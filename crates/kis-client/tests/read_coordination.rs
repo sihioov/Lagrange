@@ -16,7 +16,7 @@ use kis_client::clock::Clock;
 use kis_client::error::KisError;
 use kis_client::read_coordination::{
     LOCK_FILE_NAME, LockAcquisition, ReadCallbackResult, ReadChannel, ReadCoordinationError,
-    ReadCoordinator, ReadFailureKind, STATE_FILE_NAME,
+    ReadCoordinator, ReadCredentials, ReadFailureKind, STATE_FILE_NAME,
 };
 use kis_client::secret::Secret;
 
@@ -33,22 +33,41 @@ fn bounded() -> LockAcquisition {
     LockAcquisition::Bounded(Duration::from_secs(1))
 }
 
+#[test]
+fn zero_credential_generation_starts_no_issuer_or_read_callback() {
+    let issuer_calls = AtomicUsize::new(0);
+    let read_calls = AtomicUsize::new(0);
+
+    let result = ReadCredentials::new(
+        Secret::new("app-key".to_owned()),
+        Secret::new("app-secret".to_owned()),
+        0,
+    );
+
+    assert!(matches!(
+        result,
+        Err(ReadCoordinationError::InvalidCredentials)
+    ));
+    assert_eq!(issuer_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(read_calls.load(Ordering::SeqCst), 0);
+}
+
 async fn successful_read(
     coordinator: &ReadCoordinator,
     issuer: &dyn TokenIssuer,
     path: &str,
     tr_id: &str,
 ) -> Result<&'static str, ReadCoordinationError> {
-    coordinator
-        .execute(
-            path,
-            tr_id,
-            issuer,
-            bounded(),
-            Duration::from_secs(3),
-            |_| async { ReadCallbackResult::Success("ok") },
-        )
-        .await
+    let read = |_: AccessToken| async { ReadCallbackResult::Success("ok") };
+    if (path, tr_id) == (PRICE_PATH, PRICE_TR) {
+        coordinator
+            .execute_intraday(path, tr_id, issuer, bounded(), Duration::from_secs(3), read)
+            .await
+    } else {
+        coordinator
+            .execute(path, tr_id, issuer, bounded(), Duration::from_secs(3), read)
+            .await
+    }
 }
 
 #[tokio::test]
@@ -83,7 +102,7 @@ async fn token_reuse_alias_dedup_and_get_accounting_are_separate() {
 
     let reads = AtomicUsize::new(0);
     let result = alias
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -107,7 +126,7 @@ async fn invalid_channel_is_rejected_before_token_or_read_callback() {
     let coordinator = temp.coordinator(Arc::new(clock), 1);
     let reads = AtomicUsize::new(0);
     let error = coordinator
-        .execute(
+        .execute_intraday(
             "/uapi/domestic-stock/v1/trading/inquire-balance",
             "TTTC8434R",
             &issuer,
@@ -164,36 +183,28 @@ async fn lock_wait_and_request_deadline_inputs_are_bounded_before_callbacks() {
 }
 
 #[test]
-fn isolated_channel_enum_has_exact_parity_with_existing_private_allowlist() {
-    let source = include_str!("../src/market_data.rs");
-    let start = source
-        .find("const READ_ONLY_CHANNELS")
-        .expect("allowlist start");
-    let tail = &source[start..];
-    let end = tail.find("];\n").expect("allowlist end");
-    let block = &tail[..end];
-    let literals = quoted_literals(block);
-    let existing: Vec<(&str, &str)> = literals
-        .chunks_exact(2)
-        .map(|pair| (pair[0], pair[1]))
-        .collect();
-    let isolated: Vec<_> = ReadChannel::ALL
+fn shared_allowlist_is_the_single_exact_nine_channel_source() {
+    let pairs: Vec<_> = ReadChannel::ALL
         .into_iter()
         .map(ReadChannel::pair)
         .collect();
-    assert_eq!(existing, isolated);
-}
-
-fn quoted_literals(input: &str) -> Vec<&str> {
-    let mut output = Vec::new();
-    let mut rest = input;
-    while let Some(start) = rest.find('"') {
-        rest = &rest[start + 1..];
-        let end = rest.find('"').expect("closed literal");
-        output.push(&rest[..end]);
-        rest = &rest[end + 1..];
-    }
-    output
+    assert_eq!(pairs.len(), 9);
+    assert_eq!(
+        pairs
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        9
+    );
+    assert_eq!(
+        pairs[1],
+        (
+            "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "FHKST01010100"
+        )
+    );
+    let market_client = include_str!("../src/market_data.rs");
+    assert!(!market_client.contains("const READ_ONLY_CHANNELS"));
 }
 
 #[tokio::test]
@@ -215,10 +226,10 @@ async fn global_channel_and_intraday_spacing_use_final_post_issue_time() {
     assert_eq!(
         error,
         ReadCoordinationError::IntradaySpacing {
-            retry_after_ms: 1_000
+            retry_after_ms: 1_250
         }
     );
-    clock.set(2_007_000);
+    clock.set(2_007_250);
     successful_read(&coordinator, &issuer, PRICE_PATH, PRICE_TR)
         .await
         .expect("five seconds from actual start");
@@ -227,7 +238,7 @@ async fn global_channel_and_intraday_spacing_use_final_post_issue_time() {
         .await
         .expect_err("global one-second spacing applies across channels");
     assert!(matches!(error, ReadCoordinationError::GlobalSpacing { .. }));
-    clock.advance(1_000);
+    clock.advance(1_250);
     successful_read(&coordinator, &issuer, DAILY_PATH, DAILY_TR)
         .await
         .expect("different channel after global interval");
@@ -283,7 +294,7 @@ async fn unauthorized_invalidates_shared_token_and_keeps_issue_gate() {
     let issuer = CountingIssuer::new(clock.clone());
     let coordinator = temp.coordinator(Arc::new(clock.clone()), 1);
     let error = coordinator
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -294,7 +305,7 @@ async fn unauthorized_invalidates_shared_token_and_keeps_issue_gate() {
         .await
         .expect_err("401");
     assert_eq!(error, ReadCoordinationError::Unauthorized);
-    clock.advance(5_000);
+    clock.advance(5_250);
     assert!(matches!(
         successful_read(&coordinator, &issuer, PRICE_PATH, PRICE_TR).await,
         Err(ReadCoordinationError::TokenIssueCooldown { .. })
@@ -314,7 +325,7 @@ async fn retry_after_is_persisted_before_unlock() {
     let issuer = CountingIssuer::new(clock.clone());
     let first = temp.coordinator(Arc::new(clock.clone()), 1);
     let error = first
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -337,7 +348,7 @@ async fn retry_after_is_persisted_before_unlock() {
     let restarted = temp.coordinator(Arc::new(clock.clone()), 1);
     let reads = AtomicUsize::new(0);
     let error = restarted
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -539,7 +550,7 @@ async fn cancelling_callback_preserves_reservation_debt_and_releases_kernel_lock
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
         task_coordinator
-            .execute(
+            .execute_intraday(
                 PRICE_PATH,
                 PRICE_TR,
                 task_issuer.as_ref(),
@@ -564,7 +575,7 @@ async fn cancelling_callback_preserves_reservation_debt_and_releases_kernel_lock
     assert_eq!(
         error,
         ReadCoordinationError::ReservationActive {
-            retry_after_ms: 3_000
+            retry_after_ms: 3_250
         }
     );
 }
@@ -587,7 +598,7 @@ async fn local_callback_timeout_drops_future_and_preserves_durable_reservation()
     let callback_drops = Arc::clone(&drops);
     let started = Instant::now();
     let error = coordinator
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -607,7 +618,7 @@ async fn local_callback_timeout_drops_future_and_preserves_durable_reservation()
     let restarted = temp.coordinator(Arc::new(clock.clone()), 1);
     let reads = AtomicUsize::new(0);
     let error = restarted
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -622,12 +633,14 @@ async fn local_callback_timeout_drops_future_and_preserves_durable_reservation()
         .expect_err("persisted fence denies a restarted caller before expiry");
     assert_eq!(
         error,
-        ReadCoordinationError::ReservationActive { retry_after_ms: 30 }
+        ReadCoordinationError::ReservationActive {
+            retry_after_ms: 280
+        }
     );
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     assert_eq!(issuer.calls(), 1);
 
-    clock.advance(5_000);
+    clock.advance(5_250);
     successful_read(&restarted, &issuer, PRICE_PATH, PRICE_TR)
         .await
         .expect("expired fence permits a separately accounted attempt");
@@ -656,7 +669,7 @@ async fn explicit_ambiguous_result_preserves_debt_but_completed_failure_clears_i
         Err(ReadCoordinationError::ReservationActive { .. })
     ));
 
-    clock.advance(3_000);
+    clock.advance(3_250);
     let error = coordinator
         .execute(
             DAILY_PATH,
@@ -824,7 +837,7 @@ async fn higher_generation_retains_broker_cooldown_and_makes_zero_callbacks() {
         "old-secret",
     );
     let _ = first
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -847,7 +860,7 @@ async fn higher_generation_retains_broker_cooldown_and_makes_zero_callbacks() {
     );
     let reads = AtomicUsize::new(0);
     let error = rotated
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &issuer,
@@ -968,7 +981,7 @@ async fn initialized_witness_rejects_deleted_state_before_all_callbacks() {
         ReadCoordinationError::MissingCommittedState
     );
     let error = restarted
-        .execute(
+        .execute_intraday(
             PRICE_PATH,
             PRICE_TR,
             &denied_issuer,
@@ -1192,10 +1205,10 @@ async fn process_crash_after_reservation_blocks_until_conservative_debt_expires(
     assert_eq!(
         successful_read(&coordinator, &issuer, PRICE_PATH, PRICE_TR).await,
         Err(ReadCoordinationError::ReservationActive {
-            retry_after_ms: 3_000
+            retry_after_ms: 3_250
         })
     );
-    clock.advance(5_000);
+    clock.advance(5_250);
     successful_read(&coordinator, &issuer, PRICE_PATH, PRICE_TR)
         .await
         .expect("conservative fence and spacing elapsed");
@@ -1408,7 +1421,7 @@ fn read_coordination_process_helper() {
             .expect("commit token before crash");
         std::process::exit(86);
     }
-    let result = runtime.block_on(coordinator.execute(
+    let result = runtime.block_on(coordinator.execute_intraday(
         PRICE_PATH,
         PRICE_TR,
         &issuer,

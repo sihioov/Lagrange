@@ -19,8 +19,9 @@ use kis_client::live_transport::LiveTransport;
 use kis_client::secret::SystemCredentialSource;
 use kis_client::token_issuer::KisTokenIssuer;
 use kis_client::{
-    BucketKey, CredentialRef, KisMarketDataClient, Quota, RateLimiter, SystemClock, TokenManager,
-    TokioSleeper,
+    BucketKey, CoordinatedReadAuth, CredentialRef, KisMarketDataClient, ProductionReadCoordination,
+    Quota, RateLimiter, ReadCoordinationMode, ReadCredentialSnapshot, SystemClock, TokenIssuer,
+    TokenManager, TokioSleeper,
 };
 use market_data::owner_equity_v2::{
     DAILY_BARS_PATH, DAILY_BARS_TR_ID, REFERENCE_PATH, REFERENCE_TR_ID,
@@ -246,6 +247,7 @@ fn load_config() -> Result<Config, ConfigError> {
             schedule_pins: None,
         });
     }
+    ProductionReadCoordination::from_env().map_err(|_| ConfigError::Invalid)?;
     let max_active = optional_u64("OWNER_EQUITY_V2_MAX_ACTIVE")?.unwrap_or(100);
     let initial_gets = optional_u64("OWNER_EQUITY_V2_INITIAL_GET_CEILING")?.unwrap_or(7);
     let incremental_gets = optional_u64("OWNER_EQUITY_V2_INCREMENTAL_GET_CEILING")?.unwrap_or(2);
@@ -397,25 +399,47 @@ fn database_options(production: bool) -> Result<PgConnectOptions, ConfigError> {
 }
 
 fn build_live_reader(config: &Config) -> Result<LiveReader, ConfigError> {
+    let coordination = ProductionReadCoordination::from_env().map_err(|_| ConfigError::Invalid)?;
     let app_key = CredentialRef::file(config.app_key_file.to_string_lossy().into_owned());
     let app_secret = CredentialRef::file(config.app_secret_file.to_string_lossy().into_owned());
     let token_transport =
         LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(|_| ConfigError::Invalid)?;
     let read_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(|_| ConfigError::Invalid)?;
     let clock = Arc::new(SystemClock);
-    let issuer = KisTokenIssuer::new(
-        token_transport,
-        SystemCredentialSource,
-        app_key.clone(),
-        app_secret.clone(),
-        kis_system_now_ms,
-    );
-    let tokens = Arc::new(TokenManager::new(clock.clone(), Arc::new(issuer)));
+    let snapshot = match coordination.mode() {
+        ReadCoordinationMode::Legacy => None,
+        ReadCoordinationMode::SharedRequired => Some(
+            ReadCredentialSnapshot::resolve(
+                &SystemCredentialSource,
+                app_key.clone(),
+                app_secret.clone(),
+                coordination.generation().expect("shared generation parsed"),
+            )
+            .map_err(|_| ConfigError::Invalid)?,
+        ),
+    };
+    let issuer: Arc<dyn TokenIssuer> = match snapshot.as_ref() {
+        Some(snapshot) => Arc::new(KisTokenIssuer::new(
+            token_transport,
+            snapshot.clone(),
+            app_key.clone(),
+            app_secret.clone(),
+            kis_system_now_ms,
+        )),
+        None => Arc::new(KisTokenIssuer::new(
+            token_transport,
+            SystemCredentialSource,
+            app_key.clone(),
+            app_secret.clone(),
+            kis_system_now_ms,
+        )),
+    };
+    let tokens = Arc::new(TokenManager::new(clock.clone(), Arc::clone(&issuer)));
     let quota = Quota::new(1, 1);
     let limiter = RateLimiter::new(clock, quota)
         .with_quota(BucketKey::new(REFERENCE_PATH, REFERENCE_TR_ID), quota)
         .with_quota(BucketKey::new(DAILY_BARS_PATH, DAILY_BARS_TR_ID), quota);
-    Ok(KisMarketDataClient::new(
+    let mut client = KisMarketDataClient::new(
         read_transport,
         TokioSleeper,
         tokens,
@@ -423,7 +447,22 @@ fn build_live_reader(config: &Config) -> Result<LiveReader, ConfigError> {
         SystemCredentialSource,
         app_key,
         app_secret,
-    ))
+    );
+    if let Some(snapshot) = snapshot {
+        let auth = CoordinatedReadAuth::new(
+            coordination
+                .production_config()
+                .expect("shared production config"),
+            snapshot,
+            Arc::new(SystemClock),
+            issuer,
+        )
+        .map_err(|_| ConfigError::Invalid)?;
+        let intraday_transport =
+            LiveTransport::live(Duration::from_secs(3)).map_err(|_| ConfigError::Invalid)?;
+        client = client.with_shared_read_coordination(auth, intraday_transport);
+    }
+    Ok(client)
 }
 
 fn kis_system_now_ms() -> i64 {
@@ -869,6 +908,8 @@ mod tests {
         assert!(production.contains("shutdown_signal().await"));
         assert!(production.contains("work.await"));
         assert_eq!(production.matches("TokenManager::new").count(), 1);
+        assert!(production.contains("ProductionReadCoordination::from_env"));
+        assert!(production.contains("with_shared_read_coordination"));
         assert!(production.contains("Quota::new(1, 1)"));
         assert!(production.contains("REFERENCE_PATH, REFERENCE_TR_ID"));
         assert!(production.contains("DAILY_BARS_PATH, DAILY_BARS_TR_ID"));

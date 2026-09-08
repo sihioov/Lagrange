@@ -26,6 +26,7 @@ pub mod market_data;
 pub mod order_state;
 pub mod rate_limit;
 pub mod read_coordination;
+pub mod read_coordination_config;
 pub mod reconciliation;
 pub mod rest;
 pub mod retry;
@@ -41,8 +42,13 @@ pub use error::{KisError, RequestKind};
 pub use execution::{Applied, ExecutionReport, ExecutionTracker};
 pub use idempotency::{Claim, InMemoryIntentStore, IntentState, IntentStore, guard_submission};
 pub use mapping::{InstrumentMapper, OrderAck, OrderRequest, OrderSide, OrderType};
-pub use market_data::{KisMarketDataClient, MarketDataReply};
+pub use market_data::{CoordinatedReadAuth, KisMarketDataClient, MarketDataReply};
 pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
+pub use read_coordination::ReadCredentialSnapshot;
+pub use read_coordination_config::{
+    IntradayQuotesMode, ProductionReadCoordination, ReadCoordinationConfigError,
+    ReadCoordinationMode,
+};
 pub use rest::{Profile, RestClient, SubmitError};
 pub use retry::{RetryPolicy, Sleeper, TokioSleeper};
 pub use secret::{AccountNo, CredentialError, CredentialRef, CredentialSource, Secret};

@@ -13,11 +13,13 @@ use chrono::{DateTime, Datelike, FixedOffset, NaiveTime, TimeZone, Utc};
 use domain::{BatchId, DatasetId, TradingDate, UtcTimestamp};
 use kis_client::clock::Clock;
 use kis_client::live_transport::LiveTransport;
+use kis_client::read_coordination::ReadChannel;
 use kis_client::secret::SystemCredentialSource;
 use kis_client::token_issuer::KisTokenIssuer;
 use kis_client::{
-    BucketKey, CredentialRef, KisError, KisMarketDataClient, Quota, RateLimiter, SystemClock,
-    TokenManager, TokioSleeper,
+    BucketKey, CoordinatedReadAuth, CredentialRef, KisError, KisMarketDataClient,
+    ProductionReadCoordination, Quota, RateLimiter, ReadCoordinationMode, ReadCredentialSnapshot,
+    SystemClock, TokenIssuer, TokenManager, TokioSleeper,
 };
 use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX,
@@ -70,35 +72,6 @@ const KIS_READ_QUOTA: Quota = Quota {
     capacity: 1,
     refill_per_sec: 1,
 };
-const KIS_READ_CHANNELS: [(&str, &str); 9] = [
-    (
-        "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
-        "FHKST03010100",
-    ),
-    (
-        "/uapi/domestic-stock/v1/quotations/inquire-price",
-        "FHKST01010100",
-    ),
-    (
-        "/uapi/domestic-stock/v1/quotations/chk-holiday",
-        "CTCA0903R",
-    ),
-    (
-        "/uapi/domestic-stock/v1/ksdinfo/paidin-capin",
-        "HHKDB669100C0",
-    ),
-    (
-        "/uapi/domestic-stock/v1/ksdinfo/bonus-issue",
-        "HHKDB669101C0",
-    ),
-    ("/uapi/domestic-stock/v1/ksdinfo/dividend", "HHKDB669102C0"),
-    (
-        "/uapi/domestic-stock/v1/ksdinfo/merger-split",
-        "HHKDB669104C0",
-    ),
-    ("/uapi/domestic-stock/v1/ksdinfo/rev-split", "HHKDB669105C0"),
-    ("/uapi/domestic-stock/v1/ksdinfo/cap-dcrs", "HHKDB669106C0"),
-];
 const WORKER_PROVIDER_KIS_NORMALIZED: &str = "KIS-NORMALIZED";
 
 fn worker_event_provider(mode: FetchMode) -> &'static str {
@@ -128,6 +101,9 @@ pub const WORKER_ENV_KEYS: &[&str] = &[
     "DB_PASSWORD_FILE",
     "KIS_APP_KEY_FILE",
     "KIS_APP_SECRET_FILE",
+    "KIS_READ_COORDINATION_MODE",
+    "KIS_READ_CREDENTIAL_GENERATION",
+    "OWNER_INTRADAY_QUOTES_MODE",
     "LAGRANGE_CODE_COMMIT",
     "RANGE_RAW_BATCH_ID",
 ];
@@ -619,9 +595,10 @@ fn safe_normalize_file_name(file_name: &str) -> Option<&str> {
 }
 
 fn safe_kis_read_endpoint(endpoint: &str) -> Option<&str> {
-    KIS_READ_CHANNELS
-        .iter()
-        .find_map(|(allowed, _)| (*allowed == endpoint).then_some(*allowed))
+    ReadChannel::ALL.iter().find_map(|channel| {
+        let (allowed, _) = channel.pair();
+        (allowed == endpoint).then_some(allowed)
+    })
 }
 
 fn kis_error_endpoint(error: &KisError) -> Option<&str> {
@@ -903,6 +880,10 @@ fn build_production_kis_provider_from_files(
     app_key_path: &Path,
     app_secret_path: &Path,
 ) -> Result<LiveKisProvider, WorkerError> {
+    let coordination =
+        ProductionReadCoordination::from_env().map_err(|_| WorkerError::InvalidConfig {
+            key: "KIS_READ_COORDINATION_MODE",
+        })?;
     let app_key_ref = CredentialRef::file(app_key_path.to_string_lossy().into_owned());
     let app_secret_ref = CredentialRef::file(app_secret_path.to_string_lossy().into_owned());
 
@@ -912,21 +893,44 @@ fn build_production_kis_provider_from_files(
     let token_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
     let read_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(WorkerError::KisClient)?;
     let clock = Arc::new(SystemClock);
-    let token_issuer = KisTokenIssuer::new(
-        token_transport,
-        SystemCredentialSource,
-        app_key_ref.clone(),
-        app_secret_ref.clone(),
-        kis_system_now_ms,
-    );
-    let tokens = Arc::new(TokenManager::new(clock.clone(), Arc::new(token_issuer)));
-    let limiter = KIS_READ_CHANNELS.iter().fold(
+    let snapshot = match coordination.mode() {
+        ReadCoordinationMode::Legacy => None,
+        ReadCoordinationMode::SharedRequired => Some(
+            ReadCredentialSnapshot::resolve(
+                &SystemCredentialSource,
+                app_key_ref.clone(),
+                app_secret_ref.clone(),
+                coordination.generation().expect("shared generation parsed"),
+            )
+            .map_err(KisError::from)
+            .map_err(WorkerError::KisClient)?,
+        ),
+    };
+    let token_issuer: Arc<dyn TokenIssuer> = match snapshot.as_ref() {
+        Some(snapshot) => Arc::new(KisTokenIssuer::new(
+            token_transport,
+            snapshot.clone(),
+            app_key_ref.clone(),
+            app_secret_ref.clone(),
+            kis_system_now_ms,
+        )),
+        None => Arc::new(KisTokenIssuer::new(
+            token_transport,
+            SystemCredentialSource,
+            app_key_ref.clone(),
+            app_secret_ref.clone(),
+            kis_system_now_ms,
+        )),
+    };
+    let tokens = Arc::new(TokenManager::new(clock.clone(), Arc::clone(&token_issuer)));
+    let limiter = ReadChannel::ALL.iter().fold(
         RateLimiter::new(clock, KIS_READ_QUOTA),
-        |limiter, (endpoint, tr_id)| {
-            limiter.with_quota(BucketKey::new(*endpoint, *tr_id), KIS_READ_QUOTA)
+        |limiter, channel| {
+            let (endpoint, tr_id) = channel.pair();
+            limiter.with_quota(BucketKey::new(endpoint, tr_id), KIS_READ_QUOTA)
         },
     );
-    let client = KisMarketDataClient::new(
+    let mut client = KisMarketDataClient::new(
         read_transport,
         TokioSleeper,
         tokens,
@@ -935,6 +939,23 @@ fn build_production_kis_provider_from_files(
         app_key_ref,
         app_secret_ref,
     );
+    if let Some(snapshot) = snapshot {
+        let auth = CoordinatedReadAuth::new(
+            coordination
+                .production_config()
+                .expect("shared production config"),
+            snapshot,
+            Arc::new(SystemClock),
+            token_issuer,
+        )
+        .map_err(|error| KisError::Auth {
+            reason: error.code().to_owned(),
+        })
+        .map_err(WorkerError::KisClient)?;
+        let intraday_transport =
+            LiveTransport::live(Duration::from_secs(3)).map_err(WorkerError::KisClient)?;
+        client = client.with_shared_read_coordination(auth, intraday_transport);
+    }
     Ok(KisProvider::kr_etf_core(client))
 }
 
@@ -998,7 +1019,7 @@ pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWork
     let pool = build_postgres_pool(&config.database);
     let backend = Arc::new(ProcessResearchBackend {
         executable,
-        env: helper_environment(values, system_root.as_deref()),
+        env: helper_environment(values, system_root.as_deref())?,
         sink: PostgresPublicationSink::new(pool.clone()),
         candidate_sink: PostgresCandidateSourceSink::new(pool),
         candidate_sources_enabled: config.candidate_sources_enabled,
@@ -4043,7 +4064,17 @@ struct BackfillItemWire<'a> {
 fn helper_environment(
     values: &HashMap<String, String>,
     system_root: Option<&Path>,
-) -> HashMap<OsString, OsString> {
+) -> Result<HashMap<OsString, OsString>, WorkerError> {
+    ProductionReadCoordination::from_values(
+        values.get("KIS_READ_COORDINATION_MODE").map(String::as_str),
+        values.get("OWNER_INTRADAY_QUOTES_MODE").map(String::as_str),
+        values
+            .get("KIS_READ_CREDENTIAL_GENERATION")
+            .map(String::as_str),
+    )
+    .map_err(|_| WorkerError::InvalidConfig {
+        key: "KIS_READ_COORDINATION_MODE",
+    })?;
     let environment: HashMap<OsString, OsString> = WORKER_ENV_KEYS
         .iter()
         .filter_map(|key| {
@@ -4063,7 +4094,7 @@ fn helper_environment(
     }
     #[cfg(not(windows))]
     let _ = system_root;
-    environment
+    Ok(environment)
 }
 
 fn validated_system_root() -> Result<Option<PathBuf>, WorkerError> {
@@ -5046,7 +5077,7 @@ mod process_tests {
 
     use super::{
         ChildSpec, RecoveryObserver, SupervisedChildOutcome, WaitOutcome, WorkerControl,
-        WorkerPhase, decode_helper_output, decode_helper_output_with_provider,
+        WorkerError, WorkerPhase, decode_helper_output, decode_helper_output_with_provider,
         decode_recovery_line, helper_environment, supervise_child, supervise_recovery_child,
     };
 
@@ -5306,13 +5337,19 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
         let values = HashMap::from([
             ("APP_ENV".to_owned(), "qa".to_owned()),
             ("DB_HOST".to_owned(), "db".to_owned()),
+            (
+                "KIS_READ_COORDINATION_MODE".to_owned(),
+                "shared_required".to_owned(),
+            ),
+            ("KIS_READ_CREDENTIAL_GENERATION".to_owned(), "7".to_owned()),
+            ("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "off".to_owned()),
             ("DATABASE_URL".to_owned(), "must-not-cross".to_owned()),
             (
                 "AWS_SECRET_ACCESS_KEY".to_owned(),
                 "must-not-cross".to_owned(),
             ),
         ]);
-        let env = helper_environment(&values, Some(system_root.path()));
+        let env = helper_environment(&values, Some(system_root.path())).unwrap();
         assert_eq!(
             env.get(&OsString::from("APP_ENV")),
             Some(&OsString::from("qa"))
@@ -5323,6 +5360,18 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
         );
         assert!(!env.contains_key(&OsString::from("DATABASE_URL")));
         assert!(!env.contains_key(&OsString::from("AWS_SECRET_ACCESS_KEY")));
+        assert_eq!(
+            env.get(&OsString::from("KIS_READ_COORDINATION_MODE")),
+            Some(&OsString::from("shared_required"))
+        );
+        assert_eq!(
+            env.get(&OsString::from("KIS_READ_CREDENTIAL_GENERATION")),
+            Some(&OsString::from("7"))
+        );
+        assert_eq!(
+            env.get(&OsString::from("OWNER_INTRADAY_QUOTES_MODE")),
+            Some(&OsString::from("off"))
+        );
         #[cfg(windows)]
         assert_eq!(
             env.get(&OsString::from("SYSTEMROOT")),
@@ -5330,6 +5379,30 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
         );
         #[cfg(not(windows))]
         assert!(!env.contains_key(&OsString::from("SYSTEMROOT")));
+    }
+
+    #[test]
+    fn helper_environment_rejects_unvalidated_read_arbitration_values() {
+        let values = HashMap::from([(
+            "KIS_READ_COORDINATION_MODE".to_owned(),
+            "shared_required".to_owned(),
+        )]);
+        assert!(matches!(
+            helper_environment(&values, None),
+            Err(WorkerError::InvalidConfig {
+                key: "KIS_READ_COORDINATION_MODE"
+            })
+        ));
+    }
+
+    #[test]
+    fn production_kis_constructor_explicitly_selects_shared_read_policy() {
+        let source = include_str!("worker.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("ProductionReadCoordination::from_env"));
+        assert!(production.contains("ReadCredentialSnapshot::resolve"));
+        assert!(production.contains("with_shared_read_coordination"));
+        assert!(production.contains("ReadChannel::ALL.iter()"));
     }
 
     #[cfg(windows)]

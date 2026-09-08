@@ -23,8 +23,9 @@ use kis_client::live_transport::LiveTransport;
 use kis_client::secret::SystemCredentialSource;
 use kis_client::token_issuer::KisTokenIssuer;
 use kis_client::{
-    BucketKey, CredentialRef, KisMarketDataClient, Quota, RateLimiter, SystemClock, TokenManager,
-    TokioSleeper,
+    BucketKey, CoordinatedReadAuth, CredentialRef, KisMarketDataClient, ProductionReadCoordination,
+    Quota, RateLimiter, ReadCoordinationMode, ReadCredentialSnapshot, SystemClock, TokenIssuer,
+    TokenManager, TokioSleeper,
 };
 use market_data::storage::RawStore;
 use serde::Serialize;
@@ -430,6 +431,8 @@ fn build_live_reader(
     app_key_file: &Path,
     app_secret_file: &Path,
 ) -> Result<LiveKisClient, CliError> {
+    let coordination =
+        ProductionReadCoordination::from_env().map_err(|_| CliError::InvalidConfiguration)?;
     let app_key_ref = CredentialRef::file(app_key_file.to_string_lossy().into_owned());
     let app_secret_ref = CredentialRef::file(app_secret_file.to_string_lossy().into_owned());
     let token_transport =
@@ -437,19 +440,40 @@ fn build_live_reader(
     let read_transport =
         LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(|_| CliError::TransportConfiguration)?;
     let clock = Arc::new(SystemClock);
-    let issuer = KisTokenIssuer::new(
-        token_transport,
-        SystemCredentialSource,
-        app_key_ref.clone(),
-        app_secret_ref.clone(),
-        kis_system_now_ms,
-    );
-    let tokens = Arc::new(TokenManager::new(clock.clone(), Arc::new(issuer)));
+    let snapshot = match coordination.mode() {
+        ReadCoordinationMode::Legacy => None,
+        ReadCoordinationMode::SharedRequired => Some(
+            ReadCredentialSnapshot::resolve(
+                &SystemCredentialSource,
+                app_key_ref.clone(),
+                app_secret_ref.clone(),
+                coordination.generation().expect("shared generation parsed"),
+            )
+            .map_err(|_| CliError::InvalidConfiguration)?,
+        ),
+    };
+    let issuer: Arc<dyn TokenIssuer> = match snapshot.as_ref() {
+        Some(snapshot) => Arc::new(KisTokenIssuer::new(
+            token_transport,
+            snapshot.clone(),
+            app_key_ref.clone(),
+            app_secret_ref.clone(),
+            kis_system_now_ms,
+        )),
+        None => Arc::new(KisTokenIssuer::new(
+            token_transport,
+            SystemCredentialSource,
+            app_key_ref.clone(),
+            app_secret_ref.clone(),
+            kis_system_now_ms,
+        )),
+    };
+    let tokens = Arc::new(TokenManager::new(clock.clone(), Arc::clone(&issuer)));
     let limiter = RateLimiter::new(clock, Quota::new(1, 1)).with_quota(
         BucketKey::new(DAILY_BARS_PATH, DAILY_BARS_TR_ID),
         Quota::new(1, 1),
     );
-    Ok(KisMarketDataClient::new(
+    let mut client = KisMarketDataClient::new(
         read_transport,
         TokioSleeper,
         tokens,
@@ -457,7 +481,22 @@ fn build_live_reader(
         SystemCredentialSource,
         app_key_ref,
         app_secret_ref,
-    ))
+    );
+    if let Some(snapshot) = snapshot {
+        let auth = CoordinatedReadAuth::new(
+            coordination
+                .production_config()
+                .expect("shared production config"),
+            snapshot,
+            Arc::new(SystemClock),
+            issuer,
+        )
+        .map_err(|_| CliError::InvalidConfiguration)?;
+        let intraday_transport = LiveTransport::live(Duration::from_secs(3))
+            .map_err(|_| CliError::TransportConfiguration)?;
+        client = client.with_shared_read_coordination(auth, intraday_transport);
+    }
+    Ok(client)
 }
 
 fn kis_system_now_ms() -> i64 {
@@ -581,5 +620,15 @@ mod tests {
         .expect("raw");
         assert_eq!(canonical, raw);
         assert!(parse_entitlement_hash("not-a-hash").is_err());
+    }
+
+    #[test]
+    fn production_constructor_explicitly_selects_shared_read_policy() {
+        let source = include_str!("kis-stock-price-beta-raw.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("ProductionReadCoordination::from_env"));
+        assert!(production.contains("ReadCredentialSnapshot::resolve"));
+        assert!(production.contains("with_shared_read_coordination"));
+        assert!(production.contains("Duration::from_secs(3)"));
     }
 }
