@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B·WP-5 개발 gate 통과 및 기능 브랜치 통합 완료; WP-3 신규 KIS 응답 parser 명시적 승인 대기, 운영 활성화 미실행
+상태: WP-2B·WP-5 통합 완료; owner가 신규 KIS 응답 parser·fixture 테스트 승인, WP-3A 시작 준비; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -731,3 +731,17 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   별도 독립 Web 작업은 완료됐다. 사용자 결정 대기를 알리고 반복 heartbeat를 종료한다.
 - main merge/push, 배포, 실제 KIS 호출, API/DB 및 브라우저 런타임 검증은 수행하지 않았다.
   본 수락은 fixture 기반 Web 개발 gate이며 전체 기능 QA 또는 출시 승인이 아니다.
+
+### Owner 응답 parser 승인 및 WP-3 분할
+
+- 2026-09-08 사용자가 직전의 7개 응답 필드 파싱·테스트 구현 승인 질문에 “승인해”로
+  답했다. `stck_prpr`, `prdy_vrss`, `prdy_ctrt`, `prdy_vrss_sign`, `stck_sdpr`,
+  `iscd_stat_cls_code`, `temp_stop_yn`의 동결 계약을 fixture 기반으로 구현할 수 있다.
+  실제 KIS 호출, 운영 활성화, main merge/push/배포 승인은 포함하지 않는다.
+- WP-3을 순차 분할한다. WP-3A는 독립 parser와 typed 값/오류 및 fixture 테스트만 맡는다.
+  owned: `crates/market-data/src/intraday_quotes.rs`, lib.rs의 module 등록 한 곳,
+  `crates/market-data/tests/intraday_quotes.rs`. 기존 EOD/reference parser는 변경하지 않는다.
+  intermediate, Codex luna/max, 결과는 coordinator 및 독립 검토 후 수락한다.
+- WP-3B는 WP-3A 수락 후 기존 WP-3의 migration/cache/demand/producer 범위를 맡는다.
+  0054 번호 충돌 및 실제 disposable DB 검증 환경은 해당 launch 전에 확인한다.
+  WP-3A에는 DB/runner/transport/Compose/Web 변경이나 네트워크 호출을 주지 않는다.

@@ -2,7 +2,7 @@
 
 Date: 2026-09-08 (Asia/Seoul)
 
-Status: WP-1 contract artifact complete; source implementation and production activation not started
+Status: WP-2 shared coordination and WP-5 fixture Web integrated; owner approved the seven-field parser and fixture tests on 2026-09-08; production activation remains unapproved
 
 Baseline: `b5f32abf833f86de5dc46fc0ba7fd88923fcbaf8`
 
@@ -765,7 +765,7 @@ allowed. Production activation, migration execution, or service restart is not p
 | Delta from already approved system | Status after WP-1 | Required action |
 | --- | --- | --- |
 | private single-owner KIS personal-use entitlement | already settled by ADR-0005 | do not reopen; preserve exact entitlement reference/hash and private serving boundary |
-| parse `stck_prpr`, `prdy_vrss`, `prdy_vrss_sign`, `prdy_ctrt`, `stck_sdpr`, `iscd_stat_cls_code`, `temp_stop_yn` rather than identity only | **explicit response-contract approval required** by AGENTS | owner/coordinator accepts this exact whitelist, sign legend evidence, fixtures, and fail-closed rules before parser/live branch |
+| parse `stck_prpr`, `prdy_vrss`, `prdy_vrss_sign`, `prdy_ctrt`, `stck_sdpr`, `iscd_stat_cls_code`, `temp_stop_yn` rather than identity only | **owner approved parser and fixture tests, 2026-09-08** | user's “승인해” answers the exact seven-field, no-live-call question; implement this whitelist/sign legend/fail-closed contract only; live activation remains separate |
 | periodic production current-price calls, five-second slot and 5,000-attempt daily cap | product requested, but **live high-frequency activation not authorized by this docs task** | separate activation approval with exact instrument/time/budget and current official docs; fixtures remain network-free |
 | process-shared token persistence and coordination bind | proposed security/runtime change | coordinator accepts WP-2 design; cross-process crash/rotation tests must pass before producer work |
 | date-specific session-window evidence file | proposed fail-closed seam; baseline input absent | coordinator accepts seam, then owner-reviewed official evidence populates exact dates; otherwise `UNKNOWN`, zero calls |
