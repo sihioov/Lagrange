@@ -259,7 +259,8 @@ job's own request ceiling.
 
 - A mounted visible/online quote widget owns one random UUID `consumer_id` in memory. It is not
   persisted across reload/logout and is regenerated when the selected identity changes.
-- Server lease is exactly 30 seconds from DB transaction time. Renewal is every 15 seconds.
+- Server lease is exactly 30 seconds from a fresh DB clock sampled inside the mutation transaction
+  after its blocking locks are acquired, not from transaction-start `now()`. Renewal is every 15 seconds.
 - Mutations for one consumer are serialized. Unmount, hide, offline, logout, or selection change
   stops polling/renewal and sends a best-effort release.
 - Each consumer has a separate row. Collection demand is the merge of all non-expired ACTIVE rows
@@ -460,7 +461,7 @@ Coordinator clarification (2026-09-08, application contract only): lease expiry 
 explicit RELEASED tombstone. While the same consumer remains mounted/visible/online and its
 membership remains READY, a retained, expired ACTIVE row may be renewed with exactly the next
 sequence. The transaction rechecks owner, membership/generation and both capacity limits as
-a new active lease, and grants 30 seconds from its transaction time. Exact replay still returns
+a new active lease, and grants 30 seconds from its fresh post-lock DB clock. Exact replay still returns
 the original expiry without extending it; resolve an ambiguous prior mutation by replaying its
 same key/body/sequence before advancing. RELEASED rows never reactivate; missing/GC rows return
 404 and stop that consumer without automatic identity churn. Expired ACTIVE rows remain logically
@@ -595,13 +596,26 @@ release time, latest idempotency/request digests, and timestamps. Its own fields
 most recent idempotent response.
 It has a composite FK through the 0053 admission lineage, unique `{owner_user_id, consumer_id}`,
 and indexes on `{owner_user_id, state, lease_expires_at}` and the exact merge identity. Capacity is
-serialized by locking the owner's `owner_equity_universe_policies` row in the mutation transaction.
+serialized by an owner-scoped transaction advisory mutex. Coordinator amendment (2026-09-08):
+use `pg_advisory_xact_lock(hashtextextended('owner-intraday-demand-cap|' || canonical_owner_uuid, 0))`
+for every demand create, renew, and release before observing/modifying consumer state or capacity.
+The policy row is only an existence anchor; this mutex does not serialize policy administration
+or replace the existing READY/current-admission checks and publication membership locks.
+The fixed 20-consumer/5-distinct-identity bounds do not derive from mutable 0053 policy values.
+0053 does not write intraday demand rows. Any future path that adds/reactivates such rows must
+take this same mutex; expiry and GC only reduce capacity. A hash collision may conservatively
+serialize different owners, never combine their counts or actor scopes. No policy UPDATE grant
+or privilege-bypass helper is added. This replaces the earlier policy-row-lock requirement,
+which is incompatible with the existing SELECT-only app policy grants.
 
 `owner_intraday_quote_cache` has one latest/status row per exact owner membership. Its composite FK
 binds generation admission. It stores instrument, generation/session and both evidence hashes,
 nullable all-or-none decimal quote fields, direction, halt flag, successful `received_at` and
 `last_success_at`, `quote_version`, last attempt/failure code/time, producer fencing token, and
 timestamps. A success increments `quote_version`; a failure changes only attempt/failure status.
+For the same exact identity/session, an older receipt must return a typed stale-receipt rejection
+without changing price, success timestamps, version, or failure fields. The comparison must be
+atomic with the cache update; a higher version cannot make an older receipt current.
 It stores no JSON provider body, previous-close claim, provider message, Raw pointer, EOD value, or
 browser consumer identity.
 
@@ -611,6 +625,13 @@ locks this row and the membership, verifies unexpired producer lease, READY memb
 admission generation, current active demand, exact session evidence, and budget reservation, then
 upserts cache in one transaction. Disable or generation change racing an HTTP request therefore
 causes discard, not a late publish.
+
+Expiry is wall-time authoritative even after lock waits. Acquire required blocking rows (including
+the cache row when present), then sample a fresh database `clock_timestamp()` and revalidate
+producer/demand expiry, receipt, and current-session/evidence age before mutation. A clock expression
+evaluated before a blocking row lock is not a post-lock check. Producer claim/heartbeat and demand
+renewal must likewise use fresh post-lock time for eligibility and lease extension; exact demand
+replay alone preserves its previously committed expiry. Do not substitute the application clock.
 
 No stored procedure, trigger, sequence, or `SECURITY DEFINER` helper is added. The job-queue repo
 uses explicit typed SQL inside transactions and treats a zero-row fenced UPDATE/UPSERT as a lost

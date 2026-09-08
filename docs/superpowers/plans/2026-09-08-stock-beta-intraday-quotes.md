@@ -827,3 +827,24 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   거부 가능성과 lock 대기 중 expiry/receipt 순서 경계도 재현·판정 대상으로 전달했다.
 - B2는 B1 review ACCEPT와 필요한 coordinator 계약 판단 이후에만 시작한다.
   임시 QA DB는 검토에 계속 사용하며 운영 DB/provider/배포에는 접근하지 않는다.
+
+### WP-3B1 독립 REJECT 및 범위 한정 수정
+
+- reviewer는 기존 DB 9/9 및 job-queue all-target clippy/fmt를 통과시켰지만, 격리 DB
+  회귀 probe로 세 결함을 재현했다: 5개 identity에서 동일 identity의 새 consumer 거부,
+  producer 잠금 대기 중 만료 후에도 transaction-start now()로 publish 허용,
+  동일 fence의 오래된 receipt가 최신 cache를 덮음. 아직 통합하지 않는다.
+- coordinator가 해당 SQL과 호출 경로를 읽어 수정 대상으로 수락했다. 기존 Tokio
+  시작 barrier에 더해 실제 SQL/advisory lock 대기를 관찰하는 테스트를 추가한다.
+- coordinator 계약 판단: policy UPDATE 권한을 추가하지 않고 owner별 advisory mutex를
+  intraday capacity 전용으로 채택한다. policy는 존재 anchor일 뿐이며 0053 관리 작업을
+  잠근다고 주장하지 않는다. 고정 cap과 actor scope, READY/current-generation 검증,
+  publication membership lock은 유지한다. spec 6.1/8.2/9.1에 post-lock DB clock 및
+  receipt 역행 거부도 명시했다. 실제 provider/운영 권한에는 변화가 없다.
+- 기존 luna/max 구현 담당자에게 첫 bounded remediation을 맡긴다. 소유 범위는 새
+  intraday repository, intraday DB tests, 필요 시 새 test support뿐이다. migration,
+  기존 0053/EOD/parser/API/Web/Compose/Cargo는 수정하지 않는다. 세 재현 테스트를
+  먼저 실패시킨 뒤 수정하고 독립 재검토를 받는다. B2는 ACCEPT 이후에만 시작한다.
+- 전체 workspace clippy는 unowned kis-historical-price-v3-artifact.rs:448의
+  large_enum_variant로 실패했다. B1 변경 파일은 아니지만 baseline 재현은 아직 하지
+  않았으므로 기존 결함이라고 확정하지 않는다. 이 수정 범위에 편입하지 않는다.
