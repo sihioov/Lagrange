@@ -407,6 +407,166 @@ describe("Stock Beta intraday quote lifecycle", () => {
     expect(client.releaseDemand).not.toHaveBeenCalled();
   });
 
+  it("preserves a pre-expiry Retry-After across expiry before replaying the same renewal", async () => {
+    const clock = new FakeClock();
+    let renewalCalls = 0;
+    const client = fakeClient(clock, {
+      createDemand: vi.fn(async (body) => {
+        if (body.renewal_sequence === 1) {
+          renewalCalls += 1;
+          if (renewalCalls === 1) {
+            throw new IntradayQuoteApiError(429, "QUOTE_DEMAND_CAPACITY", "request", 60_000);
+          }
+        }
+        return demandFor(
+          IDENTITY_A,
+          body.consumer_id,
+          body.renewal_sequence,
+          new Date(clock.now() + 30_000).toISOString().replace(".000", ""),
+        );
+      }),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({
+      client,
+      clock,
+      createConsumerId: () => "00000000-0000-4000-8000-000000000010",
+      createIdempotencyKey: (operation, sequence) => `${operation}/${sequence}`,
+    });
+
+    startContext(coordinator);
+    await flush();
+    clock.advance(15_000);
+    await flush();
+    expect(client.createDemand).toHaveBeenCalledTimes(2);
+
+    clock.advance(15_000);
+    await flush();
+    const getCallsAtExpiry = client.getQuote.mock.calls.length;
+    expect(coordinator.getState()).toMatchObject({ phase: "unavailable", quote: null });
+
+    clock.advance(44_999);
+    await flush();
+    expect(clock.now()).toBe(NOW_MS + 74_999);
+    expect(client.createDemand).toHaveBeenCalledTimes(2);
+    expect(client.getQuote).toHaveBeenCalledTimes(getCallsAtExpiry);
+
+    clock.advance(1);
+    await flush();
+    expect(clock.now()).toBe(NOW_MS + 75_000);
+    expect(client.createDemand).toHaveBeenCalledTimes(3);
+    expect(client.createDemand.mock.calls[2]?.[0]).toEqual(client.createDemand.mock.calls[1]?.[0]);
+    expect(client.createDemand.mock.calls[2]?.[1]).toMatchObject({
+      idempotencyKey: client.createDemand.mock.calls[1]?.[1].idempotencyKey,
+    });
+    expect(client.getQuote.mock.calls.length).toBeGreaterThan(getCallsAtExpiry);
+    expect(new Set(client.createDemand.mock.calls.map(([body]) => body.consumer_id)).size).toBe(1);
+  });
+
+  it("fences an old GET before accepting a future renewal after an unfired lease deadline", async () => {
+    const clock = new FakeClock();
+    const oldGet = deferred<IntradayQuoteResponse>();
+    const freshGet = deferred<IntradayQuoteResponse>();
+    const renewal = deferred<IntradayQuoteDemandResponse>();
+    let oldSignal: AbortSignal | undefined;
+    const client = fakeClient(clock, {
+      createDemand: vi.fn((body) => {
+        if (body.renewal_sequence === 1) return renewal.promise;
+        return Promise.resolve(
+          demandFor(
+            IDENTITY_A,
+            body.consumer_id,
+            body.renewal_sequence,
+            new Date(clock.now() + 20_000).toISOString().replace(".000", ""),
+          ),
+        );
+      }),
+      getQuote: vi.fn((_identity, options) => {
+        if (oldSignal === undefined) {
+          oldSignal = options.signal;
+          return oldGet.promise;
+        }
+        return freshGet.promise;
+      }),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({ client, clock });
+
+    startContext(coordinator);
+    await flush();
+    expect(client.getQuote).toHaveBeenCalledOnce();
+    clock.advance(15_000);
+    await flush();
+    clock.jump(5_000);
+    renewal.resolve(
+      demandFor(
+        IDENTITY_A,
+        client.createDemand.mock.calls[0]?.[0].consumer_id,
+        1,
+        new Date(clock.now() + 30_000).toISOString().replace(".000", ""),
+      ),
+    );
+    await flush();
+    expect(oldSignal?.aborted).toBe(true);
+    expect(client.getQuote).toHaveBeenCalledTimes(2);
+
+    oldGet.resolve(quoteFor(IDENTITY_A, clock));
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ fetching: true, phase: "polling" });
+
+    freshGet.resolve(quoteFor(IDENTITY_A, clock));
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ phase: "ready", quote: expect.any(Object) });
+  });
+
+  it("does not let an old GET rejection clobber the fresh poll after an unfired lease deadline", async () => {
+    const clock = new FakeClock();
+    const oldGet = deferred<IntradayQuoteResponse>();
+    const freshGet = deferred<IntradayQuoteResponse>();
+    const renewal = deferred<IntradayQuoteDemandResponse>();
+    let requestCount = 0;
+    const client = fakeClient(clock, {
+      createDemand: vi.fn((body) => {
+        if (body.renewal_sequence === 1) return renewal.promise;
+        return Promise.resolve(
+          demandFor(
+            IDENTITY_A,
+            body.consumer_id,
+            body.renewal_sequence,
+            new Date(clock.now() + 20_000).toISOString().replace(".000", ""),
+          ),
+        );
+      }),
+      getQuote: vi.fn(() => {
+        requestCount += 1;
+        return requestCount === 1 ? oldGet.promise : freshGet.promise;
+      }),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({ client, clock });
+
+    startContext(coordinator);
+    await flush();
+    clock.advance(15_000);
+    await flush();
+    clock.jump(5_000);
+    renewal.resolve(
+      demandFor(
+        IDENTITY_A,
+        client.createDemand.mock.calls[0]?.[0].consumer_id,
+        1,
+        new Date(clock.now() + 30_000).toISOString().replace(".000", ""),
+      ),
+    );
+    await flush();
+    expect(client.getQuote).toHaveBeenCalledTimes(2);
+
+    oldGet.reject(new Error("old GET failed after its lease ended"));
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ fetching: true, phase: "polling" });
+
+    freshGet.resolve(quoteFor(IDENTITY_A, clock));
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ phase: "ready", quote: expect.any(Object) });
+  });
+
   it("replays a transient renewal with the same body and key, then advances once", async () => {
     const clock = new FakeClock();
     const client = fakeClient(clock, {

@@ -115,6 +115,7 @@ type QuoteSession = {
   releaseRequested: boolean;
   releaseQueued: boolean;
   leaseExpired: boolean;
+  retryNotBeforeMs: number | null;
   renewalAttempts: number;
   renewalTimer: TimerHandle | null;
   staleTimer: TimerHandle | null;
@@ -322,6 +323,7 @@ export class IntradayQuoteLoadCoordinator {
       releaseQueued: false,
       releaseRequested: false,
       leaseExpired: false,
+      retryNotBeforeMs: null,
       renewalAttempts: 0,
       renewalTimer: null,
       snapshotKey,
@@ -409,6 +411,20 @@ export class IntradayQuoteLoadCoordinator {
     this.scheduleRecovery(session);
   }
 
+  private fenceOverdueLease(session: QuoteSession): void {
+    if (
+      session.leaseExpired ||
+      session.demandExpiresAtMs === null ||
+      this.clock.now() < session.demandExpiresAtMs
+    ) {
+      return;
+    }
+    // A renewal can settle after the old deadline before the browser runs its
+    // expiration callback. Fence its GET epoch before accepting the replacement
+    // lease so an old response cannot publish under the new one.
+    this.expireDemand(session);
+  }
+
   private fenceGet(session: QuoteSession): void {
     session.getEpoch += 1;
     session.abortController?.abort();
@@ -467,11 +483,20 @@ export class IntradayQuoteLoadCoordinator {
     replay: DemandMutation | null = null,
   ): void {
     if (!this.isCurrent(session) || session.pendingMutation !== null) return;
+    if (this.isDemandRetryBlocked(session)) {
+      this.deferDemandMutation(session);
+      return;
+    }
     const mutation = replay ?? this.demandMutation(session, operation, sequence);
     session.pendingMutation = mutation;
     session.replayMutation = mutation;
     void this.mutation(session, async () => {
       if (!this.isCurrent(session) || session.pendingMutation !== mutation) return;
+      if (this.isDemandRetryBlocked(session)) {
+        if (session.pendingMutation === mutation) session.pendingMutation = null;
+        this.deferDemandMutation(session);
+        return;
+      }
       let demand: IntradayQuoteDemandResponse;
       try {
         demand = await this.client.createDemand(mutation.body, {
@@ -512,6 +537,7 @@ export class IntradayQuoteLoadCoordinator {
       }
       return;
     }
+    this.fenceOverdueLease(session);
     session.demand = demand;
     session.demandExpiresAtMs = demandExpiresAtMs;
     session.nextSequence = demand.renewal_sequence + 1;
@@ -529,6 +555,7 @@ export class IntradayQuoteLoadCoordinator {
     }
     session.leaseExpired = false;
     session.leaseExpiredAtMs = null;
+    session.retryNotBeforeMs = null;
     session.recoveryAttempts = 0;
     session.recoveryLastAttemptAtMs = null;
     if (session.recoveryTimer !== null) this.clock.clearTimeout(session.recoveryTimer);
@@ -577,6 +604,7 @@ export class IntradayQuoteLoadCoordinator {
       return;
     }
     const retryAfterMs = error instanceof IntradayQuoteApiError ? (error.retryAfterMs ?? 0) : 0;
+    this.rememberRetryNotBefore(session, retryAfterMs);
     if (session.leaseExpired) {
       this.publish({
         ...this.state,
@@ -617,7 +645,7 @@ export class IntradayQuoteLoadCoordinator {
         if (!this.isLive(session) || session.demand === null) return;
         this.enqueueRenewal(session);
       },
-      Math.max(delayMs, INTRADAY_QUOTE_RENEWAL_INTERVAL_MS),
+      this.demandAttemptDelay(session, Math.max(delayMs, INTRADAY_QUOTE_RENEWAL_INTERVAL_MS)),
     );
   }
 
@@ -630,13 +658,17 @@ export class IntradayQuoteLoadCoordinator {
     this.schedule(
       session,
       "renewalTimer",
-      Math.max(INTRADAY_QUOTE_RENEWAL_INTERVAL_MS, retryAfterMs),
+      this.demandAttemptDelay(session, Math.max(INTRADAY_QUOTE_RENEWAL_INTERVAL_MS, retryAfterMs)),
       () => this.replayDemandMutation(session),
     );
   }
 
   private replayDemandMutation(session: QuoteSession): void {
     if (!this.isCurrent(session)) return;
+    if (this.isDemandRetryBlocked(session)) {
+      this.deferDemandMutation(session);
+      return;
+    }
     if (session.leaseExpired) {
       this.scheduleRecovery(session);
       return;
@@ -665,6 +697,7 @@ export class IntradayQuoteLoadCoordinator {
       (session.leaseExpiredAtMs ?? nowMs) + INTRADAY_QUOTE_RENEWAL_INTERVAL_MS,
       (session.recoveryLastAttemptAtMs ?? nowMs) + INTRADAY_QUOTE_RENEWAL_INTERVAL_MS,
       nowMs + retryAfterMs,
+      session.retryNotBeforeMs ?? nowMs,
     );
     this.schedule(session, "recoveryTimer", Math.max(0, earliestAttemptMs - nowMs), () => {
       if (!this.isCurrent(session) || !session.leaseExpired || session.pendingMutation !== null) {
@@ -672,6 +705,10 @@ export class IntradayQuoteLoadCoordinator {
       }
       if (session.recoveryAttempts >= MAX_DEMAND_ATTEMPTS) {
         this.exhaustRecovery(session);
+        return;
+      }
+      if (this.isDemandRetryBlocked(session)) {
+        this.scheduleRecovery(session);
         return;
       }
       session.recoveryAttempts += 1;
@@ -687,6 +724,32 @@ export class IntradayQuoteLoadCoordinator {
         session.nextSequence,
       );
     });
+  }
+
+  private rememberRetryNotBefore(session: QuoteSession, retryAfterMs: number): void {
+    if (!Number.isFinite(retryAfterMs) || retryAfterMs <= 0) return;
+    const retryNotBeforeMs = this.clock.now() + retryAfterMs;
+    session.retryNotBeforeMs = Math.max(
+      session.retryNotBeforeMs ?? retryNotBeforeMs,
+      retryNotBeforeMs,
+    );
+  }
+
+  private isDemandRetryBlocked(session: QuoteSession): boolean {
+    return session.retryNotBeforeMs !== null && this.clock.now() < session.retryNotBeforeMs;
+  }
+
+  private demandAttemptDelay(session: QuoteSession, delayMs: number): number {
+    const nowMs = this.clock.now();
+    return Math.max(0, delayMs, (session.retryNotBeforeMs ?? nowMs) - nowMs);
+  }
+
+  private deferDemandMutation(session: QuoteSession): void {
+    if (session.leaseExpired) {
+      this.scheduleRecovery(session);
+      return;
+    }
+    this.scheduleDemandRetry(session, 0);
   }
 
   private exhaustRecovery(session: QuoteSession): void {
