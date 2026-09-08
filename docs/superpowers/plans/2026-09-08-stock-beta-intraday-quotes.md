@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-1 검토 완료, WP-2A provider-free 공통 모듈 구현 착수; 운영 활성화 미실행
+상태: WP-2A 보완 검토·통합 완료, WP-2B 기존 reader 연결 준비; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -507,3 +507,29 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - 동일 idle worker에 위 세 항목만 후속 위임한다. scope는 WP-2A 모듈과 전용 테스트이며
   기존 caller/응답 parser/운영 설정은 여전히 수정하지 않는다. 회귀 검증과 보완 커밋을
   확인한 후 WP-2A 수락 및 WP-2B 호환 결정을 진행한다.
+
+### WP-2A 수락 및 WP-2B 연결 결정
+
+- 보완 `add315a`의 전체 diff와 새 테스트를 직접 검토했다. 초기화 witness, callback timeout,
+  잠금을 소유하는 blocking I/O 작업이 세 지적을 처리한다. worker의 offline 187개 테스트,
+  fmt/clippy 통과 보고와 clean scope를 확인했다. integration은 `ac694a2` + `65853e9`이며
+  disconnected primitive로만 수락한다. 운영 환경 및 전체 shared-boundary 수락은 아니다.
+- WP-2B 호환 정책: `KIS_READ_COORDINATION_MODE`는 누락 시 `legacy`, 명시값은
+  `legacy|shared_required`만 허용한다. legacy는 기존 EOD 동작을 유지하지만 intraday를
+  제공하지 않는다. `OWNER_INTRADAY_QUOTES_MODE=owner_only`는 shared_required가 필수이고,
+  누락/`off`만 비활성으로 취급한다. 비어 있거나 알 수 없는 명시값은 오류다.
+- shared_required는 기존 credential 경로를 그대로 사용하며 production root를
+  `/run/lagrange/kis-read-coordination`, UID 10001로 고정한다. 양의 canonical
+  `KIS_READ_CREDENTIAL_GENERATION`이 필수이고, 안전하지 않은 공유 상태/설정은 callback
+  전에 실패한다. legacy fallback이나 임의 root/env override는 허용하지 않는다.
+- 위 모드를 네 production reader 생성 지점에 명시적으로 연결하고 provider-free 생성/호출
+  테스트로 검사한다. 섹션 5.2의 모든 LiveTransport 즉시 금지 문구는 이 호환 결정으로
+  대체한다. intraday 운영 활성화 전에는 네 caller 모두 shared_required로 전환했음을 WP-6과
+  별도 release gate에서 입증해야 한다. legacy 혼재 상태가 전역 보호된다고 주장하지 않는다.
+- EOD와 intraday는 동일 inquire-price 채널이라도 explicit read class로 구별한다.
+  EOD는 1초 공유 간격, intraday만 추가 5초/5,000회 한도를 소비한다. intraday class는
+  해당 exact path/TR에서만 허용하고 coordinated client에서만 사용할 수 있다.
+- WP-2B는 기존 네 caller 접속점, kis-client auth/market_data/retry/error/token_issuer,
+  read_coordination 및 lib export와 해당 focused test를 순차 소유한다. parser/DB/Web/Compose
+  변경과 실제 provider 호출은 제외한다. config parser가 필요하면 kis-client 신규
+  `read_coordination_config.rs`에 한정한다. Cargo 의존성 추가는 이번 연결 범위에서 제외한다.
