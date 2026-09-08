@@ -1066,3 +1066,19 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   이번 패키지에 섞지 않는다. 독립 재검토 후 별도 범위로 나머지 coverage를 보완한다.
 - 7dd9483은 미통합 상태다. window evidence age 임계값은 별도 계약 판단으로 남으며
   이번 두 코드 결함 수정을 막지 않는다. 운영 활성화/날짜 evidence 생성은 승인되지 않았다.
+
+### WP-3B2b 범위 한정 수정 완료 및 재검토
+
+- 구현자는 `b34198f9a6910df48927f472e97b766518d9153e` (parent `7dd9483`)로 완료했고
+  idle/clean이다. coordinator가 실제 3파일 diff 전체를 읽고 소유 범위를 확인했다.
+  producer FOR UPDATE 뒤 eligibility clock을 샘플하고, 주입식 quote startup 오류는
+  quote task만 비활성화한다. 원본과 수정 커밋 모두 아직 미통합이다.
+- worker 보고: 수정 전 eligibility 2개 실패 및 runner source 회귀 1개 실패;
+  수정 후 producer DB6/B1 DB24/runner11 및 job-queue all-target clippy/fmt/diff 통과.
+  이 수치는 worker 보고이며 독립 재검증을 요청했다.
+- 유휴 reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)를 재사용해
+  두 결함과 delta만 read-only 재검토한다. 최종 clock 이후 lineage query의 지연 가능성,
+  FOR UPDATE 영향, 항상 true인 test-only eod_continues helper의 증거 한계 및 demand-only
+  expiry 검증 여부를 확인/반박하도록 요청했다. 결론을 미리 정하지 않는다.
+- scoped ACCEPT여도 전체 producer 수락은 아니다. 성공/재시도/fairness/취소/heartbeat/
+  takeover/세대 변경/EOD 경합의 별도 coverage gate 및 window age 계약 판단은 남아 있다.
