@@ -848,3 +848,17 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - 전체 workspace clippy는 unowned kis-historical-price-v3-artifact.rs:448의
   large_enum_variant로 실패했다. B1 변경 파일은 아니지만 baseline 재현은 아직 하지
   않았으므로 기존 결함이라고 확정하지 않는다. 이 수정 범위에 편입하지 않는다.
+
+### WP-3B1 수정 완료 및 재검토
+
+- 구현 담당자는 `8c25106ecfb9492baeeefcbcebe7c7d4b7dbccb5` (parent `b02959d`)로
+  한정한 세 파일만 커밋하고 idle/clean 상태다. 원본과 수정 모두 아직 미통합이다.
+  수정 전 11 pass/9 fail로 세 결함 재현, 수정 후 DB 21/21(22.94s), job-queue
+  all-target clippy/fmt/diff 통과를 보고했다. 독립 검증 전이므로 수락하지 않는다.
+- coordinator가 production 변경의 주요 경로와 SQL 대기 관찰 helper 및 테스트 일부를
+  확인했다. 동일 identity cap 허용, cache 잠금 후 clock 샘플, stale-receipt typed
+  거부가 추가됐다. 기존 reviewer `4ff1fb96-28a4-4a6d-ac03-11dca13f875a`에게
+  세 결함 및 amended 계약을 기준으로 read-only 재검토를 맡겼다.
+- 추가 확인 대상으로 demand 갱신이 fresh clock 이후 UPDATE에서 publication의
+  FOR SHARE 잠금을 기다릴 가능성을 전달했다. advisory lock 대기 테스트만으로
+  이 경계가 검증되는지는 아직 판정하지 않는다. reviewer가 재현/반증한다.
