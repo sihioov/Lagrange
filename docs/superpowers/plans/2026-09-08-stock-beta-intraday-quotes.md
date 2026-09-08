@@ -1354,3 +1354,42 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   이들은 검토 질문이며 확정된 source bug가 아니다. 이전 lower-layer 증거도 구분해 평가한다.
 - C2b 독립 수락 후 C3 상세 brief를 확정한다. 모든 B2b 커밋은 미통합이며 window maxage
   계약 gap/실제 provider 활성화 금지는 그대로다.
+
+### B2b-C2b evidence 반려 및 bounded test-only 보완
+
+- 독립 reviewer는 scoped REJECT. lifecycle7/7 (45.17초), pipeline9/9 (40.74초),
+  producer6/6 (9.11초), strict scoped clippy/fmt/diff/clean은 통과했지만 High 2건과
+  Medium cleanup 1건이 남는다. coordinator는 실제 해당 단언과 join 코드를 재확인했다.
+  production 결함 재현은 없으며 첫 C2b 검토 반려이므로 동일 writer luna/max를 유지한다.
+- High: takeover/generation/disable 사례는 cache_count=0만 확인하여 기존 last-good
+  덮어쓰기를 탐지하지 못한다. 같은 실제 client 경로로 먼저 성공 quote를 publish하고
+  raw cache row의 전체 관련 필드/quote_version/receipt를 fingerprint한 뒤, 다음 실제 성공
+  outcome을 보류하여 각 fence를 변경한다. 폐기 뒤 기존 row가 그대로임을 확인한다.
+  공개 cache read가 disabled/new-generation row를 숨기는 것을 삭제로 오해하지 않는다.
+- High: demand-only 사례의 zero GET/debt만으로는 3초 callback timeout과 정상 false를
+  구별하지 못한다. test-only reader가 실제 eligibility callback 진입/반환 bool 및 실제
+  client outcome classification을 관찰하게 하고 `false`와 `CallerIneligible`을 모두 단언한다.
+  실제 lock observation 및 blocker PID 상관관계를 보강하며 producer/window 유효, demand만
+  만료되었다는 DB clock 단언을 보존한다. Timeout/Busy/Err를 false로 변환하거나 deadline을
+  늘리지 않는다. 필요 시 demand만 더 짧게 하는 fixture로 실제 3초 안에 barrier를 해제한다.
+- Medium: 두 task wrapper가 join handle을 local로 꺼낸 상태에서 outer timeout으로
+  취소되면 Drop이 자식을 abort하지 못한다. await 전체 동안 handle 또는 abort-on-drop guard를
+  소유하게 고치고, 각 wrapper에 실제 child-start handshake 뒤 outer join-future timeout/cancel을
+  강제하는 짧은 helper regression을 추가한다. 자식 drop signal 관찰과 정상 join/local timeout
+  경로를 확인한다. 테스트를 90초 기다리게 하거나 타이밍만으로 종료를 가정하지 않는다.
+- 소유는 오직 `crates/job-queue/tests/intraday_producer_lifecycle.rs`와
+  `crates/job-queue/tests/intraday_producer_lifecycle_support/mod.rs`. base `31ab97f`,
+  기존 C2b writer `e202662b-abce-4446-95d0-c2eec33bf32d`를 유휴 상태에서 재사용한다.
+  production/pipeline support/quote support/Cargo/migration/runner/C3 변경 금지.
+  classification은 기존 intermediate/medium이며 반복 보완 실패 시 모델만 한 tier 올린다.
+- 실제 metadata/receipt를 만들거나 바꾸지 않으며 first-good와 held-next-good 모두
+  실제 guarded client 성공 경로를 사용한다. 실제 5초 간격, 20초 lease/5초 heartbeat,
+  필요한 공개 demand renew/다음 sequence 및 모든 task failure cleanup을 보존한다.
+  cleanup helper는 가능하면 수정 전 실패를 재현하고 수정 후 통과를 기록한다.
+- EOD 단일 signal-row fingerprint의 no-write 범위는 Low 한계로 기록한다. 이번 보완에서
+  다른 EOD fixture를 확대하지 않으며 모든 EOD row에 대한 UPDATE 방지 증거라고 주장하지 않는다.
+  기존 spacing/real-outcome heartbeat 증거는 수락하고 다시 설계하지 않는다.
+- 동일 synthetic QA/단일 compiler/locked offline으로 lifecycle 전체, pipeline/scheduling/
+  producer/quotes 회귀, scoped strict clippy/fmt/diff를 검증한다. 명령·결과, 실제 capture/return
+  관찰, 수정 전 재현, 파일·라인, full commit/parent, 차이·미해결·미확인(없으면 없음)을 보고한다.
+  source defect 발견 시 별도 재현으로 보고하고 임의 수정하지 않는다. reviewer 재검토 전 미통합.
