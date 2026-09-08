@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset, Utc};
 use collectors::intraday_quotes::IntradaySessionWindowContract;
@@ -75,6 +75,7 @@ pub enum TransportStep {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestRecord {
+    pub dispatched_at: Instant,
     pub method: &'static str,
     pub path: String,
     pub tr_id: String,
@@ -123,6 +124,7 @@ impl Transport for ScriptedTransport {
                 .lock()
                 .expect("synthetic request records")
                 .push(RequestRecord {
+                    dispatched_at: Instant::now(),
                     method: request.method,
                     path: request.path,
                     tr_id: request.tr_id,
@@ -166,6 +168,17 @@ impl Transport for ScriptedTransport {
                 }),
             }
         }
+    }
+}
+
+pub fn assert_minimum_dispatch_spacing(harness: &ClientHarness, minimum: Duration) {
+    let requests = harness.transport.requests();
+    for pair in requests.windows(2) {
+        let spacing = pair[1].dispatched_at.duration_since(pair[0].dispatched_at);
+        assert!(
+            spacing >= minimum,
+            "synthetic GET dispatch spacing was shorter than the guarded minimum"
+        );
     }
 }
 
@@ -302,6 +315,15 @@ pub async fn install_current_window_contract(
 }
 
 pub fn valid_quote_response(symbol: &str) -> HttpResponse {
+    quote_response(symbol, "N")
+}
+
+#[allow(dead_code)]
+pub fn halted_quote_response(symbol: &str) -> HttpResponse {
+    quote_response(symbol, "Y")
+}
+
+fn quote_response(symbol: &str, temp_stop_yn: &str) -> HttpResponse {
     HttpResponse::ok(
         json!({
             "rt_cd": "0",
@@ -313,7 +335,7 @@ pub fn valid_quote_response(symbol: &str) -> HttpResponse {
                 "prdy_ctrt": "2.11",
                 "stck_sdpr": "71000",
                 "iscd_stat_cls_code": "00",
-                "temp_stop_yn": "N"
+                "temp_stop_yn": temp_stop_yn
             }
         })
         .to_string(),

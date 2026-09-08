@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, NaiveDate, Utc};
 use collectors::intraday_quotes::{INTRADAY_QUOTE_PATH, INTRADAY_QUOTE_TR_ID};
 use intraday_producer_pipeline_support::{
-    ClientHarness, PipelineClient, RequestRecord, TransportStep, install_current_window_contract,
-    malformed_quote_response, publication_counts, rate_limited_response, transport_timeout_step,
-    valid_quote_response,
+    ClientHarness, PipelineClient, RequestRecord, TransportStep, assert_minimum_dispatch_spacing,
+    install_current_window_contract, malformed_quote_response, publication_counts,
+    rate_limited_response, transport_timeout_step, valid_quote_response,
 };
 use intraday_quotes_support::{
     IntradayTestDb, MembershipFixture, run_body, wait_until_database_time,
@@ -352,6 +352,7 @@ async fn transient_503_then_success_uses_two_real_reservations_and_two_gets() {
         assert_eq!(report.successful_quotes, 1);
         assert_eq!(report.failures_recorded, 1);
         assert_exact_gets(&harness, "005931", 2);
+        assert_minimum_dispatch_spacing(&harness, Duration::from_secs(5));
         assert_eq!(harness.issuer.calls(), 1);
 
         let cache = read_cache(&db, &fixture).await?;
@@ -396,6 +397,7 @@ async fn three_transient_503s_stop_at_three_real_gets_without_a_fourth_attempt()
         assert_eq!(report.successful_quotes, 0);
         assert_eq!(report.failures_recorded, 3);
         assert_exact_gets(&harness, "005932", 3);
+        assert_minimum_dispatch_spacing(&harness, Duration::from_secs(5));
         assert_eq!(harness.issuer.calls(), 1);
 
         let cache = read_cache(&db, &fixture).await?;
