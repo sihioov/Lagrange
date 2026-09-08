@@ -25,6 +25,7 @@ pub mod mapping;
 pub mod market_data;
 pub mod order_state;
 pub mod rate_limit;
+pub mod read_coordination;
 pub mod reconciliation;
 pub mod rest;
 pub mod retry;
