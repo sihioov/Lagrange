@@ -117,6 +117,28 @@ describe("Stock Beta current quote widget", () => {
     expect(staleRefreshing).not.toContain(stockBetaDictionary.en.intradayQuoteUnavailable);
   });
 
+  it("makes a retained request failure explicit in English and Korean without presenting it as ready", () => {
+    const failed = state({
+      errorCode: "INTRADAY_QUOTE_REQUEST_FAILED",
+      fetching: true,
+      phase: "stale",
+      reasonCode: "PRODUCER_UNAVAILABLE",
+    });
+    const english = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.en} locale="en" state={failed} />,
+    );
+    const korean = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.ko} locale="ko" state={failed} />,
+    );
+
+    expect(english).toContain(stockBetaDictionary.en.intradayQuoteRefreshFailed);
+    expect(korean).toContain(stockBetaDictionary.ko.intradayQuoteRefreshFailed);
+    expect(english).toContain(stockBetaDictionary.en.intradayQuoteLastSuccessLabel);
+    expect(english).toContain(RESPONSE.quote?.last_success_at ?? "");
+    expect(english).toContain('data-request-failure="true"');
+    expect(english).not.toContain(stockBetaDictionary.en.intradayQuoteReady);
+  });
+
   it("renders halted and closed market state independently of a retained quote", () => {
     const halted = intradayQuoteResponseSchema.parse({ ...RESPONSE, market_state: "HALTED" });
     const closed = intradayQuoteResponseSchema.parse({ ...RESPONSE, market_state: "CLOSED" });

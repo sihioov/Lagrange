@@ -41,11 +41,22 @@ function directionLabel(
           : t.intradayQuoteDirectionLimitDown;
 }
 
+function hasRetainedRefreshFailure(state: IntradayQuoteLoadState): boolean {
+  return (
+    state.errorCode !== null &&
+    state.reasonCode === "PRODUCER_UNAVAILABLE" &&
+    state.lastSuccessAt !== null &&
+    state.quote?.quote !== null
+  );
+}
+
 function statusText(state: IntradayQuoteLoadState, t: StockBetaDictionary): string {
   if (state.phase === "offline") return t.intradayQuoteOffline;
   if (state.phase === "demanding") return t.intradayQuoteDemanding;
-  const semanticStatus =
-    state.phase === "polling" && state.quote !== null
+  const retainedRefreshFailure = hasRetainedRefreshFailure(state);
+  const semanticStatus = retainedRefreshFailure
+    ? t.intradayQuoteRefreshFailed
+    : state.phase === "polling" && state.quote !== null
       ? state.quote.freshness === "STALE"
         ? t.intradayQuoteStale
         : t.intradayQuoteReady
@@ -91,6 +102,7 @@ export type CurrentQuoteViewProps = {
 export function CurrentQuoteView({ copy: t, locale, state }: CurrentQuoteViewProps) {
   const response = state.quote;
   const quote = response?.quote;
+  const retainedRefreshFailure = hasRetainedRefreshFailure(state);
   const quoteContent =
     response === null || quote === null || quote === undefined ? null : (
       <div className={styles["quote"]} data-testid="stock-beta-current-quote">
@@ -139,6 +151,7 @@ export function CurrentQuoteView({ copy: t, locale, state }: CurrentQuoteViewPro
           className={styles["status"]}
           data-fetching={state.fetching ? "true" : "false"}
           data-market-state={state.marketState ?? undefined}
+          data-request-failure={retainedRefreshFailure ? "true" : undefined}
           data-status-phase={state.phase}
         >
           {statusText(state, t)}

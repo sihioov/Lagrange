@@ -86,7 +86,8 @@ export class IntradayQuoteApiError extends Error {
 
 export type IntradayQuoteClientOptions = BrowserClientOptions & {
   readonly fetcher?: typeof fetch;
-  readonly nowMs?: number;
+  /** Sampled after the response body has been received, before validation. */
+  readonly now?: () => number;
   readonly origin?: string;
   readonly signal?: AbortSignal;
 };
@@ -202,7 +203,7 @@ export async function createIntradayQuoteDemand(
   options: IntradayQuoteMutationOptions,
 ): Promise<IntradayQuoteDemandResponse> {
   const requestBody = intradayQuoteDemandRequestSchema.parse(body);
-  const { idempotencyKey, signal: _signal, nowMs: _nowMs, ...browserOptions } = options;
+  const { idempotencyKey, now: _now, signal: _signal, ...browserOptions } = options;
   const response = await mutateWithCsrf(mutationPath(INTRADAY_QUOTE_DEMAND_PATH), {
     ...browserOptions,
     idempotencyKey: mutationKey({ ...options, idempotencyKey }),
@@ -218,7 +219,7 @@ export async function releaseIntradayQuoteDemand(
   options: IntradayQuoteMutationOptions,
 ): Promise<void> {
   const requestBody = intradayQuoteReleaseRequestSchema.parse(body);
-  const { idempotencyKey, signal: _signal, nowMs: _nowMs, ...browserOptions } = options;
+  const { idempotencyKey, now: _now, signal: _signal, ...browserOptions } = options;
   const response = await mutateWithCsrf(mutationPath(intradayQuoteDemandPath(demandId)), {
     ...browserOptions,
     idempotencyKey: mutationKey({ ...options, idempotencyKey }),
@@ -247,8 +248,9 @@ export async function getIntradayQuote(
   if (response.status !== 200) {
     throw new ApiContractError(response.status, "Intraday quote returned an unexpected status");
   }
-  return parseIntradayQuoteResponse(await jsonBody(response), {
-    nowMs: options.nowMs ?? Date.now(),
+  const body = await jsonBody(response);
+  return parseIntradayQuoteResponse(body, {
+    nowMs: options.now?.() ?? Date.now(),
   });
 }
 
@@ -269,7 +271,7 @@ export type IntradayQuoteClient = {
 };
 
 export function createIntradayQuoteClient(
-  defaults: Omit<IntradayQuoteClientOptions, "signal" | "nowMs"> = {},
+  defaults: Omit<IntradayQuoteClientOptions, "signal"> = {},
 ): IntradayQuoteClient {
   return {
     createDemand: (body, options) => createIntradayQuoteDemand(body, { ...defaults, ...options }),

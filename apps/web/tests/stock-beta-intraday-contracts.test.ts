@@ -190,11 +190,11 @@ describe("Stock Beta intraday quote application contract", () => {
         }),
         { status: 503, headers: { "Retry-After": "15" } },
       );
-    await expect(getIntradayQuote(IDENTITY, { fetcher, nowMs: NOW_MS })).rejects.toMatchObject({
+    await expect(getIntradayQuote(IDENTITY, { fetcher, now: () => NOW_MS })).rejects.toMatchObject({
       code: "QUOTE_CACHE_UNAVAILABLE",
       retryAfterMs: 15_000,
     } satisfies Partial<IntradayQuoteApiError>);
-    await expect(getIntradayQuote(IDENTITY, { fetcher, nowMs: NOW_MS })).rejects.not.toThrow(
+    await expect(getIntradayQuote(IDENTITY, { fetcher, now: () => NOW_MS })).rejects.not.toThrow(
       /broker prose/,
     );
   });

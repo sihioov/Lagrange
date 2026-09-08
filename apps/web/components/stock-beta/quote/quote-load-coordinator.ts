@@ -77,6 +77,13 @@ export type IntradayQuoteCoordinatorOptions = {
 
 type TimerHandle = unknown;
 
+type DemandMutation = {
+  readonly body: IntradayQuoteDemandRequest;
+  readonly idempotencyKey: string;
+  readonly operation: "create" | "renew";
+  readonly sequence: number;
+};
+
 type QuoteSession = {
   readonly consumerId: string;
   readonly epoch: number;
@@ -88,15 +95,23 @@ type QuoteSession = {
   demandExpiresAtMs: number | null;
   demandLeaseTimer: TimerHandle | null;
   expiryTimer: TimerHandle | null;
+  getEpoch: number;
   getInFlight: Promise<void> | null;
   readonly idempotencyKeys: Map<string, string>;
   lastGoodResponse: IntradayQuoteResponse | null;
   lastObservedNowMs: number;
   lastSessionKey: string | null;
   lastVersion: bigint | null;
+  leaseExpiredAtMs: number | null;
   mutationTail: Promise<void>;
   nextSequence: number;
+  pendingMutation: DemandMutation | null;
   pollTimer: TimerHandle | null;
+  pollFailureCode: string | null;
+  recoveryAttempts: number;
+  recoveryLastAttemptAtMs: number | null;
+  recoveryTimer: TimerHandle | null;
+  replayMutation: DemandMutation | null;
   releaseRequested: boolean;
   releaseQueued: boolean;
   leaseExpired: boolean;
@@ -137,7 +152,7 @@ const TRANSIENT_QUOTE_REASONS = new Set<IntradayQuoteReasonCode>([
   "PRODUCER_UNAVAILABLE",
 ]);
 
-const MAX_CREATE_ATTEMPTS = 3;
+const MAX_DEMAND_ATTEMPTS = 3;
 
 function defaultConsumerId(): string {
   return crypto.randomUUID();
@@ -286,6 +301,7 @@ export class IntradayQuoteLoadCoordinator {
       demandLeaseTimer: null,
       epoch: ++this.epoch,
       expiryTimer: null,
+      getEpoch: 0,
       getInFlight: null,
       idempotencyKeys: new Map(),
       identity,
@@ -293,9 +309,16 @@ export class IntradayQuoteLoadCoordinator {
       lastObservedNowMs: this.clock.now(),
       lastSessionKey: null,
       lastVersion: null,
+      leaseExpiredAtMs: null,
       mutationTail: Promise.resolve(),
       nextSequence: 0,
+      pendingMutation: null,
       pollTimer: null,
+      pollFailureCode: null,
+      recoveryAttempts: 0,
+      recoveryLastAttemptAtMs: null,
+      recoveryTimer: null,
+      replayMutation: null,
       releaseQueued: false,
       releaseRequested: false,
       leaseExpired: false,
@@ -326,8 +349,7 @@ export class IntradayQuoteLoadCoordinator {
     if (session !== null) {
       session.releaseRequested = true;
       this.clearTimers(session);
-      session.abortController?.abort();
-      session.abortController = null;
+      this.fenceGet(session);
       this.queueRelease(session);
     }
     this.publish({
@@ -348,16 +370,14 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private isCurrent(session: QuoteSession): boolean {
-    return (
-      this.session === session &&
-      session.epoch === this.epoch &&
-      !isSessionStopping(session) &&
-      !session.leaseExpired
-    );
+    return this.session === session && session.epoch === this.epoch && !isSessionStopping(session);
   }
 
   private isLive(session: QuoteSession): boolean {
     if (!this.isCurrent(session)) return false;
+    if (session.leaseExpired || session.demand === null || session.demandExpiresAtMs === null) {
+      return false;
+    }
     if (session.demandExpiresAtMs !== null && this.clock.now() >= session.demandExpiresAtMs) {
       this.expireDemand(session);
       return false;
@@ -367,8 +387,36 @@ export class IntradayQuoteLoadCoordinator {
 
   private expireDemand(session: QuoteSession): void {
     if (!this.isCurrent(session)) return;
-    session.leaseExpired = true;
-    this.stop("idle");
+    if (!session.leaseExpired) {
+      session.leaseExpired = true;
+      session.leaseExpiredAtMs = this.clock.now();
+      if (session.demandLeaseTimer !== null) this.clock.clearTimeout(session.demandLeaseTimer);
+      session.demandLeaseTimer = null;
+      this.clearQuoteTimers(session);
+      this.fenceGet(session);
+      this.publish({
+        ...this.state,
+        consumerId: session.consumerId,
+        errorCode: session.pollFailureCode,
+        fetching: false,
+        identity: session.identity,
+        lastSuccessAt: session.lastGoodResponse?.quote?.last_success_at ?? this.state.lastSuccessAt,
+        phase: "unavailable",
+        quote: null,
+        reasonCode: "NO_ACTIVE_DEMAND",
+      });
+    }
+    this.scheduleRecovery(session);
+  }
+
+  private fenceGet(session: QuoteSession): void {
+    session.getEpoch += 1;
+    session.abortController?.abort();
+    session.abortController = null;
+    // A browser may ignore abort after the response has started. Dropping the
+    // tracked promise permits the post-recovery GET while getEpoch prevents the
+    // abandoned response from publishing into the new lease.
+    session.getInFlight = null;
   }
 
   private mutation<T>(session: QuoteSession, task: () => Promise<T>): Promise<T> {
@@ -390,64 +438,105 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private enqueueCreate(session: QuoteSession): void {
-    const sequence = 0;
-    const body: IntradayQuoteDemandRequest = {
-      consumer_id: session.consumerId,
-      generation: session.identity.generation,
-      membership_id: session.identity.membership_id,
-      renewal_sequence: sequence,
-      schema_version: 1,
-    };
-    const idempotencyKey = this.sequenceKey(session, "quote-demand", sequence);
-    void this.mutation(session, () =>
-      Promise.resolve()
-        .then(() =>
-          this.client.createDemand(body, {
-            idempotencyKey,
-            navigate: (href) => this.navigateAfterStop(session, href),
-          }),
-        )
-        .then((demand) => this.acceptDemand(session, demand))
-        .catch((error: unknown) => this.handleCreateFailure(session, error)),
-    );
+    this.enqueueDemandMutation(session, "create", 0);
   }
 
-  private acceptDemand(session: QuoteSession, demand: IntradayQuoteDemandResponse): void {
+  private demandMutation(
+    session: QuoteSession,
+    operation: DemandMutation["operation"],
+    sequence: number,
+  ): DemandMutation {
+    return {
+      body: {
+        consumer_id: session.consumerId,
+        generation: session.identity.generation,
+        membership_id: session.identity.membership_id,
+        renewal_sequence: sequence,
+        schema_version: 1,
+      },
+      idempotencyKey: this.sequenceKey(session, "quote-demand", sequence),
+      operation,
+      sequence,
+    };
+  }
+
+  private enqueueDemandMutation(
+    session: QuoteSession,
+    operation: DemandMutation["operation"],
+    sequence: number,
+    replay: DemandMutation | null = null,
+  ): void {
+    if (!this.isCurrent(session) || session.pendingMutation !== null) return;
+    const mutation = replay ?? this.demandMutation(session, operation, sequence);
+    session.pendingMutation = mutation;
+    session.replayMutation = mutation;
+    void this.mutation(session, async () => {
+      if (!this.isCurrent(session) || session.pendingMutation !== mutation) return;
+      let demand: IntradayQuoteDemandResponse;
+      try {
+        demand = await this.client.createDemand(mutation.body, {
+          idempotencyKey: mutation.idempotencyKey,
+          navigate: (href) => this.navigateAfterStop(session, href),
+        });
+      } catch (error) {
+        if (session.pendingMutation === mutation) session.pendingMutation = null;
+        this.handleDemandFailure(session, error, mutation);
+        return;
+      }
+      if (session.pendingMutation === mutation) session.pendingMutation = null;
+      this.acceptDemand(session, demand, mutation);
+    });
+  }
+
+  private acceptDemand(
+    session: QuoteSession,
+    demand: IntradayQuoteDemandResponse,
+    mutation: DemandMutation,
+  ): void {
     if (
       demand.consumer_id !== session.consumerId ||
       demand.membership_id !== session.identity.membership_id ||
       demand.instrument_id !== session.identity.instrument_id ||
       demand.generation !== session.identity.generation ||
-      demand.renewal_sequence !== session.nextSequence
+      demand.renewal_sequence !== mutation.sequence
     ) {
-      this.handleSessionError(session, "INTRADAY_QUOTE_DEMAND_CONTRACT_INVALID");
+      if (this.isCurrent(session)) {
+        this.handleSessionError(session, "INTRADAY_QUOTE_DEMAND_CONTRACT_INVALID");
+      }
       return;
     }
-    const priorLeaseExpired =
-      session.demand !== null &&
-      session.demandExpiresAtMs !== null &&
-      this.clock.now() >= session.demandExpiresAtMs;
     const demandExpiresAtMs = Date.parse(demand.lease_expires_at);
     if (!Number.isFinite(demandExpiresAtMs)) {
-      this.handleSessionError(session, "INTRADAY_QUOTE_DEMAND_LEASE_INVALID");
+      if (this.isCurrent(session)) {
+        this.handleSessionError(session, "INTRADAY_QUOTE_DEMAND_LEASE_INVALID");
+      }
       return;
     }
     session.demand = demand;
     session.demandExpiresAtMs = demandExpiresAtMs;
     session.nextSequence = demand.renewal_sequence + 1;
-    session.renewalAttempts = 0;
+    session.replayMutation = null;
     if (!this.isCurrent(session)) {
       this.queueRelease(session);
       return;
     }
-    if (priorLeaseExpired) {
-      session.leaseExpired = true;
-      this.stop("idle");
+    if (demandExpiresAtMs <= this.clock.now()) {
+      // An exact replay can legitimately return the prior, already-expired
+      // lease. It proves this sequence was accepted, so recovery advances to a
+      // new sequence rather than creating another consumer or reusing it.
+      this.expireDemand(session);
       return;
     }
+    session.leaseExpired = false;
+    session.leaseExpiredAtMs = null;
+    session.recoveryAttempts = 0;
+    session.recoveryLastAttemptAtMs = null;
+    if (session.recoveryTimer !== null) this.clock.clearTimeout(session.recoveryTimer);
+    session.recoveryTimer = null;
+    session.createAttempts = 0;
+    session.renewalAttempts = 0;
     this.scheduleDemandLease(session, demandExpiresAtMs);
     if (!this.isLive(session)) return;
-    session.createAttempts = 0;
     this.scheduleRenewal(session, demand.renew_after_ms);
     void this.poll(session, true);
   }
@@ -472,23 +561,52 @@ export class IntradayQuoteLoadCoordinator {
     if (this.clock.now() >= expiresAtMs) this.expireDemand(session);
   }
 
-  private handleCreateFailure(session: QuoteSession, error: unknown): void {
+  private handleDemandFailure(
+    session: QuoteSession,
+    error: unknown,
+    mutation: DemandMutation,
+  ): void {
     if (!this.isCurrent(session)) return;
-    if (isAbortError(error)) return;
+    if (isAbortError(error)) {
+      if (session.leaseExpired) this.scheduleRecovery(session);
+      return;
+    }
     const code = typedErrorCode(error);
     if (this.isTerminalError(error)) {
       this.handleSessionError(session, code);
       return;
     }
-    session.createAttempts += 1;
-    this.publish({ ...this.state, phase: "unavailable", errorCode: code });
-    if (session.createAttempts < MAX_CREATE_ATTEMPTS) {
-      const delay =
-        error instanceof IntradayQuoteApiError ? (error.retryAfterMs ?? 15_000) : 15_000;
-      this.schedule(session, "pollTimer", Math.max(delay, 15_000), () =>
-        this.enqueueCreate(session),
-      );
+    const retryAfterMs = error instanceof IntradayQuoteApiError ? (error.retryAfterMs ?? 0) : 0;
+    if (session.leaseExpired) {
+      this.publish({
+        ...this.state,
+        errorCode: code,
+        fetching: false,
+        phase: "unavailable",
+        quote: null,
+        reasonCode: "NO_ACTIVE_DEMAND",
+      });
+      this.scheduleRecovery(session, retryAfterMs);
+      return;
     }
+    let attempts: number;
+    if (mutation.operation === "create") {
+      session.createAttempts += 1;
+      attempts = session.createAttempts;
+    } else {
+      session.renewalAttempts += 1;
+      attempts = session.renewalAttempts;
+    }
+    this.publish({
+      ...this.state,
+      errorCode: code,
+      phase: this.state.quote === null ? "unavailable" : "stale",
+    });
+    if (attempts >= MAX_DEMAND_ATTEMPTS) {
+      this.handleSessionError(session, code);
+      return;
+    }
+    this.scheduleDemandRetry(session, retryAfterMs);
   }
 
   private scheduleRenewal(session: QuoteSession, delayMs: number): void {
@@ -505,52 +623,86 @@ export class IntradayQuoteLoadCoordinator {
 
   private enqueueRenewal(session: QuoteSession): void {
     if (!this.isLive(session) || session.demand === null) return;
-    const sequence = session.nextSequence;
-    const body: IntradayQuoteDemandRequest = {
-      consumer_id: session.consumerId,
-      generation: session.identity.generation,
-      membership_id: session.identity.membership_id,
-      renewal_sequence: sequence,
-      schema_version: 1,
-    };
-    const idempotencyKey = this.sequenceKey(session, "quote-demand", sequence);
-    void this.mutation(session, () =>
-      Promise.resolve()
-        .then(() =>
-          this.client.createDemand(body, {
-            idempotencyKey,
-            navigate: (href) => this.navigateAfterStop(session, href),
-          }),
-        )
-        .then((demand) => this.acceptDemand(session, demand))
-        .catch((error: unknown) => this.handleRenewalFailure(session, error)),
+    this.enqueueDemandMutation(session, "renew", session.nextSequence);
+  }
+
+  private scheduleDemandRetry(session: QuoteSession, retryAfterMs: number): void {
+    this.schedule(
+      session,
+      "renewalTimer",
+      Math.max(INTRADAY_QUOTE_RENEWAL_INTERVAL_MS, retryAfterMs),
+      () => this.replayDemandMutation(session),
     );
   }
 
-  private handleRenewalFailure(session: QuoteSession, error: unknown): void {
-    if (isAbortError(error) || !this.isLive(session)) return;
-    const code = typedErrorCode(error);
-    if (this.isTerminalError(error)) {
-      this.handleSessionError(session, code);
+  private replayDemandMutation(session: QuoteSession): void {
+    if (!this.isCurrent(session)) return;
+    if (session.leaseExpired) {
+      this.scheduleRecovery(session);
       return;
     }
-    session.renewalAttempts += 1;
+    const replay = session.replayMutation;
+    if (replay !== null) {
+      this.enqueueDemandMutation(session, replay.operation, replay.sequence, replay);
+      return;
+    }
+    this.enqueueDemandMutation(
+      session,
+      session.demand === null ? "create" : "renew",
+      session.nextSequence,
+    );
+  }
+
+  private scheduleRecovery(session: QuoteSession, retryAfterMs = 0): void {
+    if (!this.isCurrent(session) || !session.leaseExpired || session.pendingMutation !== null)
+      return;
+    if (session.recoveryAttempts >= MAX_DEMAND_ATTEMPTS) {
+      this.exhaustRecovery(session);
+      return;
+    }
+    const nowMs = this.clock.now();
+    const earliestAttemptMs = Math.max(
+      (session.leaseExpiredAtMs ?? nowMs) + INTRADAY_QUOTE_RENEWAL_INTERVAL_MS,
+      (session.recoveryLastAttemptAtMs ?? nowMs) + INTRADAY_QUOTE_RENEWAL_INTERVAL_MS,
+      nowMs + retryAfterMs,
+    );
+    this.schedule(session, "recoveryTimer", Math.max(0, earliestAttemptMs - nowMs), () => {
+      if (!this.isCurrent(session) || !session.leaseExpired || session.pendingMutation !== null) {
+        return;
+      }
+      if (session.recoveryAttempts >= MAX_DEMAND_ATTEMPTS) {
+        this.exhaustRecovery(session);
+        return;
+      }
+      session.recoveryAttempts += 1;
+      session.recoveryLastAttemptAtMs = this.clock.now();
+      const replay = session.replayMutation;
+      if (replay !== null) {
+        this.enqueueDemandMutation(session, replay.operation, replay.sequence, replay);
+        return;
+      }
+      this.enqueueDemandMutation(
+        session,
+        session.demand === null ? "create" : "renew",
+        session.nextSequence,
+      );
+    });
+  }
+
+  private exhaustRecovery(session: QuoteSession): void {
+    if (!this.isCurrent(session) || !session.leaseExpired) return;
+    if (session.recoveryTimer !== null) this.clock.clearTimeout(session.recoveryTimer);
+    session.recoveryTimer = null;
     this.publish({
       ...this.state,
-      phase: this.state.quote === null ? "unavailable" : "stale",
-      errorCode: code,
+      consumerId: session.consumerId,
+      errorCode: this.state.errorCode ?? "INTRADAY_QUOTE_DEMAND_RECOVERY_EXHAUSTED",
+      fetching: false,
+      identity: session.identity,
+      phase: "unavailable",
+      quote: null,
+      reasonCode: "NO_ACTIVE_DEMAND",
     });
-    if (session.renewalAttempts >= MAX_CREATE_ATTEMPTS) {
-      this.handleSessionError(session, code);
-      return;
-    }
-    this.scheduleRenewal(
-      session,
-      Math.max(
-        INTRADAY_QUOTE_RENEWAL_INTERVAL_MS,
-        error instanceof IntradayQuoteApiError ? (error.retryAfterMs ?? 0) : 0,
-      ),
-    );
   }
 
   private async poll(session: QuoteSession, immediate: boolean): Promise<void> {
@@ -560,31 +712,46 @@ export class IntradayQuoteLoadCoordinator {
     this.observeClock(session);
     if (!this.isLive(session)) return;
     const controller = new AbortController();
+    const getEpoch = ++session.getEpoch;
     session.abortController = controller;
     this.publish({
       ...this.state,
-      errorCode: null,
       fetching: true,
-      phase: session.lastGoodResponse === null ? "polling" : this.state.phase,
+      phase:
+        session.lastGoodResponse === null && session.pollFailureCode === null
+          ? "polling"
+          : this.state.phase,
     });
     const request = Promise.resolve().then(() =>
       this.client.getQuote(session.identity, {
+        now: this.clock.now,
         signal: controller.signal,
         navigate: (href) => this.navigateAfterStop(session, href),
-        nowMs: this.clock.now(),
       }),
     );
-    session.getInFlight = request
-      .then((response) => this.acceptQuote(session, response))
-      .catch((error: unknown) => this.handlePollFailure(session, error))
-      .finally(() => {
-        if (session.getInFlight !== null) session.getInFlight = null;
+    const inFlight = request
+      .then((response) => this.acceptQuote(session, response, getEpoch))
+      .catch((error: unknown) => this.handlePollFailure(session, error, getEpoch));
+    session.getInFlight = inFlight;
+    void inFlight.then(
+      () => {
+        if (session.getInFlight === inFlight) session.getInFlight = null;
         if (session.abortController === controller) session.abortController = null;
-      });
-    await session.getInFlight;
+      },
+      () => {
+        if (session.getInFlight === inFlight) session.getInFlight = null;
+        if (session.abortController === controller) session.abortController = null;
+      },
+    );
+    await inFlight;
   }
 
-  private acceptQuote(session: QuoteSession, response: IntradayQuoteResponse): void {
+  private acceptQuote(
+    session: QuoteSession,
+    response: IntradayQuoteResponse,
+    getEpoch: number,
+  ): void {
+    if (getEpoch !== session.getEpoch) return;
     if (!this.isLive(session)) return;
     if (!isIntradayQuoteIdentityMatch(response, session.identity)) {
       this.handleSessionError(session, "INTRADAY_QUOTE_IDENTITY_MISMATCH");
@@ -615,6 +782,7 @@ export class IntradayQuoteLoadCoordinator {
       }
       session.lastVersion = nextVersion;
       session.lastGoodResponse = response;
+      session.pollFailureCode = null;
       this.scheduleStaleness(session, response.quote.last_success_at);
     } else if (
       response.market_state === "UNKNOWN" ||
@@ -634,34 +802,45 @@ export class IntradayQuoteLoadCoordinator {
       TRANSIENT_QUOTE_REASONS.has(response.reason_code)
         ? lastGood
         : response;
-    const reasonCode = response.reason_code;
+    const requestFailure = session.pollFailureCode;
+    const reasonCode = requestFailure === null ? response.reason_code : "PRODUCER_UNAVAILABLE";
     this.publish({
       consumerId: session.consumerId,
-      errorCode: null,
+      errorCode: requestFailure,
       fetching: false,
       identity: session.identity,
       lastSuccessAt: retained.quote?.last_success_at ?? null,
       marketState: response.market_state,
-      phase: retained !== response ? "stale" : responsePhase(retained, this.clock.now()),
+      phase:
+        requestFailure !== null
+          ? retained.quote === null
+            ? "unavailable"
+            : "stale"
+          : retained !== response
+            ? "stale"
+            : responsePhase(retained, this.clock.now()),
       quote: retained,
       reasonCode,
     });
     this.schedulePoll(session, response.next_poll_after_ms);
   }
 
-  private handlePollFailure(session: QuoteSession, error: unknown): void {
-    if (isAbortError(error) || !this.isLive(session)) return;
+  private handlePollFailure(session: QuoteSession, error: unknown, getEpoch: number): void {
+    if (getEpoch !== session.getEpoch || isAbortError(error) || !this.isLive(session)) return;
     const code = typedErrorCode(error);
     if (this.isTerminalError(error)) {
       this.handleSessionError(session, code);
       return;
     }
+    session.pollFailureCode = code;
     const retained = this.validatedLastGood(session);
     this.publish({
       ...this.state,
       errorCode: code,
       fetching: false,
-      phase: retained === null ? "unavailable" : responsePhase(retained, this.clock.now()),
+      // A transport failure is distinct from the retained cache age: a young
+      // value stays visible with its timestamp, but it is never shown as ready.
+      phase: retained === null ? "unavailable" : "stale",
       quote: retained,
       lastSuccessAt: retained?.quote?.last_success_at ?? null,
       reasonCode: "PRODUCER_UNAVAILABLE",
@@ -678,7 +857,7 @@ export class IntradayQuoteLoadCoordinator {
 
   private schedule(
     session: QuoteSession,
-    timer: "expiryTimer" | "pollTimer" | "staleTimer" | "renewalTimer",
+    timer: "expiryTimer" | "pollTimer" | "recoveryTimer" | "staleTimer" | "renewalTimer",
     delayMs: number,
     callback: () => void,
   ): void {
@@ -710,10 +889,10 @@ export class IntradayQuoteLoadCoordinator {
         }
         this.publish({
           ...this.state,
-          errorCode: null,
+          errorCode: session.pollFailureCode,
           fetching: session.getInFlight !== null,
           phase: "stale",
-          reasonCode: "QUOTE_STALE",
+          reasonCode: session.pollFailureCode === null ? "QUOTE_STALE" : "PRODUCER_UNAVAILABLE",
           lastSuccessAt: lastGood.quote?.last_success_at ?? null,
         });
       },
@@ -782,12 +961,12 @@ export class IntradayQuoteLoadCoordinator {
     session.lastVersion = null;
     this.publish({
       ...this.state,
-      errorCode,
+      errorCode: errorCode ?? session.pollFailureCode,
       fetching: session.getInFlight !== null,
       lastSuccessAt: null,
       phase: "unavailable",
       quote: null,
-      reasonCode,
+      reasonCode: session.pollFailureCode === null ? reasonCode : "PRODUCER_UNAVAILABLE",
     });
     this.schedulePoll(session, INTRADAY_QUOTE_POLL_INTERVAL_MS);
   }
@@ -815,6 +994,20 @@ export class IntradayQuoteLoadCoordinator {
   private clearTimers(session: QuoteSession): void {
     if (session.demandLeaseTimer !== null) this.clock.clearTimeout(session.demandLeaseTimer);
     session.demandLeaseTimer = null;
+    for (const timer of [
+      "expiryTimer",
+      "pollTimer",
+      "recoveryTimer",
+      "renewalTimer",
+      "staleTimer",
+    ] as const) {
+      const handle = session[timer];
+      if (handle !== null) this.clock.clearTimeout(handle);
+      session[timer] = null;
+    }
+  }
+
+  private clearQuoteTimers(session: QuoteSession): void {
     for (const timer of ["expiryTimer", "pollTimer", "renewalTimer", "staleTimer"] as const) {
       const handle = session[timer];
       if (handle !== null) this.clock.clearTimeout(handle);

@@ -64,6 +64,30 @@ function quote(): ReturnType<typeof intradayQuoteResponseSchema.parse> {
   });
 }
 
+function quoteAt(timestamp: string) {
+  const response = quote();
+  if (response.quote === null) throw new Error("fixture quote is required");
+  return {
+    ...response,
+    quote: {
+      ...response.quote,
+      last_success_at: timestamp,
+      received_at: timestamp,
+    },
+  };
+}
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+} {
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 describe("Stock Beta intraday quote browser client", () => {
   it("uses the fixed same-origin routes, CSRF mutation seam, exact body, and no-store GET", async () => {
     const demandContract = intradayQuoteDemandResponseSchema.safeParse(demand());
@@ -125,7 +149,7 @@ describe("Stock Beta intraday quote browser client", () => {
     );
     const received = await getIntradayQuote(IDENTITY, {
       fetcher,
-      nowMs: Date.parse("2026-09-08T03:00:00Z"),
+      now: () => Date.parse("2026-09-08T03:00:00Z"),
       origin: "https://app.example",
     });
 
@@ -161,5 +185,51 @@ describe("Stock Beta intraday quote browser client", () => {
     });
     expect(calls[4]).toMatchObject({ cache: "no-store", credentials: "same-origin" });
     expect(calls[4]?.init.body).toBeUndefined();
+  });
+
+  it("samples the injected clock after receipt and rejects future or prior-KST-session payloads", async () => {
+    const dispatchedAt = Date.parse("2026-09-08T03:00:00Z");
+    let nowMs = dispatchedAt;
+    const samples: number[] = [];
+    const delayedResponse = deferred<Response>();
+    const delayed = getIntradayQuote(IDENTITY, {
+      fetcher: async () => delayedResponse.promise,
+      now: () => {
+        samples.push(nowMs);
+        return nowMs;
+      },
+    });
+
+    expect(samples).toEqual([]);
+    nowMs = dispatchedAt + 2_000;
+    delayedResponse.resolve(
+      new Response(JSON.stringify(quoteAt(new Date(dispatchedAt + 1_000).toISOString())), {
+        status: 200,
+      }),
+    );
+    await expect(delayed).resolves.toMatchObject({ quote: { price: "101200.00" } });
+    expect(samples).toEqual([dispatchedAt + 2_000]);
+
+    const futureResponse = deferred<Response>();
+    const future = getIntradayQuote(IDENTITY, {
+      fetcher: async () => futureResponse.promise,
+      now: () => nowMs,
+    });
+    futureResponse.resolve(
+      new Response(JSON.stringify(quoteAt(new Date(nowMs + 1_000).toISOString())), {
+        status: 200,
+      }),
+    );
+    await expect(future).rejects.toThrow("approved contract");
+
+    let crossingNowMs = dispatchedAt;
+    const priorSessionResponse = deferred<Response>();
+    const priorSession = getIntradayQuote(IDENTITY, {
+      fetcher: async () => priorSessionResponse.promise,
+      now: () => crossingNowMs,
+    });
+    crossingNowMs = Date.parse("2026-09-08T15:00:00Z");
+    priorSessionResponse.resolve(new Response(JSON.stringify(quote()), { status: 200 }));
+    await expect(priorSession).rejects.toThrow("approved contract");
   });
 });
