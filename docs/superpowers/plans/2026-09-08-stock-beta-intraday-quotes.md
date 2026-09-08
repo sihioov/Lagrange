@@ -811,3 +811,19 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - B1 담당자 `6416026d-b838-4fa1-a697-f2243b618577` (Codex luna/max)를 base `a0da246`,
   `/data/worktrees/3puw275b/stock-beta-intraday-storage`, workspace `wks_cb50f59b1dc645f6`에
   시작했다. source/parser 담당자와 reviewer는 idle로 유지하며 mutable 범위는 겹치지 않는다.
+
+### WP-3B1 완료 보고 및 독립 검토
+
+- 구현 담당자는 `b02959d4be8cc5aee8dacceaf57ecb85c29cf627` (parent `a0da246`)로
+  완료했으며 idle/clean이다. 소유한 6파일만 변경했고 아직 기능 브랜치에 통합하지 않았다.
+  worker는 격리 DB 9 tests/5.76s, all-target clippy 및 fmt/diff 통과를 보고했다.
+- coordinator가 migration 전체와 demand/cap/publication 경로 및 테스트 일부를 직접 읽었다.
+  frozen policy-row lock은 기존 app SELECT-only 권한 때문에 실행 불가능하다는 worker
+  보고가 있고, 실제 구현은 owner advisory transaction lock + policy 존재 확인이다.
+  권한 추가는 없지만 계약과의 차이는 아직 수락하지 않았다.
+- 독립 reviewer `4ff1fb96-28a4-4a6d-ac03-11dca13f875a` (Codex terra/high)를 같은
+  storage workspace에서 시작했다. 전체 6파일과 DB 검증, 정책 잠금 대안의 보장 범위를
+  read-only 검토한다. coordinator가 확인한 5-identity cap의 기존 identity 신규 consumer
+  거부 가능성과 lock 대기 중 expiry/receipt 순서 경계도 재현·판정 대상으로 전달했다.
+- B2는 B1 review ACCEPT와 필요한 coordinator 계약 판단 이후에만 시작한다.
+  임시 QA DB는 검토에 계속 사용하며 운영 DB/provider/배포에는 접근하지 않는다.
