@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 구현 완료·독립 검토 중, WP-5 fixture Web 작업 준비; 운영 활성화 미실행
+상태: WP-2B 독립 리뷰 후 보완 중, WP-5 fixture Web 구현 중; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -573,3 +573,21 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   이 수신 DTO 방어는 KIS의 새로운 응답 필드 parser 승인이나 운영 활성화를 뜻하지 않는다.
 - 새 response field 파싱은 여전히 owner의 명시적 승인 전 보류한다. 실제 provider 호출,
   운영 변경, main merge/push는 두 worker 모두 금지한다.
+
+### WP-2B 보완 및 WP-5 launch 기록
+
+- 독립 reviewer가 idle/REJECT를 반환했다. coordinator도 401이 기존 read retry predicate에서
+  제외된 코드와, 두 child를 단순 해제하는 기존 테스트를 직접 확인했다. 401 뒤 한 번의
+  shared 재발급 기회 및 실제 contention barrier 증거를 WP-2B 담당에게 요구했다.
+- 추가로 durable anchor 검사 뒤 callback 첫 poll이 지연될 때 다음 호출 간격이 짧아질 수
+  있다는 정적 지적은 deterministic reproduction부터 요구했다. 아직 실제 provider에서
+  발생한 장애라고 보고하지 않는다. 임의 lead 확대가 아닌 보수적인 spacing·deadline·
+  cancellation 처리와 명확한 callback 보장 범위를 검증하게 했다.
+- 기존 idle WP-2B worker `1a321ba4-6ac2-46c2-a7c1-01ccbc0cf049`에 위 세 항목만
+  후속 위임했다. 수정은 kis-client 공유 read 모듈과 focused tests 중심이며 외부 API 응답
+  parser/운영 설정은 제외한다. `6a7b87a`는 아직 통합하지 않았다.
+- WP-5 worker `6302f7a6-76ba-48b6-9e61-785e92b8fd20`, Codex luna/max,
+  workspace `wks_f63a48bceda4e05e`, cwd `/data/worktrees/3puw275b/stock-beta-intraday-widget`,
+  branch `work/stock-beta-intraday-widget-20260908`, base `d41a733`의 running을 확인했다.
+  위 default-off/scope amendment와 exact application DTO로만 구현한다. Browser/Next runtime
+  검증과 실제 API 연동은 후속 gate이며 이번 worker의 unit 검증과 구별한다.
