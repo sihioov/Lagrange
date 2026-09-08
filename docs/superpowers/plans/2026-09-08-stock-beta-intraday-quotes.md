@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: 실행 착수 — WP-1 계약 검토 진행 중; 구현·provider 호출·운영 활성화 미실행
+상태: WP-1 검토 완료, WP-2A provider-free 공통 모듈 구현 착수; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -210,7 +210,8 @@ widget 제거·숨김으로 소비자가 없어지면 polling/demand가 정리�
 | Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
 | --- | --- | --- | --- | --- |
 | WP-1 | hard | source contract·시간 의미·공유 credential 운영 경계의 설계 판단 | high | 문서 충돌, 기존 read 프로세스 누락, 승인되지 않은 응답/시장/권한 필요 시 영향 분기 중지 |
-| WP-2 | hard | 프로세스 간 token/rate/cooldown, crash·restart 실패 비용 | high | 모든 caller 경계를 봉인 못함, rotation/lease race 재현 실패 시 설계 재검토 |
+| WP-2A | hard | 프로세스 간 token/rate/cooldown primitive의 crash·restart 실패 비용 | high | durable reservation/rotation race 증명 실패 시 설계 재검토 |
+| WP-2B | hard | 여러 기존 read caller와 default-off 호환 경계 연결 | medium | baseline 생성자 호환과 fail-closed opt-in 충돌 시 coordinator가 정책 고정 후 launch |
 | WP-3 | intermediate | 동결 계약의 demand/cache/producer 구현과 DB fencing | medium | 별도 서비스 필요, 기존 job lease 침범, DB 권한 모델 변경 확대 시 hard로 재분류 |
 | WP-4 | intermediate | 기존 owner API·RLS·OpenAPI 패턴으로 제한된 endpoint 추가 | high | actor isolation 증명 불가, API에 secret/egress 필요 주장 시 구현 중지 |
 | WP-5 | intermediate | catalog 위젯과 독립 polling 상태 기계, 결정적 UI 검증 | high | catalog 수정이 공통 엔진 재설계로 확장되거나 race 수정 2회 실패 시 상향 |
@@ -223,15 +224,16 @@ widget 제거·숨김으로 소비자가 없어지면 polling/demand가 정리�
 | Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
 | --- | ---: | --- | --- | --- | --- | --- | --- | --- |
 | WP-1 | 1 | hard | 정확한 소스·API·스케줄·공유경계 계약 동결 | 아래 신규 contract spec만 | 없음 | Codex sol high | 계약/승인 delta/정확한 파일 map | 공식 근거, caller 목록, budget 계산, coordinator 승인 |
-| WP-2 | 2 | hard | read credential 공유 보호 | kis-client read/auth/limiter 및 정확한 read caller 연결 | WP-1 gate | Codex sol high | 공유 arbitration와 crash/다중 프로세스 테스트 | fake transport/clock 및 cross-process barrier tests |
-| WP-3 | 3 | intermediate | demand/cache DB와 quote producer | 신규 migration, market-data/collector/job-queue quote 모듈 | WP-2 | Codex luna max | producer·fencing·role grant | disposable DB, scheduler fake-time, read boundary regression |
-| WP-5 | 3 | intermediate | 현재가 위젯·Web client·polling | apps/web의 아래 지정 source/unit tests | WP-1·WP-2 gate, 동결 fixture contract | Codex luna max | dashboard/detail quote UX | unit·typecheck·lint, mock-only race tests |
-| WP-4 | 4 | intermediate | owner cache API·OpenAPI | API Rust/contract/generated OpenAPI | WP-3 | Codex luna max | 인증·demand mutation·cache GET | DB-backed HTTP, OpenAPI check, no-provider assertions |
-| WP-6 | 5 | intermediate | opt-in 배포 계약·runbook·diagram | Compose/ops/docs 및 필요 CI 접속점 | WP-3·WP-4·WP-5 | Codex luna max | default-off 설정과 검사/로컬 PNG | static/self-test, manifest compatibility, local renderer |
-| WP-7 | 6 | hard | 독립 전체 변경 리뷰 | source read-only, review report | WP-6 | Codex terra high | severity별 ACCEPT/REJECT | source/권한/계약/데이터 독립성 증거 |
-| WP-8 | 7 | intermediate | 실제 기능·회귀 QA와 증거 | 지정 E2E/fixtures/QA report | WP-7 ACCEPT | Codex luna max | 통합 QA matrix | production browser 2회·DB·부하·전체 회귀 |
+| WP-2A | 2 | hard | 비연결 shared read primitive 구현 | 신규 read_coordination 및 module/dependency/전용 tests | WP-1 제한 수락 | Codex sol high | 보호 state·durable budget/token API | fake transport/clock·OS process barriers |
+| WP-2B | 3 | hard | 검증 primitive를 기존 read caller에 연결 | 기존 WP-2 나머지 scope, WP-2A와 순차 | WP-2A 및 compatibility gate | Codex sol high | explicit mode·caller wiring | constructor/기존 read 회귀·disabled 호환 |
+| WP-3 | 4 | intermediate | demand/cache DB와 quote producer | 신규 migration, market-data/collector/job-queue quote 모듈 | WP-2B·response gate | Codex luna max | producer·fencing·role grant | disposable DB, scheduler fake-time, read boundary regression |
+| WP-5 | 4 | intermediate | 현재가 위젯·Web client·polling | apps/web의 아래 지정 source/unit tests | WP-1·WP-2B gate, 동결 fixture contract | Codex luna max | dashboard/detail quote UX | unit·typecheck·lint, mock-only race tests |
+| WP-4 | 5 | intermediate | owner cache API·OpenAPI | API Rust/contract/generated OpenAPI | WP-3 | Codex luna max | 인증·demand mutation·cache GET | DB-backed HTTP, OpenAPI check, no-provider assertions |
+| WP-6 | 6 | intermediate | opt-in 배포 계약·runbook·diagram | Compose/ops/docs 및 필요 CI 접속점 | WP-3·WP-4·WP-5 | Codex luna max | default-off 설정과 검사/로컬 PNG | static/self-test, manifest compatibility, local renderer |
+| WP-7 | 7 | hard | 독립 전체 변경 리뷰 | source read-only, review report | WP-6 | Codex terra high | severity별 ACCEPT/REJECT | source/권한/계약/데이터 독립성 증거 |
+| WP-8 | 8 | intermediate | 실제 기능·회귀 QA와 증거 | 지정 E2E/fixtures/QA report | WP-7 ACCEPT | Codex luna max | 통합 QA matrix | production browser 2회·DB·부하·전체 회귀 |
 
-Wave 3의 WP-3과 WP-5만 병렬이다. 다른 wave는 순서대로 통합한다. WP-2의 공용 caller
+Wave 4의 WP-3과 WP-5만 병렬이다. 다른 wave는 순서대로 통합한다. WP-2B의 공용 caller
 수정이 끝나기 전에 WP-3은 시작하지 않는다. WP-4와 WP-5는 Rust/OpenAPI 대 Web으로
 파일이 분리되지만 API는 DB 후 실행한다. QA는 모든 code integration 후 한 worker만 실행한다.
 
@@ -272,6 +274,43 @@ Wave 3의 WP-3과 WP-5만 병렬이다. 다른 wave는 순서대로 통합한다
   baseline 대비 승인 delta 목록. coordinator가 승인 전 downstream launch 금지.
 
 ### WP-2 — read credential arbitration
+
+아래 원래 owned scope는 WP-2A → WP-2B 두 순차 package의 합집합이다. primitive와
+runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결정을 기다리느라
+외부 호출 없는 구현까지 멈추지 않는다. 두 package에도 공통 필수 보고 형식을 적용한다.
+
+#### WP-2A — 비연결 primitive (현재 launch 허용)
+
+- cwd: executor의 별도 WP-2A Paseo worktree. hard/high confidence, Codex sol high.
+- owned: 신규 `crates/kis-client/src/read_coordination.rs`, 필요 그 하위 모듈,
+  `crates/kis-client/src/lib.rs` export, `crates/kis-client/Cargo.toml`, `Cargo.lock`,
+  신규 `crates/kis-client/tests/read_coordination*.rs`와 전용 fixture helper만.
+- 기존 auth/market_data/limiter/transport/caller의 실행 동작과 constructor는 변경하지 않는다.
+  실제 secret/path/env/network를 읽지 않고 명시적으로 제공한 fake credential·temp root·clock·
+  issuer/read callback으로 shared protocol을 검증한다. 아직 production 보호가 연결됐다고 보고하지 않는다.
+- WP-1 sections 5–6의 file trust/atomic state/lock/credential generation/HMAC/token reuse/
+  rate/cooldown/quote budget을 primitive로 구현한다. 파일 descriptor를 보유한 검증으로
+  symlink/hardlink 및 check/open 경합을 방지한다. fake root의 uid는 현재 사용자로 명시한다.
+- crash 예약은 마지막 시작시각만 저장해서는 안 된다. 시작 전 durable in-flight deadline과
+  token issue attempt를 기록하고, 새 프로세스가 죽은 요청의 유효 deadline 이전에 재진입하지
+  못하게 한다. 정상 완료만 fence에 맞춰 예약을 해제한다. ambiguous/cancel 시 보수적으로 보존한다.
+  broker 내부 처리 종료를 완벽히 증명한다는 주장은 하지 않는다.
+- token 획득/재사용 자체는 GET quota를 소비하지 않는다. 최종 GET 전 시각으로 read 간격과
+  예약을 다시 검사한다. 실패를 typed error로 반환하고 secret을 Debug/error에 포함하지 않는다.
+- 검증: offline/locked Cargo, 기존 kis-client 회귀와 두 OS 프로세스 fixture. 한 번에 한
+  compiler invocation, `CARGO_BUILD_JOBS=2`; 실제 HTTP/DB/Docker/provider는 0.
+- 결과는 primitive+테스트/commit/scope diff. 파일 추가나 설계 미해결은 추측하지 않고 반환한다.
+
+#### WP-2B — 기존 caller 연결 (WP-2A 검증 이후)
+
+- cwd: WP-2A를 통합한 별도 worktree. hard/medium confidence, Codex sol high.
+- owned: 아래 원래 WP-2의 나머지 auth/market_data/retry/error 및 정확한 read caller wiring.
+  primitive 보완은 순차 소유이며 필요한 경우 coordinator가 diff scope를 명시한다.
+- launch 전 coordinator는 기존 설정의 feature-off 호환성과 신규 coordinated-required
+  mode의 fail-closed 동작을 고정한다. “모든 LiveTransport 생성자를 즉시 금지”와
+  “기존 default-off 릴리스가 그대로 동작”을 동시에 충족했다고 가정하지 않는다.
+- 응답 parser 필드 확대나 실제 polling 활성화 없이 read 경계만 연결·검증한다.
+  WP-2A 단독 성공은 이 package 또는 shared-boundary gate 완료가 아니다.
 
 - cwd: WP-2 worktree. hard/high confidence; sol high. 입력은 동결 WP-1과 baseline.
 - owned: `crates/kis-client/src/{auth,rate_limit,market_data,token_issuer}.rs`, 필요 신규
@@ -442,3 +481,15 @@ Wave 3의 WP-3과 WP-5만 병렬이다. 다른 wave는 순서대로 통합한다
 - 현재 모델 가용성과 지침을 확인했다. provider 시작·결과 수락은 단순 agent ID 생성과
   구분하며, WP-1 계약 검토/승인 gate 전 WP-2 이후 작업을 시작하지 않는다.
 - main 변경·push, 실제 시장 데이터 호출 및 운영 변경은 수행하지 않았다.
+
+### WP-1 검토와 다음 단계
+
+- WP-1 `3a3f528`을 검토하고 integration에 문서만 통합했다. 문서 완료와 모든 내용의
+  production 승인은 구별한다. 정확한 기존 API prefix, 20 consumer lease/5 identities,
+  11초 happy-path 한정, EOD 분리 원칙은 coordinator가 개발 계약으로 수락한다.
+- 새 quote 응답 필드 해석의 승인 gate와 실제 운영 활성화는 보류한다. 당일 calendar/
+  session-window 증거 공급도 production 전제이며 해결 완료로 보고하지 않는다.
+- shared primitive의 provider-free 개발은 승인된 구현 범위다. 계약의 crash reservation
+  보강과 default-off 호환 모순을 분리해 WP-2A/2B로 순차 분해했다.
+- worker 완료 후 미처리 방지를 위해 bounded Paseo heartbeat를 사용한다. 완료/오류/실제
+  사용자 결정 필요 시 결과를 검토하고 후속 작업 또는 정확한 blocker를 처리한다.
