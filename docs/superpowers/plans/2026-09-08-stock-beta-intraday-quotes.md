@@ -1082,3 +1082,51 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   expiry 검증 여부를 확인/반박하도록 요청했다. 결론을 미리 정하지 않는다.
 - scoped ACCEPT여도 전체 producer 수락은 아니다. 성공/재시도/fairness/취소/heartbeat/
   takeover/세대 변경/EOD 경합의 별도 coverage gate 및 window age 계약 판단은 남아 있다.
+
+### WP-3B2b bounded ACCEPT 및 coverage 실행 분할
+
+- reviewer는 두 코드 결함에 한정해 ACCEPT했다. 독립 producer DB6/runner11/scoped clippy/
+  fmt/diff 통과. lineage 후속 읽기는 정상 동시 실행 경로에서 row lock을 취하지 않는
+  MVCC read이며, 운영 중 ACCESS EXCLUSIVE DDL은 허용된 경로가 아니다. coordinator는
+  이 한정 판단을 채택한다. 원본/수정 커밋은 전체 gate 전까지 미통합으로 유지한다.
+- 남은 테스트를 아래 순서로 분리한다. Execution skill은 계속 `$paseo-delegate`이며
+  native subagents는 금지다. 대상은 기존 producer workspace, base `b34198f`다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| B2b-C1 | intermediate | 기존 guarded client/parser/DB를 결합하는 명세 확정 fixture 테스트 | medium | public seam/의존성 부족, 시간 모델 충돌은 보고; 반복 검증 실패 시 한 tier 상향 |
+| B2b-C2 | intermediate | 기존 SQL barrier와 daemon에 대한 순서/취소/lease 경합 검증 | medium | 재현 불가 경합/lock-order 설계 필요 시 재분류 |
+| B2b-C3 | intermediate | quote startup 뒤 EOD callback 도달을 주입식 harness로 관찰 | medium | 기존 EOD lifecycle 변경 필요 시 중단·scope 재검토 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| B2b-C1 | 1 | intermediate | 실제 guarded reader를 통한 성공·실패·재시도 증거 | 새 job-queue tests/intraday_producer_pipeline.rs, 새 tests/intraday_producer_pipeline_support/mod.rs, 필요 최소 기존 intraday_quotes_support/mod.rs | bounded ACCEPT | Codex luna/max | 테스트 전용 owned commit, 실패 발견 시 정확한 재현 보고 | synthetic QA DB + fake Transport/issuer + 실제 ReadCoordinator/client/parser/producer; scoped lint/fmt |
+| B2b-C2 | 2 | intermediate | fairness/halt/cancel/heartbeat/fencing/EOD contention | 기존 tests/intraday_producer.rs 및 C1 support, 필요 최소 기존 quote support | C1 검토 후 상세 brief 확정 | Codex luna/max, 반복 실패 시 terra | 별도 테스트 commit | 실제 관찰 barrier와 순서/횟수 증거, B1 24개 유지 |
+| B2b-C3 | 3 | intermediate | 실제 startup/EOD 도달 관찰 | runner quote-startup의 최소 주입식 연결 및 runner tests만 | C2 검토 후 상세 brief 확정 | Codex luna/max | tautological helper 대체 검증 | credentials/운영 main 없이 EOD callback 관찰 |
+
+#### B2b-C1 worker brief / coordinator gates
+
+- cwd `/data/worktrees/3puw275b/stock-beta-intraday-producer`, workspace `wks_7ee1494fc4f22bcc`.
+  기존 구현자/reviewer 모두 idle이다. 새 테스트 작성 worker가 단독으로 위 C1 파일만 소유한다.
+  기존 guarded API와 실제 disk reservation metadata를 그대로 사용하며 metadata/receipt를
+  직접 조립하거나 DB clock과 앞서는 fake receipt를 만들지 않는다. 기존 파일의 테스트를
+  옮기거나 약화하지 않는다. Cargo/production source/ledger schema 변경은 허용하지 않는다.
+- 성공 응답을 fake Transport에서 complete bytes로 전달하여 실제 client -> parser -> producer
+  -> QA cache publication의 값/identity/session/version/receipt와 exact GET/path/TR/J를 검증한다.
+  성공 이후 malformed/identity-invalid 응답은 같은 cycle 재시도 없이 last-good을 보존해야 한다.
+- 503 후 성공 및 3회 연속 retryable failure의 실제 GET 수/영속 reservation count/fence,
+  transport timeout(3초) 및 HTTP 429 Retry-After의 spacing/cooldown/중단을 검증한다.
+  401은 실제 shared invalidation과 60초 issue debt를 유지하며, 증거/lease가 다음 시도를
+  허용하지 않으면 안전한 중단을 기대한다. 임의로 guard를 완화하여 reissue를 강제하지 않는다.
+  HTTP timeout과 transport-shaped timeout의 typed 결과를 구별하고 provider prose는 내보내지 않는다.
+- 검증은 합성 loopback QA URL과 per-test DB, 0700/0600 임시 coordinator, fake issuer/Transport만
+  사용한다. 현실 DB clock에 맞는 시간 모델을 유지한다. 필요하면 bounded real 5초 대기를 쓰고,
+  DB 시간을 멈추지 못하는 paused Tokio 시간으로 lease/receipt 증거를 조작하지 않는다.
+- `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test --locked --offline -p job-queue
+  --test intraday_producer_pipeline -- --test-threads=1`, 기존 producer6/B1DB24 및 scoped
+  clippy/fmt/diff를 단일 compiler로 실행한다. 소스 결함 발견 시 실패 테스트/정확한 evidence를
+  보고하고 production fix는 coordinator의 새 bounded assignment를 기다린다.
+- 보고: full commit/parent, 파일/라인, 명세 차이와 이유, 실행 명령/결과, 실패 재현,
+  미해결/후속 및 확인하지 못한 사항(없으면 없음). 독립 검토 후 C2 brief를 확정하며,
+  전체 coverage와 window evidence age 판단 전에는 B2b 전체를 통합/수락하지 않는다.
+  모든 기존 provider/운영DB/root/배포/merge/push 금지와 QA lifecycle 경계는 유지한다.
