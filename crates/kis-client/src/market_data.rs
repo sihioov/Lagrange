@@ -19,7 +19,7 @@ use crate::rate_limit::{BucketKey, Permit, RateLimiter};
 use crate::read_coordination::{
     COORDINATED_EOD_RETRY_DELAY, COORDINATED_INTRADAY_RETRY_DELAY, LockAcquisition,
     ReadCallbackResult, ReadChannel, ReadCoordinationConfig, ReadCoordinationError,
-    ReadCoordinator, ReadCredentialSnapshot, ReadFailureKind,
+    ReadCoordinator, ReadCredentialSnapshot, ReadDispatchGuard, ReadFailureKind,
 };
 use crate::retry::{RetryPolicy, Sleeper};
 use crate::secret::{CredentialRef, CredentialSource, Secret};
@@ -255,6 +255,7 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
             RetryPolicy::reads()
         };
         let mut attempts = 0_u32;
+        let mut auth_refresh_available = true;
         loop {
             if attempts > 0 {
                 let spacing = if intraday {
@@ -288,6 +289,15 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
                 // Shared 429 state is already durable. Returning it prevents
                 // an early nested retry; a later job/cycle must honor it.
                 Err(error @ KisError::RateLimited { .. }) => return Err(error),
+                Err(KisError::Broker { status: 401, .. })
+                    if auth_refresh_available && attempts < policy.max_attempts =>
+                {
+                    // The coordinator already invalidated the persisted token.
+                    // Permit exactly one local reissue opportunity; the next
+                    // gate still enforces the durable 60-second issue debt and
+                    // this GET still counts against the attempt bound.
+                    auth_refresh_available = false;
+                }
                 Err(error)
                     if attempts < policy.max_attempts && error.is_retryable(RequestKind::Read) => {}
                 Err(error) => return Err(error),
@@ -316,19 +326,23 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         let captured = Arc::new(Mutex::new(None));
         let captured_by_callback = Arc::clone(&captured);
         let credentials = coordinated.credentials.clone();
-        let execute = |token| async move {
+        let execute = |token, dispatch: ReadDispatchGuard| async move {
+            let request =
+                match self.build_request(&credentials, token, path, tr_id, query, continuation) {
+                    Ok(request) => request,
+                    Err(error) => {
+                        *captured_by_callback.lock().expect("captured error mutex") = Some(error);
+                        return ReadCallbackResult::CompletedFailure(ReadFailureKind::Transport);
+                    }
+                };
+            // This is the cooperative final send boundary. The clock check and
+            // transport call are intentionally adjacent; arbitrary OS
+            // preemption between them cannot be physically excluded.
+            if dispatch.begin_dispatch().is_err() {
+                return ReadCallbackResult::CompletedFailure(ReadFailureKind::Transport);
+            }
             started.store(true, Ordering::SeqCst);
-            let result = self
-                .send_attempt(
-                    transport,
-                    &credentials,
-                    token,
-                    path,
-                    tr_id,
-                    query,
-                    continuation,
-                )
-                .await;
+            let result = self.send_request(transport, request, path).await;
             match result {
                 Ok(reply) => ReadCallbackResult::Success(reply),
                 Err(error) => {
@@ -418,6 +432,20 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         query: &[(String, String)],
         continuation: Option<&str>,
     ) -> Result<MarketDataReply, KisError> {
+        let request = self.build_request(credentials, token, path, tr_id, query, continuation)?;
+        self.send_request(transport, request, path).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_request<D: CredentialSource>(
+        &self,
+        credentials: &D,
+        token: AccessToken,
+        path: &str,
+        tr_id: &str,
+        query: &[(String, String)],
+        continuation: Option<&str>,
+    ) -> Result<HttpRequest, KisError> {
         let app_key = credentials.resolve(&self.app_key_ref)?;
         let app_secret = credentials.resolve(&self.app_secret_ref)?;
         let mut request = HttpRequest::get(path, tr_id)
@@ -434,7 +462,15 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         for (key, value) in query {
             request = request.with_query(key, value);
         }
+        Ok(request)
+    }
 
+    async fn send_request(
+        &self,
+        transport: &T,
+        request: HttpRequest,
+        path: &str,
+    ) -> Result<MarketDataReply, KisError> {
         let response = transport.send(request).await?;
         if response.status == 429 {
             let retry_after_ms = response
@@ -992,7 +1028,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shared_401_invalidates_token_without_bypassing_issue_debt() {
+    async fn fresh_shared_401_uses_one_refresh_opportunity_but_issue_debt_blocks_another_get() {
         let root = PrivateRoot::new("unauthorized");
         let clock = TestClock::at(3_500_000);
         let snapshot = ReadCredentialSnapshot::resolve(
@@ -1020,15 +1056,113 @@ mod tests {
         let (path, tr_id) = ReadChannel::InquirePrice.pair();
         assert!(matches!(
             client.get_intraday(path, tr_id, &[]).await,
-            Err(KisError::Broker { status: 401, .. })
-        ));
-        clock.advance_ms(COORDINATED_INTRADAY_RETRY_DELAY.as_millis() as i64);
-        assert!(matches!(
-            client.get_intraday(path, tr_id, &[]).await,
             Err(KisError::RateLimited { .. })
         ));
         assert_eq!(token_probe.requests.lock().unwrap().len(), 1);
         assert_eq!(intraday_probe.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn aged_shared_token_gets_one_401_reissue_and_then_succeeds() {
+        let root = PrivateRoot::new("aged-unauthorized");
+        let clock = TestClock::at(1_000_000);
+        let snapshot = ReadCredentialSnapshot::resolve(
+            &FixedCredentials,
+            CredentialRef::env("KIS_APP_KEY"),
+            CredentialRef::file("/run/secrets/kis_app_secret"),
+            1,
+        )
+        .unwrap();
+        let token_transport = CapturingTransport::with_responses(vec![
+            HttpResponse::ok(r#"{"access_token":"first-token","expires_in":3600}"#),
+            HttpResponse::ok(r#"{"access_token":"renewed-token","expires_in":3600}"#),
+        ]);
+        let token_probe = token_transport.clone();
+        let read_transport = CapturingTransport::with_responses(vec![HttpResponse::ok(
+            r#"{"rt_cd":"0","output":{}}"#,
+        )]);
+        let intraday_transport = CapturingTransport::with_responses(vec![
+            HttpResponse::status(401, "unauthorized"),
+            HttpResponse::ok(r#"{"rt_cd":"0","output":{}}"#),
+        ]);
+        let intraday_probe = intraday_transport.clone();
+        let client = shared_client(
+            root.path(),
+            clock.clone(),
+            read_transport,
+            intraday_transport,
+            token_transport,
+            snapshot,
+        );
+        let (path, tr_id) = ReadChannel::InquirePrice.pair();
+        client
+            .get(path, tr_id, &[], None)
+            .await
+            .expect("prime an existing shared token");
+        clock.advance_ms(60_000);
+
+        client
+            .get_intraday(path, tr_id, &[])
+            .await
+            .expect("one aged-token invalidation may reissue and retry");
+        assert_eq!(token_probe.requests.lock().unwrap().len(), 2);
+        assert_eq!(intraday_probe.requests.lock().unwrap().len(), 2);
+        assert!(matches!(
+            client.get_intraday(path, tr_id, &[]).await,
+            Err(KisError::RateLimited { .. })
+        ));
+        assert_eq!(
+            intraday_probe.requests.lock().unwrap().len(),
+            2,
+            "successful retry still leaves its shared spacing debt"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_shared_401_stops_without_a_refresh_loop_or_third_get() {
+        let root = PrivateRoot::new("repeated-unauthorized");
+        let clock = TestClock::at(1_500_000);
+        let snapshot = ReadCredentialSnapshot::resolve(
+            &FixedCredentials,
+            CredentialRef::env("KIS_APP_KEY"),
+            CredentialRef::file("/run/secrets/kis_app_secret"),
+            1,
+        )
+        .unwrap();
+        let token_transport = CapturingTransport::with_responses(vec![
+            HttpResponse::ok(r#"{"access_token":"first-token","expires_in":3600}"#),
+            HttpResponse::ok(r#"{"access_token":"renewed-token","expires_in":3600}"#),
+        ]);
+        let token_probe = token_transport.clone();
+        let intraday_transport = CapturingTransport::with_responses(vec![
+            HttpResponse::status(401, "unauthorized"),
+            HttpResponse::status(401, "unauthorized-again"),
+            HttpResponse::ok(r#"{"rt_cd":"0","output":{}}"#),
+        ]);
+        let intraday_probe = intraday_transport.clone();
+        let client = shared_client(
+            root.path(),
+            clock.clone(),
+            CapturingTransport::with_responses(vec![HttpResponse::ok(
+                r#"{"rt_cd":"0","output":{}}"#,
+            )]),
+            intraday_transport,
+            token_transport,
+            snapshot,
+        );
+        let (path, tr_id) = ReadChannel::InquirePrice.pair();
+        client
+            .get(path, tr_id, &[], None)
+            .await
+            .expect("prime an existing shared token");
+        clock.advance_ms(60_000);
+
+        assert!(matches!(
+            client.get_intraday(path, tr_id, &[]).await,
+            Err(KisError::Broker { status: 401, .. })
+        ));
+        assert_eq!(token_probe.requests.lock().unwrap().len(), 2);
+        assert_eq!(intraday_probe.requests.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

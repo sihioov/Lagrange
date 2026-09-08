@@ -13,7 +13,7 @@ use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::fs::{FileExt as UnixFileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use fs2::FileExt as Fs2FileExt;
@@ -38,12 +38,11 @@ const GLOBAL_READ_INTERVAL_MS: i64 = 1_000;
 const CHANNEL_READ_INTERVAL_MS: i64 = 1_000;
 const INTRADAY_READ_INTERVAL_MS: i64 = 5_000;
 const INTRADAY_DAILY_LIMIT: u32 = 5_000;
-// State persistence happens before a callback can send bytes. The recorded
-// start is deliberately a short distance in the future: if the durable write
-// finishes within this bound, all later spacing is measured from a time no
-// earlier than the real callback start; if it does not, the callback is not
-// invoked. This converts unbounded filesystem latency into a bounded,
-// fail-closed local error rather than a stale reservation timestamp.
+// State persistence happens before a callback can send bytes. A callback gets
+// this short, fixed window to cross its cooperative final dispatch guard. The
+// durable state initially charges debt from the latest possible completion;
+// a known completion replaces it with the observed completion time. Missing
+// the window sends nothing and retains the conservative debt.
 const DURABLE_START_LEAD_MS: i64 = 250;
 pub const COORDINATED_EOD_RETRY_DELAY: Duration =
     Duration::from_millis((GLOBAL_READ_INTERVAL_MS + DURABLE_START_LEAD_MS) as u64);
@@ -286,6 +285,64 @@ pub enum LockAcquisition {
     Bounded(Duration),
 }
 
+/// Cooperative final-boundary guard for one reserved read attempt.
+///
+/// A callback must call [`Self::begin_dispatch`] immediately before handing
+/// the request to its transport. The check prevents a callback first-polled
+/// after its durable dispatch window from sending. The coordinator verifies
+/// that successful and classified callback results actually consumed the
+/// guard. This cannot prevent arbitrary OS preemption between the check and a
+/// transport call, nor can it contain work that the callback independently
+/// spawns and then abandons.
+#[derive(Clone)]
+pub struct ReadDispatchGuard {
+    clock: Arc<dyn Clock>,
+    dispatch_not_before_ms: i64,
+    dispatch_not_after_ms: i64,
+    dispatched_at_ms: Arc<AtomicI64>,
+}
+
+impl ReadDispatchGuard {
+    fn new(clock: Arc<dyn Clock>, dispatch_not_before_ms: i64, dispatch_not_after_ms: i64) -> Self {
+        Self {
+            clock,
+            dispatch_not_before_ms,
+            dispatch_not_after_ms,
+            dispatched_at_ms: Arc::new(AtomicI64::new(-1)),
+        }
+    }
+
+    pub fn begin_dispatch(&self) -> Result<(), ReadCoordinationError> {
+        let now = self.clock.now_ms();
+        if now < self.dispatch_not_before_ms {
+            return Err(ReadCoordinationError::ClockRollback);
+        }
+        if now > self.dispatch_not_after_ms {
+            return Err(ReadCoordinationError::CallbackStartMissed);
+        }
+        self.dispatched_at_ms
+            .compare_exchange(-1, now, Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| ())
+            .map_err(|_| ReadCoordinationError::CallbackAmbiguous)
+    }
+
+    fn dispatched_at_ms(&self) -> Option<i64> {
+        let value = self.dispatched_at_ms.load(Ordering::SeqCst);
+        (value >= 0).then_some(value)
+    }
+}
+
+impl std::fmt::Debug for ReadDispatchGuard {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReadDispatchGuard")
+            .field("dispatch_not_before_ms", &self.dispatch_not_before_ms)
+            .field("dispatch_not_after_ms", &self.dispatch_not_after_ms)
+            .field("dispatched", &self.dispatched_at_ms().is_some())
+            .finish()
+    }
+}
+
 /// A provider callback result with no free-form provider text.
 pub enum ReadCallbackResult<T> {
     Success(T),
@@ -475,6 +532,7 @@ impl ReadCoordinator {
 
     /// Execute one allowlisted read while holding the global process-shared gate.
     /// Invalid pairs are rejected before opening state or invoking either callback.
+    /// The callback must consume its dispatch guard at the final transport boundary.
     pub async fn execute<T, F, Fut>(
         &self,
         path: &str,
@@ -485,7 +543,7 @@ impl ReadCoordinator {
         read: F,
     ) -> Result<T, ReadCoordinationError>
     where
-        F: FnOnce(AccessToken) -> Fut,
+        F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
         Fut: Future<Output = ReadCallbackResult<T>>,
     {
         self.execute_class(
@@ -502,6 +560,7 @@ impl ReadCoordinator {
 
     /// Execute one exact current-price GET as an intraday-class attempt.
     /// Unlike `execute`, this consumes the five-second and KST daily ledgers.
+    /// The callback must consume its dispatch guard at the final transport boundary.
     pub async fn execute_intraday<T, F, Fut>(
         &self,
         path: &str,
@@ -512,7 +571,7 @@ impl ReadCoordinator {
         read: F,
     ) -> Result<T, ReadCoordinationError>
     where
-        F: FnOnce(AccessToken) -> Fut,
+        F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
         Fut: Future<Output = ReadCallbackResult<T>>,
     {
         let channel = ReadChannel::from_pair(path, tr_id)?;
@@ -546,7 +605,7 @@ impl ReadCoordinator {
         read: F,
     ) -> Result<T, ReadCoordinationError>
     where
-        F: FnOnce(AccessToken) -> Fut,
+        F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
         Fut: Future<Output = ReadCallbackResult<T>>,
     {
         let channel = ReadChannel::from_pair(path, tr_id)?;
@@ -588,17 +647,38 @@ impl ReadCoordinator {
             return Err(ReadCoordinationError::CallbackStartMissed);
         }
 
-        let outcome = tokio::time::timeout(request_timeout, read(token)).await;
+        let dispatch = ReadDispatchGuard::new(Arc::clone(&self.clock), start_ms, reserved_start_ms);
+        let outcome = tokio::time::timeout(request_timeout, read(token, dispatch.clone())).await;
         let finished_ms = self.clock.now_ms();
         advance_high_water(&mut state, finished_ms)?;
+        let dispatched_at_ms = dispatch.dispatched_at_ms();
+
+        if dispatched_at_ms.is_none() {
+            // No cooperative transport boundary was crossed. Keep the
+            // pre-reserved deadline debt; a returned callback is rejected as
+            // stale/unusable, while a pending pre-dispatch callback retains
+            // the ordinary local-timeout classification.
+            Self::persist_state(gate, state).await?;
+            return if outcome.is_err() {
+                Err(ReadCoordinationError::CallbackTimedOut)
+            } else {
+                Err(ReadCoordinationError::CallbackStartMissed)
+            };
+        }
+        if finished_ms < dispatched_at_ms.expect("dispatch presence checked") {
+            Self::persist_state(gate, state).await?;
+            return Err(ReadCoordinationError::ClockRollback);
+        }
 
         match outcome {
             Ok(ReadCallbackResult::Success(value)) => {
+                record_known_completion(&mut state, channel, intraday, finished_ms);
                 clear_matching_reservation(&mut state, fence);
                 Self::persist_state(gate, state).await?;
                 Ok(value)
             }
             Ok(ReadCallbackResult::Unauthorized) => {
+                record_known_completion(&mut state, channel, intraday, finished_ms);
                 state.token = None;
                 clear_matching_reservation(&mut state, fence);
                 Self::persist_state(gate, state).await?;
@@ -613,6 +693,7 @@ impl ReadCoordinator {
                     Self::persist_state(gate, state).await?;
                     return Err(ReadCoordinationError::InvalidStateTime);
                 };
+                record_known_completion(&mut state, channel, intraday, finished_ms);
                 state.broker_cooldown_until_ms = Some(
                     state
                         .broker_cooldown_until_ms
@@ -626,6 +707,7 @@ impl ReadCoordinator {
                 })
             }
             Ok(ReadCallbackResult::CompletedFailure(kind)) => {
+                record_known_completion(&mut state, channel, intraday, finished_ms);
                 clear_matching_reservation(&mut state, fence);
                 Self::persist_state(gate, state).await?;
                 Err(ReadCoordinationError::CallbackFailed { kind })
@@ -638,8 +720,11 @@ impl ReadCoordinator {
             }
             Err(_) => {
                 // Dropping the cooperative callback does not prove whether a
-                // provider observed bytes and cannot cancel work the callback
-                // independently spawned, so the durable fence is retained.
+                // provider observed bytes. Anchor subsequent spacing at the
+                // observed cooperative cancellation time and retain the
+                // fence. Independently spawned work remains outside this
+                // guarantee and callbacks must not create it.
+                record_known_completion(&mut state, channel, intraday, finished_ms);
                 Self::persist_state(gate, state).await?;
                 Err(ReadCoordinationError::CallbackTimedOut)
             }
@@ -1226,7 +1311,10 @@ fn validate_state(state: &PersistedState, now: i64) -> Result<(), ReadCoordinati
         && (in_flight.fence == 0
             || in_flight.fence >= state.next_fence
             || in_flight.reserved_at_ms < 0
-            || in_flight.reserved_at_ms > allowed_attempt_time
+            || in_flight.reserved_at_ms
+                > state
+                    .wall_time_high_water_ms
+                    .saturating_add(DURABLE_START_LEAD_MS)
             || in_flight.expires_at_ms <= in_flight.reserved_at_ms
             || in_flight.expires_at_ms
                 > in_flight
@@ -1244,6 +1332,7 @@ fn validate_state(state: &PersistedState, now: i64) -> Result<(), ReadCoordinati
                 > state
                     .wall_time_high_water_ms
                     .saturating_add(DURABLE_START_LEAD_MS)
+                    .saturating_add(MAX_REQUEST_TIMEOUT_MS)
             || state.last_global_attempt_ms != Some(anchor))
     {
         return Err(ReadCoordinationError::InvalidStateTime);
@@ -1352,18 +1441,25 @@ fn reserve_read(
         .next_fence
         .checked_add(1)
         .ok_or(ReadCoordinationError::CorruptState)?;
-    state.last_global_attempt_ms = Some(now);
-    state.conservative_start_anchor_ms = Some(now);
+    let completion_deadline_ms = now
+        .checked_add(timeout_ms)
+        .filter(|deadline| *deadline <= MAX_SUPPORTED_WALL_MS)
+        .ok_or(ReadCoordinationError::InvalidRequestTimeout)?;
+    // Until a cooperative callback durably reports completion, spacing is
+    // conservatively measured from the latest possible completion. A crash or
+    // cancellation therefore cannot reuse an attempt near its deadline.
+    state.last_global_attempt_ms = Some(completion_deadline_ms);
+    state.conservative_start_anchor_ms = Some(completion_deadline_ms);
     state
         .channel_attempts_ms
-        .insert(channel.state_key().to_owned(), now);
+        .insert(channel.state_key().to_owned(), completion_deadline_ms);
     if intraday {
         let today = kst_date(now);
         if state.intraday_kst_date.as_deref() != Some(today.as_str()) {
             state.intraday_kst_date = Some(today);
             state.intraday_attempts = 0;
         }
-        state.last_intraday_attempt_ms = Some(now);
+        state.last_intraday_attempt_ms = Some(completion_deadline_ms);
         state.intraday_attempts = state
             .intraday_attempts
             .checked_add(1)
@@ -1373,12 +1469,28 @@ fn reserve_read(
         fence,
         channel: channel.state_key().to_owned(),
         reserved_at_ms: now,
-        expires_at_ms: now
-            .checked_add(timeout_ms)
-            .filter(|expires| *expires <= MAX_SUPPORTED_WALL_MS)
-            .ok_or(ReadCoordinationError::InvalidRequestTimeout)?,
+        expires_at_ms: completion_deadline_ms,
     });
     Ok(fence)
+}
+
+fn record_known_completion(
+    state: &mut PersistedState,
+    channel: ReadChannel,
+    intraday: bool,
+    finished_ms: i64,
+) {
+    // Measuring from completion is deliberately a lower-throughput policy
+    // than measuring from dispatch and prevents response latency from opening
+    // an early subsequent slot.
+    state.last_global_attempt_ms = Some(finished_ms);
+    state.conservative_start_anchor_ms = Some(finished_ms);
+    state
+        .channel_attempts_ms
+        .insert(channel.state_key().to_owned(), finished_ms);
+    if intraday {
+        state.last_intraday_attempt_ms = Some(finished_ms);
+    }
 }
 
 fn clear_matching_reservation(state: &mut PersistedState, fence: u64) {
@@ -1799,14 +1911,22 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn state_io_is_off_reactor_and_cancelled_wait_keeps_gate_until_mutation_finishes() {
+    fn unique_test_root(label: &str) -> PathBuf {
         static IO_TEST_NONCE: AtomicU64 = AtomicU64::new(1);
-        let root = std::env::temp_dir().join(format!(
-            "kis-read-coordination-io-hook-{}-{}",
+        let wall_nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("test clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "kis-read-coordination-{label}-{}-{wall_nonce}-{}",
             std::process::id(),
             IO_TEST_NONCE.fetch_add(1, Ordering::Relaxed)
-        ));
+        ))
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn state_io_is_off_reactor_and_cancelled_wait_keeps_gate_until_mutation_finishes() {
+        let root = unique_test_root("io-hook");
         std::fs::create_dir(&root).expect("create state I/O test root");
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(ROOT_MODE))
             .expect("protect state I/O test root");
@@ -1887,12 +2007,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn slow_reservation_commit_never_starts_callback_with_stale_spacing() {
-        static IO_TEST_NONCE: AtomicU64 = AtomicU64::new(1);
-        let root = std::env::temp_dir().join(format!(
-            "kis-read-coordination-slow-commit-{}-{}",
-            std::process::id(),
-            IO_TEST_NONCE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = unique_test_root("slow-commit");
         std::fs::create_dir(&root).expect("create slow-commit test root");
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(ROOT_MODE))
             .expect("protect slow-commit test root");
@@ -1938,7 +2053,8 @@ mod tests {
                     task_issuer.as_ref(),
                     LockAcquisition::Bounded(Duration::from_secs(1)),
                     Duration::from_secs(3),
-                    |_| async move {
+                    |_, dispatch| async move {
+                        dispatch.begin_dispatch().expect("dispatch within bound");
                         task_reads.fetch_add(1, Ordering::SeqCst);
                         ReadCallbackResult::Success(())
                     },
@@ -1979,10 +2095,11 @@ mod tests {
         )
         .expect("credentials");
         let start = 0_i64;
+        let abandoned_attempt_interval_ms = INTRADAY_READ_INTERVAL_MS + 3_000;
         let mut state = PersistedState::initial(&credentials, start).expect("state");
 
         for attempt in 0..INTRADAY_DAILY_LIMIT {
-            let now = start + i64::from(attempt) * INTRADAY_READ_INTERVAL_MS;
+            let now = start + i64::from(attempt) * abandoned_attempt_interval_ms;
             advance_high_water(&mut state, now).expect("nonregressing time");
             check_read_eligibility(&mut state, ReadChannel::InquirePrice, true, now)
                 .expect("budget remains");
@@ -1990,7 +2107,7 @@ mod tests {
                 .expect("reserve each attempt");
             clear_matching_reservation(&mut state, fence);
         }
-        let exhausted_at = start + i64::from(INTRADAY_DAILY_LIMIT) * INTRADAY_READ_INTERVAL_MS;
+        let exhausted_at = start + i64::from(INTRADAY_DAILY_LIMIT) * abandoned_attempt_interval_ms;
         advance_high_water(&mut state, exhausted_at).expect("advance");
         assert!(matches!(
             check_read_eligibility(&mut state, ReadChannel::InquirePrice, true, exhausted_at),
@@ -2034,10 +2151,10 @@ mod tests {
 
         // Model an abandoned request after its deadline. Replacing its fence
         // reserves a distinct retry and never refunds the first attempt.
-        advance_high_water(&mut state, 5_000).expect("advance");
-        check_read_eligibility(&mut state, ReadChannel::InquirePrice, true, 5_000)
+        advance_high_water(&mut state, 8_000).expect("advance");
+        check_read_eligibility(&mut state, ReadChannel::InquirePrice, true, 8_000)
             .expect("expired fence permits bounded retry");
-        reserve_read(&mut state, ReadChannel::InquirePrice, true, 5_000, 3_000)
+        reserve_read(&mut state, ReadChannel::InquirePrice, true, 8_000, 3_000)
             .expect("retry reservation");
         assert_eq!(state.intraday_attempts, 2);
     }

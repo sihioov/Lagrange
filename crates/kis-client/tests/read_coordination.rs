@@ -58,7 +58,10 @@ async fn successful_read(
     path: &str,
     tr_id: &str,
 ) -> Result<&'static str, ReadCoordinationError> {
-    let read = |_: AccessToken| async { ReadCallbackResult::Success("ok") };
+    let read = |_: AccessToken, dispatch: kis_client::read_coordination::ReadDispatchGuard| async move {
+        dispatch.begin_dispatch().expect("dispatch within bound");
+        ReadCallbackResult::Success("ok")
+    };
     if (path, tr_id) == (PRICE_PATH, PRICE_TR) {
         coordinator
             .execute_intraday(path, tr_id, issuer, bounded(), Duration::from_secs(3), read)
@@ -101,6 +104,7 @@ async fn token_reuse_alias_dedup_and_get_accounting_are_separate() {
     );
 
     let reads = AtomicUsize::new(0);
+    let callback_reads = &reads;
     let result = alias
         .execute_intraday(
             PRICE_PATH,
@@ -108,8 +112,9 @@ async fn token_reuse_alias_dedup_and_get_accounting_are_separate() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
-                reads.fetch_add(1, Ordering::SeqCst);
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
+                callback_reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
         )
@@ -132,7 +137,7 @@ async fn invalid_channel_is_rejected_before_token_or_read_callback() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, _| async {
                 reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
@@ -162,7 +167,7 @@ async fn lock_wait_and_request_deadline_inputs_are_bounded_before_callbacks() {
             &issuer,
             bounded(),
             Duration::ZERO,
-            |_| async {
+            |_, _| async {
                 reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
@@ -226,10 +231,10 @@ async fn global_channel_and_intraday_spacing_use_final_post_issue_time() {
     assert_eq!(
         error,
         ReadCoordinationError::IntradaySpacing {
-            retry_after_ms: 1_250
+            retry_after_ms: 1_000
         }
     );
-    clock.set(2_007_250);
+    clock.set(2_007_000);
     successful_read(&coordinator, &issuer, PRICE_PATH, PRICE_TR)
         .await
         .expect("five seconds from actual start");
@@ -238,10 +243,153 @@ async fn global_channel_and_intraday_spacing_use_final_post_issue_time() {
         .await
         .expect_err("global one-second spacing applies across channels");
     assert!(matches!(error, ReadCoordinationError::GlobalSpacing { .. }));
-    clock.advance(1_250);
+    clock.advance(1_000);
     successful_read(&coordinator, &issuer, DAILY_PATH, DAILY_TR)
         .await
         .expect("different channel after global interval");
+}
+
+#[tokio::test]
+async fn eod_spacing_is_anchored_after_a_delayed_first_poll_completes() {
+    let temp = PrivateTemp::new("eod-post-check-delay");
+    let clock = SettableClock::at(2_100_000);
+    let issuer = CountingIssuer::new(clock.clone());
+    let coordinator = temp.coordinator(Arc::new(clock.clone()), 1);
+
+    coordinator
+        .execute(
+            DAILY_PATH,
+            DAILY_TR,
+            &issuer,
+            bounded(),
+            Duration::from_secs(3),
+            |_, dispatch| {
+                let clock = clock.clone();
+                async move {
+                    clock.advance(200);
+                    dispatch.begin_dispatch().expect("dispatch within bound");
+                    clock.advance(700);
+                    ReadCallbackResult::Success(())
+                }
+            },
+        )
+        .await
+        .expect("delayed EOD callback completes");
+
+    clock.advance(350);
+    let reads = AtomicUsize::new(0);
+    let callback_reads = &reads;
+    let error = coordinator
+        .execute(
+            DAILY_PATH,
+            DAILY_TR,
+            &issuer,
+            bounded(),
+            Duration::from_secs(3),
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
+                callback_reads.fetch_add(1, Ordering::SeqCst);
+                ReadCallbackResult::Success(())
+            },
+        )
+        .await
+        .expect_err("one second must run from observed completion");
+    assert_eq!(
+        error,
+        ReadCoordinationError::GlobalSpacing {
+            retry_after_ms: 650
+        }
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn intraday_spacing_is_anchored_after_a_delayed_first_poll_completes() {
+    let temp = PrivateTemp::new("intraday-post-check-delay");
+    let clock = SettableClock::at(2_200_000);
+    let issuer = CountingIssuer::new(clock.clone());
+    let coordinator = temp.coordinator(Arc::new(clock.clone()), 1);
+
+    coordinator
+        .execute_intraday(
+            PRICE_PATH,
+            PRICE_TR,
+            &issuer,
+            bounded(),
+            Duration::from_secs(3),
+            |_, dispatch| {
+                let clock = clock.clone();
+                async move {
+                    clock.advance(200);
+                    dispatch.begin_dispatch().expect("dispatch within bound");
+                    clock.advance(700);
+                    ReadCallbackResult::Success(())
+                }
+            },
+        )
+        .await
+        .expect("delayed intraday callback completes");
+
+    clock.advance(4_350);
+    let reads = AtomicUsize::new(0);
+    let callback_reads = &reads;
+    let error = coordinator
+        .execute_intraday(
+            PRICE_PATH,
+            PRICE_TR,
+            &issuer,
+            bounded(),
+            Duration::from_secs(3),
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
+                callback_reads.fetch_add(1, Ordering::SeqCst);
+                ReadCallbackResult::Success(())
+            },
+        )
+        .await
+        .expect_err("five seconds must run from observed completion");
+    assert_eq!(
+        error,
+        ReadCoordinationError::IntradaySpacing {
+            retry_after_ms: 650
+        }
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn final_dispatch_guard_rejects_a_callback_first_polled_after_its_bound() {
+    let temp = PrivateTemp::new("expired-final-dispatch");
+    let clock = SettableClock::at(2_300_000);
+    let issuer = CountingIssuer::new(clock.clone());
+    let coordinator = temp.coordinator(Arc::new(clock.clone()), 1);
+    let sends = AtomicUsize::new(0);
+    let callback_clock = &clock;
+    let callback_sends = &sends;
+
+    let error = coordinator
+        .execute(
+            DAILY_PATH,
+            DAILY_TR,
+            &issuer,
+            bounded(),
+            Duration::from_secs(3),
+            |_, dispatch| async move {
+                callback_clock.advance(251);
+                if dispatch.begin_dispatch().is_ok() {
+                    callback_sends.fetch_add(1, Ordering::SeqCst);
+                }
+                ReadCallbackResult::<()>::CompletedFailure(ReadFailureKind::Transport)
+            },
+        )
+        .await
+        .expect_err("expired final dispatch boundary must fail closed");
+    assert_eq!(error, ReadCoordinationError::CallbackStartMissed);
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        successful_read(&coordinator, &issuer, DAILY_PATH, DAILY_TR).await,
+        Err(ReadCoordinationError::ReservationActive { .. })
+    ));
 }
 
 #[tokio::test]
@@ -300,7 +448,10 @@ async fn unauthorized_invalidates_shared_token_and_keeps_issue_gate() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async { ReadCallbackResult::<()>::Unauthorized },
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
+                ReadCallbackResult::<()>::Unauthorized
+            },
         )
         .await
         .expect_err("401");
@@ -331,7 +482,8 @@ async fn retry_after_is_persisted_before_unlock() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
                 ReadCallbackResult::<()>::RateLimited {
                     retry_after: Duration::from_secs(10),
                 }
@@ -354,7 +506,7 @@ async fn retry_after_is_persisted_before_unlock() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, _| async {
                 reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
@@ -556,7 +708,8 @@ async fn cancelling_callback_preserves_reservation_debt_and_releases_kernel_lock
                 task_issuer.as_ref(),
                 bounded(),
                 Duration::from_secs(3),
-                |_| async move {
+                |_, dispatch| async move {
+                    dispatch.begin_dispatch().expect("dispatch within bound");
                     let _ = started_tx.send(());
                     std::future::pending::<ReadCallbackResult<()>>().await
                 },
@@ -578,6 +731,15 @@ async fn cancelling_callback_preserves_reservation_debt_and_releases_kernel_lock
             retry_after_ms: 3_250
         }
     );
+    clock.advance(8_249);
+    assert_eq!(
+        successful_read(&coordinator, issuer.as_ref(), PRICE_PATH, PRICE_TR).await,
+        Err(ReadCoordinationError::IntradaySpacing { retry_after_ms: 1 })
+    );
+    clock.advance(1);
+    successful_read(&coordinator, issuer.as_ref(), PRICE_PATH, PRICE_TR)
+        .await
+        .expect("cancelled attempt debt expires only after deadline plus spacing");
 }
 
 #[tokio::test]
@@ -604,7 +766,8 @@ async fn local_callback_timeout_drops_future_and_preserves_durable_reservation()
             &issuer,
             bounded(),
             Duration::from_millis(30),
-            move |_| async move {
+            move |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
                 let _drop_counter = DropCounter(callback_drops);
                 std::future::pending::<ReadCallbackResult<()>>().await
             },
@@ -624,7 +787,7 @@ async fn local_callback_timeout_drops_future_and_preserves_durable_reservation()
             &issuer,
             LockAcquisition::NonBlocking,
             Duration::from_secs(3),
-            |_| async {
+            |_, _| async {
                 reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
@@ -640,7 +803,13 @@ async fn local_callback_timeout_drops_future_and_preserves_durable_reservation()
     assert_eq!(reads.load(Ordering::SeqCst), 0);
     assert_eq!(issuer.calls(), 1);
 
-    clock.advance(5_250);
+    clock.advance(4_999);
+    assert_eq!(
+        successful_read(&restarted, &issuer, PRICE_PATH, PRICE_TR).await,
+        Err(ReadCoordinationError::IntradaySpacing { retry_after_ms: 1 })
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    clock.advance(1);
     successful_read(&restarted, &issuer, PRICE_PATH, PRICE_TR)
         .await
         .expect("expired fence permits a separately accounted attempt");
@@ -659,7 +828,10 @@ async fn explicit_ambiguous_result_preserves_debt_but_completed_failure_clears_i
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async { ReadCallbackResult::<()>::Ambiguous },
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
+                ReadCallbackResult::<()>::Ambiguous
+            },
         )
         .await
         .expect_err("ambiguous");
@@ -669,7 +841,7 @@ async fn explicit_ambiguous_result_preserves_debt_but_completed_failure_clears_i
         Err(ReadCoordinationError::ReservationActive { .. })
     ));
 
-    clock.advance(3_250);
+    clock.advance(4_250);
     let error = coordinator
         .execute(
             DAILY_PATH,
@@ -677,7 +849,8 @@ async fn explicit_ambiguous_result_preserves_debt_but_completed_failure_clears_i
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
                 ReadCallbackResult::<()>::CompletedFailure(ReadFailureKind::ResponseInvalid)
             },
         )
@@ -793,7 +966,7 @@ async fn denied_state_invokes_neither_issuer_nor_read_callback() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, _| async {
                 reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
@@ -843,7 +1016,8 @@ async fn higher_generation_retains_broker_cooldown_and_makes_zero_callbacks() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, dispatch| async move {
+                dispatch.begin_dispatch().expect("dispatch within bound");
                 ReadCallbackResult::<()>::RateLimited {
                     retry_after: Duration::from_secs(30),
                 }
@@ -866,7 +1040,7 @@ async fn higher_generation_retains_broker_cooldown_and_makes_zero_callbacks() {
             &issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, _| async {
                 reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
@@ -987,7 +1161,7 @@ async fn initialized_witness_rejects_deleted_state_before_all_callbacks() {
             &denied_issuer,
             bounded(),
             Duration::from_secs(3),
-            |_| async {
+            |_, _| async {
                 reads.fetch_add(1, Ordering::SeqCst);
                 ReadCallbackResult::Success(())
             },
@@ -1083,49 +1257,100 @@ async fn two_real_processes_share_one_token_and_one_read_attempt() {
     let temp = PrivateTemp::new("process-race");
     let issue_count = temp.base().join("issue-count");
     let read_count = temp.base().join("read-count");
-    let now = 20_000_000_i64;
-    let mut first = spawn_helper(
-        "execute",
+    let first_ready = temp.base().join("first-ready");
+    let first_entered = temp.base().join("first-issuer-entered");
+    let first_release = temp.base().join("first-issuer-release");
+    let second_ready = temp.base().join("second-ready");
+    let third_ready = temp.base().join("third-ready");
+    let initial_now = 20_000_000_i64;
+    let initial_clock = SettableClock::at(initial_now);
+    let initial = coordinator_at(
+        temp.root().to_path_buf(),
+        temp.uid(),
+        Arc::new(initial_clock.clone()),
+        1,
+        "child-app-key",
+        "child-app-secret",
+    );
+    let initial_issuer = CountingIssuer::new(initial_clock);
+    prime_token(&initial, &initial_issuer)
+        .await
+        .expect("prime token that will be expired for both children");
+    let expired_now = initial_now + 3_600_001;
+
+    let mut first = ManagedChild::new(spawn_barrier_helper(
+        "hold-issuer",
         temp.root(),
         temp.uid(),
-        now,
+        expired_now,
         &issue_count,
         &read_count,
-    );
-    let mut second = spawn_helper(
-        "execute",
+        &first_ready,
+        Some(&first_entered),
+        Some(&first_release),
+    ));
+    let mut second = ManagedChild::new(spawn_barrier_helper(
+        "probe-nonblocking",
         temp.root(),
         temp.uid(),
-        now,
+        expired_now,
         &issue_count,
         &read_count,
-    );
-    release_child(&mut first);
-    release_child(&mut second);
-    let first_output = first.wait_with_output().expect("first child");
-    let second_output = second.wait_with_output().expect("second child");
-    assert!(first_output.status.success());
+        &second_ready,
+        None,
+        None,
+    ));
+    wait_for_file(&first_ready);
+    wait_for_file(&second_ready);
+    release_child(first.child_mut());
+    wait_for_file(&first_entered);
+    assert_eq!(line_count(&issue_count), 1, "first issuer is held");
+    assert_eq!(line_count(&read_count), 0, "no GET before token issue");
+
+    release_child(second.child_mut());
+    let second_output = second.wait_with_output_bounded(Duration::from_secs(2));
     assert!(second_output.status.success());
-    let outcomes = [
-        String::from_utf8(first_output.stdout).expect("first output"),
-        String::from_utf8(second_output.stdout).expect("second output"),
-    ];
-    assert_eq!(
-        outcomes
-            .iter()
-            .filter(|value| value.contains("WP2A_SUCCESS"))
-            .count(),
-        1
+    assert!(
+        String::from_utf8(second_output.stdout)
+            .expect("second output")
+            .contains("WP2A_BUSY")
     );
-    assert_eq!(
-        outcomes
-            .iter()
-            .filter(|value| value.contains("WP2A_DENIED"))
-            .count(),
-        1
+    assert_eq!(line_count(&issue_count), 1, "second cannot issue");
+    assert_eq!(line_count(&read_count), 0, "second cannot read");
+
+    write_marker(&first_release);
+    let first_output = first.wait_with_output_bounded(Duration::from_secs(2));
+    assert!(first_output.status.success());
+    assert!(
+        String::from_utf8(first_output.stdout)
+            .expect("first output")
+            .contains("WP2A_SUCCESS")
     );
     assert_eq!(line_count(&issue_count), 1);
     assert_eq!(line_count(&read_count), 1);
+
+    let mut third = ManagedChild::new(spawn_barrier_helper(
+        "execute",
+        temp.root(),
+        temp.uid(),
+        expired_now,
+        &issue_count,
+        &read_count,
+        &third_ready,
+        None,
+        None,
+    ));
+    wait_for_file(&third_ready);
+    release_child(third.child_mut());
+    let third_output = third.wait_with_output_bounded(Duration::from_secs(2));
+    assert!(third_output.status.success());
+    assert!(
+        String::from_utf8(third_output.stdout)
+            .expect("third output")
+            .contains("WP2A_DENIED")
+    );
+    assert_eq!(line_count(&issue_count), 1, "token is shared after release");
+    assert_eq!(line_count(&read_count), 1, "spacing blocks another GET");
 }
 
 #[tokio::test]
@@ -1208,7 +1433,7 @@ async fn process_crash_after_reservation_blocks_until_conservative_debt_expires(
             retry_after_ms: 3_250
         })
     );
-    clock.advance(5_250);
+    clock.advance(8_250);
     successful_read(&coordinator, &issuer, PRICE_PATH, PRICE_TR)
         .await
         .expect("conservative fence and spacing elapsed");
@@ -1316,6 +1541,85 @@ fn spawn_helper(
         .expect("spawn helper")
 }
 
+#[allow(clippy::too_many_arguments)]
+fn spawn_barrier_helper(
+    action: &str,
+    root: &Path,
+    uid: u32,
+    now_ms: i64,
+    issue_count: &Path,
+    read_count: &Path,
+    ready: &Path,
+    entered: Option<&Path>,
+    release: Option<&Path>,
+) -> Child {
+    let mut command = Command::new(std::env::current_exe().expect("test executable"));
+    command
+        .arg("--exact")
+        .arg("read_coordination_process_helper")
+        .arg("--nocapture")
+        .env("WP2A_CHILD_ACTION", action)
+        .env("WP2A_CHILD_ROOT", root)
+        .env("WP2A_CHILD_UID", uid.to_string())
+        .env("WP2A_CHILD_NOW_MS", now_ms.to_string())
+        .env("WP2A_CHILD_ISSUE_COUNT", issue_count)
+        .env("WP2A_CHILD_READ_COUNT", read_count)
+        .env("WP2A_CHILD_READY", ready)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(entered) = entered {
+        command.env("WP2A_CHILD_ISSUER_ENTERED", entered);
+    }
+    if let Some(release) = release {
+        command.env("WP2A_CHILD_ISSUER_RELEASE", release);
+    }
+    command.spawn().expect("spawn barrier helper")
+}
+
+struct ManagedChild {
+    child: Option<Child>,
+}
+
+impl ManagedChild {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        self.child.as_mut().expect("managed child present")
+    }
+
+    fn wait_with_output_bounded(&mut self, timeout: Duration) -> std::process::Output {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.child_mut().try_wait().expect("poll child") {
+                Some(_) => {
+                    return self
+                        .child
+                        .take()
+                        .expect("managed child present")
+                        .wait_with_output()
+                        .expect("collect child output");
+                }
+                None if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                None => panic!("child exceeded bounded deadline"),
+            }
+        }
+    }
+}
+
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 fn release_child(child: &mut Child) {
     child
         .stdin
@@ -1344,16 +1648,47 @@ fn wait_for_lines(path: &Path, wanted: usize) {
     panic!("child did not reach bounded synchronization point");
 }
 
+fn write_marker(path: &Path) {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .expect("create barrier marker");
+    file.write_all(b"ready\n").expect("write barrier marker");
+    file.sync_all().expect("sync barrier marker");
+}
+
+fn wait_for_file(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if path.is_file() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("child did not reach bounded file barrier");
+}
+
 struct FileIssuer {
     clock: SettableClock,
     count_path: PathBuf,
     hang: bool,
+    entered_path: Option<PathBuf>,
+    release_path: Option<PathBuf>,
 }
 
 #[async_trait::async_trait]
 impl TokenIssuer for FileIssuer {
     async fn issue(&self) -> Result<AccessToken, KisError> {
         append_counter(&self.count_path);
+        if let Some(entered) = self.entered_path.as_deref() {
+            write_marker(entered);
+            let release = self
+                .release_path
+                .as_deref()
+                .expect("held issuer carries release barrier");
+            wait_for_file(release);
+        }
         if self.hang {
             std::future::pending::<()>().await;
         }
@@ -1391,6 +1726,9 @@ fn read_coordination_process_helper() {
     let issue_count =
         PathBuf::from(std::env::var_os("WP2A_CHILD_ISSUE_COUNT").expect("issue count"));
     let read_count = PathBuf::from(std::env::var_os("WP2A_CHILD_READ_COUNT").expect("read count"));
+    if let Some(ready) = std::env::var_os("WP2A_CHILD_READY") {
+        write_marker(Path::new(&ready));
+    }
     let mut signal = String::new();
     std::io::stdin()
         .read_to_string(&mut signal)
@@ -1410,6 +1748,8 @@ fn read_coordination_process_helper() {
         clock,
         count_path: issue_count,
         hang: action == "hang-issue",
+        entered_path: std::env::var_os("WP2A_CHILD_ISSUER_ENTERED").map(PathBuf::from),
+        release_path: std::env::var_os("WP2A_CHILD_ISSUER_RELEASE").map(PathBuf::from),
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -1421,15 +1761,22 @@ fn read_coordination_process_helper() {
             .expect("commit token before crash");
         std::process::exit(86);
     }
+    let crash_read = action == "crash-read";
+    let acquisition = if action == "probe-nonblocking" {
+        LockAcquisition::NonBlocking
+    } else {
+        bounded()
+    };
     let result = runtime.block_on(coordinator.execute_intraday(
         PRICE_PATH,
         PRICE_TR,
         &issuer,
-        bounded(),
+        acquisition,
         Duration::from_secs(3),
-        |_| async {
+        |_, dispatch| async move {
+            dispatch.begin_dispatch().expect("dispatch within bound");
             append_counter(&read_count);
-            if action == "crash-read" {
+            if crash_read {
                 std::process::exit(86);
             }
             ReadCallbackResult::Success(())
@@ -1452,6 +1799,7 @@ fn read_coordination_process_helper() {
             | ReadCoordinationError::IntradaySpacing { .. }
             | ReadCoordinationError::ReservationActive { .. },
         ) => println!("WP2A_DENIED"),
+        Err(ReadCoordinationError::LockBusy) => println!("WP2A_BUSY"),
         Err(_) => panic!("unexpected typed child result"),
     }
 }
