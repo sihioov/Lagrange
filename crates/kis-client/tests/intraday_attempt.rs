@@ -11,6 +11,7 @@ use fs2::FileExt;
 use kis_client::auth::{AccessToken, TokenIssuer, TokenManager};
 use kis_client::clock::{Clock, TestClock};
 use kis_client::error::KisError;
+use kis_client::live_transport::{Failure, classify};
 use kis_client::market_data::{IntradayAttemptError, KisMarketDataClient};
 use kis_client::rate_limit::{Quota, RateLimiter};
 use kis_client::read_coordination::{
@@ -573,6 +574,46 @@ async fn unauthorized_rate_limited_and_timeout_are_single_get_attempts() {
 }
 
 #[tokio::test]
+async fn live_shaped_timeout_is_typed_timeout_without_retry_or_body_leak() {
+    let request = HttpRequest::get(PRICE_PATH, PRICE_TR);
+    let live_shaped_error = classify(Failure::TimedOut, &request);
+    assert!(matches!(
+        live_shaped_error,
+        KisError::Broker { status: 504, .. }
+    ));
+
+    let timeout = Harness::new(
+        "live-shaped-timeout",
+        [TransportStep::Reply(Err(live_shaped_error))],
+    );
+    let error = eligible_attempt(&timeout)
+        .await
+        .expect_err("live transport timeout");
+    assert_eq!(error, IntradayAttemptError::Timeout);
+    assert!(!error.to_string().contains("gateway timeout"));
+    assert_eq!(timeout.intraday.request_count(), 1);
+    assert!(matches!(
+        eligible_attempt(&timeout).await,
+        Err(IntradayAttemptError::Coordination(
+            ReadCoordinationError::GlobalSpacing { .. }
+        ))
+    ));
+    assert_eq!(timeout.intraday.request_count(), 1);
+
+    let raw = Harness::new(
+        "raw-http-504",
+        [TransportStep::Reply(Ok(HttpResponse::status(
+            504,
+            "raw gateway body",
+        )))],
+    );
+    let raw_error = eligible_attempt(&raw).await.expect_err("raw provider 504");
+    assert_eq!(raw_error, IntradayAttemptError::ProviderUnavailable);
+    assert!(!raw_error.to_string().contains("raw gateway body"));
+    assert_eq!(raw.intraday.request_count(), 1);
+}
+
+#[tokio::test]
 async fn date_rollover_resets_ordinal_and_clock_rollback_fails_closed() {
     let harness = Harness::new("dates", [ok_response(), ok_response()]);
     let first = eligible_attempt(&harness).await.expect("first day attempt");
@@ -611,6 +652,101 @@ async fn single_attempt_does_not_reuse_the_legacy_retry_loop() {
 
 #[tokio::test]
 async fn budget_exhaustion_is_durable_and_next_kst_day_can_start_again() {
+    let harness = Harness::new("public-budget", [ok_response(), ok_response()]);
+    let seed_coordinator = ReadCoordinator::new(
+        ReadCoordinationConfig::new(&harness.root.root, harness.root.uid),
+        kis_client::read_coordination::ReadCredentials::new(
+            Secret::new("fake-app-key".to_owned()),
+            Secret::new("fake-app-secret".to_owned()),
+            1,
+        )
+        .expect("credentials"),
+        Arc::new(harness.clock.clone()),
+    );
+    for _ in 0..4_999 {
+        seed_coordinator
+            .execute_intraday(
+                PRICE_PATH,
+                PRICE_TR,
+                harness.issuer.as_ref(),
+                kis_client::read_coordination::LockAcquisition::Bounded(Duration::from_secs(1)),
+                Duration::from_secs(3),
+                |_, dispatch| async move {
+                    dispatch.begin_dispatch().expect("dispatch");
+                    ReadCallbackResult::Success(())
+                },
+            )
+            .await
+            .expect("budget attempt");
+        harness.clock.advance_ms(5_000);
+    }
+
+    let eligibility_calls = Arc::new(AtomicUsize::new(0));
+    let eligibility_calls_for_attempt = Arc::clone(&eligibility_calls);
+    let final_attempt = harness
+        .client
+        .get_intraday_attempt(PRICE_PATH, PRICE_TR, &[], move || async move {
+            eligibility_calls_for_attempt.fetch_add(1, Ordering::SeqCst);
+            Ok::<bool, &'static str>(true)
+        })
+        .await
+        .expect("new API owns the 5000th reservation");
+    assert_eq!(final_attempt.metadata().kst_date(), "1970-01-01");
+    assert_eq!(final_attempt.metadata().daily_attempt_ordinal(), 5_000);
+    assert_eq!(final_attempt.metadata().reservation_fence(), 5_000);
+    assert_eq!(eligibility_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.intraday.request_count(), 1);
+
+    harness.clock.advance_ms(5_000);
+    let exhausted_eligibility_calls = Arc::new(AtomicUsize::new(0));
+    let exhausted_eligibility_calls_for_attempt = Arc::clone(&exhausted_eligibility_calls);
+    let exhausted = harness
+        .client
+        .get_intraday_attempt(PRICE_PATH, PRICE_TR, &[], move || async move {
+            exhausted_eligibility_calls_for_attempt.fetch_add(1, Ordering::SeqCst);
+            Ok::<bool, &'static str>(true)
+        })
+        .await
+        .expect_err("new API observes the durable daily budget");
+    assert_eq!(
+        exhausted,
+        IntradayAttemptError::Coordination(ReadCoordinationError::IntradayBudgetExhausted)
+    );
+    assert_eq!(exhausted_eligibility_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(harness.intraday.request_count(), 1);
+
+    harness
+        .clock
+        .advance_ms(KST_DAY_MS - harness.clock.now_ms());
+    let next_day = eligible_attempt(&harness)
+        .await
+        .expect("new API resets the durable ledger on the next KST day");
+    assert_eq!(next_day.metadata().kst_date(), "1970-01-02");
+    assert_eq!(next_day.metadata().daily_attempt_ordinal(), 1);
+    assert_eq!(next_day.metadata().reservation_fence(), 5_001);
+    assert_eq!(harness.intraday.request_count(), 2);
+
+    harness.clock.advance_ms(-1);
+    let rollback_calls = Arc::new(AtomicUsize::new(0));
+    let rollback_calls_for_attempt = Arc::clone(&rollback_calls);
+    let rollback = harness
+        .client
+        .get_intraday_attempt(PRICE_PATH, PRICE_TR, &[], move || async move {
+            rollback_calls_for_attempt.fetch_add(1, Ordering::SeqCst);
+            Ok::<bool, &'static str>(true)
+        })
+        .await
+        .expect_err("clock regression");
+    assert_eq!(
+        rollback,
+        IntradayAttemptError::Coordination(ReadCoordinationError::ClockRollback)
+    );
+    assert_eq!(rollback_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(harness.intraday.request_count(), 2);
+}
+
+#[tokio::test]
+async fn coordinator_budget_exhaustion_regression_remains_intact() {
     let root = TempRoot::new("budget");
     let clock = TestClock::at(0);
     let issuer = FixedIssuer::new(clock.clone());

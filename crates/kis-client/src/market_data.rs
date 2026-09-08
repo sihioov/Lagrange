@@ -385,6 +385,9 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
                             }
                         }
                         KisError::Ambiguous { .. } => ReadCallbackResult::Ambiguous,
+                        KisError::Broker { status: 504, .. } => {
+                            ReadCallbackResult::CompletedFailure(ReadFailureKind::Timeout)
+                        }
                         KisError::Broker {
                             status: 500..=599, ..
                         } => ReadCallbackResult::CompletedFailure(
