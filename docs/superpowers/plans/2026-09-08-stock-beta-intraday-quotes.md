@@ -761,3 +761,16 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   검증 대상을 독립 확인한다. 일부 wrong-shape fixture가 malformed JSON으로도 실패하는
   점은 검토 대상으로 전달했다. ACCEPT 이전에는 통합하거나 WP-3B를 시작하지 않는다.
 - 실제 provider, DB, runner, browser, 운영 변경은 수행하지 않았다.
+
+### WP-3A 독립 수락 및 테스트 보강
+
+- 독립 reviewer는 `3ff2bb4`의 parser 구현에 ACCEPT를 반환했다. focused 15개 테스트,
+  scoped clippy/fmt/diff check가 독립 실행에서 통과했다. 추가 임시 probe는 유효 JSON의
+  잘못된 envelope, 모든 critical 필드의 null/숫자 타입/escaped 중복을 거부함을 확인했다.
+- 남은 Low는 영구 테스트 범위다. coordinator가 두 fixture의 잘못된 JSON 구성을
+  직접 확인했고, idle luna 담당자에게 기존 테스트 한 파일만 보강하도록 후속 위임했다.
+  reviewer는 idle이며 담당자는 running/permission 대기 없음으로 확인됐다.
+- 보강 후 검증된 두 커밋을 통합한다. WP-3B 준비 확인에서 0054 번호는 비어 있고,
+  고정된 disposable QA Compose 정의가 존재한다. 로컬 PostgreSQL 실행 파일은 없지만
+  sandbox 밖 read-only Docker version 조회는 성공했다. 운영 DB를 대안으로 사용하지 않으며
+  아직 QA DB를 시작하거나 migration을 적용하지 않았다.
