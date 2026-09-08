@@ -1212,3 +1212,27 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   실제 daemon scheduling 대비 직접 run_cycle 호출의 증거 범위도 구별한다.
   429는 persistence 관찰 뒤 취소, 다음 cycle 차단 및 만료 후 성공을 검토한다.
 - 아직 C2a ACCEPT나 전체 B2b 통합이 아니다. C2b/C3/window maxage 판단은 남는다.
+
+### B2b-C2a 검토 반려 및 negative evidence 보완
+
+- reviewer는 C2a scoped REJECT. 독립 scheduling4/4 (123.21초), 실제 503 retry2/2,
+  strict clippy/fmt/diff는 통과했지만 High halt test는 즉시 검사 후 60초를 직접 기다려
+  60→5초 회귀를 놓친다. Medium ordinary due test도 직접 5초 대기하므로 조기 cycle 억제를
+  입증하지 않는다. Low renewal task는 timeout/panic에서 stop/join을 건너뛸 수 있다.
+  coordinator가 해당 실제 코드를 다시 읽고 이 증거 한계를 확인했다.
+- 429 persistence/cross-cycle/positive evidence와 실제 503 간격은 충분하다. halt fence2는
+  만료 후 takeover로 올바르며 production 결함이나 lease 조작은 발견되지 않았다.
+- 유휴 C2a writer luna/max에 첫 bounded 보완을 맡긴다. 소유는 오직
+  `crates/job-queue/tests/intraday_producer_scheduling.rs`; 다른 source/support 변경 금지.
+  기존 positive/순환/429 단언을 보존한다. ordinary cache last_attempt+2초 이후, +5초 전의
+  실제 DB 시각을 확인하고 run_cycle의 attempts_started=0/GET 증가0/cache·ledger 불변을
+  단언한다. 이는 shared client의 busy가 잘못된 producer due 판단을 가리지 않게 한다.
+  halt는 last_attempt+7초 이후/+60초 전에도 같은 negative probe를 수행하고 기존 60초
+  positive를 유지한다. 시각이 이미 경계를 지났으면 억지 통과시키지 않는다.
+- renewal task에 cancellation/abort-on-drop 보호를 추가하고 normal path는 stop/join을
+  유지한다. timeout은 가능한 경로에서 정리 후 반환하며, panic/drop 보호도 작은 자체
+  helper 테스트로 확인한다. production 상수 변경이나 mutation probe는 이번 scope가 아니다.
+- scheduling 전체/C1 및 보존 producer/B1 회귀, scoped strict clippy/fmt/diff를 같은 QA에서
+  단일 compiler로 검증한다. intermediate/medium 분류와 luna/max는 유지한다. 첫 검토 반려이며
+  반복 실패가 관찰되면 모델만 한 tier 올린다. 독립 재검토 후 C2b로 진행하고 자동 daemon
+  cadence는 C2b lifecycle brief에 명시한다. 전체 B2b 미통합/활성화 금지는 유지한다.
