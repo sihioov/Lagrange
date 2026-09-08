@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 보완 완료·독립 재검토 중, WP-5 fixture Web 구현 중; 운영 활성화 미실행
+상태: WP-2B 보완·독립 재검토·개발 브랜치 통합 완료, WP-5 fixture Web 구현 중; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -603,3 +603,17 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   처리량이 낮아질 수 있으며 정확히 5초마다 실제 요청이 시작된다는 보장은 하지 않는다.
 - 기존 idle reviewer `f7941398-44f7-4293-a6d5-c72bac530a97`에 위 delta와 앞선 세 지적의
   해소 여부를 read-only 재검토하도록 후속 위임했다. WP-5는 별도 worktree에서 계속 진행한다.
+
+### WP-2B shared-boundary 개발 gate 수락
+
+- reviewer `f7941398-44f7-4293-a6d5-c72bac530a97`의 idle/ACCEPT를 확인했다.
+  세 지적 모두 해소됐으며 reviewer가 직접 offline integration 36개와 market-data 13개를
+  순차 실행해 통과했다. 전체 204개/fmt/clippy는 구현 담당의 검증 보고와 구분한다.
+- coordinator의 코드·barrier 확인, 독립 검토와 focused 재실행, 지정 9개 파일/clean 상태를
+  근거로 provider-free shared-boundary 개발 gate를 수락한다. 실제 provider나 운영 전역
+  보호의 검증 완료를 뜻하지 않으며 모든 reader의 shared_required 배포 전제는 유지한다.
+- `6a7b87a` → `0684ab9`, `85ac02b` → `87e672c`로 기능 integration branch에 통합했다.
+  통합된 9개 source/test 파일이 검토 HEAD와 동일함을 diff로 확인했다. main merge/push나
+  provider 호출·운영 변경은 수행하지 않았다.
+- WP-5는 실행 중이다. WP-3의 새 KIS 응답 필드 해석은 별도로 요청한 owner 승인에 아직
+  답변이 없어 시작하지 않는다. 승인 대기 때문에 독립 Web 구현을 중단하지 않는다.
