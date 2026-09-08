@@ -46,14 +46,87 @@ fn replace_once(bytes: Vec<u8>, from: &str, to: &str) -> Vec<u8> {
     text.replacen(from, to, 1).into_bytes()
 }
 
+fn assert_valid_json(bytes: &[u8]) {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .expect("synthetic fixture must be syntactically valid JSON");
+}
+
 fn assert_code(result: Result<IntradayQuote, IntradayQuoteError>, expected: &str) {
+    assert_code_with_label(result, expected, "fixture");
+}
+
+fn assert_code_with_label(
+    result: Result<IntradayQuote, IntradayQuoteError>,
+    expected: &str,
+    label: &str,
+) {
     let error = result.expect_err("fixture should be rejected");
-    assert_eq!(error.code(), expected);
+    assert_eq!(error.code(), expected, "{label}");
     let display = error.to_string();
     let debug = format!("{error:?}");
     assert!(display == "PROVIDER_RESPONSE_INVALID" || display == "QUOTE_VALUE_INVALID");
     assert!(!display.contains(PROVIDER_PROSE_SENTINEL));
     assert!(!debug.contains(PROVIDER_PROSE_SENTINEL));
+}
+
+#[derive(Clone, Copy)]
+struct CriticalOutputField {
+    name: &'static str,
+    string_value: &'static str,
+    numeric_value: &'static str,
+}
+
+const CRITICAL_OUTPUT_FIELDS: [CriticalOutputField; 8] = [
+    CriticalOutputField {
+        name: "stck_shrn_iscd",
+        string_value: "005930",
+        numeric_value: "5930",
+    },
+    CriticalOutputField {
+        name: "stck_prpr",
+        string_value: "72500",
+        numeric_value: "72500",
+    },
+    CriticalOutputField {
+        name: "prdy_vrss",
+        string_value: "1500",
+        numeric_value: "1500",
+    },
+    CriticalOutputField {
+        name: "prdy_ctrt",
+        string_value: "2.11",
+        numeric_value: "2.11",
+    },
+    CriticalOutputField {
+        name: "prdy_vrss_sign",
+        string_value: "2",
+        numeric_value: "2",
+    },
+    CriticalOutputField {
+        name: "stck_sdpr",
+        string_value: "71000",
+        numeric_value: "71000",
+    },
+    CriticalOutputField {
+        name: "iscd_stat_cls_code",
+        string_value: "00",
+        numeric_value: "0",
+    },
+    CriticalOutputField {
+        name: "temp_stop_yn",
+        string_value: "N",
+        numeric_value: "0",
+    },
+];
+
+fn escaped_json_key(field: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut escaped = String::with_capacity(field.len() * 6);
+    for byte in field.bytes() {
+        write!(&mut escaped, r#"\u{byte:04x}"#).expect("writing to String cannot fail");
+    }
+    escaped
 }
 
 #[test]
@@ -160,15 +233,26 @@ fn rejects_missing_or_wrong_type_envelope_fields() {
         "PROVIDER_RESPONSE_INVALID",
     );
 
-    let missing_output = replace_once(valid_fixture(), r#","output":{"#, "");
+    let missing_output =
+        br#"{"rt_cd":"0","msg_cd":"M000","msg1":"SYNTHETIC_PROVIDER_PROSE_SENTINEL"}"#;
+    assert_valid_json(missing_output);
     assert_code(
-        parse_intraday_quote(SYMBOL, &missing_output),
+        parse_intraday_quote(SYMBOL, missing_output),
         "PROVIDER_RESPONSE_INVALID",
     );
 
-    let array_output = replace_once(valid_fixture(), r#""output":{"#, r#""output":[],"#);
+    let array_output =
+        br#"{"rt_cd":"0","msg_cd":"M000","msg1":"SYNTHETIC_PROVIDER_PROSE_SENTINEL","output":[]}"#;
+    assert_valid_json(array_output);
     assert_code(
-        parse_intraday_quote(SYMBOL, &array_output),
+        parse_intraday_quote(SYMBOL, array_output),
+        "PROVIDER_RESPONSE_INVALID",
+    );
+
+    let null_output = br#"{"rt_cd":"0","msg_cd":"M000","msg1":"SYNTHETIC_PROVIDER_PROSE_SENTINEL","output":null}"#;
+    assert_valid_json(null_output);
+    assert_code(
+        parse_intraday_quote(SYMBOL, null_output),
         "PROVIDER_RESPONSE_INVALID",
     );
 }
@@ -206,6 +290,61 @@ fn rejects_missing_and_wrong_type_required_output_fields() {
         parse_intraday_quote(SYMBOL, &missing_stop),
         "PROVIDER_RESPONSE_INVALID",
     );
+}
+
+#[test]
+fn rejects_all_critical_output_fields_for_missing_null_numeric_and_escaped_duplicates() {
+    for field in CRITICAL_OUTPUT_FIELDS {
+        let field_fragment = format!(r#""{}":"{}""#, field.name, field.string_value);
+        let missing_fragment = format!(r#""{}":"{}","#, field.name, field.string_value);
+        let missing = replace_once(valid_fixture(), &missing_fragment, "");
+        assert_valid_json(&missing);
+        assert_code_with_label(
+            parse_intraday_quote(SYMBOL, &missing),
+            "PROVIDER_RESPONSE_INVALID",
+            &format!("{} missing", field.name),
+        );
+
+        let null = replace_once(
+            valid_fixture(),
+            &field_fragment,
+            &format!(r#""{}":null"#, field.name),
+        );
+        assert_valid_json(&null);
+        assert_code_with_label(
+            parse_intraday_quote(SYMBOL, &null),
+            "PROVIDER_RESPONSE_INVALID",
+            &format!("{} null", field.name),
+        );
+
+        let numeric = replace_once(
+            valid_fixture(),
+            &field_fragment,
+            &format!(r#""{}":{}"#, field.name, field.numeric_value),
+        );
+        assert_valid_json(&numeric);
+        assert_code_with_label(
+            parse_intraday_quote(SYMBOL, &numeric),
+            "PROVIDER_RESPONSE_INVALID",
+            &format!("{} numeric", field.name),
+        );
+
+        let escaped_key = escaped_json_key(field.name);
+        let escaped_duplicate = replace_once(
+            valid_fixture(),
+            &field_fragment,
+            &format!(
+                r#""{}":"{}","{}":"{}""#,
+                field.name, field.string_value, escaped_key, field.string_value
+            ),
+        );
+        assert_valid_json(&escaped_duplicate);
+        assert_code_with_label(
+            parse_intraday_quote(SYMBOL, &escaped_duplicate),
+            "PROVIDER_RESPONSE_INVALID",
+            &format!("{} escaped duplicate", field.name),
+        );
+    }
 }
 
 #[test]
