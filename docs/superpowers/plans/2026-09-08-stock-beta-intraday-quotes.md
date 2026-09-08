@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B·WP-5·WP-3A 통합 완료; WP-3B 저장소/producer 순차 구현 준비; 운영 활성화 미실행
+상태: WP-2B·WP-5·WP-3A·WP-3B1 통합 완료; WP-3B2 호출 증거 연결 선행 작업 준비; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -893,3 +893,44 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   통과를 보고했다. 격리 DB 접속 sandbox 제한은 정상 승인 경로의 재실행으로 해결했고
   운영 DB나 container lifecycle 변경은 없었다. 독립 reviewer에게 수락 재검토를 맡긴다.
   `b02959d`, `8c25106`, `c22bf57` 모두 ACCEPT 전까지 미통합이다.
+
+### WP-3B1 수락 및 WP-3B2 연결 경계 분할
+
+- 독립 reviewer `4ff1fb96-28a4-4a6d-ac03-11dca13f875a`가 최종 `c22bf57`을 ACCEPT했다.
+  격리 DB의 실제 app/worker 역할로 24/24 tests(30.5s), job-queue all-target clippy,
+  fmt/diff check를 독립 통과했다. 원래 세 결함과 후속 두 clock 경계 모두 해결됐다.
+- source `b02959d` → `63d8301`, `8c25106` → `ad2c3ce`, `c22bf57` → `46a70ca`를
+  기능 브랜치에 통합했다. 소유한 여섯 파일이 수락된 worker HEAD와 정확히 같고 clean임을
+  확인했다. B1 수락은 runtime/session-window/shared-budget 연결 수락이 아니다.
+- B2 pre-launch 검사에서 `get_intraday`는 내부 3회 retry와 `MarketDataReply`만 제공하며,
+  durable reservation의 KST date/count/fence를 반환하지 않는 것을 확인했다. 이 상태로
+  B1 `IntradayAttemptReservation`을 채우거나 매 retry의 수요/producer/session 검증을
+  가장하지 않는다. B2를 아래 두 순차 패키지로 좁힌다. 외부 응답 계약/호출 권한은 불변이다.
+
+| Package | Wave | Complexity | Objective / owned scope | Depends on | Worker | Verification |
+| --- | --- | --- | --- | --- | --- | --- |
+| WP-3B2a | 4b1 | intermediate | kis-client read_coordination.rs/market_data.rs의 새 단일 guarded intraday attempt와 실제 예약/receipt metadata, lib re-export만, 신규 focused tests | B1 ACCEPT | Codex luna/max | fake transport/clock, shared contention/budget/deadline, 기존 read regression, fmt/scoped clippy |
+| WP-3B2b | 4b2 | intermediate | 기존 B2 collector/session/scheduler/runner/DB 연결 범위; 새 단일 시도 API로 최대3회 retry를 명시적 소유 | B2a ACCEPT | Codex luna/max | fake session/fairness/retry + disposable DB fenced publish |
+
+- B2a confidence medium: 기존 shared ledger/gate는 수락됐고 필요한 변경은 그 증거의
+  typed 반환과 caller final eligibility 경계다. EOD 변경/새 dependency/저장 schema 변경이나
+  계약 모순이 필요하면 보고 후 coordinator가 재분류한다. B2b confidence medium과 기존
+  EOD lease 침범/runtime 의존성 escalation 조건은 유지한다.
+- B2a 계약: 기존 get/get_intraday 동작/테스트는 유지하고 새 API는 정확히 한 번 이하의
+  GET만 시도한다(내부 재시도 없음). exact path/TR, nonblocking shared lock, 전용3초
+  transport, durable 5000/day 및5초 ledger, shared401 invalidation/cooldown을 그대로 쓴다.
+  Caller의 async eligibility 검증을 final callback 안에서 실행한 뒤 dispatch guard와 send를
+  인접하게 수행한다. false/error/cancellation이면 GET 0회; 이미 예약한 debt는 환불하지 않는다.
+  검증의 시간도 기존 timeout/dispatch deadline 안에 포함한다. OS 선점 보장은 주장하지 않는다.
+- 결과 metadata는 persist된 실제 reservation에서만 얻는 KST date/day count/fence이며
+  credential fingerprint/token/body를 포함하지 않는다. 성공 receipt는 완전한 bytes 수신 뒤,
+  응답 검증/파싱 전 clock을 캡처한다. 오류/Debug에는 broker body/message가 노출되지 않는다.
+  B2b가 이 metadata로 저장소 입력을 구성하며 임의 성공 예약이나 두 번째 quota는 금지한다.
+- B2a 테스트: 정상 metadata/receipt, legacy/wrong channel reject, busy skip, caller deny/error,
+  callback delay/cancel, 401/429/timeout 단일 GET, no eager retry, budget exhaustion/date rollback,
+  기존 EOD 및 intraday retry regressions. 실제 provider/DB/runner/API/Web/Compose/Cargo 수정 금지.
+  하나의 compiler, CARGO_BUILD_JOBS=2, --locked --offline 사용. scoped tests/clippy/fmt 수행.
+- 작업 디렉터리는 기능 브랜치에서 분기한 새 intraday-attempt workspace다. worker는 이 plan과
+  spec 전체, root AGENTS를 읽고 파일/라인, deviation, 실행 명령/결과, 미해결/미검증(없으면
+  없음)을 보고하며 소유 파일만 commit한다. 독립 review ACCEPT 후 scope/tree를 대조해 통합한다.
+  B2b는 B2a 수락 이후 시작한다. QA DB는 후속 DB 작업을 위해 유지한다.
