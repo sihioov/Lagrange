@@ -456,6 +456,25 @@ skipped, or reused sequence is `QUOTE_DEMAND_SEQUENCE_CONFLICT`. The row records
 sequence on release, so a delayed renewal cannot resurrect it. A changed selection creates a new
 in-memory consumer UUID and demand.
 
+Coordinator clarification (2026-09-08, application contract only): lease expiry is not an
+explicit RELEASED tombstone. While the same consumer remains mounted/visible/online and its
+membership remains READY, a retained, expired ACTIVE row may be renewed with exactly the next
+sequence. The transaction rechecks owner, membership/generation and both capacity limits as
+a new active lease, and grants 30 seconds from its transaction time. Exact replay still returns
+the original expiry without extending it; resolve an ambiguous prior mutation by replaying its
+same key/body/sequence before advancing. RELEASED rows never reactivate; missing/GC rows return
+404 and stop that consumer without automatic identity churn. Expired ACTIVE rows remain logically
+inactive and are eligible for tombstone GC after 24 hours; the worker must not convert mere expiry
+into explicit release before that recovery window. WP-3/WP-4 must implement and DB-test this rule.
+
+At browser-observed expiry, abort/fence cache GETs but retain the serialized mutation context.
+Do not enqueue a concurrent mutation while one is pending. After a known successful renewal with
+a future expiry, resume with a fresh GET epoch; an old pre-expiry GET cannot become valid again.
+Expired exact replay advances only the known accepted sequence and schedules a new renewal.
+Recovery attempts are bounded (three consecutive attempts, at least 15 seconds apart, honoring
+Retry-After); exhaustion is visibly unavailable, not silent idle. Lifecycle cleanup always wins.
+This clarification changes neither the KIS response contract nor production authorization.
+
 DELETE body is:
 
 ```json
@@ -613,7 +632,7 @@ No new login role, schema, extension, service, Redis instance, or sequence grant
 
 ### 9.2 Retention and restart
 
-- Reads reject expired demand immediately. Worker marks/releases expired leases and deletes
+- Reads reject expired demand immediately. Worker treats expired ACTIVE leases as inactive and deletes
   RELEASED/expired demand tombstones after 24 hours.
 - Cache is latest-only. It is unreadable immediately after membership disable/generation mismatch
   and deleted by worker after 24 hours from the later of last attempt/success; null never-success

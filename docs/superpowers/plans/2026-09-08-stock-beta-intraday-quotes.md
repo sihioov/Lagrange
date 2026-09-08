@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 통합 완료, WP-5 보완 커밋 독립 재검토 중(미통합); 운영 활성화 미실행
+상태: WP-2B 통합 완료, WP-5 재검토 후 복구 규칙 명확화·상향 재배정(미통합); 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -662,3 +662,20 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   실패 이유를 숨기는지를 재검토 항목으로 명시했다. worker 요약만으로 해소 판정하지 않는다.
 - 기존 idle reviewer에게 네 원지적 및 위 delta의 회귀를 read-only 후속 위임했다.
   구현 담당은 대기하며 수정/리뷰 동시 소유는 없다. provider 응답 승인 대기와 운영 제외는 유지한다.
+
+### WP-5 재검토 결과 및 복구 계약 명확화
+
+- reviewer가 다시 idle/REJECT를 반환했다. 만료 후 영구 idle(High), 실패한 GET의 retained
+  값을 정상으로 표시하는 회귀(High), GET 시작 시각을 미래 시각 판정에 사용하는 문제(Medium)가
+  남았다. KST 날짜·strict 경계·background status/HALTED 원지적은 수정된 것으로 확인했다.
+  독립 focused 3 files/27 tests와 typecheck/lint는 통과했지만 완료 판정으로 대체하지 않는다.
+- coordinator가 client의 고정 nowMs 전달과 앞서 확인한 두 경로를 대조했다. application
+  contract 8.2에 expired ACTIVE와 명시적 RELEASED를 구별하는 복구 규칙을 명시했다.
+  다음 sequence 재갱신은 권한/READY/cap을 다시 확인하며 replay는 기존 만료를 연장하지 않는다.
+  missing/RELEASED는 자동 새 consumer로 우회하지 않는다. WP-3/4의 구현·DB 검증 의무다.
+- browser는 만료 시 GET만 중단/세대 무효화하고 mutation 직렬화 문맥을 유지한다. 복구는
+  15초 이상 간격·연속 3회 제한이며 pending 요청과 중첩하지 않는다. 수신 시각 clock과
+  실패 표시도 함께 보완한다. 이는 provider 계약 승인이나 실제 API 활성화가 아니다.
+- 반복 미해결에 따라 기존 luna implementer는 idle로 유지하고 새 Codex terra/max 담당에게
+  세 항목만 재배정한다(모델만 한 단계 상향, effort max 유지). 소유 범위는 quote coordinator/
+  view, application client, 신규 intraday tests, 필요한 최소 locale이며 다른 변경은 금지한다.
