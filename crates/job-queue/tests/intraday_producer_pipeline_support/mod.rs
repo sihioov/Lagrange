@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tempfile::{Builder, TempDir};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::intraday_quotes_support::IntradayTestDb;
@@ -60,9 +61,14 @@ impl Sleeper for NoSleep {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub enum TransportStep {
     Response(HttpResponse),
     ResponseAfter(Duration, HttpResponse),
+    ResponseAfterBarrier {
+        barrier: ResponseBarrier,
+        response: HttpResponse,
+    },
     Error(KisError),
     Hang,
     ResponseAfterShorteningProducerLease {
@@ -71,6 +77,31 @@ pub enum TransportStep {
         pool: PgPool,
         owner_user_id: Uuid,
     },
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct ResponseBarrier {
+    reached: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+#[allow(dead_code)]
+impl ResponseBarrier {
+    pub fn new() -> Self {
+        Self {
+            reached: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+        }
+    }
+
+    pub async fn wait_until_reached(&self) {
+        self.reached.notified().await;
+    }
+
+    pub fn release(&self) {
+        self.release.notify_one();
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +168,11 @@ impl Transport for ScriptedTransport {
                 Some(TransportStep::Response(response)) => Ok(response),
                 Some(TransportStep::ResponseAfter(delay, response)) => {
                     tokio::time::sleep(delay).await;
+                    Ok(response)
+                }
+                Some(TransportStep::ResponseAfterBarrier { barrier, response }) => {
+                    barrier.reached.notify_one();
+                    barrier.release.notified().await;
                     Ok(response)
                 }
                 Some(TransportStep::Error(error)) => Err(error),
@@ -251,7 +287,7 @@ impl ClientHarness {
         .expect("synthetic coordinated authentication");
         let transport = ScriptedTransport::new(steps);
         let client = KisMarketDataClient::new(
-            ScriptedTransport::new(std::iter::empty()),
+            transport.clone(),
             NoSleep,
             Arc::new(TokenManager::new(clock.clone(), issuer_trait)),
             Arc::new(RateLimiter::new(clock, Quota::new(100, 100))),
