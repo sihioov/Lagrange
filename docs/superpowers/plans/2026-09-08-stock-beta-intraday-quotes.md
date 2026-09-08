@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: 계획 작성 완료 — 구현·provider 호출·운영 활성화 미실행
+상태: 실행 착수 — WP-1 계약 검토 진행 중; 구현·provider 호출·운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -432,3 +432,13 @@ Wave 3의 WP-3과 WP-5만 병렬이다. 다른 wave는 순서대로 통합한다
 고정할 대상이다. 현재 문서가 그 사실을 검증 완료했다고 뜻하지 않는다.
 이후 실행에서 scope/승인/dependency가 어긋나면 해당 branch를 멈추고 본 graph와 brief를
 수정한 뒤 `$paseo-delegate`로 재개한다. native subagent로 우회하지 않는다.
+
+## 실행 기록 — 2026-09-08
+
+- 계획 커밋: `b5f32abf833f86de5dc46fc0ba7fd88923fcbaf8`.
+- 전용 integration branch: `feature/stock-beta-intraday-quotes-20260908`.
+- WP-1은 별도 Paseo worktree의 `work/stock-beta-intraday-contract-20260908`에서
+  Codex `gpt-5.6-sol`, high로 시작했다. scope는 신규 contract spec 한 파일뿐이다.
+- 현재 모델 가용성과 지침을 확인했다. provider 시작·결과 수락은 단순 agent ID 생성과
+  구분하며, WP-1 계약 검토/승인 gate 전 WP-2 이후 작업을 시작하지 않는다.
+- main 변경·push, 실제 시장 데이터 호출 및 운영 변경은 수행하지 않았다.
