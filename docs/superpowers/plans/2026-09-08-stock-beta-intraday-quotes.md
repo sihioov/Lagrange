@@ -749,3 +749,15 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   `/data/worktrees/3puw275b/stock-beta-intraday-parser`, workspace `wks_532168c8d9670b4d`,
   base `9f4fb4f07f1dff73772922403b90d457d858ff96`에서 시작했다. 공식 KIS 필드 매핑과
   inquire-price 공개 문서를 재확인했으며 샘플 실행이나 실제 provider 요청은 하지 않았다.
+
+### WP-3A 구현 완료 및 독립 검토
+
+- 담당자는 `3ff2bb4659d59259cc04307d143dd1461fd881d0`을 완료하고 idle/clean 상태다.
+  coordinator가 지정된 세 파일의 전체 source/test를 읽고 범위를 확인했다. 아직 미통합이다.
+- worker는 offline/locked focused parser 테스트 15개, scoped clippy, fmt 및 diff check
+  통과를 보고했다. 독립 reviewer `0ca82aff-cdd6-4d78-ae6f-8a841b6e1fe5`
+  (Codex terra/high)를 같은 workspace에서 시작했고 running 상태를 확인했다.
+- 중복 critical 필드 거부, decimal/sign/halt 경계, 오류 redaction과 fixture의 실제
+  검증 대상을 독립 확인한다. 일부 wrong-shape fixture가 malformed JSON으로도 실패하는
+  점은 검토 대상으로 전달했다. ACCEPT 이전에는 통합하거나 WP-3B를 시작하지 않는다.
+- 실제 provider, DB, runner, browser, 운영 변경은 수행하지 않았다.
