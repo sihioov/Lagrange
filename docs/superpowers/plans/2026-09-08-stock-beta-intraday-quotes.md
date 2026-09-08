@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 보완·독립 재검토·개발 브랜치 통합 완료, WP-5 fixture Web 구현 중; 운영 활성화 미실행
+상태: WP-2B 통합 완료, WP-5 구현 커밋 완료·독립 리뷰 중(미통합); 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -617,3 +617,20 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   provider 호출·운영 변경은 수행하지 않았다.
 - WP-5는 실행 중이다. WP-3의 새 KIS 응답 필드 해석은 별도로 요청한 owner 승인에 아직
   답변이 없어 시작하지 않는다. 승인 대기 때문에 독립 Web 구현을 중단하지 않는다.
+
+### WP-5 완료 결과 회수 및 독립 Web 리뷰
+
+- implementer의 idle과 `743bca7ca2e33ed1b76a364599ff51e5d059f0dd`, clean tree를 확인했다.
+  최종 변경은 Web 33개 파일이다. 작업 도중 보였던 기존 `detail/detail.module.css` 변경은
+  최종 커밋에 없으며 기존 EOD 테스트의 변경은 catalog 목록/optional 기대값뿐이다.
+- worker는 focused Vitest 10 files/75 tests, full Vitest 44 files/296 tests,
+  typecheck/lint/diff check 통과를 보고했다. dependency symlink는 제거됐다.
+  이 보고를 browser QA 또는 실제 API/provider 연동 완료로 취급하지 않는다.
+- coordinator가 page/flag/membership, registry/renderer, workspace 및 logout 접속 diff와
+  hook/widget 연결 코드를 직접 확인했다. 통합은 독립 검토 후 결정한다.
+- bounded read-only reviewer `6bd4786b-5ed1-4ab5-bcc4-999210431972`, Codex terra/high,
+  동일 frozen WP-5 worktree에서 running을 확인했다. strict DTO/client/coordinator/hook,
+  cleanup/race/freshness/catalog lifecycle 및 테스트 근거를 검토하며 소스 수정은 금지한다.
+  이는 WP-5 개발 gate의 사전 리뷰이지 후속 WP-7 전체 계층 리뷰의 대체가 아니다.
+- WP-3 response-field 승인 대기는 유지한다. main merge/push, provider 호출, Next/browser,
+  DB/운영 활성화는 수행하지 않았다. heartbeat는 구현 담당 대신 리뷰 담당을 추적한다.
