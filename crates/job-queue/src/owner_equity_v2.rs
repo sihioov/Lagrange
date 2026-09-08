@@ -53,6 +53,9 @@ pub use schedule::{
     OwnerEquityScheduleError, OwnerEquitySchedulePins, OwnerEquityScheduleReport,
     eligible_schedule_date, run_owner_equity_schedule_cycle,
 };
+#[path = "owner_equity_v2/intraday.rs"]
+mod intraday;
+pub use intraday::*;
 
 /// Dedicated type claimed by the V2 worker.  V1 jobs use different values.
 pub const OWNER_EQUITY_V2_JOB_TYPE: &str = "owner_equity_v2";
