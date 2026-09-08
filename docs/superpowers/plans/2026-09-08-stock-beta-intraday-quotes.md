@@ -1236,3 +1236,16 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   단일 compiler로 검증한다. intermediate/medium 분류와 luna/max는 유지한다. 첫 검토 반려이며
   반복 실패가 관찰되면 모델만 한 tier 올린다. 독립 재검토 후 C2b로 진행하고 자동 daemon
   cadence는 C2b lifecycle brief에 명시한다. 전체 B2b 미통합/활성화 금지는 유지한다.
+
+### B2b-C2a negative evidence 보완 완료 및 재검토
+
+- writer는 `f1c1fe1f985f966df3de22968fcb69d80a0fddd8` (parent `c5e059`)로 완료했고
+  idle/clean이다. coordinator가 한 파일 +141/-19 diff 전체를 읽었다. ordinary +2<5 및
+  halt +7<60의 전후 DB clock bracket, attempts_started=0/cache·ledger 불변 단언이 추가됐다.
+  renewal task Drop abort 및 handshake helper test, timeout 후 정리 경로도 추가됐다.
+- worker 보고: scheduling5/5 (123.29초), C1 9/9, producer6/6, B1 DB24/24,
+  scoped strict clippy/fmt/diff 통과. production/support/계약 변경은 없다.
+- 유휴 reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)에 이전
+  High/Medium/Low와 한 파일 delta를 read-only 재검토하도록 요청한다. 기존 429/503/positive
+  증거를 유지하는지 검증하며 scoped C2a 수락 이후에만 다음 C2b 상세 brief를 확정한다.
+  모든 B2b 커밋은 여전히 미통합이고 C2b/C3/window maxage 판단은 남는다.
