@@ -1249,3 +1249,86 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   High/Medium/Low와 한 파일 delta를 read-only 재검토하도록 요청한다. 기존 429/503/positive
   증거를 유지하는지 검증하며 scoped C2a 수락 이후에만 다음 C2b 상세 brief를 확정한다.
   모든 B2b 커밋은 여전히 미통합이고 C2b/C3/window maxage 판단은 남는다.
+
+### B2b-C2a ACCEPT 및 C2b lifecycle 실행 계약
+
+- 독립 reviewer는 `f1c1fe1f985f966df3de22968fcb69d80a0fddd8`의 High/Medium/Low 보완을
+  ACCEPT했다. scheduling5/5 (123.20초), scheduling/pipeline strict scoped clippy,
+  fmt/diff/clean tree를 독립 확인했다. unchanged 503은 이전 검토의 실행 증거를 유지한다.
+  coordinator는 실제 early-cycle/DB bracket/attempts=0 증거와 task cleanup을 채택한다.
+  C2a scoped ACCEPT이며 전체 B2b 수락이나 통합은 아니다.
+- 지시 근거는 root AGENTS.md, 본 계획과 frozen spec이다. 관련 crates 하위에 추가
+  AGENTS.md/CLAUDE.md는 발견되지 않았다. 모든 worker package는 `$paseo-delegate` CLI로만
+  실행하고 native subagents는 금지한다. 현재 writer와 reviewer는 모두 idle이다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| B2b-C2b | intermediate | 기존 실제 client fixture, 공개 daemon/repository API와 관찰 가능한 SQL barrier를 쓰는 test-only lifecycle 검증 | medium | public seam 부족, 재현 불가 경합 또는 source defect이면 evidence와 함께 중단; 반복 실패 때 모델만 한 tier 상향 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| B2b-C2b | 2b | intermediate | 실제 daemon cadence, 취소/heartbeat/lease fencing/현재 membership/EOD arbitration 증거 | 새 job-queue tests/intraday_producer_lifecycle.rs, 선택적 새 lifecycle_support/mod.rs, 최소 pipeline_support/mod.rs 및 intraday_quotes_support/mod.rs | C2a ACCEPT | 새 context의 Codex luna/max, auto-review | test-only commit 또는 정확한 failing source reproduction | 실제 guarded client+synthetic QA DB, SQL/response observation barriers, 기존 intraday 회귀, strict scoped clippy/fmt |
+
+#### C2b worker brief
+
+- target `/data/worktrees/3puw275b/stock-beta-intraday-producer`, workspace
+  `wks_7ee1494fc4f22bcc`, base `f1c1fe1f985f966df3de22968fcb69d80a0fddd8`.
+  main branch의 최신 계획/spec은 coordinator 절대경로에서 읽는다. worker branch의 plan은
+  오래됐으므로 사용하지 않는다. 앞선 B2b/C1/C2a 커밋과 기존 테스트를 보존한다.
+- 목표는 다음 lifecycle acceptance matrix의 관찰 가능한 증거다. 인접 구현/runner/C3,
+  migration/Cargo/API/Web/ops/Compose 변경은 금지한다. 실패하는 source 경로를 찾으면
+  최소 재현·예상/실제·명령을 보고하고 production fix는 별도 bounded assignment로 남긴다.
+  계약이나 window maxage를 새로 정하지 않는다.
+- 실제 `KisMarketDataClient` + `ReadCoordinator` + parser + producer + DB를 사용한다.
+  fake transport/issuer만 허용하며 reservation/receipt를 조립하지 않는다. 필요 시 test-only
+  `IntradayQuoteReader` decorator가 실제 guarded call의 완료된 outcome 전달을 barrier에서
+  보류할 수 있다. 이는 HTTP timeout 테스트가 아니라 post-capture lifecycle fault injection임을
+  명시하고 outcome/receipt/metadata를 변경하지 않는다. fake HTTP 응답은 실제 3초 한도를 지킨다.
+- (1) 실제 `run_daemon`이 한 identity를 두 번 이상 자동 조회하고 dispatch 간격 >=5초임을
+  검증한다. 테스트가 run_cycle 사이 sleep을 삽입하는 증거로 대신하지 않는다. 실제 request
+  observation으로 shutdown을 보내고 bounded join 및 추가 GET 없음/태스크 정리를 확인한다.
+- (2) 실제 GET가 시작된 response barrier에서 shutdown하여 publication과 다음 GET를 막고
+  이미 소비한 영속 budget/debt가 환불되지 않음을 확인한다. 먼저 확보한 last-good가 있으면
+  전체 relevant cache fields를 비교한다. 취소와 늦은 결과 전달도 별도 observation으로 구분한다.
+- (3) 실제 성공 outcome 전달을 보류하는 동안 DB heartbeat_at이 최소 한 번 전진하고
+  producer lease가 살아 있음을 관찰한다. 기본 20초/5초 설정을 줄이지 않는다. 이후 outcome을
+  전달하여 실제 성공 publication까지 확인한다. demand는 공개 renew/다음 sequence로 유지한다.
+- (4) 같은 post-capture 상태에서 producer row lock을 잡고 heartbeat SQL 대기를 실제
+  pg blocking evidence로 확인한다. 기록된 원래 20초 expiry를 넘긴 뒤 lock을 풀면 old heartbeat는
+  lease를 소급 연장하지 못해야 한다. 다른 holder의 공개 claim으로 fence 증가와 takeover를 확인하고
+  old pending outcome이 현재 cache를 덮어쓰거나 추가 GET를 시작하지 못함을 확인한다.
+  오래 걸리는 fixture에는 공개 demand renew를 유지한다. 임의 lease 연장/clock pause는 금지한다.
+- (5) 실제 outcome capture와 publication 사이에 current membership generation 변경 및
+  disable을 각각 주입하여 old result 폐기/last-good 보존을 검증한다. 공개 administration seam을
+  재사용하거나 기존 QA fixture와 동일하게 자기 per-test DB의 정확한 owner/membership row만
+  변경한다. 이는 동시 관리 변경의 synthetic fault injection이며 운영 변경 권한이 아니다.
+- (6) 기존 combined expiry test와 달리 producer lease와 window는 유효한 채 demand만
+  producer SQL lock 대기 중 만료되는 사례를 검증한다. demand만 짧게 만드는 기존 fixture 방식은
+  허용하되 fresh DB clock으로 producer/window 유효성과 demand 만료를 각각 단언한다. 관찰된
+  SQL barrier 뒤 final eligibility=false와 zero dispatch를 증명한다.
+- (7) 같은 실제 client/shared coordination으로 fake EOD GET를 response barrier에 잡아둔다.
+  quote cycle은 bounded Busy/zero quote GET이며 EOD가 완료된 후 shared debt/spacing을 지켜
+  실제 quote success가 가능함을 확인한다. 별도 client나 별도 ledger로 경합을 흉내 내지 않는다.
+  quote 실행 전후 기존 EOD table의 seeded row content와 xmin 등 UPDATE 탐지 가능한 fingerprint를
+  비교한다. row count만으로 no-write를 주장하지 않는다. EOD writer나 실제 provider는 실행하지 않는다.
+- 테스트 관찰은 oneshot/watch/실제 SQL blocker PID/DB time bracket을 사용한다. 모든 spawned
+  task는 정상 stop/join과 Drop abort 보호, 전체 bounded timeout을 가진다. helper 자신이 검증할
+  동작을 강제로 참으로 만들거나 단순 시간 대기를 동작 증거로 제시하지 않는다.
+- 검증은 synthetic URL `postgres://postgres:lagrange@127.0.0.1:55438/postgres`의 own per-test DB만
+  사용한다. QA lifecycle은 coordinator 소유이므로 worker Docker lifecycle 금지. 외부 provider,
+  운영 DB, root/Next/browser/deploy/main merge/push는 계속 금지한다.
+- 한 compiler로 `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test --locked --offline
+  -p job-queue --test intraday_producer_lifecycle -- --test-threads=1` 실행, 기존 pipeline/scheduling/
+  producer/quotes test target 회귀, lifecycle 및 변경 support 소비 target의 strict scoped clippy,
+  fmt/diff를 검증한다. 설치/의존성 변경이나 공유 cache 삭제는 하지 않는다.
+- 보고: full commit/parent, 변경 파일·라인, matrix별 실제 단언·barrier와 결과, 명세 차이/이유,
+  실행 명령·결과, source failure 재현, 미해결/후속 및 미확인(없으면 없음). 로그나 provider body는
+  덤프하지 않는다. 완료 후 idle로 반환한다.
+
+#### C2b coordinator gates
+
+1. 현재 profile notes/provider 설정, clean base 및 파일 소유를 확인하고 luna/max worker 하나만 시작한다.
+2. 완료 시 실제 diff와 matrix evidence를 읽고 독립 terra/high review를 수행한다. 결함은 별도 bounded
+   수정/재검토 후 수락하며 테스트 개수만으로 수락하지 않는다.
+3. C2b 후 C3 behavioral runner harness를 상세화한다. window evidence maxage는 별도 계약 gap이며
+   36시간을 추정하거나 activation으로 해석하지 않는다. C3/전체 coverage/계약 판단 전에는 B2b 미통합이다.
