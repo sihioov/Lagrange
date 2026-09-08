@@ -707,3 +707,13 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - idle terra 담당자에게 coordinator와 신규 coordinator test 두 파일만 후속 위임했다.
   절대 retry-not-before 유지 및 타이머와 무관한 이전 GET epoch 무효화를 회귀 테스트로
   먼저 재현한 뒤 수정한다. 기존 커밋은 모두 미통합이며 재검토 후에만 수락한다.
+
+### WP-5 경계 수정 완료 및 검증 재개
+
+- `f0442733f246e5d93eb7d8de57e9b37403bab2d8`의 idle/clean 및 두 파일 범위를 확인했다.
+  coordinator가 전체 delta를 읽었으며 절대 재시도 기한과 이전 lease의 GET 무효화가
+  추가됐다. worker는 수정 전 27개 중 3개 실패 재현, 수정 후 27개 통과 및 전체 Web
+  44 files/316 tests, typecheck/lint 통과를 보고했다.
+- idle reviewer에게 두 High와 회귀를 재검토하도록 전달했다. 독립 실행에서는 기존 app
+  캐시를 보존하고 repository root의 임시 dependency symlink 방식으로 검증을 재개한다.
+  아직 WP-5 커밋은 모두 미통합이며 backend/browser 검증이나 provider 승인을 뜻하지 않는다.
