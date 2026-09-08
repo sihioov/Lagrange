@@ -12,7 +12,7 @@ use kis_client::auth::{AccessToken, TokenIssuer, TokenManager};
 use kis_client::clock::{Clock, TestClock};
 use kis_client::error::KisError;
 use kis_client::live_transport::{Failure, classify};
-use kis_client::market_data::{IntradayAttemptError, KisMarketDataClient};
+use kis_client::market_data::{IntradayAttemptError, IntradayAttemptOutcome, KisMarketDataClient};
 use kis_client::rate_limit::{Quota, RateLimiter};
 use kis_client::read_coordination::{
     LOCK_FILE_NAME, ReadCallbackResult, ReadCoordinationConfig, ReadCoordinationError,
@@ -476,6 +476,54 @@ async fn caller_false_or_error_sends_no_get_and_retains_reservation_debt() {
     assert_eq!(error, IntradayAttemptError::CallerEligibilityFailed);
     assert!(!error.to_string().contains("database/provider prose"));
     assert_eq!(failed.intraday.request_count(), 0);
+}
+
+#[tokio::test]
+async fn outcome_exposes_only_real_failed_reservation_without_a_receipt() {
+    let ineligible = Harness::new("outcome-ineligible", [ok_response()]);
+    let outcome = ineligible
+        .client
+        .get_intraday_attempt_outcome(PRICE_PATH, PRICE_TR, &[], || async {
+            Ok::<bool, &'static str>(false)
+        })
+        .await;
+    match outcome {
+        IntradayAttemptOutcome::Failed {
+            error: IntradayAttemptError::CallerIneligible,
+            reservation: Some(reservation),
+        } => {
+            assert_eq!(reservation.kst_date(), "1970-01-01");
+            assert_eq!(reservation.daily_attempt_ordinal(), 1);
+            assert_eq!(reservation.reservation_fence(), 1);
+        }
+        other => panic!("unexpected typed outcome: {other:?}"),
+    }
+    assert_eq!(ineligible.intraday.request_count(), 0);
+
+    let transport = Harness::new(
+        "outcome-transport",
+        [TransportStep::Reply(Ok(HttpResponse::status(
+            503,
+            "provider body must remain private",
+        )))],
+    );
+    let outcome = transport
+        .client
+        .get_intraday_attempt_outcome(PRICE_PATH, PRICE_TR, &[], || async {
+            Ok::<bool, &'static str>(true)
+        })
+        .await;
+    match outcome {
+        IntradayAttemptOutcome::Failed {
+            error: IntradayAttemptError::ProviderUnavailable,
+            reservation: Some(reservation),
+        } => {
+            assert_eq!(reservation.daily_attempt_ordinal(), 1);
+            assert_eq!(reservation.reservation_fence(), 1);
+        }
+        other => panic!("unexpected typed outcome: {other:?}"),
+    }
+    assert_eq!(transport.intraday.request_count(), 1);
 }
 
 #[tokio::test]

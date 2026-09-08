@@ -79,6 +79,16 @@ fn map_intraday_coordination_error(error: ReadCoordinationError) -> IntradayAtte
     }
 }
 
+fn map_reservation(
+    reservation: crate::read_coordination::IntradayAttemptReservation,
+) -> IntradayAttemptReservationMetadata {
+    IntradayAttemptReservationMetadata {
+        kst_date: reservation.kst_date,
+        daily_attempt_ordinal: reservation.daily_attempt_ordinal,
+        reservation_fence: reservation.reservation_fence,
+    }
+}
+
 /// One successful KIS read, before provider-specific parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketDataReply {
@@ -115,12 +125,82 @@ impl IntradayAttemptMetadata {
     }
 }
 
+/// The real shared-ledger reservation retained when a one-shot attempt fails
+/// after its reservation was committed.  There is deliberately no receipt:
+/// response bytes are required before a receipt can exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntradayAttemptReservationMetadata {
+    kst_date: String,
+    daily_attempt_ordinal: u32,
+    reservation_fence: u64,
+}
+
+impl IntradayAttemptReservationMetadata {
+    pub fn kst_date(&self) -> &str {
+        &self.kst_date
+    }
+
+    pub fn daily_attempt_ordinal(&self) -> u32 {
+        self.daily_attempt_ordinal
+    }
+
+    pub fn reservation_fence(&self) -> u64 {
+        self.reservation_fence
+    }
+}
+
 /// A successful single intraday read and the metadata of its real persisted
 /// reservation. Construction is private and the reply is intentionally not
 /// rendered by `Debug`, because it contains the provider body.
+#[derive(PartialEq, Eq)]
 pub struct IntradayAttemptReply {
     reply: MarketDataReply,
     metadata: IntradayAttemptMetadata,
+}
+
+/// A one-shot result that preserves reservation evidence on a typed failure.
+/// The ordinary `get_intraday_attempt` method remains a Result-shaped wrapper
+/// for existing callers.
+#[derive(Debug, PartialEq, Eq)]
+pub enum IntradayAttemptOutcome {
+    Success(IntradayAttemptReply),
+    Failed {
+        error: IntradayAttemptError,
+        reservation: Option<IntradayAttemptReservationMetadata>,
+    },
+}
+
+impl IntradayAttemptOutcome {
+    pub fn reservation(&self) -> Option<IntradayAttemptReservationMetadata> {
+        match self {
+            Self::Success(reply) => Some(reply.metadata().reservation_metadata()),
+            Self::Failed { reservation, .. } => reservation.clone(),
+        }
+    }
+
+    pub fn error(&self) -> Option<&IntradayAttemptError> {
+        match self {
+            Self::Success(_) => None,
+            Self::Failed { error, .. } => Some(error),
+        }
+    }
+
+    pub fn into_result(self) -> Result<IntradayAttemptReply, IntradayAttemptError> {
+        match self {
+            Self::Success(reply) => Ok(reply),
+            Self::Failed { error, .. } => Err(error),
+        }
+    }
+}
+
+impl IntradayAttemptMetadata {
+    pub fn reservation_metadata(&self) -> IntradayAttemptReservationMetadata {
+        IntradayAttemptReservationMetadata {
+            kst_date: self.kst_date.clone(),
+            daily_attempt_ordinal: self.daily_attempt_ordinal,
+            reservation_fence: self.reservation_fence,
+        }
+    }
 }
 
 impl IntradayAttemptReply {
@@ -323,14 +403,8 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         self.get_shared(path, tr_id, query, None, true).await
     }
 
-    /// Perform one guarded current-price GET.
-    ///
-    /// The caller owns any retry cycle around this method. The eligibility
-    /// future runs inside the coordinator's final callback and its result is
-    /// intentionally reduced to a bounded outcome; caller/database/provider
-    /// error text never crosses this boundary. A returned `Err` or a dropped
-    /// eligibility future sends no GET but retains the already-persisted
-    /// reservation debt.
+    /// Perform one guarded current-price GET and retain real reservation
+    /// evidence on a typed failure.
     pub async fn get_intraday_attempt<F, Fut, E>(
         &self,
         path: &str,
@@ -342,16 +416,43 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<bool, E>>,
     {
+        self.get_intraday_attempt_outcome(path, tr_id, query, eligibility_check)
+            .await
+            .into_result()
+    }
+
+    /// The producer-facing one-shot seam. The caller owns retries; this method
+    /// never retries internally. A reservation is returned on every failure
+    /// for which the shared coordinator committed a real slot, and is `None`
+    /// for failures before reservation.
+    pub async fn get_intraday_attempt_outcome<F, Fut, E>(
+        &self,
+        path: &str,
+        tr_id: &str,
+        query: &[(String, String)],
+        eligibility_check: F,
+    ) -> IntradayAttemptOutcome
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<bool, E>>,
+    {
         if ReadChannel::from_pair(path, tr_id).ok() != Some(ReadChannel::InquirePrice) {
-            return Err(IntradayAttemptError::UnsupportedEndpoint);
+            return IntradayAttemptOutcome::Failed {
+                error: IntradayAttemptError::UnsupportedEndpoint,
+                reservation: None,
+            };
         }
         let Some(coordinated) = self.coordinated.as_ref() else {
-            return Err(IntradayAttemptError::SharedReadRequired);
+            return IntradayAttemptOutcome::Failed {
+                error: IntradayAttemptError::SharedReadRequired,
+                reservation: None,
+            };
         };
         let Some(transport) = self.intraday_transport.as_ref() else {
-            return Err(IntradayAttemptError::Coordination(
-                ReadCoordinationError::CorruptState,
-            ));
+            return IntradayAttemptOutcome::Failed {
+                error: IntradayAttemptError::Coordination(ReadCoordinationError::CorruptState),
+                reservation: None,
+            };
         };
 
         let credentials = coordinated.credentials.clone();
@@ -429,7 +530,7 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
 
         let outcome = coordinated
             .coordinator
-            .execute_intraday_attempt(
+            .execute_intraday_attempt_outcome(
                 path,
                 tr_id,
                 coordinated.issuer.as_ref(),
@@ -439,23 +540,33 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
             )
             .await;
 
-        match outcome {
-            Ok(success) => {
-                let ReceivedMarketData {
-                    reply,
-                    received_at_ms,
-                } = success.value;
-                Ok(IntradayAttemptReply {
+        match outcome.result {
+            Ok(ReceivedMarketData {
+                reply,
+                received_at_ms,
+            }) => {
+                let Some(reservation) = outcome.reservation else {
+                    return IntradayAttemptOutcome::Failed {
+                        error: IntradayAttemptError::Coordination(
+                            ReadCoordinationError::CorruptState,
+                        ),
+                        reservation: None,
+                    };
+                };
+                IntradayAttemptOutcome::Success(IntradayAttemptReply {
                     reply,
                     metadata: IntradayAttemptMetadata {
-                        kst_date: success.reservation.kst_date,
-                        daily_attempt_ordinal: success.reservation.daily_attempt_ordinal,
-                        reservation_fence: success.reservation.reservation_fence,
+                        kst_date: reservation.kst_date,
+                        daily_attempt_ordinal: reservation.daily_attempt_ordinal,
+                        reservation_fence: reservation.reservation_fence,
                         received_at_ms,
                     },
                 })
             }
-            Err(error) => Err(map_intraday_coordination_error(error)),
+            Err(error) => IntradayAttemptOutcome::Failed {
+                error: map_intraday_coordination_error(error),
+                reservation: outcome.reservation.map(map_reservation),
+            },
         }
     }
 

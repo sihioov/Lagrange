@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use market_data::intraday_quotes::{IntradayQuote, IntradayQuoteDirection};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -30,6 +30,8 @@ pub const SESSION_PROOF_MAX_AGE_HOURS: i64 = 36;
 
 const KRX_SOURCE: &str = "kis";
 const KRX_SOURCE_VERSION: &str = "kis-chk-holiday-v1:schema-1";
+const INTRADAY_RESERVATION_NAMESPACE: Uuid =
+    Uuid::from_u128(0x1d7c_6b4a_3f20_4d8e_9a6b_0c1e_2f3a_4b5c);
 
 /// Typed storage failures.  No variant carries SQL text, provider prose, a
 /// response body, or a caller credential.
@@ -476,6 +478,7 @@ pub struct IntradayAttemptReservation {
     pub reservation_id: Uuid,
     pub session_date: NaiveDate,
     pub attempt_number: u64,
+    reservation_fence: Option<u64>,
 }
 
 impl IntradayAttemptReservation {
@@ -491,14 +494,93 @@ impl IntradayAttemptReservation {
             reservation_id,
             session_date,
             attempt_number,
+            reservation_fence: None,
         })
     }
 
+    /// Correlate the actual shared-ledger reservation with the storage
+    /// context.  The UUID is only a deterministic correlation value; the
+    /// private date/count/fence evidence remains the proof of the attempt.
+    pub fn from_shared_evidence(
+        owner_user_id: Uuid,
+        producer_holder_id: Uuid,
+        session_date: NaiveDate,
+        attempt_number: u64,
+        reservation_fence: u64,
+    ) -> Result<Self, IntradayStorageError> {
+        if owner_user_id.is_nil()
+            || producer_holder_id.is_nil()
+            || attempt_number == 0
+            || reservation_fence == 0
+        {
+            return Err(IntradayStorageError::BudgetProofInvalid);
+        }
+        let correlation = format!(
+            "owner={owner_user_id};holder={producer_holder_id};fence={reservation_fence};date={session_date}"
+        );
+        Ok(Self {
+            reservation_id: Uuid::new_v5(&INTRADAY_RESERVATION_NAMESPACE, correlation.as_bytes()),
+            session_date,
+            attempt_number,
+            reservation_fence: Some(reservation_fence),
+        })
+    }
+
+    pub fn reservation_fence(&self) -> Option<u64> {
+        self.reservation_fence
+    }
+
+    pub fn has_shared_evidence(&self) -> bool {
+        self.reservation_fence.is_some()
+    }
+
     fn validate(&self) -> Result<(), IntradayStorageError> {
-        if self.reservation_id.is_nil() || self.attempt_number == 0 {
+        if self.reservation_id.is_nil()
+            || self.attempt_number == 0
+            || self.reservation_fence.is_some_and(|fence| fence == 0)
+        {
             return Err(IntradayStorageError::BudgetProofInvalid);
         }
         Ok(())
+    }
+}
+
+/// UTC bounds derived from the closed, hash-pinned KRX session-window file.
+/// Storage checks them only after publication locks and a fresh DB clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntradaySessionWindow {
+    pub session_date: NaiveDate,
+    pub open_at: DateTime<Utc>,
+    pub close_at: DateTime<Utc>,
+}
+
+impl IntradaySessionWindow {
+    pub fn new(
+        session_date: NaiveDate,
+        open_at: DateTime<Utc>,
+        close_at: DateTime<Utc>,
+    ) -> Result<Self, IntradayStorageError> {
+        if open_at >= close_at
+            || (open_at
+                .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).expect("valid KST offset")))
+            .date_naive()
+                != session_date
+            || (close_at
+                .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).expect("valid KST offset")))
+            .date_naive()
+                != session_date
+        {
+            return Err(IntradayStorageError::SessionProofInvalid);
+        }
+        Ok(Self {
+            session_date,
+            open_at,
+            close_at,
+        })
+    }
+
+    fn contains(&self, now: DateTime<Utc>) -> bool {
+        self.open_at <= now && now < self.close_at
     }
 }
 
@@ -685,6 +767,14 @@ pub struct IntradayGcReport {
     pub cache_rows_deleted: u64,
 }
 
+/// One distinct current identity after duplicate consumer demand merge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntradayQuoteWorkItem {
+    pub identity: IntradayQuoteIdentity,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub halted: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct OwnerIntradayQuoteRepository {
     pool: PgPool,
@@ -697,6 +787,18 @@ impl OwnerIntradayQuoteRepository {
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    /// Read the database wall clock used by producer scheduling.  Tests may
+    /// use the disposable database as their clock source; production never
+    /// substitutes the application clock for publication fencing.
+    pub async fn current_database_time(&self) -> Result<DateTime<Utc>, IntradayStorageError> {
+        let mut tx = self.begin_worker_transaction().await?;
+        let now = fresh_database_time(&mut tx).await?;
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(now)
     }
 
     /// Create a new sequence-zero demand or renew the exact next sequence.
@@ -1009,6 +1111,347 @@ impl OwnerIntradayQuoteRepository {
         Ok(identities)
     }
 
+    /// Enumerate owner scopes with at least one non-expired demand on a READY
+    /// current admission.  This is the worker-side owner discovery query; it
+    /// does not inspect credentials or provider state.
+    pub async fn active_demand_owners(&self) -> Result<Vec<Uuid>, IntradayStorageError> {
+        let mut tx = self.begin_worker_transaction().await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        let owners: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT demand.owner_user_id
+               FROM public.owner_intraday_quote_demands AS demand
+               JOIN public.owner_equity_memberships AS membership
+                 ON membership.owner_user_id = demand.owner_user_id
+                AND membership.id = demand.membership_id
+                AND membership.instrument_id = demand.instrument_id
+                AND membership.state = 'READY'
+               JOIN public.owner_equity_generation_admissions AS admission
+                 ON admission.owner_user_id = demand.owner_user_id
+                AND admission.membership_id = demand.membership_id
+                AND admission.generation_id = demand.generation_id
+                AND admission.instrument_id = demand.instrument_id
+                AND admission.generation = demand.generation
+              WHERE demand.state = 'ACTIVE'
+                AND demand.lease_expires_at > $1
+                AND NOT EXISTS (
+                    SELECT 1
+                      FROM public.owner_equity_generation_admissions AS newer
+                     WHERE newer.owner_user_id = admission.owner_user_id
+                       AND newer.membership_id = admission.membership_id
+                       AND newer.instrument_id = admission.instrument_id
+                       AND newer.generation > admission.generation
+                )
+              ORDER BY demand.owner_user_id",
+        )
+        .bind(fresh_now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(owners)
+    }
+
+    /// Merge duplicate consumers while retaining the scheduler's last-attempt
+    /// and halt cadence metadata for each distinct current identity.
+    pub async fn active_quote_work(
+        &self,
+        owner_user_id: Uuid,
+    ) -> Result<Vec<IntradayQuoteWorkItem>, IntradayStorageError> {
+        if owner_user_id.is_nil() {
+            return Err(IntradayStorageError::InvalidInput);
+        }
+        let mut tx = self.begin_actor_transaction(owner_user_id).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        let rows: Vec<ActiveQuoteWorkDbRow> = sqlx::query_as(
+            "SELECT demand.owner_user_id, demand.membership_id,
+                    demand.generation_id, demand.instrument_id, demand.generation,
+                    MAX(
+                        CASE WHEN cache.session_date =
+                            ($2::timestamptz AT TIME ZONE 'Asia/Seoul')::date
+                        THEN cache.last_attempt_at END
+                    ) AS last_attempt_at,
+                    COALESCE(BOOL_OR(
+                        CASE WHEN cache.session_date =
+                            ($2::timestamptz AT TIME ZONE 'Asia/Seoul')::date
+                        THEN cache.halted ELSE FALSE END
+                    ), FALSE) AS halted
+               FROM public.owner_intraday_quote_demands AS demand
+               JOIN public.owner_equity_memberships AS membership
+                 ON membership.owner_user_id = demand.owner_user_id
+                AND membership.id = demand.membership_id
+                AND membership.instrument_id = demand.instrument_id
+                AND membership.state = 'READY'
+               JOIN public.owner_equity_generation_admissions AS admission
+                 ON admission.owner_user_id = demand.owner_user_id
+                AND admission.membership_id = demand.membership_id
+                AND admission.generation_id = demand.generation_id
+                AND admission.instrument_id = demand.instrument_id
+                AND admission.generation = demand.generation
+               LEFT JOIN public.owner_intraday_quote_cache AS cache
+                 ON cache.owner_user_id = demand.owner_user_id
+                AND cache.membership_id = demand.membership_id
+              WHERE demand.owner_user_id = $1
+                AND demand.state = 'ACTIVE'
+                AND demand.lease_expires_at > $2
+                AND NOT EXISTS (
+                    SELECT 1
+                      FROM public.owner_equity_generation_admissions AS newer
+                     WHERE newer.owner_user_id = admission.owner_user_id
+                       AND newer.membership_id = admission.membership_id
+                       AND newer.instrument_id = admission.instrument_id
+                       AND newer.generation > admission.generation
+                )
+              GROUP BY demand.owner_user_id, demand.membership_id,
+                       demand.generation_id, demand.instrument_id, demand.generation,
+                       cache.membership_id
+              ORDER BY MAX(
+                           CASE WHEN cache.session_date =
+                               ($2::timestamptz AT TIME ZONE 'Asia/Seoul')::date
+                           THEN cache.last_attempt_at END
+                       ) NULLS FIRST,
+                       demand.instrument_id, demand.membership_id, demand.generation",
+        )
+        .bind(owner_user_id)
+        .bind(fresh_now)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let work = rows
+            .into_iter()
+            .map(ActiveQuoteWorkDbRow::into_work_item)
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(work)
+    }
+
+    /// Resolve the exact current KIS calendar lineage for the supplied,
+    /// already hash-pinned window contract.  Missing evidence is an ordinary
+    /// empty result so the producer can remain UNKNOWN without a provider GET.
+    pub async fn resolve_current_session_proof(
+        &self,
+        owner_user_id: Uuid,
+        window_contract_sha256: &str,
+    ) -> Result<Option<IntradaySessionProof>, IntradayStorageError> {
+        if owner_user_id.is_nil() || !canonical_prefixed_sha256(window_contract_sha256) {
+            return Err(IntradayStorageError::SessionProofInvalid);
+        }
+        let mut tx = self.begin_actor_transaction(owner_user_id).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        let rows: Vec<SessionProofDbRow> = sqlx::query_as(
+            "SELECT calendar.session_date, calendar.source_batch_id,
+                    calendar.content_sha256
+               FROM public.trading_calendars AS calendar
+               JOIN public.trading_calendar_versions AS version
+                 ON version.exchange = calendar.exchange
+                AND version.session_date = calendar.session_date
+                AND version.session_type = calendar.session_type
+                AND version.source_version = calendar.source_version
+                AND version.source = $2
+                AND version.timezone = 'Asia/Seoul'
+                AND version.source_batch_id = calendar.source_batch_id
+                AND version.content_sha256 = calendar.content_sha256
+               JOIN public.data_batches AS batch
+                 ON batch.id = calendar.source_batch_id
+                AND batch.provider = 'KIS'
+                AND batch.market = 'KR'
+                AND batch.kind = 'CALENDAR'
+                AND batch.batch_date = calendar.session_date
+                AND batch.content_sha256 = calendar.content_sha256
+              WHERE calendar.exchange = 'KRX'
+                AND calendar.session_date =
+                    ($1::timestamptz AT TIME ZONE 'Asia/Seoul')::date
+                AND calendar.session_type = 'TRADING'
+                AND calendar.timezone = 'Asia/Seoul'
+                AND calendar.source = $2
+                AND calendar.source_version = $3
+                AND calendar.retrieved_at <= $1
+                AND calendar.retrieved_at >= $1 - INTERVAL '36 hours'
+                AND version.retrieved_at <= $1
+                AND version.retrieved_at >= $1 - INTERVAL '36 hours'
+                AND batch.retrieved_at <= $1
+                AND batch.retrieved_at >= $1 - INTERVAL '36 hours'
+              ORDER BY calendar.session_date, calendar.source_batch_id,
+                       calendar.content_sha256",
+        )
+        .bind(fresh_now)
+        .bind(KRX_SOURCE)
+        .bind(KRX_SOURCE_VERSION)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        if rows.len() > 1 {
+            return Err(IntradayStorageError::CalendarProofUnavailable);
+        }
+        let proof = rows
+            .into_iter()
+            .next()
+            .map(|row| row.into_proof(window_contract_sha256))
+            .transpose()?;
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(proof)
+    }
+
+    /// Recheck all non-provider eligibility immediately before the guarded
+    /// read.  False is a skip, never a fabricated budget/failure context.
+    pub async fn quote_attempt_eligible(
+        &self,
+        lease: &ProducerLease,
+        identity: &IntradayQuoteIdentity,
+        session: &IntradaySessionProof,
+        window: &IntradaySessionWindow,
+    ) -> Result<bool, IntradayStorageError> {
+        validate_lease(lease)?;
+        identity.validate()?;
+        session.validate()?;
+        if window.session_date != session.session_date {
+            return Err(IntradayStorageError::SessionProofInvalid);
+        }
+        let mut tx = self.begin_actor_transaction(identity.owner_user_id).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        let producer: Option<ProducerDbRow> = sqlx::query_as(
+            "SELECT owner_user_id, holder_id, fencing_token,
+                    lease_expires_at, heartbeat_at, FALSE AS live
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1 AND holder_id = $2
+                AND fencing_token = $3
+              FOR SHARE",
+        )
+        .bind(identity.owner_user_id)
+        .bind(lease.holder_id)
+        .bind(i64::try_from(lease.fencing_token).map_err(|_| IntradayStorageError::InvalidInput)?)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let producer_live = producer.is_some_and(|row| row.lease_expires_at > fresh_now);
+        let current_identity: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1
+                  FROM public.owner_equity_memberships AS membership
+                  JOIN public.owner_equity_generation_admissions AS admission
+                    ON admission.owner_user_id = membership.owner_user_id
+                   AND admission.membership_id = membership.id
+                   AND admission.instrument_id = membership.instrument_id
+                   AND admission.generation_id = $3
+                   AND admission.generation = $5
+                 WHERE membership.owner_user_id = $1
+                   AND membership.id = $2
+                   AND membership.instrument_id = $4
+                   AND membership.state = 'READY'
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM public.owner_equity_generation_admissions AS newer
+                        WHERE newer.owner_user_id = admission.owner_user_id
+                          AND newer.membership_id = admission.membership_id
+                          AND newer.instrument_id = admission.instrument_id
+                          AND newer.generation > admission.generation
+                   )
+            )",
+        )
+        .bind(identity.owner_user_id)
+        .bind(identity.membership_id)
+        .bind(identity.generation_id)
+        .bind(&identity.instrument_id)
+        .bind(identity.generation_i64())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let active_demand: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM public.owner_intraday_quote_demands
+                 WHERE owner_user_id = $1 AND membership_id = $2
+                   AND generation_id = $3 AND instrument_id = $4
+                   AND generation = $5 AND state = 'ACTIVE'
+                   AND lease_expires_at > $6
+            )",
+        )
+        .bind(identity.owner_user_id)
+        .bind(identity.membership_id)
+        .bind(identity.generation_id)
+        .bind(&identity.instrument_id)
+        .bind(identity.generation_i64())
+        .bind(fresh_now)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        if producer_live && current_identity && active_demand {
+            validate_session_lineage(&mut tx, session, fresh_now).await?;
+            if !window.contains(fresh_now) {
+                return Ok(false);
+            }
+        }
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(producer_live && current_identity && active_demand)
+    }
+
+    /// Check whether a broker Retry-After/backoff still fits every current
+    /// proof.  This query is advisory; the next guarded attempt performs its
+    /// own final eligibility transaction.
+    pub async fn quote_retry_allowed(
+        &self,
+        lease: &ProducerLease,
+        identity: &IntradayQuoteIdentity,
+        session: &IntradaySessionProof,
+        window: &IntradaySessionWindow,
+        delay: chrono::Duration,
+    ) -> Result<bool, IntradayStorageError> {
+        validate_lease(lease)?;
+        identity.validate()?;
+        session.validate()?;
+        if window.session_date != session.session_date {
+            return Err(IntradayStorageError::SessionProofInvalid);
+        }
+        if delay < chrono::Duration::zero() {
+            return Err(IntradayStorageError::InvalidInput);
+        }
+        let mut tx = self.begin_actor_transaction(identity.owner_user_id).await?;
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        let producer_expiry: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT lease_expires_at
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1 AND holder_id = $2
+                AND fencing_token = $3",
+        )
+        .bind(identity.owner_user_id)
+        .bind(lease.holder_id)
+        .bind(i64::try_from(lease.fencing_token).map_err(|_| IntradayStorageError::InvalidInput)?)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let demand_expiry: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT MIN(lease_expires_at)
+               FROM public.owner_intraday_quote_demands
+              WHERE owner_user_id = $1 AND membership_id = $2
+                AND generation_id = $3 AND instrument_id = $4
+                AND generation = $5 AND state = 'ACTIVE'",
+        )
+        .bind(identity.owner_user_id)
+        .bind(identity.membership_id)
+        .bind(identity.generation_id)
+        .bind(&identity.instrument_id)
+        .bind(identity.generation_i64())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let retry_at = fresh_now
+            .checked_add_signed(delay)
+            .ok_or(IntradayStorageError::InvalidInput)?;
+        let allowed = producer_expiry.is_some_and(|expiry| expiry > retry_at)
+            && demand_expiry.is_some_and(|expiry| expiry > retry_at)
+            && window.close_at > retry_at;
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(allowed)
+    }
+
     /// Claim or take over the one producer lease for an owner.  A live lease
     /// held by another UUID is never stolen; takeover increments the fence.
     pub async fn claim_producer(
@@ -1191,12 +1634,36 @@ impl OwnerIntradayQuoteRepository {
         quote: &IntradayQuote,
         receipt: IntradayQuoteReceipt,
     ) -> Result<IntradayCacheRecord, IntradayStorageError> {
+        self.publish_success_in_window_inner(context, quote, receipt, None)
+            .await
+    }
+
+    /// Publish through the producer path with the date-specific half-open
+    /// window rechecked after all publication locks.
+    pub async fn publish_success_in_window(
+        &self,
+        context: &IntradayPublicationContext,
+        quote: &IntradayQuote,
+        receipt: IntradayQuoteReceipt,
+        window: &IntradaySessionWindow,
+    ) -> Result<IntradayCacheRecord, IntradayStorageError> {
+        self.publish_success_in_window_inner(context, quote, receipt, Some(window))
+            .await
+    }
+
+    async fn publish_success_in_window_inner(
+        &self,
+        context: &IntradayPublicationContext,
+        quote: &IntradayQuote,
+        receipt: IntradayQuoteReceipt,
+        window: Option<&IntradaySessionWindow>,
+    ) -> Result<IntradayCacheRecord, IntradayStorageError> {
         context.validate()?;
         validate_quote(context.identity.symbol(), quote)?;
         let mut tx = self
             .begin_actor_transaction(context.identity.owner_user_id)
             .await?;
-        let locked = lock_publication_inputs(&mut tx, context).await?;
+        let locked = lock_publication_inputs(&mut tx, context, window).await?;
         validate_receipt(
             &mut tx,
             receipt.received_at,
@@ -1306,11 +1773,33 @@ impl OwnerIntradayQuoteRepository {
         context: &IntradayPublicationContext,
         failure: IntradayQuoteFailureCode,
     ) -> Result<IntradayCacheRecord, IntradayStorageError> {
+        self.record_failure_in_window_inner(context, failure, None)
+            .await
+    }
+
+    /// Record a typed failure only while the exact proven session window is
+    /// still open. Last-good quote fields remain untouched.
+    pub async fn record_failure_in_window(
+        &self,
+        context: &IntradayPublicationContext,
+        failure: IntradayQuoteFailureCode,
+        window: &IntradaySessionWindow,
+    ) -> Result<IntradayCacheRecord, IntradayStorageError> {
+        self.record_failure_in_window_inner(context, failure, Some(window))
+            .await
+    }
+
+    async fn record_failure_in_window_inner(
+        &self,
+        context: &IntradayPublicationContext,
+        failure: IntradayQuoteFailureCode,
+        window: Option<&IntradaySessionWindow>,
+    ) -> Result<IntradayCacheRecord, IntradayStorageError> {
         context.validate()?;
         let mut tx = self
             .begin_actor_transaction(context.identity.owner_user_id)
             .await?;
-        let locked = lock_publication_inputs(&mut tx, context).await?;
+        let locked = lock_publication_inputs(&mut tx, context, window).await?;
         let prior = locked.prior_cache;
 
         let same_identity = prior
@@ -1574,6 +2063,21 @@ impl OwnerIntradayQuoteRepository {
             .map_err(map_database_error)?;
         Ok(tx)
     }
+
+    async fn begin_worker_transaction(
+        &self,
+    ) -> Result<Transaction<'_, Postgres>, IntradayStorageError> {
+        let mut tx = self.pool.begin().await.map_err(map_database_error)?;
+        sqlx::query("SET LOCAL lock_timeout = '5s'")
+            .execute(&mut *tx)
+            .await
+            .map_err(map_database_error)?;
+        sqlx::query("SET LOCAL statement_timeout = '30s'")
+            .execute(&mut *tx)
+            .await
+            .map_err(map_database_error)?;
+        Ok(tx)
+    }
 }
 
 async fn fresh_database_time(
@@ -1647,6 +2151,56 @@ struct ActiveDemandIdentityDbRow {
     generation_id: Uuid,
     instrument_id: String,
     generation: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct ActiveQuoteWorkDbRow {
+    owner_user_id: Uuid,
+    membership_id: Uuid,
+    generation_id: Uuid,
+    instrument_id: String,
+    generation: i64,
+    last_attempt_at: Option<DateTime<Utc>>,
+    halted: bool,
+}
+
+impl ActiveQuoteWorkDbRow {
+    fn into_work_item(self) -> Result<IntradayQuoteWorkItem, IntradayStorageError> {
+        Ok(IntradayQuoteWorkItem {
+            identity: IntradayQuoteIdentity::new(
+                self.owner_user_id,
+                self.membership_id,
+                self.generation_id,
+                self.instrument_id,
+                u64::try_from(self.generation)
+                    .map_err(|_| IntradayStorageError::DatabaseIntegrity)?,
+            )
+            .map_err(|_| IntradayStorageError::DatabaseIntegrity)?,
+            last_attempt_at: self.last_attempt_at,
+            halted: self.halted,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct SessionProofDbRow {
+    session_date: NaiveDate,
+    source_batch_id: Uuid,
+    content_sha256: String,
+}
+
+impl SessionProofDbRow {
+    fn into_proof(
+        self,
+        window_contract_sha256: &str,
+    ) -> Result<IntradaySessionProof, IntradayStorageError> {
+        IntradaySessionProof::new(
+            self.session_date,
+            self.source_batch_id,
+            self.content_sha256,
+            window_contract_sha256.to_owned(),
+        )
+    }
 }
 
 impl ActiveDemandIdentityDbRow {
@@ -1964,6 +2518,7 @@ async fn lock_ready_admission(
 async fn lock_publication_inputs(
     tx: &mut Transaction<'_, Postgres>,
     context: &IntradayPublicationContext,
+    window: Option<&IntradaySessionWindow>,
 ) -> Result<LockedPublicationInputs, IntradayStorageError> {
     let fence: Option<ProducerDbRow> = sqlx::query_as(
         "SELECT owner_user_id, holder_id, fencing_token,
@@ -2047,6 +2602,11 @@ async fn lock_publication_inputs(
     .map_err(map_database_error)?;
     if !active_demand {
         return Err(IntradayStorageError::ActiveDemandRequired);
+    }
+    if let Some(window) = window
+        && (window.session_date != context.session.session_date || !window.contains(fresh_now))
+    {
+        return Err(IntradayStorageError::SessionProofInvalid);
     }
     validate_session_lineage(tx, &context.session, fresh_now).await?;
     Ok(LockedPublicationInputs {

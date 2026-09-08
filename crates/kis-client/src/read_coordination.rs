@@ -513,18 +513,20 @@ pub struct ReadCoordinator {
     clock: Arc<dyn Clock>,
 }
 
-/// The committed facts for one successful intraday reservation.
+/// The committed facts for one intraday reservation.
 ///
 /// This is crate-private on purpose: callers can receive it only from the
 /// coordinator after the reservation and successful completion state have
-/// both been persisted. No external caller can construct a successful
-/// reservation or choose a second quota ordinal/fence.
+/// both been persisted. No external caller can construct a reservation or
+/// choose a second quota ordinal/fence.
+#[derive(Clone)]
 pub(crate) struct IntradayAttemptReservation {
     pub(crate) kst_date: String,
     pub(crate) daily_attempt_ordinal: u32,
     pub(crate) reservation_fence: u64,
 }
 
+#[allow(dead_code)]
 pub(crate) struct ReadAttemptSuccess<T> {
     pub(crate) value: T,
     pub(crate) reservation: IntradayAttemptReservation,
@@ -533,6 +535,37 @@ pub(crate) struct ReadAttemptSuccess<T> {
 struct ReadExecutionSuccess<T> {
     value: T,
     reservation: Option<IntradayAttemptReservation>,
+}
+
+struct ReadExecutionFailure {
+    error: ReadCoordinationError,
+    reservation: Option<IntradayAttemptReservation>,
+}
+
+pub(crate) struct ReadAttemptOutcome<T> {
+    pub(crate) result: Result<T, ReadCoordinationError>,
+    pub(crate) reservation: Option<IntradayAttemptReservation>,
+}
+
+impl<T> ReadAttemptOutcome<T> {
+    fn failed(
+        error: ReadCoordinationError,
+        reservation: Option<IntradayAttemptReservation>,
+    ) -> Self {
+        Self {
+            result: Err(error),
+            reservation,
+        }
+    }
+}
+
+impl From<ReadCoordinationError> for ReadExecutionFailure {
+    fn from(error: ReadCoordinationError) -> Self {
+        Self {
+            error,
+            reservation: None,
+        }
+    }
 }
 
 impl ReadCoordinator {
@@ -639,6 +672,7 @@ impl ReadCoordinator {
     /// Execute exactly one current-price attempt and return its committed
     /// reservation evidence. The caller owns any retry cycle around this
     /// method; this method never sleeps or retries internally.
+    #[allow(dead_code)]
     pub(crate) async fn execute_intraday_attempt<T, F, Fut>(
         &self,
         path: &str,
@@ -652,32 +686,75 @@ impl ReadCoordinator {
         F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
         Fut: Future<Output = ReadCallbackResult<T>>,
     {
-        let channel = ReadChannel::from_pair(path, tr_id)?;
-        if channel != ReadChannel::InquirePrice {
-            return Err(ReadCoordinationError::UnsupportedChannel {
-                path: path.to_owned(),
-                tr_id: tr_id.to_owned(),
-            });
+        let outcome = self
+            .execute_intraday_attempt_outcome(
+                path,
+                tr_id,
+                issuer,
+                acquisition,
+                request_timeout,
+                read,
+            )
+            .await;
+        match outcome.result {
+            Ok(value) => {
+                let reservation = outcome
+                    .reservation
+                    .ok_or(ReadCoordinationError::CorruptState)?;
+                Ok(ReadAttemptSuccess { value, reservation })
+            }
+            Err(error) => Err(error),
         }
-        self.execute_class(
-            path,
-            tr_id,
-            true,
-            issuer,
-            acquisition,
-            request_timeout,
-            read,
-        )
-        .await
-        .and_then(|success| {
-            let reservation = success
-                .reservation
-                .ok_or(ReadCoordinationError::CorruptState)?;
-            Ok(ReadAttemptSuccess {
-                value: success.value,
-                reservation,
-            })
-        })
+    }
+
+    /// Execute one current-price attempt and retain real reservation evidence
+    /// even when the callback or transport fails after the slot was persisted.
+    /// This is intentionally separate from `execute_intraday_attempt`; callers
+    /// that do not need failure evidence keep the older Result-shaped seam.
+    pub(crate) async fn execute_intraday_attempt_outcome<T, F, Fut>(
+        &self,
+        path: &str,
+        tr_id: &str,
+        issuer: &dyn TokenIssuer,
+        acquisition: LockAcquisition,
+        request_timeout: Duration,
+        read: F,
+    ) -> ReadAttemptOutcome<T>
+    where
+        F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
+        Fut: Future<Output = ReadCallbackResult<T>>,
+    {
+        let channel = match ReadChannel::from_pair(path, tr_id) {
+            Ok(channel) => channel,
+            Err(error) => return ReadAttemptOutcome::failed(error, None),
+        };
+        if channel != ReadChannel::InquirePrice {
+            return ReadAttemptOutcome::failed(
+                ReadCoordinationError::UnsupportedChannel {
+                    path: path.to_owned(),
+                    tr_id: tr_id.to_owned(),
+                },
+                None,
+            );
+        }
+        match self
+            .execute_class_with_reservation(
+                path,
+                tr_id,
+                true,
+                issuer,
+                acquisition,
+                request_timeout,
+                read,
+            )
+            .await
+        {
+            Ok(success) => ReadAttemptOutcome {
+                result: Ok(success.value),
+                reservation: success.reservation,
+            },
+            Err(failure) => ReadAttemptOutcome::failed(failure.error, failure.reservation),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -691,6 +768,61 @@ impl ReadCoordinator {
         request_timeout: Duration,
         read: F,
     ) -> Result<ReadExecutionSuccess<T>, ReadCoordinationError>
+    where
+        F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
+        Fut: Future<Output = ReadCallbackResult<T>>,
+    {
+        self.execute_class_with_reservation(
+            path,
+            tr_id,
+            intraday,
+            issuer,
+            acquisition,
+            request_timeout,
+            read,
+        )
+        .await
+        .map_err(|failure| failure.error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_class_with_reservation<T, F, Fut>(
+        &self,
+        path: &str,
+        tr_id: &str,
+        intraday: bool,
+        issuer: &dyn TokenIssuer,
+        acquisition: LockAcquisition,
+        request_timeout: Duration,
+        read: F,
+    ) -> Result<ReadExecutionSuccess<T>, ReadExecutionFailure>
+    where
+        F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
+        Fut: Future<Output = ReadCallbackResult<T>>,
+    {
+        self.execute_class_inner(
+            path,
+            tr_id,
+            intraday,
+            issuer,
+            acquisition,
+            request_timeout,
+            read,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_class_inner<T, F, Fut>(
+        &self,
+        path: &str,
+        tr_id: &str,
+        intraday: bool,
+        issuer: &dyn TokenIssuer,
+        acquisition: LockAcquisition,
+        request_timeout: Duration,
+        read: F,
+    ) -> Result<ReadExecutionSuccess<T>, ReadExecutionFailure>
     where
         F: FnOnce(AccessToken, ReadDispatchGuard) -> Fut,
         Fut: Future<Output = ReadCallbackResult<T>>,
@@ -742,14 +874,25 @@ impl ReadCoordinator {
         // debt, including its intraday attempt count, when this bound is
         // missed.
         if self.clock.now_ms() > reserved_start_ms {
-            Self::persist_state(gate, state).await?;
-            return Err(ReadCoordinationError::CallbackStartMissed);
+            Self::persist_state(gate, state)
+                .await
+                .map_err(|error| ReadExecutionFailure {
+                    error,
+                    reservation: reservation.clone(),
+                })?;
+            return Err(ReadExecutionFailure {
+                error: ReadCoordinationError::CallbackStartMissed,
+                reservation,
+            });
         }
 
         let dispatch = ReadDispatchGuard::new(Arc::clone(&self.clock), start_ms, reserved_start_ms);
         let outcome = tokio::time::timeout(request_timeout, read(token, dispatch.clone())).await;
         let finished_ms = self.clock.now_ms();
-        advance_high_water(&mut state, finished_ms)?;
+        advance_high_water(&mut state, finished_ms).map_err(|error| ReadExecutionFailure {
+            error,
+            reservation: reservation.clone(),
+        })?;
         let dispatched_at_ms = dispatch.dispatched_at_ms();
 
         if dispatched_at_ms.is_none() {
@@ -757,56 +900,113 @@ impl ReadCoordinator {
             // pre-reserved deadline debt; a returned callback is rejected as
             // stale/unusable, while a pending pre-dispatch callback retains
             // the ordinary local-timeout classification.
-            Self::persist_state(gate, state).await?;
-            return match outcome {
-                Ok(ReadCallbackResult::CallerIneligible) => {
-                    Err(ReadCoordinationError::CallerIneligible)
-                }
+            Self::persist_state(gate, state)
+                .await
+                .map_err(|error| ReadExecutionFailure {
+                    error,
+                    reservation: reservation.clone(),
+                })?;
+            let error = match outcome {
+                Ok(ReadCallbackResult::CallerIneligible) => ReadCoordinationError::CallerIneligible,
                 Ok(ReadCallbackResult::CallerEligibilityFailed) => {
-                    Err(ReadCoordinationError::CallerEligibilityFailed)
+                    ReadCoordinationError::CallerEligibilityFailed
                 }
-                Err(_) => Err(ReadCoordinationError::CallbackTimedOut),
-                Ok(_) => Err(ReadCoordinationError::CallbackStartMissed),
+                Err(_) => ReadCoordinationError::CallbackTimedOut,
+                Ok(_) => ReadCoordinationError::CallbackStartMissed,
             };
+            return Err(ReadExecutionFailure { error, reservation });
         }
         if finished_ms < dispatched_at_ms.expect("dispatch presence checked") {
-            Self::persist_state(gate, state).await?;
-            return Err(ReadCoordinationError::ClockRollback);
+            Self::persist_state(gate, state)
+                .await
+                .map_err(|error| ReadExecutionFailure {
+                    error,
+                    reservation: reservation.clone(),
+                })?;
+            return Err(ReadExecutionFailure {
+                error: ReadCoordinationError::ClockRollback,
+                reservation,
+            });
         }
 
         match outcome {
             Ok(ReadCallbackResult::Success(value)) => {
                 record_known_completion(&mut state, channel, intraday, finished_ms);
                 clear_matching_reservation(&mut state, fence);
-                Self::persist_state(gate, state).await?;
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
                 Ok(ReadExecutionSuccess { value, reservation })
             }
             Ok(ReadCallbackResult::CallerIneligible) => {
                 // A callback must not report caller ineligibility after it
                 // crossed the final dispatch guard. Treat that impossible
                 // combination as ambiguous and retain the durable debt.
-                Self::persist_state(gate, state).await?;
-                Err(ReadCoordinationError::CallbackAmbiguous)
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
+                Err(ReadExecutionFailure {
+                    error: ReadCoordinationError::CallbackAmbiguous,
+                    reservation: reservation.clone(),
+                })
             }
             Ok(ReadCallbackResult::CallerEligibilityFailed) => {
-                Self::persist_state(gate, state).await?;
-                Err(ReadCoordinationError::CallbackAmbiguous)
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
+                Err(ReadExecutionFailure {
+                    error: ReadCoordinationError::CallbackAmbiguous,
+                    reservation: reservation.clone(),
+                })
             }
             Ok(ReadCallbackResult::Unauthorized) => {
                 record_known_completion(&mut state, channel, intraday, finished_ms);
                 state.token = None;
                 clear_matching_reservation(&mut state, fence);
-                Self::persist_state(gate, state).await?;
-                Err(ReadCoordinationError::Unauthorized)
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
+                Err(ReadExecutionFailure {
+                    error: ReadCoordinationError::Unauthorized,
+                    reservation: reservation.clone(),
+                })
             }
             Ok(ReadCallbackResult::RateLimited { retry_after }) => {
                 let Some(retry_after_ms) = duration_ms(retry_after) else {
-                    Self::persist_state(gate, state).await?;
-                    return Err(ReadCoordinationError::InvalidStateTime);
+                    Self::persist_state(gate, state).await.map_err(|error| {
+                        ReadExecutionFailure {
+                            error,
+                            reservation: reservation.clone(),
+                        }
+                    })?;
+                    return Err(ReadExecutionFailure {
+                        error: ReadCoordinationError::InvalidStateTime,
+                        reservation: reservation.clone(),
+                    });
                 };
                 let Some(cooldown_until) = finished_ms.checked_add(retry_after_ms) else {
-                    Self::persist_state(gate, state).await?;
-                    return Err(ReadCoordinationError::InvalidStateTime);
+                    Self::persist_state(gate, state).await.map_err(|error| {
+                        ReadExecutionFailure {
+                            error,
+                            reservation: reservation.clone(),
+                        }
+                    })?;
+                    return Err(ReadExecutionFailure {
+                        error: ReadCoordinationError::InvalidStateTime,
+                        reservation: reservation.clone(),
+                    });
                 };
                 record_known_completion(&mut state, channel, intraday, finished_ms);
                 state.broker_cooldown_until_ms = Some(
@@ -816,22 +1016,46 @@ impl ReadCoordinator {
                         .max(cooldown_until),
                 );
                 clear_matching_reservation(&mut state, fence);
-                Self::persist_state(gate, state).await?;
-                Err(ReadCoordinationError::CallbackRateLimited {
-                    retry_after_ms: retry_after_ms as u64,
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
+                Err(ReadExecutionFailure {
+                    error: ReadCoordinationError::CallbackRateLimited {
+                        retry_after_ms: retry_after_ms as u64,
+                    },
+                    reservation: reservation.clone(),
                 })
             }
             Ok(ReadCallbackResult::CompletedFailure(kind)) => {
                 record_known_completion(&mut state, channel, intraday, finished_ms);
                 clear_matching_reservation(&mut state, fence);
-                Self::persist_state(gate, state).await?;
-                Err(ReadCoordinationError::CallbackFailed { kind })
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
+                Err(ReadExecutionFailure {
+                    error: ReadCoordinationError::CallbackFailed { kind },
+                    reservation: reservation.clone(),
+                })
             }
             Ok(ReadCallbackResult::Ambiguous) => {
                 // Preserve the fence until its durable deadline. We know only
                 // that local completion is ambiguous, not what the broker did.
-                Self::persist_state(gate, state).await?;
-                Err(ReadCoordinationError::CallbackAmbiguous)
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
+                Err(ReadExecutionFailure {
+                    error: ReadCoordinationError::CallbackAmbiguous,
+                    reservation: reservation.clone(),
+                })
             }
             Err(_) => {
                 // Dropping the cooperative callback does not prove whether a
@@ -840,8 +1064,16 @@ impl ReadCoordinator {
                 // fence. Independently spawned work remains outside this
                 // guarantee and callbacks must not create it.
                 record_known_completion(&mut state, channel, intraday, finished_ms);
-                Self::persist_state(gate, state).await?;
-                Err(ReadCoordinationError::CallbackTimedOut)
+                Self::persist_state(gate, state)
+                    .await
+                    .map_err(|error| ReadExecutionFailure {
+                        error,
+                        reservation: reservation.clone(),
+                    })?;
+                Err(ReadExecutionFailure {
+                    error: ReadCoordinationError::CallbackTimedOut,
+                    reservation: reservation.clone(),
+                })
             }
         }
     }

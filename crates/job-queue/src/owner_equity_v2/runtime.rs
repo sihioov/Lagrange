@@ -157,6 +157,12 @@ impl<R: KisRead> ProductionOwnerEquityAdapter<R> {
         })
     }
 
+    /// Clone the same reader Arc used by the EOD adapter.  Intraday wiring
+    /// must not construct a second credential/coordination client.
+    pub fn intraday_reader(&self) -> Arc<R> {
+        Arc::clone(&self.reader)
+    }
+
     fn identity(
         &self,
         payload: &OwnerEquityJobPayload,

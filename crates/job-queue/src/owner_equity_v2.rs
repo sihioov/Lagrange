@@ -56,6 +56,9 @@ pub use schedule::{
 #[path = "owner_equity_v2/intraday.rs"]
 mod intraday;
 pub use intraday::*;
+#[path = "owner_equity_v2/intraday_producer.rs"]
+mod intraday_producer;
+pub use intraday_producer::*;
 
 /// Dedicated type claimed by the V2 worker.  V1 jobs use different values.
 pub const OWNER_EQUITY_V2_JOB_TYPE: &str = "owner_equity_v2";

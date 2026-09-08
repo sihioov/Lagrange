@@ -174,11 +174,18 @@ impl IntradayTestDb {
     }
 
     pub fn session_proof(&self) -> IntradaySessionProof {
+        self.session_proof_for_window_hash(&self.window_contract_sha256)
+    }
+
+    pub fn session_proof_for_window_hash(
+        &self,
+        window_contract_sha256: &str,
+    ) -> IntradaySessionProof {
         IntradaySessionProof::new(
             self.session_date,
             self.calendar_source_batch_id,
             self.calendar_content_sha256.clone(),
-            self.window_contract_sha256.clone(),
+            window_contract_sha256.to_owned(),
         )
         .expect("fixture session proof is canonical")
     }

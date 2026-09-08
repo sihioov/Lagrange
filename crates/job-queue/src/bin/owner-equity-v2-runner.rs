@@ -7,11 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
+use collectors::intraday_quotes::IntradaySessionWindowContract;
 use job_queue::owner_equity_v2::{
-    OwnerEquityRunOutcome, OwnerEquityRunnerConfig, OwnerEquityRuntimeLimits,
-    OwnerEquityScheduleError, OwnerEquitySchedulePins, ProductionOwnerEquityAdapter,
-    eligible_schedule_date, recover_owner_equity_claims, run_owner_equity_runner_once,
-    run_owner_equity_schedule_cycle,
+    IntradayProducer, IntradayProducerConfig, OwnerEquityRunOutcome, OwnerEquityRunnerConfig,
+    OwnerEquityRuntimeLimits, OwnerEquityScheduleError, OwnerEquitySchedulePins,
+    OwnerIntradayQuoteRepository, ProductionOwnerEquityAdapter, eligible_schedule_date,
+    recover_owner_equity_claims, run_owner_equity_runner_once, run_owner_equity_schedule_cycle,
 };
 use job_queue::{JobQueue, QueueConfig};
 use kis_client::clock::Clock;
@@ -19,9 +20,9 @@ use kis_client::live_transport::LiveTransport;
 use kis_client::secret::SystemCredentialSource;
 use kis_client::token_issuer::KisTokenIssuer;
 use kis_client::{
-    BucketKey, CoordinatedReadAuth, CredentialRef, KisMarketDataClient, ProductionReadCoordination,
-    Quota, RateLimiter, ReadCoordinationMode, ReadCredentialSnapshot, SystemClock, TokenIssuer,
-    TokenManager, TokioSleeper,
+    BucketKey, CoordinatedReadAuth, CredentialRef, IntradayQuotesMode, KisMarketDataClient,
+    ProductionReadCoordination, Quota, RateLimiter, ReadCoordinationMode, ReadCredentialSnapshot,
+    SystemClock, TokenIssuer, TokenManager, TokioSleeper,
 };
 use market_data::owner_equity_v2::{
     DAILY_BARS_PATH, DAILY_BARS_TR_ID, REFERENCE_PATH, REFERENCE_TR_ID,
@@ -74,6 +75,7 @@ impl Environment {
 #[derive(Debug, Clone)]
 struct Config {
     mode: Mode,
+    intraday_mode: IntradayQuotesMode,
     production: bool,
     raw_root: PathBuf,
     artifact_root: PathBuf,
@@ -105,6 +107,10 @@ fn parse_args_from(values: Vec<std::ffi::OsString>) -> Result<Mode, ConfigError>
         [mode] if mode == "healthcheck" => Ok(Mode::Healthcheck),
         _ => Err(ConfigError::Invalid),
     }
+}
+
+fn should_start_intraday(mode: Mode, intraday_mode: IntradayQuotesMode) -> bool {
+    mode == Mode::Daemon && intraday_mode == IntradayQuotesMode::OwnerOnly
 }
 
 fn positive_duration(name: &str, default: Duration) -> Result<Duration, ConfigError> {
@@ -226,6 +232,7 @@ fn load_config() -> Result<Config, ConfigError> {
     if mode == Mode::Healthcheck {
         return Ok(Config {
             mode,
+            intraday_mode: IntradayQuotesMode::Disabled,
             production,
             raw_root: PathBuf::new(),
             artifact_root: PathBuf::new(),
@@ -247,7 +254,8 @@ fn load_config() -> Result<Config, ConfigError> {
             schedule_pins: None,
         });
     }
-    ProductionReadCoordination::from_env().map_err(|_| ConfigError::Invalid)?;
+    let read_coordination =
+        ProductionReadCoordination::from_env().map_err(|_| ConfigError::Invalid)?;
     let max_active = optional_u64("OWNER_EQUITY_V2_MAX_ACTIVE")?.unwrap_or(100);
     let initial_gets = optional_u64("OWNER_EQUITY_V2_INITIAL_GET_CEILING")?.unwrap_or(7);
     let incremental_gets = optional_u64("OWNER_EQUITY_V2_INCREMENTAL_GET_CEILING")?.unwrap_or(2);
@@ -296,6 +304,7 @@ fn load_config() -> Result<Config, ConfigError> {
     .map_err(|_| ConfigError::Invalid)?;
     Ok(Config {
         mode,
+        intraday_mode: read_coordination.intraday_mode(),
         production,
         raw_root,
         artifact_root,
@@ -681,6 +690,46 @@ async fn main() -> ExitCode {
             let _ = signal_tx.send(true);
         });
     }
+    let mut intraday_task = if should_start_intraday(config.mode, config.intraday_mode) {
+        let windows = match IntradaySessionWindowContract::from_fixed_path() {
+            Ok(windows) => Arc::new(windows),
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "event":"owner_equity_v2_intraday",
+                        "code":"SESSION_WINDOWS_INVALID"
+                    })
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        let producer_config = match IntradayProducerConfig::for_worker(&config.worker_id) {
+            Ok(config) => config,
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "event":"owner_equity_v2_intraday",
+                        "code":"PRODUCER_CONFIG_INVALID"
+                    })
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        let producer = IntradayProducer::new(
+            OwnerIntradayQuoteRepository::new(pool.clone()),
+            adapter.intraday_reader(),
+            windows,
+            producer_config,
+        );
+        let intraday_shutdown = shutdown_rx.clone();
+        Some(tokio::spawn(async move {
+            producer.run_daemon(intraday_shutdown).await
+        }))
+    } else {
+        None
+    };
     let mut next_recovery = tokio::time::Instant::now();
     let seoul = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
     let mut schedule_cadence = ScheduleCadence::default();
@@ -700,6 +749,26 @@ async fn main() -> ExitCode {
             );
             exit = ExitCode::FAILURE;
             break;
+        }
+        let intraday_finished = intraday_task
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished);
+        if intraday_finished {
+            let task = intraday_task
+                .take()
+                .expect("finished intraday task remains owned by runner");
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) | Err(_) => {
+                    eprintln!(
+                        "{}",
+                        json!({"event":"owner_equity_v2_intraday","code":"PRODUCER_UNAVAILABLE"})
+                    );
+                    // The quote task is intentionally independent: its
+                    // failure must not cancel or block the EOD worker.
+                    exit = ExitCode::FAILURE;
+                }
+            }
         }
         let now = tokio::time::Instant::now();
         let now_kst = Utc::now().with_timezone(&seoul);
@@ -799,6 +868,21 @@ async fn main() -> ExitCode {
     {
         exit = ExitCode::FAILURE;
     }
+    if let Some(task) = intraday_task {
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) | Err(_) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "event":"owner_equity_v2_intraday",
+                        "code":"PRODUCER_UNAVAILABLE"
+                    })
+                );
+                exit = ExitCode::FAILURE;
+            }
+        }
+    }
     exit
 }
 
@@ -826,6 +910,18 @@ mod tests {
             parse_args_from(args(&["--once", "healthcheck"])),
             Err(ConfigError::Invalid)
         );
+        assert!(!should_start_intraday(
+            Mode::Once,
+            IntradayQuotesMode::OwnerOnly
+        ));
+        assert!(!should_start_intraday(
+            Mode::Daemon,
+            IntradayQuotesMode::Disabled
+        ));
+        assert!(should_start_intraday(
+            Mode::Daemon,
+            IntradayQuotesMode::OwnerOnly
+        ));
     }
 
     #[test]

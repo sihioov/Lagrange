@@ -1,5 +1,6 @@
 mod candidate_pipeline;
 mod candidate_sink;
+pub mod intraday_quotes;
 pub mod owner_equity_v2;
 mod pipeline;
 mod sink;
