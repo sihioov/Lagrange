@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 통합 완료, WP-5 구현 커밋 완료·독립 리뷰 중(미통합); 운영 활성화 미실행
+상태: WP-2B 통합 완료, WP-5 독립 리뷰 지적 보완 중(미통합); 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -634,3 +634,19 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   이는 WP-5 개발 gate의 사전 리뷰이지 후속 WP-7 전체 계층 리뷰의 대체가 아니다.
 - WP-3 response-field 승인 대기는 유지한다. main merge/push, provider 호출, Next/browser,
   DB/운영 활성화는 수행하지 않았다. heartbeat는 구현 담당 대신 리뷰 담당을 추적한다.
+
+### WP-5 독립 리뷰 지적 및 bounded 보완
+
+- reviewer의 idle/REJECT를 회수했다. 독립 focused 10 files/75 tests, typecheck/lint는
+  통과했지만 다음 네 결함이 남았다: demand lease 만료 후 polling 중단/복구 부재(High),
+  receipt/success의 KST 날짜와 session 날짜 대조 누락(High), 30초/24시간 경계의 조기
+  stale/만료 전환(Medium), 매 poll의 거짓 unavailable 알림과 HALTED 표시 누락(Medium).
+- coordinator가 acceptDemand/poll/statusText/parser와 동결 lease/세션/freshness 계약을
+  대조했다. 구현 커밋은 미통합으로 유지하며 idle implementer에게 네 항목만 후속 위임한다.
+  수정 범위는 quote coordinator/view, application contracts, 신규 intraday tests와 필요한
+  최소 locale 문구다. 기존 EOD assertion, API/DB/provider 계약 변경은 허용하지 않는다.
+- lease 만료는 cache retention과 별개로 관리한다. 만료 시 cache GET을 중단하고 ambiguous
+  mutation은 같은 key/body/sequence로 serialized 재처리한다. pending mutation 중 중첩이나
+  consumer 교체로 quota를 우회하지 않는다. 정해지지 않은 서버 동작은 추측하지 않고 보고한다.
+- 회귀 재현 후 수정·full Vitest/typecheck/lint를 요구했다. 완료 후 동일 reviewer의
+  read-only 재검토를 거쳐 수락한다. WP-3 응답 parser 승인 대기는 그대로 유지한다.
