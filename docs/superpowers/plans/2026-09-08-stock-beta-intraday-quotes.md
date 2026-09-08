@@ -862,3 +862,20 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - 추가 확인 대상으로 demand 갱신이 fresh clock 이후 UPDATE에서 publication의
   FOR SHARE 잠금을 기다릴 가능성을 전달했다. advisory lock 대기 테스트만으로
   이 경계가 검증되는지는 아직 판정하지 않는다. reviewer가 재현/반증한다.
+
+### WP-3B1 남은 후행 잠금 경계 수정
+
+- 독립 재검토는 21/21 DB tests(23.02s), scoped clippy/fmt를 통과시켰고 최초 세
+  High 및 SQL 대기 증거 보완은 해결로 판정했다. 하지만 추가 probe 두 건은 실패했다.
+  demand 갱신이 row FOR SHARE 뒤 UPDATE에서 기다리며 30초 lease를 짧게 만들고,
+  최초 producer INSERT가 다른 미커밋 INSERT의 rollback을 기다리며 20초 lease를
+  대기 전 시각에서 만들었다. coordinator가 두 코드 경로를 확인하여 수정 대상으로
+  수락한다. 원본/첫 수정 모두 아직 미통합이다.
+- 시간/잠금 경계가 두 차례 검토에서 남았으므로 모델만 luna→terra로 한 단계 올리고
+  effort는 max로 유지한다. 새 독립 구현 담당자는 같은 clean workspace의 `8c25106`
+  에서 두 경로만 수정한다. 기존 luna 및 reviewer는 idle이며 파일 소유권은 겹치지 않는다.
+- scope: 새 intraday repository와 새 DB tests, 필요한 test support만. 기존 demand
+  row를 갱신/해제 전에 잠근 후 clock을 읽고, 최초 producer insert 성공 후 자기
+  미커밋 row의 시간을 다시 설정한다. 새 회귀는 실제 demand-row/unique-index 대기를
+  관찰하고 먼저 실패를 재현한다. grant/migration/0053/B2/API/Web/운영 변경은 없다.
+- reviewer는 수정 후 다시 독립 수락 판단을 한다. B2는 B1 ACCEPT 이후로 유지한다.
