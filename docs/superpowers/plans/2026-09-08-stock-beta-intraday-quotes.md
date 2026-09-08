@@ -1197,3 +1197,18 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - 보고는 full commit/parent, 파일·라인, 명세 차이/이유, 명령·결과, 재현 evidence,
   미해결/후속 및 미확인(없으면 없음)을 포함한다. 완료 후 독립 검토를 거쳐 C2b 상세 brief를
   확정한다. C2b/C3/window maxage 판단 및 전체 B2b acceptance는 여전히 남는다.
+
+### B2b-C2a 완료 및 독립 검토
+
+- worker는 `c5e05925e69f28ad76ea9cd3b3249ce6cc5ef536` (parent `18b8b33`)로 완료했고
+  idle/clean이다. coordinator는 신규 scheduling668줄 및 C1/support delta 전체를 읽었다.
+  실제 변경은 허용된 3개 test 파일 +697/-5이며 production/기존 quote support 변경은 없다.
+- worker 보고: scheduling4/4 (123.37초), C1 9/9, producer6/6, B1 DB24/24,
+  두 strict scoped clippy target/fmt/diff 통과. halt 후 producer fence를 1에서 2로 고친 것은
+  20초 lease 만료 후 정상 takeover라는 설명이며 검토에서 실제 의미를 확인한다.
+- 유휴 독립 reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)를 재사용한다.
+  새 증거의 충분성을 검토하며, 특히 test-side wait가 5초/60초 minimum을 대신 강제하는지,
+  halt 직후 한 번만 검사하는 negative case가 조기 reprobe 회귀를 잡는지 확인/반박한다.
+  실제 daemon scheduling 대비 직접 run_cycle 호출의 증거 범위도 구별한다.
+  429는 persistence 관찰 뒤 취소, 다음 cycle 차단 및 만료 후 성공을 검토한다.
+- 아직 C2a ACCEPT나 전체 B2b 통합이 아니다. C2b/C3/window maxage 판단은 남는다.
