@@ -682,3 +682,16 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - 새 담당자 `f148b96b-96fc-4f98-ba90-11c3baf8872a`의 terra/max running을 확인했다.
   동일 WP-5 workspace의 `4d39adb`에서 순차 소유하며, coordinator의 `40df089` 문서에
   확정한 복구 계약을 읽도록 지시했다. 재검토 담당자는 구현에 참여하지 않는다.
+
+### WP-5 복구 수정 회수 및 독립 재검토
+
+- terra 담당자의 idle/clean 및 `9ccd6f3fb802c6bcde03250f1bdfd437c609864c`를 확인했다.
+  지정된 8개 Web 파일만 변경됐으며 기존 두 커밋과 함께 아직 미통합이다.
+- coordinator가 production/test delta를 직접 읽었다. 같은 consumer의 만료 복구,
+  GET epoch fencing, 실패 표시 유지 및 응답 수신 후 clock 검증이 추가됐다.
+  worker는 focused 4 files/35 tests, full 44 files/313 tests, typecheck/lint 통과를 보고했다.
+- 기존 idle reviewer에게 세 원지적과 새 경계 조건을 read-only 재검토하도록 전달했다.
+  특히 만료 이전 Retry-After의 만료 이후 보존, 타이머보다 늦은 renewal 응답이 먼저
+  처리될 때 이전 GET의 무효화 여부는 별도로 확인한다. 통과 보고만으로 수락하지 않는다.
+- 구현 담당은 idle로 유지한다. backend 복구 계약 검증 및 KIS 응답 parser 승인 대기는
+  그대로이며 browser/운영 검증이나 main 통합·push는 수행하지 않았다.
