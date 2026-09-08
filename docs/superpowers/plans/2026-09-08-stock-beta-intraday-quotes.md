@@ -1410,3 +1410,78 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   실패 cleanup을 확인/반박한다. 기존 EOD 단일 fingerprint의 Low 범위 한계는 유지한다.
 - C3 behavioral runner 및 window maxage 계약 gap은 남는다. 전체 B2b는 미통합이며
   독립 재검토/전체 gate 전 수락 또는 실제 provider 활성화를 주장하지 않는다.
+
+### B2b-C2b scoped ACCEPT 및 C3 실행 계약
+
+- 독립 reviewer는 `18f96a6` 보완을 scoped ACCEPT했다. lifecycle9/9 (65.69초),
+  pipeline9/9 (40.93초), 3 target strict clippy/fmt/diff 및 clean을 직접 확인했다.
+  실제 first-good 보존, false/CallerIneligible 관찰, outer join 취소 시 handle 소유가
+  이전 High 2건/Medium 1건을 해소한다는 판단을 coordinator가 수락한다.
+- SQL waiter PID가 callback만을 고유 식별하지는 않지만 실제 callback 반환 관찰과
+  production 잠금 순서를 함께 검증했다. Low 한계: child drop receiver의 `.is_ok()`는
+  명시 신호와 채널 종료를 모두 허용하고, takeover 직전 demand liveness의 별도 단언은
+  없으며, EOD fingerprint는 단일 signal row 범위다. 이 범위를 과장하지 않는다.
+  추가 source defect는 없고 C2b를 반복 보완하지 않는다. 전체 B2b는 아직 미통합이다.
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### C3 goal / initial classification
+
+- 목표: credentials/DB/provider 없이 production에서 실제 사용하는 quote-startup 연결이
+  실패 시에도 EOD continuation을 호출한다는 관찰 가능한 테스트. test-only `eod_continues`
+  상수 true나 source 문자열 검사만으로 이를 주장하지 않는다.
+- 대상: producer workspace `/data/worktrees/3puw275b/stock-beta-intraday-producer`,
+  clean base `18f96a6b2faf9892a4403769e603f9e0654306ac`. root AGENTS 및 coordinator에
+  제공된 모델 규칙 적용; 하위 AGENTS/CLAUDE 없음. C3는 window maxage를 결정하지 않는다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| B2b-C3 | intermediate | 한 runner 파일의 기존 startup을 주입 가능한 continuation seam으로 추출하고 실제 callback을 관찰; EOD 정책은 그대로 | medium | EOD lifecycle 의미 변경/새 의존성/다른 파일 필요 시 멈추고 보고; 반복 검증 실패 시 모델만 한 tier 상향 |
+
+#### C3 execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| B2b-C3 | 3 | intermediate | quote startup/EOD continuation 실제 도달 증거 | `crates/job-queue/src/bin/owner-equity-v2-runner.rs`의 최소 startup 연결과 unit tests만 | C2b ACCEPT | 새 Codex luna/max, auto-review | 단일 파일 commit 및 behavior matrix | offline runner tests + runner strict clippy/fmt/diff, 독립 terra/high review |
+
+#### C3 worker brief
+
+- production `prepare_intraday_quote_startup` 뒤 Ready/Unavailable/Disabled 처리와 EOD
+  continuation 호출을 작은 generic helper로 추출한다. 입력은 기존 mode, injected window
+  loader, Ready에서만 호출되는 quote-start factory, EOD continuation이다. factory는 기존
+  producer-config-invalid 경로처럼 `None`을 반환할 수 있고 continuation은 Option task를 받는다.
+  helper는 continuation 결과/future를 그대로 전달하며 비활성/로드 실패가 EOD를 건너뛰는
+  Result/조기 return으로 바뀌지 않게 한다. 별도 trait framework나 runtime crate 추출 금지.
+- 실제 main이 같은 helper를 사용해야 한다. 기존 from_fixed_path loader, producer config,
+  shared adapter reader, watch receiver, spawn 및 redacted event codes를 보존한다. 기존 EOD
+  loop와 cleanup을 continuation async block으로 감싸는 기계적 이동/들여쓰기만 허용한다.
+  schedule/recovery/work/select/health/shutdown/exit-code 정책 및 quote finished 처리 내용은
+  바꾸지 않는다. 기존 healthcheck early return도 보존한다. 의미 변경이 필요하면 보고한다.
+- unit tests는 같은 helper를 실행하여 load/start/EOD event 순서와 호출 횟수, EOD에서 받은
+  task Option, continuation의 실제 반환 sentinel을 단언한다. future라면 반드시 await하여
+  body 실행을 관찰한다. 테스트 전용 모사 helper가 production과 따로 존재하면 불수락이다.
+- 필수 matrix: daemon owner_only에서 Missing/Invalid/HashMismatch 각각 load1/start0/EOD1;
+  valid pinned in-memory fixture에서 load1/start1/EOD1 및 factory에 전달된 windows 확인;
+  valid window + quote factory None (producer config 실패에 해당)에서도 EOD1;
+  daemon Disabled와 Once OwnerOnly는 load0/start0/EOD1. 가능하면 panic-on-call loader/factory로
+  forbidden invocation을 탐지한다. healthcheck는 main이 이 연결 전에 종료한다는 기존 경계를
+  보존하며 healthcheck에서 EOD 실행한다고 주장하지 않는다.
+- 실제 main/credentials/build_live_reader/DB/network/환경변수 변경이나 `/opt` 파일 쓰기 금지.
+  fake task token으로 충분하며 spawn을 쓰면 모든 경로 bounded join/abort cleanup을 보장한다.
+  기존 unrelated runner tests 유지. 상수 true `eod_continues` 및 이에만 의존한 단언을 제거하고
+  취약한 source-string-only startup test는 behavioral matrix로 대체해도 된다.
+- 소유는 위 한 파일뿐. collector/repository/runtime/다른 test support/Cargo/migration/Compose/
+  API/Web/ops/production/mainmerge/push 금지. 새 defect는 재현과 함께 보고하고 임의 인접 수정 금지.
+- 검증: `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test --locked --offline -p job-queue
+  --bin owner-equity-v2-runner`; 같은 env로 `cargo clippy --locked --offline -p job-queue
+  --bin owner-equity-v2-runner -- -D warnings`; `cargo fmt --all -- --check`, `git diff --check`.
+  compiler 하나만 실행한다. DB 테스트는 이번 package에 필요 없다.
+- 보고: full commit/parent, 변경 파일·라인, production 이동과 의미 보존 근거, matrix 실제
+  이벤트/횟수/반환값, 명령·결과, 명세 차이와 이유, 미해결/미확인(없으면 없음). 완료 후 idle.
+
+#### C3 coordinator gates
+
+1. profile notes/provider availability, clean base 및 단일 파일 소유를 확인하고 새 luna/max worker 시작.
+2. 실제 main 호출 연결과 EOD diff를 직접 읽고 독립 terra/high review 후 scoped 수락.
+3. C3 후 전체 B2b coverage와 window maxage 계약 gap을 판단한다. 아직 전체 통합/활성화 금지.
