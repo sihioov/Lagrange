@@ -1046,3 +1046,23 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   검토하며 source는 수정하지 않는다. ACCEPT와 coordinator 확인 전에는 통합하지 않는다.
 - worker가 window evidence staleness의 구체적 임계값 누락을 보고했다. calendar 36h와
   동일하다고 추정하지 않는다. 검토 후 별도 계약 판단이 필요하며 운영 활성화 승인은 없다.
+
+### WP-3B2b 첫 검토 반려 및 범위 한정 수정
+
+- 독립 reviewer는 REJECT: High `quote_attempt_eligible`의 producer FOR SHARE 이전 DB clock
+  샘플이 잠금 대기 후에도 사용되어 장 마감 후 GET을 허용할 수 있다. Medium runner의
+  missing/malformed window 로딩 오류가 EOD 루프 진입 전 process failure를 반환한다.
+  coordinator가 두 실제 경로를 읽고 확인했다. reviewer가 재현 절차를 제시했으나 실행한
+  failing race test 증거는 없으므로 구현자가 먼저 재현한다.
+- 독립 실행 KIS12/collectors3/producerDB4 및 targeted clippy/fmt는 통과했다. 기존
+  collectors artifact large_enum_variant는 parent에서 확인됐고 변경 파일의 lint는 통과했다.
+  producer 성공 전체 경로, 3회/401/429 재시도, 반복 fairness/halt, 취소/heartbeat loss,
+  takeover/disable/generation/close inflight 및 EOD 경합 coverage는 여전히 부족하다.
+- 원 구현자 luna/max를 유휴 상태에서 재사용한다. 이번 수정은 intraday.rs final eligibility,
+  runner quote startup wiring, 신규 producer tests/기존 신규 support만 소유한다. 잠금 후
+  fresh DB clock으로 최종 expiry/window를 확인하고, window 로딩 실패는 quote task만
+  비활성화하여 EOD를 유지한다. 실제 SQL 대기를 관찰한 race와 주입식 startup tests를 추가한다.
+  B1 24개/producer/runner 회귀를 검증한다. 관련 없는 source 변경이나 전체 coverage 확장은
+  이번 패키지에 섞지 않는다. 독립 재검토 후 별도 범위로 나머지 coverage를 보완한다.
+- 7dd9483은 미통합 상태다. window evidence age 임계값은 별도 계약 판단으로 남으며
+  이번 두 코드 결함 수정을 막지 않는다. 운영 활성화/날짜 evidence 생성은 승인되지 않았다.
