@@ -4,6 +4,7 @@ import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-rou
 import { StatePanel } from "@/components/states/state-panel";
 import type { StockBetaChartError } from "@/components/stock-beta/dashboard/types";
 import { StockBetaPolicyNotice } from "@/components/stock-beta/dashboard/widgets/policy-boundary-widget";
+import { isStockBetaIntradayQuotesEnabled } from "@/components/stock-beta/quote/intraday-quotes-mode";
 import { StockBetaWorkspace } from "@/components/stock-beta/stock-beta-workspace";
 import { StockBetaTerminalPage } from "@/components/stock-beta/terminal";
 import { ApiContractError, ApiProblem, isLoginRequiredError } from "@/lib/api/response";
@@ -57,6 +58,7 @@ function chartFailure(error: unknown): StockBetaChartError | undefined {
 
 async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
   try {
+    const intradayEnabled = isStockBetaIntradayQuotesEnabled();
     const api = await getProductApi();
     const memberships = await api.getOwnerEquityV2Memberships();
     let signals = null;
@@ -104,6 +106,7 @@ async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
         initialMemberships={memberships}
         initialSignalUnavailable={initialSignalUnavailable}
         initialSignals={signals}
+        intradayEnabled={intradayEnabled}
         locale={locale}
       />
     );

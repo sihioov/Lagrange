@@ -75,6 +75,27 @@ export type StockBetaDictionary = {
   readonly instrumentLabel: string;
   readonly instrumentNotFoundMessage: string;
   readonly instrumentNotFoundTitle: string;
+  readonly intradayQuoteBasePriceLabel: string;
+  readonly intradayQuoteBasePricePolicy: string;
+  readonly intradayQuoteChangeLabel: string;
+  readonly intradayQuoteChangePercentLabel: string;
+  readonly intradayQuoteClosed: string;
+  readonly intradayQuoteDemanding: string;
+  readonly intradayQuoteDescription: string;
+  readonly intradayQuoteDirectionDown: string;
+  readonly intradayQuoteDirectionFlat: string;
+  readonly intradayQuoteDirectionLabel: string;
+  readonly intradayQuoteDirectionLimitDown: string;
+  readonly intradayQuoteDirectionLimitUp: string;
+  readonly intradayQuoteDirectionUp: string;
+  readonly intradayQuoteHeading: string;
+  readonly intradayQuoteLastSuccessLabel: string;
+  readonly intradayQuoteOffline: string;
+  readonly intradayQuotePolling: string;
+  readonly intradayQuotePriceLabel: string;
+  readonly intradayQuoteReady: string;
+  readonly intradayQuoteStale: string;
+  readonly intradayQuoteUnavailable: string;
   readonly integrityMessage: string;
   readonly integrityTitle: string;
   readonly invalidInstrumentCode: string;
@@ -278,6 +299,27 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     instrumentLabel: "Instrument ID",
     instrumentNotFoundMessage: "No current V2 signal matches this membership.",
     instrumentNotFoundTitle: "Instrument signal not found",
+    intradayQuoteBasePriceLabel: "Base price",
+    intradayQuoteBasePricePolicy: "Not previous close",
+    intradayQuoteChangeLabel: "Change from previous day",
+    intradayQuoteChangePercentLabel: "Change percent",
+    intradayQuoteClosed: "Market closed",
+    intradayQuoteDemanding: "Starting periodic quote demand…",
+    intradayQuoteDescription: "Owner-only current KRX quote cache; separate from the EOD signal.",
+    intradayQuoteDirectionDown: "Down",
+    intradayQuoteDirectionFlat: "Flat",
+    intradayQuoteDirectionLabel: "Direction",
+    intradayQuoteDirectionLimitDown: "Limit down",
+    intradayQuoteDirectionLimitUp: "Limit up",
+    intradayQuoteDirectionUp: "Up",
+    intradayQuoteHeading: "Intraday price · periodic refresh",
+    intradayQuoteLastSuccessLabel: "Last successful quote",
+    intradayQuoteOffline: "Updates paused while offline or hidden.",
+    intradayQuotePolling: "Waiting for the next validated quote…",
+    intradayQuotePriceLabel: "Current price",
+    intradayQuoteReady: "Validated cache",
+    intradayQuoteStale: "Quote is stale; last successful value retained.",
+    intradayQuoteUnavailable: "Current quote is unavailable. EOD data is unchanged.",
     integrityMessage: "The V2 snapshot failed its integrity boundary. No rows are shown.",
     integrityTitle: "Signal snapshot integrity failed",
     invalidInstrumentCode: "Enter exactly six ASCII digits.",
@@ -480,6 +522,27 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     instrumentLabel: "종목 ID",
     instrumentNotFoundMessage: "이 멤버십과 일치하는 현재 V2 신호가 없습니다.",
     instrumentNotFoundTitle: "종목 신호 없음",
+    intradayQuoteBasePriceLabel: "기준 가격",
+    intradayQuoteBasePricePolicy: "전일 종가 아님",
+    intradayQuoteChangeLabel: "전일 대비 변동",
+    intradayQuoteChangePercentLabel: "변동률",
+    intradayQuoteClosed: "장 마감",
+    intradayQuoteDemanding: "장중 현재가 조회를 시작하는 중…",
+    intradayQuoteDescription: "EOD 신호와 분리된 Owner 전용 KRX 현재가 캐시입니다.",
+    intradayQuoteDirectionDown: "하락",
+    intradayQuoteDirectionFlat: "보합",
+    intradayQuoteDirectionLabel: "방향",
+    intradayQuoteDirectionLimitDown: "하한가",
+    intradayQuoteDirectionLimitUp: "상한가",
+    intradayQuoteDirectionUp: "상승",
+    intradayQuoteHeading: "장중 현재가 · 주기적 조회",
+    intradayQuoteLastSuccessLabel: "마지막 성공 조회",
+    intradayQuoteOffline: "오프라인이거나 화면이 숨겨져 있어 조회를 멈췄습니다.",
+    intradayQuotePolling: "다음 검증된 현재가를 기다리는 중…",
+    intradayQuotePriceLabel: "현재가",
+    intradayQuoteReady: "검증된 캐시",
+    intradayQuoteStale: "현재가가 오래되어 마지막 성공 값을 유지합니다.",
+    intradayQuoteUnavailable: "현재가를 사용할 수 없습니다. EOD 데이터는 변경되지 않습니다.",
     integrityMessage: "V2 스냅샷이 무결성 경계를 통과하지 못했습니다. 행을 표시하지 않습니다.",
     integrityTitle: "신호 스냅샷 무결성 실패",
     invalidInstrumentCode: "ASCII 숫자 6자리를 정확히 입력하세요.",

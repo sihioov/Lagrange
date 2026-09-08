@@ -1,3 +1,4 @@
+import { CurrentQuoteWidget } from "../quote/current-quote-widget";
 import {
   defineStockBetaWidgetArchitecture,
   defineStockBetaWidgetCatalog,
@@ -75,6 +76,16 @@ export const stockBetaDetailCatalog = defineStockBetaDetailCatalog([
     id: "policy-boundary",
     component: PolicyBoundaryWidget,
     required: true,
+    placements: {
+      desktop: visible("full"),
+      tablet: visible("full"),
+      mobile: visible("full"),
+    },
+  },
+  {
+    id: "current-quote",
+    component: CurrentQuoteWidget,
+    required: false,
     placements: {
       desktop: visible("full"),
       tablet: visible("full"),

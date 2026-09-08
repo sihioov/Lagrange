@@ -212,6 +212,7 @@ describe("stock-beta V2 dashboard composition", () => {
       "snapshot-tape",
       "policy-boundary",
       "provenance",
+      "current-quote",
     ]);
     expect(stockBetaDashboardArchitecture.requiredWidgetIds).toEqual([
       "universe-management",
@@ -235,6 +236,7 @@ describe("stock-beta V2 dashboard composition", () => {
       "snapshot-tape",
       "policy-boundary",
       "provenance",
+      "current-quote",
     ]);
     expect(
       stockBetaDashboardArchitecture.layout.desktop.filter((placement) =>

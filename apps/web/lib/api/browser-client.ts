@@ -1,5 +1,6 @@
 import ky from "ky";
 import { z } from "zod";
+import { notifyBrowserLogout } from "./browser-lifecycle";
 import type { BrowserResponseOptions } from "./browser-response";
 import { parseBrowserApiResponse } from "./browser-response";
 import type { ApiPath, ProductMutationPath } from "./contracts";
@@ -63,6 +64,7 @@ export async function mutateWithCsrf(
 }
 
 export async function logout(options: BrowserClientOptions = {}): Promise<Response> {
+  notifyBrowserLogout();
   const response = await mutateWithCsrf(AUTH_API_PATHS.logout, {
     ...options,
     json: {},

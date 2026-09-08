@@ -1,3 +1,4 @@
+import { CurrentQuoteWidget } from "../quote/current-quote-widget";
 import {
   defineStockBetaWidgetArchitecture,
   defineStockBetaWidgetCatalog,
@@ -279,6 +280,31 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
         column: 1,
         columnSpan: 1,
         row: 5,
+        visible: false,
+      }),
+    },
+  },
+  {
+    id: "current-quote",
+    component: CurrentQuoteWidget,
+    required: false,
+    placements: {
+      desktop: gridPlacement("full", 1, 12, 6, true, {
+        column: 1,
+        columnSpan: 12,
+        row: 6,
+        visible: false,
+      }),
+      tablet: gridPlacement("full", 1, 12, 8, true, {
+        column: 1,
+        columnSpan: 12,
+        row: 8,
+        visible: false,
+      }),
+      mobile: gridPlacement("full", 1, 1, 10, true, {
+        column: 1,
+        columnSpan: 1,
+        row: 10,
         visible: false,
       }),
     },

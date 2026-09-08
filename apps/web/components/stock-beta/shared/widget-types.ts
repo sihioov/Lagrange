@@ -9,6 +9,7 @@ export const STOCK_BETA_WIDGET_BREAKPOINTS = ["desktop", "tablet", "mobile"] as 
 export type StockBetaWidgetBreakpoint = (typeof STOCK_BETA_WIDGET_BREAKPOINTS)[number];
 
 export type StockBetaWidgetProps<ViewModel> = {
+  readonly placementVisibility?: Readonly<Partial<Record<StockBetaWidgetBreakpoint, boolean>>>;
   readonly viewModel: ViewModel;
 };
 

@@ -130,6 +130,7 @@ export type StockBetaWorkspaceProps = {
   readonly initialMemberships: OwnerEquityV2MembershipListModel;
   readonly initialSignals: OwnerEquityV2LatestSignalsModel | null;
   readonly initialSignalUnavailable?: boolean;
+  readonly intradayEnabled?: boolean;
   readonly locale?: Locale;
 };
 
@@ -139,6 +140,7 @@ export function StockBetaWorkspace({
   initialMemberships,
   initialSignals,
   initialSignalUnavailable = false,
+  intradayEnabled = false,
   locale,
 }: StockBetaWorkspaceProps) {
   const router = useRouter();
@@ -568,6 +570,7 @@ export function StockBetaWorkspace({
     copy: t,
     disableId,
     inputError,
+    intradayEnabled,
     instrumentCode,
     locale: resolvedLocale,
     memberships,

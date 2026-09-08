@@ -323,7 +323,9 @@ describe("stock-beta widget architecture", () => {
     expect(stockBetaDashboardArchitecture.requiredWidgetIds).not.toContain("signal-state");
     expect(stockBetaDetailArchitecture.requiredWidgetIds).toContain("snapshot");
     const detailCatalogIds = stockBetaDetailArchitecture.catalog.map((entry) => entry.id);
-    expect(stockBetaDetailArchitecture.requiredWidgetIds).toEqual(detailCatalogIds);
+    expect(stockBetaDetailArchitecture.requiredWidgetIds).toEqual(
+      detailCatalogIds.filter((id) => id !== "current-quote"),
+    );
     for (const breakpoint of ["desktop", "tablet", "mobile"] as const) {
       expect(
         stockBetaDetailArchitecture.layout[breakpoint].map((placement) => placement.id),

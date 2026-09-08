@@ -52,6 +52,7 @@ export function renderStockBetaDetailGrid(
     <div className={styles["detail"]} data-testid="stock-beta-detail-board">
       <div className={styles["detailGrid"]}>
         {architecture.catalog.map((entry, catalogIndex) => {
+          if (entry.id === "current-quote" && viewModel.intradayEnabled !== true) return null;
           const desktop = placementFor(architecture, entry.id, "desktop");
           const tablet = placementFor(architecture, entry.id, "tablet");
           const mobile = placementFor(architecture, entry.id, "mobile");
@@ -71,7 +72,18 @@ export function renderStockBetaDetailGrid(
               key={entry.id}
               style={layoutStyle(catalogIndex)}
             >
-              <Widget viewModel={viewModel} />
+              <Widget
+                {...(entry.id === "current-quote"
+                  ? {
+                      placementVisibility: {
+                        desktop: desktop?.visible === true,
+                        mobile: mobile?.visible === true,
+                        tablet: tablet?.visible === true,
+                      },
+                    }
+                  : {})}
+                viewModel={viewModel}
+              />
             </div>
           );
         })}

@@ -56,6 +56,7 @@ export type StockBetaDashboardViewModel = {
   readonly pollError: boolean;
   readonly signalState: StockBetaSignalState;
   readonly signals: OwnerEquityV2LatestSignalsModel | null;
+  readonly intradayEnabled?: boolean;
   /** Optional until the presentation widget consumes the WP-3 chart model. */
   readonly selectedInstrumentId?: string | null;
   readonly chartRange?: OwnerEquityV2ChartRange;

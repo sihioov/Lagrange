@@ -1,7 +1,10 @@
 import Link from "next/link";
 import type { StockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import type { Locale } from "@/lib/i18n/locale";
-import type { OwnerEquityV2SignalDetailModel } from "@/lib/products/equity-signals-contracts";
+import type {
+  OwnerEquityV2MembershipModel,
+  OwnerEquityV2SignalDetailModel,
+} from "@/lib/products/equity-signals-contracts";
 import styles from "./detail/detail.module.css";
 import { StockBetaDetailLayout } from "./detail/stock-beta-detail-layout";
 import { StockBetaTerminalPage } from "./terminal";
@@ -23,16 +26,27 @@ export function StockBetaDetailBackLink({
 export function StockBetaDetail({
   backHref = "/stock-beta",
   detail,
+  intradayEnabled = false,
+  intradayMembership = null,
   locale,
   t,
 }: {
   readonly backHref?: string;
   readonly detail: OwnerEquityV2SignalDetailModel;
+  readonly intradayEnabled?: boolean;
+  readonly intradayMembership?: OwnerEquityV2MembershipModel | null;
   readonly locale?: Locale;
   readonly t: StockBetaDictionary;
 }) {
   const resolvedLocale = locale ?? "en";
-  const viewModel = { backHref, copy: t, detail, locale: resolvedLocale } as const;
+  const viewModel = {
+    backHref,
+    copy: t,
+    detail,
+    intradayEnabled,
+    intradayMembership,
+    locale: resolvedLocale,
+  } as const;
   return (
     <StockBetaTerminalPage
       asOf={

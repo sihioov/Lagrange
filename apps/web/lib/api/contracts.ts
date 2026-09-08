@@ -38,6 +38,8 @@ export type ProductMutationPath =
   | `/api/v1/screener/screens/${string}`
   | `/api/v1/strategies/${string}/configs`
   | "/api/v1/research/owner-beta/equity-universe-v2/memberships"
+  | "/api/v1/research/owner-beta/equity-universe-v2/quote-demands"
+  | `/api/v1/research/owner-beta/equity-universe-v2/quote-demands/${string}`
   | `/api/v1/research/owner-beta/equity-universe-v2/memberships/${string}/retry`
   | `/api/v1/research/owner-beta/equity-universe-v2/memberships/${string}/disable`;
 

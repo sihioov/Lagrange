@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { StatePanel } from "@/components/states/state-panel";
 import { StockBetaDetailPolicyNotice } from "@/components/stock-beta/detail/widgets/policy-boundary-widget";
+import { isStockBetaIntradayQuotesEnabled } from "@/components/stock-beta/quote/intraday-quotes-mode";
+import { matchReadyIntradayQuoteMembership } from "@/components/stock-beta/quote/membership";
 import {
   StockBetaDetail,
   StockBetaDetailBackLink,
@@ -47,9 +49,30 @@ async function renderStockBetaDetailProduct(
   locale: Locale,
 ) {
   try {
+    const intradayEnabled = isStockBetaIntradayQuotesEnabled();
     const api = await getProductApi();
     const detail = await api.getOwnerEquityV2SignalDetail(instrument);
-    return <StockBetaDetail detail={detail} locale={locale} t={t} />;
+    let intradayMembership = null;
+    if (intradayEnabled) {
+      try {
+        const memberships = await api.getOwnerEquityV2Memberships();
+        intradayMembership = matchReadyIntradayQuoteMembership(memberships.memberships, {
+          instrument_id: detail.signal.instrument_id,
+          generation: detail.signal.generation,
+        });
+      } catch (error) {
+        if (isLoginRequiredError(error)) throw error;
+      }
+    }
+    return (
+      <StockBetaDetail
+        detail={detail}
+        intradayEnabled={intradayEnabled}
+        intradayMembership={intradayMembership}
+        locale={locale}
+        t={t}
+      />
+    );
   } catch (error) {
     if (isLoginRequiredError(error)) redirect("/login");
     if (error instanceof ApiProblem) {

@@ -85,6 +85,7 @@ export function renderStockBetaDashboardGrid(
     >
       <div className={styles["dashboardGrid"]}>
         {architecture.catalog.map((entry, catalogIndex) => {
+          if (entry.id === "current-quote" && viewModel.intradayEnabled !== true) return null;
           const desktop = placementFor(architecture, entry.id, "desktop", hasSnapshot);
           const tablet = placementFor(architecture, entry.id, "tablet", hasSnapshot);
           const mobile = placementFor(architecture, entry.id, "mobile", hasSnapshot);
@@ -106,7 +107,18 @@ export function renderStockBetaDashboardGrid(
               key={entry.id}
               style={layoutStyle(desktop, tablet, mobile, catalogIndex)}
             >
-              <Widget viewModel={viewModel} />
+              <Widget
+                {...(entry.id === "current-quote"
+                  ? {
+                      placementVisibility: {
+                        desktop: desktop?.visible === true,
+                        mobile: mobile?.visible === true,
+                        tablet: tablet?.visible === true,
+                      },
+                    }
+                  : {})}
+                viewModel={viewModel}
+              />
             </div>
           );
         })}
