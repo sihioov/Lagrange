@@ -1,0 +1,434 @@
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+# Stock Beta 장중 현재가 반영 실행 계획
+
+작성일: 2026-09-08 (Asia/Seoul)
+상태: 계획 작성 완료 — 구현·provider 호출·운영 활성화 미실행
+기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
+
+## Goal and boundaries
+
+### 목표와 제품 범위
+
+장중 선택한 종목의 현재가와 전일 대비를 Stock Beta Koyfin형 화면에 주기적으로
+반영한다. 사용자의 “실시간” 요구는 앞서 제안한 **REST 현재가 polling 1차안**으로
+계획한다. 매 체결을 받는 WebSocket 스트리밍이나 확정 종가 실시간 변경을 뜻하지 않는다.
+UI에는 `장중 현재가 · 주기적 조회`로 표시하며 무지연 실시간이라고 표기하지 않는다.
+
+1차 범위는 `/stock-beta`와 `/stock-beta/[instrument]`에서 **선택한 한 종목**의
+현재가 위젯이다. 실제 owner의 승인된 V2 membership에 속한 종목만 허용한다.
+ETF는 해당 화면의 승인 membership·동일 KRX 조회 계약을 만족하는 경우에만 포함한다.
+기존 별도 ETF11 제품 전체, 관심종목 전체 일괄 polling, 종목 자동 등록은 포함하지 않는다.
+선택 종목 우선이라는 범위와 아래 숫자는 제안 기본값이다. 전 종목 갱신이나 tick 수신이
+필수라면 WP-1 전에 이 계획의 예산·스케줄·소스 승인 범위를 수정해야 한다.
+
+### 측정 가능한 완료 조건
+
+- 정상 장중, 하나의 활성 종목, 합성 provider 응답 1초 이내 조건에서 서버의 5초 목표
+  수집 주기와 Web의 5초 cache 조회 주기가 동작한다. 합성 가격 변경은 최악 11초 이내
+  화면에 나타난다. 실제 provider의 거래 지연이나 네트워크 지연에 대한 SLA는 아니다.
+- 전일 대비 금액·퍼센트의 부호가 정확하고, 종목/시장/세션/기준가격이 다른 값을 섞지 않는다.
+  현재가와 `마지막 확정 EOD 종가`, EOD 기준일, 신호 snapshot 기준일은 각각 구별된다.
+- cache 조회·컴포넌트 재렌더·다중 탭이 provider 직접 호출을 유발하지 않는다.
+  동일 종목 demand는 병합되고, 모든 실제 재시도도 서버의 공유 예산에 포함된다.
+- 현재가 도착이 기존 일봉 OHLCV, SMA, 수익률, signal score/rank, snapshot/generation,
+  Raw EOD evidence 또는 publication 상태를 변경하지 않는 회귀 증거가 있다.
+- hidden/offline/unmount/logout/membership disable 시 Web polling과 demand 갱신이 멈춘다.
+  만료된 demand, 장외, 휴장, calendar 불명, 토큰/예산/정책 오류 시 수집이 안전하게 중단된다.
+- API 권한·DB 분리·schema 검증, 실제 Chromium 조작 QA, 부하·장애·다중 프로세스
+  토큰/호출량 회귀 검사가 통과한다. UI 위젯의 추가·제거·재배치를 catalog에서 검증한다.
+
+### 대상 workspace와 지침
+
+- 계획 저장 위치: `docs/superpowers/plans/2026-09-08-stock-beta-intraday-quotes.md`.
+- coordinator checkout: `/data/worktrees/3puw275b/enhanced-pig`.
+- 실행 시 위 기준을 포함하는 최신 승인 커밋에서 전용 integration branch와 Paseo worker
+  worktree를 생성한다. 기존 운영 checkout, 배포용 고정 snapshot, 다른 작업 branch를 수정하지 않는다.
+- 아래 worker의 cwd는 executor가 생성한 **각 package의 repo-root 절대경로**다. 실행 전
+  실제 경로·branch·base SHA를 각 brief에 삽입한다. 미해결 경로로 worker를 시작하지 않는다.
+- 읽은 지침: 사용자 제공 repository/global AGENTS 지침, 저장소 `AGENTS.md`,
+  `apps/web/AGENTS.md`, `apps/web/CLAUDE.md` (`@AGENTS.md`). 현재 checkout에는 root
+  `CLAUDE.md`가 없으며 main checkout의 해당 파일도 `@AGENTS.md` 위임이다.
+  각 worker는 실행 시 추가/변경된 계층 지침을 다시 확인한다.
+- Web 코드를 쓰기 전 설치된 Next의 `node_modules/next/dist/docs/`에서 해당 API 가이드를 읽는다.
+- provider/model: Codex. 아래 luna/terra/sol은 각각 `gpt-5.6-luna`, `gpt-5.6-terra`,
+  `gpt-5.6-sol`을 뜻한다. 정해진 구현은 luna max, 독립 리뷰는 terra high, 열린 설계는 sol high.
+  비용 이유의 luna 선택은 max를 사용한다. 모델/effort 가용성은 실행 시 확인하고 미지원이면
+  `resolve at execution from current Paseo availability`; 모델명을 추측하거나 조용히 대체하지 않는다.
+- 반복 실패 2회, loop, 맥락 누락 또는 검증 반복 실패 시 luna → terra → sol 순서로
+  한 단계씩 재배정한다. 모델과 effort를 동시에 올리지 않는다. worker 자체 하위 위임 금지.
+- 모든 WP는 `$paseo-delegate`로만 실행한다. 현재 계획 작성에는 worker를 띄우지 않는다.
+  실행 시 이 스킬이 없으면 첫 worker 전에 중지하고 설치/가용성 전제를 보고한다.
+- Mem0 scope resolver와 두 검색을 사용했으나 관련 결과가 없었다. 아래 근거는 소스와
+  대화의 확정 결정이며 메모리에서 새로운 승인이나 운영 상태를 추론하지 않았다.
+
+### 확인된 기술적 출발점
+
+- `crates/kis-client/src/market_data.rs`: `KisMarketDataClient`의 정확한 read allowlist에
+  `GET /uapi/domestic-stock/v1/quotations/inquire-price`, `FHKST01010100`이 존재한다.
+  이 transport를 재사용하며 generic proxy나 새 ETF 전용 endpoint로 확장하지 않는다.
+- `crates/kis-client/src/auth.rs:69`, `rate_limit.rs:74`: 토큰과 rate state는 각각
+  프로세스 내부 mutex에 있다. 같은 App Key를 쓰는 별도 프로세스 사이의 공유를 보장하지 않는다.
+  `Arc`를 하나 더 만드는 것으로 전역 호출 제한을 해결했다고 판정하지 않는다.
+- `crates/job-queue/src/bin/owner-equity-v2-runner.rs`와
+  `data-pipelines/collectors/src/worker.rs`가 credentialed read client를 구성한다.
+  장기 worker, 일일/수동 one-shot, V2 runner의 실제 동시 실행 경로 확인이 선행되어야 한다.
+- `crates/api-server/src/http/owner_equity_v2.rs`와 `deploy/compose/compose.yml`은
+  API에 provider credential/Raw root를 주지 않는다. 이 경계를 유지한다.
+- `apps/web/components/stock-beta/dashboard/widget-registry.ts`, detail registry,
+  `shared/widget-types.ts`의 catalog 구조를 사용한다. EOD `chart-load-coordinator.ts`와
+  `signal-refresh-coordinator.ts`에 장중 수집 로직을 덧붙이지 않는다.
+- [ADR-0005](../../decisions/0005-kis-personal-use-entitlement.md)의 private single-owner
+  권리 결정은 유지한다. 같은 범위의 권리를 재확인하도록 요구하지 않는다.
+- 기존 운영 수집 복구와 새 릴리스 배포는 미완료 기록이 있다.
+  [운영 준비 기록](2026-09-07-stock-beta-production-release-readiness.md),
+  [수집 incident](../../runbooks/kis-daily-stale-release-20260907.md)를 읽고 실제 상태를
+  별도 확인한다. main 푸시가 이 문제들을 해결한 것으로 가정하지 않는다.
+
+### 명시적 제외와 승인 경계
+
+- WebSocket, 분봉/tick history 저장, 장중 candle 생성·기존 일봉 덮어쓰기, 장중 신호 재산출 제외.
+- 계좌·잔고·주문·실행내역·주문 WebSocket·Compose `live` profile은 전부 제외.
+  기존 `crates/kis-client/src/websocket.rs`가 있다는 이유로 시세 연결에 재사용하지 않는다.
+- KRX 이외 NXT/통합시장, 다른 가격 공급자/fallback, OpenDART/KIND 호출 제외.
+- feature 개발은 fixture/provider-free가 기본이다. 계획은 장중 상시 호출, 새로운 response
+  contract, 새 credential 경로 또는 운영 활성화를 자동 승인하지 않는다.
+- WP-1은 기존 parser 대비 추가 필드를 명시한다. `AGENTS.md`가 요구하는 response contract
+  변경 승인이 필요한 경우 정확한 필드/표본 계약/예산을 제시하고 승인 전 해당 분기를 중지한다.
+- 테스트 토큰 sentinel 외 실제 key/token/body/provider prose는 로그·문서·Git·Web·quote DB에
+  남기지 않는다. 토큰 persistence가 필요하면 보호된 runtime 전용 저장소만 검토한다.
+- 실제 배포·sudo grant 변경·수집기 재시작·DB migration 실행·Funnel 변경·main merge/push는
+  이 계획 실행의 자동 단계가 아니다. 별도 release 승인 gate로 남긴다.
+
+## 설계 계약 및 제안 기본값
+
+### 데이터 흐름과 격리
+
+Web selection demand → owner API의 제한된 demand 저장 → credentialed worker의
+스케줄러/공유 KIS 호출 경계 → 검증된 단기 quote cache → owner API GET → 현재가 위젯.
+
+API GET은 cache-only이며 provider 호출/토큰 발급/새 demand 생성이 없다.
+demand 생성·연장은 별도 CSRF 보호 mutation으로 표현한다. 각 소비자의 bounded lease는
+별도로 관리하고 같은 종목의 수집 수요만 병합한다. 한 탭의 해제로 다른 탭의 유효 lease를
+삭제하지 않는다. 무제한 lease/queue/job 생성은 금지하며 최대 lease 수도 WP-1에서 고정한다.
+DB 접근은 기존 actor transaction/RLS 및 최소 권한을 따른다. API는 quote를 쓰지 않고,
+worker는 허가된 active membership만 읽고 quote를 쓴다. Web에는 DB/worker 인증이 없다.
+
+기본 방향은 기존 V2 credentialed runner에 독립적인 quote loop를 추가하고,
+기존 EOD 작업과 같은 read boundary를 사용하는 것이다. 큐의 15분 작업이 quote loop를
+무조건 막거나, quote가 EOD 재시도를 고갈시키지 않도록 실제 실행 모델을 WP-1에서 확정한다.
+새 서비스/Redis/외부 broker는 기본안이 아니다. 반드시 필요하면 coordinator가 소유 범위와
+운영 비용을 다시 승인한 뒤 graph를 수정한다.
+
+### 조회 예산과 여러 탭
+
+| 항목 | 제안 기본값 및 의미 |
+| --- | --- |
+| Web cache polling | visible/online에서 5초, 이전 요청 완료 후 다음 예약; 중첩 요청 금지 |
+| demand lease | 30초; 별도 mutation을 15초마다 갱신, 화면 종료 시 best-effort 해제 |
+| intraday provider slot | App Key 공유 범위에서 최소 5초 간격, 동시에 한 요청만 실행 |
+| 중복 제거 | owner/instrument/venue/session으로 병합; 같은 종목 탭 수로 호출 증가 금지 |
+| 활성 종목 한도 | 단일 owner의 서로 다른 탭 합계 최대 5개; 초과는 명시적 capacity 응답 |
+| 여러 종목 fairness | round-robin; 5개면 종목별 약 25초 목표, 단일 종목 5초 목표; 보장 SLA 아님 |
+| 기존 KIS 상한 | 해당 credential의 endpoint/TR 채널별 총 1 request/sec 이하, 기본 순차 |
+| 장중 일일 상한 | credential별 5,000 GET attempts 제안; 실패/재시도 포함, 도달 시 다음 날까지 중단 |
+| request deadline/retry | WP-1에서 기존 transport와 양립하는 deadline 확정; 최대 2회 재시도, 모든 시도에 slot 적용 |
+| throttling | Retry-After 우선, bounded backoff; 한 화면 새로고침으로 cooldown 우회 불가 |
+
+하루 요청 수는 “승인된 세션 길이 ÷ slot 간격”과 retries로 계산하여 WP-1에 기록한다.
+특수 개장일·세션 연장에도 daily hard cap을 초과하지 않는다. 이 숫자는 polling 예산 제안이지
+증권사의 공식 quota 숫자가 아니다. 기존 EOD/token 정책이 우선이며 부하 시 현재가가 느려졌음을
+표시한다. 모든 탭이 닫히면 lease 만료 후 새 provider 요청은 0이어야 한다.
+
+공유 경계는 token 재사용·발급 직렬화·최소 발급 간격·재시작 및 credential 회전, 채널별
+quota와 cooldown을 **같은 credential을 쓰는 모든 활성 프로세스**에 적용해야 한다.
+token secret을 담은 일반 DB cache나 단순 무잠금 파일은 금지한다. 안전한 공유가 불가능하면
+새로 각자 발급하지 않고 장중 기능을 disabled로 유지한다. 기존 EOD를 임의 중지하지 않는다.
+
+### API와 quote 의미
+
+WP-1이 고정할 proposed application routes (KIS endpoint 변경을 뜻하지 않음):
+
+- `POST /api/v2/owner-equity/quote-demands`: instrument/membership generation과 bounded
+  lease 식별자만 받는다. arbitrary provider URL/TR/account/owner ID override는 받지 않는다.
+- `DELETE /api/v2/owner-equity/quote-demands/{demand_id}`: 해당 owner demand 해제.
+- `GET /api/v2/owner-equity/instruments/{instrument}/quote`: 인증·권한 확인 후 cache-only 응답.
+
+기존 V2 prefix와 route conventions를 WP-1에서 대조해 literal path를 확정한다.
+path가 달라지면 WP-1 산출물에서 표를 교체한 뒤 WP-3/4/5를 시작하며 각자가 추측하지 않는다.
+
+최소 DTO: schema version, instrument ID, venue=KRX, currency=KRW, membership generation,
+검증된 session identity, price, previous-close 기준 값/일자(입증 가능한 경우), change/percent,
+수집 시각 `received_at`, provider timestamp(문서에 있고 검증될 때만), sequence/quote version,
+next-poll hint, transport freshness, market/session status, typed failure reason.
+
+- KIS 현재가 field 의미와 부호 code, 거래정지/무거래/0·빈 값 처리, ETF 동일 계약,
+  identity/date 검증은 공식 문서+fixture로 고정한다. 금액은 decimal-safe 계약을 사용한다.
+- `received_at`은 서버가 응답을 받은 시각이지 마지막 체결 시각이 아니다. 제공되지 않는
+  trade timestamp를 만들지 않는다. 최근 조회에 성공해도 “방금 체결”이라고 표시하지 않는다.
+- 이전 거래일 종가를 옛 EOD snapshot의 마지막 값으로 대신하지 않는다. provider 기준일이
+  입증되지 않으면 해당 메타데이터를 unavailable로 두고 EOD 기준일과 합치지 않는다.
+- freshness(RECENT/STALE/UNAVAILABLE)와 시장 상태(OPEN/CLOSED/HALTED/UNKNOWN)를
+  분리한다. OPEN은 KST 시계만으로 판정하지 않는다. 수집 calendar가 없거나 오래됐으면
+  UNKNOWN으로 fail-closed. `chk-holiday`는 승인된 daily 결과를 재사용하며 polling하지 않는다.
+- 최근 cache의 transport age 30초 초과 시 STALE. 서버 last-success 시간을 유지하고
+  실패마다 received_at을 갱신하지 않는다. 재시작 후 복원 cache도 현재로 둔갑시키지 않는다.
+- quote payload가 identity/schema/integrity 검증에 실패하면 새 가격은 표시하지 않는다.
+  last-good 유지 허용 시 동일 identity+세션에만, stale/실패 이유·시각을 함께 표시한다.
+- 장 마감은 현재가를 확정 종가로 승격하는 이벤트가 아니다. 다음 일자의 확정 종가는
+  기존 EOD pipeline의 검증·publication을 통해서만 반영한다.
+- Cache는 short-lived latest record이며 EOD Raw/Curated와 분리한다. 기본 history 미저장,
+  quote row 최대 24시간 retention 및 membership disable 시 읽기 차단. 정확한 GC와 restart
+  규칙은 WP-1에서 확정하고 운영 데이터 삭제를 이번 계획으로 실행하지 않는다.
+- API response는 `Cache-Control: no-store`; 초대 Member/비로그인/다른 owner는 가격과
+  demand 존재 여부를 볼 수 없다. logout/401/403 때 화면의 잔존 quote를 제거한다.
+
+### UI/UX와 확장성
+
+`CurrentQuoteWidget`은 dashboard/detail에서 같은 view model과 컴포넌트를 사용한다.
+서버 I/O와 timer는 `quote-load-coordinator`/전용 hook, UI는 상태를 렌더하는 컴포넌트로 분리한다.
+기존 workspace는 연결만 담당하며 거대 파일로 수집 상태 기계를 합치지 않는다.
+widget 제거·숨김으로 소비자가 없어지면 polling/demand가 정리되어야 한다.
+
+- 현재가, 전일 대비, `주기적 조회`, 마지막 수신 시각 및 지연/장외/정지 상태 표시.
+- EOD 차트 옆 독립 quote 카드가 1차안이다. 일봉 y축/SMA/tooltip 배열이나 마지막 candle을
+  quote로 변경하지 않는다. 차트 overlay/분봉은 후속으로 남긴다.
+- 선택 A→B, membership generation 변경, disable/re-add, snapshot 변경 시 quote identity를
+  재검증한다. AbortController와 단조 증가 request token으로 늦은 A 응답을 거부한다.
+- 기존 메뉴/한영/접근성 유지. 색상만으로 상승·하락을 구분하지 않고 숫자 부호/텍스트를 함께 표시.
+  매 tick마다 screen-reader announcement를 강제하지 않으며 상태 전환만 적절히 알린다.
+- 375×800, 640×360, 768×1024, 1280×720, 1440×900에서 가로 overflow 0,
+  quote/종목명/시각/상태/조작 버튼 접근 가능. 44px touch target, keyboard, forced colors,
+  reduced motion과 200% zoom-equivalent를 검사하고 실제 zoom과 혼동하지 않는다.
+
+## Initial classification
+
+분류를 먼저 정한 뒤 아래 graph에서 worker를 배정했다. 아직 해소되지 않은 필수 계약은
+복잡도라는 이유로 worker에게 떠넘기지 않고 WP-1 및 coordinator gate에서 고정한다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| WP-1 | hard | source contract·시간 의미·공유 credential 운영 경계의 설계 판단 | high | 문서 충돌, 기존 read 프로세스 누락, 승인되지 않은 응답/시장/권한 필요 시 영향 분기 중지 |
+| WP-2 | hard | 프로세스 간 token/rate/cooldown, crash·restart 실패 비용 | high | 모든 caller 경계를 봉인 못함, rotation/lease race 재현 실패 시 설계 재검토 |
+| WP-3 | intermediate | 동결 계약의 demand/cache/producer 구현과 DB fencing | medium | 별도 서비스 필요, 기존 job lease 침범, DB 권한 모델 변경 확대 시 hard로 재분류 |
+| WP-4 | intermediate | 기존 owner API·RLS·OpenAPI 패턴으로 제한된 endpoint 추가 | high | actor isolation 증명 불가, API에 secret/egress 필요 주장 시 구현 중지 |
+| WP-5 | intermediate | catalog 위젯과 독립 polling 상태 기계, 결정적 UI 검증 | high | catalog 수정이 공통 엔진 재설계로 확장되거나 race 수정 2회 실패 시 상향 |
+| WP-6 | intermediate | 확정 구조의 opt-in runtime wiring/검사/다이어그램 동기화 | medium | 새 DB login/image 서비스·root grant 필요 시 변경 범위 재승인 |
+| WP-7 | hard | cross-layer 안전성과 승인 경계에 대한 독립 수락 판단 | high | critical/high/medium 발견 시 담당 반환; 자체 구현·범위 확대 금지 |
+| WP-8 | intermediate | 동결 acceptance의 fixture/DB/browser·부하 회귀 실행 | high | 재현 불가 race, 결과 누락/반복 flaky이면 중지 후 harness 또는 코드 결함 분리 |
+
+## Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP-1 | 1 | hard | 정확한 소스·API·스케줄·공유경계 계약 동결 | 아래 신규 contract spec만 | 없음 | Codex sol high | 계약/승인 delta/정확한 파일 map | 공식 근거, caller 목록, budget 계산, coordinator 승인 |
+| WP-2 | 2 | hard | read credential 공유 보호 | kis-client read/auth/limiter 및 정확한 read caller 연결 | WP-1 gate | Codex sol high | 공유 arbitration와 crash/다중 프로세스 테스트 | fake transport/clock 및 cross-process barrier tests |
+| WP-3 | 3 | intermediate | demand/cache DB와 quote producer | 신규 migration, market-data/collector/job-queue quote 모듈 | WP-2 | Codex luna max | producer·fencing·role grant | disposable DB, scheduler fake-time, read boundary regression |
+| WP-5 | 3 | intermediate | 현재가 위젯·Web client·polling | apps/web의 아래 지정 source/unit tests | WP-1·WP-2 gate, 동결 fixture contract | Codex luna max | dashboard/detail quote UX | unit·typecheck·lint, mock-only race tests |
+| WP-4 | 4 | intermediate | owner cache API·OpenAPI | API Rust/contract/generated OpenAPI | WP-3 | Codex luna max | 인증·demand mutation·cache GET | DB-backed HTTP, OpenAPI check, no-provider assertions |
+| WP-6 | 5 | intermediate | opt-in 배포 계약·runbook·diagram | Compose/ops/docs 및 필요 CI 접속점 | WP-3·WP-4·WP-5 | Codex luna max | default-off 설정과 검사/로컬 PNG | static/self-test, manifest compatibility, local renderer |
+| WP-7 | 6 | hard | 독립 전체 변경 리뷰 | source read-only, review report | WP-6 | Codex terra high | severity별 ACCEPT/REJECT | source/권한/계약/데이터 독립성 증거 |
+| WP-8 | 7 | intermediate | 실제 기능·회귀 QA와 증거 | 지정 E2E/fixtures/QA report | WP-7 ACCEPT | Codex luna max | 통합 QA matrix | production browser 2회·DB·부하·전체 회귀 |
+
+Wave 3의 WP-3과 WP-5만 병렬이다. 다른 wave는 순서대로 통합한다. WP-2의 공용 caller
+수정이 끝나기 전에 WP-3은 시작하지 않는다. WP-4와 WP-5는 Rust/OpenAPI 대 Web으로
+파일이 분리되지만 API는 DB 후 실행한다. QA는 모든 code integration 후 한 worker만 실행한다.
+
+## Worker briefs
+
+### 모든 worker에 복사할 공통 brief
+
+- cwd: executor가 package에 배정한 Paseo worktree repo-root 절대경로와 확인된 base SHA.
+  필요한 이전 결과는 경로만 가리키지 말고 동결 계약·결정·제약 요약을 prompt에 포함한다.
+- 본 문서의 해당 scope, 목표, 예산, 금지 경계와 단계별 승인을 지킨다. 다른 source를
+  읽는 것은 가능하나 owned scope 밖은 수정하지 않는다. 미지정 파일이 필요하면 coordinator에
+  정확한 파일/이유를 보고하고 scope amendment 전 수정하지 않는다. 추측·재위임 금지.
+- 필수 보고: (1) 변경 파일/라인 범위 (2) brief와 다른 처리 및 이유 (3) 실제 명령/exit/
+  count/elapsed (4) unresolved/후속 항목 (5) 찾지 못했거나 검증 못한 항목.
+  빈 항목도 `none`을 명시한다. “실행 시작”/생략된 terminal summary를 PASS로 세지 않는다.
+- dependency 설치, DB/Docker/Next/browser 시작은 자신의 단계에서 명시한 범위와 실행환경
+  권한 확인 뒤만 수행한다. 실제 KIS·계좌·주문·production 서비스 접근은 전 WP에서 금지한다.
+- owned package commit과 clean 상태를 보고하되 main merge/push나 운영 릴리스 변경은 하지 않는다.
+
+### WP-1 — 계약 동결과 승인 delta
+
+- cwd: WP-1 Paseo worktree. hard/high confidence, 열린 cross-system 설계이므로 sol high.
+- 입력: baseline source, 본 문서, AGENTS, ADR-0005, 운영 incident, 공식 KIS 자료.
+  공식 자료만 research하고 broker endpoint 자체를 호출하지 않는다.
+- owned write: `docs/superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md` 신규.
+  다른 source/AGENTS/기존 ADR 수정 금지. 필요한 승인 변경은 spec에 proposal로 기록한다.
+- 산출물: 실제 read caller 전체의 file:line 목록, 동일 credential 판별/공유 저장소 권한,
+  token restart/rotation 방안, 모든 limiter 우회 경로의 차단 방식, producer 실행 위치,
+  API literal DTO/path/CSRF/lease/capacity/failure code, schema 숫자·시각·부호 계약,
+  market calendar/특수일/정지·무거래 정책, 정확한 migration/role/helper/source 파일 소유 map.
+- 공식 [현재가 예제](https://github.com/koreainvestment/open-trading-api/blob/main/examples_llm/domestic_stock/inquire_price/inquire_price.py),
+  [필드 매핑](https://github.com/koreainvestment/open-trading-api/blob/main/examples_llm/domestic_stock/inquire_price/chk_inquire_price.py),
+  KIS portal 및 제공 XLSX를 현재 상태로 재확인하고 조회일·가능하면 revision pin을 기록한다.
+  현재가는 REST이고 공식 예제도 streaming에는 WebSocket을 안내한다. sample 전체 실행 금지.
+- 최소 fixture matrix와 예산 산식을 제출한다. response contract 변화/운영 high-frequency
+  승인 필요 여부를 명시한다. 중요한 문서 충돌이나 source freshness 증명 불가를 숨기지 않는다.
+- 검증: 소스 근거 및 공식 근거 직접 대조, 모든 proposed owned file·dependency에 중복 없음,
+  baseline 대비 승인 delta 목록. coordinator가 승인 전 downstream launch 금지.
+
+### WP-2 — read credential arbitration
+
+- cwd: WP-2 worktree. hard/high confidence; sol high. 입력은 동결 WP-1과 baseline.
+- owned: `crates/kis-client/src/{auth,rate_limit,market_data,token_issuer}.rs`, 필요 신규
+  read-coordination 모듈과 `lib.rs` 등록 및 focused tests; WP-1에서 지정한 credentialed read
+  생성 지점 (`data-pipelines/collectors/src/worker.rs`, V2 runner bin, 필요한 one-shot의
+  **생성 연결 부분만**). Cargo dependency 변경은 사전 file map에 있을 때만.
+- 기존 TokenManager/allowlist를 유지하며 process-shared 정책으로 보강한다. read 전용 opt-in
+  보호가 live-order client의 실행 의미를 바꾸거나 계좌 경로에 접근해서는 안 된다.
+- 정상/만료/401/429/timeout/crash/restart/clock skew/credential rotation에서 token 발급,
+  cooldown, channel budget을 검증한다. 위장 credential alias로 동일 key budget이 분리되는
+  경로를 막는다. 실제 key/hash값을 진단에 노출하지 않는다.
+- marker만 공유하고 secret lifecycle은 각 프로세스에서 재발급하는 가짜 공유를 금지한다.
+  공용 보호 저장소가 없거나 안전하지 않으면 typed disabled/error, unguarded fallback 0.
+- 검증: `CARGO_BUILD_JOBS=2 cargo test --locked -p kis-client`와 동결 scoped tests.
+  두 실제 OS 프로세스+fake transport의 barrier로 동시 만료/죽은 leader/재시작을 검사한다.
+  provider 호출은 0. live 통합 test가 있으면 실행 제외 목록을 명시하고 대체 fixture 근거를 제출한다.
+
+### WP-3 — quote producer와 저장 모델
+
+- cwd: WP-3 worktree. intermediate/medium confidence; luna max. WP-1 계약과 WP-2 연결 완료 필요.
+- owned: 다음 빈 번호의 `migrations/*_owner_intraday_quotes.{up,down}.sql` (번호는 launch 때 고정),
+  `crates/market-data/src/intraday_quotes.rs`, `data-pipelines/collectors/src/intraday_quotes.rs`,
+  `crates/job-queue/src/owner_equity_v2/intraday.rs` 신규 및 필요한 module 등록,
+  기존 V2 runner의 quote loop wiring, 해당 quote/scheduler/DB 테스트.
+  bootstrap role 파일이 필요하면 WP-1 map에서 지정; 임의 새 login/서비스 생성 금지.
+- 스케줄러는 quote provider slot/일일 예산/세션/demand cap을 적용한다. 동일 identity merge,
+  공정성, no-demand stop, EOD contention, deadline/backoff를 fake-time으로 증명한다.
+- quote 상태는 독립 테이블 latest cache. 소유자·generation·session·monotonic version/fencing,
+  transaction 경계와 worker 재시작을 처리한다. disable 중 in-flight 응답은 publication 불가.
+- 기존 Raw/EOD/신호 테이블을 수정하는 경로는 0. 시장·가격 parser 추가가 기존 reference
+  normalizer response 의미를 넓히지 않는다. raw body는 cache나 operational log에 저장하지 않는다.
+- 검증: market-data/collectors/job-queue focused unit 및 disposable QA PostgreSQL role/RLS,
+  grants/up-down safety/lease-expiry/concurrent-write 테스트. DB 없으면 필수 acceptance 실패로
+  보고하며 조용히 skip 후 성공시키지 않는다. 운영 DB는 사용하지 않는다.
+
+### WP-4 — owner API와 계약
+
+- cwd: WP-4 worktree. intermediate/high confidence; luna max. WP-3 DB와 WP-1 route spec 입력.
+- owned: `crates/api-server/src/http/owner_intraday_quotes.rs`,
+  `crates/api-server/src/repos/owner_intraday_quotes.rs` 및 필요한 mod/state/runtime/contract 접속점,
+  `apps/api-server/scripts/openapi-spec.mjs`, `openapi.json`, `generated/openapi.ts`,
+  신규 `crates/api-server/tests/http_owner_intraday_quotes.rs`와 scoped OpenAPI tests.
+- API는 DTO whitelist/owner-only/current membership 검증, bounded demand mutation/CSRF,
+  cache-only GET을 구현한다. 외부 URL/query 임의 전달 금지, job 폭증/lease 과장/cap 우회 방지.
+- GET 무한 반복이나 비인가/잘못된 요청이 provider 호출·토큰 발급·demand write를 유발하지
+  않음을 테스트한다. DB 역할과 expiry/sequence/integrity 계약이 Web과 동일해야 한다.
+- 검증: real disposable DB HTTP acceptance, actor/Member/expired session/CSRF 및
+  unknown/disabled/generation mismatch, `cargo test --locked -p api-server --test openapi_contract`,
+  `npm run openapi:check --workspace @lagrange/api-server`. DB 생략 PASS 금지.
+
+### WP-5 — quote 위젯과 polling 상태 기계
+
+- cwd: WP-5 worktree. intermediate/high confidence; luna max. WP-1의 동결 DTO fixture로 개발하며
+  WP-3과 mutable scope가 겹치지 않는다. 실제 endpoint 연동은 WP-4 통합 gate에서 확인한다.
+- owned: `apps/web/lib/products/intraday-quotes-{contracts,client}.ts` 신규,
+  `components/stock-beta/quote/` 신규(coordinator/hook/view/widget/CSS), dashboard/detail registry와
+  view-model types의 최소 접속점, workspace/detail composition, stock-beta locale dictionary,
+  필요 `apps/web/lib/api/contracts.ts` mutation path 등록, 신규 `tests/stock-beta-intraday-*.test.*`.
+  기존 EOD chart renderer·geometry·signal 계산과 E2E 파일은 수정하지 않는다.
+- 재사용 가능한 widget을 catalog에 등록하고 add/remove/reorder/hide에 따른 lifecycle을 검사한다.
+  숫자 가격만 전체 페이지 rerender하거나 signal refresh를 호출하는 연결 금지.
+- fake clock으로 polling5초/demand15초/TTL30초, 숨김·offline·unmount·logout cleanup,
+  선택 race·generation·영문/한글·부분 실패·마지막 성공시각 및 상태 표시를 검증한다.
+- 검증: scoped/full Vitest, `npm run typecheck --workspace @lagrange/web`, Web lint.
+  필요 시 `--configLoader runner`를 사용하고 기존 shared dependencies는 재설치/삭제하지 않는다.
+  이 wave에서 Next/browser는 띄우지 않는다. UI runtime 검증은 WP-8이 단독 수행한다.
+
+### WP-6 — default-off 운영 계약과 구조 문서
+
+- cwd: WP-6 worktree. intermediate/medium confidence; luna max. WP-2~5 통합 source 입력.
+- owned: `deploy/compose/compose.yml`과 WP-1에서 명시한 env example/schema/ops validator,
+  V2 runtime static/self-test, credential-coordination 안전 검사, 필요한 CI test 접속점,
+  신규 `docs/runbooks/stock-beta-intraday-quotes.md`,
+  `docs/diagrams/{component_architecture,runtime_deployment}.{puml,png}`.
+- 기능 기본 OFF; 잘못된/누락된 quota/calendar/권한 설정은 시작 실패 또는 typed disabled.
+  기존 릴리스 설정에서 안전하게 비활성 호환되어야 한다. API/Web에 credential/Raw 쓰기 권한
+  추가 금지. 새 token-coordination mount는 credentialed read worker에만 최소 권한으로 연결한다.
+- 기존 image set을 재사용하는 기본안을 지킨다. 새 image가 필요한 판단은 coordinator로 반환한다.
+  현행 pinned manifest/static checks를 우회하거나 검사 전체를 삭제하지 않는다.
+- runbook에는 활성화 승인/예산/health/backout/disable/EOD 복구 전제/기능과 배포 QA 차이를 적는다.
+  privileged 인증·bootstrap·72h grant를 새로 만들거나 frozen 운영 파일을 변경하지 않는다.
+- 구조 edge마다 실제 file:line을 쓰고 두 PNG를 로컬에서 재렌더한다:
+  `docker run --rm -v "$PWD/docs/diagrams:/data" plantuml/plantuml -tpng /data/component_architecture.puml /data/runtime_deployment.puml`.
+  Docker 권한이 없으면 미검증을 보고하며 원격 renderer로 보내지 않는다.
+- 검증: 수정 validator와 provider-free static/self-tests, default-off compose 계약,
+  기존 7개 release preflight 회귀. 실제 image build/install/rollout은 하지 않는다.
+
+### WP-7 — 독립 설계·구현 리뷰
+
+- cwd: reviewed integration을 고정한 별도 Paseo worktree. hard/high confidence; terra high.
+- owned write: `docs/superpowers/plans/2026-09-08-stock-beta-intraday-quotes-review.md`만.
+  source는 read-only; WP-1~6 구현자가 아닌 독립 worker를 선택한다.
+- source/API/DB/runtime/UI 전체 diff에서 권한, token/rate 우회, calendar/시각 정직성,
+  stale-data 표시, 원래 EOD와의 독립성, registry 확장성, 통합 race를 검토한다.
+- Critical/High/Medium별 file:line·재현·영향·담당을 적고 미해결 blocker가 있으면 REJECT.
+  직접 수정하지 않고 담당 package scope로 반환한다. WP-8 이후 변경분/QA 증거 재검토도
+  동일 package의 후속으로 수행한다. QA 전 static ACCEPT를 최종 release ACCEPT로 부르지 않는다.
+
+### WP-8 — 기능 QA와 통합 acceptance
+
+- cwd: WP-7 통과 integration의 QA worktree. intermediate/high confidence; luna max.
+- owned: 신규 `apps/web/tests/e2e/stock-beta-intraday.spec.ts`, 관련 synthetic fixture 신규 파일,
+  `tests/e2e/support/synthetic-api.mjs`의 최소 routing/시나리오 연결,
+  신규 `docs/superpowers/plans/2026-09-08-stock-beta-intraday-quotes-qa.md`.
+  기존 E2E 하네스 접속점 수정이 필요하면 exact map 승인 후 진행; production source 수정 금지.
+- broker 대신 결정적 fake transport를 사용한다. HTTP polling provider mock와 browser용
+  synthetic app API를 구분하고, 실제 broker/계좌/주문/외부 네트워크 요청은 0으로 검사한다.
+- 필수 runtime: 종목 선택/전환/등록 후 READY/disable/재등록, 값·부호·시각 변화,
+  A→B 늦은 응답, multi-tab dedup/cap/fairness, visibility/offline/reconnect/logout,
+  429/timeout/503/invalid data/unknown calendar/휴장/마감/정지/0가격/날짜 변경,
+  오래된 EOD 차트 옆 최신 quote와 정상 EOD 불변성을 실제 Chromium에서 조작한다.
+- timeout 뒤 fake response 도착, stale cache의 재시작, 미래 timestamp/역행 clock,
+  worker lease 만료/disable in-flight 및 예산 소진을 unit+DB+integration 층에서 검사한다.
+- 동일 안전 API를 1/10/100회 polling해도 cache-only GET이 provider call을 늘리지 않는지
+  fake-time count로 증명한다. 30분 상당 scheduler 시간을 압축해 request/메모리/demand/cache
+  bound를 검사한다. idle 체류와 UI hidden 상태에서 API/request counter를 직접 확인한다.
+- 실사용 flow의 가격 숫자/시각/상태를 screenshot과 semantic assertions로 남긴다.
+  수동/자동 클릭, 합성 데이터/실제 provider, zoom-equivalent/실제 zoom을 구분해 기록한다.
+- final typecheck/lint/OpenAPI/full Vitest, Rust focused tests/clippy, disposable DB acceptance를
+  수행한다. fresh production build 두 개로 focused Playwright 두 회 통과를 요구한다.
+  Next `output: standalone`이면 standalone server 사용, 각 API URL을 build 시 정확히 고정한다.
+  page와 실제 JS asset HTTP 200 확인, 한 worker, 각 회 완전한 terminal exit/count 확보.
+- 전체 Web E2E도 수행한다. 기존 synthetic account/live UI fixture 외 실제 forbidden traffic은 0.
+  중간 test 시작만 보인 실행은 PASS가 아니며 누락 결과를 timeout 근거로 면제하지 않는다.
+- 빌드/테스트 하나씩 진행하고 14 GiB host 자원/OOM 정책을 지킨다. QA background session과
+  정해진 새 loopback ports만 사용, 정확한 PID 정리, 사용자 프로세스/포트/기존 산출물 삭제 금지.
+- 실제 KIS 장중 smoke와 외부 Tailscale 접속은 이 fixture QA의 범위 밖이다. 필요 시 별도 승인
+  release gate에서 본인 인증 owner session과 8443 경로로 확인하며 공개 demo에 실데이터를 넣지 않는다.
+
+## Coordinator gates
+
+1. **Pre-launch:** `$paseo-delegate` 가용성, 모든 지침·baseline·clean state·현재 날짜 확인.
+   기존 worker/build와 충돌하지 않는 worktree/자원 확보. 선택 종목 polling 범위를 유지하며
+   live 호출은 승인하지 않은 상태로 WP-1 문서 작업만 시작한다.
+2. **Contract gate:** WP-1의 정확한 route/DTO/session proof/동시 read caller map/공유 token
+   모델·예산·파일 소유권을 coordinator가 직접 수락한다. response contract 변경 또는
+   계획 범위 밖 서비스/시장/권한이 필요하면 그 분기를 중지하고 사용자 결정을 요청한다.
+3. **Shared-boundary gate:** WP-2의 실제 다중 프로세스 fixture 증거 확인. credential/limiter
+   우회가 남거나 토큰 재시작 정책이 미확정이면 producer 구현·운영 활성화를 허용하지 않는다.
+4. **Per-wave integration:** WP-3/5 별도 commit 통합, exact owned scope와 기계적 검증 확인.
+   WP-4에서 실제 DB/API와 Web schema 대조. 불일치는 계약 변경 승인 후 관련 package를
+   순차 수정한다. reviewer가 구현자를 대신해 고치거나 worker가 임의로 graph를 재작성하지 않는다.
+5. **Static acceptance:** WP-6 default-off/diagram/ops 검증 후 WP-7 독립 리뷰. unresolved
+   Critical/High/Medium은 담당에게 반환하고 재검증 후에만 QA로 진행한다.
+6. **Final end-to-end:** WP-8에서 두 fresh production focused pass와 전체 Web regression,
+   DB/cross-process/rate tests의 exit/count/기간을 확보한다. QA 수정 뒤 WP-7 후속 리뷰가
+   ACCEPT해야 개발 완료다. 새로운 source 수정이 있었다면 영향받는 runtime 검사를 다시 수행한다.
+7. **Production activation (별도, 이번 실행 제외):** 최신화 incident/기존 research health,
+   설치된 V2 릴리스/DB·calendar freshness·백업 및 rollback·entitlement pins·shared read worker
+   rollout을 확인한다. 기존 72h image-only grant를 재사용해 migration/restart/live polling하지 않는다.
+   사용자 승인된 종목·시간·요청 예산으로 제한된 장중 smoke를 먼저 수행하고, 실제 값과 수신 시각,
+   provider 요청 수/오류, EOD 무영향을 확인한 뒤에만 상시 활성화를 검토한다.
+   권한이 없으면 정확한 blocker를 보고하며 새로운 sudo 체계를 자동 제작하지 않는다.
+
+## 계획 변경 규칙
+
+아직 미확정인 소스·시장 세션 계약과 credential 공유 방식은 WP-1 산출물 및 gate에서
+고정할 대상이다. 현재 문서가 그 사실을 검증 완료했다고 뜻하지 않는다.
+이후 실행에서 scope/승인/dependency가 어긋나면 해당 branch를 멈추고 본 graph와 brief를
+수정한 뒤 `$paseo-delegate`로 재개한다. native subagent로 우회하지 않는다.
