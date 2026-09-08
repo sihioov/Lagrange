@@ -808,3 +808,6 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   tmpfs, `127.0.0.1:55438`만 바인딩. 신규 이름/포트의 공백을 확인한 뒤 `--pull never`로
   시작했고 healthy 및 SQL version 응답을 확인했다. 운영 DB·서비스는 사용/변경하지 않았다.
   coordinator가 해당 QA 컨테이너만 관리/정리하며 worker는 loopback의 임시 test DB만 사용한다.
+- B1 담당자 `6416026d-b838-4fa1-a697-f2243b618577` (Codex luna/max)를 base `a0da246`,
+  `/data/worktrees/3puw275b/stock-beta-intraday-storage`, workspace `wks_cb50f59b1dc645f6`에
+  시작했다. source/parser 담당자와 reviewer는 idle로 유지하며 mutable 범위는 겹치지 않는다.
