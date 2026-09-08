@@ -745,3 +745,7 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - WP-3B는 WP-3A 수락 후 기존 WP-3의 migration/cache/demand/producer 범위를 맡는다.
   0054 번호 충돌 및 실제 disposable DB 검증 환경은 해당 launch 전에 확인한다.
   WP-3A에는 DB/runner/transport/Compose/Web 변경이나 네트워크 호출을 주지 않는다.
+- WP-3A 담당자 `b4a77188-5d3a-4685-b5bf-1f2535a1a1d1` (Codex luna/max)를
+  `/data/worktrees/3puw275b/stock-beta-intraday-parser`, workspace `wks_532168c8d9670b4d`,
+  base `9f4fb4f07f1dff73772922403b90d457d858ff96`에서 시작했다. 공식 KIS 필드 매핑과
+  inquire-price 공개 문서를 재확인했으며 샘플 실행이나 실제 provider 요청은 하지 않았다.
