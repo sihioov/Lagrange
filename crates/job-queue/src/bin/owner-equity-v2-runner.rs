@@ -1,5 +1,6 @@
 //! Production queue daemon for owner-managed equity universe V2.
 
+use std::future::Future;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
@@ -120,26 +121,6 @@ enum IntradayQuoteStartup {
     Ready(Arc<IntradaySessionWindowContract>),
 }
 
-impl IntradayQuoteStartup {
-    #[cfg(test)]
-    fn windows(&self) -> Option<&Arc<IntradaySessionWindowContract>> {
-        match self {
-            Self::Ready(windows) => Some(windows),
-            Self::Disabled | Self::Unavailable(_) => None,
-        }
-    }
-
-    #[cfg(test)]
-    const fn starts_quote_task(&self) -> bool {
-        matches!(self, Self::Ready(_))
-    }
-
-    #[cfg(test)]
-    const fn eod_continues(&self) -> bool {
-        true
-    }
-}
-
 fn prepare_intraday_quote_startup<F>(
     mode: Mode,
     intraday_mode: IntradayQuotesMode,
@@ -158,6 +139,46 @@ where
         Ok(windows) => IntradayQuoteStartup::Ready(Arc::new(windows)),
         Err(error) => IntradayQuoteStartup::Unavailable(error),
     }
+}
+
+async fn run_intraday_quote_startup<
+    LoadWindows,
+    StartQuote,
+    ContinueEod,
+    QuoteTask,
+    EodFuture,
+    EodResult,
+>(
+    mode: Mode,
+    intraday_mode: IntradayQuotesMode,
+    load_windows: LoadWindows,
+    start_quote: StartQuote,
+    continue_eod: ContinueEod,
+) -> EodResult
+where
+    LoadWindows: FnOnce() -> Result<
+        IntradaySessionWindowContract,
+        collectors::intraday_quotes::IntradaySessionWindowError,
+    >,
+    StartQuote: FnOnce(Arc<IntradaySessionWindowContract>) -> Option<QuoteTask>,
+    ContinueEod: FnOnce(Option<QuoteTask>) -> EodFuture,
+    EodFuture: Future<Output = EodResult>,
+{
+    let intraday_task = match prepare_intraday_quote_startup(mode, intraday_mode, load_windows) {
+        IntradayQuoteStartup::Ready(windows) => start_quote(windows),
+        IntradayQuoteStartup::Unavailable(_) => {
+            eprintln!(
+                "{}",
+                json!({
+                    "event":"owner_equity_v2_intraday",
+                    "code":"SESSION_WINDOWS_UNAVAILABLE"
+                })
+            );
+            None
+        }
+        IntradayQuoteStartup::Disabled => None,
+    };
+    continue_eod(intraday_task).await
 }
 
 fn positive_duration(name: &str, default: Duration) -> Result<Duration, ConfigError> {
@@ -737,12 +758,12 @@ async fn main() -> ExitCode {
             let _ = signal_tx.send(true);
         });
     }
-    let mut intraday_task = match prepare_intraday_quote_startup(
+    let quote_shutdown_rx = shutdown_rx.clone();
+    run_intraday_quote_startup(
         config.mode,
         config.intraday_mode,
         IntradaySessionWindowContract::from_fixed_path,
-    ) {
-        IntradayQuoteStartup::Ready(windows) => {
+        |windows| {
             let producer_config = match IntradayProducerConfig::for_worker(&config.worker_id) {
                 Ok(config) => Some(config),
                 Err(_) => {
@@ -763,176 +784,174 @@ async fn main() -> ExitCode {
                     windows,
                     producer_config,
                 );
-                let intraday_shutdown = shutdown_rx.clone();
+                let intraday_shutdown = quote_shutdown_rx.clone();
                 tokio::spawn(async move { producer.run_daemon(intraday_shutdown).await })
             })
-        }
-        IntradayQuoteStartup::Unavailable(_) => {
-            eprintln!(
-                "{}",
-                json!({
-                    "event":"owner_equity_v2_intraday",
-                    "code":"SESSION_WINDOWS_UNAVAILABLE"
-                })
-            );
-            None
-        }
-        IntradayQuoteStartup::Disabled => None,
-    };
-    let mut next_recovery = tokio::time::Instant::now();
-    let seoul = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
-    let mut schedule_cadence = ScheduleCadence::default();
-    let mut next_schedule_attempt = tokio::time::Instant::now();
-    let mut exit = ExitCode::SUCCESS;
-    loop {
-        if *shutdown_rx.borrow() {
-            break;
-        }
-        if health_task
-            .as_ref()
-            .is_some_and(tokio::task::JoinHandle::is_finished)
-        {
-            eprintln!(
-                "{}",
-                json!({"event":"owner_equity_v2_health","code":"WRITER_UNAVAILABLE"})
-            );
-            exit = ExitCode::FAILURE;
-            break;
-        }
-        let intraday_finished = intraday_task
-            .as_ref()
-            .is_some_and(tokio::task::JoinHandle::is_finished);
-        if intraday_finished {
-            let task = intraday_task
-                .take()
-                .expect("finished intraday task remains owned by runner");
-            match task.await {
-                Ok(Ok(())) => {}
-                Ok(Err(_)) | Err(_) => {
-                    eprintln!(
-                        "{}",
-                        json!({"event":"owner_equity_v2_intraday","code":"PRODUCER_UNAVAILABLE"})
-                    );
-                    // The quote task is intentionally independent: its
-                    // failure must not cancel or block the EOD worker.
-                    exit = ExitCode::FAILURE;
-                }
-            }
-        }
-        let now = tokio::time::Instant::now();
-        let now_kst = Utc::now().with_timezone(&seoul);
-        if let Some(key) = schedule_cadence.pending_key(now_kst)
-            && now >= next_schedule_attempt
-        {
-            let pins = config
-                .schedule_pins
-                .as_ref()
-                .expect("non-healthcheck configuration has schedule pins");
-            match run_owner_equity_schedule_cycle(&pool, pins, now_kst).await {
-                Ok(report) => {
-                    schedule_cadence.complete(key);
-                    println!(
-                        "{}",
-                        json!({
-                            "event":"owner_equity_v2_schedule",
-                            "as_of":report.as_of,
-                            "scheduled":report.scheduled
-                        })
-                    );
-                }
-                Err(OwnerEquityScheduleError::NoConfirmedClose) => {
-                    eprintln!(
-                        "{}",
-                        json!({
-                            "event":"owner_equity_v2_schedule",
-                            "code":"CONFIRMED_CLOSE_UNAVAILABLE"
-                        })
-                    );
-                    next_schedule_attempt = tokio::time::Instant::now() + Duration::from_secs(60);
-                }
-                Err(OwnerEquityScheduleError::Database | OwnerEquityScheduleError::InvalidPins) => {
-                    eprintln!(
-                        "{}",
-                        json!({
-                            "event":"owner_equity_v2_schedule",
-                            "code":"SCHEDULER_UNAVAILABLE"
-                        })
-                    );
-                    next_schedule_attempt = tokio::time::Instant::now() + Duration::from_secs(60);
-                }
-            }
-        }
-        if now >= next_recovery {
-            if recover_owner_equity_claims(&queue).await.is_err() {
-                eprintln!(
-                    "{}",
-                    json!({"event":"owner_equity_v2_recovery","code":"RECOVERY_UNAVAILABLE"})
-                );
-                exit = ExitCode::FAILURE;
-                break;
-            }
-            next_recovery = now + config.recovery;
-        }
-        let work = run_owner_equity_runner_once(&pool, &queue, &config.worker_id, &adapter, runner);
-        tokio::pin!(work);
-        let outcome = tokio::select! {
-            result = &mut work => result,
-            changed = shutdown_rx.changed(), if config.mode == Mode::Daemon => {
-                if changed.is_err() || *shutdown_rx.borrow() {
-                    work.await
-                } else {
-                    continue;
-                }
-            }
-        };
-        match outcome {
-            Ok(outcome) => {
-                println!(
-                    "{}",
-                    json!({"event":"owner_equity_v2_run","outcome":outcome_label(outcome)})
-                );
-                if config.mode == Mode::Once {
+        },
+        |mut intraday_task| async {
+            let mut next_recovery = tokio::time::Instant::now();
+            let seoul = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
+            let mut schedule_cadence = ScheduleCadence::default();
+            let mut next_schedule_attempt = tokio::time::Instant::now();
+            let mut exit = ExitCode::SUCCESS;
+            loop {
+                if *shutdown_rx.borrow() {
                     break;
                 }
+                if health_task
+                    .as_ref()
+                    .is_some_and(tokio::task::JoinHandle::is_finished)
+                {
+                    eprintln!(
+                        "{}",
+                        json!({"event":"owner_equity_v2_health","code":"WRITER_UNAVAILABLE"})
+                    );
+                    exit = ExitCode::FAILURE;
+                    break;
+                }
+                let intraday_finished = intraday_task
+                    .as_ref()
+                    .is_some_and(tokio::task::JoinHandle::is_finished);
+                if intraday_finished {
+                    let task = intraday_task
+                        .take()
+                        .expect("finished intraday task remains owned by runner");
+                    match task.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) | Err(_) => {
+                            eprintln!(
+                                "{}",
+                                json!({"event":"owner_equity_v2_intraday","code":"PRODUCER_UNAVAILABLE"})
+                            );
+                            // The quote task is intentionally independent: its
+                            // failure must not cancel or block the EOD worker.
+                            exit = ExitCode::FAILURE;
+                        }
+                    }
+                }
+                let now = tokio::time::Instant::now();
+                let now_kst = Utc::now().with_timezone(&seoul);
+                if let Some(key) = schedule_cadence.pending_key(now_kst)
+                    && now >= next_schedule_attempt
+                {
+                    let pins = config
+                        .schedule_pins
+                        .as_ref()
+                        .expect("non-healthcheck configuration has schedule pins");
+                    match run_owner_equity_schedule_cycle(&pool, pins, now_kst).await {
+                        Ok(report) => {
+                            schedule_cadence.complete(key);
+                            println!(
+                                "{}",
+                                json!({
+                                    "event":"owner_equity_v2_schedule",
+                                    "as_of":report.as_of,
+                                    "scheduled":report.scheduled
+                                })
+                            );
+                        }
+                        Err(OwnerEquityScheduleError::NoConfirmedClose) => {
+                            eprintln!(
+                                "{}",
+                                json!({
+                                    "event":"owner_equity_v2_schedule",
+                                    "code":"CONFIRMED_CLOSE_UNAVAILABLE"
+                                })
+                            );
+                            next_schedule_attempt =
+                                tokio::time::Instant::now() + Duration::from_secs(60);
+                        }
+                        Err(
+                            OwnerEquityScheduleError::Database
+                            | OwnerEquityScheduleError::InvalidPins,
+                        ) => {
+                            eprintln!(
+                                "{}",
+                                json!({
+                                    "event":"owner_equity_v2_schedule",
+                                    "code":"SCHEDULER_UNAVAILABLE"
+                                })
+                            );
+                            next_schedule_attempt =
+                                tokio::time::Instant::now() + Duration::from_secs(60);
+                        }
+                    }
+                }
+                if now >= next_recovery {
+                    if recover_owner_equity_claims(&queue).await.is_err() {
+                        eprintln!(
+                            "{}",
+                            json!({"event":"owner_equity_v2_recovery","code":"RECOVERY_UNAVAILABLE"})
+                        );
+                        exit = ExitCode::FAILURE;
+                        break;
+                    }
+                    next_recovery = now + config.recovery;
+                }
+                let work =
+                    run_owner_equity_runner_once(&pool, &queue, &config.worker_id, &adapter, runner);
+                tokio::pin!(work);
+                let outcome = tokio::select! {
+                    result = &mut work => result,
+                    changed = shutdown_rx.changed(), if config.mode == Mode::Daemon => {
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            work.await
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+                match outcome {
+                    Ok(outcome) => {
+                        println!(
+                            "{}",
+                            json!({"event":"owner_equity_v2_run","outcome":outcome_label(outcome)})
+                        );
+                        if config.mode == Mode::Once {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "{}",
+                            json!({"event":"owner_equity_v2_run","code":"WORKER_UNAVAILABLE"})
+                        );
+                        exit = ExitCode::FAILURE;
+                        break;
+                    }
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(config.poll) => {}
+                    changed = shutdown_rx.changed(), if config.mode == Mode::Daemon => {
+                        if changed.is_err() || *shutdown_rx.borrow() { break; }
+                    }
+                }
             }
-            Err(_) => {
-                eprintln!(
-                    "{}",
-                    json!({"event":"owner_equity_v2_run","code":"WORKER_UNAVAILABLE"})
-                );
+            let _ = shutdown_tx.send(true);
+            if let Some(task) = health_task
+                && task.await.is_err()
+            {
                 exit = ExitCode::FAILURE;
-                break;
             }
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(config.poll) => {}
-            changed = shutdown_rx.changed(), if config.mode == Mode::Daemon => {
-                if changed.is_err() || *shutdown_rx.borrow() { break; }
+            if let Some(task) = intraday_task {
+                match task.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) | Err(_) => {
+                        eprintln!(
+                            "{}",
+                            json!({
+                                "event":"owner_equity_v2_intraday",
+                                "code":"PRODUCER_UNAVAILABLE"
+                            })
+                        );
+                        exit = ExitCode::FAILURE;
+                    }
+                }
             }
-        }
-    }
-    let _ = shutdown_tx.send(true);
-    if let Some(task) = health_task
-        && task.await.is_err()
-    {
-        exit = ExitCode::FAILURE;
-    }
-    if let Some(task) = intraday_task {
-        match task.await {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) | Err(_) => {
-                eprintln!(
-                    "{}",
-                    json!({
-                        "event":"owner_equity_v2_intraday",
-                        "code":"PRODUCER_UNAVAILABLE"
-                    })
-                );
-                exit = ExitCode::FAILURE;
-            }
-        }
-    }
-    exit
+            exit
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -940,6 +959,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use sha2::{Digest, Sha256};
+    use std::{cell::RefCell, rc::Rc};
 
     fn args(values: &[&str]) -> Vec<std::ffi::OsString> {
         std::iter::once("owner-equity-v2-runner")
@@ -986,75 +1006,165 @@ mod tests {
             .expect("valid injected window fixture")
     }
 
-    #[test]
-    fn invalid_intraday_window_disables_only_quotes_and_keeps_eod_reachable() {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum StartupEvent {
+        Load,
+        Start,
+        Eod,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum FakeQuoteTask {
+        Started,
+    }
+
+    fn record_event(events: &Rc<RefCell<Vec<StartupEvent>>>, event: StartupEvent) {
+        events.borrow_mut().push(event);
+    }
+
+    #[tokio::test]
+    async fn invalid_intraday_windows_continue_to_eod_without_starting_quote() {
         for error in [
             collectors::intraday_quotes::IntradaySessionWindowError::Missing,
             collectors::intraday_quotes::IntradaySessionWindowError::Invalid,
             collectors::intraday_quotes::IntradaySessionWindowError::HashMismatch,
         ] {
-            let mut loads = 0;
-            let startup =
-                prepare_intraday_quote_startup(Mode::Daemon, IntradayQuotesMode::OwnerOnly, || {
-                    loads += 1;
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let load_events = Rc::clone(&events);
+            let start_events = Rc::clone(&events);
+            let eod_events = Rc::clone(&events);
+            let result = run_intraday_quote_startup(
+                Mode::Daemon,
+                IntradayQuotesMode::OwnerOnly,
+                move || {
+                    record_event(&load_events, StartupEvent::Load);
                     Err(error)
-                });
-            assert_eq!(loads, 1);
-            assert!(matches!(
-                &startup,
-                IntradayQuoteStartup::Unavailable(actual) if *actual == error
-            ));
-            assert!(!startup.starts_quote_task());
-            assert!(startup.windows().is_none());
-            assert!(startup.eod_continues());
+                },
+                move |_| -> Option<FakeQuoteTask> {
+                    record_event(&start_events, StartupEvent::Start);
+                    panic!("invalid session windows must not start the quote task");
+                },
+                move |task| async move {
+                    record_event(&eod_events, StartupEvent::Eod);
+                    assert_eq!(task, None);
+                    0xC3_u16
+                },
+            )
+            .await;
+
+            assert_eq!(result, 0xC3_u16);
+            assert_eq!(&*events.borrow(), &[StartupEvent::Load, StartupEvent::Eod]);
         }
     }
 
-    #[test]
-    fn valid_owner_only_startup_has_windows_and_starts_one_quote_task() {
-        let startup =
-            prepare_intraday_quote_startup(Mode::Daemon, IntradayQuotesMode::OwnerOnly, || {
-                Ok(valid_window_contract_fixture())
-            });
-        assert!(startup.starts_quote_task());
-        assert!(startup.windows().is_some());
-        assert!(startup.eod_continues());
+    #[tokio::test]
+    async fn valid_owner_only_startup_delivers_windows_and_continues_to_eod() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let load_events = Rc::clone(&events);
+        let start_events = Rc::clone(&events);
+        let eod_events = Rc::clone(&events);
+        let expected_windows = Arc::new(valid_window_contract_fixture());
+        let delivered_windows = Rc::new(RefCell::new(None));
+        let loader_windows = Arc::clone(&expected_windows);
+        let delivered_for_factory = Rc::clone(&delivered_windows);
+
+        let result = run_intraday_quote_startup(
+            Mode::Daemon,
+            IntradayQuotesMode::OwnerOnly,
+            move || {
+                record_event(&load_events, StartupEvent::Load);
+                Ok(loader_windows.as_ref().clone())
+            },
+            move |windows| {
+                record_event(&start_events, StartupEvent::Start);
+                delivered_for_factory
+                    .borrow_mut()
+                    .replace(Arc::clone(&windows));
+                Some(FakeQuoteTask::Started)
+            },
+            move |task| async move {
+                record_event(&eod_events, StartupEvent::Eod);
+                assert_eq!(task, Some(FakeQuoteTask::Started));
+                0xC3_u16
+            },
+        )
+        .await;
+
+        assert_eq!(result, 0xC3_u16);
+        assert_eq!(delivered_windows.borrow().as_ref(), Some(&expected_windows));
+        assert_eq!(
+            &*events.borrow(),
+            &[StartupEvent::Load, StartupEvent::Start, StartupEvent::Eod,]
+        );
     }
 
-    #[test]
-    fn disabled_and_once_never_invoke_window_loader_or_start_quote_task() {
+    #[tokio::test]
+    async fn valid_windows_with_no_quote_task_still_continue_to_eod() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let load_events = Rc::clone(&events);
+        let start_events = Rc::clone(&events);
+        let eod_events = Rc::clone(&events);
+        let result = run_intraday_quote_startup(
+            Mode::Daemon,
+            IntradayQuotesMode::OwnerOnly,
+            move || {
+                record_event(&load_events, StartupEvent::Load);
+                Ok(valid_window_contract_fixture())
+            },
+            move |_| {
+                record_event(&start_events, StartupEvent::Start);
+                None::<FakeQuoteTask>
+            },
+            move |task| async move {
+                record_event(&eod_events, StartupEvent::Eod);
+                assert_eq!(task, None);
+                0xC4_u16
+            },
+        )
+        .await;
+
+        assert_eq!(result, 0xC4_u16);
+        assert_eq!(
+            &*events.borrow(),
+            &[StartupEvent::Load, StartupEvent::Start, StartupEvent::Eod,]
+        );
+    }
+
+    #[tokio::test]
+    async fn disabled_and_once_skip_loader_and_factory_but_continue_to_eod() {
         for (mode, intraday_mode) in [
             (Mode::Once, IntradayQuotesMode::OwnerOnly),
             (Mode::Daemon, IntradayQuotesMode::Disabled),
         ] {
-            let mut loads = 0;
-            let startup = prepare_intraday_quote_startup(mode, intraday_mode, || {
-                loads += 1;
-                Ok(valid_window_contract_fixture())
-            });
-            assert_eq!(loads, 0);
-            assert_eq!(startup, IntradayQuoteStartup::Disabled);
-            assert!(!startup.starts_quote_task());
-            assert!(startup.windows().is_none());
-            assert!(startup.eod_continues());
-        }
-    }
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let load_events = Rc::clone(&events);
+            let start_events = Rc::clone(&events);
+            let eod_events = Rc::clone(&events);
+            let result = run_intraday_quote_startup(
+                mode,
+                intraday_mode,
+                move || -> Result<
+                    IntradaySessionWindowContract,
+                    collectors::intraday_quotes::IntradaySessionWindowError,
+                > {
+                    record_event(&load_events, StartupEvent::Load);
+                    panic!("disabled quote startup must not load session windows");
+                },
+                move |_| -> Option<FakeQuoteTask> {
+                    record_event(&start_events, StartupEvent::Start);
+                    panic!("disabled quote startup must not start the quote task");
+                },
+                move |task| async move {
+                    record_event(&eod_events, StartupEvent::Eod);
+                    assert_eq!(task, None);
+                    0xC5_u16
+                },
+            )
+            .await;
 
-    #[test]
-    fn invalid_intraday_window_does_not_abort_before_eod_loop() {
-        let production = include_str!("owner-equity-v2-runner.rs")
-            .split("#[cfg(test)]\nmod tests")
-            .next()
-            .expect("runner production source exists");
-        let startup = production
-            .split("let mut intraday_task")
-            .nth(1)
-            .and_then(|tail| tail.split("let mut next_recovery").next())
-            .expect("runner quote startup block exists");
-        assert!(
-            !startup.contains("return ExitCode::FAILURE"),
-            "quote startup failure must leave the EOD loop reachable"
-        );
+            assert_eq!(result, 0xC5_u16);
+            assert_eq!(&*events.borrow(), &[StartupEvent::Eod]);
+        }
     }
 
     #[test]
