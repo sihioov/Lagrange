@@ -1489,3 +1489,17 @@ Native subagents: prohibited for worker packages
 - C3 작업자 `bb285c3c-ad98-494a-9454-a12ecc51cec6` (Codex luna/max, auto-review)를
   producer workspace의 clean `18f96a6`에서 시작했다. profile notes/provider availability와
   단일 파일 소유를 확인했다. 이전 C2b writer/reviewer는 idle이며 중복 작업하지 않는다.
+
+### B2b-C3 완료 및 독립 검토
+
+- C3 writer는 `60bebf09c274e65b14c7a409e9cf9eefc099899f` (parent `18f96a6`)로 완료,
+  idle/clean이다. runner 한 파일 +339/-229이며 coordinator가 전체 diff 및 공백 무시 diff를
+  읽었다. generic startup helper를 main과 tests가 공유하고, EOD loop/cleanup은 continuation
+  async block으로 감쌌다. watch receiver 추가 clone은 closure borrow 분리를 위한 변경이다.
+- worker 보고: runner11/11, strict scoped clippy/fmt/diff 통과. matrix는 오류 3종,
+  valid/정확한 windows 전달, factory None, Disabled/Once에서 실제 ordered event와
+  continuation 반환 sentinel/task Option을 확인했다. 상수 true와 string-only 증거를 대체했다.
+- 유휴 reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)에게 bounded
+  read-only C3 검토를 맡겼다. main 연결 및 watch/async 이동을 포함한 EOD 의미 보존과 실제
+  behavior matrix를 독립 검증한다. DB/provider/실제 main 실행은 이 검토 범위가 아니다.
+- C3 독립 수락 전 미통합. 전체 coverage/window maxage 계약 판단과 실제 활성화는 별개로 남는다.
