@@ -55,6 +55,7 @@ pub mod historical_price_only_v3;
 mod historical_price_only_v3_artifact;
 pub mod ingest;
 pub mod instrument_master;
+pub mod intraday_quotes;
 pub mod kind_correction_normalize;
 pub mod kind_normalize;
 pub mod normalize;
