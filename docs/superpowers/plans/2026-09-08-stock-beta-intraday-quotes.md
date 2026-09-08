@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B·WP-5 통합 완료; owner가 신규 KIS 응답 parser·fixture 테스트 승인, WP-3A 시작 준비; 운영 활성화 미실행
+상태: WP-2B·WP-5·WP-3A 통합 완료; WP-3B 저장소/producer 순차 구현 준비; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -774,3 +774,37 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   고정된 disposable QA Compose 정의가 존재한다. 로컬 PostgreSQL 실행 파일은 없지만
   sandbox 밖 read-only Docker version 조회는 성공했다. 운영 DB를 대안으로 사용하지 않으며
   아직 QA DB를 시작하거나 migration을 적용하지 않았다.
+
+### WP-3A 통합 및 WP-3B 실행 분할
+
+- Low 테스트 보강 `1a7a52701d9bdeba1d27f267861134a75f486ce7`의 단일 파일 diff를
+  coordinator가 읽었다. 유효 JSON 확인과 8필드 × 4형태 32개 거부 사례가 추가됐고,
+  focused 16개 테스트, scoped clippy/fmt/diff check 통과를 확인했다.
+- 수락된 source `3ff2bb4` → `37286bb`, test `1a7a527` → `fc795e5`를 기능 브랜치에
+  통합했다. 세 파일 전체가 worker HEAD와 동일하고 작업 트리는 clean이었다.
+- WP-3B를 같은 동결 계약 안에서 B1 저장소, B2 producer 연결로 순차 분할한다.
+  테스트 가능한 DB 경계를 먼저 수락해 loop/transport와 권한·동시성 문제를 분리한다.
+
+| Package | Complexity | Basis | Confidence | Escalation signal |
+| --- | --- | --- | --- | --- |
+| WP-3B1 | intermediate | 동결 0054 schema 및 명시적 transaction/RLS 구현, 실제 역할별 DB 검증 가능 | medium | 새 권한/trigger 필요 또는 반복 동시성 검증 실패 |
+| WP-3B2 | intermediate | 수락된 저장소와 shared read/parser 연결, 동결 session/budget/fairness 규칙 | medium | 기존 EOD lease 침범 또는 계약에 없는 runtime 의존성 필요 |
+
+| Package | Wave | Objective | Owned scope | Depends on | Worker | Verification |
+| --- | --- | --- | --- | --- | --- | --- |
+| WP-3B1 | 4a | demand/cache/producer lease 저장소와 권한·fencing 검증 | 0054 up/down; 신규 job-queue owner_equity_v2/intraday.rs; 상위 module 등록만; 신규 intraday_quotes DB/unit tests | WP-3A | Codex luna/max | disposable DB role/RLS, capacity/idempotency/expiry/takeover/publication/GC/up-down; fmt/clippy |
+| WP-3B2 | 4b | provider-free 검증된 producer loop 연결 | 신규 collectors intraday_quotes.rs 및 등록; 기존 runner quote-loop wiring; B1 모듈의 필요한 통합; 신규 quote scheduler tests | B1 ACCEPT | Codex luna/max | fake clock/transport fairness/session/budget/deadline 및 DB fenced publish |
+
+- B1은 §8.2/9.2의 expired ACTIVE 복구와 exact replay 원래 만료 유지, RELEASED 재활성화
+  금지, 20 consumer/5 identity cap을 실제 동시 transaction으로 검증한다. owner별 producer
+  fencing과 cache success/failure 분리, 0053 composite lineage, 기존 EOD 불변도 검증한다.
+  parser/collector/runner/API/Web/Compose/Cargo/기존 migration·test는 변경하지 않는다.
+- B2 전까지 runtime 호출은 연결하지 않는다. 저장소 API는 typed inputs/SQL로 작성하며
+  검증되지 않은 session/budget을 승인된 것으로 가장하는 production placeholder는 금지한다.
+  다른 파일 또는 계약 변경이 필요하면 해당 경계를 coordinator에게 보고한다.
+- 각 패키지는 독립 review 후 소유 범위와 기계적 검증을 대조하여 통합한다. 보고는 파일/라인,
+  deviation, 정확한 검증 결과, 미해결/미검증 항목을 명시한다. 전체 API/browser 수락은 후속 gate다.
+- 격리 QA DB: `lagrange-intraday-qa-20260908` project, 고정 PostgreSQL 18.4 image,
+  tmpfs, `127.0.0.1:55438`만 바인딩. 신규 이름/포트의 공백을 확인한 뒤 `--pull never`로
+  시작했고 healthy 및 SQL version 응답을 확인했다. 운영 DB·서비스는 사용/변경하지 않았다.
+  coordinator가 해당 QA 컨테이너만 관리/정리하며 worker는 loopback의 임시 test DB만 사용한다.
