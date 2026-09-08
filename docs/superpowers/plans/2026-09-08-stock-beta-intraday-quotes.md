@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2A 보완 검토·통합 완료, WP-2B 기존 reader 연결 실행 중; 운영 활성화 미실행
+상태: WP-2B 구현 완료·독립 검토 중, WP-5 fixture Web 작업 준비; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -537,3 +537,39 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   workspace `wks_9348f3ca1a30ddb5`, cwd
   `/data/worktrees/3puw275b/stock-beta-intraday-read-wiring`, base `2c4b9a0`.
   기존 WP-2A heartbeat를 종료하고 WP-2B용 5분 간격, 최대 2시간 heartbeat로 교체했다.
+
+### WP-2B 검토 및 WP-5 독립 실행 결정
+
+- WP-2B worker의 idle 완료와 `6a7b87a33d2812ffc13f5bae5c9c878fe2e8c4d3`를 확인했다.
+  변경은 지정된 9개 파일이며 worker는 offline kis-client 199개, collectors 67+13개,
+  runner 7개 테스트와 focused clippy/fmt 통과를 보고했다. coordinator가 mode parser와
+  shared GET 실행 경로를 직접 확인했고, 토큰·예약·caller 경계를 별도 Codex terra/high
+  reviewer `f7941398-44f7-4293-a6d5-c72bac530a97`에 read-only 위임했다.
+  아직 WP-2B를 통합하거나 shared-boundary gate를 수락하지 않았다.
+- Graph amendment: WP-5는 WP-1의 application DTO만 사용하는 독립 provider-free Web
+  구현이므로 WP-2B 리뷰와 병렬로 시작할 수 있다. WP-3의 shared-boundary/response 승인
+  gate는 그대로다. WP-5는 Rust/provider parser를 읽어 새 계약을 추측하거나 수정하지 않는다.
+- WP-5 default-off 연결은 서버에서 `OWNER_INTRADAY_QUOTES_MODE`를 읽어 정확히
+  `owner_only`일 때만 enabled prop을 넘긴다. 누락/`off`는 disabled이며 다른 값도 활성화하지
+  않는다. client env 접근이나 credential 전달은 금지한다. 현재 Compose/env는 수정하지 않는다.
+  disabled일 때 기존 EOD 화면과 조회 수는 유지하고 현재가 위젯의 요청·타이머는 0이다.
+- 최소 scope amendment: 두 Stock Beta `app/(authenticated)/stock-beta/**/page.tsx`의
+  enabled prop 연결과 detail의 기존 membership API 조회를 허용한다. detail에서는 flag가
+  켜졌을 때만 READY membership의 instrument/generation을 signal과 정확히 대조해 넘긴다.
+  조회 실패는 quote만 unavailable 처리하며 기존 EOD detail은 유지하되 인증 실패는 기존
+  로그인 복구를 따른다. dashboard도 READY membership·선택 signal의 일치를 요구한다.
+- catalog 등록에 따른 최소 renderer 접속은 dashboard `stock-beta-dashboard.tsx`, detail
+  `stock-beta-detail-layout.tsx`까지 허용한다. 신규 optional `current-quote` entry와 visibility
+  전달만 다루며 catalog 엔진을 재설계하지 않는다. breakpoint별 CSS 숨김도 실제 소비자
+  lifecycle에 반영한다. 기존 `stock-beta-dashboard.test.tsx`, `owner-beta-equity-signals-surface.test.tsx`,
+  `stock-beta-widget-architecture.test.tsx`는 신규 optional entry의 목록/순서 기대값만 조정할 수
+  있다. 다른 assertion 완화/기존 테스트 삭제 금지, 새 동작 회귀는 신규 intraday tests에 둔다.
+- logout 시작 시 즉시 정리를 위해 `lib/api/browser-client.ts`의 logout 접속점과 신규
+  `lib/api/browser-lifecycle.ts`의 payload 없는 local logout notification만 허용한다.
+  quote-specific 로직을 공통 auth 모듈에 넣거나 기존 CSRF/응답 복구를 변경하지 않는다.
+- WP-5 application schema는 section 8의 exact DTO/route를 사용한다. 금액은 문자열을
+  유지하고 `numeric(20,8)` 저장 가능 범위인 정수부 최대 12자리·소수부 최대 8자리도 검사한다.
+  quote version은 bigint 문자열 비교, generation/sequence는 JS safe integer를 요구한다.
+  이 수신 DTO 방어는 KIS의 새로운 응답 필드 parser 승인이나 운영 활성화를 뜻하지 않는다.
+- 새 response field 파싱은 여전히 owner의 명시적 승인 전 보류한다. 실제 provider 호출,
+  운영 변경, main merge/push는 두 worker 모두 금지한다.
