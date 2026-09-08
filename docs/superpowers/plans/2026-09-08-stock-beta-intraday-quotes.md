@@ -1485,3 +1485,7 @@ Native subagents: prohibited for worker packages
 1. profile notes/provider availability, clean base 및 단일 파일 소유를 확인하고 새 luna/max worker 시작.
 2. 실제 main 호출 연결과 EOD diff를 직접 읽고 독립 terra/high review 후 scoped 수락.
 3. C3 후 전체 B2b coverage와 window maxage 계약 gap을 판단한다. 아직 전체 통합/활성화 금지.
+
+- C3 작업자 `bb285c3c-ad98-494a-9454-a12ecc51cec6` (Codex luna/max, auto-review)를
+  producer workspace의 clean `18f96a6`에서 시작했다. profile notes/provider availability와
+  단일 파일 소유를 확인했다. 이전 C2b writer/reviewer는 idle이며 중복 작업하지 않는다.
