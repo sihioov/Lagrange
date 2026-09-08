@@ -1130,3 +1130,6 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   미해결/후속 및 확인하지 못한 사항(없으면 없음). 독립 검토 후 C2 brief를 확정하며,
   전체 coverage와 window evidence age 판단 전에는 B2b 전체를 통합/수락하지 않는다.
   모든 기존 provider/운영DB/root/배포/merge/push 금지와 QA lifecycle 경계는 유지한다.
+- C1 worker `de50de28-cfb0-4e02-a236-d91dd2b8d775` (Codex luna/max, auto-review)를
+  위 producer workspace/base `b34198f`에서 새 격리 agent context로 시작했다.
+  기존 구현자와 reviewer는 idle이며, 이 테스트 writer만 활성 상태다.
