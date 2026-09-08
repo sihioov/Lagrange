@@ -11,13 +11,13 @@ use std::fs::{File, OpenOptions};
 use std::future::Future;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileExt as UnixFileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
+use fs2::FileExt as Fs2FileExt;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -42,6 +42,7 @@ const INTRADAY_DAILY_LIMIT: u32 = 5_000;
 const MAX_LOCK_WAIT: Duration = Duration::from_secs(30);
 const MAX_REQUEST_TIMEOUT_MS: i64 = 5 * 60 * 1_000;
 const MAX_TOKEN_FUTURE_MS: i64 = 48 * 60 * 60 * 1_000;
+const INITIALIZED_WITNESS: &[u8] = b"lagrange-kis-read-coordination-initialized-v1\n";
 // Last millisecond of year 9999 UTC. This keeps canonical civil dates at the
 // fixed YYYY-MM-DD width and rejects corrupt far-future clocks.
 const MAX_SUPPORTED_WALL_MS: i64 = 253_402_300_799_999;
@@ -249,6 +250,10 @@ pub enum ReadCoordinationError {
     NonCanonicalState,
     #[error("KIS read coordination state exceeds its size bound")]
     StateTooLarge,
+    #[error("KIS read coordination committed state is missing")]
+    MissingCommittedState,
+    #[error("KIS read coordination initialization witness is invalid")]
+    InvalidInitializationWitness,
     #[doc(hidden)]
     #[error("KIS read coordination state is not initialized")]
     StateMissing,
@@ -299,6 +304,8 @@ pub enum ReadCoordinationError {
     CallbackFailed { kind: ReadFailureKind },
     #[error("KIS read callback outcome is ambiguous")]
     CallbackAmbiguous,
+    #[error("KIS read callback reached its local deadline")]
+    CallbackTimedOut,
     #[error("KIS read coordination I/O failed during {operation}")]
     Io { operation: &'static str },
     #[error("KIS read coordination blocking task failed")]
@@ -331,16 +338,15 @@ impl ReadCoordinator {
         issuer: &dyn TokenIssuer,
         acquisition: LockAcquisition,
     ) -> Result<AccessToken, ReadCoordinationError> {
-        let mut gate = self.acquire(acquisition).await?;
+        let gate = self.acquire(acquisition).await?;
         let observed_at = self.clock.now_ms();
-        let mut state = gate.load_and_validate(self.credentials.as_ref(), observed_at)?;
-        gate.write_state(&state)?;
-        let token = self.ensure_token(&mut gate, &mut state, issuer).await?;
+        let (gate, state) = self.load_state(gate, observed_at).await?;
+        let (gate, mut state, token) = self.ensure_token(gate, state, issuer).await?;
         let now = self.clock.now_ms();
         let advanced = now > state.wall_time_high_water_ms;
         advance_high_water(&mut state, now)?;
         if advanced {
-            gate.write_state(&state)?;
+            Self::persist_state(gate, state).await?;
         }
         Ok(token)
     }
@@ -365,15 +371,14 @@ impl ReadCoordinator {
             .filter(|value| *value > 0 && *value <= MAX_REQUEST_TIMEOUT_MS)
             .ok_or(ReadCoordinationError::InvalidRequestTimeout)?;
 
-        let mut gate = self.acquire(acquisition).await?;
+        let gate = self.acquire(acquisition).await?;
         let observed_at = self.clock.now_ms();
-        let mut state = gate.load_and_validate(self.credentials.as_ref(), observed_at)?;
+        let (gate, mut state) = self.load_state(gate, observed_at).await?;
         // Persist a credential-generation rotation and the wall-time high-water
         // even when a cooldown or older reservation denies this read.
-        gate.write_state(&state)?;
         check_read_eligibility(&mut state, channel, observed_at)?;
 
-        let token = self.ensure_token(&mut gate, &mut state, issuer).await?;
+        let (mut gate, mut state, token) = self.ensure_token(gate, state, issuer).await?;
 
         // Token issuance can be slow. Reserve against the actual final GET
         // start time, never the time at which token work began.
@@ -381,35 +386,35 @@ impl ReadCoordinator {
         let advanced = start_ms > state.wall_time_high_water_ms;
         advance_high_water(&mut state, start_ms)?;
         if advanced {
-            gate.write_state(&state)?;
+            (gate, state) = Self::persist_state(gate, state).await?;
         }
         check_read_eligibility(&mut state, channel, start_ms)?;
         let fence = reserve_read(&mut state, channel, start_ms, timeout_ms)?;
-        gate.write_state(&state)?;
+        (gate, state) = Self::persist_state(gate, state).await?;
 
-        let outcome = read(token).await;
+        let outcome = tokio::time::timeout(request_timeout, read(token)).await;
         let finished_ms = self.clock.now_ms();
         advance_high_water(&mut state, finished_ms)?;
 
         match outcome {
-            ReadCallbackResult::Success(value) => {
+            Ok(ReadCallbackResult::Success(value)) => {
                 clear_matching_reservation(&mut state, fence);
-                gate.write_state(&state)?;
+                Self::persist_state(gate, state).await?;
                 Ok(value)
             }
-            ReadCallbackResult::Unauthorized => {
+            Ok(ReadCallbackResult::Unauthorized) => {
                 state.token = None;
                 clear_matching_reservation(&mut state, fence);
-                gate.write_state(&state)?;
+                Self::persist_state(gate, state).await?;
                 Err(ReadCoordinationError::Unauthorized)
             }
-            ReadCallbackResult::RateLimited { retry_after } => {
+            Ok(ReadCallbackResult::RateLimited { retry_after }) => {
                 let Some(retry_after_ms) = duration_ms(retry_after) else {
-                    gate.write_state(&state)?;
+                    Self::persist_state(gate, state).await?;
                     return Err(ReadCoordinationError::InvalidStateTime);
                 };
                 let Some(cooldown_until) = finished_ms.checked_add(retry_after_ms) else {
-                    gate.write_state(&state)?;
+                    Self::persist_state(gate, state).await?;
                     return Err(ReadCoordinationError::InvalidStateTime);
                 };
                 state.broker_cooldown_until_ms = Some(
@@ -419,41 +424,49 @@ impl ReadCoordinator {
                         .max(cooldown_until),
                 );
                 clear_matching_reservation(&mut state, fence);
-                gate.write_state(&state)?;
+                Self::persist_state(gate, state).await?;
                 Err(ReadCoordinationError::CallbackRateLimited {
                     retry_after_ms: retry_after_ms as u64,
                 })
             }
-            ReadCallbackResult::CompletedFailure(kind) => {
+            Ok(ReadCallbackResult::CompletedFailure(kind)) => {
                 clear_matching_reservation(&mut state, fence);
-                gate.write_state(&state)?;
+                Self::persist_state(gate, state).await?;
                 Err(ReadCoordinationError::CallbackFailed { kind })
             }
-            ReadCallbackResult::Ambiguous => {
+            Ok(ReadCallbackResult::Ambiguous) => {
                 // Preserve the fence until its durable deadline. We know only
                 // that local completion is ambiguous, not what the broker did.
-                gate.write_state(&state)?;
+                Self::persist_state(gate, state).await?;
                 Err(ReadCoordinationError::CallbackAmbiguous)
+            }
+            Err(_) => {
+                // Dropping the cooperative callback does not prove whether a
+                // provider observed bytes and cannot cancel work the callback
+                // independently spawned, so the durable fence is retained.
+                Self::persist_state(gate, state).await?;
+                Err(ReadCoordinationError::CallbackTimedOut)
             }
         }
     }
 
     async fn ensure_token(
         &self,
-        gate: &mut LockedRoot,
-        state: &mut PersistedState,
+        mut gate: LockedRoot,
+        mut state: PersistedState,
         issuer: &dyn TokenIssuer,
-    ) -> Result<AccessToken, ReadCoordinationError> {
+    ) -> Result<(LockedRoot, PersistedState, AccessToken), ReadCoordinationError> {
         let now = self.clock.now_ms();
         let advanced = now > state.wall_time_high_water_ms;
-        advance_high_water(state, now)?;
+        advance_high_water(&mut state, now)?;
         if advanced {
-            gate.write_state(state)?;
+            (gate, state) = Self::persist_state(gate, state).await?;
         }
         if let Some(token) = state.token.as_ref()
             && now.saturating_add(DEFAULT_REFRESH_MARGIN_MS) < token.expires_at_ms
         {
-            return Ok(token.to_access_token());
+            let token = token.to_access_token();
+            return Ok((gate, state, token));
         }
 
         if let Some(last) = state.last_issue_attempt_ms {
@@ -468,28 +481,51 @@ impl ReadCoordinator {
         // This write precedes the await. Cancellation, panic, or process death
         // in the issuer therefore keeps the one-minute debt.
         state.last_issue_attempt_ms = Some(now);
-        gate.write_state(state)?;
+        (gate, state) = Self::persist_state(gate, state).await?;
         let issued = match issuer.issue().await {
             Ok(issued) => issued,
             Err(_) => {
                 let failed_at = self.clock.now_ms();
-                advance_high_water(state, failed_at)?;
-                gate.write_state(state)?;
+                advance_high_water(&mut state, failed_at)?;
+                Self::persist_state(gate, state).await?;
                 return Err(ReadCoordinationError::TokenIssueFailed);
             }
         };
         let after = self.clock.now_ms();
-        advance_high_water(state, after)?;
+        advance_high_water(&mut state, after)?;
         if issued.value.expose().trim().is_empty()
             || issued.expires_at_ms <= after.saturating_add(DEFAULT_REFRESH_MARGIN_MS)
             || issued.expires_at_ms > after.saturating_add(MAX_TOKEN_FUTURE_MS)
         {
-            gate.write_state(state)?;
+            Self::persist_state(gate, state).await?;
             return Err(ReadCoordinationError::UnusableToken);
         }
         state.token = Some(PersistedToken::from_access_token(&issued));
-        gate.write_state(state)?;
-        Ok(issued)
+        let (gate, state) = Self::persist_state(gate, state).await?;
+        Ok((gate, state, issued))
+    }
+
+    async fn load_state(
+        &self,
+        gate: LockedRoot,
+        observed_at: i64,
+    ) -> Result<(LockedRoot, PersistedState), ReadCoordinationError> {
+        let credentials = Arc::clone(&self.credentials);
+        run_gate_io(gate, move |gate| {
+            gate.load_and_validate(credentials.as_ref(), observed_at)
+        })
+        .await
+    }
+
+    async fn persist_state(
+        gate: LockedRoot,
+        state: PersistedState,
+    ) -> Result<(LockedRoot, PersistedState), ReadCoordinationError> {
+        run_gate_io(gate, move |gate| {
+            gate.write_state(&state)?;
+            Ok(state)
+        })
+        .await
     }
 
     async fn acquire(
@@ -522,6 +558,28 @@ impl std::fmt::Debug for ReadCoordinator {
             .field("credentials", &self.credentials)
             .finish_non_exhaustive()
     }
+}
+
+async fn run_gate_io<T, F>(
+    gate: LockedRoot,
+    operation: F,
+) -> Result<(LockedRoot, T), ReadCoordinationError>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut LockedRoot) -> Result<T, ReadCoordinationError> + Send + 'static,
+{
+    // The blocking closure owns the locked descriptor. If the awaiting async
+    // task is cancelled, Tokio may detach this work, but no other process can
+    // acquire the gate until the operation has finished and this owned value
+    // is dropped.
+    let (gate, result) = tokio::task::spawn_blocking(move || {
+        let mut gate = gate;
+        let result = operation(&mut gate);
+        (gate, result)
+    })
+    .await
+    .map_err(|_| ReadCoordinationError::BlockingTaskFailed)?;
+    result.map(|value| (gate, value))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -601,8 +659,14 @@ impl PersistedState {
 
 struct LockedRoot {
     directory: File,
-    _lock: File,
+    lock: File,
     expected_uid: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InitializationWitness {
+    Empty,
+    Initialized,
 }
 
 struct CancelOnDrop(Arc<AtomicBool>);
@@ -623,12 +687,12 @@ impl LockedRoot {
             return Err(ReadCoordinationError::AcquisitionCancelled);
         }
         let directory = open_root(&config.state_root, config.expected_uid)?;
-        let lock = match openat_file(
+        let (lock, lock_was_created) = match openat_file(
             directory.as_raw_fd(),
             LOCK_FILE_NAME,
             OpenKind::LockExisting,
         ) {
-            Ok(lock) => lock,
+            Ok(lock) => (lock, false),
             Err(ReadCoordinationError::LockMissing) => {
                 // Once state exists, losing the stable lock inode is fatal: a
                 // replacement could split active processes across two flocks.
@@ -638,30 +702,37 @@ impl LockedRoot {
                     Err(error) => return Err(error),
                 }
                 match openat_file(directory.as_raw_fd(), LOCK_FILE_NAME, OpenKind::LockNew) {
-                    Ok(lock) => lock,
-                    Err(ReadCoordinationError::LockAlreadyExists) => openat_file(
-                        directory.as_raw_fd(),
-                        LOCK_FILE_NAME,
-                        OpenKind::LockExisting,
-                    )?,
+                    Ok(lock) => (lock, true),
+                    Err(ReadCoordinationError::LockAlreadyExists) => (
+                        openat_file(
+                            directory.as_raw_fd(),
+                            LOCK_FILE_NAME,
+                            OpenKind::LockExisting,
+                        )?,
+                        false,
+                    ),
                     Err(error) => return Err(error),
                 }
             }
             Err(error) => return Err(error),
         };
         validate_regular_file(&lock, config.expected_uid)?;
+        if lock_was_created {
+            directory
+                .sync_all()
+                .map_err(|_| io_error("sync lock directory"))?;
+        }
 
         match acquisition {
-            LockAcquisition::NonBlocking => {
-                FileExt::try_lock_exclusive(&lock).map_err(|_| ReadCoordinationError::LockBusy)?
-            }
+            LockAcquisition::NonBlocking => Fs2FileExt::try_lock_exclusive(&lock)
+                .map_err(|_| ReadCoordinationError::LockBusy)?,
             LockAcquisition::Bounded(wait) => {
                 let deadline = Instant::now() + wait;
                 loop {
                     if cancelled.load(Ordering::Acquire) {
                         return Err(ReadCoordinationError::AcquisitionCancelled);
                     }
-                    match FileExt::try_lock_exclusive(&lock) {
+                    match Fs2FileExt::try_lock_exclusive(&lock) {
                         Ok(()) => break,
                         Err(_) if Instant::now() >= deadline => {
                             return Err(ReadCoordinationError::LockTimeout);
@@ -697,7 +768,7 @@ impl LockedRoot {
         }
         Ok(Self {
             directory,
-            _lock: lock,
+            lock,
             expected_uid: config.expected_uid,
         })
     }
@@ -707,11 +778,16 @@ impl LockedRoot {
         credentials: &ReadCredentials,
         now: i64,
     ) -> Result<PersistedState, ReadCoordinationError> {
-        let mut state = match openat_file(
+        #[cfg(test)]
+        state_io_test_hook::wait_once();
+
+        let witness = self.initialization_witness()?;
+        let state_file = openat_file(
             self.directory.as_raw_fd(),
             STATE_FILE_NAME,
             OpenKind::ReadOnly,
-        ) {
+        );
+        let mut state = match state_file {
             Ok(file) => {
                 validate_regular_file(&file, self.expected_uid)?;
                 let size = file
@@ -736,6 +812,11 @@ impl LockedRoot {
                 }
                 parsed
             }
+            Err(ReadCoordinationError::StateMissing)
+                if witness == InitializationWitness::Initialized =>
+            {
+                return Err(ReadCoordinationError::MissingCommittedState);
+            }
             Err(ReadCoordinationError::StateMissing) => PersistedState::initial(credentials, now)?,
             Err(error) => return Err(error),
         };
@@ -743,7 +824,51 @@ impl LockedRoot {
         validate_state(&state, now)?;
         apply_credentials(&mut state, credentials)?;
         advance_high_water(&mut state, now)?;
+        self.write_state(&state)?;
+        if witness == InitializationWitness::Empty {
+            // State is durable before the one-way witness. A crash before the
+            // marker is complete can safely resume from the validated state;
+            // a partial marker is invalid and fails closed.
+            self.commit_initialization_witness()?;
+        }
         Ok(state)
+    }
+
+    fn initialization_witness(&self) -> Result<InitializationWitness, ReadCoordinationError> {
+        validate_regular_file(&self.lock, self.expected_uid)?;
+        let size = self
+            .lock
+            .metadata()
+            .map_err(|_| ReadCoordinationError::InvalidInitializationWitness)?
+            .len();
+        if size == 0 {
+            return Ok(InitializationWitness::Empty);
+        }
+        if size != INITIALIZED_WITNESS.len() as u64 {
+            return Err(ReadCoordinationError::InvalidInitializationWitness);
+        }
+        let mut marker = [0_u8; INITIALIZED_WITNESS.len()];
+        UnixFileExt::read_exact_at(&self.lock, &mut marker, 0)
+            .map_err(|_| ReadCoordinationError::InvalidInitializationWitness)?;
+        if !constant_time_eq(&marker, INITIALIZED_WITNESS) {
+            return Err(ReadCoordinationError::InvalidInitializationWitness);
+        }
+        Ok(InitializationWitness::Initialized)
+    }
+
+    fn commit_initialization_witness(&self) -> Result<(), ReadCoordinationError> {
+        if self.initialization_witness()? != InitializationWitness::Empty {
+            return Err(ReadCoordinationError::InvalidInitializationWitness);
+        }
+        UnixFileExt::write_all_at(&self.lock, INITIALIZED_WITNESS, 0)
+            .map_err(|_| io_error("write initialization witness"))?;
+        self.lock
+            .sync_all()
+            .map_err(|_| io_error("sync initialization witness"))?;
+        if self.initialization_witness()? != InitializationWitness::Initialized {
+            return Err(ReadCoordinationError::InvalidInitializationWitness);
+        }
+        Ok(())
     }
 
     fn write_state(&mut self, state: &PersistedState) -> Result<(), ReadCoordinationError> {
@@ -1281,8 +1406,184 @@ unsafe extern "C" {
 }
 
 #[cfg(test)]
+mod state_io_test_hook {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Condvar, Mutex, OnceLock};
+    use std::time::Duration;
+
+    pub(super) struct Barrier {
+        entered: AtomicBool,
+        released: Mutex<bool>,
+        release_changed: Condvar,
+    }
+
+    impl Barrier {
+        pub(super) fn new() -> Arc<Self> {
+            Arc::new(Self {
+                entered: AtomicBool::new(false),
+                released: Mutex::new(false),
+                release_changed: Condvar::new(),
+            })
+        }
+
+        pub(super) fn entered(&self) -> bool {
+            self.entered.load(Ordering::Acquire)
+        }
+
+        pub(super) fn release(&self) {
+            *self.released.lock().expect("state I/O test barrier") = true;
+            self.release_changed.notify_all();
+        }
+
+        fn wait(&self) {
+            self.entered.store(true, Ordering::Release);
+            let released = self.released.lock().expect("state I/O test barrier");
+            let _ = self
+                .release_changed
+                .wait_timeout_while(released, Duration::from_secs(5), |released| !*released)
+                .expect("state I/O test barrier");
+        }
+    }
+
+    fn installed() -> &'static Mutex<Option<Arc<Barrier>>> {
+        static INSTALLED: OnceLock<Mutex<Option<Arc<Barrier>>>> = OnceLock::new();
+        INSTALLED.get_or_init(|| Mutex::new(None))
+    }
+
+    pub(super) fn install(barrier: Arc<Barrier>) {
+        let previous = installed()
+            .lock()
+            .expect("state I/O test hook")
+            .replace(barrier);
+        assert!(previous.is_none(), "state I/O test hook already installed");
+    }
+
+    pub(super) fn wait_once() {
+        let barrier = installed().lock().expect("state I/O test hook").take();
+        if let Some(barrier) = barrier {
+            barrier.wait();
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FixedClock(i64);
+
+    impl Clock for FixedClock {
+        fn now_ms(&self) -> i64 {
+            self.0
+        }
+    }
+
+    struct UnitIssuer {
+        calls: AtomicU64,
+        now_ms: i64,
+    }
+
+    #[async_trait::async_trait]
+    impl TokenIssuer for UnitIssuer {
+        async fn issue(&self) -> Result<AccessToken, crate::error::KisError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(AccessToken {
+                value: Secret::new("unit-fake-token".to_owned()),
+                expires_at_ms: self.now_ms + 3_600_000,
+            })
+        }
+    }
+
+    struct ReleaseOnDrop(Arc<state_io_test_hook::Barrier>);
+
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            self.0.release();
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn state_io_is_off_reactor_and_cancelled_wait_keeps_gate_until_mutation_finishes() {
+        static IO_TEST_NONCE: AtomicU64 = AtomicU64::new(1);
+        let root = std::env::temp_dir().join(format!(
+            "kis-read-coordination-io-hook-{}-{}",
+            std::process::id(),
+            IO_TEST_NONCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).expect("create state I/O test root");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(ROOT_MODE))
+            .expect("protect state I/O test root");
+        let expected_uid = std::fs::metadata(&root).expect("root metadata").uid();
+        let now_ms = 42_000_000;
+        let coordinator = ReadCoordinator::new(
+            ReadCoordinationConfig::new(&root, expected_uid),
+            ReadCredentials::new(
+                Secret::new("unit-key".to_owned()),
+                Secret::new("unit-secret".to_owned()),
+                1,
+            )
+            .expect("credentials"),
+            Arc::new(FixedClock(now_ms)),
+        );
+        let issuer = Arc::new(UnitIssuer {
+            calls: AtomicU64::new(0),
+            now_ms,
+        });
+        let barrier = state_io_test_hook::Barrier::new();
+        let release_on_drop = ReleaseOnDrop(Arc::clone(&barrier));
+        state_io_test_hook::install(Arc::clone(&barrier));
+
+        let first_coordinator = coordinator.clone();
+        let first_issuer = Arc::clone(&issuer);
+        let first = tokio::spawn(async move {
+            first_coordinator
+                .token(
+                    first_issuer.as_ref(),
+                    LockAcquisition::Bounded(Duration::from_secs(1)),
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !barrier.entered() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("blocking state I/O reached test barrier");
+
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            tokio::time::sleep(Duration::from_millis(10)),
+        )
+        .await
+        .expect("single-thread reactor stayed responsive");
+
+        first.abort();
+        assert!(
+            first
+                .await
+                .expect_err("cancelled state I/O waiter")
+                .is_cancelled()
+        );
+        let busy = coordinator
+            .token(issuer.as_ref(), LockAcquisition::NonBlocking)
+            .await
+            .expect_err("detached state mutation must retain the gate");
+        assert_eq!(busy, ReadCoordinationError::LockBusy);
+        assert_eq!(issuer.calls.load(Ordering::SeqCst), 0);
+
+        barrier.release();
+        coordinator
+            .token(
+                issuer.as_ref(),
+                LockAcquisition::Bounded(Duration::from_secs(1)),
+            )
+            .await
+            .expect("gate released only after detached state I/O completed");
+        assert_eq!(issuer.calls.load(Ordering::SeqCst), 1);
+        drop(release_on_drop);
+        std::fs::remove_dir_all(&root).expect("remove state I/O test root");
+    }
 
     #[test]
     fn kst_date_rolls_at_korean_midnight() {

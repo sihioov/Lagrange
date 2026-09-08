@@ -570,6 +570,70 @@ async fn cancelling_callback_preserves_reservation_debt_and_releases_kernel_lock
 }
 
 #[tokio::test]
+async fn local_callback_timeout_drops_future_and_preserves_durable_reservation() {
+    struct DropCounter(Arc<AtomicUsize>);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let temp = PrivateTemp::new("callback-timeout");
+    let clock = SettableClock::at(10_500_000);
+    let issuer = CountingIssuer::new(clock.clone());
+    let coordinator = temp.coordinator(Arc::new(clock.clone()), 1);
+    let drops = Arc::new(AtomicUsize::new(0));
+    let callback_drops = Arc::clone(&drops);
+    let started = Instant::now();
+    let error = coordinator
+        .execute(
+            PRICE_PATH,
+            PRICE_TR,
+            &issuer,
+            bounded(),
+            Duration::from_millis(30),
+            move |_| async move {
+                let _drop_counter = DropCounter(callback_drops);
+                std::future::pending::<ReadCallbackResult<()>>().await
+            },
+        )
+        .await
+        .expect_err("cooperative pending callback reaches its local deadline");
+    assert_eq!(error, ReadCoordinationError::CallbackTimedOut);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(drops.load(Ordering::SeqCst), 1, "callback future dropped");
+
+    let restarted = temp.coordinator(Arc::new(clock.clone()), 1);
+    let reads = AtomicUsize::new(0);
+    let error = restarted
+        .execute(
+            PRICE_PATH,
+            PRICE_TR,
+            &issuer,
+            LockAcquisition::NonBlocking,
+            Duration::from_secs(3),
+            |_| async {
+                reads.fetch_add(1, Ordering::SeqCst);
+                ReadCallbackResult::Success(())
+            },
+        )
+        .await
+        .expect_err("persisted fence denies a restarted caller before expiry");
+    assert_eq!(
+        error,
+        ReadCoordinationError::ReservationActive { retry_after_ms: 30 }
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert_eq!(issuer.calls(), 1);
+
+    clock.advance(5_000);
+    successful_read(&restarted, &issuer, PRICE_PATH, PRICE_TR)
+        .await
+        .expect("expired fence permits a separately accounted attempt");
+}
+
+#[tokio::test]
 async fn explicit_ambiguous_result_preserves_debt_but_completed_failure_clears_it() {
     let temp = PrivateTemp::new("ambiguity");
     let clock = SettableClock::at(11_000_000);
@@ -884,6 +948,70 @@ async fn initialized_state_never_recreates_a_missing_stable_lock_inode() {
 }
 
 #[tokio::test]
+async fn initialized_witness_rejects_deleted_state_before_all_callbacks() {
+    let temp = PrivateTemp::new("missing-committed-state");
+    let clock = SettableClock::at(13_750_000);
+    let initial_issuer = CountingIssuer::new(clock.clone());
+    let coordinator = temp.coordinator(Arc::new(clock.clone()), 1);
+    prime_token(&coordinator, &initial_issuer)
+        .await
+        .expect("fresh coordinator bootstraps once");
+    fs::remove_file(temp.root().join(STATE_FILE_NAME)).expect("delete committed state fixture");
+
+    let restarted = temp.coordinator(Arc::new(clock), 1);
+    let denied_issuer = CountingIssuer::new(SettableClock::at(13_750_000));
+    let reads = AtomicUsize::new(0);
+    assert_eq!(
+        prime_token(&restarted, &denied_issuer)
+            .await
+            .expect_err("initialized witness forbids token-state reset"),
+        ReadCoordinationError::MissingCommittedState
+    );
+    let error = restarted
+        .execute(
+            PRICE_PATH,
+            PRICE_TR,
+            &denied_issuer,
+            bounded(),
+            Duration::from_secs(3),
+            |_| async {
+                reads.fetch_add(1, Ordering::SeqCst);
+                ReadCallbackResult::Success(())
+            },
+        )
+        .await
+        .expect_err("missing committed state denies read");
+    assert_eq!(error, ReadCoordinationError::MissingCommittedState);
+    assert_eq!(denied_issuer.calls(), 0);
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    assert!(!temp.root().join(STATE_FILE_NAME).exists());
+}
+
+#[tokio::test]
+async fn empty_initialization_witness_bootstraps_once_and_malformed_witness_fails_closed() {
+    let temp = PrivateTemp::new("ambiguous-initialization");
+    let lock_path = temp.root().join(LOCK_FILE_NAME);
+    fs::write(&lock_path, b"").expect("create preexisting empty lock fixture");
+    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600)).expect("protect lock");
+    let clock = SettableClock::at(13_875_000);
+    let issuer = CountingIssuer::new(clock.clone());
+    let coordinator = temp.coordinator(Arc::new(clock), 1);
+    prime_token(&coordinator, &issuer)
+        .await
+        .expect("empty witness has no committed-state history and bootstraps safely");
+
+    fs::write(&lock_path, b"invalid-witness\n").expect("malform witness fixture");
+    assert_eq!(
+        prime_token(&coordinator, &issuer)
+            .await
+            .expect_err("malformed witness is invalid"),
+        ReadCoordinationError::InvalidInitializationWitness
+    );
+    assert_eq!(issuer.calls(), 1, "malformed witness invokes no new issuer");
+    assert!(temp.root().join(STATE_FILE_NAME).exists());
+}
+
+#[tokio::test]
 async fn secret_values_never_render_in_debug_or_errors() {
     let temp = PrivateTemp::new("redaction");
     let key = "WP2A-SENTINEL-APP-KEY";
@@ -985,6 +1113,51 @@ async fn two_real_processes_share_one_token_and_one_read_attempt() {
     );
     assert_eq!(line_count(&issue_count), 1);
     assert_eq!(line_count(&read_count), 1);
+}
+
+#[tokio::test]
+async fn child_restart_after_state_deletion_invokes_no_issuer_or_read_callback() {
+    let temp = PrivateTemp::new("process-missing-state");
+    let issue_count = temp.base().join("issue-count");
+    let read_count = temp.base().join("read-count");
+    let now = 20_500_000_i64;
+    let mut initializer = spawn_helper(
+        "execute",
+        temp.root(),
+        temp.uid(),
+        now,
+        &issue_count,
+        &read_count,
+    );
+    release_child(&mut initializer);
+    let initial_output = initializer.wait_with_output().expect("initializer child");
+    assert!(initial_output.status.success());
+    assert_eq!(line_count(&issue_count), 1);
+    assert_eq!(line_count(&read_count), 1);
+
+    fs::remove_file(temp.root().join(STATE_FILE_NAME)).expect("delete initialized state fixture");
+    let mut restarted = spawn_helper(
+        "missing-state",
+        temp.root(),
+        temp.uid(),
+        now,
+        &issue_count,
+        &read_count,
+    );
+    release_child(&mut restarted);
+    let restarted_output = restarted.wait_with_output().expect("restarted child");
+    assert!(restarted_output.status.success());
+    assert!(
+        String::from_utf8(restarted_output.stdout)
+            .expect("child output")
+            .contains("WP2A_MISSING_STATE")
+    );
+    assert_eq!(
+        line_count(&issue_count),
+        1,
+        "issuer callback count unchanged"
+    );
+    assert_eq!(line_count(&read_count), 1, "read callback count unchanged");
 }
 
 #[tokio::test]
@@ -1249,6 +1422,15 @@ fn read_coordination_process_helper() {
             ReadCallbackResult::Success(())
         },
     ));
+    if action == "missing-state" {
+        match result {
+            Err(ReadCoordinationError::MissingCommittedState) => {
+                println!("WP2A_MISSING_STATE");
+                return;
+            }
+            _ => panic!("missing committed state was not rejected"),
+        }
+    }
     match result {
         Ok(()) => println!("WP2A_SUCCESS"),
         Err(
