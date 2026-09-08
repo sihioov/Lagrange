@@ -1133,3 +1133,17 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - C1 worker `de50de28-cfb0-4e02-a236-d91dd2b8d775` (Codex luna/max, auto-review)를
   위 producer workspace/base `b34198f`에서 새 격리 agent context로 시작했다.
   기존 구현자와 reviewer는 idle이며, 이 테스트 writer만 활성 상태다.
+
+### B2b-C1 완료 및 독립 coverage 검토
+
+- C1 worker는 `18b8b33cff461b3d66c957802b93ddd9cf33aaba` (parent `b34198f`)로 완료했고
+  idle/clean이다. coordinator가 새 test627/support378, 총 1005줄의 두 파일 전체를 읽었다.
+  기존 source/test/support는 수정되지 않았으며 아직 미통합이다.
+- worker 보고: 신규9/9 (40.53초), 기존 producer6/B1DB24 및 strict scoped clippy/fmt 통과.
+  dead_code 허용은 재사용한 기존 B1 test-support module import에만 한정됐다.
+- 유휴 reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)에 C1만 read-only
+  검토하도록 요청했다. 실제 client/reservation/parser/DB 연결과 테스트 실행을 확인한다.
+  coordinator는 요청 시각의 spacing 단언 부재, 429 stop-only 대비 성공 재시도/cycle 간
+  cooldown 증거, receipt byte-arrival 경계, EOD row count의 UPDATE 탐지 한계를 전달했다.
+  기존 하위 계층 증거로 충분한지 또는 C1 보완이 필요한지 독립 판단하도록 한다.
+- C2/C3 및 window evidence age 판단은 여전히 남아 있으며 전체 B2b 수락/통합을 뜻하지 않는다.
