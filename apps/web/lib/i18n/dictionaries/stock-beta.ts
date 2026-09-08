@@ -88,6 +88,7 @@ export type StockBetaDictionary = {
   readonly intradayQuoteDirectionLimitDown: string;
   readonly intradayQuoteDirectionLimitUp: string;
   readonly intradayQuoteDirectionUp: string;
+  readonly intradayQuoteHalted: string;
   readonly intradayQuoteHeading: string;
   readonly intradayQuoteLastSuccessLabel: string;
   readonly intradayQuoteOffline: string;
@@ -95,6 +96,7 @@ export type StockBetaDictionary = {
   readonly intradayQuotePriceLabel: string;
   readonly intradayQuoteReady: string;
   readonly intradayQuoteStale: string;
+  readonly intradayQuoteUnknown: string;
   readonly intradayQuoteUnavailable: string;
   readonly integrityMessage: string;
   readonly integrityTitle: string;
@@ -312,6 +314,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuoteDirectionLimitDown: "Limit down",
     intradayQuoteDirectionLimitUp: "Limit up",
     intradayQuoteDirectionUp: "Up",
+    intradayQuoteHalted: "Instrument halted",
     intradayQuoteHeading: "Intraday price · periodic refresh",
     intradayQuoteLastSuccessLabel: "Last successful quote",
     intradayQuoteOffline: "Updates paused while offline or hidden.",
@@ -319,6 +322,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuotePriceLabel: "Current price",
     intradayQuoteReady: "Validated cache",
     intradayQuoteStale: "Quote is stale; last successful value retained.",
+    intradayQuoteUnknown: "Market state unknown",
     intradayQuoteUnavailable: "Current quote is unavailable. EOD data is unchanged.",
     integrityMessage: "The V2 snapshot failed its integrity boundary. No rows are shown.",
     integrityTitle: "Signal snapshot integrity failed",
@@ -535,6 +539,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuoteDirectionLimitDown: "하한가",
     intradayQuoteDirectionLimitUp: "상한가",
     intradayQuoteDirectionUp: "상승",
+    intradayQuoteHalted: "종목 거래 정지",
     intradayQuoteHeading: "장중 현재가 · 주기적 조회",
     intradayQuoteLastSuccessLabel: "마지막 성공 조회",
     intradayQuoteOffline: "오프라인이거나 화면이 숨겨져 있어 조회를 멈췄습니다.",
@@ -542,6 +547,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuotePriceLabel: "현재가",
     intradayQuoteReady: "검증된 캐시",
     intradayQuoteStale: "현재가가 오래되어 마지막 성공 값을 유지합니다.",
+    intradayQuoteUnknown: "시장 상태 확인 불가",
     intradayQuoteUnavailable: "현재가를 사용할 수 없습니다. EOD 데이터는 변경되지 않습니다.",
     integrityMessage: "V2 스냅샷이 무결성 경계를 통과하지 못했습니다. 행을 표시하지 않습니다.",
     integrityTitle: "신호 스냅샷 무결성 실패",

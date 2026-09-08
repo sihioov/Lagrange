@@ -44,12 +44,31 @@ function directionLabel(
 function statusText(state: IntradayQuoteLoadState, t: StockBetaDictionary): string {
   if (state.phase === "offline") return t.intradayQuoteOffline;
   if (state.phase === "demanding") return t.intradayQuoteDemanding;
-  if (state.phase === "polling" && state.quote === null) return t.intradayQuotePolling;
-  if (state.reasonCode === "SESSION_CLOSED") return t.intradayQuoteClosed;
-  if (state.phase === "stale") return t.intradayQuoteStale;
-  if (state.phase === "unavailable" || state.phase === "error") return t.intradayQuoteUnavailable;
-  if (state.phase === "ready") return t.intradayQuoteReady;
-  return t.intradayQuoteUnavailable;
+  const semanticStatus =
+    state.phase === "polling" && state.quote !== null
+      ? state.quote.freshness === "STALE"
+        ? t.intradayQuoteStale
+        : t.intradayQuoteReady
+      : state.phase === "polling"
+        ? t.intradayQuotePolling
+        : state.reasonCode === "SESSION_CLOSED"
+          ? t.intradayQuoteClosed
+          : state.phase === "stale"
+            ? t.intradayQuoteStale
+            : state.phase === "unavailable" || state.phase === "error"
+              ? t.intradayQuoteUnavailable
+              : state.phase === "ready"
+                ? t.intradayQuoteReady
+                : t.intradayQuoteUnavailable;
+  const marketStatus =
+    state.marketState === "HALTED"
+      ? t.intradayQuoteHalted
+      : state.marketState === "CLOSED"
+        ? t.intradayQuoteClosed
+        : state.marketState === "UNKNOWN"
+          ? t.intradayQuoteUnknown
+          : null;
+  return marketStatus === null ? semanticStatus : `${marketStatus} · ${semanticStatus}`;
 }
 
 function frameState(
@@ -115,7 +134,13 @@ export function CurrentQuoteView({ copy: t, locale, state }: CurrentQuoteViewPro
       description={t.intradayQuoteDescription}
       state={frameState(state, t)}
       status={
-        <span aria-live="polite" className={styles["status"]} data-status-phase={state.phase}>
+        <span
+          aria-live="polite"
+          className={styles["status"]}
+          data-fetching={state.fetching ? "true" : "false"}
+          data-market-state={state.marketState ?? undefined}
+          data-status-phase={state.phase}
+        >
           {statusText(state, t)}
         </span>
       }

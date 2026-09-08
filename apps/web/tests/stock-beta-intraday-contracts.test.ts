@@ -122,6 +122,17 @@ describe("Stock Beta intraday quote application contract", () => {
       }),
     ).toThrow();
     expect(() =>
+      parseIntradayQuoteResponse(
+        quoteResponse({
+          quote: {
+            ...quoteResponse().quote,
+            last_success_at: "2026-09-07T14:00:00Z",
+            received_at: "2026-09-07T14:00:00Z",
+          },
+        }),
+      ),
+    ).toThrow();
+    expect(() =>
       intradayQuoteResponseSchema.parse(
         quoteResponse({
           quote: { ...quoteResponse().quote, quote_version: "9223372036854775808" },
@@ -144,6 +155,21 @@ describe("Stock Beta intraday quote application contract", () => {
         schema_version: 1,
       }),
     ).toThrow();
+  });
+
+  it("accepts a genuine quote at the KST boundary of a new session", () => {
+    expect(
+      parseIntradayQuoteResponse(
+        quoteResponse({
+          quote: {
+            ...quoteResponse().quote,
+            last_success_at: "2026-09-08T15:00:00Z",
+            received_at: "2026-09-08T15:00:00Z",
+          },
+          session: { ...quoteResponse().session, date: "2026-09-09" },
+        }),
+      ).quote?.last_success_at,
+    ).toBe("2026-09-08T15:00:00Z");
   });
 
   it("accepts only visible ASCII idempotency keys and never exposes typed error prose", async () => {

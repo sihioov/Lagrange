@@ -15,6 +15,7 @@ import type {
   IntradayQuoteReleaseRequest,
   IntradayQuoteResponse,
 } from "@/lib/products/intraday-quotes-contracts";
+import { INTRADAY_QUOTE_CACHE_MAX_AGE_MS } from "@/lib/products/intraday-quotes-contracts";
 
 const IDENTITY_A: IntradayQuoteIdentity = {
   generation: 7,
@@ -56,6 +57,10 @@ class FakeClock implements IntradayQuoteClock {
       due[1].callback();
     }
   }
+
+  jump(delayMs: number): void {
+    this.current += delayMs;
+  }
 }
 
 async function flush(): Promise<void> {
@@ -68,17 +73,35 @@ function demandFor(
   identity: IntradayQuoteIdentity,
   consumerId: string,
   sequence: number,
+  leaseExpiresAt = "2026-09-08T03:00:30Z",
 ): IntradayQuoteDemandResponse {
   return {
     consumer_id: consumerId,
     demand_id: `00000000-0000-4000-8000-${String(sequence + 10).padStart(12, "0")}`,
     generation: identity.generation,
     instrument_id: identity.instrument_id,
-    lease_expires_at: "2026-09-08T03:00:30Z",
+    lease_expires_at: leaseExpiresAt,
     membership_id: identity.membership_id,
     renew_after_ms: 15_000,
     renewal_sequence: sequence,
     schema_version: 1,
+  };
+}
+
+function quoteWithSuccessAt(
+  identity: IntradayQuoteIdentity,
+  clock: FakeClock,
+  successAtMs: number,
+  overrides: Partial<IntradayQuoteResponse> = {},
+): IntradayQuoteResponse {
+  const response = quoteFor(identity, clock, overrides);
+  const successAt = new Date(successAtMs).toISOString().replace(".000", "");
+  return {
+    ...response,
+    quote:
+      response.quote === null
+        ? null
+        : { ...response.quote, last_success_at: successAt, received_at: successAt },
   };
 }
 
@@ -215,6 +238,267 @@ describe("Stock Beta intraday quote lifecycle", () => {
     await flush();
     expect(client.createDemand).toHaveBeenCalledTimes(2);
     expect(client.createDemand.mock.calls[1]?.[0]).toMatchObject({ renewal_sequence: 1 });
+  });
+
+  it("does not start a GET when the accepted demand lease is already expired", async () => {
+    const clock = new FakeClock();
+    const client = fakeClient(clock, {
+      createDemand: vi.fn(async (body) =>
+        demandFor(
+          IDENTITY_A,
+          body.consumer_id,
+          body.renewal_sequence,
+          new Date(clock.now()).toISOString().replace(".000", ""),
+        ),
+      ),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({
+      client,
+      clock,
+      createConsumerId: () => "00000000-0000-4000-8000-000000000010",
+    });
+
+    startContext(coordinator);
+    await flush();
+
+    expect(client.getQuote).not.toHaveBeenCalled();
+    expect(coordinator.getState()).toMatchObject({ phase: "idle", quote: null });
+  });
+
+  it("stops at lease expiry and ignores a delayed GET result", async () => {
+    const clock = new FakeClock();
+    const get = deferred<IntradayQuoteResponse>();
+    const client = fakeClient(clock, {
+      createDemand: vi.fn(async (body) =>
+        demandFor(
+          IDENTITY_A,
+          body.consumer_id,
+          body.renewal_sequence,
+          new Date(clock.now() + 10_000).toISOString().replace(".000", ""),
+        ),
+      ),
+      getQuote: vi.fn(async () => get.promise),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({ client, clock });
+
+    startContext(coordinator);
+    await flush();
+    expect(client.getQuote).toHaveBeenCalledOnce();
+
+    clock.advance(10_000);
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ phase: "idle", quote: null });
+
+    get.resolve(quoteFor(IDENTITY_A, clock));
+    await flush();
+    expect(client.getQuote).toHaveBeenCalledOnce();
+    expect(coordinator.getState()).toMatchObject({ phase: "idle", quote: null });
+  });
+
+  it("stops polling while a renewal is hung beyond the authoritative lease", async () => {
+    const clock = new FakeClock();
+    const renewal = deferred<IntradayQuoteDemandResponse>();
+    const client = fakeClient(clock, {
+      createDemand: vi.fn(async (body) => {
+        if (body.renewal_sequence === 1) return renewal.promise;
+        return demandFor(
+          IDENTITY_A,
+          body.consumer_id,
+          body.renewal_sequence,
+          new Date(clock.now() + 20_000).toISOString().replace(".000", ""),
+        );
+      }),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({
+      client,
+      clock,
+      createConsumerId: () => "00000000-0000-4000-8000-000000000010",
+    });
+
+    startContext(coordinator);
+    await flush();
+    clock.advance(15_000);
+    await flush();
+    expect(client.createDemand).toHaveBeenCalledTimes(2);
+
+    clock.advance(5_000);
+    await flush();
+    const getCallsAtExpiry = client.getQuote.mock.calls.length;
+    expect(coordinator.getState()).toMatchObject({ phase: "idle", quote: null });
+
+    renewal.resolve(
+      demandFor(
+        IDENTITY_A,
+        "00000000-0000-4000-8000-000000000010",
+        1,
+        new Date(clock.now() + 20_000).toISOString().replace(".000", ""),
+      ),
+    );
+    await flush();
+    expect(client.getQuote).toHaveBeenCalledTimes(getCallsAtExpiry);
+    expect(client.releaseDemand).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ renewal_sequence: 2 }),
+      expect.any(Object),
+    );
+  });
+
+  it("does not resurrect when a renewal settles after the lease boundary before its timer callback", async () => {
+    const clock = new FakeClock();
+    const renewal = deferred<IntradayQuoteDemandResponse>();
+    const client = fakeClient(clock, {
+      createDemand: vi.fn(async (body) => {
+        if (body.renewal_sequence === 1) return renewal.promise;
+        return demandFor(
+          IDENTITY_A,
+          body.consumer_id,
+          body.renewal_sequence,
+          new Date(clock.now() + 20_000).toISOString().replace(".000", ""),
+        );
+      }),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({
+      client,
+      clock,
+      createConsumerId: () => "00000000-0000-4000-8000-000000000010",
+    });
+
+    startContext(coordinator);
+    await flush();
+    clock.advance(15_000);
+    await flush();
+    const getCallsBeforeLateRenewal = client.getQuote.mock.calls.length;
+    clock.jump(5_000);
+    renewal.resolve(
+      demandFor(
+        IDENTITY_A,
+        "00000000-0000-4000-8000-000000000010",
+        1,
+        new Date(clock.now() + 20_000).toISOString().replace(".000", ""),
+      ),
+    );
+    await flush();
+
+    expect(client.getQuote).toHaveBeenCalledTimes(getCallsBeforeLateRenewal);
+    expect(coordinator.getState()).toMatchObject({ phase: "idle", quote: null });
+    expect(client.releaseDemand).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ renewal_sequence: 2 }),
+      expect.any(Object),
+    );
+  });
+
+  it("replays a transient renewal with the same body and key, then advances once", async () => {
+    const clock = new FakeClock();
+    const client = fakeClient(clock, {
+      createDemand: vi
+        .fn()
+        .mockImplementationOnce(async (body) =>
+          demandFor(
+            IDENTITY_A,
+            body.consumer_id,
+            body.renewal_sequence,
+            new Date(clock.now() + 60_000).toISOString().replace(".000", ""),
+          ),
+        )
+        .mockRejectedValueOnce(
+          new IntradayQuoteApiError(503, "QUOTE_CACHE_UNAVAILABLE", "request", 15_000),
+        )
+        .mockImplementationOnce(async (body) =>
+          demandFor(
+            IDENTITY_A,
+            body.consumer_id,
+            body.renewal_sequence,
+            new Date(clock.now() + 60_000).toISOString().replace(".000", ""),
+          ),
+        ),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({
+      client,
+      clock,
+      createConsumerId: () => "00000000-0000-4000-8000-000000000010",
+      createIdempotencyKey: (operation, sequence) => `${operation}/${sequence}`,
+    });
+
+    startContext(coordinator);
+    await flush();
+    clock.advance(15_000);
+    await flush();
+    expect(client.createDemand).toHaveBeenCalledTimes(2);
+
+    clock.advance(15_000);
+    await flush();
+    expect(client.createDemand).toHaveBeenCalledTimes(3);
+    expect(client.createDemand.mock.calls[1]?.[0]).toEqual(client.createDemand.mock.calls[2]?.[0]);
+    expect(client.createDemand.mock.calls[1]?.[1]).toMatchObject({
+      idempotencyKey: "quote-demand-00000000-0000-4000-8000-000000000010/1",
+    });
+    expect(client.createDemand.mock.calls[2]?.[1]).toMatchObject({
+      idempotencyKey: "quote-demand-00000000-0000-4000-8000-000000000010/1",
+    });
+
+    clock.advance(15_000);
+    await flush();
+    expect(client.createDemand.mock.calls[3]?.[0]).toMatchObject({ renewal_sequence: 2 });
+  });
+
+  it("keeps the quote recent at exactly 30 seconds and cache-valid at exactly 24 hours", async () => {
+    const clock = new FakeClock();
+    const pending = deferred<IntradayQuoteResponse>();
+    const client = fakeClient(clock, {
+      createDemand: vi.fn(async (body) =>
+        demandFor(
+          IDENTITY_A,
+          body.consumer_id,
+          body.renewal_sequence,
+          new Date(clock.now() + INTRADAY_QUOTE_CACHE_MAX_AGE_MS * 2)
+            .toISOString()
+            .replace(".000", ""),
+        ),
+      ),
+      getQuote: vi
+        .fn()
+        .mockImplementationOnce(async () => quoteWithSuccessAt(IDENTITY_A, clock, NOW_MS))
+        .mockReturnValue(pending.promise),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({ client, clock });
+
+    startContext(coordinator);
+    await flush();
+    clock.advance(5_000);
+    await flush();
+    clock.advance(INTRADAY_QUOTE_CACHE_MAX_AGE_MS - 5_000);
+    await flush();
+    expect(coordinator.getState().quote).not.toBeNull();
+    expect(coordinator.getState().phase).toBe("stale");
+
+    clock.advance(1);
+    expect(coordinator.getState().quote).toBeNull();
+  });
+
+  it("keeps the semantic phase while a retained quote GET is in flight", async () => {
+    const clock = new FakeClock();
+    const pending = deferred<IntradayQuoteResponse>();
+    const client = fakeClient(clock, {
+      getQuote: vi
+        .fn()
+        .mockResolvedValueOnce(quoteFor(IDENTITY_A, clock))
+        .mockReturnValueOnce(pending.promise),
+    });
+    const coordinator = new IntradayQuoteLoadCoordinator({ client, clock });
+
+    startContext(coordinator);
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ phase: "ready", fetching: false });
+
+    clock.advance(5_000);
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ phase: "ready", fetching: true });
+    expect(coordinator.getState().quote?.quote?.price).toBe("101200.00");
+
+    pending.resolve(quoteFor(IDENTITY_A, clock));
+    await flush();
+    expect(coordinator.getState()).toMatchObject({ phase: "ready", fetching: false });
   });
 
   it("replays an ambiguous demand with the same sequence and key, then releases only its demand id", async () => {
@@ -358,6 +642,16 @@ describe("Stock Beta intraday quote lifecycle", () => {
   it("clears on terminal auth/resource errors, marks stale after 30 seconds, and rejects reversed versions", async () => {
     const clock = new FakeClock();
     const client = fakeClient(clock, {
+      createDemand: vi.fn(async (body) =>
+        demandFor(
+          IDENTITY_A,
+          body.consumer_id,
+          body.renewal_sequence,
+          new Date(clock.now() + INTRADAY_QUOTE_CACHE_MAX_AGE_MS * 2)
+            .toISOString()
+            .replace(".000", ""),
+        ),
+      ),
       getQuote: vi
         .fn()
         .mockResolvedValueOnce(quoteFor(IDENTITY_A, clock))
@@ -368,6 +662,8 @@ describe("Stock Beta intraday quote lifecycle", () => {
     await flush();
     expect(coordinator.getState().phase).toBe("ready");
     clock.advance(30_000);
+    expect(coordinator.getState().phase).toBe("ready");
+    clock.advance(1);
     expect(coordinator.getState().phase).toBe("stale");
     expect(coordinator.getState().lastSuccessAt).not.toBeNull();
 

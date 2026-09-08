@@ -12,6 +12,7 @@ import {
   type IntradayQuoteDemandRequest,
   type IntradayQuoteDemandResponse,
   type IntradayQuoteIdentity,
+  type IntradayQuoteMarketState,
   type IntradayQuoteReasonCode,
   type IntradayQuoteResponse,
   intradayQuoteSessionKey,
@@ -44,8 +45,10 @@ export type IntradayQuoteLoadPhase =
 export type IntradayQuoteLoadState = {
   readonly consumerId: string | null;
   readonly errorCode: string | null;
+  readonly fetching: boolean;
   readonly identity: IntradayQuoteIdentity | null;
   readonly lastSuccessAt: string | null;
+  readonly marketState: IntradayQuoteMarketState | null;
   readonly phase: IntradayQuoteLoadPhase;
   readonly quote: IntradayQuoteResponse | null;
   readonly reasonCode: IntradayQuoteReasonCode | null;
@@ -82,6 +85,8 @@ type QuoteSession = {
   abortController: AbortController | null;
   createAttempts: number;
   demand: IntradayQuoteDemandResponse | null;
+  demandExpiresAtMs: number | null;
+  demandLeaseTimer: TimerHandle | null;
   expiryTimer: TimerHandle | null;
   getInFlight: Promise<void> | null;
   readonly idempotencyKeys: Map<string, string>;
@@ -94,6 +99,7 @@ type QuoteSession = {
   pollTimer: TimerHandle | null;
   releaseRequested: boolean;
   releaseQueued: boolean;
+  leaseExpired: boolean;
   renewalAttempts: number;
   renewalTimer: TimerHandle | null;
   staleTimer: TimerHandle | null;
@@ -111,8 +117,10 @@ const EMPTY_CONTEXT: IntradayQuoteLoadContext = {
 const EMPTY_STATE: IntradayQuoteLoadState = {
   consumerId: null,
   errorCode: null,
+  fetching: false,
   identity: null,
   lastSuccessAt: null,
+  marketState: null,
   phase: "idle",
   quote: null,
   reasonCode: null,
@@ -183,9 +191,11 @@ function sameContext(
   );
 }
 
-function responsePhase(response: IntradayQuoteResponse): IntradayQuoteLoadPhase {
+function responsePhase(response: IntradayQuoteResponse, nowMs: number): IntradayQuoteLoadPhase {
   if (response.quote === null || response.freshness === "UNAVAILABLE") return "unavailable";
-  return response.freshness === "STALE" ? "stale" : "ready";
+  if (response.freshness === "STALE") return "stale";
+  const age = nowMs - Date.parse(response.quote.last_success_at);
+  return age > INTRADAY_QUOTE_STALE_AFTER_MS ? "stale" : "ready";
 }
 
 export class IntradayQuoteLoadCoordinator {
@@ -257,8 +267,10 @@ export class IntradayQuoteLoadCoordinator {
       this.stop(context.online ? "idle" : "offline");
       return;
     }
-    if (this.session !== null && previousKey === nextKey && sameContext(this.session, context))
+    if (this.session !== null && previousKey === nextKey && sameContext(this.session, context)) {
+      this.isLive(this.session);
       return;
+    }
     this.stop("idle");
     this.start(context.identity, context.snapshotKey);
   }
@@ -270,6 +282,8 @@ export class IntradayQuoteLoadCoordinator {
       consumerId: this.createConsumerId(),
       createAttempts: 0,
       demand: null,
+      demandExpiresAtMs: null,
+      demandLeaseTimer: null,
       epoch: ++this.epoch,
       expiryTimer: null,
       getInFlight: null,
@@ -284,6 +298,7 @@ export class IntradayQuoteLoadCoordinator {
       pollTimer: null,
       releaseQueued: false,
       releaseRequested: false,
+      leaseExpired: false,
       renewalAttempts: 0,
       renewalTimer: null,
       snapshotKey,
@@ -293,8 +308,10 @@ export class IntradayQuoteLoadCoordinator {
     this.publish({
       consumerId: session.consumerId,
       errorCode: null,
+      fetching: false,
       identity: session.identity,
       lastSuccessAt: null,
+      marketState: null,
       phase: "demanding",
       quote: null,
       reasonCode: null,
@@ -331,7 +348,27 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private isCurrent(session: QuoteSession): boolean {
-    return this.session === session && session.epoch === this.epoch && !isSessionStopping(session);
+    return (
+      this.session === session &&
+      session.epoch === this.epoch &&
+      !isSessionStopping(session) &&
+      !session.leaseExpired
+    );
+  }
+
+  private isLive(session: QuoteSession): boolean {
+    if (!this.isCurrent(session)) return false;
+    if (session.demandExpiresAtMs !== null && this.clock.now() >= session.demandExpiresAtMs) {
+      this.expireDemand(session);
+      return false;
+    }
+    return true;
+  }
+
+  private expireDemand(session: QuoteSession): void {
+    if (!this.isCurrent(session)) return;
+    session.leaseExpired = true;
+    this.stop("idle");
   }
 
   private mutation<T>(session: QuoteSession, task: () => Promise<T>): Promise<T> {
@@ -386,16 +423,53 @@ export class IntradayQuoteLoadCoordinator {
       this.handleSessionError(session, "INTRADAY_QUOTE_DEMAND_CONTRACT_INVALID");
       return;
     }
+    const priorLeaseExpired =
+      session.demand !== null &&
+      session.demandExpiresAtMs !== null &&
+      this.clock.now() >= session.demandExpiresAtMs;
+    const demandExpiresAtMs = Date.parse(demand.lease_expires_at);
+    if (!Number.isFinite(demandExpiresAtMs)) {
+      this.handleSessionError(session, "INTRADAY_QUOTE_DEMAND_LEASE_INVALID");
+      return;
+    }
     session.demand = demand;
+    session.demandExpiresAtMs = demandExpiresAtMs;
     session.nextSequence = demand.renewal_sequence + 1;
     session.renewalAttempts = 0;
     if (!this.isCurrent(session)) {
       this.queueRelease(session);
       return;
     }
+    if (priorLeaseExpired) {
+      session.leaseExpired = true;
+      this.stop("idle");
+      return;
+    }
+    this.scheduleDemandLease(session, demandExpiresAtMs);
+    if (!this.isLive(session)) return;
     session.createAttempts = 0;
     this.scheduleRenewal(session, demand.renew_after_ms);
     void this.poll(session, true);
+  }
+
+  private scheduleDemandLease(session: QuoteSession, expiresAtMs: number): void {
+    if (session.demandLeaseTimer !== null) this.clock.clearTimeout(session.demandLeaseTimer);
+    session.demandExpiresAtMs = expiresAtMs;
+    const timer = this.clock.setTimeout(
+      () => {
+        if (session.demandLeaseTimer !== timer) return;
+        session.demandLeaseTimer = null;
+        if (!this.isCurrent(session) || session.demandExpiresAtMs !== expiresAtMs) return;
+        if (this.clock.now() < expiresAtMs) {
+          this.scheduleDemandLease(session, expiresAtMs);
+          return;
+        }
+        this.expireDemand(session);
+      },
+      Math.max(0, expiresAtMs - this.clock.now()),
+    );
+    session.demandLeaseTimer = timer;
+    if (this.clock.now() >= expiresAtMs) this.expireDemand(session);
   }
 
   private handleCreateFailure(session: QuoteSession, error: unknown): void {
@@ -422,7 +496,7 @@ export class IntradayQuoteLoadCoordinator {
     session.renewalTimer = this.clock.setTimeout(
       () => {
         session.renewalTimer = null;
-        if (!this.isCurrent(session) || session.demand === null) return;
+        if (!this.isLive(session) || session.demand === null) return;
         this.enqueueRenewal(session);
       },
       Math.max(delayMs, INTRADAY_QUOTE_RENEWAL_INTERVAL_MS),
@@ -430,6 +504,7 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private enqueueRenewal(session: QuoteSession): void {
+    if (!this.isLive(session) || session.demand === null) return;
     const sequence = session.nextSequence;
     const body: IntradayQuoteDemandRequest = {
       consumer_id: session.consumerId,
@@ -453,7 +528,7 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private handleRenewalFailure(session: QuoteSession, error: unknown): void {
-    if (!this.isCurrent(session) || isAbortError(error)) return;
+    if (isAbortError(error) || !this.isLive(session)) return;
     const code = typedErrorCode(error);
     if (this.isTerminalError(error)) {
       this.handleSessionError(session, code);
@@ -479,13 +554,19 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private async poll(session: QuoteSession, immediate: boolean): Promise<void> {
-    if (!this.isCurrent(session) || session.demand === null || session.getInFlight !== null) return;
+    if (!this.isLive(session) || session.demand === null || session.getInFlight !== null) return;
     if (!immediate) await Promise.resolve();
-    if (!this.isCurrent(session) || session.demand === null || session.getInFlight !== null) return;
+    if (!this.isLive(session) || session.demand === null || session.getInFlight !== null) return;
     this.observeClock(session);
+    if (!this.isLive(session)) return;
     const controller = new AbortController();
     session.abortController = controller;
-    this.publish({ ...this.state, phase: "polling", errorCode: null });
+    this.publish({
+      ...this.state,
+      errorCode: null,
+      fetching: true,
+      phase: session.lastGoodResponse === null ? "polling" : this.state.phase,
+    });
     const request = Promise.resolve().then(() =>
       this.client.getQuote(session.identity, {
         signal: controller.signal,
@@ -504,12 +585,22 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private acceptQuote(session: QuoteSession, response: IntradayQuoteResponse): void {
-    if (!this.isCurrent(session)) return;
+    if (!this.isLive(session)) return;
     if (!isIntradayQuoteIdentityMatch(response, session.identity)) {
       this.handleSessionError(session, "INTRADAY_QUOTE_IDENTITY_MISMATCH");
       return;
     }
     this.observeClock(session);
+    if (
+      response.quote !== null &&
+      (() => {
+        const age = this.clock.now() - Date.parse(response.quote.last_success_at);
+        return !Number.isFinite(age) || age < 0 || age > INTRADAY_QUOTE_CACHE_MAX_AGE_MS;
+      })()
+    ) {
+      this.invalidateQuote(session, "QUOTE_STALE", "INTRADAY_QUOTE_TIMESTAMP_INVALID");
+      return;
+    }
     const nextSessionKey = intradayQuoteSessionKey(response);
     if (nextSessionKey !== session.lastSessionKey) {
       session.lastGoodResponse = null;
@@ -526,6 +617,8 @@ export class IntradayQuoteLoadCoordinator {
       session.lastGoodResponse = response;
       this.scheduleStaleness(session, response.quote.last_success_at);
     } else if (
+      response.market_state === "UNKNOWN" ||
+      response.session === null ||
       response.reason_code === null ||
       !TRANSIENT_QUOTE_REASONS.has(response.reason_code)
     ) {
@@ -545,9 +638,11 @@ export class IntradayQuoteLoadCoordinator {
     this.publish({
       consumerId: session.consumerId,
       errorCode: null,
+      fetching: false,
       identity: session.identity,
       lastSuccessAt: retained.quote?.last_success_at ?? null,
-      phase: retained !== response ? "stale" : responsePhase(retained),
+      marketState: response.market_state,
+      phase: retained !== response ? "stale" : responsePhase(retained, this.clock.now()),
       quote: retained,
       reasonCode,
     });
@@ -555,7 +650,7 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private handlePollFailure(session: QuoteSession, error: unknown): void {
-    if (!this.isCurrent(session) || isAbortError(error)) return;
+    if (isAbortError(error) || !this.isLive(session)) return;
     const code = typedErrorCode(error);
     if (this.isTerminalError(error)) {
       this.handleSessionError(session, code);
@@ -565,7 +660,8 @@ export class IntradayQuoteLoadCoordinator {
     this.publish({
       ...this.state,
       errorCode: code,
-      phase: retained === null ? "unavailable" : "stale",
+      fetching: false,
+      phase: retained === null ? "unavailable" : responsePhase(retained, this.clock.now()),
       quote: retained,
       lastSuccessAt: retained?.quote?.last_success_at ?? null,
       reasonCode: "PRODUCER_UNAVAILABLE",
@@ -600,20 +696,42 @@ export class IntradayQuoteLoadCoordinator {
   private scheduleStaleness(session: QuoteSession, lastSuccessAt: string): void {
     const lastSuccessMs = Date.parse(lastSuccessAt);
     const age = this.clock.now() - lastSuccessMs;
-    this.schedule(session, "staleTimer", Math.max(0, INTRADAY_QUOTE_STALE_AFTER_MS - age), () => {
-      if (session.lastGoodResponse === null || !this.isCurrent(session)) return;
-      this.publish({
-        ...this.state,
-        phase: "stale",
-        reasonCode: "QUOTE_STALE",
-        lastSuccessAt: session.lastGoodResponse.quote?.last_success_at ?? null,
-      });
-    });
+    this.schedule(
+      session,
+      "staleTimer",
+      age <= INTRADAY_QUOTE_STALE_AFTER_MS ? INTRADAY_QUOTE_STALE_AFTER_MS - age + 1 : 0,
+      () => {
+        const lastGood = this.validatedLastGood(session);
+        if (lastGood === null || !this.isCurrent(session)) return;
+        const currentAge = this.clock.now() - Date.parse(lastGood.quote?.last_success_at ?? "");
+        if (currentAge <= INTRADAY_QUOTE_STALE_AFTER_MS) {
+          this.scheduleStaleness(session, lastGood.quote?.last_success_at ?? lastSuccessAt);
+          return;
+        }
+        this.publish({
+          ...this.state,
+          errorCode: null,
+          fetching: session.getInFlight !== null,
+          phase: "stale",
+          reasonCode: "QUOTE_STALE",
+          lastSuccessAt: lastGood.quote?.last_success_at ?? null,
+        });
+      },
+    );
     this.schedule(
       session,
       "expiryTimer",
-      Math.max(0, INTRADAY_QUOTE_CACHE_MAX_AGE_MS - age),
+      age <= INTRADAY_QUOTE_CACHE_MAX_AGE_MS ? INTRADAY_QUOTE_CACHE_MAX_AGE_MS - age + 1 : 0,
       () => {
+        const lastGood = this.validatedLastGood(session);
+        if (
+          lastGood !== null &&
+          this.clock.now() - Date.parse(lastGood.quote?.last_success_at ?? "") <=
+            INTRADAY_QUOTE_CACHE_MAX_AGE_MS
+        ) {
+          this.scheduleStaleness(session, lastGood.quote?.last_success_at ?? lastSuccessAt);
+          return;
+        }
         this.invalidateQuote(session, "QUOTE_STALE", null);
       },
     );
@@ -659,12 +777,13 @@ export class IntradayQuoteLoadCoordinator {
     reasonCode: IntradayQuoteReasonCode,
     errorCode: string | null,
   ): void {
-    if (!this.isCurrent(session)) return;
+    if (!this.isLive(session)) return;
     session.lastGoodResponse = null;
     session.lastVersion = null;
     this.publish({
       ...this.state,
       errorCode,
+      fetching: session.getInFlight !== null,
       lastSuccessAt: null,
       phase: "unavailable",
       quote: null,
@@ -694,6 +813,8 @@ export class IntradayQuoteLoadCoordinator {
   }
 
   private clearTimers(session: QuoteSession): void {
+    if (session.demandLeaseTimer !== null) this.clock.clearTimeout(session.demandLeaseTimer);
+    session.demandLeaseTimer = null;
     for (const timer of ["expiryTimer", "pollTimer", "renewalTimer", "staleTimer"] as const) {
       const handle = session[timer];
       if (handle !== null) this.clock.clearTimeout(handle);

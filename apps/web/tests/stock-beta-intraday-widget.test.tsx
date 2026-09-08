@@ -12,6 +12,7 @@ import {
   CurrentQuoteView,
   formatIntradayQuoteSigned,
 } from "@/components/stock-beta/quote/current-quote-view";
+import type { IntradayQuoteLoadState } from "@/components/stock-beta/quote/quote-load-coordinator";
 import { validateStockBetaWidgetArchitecture } from "@/components/stock-beta/shared/widget-types";
 import { stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import { intradayQuoteResponseSchema } from "@/lib/products/intraday-quotes-contracts";
@@ -47,19 +48,22 @@ const RESPONSE = intradayQuoteResponseSchema.parse({
   venue: "KRX",
 });
 
-function state() {
+function state(overrides: Partial<IntradayQuoteLoadState> = {}): IntradayQuoteLoadState {
   return {
     consumerId: "00000000-0000-4000-8000-000000000002",
     errorCode: null,
+    fetching: false,
     identity: {
       generation: 7,
       instrument_id: RESPONSE.instrument_id,
       membership_id: RESPONSE.membership_id,
     },
     lastSuccessAt: RESPONSE.quote?.last_success_at ?? null,
+    marketState: "OPEN",
     phase: "ready" as const,
     quote: RESPONSE,
     reasonCode: null,
+    ...overrides,
   };
 }
 
@@ -84,6 +88,57 @@ describe("Stock Beta current quote widget", () => {
     expect(english).toContain("2026-09-08T02:59:00Z");
     expect(formatIntradayQuoteSigned("0", "en")).toBe("0");
     expect(formatIntradayQuoteSigned("-12.5", "ko")).toBe("-12.5");
+  });
+
+  it("keeps the semantic status while a retained quote is being refreshed", () => {
+    const refreshing = renderToStaticMarkup(
+      <CurrentQuoteView
+        copy={stockBetaDictionary.en}
+        locale="en"
+        state={{ ...state(), phase: "polling", fetching: true }}
+      />,
+    );
+    const staleRefreshing = renderToStaticMarkup(
+      <CurrentQuoteView
+        copy={stockBetaDictionary.en}
+        locale="en"
+        state={{
+          ...state(),
+          phase: "polling",
+          fetching: true,
+          quote: { ...RESPONSE, freshness: "STALE" },
+        }}
+      />,
+    );
+
+    expect(refreshing).toContain(stockBetaDictionary.en.intradayQuoteReady);
+    expect(refreshing).not.toContain(stockBetaDictionary.en.intradayQuoteUnavailable);
+    expect(staleRefreshing).toContain(stockBetaDictionary.en.intradayQuoteStale);
+    expect(staleRefreshing).not.toContain(stockBetaDictionary.en.intradayQuoteUnavailable);
+  });
+
+  it("renders halted and closed market state independently of a retained quote", () => {
+    const halted = intradayQuoteResponseSchema.parse({ ...RESPONSE, market_state: "HALTED" });
+    const closed = intradayQuoteResponseSchema.parse({ ...RESPONSE, market_state: "CLOSED" });
+    const haltedMarkup = renderToStaticMarkup(
+      <CurrentQuoteView
+        copy={stockBetaDictionary.en}
+        locale="en"
+        state={state({ marketState: "HALTED", quote: halted })}
+      />,
+    );
+    const closedMarkup = renderToStaticMarkup(
+      <CurrentQuoteView
+        copy={stockBetaDictionary.ko}
+        locale="ko"
+        state={state({ marketState: "CLOSED", quote: closed })}
+      />,
+    );
+
+    expect(haltedMarkup).toContain(stockBetaDictionary.en.intradayQuoteHalted);
+    expect(haltedMarkup).toContain('data-market-state="HALTED"');
+    expect(closedMarkup).toContain(stockBetaDictionary.ko.intradayQuoteClosed);
+    expect(closedMarkup).toContain('data-market-state="CLOSED"');
   });
 
   it("keeps the optional current-quote entry non-overlapping and removable from both catalogs", () => {

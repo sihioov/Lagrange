@@ -323,14 +323,21 @@ export function parseIntradayQuoteResponse(
   const parsed = intradayQuoteResponseSchema.safeParse(input);
   if (!parsed.success) throw new IntradayQuoteContractError();
   const { quote, session } = parsed.data;
-  if (quote === null || session === null || options.nowMs === undefined) return parsed.data;
+  if (quote === null || session === null) return parsed.data;
   const receivedMs = Date.parse(quote.received_at);
   const lastSuccessMs = Date.parse(quote.last_success_at);
+  if (
+    !Number.isFinite(receivedMs) ||
+    !Number.isFinite(lastSuccessMs) ||
+    kstDateAt(receivedMs) !== session.date ||
+    kstDateAt(lastSuccessMs) !== session.date
+  ) {
+    throw new IntradayQuoteContractError();
+  }
+  if (options.nowMs === undefined) return parsed.data;
   const nowMs = options.nowMs;
   if (
     !Number.isFinite(nowMs) ||
-    !Number.isFinite(receivedMs) ||
-    !Number.isFinite(lastSuccessMs) ||
     receivedMs > nowMs ||
     lastSuccessMs > nowMs ||
     nowMs - lastSuccessMs > INTRADAY_QUOTE_CACHE_MAX_AGE_MS ||
