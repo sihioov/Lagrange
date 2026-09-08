@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 통합 완료, WP-5 독립 리뷰 지적 보완 중(미통합); 운영 활성화 미실행
+상태: WP-2B 통합 완료, WP-5 보완 커밋 독립 재검토 중(미통합); 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -650,3 +650,15 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   consumer 교체로 quota를 우회하지 않는다. 정해지지 않은 서버 동작은 추측하지 않고 보고한다.
 - 회귀 재현 후 수정·full Vitest/typecheck/lint를 요구했다. 완료 후 동일 reviewer의
   read-only 재검토를 거쳐 수락한다. WP-3 응답 parser 승인 대기는 그대로 유지한다.
+
+### WP-5 보완 결과 회수 및 재검토
+
+- `4d39adb465e9020d9b03bfe9679d4ec51046bbb1`의 idle/clean 및 지정 7개 파일 변경을
+  확인했다. worker는 수정 전 회귀 재현, focused 3 files/27 tests, full 44 files/306 tests,
+  typecheck/lint/diff check 통과를 보고했다. 아직 두 WP-5 커밋 모두 통합하지 않는다.
+- coordinator가 production delta를 직접 확인했다. 별도 lease timer와 KST 날짜 검사,
+  strict freshness 경계, fetching/semantic status 분리가 추가됐다. 다만 lease 만료 시
+  stop() 이후 복구 없이 idle에 머무는지, 요청 실패 후 retained 값을 ready로 표시하면서
+  실패 이유를 숨기는지를 재검토 항목으로 명시했다. worker 요약만으로 해소 판정하지 않는다.
+- 기존 idle reviewer에게 네 원지적 및 위 delta의 회귀를 read-only 후속 위임했다.
+  구현 담당은 대기하며 수정/리뷰 동시 소유는 없다. provider 응답 승인 대기와 운영 제외는 유지한다.
