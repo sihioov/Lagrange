@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 통합 완료, WP-5 재검토 후 복구 규칙 명확화·상향 재배정(미통합); 운영 활성화 미실행
+상태: WP-2B·WP-5 개발 gate 통과 및 기능 브랜치 통합 완료; WP-3 신규 KIS 응답 parser 명시적 승인 대기, 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -717,3 +717,17 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - idle reviewer에게 두 High와 회귀를 재검토하도록 전달했다. 독립 실행에서는 기존 app
   캐시를 보존하고 repository root의 임시 dependency symlink 방식으로 검증을 재개한다.
   아직 WP-5 커밋은 모두 미통합이며 backend/browser 검증이나 provider 승인을 뜻하지 않는다.
+
+### WP-5 개발 gate 수락 및 통합
+
+- 독립 reviewer가 `f0442733f246e5d93eb7d8de57e9b37403bab2d8`에 ACCEPT를 반환했다.
+  focused 4 files/38 tests, 전체 Web 44 files/316 tests, typecheck/lint가 독립 실행에서
+  통과했다. 남은 Web 개발 gate 지적은 없으며 기존 warning 4개와 config info만 남았다.
+- 기능 브랜치에 순차 통합했다: `743bca7` → `a030cf9`, `4d39adb` → `110f49a`,
+  `9ccd6f3` → `34b5839`, `f044273` → `06ea903`. 통합한 apps/web 전체가 독립 검증된
+  worker HEAD와 동일함을 git diff로 확인했고 diff check와 작업 트리 상태도 통과했다.
+- WP-3은 신규 KIS 현재가 응답 7개 필드의 파싱에 대한 명시적 owner 승인이 아직 필요하다.
+  승인 없이 parser를 시작하지 않는다. WP-4/6/7/8은 dependency가 충족되지 않았으며
+  별도 독립 Web 작업은 완료됐다. 사용자 결정 대기를 알리고 반복 heartbeat를 종료한다.
+- main merge/push, 배포, 실제 KIS 호출, API/DB 및 브라우저 런타임 검증은 수행하지 않았다.
+  본 수락은 fixture 기반 Web 개발 gate이며 전체 기능 QA 또는 출시 승인이 아니다.
