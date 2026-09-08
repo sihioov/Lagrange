@@ -493,3 +493,17 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   보강과 default-off 호환 모순을 분리해 WP-2A/2B로 순차 분해했다.
 - worker 완료 후 미처리 방지를 위해 bounded Paseo heartbeat를 사용한다. 완료/오류/실제
   사용자 결정 필요 시 결과를 검토하고 후속 작업 또는 정확한 blocker를 처리한다.
+
+### WP-2A coordinator 검토 — 보완 후 재수락
+
+- worker `c52971ef-6447-4fd5-98dd-e4ec6bcc1922`의 idle 완료와 커밋
+  `392a1b0112fa5aca8c457dbb0dd12dc8e1cd65de`를 확인했다. 변경은 지정한 6개 파일뿐이며
+  worker tree와 diff check는 clean이다. worker는 offline 테스트 182개와 fmt/clippy 통과를
+  보고했다. 아직 integration에 해당 구현을 통합하거나 WP-2B를 시작하지 않는다.
+- 직접 코드 검토에서 다음 보완을 요구했다: 초기화된 root에서 state 파일 소실을 최초
+  실행으로 취급하여 token/quota ledger를 재설정하지 않을 것; 전달된 request timeout을
+  실제 pending callback의 중단에 적용하고 timeout 시 durable reservation을 보존할 것;
+  async 실행 경로의 state read/write/fsync를 reactor 밖에서 수행할 것.
+- 동일 idle worker에 위 세 항목만 후속 위임한다. scope는 WP-2A 모듈과 전용 테스트이며
+  기존 caller/응답 parser/운영 설정은 여전히 수정하지 않는다. 회귀 검증과 보완 커밋을
+  확인한 후 WP-2A 수락 및 WP-2B 호환 결정을 진행한다.
