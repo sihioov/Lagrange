@@ -695,3 +695,15 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   처리될 때 이전 GET의 무효화 여부는 별도로 확인한다. 통과 보고만으로 수락하지 않는다.
 - 구현 담당은 idle로 유지한다. backend 복구 계약 검증 및 KIS 응답 parser 승인 대기는
   그대로이며 browser/운영 검증이나 main 통합·push는 수행하지 않았다.
+
+### WP-5 복구 경계 재검토 결과
+
+- reviewer가 `9ccd6f3`에 REJECT를 반환했다. 만료 이전 429 Retry-After 대기 시간이
+  만료 시 사라지는 문제와, 만료 타이머보다 갱신 응답이 먼저 처리될 때 기존 GET이
+  새 lease 아래 반영되는 문제를 High로 확인했다. coordinator도 해당 경로를 대조했다.
+- 실패 표시 및 응답 수신 후 clock 판정은 수정됐다. 독립 lint는 통과했으나 focused
+  테스트/typecheck는 기존 app node_modules의 의존성 해석 실패로 실행 증거가 불충분하다.
+  기존 캐시 디렉터리는 보존하며, 구현 담당자의 root 임시 symlink 검증 방식으로 재시도한다.
+- idle terra 담당자에게 coordinator와 신규 coordinator test 두 파일만 후속 위임했다.
+  절대 retry-not-before 유지 및 타이머와 무관한 이전 GET epoch 무효화를 회귀 테스트로
+  먼저 재현한 뒤 수정한다. 기존 커밋은 모두 미통합이며 재검토 후에만 수락한다.
