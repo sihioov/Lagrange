@@ -934,3 +934,19 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   spec 전체, root AGENTS를 읽고 파일/라인, deviation, 실행 명령/결과, 미해결/미검증(없으면
   없음)을 보고하며 소유 파일만 commit한다. 독립 review ACCEPT 후 scope/tree를 대조해 통합한다.
   B2b는 B2a 수락 이후 시작한다. QA DB는 후속 DB 작업을 위해 유지한다.
+
+### WP-3B2a 완료 및 독립 검토
+
+- 구현 담당자 `6ece60e0-e6f8-4825-a743-4f6a841d93ac` (Codex luna/max)가
+  `51cd791685147e70ab95da0a3bf4500f501c2c82` (parent `ac436c5`)로 완료했다.
+  `/data/worktrees/3puw275b/stock-beta-intraday-attempt`, workspace
+  `wks_31cd2daa34b62251`에서 소유한 4파일만 변경했고 idle/clean이다. 아직 미통합이다.
+- coordinator가 production diff 전체와 focused tests 일부를 읽었다. 실제 persist된
+  예약 date/count/fence 반환, caller eligibility 이후 final dispatch, bytes 수신 직후
+  검증 전 receipt clock을 확인했다. 기존 get/get_intraday 동작을 유지하는 별도 API다.
+- worker는 신규 9 tests, coordination 36, market-data 13, package all-targets 213,
+  scoped clippy/fmt/diff 통과를 보고했다. 독립 검증 결과로 간주하지 않는다.
+- reviewer `b55535f1-8251-4323-9392-4c679f0b5219` (Codex terra/high)를 동일 workspace의
+  read-only 검토로 시작했다. 새 API의 budget exhaustion 테스트가 기존 coordinator
+  API만 실행한다는 coverage caveat와 실제 transport timeout 분류도 확인·반박 대상이다.
+  임의 결함으로 확정하지 않는다. ACCEPT 및 검증 후에만 통합하고 B2b를 시작한다.
