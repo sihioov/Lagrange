@@ -881,3 +881,15 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
 - reviewer는 수정 후 다시 독립 수락 판단을 한다. B2는 B1 ACCEPT 이후로 유지한다.
 - 새 담당자 `1d21676d-0284-43db-a1e3-2936dcaafc19` (Codex terra/max)를 storage
   workspace `wks_cb50f59b1dc645f6`에서 시작했으며 running/권한 요청 없음 확인했다.
+
+### WP-3B1 후행 잠금 수정 완료 / 수락 재검토
+
+- terra 담당자는 `c22bf5728e755b0e60d475f16f3ec3ee63aa5776` (parent `8c25106`)로
+  repository와 DB test 두 파일만 커밋하고 idle/clean이다. coordinator가 전체 두 파일
+  diff를 읽었다. 기존 demand renew/release SELECT에 FOR UPDATE가 추가됐고 최초
+  producer insert 성공은 post-lock clock으로 자기 row를 갱신하되 fence 1/Acquired를
+  유지한다. 재현 테스트는 두 demand-share-lock 경로와 initial unique-index rollback이다.
+- 담당자는 수정 전 21 pass/3 fail, 수정 후 24 pass(30.57s), scoped clippy/fmt/diff
+  통과를 보고했다. 격리 DB 접속 sandbox 제한은 정상 승인 경로의 재실행으로 해결했고
+  운영 DB나 container lifecycle 변경은 없었다. 독립 reviewer에게 수락 재검토를 맡긴다.
+  `b02959d`, `8c25106`, `c22bf57` 모두 ACCEPT 전까지 미통합이다.
