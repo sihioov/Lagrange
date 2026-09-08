@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B 독립 리뷰 후 보완 중, WP-5 fixture Web 구현 중; 운영 활성화 미실행
+상태: WP-2B 보완 완료·독립 재검토 중, WP-5 fixture Web 구현 중; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -591,3 +591,15 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
   branch `work/stock-beta-intraday-widget-20260908`, base `d41a733`의 running을 확인했다.
   위 default-off/scope amendment와 exact application DTO로만 구현한다. Browser/Next runtime
   검증과 실제 API 연동은 후속 gate이며 이번 worker의 unit 검증과 구별한다.
+
+### WP-2B 보완 완료와 재검토
+
+- `85ac02b28b0c095cf6ca18a00a6aa396e0e8649f`의 idle 완료 및 지정 3개 파일/clean tree를
+  확인했다. worker는 수정 전 EOD/intraday 간격 회귀의 실패를 재현했으며 수정 후 전체
+  kis-client 204개, fmt/clippy 통과를 보고했다. 아직 통합하거나 최종 수락하지 않았다.
+- coordinator가 두 production 모듈의 보완 diff와 새 OS child barrier를 직접 확인했다.
+  최종 dispatch guard, 완료 시각 기준의 보수적 간격, 401 재발급 1회 기회, 첫 issuer를
+  유지한 채 다른 프로세스의 LockBusy를 관측하는 테스트가 추가됐다. 완료 기준 간격은
+  처리량이 낮아질 수 있으며 정확히 5초마다 실제 요청이 시작된다는 보장은 하지 않는다.
+- 기존 idle reviewer `f7941398-44f7-4293-a6d5-c72bac530a97`에 위 delta와 앞선 세 지적의
+  해소 여부를 read-only 재검토하도록 후속 위임했다. WP-5는 별도 worktree에서 계속 진행한다.
