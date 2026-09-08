@@ -113,6 +113,53 @@ fn should_start_intraday(mode: Mode, intraday_mode: IntradayQuotesMode) -> bool 
     mode == Mode::Daemon && intraday_mode == IntradayQuotesMode::OwnerOnly
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum IntradayQuoteStartup {
+    Disabled,
+    Unavailable(collectors::intraday_quotes::IntradaySessionWindowError),
+    Ready(Arc<IntradaySessionWindowContract>),
+}
+
+impl IntradayQuoteStartup {
+    #[cfg(test)]
+    fn windows(&self) -> Option<&Arc<IntradaySessionWindowContract>> {
+        match self {
+            Self::Ready(windows) => Some(windows),
+            Self::Disabled | Self::Unavailable(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    const fn starts_quote_task(&self) -> bool {
+        matches!(self, Self::Ready(_))
+    }
+
+    #[cfg(test)]
+    const fn eod_continues(&self) -> bool {
+        true
+    }
+}
+
+fn prepare_intraday_quote_startup<F>(
+    mode: Mode,
+    intraday_mode: IntradayQuotesMode,
+    load_windows: F,
+) -> IntradayQuoteStartup
+where
+    F: FnOnce() -> Result<
+        IntradaySessionWindowContract,
+        collectors::intraday_quotes::IntradaySessionWindowError,
+    >,
+{
+    if !should_start_intraday(mode, intraday_mode) {
+        return IntradayQuoteStartup::Disabled;
+    }
+    match load_windows() {
+        Ok(windows) => IntradayQuoteStartup::Ready(Arc::new(windows)),
+        Err(error) => IntradayQuoteStartup::Unavailable(error),
+    }
+}
+
 fn positive_duration(name: &str, default: Duration) -> Result<Duration, ConfigError> {
     let seconds = optional_u64(name)?.unwrap_or(default.as_secs());
     if seconds == 0 {
@@ -690,45 +737,47 @@ async fn main() -> ExitCode {
             let _ = signal_tx.send(true);
         });
     }
-    let mut intraday_task = if should_start_intraday(config.mode, config.intraday_mode) {
-        let windows = match IntradaySessionWindowContract::from_fixed_path() {
-            Ok(windows) => Arc::new(windows),
-            Err(_) => {
-                eprintln!(
-                    "{}",
-                    json!({
-                        "event":"owner_equity_v2_intraday",
-                        "code":"SESSION_WINDOWS_INVALID"
-                    })
+    let mut intraday_task = match prepare_intraday_quote_startup(
+        config.mode,
+        config.intraday_mode,
+        IntradaySessionWindowContract::from_fixed_path,
+    ) {
+        IntradayQuoteStartup::Ready(windows) => {
+            let producer_config = match IntradayProducerConfig::for_worker(&config.worker_id) {
+                Ok(config) => Some(config),
+                Err(_) => {
+                    eprintln!(
+                        "{}",
+                        json!({
+                            "event":"owner_equity_v2_intraday",
+                            "code":"PRODUCER_CONFIG_INVALID"
+                        })
+                    );
+                    None
+                }
+            };
+            producer_config.map(|producer_config| {
+                let producer = IntradayProducer::new(
+                    OwnerIntradayQuoteRepository::new(pool.clone()),
+                    adapter.intraday_reader(),
+                    windows,
+                    producer_config,
                 );
-                return ExitCode::FAILURE;
-            }
-        };
-        let producer_config = match IntradayProducerConfig::for_worker(&config.worker_id) {
-            Ok(config) => config,
-            Err(_) => {
-                eprintln!(
-                    "{}",
-                    json!({
-                        "event":"owner_equity_v2_intraday",
-                        "code":"PRODUCER_CONFIG_INVALID"
-                    })
-                );
-                return ExitCode::FAILURE;
-            }
-        };
-        let producer = IntradayProducer::new(
-            OwnerIntradayQuoteRepository::new(pool.clone()),
-            adapter.intraday_reader(),
-            windows,
-            producer_config,
-        );
-        let intraday_shutdown = shutdown_rx.clone();
-        Some(tokio::spawn(async move {
-            producer.run_daemon(intraday_shutdown).await
-        }))
-    } else {
-        None
+                let intraday_shutdown = shutdown_rx.clone();
+                tokio::spawn(async move { producer.run_daemon(intraday_shutdown).await })
+            })
+        }
+        IntradayQuoteStartup::Unavailable(_) => {
+            eprintln!(
+                "{}",
+                json!({
+                    "event":"owner_equity_v2_intraday",
+                    "code":"SESSION_WINDOWS_UNAVAILABLE"
+                })
+            );
+            None
+        }
+        IntradayQuoteStartup::Disabled => None,
     };
     let mut next_recovery = tokio::time::Instant::now();
     let seoul = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
@@ -890,6 +939,7 @@ async fn main() -> ExitCode {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use sha2::{Digest, Sha256};
 
     fn args(values: &[&str]) -> Vec<std::ffi::OsString> {
         std::iter::once("owner-equity-v2-runner")
@@ -922,6 +972,89 @@ mod tests {
             Mode::Daemon,
             IntradayQuotesMode::OwnerOnly
         ));
+    }
+
+    fn valid_window_contract_fixture() -> IntradaySessionWindowContract {
+        let bytes = br#"{
+            "schema_version":1,
+            "exchange":"KRX",
+            "timezone":"Asia/Seoul",
+            "entries":[]
+        }"#;
+        let hash = format!("sha256:{:x}", Sha256::digest(bytes));
+        IntradaySessionWindowContract::from_bytes(bytes, &hash)
+            .expect("valid injected window fixture")
+    }
+
+    #[test]
+    fn invalid_intraday_window_disables_only_quotes_and_keeps_eod_reachable() {
+        for error in [
+            collectors::intraday_quotes::IntradaySessionWindowError::Missing,
+            collectors::intraday_quotes::IntradaySessionWindowError::Invalid,
+            collectors::intraday_quotes::IntradaySessionWindowError::HashMismatch,
+        ] {
+            let mut loads = 0;
+            let startup =
+                prepare_intraday_quote_startup(Mode::Daemon, IntradayQuotesMode::OwnerOnly, || {
+                    loads += 1;
+                    Err(error)
+                });
+            assert_eq!(loads, 1);
+            assert!(matches!(
+                &startup,
+                IntradayQuoteStartup::Unavailable(actual) if *actual == error
+            ));
+            assert!(!startup.starts_quote_task());
+            assert!(startup.windows().is_none());
+            assert!(startup.eod_continues());
+        }
+    }
+
+    #[test]
+    fn valid_owner_only_startup_has_windows_and_starts_one_quote_task() {
+        let startup =
+            prepare_intraday_quote_startup(Mode::Daemon, IntradayQuotesMode::OwnerOnly, || {
+                Ok(valid_window_contract_fixture())
+            });
+        assert!(startup.starts_quote_task());
+        assert!(startup.windows().is_some());
+        assert!(startup.eod_continues());
+    }
+
+    #[test]
+    fn disabled_and_once_never_invoke_window_loader_or_start_quote_task() {
+        for (mode, intraday_mode) in [
+            (Mode::Once, IntradayQuotesMode::OwnerOnly),
+            (Mode::Daemon, IntradayQuotesMode::Disabled),
+        ] {
+            let mut loads = 0;
+            let startup = prepare_intraday_quote_startup(mode, intraday_mode, || {
+                loads += 1;
+                Ok(valid_window_contract_fixture())
+            });
+            assert_eq!(loads, 0);
+            assert_eq!(startup, IntradayQuoteStartup::Disabled);
+            assert!(!startup.starts_quote_task());
+            assert!(startup.windows().is_none());
+            assert!(startup.eod_continues());
+        }
+    }
+
+    #[test]
+    fn invalid_intraday_window_does_not_abort_before_eod_loop() {
+        let production = include_str!("owner-equity-v2-runner.rs")
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("runner production source exists");
+        let startup = production
+            .split("let mut intraday_task")
+            .nth(1)
+            .and_then(|tail| tail.split("let mut next_recovery").next())
+            .expect("runner quote startup block exists");
+        assert!(
+            !startup.contains("return ExitCode::FAILURE"),
+            "quote startup failure must leave the EOD loop reachable"
+        );
     }
 
     #[test]
@@ -999,7 +1132,7 @@ mod tests {
     #[test]
     fn daemon_source_keeps_recovery_shutdown_token_and_rate_seams() {
         let source = include_str!("owner-equity-v2-runner.rs");
-        let production = source.split("#[cfg(test)]").next().unwrap();
+        let production = source.split("#[cfg(test)]\nmod tests").next().unwrap();
         assert!(production.contains("recover_owner_equity_claims(&queue).await"));
         assert!(production.contains("shutdown_signal().await"));
         assert!(production.contains("work.await"));

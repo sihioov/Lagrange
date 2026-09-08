@@ -13,8 +13,8 @@ use intraday_quotes_support::{
 use job_queue::owner_equity_v2::{
     EligibilityCheck, IntradayAttemptReservation, IntradayProducer, IntradayProducerConfig,
     IntradayPublicationContext, IntradayQuoteDemandRequest, IntradayQuoteFailureCode,
-    IntradayQuoteIdentity, IntradayQuoteReceipt, IntradaySessionWindow, IntradayStorageError,
-    ProducerLease,
+    IntradayQuoteIdentity, IntradayQuoteReader, IntradayQuoteReceipt, IntradaySessionWindow,
+    IntradayStorageError, ProducerLease,
 };
 use kis_client::{IntradayAttemptError, IntradayAttemptOutcome};
 use market_data::intraday_quotes::{IntradayQuote, IntradayQuoteDirection};
@@ -383,6 +383,252 @@ async fn open_cycle_rechecks_eligibility_and_busy_reader_is_one_nonblocking_atte
             .map_err(|error| format!("busy-deferred cycle failed: {error}"))?;
         if second.attempts_started != 0 || reader.calls() != 1 {
             return Err("shared busy skip entered an eager retry loop".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn eligibility_rechecks_window_after_producer_lock_wait_and_dispatch_stays_guarded() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("eligibility-window-close").await?;
+        let fixture = db.seed_ready_membership(owner, "005933.KRX").await?;
+        db.repository_as_app()
+            .create_or_renew_demand(
+                owner,
+                &demand_request(fixture.membership_id, Uuid::new_v4(), "eligibility-close"),
+            )
+            .await
+            .map_err(|error| format!("eligibility demand setup failed: {error}"))?;
+        let worker = db.repository_as_worker();
+        let claim = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("eligibility claim failed: {error}"))?;
+        let lease = claim.lease;
+        let quote_identity = identity(&fixture);
+        let session = db.session_proof();
+        let (open_at, _) = day_bounds(db.session_date);
+        let before_wait: DateTime<Utc> = sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+            .fetch_one(&db.superuser)
+            .await
+            .map_err(|_| "could not sample eligibility close start".to_owned())?;
+        let close_at = before_wait + chrono::Duration::seconds(1);
+        if close_at
+            .with_timezone(&FixedOffset::east_opt(9 * 60 * 60).expect("KST"))
+            .date_naive()
+            != db.session_date
+        {
+            return Err("eligibility close fixture crossed the KST date boundary".to_owned());
+        }
+        let window = IntradaySessionWindow::new(db.session_date, open_at, close_at)
+            .map_err(|error| format!("eligibility close window failed: {error}"))?;
+
+        if !worker
+            .quote_attempt_eligible(&lease, &quote_identity, &session, &window)
+            .await
+            .map_err(|error| format!("open eligibility check failed: {error}"))?
+        {
+            return Err(
+                "open eligibility fixture was not eligible before the lock wait".to_owned(),
+            );
+        }
+
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin eligibility close observer".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify eligibility close observer".to_owned())?;
+        sqlx::query(
+            "SELECT owner_user_id
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1
+              FOR UPDATE",
+        )
+        .bind(owner)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold producer row for eligibility close".to_owned())?;
+
+        let eligibility_task = tokio::spawn({
+            let worker = worker.clone();
+            let lease = lease.clone();
+            let quote_identity = quote_identity.clone();
+            let session = session.clone();
+            async move {
+                worker
+                    .quote_attempt_eligible(&lease, &quote_identity, &session, &window)
+                    .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_producers")
+                .await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("eligibility close check did not block on producer row".to_owned());
+        }
+        wait_until_database_time(
+            &db.superuser,
+            close_at + chrono::Duration::milliseconds(100),
+        )
+        .await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release eligibility close producer lock".to_owned())?;
+        let eligible = eligibility_task
+            .await
+            .map_err(|_| "eligibility close task failed".to_owned())?
+            .map_err(|error| format!("eligibility close check failed: {error}"))?;
+        if eligible {
+            return Err("eligibility remained true after the proven window close".to_owned());
+        }
+
+        let reader = CountingReader::new(IntradayAttemptError::Busy);
+        let outcome = reader
+            .get_intraday_attempt(
+                &[("FID_INPUT_ISCD".to_owned(), "005933".to_owned())],
+                Box::new({
+                    let worker = worker.clone();
+                    let lease = lease.clone();
+                    let quote_identity = quote_identity.clone();
+                    let session = session.clone();
+                    move || {
+                        let worker = worker.clone();
+                        let lease = lease.clone();
+                        let quote_identity = quote_identity.clone();
+                        let session = session.clone();
+                        Box::pin(async move {
+                            worker
+                                .quote_attempt_eligible(&lease, &quote_identity, &session, &window)
+                                .await
+                                .map_err(|_| ())
+                        })
+                    }
+                }),
+            )
+            .await;
+        if !matches!(
+            outcome,
+            IntradayAttemptOutcome::Failed {
+                error: IntradayAttemptError::CallerIneligible,
+                reservation: None
+            }
+        ) || reader.calls() != 0
+        {
+            return Err("closed final eligibility guard dispatched the fake reader".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn eligibility_rechecks_producer_and_demand_expiry_after_lock_wait() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("eligibility-expiry").await?;
+        let fixture = db.seed_ready_membership(owner, "005934.KRX").await?;
+        db.repository_as_app()
+            .create_or_renew_demand(
+                owner,
+                &demand_request(fixture.membership_id, Uuid::new_v4(), "eligibility-expiry"),
+            )
+            .await
+            .map_err(|error| format!("expiry demand setup failed: {error}"))?;
+        let worker = db.repository_as_worker();
+        let claim = worker
+            .claim_producer(owner, Uuid::new_v4())
+            .await
+            .map_err(|error| format!("expiry claim failed: {error}"))?;
+        let lease = claim.lease;
+        let quote_identity = identity(&fixture);
+        let session = db.session_proof();
+        let (open_at, close_at) = day_bounds(db.session_date);
+        sqlx::query(
+            "UPDATE public.owner_intraday_quote_producers
+                SET lease_expires_at = pg_catalog.clock_timestamp() + INTERVAL '1 second',
+                    heartbeat_at = pg_catalog.clock_timestamp(),
+                    updated_at = pg_catalog.clock_timestamp()
+              WHERE owner_user_id = $1",
+        )
+        .bind(owner)
+        .execute(&db.superuser)
+        .await
+        .map_err(|_| "could not shorten producer fixture lease".to_owned())?;
+        sqlx::query(
+            "UPDATE public.owner_intraday_quote_demands
+                SET lease_expires_at = pg_catalog.clock_timestamp() + INTERVAL '1 second',
+                    updated_at = pg_catalog.clock_timestamp()
+              WHERE owner_user_id = $1 AND membership_id = $2",
+        )
+        .bind(owner)
+        .bind(fixture.membership_id)
+        .execute(&db.superuser)
+        .await
+        .map_err(|_| "could not shorten demand fixture lease".to_owned())?;
+        let wait_start: DateTime<Utc> = sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+            .fetch_one(&db.superuser)
+            .await
+            .map_err(|_| "could not sample expiry wait start".to_owned())?;
+
+        let mut observer_tx = db
+            .superuser
+            .begin()
+            .await
+            .map_err(|_| "could not begin expiry observer".to_owned())?;
+        let observer_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *observer_tx)
+            .await
+            .map_err(|_| "could not identify expiry observer".to_owned())?;
+        sqlx::query(
+            "SELECT owner_user_id
+               FROM public.owner_intraday_quote_producers
+              WHERE owner_user_id = $1
+              FOR UPDATE",
+        )
+        .bind(owner)
+        .fetch_one(&mut *observer_tx)
+        .await
+        .map_err(|_| "could not hold producer row for expiry".to_owned())?;
+        let eligibility_task = tokio::spawn({
+            let worker = worker.clone();
+            let lease = lease.clone();
+            let quote_identity = quote_identity.clone();
+            let session = session.clone();
+            async move {
+                worker
+                    .quote_attempt_eligible(
+                        &lease,
+                        &quote_identity,
+                        &session,
+                        &IntradaySessionWindow::new(session.session_date, open_at, close_at)
+                            .expect("full-day eligibility window is valid"),
+                    )
+                    .await
+            }
+        });
+        let (_, blockers) =
+            wait_for_blocked_session(&db.superuser, "worker", "owner_intraday_quote_producers")
+                .await?;
+        if !blockers.contains(&observer_pid) {
+            return Err("expiry eligibility check did not block on producer row".to_owned());
+        }
+        wait_until_database_time(&db.superuser, wait_start + chrono::Duration::seconds(2)).await?;
+        observer_tx
+            .commit()
+            .await
+            .map_err(|_| "could not release expiry producer lock".to_owned())?;
+        let eligible = eligibility_task
+            .await
+            .map_err(|_| "expiry eligibility task failed".to_owned())?
+            .map_err(|error| format!("expiry eligibility check failed: {error}"))?;
+        if eligible {
+            return Err("expired producer and demand remained eligible after lock wait".to_owned());
         }
         Ok(())
     })

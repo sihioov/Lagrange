@@ -1313,14 +1313,13 @@ impl OwnerIntradayQuoteRepository {
             return Err(IntradayStorageError::SessionProofInvalid);
         }
         let mut tx = self.begin_actor_transaction(identity.owner_user_id).await?;
-        let fresh_now = fresh_database_time(&mut tx).await?;
         let producer: Option<ProducerDbRow> = sqlx::query_as(
             "SELECT owner_user_id, holder_id, fencing_token,
                     lease_expires_at, heartbeat_at, FALSE AS live
                FROM public.owner_intraday_quote_producers
               WHERE owner_user_id = $1 AND holder_id = $2
                 AND fencing_token = $3
-              FOR SHARE",
+              FOR UPDATE",
         )
         .bind(identity.owner_user_id)
         .bind(lease.holder_id)
@@ -1328,7 +1327,6 @@ impl OwnerIntradayQuoteRepository {
         .fetch_optional(&mut *tx)
         .await
         .map_err(map_database_error)?;
-        let producer_live = producer.is_some_and(|row| row.lease_expires_at > fresh_now);
         let current_identity: bool = sqlx::query_scalar(
             "SELECT EXISTS (
                 SELECT 1
@@ -1361,24 +1359,28 @@ impl OwnerIntradayQuoteRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(map_database_error)?;
-        let active_demand: bool = sqlx::query_scalar(
-            "SELECT EXISTS (
-                SELECT 1 FROM public.owner_intraday_quote_demands
-                 WHERE owner_user_id = $1 AND membership_id = $2
-                   AND generation_id = $3 AND instrument_id = $4
-                   AND generation = $5 AND state = 'ACTIVE'
-                   AND lease_expires_at > $6
-            )",
+        let active_demand_expires_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT MAX(lease_expires_at)
+               FROM public.owner_intraday_quote_demands
+              WHERE owner_user_id = $1 AND membership_id = $2
+                AND generation_id = $3 AND instrument_id = $4
+                AND generation = $5 AND state = 'ACTIVE'",
         )
         .bind(identity.owner_user_id)
         .bind(identity.membership_id)
         .bind(identity.generation_id)
         .bind(&identity.instrument_id)
         .bind(identity.generation_i64())
-        .bind(fresh_now)
         .fetch_one(&mut *tx)
         .await
         .map_err(map_database_error)?;
+        // This clock sample is deliberately after the producer row lock and
+        // all eligibility queries.  Expiry and half-open window checks must
+        // describe the wall time observed after any blocking wait.
+        let fresh_now = fresh_database_time(&mut tx).await?;
+        let producer_live = producer.is_some_and(|row| row.lease_expires_at > fresh_now);
+        let active_demand =
+            active_demand_expires_at.is_some_and(|expires_at| expires_at > fresh_now);
         if producer_live && current_identity && active_demand {
             validate_session_lineage(&mut tx, session, fresh_now).await?;
             if !window.contains(fresh_now) {
