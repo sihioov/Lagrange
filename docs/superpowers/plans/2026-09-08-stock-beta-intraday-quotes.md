@@ -1332,3 +1332,8 @@ runtime 연결을 분리하여 source-response 승인 및 default-off 호환 결
    수정/재검토 후 수락하며 테스트 개수만으로 수락하지 않는다.
 3. C2b 후 C3 behavioral runner harness를 상세화한다. window evidence maxage는 별도 계약 gap이며
    36시간을 추정하거나 activation으로 해석하지 않는다. C3/전체 coverage/계약 판단 전에는 B2b 미통합이다.
+
+- C2b 실행 worker: `e202662b-abce-4446-95d0-c2eec33bf32d`, Codex `gpt-5.6-luna/max`,
+  auto-review, 기존 producer workspace의 clean `f1c1fe1`에서 시작했다. profile notes와
+  provider availability를 확인했으며 첫 sandbox localhost EPERM 이후 동일 CLI를 정확한
+  local-daemon 권한으로 재실행했다. daemon 재시작이나 중복 worker는 생성하지 않았다.
