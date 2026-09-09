@@ -3571,3 +3571,9 @@ broad mapping or idle-transition delay. Keep retained QA untouched for later aut
   Complete this assignment directly and report if it needs further decomposition. No Paseo
   run/send/daemon commands. Coordinator integrates only independently accepted exact files,
   then freezes WP6-B after actual source inspection; no redundant C3 regression or broad mapping.
+
+- WP6-A-R active binding: NEW reviewer3e00a43f-314e-4d06-a58f-b58401a6a86e Codex sol/high
+  auto-review, workspace wks_42028f6f939c65ac /stock-beta-intraday-ops, pinned1bfe15e3.
+  Current profiles/capability inspected. Startup wait JSON timeout contained actual read-only
+  review acknowledgment and instruction read. Writerc15df593 is idle clean, not active.
+  Replace heartbeatb506fc2e with reviewer binding; no implementation integrated before ACCEPT.
