@@ -83,6 +83,15 @@ pub struct IntradayTestDb {
 
 impl IntradayTestDb {
     pub async fn create() -> Result<Self, String> {
+        Self::create_with_calendar(true).await
+    }
+
+    #[allow(dead_code)]
+    pub async fn create_without_calendar() -> Result<Self, String> {
+        Self::create_with_calendar(false).await
+    }
+
+    async fn create_with_calendar(install_initial_calendar: bool) -> Result<Self, String> {
         let configured = std::env::var("DATABASE_URL").map_err(|_| {
             format!("DATABASE_URL must equal the fixed intraday QA URL {QA_DATABASE_URL}")
         })?;
@@ -140,13 +149,15 @@ impl IntradayTestDb {
         let calendar_source_batch_id = Uuid::new_v4();
         let calendar_content_sha256 = "a".repeat(64);
         let window_contract_sha256 = format!("sha256:{}", "b".repeat(64));
-        install_calendar(
-            &superuser,
-            session_date,
-            calendar_source_batch_id,
-            &calendar_content_sha256,
-        )
-        .await?;
+        if install_initial_calendar {
+            install_calendar(
+                &superuser,
+                session_date,
+                calendar_source_batch_id,
+                &calendar_content_sha256,
+            )
+            .await?;
+        }
 
         Ok(Self {
             database_name,

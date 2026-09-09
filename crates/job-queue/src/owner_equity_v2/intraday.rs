@@ -216,6 +216,31 @@ pub struct IntradayIdentityReadState {
     pub observed_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntradayCalendarDisposition {
+    Trading,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntradayCalendarReadState {
+    pub session_date: NaiveDate,
+    pub disposition: IntradayCalendarDisposition,
+    pub calendar_source_batch_id: Uuid,
+    pub calendar_content_sha256: String,
+    pub observed_at: DateTime<Utc>,
+}
+
+impl IntradayCalendarReadState {
+    pub fn calendar_source(&self) -> &'static str {
+        KRX_SOURCE
+    }
+
+    pub fn calendar_source_version(&self) -> &'static str {
+        KRX_SOURCE_VERSION
+    }
+}
+
 /// Input for POST create/renew.  The raw idempotency key is transient and is
 /// never placed in the database; only its SHA-256 digest is stored.
 pub struct IntradayQuoteDemandRequest {
@@ -1279,6 +1304,82 @@ impl OwnerIntradayQuoteRepository {
         Ok(state)
     }
 
+    /// Read the current KIS calendar disposition and its complete immutable
+    /// source lineage.  Calendar evidence is shared existing metadata; the
+    /// owner argument only establishes the app actor transaction boundary.
+    pub async fn read_current_calendar_disposition(
+        &self,
+        owner_user_id: Uuid,
+    ) -> Result<Option<IntradayCalendarReadState>, IntradayStorageError> {
+        if owner_user_id.is_nil() {
+            return Err(IntradayStorageError::InvalidInput);
+        }
+        let mut tx = self.begin_actor_transaction(owner_user_id).await?;
+        let rows: Vec<IntradayCalendarReadDbRow> = sqlx::query_as(
+            "WITH observed AS MATERIALIZED (
+                    SELECT pg_catalog.clock_timestamp() AS observed_at
+             )
+             SELECT calendar.session_date,
+                    calendar.session_type AS disposition,
+                    calendar.source_batch_id AS calendar_source_batch_id,
+                    calendar.content_sha256 AS calendar_content_sha256,
+                    observed.observed_at
+               FROM public.trading_calendars AS calendar
+               JOIN public.trading_calendar_versions AS version
+                 ON version.exchange = calendar.exchange
+                AND version.session_date = calendar.session_date
+                AND version.session_type = calendar.session_type
+                AND version.source_version = calendar.source_version
+                AND version.source = $1
+                AND version.timezone = 'Asia/Seoul'
+                AND version.source_batch_id = calendar.source_batch_id
+                AND version.content_sha256 = calendar.content_sha256
+               JOIN public.data_batches AS batch
+                 ON batch.id = calendar.source_batch_id
+                AND batch.provider = 'KIS'
+                AND batch.market = 'KR'
+                AND batch.kind = 'CALENDAR'
+                AND batch.batch_date = calendar.session_date
+                AND batch.content_sha256 = calendar.content_sha256
+             CROSS JOIN observed
+              WHERE calendar.exchange = 'KRX'
+                AND calendar.session_date =
+                    (observed.observed_at AT TIME ZONE 'Asia/Seoul')::date
+                AND calendar.session_type IN ('TRADING', 'CLOSED')
+                AND calendar.timezone = 'Asia/Seoul'
+                AND calendar.source = $1
+                AND calendar.source_version = $2
+                AND calendar.source_batch_id IS NOT NULL
+                AND calendar.source_batch_id <> '00000000-0000-0000-0000-000000000000'::uuid
+                AND calendar.content_sha256 ~ '^[0-9a-f]{64}$'
+                AND calendar.retrieved_at <= observed.observed_at
+                AND calendar.retrieved_at >= observed.observed_at - INTERVAL '36 hours'
+                AND version.retrieved_at <= observed.observed_at
+                AND version.retrieved_at >= observed.observed_at - INTERVAL '36 hours'
+                AND batch.retrieved_at <= observed.observed_at
+                AND batch.retrieved_at >= observed.observed_at - INTERVAL '36 hours'
+              ORDER BY calendar.session_date, calendar.source_batch_id,
+                       calendar.content_sha256",
+        )
+        .bind(KRX_SOURCE)
+        .bind(KRX_SOURCE_VERSION)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        if rows.len() > 1 {
+            return Err(IntradayStorageError::CalendarProofUnavailable);
+        }
+        let state = rows
+            .into_iter()
+            .next()
+            .map(IntradayCalendarReadDbRow::into_state)
+            .transpose()?;
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(state)
+    }
+
     /// Enumerate owner scopes with at least one non-expired demand on a READY
     /// current admission.  This is the worker-side owner discovery query; it
     /// does not inspect credentials or provider state.
@@ -2331,6 +2432,37 @@ struct IntradayIdentityReadDbRow {
     generation: i64,
     observed_at: DateTime<Utc>,
     has_active_demand: bool,
+}
+
+#[derive(Debug, FromRow)]
+struct IntradayCalendarReadDbRow {
+    session_date: NaiveDate,
+    disposition: String,
+    calendar_source_batch_id: Uuid,
+    calendar_content_sha256: String,
+    observed_at: DateTime<Utc>,
+}
+
+impl IntradayCalendarReadDbRow {
+    fn into_state(self) -> Result<IntradayCalendarReadState, IntradayStorageError> {
+        let disposition = match self.disposition.as_str() {
+            "TRADING" => IntradayCalendarDisposition::Trading,
+            "CLOSED" => IntradayCalendarDisposition::Closed,
+            _ => return Err(IntradayStorageError::DatabaseIntegrity),
+        };
+        if self.calendar_source_batch_id.is_nil()
+            || !canonical_unprefixed_sha256(&self.calendar_content_sha256)
+        {
+            return Err(IntradayStorageError::DatabaseIntegrity);
+        }
+        Ok(IntradayCalendarReadState {
+            session_date: self.session_date,
+            disposition,
+            calendar_source_batch_id: self.calendar_source_batch_id,
+            calendar_content_sha256: self.calendar_content_sha256,
+            observed_at: self.observed_at,
+        })
+    }
 }
 
 impl IntradayIdentityReadDbRow {
