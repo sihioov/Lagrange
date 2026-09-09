@@ -4504,3 +4504,7 @@ C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain
   when empty. Coordinator decides bounded remediation or exact integration; C2 separate, not launched.
   Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
   No Paseo run/send/daemon start/restart. Read coordinator absolute plan/spec, own sourcea927203.
+
+- C1-R active binding: reviewer5f6d978f sol/high at ops workspacewks_42028f6f939c65ac sourcea927203.
+  Nonblocking CLI send accepted; startup wait includes NEW C1-R ACK, scope and actual fullbrief/
+  spec reads. Writer8ed8dd00 IDLE. Replaced heartbeatf5154c4e with3f5fc580; no integration yet.
