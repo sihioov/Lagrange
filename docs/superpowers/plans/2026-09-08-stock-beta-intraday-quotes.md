@@ -4119,3 +4119,9 @@ No Paseo run/send/daemon start/restart.
   Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
   No Paseo run/send/daemon start/restart. Only verified ACCEPT permits exact B1/F1/F2 integration,
   then coordinator freezes B2 compatibility before launch; no idle gap or redundant mapping/IV.
+
+- B1-F2-R active binding: reused reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 sol/high
+  auto-review, ops workspace wks_42028f6f939c65ac, pinned039a458. Startup wait timeout includes
+  direct read-only ACK, exact checkout checks and actual full-brief reads. Writer873f830e idle clean.
+  Replaced5c0747fd with heartbeatcda75f12. Send terminal11005 may remain waiting normally;
+  do not resend/interrupt. No integration or acceptance yet.
