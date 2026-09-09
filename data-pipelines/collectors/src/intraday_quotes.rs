@@ -195,7 +195,14 @@ impl IntradaySessionWindowContract {
         let Some(entry) = self.entries.get(&date) else {
             return IntradayMarketState::Unknown;
         };
-        if entry.evidence_retrieved_at > now {
+        // Session-window evidence is valid only for the same, non-future KST
+        // civil date as both the selected entry and this evaluation instant.
+        let evidence_date = entry
+            .evidence_retrieved_at
+            .with_timezone(&offset)
+            .date_naive();
+        if entry.evidence_retrieved_at > now || evidence_date != entry.date || evidence_date != date
+        {
             return IntradayMarketState::Unknown;
         }
         let Some((open, close)) = entry.utc_bounds() else {

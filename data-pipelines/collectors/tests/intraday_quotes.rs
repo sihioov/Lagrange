@@ -14,13 +14,29 @@ fn entry(
     open_local: Option<&str>,
     close_local: Option<&str>,
 ) -> Value {
+    entry_with_evidence(
+        date,
+        disposition,
+        open_local,
+        close_local,
+        &format!("{date}T00:00:00+09:00"),
+    )
+}
+
+fn entry_with_evidence(
+    date: &str,
+    disposition: &str,
+    open_local: Option<&str>,
+    close_local: Option<&str>,
+    evidence_retrieved_at: &str,
+) -> Value {
     json!({
         "date": date,
         "disposition": disposition,
         "open_local": open_local,
         "close_local": close_local,
         "evidence_url": "https://global.krx.co.kr/contents/test",
-        "evidence_retrieved_at": "2026-09-07T00:00:00Z",
+        "evidence_retrieved_at": evidence_retrieved_at,
         "evidence_sha256": format!("sha256:{}", "c".repeat(64)),
     })
 }
@@ -85,6 +101,10 @@ fn regular_special_closed_and_rollover_states_use_only_exact_entries() {
         IntradayMarketState::Unknown
     );
     assert_eq!(
+        contract.state_at(utc("2026-09-07T03:00:00Z"), true),
+        IntradayMarketState::Closed
+    );
+    assert_eq!(
         contract.state_at(utc("2026-09-08T00:00:00Z"), true),
         IntradayMarketState::Halted
     );
@@ -94,6 +114,89 @@ fn regular_special_closed_and_rollover_states_use_only_exact_entries() {
             .unwrap()
             .disposition,
         IntradaySessionDisposition::Special
+    );
+}
+
+#[test]
+fn evidence_must_be_nonfuture_and_same_kst_civil_date_before_state_classification() {
+    let now = utc("2026-09-08T00:00:00Z");
+
+    let (previous_day_bytes, previous_day_hash) = pinned(vec![entry_with_evidence(
+        "2026-09-08",
+        "REGULAR",
+        Some("09:00:00"),
+        Some("15:30:00"),
+        "2026-09-07T14:59:59Z",
+    )]);
+    let previous_day =
+        IntradaySessionWindowContract::from_bytes(&previous_day_bytes, &previous_day_hash).unwrap();
+    assert_eq!(
+        previous_day.state_at(now, false),
+        IntradayMarketState::Unknown
+    );
+
+    let (future_bytes, future_hash) = pinned(vec![entry_with_evidence(
+        "2026-09-08",
+        "REGULAR",
+        Some("09:00:00"),
+        Some("15:30:00"),
+        "2026-09-08T00:00:01Z",
+    )]);
+    let future = IntradaySessionWindowContract::from_bytes(&future_bytes, &future_hash).unwrap();
+    assert_eq!(future.state_at(now, false), IntradayMarketState::Unknown);
+
+    let (exact_now_bytes, exact_now_hash) = pinned(vec![entry_with_evidence(
+        "2026-09-08",
+        "REGULAR",
+        Some("09:00:00"),
+        Some("15:30:00"),
+        "2026-09-08T00:00:00Z",
+    )]);
+    let exact_now =
+        IntradaySessionWindowContract::from_bytes(&exact_now_bytes, &exact_now_hash).unwrap();
+    assert_eq!(exact_now.state_at(now, false), IntradayMarketState::Open);
+
+    let (same_kst_bytes, same_kst_hash) = pinned(vec![entry_with_evidence(
+        "2026-09-08",
+        "REGULAR",
+        Some("09:00:00"),
+        Some("15:30:00"),
+        "2026-09-07T15:00:00Z",
+    )]);
+    let same_kst =
+        IntradaySessionWindowContract::from_bytes(&same_kst_bytes, &same_kst_hash).unwrap();
+    assert_eq!(
+        same_kst.state_at(utc("2026-09-08T00:00:01Z"), false),
+        IntradayMarketState::Open
+    );
+
+    let (rollover_bytes, rollover_hash) = pinned(vec![entry_with_evidence(
+        "2026-09-07",
+        "REGULAR",
+        Some("09:00:00"),
+        Some("15:30:00"),
+        "2026-09-07T14:59:59Z",
+    )]);
+    let rollover =
+        IntradaySessionWindowContract::from_bytes(&rollover_bytes, &rollover_hash).unwrap();
+    assert_eq!(rollover.state_at(now, false), IntradayMarketState::Unknown);
+
+    let (missing_bytes, missing_hash) = pinned(Vec::new());
+    let missing = IntradaySessionWindowContract::from_bytes(&missing_bytes, &missing_hash).unwrap();
+    assert_eq!(missing.state_at(now, false), IntradayMarketState::Unknown);
+
+    let (stale_closed_bytes, stale_closed_hash) = pinned(vec![entry_with_evidence(
+        "2026-09-08",
+        "CLOSED",
+        None,
+        None,
+        "2026-09-07T14:59:59Z",
+    )]);
+    let stale_closed =
+        IntradaySessionWindowContract::from_bytes(&stale_closed_bytes, &stale_closed_hash).unwrap();
+    assert_eq!(
+        stale_closed.state_at(now, true),
+        IntradayMarketState::Unknown
     );
 }
 

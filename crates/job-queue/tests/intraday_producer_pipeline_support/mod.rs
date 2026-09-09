@@ -312,11 +312,29 @@ impl ClientHarness {
         let bytes = fs::read(self.state_path()).expect("synthetic coordinator state");
         serde_json::from_slice(&bytes).expect("canonical synthetic coordinator state")
     }
+
+    pub fn state_if_present(&self) -> Option<Value> {
+        fs::read(self.state_path()).ok().map(|bytes| {
+            serde_json::from_slice(&bytes).expect("canonical synthetic coordinator state")
+        })
+    }
 }
 
 pub async fn install_current_window_contract(
     db: &mut IntradayTestDb,
     close_after_seconds: i64,
+) -> Result<Arc<IntradaySessionWindowContract>, String> {
+    let now: DateTime<Utc> = sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not sample window fixture database clock".to_owned())?;
+    install_window_contract_with_evidence(db, close_after_seconds, now).await
+}
+
+pub async fn install_window_contract_with_evidence(
+    db: &mut IntradayTestDb,
+    close_after_seconds: i64,
+    evidence_retrieved_at: DateTime<Utc>,
 ) -> Result<Arc<IntradaySessionWindowContract>, String> {
     let now: DateTime<Utc> = sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
         .fetch_one(&db.superuser)
@@ -338,7 +356,7 @@ pub async fn install_current_window_contract(
             "open_local": "00:00:00",
             "close_local": close_local,
             "evidence_url": "https://global.krx.co.kr/contents/test",
-            "evidence_retrieved_at": (now - chrono::Duration::seconds(1)).to_rfc3339(),
+            "evidence_retrieved_at": evidence_retrieved_at.to_rfc3339(),
             "evidence_sha256": format!("sha256:{}", "c".repeat(64)),
         }],
     }))

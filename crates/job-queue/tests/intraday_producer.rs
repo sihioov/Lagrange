@@ -34,13 +34,20 @@ fn entry(
     open_local: Option<&str>,
     close_local: Option<&str>,
 ) -> Value {
+    let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset");
+    let evidence_retrieved_at = kst
+        .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("KST midnight"))
+        .single()
+        .expect("unambiguous KST midnight")
+        .with_timezone(&Utc)
+        .to_rfc3339();
     json!({
         "date": date.to_string(),
         "disposition": disposition,
         "open_local": open_local,
         "close_local": close_local,
         "evidence_url": "https://global.krx.co.kr/contents/test",
-        "evidence_retrieved_at": "1970-01-01T00:00:00Z",
+        "evidence_retrieved_at": evidence_retrieved_at,
         "evidence_sha256": format!("sha256:{}", "c".repeat(64)),
     })
 }

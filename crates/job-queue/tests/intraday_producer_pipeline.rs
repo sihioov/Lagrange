@@ -4,12 +4,13 @@ mod intraday_quotes_support;
 
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Days, FixedOffset, NaiveDate, TimeZone, Utc};
 use collectors::intraday_quotes::{INTRADAY_QUOTE_PATH, INTRADAY_QUOTE_TR_ID};
 use intraday_producer_pipeline_support::{
     ClientHarness, PipelineClient, RequestRecord, TransportStep, assert_minimum_dispatch_spacing,
-    install_current_window_contract, malformed_quote_response, publication_counts,
-    rate_limited_response, transport_timeout_step, valid_quote_response,
+    install_current_window_contract, install_window_contract_with_evidence,
+    malformed_quote_response, publication_counts, rate_limited_response, transport_timeout_step,
+    valid_quote_response,
 };
 use intraday_quotes_support::{
     IntradayTestDb, MembershipFixture, run_body, wait_until_database_time,
@@ -79,6 +80,86 @@ async fn run_cycle(
         .run_cycle(&mut shutdown_rx)
         .await
         .map_err(|error| format!("intraday producer cycle failed: {error}"))
+}
+
+#[tokio::test]
+async fn prior_kst_day_window_evidence_keeps_guarded_pipeline_disabled() {
+    run_body(|mut db| async move {
+        let owner = db.seed_owner("stale-evidence").await?;
+        let fixture = db.seed_ready_membership(owner, "005930.KRX").await?;
+        db.repository_as_app()
+            .create_or_renew_demand(
+                owner,
+                &demand_request(
+                    fixture.membership_id,
+                    Uuid::new_v4(),
+                    "stale-evidence-demand",
+                ),
+            )
+            .await
+            .map_err(|error| format!("stale-evidence demand setup failed: {error}"))?;
+
+        let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset");
+        let prior_date = db
+            .session_date
+            .checked_sub_days(Days::new(1))
+            .ok_or_else(|| "stale-evidence fixture date underflowed".to_owned())?;
+        let stale_evidence = kst
+            .from_local_datetime(
+                &prior_date
+                    .and_hms_opt(23, 59, 59)
+                    .expect("prior-day evidence time"),
+            )
+            .single()
+            .expect("prior-day evidence instant")
+            .with_timezone(&Utc);
+        let windows = install_window_contract_with_evidence(&mut db, 25, stale_evidence).await?;
+        let harness = ClientHarness::new(
+            "stale-evidence",
+            [TransportStep::Response(valid_quote_response("005930"))],
+        );
+        let config = IntradayProducerConfig::for_worker("b2b-c1-stale-evidence")
+            .map_err(|error| format!("stale-evidence producer configuration failed: {error}"))?;
+        let producer = IntradayProducer::new(
+            db.repository_as_worker(),
+            harness.client.clone(),
+            windows,
+            config,
+        );
+        let before_state = harness.state_if_present();
+        let before_cache = db
+            .repository_as_app()
+            .read_current_cache(
+                fixture.owner_user_id,
+                fixture.membership_id,
+                fixture.generation,
+                &db.session_proof(),
+            )
+            .await
+            .map_err(|error| format!("stale-evidence initial cache read failed: {error}"))?;
+
+        let report = run_cycle(&producer).await?;
+        assert_eq!(report.attempts_started, 0);
+        assert_eq!(report.successful_quotes, 0);
+        assert_eq!(report.failures_recorded, 0);
+        assert_eq!(harness.transport.request_count(), 0);
+        assert_eq!(harness.issuer.calls(), 0);
+        assert_eq!(harness.state_if_present(), before_state);
+        assert_eq!(
+            db.repository_as_app()
+                .read_current_cache(
+                    fixture.owner_user_id,
+                    fixture.membership_id,
+                    fixture.generation,
+                    &db.session_proof(),
+                )
+                .await
+                .map_err(|error| format!("stale-evidence final cache read failed: {error}"))?,
+            before_cache
+        );
+        Ok(())
+    })
+    .await;
 }
 
 async fn read_cache(
