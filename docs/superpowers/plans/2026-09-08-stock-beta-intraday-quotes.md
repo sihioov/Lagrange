@@ -2090,3 +2090,91 @@ Native subagents: prohibited for worker packages
 - Original reviewer `4b2c514f-a69f-4562-949c-68b1b1675618` receives read-only bounded F1
   re-review; no F2 fix, no integration yet. Preserve previously accepted limits instead of reopening
   unrelated producer/EOD scope.
+
+### WP4-B-F1 REJECT / legacy renewal restoration F1b (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- F1 reviewer is idle REJECT. Prior two High HTTP identity bypasses are resolved, but a new High
+  legacy B1 renewal regression is confirmed in source: the old public entrypoint passes false,
+  obtains the request admission after replay handling, then updates the retained consumer row
+  without comparing its identity. Another READY membership or newer admission can renew the old
+  row instead of returning IdentityMismatch. A new executed regression reproduction is still needed.
+- Independent HTTP5 (5.31s), read-state1 (0.83s), scoped strict clippy/fmt/diff pass. B1 quotes24
+  output was truncated before the final summary; do not count it as independently verified 24/24.
+  Low adapter comment still describes the removed preflight and replay-after-invalidation behavior.
+- Target clean API worktree at `7c1988f2b3e8d9c2ced8d728b6c9e05dc6676651`; original WP4-B and
+  F1 remain unintegrated. This second unsuccessful acceptance triggers model-only escalation from
+  luna to terra, keeping max effort. Original writer remains idle; fresh bounded context is used.
+  F2 rounded OpenAPI maximum remains a separate pending Medium, not part of F1b.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-B-F1b | intermediate | Known missing identity comparison, direct real-role regression and bounded comment correction | high | Reproduction contradicts source finding or requires other files/privileges: report before expansion |
+| WP4-B-F1b-R | intermediate | Review restored old API semantics alongside guarded HTTP behavior | high | Failed regression returns a bounded fix, no unverified integration |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-B-F1b | 1 | intermediate | Restore legacy retained-row identity invariant | Three exact files below | F1 REJECT | NEW Codex terra/max auto-review | scoped commit, before/after direct API proof | real app-role tests, HTTP5, B1 quotes24/read-state1, strict clippy/fmt |
+| WP4-B-F1b-R | 2 | intermediate | Independent bounded acceptance | read-only delta | F1b complete | existing terra/high reviewer | ACCEPT/REJECT | old and guarded API semantics, actual results |
+| WP4-B-F2 | 3 | intermediate | Exact OpenAPI integer contract | Final brief after F1b acceptance | F1b-R ACCEPT | luna/max | separately bounded fix | exact boundary and clean regeneration |
+
+#### Worker brief: WP4-B-F1b
+
+- Work in `/data/worktrees/3puw275b/stock-beta-intraday-api`, workspace
+  `wks_3249856abbf32750`, branch `work/stock-beta-intraday-api-20260909`. Read root AGENTS,
+  current coordinator plan and full spec. Existing test helpers are read-only inputs.
+- Own ONLY `crates/job-queue/src/owner_equity_v2/intraday.rs` for the missing comparison;
+  NEW `crates/job-queue/tests/intraday_demand_identity.rs` for direct legacy API regression;
+  `crates/api-server/src/repos/owner_intraday_quotes.rs` for the stale doc comment ONLY.
+- Restore the unconditional retained-row/admission comparison immediately after admission
+  acquisition in the existing-row non-replay renewal path, before sequence/time/capacity/update.
+  Reuse `demand_matches_admission` if appropriate. Preserve the earlier guarded HTTP comparison,
+  old exact-replay ordering, typed error ordering, release current sequence, all locks and clocks.
+  Do not move legacy replay behind current membership validation or weaken the HTTP guard.
+- Reproduce BEFORE production fix using the old public `create_or_renew_demand` with a real app
+  role: same consumer, next sequence, different READY membership must return IdentityMismatch;
+  same consumer, next sequence, same membership with newer current admission/generation must
+  return IdentityMismatch. Assert complete raw retained demand row/fingerprint unchanged on each
+  rejection. Show actual pre-fix outcomes without asserting an unexecuted failure occurred.
+- Keep valid exact-identity next renewal positive and legacy exact replay behavior unchanged;
+  include an explicit replay-after-invalidation check for the old API if the fixture permits it,
+  while existing HTTP invalidation tests continue to require404. Use existing
+  `intraday_quotes_support` read-only and local fixture helpers in the new test file; do not alter
+  shared harnesses. No new provider or fabricated storage results.
+- Correct only the stale API adapter documentation to describe delegation to the same-transaction
+  current-identity seam. No adapter behavior, HTTP tests/DTO, OpenAPI/F2, schema/grants, Cargo,
+  producer/runner/KIS/collector/Web/ops changes. No stronger concurrency claim than the F1 brief.
+- Sequential tests: new job-queue `intraday_demand_identity`, api-server
+  `http_owner_intraday_quotes`, job-queue `intraday_quotes` and `intraday_read_state`;
+  `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true`, cargo `--locked --offline`, DB tests
+  `-- --test-threads=1`. Capture complete final counts, not truncated output or skipped QA.
+  Run scoped strict clippy `-D warnings`, fmt and diff checks. Do not rerun unrelated suites.
+- QA ONLY `postgres://postgres:lagrange@127.0.0.1:55438/postgres`, own per-test databases;
+  coordinator-owned `lagrange-intraday-qa-20260908` project, no Docker lifecycle. No actual
+  provider/external network/account/order/operational DB/root/Next/browser/migration/dependency
+  install/Compose/production/deploy/main merge/push or activation. Report any missing contract,
+  fixture privilege or scope need rather than inventing it. One compiler, old workers idle.
+- Report full commit/parent; changed files/line ranges; pre/post reproduction and real roles;
+  commands/counts/timings; deviations/reasons; unresolved/follow-up; not found or not verified
+  explicitly (say none when empty). Commit only owned files and stop idle, no further delegation.
+
+#### Coordinator gates
+
+1. Verify clean source, applicable instructions and current profile/provider; launch only F1b.
+2. Inspect full delta/results then independent F1b-R acceptance before freezing F2 details.
+3. Integrate no WP4-B source until all High/Medium findings are resolved. GET/config remains later;
+   no overall user decision block, no activation, no reopening accepted EOD/producer limitations.
+
+- F1b writer `364130da-bd59-4223-8b1d-c6a9850ca5b9` (Codex terra/max, auto-review)
+  launched in the existing isolated API workspace at clean `7c1988f2`. Profile notes/provider
+  availability and root instructions were checked. Local daemon sandbox EPERM was resolved with
+  the identical precise CLI escalation, without restarting the daemon. Prior writer and reviewer
+  remain idle; only F1b owns the source/compiler until completion.
