@@ -410,6 +410,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/research/owner-beta/equity-universe-v2/instruments/{instrument_id}/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/research/owner-beta/equity-universe-v2/instruments/{instrument_id}/quote */
+        get: operations["get__api_v1_research_owner_beta_equity_universe_v2_instruments__instrument_id__quote"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/research/owner-beta/equity-universe-v2/signals/latest": {
         parameters: {
             query?: never;
@@ -1691,6 +1708,57 @@ export interface components {
             lease_expires_at: string;
             /** @constant */
             renew_after_ms: 15000;
+        };
+        /** @enum {string} */
+        OwnerIntradayQuoteDirection: "UP" | "DOWN" | "FLAT" | "LIMIT_UP" | "LIMIT_DOWN";
+        /** @enum {string} */
+        OwnerIntradayQuoteMarketState: "OPEN" | "CLOSED" | "HALTED" | "UNKNOWN";
+        /** @enum {string} */
+        OwnerIntradayQuoteFreshness: "RECENT" | "STALE" | "UNAVAILABLE";
+        /** @enum {string} */
+        OwnerIntradayQuoteReasonCode: "NO_ACTIVE_DEMAND" | "QUOTE_PENDING" | "QUOTE_STALE" | "PROVIDER_TIMEOUT" | "PROVIDER_RATE_LIMITED" | "PROVIDER_UNAVAILABLE" | "PROVIDER_RESPONSE_INVALID" | "QUOTE_VALUE_INVALID" | "QUOTE_BUDGET_EXHAUSTED" | "CALENDAR_UNAVAILABLE" | "SESSION_WINDOW_UNAVAILABLE" | "SESSION_CLOSED" | "INSTRUMENT_HALTED" | "PRODUCER_UNAVAILABLE" | "FEATURE_DISABLED";
+        OwnerIntradayQuoteSession: {
+            /** @example 2026-01-31 */
+            date: string;
+            /** @constant */
+            timezone: "Asia/Seoul";
+            /** @constant */
+            calendar_source: "kis";
+            /** @constant */
+            calendar_source_version: "kis-chk-holiday-v1:schema-1";
+            calendar_content_sha256: string;
+            window_contract_sha256: string;
+        };
+        OwnerIntradayQuotePayload: {
+            price: string;
+            base_price: string;
+            change_from_previous_day: string;
+            change_percent_from_previous_day: string;
+            direction: components["schemas"]["OwnerIntradayQuoteDirection"];
+            /** Format: date-time */
+            received_at: string;
+            /** Format: date-time */
+            last_success_at: string;
+            quote_version: string;
+        };
+        OwnerIntradayQuote: {
+            /** @constant */
+            schema_version: 1;
+            /** Format: uuid */
+            membership_id: string;
+            instrument_id: string;
+            /** @constant */
+            venue: "KRX";
+            /** @constant */
+            currency: "KRW";
+            generation: number;
+            session: components["schemas"]["OwnerIntradayQuoteSession"] | null;
+            market_state: components["schemas"]["OwnerIntradayQuoteMarketState"];
+            freshness: components["schemas"]["OwnerIntradayQuoteFreshness"];
+            reason_code: components["schemas"]["OwnerIntradayQuoteReasonCode"] | null;
+            quote: components["schemas"]["OwnerIntradayQuotePayload"] | null;
+            /** @constant */
+            next_poll_after_ms: 5000;
         };
         /** @enum {string} */
         OwnerEquityV2Lifecycle: "REQUESTED" | "VALIDATING" | "BACKFILLING" | "MATERIALIZING" | "READY" | "INSUFFICIENT_HISTORY" | "FAILED" | "DISABLED";
@@ -3510,6 +3578,36 @@ export interface operations {
             413: components["responses"]["Error413"];
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_universe_v2_instruments__instrument_id__quote: {
+        parameters: {
+            query: {
+                membership_id: string;
+                generation: number;
+            };
+            header?: never;
+            path: {
+                instrument_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current owner intraday quote cache state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerIntradayQuote"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
             503: components["responses"]["Error503"];
         };
     };

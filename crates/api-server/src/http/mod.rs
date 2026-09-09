@@ -349,6 +349,10 @@ pub fn api_router(state: ApiState) -> Router {
             axum::routing::delete(owner_intraday_quotes::release),
         )
         .route(
+            "/research/owner-beta/equity-universe-v2/instruments/{instrument_id}/quote",
+            get(owner_intraday_quotes::get_current_quote),
+        )
+        .route(
             "/research/owner-beta/equity-universe-v2/signals/latest",
             get(owner_equity_v2::latest_signals),
         )

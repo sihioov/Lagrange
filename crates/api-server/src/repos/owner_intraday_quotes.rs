@@ -8,8 +8,9 @@
 use crate::actor_tx::actor_uuid;
 use auth::entitlement::Actor;
 use job_queue::owner_equity_v2::{
-    DemandMutationOutcome, DemandReleaseOutcome, IntradayQuoteDemandRequest,
-    IntradayQuoteReleaseRequest, IntradayStorageError, OwnerIntradayQuoteRepository,
+    DemandMutationOutcome, DemandReleaseOutcome, IntradayCacheRecord, IntradayCalendarReadState,
+    IntradayIdentityReadState, IntradayQuoteDemandRequest, IntradayQuoteReleaseRequest,
+    IntradaySessionProof, IntradayStorageError, OwnerIntradayQuoteRepository,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -47,6 +48,50 @@ impl OwnerIntradayQuoteRepo {
         let owner = owner_uuid(actor)?;
         OwnerIntradayQuoteRepository::new(self.pool.clone())
             .release_demand_current(owner, demand_id, request)
+            .await
+    }
+
+    /// Read the exact current READY identity for the authenticated owner.
+    /// The durable repository owns the RLS transaction and current-admission
+    /// semantics; this adapter only derives the owner from the actor.
+    pub async fn read_current_identity_state(
+        &self,
+        actor: &Actor,
+        membership_id: Uuid,
+        instrument_id: &str,
+        generation: u64,
+    ) -> Result<Option<IntradayIdentityReadState>, IntradayStorageError> {
+        let owner = owner_uuid(actor)?;
+        OwnerIntradayQuoteRepository::new(self.pool.clone())
+            .read_current_identity_state(owner, membership_id, instrument_id, generation)
+            .await
+    }
+
+    /// Read the current KIS calendar disposition through the accepted
+    /// actor-scoped repository seam.  No provider or credential state is
+    /// consulted here.
+    pub async fn read_current_calendar_disposition(
+        &self,
+        actor: &Actor,
+    ) -> Result<Option<IntradayCalendarReadState>, IntradayStorageError> {
+        let owner = owner_uuid(actor)?;
+        OwnerIntradayQuoteRepository::new(self.pool.clone())
+            .read_current_calendar_disposition(owner)
+            .await
+    }
+
+    /// Read the exact current identity/session cache row through the accepted
+    /// read-only repository seam.
+    pub async fn read_current_cache(
+        &self,
+        actor: &Actor,
+        membership_id: Uuid,
+        generation: u64,
+        session: &IntradaySessionProof,
+    ) -> Result<Option<IntradayCacheRecord>, IntradayStorageError> {
+        let owner = owner_uuid(actor)?;
+        OwnerIntradayQuoteRepository::new(self.pool.clone())
+            .read_current_cache(owner, membership_id, generation, session)
             .await
     }
 }

@@ -15,7 +15,9 @@
 #![allow(dead_code)]
 
 use api_server::http::api_router;
-use api_server::http::state::{ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaPaperMode};
+use api_server::http::state::{
+    ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaPaperMode, OwnerIntradayQuoteReadConfig,
+};
 use auth::entitlement::{Actor, Role};
 use auth::sessions::cookie;
 use axum::body::Body;
@@ -485,6 +487,17 @@ impl Harness {
         let mut cfg = (*self.state().cfg).clone();
         cfg.seoul_today = seoul_today;
         cfg.candidate_eod_ready = candidate_eod_ready;
+        self.restart_api_with_config(cfg).await;
+    }
+
+    pub async fn restart_api_with_intraday_read_config(
+        &mut self,
+        config: OwnerIntradayQuoteReadConfig,
+        clock: fn() -> chrono::DateTime<chrono::Utc>,
+    ) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.owner_intraday_quotes = config;
+        cfg.intraday_now = clock;
         self.restart_api_with_config(cfg).await;
     }
 

@@ -1365,6 +1365,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
     ),
     route(
         "GET",
+        "/api/v1/research/owner-beta/equity-universe-v2/instruments/{instrument_id}/quote",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        None,
+        false,
+    ),
+    route(
+        "GET",
         "/api/v1/research/owner-beta/equity-universe-v2/signals/latest",
         Phase::Current,
         false,

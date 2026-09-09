@@ -436,6 +436,186 @@ fn openapi_owner_intraday_quote_demand_routes_and_dtos_are_exact() {
 }
 
 #[test]
+fn openapi_owner_intraday_quote_cache_get_is_exact() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let path = "/api/v1/research/owner-beta/equity-universe-v2/instruments/{instrument_id}/quote";
+    let get = &spec["paths"][path]["get"];
+    assert!(get.is_object(), "cache GET must be documented");
+    assert_eq!(get["x-lagrange"]["ownership"]["owner_only"], true);
+    assert_eq!(get["x-lagrange"]["cache"]["policy"], "no-store");
+    assert_eq!(get["x-lagrange"]["idempotency"]["required"], false);
+    assert_eq!(get["x-lagrange"]["audit"]["writer"], Value::Null);
+    assert!(get["requestBody"].is_null(), "GET must not have a body");
+    assert_eq!(
+        get["x-lagrange"]["errors"],
+        serde_json::json!([
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "QUOTE_CACHE_UNAVAILABLE"
+        ])
+    );
+    let response_codes = get["responses"]
+        .as_object()
+        .expect("GET responses")
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        response_codes,
+        ["200", "400", "401", "403", "404", "503"]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+    );
+
+    let parameters = get["parameters"].as_array().expect("GET parameters");
+    assert_eq!(parameters.len(), 3);
+    assert_eq!(parameters[0]["name"], "instrument_id");
+    assert_eq!(parameters[0]["in"], "path");
+    assert_eq!(parameters[0]["schema"]["pattern"], "^[0-9]{6}\\.KRX$");
+    assert_eq!(parameters[1]["name"], "membership_id");
+    assert_eq!(parameters[1]["in"], "query");
+    assert_eq!(parameters[1]["required"], true);
+    assert_eq!(parameters[1]["schema"]["format"], "uuid");
+    assert_eq!(parameters[2]["name"], "generation");
+    assert_eq!(parameters[2]["in"], "query");
+    assert_eq!(parameters[2]["required"], true);
+    assert_eq!(parameters[2]["schema"]["type"], "integer");
+    assert_eq!(parameters[2]["schema"]["minimum"], 1);
+    assert_eq!(
+        parameters[2]["schema"]["maximum"].as_u64(),
+        Some(i64::MAX as u64)
+    );
+    assert!(
+        parameters
+            .iter()
+            .all(|parameter| parameter["in"] != "header")
+    );
+    assert_eq!(
+        get["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerIntradayQuote"
+    );
+
+    let schemas = &spec["components"]["schemas"];
+    let exact_fields = [
+        (
+            "OwnerIntradayQuote",
+            [
+                "schema_version",
+                "membership_id",
+                "instrument_id",
+                "venue",
+                "currency",
+                "generation",
+                "session",
+                "market_state",
+                "freshness",
+                "reason_code",
+                "quote",
+                "next_poll_after_ms",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        ),
+        (
+            "OwnerIntradayQuoteSession",
+            [
+                "date",
+                "timezone",
+                "calendar_source",
+                "calendar_source_version",
+                "calendar_content_sha256",
+                "window_contract_sha256",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        ),
+        (
+            "OwnerIntradayQuotePayload",
+            [
+                "price",
+                "base_price",
+                "change_from_previous_day",
+                "change_percent_from_previous_day",
+                "direction",
+                "received_at",
+                "last_success_at",
+                "quote_version",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        ),
+    ];
+    for (name, expected) in exact_fields {
+        let schema = &schemas[name];
+        assert_eq!(schema["additionalProperties"], false, "{name} is closed");
+        let actual = schema["properties"]
+            .as_object()
+            .expect("schema properties")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected, "{name} fields changed");
+        let required = schema["required"]
+            .as_array()
+            .expect("schema required")
+            .iter()
+            .map(|field| field.as_str().expect("required field"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(required, expected, "{name} required fields changed");
+    }
+    assert_eq!(
+        schemas["OwnerIntradayQuote"]["properties"]["schema_version"]["const"],
+        1
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuote"]["properties"]["venue"]["const"],
+        "KRX"
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuote"]["properties"]["currency"]["const"],
+        "KRW"
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuote"]["properties"]["next_poll_after_ms"]["const"],
+        5000
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuote"]["properties"]["generation"]["maximum"].as_u64(),
+        Some(i64::MAX as u64)
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteMarketState"]["enum"],
+        serde_json::json!(["OPEN", "CLOSED", "HALTED", "UNKNOWN"])
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteFreshness"]["enum"],
+        serde_json::json!(["RECENT", "STALE", "UNAVAILABLE"])
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteDirection"]["enum"],
+        serde_json::json!(["UP", "DOWN", "FLAT", "LIMIT_UP", "LIMIT_DOWN"])
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteSession"]["properties"]["calendar_content_sha256"]["pattern"],
+        "^[0-9a-f]{64}$"
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteSession"]["properties"]["window_contract_sha256"]["pattern"],
+        "^sha256:[0-9a-f]{64}$"
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuotePayload"]["properties"]["quote_version"]["type"],
+        "string"
+    );
+    for field in ["session", "reason_code", "quote"] {
+        assert!(schemas["OwnerIntradayQuote"]["properties"][field]["anyOf"].is_array());
+    }
+}
+
+#[test]
 fn openapi_intraday_bigint_bounds_are_exact_and_match_request_validation() {
     const I64_MAX_LITERAL: &str = "9223372036854775807";
     const I64_MAX_PLUS_ONE_LITERAL: &str = "9223372036854775808";
@@ -451,6 +631,7 @@ fn openapi_intraday_bigint_bounds_are_exact_and_match_request_validation() {
         ("OwnerIntradayQuoteReleaseBody", "renewal_sequence", 0),
         ("OwnerIntradayQuoteDemand", "generation", 1),
         ("OwnerIntradayQuoteDemand", "renewal_sequence", 0),
+        ("OwnerIntradayQuote", "generation", 1),
     ] {
         let property = &schemas[schema_name]["properties"][field_name];
         assert_eq!(property["type"], "integer", "{schema_name}.{field_name}");

@@ -11,6 +11,8 @@
 
 const PHASE3 = "phase3";
 const INTRADAY_BIGINT_MAXIMUM = JSON.rawJSON("9223372036854775807");
+const OWNER_INTRADAY_QUOTE_CACHE_PATH =
+  "/api/v1/research/owner-beta/equity-universe-v2/instruments/{instrument_id}/quote";
 
 /** Mirror of api-server CONTRACT_ROUTES. [method, path, flags] */
 const ROUTES = [
@@ -108,6 +110,10 @@ const ROUTES = [
     ownerIntradayQuotes: true,
     mutating: true,
     idem: true,
+  }],
+  ["GET", OWNER_INTRADAY_QUOTE_CACHE_PATH, {
+    owner: true,
+    ownerIntradayQuotes: true,
   }],
   ["GET", "/api/v1/research/owner-beta/equity-universe-v2/signals/latest", {
     owner: true,
@@ -251,6 +257,15 @@ if (ERROR_CODES_SET.size !== ERROR_CODES.length) {
 const ENVELOPE = { $ref: "#/components/schemas/ErrorEnvelope" };
 
 function errorResponses(route) {
+  if (isOwnerIntradayQuoteCache(route)) {
+    return {
+      "400": { $ref: "#/components/responses/Error400" },
+      "401": { $ref: "#/components/responses/Error401" },
+      "403": { $ref: "#/components/responses/Error403" },
+      "404": { $ref: "#/components/responses/Error404" },
+      "503": { $ref: "#/components/responses/Error503" },
+    };
+  }
   if (route?.[2]?.ownerIntradayQuotes) {
     return {
       "400": { $ref: "#/components/responses/Error400" },
@@ -309,6 +324,7 @@ function operation(route) {
   const natural = flags.natural === true;
   const audit = flags.audit === true;
   const shared = flags.shared === true;
+  const cacheGet = isOwnerIntradayQuoteCache(route);
 
   const op = {
     operationId: `${method}_${path.replace(/[\/{}\-]/g, "_")}`,
@@ -335,6 +351,8 @@ function operation(route) {
           ? "Owner role; sealed historical price-only input"
           : flags.ownerBetaPriceRead
           ? "Owner role; actor-scoped sealed historical price-only read model"
+          : cacheGet
+          ? "Owner role; actor-scoped current intraday quote cache"
           : flags.ownerIntradayQuotes
           ? "Owner role; actor-scoped durable intraday quote demand lease"
           : owner
@@ -351,7 +369,7 @@ function operation(route) {
       idempotency: mutating
         ? natural
           ? { required: false, natural: true, note: "idempotent by nature; no key required" }
-          : flags.ownerIntradayQuotes
+          : flags.ownerIntradayQuotes && !cacheGet
           ? {
               required: idemRequired,
               header: "Idempotency-Key",
@@ -387,7 +405,7 @@ function operation(route) {
   for (const [n, k] of Object.entries(pathParams(path))) {
     const schema = n === "membership_id" || n === "demand_id"
       ? { type: "string", format: "uuid" }
-      : n === "instrument_id" && flags.ownerEquityV2
+      : n === "instrument_id" && (flags.ownerEquityV2 || cacheGet)
         ? { type: "string", pattern: "^[0-9]{6}\\.KRX$" }
         : { type: "string" };
     op.parameters.push(param(n, "path", schema, true));
@@ -410,7 +428,15 @@ function operation(route) {
     op.parameters.push(param("snapshot_id", "query", { type: "string", format: "uuid" }, true));
     op.parameters.push(param("range", "query", { $ref: "#/components/schemas/OwnerEquityV2ChartRange" }, true));
   }
-  if (flags.ownerIntradayQuotes) {
+  if (cacheGet) {
+    op.parameters.push(param("membership_id", "query", { type: "string", format: "uuid" }, true));
+    op.parameters.push(param("generation", "query", {
+      type: "integer",
+      minimum: 1,
+      maximum: INTRADAY_BIGINT_MAXIMUM,
+    }, true));
+  }
+  if (flags.ownerIntradayQuotes && !cacheGet) {
     op.parameters.push(param(
       "Idempotency-Key",
       "header",
@@ -486,6 +512,9 @@ function successResponsesFor(method, path) {
   if (path === "/api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}" && method === "delete") {
     return { "204": { description: "Owner intraday quote demand lease released; exact replay is also empty" } };
   }
+  if (path === OWNER_INTRADAY_QUOTE_CACHE_PATH && method === "get") {
+    return { "200": json("Current owner intraday quote cache state", "#/components/schemas/OwnerIntradayQuote") };
+  }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "get") {
     return { "200": json("Owner-beta price-only recommendation history", "#/components/schemas/OwnerBetaPriceOnlyReadPage") };
   }
@@ -545,6 +574,10 @@ function pathParams(path) {
   return out;
 }
 
+function isOwnerIntradayQuoteCache(route) {
+  return route?.[0] === "GET" && route?.[1] === OWNER_INTRADAY_QUOTE_CACHE_PATH;
+}
+
 function bodySchemaRef(path) {
   if (path.endsWith("/configs")) return "#/components/schemas/NewStrategyConfigBody";
   if (path === "/api/v1/research/owner-beta/equity-price-signals/screen") {
@@ -581,6 +614,16 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (isOwnerIntradayQuoteCache(route)) {
+    return [
+      "SESSION_UNKNOWN",
+      "SESSION_EXPIRED",
+      "FORBIDDEN",
+      "INVALID_PARAMETER",
+      "RESOURCE_NOT_FOUND",
+      "QUOTE_CACHE_UNAVAILABLE",
+    ];
+  }
   if (flags.ownerIntradayQuotes) {
     return [
       "SESSION_UNKNOWN",
@@ -1349,6 +1392,114 @@ const SCHEMAS = {
       renewal_sequence: { type: "integer", minimum: 0, maximum: INTRADAY_BIGINT_MAXIMUM },
       lease_expires_at: ts,
       renew_after_ms: { type: "integer", const: 15000 },
+    },
+  },
+  OwnerIntradayQuoteDirection: {
+    type: "string",
+    enum: ["UP", "DOWN", "FLAT", "LIMIT_UP", "LIMIT_DOWN"],
+  },
+  OwnerIntradayQuoteMarketState: {
+    type: "string",
+    enum: ["OPEN", "CLOSED", "HALTED", "UNKNOWN"],
+  },
+  OwnerIntradayQuoteFreshness: {
+    type: "string",
+    enum: ["RECENT", "STALE", "UNAVAILABLE"],
+  },
+  OwnerIntradayQuoteReasonCode: {
+    type: "string",
+    enum: [
+      "NO_ACTIVE_DEMAND",
+      "QUOTE_PENDING",
+      "QUOTE_STALE",
+      "PROVIDER_TIMEOUT",
+      "PROVIDER_RATE_LIMITED",
+      "PROVIDER_UNAVAILABLE",
+      "PROVIDER_RESPONSE_INVALID",
+      "QUOTE_VALUE_INVALID",
+      "QUOTE_BUDGET_EXHAUSTED",
+      "CALENDAR_UNAVAILABLE",
+      "SESSION_WINDOW_UNAVAILABLE",
+      "SESSION_CLOSED",
+      "INSTRUMENT_HALTED",
+      "PRODUCER_UNAVAILABLE",
+      "FEATURE_DISABLED",
+    ],
+  },
+  OwnerIntradayQuoteSession: {
+    type: "object",
+    required: [
+      "date",
+      "timezone",
+      "calendar_source",
+      "calendar_source_version",
+      "calendar_content_sha256",
+      "window_contract_sha256",
+    ],
+    additionalProperties: false,
+    properties: {
+      date: dateStr,
+      timezone: { type: "string", const: "Asia/Seoul" },
+      calendar_source: { type: "string", const: "kis" },
+      calendar_source_version: { type: "string", const: "kis-chk-holiday-v1:schema-1" },
+      calendar_content_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      window_contract_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+    },
+  },
+  OwnerIntradayQuotePayload: {
+    type: "object",
+    required: [
+      "price",
+      "base_price",
+      "change_from_previous_day",
+      "change_percent_from_previous_day",
+      "direction",
+      "received_at",
+      "last_success_at",
+      "quote_version",
+    ],
+    additionalProperties: false,
+    properties: {
+      price: { type: "string", pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$" },
+      base_price: { type: "string", pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$" },
+      change_from_previous_day: { type: "string", pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$" },
+      change_percent_from_previous_day: { type: "string", pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$" },
+      direction: { $ref: "#/components/schemas/OwnerIntradayQuoteDirection" },
+      received_at: ts,
+      last_success_at: ts,
+      quote_version: { type: "string", pattern: "^[1-9][0-9]*$" },
+    },
+  },
+  OwnerIntradayQuote: {
+    type: "object",
+    required: [
+      "schema_version",
+      "membership_id",
+      "instrument_id",
+      "venue",
+      "currency",
+      "generation",
+      "session",
+      "market_state",
+      "freshness",
+      "reason_code",
+      "quote",
+      "next_poll_after_ms",
+    ],
+    additionalProperties: false,
+    properties: {
+      schema_version: { type: "integer", const: 1 },
+      membership_id: uuid,
+      instrument_id: { type: "string", pattern: "^[0-9]{6}\\.KRX$" },
+      venue: { type: "string", const: "KRX" },
+      currency: { type: "string", const: "KRW" },
+      generation: { type: "integer", minimum: 1, maximum: INTRADAY_BIGINT_MAXIMUM },
+      session: { anyOf: [{ $ref: "#/components/schemas/OwnerIntradayQuoteSession" }, { type: "null" }] },
+      market_state: { $ref: "#/components/schemas/OwnerIntradayQuoteMarketState" },
+      freshness: { $ref: "#/components/schemas/OwnerIntradayQuoteFreshness" },
+      reason_code: { anyOf: [{ $ref: "#/components/schemas/OwnerIntradayQuoteReasonCode" }, { type: "null" }] },
+      quote: { anyOf: [{ $ref: "#/components/schemas/OwnerIntradayQuotePayload" }, { type: "null" }] },
+      next_poll_after_ms: { type: "integer", const: 5000 },
     },
   },
   OwnerEquityV2Lifecycle: {
