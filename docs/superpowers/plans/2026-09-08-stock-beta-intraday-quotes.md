@@ -2640,3 +2640,118 @@ Native subagents: prohibited for worker packages
 - IV worker `28e0e6ae-7794-41a5-ba2b-72c41b944ff6` (Codex luna/medium, auto-review)
   launched read-only in coordinator workspace at `aad527d`. Current profiles/provider checked;
   all previous workers idle. Only IV runs compiler and QA regression targets.
+
+### WP4-C1-IV ACCEPT / WP4-C2 default-off API configuration (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- IV worker 28e0e6ae-7794-41a5-ba2b-72c41b944ff6 is IDLE ACCEPT, not running.
+  Coordinator recovered complete final summaries: calendar5, quotes24, identity-read1, producer6
+  (36 total, no DB skips); strict four-target clippy/fmt/diff passed. Source461b4e99 and integrated
+  aad527d have empty crates/apps/data-pipelines diff. Initial invalid target-name invocation was
+  corrected; only complete actual target results count. No additional C1 verification is needed.
+- Coordinator failed to advance promptly after IV completion; user requested immediate continuation.
+  Next implementation starts now, not another mapping worker. C2 wires immutable API read settings;
+  C3 then implements GET/DTO/OpenAPI with explicit projection decisions. No provider activation.
+- Target /data/worktrees/3puw275b/stock-beta-intraday-api, workspace wks_3249856abbf32750,
+  branch work/stock-beta-intraday-api-20260909, clean base461b4e99be0159e20c9c1b386c1bfb10ddd344c6.
+- Scope amendment within authorized API implementation: runtime.rs and the two existing ApiConfig
+  literal callsites below may be changed only for this non-secret read configuration. No ops/runtime
+  deployment change. Existing collectors dependency already supplies the validated window parser.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C2 | intermediate | Four-file bounded config wiring, injectable pure tests, unchanged routes | high | Missing source/contract dependency or repeated failed checks; report before scope expansion |
+| WP4-C2-R | intermediate | Independent fail-closed config and unchanged runtime behavior review | high | Concrete regression returns to bounded fix |
+| WP4-C3 | intermediate | Cache-only GET composed from accepted identity/calendar/cache seams | medium | Freeze final projection and HTTP test brief before launch, no implementation assumptions |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C2 | 1 | intermediate | Add API-only default-off read settings and injected wall clock | exact four files below | C1-IV ACCEPT | NEW Codex luna/max auto-review | scoped commit and test evidence | runtime/lib tests, literal consumers, scoped clippy/fmt |
+| WP4-C2-R | 2 | intermediate | Independently validate settings and no activation/route regression | read-only C2 | C2 completion | terra/high auto-review | ACCEPT/REJECT | source and independent bounded tests |
+| WP4-C3 | 3 | intermediate | GET/DTO/OpenAPI and real-role cache-only HTTP evidence | existing intraday HTTP/repo/contract/OpenAPI and focused tests; exact brief next | C2 accepted | luna/max auto-review | cache GET implementation | explicit decision table and HTTP QA |
+
+#### Worker brief: WP4-C2
+
+- Read applicable root instructions, full coordinator spec and this CURRENT coordinator plan.
+  API worktree's copy of plan is older. Complete directly; do not delegate.
+- Own ONLY crates/api-server/src/runtime.rs, crates/api-server/src/http/state.rs,
+  crates/api-server/src/bin/paper-runner.rs (ApiConfig literal/import ONLY), and
+  crates/api-server/tests/common/mod.rs (ApiConfig literal/import ONLY).
+  Tests for new behavior belong inline in runtime.rs/state.rs. Do not change any route, repository,
+  DTO/OpenAPI, auth, demand, SQL, producer, collector/KIS, Cargo, Web, ops or deployment file.
+- Add typed immutable API configuration in state.rs, e.g. OwnerIntradayQuoteReadConfig:
+  Disabled (default), OwnerOnly { window: Option<Arc<IntradaySessionWindowContract>> }.
+  None is typed unavailable evidence, distinct from disabled. Reuse collectors::intraday_quotes
+  validated contract; do not duplicate its JSON, hash or civil-date logic. No KIS coordination,
+  token/credential state, secret environment reads or provider constructor.
+- ApiConfig gains this configuration and an injected intraday_now: fn() -> DateTime<Utc>.
+  Production supplies Utc::now through a named function; no change to seoul_today/EOD clocks.
+  RuntimeConfig carries immutable read config; api_config clones it and installs production clock.
+  Update all four known literal sites: runtime.rs115, state.rs252, paper-runner.rs449,
+  tests/common/mod.rs358. Defaults remain Disabled; no existing test activation.
+- Parse OWNER_INTRADAY_QUOTES_MODE strictly: absent or exact "off" -> Disabled; exact "owner_only"
+  -> OwnerOnly. Empty/whitespace/case/unknown/non-Unicode -> existing typed ConfigError keyed only.
+  Reject OWNER_INTRADAY_QUOTES_MODE_FILE just like other policy aliases; no trimming/fallback.
+  Do not require KIS_READ_COORDINATION_MODE, generation, provider credentials or beta Paper flags:
+  this is API read-only configuration, not a credentialed reader or producer authorization.
+- Disabled mode must not read the session-window file or consult its hash. OwnerOnly reads hash
+  only from injected environment key OWNER_INTRADAY_SESSION_WINDOWS_SHA256. Missing/empty/
+  malformed/non-Unicode hash -> OwnerOnly with window None, not process startup failure.
+  Canonical hash is sha256: plus64 lowercase hex. No *_FILE hash convention or path override.
+- Only if canonical hash exists, read exact fixed constant
+  /opt/lagrange/configs/market-hours/krx-intraday-session-windows-v1.json once at config load,
+  through a private injectable reader used by the SAME production helper. Production reads bounded
+  bytes (at most 1,048,577 to detect >1MiB); existing parser rejects oversized/malformed/hash mismatch.
+  File IO error or parser failure -> window None without raw error/body/path/hash logging.
+  No global env mutation, /opt write, actual fixed-file read in tests, auto-fetch, restamping,
+  polling/reload thread, arbitrary path, fallback calendar, or global startup abort for window error.
+- Preserve load_config_from's public signature; factor a private get+reader helper for tests,
+  using get for every new setting (never call contract.from_fixed_path which reads global env).
+  Production load_config/load_config_from use this same helper with the bounded fixed-path reader.
+  Unrelated runtime parsing, database pools, listener/health/shutdown and EOD behavior unchanged.
+  Runtime tests use base_env and fake reader, with call counts and exact requested path assertions.
+- Tests: absent/off -> Disabled, zero file reads even bogus hash; strict mode error matrix and
+  non-Unicode Unix case; OwnerOnly missing/bad/non-Unicode hash zero reads and unrelated config
+  valid; reader missing/IO error, malformed/empty/oversized bytes and hash mismatch unavailable;
+  exact valid hash bytes -> Ready contract preserved into api_config; no KIS setting required.
+  Use synthetic bytes and existing sha2 dev availability, no dependency change.
+  Verify real parsed contract state_at with fixed times (same-KST evidence, stale/future Unknown,
+  regular half-open boundary) without inventing a new evidence-age policy. Config loading validates
+  structure/hash only; evaluation remains per request, not stale startup-time market-state caching.
+  Verify injected intraday clock invocation and default production clock, not a constant-true test.
+- Verification serial only: CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test -p api-server
+  --locked --offline --lib (complete actual baseline plus new tests); paper-runner bin tests;
+  compile existing http_owner_intraday_quotes test with --no-run to cover common literal.
+  No DB tests needed for C2; no tests may silently skip and be claimed as DB proof.
+  Strict scoped clippy --lib, --bin paper-runner, --test http_owner_intraday_quotes; fmt/diff.
+  If pre-existing listener sandbox permission failure occurs, identical precisely escalated local
+  command only; no application server launch, actual main, DB or external network.
+- QA project lagrange-intraday-qa-20260908/container lagrange-intraday-qa-20260908-qa-db-1 stays
+  retained untouched for subsequent GET HTTP tests. No Docker lifecycle or QA cleanup in C2.
+- Commit only four owned files. Report full commit/parent, files/line ranges, deviations/reasons,
+  every command and complete counts, before/after behavior, no-provider/no-file-read evidence,
+  unresolved/follow-up/not verified explicitly none if empty. Missing requirement -> report first.
+  No operational DB, provider/network/accounts/orders/root/Next/browser/migration/Cargo/Compose/
+  production/deploy/main merge/push/activation.
+
+#### Coordinator gates
+
+1. C1-IV result accepted; clean isolated source and current profile/provider verified. Only C2 owns
+   compiler slot. Launch CLI and immediately report actual worker ID, then replace completed IV heartbeat.
+2. While C2 executes, finish C3 projection/test brief. No-active-demand is NOT an automatic cache
+   visibility rejection: accepted same-identity/session last good stays age-classified under §8.3.
+   Calendar/window disagreement remains UNKNOWN/SESSION_WINDOW_UNAVAILABLE. C3 exact table next.
+3. Recover C2 result/diff, independent bounded review, then exact integration. Do not rerun already
+   accepted C1 findings or leave an idle completed worker presented as active.
+
+- C2 worker `099c080b-0cac-4770-8a7e-00f27d0bf32a` (Codex luna/max, auto-review)
+  launched via CLI in isolated API workspace at clean461b4e99. Current profile notes/provider
+  verified. Only C2 owns its four files/compiler slot; all older workers are idle.
