@@ -3379,3 +3379,10 @@ Native subagents: prohibited for worker packages
 2. Inspect exact test-only delta and evidence, reuse idle sol/high reviewer for bounded acceptance.
 3. Integrate C3 chain only after all Medium findings resolved and verified ACCEPT; keep npm limit
    visible, promptly proceed to next authorized package without redundant mapping/IV.
+
+- F2 active binding: NEW writer e3fed58b-5c98-4138-a1c4-80a73ade7435, Codex
+  gpt-5.6-terra/max auto-review, workspacewks_3249856abbf32750 at clean8326a6d. Startup
+  wait returned timeout with a new direct-execution acknowledgment of the two test files,
+  current coordinator contract and serial retained-QA work. Only this writer owns compiler/QA.
+  Reviewer1c3827ae is IDLE REJECT, old writer39da45eb idle; no redirect or duplicate assignment.
+  Replace re-review heartbeat11694fdf with F2 implementation heartbeat.
