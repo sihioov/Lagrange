@@ -1964,3 +1964,24 @@ Native subagents: prohibited for worker packages
   API workspace `wks_3249856abbf32750`, clean `7147a327`에서 시작했다. coordinator
   `2796470`과 source가 동일함을 확인했다. 최신 brief는 coordinator plan `765134f`를 읽도록
   지정했다. WP4-A writer/reviewer는 idle이며 새 worker만 compiler/해당 파일을 사용한다.
+
+### WP4-B completion / independent review gate (2026-09-09)
+
+- Writer is idle at `9f9e90498258367b3879f89aeb9d201d676430ff`, parent `7147a327`,
+  clean; exactly 11 owned files (+2389/-2). Not integrated. Reports HTTP 3/3 (3.69s),
+  chart 4/4 (3.34s), OpenAPI 14/14, library 85/85, strict clippy/fmt/diff and 87-operation
+  OpenAPI generation/typecheck passing. Library sandbox listener denial passed after precise
+  loopback escalation. Coordinator recovered full final report and read production delta,
+  OpenAPI/test portions; counts are not independent acceptance.
+- Review must confirm/refute a concrete contract concern: the new adapter discards the optional
+  current identity result (`map(|_| ())`), permits missing membership observations, and directly
+  delegates DELETE without the specified current identity check. Its comments intentionally allow
+  replay after disable/generation change, unlike the frozen WP4-B 404 boundary. Check actual B1
+  replay ordering and existing tests before concluding; do not change B1 or invent new policy.
+- Also verify DELETE renewal sequence semantics against §8.2 and existing B1, exact i64 bounds
+  in generated OpenAPI (JavaScript numeric rounding), actual app-role/privacy ordering, durable
+  replay/capacity and non-vacuous side-effect fingerprints. Review is read-only and scoped to
+  this commit plus necessary dependency inspection; no source fix or integration until adjudicated.
+- Independent reviewer `4b2c514f-a69f-4562-949c-68b1b1675618` (Codex terra/high,
+  auto-review) started in the API workspace after profile/provider checks. Only this reviewer
+  runs the sequential compiler/QA checks; writer and prior reviewers remain idle.
