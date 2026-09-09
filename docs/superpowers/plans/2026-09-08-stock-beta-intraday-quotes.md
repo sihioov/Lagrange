@@ -3996,6 +3996,7 @@ No Paseo run/send/daemon start/restart.
   Replaced f6472491 with heartbeat88696a5f. Send terminal21345 may remain waiting normally,
   do not resend/interrupt. No integration or acceptance yet.
 
+
 ### WP6-B1-F1-R REJECT / B1-F2 relative-artifact exact brief (2026-09-09)
 
 Execution skill: $paseo-delegate (required)
@@ -4125,3 +4126,119 @@ No Paseo run/send/daemon start/restart.
   direct read-only ACK, exact checkout checks and actual full-brief reads. Writer873f830e idle clean.
   Replaced5c0747fd with heartbeatcda75f12. Send terminal11005 may remain waiting normally;
   do not resend/interrupt. No integration or acceptance yet.
+
+### WP6-B1-F2-R ACCEPT / exact integration (2026-09-09)
+
+- Reviewer5f6d978f is IDLE ACCEPT, no Critical/High/Medium findings. Coordinator recovered full
+  report/logs and accepts remaining relative-artifact Medium and representative sibling Low resolved.
+  Independent deeper-cwd actual-validator probes distinguish env-dir resolution from cwd: equality
+  and both ancestry cases exit1 with overlap marker; nonoverlap exit0; release relative path exit1
+  with absolute-path marker. Permanent fixture limitations are complemented, not silently claimed.
+- Independent complete checks: syntax/static/self-test exit0, regex69, A baseline+11 negatives,
+  B1 mutations3, validator77 (13 positive/64 expected failures), provision/idempotence/sentinel,
+  and all seven guarded offline regressions exit0. No new scope/deviation/unresolved blocker.
+  uutils0.8.0, narrow socket simulation, metadata-only and prior snapshot limits remain explicit.
+- Exact source commits a661bfc/8f1db6b/039a458 integrated as 9508ca1/c887e9c/20f7498.
+  Source comparison to039a458 is empty for crates/apps/data-pipelines/configs/scripts/deploy;
+  coordinator clean before docs. No redundant C3/132-test IV. QA untouched, no activation.
+
+### WP6-B2 compatibility decision and frozen implementation brief (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+Goal: commit default-off, provider-free Compose wiring without changing existing legacy/OFF
+invocation requirements. Coordinator inspected base service blocks and compose-release.sh: it
+passes the full base file explicitly, and inactive profiles do not isolate interpolation. A required
+new host-root mount in that base would break existing scopes. No permissive host-path fallback is
+acceptable. Therefore approve the minimal ownership amendment in fullspec section11: one explicit
+non-auto-loaded overlay compose.intraday.yml. Base compose.yml stays BYTE UNCHANGED. Existing
+release installers/wrappers remain unchanged and do not select the overlay. This is preparation,
+NOT an alternate operator activation workflow or evidence that installed releases consume it.
+Future activation must wire the immutable-release selection with owner approval, validate all five
+reader lifecycles together, and drain old uncoordinated readers. C will record this gate; do not
+claim WP6/Stock Beta complete from B2 alone.
+
+| Package | Complexity | Basis | Confidence | Escalation signals |
+| --- | --- | --- | --- | --- |
+| WP6-B2 | intermediate | Exact six-service environment/bind delta and bounded offline contract mutations | high | Repeated failed checks, incompatible merge semantics or missing scoped capability; report before expansion |
+| WP6-B2-R | intermediate | Independent security-boundary and exact-wiring conclusion | high | Reproducible leak, enabled default, or hidden base compatibility change |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP6-B2 | 1 | intermediate | Explicit opt-in overlay plus exact static checks | New deploy/compose/compose.intraday.yml; existing scripts/ops/stock-beta-intraday-static-check.sh and stock-beta-intraday-self-test.sh ONLY | B1-F2 ACCEPT | Codex luna/max auto-review | Scoped commit/report | Same-checker isolated mutations plus seven offline regressions |
+| WP6-B2-R | 2 | intermediate | Independent acceptance | Read-only same workspace | B2 complete and coordinator full delta read | Codex sol/high auto-review | ACCEPT/REJECT evidence | Exact scope/source and offline checks |
+
+WP6-B2 target /data/worktrees/3puw275b/stock-beta-intraday-ops workspacewks_42028f6f939c65ac,
+branchwork/stock-beta-intraday-ops-20260909 cleanbase039a458564aedf54c2e297877fd4f8c6335de98e.
+Read applicable instructions, this FULL brief and fullspec from coordinator absolute path
+/data/worktrees/3puw275b/enhanced-pig/docs/superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md.
+Complete directly. No new analyst/delegation. Exact requirements:
+
+1. New compose.intraday.yml is JSON-form YAML (a strict JSON object, duplicate keys rejected by
+   checker), allowing Python3 stdlib structural checking without adding YAML dependencies or
+   claiming a general Compose engine. Top-level ONLY services. EXACTLY six existing service keys:
+   research-worker, research-range-raw, research-action-range-raw, research-stock-price-beta-raw,
+   owner-equity-v2-runner, api-server. Verify the API literal key in base before editing; if not
+   api-server report mismatch instead of guessing. Each override has ONLY environment and volumes.
+   No new service/image/profile/network/secret/user/entrypoint/restart/health/dependency/build field.
+2. All five credentialed services receive identical environment entries:
+   KIS_READ_COORDINATION_MODE = ${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}
+   KIS_READ_CREDENTIAL_GENERATION = ${KIS_READ_CREDENTIAL_GENERATION:?KIS_READ_CREDENTIAL_GENERATION must be explicitly set}
+   OWNER_INTRADAY_QUOTES_MODE = ${OWNER_INTRADAY_QUOTES_MODE:-off}
+   These are strings. No credential values, aliases or path overrides. B1 validator/runtime retain
+   strict values and owner_only requires shared_required; Compose interpolation only checks presence,
+   not semantic mode/generation validity. Do not pretend this overlay alone validates deployment.
+3. Each five-service volume list includes exactly one long-form shared bind:
+   type bind; source ${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-read-coordination;
+   target /run/lagrange/kis-read-coordination; read_only false (JSON boolean);
+   bind {create_host_path: false}. No fallback/named/anonymous volume, no whole parent mount.
+   This must merge with existing volumes, not replace them; no !reset/!override constructs.
+4. Runner additionally, and API exclusively, receive
+   OWNER_INTRADAY_SESSION_WINDOWS_SHA256 = ${OWNER_INTRADAY_SESSION_WINDOWS_SHA256:-}.
+   API environment has ONLY that hash and OWNER_INTRADAY_QUOTES_MODE = ${OWNER_INTRADAY_QUOTES_MODE:-off}.
+   Both runner/API have the exact long-form session-window bind: type bind;
+   source ../../configs/market-hours/krx-intraday-session-windows-v1.json;
+   target /opt/lagrange/configs/market-hours/krx-intraday-session-windows-v1.json;
+   read_only true; bind {create_host_path: false}. Runner order: shared bind then window bind.
+   All other four reader lists contain only shared bind; API list only window bind. No API KIS
+   environment/secret/state mount or egress; no Web/provider-free overrides at all. Artifact stays
+   empty and byte-identical; no hardcoded approved hash or enabled mode, no operational file read.
+5. Extend SAME existing Stock static checker to require regular nonsymlink overlay/base and validate
+   exact structural object above (closed keys/types, duplicate key rejection), all six keys existing
+   in base, fixed sources/targets/modes/create_host_path and no extra override. State explicitly
+   source-contract checking, NOT actual Compose merge/interpolation/daemon execution. Source base
+   unchanged is coordinator/diff gate; no broad YAML parser or dependency installation. Keep all
+   A/B1 checks. Do not edit generic static-check/V2 scripts now: invocation/docs/diagram work is C,
+   avoiding unrelated fixture dependency expansion in B2.
+6. Extend private copy_fixture for overlay and base. Independent fresh baseline per SAME-checker
+   mutation, all expected nonzero with complete count: remove each of five shared binds (5);
+   change one host source; target; read_only; create_host_path; add root fallback; remove one
+   generation; diverge one coordination expression; enabled default; add API KIS env; add API
+   shared mount; add Web override; add provider-free materializer override; runner window absent;
+   API window writable; wrong window source; wrong window target; missing hash; extra service/image
+   field; duplicate overlay JSON key. At least 24 independent negatives plus pristine positive.
+   Do not count textual searches or a handbuilt substitute checker as executed rejection evidence.
+   Report exact actual count. Retain regex69/A11/B1mut3/validator77 and all prior fixture snapshots.
+7. Syntax both scripts; strict JSON parse overlay; focused static/self-test complete final summaries;
+   seven guarded offline tests from B1: owner-equity-v2-runtime-static-check.sh and self-test.sh,
+   build-production-images-static-check.sh and self-test.sh, production-ops-static-check.sh and
+   self-test.sh, deploy/db/migrate-static-check.sh. Inspect guards before execution: only existing
+   private fake-root/fakeDocker fixtures, never actual Docker/Compose/build/DB. Missing capability
+   report, no silent skip. No actual Compose config run; record merge/interpolation engine check
+   UNVERIFIED and required before activation, not a runtime success claim. Check diff/scope and
+   unchanged base/.env/provision/validator/schema/artifact/Rust/apps/release scripts; commit only
+   three owned files, clean final tree.
+
+No actual root/sudo/credentials/accounts/orders/provider/network/opt/hostenvclock/DB/Docker/Compose/
+compiler/Cargo/build/npm/dependency install/liveops/activation/deploy/mainmerge/push/sibling search.
+Own mktemp/fake-root subprocess fixtures only. No changes to base Compose, .env, provision/validator,
+dotenv, other harnesses, Rust/API/Web, CI, release/installer, docs/diagrams. No new activation wrapper.
+QA project lagrange-intraday-qa-20260908 retained untouched. No npm deps or other-worktree links.
+Calendar36h separate from same-KST window<=now, EOD unchanged, no-active-demand cache rule unchanged.
+If the specification conflicts or needs another file/capability, report before expanding.
+Report changed files/lines; deviations/reasons; complete commands/counts/exits; unresolved/follow-up;
+notverified explicitly none when empty (Compose engine verification remains an explicit limitation).
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No Paseo run/send/daemon start/restart. Coordinator full-delta review then independent sol/high;
+only verified ACCEPT permits integration. C documentation/diagrams/invocation remains separate.

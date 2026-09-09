@@ -770,6 +770,11 @@ or deployment. It must first read the installed Next documentation required by `
 ### WP-6 — default-off runtime and operations
 
 - `deploy/compose/compose.yml`, `deploy/compose/.env.example`
+- Coordinator scope amendment (2026-09-09): new, explicitly selected
+  `deploy/compose/compose.intraday.yml` holds the opt-in bind/environment overlay. It is not an
+  automatically loaded override. Base Compose remains unchanged so legacy/OFF invocation does
+  not interpolate a mandatory new host root. The overlay is preparation only, not an alternate
+  activation path; installed-release selection and all-reader rollout require separate approval.
 - `scripts/ops/provision-linux.sh`, `scripts/ops/validate-production-config.sh`,
   `scripts/ops/owner-equity-v2-runtime-static-check.sh`,
   `scripts/ops/owner-equity-v2-runtime-self-test.sh`, and the minimal invocation in
