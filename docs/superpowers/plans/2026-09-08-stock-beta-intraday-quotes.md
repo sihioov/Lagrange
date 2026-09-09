@@ -2755,3 +2755,178 @@ Native subagents: prohibited for worker packages
 - C2 worker `099c080b-0cac-4770-8a7e-00f27d0bf32a` (Codex luna/max, auto-review)
   launched via CLI in isolated API workspace at clean461b4e99. Current profile notes/provider
   verified. Only C2 owns its four files/compiler slot; all older workers are idle.
+
+### WP4-C3 cache GET frozen behavior / implementation brief (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- Prepared by coordinator while C2 runs. NOT launched and NOT an expansion of C2's four-file scope.
+  C2 must finish and pass independent review first; bind its accepted commit/type names at launch.
+  No new mapping task and no repeated C1/WP4-B verification gate.
+- Goal: owner-only cache GET using accepted app-role identity/calendar/cache methods, immutable
+  C2 read config and clock; exact §8 DTO/OpenAPI with real-role no-write HTTP tests.
+- Target remains isolated API workspace wks_3249856abbf32750, branch
+  work/stock-beta-intraday-api-20260909. Base is accepted C2 commit (must resolve before launch).
+- Applicable root instructions and full contract govern. Existing provider-free fixture authority
+  only: no live endpoint, provider constructor, credential/coordination read, worker start, new DB
+  grant, deployment, main merge, push or activation. Calendar36h and same-KST window are separate.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C3 | intermediate | Explicit projection precedence, accepted app reads, bounded router/OpenAPI and real-role fixtures | high after C2 API binding | Needed repository capability absent, permissions failure, repeated tests fail: report before expanding |
+| WP4-C3-R | intermediate | Independent privacy, evidence/freshness, no-write and contract audit | high | Concrete failing counterexample returns to original bounded owner |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C3 | 1 after C2-R | intermediate | Cache GET, exact DTO/OpenAPI and HTTP tests | exact files below | accepted C2 configuration | NEW luna/max auto-review | scoped commit, explicit case matrix | pure projection plus real-role HTTP, OpenAPI and regressions |
+| WP4-C3-R | 2 | intermediate | Verify complete GET contract and unchanged mutations | read-only C3 diff | C3 complete | terra/high auto-review | ACCEPT/REJECT with evidence | independent targeted tests and source |
+
+#### Coordinator decisions: observable precedence
+
+- Authentication/owner guard before path/query/resource validation and lookup; invalid typed input
+  400, absent/foreign/disabled/noncurrent identity 404, even modeoff or unavailable evidence.
+  GET has no mutation body, CSRF or Idempotency-Key requirement.
+- Valid identity always receives 200/no-store unless actual DB/infrastructure error is 503.
+  Session, market state, quote freshness and demand are distinct. No demand is NOT cache invisibility.
+- Evaluate at a fresh injected API UTC instant sampled after database reads, not API startup.
+  Calendar read must refer to that instant's KST date; disagreement/rollover invalidates response
+  evidence. Do not compare app versus DB clocks for submillisecond ordering as a skew detector.
+  No new skew tolerance, persistent API clock high-water, producer-heartbeat timeout or version ledger.
+- Use actual window.state_at(now,false) to enforce same-KST/nonfuture evidence and half-open bounds.
+  Calendar Trading agrees only with Regular/Special entry, Closed only with Closed entry. Valid
+  Trading outside regular/special hours is CLOSED, not a calendar/window disagreement.
+- A usable quote is complete successful data, positive version, exact current identity and all
+  session lineage/hash fields, success==receipt, both nonfuture, age<=24h. The accepted cache read
+  already filters DB-time age/current admission/session; projection also checks its API-clock view.
+  Never repair mismatching fields, substitute EOD values or fabricate provider timestamps.
+- Current quote version is DB-monotonic; GET is stateless and cannot infer regression across
+  separate responses. Existing DB publication prevents decreases and Web fences old responses.
+  Version0/invalid successful rows are unavailable; do not claim an API cross-request history test.
+- Eligible last failure is one of ProviderTimeout/ProviderRateLimited/ProviderUnavailable/
+  ProviderResponseInvalid/QuoteValueInvalid/QuoteBudgetExhausted/ProducerUnavailable, with actual
+  failure_at<=API now and (no successful quote or failure_at>=last_success_at). Ignore stale failure
+  metadata preceding a newer success. Other stored statuses never override current local proofs,
+  window, demand or halt calculation. No invented timeout threshold for ProducerUnavailable.
+- Exact response precedence, after identity validation:
+
+| Condition (first match for state; reason priorities below) | market_state | session | quote/freshness | reason_code |
+|---|---|---|---|---|
+| config Disabled | UNKNOWN | null | null/UNAVAILABLE | FEATURE_DISABLED |
+| missing/stale/invalid calendar evidence or calendar/API-date rollover | UNKNOWN | null | null/UNAVAILABLE | CALENDAR_UNAVAILABLE |
+| window absent/invalid at now or calendar/window disposition disagreement | UNKNOWN | null | null/UNAVAILABLE | SESSION_WINDOW_UNAVAILABLE |
+| both valid Closed | CLOSED | validated current session DTO | null/UNAVAILABLE | SESSION_CLOSED |
+| Trading + valid Regular/Special, outside half-open interval | CLOSED | validated current session DTO | usable last good age-classified, else null/UNAVAILABLE | SESSION_CLOSED |
+| inside interval and usable last good halted | HALTED | validated current session DTO | usable last good age-classified | INSTRUMENT_HALTED |
+| inside interval, not halted | OPEN | validated current session DTO | usable last good age-classified, else null/UNAVAILABLE | first: no active demand -> NO_ACTIVE_DEMAND; else eligible typed failure; else missing quote -> QUOTE_PENDING; else stale -> QUOTE_STALE; else null |
+
+- Age classification independent of state/reason: <=30 seconds RECENT, >30 seconds STALE,
+  including CLOSED/HALTED/no-demand. No-success/invalid/>24h UNAVAILABLE. A provider failure does
+  not erase last good or advance success/version. Returned future success/receipt/attempt/failure
+  timestamps indicate unusable/clock-regressed observation: UNKNOWN, null session/quote,
+  UNAVAILABLE, PRODUCER_UNAVAILABLE; do not map this to a provider trade-time claim.
+  A row hidden by existing DB filters is simply no usable cache, not evidence of the hidden cause.
+- If multiple missing proofs exist, calendar error wins once configured OwnerOnly. This ordering
+  describes the GET result only and cannot authorize collection. Existing mutations work while off.
+
+#### Worker brief: exact scope and implementation
+
+- Own crates/api-server/src/http/owner_intraday_quotes.rs (new GET/typed DTO/projection/tests only,
+  preserve POST/DELETE), repos/owner_intraday_quotes.rs (read adapter only, preserve mutations),
+  http/mod.rs (one route), contract.rs (one GET route metadata, existing error wording may become
+  neutral intraday storage wording), apps/api-server/scripts/openapi-spec.mjs, openapi.json,
+  generated/openapi.ts, tests/openapi_contract.rs (scoped additions),
+  NEW tests/http_owner_intraday_quote_cache.rs and optional NEW
+  tests/intraday_quote_cache_support/mod.rs.
+  tests/common/mod.rs ONLY an additive restart_api_with_intraday_read_config(config,clock) wrapper
+  cloning ApiConfig and invoking its existing private restart helper; no other harness changes.
+  No runtime/state changes beyond accepted C2; ask coordinator if names/interfaces are insufficient.
+- Exact literal GET:
+  /api/v1/research/owner-beta/equity-universe-v2/instruments/{instrument_id}/quote
+  query membership_id UUID and generation u64 positive <=i64::MAX, deny unknown/duplicate fields.
+  Canonical instrument shape uses existing project validation; no owner/provider/path override.
+  Use Result extractors so authenticated non-owner guard runs before reporting input errors.
+  Return standard typed errors, no provider/raw/internal error strings.
+- Repo owner must derive from authenticated Actor, never user input. Use accepted
+  read_current_identity_state, read_current_calendar_disposition and read_current_cache.
+  Construct valid Trading IntradaySessionProof from the actual typed calendar plus pinned window
+  hash only after validating agreement; never manufacture Trading proof for Closed.
+  Cache method itself revalidates trading lineage. Missing/invalid proof returns typed unavailable,
+  DB/commit/permission failures stay 503; CalendarProofUnavailable/SessionProofInvalid from evidence
+  races map CALENDAR_UNAVAILABLE, not arbitrary cached success.
+- After calendar/cache reads, re-read exact identity before response so invalidation already
+  committed while reading gives 404; use that final observation's active-demand flag. No locks or
+  claim that invalidation after the final read is excluded. Cache read already fences current
+  admission, and producer dispatch/publication guards are unchanged.
+- Use pure projection helper actually called by GET, receiving validated reads and one final
+  clock instant. Tests must not use a parallel fake projection or a constant success flag.
+  Never read producer table/worker credentials; no mutation, queue enqueue, provider call, file
+  read or demand renewal from GET. Immutable window from C2 config only.
+- Serialize exact §8.3 DTO, all required keys including nullable session/quote/reason:
+  schema_version1, membership_id, instrument_id, venue KRX, currency KRW, generation,
+  session {date,timezone Asia/Seoul,calendar_source kis,calendar_source_version
+  kis-chk-holiday-v1:schema-1,calendar_content_sha256 unprefixed64,window_contract_sha256 prefixed},
+  market_state/freshness/reason enums, quote {price,base_price,change_from_previous_day,
+  change_percent_from_previous_day decimal strings,direction,received_at,last_success_at,
+  quote_version decimal string}, next_poll_after_ms5000. No owner/generation_id/batch_id/producer/
+  private pins/provider_time/previous_close/EOD/snapshot/freeform fields. no-store on 200.
+- OpenAPI GET query/path, no requestBody/CSRF/idempotency, exact schemas required keys/additional
+  properties false/enum/nullability/decimal strings/quote_version string, 400/401/403/404/503.
+  Reuse accepted exact rawJSON i64 maximum helper for numeric generation; do not reintroduce
+  rounded bigint limits. No unrelated operation/schema drift.
+
+#### Worker brief: verification and report
+
+- Pure projection cases through production helper: all table rows; exact30s and >30s; 24h bounds;
+  future times, version0, incomplete/mismatched identity/session/evidence; typed failure preserves
+  last good vs older failure ignored; halted and no-demand do not rewrite age; before/at open and
+  before/at close, Special, bothClosed, disagreement, same-KST/future/prior-day window evidence,
+  rollover. Unit fixtures may inject typed records but are projection tests, not provider evidence.
+- Real-role production router/app-GUC harness over ONLY synthetic QA URL
+  postgres://postgres:lagrange@127.0.0.1:55438/postgres and own per-test DBs.
+  Seed immutable calendar/version/batch baseline with exact current DB KST date, using local
+  test-only seed helpers. Do not mutate append-only versions, disable triggers, fake DB clock
+  or edit existing demand tests. Fake API clock for projection is not fake database time.
+- Real HTTP matrix: defaultoff valid identity; missing window/calendar/disagreement; valid successful
+  quote decimal/string/exact DTO; no active demand with preserved last good; active pending; typed
+  failure retains last good; valid Closed; stale and API restart recalculates age; old session/
+  generation/hash not exposed; disable/new generation/mismatched instrument ->404; real Owner
+  vs Member/admin/anotherOwner/anonymous/expired session order, malformed input/unknown query.
+  No GET body/header mutation requirement. Existing POST/DELETE regression unchanged.
+- Populate demand/cache/producer and representative existing EOD/signal rows before 1/10/100 GETs.
+  Compare UPDATE-sensitive complete-row fingerprints for those rows plus membership/admission/
+  calendar/version/batch and queue rows, for success and 401/403/404. Use deterministic ordering.
+  Empty-table counts alone are not proof of unchanged pre-existing data. Query fingerprints with
+  test setup authority only; HTTP still uses app. Assert actual app role and producer42501.
+  Capture API helper/source call chain showing zero provider/token entrypoints; do not fabricate
+  provider counters or claim a fake transport was exercised if none is constructed.
+- Local helpers must clean up their own generated database on returned errors; bounded task/lock
+  helpers retain abort/rollback ownership. Avoid long sleeps; assert time boundaries in pure tests,
+  with real DB HTTP cases verifying integration/permissions and fresh timestamps.
+- Sequential jobs2 locked/offline DBthreads1: NEW HTTP cache target complete summaries; existing
+  http_owner_intraday_quotes5; http_owner_equity_v2_chart4; openapi_contract baseline15+new; lib
+  baseline+C2+new. Strict scoped clippy for lib/new/existing intraday/chart/OpenAPI targets, fmt/diff.
+  Existing npm openapi:check generation/typecheck, second clean output. Only existing dependencies;
+  temporary API node_modules symlink to coordinator node_modules allowed if absent, remove only
+  created link; no install/network/dependency/checker changes.
+- QA project lagrange-intraday-qa-20260908 and pinnedPG18.4tmpfs container retained. No Docker
+  lifecycle. Existing migrations run only in own disposable test DB. No operational DB, actual
+  provider/external network/accounts/orders/root/Next/browser/producer/KIS/collector/migration
+  changes/Cargo/Compose/ops/production/deploy/main merge/push/activation.
+- Commit owned files only. Return full commit/parent, files/line ranges, deviations/reasons,
+  exact commands/counts and case matrix, source/no-write evidence, unresolved/not verified
+  explicitly none if empty. Missing API capability or contradictory contract -> report, not invent.
+
+#### Coordinator gates
+
+1. C2 remains sole active writer/compiler. C3 brief is ready; launch only after accepted C2 source,
+   exact config interface binding, clean workspace and current profile/provider/QA checks.
+2. Review full C3 scope, response table and evidence; independent terra/high ACCEPT before merge.
+3. Integrate exact accepted source and relevant regressions, then advance to authorized WP6/WP7
+   without claiming live activation or overall completion early.
