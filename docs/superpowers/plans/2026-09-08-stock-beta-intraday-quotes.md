@@ -4388,3 +4388,10 @@ reviewer; no integration before Medium findings resolved. C and activation gates
   No Paseo run/send/daemon start/restart. Only verified ACCEPT permits exact B2+F1 integration then
   freeze C docs/diagrams/invocation; no redundant C3 IV. If remaining confirmed failure, bounded
   remediation with model-only escalation only upon observed repeat failure, not preemptively.
+
+- B2-F1-R active binding: reused reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 sol/high
+  auto-review, ops workspacewks_42028f6f939c65ac pinned79b0aab. Startup wait timeout includes NEW
+  direct read-only F1-R ACK, exact checkout/scope checks and actual plan read. Old B2 REJECT in
+  history is not a new verdict. Writer9ba07de6 idle clean; B2/F1 still unintegrated.
+  Replaced76b3b141 with heartbeat29d69d16. Send terminal12476 may remain waiting normally;
+  do not resend/interrupt. No acceptance or completion claimed.
