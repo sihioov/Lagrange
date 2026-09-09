@@ -51,7 +51,7 @@ ENTRY_KEYS = (
 DISPOSITIONS = ("REGULAR", "SPECIAL", "CLOSED")
 DATE_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 TIME_PATTERN = r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
-URL_PATTERN = r"^https://global\.krx\.co\.kr/[^\s]+$"
+URL_PATTERN = r"^https://global\.krx\.co\.kr/[^\s\x00-\x1f\x7f]+(?![\s\S])"
 UTC_DATETIME_PATTERN = (
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
     r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]"

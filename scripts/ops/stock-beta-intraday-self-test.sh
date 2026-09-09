@@ -74,6 +74,10 @@ elif mutation == "wrong_type":
     document["entries"] = {}
 elif mutation == "schema_open":
     document["additionalProperties"] = True
+elif mutation == "schema_old_url_pattern":
+    document["$defs"]["entry"]["properties"]["evidence_url"]["pattern"] = (
+        r"^https://global\.krx\.co\.kr/[^\s]+$"
+    )
 elif mutation == "schema_missing_closed":
     document["$defs"]["entry"]["allOf"] = [
         clause
@@ -107,9 +111,65 @@ path.write_text(raw.replace(needle, needle + needle, 1), encoding="utf-8")
 PY
 }
 
+run_url_pattern_tests() {
+  local pattern_file=$1
+  python3 - "$pattern_file" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise SystemExit("URL_PATTERN_DUPLICATE_SCHEMA_KEY")
+        result[key] = value
+    return result
+
+
+schema = json.loads(
+    pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"),
+    object_pairs_hook=unique_object,
+)
+pattern = schema["$defs"]["entry"]["properties"]["evidence_url"]["pattern"]
+prefix = "https://global.krx.co.kr/"
+path = "fixture"
+case_count = 0
+
+
+def check(label, value, expected):
+    global case_count
+    case_count += 1
+    actual = re.search(pattern, value) is not None
+    if actual is not expected:
+        raise SystemExit(f"URL_PATTERN_CASE_FAILED_{label}")
+
+
+# Deliberately use re.search, never fullmatch: this exercises the same
+# unanchored pattern semantics that exposed the old terminal-LF defect.
+check("valid", prefix + path, True)
+for code in list(range(32)) + [127]:
+    character = chr(code)
+    check(f"control_{code}_interior", prefix + "fi" + character + "xture", False)
+    check(f"control_{code}_suffix", prefix + path + character, False)
+check("trailing_lf", prefix + path + "\n", False)
+check("trailing_cr", prefix + path + "\r", False)
+
+if case_count != 69:
+    raise SystemExit("URL_PATTERN_CASE_COUNT_INVALID")
+print(case_count)
+PY
+}
+
 pass_count=0
 expected_failure_count=0
 actual_nonzero_count=0
+regex_case_count=$(run_url_pattern_tests "$root/$schema_rel") || die 'URL_PATTERN_TEST_FAILED'
+[ "$regex_case_count" -eq 69 ] || die "URL_PATTERN_COUNT_INVALID cases=$regex_case_count"
+printf 'STOCK_BETA_INTRADAY_SELF_TEST: regex_cases=%s regex_passed=%s\n' \
+  "$regex_case_count" "$regex_case_count"
 
 expect_pass() {
   local name=$1
@@ -193,6 +253,11 @@ copy_fixture "$fixture"
 rewrite_json "$fixture/$schema_rel" schema_open
 expect_failure schema-open-top-level "$fixture"
 
+fixture=$tmp/schema-old-url-pattern
+copy_fixture "$fixture"
+rewrite_json "$fixture/$schema_rel" schema_old_url_pattern
+expect_failure schema-old-weak-url-pattern "$fixture"
+
 fixture=$tmp/schema-missing-conditional
 copy_fixture "$fixture"
 rewrite_json "$fixture/$schema_rel" schema_missing_closed
@@ -209,10 +274,11 @@ rewrite_json "$fixture/$schema_rel" schema_bool_const
 expect_failure schema-boolean-const "$fixture"
 
 [ "$pass_count" -eq 1 ] || die "COUNT_MISMATCH passes=$pass_count expected=1"
-[ "$expected_failure_count" -eq 10 ] ||
-  die "COUNT_MISMATCH expected_failures=$expected_failure_count expected=10"
-[ "$actual_nonzero_count" -eq 10 ] ||
-  die "COUNT_MISMATCH actual_nonzero=$actual_nonzero_count expected=10"
+[ "$expected_failure_count" -eq 11 ] ||
+  die "COUNT_MISMATCH checker_mutations=$expected_failure_count expected=11"
+[ "$actual_nonzero_count" -eq 11 ] ||
+  die "COUNT_MISMATCH checker_nonzero=$actual_nonzero_count expected=11"
 
-printf 'STOCK_BETA_INTRADAY_SELF_TEST: PASS cases=%s expected_failures=%s actual_nonzero=%s\n' \
-  "$((pass_count + expected_failure_count))" "$expected_failure_count" "$actual_nonzero_count"
+printf 'STOCK_BETA_INTRADAY_SELF_TEST: PASS regex_cases=%s regex_passed=%s checker_mutations=%s checker_nonzero=%s total_cases=%s\n' \
+  "$regex_case_count" "$regex_case_count" "$expected_failure_count" "$actual_nonzero_count" \
+  "$((pass_count + expected_failure_count))"
