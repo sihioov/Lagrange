@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-1~5 및 WP-6 설정·운영 안내서 통합 완료; WP6-C2 다이어그램 진행 중; WP-7 전체 리뷰·WP-8 최종 통합 QA 미완료; 운영 활성화 미실행
+상태: WP-1~5 및 WP-6 설정·운영 안내서 통합 완료; 다이어그램 소스 검토·WP-7 SOURCE_ACCEPT 완료; PNG·전체 수락·WP-8 통합 QA 미완료; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -4661,3 +4661,23 @@ pull/install/QA change; answer pending. Proceed C2a independently, not blocked o
   coverage limits, not final acceptance. WP6 completion / WP8 / release gates are NOT waived.
   This is an early independent read-only review, not a new implementation plan or completed WP7.
   Keep one active reviewer; no new workspace or heartbeat.
+
+### WP-7 SOURCE_ACCEPT / remaining execution gates (2026-09-10)
+
+- Reviewer d3b70340-82c4-4d80-85d9-94184524fe6e (Codex sol/high) completed the existing
+  cross-layer source review in this workspace. Coordinator recovered the full report and found
+  its initial Medium claim strengthened the accepted F1 concurrency contract; a separate claim
+  that intraday writes Raw was also incorrect. Bounded same-reviewer reconciliation withdrew the
+  finding (not downgraded) against the exact F1/F1b brief and corrected Raw to fenced DB-cache
+  publication. Coordinator independently checked those sources: SOURCE_ACCEPT, no code fix.
+  See 2026-09-08-stock-beta-intraday-quotes-review.md for evidence and explicit coverage limits.
+- Direct CLI send returned completed; final wait JSON confirmed idle. No heartbeat or additional
+  workspace was created, and no source tests were rerun. Completed reviewer is to be archived.
+- Diagram source hashes remain as recorded above. Both PUML files stay uncommitted for the
+  required local PNG pair; java/plantuml/dot and checked standard local renderer locations absent.
+  Docker inspection/render permission requested earlier is still unanswered; no Docker invoked.
+- Root/Web/API npm dependencies and installed Next docs are absent. Existing no-install/no-network/
+  no-browser/build scope has not been silently broadened. WP8 execution needs a bounded local
+  toolchain/fixture-QA allowance and actual dependency capability, with no provider/production use.
+  These are genuine remaining execution gates, not unfinished source review or another code plan.
+  Do not claim overall WP6/WP7/WP8 completion, activation, or verified PNG/Compose/browser tests.
