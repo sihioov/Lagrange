@@ -3995,3 +3995,85 @@ No Paseo run/send/daemon start/restart.
   direct read-only ACK, checkout checks and actual plan reads. Writer50c5f35c is IDLE clean.
   Replaced f6472491 with heartbeat88696a5f. Send terminal21345 may remain waiting normally,
   do not resend/interrupt. No integration or acceptance yet.
+
+### WP6-B1-F1-R REJECT / B1-F2 relative-artifact exact brief (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+- Reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 is IDLE REJECT; full final result/logs recovered.
+  Medium remaining: validator keeps LAGRANGE_ARTIFACTS_DIR verbatim and skips nonabsolute protected
+  operands at line456. Actual private range-raw fixture with ../artifact-store and an equal absolute
+  runtime-state root passes0 instead of invalid1. Coordinator inspected source and confirms skip.
+  Serving/release reject relative artifact configuration already; defect is partial-scope isolation.
+- Low: permanent sibling positives don't use a similarly named protected sibling. Independent
+  data/raw-sibling actual-validator probe passed0, so component-boundary production behavior is
+  correct; add the permanent case with the repair, no new path algorithm needed.
+- Previous High/Medium, missing-root exit2, malformed off hash and regular lock/state per-case
+  snapshots independently confirmed fixed. Shape-only nonregular/symlink snapshots and deliberate
+  parent-symlink no-follow accepted. State-hardlink supplies valid owner/mode independently, so
+  don't reopen lock-hardlink fixture metadata issue. No deviations in this review.
+- Complete independent checks: syntax/static, regex69, A baseline+11 negative, B1 mutations3,
+  validator68 (9 positives/59 expected failures), provision/idempotence and seven offline regressions
+  all exit0. Scope4scripts +306/-83, clean8f1db6b; .env/artifact/schema unchanged. uutils0.8.0 and
+  labelled socket simulation limitations retained. B1+F1 still UNINTEGRATED.
+
+| Package | Complexity | Basis | Confidence | Escalation signals |
+|---|---|---|---|---|
+| WP6-B1-F2 | intermediate | Actual reproduced missing operand resolution; exact local change and fixtures | high | Same focused fix fails review again, unexpected path-base ambiguity or scope need |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP6-B1-F2 | 2 repair | intermediate | Include relative artifact root in isolation comparison | Validator plus focused self-test ONLY | B1-F1-R evidence | NEW Codex terra/max auto-review, model-only one tier up after observed repeat path-safety failure | Scoped commit and pre/post evidence | Focused actual-script cases plus seven offline regressions |
+
+Target /data/worktrees/3puw275b/stock-beta-intraday-ops, workspace wks_42028f6f939c65ac,
+branch work/stock-beta-intraday-ops-20260909, clean base8f1db6b95f7afb28fa5116679e0ffca31a72ff0d.
+Original writer50c5f35c and reviewer5f6d978f are idle. This new worker is sole mutator. Keep max
+effort; raise ONLY model luna->terra, not effort. Current profile/capability checked; target AGENTS
+read and no scripts nested instructions found (.codex/.agents absent). Read FULL this brief,
+prior F1/B1 briefs and full contract at coordinator, applicable target instructions only.
+
+Own ONLY scripts/ops/validate-production-config.sh and scripts/ops/stock-beta-intraday-self-test.sh.
+No new files. ALL provisioner, static checker, dotenv lib, env example, schema/artifact, Compose,
+other fixtures, Rust/runtime/API/Web, docs/diagrams byte unchanged. Don't refactor earlier fixes.
+
+1. Before production edits, reproduce using the SAME actual validator and real private fake-root
+   filesystem: env file under fixture/config, relative artifact ../artifact-store, canonical absolute
+   coordination root equal to fixture/artifact-store, shared_required/gen17/off and valid metadata.
+   range-raw should be invalid1 but base passes0. Record complete actual exits, no fake checker.
+2. Fix only coordination protected-operand construction/comparison. Ignore empty optional artifact
+   value; do NOT ignore nonempty relative protected operands. Resolve them with existing
+   resolve_config_path (env-file-directory base, not process cwd), then realpath -m, and compare
+   canonical absolute identities using existing component-boundary comparison. This includes exact,
+   ancestor and descendant overlap. Keep existing source/runtime paths and absolute operands working.
+   Do not mutate global artifacts_dir or globally change path resolution/requiredness. Keep current
+   serving/release rejection of relative artifact paths and partial-scope compatibility for a
+   nonoverlapping relative artifact path. Do not create a new fallback, require missing artifact
+   value in old partial configs, or inspect content. Legacy/off no explicit root remains unchanged.
+3. Permanent actual-script fixtures: relative artifact equality and both ancestry directions invalid1;
+   distinct nonoverlap relative artifact positive0 with valid shared metadata; empty/absent artifact
+   still allowed in old partial fixture; absolute artifact overlap still rejected. Include dot/repeated
+   separator equivalent protected spelling and invoke from a different cwd than env-file directory
+   to prove correct base. Keep all fixture setup isolated and restore baseline per case. Use current
+   seven-argument helper without discarded extras; adding an optional test-fixture variable is fine.
+   Replace/add similarly named protected sibling positives using data/raw-sibling for validator and
+   provisioner dry-run via existing helper; retain existing protected data/raw rejection. Do not edit
+   provision source. No blanket rejection of relative artifacts or string-prefix false positives.
+4. Preserve all previous regex69, A baseline+11 negative, B1 mutations3, validator68 cases and
+   strengthened metadata snapshots/provision idempotence. Report updated counts (not assumed).
+   Syntax both files; focused static/self-test; all seven existing offline regressions from B1 brief
+   after guard inspection. Those use private fake-root/fakeDocker only, not real builds. Complete
+   commands/counts/exits; never skip missing capability as success. Diff/scope/clean checks; all
+   other files byte unchanged to base. No npm/dependency install or GNU branding claim.
+
+No actual root/sudo/credentials/accounts/orders/provider/network/Docker/Compose/DB/compiler/build/
+Cargo/npm/install/opt/hostenvclock/liveops/activation/deploy/mainmerge/push/siblingsearch. Own mktemp
+and subprocess fake-root fixtures ONLY. QA project retained untouched. Accepted previous evidence
+limits (uutils0.8.0/socket simulation/no runtime-state parser tests) aren't reopened. Calendar36h and
+same-KST window rules/EOD unchanged. B2 compatibility decision and C remain separate, not launched.
+Commit only the two scoped files after checks; report exact files/lines, pre/post repros and complete
+checks/counts/exits, deviations/reasons, unresolved/follow-up and notverified explicitly none when
+empty. If scope or requirements conflict, report before expanding, don't invent missing rules.
+Coordinator reads full delta then reuses sol/high reviewer. No integration until all Medium resolved.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No Paseo run/send/daemon start/restart.
