@@ -3950,3 +3950,42 @@ No Paseo run/send/daemon start/restart.
   actual full brief/spec reads; no implementation/test completion claimed. Reviewer5f6d978f idle.
   Send terminal58992 may remain waiting normally; do not resend/interrupt. Replaced heartbeat
   a779d37e with f6472491 to follow writer; no integration. Next bounded review remains sol/high.
+
+### WP6-B1-F1 completion / acceptance re-review (2026-09-09)
+
+- Writer50c5f35c-d28f-4c75-bd62-31cc99042cd0 is IDLE clean at
+  8f1db6b95f7afb28fa5116679e0ffca31a72ff0d, parent a661bfc5ab3bb0c02ac0652c2ac22fe550bfe147.
+  Exact four scoped scripts +306/-83; coordinator recovered full report/logs and read full delta.
+  B1 and F1 remain UNINTEGRATED. No .env/schema/artifact change reported.
+- Writer reports actual pre-fix overlap/broad-root acceptance and empty-lock rejection; corrected
+  post-repro exits: relative runtime-secret provision1, /var/ provision1, relative source validator1,
+  empty lock0, /var/ validator1, //var// validator1. First post-repro fixture setup/capability attempt
+  failed, then corrected; not a production defect claim. Installed stat uutils0.8.0, no GNU claim.
+  Focused syntax/static/self-test PASS: regex69, A baseline+11 negatives, B1 mutations3,
+  validator68 (9 positive/59 expected failures), provision/idempotence; seven offline regressions
+  PASS reported. Socket remains explicitly narrow simulation, no actual host operations.
+- B1-F1-R: reuse IDLE reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 Codex sol/high auto-review,
+  same ops workspace/source. Intermediate/high-confidence bounded conclusion-only task. Own NO
+  files/commits/docs. Read full F1/B1 briefs and full spec, inspect actual four-file delta. Verify
+  previous High/Medium and related Low findings, not broader Compose/runtime redesign.
+- Independently verify new-root canonical spelling rejection before filesystem resolution;
+  correct relative secret bases/canonical identities/overlap component boundaries; no symlink
+  normalization bypass; empty/nonempty regular mode-bit classification plus exact metadata;
+  missing root exit2 and malformed nonempty off hash; actual per-case regular lock/state bytes/inodes.
+  Assess proportionately remaining source-complement/coverage limitations: validator skips nonabsolute
+  forbidden operands (artifact value may be relative outside serving/release); canonical-sibling
+  fixture is not a similarly named protected-tree sibling; symlink/nonregular snapshots check shape
+  only and parent-symlink snapshots deliberately avoid following it; lock-hardlink fixture may carry
+  other invalid metadata. Confirm/refute relevance against actual supported configuration and frozen
+  F1 requirements; no predetermined rejection, no invented bug/reproduction.
+- Run complete syntax/static/focused self-test and all seven offline regressions from B1 brief.
+  Inspect guards first. Private mktemp fake-root/subprocess fixtures only; bounded throwaway repro
+  permitted, no tracked edits. Missing capabilities explicit, no skips/installed dependency fallback.
+  Verify scope/status and .env/artifact/schema byte equality to parent. Report ACCEPT/REJECT with
+  severity/fileline/repro/impact, all actual commands/counts/exits, deviations/limitations/unresolved/
+  notverified explicitly none when empty. No actual root/sudo/accounts/credentials/network/provider/
+  Docker/Compose/DB/compiler/build/Cargo/npm/install/opt/hostenvclock/activation/deploy/mainmerge/push
+  or sibling searches. QA remains untouched retained. Accepted A/runtime semantic limitations stay.
+  Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+  No Paseo run/send/daemon start/restart. Coordinator decides acceptance; no integration before
+  High/Medium resolved; then exact B1+F1 integration and freeze B2 wiring without redundant C3 IV.
