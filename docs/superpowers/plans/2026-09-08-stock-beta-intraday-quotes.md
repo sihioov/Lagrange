@@ -3386,3 +3386,59 @@ Native subagents: prohibited for worker packages
   current coordinator contract and serial retained-QA work. Only this writer owns compiler/QA.
   Reviewer1c3827ae is IDLE REJECT, old writer39da45eb idle; no redirect or duplicate assignment.
   Replace re-review heartbeat11694fdf with F2 implementation heartbeat.
+
+### WP4-C3-F2 completion / bounded acceptance re-review (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+- Writer e3fed58b is IDLE, clean75c764aa86a56790e410281f2a6def75eb9b0adf,
+  parent8326a6d9694470d15494334ddacae4b79ee29fab; UNINTEGRATED. Exactly two test scopes
+  +287/-157. Coordinator read FULL two-file delta and confirmed no production diff hunks.
+- Reports lib103/cacheHTTP4/mutation5/chart4/OpenAPI16 (132 total), strict clippy/fmt/diff pass.
+  Before-fix synthetic08:00 helper demonstration was a passing counterexample assertion showing
+  age>30s, not a failed product test or altered DB clock; replaced by retained shared-planner test.
+  Independently verify actual runtime counts and no skips; npm remains unverified/unchanged.
+- Actual planner: captured DB instant, API initial min(DB,23:59:20KST), receipt/attempt/failure
+  equal initial, +31s second instant, SPECIAL00:00:00-23:59:59, synthetic evidence midnight.
+  Same helper and assertions used by real QA fixtures and seven pure date/time inputs. Existing
+  immutable calendar rows are initially seeded from captured DB time, not modified afterward.
+- Fresh baseline for11 named single-field mismatch cases, explicit initial OPEN/RECENT/null,
+  required Harness expectation in both wrappers, malformed Member403, restored valid window hash
+  and visible old-generation quote before generation2, unchanged cache/fingerprints across
+  API+31s and restart are present in source. No preemptive acceptance; verify independently.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C3-F2-R | intermediate | Exact test-only delta and previously identified acceptance defects | high | Concrete remaining defect returns bounded follow-up; do not reopen accepted production or unrelated limits |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C3-F2-R | 1 | intermediate | Verify deterministic/non-skipping/nonconfounded GET evidence | read-only two-file delta and necessary production anchors; no edits/commits | idle clean75c764aa | reuse Codex sol/high auto-review reviewer1c3827ae | ACCEPT/REJECT, prior finding disposition, proportional limitations | independent103/4/5/4/16 complete summaries, strict scoped clippy/fmt |
+
+- Target /data/worktrees/3puw275b/stock-beta-intraday-api workspacewks_3249856abbf32750.
+  Read current coordinator absolute frozen C3 table, F2 brief and fullspec; inspect8326a6d..75c764aa.
+  Writer idle; reviewer sole compiler/QA owner. Complete directly without delegation or mutation.
+- Verify production byte-equivalence and unchanged prior fixes; all-day planner validity, sameKST
+  receipt/evidence/nonfuture to actual capture and API, late-day cap plus31s insidewindow. Assess
+  the 00:00:01 and UTC-equivalent input repetition, exact-midnight/source complement and possible
+  actual database date rollover during a scenario proportionately, not an automatic new scope.
+- Verify both wrappers fail on absentURL, retain teardown control flow; fresh baseline isolates
+  all11 fields. Verify old hash truly restored plus positive GET before generation switch; same
+  cache/version/success and13 fullrows across recent->advanceAPI/restart->stale. Later reset API
+  clock isolates following fixture cases; do not confuse it with a production monotonicity claim.
+- Independently execute serial jobs2 locked/offline lib and cacheHTTP/mutationHTTP/chart/OpenAPI,
+  DBthreads1 with exact syntheticURL postgres://postgres:lagrange@127.0.0.1:55438/postgres.
+  Strict clippy lib plus four targets -- -D warnings, fmtallcheck/diffcheck. Recover all final
+  summaries/process exits, actual two QA DB scenarios (not zero/skip). No npm absentdependencies.
+- No source/docs/commits/new repro patches; no provider/token/DBclock/hostclock/env/opt operations.
+  Retained QA own per-test DBs only, project lagrange-intraday-qa-20260908/container
+  lagrange-intraday-qa-20260908-qa-db-1 pinnedPG18.4tmpfs127.0.0.1:55438; no Docker lifecycle.
+  No operationalDB/externalnetwork/accounts/orders/root/Next/browser/migration/Cargo/Compose/
+  KIS/collector/runner/Web/ops/production/deploy/mainmerge/push/activation. Precise identical
+  EPERM escalation only, NEVER Paseo daemon commands or dependencies links/install.
+- Report verdict/severity/fileline, all prior finding resolutions, actual commands/counts,
+  covered/missing matrix and production/no-write evidence, deviations, unresolved and notverified
+  explicit none if empty. Accepted EOD3/adminRoleabsence/cleanupcapture-only/npm limits remain.
+- Coordinator gate: inspect independent evidence, bounded follow-up only if concrete unresolved
+  Medium; otherwise accept exact C3 chain and advance authorized next package promptly.
