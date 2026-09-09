@@ -3577,3 +3577,43 @@ broad mapping or idle-transition delay. Keep retained QA untouched for later aut
   Current profiles/capability inspected. Startup wait JSON timeout contained actual read-only
   review acknowledgment and instruction read. Writerc15df593 is idle clean, not active.
   Replace heartbeatb506fc2e with reviewer binding; no implementation integrated before ACCEPT.
+
+### WP6-A-R REJECT / F1 bounded URL-schema remediation (2026-09-09)
+
+- Reviewer3e00a43f-314e-4d06-a58f-b58401a6a86e is IDLE REJECT: one Medium URL pattern
+  permits NUL/DEL whereas collector parser rejects all ASCII controls. Independently verified
+  syntax/static/11 self-test cases (baseline0,10 mutations1), exact four files/clean1bfe15e3.
+  Coordinator recovered full verdict and inspected schema75/checker54/parser67. A direct
+  stdlib re.search of the exact committed pattern confirmed NUL, DEL and trailing LF accepted
+  while runtime control predicate rejects each; dollar anchor admits pre-final-newline matches.
+  This is bounded/fail-closed, not provider activation. Source1bfe15e3 remains UNINTEGRATED.
+- UTC Z-only representation is an accepted narrower operational form; format annotation versus
+  engine behavior remains an explicit limitation. No generic schema engine or unrelated regex
+  audit required. Existing empty artifact/sorting/interval/hash/same-KST runtime limits unchanged.
+- WP6-A-F1 is intermediate/high confidence, exact local remediation. Reuse original IDLE writer
+  c15df593-2419-4942-9799-402e9d160d9e Codex luna/max auto-review (first rejection, keep model).
+  Cwd /data/worktrees/3puw275b/stock-beta-intraday-ops workspace wks_42028f6f939c65ac,
+  base1bfe15e3ab286fbff204c5f0b58d519b871850c5. Own ONLY schema JSON, static checker and self-test
+  from WP6-A; data JSON must remain BYTE-identical SHA256
+  f53e05f951ad6e8bf216cc62e0302b9171c886fe9a9b8303bbbdbf55b738f0d0. No new files.
+- Reproduce the reviewed NUL/DEL acceptance before changing the URL rule. Update only the schema
+  evidence_url pattern and mirrored checker constant to reject ALL ASCII controls0..31/127,
+  including trailing LF/CR even with JSON-Schema pattern search semantics. Retain existing HTTPS
+  host and stricter whitespace/nonempty-path policy; do not widen it to everything runtime accepts.
+  Use ECMAScript-compatible regex syntax; do not hide an end-anchor bug using fullmatch-only tests.
+- Add focused self-test evidence evaluating the pattern extracted from the actual schema via
+  stdlib search semantics: valid ordinary URL positive, each ASCII control0..31/127 in URL path
+  interior and suffix rejected, explicit trailing LF/CR cases. Add isolated old-weakened-pattern
+  schema mutation invoking the SAME static checker with actual nonzero exit, preserving prior10
+  negative cases and fresh baseline. Report regex-case and checker-mutation counts separately.
+  No claim of full JSON-Schema-engine validation; no npm/jsonschema installation or dependency.
+- Verify bash -n both scripts, actual static/self-test complete counts/exits, JSON parse,
+  exact three-file diff, empty-artifact hash unchanged and clean scoped commit. Do not modify
+  other schema fields/checker rules, Rust/collector/runtime/Compose/env/provision/CI/docs/diagrams.
+  No network/provider/credentials/accounts/orders/DB/Docker/build/compiler/Cargo/npm/root/opt/
+  hostenv or clock mutation/production/activation/deploy/main merge/push or siblingworktree search.
+- Report files/lines, pre/post repro, commands/counts, deviations, unresolved/followup and
+  notverified explicit none if empty. Scope gap: report before expanding. Do not use native
+  subagent, Task, Agent, team, or delegation features. Complete this assignment directly and
+  report if it needs further decomposition. No Paseo run/send/daemon commands. Reviewer remains
+  idle for bounded re-review after completion; integration only after Medium resolved/ACCEPT.
