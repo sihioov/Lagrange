@@ -4395,3 +4395,70 @@ reviewer; no integration before Medium findings resolved. C and activation gates
   history is not a new verdict. Writer9ba07de6 idle clean; B2/F1 still unintegrated.
   Replaced76b3b141 with heartbeat29d69d16. Send terminal12476 may remain waiting normally;
   do not resend/interrupt. No acceptance or completion claimed.
+
+### WP6-B2-F1-R ACCEPT / integration / C1 frozen brief (2026-09-09)
+
+- Reviewer5f6d978f is IDLE ACCEPT, no findings. Full result/logs recovered. Independent proper
+  service insertions and balanced identical duplicate reject with intended exact markers;
+  syntax/static/strict JSON, regex69/A11/overlay24/inclusive35/total36/B1mut3/validator77
+  (13 positive64 expected failure), plus seven guarded offline regressions all complete PASS.
+  Prior two Mediums and counter Low resolved. All other bytes unchanged, clean source79b0aab.
+- Integrated exact aa0b414->323dfff and79b0aab->f421391. Coordinator clean; source equality is
+  empty diff across crates/apps/data-pipelines/configs/scripts/deploy. No redundant test IV.
+  Compose engine merge/interpolation and installed-release overlay selection remain UNVERIFIED/
+  separately gated, not activated. No current production-health claim.
+- Continuity diagnosis: one-second running checks followed by five-minute heartbeat-only wakeups
+  introduced coordinator transition latency; a worker could finish while its stale active binding
+  remained until the next wakeup. This is distinct from worker execution time. No pending permission
+  was found in the inspected reviewer. Completion-event delivery cause was not established and no
+  Paseo settings/daemon changes were made. Do not re-wait already recovered terminal results.
+
+| Package | Classification / confidence | Execution / scope |
+| --- | --- | --- |
+| WP6-C1 | intermediate / high, exact implementation | Paseo CLI Codex luna/max auto-review; runbook plus minimal static invocation |
+| WP6-C2 | separate, not launched | evidence-bound diagrams and local renders; freeze after renderer capability/authority check |
+
+C1 uses ops workspacewks_42028f6f939c65ac at clean79b0aab0e4a6f72d7c47acc203cda7b7c05d6fb5.
+Own ONLY new docs/runbooks/stock-beta-intraday-quotes.md and existing scripts/ops/static-check.sh.
+All other files BYTE UNCHANGED, no diagrams/PNGs yet. Read this complete brief and full contract at
+coordinator absolute paths, root instructions, and cited actual source in your own checkout.
+
+1. Write a concise operator runbook in repository style with current relative source links/anchors.
+   Distinguish fixture/source acceptance from live activation. Document private owner-only periodic
+   REST quotes, cache-only GET, no demand as a producer stop rather than a cache-visibility rejection,
+   RECENT <=30s / STALE >30s / logical usable <=24h, separate EOD semantics and no write/provider GET.
+   Bind exact paths and observable reasons to actual API source/frozen C3 table, not inferred policy.
+2. Explain default-off config, accepted strict modes/generation/hash and protected root ownership,
+   permissions, overlap checks and no unsafe repair. List the exact five credentialed services sharing
+   the same bind and API mode/hash plus read-only window ONLY. Never print token/state contents.
+   Explain missing/invalid proofs fail closed; calendar36h and same-KST nonfuture window evidence are
+   separate rules. Empty committed artifact is intentional; no invented dates/restamped evidence.
+3. Explicitly describe compose.intraday.yml as non-auto-loaded preparation only, base remains
+   legacy-OFF compatible. Existing immutable-release wrappers DO NOT select this overlay. No manual
+   compose-up/alternate installer recipe. Before any activation: separate owner approval, actual
+   engine merge/interpolation verification, approved installed-release/all-reader wiring, all-reader
+   drain and mount/generation consistency, exact date evidence/hash, migration/recovery/entitlement/
+   forbidden-path checks, counters and rollback review. Describe rotation/off rollback as gated
+   procedure requirements; preserve coordination ledger and never advise deleting state to reset
+   quota. Do not execute or imply these gates passed. Preserve 5-second/5000-attempt bounds and
+   20-consumer/5-identity/30s lease/15s renewal semantics from actual contract.
+4. Add ONE fail-propagating invocation of stock-beta-intraday-static-check.sh to global
+   scripts/ops/static-check.sh before its success marker, using existing root/ops variables/style.
+   Add its executable/syntax guard to the existing script list if needed, no unrelated refactor.
+   Do not nest the full expensive Stock self-test inside the top-level checker. Document the two
+   direct offline commands (static and self-test), their purpose and accurate evidence limitations.
+5. Validation: inspect top-level checker and its invoked fixture guards first; bash -n changed shell,
+   run actual Stock static and actual top-level static with complete exits, verify runbook links and
+   factual claims against source, diffcheck/exact two-file scope. No full seven-suite or Rust/API IV
+   repeat solely for this documentation/invocation package. If an existing failure occurs, report
+   bounded source evidence, do not edit adjacent harnesses. Commit only two owned files, clean tree.
+   Report file/line ranges, deviations/reasons, complete commands/exits, unresolved/follow-up and
+   notverified explicitly none when empty. Render/engine/npm regeneration limitations stay explicit.
+
+No actual Docker/Compose/DB/root/sudo/provider/network/credentials/accounts/orders/opt/hostenvclock/
+Rust/compiler/Cargo/build/npm/install/liveops/activation/deploy/mainmerge/push/siblingsearch. Own
+mktemp/subprocess fixture operations only after guard inspection. Retained QA untouched. Do not
+edit plan/spec/release wiring/other ops files; report scope conflict before expanding or inventing.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No Paseo run/send/daemon start/restart. Coordinator reviews full delta, then bounded sol/high review.
+C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain separate packages.
