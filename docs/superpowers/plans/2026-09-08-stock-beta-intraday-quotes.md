@@ -2974,3 +2974,34 @@ Native subagents: prohibited for worker packages
 - C2-R reviewer `8cc81e83-0baf-45f5-8c40-511ca67546f5` (Codex terra/high,
   auto-review) launched read-only at21ebf1ea. Current profile notes/provider checked;
   only reviewer owns compiler slot. C2 writer and all older workers idle.
+
+### WP4-C2 ACCEPT / C3 launch binding (2026-09-09)
+
+- C2-R IDLE ACCEPT, no severity findings. Independent complete library94 and paper-runner5,
+  HTTP target no-run, strict3clippy/fmt/diff passed. Coordinator recovered report/logs and accepts
+  exact source previously inspected in full. Recorded coverage limits are non-blocking, not another
+  fix cycle: missing-hash direct early return, shared NotFound fixture, source-inspected read bound,
+  direct-contract state_at test, reader-count rather than hash-get instrumentation.
+- Source21ebf1ea1887d07020da852d88d59cd94e030a76 integrated as864301c (four files +447/-1).
+  Coordinator verifies empty crates/apps/data-pipelines source diff and clean worktree. No repeated
+  C1 regression or mapping package. C3's own lib/HTTP regressions cover accepted configuration.
+- Launch C3 from isolated API source21ebf1ea1887d07020da852d88d59cd94e030a76, identical integrated
+  source. Existing C3 frozen table/brief above is the exact execution contract. Configuration binding:
+  ApiConfig.owner_intraday_quotes, ApiConfig.intraday_now; state::OwnerIntradayQuoteReadConfig
+  Disabled or OwnerOnly { window: Option<Arc<collectors::intraday_quotes::IntradaySessionWindowContract>> }.
+  C2 configuration/clock implementation is read-only to C3; only the authorized common harness
+  restart wrapper may configure those fields for tests. Baseline API lib94, OpenAPI15/87 operations.
+- Exact Rust paths in C3 brief are under crates/api-server: src/http/{owner_intraday_quotes.rs,mod.rs},
+  src/repos/owner_intraday_quotes.rs, src/contract.rs, tests/openapi_contract.rs,
+  new tests/http_owner_intraday_quote_cache.rs, optional new tests/intraday_quote_cache_support/mod.rs,
+  and tests/common/mod.rs restart wrapper ONLY. Three OpenAPI artifacts under apps/api-server as
+  already listed. No mutation changes or unlisted files; report dependency gap before expanding.
+- Current profiles/provider checked for NEW luna/max auto-review worker. Exact QA read-only inspect
+  confirmed lagrange-intraday-qa-20260908-qa-db-1 running/healthy, pinnedPG18.4 image, tmpfs and only
+  127.0.0.1:55438; retains own-test-DB authority, no worker Docker lifecycle. Only C3 compiler slot.
+  C2 writer/reviewer and all older workers are idle. Independent C3-R remains mandatory before
+  integration; no live activation or overall API completion claim.
+
+- C3 worker `0eabccf8-820f-4a6e-bbd0-da7503953275` (Codex luna/max, auto-review)
+  launched via CLI in isolated API workspace at21ebf1ea. Only C3 owns its exact scoped files and
+  sequential compiler/QA slot. Completed C2 reviewer/writer are idle; monitor replaced for C3.
