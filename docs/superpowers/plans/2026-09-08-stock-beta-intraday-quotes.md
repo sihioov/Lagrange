@@ -3989,3 +3989,9 @@ No Paseo run/send/daemon start/restart.
   Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
   No Paseo run/send/daemon start/restart. Coordinator decides acceptance; no integration before
   High/Medium resolved; then exact B1+F1 integration and freeze B2 wiring without redundant C3 IV.
+
+- B1-F1-R active binding: reused reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 sol/high
+  auto-review, ops workspace wks_42028f6f939c65ac, pinned8f1db6b. Startup wait timeout includes
+  direct read-only ACK, checkout checks and actual plan reads. Writer50c5f35c is IDLE clean.
+  Replaced f6472491 with heartbeat88696a5f. Send terminal21345 may remain waiting normally,
+  do not resend/interrupt. No integration or acceptance yet.
