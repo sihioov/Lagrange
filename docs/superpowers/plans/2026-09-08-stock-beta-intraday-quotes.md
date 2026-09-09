@@ -1959,3 +1959,8 @@ Native subagents: prohibited for worker packages
 2. 전체 delta/HTTP 실제 증거와 독립 WP4-B-R 수락 후 통합한다. 더 넓은 변경 필요는 먼저 판단.
 3. 후속 cache GET/config/freshness package brief를 별도로 확정한다. 실제 수집은 계속 off,
    전체 API/운영 활성화 완료를 주장하지 않는다.
+
+- WP4-B 작업자 `697d9508-22a6-46ce-a41a-6832a10612d8` (Codex luna/max, auto-review)를
+  API workspace `wks_3249856abbf32750`, clean `7147a327`에서 시작했다. coordinator
+  `2796470`과 source가 동일함을 확인했다. 최신 brief는 coordinator plan `765134f`를 읽도록
+  지정했다. WP4-A writer/reviewer는 idle이며 새 worker만 compiler/해당 파일을 사용한다.
