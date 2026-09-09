@@ -208,11 +208,18 @@ elif mutation == "api-kis-environment":
 elif mutation == "api-shared-mount":
     services["api-server"]["volumes"].append(services["research-worker"]["volumes"][0])
 elif mutation == "web-override":
-    services["research-worker"]["environment"]["WEB_PORT"] = "8080"
+    if "web" in services:
+        raise ValueError("web fixture service already exists")
+    services["web"] = {"environment": {}, "volumes": []}
+    if "web" not in services:
+        raise ValueError("web fixture service was not inserted")
 elif mutation == "materializer-override":
-    services["research-worker"]["environment"]["OWNER_INTRADAY_QUOTES_MATERIALIZER"] = (
-        "fixture"
-    )
+    service_name = "research-stock-price-beta-materialize"
+    if service_name in services:
+        raise ValueError("materializer fixture service already exists")
+    services[service_name] = {"environment": {}, "volumes": []}
+    if service_name not in services:
+        raise ValueError("materializer fixture service was not inserted")
 elif mutation == "runner-window-absent":
     del services["owner-equity-v2-runner"]["volumes"][1]
 elif mutation == "api-window-writable":
@@ -241,16 +248,73 @@ PY
 duplicate_overlay_key() {
   local path=$1
   python3 - "$path" <<'PY'
+import json
 import pathlib
 import sys
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate baseline key")
+        result[key] = value
+    return result
+
+
+def render_property(name, value):
+    encoded = json.dumps(value, indent=2, ensure_ascii=False).splitlines()
+    return [f"    {json.dumps(name)}: {encoded[0]}"] + [
+        f"    {line}" for line in encoded[1:]
+    ]
+
+
 path = pathlib.Path(sys.argv[1])
-raw = path.read_text(encoding="utf-8")
-needle = '    "api-server": {\n'
-if raw.count(needle) != 1:
+baseline = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+ordered_services = []
+for name, value in baseline["services"].items():
+    ordered_services.append((name, value))
+    if name == "api-server":
+        ordered_services.append((name, value))
+
+if sum(name == "api-server" for name, _ in ordered_services) != 2:
     raise SystemExit("fixture duplicate overlay target is not unique")
-path.write_text(raw.replace(needle, needle + needle, 1), encoding="utf-8")
+
+lines = ["{", '  "services": {']
+for index, (name, value) in enumerate(ordered_services):
+    rendered = render_property(name, value)
+    if index + 1 != len(ordered_services):
+        rendered[-1] += ","
+    lines.extend(rendered)
+lines.extend(["  }", "}"])
+raw = "\n".join(lines) + "\n"
+
+# Ordinary parsing must succeed and retain the baseline value (the duplicate
+# values are identical, so the standard last-value behavior is equivalent).
+if json.loads(raw) != baseline:
+    raise SystemExit("fixture duplicate overlay baseline mismatch")
+
+captured_objects = []
+
+
+def capture_pairs(pairs):
+    captured_objects.append(pairs)
+    return dict(pairs)
+
+
+json.loads(raw, object_pairs_hook=capture_pairs)
+service_pairs = [
+    pairs
+    for pairs in captured_objects
+    if sum(key == "api-server" for key, _ in pairs) == 2
+]
+if len(service_pairs) != 1:
+    raise SystemExit("fixture duplicate overlay pair capture mismatch")
+api_values = [value for key, value in service_pairs[0] if key == "api-server"]
+if len(api_values) != 2 or any(value != baseline["services"]["api-server"] for value in api_values):
+    raise SystemExit("fixture duplicate overlay values mismatch")
+
+path.write_text(raw, encoding="utf-8")
 PY
 }
 
@@ -336,6 +400,7 @@ expect_pass() {
 expect_failure() {
   local name=$1
   local fixture=$2
+  local expected_marker=${3:-}
   local output status
   if output=$(bash "$fixture/$static_rel" 2>&1); then
     status=0
@@ -346,8 +411,13 @@ expect_failure() {
     printf '%s\n' "$output" >&2
     die "CASE_FAILED name=$name exit=$status expected=nonzero"
   }
-  grep -Fq 'STOCK_BETA_INTRADAY_STATIC:' <<<"$output" ||
-    die "CASE_UNTYPED_FAILURE name=$name"
+  if [ -n "$expected_marker" ]; then
+    grep -Fqx -- "$expected_marker" <<<"$output" ||
+      die "CASE_MARKER_MISMATCH name=$name expected=$expected_marker"
+  else
+    grep -Fq 'STOCK_BETA_INTRADAY_STATIC:' <<<"$output" ||
+      die "CASE_UNTYPED_FAILURE name=$name"
+  fi
   if grep -Fq 'Traceback' <<<"$output"; then
     die "CASE_UNSAFE_FAILURE_OUTPUT name=$name"
   fi
@@ -421,13 +491,16 @@ expect_failure schema-boolean-const "$fixture"
   die "COUNT_MISMATCH checker_mutations=$expected_failure_count expected=11"
 [ "$actual_nonzero_count" -eq 11 ] ||
   die "COUNT_MISMATCH checker_nonzero=$actual_nonzero_count expected=11"
+a_checker_mutations=$expected_failure_count
+a_checker_nonzero=$actual_nonzero_count
 
 overlay_mutation_count=0
 overlay_nonzero_count=0
 expect_overlay_failure() {
   local name=$1
   local fixture=$2
-  expect_failure "overlay-$name" "$fixture"
+  local expected_marker=${3:-}
+  expect_failure "overlay-$name" "$fixture" "$expected_marker"
   overlay_mutation_count=$((overlay_mutation_count + 1))
   overlay_nonzero_count=$((overlay_nonzero_count + 1))
 }
@@ -466,13 +539,26 @@ for mutation in \
   fixture=$tmp/overlay-$mutation
   copy_fixture "$fixture"
   rewrite_overlay "$fixture/$compose_overlay_rel" "$mutation"
-  expect_overlay_failure "$mutation" "$fixture"
+  case "$mutation" in
+    web-override)
+      expect_overlay_failure "$mutation" "$fixture" \
+        'STOCK_BETA_INTRADAY_STATIC: COMPOSE_OVERLAY_SERVICES_INVALID'
+      ;;
+    materializer-override)
+      expect_overlay_failure "$mutation" "$fixture" \
+        'STOCK_BETA_INTRADAY_STATIC: COMPOSE_OVERLAY_SERVICES_INVALID'
+      ;;
+    *)
+      expect_overlay_failure "$mutation" "$fixture"
+      ;;
+  esac
 done
 
 fixture=$tmp/overlay-duplicate-key
 copy_fixture "$fixture"
 duplicate_overlay_key "$fixture/$compose_overlay_rel"
-expect_overlay_failure duplicate-key "$fixture"
+expect_overlay_failure duplicate-key "$fixture" \
+  'STOCK_BETA_INTRADAY_STATIC: COMPOSE_OVERLAY_DUPLICATE_KEY'
 
 [ "$overlay_mutation_count" -eq 24 ] ||
   die "COUNT_MISMATCH overlay_mutations=$overlay_mutation_count expected=24"
@@ -1291,7 +1377,8 @@ validator_store_expect final-valid-store 0 "$empty_env"
 
 printf 'STOCK_BETA_INTRADAY_SELF_TEST: b1_static_mutations=%s validator_cases=%s validator_passes=%s validator_expected_failures=%s provision_fixture=PASS idempotent=PASS sentinel=PASS socket_fixture=%s\n' \
   "$b1_static_mutations" "$validator_cases" "$validator_passes" "$validator_failures" "$socket_fixture_mode"
-printf 'STOCK_BETA_INTRADAY_SELF_TEST: PASS regex_cases=%s regex_passed=%s checker_mutations=%s checker_nonzero=%s overlay_mutations=%s overlay_nonzero=%s total_cases=%s\n' \
-  "$regex_case_count" "$regex_case_count" "$expected_failure_count" "$actual_nonzero_count" \
+printf 'STOCK_BETA_INTRADAY_SELF_TEST: PASS regex_cases=%s regex_passed=%s a_checker_mutations=%s a_checker_nonzero=%s overlay_mutations=%s overlay_nonzero=%s checker_mutations_inclusive=%s checker_nonzero_inclusive=%s total_cases=%s\n' \
+  "$regex_case_count" "$regex_case_count" "$a_checker_mutations" "$a_checker_nonzero" \
   "$overlay_mutation_count" "$overlay_nonzero_count" \
+  "$expected_failure_count" "$actual_nonzero_count" \
   "$((pass_count + expected_failure_count))"
