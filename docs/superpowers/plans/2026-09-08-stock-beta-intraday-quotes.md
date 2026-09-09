@@ -1745,3 +1745,83 @@ Native subagents: prohibited for worker packages
 - WP4-P 작업자 `3148e8b1-45d7-49af-a756-40033df94e33` (Codex terra/high,
   auto-review)를 coordinator workspace `wks_c8105f3859e0ad64`, clean `0929d54`에서
   시작했다. 소스/문서/DB/build 수정 권한 없는 연결 분석이며 IV 작업자는 idle 완료다.
+
+### WP4-P 회수 / WP4-A app-role 읽기 준비
+
+- 분석 작업자는 idle, 변경 없음. coordinator는 보고 전체와 B1 cache/proof/actor transaction
+  코드를 대조했다. 기존 job-queue dependency, actor GUC, app grants로 demand mutation과
+  current proof/cache를 재사용할 수 있다. producer-table 접근이나 추가 grant는 불필요하다.
+- 분석의 same-day 범위 질문은 현행 §7.1 문구가 이미 해결한다: session-window 증빙에만
+  당일 조건을 적용하며 별도 calendar proof의 36시간 조건은 보존한다. 재승인/변경 없음.
+- 캐시가 없거나 session proof를 만들 수 없어도 정확한 READY/current admission 유무를
+  판별할 read seam은 필요하다. active demand 유무도 같은 읽기에서 반환해야 404와
+  200 unavailable/QUOTE_PENDING/NO_ACTIVE_DEMAND를 추측 없이 구분할 수 있다.
+- mode-disabled mutation의 별도 HTTP 정책은 WP4 HTTP brief 확정 시 §8의 기존 mutation
+  계약과 조정한다. 이번 WP4-A는 mode/HTTP를 다루지 않으므로 그 판단과 독립적으로 진행한다.
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- WP4-A는 정확한 owner/membership/instrument/generation의 현재 admission + active-demand
+  유무만 읽는 public 저장소 메서드와 실제 app-role QA를 추가한다. API handler를 아직 만들지
+  않는다. 권한/스키마/기존 쓰기 경로 및 calendar/window 계약 변경 없음.
+- 대상은 새 격리 worktree, coordinator plan 포함 clean base. root AGENTS 적용, 하위 지침 없음.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-A | intermediate | 기존 SQL/actor 패턴의 한정된 read seam, real-role 검증 가능 | high | app grant 부재나 기존 계약 충돌은 보고; 두 번 수정 실패 시 모델만 한 단계 상향 |
+| WP4-A-R | intermediate | actor isolation/current admission/read-only 독립 검토 | high | 재현 가능한 반례가 있으면 bounded fix로 반환 |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-A | 1 | intermediate | app 읽기 상태 seam | intraday.rs + 새 intraday_read_state.rs test + 필요 최소 기존 QA support | WP4-P 판단 | 새 Codex luna/max auto-review | bounded commit/typed public API | real app-role DB tests + B1 회귀/clippy/fmt |
+| WP4-A-R | 2 | intermediate | 독립 수락 | WP4-A delta read-only | WP4-A 완료 | terra/high reviewer | ACCEPT/REJECT + evidence | 직접 SQL/role/test 대조 |
+
+#### Worker brief: WP4-A
+
+- 소유는 `crates/job-queue/src/owner_equity_v2/intraday.rs`, 새
+  `crates/job-queue/tests/intraday_read_state.rs`, 그리고 필요할 때만
+  `crates/job-queue/tests/intraday_quotes_support/mod.rs`의 최소 test fixture 추가다.
+  `owner_equity_v2.rs`는 이미 wildcard export이므로 변경 불필요. 기존 tests 보존.
+- 새 typed `read_current_identity_state(owner_user_id, membership_id, instrument_id, generation)`
+  메서드는 `Result<Option<IntradayIdentityReadState>, IntradayStorageError>`를 반환한다.
+  state는 정확한 `IntradayQuoteIdentity`, `has_active_demand: bool`, DB `observed_at`만 가진다.
+  invalid UUID/nil/canonical instrument/generation 0 또는 bigint overflow는 InvalidInput.
+  다른 owner/unknown/not READY/미승인/현재가 아닌 generation/instrument mismatch는 None.
+- 기존 begin_actor_transaction을 사용한다. READY membership과 exact admission을 조인하고
+  더 높은 admission generation이 없는지 확인한다. active-demand EXISTS는 owner/membership/
+  generation_id/instrument/generation 전부 일치, ACTIVE, lease_expires_at > DB 관측 시각이다.
+  결과는 하나의 read SQL statement snapshot 안에서 일관되게 계산하며 DB clock_timestamp를
+  사용한다. 애플리케이션 clock, row/advisory lock, writes, cache/proof 존재 의존 금지.
+  어떤 producer/private/budget/provider 필드도 읽거나 반환하지 않는다. 이 메서드는 읽는 순간의
+  상태일 뿐 이후 publication 권한이나 lock/fencing 보장이라고 주장하지 않는다.
+- tests: cache/calendar/window 없이 READY current identity Some(false); 실제 공개 demand 생성 후
+  Some(true), duplicate consumer도 bool 유지, 공개 release 후 false; expired ACTIVE false를
+  실제 DB 시간으로 확인; 다른 owner/unknown/instrument mismatch/generation mismatch/disabled/
+  no admission/newer admission은 None. real app-role connection으로 모두 실행한다.
+- invalid inputs typed error; 반복 1/10/100 reads 후 demand/cache/producer 및 seeded membership/
+  admission의 UPDATE-sensitive JSON row fingerprints가 동일해야 한다. app producer SELECT
+  거부가 여전히 유지되고 seam은 성공함을 확인한다. QA fixture setup만 privileged test connection
+  사용, seam은 반드시 app pool. 테스트 표본/SQL 실패를 skip/None으로 숨기지 않는다.
+- 모든 cargo는 `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true`, `--locked --offline` 단일 compiler.
+  new intraday_read_state 및 기존 intraday_quotes DB tests를 test-threads=1로 순차 실행;
+  같은 test targets strict clippy `-D warnings`, workspace fmt-check/diff-check.
+- QA는 기존 coordinator project `lagrange-intraday-qa-20260908`, tmpfs PG18.4
+  `postgres://postgres:lagrange@127.0.0.1:55438/postgres`의 own per-test DB만.
+  Docker lifecycle/운영 DB/provider/network/account/order/root/Next/browser/migration/Cargo/
+  Compose/API/Web/ops/production/deploy/mainmerge/push 금지. missing seam/contract는 보고, 확장 금지.
+- 보고: full commit/parent, 변경 파일·라인, 명세 차이/이유, 테스트 명령·count·결과 및 실제 role,
+  미해결/후속/미확인(없으면 없음). 완료 후 idle; 하위 위임 금지.
+
+#### Coordinator gates
+
+1. clean isolated base/profile/provider/소유 확인 후 시작하고 heartbeat 교체한다.
+2. 전체 delta와 실제 role 증거를 읽고 WP4-A-R 독립 수락 전 통합하지 않는다.
+3. HTTP/DTO/config/OpenAPI package는 해당 exact brief 및 mode-disabled 동작 판단 후 실행한다.
+   기존 producer 수락은 유지하며 API 수락 또는 runtime activation을 선취하지 않는다.
