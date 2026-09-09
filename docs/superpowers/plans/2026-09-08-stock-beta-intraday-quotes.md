@@ -3080,3 +3080,8 @@ Native subagents: prohibited for worker packages
 - Return independent ACCEPT/REJECT, severity/file:line rationale, exact commands/counts, requirement
   coverage versus remaining limits, deviations, unresolved/not verified explicitly none if empty.
   Coordinator integrates only after acceptance; otherwise assign the smallest bounded remediation.
+
+- C3-R reviewer `1c3827ae-711c-4d8f-8f66-2ce6e8039970` (Codex sol/high,
+  auto-review) launched through CLI at cleanbc5e765 in API workspace. Current profiles/provider
+  checked. Only reviewer owns compiler/QA slot; implementation writer39da45eb is idle and
+  redundant parent0eabccf8 remains stopped. Monitor now targets this independent review.
