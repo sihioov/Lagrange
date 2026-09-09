@@ -26,6 +26,7 @@
 # starts a service; Compose remains on the three execution scopes below.
 # `--scope release` is the full serving contract and remains the default.
 set -euo pipefail
+export LC_ALL=C
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
@@ -130,6 +131,101 @@ if ! dotenv_validate_shell_overrides; then
 fi
 
 get() { dotenv_get "$1"; }
+
+# These five keys are deliberately kept out of the shared dotenv helper: they
+# are this release's local coordination/session contract and must be guarded
+# even when an operator supplies a shell-only value for a key absent from the
+# env file. Defaults match ProductionReadCoordination::from_values; the other
+# three keys have no implicit production value.
+guard_new_config_shell_overrides() {
+  local key default_value shell_value file_value expected
+  local -a keys=(
+    OWNER_INTRADAY_QUOTES_MODE
+    KIS_READ_COORDINATION_MODE
+    KIS_READ_CREDENTIAL_GENERATION
+    LAGRANGE_RUNTIME_STATE_DIR
+    OWNER_INTRADAY_SESSION_WINDOWS_SHA256
+  )
+  for key in "${keys[@]}"; do
+    file_value=$(get "$key")
+    expected=$file_value
+    case "$key" in
+      OWNER_INTRADAY_QUOTES_MODE) default_value=off ;;
+      KIS_READ_COORDINATION_MODE) default_value=legacy ;;
+      *) default_value= ;;
+    esac
+    if ! dotenv_has "$key"; then
+      expected=$default_value
+    fi
+    if [[ -v "$key" ]]; then
+      shell_value=${!key-}
+      [ "$shell_value" = "$expected" ] ||
+        invalid+=("${key,,}_shell_override_mismatch")
+    fi
+  done
+}
+
+reject_new_config_file_aliases() {
+  local alias
+  for alias in \
+    OWNER_INTRADAY_QUOTES_MODE_FILE \
+    KIS_READ_COORDINATION_MODE_FILE \
+    KIS_READ_CREDENTIAL_GENERATION_FILE \
+    LAGRANGE_RUNTIME_STATE_DIR_FILE \
+    OWNER_INTRADAY_SESSION_WINDOWS_SHA256_FILE; do
+    if dotenv_has "$alias" || [[ -v "$alias" ]]; then
+      invalid+=("${alias,,}_forbidden")
+    fi
+  done
+}
+
+guard_new_config_shell_overrides
+reject_new_config_file_aliases
+
+intraday_quotes_mode=$(get OWNER_INTRADAY_QUOTES_MODE)
+dotenv_has OWNER_INTRADAY_QUOTES_MODE || intraday_quotes_mode=off
+coordination_mode=$(get KIS_READ_COORDINATION_MODE)
+dotenv_has KIS_READ_COORDINATION_MODE || coordination_mode=legacy
+credential_generation=$(get KIS_READ_CREDENTIAL_GENERATION)
+runtime_state_root=$(get LAGRANGE_RUNTIME_STATE_DIR)
+session_windows_hash=$(get OWNER_INTRADAY_SESSION_WINDOWS_SHA256)
+
+case "$intraday_quotes_mode" in
+  off|owner_only) ;;
+  *) invalid+=("owner_intraday_quotes_mode_invalid") ;;
+esac
+case "$coordination_mode" in
+  legacy|shared_required) ;;
+  *) invalid+=("kis_read_coordination_mode_invalid") ;
+esac
+if [ "$intraday_quotes_mode" = owner_only ] && [ "$coordination_mode" != shared_required ]; then
+  invalid+=("owner_intraday_quotes_requires_shared")
+fi
+
+if [ "$coordination_mode" = shared_required ]; then
+  generation_valid=yes
+  case "$credential_generation" in
+    ''|0|0*|*[!0-9]*) generation_valid=no ;;
+  esac
+  if [ "$generation_valid" = yes ]; then
+    generation_length=${#credential_generation}
+    if [ "$generation_length" -gt 20 ]; then
+      generation_valid=no
+    elif [ "$generation_length" -eq 20 ] &&
+         [[ "$credential_generation" > 18446744073709551615 ]]; then
+      generation_valid=no
+    fi
+  fi
+  [ "$generation_valid" = yes ] || invalid+=("kis_read_credential_generation_invalid")
+fi
+
+if [ "$intraday_quotes_mode" = owner_only ]; then
+  if [ -z "$session_windows_hash" ]; then
+    missing+=("OWNER_INTRADAY_SESSION_WINDOWS_SHA256")
+  elif [[ ! "$session_windows_hash" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    invalid+=("owner_intraday_session_windows_hash_invalid")
+  fi
+fi
 
 # Owner-beta admission is deployment policy, not a secret. Missing mode keys
 # preserve the pre-beta release as disabled, while a present value must be
@@ -281,6 +377,163 @@ artifacts_dir=$(get LAGRANGE_ARTIFACTS_DIR)
 [ -z "$data_dir" ] || [[ "$data_dir" = /* ]] || invalid+=("LAGRANGE_DATA_DIR must be absolute")
 if [ "$scope" = serving-prereqs ] || [ "$scope" = release ]; then
   [ -z "$artifacts_dir" ] || [[ "$artifacts_dir" = /* ]] || invalid+=("LAGRANGE_ARTIFACTS_DIR must be absolute")
+fi
+
+path_overlaps() {
+  local left=${1%/} right=${2%/}
+  [ -n "$left" ] || left=/
+  [ -n "$right" ] || right=/
+  case "$left/" in
+    "$right/"*) return 0 ;;
+  esac
+  case "$right/" in
+    "$left/"*) return 0 ;;
+  esac
+  return 1
+}
+
+check_runtime_state_path() {
+  local path=$1 probe
+  coordination_path_safe=yes
+  case "$path" in
+    ''|/*) ;;
+    *) invalid+=("LAGRANGE_RUNTIME_STATE_DIR must be absolute") ; coordination_path_safe=no ;;
+  esac
+  case "$path" in
+    */../*|*/..|*/./*|*/.)
+      invalid+=("LAGRANGE_RUNTIME_STATE_DIR must not contain dot traversal")
+      coordination_path_safe=no
+      ;;
+  esac
+  case "$path" in
+    /|/etc|/opt|/var|/var/lib|/usr|/usr/local|/tmp|/home|/run|/data)
+      invalid+=("LAGRANGE_RUNTIME_STATE_DIR is too broad")
+      coordination_path_safe=no
+      ;;
+  esac
+  if [ "$coordination_path_safe" = yes ]; then
+    probe=$path
+    while [ "$probe" != / ]; do
+      if [ -L "$probe" ]; then
+        invalid+=("LAGRANGE_RUNTIME_STATE_DIR must not traverse a symlink")
+        coordination_path_safe=no
+        break
+      fi
+      probe=${probe%/*}
+      [ -n "$probe" ] || probe=/
+    done
+  fi
+  if [ "$coordination_path_safe" = yes ]; then
+    local forbidden
+    for forbidden in \
+      "$data_dir/raw" \
+      "$data_dir/curated" \
+      "$data_dir/artifacts" \
+      "$data_dir/owner-equity-v2-artifacts" \
+      "$artifacts_dir" \
+      "$source_dir" \
+      "$runtime_dir"; do
+      [[ "$forbidden" = /* ]] || continue
+      if path_overlaps "$path" "$forbidden"; then
+        invalid+=("LAGRANGE_RUNTIME_STATE_DIR overlaps a protected tree")
+        coordination_path_safe=no
+        break
+      fi
+    done
+  fi
+}
+
+coordination_path_safe=yes
+if [ -n "$runtime_state_root" ]; then
+  check_runtime_state_path "$runtime_state_root"
+elif [ "$coordination_mode" = shared_required ]; then
+  invalid+=("LAGRANGE_RUNTIME_STATE_DIR required for shared coordination")
+  coordination_path_safe=no
+fi
+
+credentialed_scope=no
+case "$scope" in
+  backfill|range-raw|release) credentialed_scope=yes ;;
+esac
+
+coordination_leaf=
+if [ -n "$runtime_state_root" ]; then
+  coordination_leaf=${runtime_state_root%/}/kis-read-coordination
+fi
+
+check_coordination_file() {
+  local path=$1 label=$2 kind actual
+  if [ -L "$path" ]; then
+    invalid+=("$label must be a nonsymlink regular file")
+    return
+  fi
+  [ -e "$path" ] || return 0
+  kind=$(stat -c '%F' -- "$path") || die "cannot stat $label"
+  [ "$kind" = 'regular file' ] || {
+    invalid+=("$label must be a regular file")
+    return
+  }
+  actual=$(stat -c '%u:%g:%a:%h' -- "$path") || die "cannot stat $label"
+  [ "$actual" = '10001:10001:600:1' ] ||
+    invalid+=("$label has unsafe metadata")
+}
+
+check_coordination_state() {
+  local parent_actual leaf_actual path
+  if [ -L "$runtime_state_root" ]; then
+    invalid+=("LAGRANGE_RUNTIME_STATE_DIR must be a nonsymlink directory")
+    return
+  fi
+  if [ ! -e "$runtime_state_root" ]; then
+    missing+=("LAGRANGE_RUNTIME_STATE_DIR (run provision-linux.sh)")
+    return
+  fi
+  [ -d "$runtime_state_root" ] || {
+    invalid+=("LAGRANGE_RUNTIME_STATE_DIR must be a directory")
+    return
+  }
+  parent_actual=$(stat -c '%u:%g:%a' -- "$runtime_state_root") ||
+    die 'cannot stat LAGRANGE_RUNTIME_STATE_DIR'
+  [ "$parent_actual" = '0:10001:750' ] ||
+    invalid+=("LAGRANGE_RUNTIME_STATE_DIR has unsafe metadata")
+
+  if [ -L "$coordination_leaf" ]; then
+    invalid+=("kis-read-coordination must be a nonsymlink directory")
+    return
+  fi
+  if [ ! -e "$coordination_leaf" ]; then
+    missing+=("kis-read-coordination (run provision-linux.sh)")
+    return
+  fi
+  [ -d "$coordination_leaf" ] || {
+    invalid+=("kis-read-coordination must be a directory")
+    return
+  }
+  leaf_actual=$(stat -c '%u:%g:%a' -- "$coordination_leaf") ||
+    die 'cannot stat kis-read-coordination'
+  [ "$leaf_actual" = '10001:10001:700' ] ||
+    invalid+=("kis-read-coordination has unsafe metadata")
+
+  if [ -e "$coordination_leaf/state-v1.json" ] ||
+     [ -L "$coordination_leaf/state-v1.json" ]; then
+    if [ ! -e "$coordination_leaf/coordination.lock" ] &&
+       [ ! -L "$coordination_leaf/coordination.lock" ]; then
+      invalid+=("state-v1.json requires coordination.lock")
+    fi
+  fi
+  check_coordination_file "$coordination_leaf/coordination.lock" coordination.lock
+  check_coordination_file "$coordination_leaf/state-v1.json" state-v1.json
+  for path in "$coordination_leaf"/.state-v1.tmp.*; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      check_coordination_file "$path" state-v1.tmp
+    fi
+  done
+}
+
+if [ "$coordination_mode" = shared_required ] &&
+   [ "$credentialed_scope" = yes ] &&
+   [ "$coordination_path_safe" = yes ]; then
+  check_coordination_state
 fi
 if [ "$scope" = backfill ] || [ "$scope" = range-raw ] || [ "$scope" = range-raw-recovery ] || [ "$scope" = release ]; then
   [ "$(get RESEARCH_APP_ENV)" = production ] || invalid+=("RESEARCH_APP_ENV must be production")

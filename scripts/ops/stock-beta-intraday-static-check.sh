@@ -8,6 +8,10 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 artifact=$root/configs/market-hours/krx-intraday-session-windows-v1.json
 schema=$root/configs/market-hours/krx-intraday-session-windows-v1.schema.json
+env_example=$root/deploy/compose/.env.example
+provision=$root/scripts/ops/provision-linux.sh
+validator=$root/scripts/ops/validate-production-config.sh
+self_test=$root/scripts/ops/stock-beta-intraday-self-test.sh
 
 die() {
   echo "STOCK_BETA_INTRADAY_STATIC: $*" >&2
@@ -15,9 +19,88 @@ die() {
 }
 
 command -v python3 >/dev/null 2>&1 || die 'PYTHON3_MISSING'
-for path in "$artifact" "$schema"; do
+for path in "$artifact" "$schema" "$env_example" "$provision" "$validator" "$self_test"; do
   [ -f "$path" ] || die 'REQUIRED_FILE_MISSING'
   [ ! -L "$path" ] || die 'REQUIRED_FILE_SYMLINK'
+done
+
+for script in "$provision" "$validator" "$self_test"; do
+  bash -n "$script" || die "SHELL_SYNTAX_INVALID:$script"
+done
+
+for expected in \
+  'OWNER_INTRADAY_QUOTES_MODE=off' \
+  'KIS_READ_COORDINATION_MODE=legacy' \
+  'KIS_READ_CREDENTIAL_GENERATION=' \
+  'LAGRANGE_RUNTIME_STATE_DIR=' \
+  'OWNER_INTRADAY_SESSION_WINDOWS_SHA256='; do
+  [ "$(grep -Fxc -- "$expected" "$env_example")" -eq 1 ] ||
+    die "ENV_DEFAULT_MISSING:$expected"
+done
+grep -Fq 'explicit absolute host root' "$env_example" ||
+  die 'ENV_HOST_ROOT_COMMENT_MISSING'
+grep -Fq 'fixed kis-read-coordination leaf' "$env_example" ||
+  die 'ENV_COORDINATION_LEAF_COMMENT_MISSING'
+grep -Fq '/run/lagrange/kis-read-coordination' "$env_example" ||
+  die 'ENV_CONTAINER_PATH_COMMENT_MISSING'
+grep -Fq 'separately approved' "$env_example" ||
+  die 'ENV_ACTIVATION_COMMENT_MISSING'
+if grep -Eq 'KIS_APP_KEY=|KIS_APP_SECRET=|CANO|ACNT_PRDT_CD|KIS_ACCOUNT_REF|owner_only' \
+  "$env_example"; then
+  die 'ENV_EXAMPLE_CONTAINS_FORBIDDEN_OR_ENABLED_VALUE'
+fi
+
+for expected in \
+  'runtime_state_root=${LAGRANGE_RUNTIME_STATE_DIR-}' \
+  'coordination_leaf_name=kis-read-coordination' \
+  'coordination_mode=${KIS_READ_COORDINATION_MODE-legacy}' \
+  'safe_runtime_state_path' \
+  'reject_runtime_state_overlap' \
+  'shared_required coordination requires explicit LAGRANGE_RUNTIME_STATE_DIR' \
+  'check_coordination_tree' \
+  'ensure_coordination_dir' \
+  'check_coordination_dir "$runtime_state_root" 0 "$worker_gid" 750' \
+  'check_coordination_dir "$coordination_leaf" "$worker_uid" "$worker_gid" 700'; do
+  grep -Fq -- "$expected" "$provision" || die "PROVISION_HOOK_MISSING:$expected"
+done
+if grep -Eq 'runtime_state_root=\$\{LAGRANGE_RUNTIME_STATE_DIR:-' "$provision"; then
+  die 'PROVISION_RUNTIME_STATE_FALLBACK_PRESENT'
+fi
+
+for expected in \
+  'guard_new_config_shell_overrides' \
+  'reject_new_config_file_aliases' \
+  'OWNER_INTRADAY_QUOTES_MODE_FILE' \
+  'KIS_READ_COORDINATION_MODE_FILE' \
+  'KIS_READ_CREDENTIAL_GENERATION_FILE' \
+  'LAGRANGE_RUNTIME_STATE_DIR_FILE' \
+  'OWNER_INTRADAY_SESSION_WINDOWS_SHA256_FILE' \
+  'intraday_quotes_mode=off' \
+  'coordination_mode=legacy' \
+  '18446744073709551615' \
+  'generation_length' \
+  'coordination_path_safe' \
+  'backfill|range-raw|release' \
+  'state-v1.json requires coordination.lock' \
+  "'0:10001:750'" \
+  "'10001:10001:700'" \
+  "'10001:10001:600:1'" \
+  'overlaps a protected tree'; do
+  grep -Fq -- "$expected" "$validator" || die "VALIDATOR_HOOK_MISSING:$expected"
+done
+if grep -Eiq 'cat[[:space:]].*(coordination|state-v1)|sha(256|sum).*state-v1' "$validator"; then
+  die 'VALIDATOR_READS_COORDINATION_CONTENT'
+fi
+
+for expected in \
+  'LAGRANGE_B1_ROOT_FIXTURE_CHILD' \
+  'fakeroot' \
+  'validate-production-config.sh' \
+  'provision-linux.sh' \
+  'coordination.lock' \
+  'sentinel' \
+  'idempotent'; do
+  grep -Fq -- "$expected" "$self_test" || die "SELF_TEST_HOOK_MISSING:$expected"
 done
 
 python3 - "$artifact" "$schema" <<'PY'

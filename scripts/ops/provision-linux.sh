@@ -19,6 +19,8 @@ artifacts_root=${LAGRANGE_ARTIFACTS_DIR:-$data_root/artifacts}
 secret_root=${LAGRANGE_HOST_SECRET_ROOT:-$config_root/secrets}
 worker_uid=${LAGRANGE_WORKER_UID:-10001}
 worker_gid=${LAGRANGE_WORKER_GID:-10001}
+runtime_state_root=${LAGRANGE_RUNTIME_STATE_DIR-}
+coordination_leaf_name=kis-read-coordination
 data_group=lagrange-data
 mode=dry-run
 
@@ -40,9 +42,11 @@ The paths may be overridden for an isolated test with:
   LAGRANGE_CONFIG_ROOT, LAGRANGE_DEPLOY_ROOT, LAGRANGE_DATA_ROOT,
   LAGRANGE_ARTIFACTS_DIR,
   LAGRANGE_HOST_SECRET_ROOT, LAGRANGE_SERVICE_USER, LAGRANGE_SERVICE_GROUP,
-  LAGRANGE_WORKER_UID, LAGRANGE_WORKER_GID. The worker UID/GID must remain
-  exactly 10001 to match the Compose and systemd container identity; the host
-  data group is always named lagrange-data with GID 10001.
+  LAGRANGE_WORKER_UID, LAGRANGE_WORKER_GID, LAGRANGE_RUNTIME_STATE_DIR. The
+  worker UID/GID must remain exactly 10001 to match the Compose and systemd
+  container identity; the host data group is always named lagrange-data with
+  GID 10001. The optional runtime-state root is an explicit absolute host path;
+  its fixed kis-read-coordination leaf is never inferred or redirected.
 EOF
 }
 
@@ -99,6 +103,73 @@ safe_path() {
   done
 }
 
+safe_runtime_state_path() {
+  local path=$1 label=$2
+  is_absolute "$path" || die "$label must be absolute: $path"
+  case "$path" in
+    */../*|*/..|*/./*|*/.) die "$label must not contain dot traversal: $path" ;;
+  esac
+  case "$path" in
+    /|/etc|/opt|/var|/var/lib|/usr|/usr/local|/tmp|/home|/run|/data)
+      die "$label is too broad: $path"
+      ;;
+  esac
+  local probe=$path
+  while [ "$probe" != / ]; do
+    [ ! -L "$probe" ] || die "$label must not traverse a symlink: $probe"
+    probe=${probe%/*}
+    [ -n "$probe" ] || probe=/
+  done
+}
+
+path_overlaps() {
+  local left=${1%/} right=${2%/}
+  [ -n "$left" ] || left=/
+  [ -n "$right" ] || right=/
+  case "$left/" in
+    "$right/"*) return 0 ;;
+  esac
+  case "$right/" in
+    "$left/"*) return 0 ;;
+  esac
+  return 1
+}
+
+reject_runtime_state_overlap() {
+  local forbidden runtime_secret_root
+  runtime_secret_root=${LAGRANGE_RUNTIME_SECRET_DIR:-$secret_root/runtime}
+  for forbidden in \
+    "$data_root/raw" \
+    "$data_root/curated" \
+    "$data_root/owner-equity-v2-artifacts" \
+    "$artifacts_root" \
+    "$secret_root" \
+    "$secret_root/runtime" \
+    "$runtime_secret_root"; do
+    [ -n "$forbidden" ] || continue
+    if path_overlaps "$runtime_state_root" "$forbidden"; then
+      die "LAGRANGE_RUNTIME_STATE_DIR overlaps an existing protected tree: $forbidden"
+    fi
+  done
+}
+
+coordination_mode=${KIS_READ_COORDINATION_MODE-legacy}
+case "$coordination_mode" in
+  legacy|shared_required) ;;
+  '') die 'KIS_READ_COORDINATION_MODE must be legacy or shared_required' ;;
+  *) die 'KIS_READ_COORDINATION_MODE must be legacy or shared_required' ;;
+esac
+
+coordination_leaf=
+if [ -n "$runtime_state_root" ]; then
+  safe_runtime_state_path "$runtime_state_root" LAGRANGE_RUNTIME_STATE_DIR
+  coordination_leaf="$runtime_state_root/$coordination_leaf_name"
+  safe_runtime_state_path "$coordination_leaf" kis-read-coordination
+  reject_runtime_state_overlap
+elif [ "$coordination_mode" = shared_required ]; then
+  die 'shared_required coordination requires explicit LAGRANGE_RUNTIME_STATE_DIR'
+fi
+
 safe_path "$config_root" LAGRANGE_CONFIG_ROOT
 safe_path "$deploy_root" LAGRANGE_DEPLOY_ROOT
 safe_path "$data_root" LAGRANGE_DATA_ROOT
@@ -146,6 +217,12 @@ print_plan() {
   esac
   echo "  config=$config_root deploy=$deploy_root data=$data_root artifacts=$artifacts_root"
   echo "  artifacts-root owner=service-uid:$worker_gid mode=0750; dedicated leaves=$worker_uid:$worker_gid mode=0750"
+  if [ -n "$runtime_state_root" ]; then
+    echo "  coordination-parent=$runtime_state_root owner=0:$worker_gid mode=0750"
+    echo "  coordination-leaf=$coordination_leaf owner=$worker_uid:$worker_gid mode=0700"
+  else
+    echo '  coordination=disabled (no explicit LAGRANGE_RUNTIME_STATE_DIR)'
+  fi
   echo "  no deletion, truncation, secret generation, Docker start, or API call"
   for dir in "${required_dirs[@]}"; do
     echo "  ensure directory $dir"
@@ -213,6 +290,35 @@ check_mode_owner() {
     blocked "$label has $actual; expected $expected_uid:$expected_gid:$expected_mode: $path"
 }
 
+check_coordination_dir() {
+  local path=$1 expected_uid=$2 expected_gid=$3 expected_mode=$4 label=$5 actual
+  if [ -L "$path" ]; then
+    die "$label must not be a symlink: $path"
+  fi
+  [ -d "$path" ] || blocked "$label is missing: $path"
+  actual=$(stat -c '%u:%g:%a' -- "$path") || die "cannot stat $label: $path"
+  [ "$actual" = "$expected_uid:$expected_gid:$expected_mode" ] ||
+    die "$label has unsafe $actual; expected $expected_uid:$expected_gid:$expected_mode: $path"
+}
+
+ensure_coordination_dir() {
+  local path=$1 expected_uid=$2 expected_gid=$3 expected_mode=$4 label=$5
+  if [ -L "$path" ]; then
+    die "$label must not be a symlink: $path"
+  elif [ -e "$path" ]; then
+    check_coordination_dir "$path" "$expected_uid" "$expected_gid" "$expected_mode" "$label"
+  else
+    install -d -m "$expected_mode" -- "$path"
+    chown --no-dereference "$expected_uid:$expected_gid" -- "$path"
+    check_coordination_dir "$path" "$expected_uid" "$expected_gid" "$expected_mode" "$label"
+  fi
+}
+
+check_coordination_tree() {
+  check_coordination_dir "$runtime_state_root" 0 "$worker_gid" 750 LAGRANGE_RUNTIME_STATE_DIR
+  check_coordination_dir "$coordination_leaf" "$worker_uid" "$worker_gid" 700 kis-read-coordination
+}
+
 resolve_data_group
 
 if [ "$mode" = dry-run ]; then
@@ -251,6 +357,9 @@ if [ "$mode" = preflight ]; then
   check_mode_owner "$artifacts_root/backtest" "$worker_uid" "$worker_gid" 750 backtest-artifacts
   check_mode_owner "$artifacts_root/backtest/runs" "$worker_uid" "$worker_gid" 750 backtest-runs
   check_mode_owner "$data_root/phase0" "$service_uid" "$service_gid" 750 phase0
+  if [ -n "$runtime_state_root" ]; then
+    check_coordination_tree
+  fi
   echo "PREFLIGHT: PASS"
   exit 0
 fi
@@ -330,6 +439,11 @@ else
   chown "$worker_uid:$worker_gid" -- "$artifacts_root/backtest/runs"
 fi
 install -d -o "$service_uid" -g "$service_gid" -m 0750 -- "$data_root/phase0"
+
+if [ -n "$runtime_state_root" ]; then
+  ensure_coordination_dir "$runtime_state_root" 0 "$worker_gid" 750 LAGRANGE_RUNTIME_STATE_DIR
+  ensure_coordination_dir "$coordination_leaf" "$worker_uid" "$worker_gid" 700 kis-read-coordination
+fi
 
 echo "APPLY: host paths and service account are ready"
 echo 'APPLY: next run sudo scripts/ops/provision-db-secrets.sh --apply (or --check if already provisioned)'
