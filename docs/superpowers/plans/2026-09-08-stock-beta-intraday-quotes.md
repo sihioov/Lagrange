@@ -1679,3 +1679,65 @@ Native subagents: prohibited for worker packages
   auto-review)를 coordinator workspace `wks_c8105f3859e0ad64`의 `361dc2c`에서 시작했다.
   source는 `5998e5d`이며 이후 docs-only 기록은 coordinator 소유다. 모든 구현자/독립
   reviewer는 idle이고, 이 작업자만 Rust compiler를 사용한다. source 수정 권한은 없다.
+
+### B2b-IV ACCEPT / WP4 연결 범위 확인 (2026-09-09)
+
+- IV 작업자는 idle/clean으로 완료했다. coordinator는 전체 최종 보고와 실행 로그를 회수해
+  KIS 53, collector 4, job-queue 54 (pipeline10/producer6/scheduling5/lifecycle9/quotes24),
+  runner 11, 총 **122 passed / 0 failed / 0 ignored**를 확인했다. 같은 scoped target의
+  strict clippy `-D warnings`, workspace fmt-check, diff-check 모두 통과했다.
+- 첫 sandbox DB 연결 실패는 동일 명령의 승인된 loopback 재실행에서 해소됐다. DB tests는
+  test-threads=1이며 skip/zero-test로 대체하지 않았다. worker 변경 파일은 없다. source
+  `ffc4e06`와 integrated `5998e5d`의 crates/data-pipelines diff는 여전히 비어 있다.
+- B2b 통합 회귀를 수락한다. 이는 API/운영 활성화/전체 feature 완료를 뜻하지 않는다.
+  다음 WP4는 아래 읽기 전용 연결 분석 후 정확한 구현 소유 범위를 확정한다.
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- WP4-P: coordinator workspace의 현행 API 인증/actor transaction/저장소/session/config/DTO 및
+  테스트 연결을 file:line 근거로 확인한다. root AGENTS와 사용자 제약 적용, 대상 하위 지침 없음.
+  production 수정, 문서 수정, commit, build/test, DB/provider/network 실행 권한은 없다.
+- 기존 API는 job-queue dependency를 이미 가지며 B1 public repository를 재사용해야 한다.
+  계약 8의 3 endpoint와 privacy order, 실제 app RLS를 만족할 최소 연결 지점만 분석한다.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-P | intermediate | 동결 계약과 기존 인증/저장소의 여러 연결점에 대한 근거 중심 분석 | high | 계약 충돌/필수 seam 부재는 보고, 임의 설계나 권한 확장 금지 |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-P | 1 | intermediate | 실행 가능한 API 연결 map | 아래 source/doc read-only | B2b-IV ACCEPT | 새 Codex terra/high auto-review; 결론 자체가 산출물인 분석 | 근거와 최소 구현 split | coordinator 직접 근거 대조 |
+
+#### Worker brief: WP4-P
+
+- cwd `/data/worktrees/3puw275b/enhanced-pig`, integrated source `5998e5d`, 계획/spec 최신본.
+  읽기: api-server `http/{owner_equity_v2,state,mod,extractors}.rs`, `repos/{owner_equity_v2,
+  actor_tx,mod}.rs` 및 실제 actor helper 위치, `runtime.rs`, 현행 owner HTTP/DB/OpenAPI test
+  harness; job-queue `owner_equity_v2/intraday.rs`; collector `intraday_quotes.rs`;
+  apps/api-server OpenAPI scripts/artifacts; 기존 Web intraday DTO fixture 계약.
+  없는 경로를 있다고 가정하지 말고 rg로 실제 파일을 확인한다.
+- 분석: (1) owner/session/CSRF/idempotency/extractor privacy ordering, (2) app-role actor GUC와
+  B1 demand create/renew/release 및 cache/session read 재사용, (3) default-off mode와 immutable
+  session hash/file config 연결 및 부재 시 응답, (4) exact DTO/reason/freshness projection과
+  GET no-write/provider-zero 보장, (5) real-role HTTP QA fixture와 OpenAPI 생성/검사 명령.
+- 특히 worker 전용 producer access가 app read를 막는지, current proof 부재 시 membership
+  validation/last-good 판독을 어떤 기존 public seam으로 처리하는지 구체적으로 확인한다.
+  필요 최소 public seam은 별도 제안만 한다. schema/Cargo grant 확장/privilege bypass 금지.
+- 1000~1500단어 이내 보고: file:line 연결 map, 최소 파일 소유 split/의존성, 명세 차이와
+  미결정, 정확한 검증 명령과 실제 harness 경로, 변경 파일(없음), 미확인(없으면 없음).
+  하위 위임 금지. 기존 WP4를 넘어 API architecture 재설계/기능 확장하지 않는다.
+
+#### Coordinator gates
+
+1. profile notes/provider와 clean을 확인하고 WP4-P 시작, active heartbeat 교체.
+2. 결과를 직접 검토해 WP4 구현 brief와 exact 소유를 확정한 뒤 격리 workspace에서 실행한다.
+   일반 구현은 luna/max부터 시작하며 이 분석 모델을 구현 기본값으로 승격하지 않는다.
+3. 구현/독립 검토/실제 role QA/OpenAPI 회귀 통과 후에만 통합. QA tmpfs 유지,
+   실제 provider/activation/운영 DB/Next/browser/main merge/push는 계속 금지다.
