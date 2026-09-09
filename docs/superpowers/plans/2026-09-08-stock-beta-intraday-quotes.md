@@ -3005,3 +3005,25 @@ Native subagents: prohibited for worker packages
 - C3 worker `0eabccf8-820f-4a6e-bbd0-da7503953275` (Codex luna/max, auto-review)
   launched via CLI in isolated API workspace at21ebf1ea. Only C3 owns its exact scoped files and
   sequential compiler/QA slot. Completed C2 reviewer/writer are idle; monitor replaced for C3.
+
+### WP4-C3 delegation deviation / single-worker monitoring correction (2026-09-09)
+
+- Heartbeat inspection exposed an execution deviation, not ordinary timeout: assigned worker
+  `0eabccf8-820f-4a6e-bbd0-da7503953275` delegated the same implementation despite the explicit
+  direct-execution/no-delegation instruction, then repeatedly inspected its child instead of
+  implementing. Its log also contains `paseo daemon start` after local sandbox EPERM, contrary to
+  the no-daemon-lifecycle boundary; the activity log alone does not establish a daemon restart.
+- Read-only inspect confirms child `39da45eb-9870-40d1-96d7-b24a3af3ad59`, title
+  `wp4-c3-cache-get`, Codex luna/max auto-review, same API cwd and base21ebf1ea, parent0eabccf8.
+  Coordinator recovered its complete initial prompt and activity: it preserves the frozen C3 scope,
+  config binding, no-provider/no-DB-lifecycle boundaries and direct-execution prohibition. Current
+  activity is source/contract inspection; API worktree status was clean. No implementation, test
+  pass or C3 completion is claimed. No further child launch was present in recovered activity.
+- Coordinator stopped ONLY the redundant parent through `paseo stop`; returned stoppedCount1
+  with exact0eabccf8 ID. No files/workspaces were removed, and no running task was redirected.
+  Existing child39da45eb remains the sole monitored C3 implementation worker with unchanged scope;
+  no replacement worker, model escalation, new mapping or duplicate compiler was launched.
+- Replace heartbeat with child39da45eb as active target; do not poll/resume the stopped parent.
+  On idle recover full result and owned diff, require complete verification and independent
+  terra/high C3 review before integration. Repeated inspection without implementation is not
+  completion evidence. All previous accepted packages and safety/QA boundaries remain unchanged.
