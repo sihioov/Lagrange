@@ -3195,3 +3195,9 @@ Native subagents: prohibited for worker packages
    bounded re-review. No integration before all Medium defects/evidence gaps are resolved.
 3. Keep npm verification limitation explicit; integrate only verified accepted source, then advance
    authorized next package without redundant mapping or idle transition gaps. Retain exact QA.
+
+- F1 follow-up delivered to idle writer39da45eb-9870-40d1-96d7-b24a3af3ad59, unchanged
+  Codex luna/max auto-review at cleanbc5e765. Startup wait reports timeout with actual activity
+  reading the complete current F1 brief and full spec. This is active work, not completion.
+  Send CLI terminal4702 may remain waiting normally; do not resend or interrupt. Reviewer1c3827ae
+  is IDLE REJECT and relinquished compiler/QA. Heartbeat now targets only F1 writer39da45eb.
