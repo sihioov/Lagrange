@@ -5,9 +5,12 @@
 //! stable error-code table matches the code constants.
 
 use api_server::contract::{CONTRACT_ROUTES, ERROR_CODES, Phase, RouteSpec};
+use api_server::http::owner_intraday_quotes::{IntradayQuoteDemandBody, IntradayQuoteReleaseBody};
+use job_queue::owner_equity_v2::{IntradayQuoteDemandRequest, IntradayQuoteReleaseRequest};
 use market_data::KR_ETF_CORE_SYMBOLS;
 use serde_json::Value;
 use std::collections::BTreeSet;
+use uuid::Uuid;
 
 /// The authored OpenAPI document (the versioned contract).
 const SPEC: &str = include_str!("../../../apps/api-server/openapi.json");
@@ -430,6 +433,122 @@ fn openapi_owner_intraday_quote_demand_routes_and_dtos_are_exact() {
         schemas["OwnerIntradayQuoteDemand"]["properties"]["instrument_id"]["pattern"],
         "^[0-9]{6}\\.KRX$"
     );
+}
+
+#[test]
+fn openapi_intraday_bigint_bounds_are_exact_and_match_request_validation() {
+    const I64_MAX_LITERAL: &str = "9223372036854775807";
+    const I64_MAX_PLUS_ONE_LITERAL: &str = "9223372036854775808";
+    const PREVIOUSLY_ROUNDED_MAX_LITERAL: &str = "9223372036854776000";
+    const CONSUMER_ID: &str = "00000000-0000-0000-0000-000000000001";
+    const MEMBERSHIP_ID: &str = "00000000-0000-0000-0000-000000000002";
+
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let schemas = &spec["components"]["schemas"];
+    for (schema_name, field_name, minimum) in [
+        ("OwnerIntradayQuoteDemandBody", "generation", 1),
+        ("OwnerIntradayQuoteDemandBody", "renewal_sequence", 0),
+        ("OwnerIntradayQuoteReleaseBody", "renewal_sequence", 0),
+        ("OwnerIntradayQuoteDemand", "generation", 1),
+        ("OwnerIntradayQuoteDemand", "renewal_sequence", 0),
+    ] {
+        let property = &schemas[schema_name]["properties"][field_name];
+        assert_eq!(property["type"], "integer", "{schema_name}.{field_name}");
+        assert_eq!(property["minimum"], minimum, "{schema_name}.{field_name}");
+        assert_eq!(
+            property["maximum"].as_u64(),
+            Some(i64::MAX as u64),
+            "{schema_name}.{field_name} must preserve i64::MAX exactly"
+        );
+    }
+
+    fn demand_body_json(generation: &str, renewal_sequence: &str) -> String {
+        format!(
+            r#"{{"schema_version":1,"consumer_id":"00000000-0000-0000-0000-000000000001","membership_id":"00000000-0000-0000-0000-000000000002","generation":{generation},"renewal_sequence":{renewal_sequence}}}"#
+        )
+    }
+
+    fn release_body_json(renewal_sequence: &str) -> String {
+        format!(
+            r#"{{"schema_version":1,"consumer_id":"00000000-0000-0000-0000-000000000001","renewal_sequence":{renewal_sequence}}}"#
+        )
+    }
+
+    let demand_max: IntradayQuoteDemandBody =
+        serde_json::from_str(&demand_body_json(I64_MAX_LITERAL, I64_MAX_LITERAL))
+            .expect("u64 demand DTO accepts i64::MAX numeric literals");
+    let release_max: IntradayQuoteReleaseBody =
+        serde_json::from_str(&release_body_json(I64_MAX_LITERAL))
+            .expect("u64 release DTO accepts i64::MAX numeric literal");
+    assert_eq!(
+        demand_max.generation,
+        I64_MAX_LITERAL.parse::<u64>().unwrap()
+    );
+    assert_eq!(
+        demand_max.renewal_sequence,
+        I64_MAX_LITERAL.parse::<u64>().unwrap()
+    );
+    assert_eq!(
+        release_max.renewal_sequence,
+        I64_MAX_LITERAL.parse::<u64>().unwrap()
+    );
+    let consumer_id = Uuid::parse_str(CONSUMER_ID).expect("consumer UUID");
+    let membership_id = Uuid::parse_str(MEMBERSHIP_ID).expect("membership UUID");
+    assert!(
+        IntradayQuoteDemandRequest::with_schema_version(
+            demand_max.schema_version,
+            demand_max.consumer_id,
+            demand_max.membership_id,
+            demand_max.generation,
+            demand_max.renewal_sequence,
+            "openapi-boundary-demand".to_owned(),
+        )
+        .is_ok(),
+        "public demand validation must accept the full bigint domain"
+    );
+    assert!(
+        IntradayQuoteReleaseRequest::new(
+            release_max.consumer_id,
+            release_max.renewal_sequence,
+            "openapi-boundary-release".to_owned(),
+        )
+        .is_ok(),
+        "public release validation must accept the full bigint domain"
+    );
+    assert_eq!(demand_max.consumer_id, consumer_id);
+    assert_eq!(demand_max.membership_id, membership_id);
+
+    for literal in [I64_MAX_PLUS_ONE_LITERAL, PREVIOUSLY_ROUNDED_MAX_LITERAL] {
+        let demand: IntradayQuoteDemandBody =
+            serde_json::from_str(&demand_body_json(literal, I64_MAX_LITERAL))
+                .expect("u64 demand DTO must parse out-of-i64 numeric literals");
+        assert_eq!(demand.generation, literal.parse::<u64>().unwrap());
+        assert!(
+            IntradayQuoteDemandRequest::with_schema_version(
+                demand.schema_version,
+                demand.consumer_id,
+                demand.membership_id,
+                demand.generation,
+                demand.renewal_sequence,
+                "openapi-boundary-demand-invalid".to_owned(),
+            )
+            .is_err(),
+            "public demand validation must reject {literal}"
+        );
+
+        let release: IntradayQuoteReleaseBody = serde_json::from_str(&release_body_json(literal))
+            .expect("u64 release DTO must parse out-of-i64 numeric literal");
+        assert_eq!(release.renewal_sequence, literal.parse::<u64>().unwrap());
+        assert!(
+            IntradayQuoteReleaseRequest::new(
+                release.consumer_id,
+                release.renewal_sequence,
+                "openapi-boundary-release-invalid".to_owned(),
+            )
+            .is_err(),
+            "public release validation must reject {literal}"
+        );
+    }
 }
 
 #[test]

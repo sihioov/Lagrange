@@ -10,6 +10,7 @@
 // per-operation metadata, and emits TypeScript types.
 
 const PHASE3 = "phase3";
+const INTRADAY_BIGINT_MAXIMUM = JSON.rawJSON("9223372036854775807");
 
 /** Mirror of api-server CONTRACT_ROUTES. [method, path, flags] */
 const ROUTES = [
@@ -1310,8 +1311,8 @@ const SCHEMAS = {
       schema_version: { type: "integer", const: 1 },
       consumer_id: uuid,
       membership_id: uuid,
-      generation: { type: "integer", minimum: 1, maximum: 9223372036854775807 },
-      renewal_sequence: { type: "integer", minimum: 0, maximum: 9223372036854775807 },
+      generation: { type: "integer", minimum: 1, maximum: INTRADAY_BIGINT_MAXIMUM },
+      renewal_sequence: { type: "integer", minimum: 0, maximum: INTRADAY_BIGINT_MAXIMUM },
     },
   },
   OwnerIntradayQuoteReleaseBody: {
@@ -1321,7 +1322,7 @@ const SCHEMAS = {
     properties: {
       schema_version: { type: "integer", const: 1 },
       consumer_id: uuid,
-      renewal_sequence: { type: "integer", minimum: 0, maximum: 9223372036854775807 },
+      renewal_sequence: { type: "integer", minimum: 0, maximum: INTRADAY_BIGINT_MAXIMUM },
     },
   },
   OwnerIntradayQuoteDemand: {
@@ -1344,8 +1345,8 @@ const SCHEMAS = {
       consumer_id: uuid,
       membership_id: uuid,
       instrument_id: { type: "string", pattern: "^[0-9]{6}\\.KRX$" },
-      generation: { type: "integer", minimum: 1, maximum: 9223372036854775807 },
-      renewal_sequence: { type: "integer", minimum: 0, maximum: 9223372036854775807 },
+      generation: { type: "integer", minimum: 1, maximum: INTRADAY_BIGINT_MAXIMUM },
+      renewal_sequence: { type: "integer", minimum: 0, maximum: INTRADAY_BIGINT_MAXIMUM },
       lease_expires_at: ts,
       renew_after_ms: { type: "integer", const: 15000 },
     },
