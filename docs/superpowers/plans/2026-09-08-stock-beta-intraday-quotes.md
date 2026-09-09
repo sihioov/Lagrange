@@ -1853,3 +1853,109 @@ Native subagents: prohibited for worker packages
 - WP4-A-R reviewer `30b92e99-63ed-4ad0-8b4a-390e0f34c2aa` (Codex terra/high,
   auto-review), API worktree/workspace에서 read-only 검토 시작. profile/provider 확인 완료.
   구현자는 idle이며 reviewer만 지정된 순차 Rust/QA 검증을 실행한다.
+
+### WP4-A ACCEPT / demand HTTP 실행 범위 (2026-09-09)
+
+- 독립 reviewer ACCEPT, severity finding 없음. 실제 app matrix 1/1 (0.75초), 기존 B1
+  24/24 (31.02초), strict clippy/fmt/diff 통과; sandbox 연결 실패는 동일 QA 명령의 precise
+  escalation 후 통과했다. SQL/RLS/current admission과 1/10/100 fingerprint 증거를 수락한다.
+  calendar baseline 잔존은 SQL 비의존성이 확인돼 blocker가 아니다.
+- source `7147a327`을 `2796470`으로 통합했다. 정확한 두 파일의 source/integrated diff는
+  비어 있고 coordinator clean이다. 전체 API 완료를 뜻하지 않는다.
+- Coordinator API 해석: §6의 수집 mode와 §8의 bounded demand 프로토콜은 별개다. 기존
+  §8의 owner/CSRF/current admission/capacity/sequence 요건을 충족하면 수집 mode가 off여도
+  짧은 lease 생성·갱신·해제의 기존 응답 계약을 유지한다. 별도 disabled mutation 에러를
+  새로 만들지 않는다. demand가 생겨도 producer mode/session/권한 검사를 우회하거나 수집을
+  활성화하지 않는다. GET의 FEATURE_DISABLED 표시/설정 연결은 후속 cache-GET 패키지다.
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- WP4-B는 §8.1/8.2/8.4의 POST quote-demands와 DELETE quote-demands/{demand_id} 두
+  endpoint, exact DTO/OpenAPI, real-role HTTP 검증만 구현한다. cache GET/config/runtime는 후속.
+- API worktree `7147a327` 기반은 coordinator 통합과 source 동일하다. root AGENTS 적용.
+  기존 B1 저장소를 app pool로 재사용, lease/sequence/capacity 알고리즘 복제 금지.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-B | intermediate | 동결된 두 mutation DTO와 기존 durable 저장소/HTTP 패턴의 연결 | high | 기존 seam이 HTTP privacy 계약을 지원하지 않으면 재현/보고; 두 번 실패 시 모델만 상향 |
+| WP4-B-R | intermediate | auth/privacy/durable replay/OpenAPI 실제 검증 | high | 테스트 또는 역할 경계 반례는 bounded fix로 반환 |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-B | 1 | intermediate | 수요 mutation HTTP 두 개 | 아래 API/OpenAPI/test 파일 | WP4-A ACCEPT | 새 Codex luna/max auto-review | scoped commit + 실제 HTTP 증거 | real role QA/OpenAPI/clippy/fmt |
+| WP4-B-R | 2 | intermediate | 독립 수락 | WP4-B delta read-only | WP4-B 완료 | terra/high | ACCEPT/REJECT | 실제 router/role/contract 검증 |
+
+#### Worker brief: WP4-B
+
+- 새 `crates/api-server/src/http/owner_intraday_quotes.rs`,
+  `crates/api-server/src/repos/owner_intraday_quotes.rs`; 최소 연결만 `http/mod.rs`,
+  `repos/mod.rs`, `http/state.rs`, `contract.rs`에 허용. state는 app repo accessor만,
+  config field 변경 없음. `runtime.rs`, lib.rs, 기존 owner_equity_v2 handlers 변경 금지.
+- 테스트는 새 `crates/api-server/tests/http_owner_intraday_quotes.rs`와 필요시 새
+  `tests/intraday_http_support/mod.rs`에 로컬 fixture를 둔다. 기존 `tests/common/mod.rs`는
+  읽기 전용 Harness를 재사용한다. 필요하면 실제 누락을 보고하고 소유 조정 전 수정하지 않는다.
+- OpenAPI 소유: `apps/api-server/scripts/openapi-spec.mjs`, `apps/api-server/openapi.json`,
+  `apps/api-server/generated/openapi.ts`, scoped `crates/api-server/tests/openapi_contract.rs`.
+  두 route/schema/error/metadata만 추가하고 GET route를 미리 광고하지 않는다.
+- prefix `/api/v1/research/owner-beta/equity-universe-v2`. POST `/quote-demands`, DELETE
+  `/quote-demands/{demand_id}`. §8.2 exact deny_unknown_fields DTO: POST schema_version1,
+  consumer_id UUID, membership_id UUID, generation positive u64/bigint, renewal_sequence nonnegative
+  u64/bigint. DELETE schema_version1, consumer_id UUID, renewal_sequence. response POST200 exact
+  whitelist(스펙 참조), DELETE204 empty incl replay; expiry는 저장소 반환값 그대로, raw SQL/body
+  digest/internal generation_id/owner/provider/권한 pin을 노출하지 않는다.
+- Session 먼저, owner role/CSRF 검사 후에만 resource DB 접근. Path/body rejection을 가능한
+  Result extractor로 보류해 malformed 요청도 비인증401/nonowner403 privacy 순서를 유지한다.
+  body/header/UUID/schema/range 오류는 §8.4 INVALID_PARAMETER400. 누락/잘못된 Idempotency-Key도
+  이 intraday 계약의 INVALID_PARAMETER400; 1..128 visible ASCII excluding colon/backslash.
+  기존 타 route의 IDEMPOTENCY_KEY_REQUIRED 동작은 변경하지 않는다.
+- 새 repo는 Actor에서만 owner UUID를 얻는다. app pool + 기존 actor tx로 caller-scoped
+  membership/demand identity를 확인하고, WP4-A current-identity read 및 B1 public mutation을
+  사용한다. POST owner/instrument는 요청으로 받지 않고 membership에서 유도한다. DELETE는
+  정확한 demand ID/consumer 소유를 확인한다. unknown/foreign/disabled/mismatched current identity
+  는 RESOURCE_NOT_FOUND404. lookup으로 발견한 identity는 권한이 아니며 실제 mutation의
+  B1 locking/current checks를 우회하지 않는다. 추가 grant/admin serving/worker pool 금지.
+- typed storage error mapping: InvalidInput400; DemandNotFound/IdentityMismatch/
+  MembershipNotReady404; DemandReleased/SequenceConflict409 QUOTE_DEMAND_SEQUENCE_CONFLICT;
+  IdempotencyMismatch409; DemandCapacity/IdentityCapacity429 QUOTE_DEMAND_CAPACITY + Retry-After15;
+  PolicyUnavailable/DatabaseUnavailable/DatabaseIntegrity/PermissionDenied/CommitUnknown503
+  QUOTE_CACHE_UNAVAILABLE. 이 경로에서 나올 수 없는 나머지 내부 오류는 같은 typed503,
+  내부 error/prose 노출 금지. auth/CSRF는 기존401/403. no-store/request-id 기존middleware 유지.
+- durable latest replay/sequence/expiry/released tombstone은 B1만 관리한다. generic in-memory
+  idempotency wrapper로 응답을 캐시하지 않는다. ephemeral demand 외 job/EOD/cache/producer/
+  token/provider/credential 쓰기나 dispatch 없음. route metadata audit=false로 실제 동작을
+  표시하며 새로운 감사 정책/테이블/기존 audit 동작을 추가·변경하지 않는다.
+- 실제 Harness router(app/admin session roles) + per-test DB fixture, no mocked repo. case matrix:
+  POST create/동일 body-key replay exact expiry/next renewal/old-skip sequence409/key mismatch409;
+  retained expired ACTIVE nextsequence recovery/expired exactreplay expiry불변; DELETE204/replay204/
+  released 재활성 불가/sibling consumer 보존. 20 consumer/5 identity 각각 capacity429 RetryAfter15,
+  5 identity 상태에서 기존 identity 새consumer 허용. unauthorized/member/다른owner/unknown/
+  disabled/stalegeneration/privacy; missingCSRF/invalidkey/unknownbody/schema/UUID/range failures.
+  API state 재생성 후 같은 mutation 재전송도 durable replay임을 검증한다.
+- 모든 전후 demand 수/정확한 rows와 cache/producer/EOD fixture fingerprints를 확인해 불필요한
+  쓰기 없음을 보인다. wrapper에 provider/client 생성 경로가 없음을 직접 검토한다. 실제 provider
+  fake network server조차 불필요하며 token issuance는 없음. 실패/deny 시 demand 변경 없음.
+- one compiler `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true`, Cargo `--locked --offline`.
+  QA `DATABASE_URL=postgres://postgres:lagrange@127.0.0.1:55438/postgres`에서 새 HTTP test 및
+  기존 http_owner_equity_v2_chart를 test-threads=1 순차 실행; api-server openapi_contract 및
+  api-server lib tests; 해당 scoped strict clippy `-D warnings`, fmt/diff.
+  `npm run openapi:check --workspace @lagrange/api-server` (기존 설치 의존성만, 최초 생성 drift 후
+  두 번째 clean 확인); dependency 다운로드/설치 금지. QA없음/0test를 통과로 보고하지 않는다.
+- QA own per-test DB만 허용; Docker lifecycle/운영 DB/root/provider/externalnetwork/accounts/
+  orders/Next/browser/migration/Cargo/Compose/producer/jobqueue/KIS/collector/Web/ops/production/
+  deploy/mainmerge/push 금지. missing seam/명세 충돌은 보고하고 임의 확대하지 않는다.
+- 보고: full commit/parent, 파일·라인, deviations/이유, matrix/실제 roles/명령·count·결과,
+  미해결/미확인(없으면 없음). 범위 완료 후 idle; 하위 위임 금지.
+
+#### Coordinator gates
+
+1. profile/provider/clean source와 대상 지침을 확인하고 WP4-B만 시작한다.
+2. 전체 delta/HTTP 실제 증거와 독립 WP4-B-R 수락 후 통합한다. 더 넓은 변경 필요는 먼저 판단.
+3. 후속 cache GET/config/freshness package brief를 별도로 확정한다. 실제 수집은 계속 off,
+   전체 API/운영 활성화 완료를 주장하지 않는다.
