@@ -3540,3 +3540,34 @@ broad mapping or idle-transition delay. Keep retained QA untouched for later aut
   with precise escalation, never daemon start/restart. Startup wait JSON timeout included actual
   acknowledgment and git/instruction inspection; this is a running implementation, not an idle
   record. Reviewer1c3827ae remains idle ACCEPT. Replace old30692211 heartbeat with this worker.
+
+### WP6-A completion / independent acceptance review (2026-09-09)
+
+- Writer c15df593-2419-4942-9799-402e9d160d9e is IDLE clean. Source commit
+  1bfe15e3ab286fbff204c5f0b58d519b871850c5, parent cd33e912, remains UNINTEGRATED.
+  Exact four new files +767: artifact6/schema159/static384/self-test218 lines; scripts executable.
+  Reports syntax/static PASS, self-test11 (baseline0,10 independent mutations exit1), JSON parse,
+  empty entries and diff check. Coordinator recovered full result and read the FULL four-file diff.
+- WP6-A-R: intermediate/high confidence bounded conclusion-only review, Codex sol/high
+  auto-review under current user model rules. Same isolated ops worktree/workspace, source pinned
+  above; reviewer owns NO source/docs/commits. No worker currently editing that worktree.
+- Read preceding FULL WP6-A exact brief and full spec, especially7.1/11/12; compare accepted
+  read-only collector parser. Independently inspect closed schema, default-empty artifact,
+  checker strict key/type/duplicate handling and three disposition conditionals, SAME-checker
+  independent mutation fixtures, actual nonzero counts and safe temporary cleanup. Assess
+  schema URL pattern against parser ASCII-control rule, UTC canonical representation differences,
+  format annotation versus validation-engine limitations proportionately. No predetermined
+  finding/verdict; do not expand A into runtime/Compose wiring or demand a generic schema engine.
+- Run bash -n both scripts, actual static and self-test complete outputs/counts/exit codes,
+  JSON inspection/diff scope/clean status. Additional non-mutating inspection or throw-away local
+  mutation repro is allowed only for a concrete suspected scoped defect; never modify tracked
+  files. No dependency installation/network/npm/Rust/Cargo/build/compiler/DB/Docker/credentials/
+  provider/root/opt/hostenv or clocks/production/activation/deploy/main merge/push. No unrelated
+  sibling worktree search or scripts that operate live paths. Current jsonschema module absent;
+  explicitly distinguish schema-structure contract check from full schema-engine/runtime proof.
+- Report ACCEPT/REJECT; severity and file:line for concrete findings; actual checks/counts;
+  coverage/limitations; deviations; unresolved/follow-up/notverified explicitly none when empty.
+  No source patch or commit. Do not use native subagent, Task, Agent, team, or delegation features.
+  Complete this assignment directly and report if it needs further decomposition. No Paseo
+  run/send/daemon commands. Coordinator integrates only independently accepted exact files,
+  then freezes WP6-B after actual source inspection; no redundant C3 regression or broad mapping.
