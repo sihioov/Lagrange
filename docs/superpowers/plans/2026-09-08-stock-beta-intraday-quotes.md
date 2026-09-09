@@ -4564,3 +4564,18 @@ C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain
   and render ONLY diagram files with no network/pull/install and no QA/service lifecycle changes.
   If image absent, report capability gap rather than pulling/installing. This is a genuine scoped
   authority decision, not worker idle timeout. No heartbeat at this gate; no overall completion.
+
+### Owner-requested unused workspace cleanup (2026-09-09)
+
+- Owner explicitly requested cleanup, not another plan. Archived all ten completed intraday
+  workspaces via Paseo CLI: contract, attempt, API, ops, parser, read-coordination, producer,
+  read-wiring, storage, widget. Preflight: every Git tree clean; git cherry against coordinator
+  contained only patch-equivalent integrated commits; all30 nonarchived agents idle; no workspace
+  scripts or terminals. Ignored files were only target/node_modules/tsbuildinfo caches.
+- All ten archive calls succeeded, active-workspace list contains none of their IDs, and all ten
+  owned worktree directories were removed by Paseo. All ten named Git branches and source tips
+  remain, so committed work is recoverable; build/dependency caches were disposable. Current
+  coordinator workspace and unrelated/user workspace directories, production and QA were untouched.
+- Historical ops/API/etc paths in older briefs are now ARCHIVED, not current launch targets.
+  Do not resume old worker IDs or assume those directories still exist. Continue from integrated
+  coordinator source; C2 renderer authority gate remains unresolved. No cleanup heartbeat created.
