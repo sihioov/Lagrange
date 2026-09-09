@@ -118,6 +118,60 @@ async fn seed_membership(
     }
 }
 
+async fn advance_generation(
+    harness: &Harness,
+    owner: &UserCtx,
+    fixture: MembershipFixture,
+) -> MembershipFixture {
+    let generation_id = Uuid::new_v4();
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "INSERT INTO owner_equity_instrument_generations \
+                 (id, membership_id, owner_user_id, instrument_id, generation, \
+                  target_observed_sessions, minimum_observed_sessions, observed_sessions, \
+                  first_session, last_session) \
+                 SELECT '{generation_id}', membership.id, membership.owner_user_id, \
+                        membership.instrument_id, 2, 261, 121, 121, \
+                        '2026-04-15', '2026-08-13' \
+                   FROM owner_equity_memberships AS membership \
+                  WHERE membership.id = '{}' \
+                    AND membership.owner_user_id = '{}'",
+                fixture.membership_id, owner.user_id
+            ),
+        )
+        .await;
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "INSERT INTO owner_equity_generation_admissions \
+                 (generation_id, owner_user_id, membership_id, instrument_id, generation, \
+                  raw_manifest_sha256, artifact_manifest_sha256, entitlement_sha256, \
+                  capture_code_commit, materializer_code_commit) \
+                 SELECT '{generation_id}', membership.owner_user_id, membership.id, \
+                        membership.instrument_id, 2, \
+                        'sha256:{}', 'sha256:{}', '{}', '{}', '{}' \
+                   FROM owner_equity_memberships AS membership \
+                  WHERE membership.id = '{}' \
+                    AND membership.owner_user_id = '{}'",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ENTITLEMENT_SHA256,
+                CODE_COMMIT,
+                CODE_COMMIT,
+                fixture.membership_id,
+                owner.user_id
+            ),
+        )
+        .await;
+    MembershipFixture {
+        membership_id: fixture.membership_id,
+        generation: 2,
+    }
+}
+
 async fn disable_membership(harness: &Harness, owner: &UserCtx, fixture: MembershipFixture) {
     harness
         .seed_migration_owner(
@@ -242,15 +296,14 @@ async fn assert_error(resp: Response, expected_status: StatusCode, expected_code
     assert_eq!(Harness::error_code(&body), expected_code);
 }
 
-async fn raw_send(
-    harness: &Harness,
+fn raw_request(
     method: &str,
     path: &str,
     user: Option<&UserCtx>,
     csrf: bool,
     idem: Option<&str>,
     payload: &str,
-) -> Response {
+) -> Request<Body> {
     let mut builder = Request::builder()
         .method(Method::from_bytes(method.as_bytes()).expect("method"))
         .uri(path)
@@ -265,14 +318,24 @@ async fn raw_send(
     if let Some(idem) = idem {
         builder = builder.header("idempotency-key", idem);
     }
+    builder
+        .body(Body::from(payload.to_owned()))
+        .expect("raw request")
+}
+
+async fn raw_send(
+    harness: &Harness,
+    method: &str,
+    path: &str,
+    user: Option<&UserCtx>,
+    csrf: bool,
+    idem: Option<&str>,
+    payload: &str,
+) -> Response {
     harness
         .app
         .clone()
-        .oneshot(
-            builder
-                .body(Body::from(payload.to_owned()))
-                .expect("raw request"),
-        )
+        .oneshot(raw_request(method, path, user, csrf, idem, payload))
         .await
         .expect("raw request response")
 }
@@ -347,6 +410,310 @@ async fn active_demand_count(harness: &Harness, owner_id: Uuid) -> i64 {
     .await[0]
         .parse()
         .expect("active demand count")
+}
+
+async fn wait_for_blocked_owner_mutex(
+    pool: &PgPool,
+    lock_key: (i64, i64, i16),
+) -> (i32, String, bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked = sqlx::query_as::<_, (i32, String, bool)>(
+                "SELECT activity.pid, waiting.locktype, waiting.granted
+                   FROM pg_locks AS waiting
+                   JOIN pg_stat_activity AS activity
+                     ON activity.pid = waiting.pid
+                  WHERE waiting.locktype = 'advisory'
+                    AND NOT waiting.granted
+                    AND activity.datname = current_database()
+                    AND activity.pid <> pg_backend_pid()
+                    AND waiting.classid::bigint = $1
+                    AND waiting.objid::bigint = $2
+                    AND waiting.objsubid = $3
+                  LIMIT 1",
+            )
+            .bind(lock_key.0)
+            .bind(lock_key.1)
+            .bind(lock_key.2)
+            .fetch_optional(pool)
+            .await
+            .expect("blocked advisory lock query");
+            if let Some((pid, locktype, granted)) = blocked {
+                return (pid, locktype, granted);
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("HTTP mutation must block on the owner advisory mutex")
+}
+
+#[tokio::test]
+async fn owner_intraday_current_identity_invalidations_are_rejected_without_mutation() {
+    let harness = Harness::new().await.expect("DATABASE_URL is required");
+    let disabled_fixture = seed_membership(&harness, &harness.owner, "069500.KRX", true).await;
+    let disabled_active_consumer = Uuid::new_v4();
+    let disabled_active = post_demand(
+        &harness,
+        &harness.owner,
+        disabled_fixture,
+        disabled_active_consumer,
+        0,
+        "disabled-active-0",
+    )
+    .await;
+    assert_eq!(status(&disabled_active), StatusCode::OK);
+    let disabled_active_body = Harness::body_json(disabled_active).await;
+    let disabled_active_id = demand_id(&disabled_active_body);
+
+    let disabled_released_consumer = Uuid::new_v4();
+    let disabled_released = post_demand(
+        &harness,
+        &harness.owner,
+        disabled_fixture,
+        disabled_released_consumer,
+        0,
+        "disabled-released-0",
+    )
+    .await;
+    assert_eq!(status(&disabled_released), StatusCode::OK);
+    let disabled_released_id = demand_id(&Harness::body_json(disabled_released).await);
+    let disabled_release_key = "disabled-release";
+    let disabled_release = delete_demand(
+        &harness,
+        &harness.owner,
+        disabled_released_id,
+        disabled_released_consumer,
+        0,
+        disabled_release_key,
+    )
+    .await;
+    assert_eq!(status(&disabled_release), StatusCode::NO_CONTENT);
+
+    disable_membership(&harness, &harness.owner, disabled_fixture).await;
+
+    let before_disabled_post = state_fingerprint(&harness, harness.owner.user_id).await;
+    let disabled_post_replay = post_demand(
+        &harness,
+        &harness.owner,
+        disabled_fixture,
+        disabled_active_consumer,
+        0,
+        "disabled-active-0",
+    )
+    .await;
+    let after_disabled_post = state_fingerprint(&harness, harness.owner.user_id).await;
+
+    let before_disabled_delete = state_fingerprint(&harness, harness.owner.user_id).await;
+    let disabled_delete = delete_demand(
+        &harness,
+        &harness.owner,
+        disabled_active_id,
+        disabled_active_consumer,
+        0,
+        "disabled-delete",
+    )
+    .await;
+    let after_disabled_delete = state_fingerprint(&harness, harness.owner.user_id).await;
+
+    let before_disabled_release_replay = state_fingerprint(&harness, harness.owner.user_id).await;
+    let disabled_release_replay = delete_demand(
+        &harness,
+        &harness.owner,
+        disabled_released_id,
+        disabled_released_consumer,
+        0,
+        disabled_release_key,
+    )
+    .await;
+    let after_disabled_release_replay = state_fingerprint(&harness, harness.owner.user_id).await;
+
+    let newer_fixture = seed_membership(&harness, &harness.owner, "229200.KRX", true).await;
+    let newer_consumer = Uuid::new_v4();
+    let newer_active = post_demand(
+        &harness,
+        &harness.owner,
+        newer_fixture,
+        newer_consumer,
+        0,
+        "newer-active-0",
+    )
+    .await;
+    assert_eq!(status(&newer_active), StatusCode::OK);
+    let newer_active_id = demand_id(&Harness::body_json(newer_active).await);
+    let newer_released_consumer = Uuid::new_v4();
+    let newer_released = post_demand(
+        &harness,
+        &harness.owner,
+        newer_fixture,
+        newer_released_consumer,
+        0,
+        "newer-released-0",
+    )
+    .await;
+    assert_eq!(status(&newer_released), StatusCode::OK);
+    let newer_released_id = demand_id(&Harness::body_json(newer_released).await);
+    let newer_release_key = "newer-release";
+    let newer_release = delete_demand(
+        &harness,
+        &harness.owner,
+        newer_released_id,
+        newer_released_consumer,
+        0,
+        newer_release_key,
+    )
+    .await;
+    assert_eq!(status(&newer_release), StatusCode::NO_CONTENT);
+    let old_newer_fixture = newer_fixture;
+    advance_generation(&harness, &harness.owner, newer_fixture).await;
+
+    let before_newer_post = state_fingerprint(&harness, harness.owner.user_id).await;
+    let newer_post_replay = post_demand(
+        &harness,
+        &harness.owner,
+        old_newer_fixture,
+        newer_consumer,
+        0,
+        "newer-active-0",
+    )
+    .await;
+    let after_newer_post = state_fingerprint(&harness, harness.owner.user_id).await;
+
+    let before_newer_delete = state_fingerprint(&harness, harness.owner.user_id).await;
+    let newer_delete = delete_demand(
+        &harness,
+        &harness.owner,
+        newer_active_id,
+        newer_consumer,
+        0,
+        "newer-delete",
+    )
+    .await;
+    let after_newer_delete = state_fingerprint(&harness, harness.owner.user_id).await;
+
+    let before_newer_release_replay = state_fingerprint(&harness, harness.owner.user_id).await;
+    let newer_release_replay = delete_demand(
+        &harness,
+        &harness.owner,
+        newer_released_id,
+        newer_released_consumer,
+        0,
+        newer_release_key,
+    )
+    .await;
+    let after_newer_release_replay = state_fingerprint(&harness, harness.owner.user_id).await;
+
+    assert_eq!(
+        [
+            status(&disabled_post_replay),
+            status(&disabled_delete),
+            status(&disabled_release_replay),
+            status(&newer_post_replay),
+            status(&newer_delete),
+            status(&newer_release_replay),
+        ],
+        [
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
+        ],
+        "current-identity invalidations must be RESOURCE_NOT_FOUND"
+    );
+    assert_eq!(
+        after_disabled_post, before_disabled_post,
+        "disabled POST replay must not mutate the demand or side-effect tables"
+    );
+    assert_eq!(
+        after_disabled_delete, before_disabled_delete,
+        "disabled ACTIVE DELETE must leave the complete demand state unchanged"
+    );
+    assert_eq!(
+        after_disabled_release_replay, before_disabled_release_replay,
+        "disabled RELEASED replay must leave the complete demand state unchanged"
+    );
+    assert_eq!(
+        after_newer_post, before_newer_post,
+        "stale-generation POST replay must not mutate the demand or side-effect tables"
+    );
+    assert_eq!(
+        after_newer_delete, before_newer_delete,
+        "stale-generation ACTIVE DELETE must leave the complete demand state unchanged"
+    );
+    assert_eq!(
+        after_newer_release_replay, before_newer_release_replay,
+        "stale-generation RELEASED replay must leave the complete demand state unchanged"
+    );
+
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn owner_intraday_current_identity_check_runs_after_observed_mutex_barrier() {
+    let harness = Harness::new().await.expect("DATABASE_URL is required");
+    let fixture = seed_membership(&harness, &harness.owner, "069500.KRX", true).await;
+    let consumer_id = Uuid::new_v4();
+    let key = "barrier-replay";
+    let created = post_demand(&harness, &harness.owner, fixture, consumer_id, 0, key).await;
+    assert_eq!(status(&created), StatusCode::OK);
+    let before_invalidation = state_fingerprint(&harness, harness.owner.user_id).await;
+
+    let mut blocker = harness.owner_pool.begin().await.expect("mutex blocker tx");
+    sqlx::query(
+        "SELECT pg_catalog.pg_advisory_xact_lock(
+                    pg_catalog.hashtextextended($1, 0))",
+    )
+    .bind(format!(
+        "owner-intraday-demand-cap|{}",
+        harness.owner.user_id
+    ))
+    .execute(&mut *blocker)
+    .await
+    .expect("owner mutex blocker");
+    let mutex_lock_key = sqlx::query_as::<_, (i64, i64, i16)>(
+        "SELECT classid::bigint, objid::bigint, objsubid
+           FROM pg_locks
+          WHERE locktype = 'advisory'
+            AND granted
+            AND pid = pg_backend_pid()
+          LIMIT 1",
+    )
+    .fetch_one(&mut *blocker)
+    .await
+    .expect("owner mutex lock key");
+
+    let app = harness.app.clone();
+    let request = raw_request(
+        "POST",
+        POST_PATH,
+        Some(&harness.owner),
+        true,
+        Some(key),
+        &demand_body(fixture, consumer_id, 0).to_string(),
+    );
+    let pending =
+        tokio::spawn(async move { app.oneshot(request).await.expect("barrier HTTP response") });
+
+    let (blocked_pid, locktype, granted) =
+        wait_for_blocked_owner_mutex(&harness.owner_pool, mutex_lock_key).await;
+    assert!(blocked_pid > 0, "blocked HTTP backend must have a real PID");
+    assert_eq!(locktype, "advisory");
+    assert!(!granted);
+
+    disable_membership(&harness, &harness.owner, fixture).await;
+    blocker.rollback().await.expect("release mutex blocker");
+
+    let response = pending.await.expect("barrier HTTP task");
+    assert_error(response, StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND").await;
+    assert_eq!(
+        state_fingerprint(&harness, harness.owner.user_id).await,
+        before_invalidation,
+        "invalidation while HTTP waits must leave the complete demand state unchanged"
+    );
+
+    harness.teardown().await;
 }
 
 #[tokio::test]

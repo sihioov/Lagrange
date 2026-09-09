@@ -818,6 +818,29 @@ impl OwnerIntradayQuoteRepository {
         owner_user_id: Uuid,
         request: &IntradayQuoteDemandRequest,
     ) -> Result<DemandMutationOutcome, IntradayStorageError> {
+        self.create_or_renew_demand_inner(owner_user_id, request, false)
+            .await
+    }
+
+    /// Create or renew a demand for an HTTP caller while requiring the
+    /// requested identity to remain the exact current READY admission inside
+    /// the mutation transaction.  Existing B1 callers keep the replay
+    /// semantics of [`Self::create_or_renew_demand`].
+    pub async fn create_or_renew_demand_current(
+        &self,
+        owner_user_id: Uuid,
+        request: &IntradayQuoteDemandRequest,
+    ) -> Result<DemandMutationOutcome, IntradayStorageError> {
+        self.create_or_renew_demand_inner(owner_user_id, request, true)
+            .await
+    }
+
+    async fn create_or_renew_demand_inner(
+        &self,
+        owner_user_id: Uuid,
+        request: &IntradayQuoteDemandRequest,
+        require_current_identity: bool,
+    ) -> Result<DemandMutationOutcome, IntradayStorageError> {
         if owner_user_id.is_nil() {
             return Err(IntradayStorageError::InvalidInput);
         }
@@ -842,7 +865,26 @@ impl OwnerIntradayQuoteRepository {
         .await
         .map_err(map_database_error)?;
 
+        let mut current_admission = if require_current_identity {
+            Some(
+                lock_ready_admission(
+                    &mut tx,
+                    owner_user_id,
+                    request.membership_id,
+                    request.generation_i64(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
         if let Some(row) = existing.as_ref() {
+            if let Some(admission) = current_admission.as_ref()
+                && !demand_matches_admission(row, admission)
+            {
+                return Err(IntradayStorageError::IdentityMismatch);
+            }
             if row.state == "RELEASED" {
                 if row.idempotency_key_sha256 == key_digest
                     && row.request_sha256 == body_digest
@@ -872,20 +914,18 @@ impl OwnerIntradayQuoteRepository {
                 }
             }
 
-            let admission = lock_ready_admission(
-                &mut tx,
-                owner_user_id,
-                request.membership_id,
-                request.generation_i64(),
-            )
-            .await?;
-            if row.membership_id != admission.membership_id
-                || row.generation_id != admission.generation_id
-                || row.instrument_id != admission.instrument_id
-                || row.generation != admission.generation
-            {
-                return Err(IntradayStorageError::IdentityMismatch);
-            }
+            let admission = match current_admission.take() {
+                Some(admission) => admission,
+                None => {
+                    lock_ready_admission(
+                        &mut tx,
+                        owner_user_id,
+                        request.membership_id,
+                        request.generation_i64(),
+                    )
+                    .await?
+                }
+            };
             let expected_next_sequence = row
                 .renewal_sequence
                 .checked_add(1)
@@ -936,13 +976,18 @@ impl OwnerIntradayQuoteRepository {
         if request.renewal_sequence != 0 {
             return Err(IntradayStorageError::DemandNotFound);
         }
-        let admission = lock_ready_admission(
-            &mut tx,
-            owner_user_id,
-            request.membership_id,
-            request.generation_i64(),
-        )
-        .await?;
+        let admission = match current_admission {
+            Some(admission) => admission,
+            None => {
+                lock_ready_admission(
+                    &mut tx,
+                    owner_user_id,
+                    request.membership_id,
+                    request.generation_i64(),
+                )
+                .await?
+            }
+        };
         let fresh_now = fresh_database_time(&mut tx).await?;
         ensure_active_capacity(&mut tx, owner_user_id, None, &admission, fresh_now).await?;
 
@@ -988,6 +1033,31 @@ impl OwnerIntradayQuoteRepository {
         demand_id: Uuid,
         request: &IntradayQuoteReleaseRequest,
     ) -> Result<DemandReleaseOutcome, IntradayStorageError> {
+        self.release_demand_inner(owner_user_id, demand_id, request, false)
+            .await
+    }
+
+    /// Release a demand for an HTTP caller while requiring the owned row to
+    /// remain the exact current READY admission inside the same transaction.
+    /// Existing B1 callers keep the release/replay semantics of
+    /// [`Self::release_demand`].
+    pub async fn release_demand_current(
+        &self,
+        owner_user_id: Uuid,
+        demand_id: Uuid,
+        request: &IntradayQuoteReleaseRequest,
+    ) -> Result<DemandReleaseOutcome, IntradayStorageError> {
+        self.release_demand_inner(owner_user_id, demand_id, request, true)
+            .await
+    }
+
+    async fn release_demand_inner(
+        &self,
+        owner_user_id: Uuid,
+        demand_id: Uuid,
+        request: &IntradayQuoteReleaseRequest,
+        require_current_identity: bool,
+    ) -> Result<DemandReleaseOutcome, IntradayStorageError> {
         if owner_user_id.is_nil() || demand_id.is_nil() {
             return Err(IntradayStorageError::InvalidInput);
         }
@@ -1013,6 +1083,18 @@ impl OwnerIntradayQuoteRepository {
         let row = row.ok_or(IntradayStorageError::DemandNotFound)?;
         if row.consumer_id != request.consumer_id {
             return Err(IntradayStorageError::DemandNotFound);
+        }
+
+        if require_current_identity {
+            if row.generation <= 0 {
+                return Err(IntradayStorageError::DatabaseIntegrity);
+            }
+            let admission =
+                lock_ready_admission(&mut tx, owner_user_id, row.membership_id, row.generation)
+                    .await?;
+            if !demand_matches_admission(&row, &admission) {
+                return Err(IntradayStorageError::IdentityMismatch);
+            }
         }
 
         if row.state == "RELEASED" {
@@ -2227,6 +2309,14 @@ struct AdmissionDbRow {
     generation_id: Uuid,
     instrument_id: String,
     generation: i64,
+}
+
+fn demand_matches_admission(row: &DemandDbRow, admission: &AdmissionDbRow) -> bool {
+    row.owner_user_id == admission.owner_user_id
+        && row.membership_id == admission.membership_id
+        && row.generation_id == admission.generation_id
+        && row.instrument_id == admission.instrument_id
+        && row.generation == admission.generation
 }
 
 #[derive(Debug, FromRow)]
