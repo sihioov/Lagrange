@@ -4285,3 +4285,9 @@ only verified ACCEPT permits integration. C documentation/diagrams/invocation re
   No Paseo run/send/daemon start/restart. No integration until all High/Medium resolved. If findings,
   bounded original writer follow-up first rejection retains luna/max; otherwise integrate exact B2
   then freeze C docs/diagrams/invocation. No redundant C3/132-test IV or idle transition gap.
+
+- B2-R active binding: reused reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 sol/high
+  auto-review, same ops workspace pinnedaa0b414. Startup wait JSON timeout contains NEW B2-R
+  direct read-only ACK and exact checkout/scope inspection (not merely the old B1 ACCEPT report).
+  Writer9ba07de6 idle clean. Replaced heartbeata077177c with207b9d45. Send terminal36583 may
+  remain waiting normally; no resend/interrupt. B2 still UNINTEGRATED pending independent verdict.
