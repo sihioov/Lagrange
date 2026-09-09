@@ -3449,3 +3449,87 @@ Native subagents: prohibited for worker packages
   terminal63224 may wait normally; do not resend or interrupt. Coordinator independently compared
   production prefix SHA256083287d7172592e234b0a8e8abfe30e51d4b602e7ffb27d271090c3a47271963
   identical on both commits. Replace heartbeatc2e8deb1 to target F2-R.
+
+### WP4-C3-F2-R ACCEPT / C3 integrated / WP6-A frozen brief (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+- Reviewer1c3827ae (Codex sol/high) is IDLE ACCEPT, no unresolved findings. Independent complete
+  counts: lib103/cacheHTTP4/mutationHTTP5/chart4/OpenAPI16 =132, zero failures/ignored; actual
+  QA scenarios ran. Strict scoped clippy and fmt/diff checks passed. Prior Medium source and
+  deterministic-evidence findings are resolved. Accepted limitations: duplicate midnight input,
+  possible loud real-DB date-rollover failure, capture-only cleanup unit test, and unavailable
+  npm regeneration/typecheck (no authorized installed dependencies). Do not reopen those as fixes.
+- Exact source chain integrated without conflicts: bc5e765 -> bf25bd5,8326a6d -> fe82bee,
+  75c764aa86a56790e410281f2a6def75eb9b0adf -> cd33e912c38eef474602e24a4f441f949b8a54af.
+  Coordinator verified clean status and empty crates/apps/data-pipelines diff against75c764aa.
+  Byte-identical integration does not warrant another duplicate 132-test worker before WP6.
+  No activation/deployment/overall feature-completion claim. All previous workers now idle.
+
+#### Goal, classification and execution graph
+
+- WP6 finishes default-off operational source/configuration and evidence-bound docs; no actual
+  provisioning, runtime modification, image build, rollout or service activation. Root AGENTS.md
+  and the user replacement model policy apply; no nested instructions under configs/scripts.
+- Isolated worktree /data/worktrees/3puw275b/stock-beta-intraday-ops,
+  workspace wks_42028f6f939c65ac, branch work/stock-beta-intraday-ops-20260909,
+  clean base cd33e912c38eef474602e24a4f441f949b8a54af.
+
+| Package | Complexity | Basis | Confidence | Escalation signals |
+|---|---|---|---|---|
+| WP6-A | intermediate | Exact empty artifact/schema and bounded offline mutation checks; no runtime wiring | high | Schema/source contradiction or unavailable verification prerequisite |
+| WP6-B (not launched) | intermediate | Existing Compose/provision/validator wiring, permissions and fake-runtime checks | medium | Missing mount/image compatibility or privileged-operation requirement |
+| WP6-C (not launched) | intermediate | Runbook and two diagrams against final integrated wiring | medium | Missing local renderer or unverifiable evidence edge |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP6-A | 1 | intermediate | Empty session-window artifact and closed schema | four new files below | integrated C3 | Codex luna/max auto-review | scoped commit and evidence | offline shell/stdlib checks and mutation self-test |
+| WP6-B | 2 | intermediate | Default-off environment/mount/permission wiring | existing WP6 Compose/env/provision/validator/static-check files; A scripts only after A completion | A accepted and coordinator exact brief | luna/max | scoped implementation | provider-free fake/static preflight regression |
+| WP6-C | 3 | intermediate | Operations instructions and structural evidence | new runbook and two puml/png pairs | B accepted and exact brief | luna/max | documentation | local-only render/current file:line anchors |
+
+#### WP6-A exact worker brief
+
+- Own ONLY these four NEW files:
+  configs/market-hours/krx-intraday-session-windows-v1.json,
+  configs/market-hours/krx-intraday-session-windows-v1.schema.json,
+  scripts/ops/stock-beta-intraday-static-check.sh,
+  scripts/ops/stock-beta-intraday-self-test.sh.
+- Read full spec docs/superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md,
+  especially7.1/11/12; source data-pipelines/collectors/src/intraday_quotes.rs is read-only.
+  The data artifact has exactly schema_version1/exchangeKRX/timezoneAsia/Seoul/entries[].
+  Never insert even a synthetic entry into the committed operational data file; fixtures only.
+- Closed draft2020-12 schema: exact required top-level and entry keys, enums/constants, real
+  date/date-time formats plus canonical date/time patterns, official global.krx.co.kr HTTPS URL,
+  lowercase prefixed SHA256. CLOSED requires both times null, REGULAR exact09:00:00/15:30:00,
+  SPECIAL requires canonical non-null times. Document positive SPECIAL interval, sorted unique
+  dates, actual hash and same-KST/nonfuture evidence as semantic runtime checks where ordinary
+  JSON Schema cannot express them. Do not fake cross-field validation or weaken runtime rules.
+- New static check is deliberately WP6-A artifact/schema-only for now: shell wrapper plus existing
+  Python3 stdlib allowed, no packages. Verify the committed file's strict exact empty shape and
+  closed schema contract/conditional constraints. Unknown keys/duplicate JSON keys/wrong types
+  fail closed, including Python bool-versus-integer ambiguity. Validate schema's expected
+  structure explicitly; do not claim a complete general JSON Schema validator. No jsonschema
+  module is installed; do not install it or invent dependency availability.
+- Self-test invokes the SAME checker against isolated temporary repository fixtures, following
+  existing owner-equity-v2-runtime-self-test.sh copy-fixture pattern. Demonstrate baseline pass
+  and independent nonempty data/extra or missing key/wrong metadata/schema loosened or missing
+  constraints failures. Each failure must be actual nonzero with safe typed messages, not just
+  source text assertions. Fixtures and cleanup stay in newly created mktemp directories; never
+  touch operational paths. A later WP6-B extends these scripts for deployment wiring checks.
+- No edits to existing files, Rust, Cargo, Compose/env/provision, runtime, CI invocation, runbook,
+  diagrams or the plan. No build/compiler/DB/Docker/npm/network/provider/credentials/root/opt/
+  host environment or clock mutation/activation/deploy/main merge/push. Existing scripts may be
+  read but not invoked if they operate live paths. No synthetic provider counters or live evidence.
+- Verify bash -n on both files, actual new static/self-test complete counts/exit codes, JSON parse,
+  git diff --check and exact four-file scope. Preserve empty operational entries. Commit only
+  these four files. If any prerequisite/scope contradiction appears report before expansion.
+- Report changed files/line ranges; deviations and reasons; all commands/counts/results;
+  unresolved/follow-up; not found/not verified, explicitly none when empty. Distinguish artifact
+  checks from runtime/date semantics or full schema-engine validation; none of those is claimed.
+- Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment
+  directly and report if it needs further decomposition. No Paseo run/send/daemon commands.
+
+Coordinator gates: inspect four-file diff and actual mutation evidence, independent sol/high
+bounded review before acceptance, then exact integration and WP6-B frozen brief. No repeated
+broad mapping or idle-transition delay. Keep retained QA untouched for later authorized DB work.
