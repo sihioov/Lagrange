@@ -3853,3 +3853,93 @@ This refinement does not expand original WP6 ownership or authorize runtime oper
   no sibling content/edits established. Treat as a bounded discovery deviation in final review,
   not evidence of implementation completion or authorization for unrelated inspection.
   Writer50c5f35c idle clean; replace3ee9f835 heartbeat with reviewer. No integration yet.
+
+### WP6-B1-R REJECT / B1-F1 exact remediation brief (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+- Reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 is IDLE REJECT. Full result/logs recovered;
+  coordinator inspected affected source. High: lexical protected-tree/broad-root bypass,
+  actual validator accepts source ../secrets overlap and /var/ or //var//; provision dry-run
+  accepts relative runtime-secret overlap and /var/. Medium: actual metadata-correct empty
+  coordination.lock rejected by exact stat %F string comparison. Runtime creates empty lock.
+  Installed stat is uutils0.8.0, NOT independently tested GNU-branded stat; no brand claim.
+- Low: shared-required missing root exits1 rather than missing-prerequisite2; off malformed-hash
+  test discards its eighth helper argument; separate sentinel does not prove actual lock/state
+  byte/inode stability around each invalid case. No source mutation defect established for latter.
+  Trailing-slash symlink rejection is REFUTED as a bug. Don't reopen accepted A/runtime limits.
+- Independent checks passed: regex69, A baseline+11 negative, B1 mutations3, validator52
+  (7 positive/45 expected failures), provision/idempotence, all seven offline regressions,
+  syntax/static/diff/clean. Passing old tests does not resolve findings. Socket exact-path
+  simulation remains labelled. Initial sibling filename enumeration deviation acknowledged;
+  no sibling content reads/edits. Source a661bfc5ab3bb0c02ac0652c2ac22fe550bfe147 UNINTEGRATED.
+
+| Package | Complexity | Basis | Confidence | Escalation signals |
+|---|---|---|---|---|
+| WP6-B1-F1 | intermediate | Reproduced defects, bounded path/file metadata fixes and same-script fixtures | high | Repeated failed remediation, ambiguous path base, unavailable scoped fixture capability |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP6-B1-F1 | 2 repair | intermediate | Restore dedicated-store separation and runtime-compatible metadata validation | Three scripts below, optional minimal static hooks | B1-R findings | Reuse original Codex luna/max auto-review; first rejection | Scoped commit/repros/report | Focused tests and seven offline regressions |
+
+Target /data/worktrees/3puw275b/stock-beta-intraday-ops, workspace wks_42028f6f939c65ac,
+branch work/stock-beta-intraday-ops-20260909, clean base a661bfc above. Reuse idle writer
+50c5f35c-d28f-4c75-bd62-31cc99042cd0, no new worker/delegation. Read full B1 brief above,
+this full F1 brief, full contract and applicable target instructions; no sibling discovery.
+
+Own ONLY scripts/ops/provision-linux.sh, scripts/ops/validate-production-config.sh,
+scripts/ops/stock-beta-intraday-self-test.sh; optional MINIMAL directly related assertions/mutation
+hooks in scripts/ops/stock-beta-intraday-static-check.sh. No new files. .env.example, artifacts,
+schema, shared dotenv lib, Compose, all Rust/runtime and other test files remain byte unchanged.
+
+1. Reproduce first against current actual scripts under private fake-root fixtures: valid empty
+   lock rejected; relative protected-secret overlap accepted; /var/ and //var// accepted. Record
+   actual pre-fix exits. Do not run real privileged scripts or write real protected paths.
+2. Explicit runtime-state root must use canonical absolute spelling: reject repeated separators,
+   trailing slash, dot/dotdot, relative paths and existing broad roots before metadata inspection.
+   Preserve symlink ancestor/leaf rejection; do not normalize away a symlink before checking it.
+   This canonical-spelling requirement is for this NEW optional root only, not a broad change to
+   existing configuration paths. No fallback, no creation/inspection when absent legacy/off.
+   Protected-tree comparisons must use canonical absolute identities for BOTH operands, not raw
+   spelling. Existing validator relative source/runtime secret paths retain their env-file-dir
+   base; provisioner relative runtime-secret path retains process-cwd base. Resolve dot segments,
+   repeated/trailing separators and existing symlink aliases for comparisons (existing realpath -m
+   is available; handle failure closed, no install). Missing suffixes must still compare safely.
+   Do not globally rewrite existing path consumers or reject valid existing relative secrets.
+   Compare ancestor/equality/descendant with component boundaries; similar-name siblings stay valid.
+   Cover Raw/Curated/artifact/source/runtime secret trees; preserve scope gating and legacy/off
+   safety for every explicitly supplied root. No broad root probes or state-content reads.
+3. Accept empty and nonempty nonsymlink regular lock/state/temp files using file-type semantics,
+   not a localized/human-readable stat description. Keep uid/gid/mode/nlink checks exact;
+   FIFO/socket/directory/symlink/hardlink remain rejected. Do not read runtime bytes in validator.
+   Adapt labelled socket simulation narrowly if predicate changes; never claim real socket coverage.
+4. In validator, otherwise-valid shared_required with absent/blank root is missing prerequisite
+   exit2/BLOCKED_EXTERNAL. Unsafe specified root stays exit1, nonexistent safe root exit2. Preserve
+   syntax precedence and existing provisioner root guard behavior; no unrelated exit-class rewrite.
+5. Tests use SAME actual scripts, pre/post failure evidence. Use real zero-byte lock positive in
+   lock-only and full store, retain nonempty regular positives. Independently restore valid baseline
+   per bad path case. Test canonical valid root and similarly named sibling positives, repeated/
+   trailing root rejection, relative ../secret and relative runtime-secret overlaps with correct
+   bases in both scripts, canonicalized aliases for protected trees and both overlap directions.
+   Validate off malformed NONEMPTY hash really reaches seventh helper argument and is ignored.
+   Around each metadata case, snapshot actual existing lock/state regular-file bytes and inodes
+   after fixture setup, compare immediately after validator (also missing/shape/metadata identity
+   where a case deliberately replaces a file); never read FIFO/socket contents or follow symlinks.
+   State sentinel must not leak to output. Snapshot per-case, not across intentional test mutations.
+   Preserve idempotent simulated provision apply, no unsafe-existing repair, all prior checks.
+6. Run syntax, focused static/self-test with complete separate counts, all seven offline regressions
+   listed in B1 brief, diff/scope/hash/clean. Guards/private fake-root only. No skipped success.
+   Data SHA256 f53e05f951ad6e8bf216cc62e0302b9171c886fe9a9b8303bbbdbf55b738f0d0 and schema
+   ae76ccdd2e46a6efeaebc378606f4022ffc672a0f8e9f69465088e3a19597739 unchanged.
+
+No actual root/sudo/accounts/credentials/provider/network/Docker/Compose/DB/compiler/Cargo/npm/
+install/build/opt/host-env-or-clock/live-operations/activation/deploy/main merge/push. Own private
+mktemp/subprocess fixture env only; no sibling searches or other dependency links. QA retained
+untouched. B2/C not launched. Calendar36h/window same-KST rules and EOD unchanged.
+Commit only scoped files after checks. Report exact files/lines, pre/post reproductions, complete
+commands/counts/exits, deviations/reasons, unresolved/follow-up and not verified explicitly none
+when empty. Missing scope/capability must be reported, not invented. Coordinator will inspect full
+delta then reuse sol/high reviewer; no integration until High/Medium resolved.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No Paseo run/send/daemon start/restart.
