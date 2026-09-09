@@ -3799,3 +3799,10 @@ Coordinator gates: actual startup acknowledgment; full five-file delta and fixtu
 bounded independent sol/high review; exact integration only after ACCEPT. Then freeze B2 wiring
 from actual source (including legacy/off interpolation decision), launch promptly, and C afterwards.
 This refinement does not expand original WP6 ownership or authorize runtime operations.
+
+- WP6-B1 active binding: NEW writer50c5f35c-d28f-4c75-bd62-31cc99042cd0 Codex luna/max
+  auto-review, ops workspace wks_42028f6f939c65ac, clean base2e528590. Current profiles and
+  capability checked. Local6767 EPERM retried with exact CLI escalation, no daemon lifecycle.
+  Startup wait JSON timeout contained direct-assignment acknowledgment (explicit no delegation);
+  subsequent logs showed actual instruction/context-scope reads. No implementation/test success
+  claimed yet. A reviewer3e00a43f and writerc15df593 are idle. Replace feec383a heartbeat with B1.
