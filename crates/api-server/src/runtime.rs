@@ -8,7 +8,8 @@
 use crate::http::api_router;
 use crate::http::state::{
     ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaEquitySignalsMode, OwnerBetaPaperMode,
-    OwnerBetaPriceInputMode, OwnerEquityV2RuntimePins, system_seoul_today,
+    OwnerBetaPriceInputMode, OwnerEquityV2RuntimePins, OwnerIntradayQuoteReadConfig,
+    system_intraday_now, system_seoul_today,
 };
 use api_server_auth::RouterState as AuthRouterState;
 use axum::extract::State;
@@ -16,10 +17,15 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::get};
 use base64::Engine;
+use collectors::intraday_quotes::{
+    INTRADAY_SESSION_WINDOWS_PATH, INTRADAY_SESSION_WINDOWS_SHA256_ENV,
+    IntradaySessionWindowContract,
+};
 use job_queue::recommendation::input::DatasetPin;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
+use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,6 +44,7 @@ const DEFAULT_MAX_JOBS_PER_OWNER: u32 = 10;
 const DEFAULT_STEP_UP_MAX_AUTH_AGE_SECS: i64 = 900;
 const DEFAULT_ARTIFACT_ROOT: &str = "/data/artifacts";
 const DEVELOPMENT_CODE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+const INTRADAY_SESSION_WINDOWS_READ_LIMIT: u64 = 1_048_577;
 /// Maximum time allowed for in-flight HTTP requests after the shutdown signal
 /// is observed. Dropping the server future after this deadline is the safe
 /// forced-drain path: no request is allowed to hold the audit shutdown hostage.
@@ -69,6 +76,7 @@ pub struct RuntimeConfig {
     pub stock_price_beta_artifact_root: PathBuf,
     pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
     pub owner_equity_v2_api_artifact_root: Option<PathBuf>,
+    pub owner_intraday_quotes: OwnerIntradayQuoteReadConfig,
     pub acquire_timeout: Duration,
 }
 
@@ -129,6 +137,8 @@ impl RuntimeConfig {
             stock_price_beta_artifact_root: self.stock_price_beta_artifact_root.clone(),
             owner_equity_v2_pins: self.owner_equity_v2_pins.clone(),
             owner_equity_v2_api_artifact_root: self.owner_equity_v2_api_artifact_root.clone(),
+            owner_intraday_quotes: self.owner_intraday_quotes.clone(),
+            intraday_now: system_intraday_now,
         }
     }
 }
@@ -143,6 +153,14 @@ pub fn load_config() -> Result<RuntimeConfig, ConfigError> {
 pub fn load_config_from<F>(get: F) -> Result<RuntimeConfig, ConfigError>
 where
     F: Fn(&str) -> Option<OsString>,
+{
+    load_config_from_with_reader(get, read_intraday_session_windows)
+}
+
+fn load_config_from_with_reader<F, R>(get: F, read_window: R) -> Result<RuntimeConfig, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+    R: Fn(&Path) -> std::io::Result<Vec<u8>>,
 {
     let app_env = optional_text(&get, "APP_ENV")?
         .map(|value| value.to_ascii_lowercase())
@@ -163,6 +181,7 @@ where
     let owner_beta_equity_signals = owner_beta_equity_signals_from(&get, owner_beta_access)?;
     let owner_equity_v2_pins = owner_equity_v2_pins_from(&get)?;
     let owner_equity_v2_api_artifact_root = owner_equity_v2_api_artifact_root_from(&get)?;
+    let owner_intraday_quotes = owner_intraday_quote_read_config_from(&get, &read_window)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -220,8 +239,75 @@ where
         stock_price_beta_artifact_root,
         owner_equity_v2_pins,
         owner_equity_v2_api_artifact_root,
+        owner_intraday_quotes,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
+}
+
+fn owner_intraday_quote_read_config_from<F, R>(
+    get: &F,
+    read_window: &R,
+) -> Result<OwnerIntradayQuoteReadConfig, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+    R: Fn(&Path) -> std::io::Result<Vec<u8>>,
+{
+    if get("OWNER_INTRADAY_QUOTES_MODE_FILE").is_some() {
+        return Err(invalid("OWNER_INTRADAY_QUOTES_MODE_FILE"));
+    }
+
+    let mode = match get("OWNER_INTRADAY_QUOTES_MODE") {
+        None => OwnerIntradayQuoteReadConfig::Disabled,
+        Some(raw) => {
+            let value = raw.into_string().map_err(|_| ConfigError::NonUnicode {
+                key: "OWNER_INTRADAY_QUOTES_MODE".to_owned(),
+            })?;
+            match value.as_str() {
+                "off" => OwnerIntradayQuoteReadConfig::Disabled,
+                "owner_only" => OwnerIntradayQuoteReadConfig::OwnerOnly { window: None },
+                _ => return Err(invalid("OWNER_INTRADAY_QUOTES_MODE")),
+            }
+        }
+    };
+
+    let OwnerIntradayQuoteReadConfig::OwnerOnly { .. } = mode else {
+        return Ok(mode);
+    };
+
+    Ok(OwnerIntradayQuoteReadConfig::OwnerOnly {
+        window: read_intraday_session_window_contract(get, read_window),
+    })
+}
+
+fn read_intraday_session_window_contract<F, R>(
+    get: &F,
+    read_window: &R,
+) -> Option<Arc<IntradaySessionWindowContract>>
+where
+    F: Fn(&str) -> Option<OsString>,
+    R: Fn(&Path) -> std::io::Result<Vec<u8>>,
+{
+    let expected_hash = get(INTRADAY_SESSION_WINDOWS_SHA256_ENV)?
+        .into_string()
+        .ok()?;
+    let canonical_hash = domain::ContentHash::parse(&expected_hash).ok()?;
+    if canonical_hash.as_str() != expected_hash {
+        return None;
+    }
+
+    let bytes = read_window(Path::new(INTRADAY_SESSION_WINDOWS_PATH)).ok()?;
+    IntradaySessionWindowContract::from_bytes(&bytes, &expected_hash)
+        .ok()
+        .map(Arc::new)
+}
+
+fn read_intraday_session_windows(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(INTRADAY_SESSION_WINDOWS_READ_LIMIT)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn owner_equity_v2_pins_from<F>(get: &F) -> Result<Option<OwnerEquityV2RuntimePins>, ConfigError>
@@ -1351,9 +1437,15 @@ pub async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{DateTime, Utc};
+    use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
     #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
 
     fn base_env() -> HashMap<String, OsString> {
@@ -1379,6 +1471,326 @@ mod tests {
 
     fn config(env: &HashMap<String, OsString>) -> Result<RuntimeConfig, ConfigError> {
         load_config_from(|key| env.get(key).cloned())
+    }
+
+    fn config_with_reader<R>(
+        env: &HashMap<String, OsString>,
+        read_window: R,
+    ) -> Result<RuntimeConfig, ConfigError>
+    where
+        R: Fn(&Path) -> std::io::Result<Vec<u8>>,
+    {
+        load_config_from_with_reader(|key| env.get(key).cloned(), read_window)
+    }
+
+    fn regular_window_bytes(evidence_retrieved_at: &str) -> Vec<u8> {
+        serde_json::json!({
+            "schema_version": 1,
+            "exchange": "KRX",
+            "timezone": "Asia/Seoul",
+            "entries": [{
+                "date": "2026-08-13",
+                "disposition": "REGULAR",
+                "open_local": "09:00:00",
+                "close_local": "15:30:00",
+                "evidence_url": "https://global.krx.co.kr/contents/GLB/06/0602/0602020204/GLB0602020204T1.jsp",
+                "evidence_retrieved_at": evidence_retrieved_at,
+                "evidence_sha256": format!("sha256:{}", "a".repeat(64)),
+            }]
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    fn content_hash(bytes: &[u8]) -> String {
+        domain::ContentHash::from_bytes(bytes).to_string()
+    }
+
+    fn utc(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .expect("valid test timestamp")
+            .with_timezone(&Utc)
+    }
+
+    static INTRADAY_CLOCK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn test_intraday_now() -> DateTime<Utc> {
+        INTRADAY_CLOCK_CALLS.fetch_add(1, Ordering::SeqCst);
+        utc("2026-08-13T00:31:00Z")
+    }
+
+    #[test]
+    fn owner_intraday_quotes_are_default_off_without_window_reads() {
+        for mode in [None, Some("off")] {
+            let mut env = base_env();
+            if let Some(mode) = mode {
+                env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), mode.into());
+            }
+            env.insert(
+                "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
+                "not-a-hash".into(),
+            );
+            let reads = Cell::new(0);
+            let loaded = config_with_reader(&env, |_| {
+                reads.set(reads.get() + 1);
+                Ok(Vec::new())
+            })
+            .expect("default-off API config");
+
+            assert_eq!(
+                loaded.owner_intraday_quotes,
+                OwnerIntradayQuoteReadConfig::Disabled
+            );
+            assert_eq!(reads.get(), 0, "disabled mode must not read the window");
+        }
+    }
+
+    #[test]
+    fn owner_intraday_quotes_mode_is_strict_and_rejects_file_alias() {
+        for value in [
+            "",
+            " ",
+            " off",
+            "off ",
+            "OFF",
+            "disabled",
+            "OWNER_ONLY",
+            "owner-only",
+            "unknown",
+        ] {
+            let mut env = base_env();
+            env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), value.into());
+            assert!(
+                matches!(
+                    config_with_reader(&env, |_| Ok(Vec::new())),
+                    Err(ConfigError::Invalid { ref key })
+                        if key == "OWNER_INTRADAY_QUOTES_MODE"
+                ),
+                "{value:?} must fail closed"
+            );
+        }
+
+        let mut env = base_env();
+        env.insert(
+            "OWNER_INTRADAY_QUOTES_MODE_FILE".to_owned(),
+            "/not/a/policy-file".into(),
+        );
+        assert!(matches!(
+            config_with_reader(&env, |_| Ok(Vec::new())),
+            Err(ConfigError::Invalid { ref key })
+                if key == "OWNER_INTRADAY_QUOTES_MODE_FILE"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_intraday_quotes_mode_rejects_non_unicode_without_reading() {
+        let mut env = base_env();
+        env.insert(
+            "OWNER_INTRADAY_QUOTES_MODE".to_owned(),
+            OsString::from_vec(vec![0xff]),
+        );
+        let reads = Cell::new(0);
+        assert!(matches!(
+            config_with_reader(&env, |_| {
+                reads.set(reads.get() + 1);
+                Ok(Vec::new())
+            }),
+            Err(ConfigError::NonUnicode { ref key })
+                if key == "OWNER_INTRADAY_QUOTES_MODE"
+        ));
+        assert_eq!(reads.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_intraday_session_hash_non_unicode_is_unavailable_without_reading() {
+        let mut env = base_env();
+        env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
+        env.insert(
+            "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
+            OsString::from_vec(vec![0xff]),
+        );
+        let reads = Cell::new(0);
+        let loaded = config_with_reader(&env, |_| {
+            reads.set(reads.get() + 1);
+            Ok(Vec::new())
+        })
+        .expect("non-unicode hash is an unavailable window, not config failure");
+        assert!(matches!(
+            loaded.owner_intraday_quotes,
+            OwnerIntradayQuoteReadConfig::OwnerOnly { window: None }
+        ));
+        assert_eq!(reads.get(), 0);
+    }
+
+    #[test]
+    fn owner_intraday_session_hash_failures_are_unavailable_without_reads() {
+        for hash in [
+            "",
+            " ",
+            "sha256:short",
+            &format!("sha256:{}", "A".repeat(64)),
+        ] {
+            let mut env = base_env();
+            env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
+            env.insert(
+                "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
+                hash.into(),
+            );
+            let reads = Cell::new(0);
+            let loaded = config_with_reader(&env, |_| {
+                reads.set(reads.get() + 1);
+                Ok(Vec::new())
+            })
+            .expect("bad hash is an unavailable window, not config failure");
+            assert!(matches!(
+                loaded.owner_intraday_quotes,
+                OwnerIntradayQuoteReadConfig::OwnerOnly { window: None }
+            ));
+            assert_eq!(reads.get(), 0, "bad hash must not read the window");
+        }
+    }
+
+    #[test]
+    fn owner_intraday_session_reader_and_parser_failures_are_unavailable() {
+        let valid_bytes = regular_window_bytes("2026-08-12T15:30:00Z");
+        let valid_hash = content_hash(&valid_bytes);
+        let cases = [
+            ("missing", None, None),
+            ("io error", None, None),
+            ("malformed", Some(b"{}".to_vec()), None),
+            ("empty", Some(Vec::new()), None),
+            ("oversized", Some(vec![b'x'; 1_048_577]), None),
+            ("hash mismatch", Some(b"{}".to_vec()), Some(valid_hash)),
+        ];
+
+        for (label, bytes, expected_hash) in cases {
+            let returned_bytes = bytes.unwrap_or_else(|| valid_bytes.clone());
+            let hash = expected_hash.unwrap_or_else(|| content_hash(&returned_bytes));
+            let mut env = base_env();
+            env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
+            env.insert(
+                "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
+                hash.into(),
+            );
+            let reads = Cell::new(0);
+            let paths = RefCell::new(Vec::<PathBuf>::new());
+            let loaded = config_with_reader(&env, |path| {
+                reads.set(reads.get() + 1);
+                paths.borrow_mut().push(path.to_path_buf());
+                if label == "missing" || label == "io error" {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "synthetic reader failure",
+                    ))
+                } else {
+                    Ok(returned_bytes.clone())
+                }
+            })
+            .expect("window read/parser failure is non-fatal");
+
+            assert!(matches!(
+                loaded.owner_intraday_quotes,
+                OwnerIntradayQuoteReadConfig::OwnerOnly { window: None }
+            ));
+            assert_eq!(reads.get(), 1, "{label} must read exactly once");
+            assert_eq!(
+                paths.into_inner(),
+                vec![PathBuf::from(INTRADAY_SESSION_WINDOWS_PATH)]
+            );
+        }
+    }
+
+    #[test]
+    fn owner_intraday_valid_window_is_ready_and_preserved_in_api_config() {
+        let bytes = regular_window_bytes("2026-08-12T15:30:00Z");
+        let hash = content_hash(&bytes);
+        let mut env = base_env();
+        env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
+        env.insert(
+            "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
+            hash.clone().into(),
+        );
+        let reads = Cell::new(0);
+        let paths = RefCell::new(Vec::<PathBuf>::new());
+        let loaded = config_with_reader(&env, |path| {
+            reads.set(reads.get() + 1);
+            paths.borrow_mut().push(path.to_path_buf());
+            Ok(bytes.clone())
+        })
+        .expect("valid owner-only window");
+
+        let api_config = loaded.api_config();
+        assert!(matches!(
+            &api_config.owner_intraday_quotes,
+            OwnerIntradayQuoteReadConfig::OwnerOnly { window: Some(window) }
+                if window.window_contract_sha256() == hash
+                    && window.entry(chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap()).is_some()
+        ));
+        assert_eq!(reads.get(), 1);
+        assert_eq!(
+            paths.into_inner(),
+            vec![PathBuf::from(INTRADAY_SESSION_WINDOWS_PATH)]
+        );
+    }
+
+    #[test]
+    fn owner_intraday_session_state_uses_same_kst_evidence_and_half_open_bounds() {
+        let same_kst = IntradaySessionWindowContract::from_bytes(
+            &regular_window_bytes("2026-08-12T15:30:00Z"),
+            &content_hash(&regular_window_bytes("2026-08-12T15:30:00Z")),
+        )
+        .expect("same-KST evidence contract");
+        assert_eq!(
+            same_kst.state_at(utc("2026-08-13T00:31:00Z"), false),
+            collectors::intraday_quotes::IntradayMarketState::Open
+        );
+        assert_eq!(
+            same_kst.state_at(utc("2026-08-13T00:00:00Z"), false),
+            collectors::intraday_quotes::IntradayMarketState::Open
+        );
+        assert_eq!(
+            same_kst.state_at(utc("2026-08-13T06:30:00Z"), false),
+            collectors::intraday_quotes::IntradayMarketState::Closed
+        );
+
+        let stale = regular_window_bytes("2026-08-12T14:59:59Z");
+        let stale_contract =
+            IntradaySessionWindowContract::from_bytes(&stale, &content_hash(&stale))
+                .expect("stale evidence contract");
+        assert_eq!(
+            stale_contract.state_at(utc("2026-08-13T00:31:00Z"), false),
+            collectors::intraday_quotes::IntradayMarketState::Unknown
+        );
+
+        let future = regular_window_bytes("2026-08-12T15:30:00Z");
+        let future_contract =
+            IntradaySessionWindowContract::from_bytes(&future, &content_hash(&future))
+                .expect("future evidence contract");
+        assert_eq!(
+            future_contract.state_at(utc("2026-08-12T15:29:59Z"), false),
+            collectors::intraday_quotes::IntradayMarketState::Unknown
+        );
+    }
+
+    #[test]
+    fn owner_intraday_clock_is_injected_and_production_clock_is_live() {
+        let loaded = config(&base_env()).expect("base config");
+        let production_api_config = loaded.api_config();
+        let before = Utc::now();
+        let observed = (production_api_config.intraday_now)();
+        let after = Utc::now();
+        assert!(
+            observed >= before && observed <= after,
+            "production clock must call the current UTC clock"
+        );
+
+        INTRADAY_CLOCK_CALLS.store(0, Ordering::SeqCst);
+        let mut injected = production_api_config;
+        injected.intraday_now = test_intraday_now;
+        assert_eq!((injected.intraday_now)(), utc("2026-08-13T00:31:00Z"));
+        assert_eq!(INTRADAY_CLOCK_CALLS.load(Ordering::SeqCst), 1);
     }
 
     #[test]

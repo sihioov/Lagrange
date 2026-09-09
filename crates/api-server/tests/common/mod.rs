@@ -379,6 +379,8 @@ impl Harness {
             stock_price_beta_artifact_root: h.artifact_root.clone(),
             owner_equity_v2_pins: None,
             owner_equity_v2_api_artifact_root: None,
+            owner_intraday_quotes: api_server::http::state::OwnerIntradayQuoteReadConfig::Disabled,
+            intraday_now: api_server::http::state::system_intraday_now,
         };
         let state = ApiState::from_pools(
             cfg,

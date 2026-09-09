@@ -475,6 +475,8 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             stock_price_beta_artifact_root: repo_root.join("artifacts"),
             owner_equity_v2_pins: None,
             owner_equity_v2_api_artifact_root: None,
+            owner_intraday_quotes: api_server::http::state::OwnerIntradayQuoteReadConfig::Disabled,
+            intraday_now: api_server::http::state::system_intraday_now,
         },
         app_pool,
         admin_pool,

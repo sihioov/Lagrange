@@ -25,6 +25,7 @@ use crate::repos::shared::SharedDataRepo;
 use crate::repos::strategies::StrategyCatalogRepo;
 use crate::repos::strategy_configs::StrategyConfigRepo;
 use auth::entitlement::{Actor, EntitlementService};
+use collectors::intraday_quotes::IntradaySessionWindowContract;
 use job_queue::JobQueue;
 use job_queue::recommendation::input::DatasetPin;
 use std::collections::HashMap;
@@ -117,6 +118,21 @@ pub struct OwnerEquityV2RuntimePins {
     pub entitlement_sha256: String,
 }
 
+/// Immutable API-side evidence for the owner-only intraday quote surface.
+///
+/// The API never owns provider credentials or a session-window path.  It only
+/// receives the already validated, hash-pinned provider-free contract during
+/// process configuration.  A missing window is therefore distinct from the
+/// feature being disabled and remains typed as unavailable evidence.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum OwnerIntradayQuoteReadConfig {
+    #[default]
+    Disabled,
+    OwnerOnly {
+        window: Option<Arc<IntradaySessionWindowContract>>,
+    },
+}
+
 /// Runtime configuration of the API surface.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -159,11 +175,23 @@ pub struct ApiConfig {
     /// Optional, read-only root for V2 admitted candidate artifacts. Its
     /// absence deliberately disables only the chart read route.
     pub owner_equity_v2_api_artifact_root: Option<std::path::PathBuf>,
+    /// Default-off, owner-only current-quote read evidence. This contains no
+    /// provider or credential state and is immutable after startup.
+    pub owner_intraday_quotes: OwnerIntradayQuoteReadConfig,
+    /// Wall clock used by the API's intraday freshness/session evaluation.
+    /// Production supplies [`system_intraday_now`]; tests may inject a clock.
+    pub intraday_now: fn() -> chrono::DateTime<chrono::Utc>,
 }
 
 pub fn system_seoul_today() -> chrono::NaiveDate {
     let offset = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
     chrono::Utc::now().with_timezone(&offset).date_naive()
+}
+
+/// Production wall clock for intraday quote freshness/session evaluation.
+/// This is deliberately separate from the existing EOD/date clocks.
+pub fn system_intraday_now() -> chrono::DateTime<chrono::Utc> {
+    chrono::Utc::now()
 }
 
 /// Shared candidate confirmed-close contract. Daemon wake-up configuration
@@ -272,6 +300,8 @@ impl ApiState {
                 stock_price_beta_artifact_root: std::path::PathBuf::from("/unused"),
                 owner_equity_v2_pins: None,
                 owner_equity_v2_api_artifact_root: None,
+                owner_intraday_quotes: OwnerIntradayQuoteReadConfig::Disabled,
+                intraday_now: system_intraday_now,
             }),
             app_pool: pool.clone(),
             admin_pool: pool.clone(),
