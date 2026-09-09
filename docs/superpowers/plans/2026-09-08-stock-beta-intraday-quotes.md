@@ -4347,3 +4347,9 @@ capability conflicts, report before expanding. No overall decision blocker: perf
 Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
 No Paseo run/send/daemon start/restart. Coordinator full one-file delta review then reuse sol/high
 reviewer; no integration before Medium findings resolved. C and activation gates unchanged.
+
+- B2-F1 active binding: reused original writer9ba07de6-c67e-4b92-b26d-39010f0549c4 luna/max
+  auto-review at cleanaa0b414, ops workspacewks_42028f6f939c65ac. Startup wait timeout contains
+  NEW direct single-file remediation ACK and instruction activity. Reviewer5f6d978f idle REJECT.
+  Replaced heartbeat207b9d45 with76b3b141. Send terminal53061 may remain waiting normally;
+  do not resend/interrupt. No fix/test completion or integration claimed yet.
