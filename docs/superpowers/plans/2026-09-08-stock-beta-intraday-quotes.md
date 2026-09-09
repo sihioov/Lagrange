@@ -3845,3 +3845,11 @@ This refinement does not expand original WP6 ownership or authorize runtime oper
   directly and report if it needs further decomposition. No Paseo run/send/daemon operations.
   Coordinator will recover evidence and either boundedly remediate via idle writer or accept
   and integrate exactly, then freeze B2 wiring; no idle-transition gap or redundant C3 IV.
+
+- B1-R active binding: NEW reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 Codex sol/high
+  auto-review in ops workspace wks_42028f6f939c65ac, sourcea661bfc. Current profiles/capability
+  inspected; startup wait timeout includes explicit read-only acknowledgment and checkout checks.
+  Startup instruction discovery used find .. -name AGENTS.md despite no sibling-search brief;
+  no sibling content/edits established. Treat as a bounded discovery deviation in final review,
+  not evidence of implementation completion or authorization for unrelated inspection.
+  Writer50c5f35c idle clean; replace3ee9f835 heartbeat with reviewer. No integration yet.
