@@ -3654,3 +3654,148 @@ broad mapping or idle-transition delay. Keep retained QA untouched for later aut
   in same ops workspace at2e528590. Startup wait timeout included NEW acknowledgment and actual
   plan/git inspection. Writer c15df593 idle clean. Send terminal65065 may remain waiting normally;
   do not resend/interrupt. Replace heartbeat09c3d5c1 to monitor reviewer, not completed writer.
+
+### WP6-A-F1-R ACCEPT / exact integration / WP6-B refinement (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+- Reviewer3e00a43f-314e-4d06-a58f-b58401a6a86e is IDLE ACCEPT with no findings.
+  Independently: Python search69/69 and existing Node RegExp69/69; same-checker baseline0
+  plus11 negative mutations exit1; syntax/static/JSON/diff/clean PASS. Prior Medium resolved.
+  Empty artifact SHA256 remains f53e05f951ad6e8bf216cc62e0302b9171c886fe9a9b8303bbbdbf55b738f0d0.
+  Accepted full-schema-engine/UTC-format/runtime-semantic limitations unchanged.
+- Integrated source1bfe15e3 -> a889d89 and source2e528590 -> 0c63e453a665e2a5e38924928f0a359844466d86.
+  Coordinator verified clean worktree and empty source comparison over crates/apps/data-pipelines/
+  configs/scripts. Four exact files; no redundant C3/132-test IV.
+- Coordinator inspected actual Compose five credentialed services, runtime strict parser, provisioner,
+  validator/dotenv and offline fixture runners. B is split at the host-preparation boundary:
+  adding a required Compose bind immediately would require resolving full-file interpolation versus
+  legacy OFF compatibility. B1 can safely implement optional explicit host preparation and strict
+  opt-in validation now, without deciding or changing any Compose activation path. B2 must settle
+  and freeze that wiring before launch; no worker may invent a fallback path or silently require
+  a new runtime mount for existing legacy/OFF configurations. This is not a user decision blocker.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP6-B1 | intermediate | Fixed parser modes plus existing metadata/provision patterns, real script fixture tests | high | Existing fixture architecture cannot test actual guarded scripts; scope gap; repeated failing remediation |
+| WP6-B2 | intermediate | Five credentialed service binds plus two window readers and static integration | medium | Full-file Compose interpolation conflicts with legacy OFF; needs new file/image/service or frozen release edits |
+| WP6-C | intermediate | Evidence-bound runbook and two existing diagrams after wiring | medium | Missing actual edge evidence or local renderer unavailable |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP6-B1 | 2 | intermediate | Default-off protected host preparation and config validation | Exact five files below | Accepted A | Codex luna/max auto-review | Scoped implementation/commit and actual fixture results | Syntax, focused static/self-test and seven existing offline regressions |
+| WP6-B2 | 3 | intermediate | Default-off Compose wiring without API credential/state exposure | compose.yml; V2 static/self-test; minimal static-check invocation; B1 files only if detailed follow-up brief explicitly needs them | Accepted B1 and coordinator wiring decision | Codex luna/max auto-review | Frozen brief first, then scoped implementation | Offline Compose contract and fake-runtime regressions |
+| WP6-C | 4 | intermediate | Operations documentation and current diagrams | Runbook plus two puml/png pairs in full spec | Accepted B2 | Codex luna/max auto-review | Evidence-anchored docs/images | Local render/evidence inspection then independent sol/high review |
+
+### WP6-B1 exact implementation brief
+
+Target: /data/worktrees/3puw275b/stock-beta-intraday-ops, workspace wks_42028f6f939c65ac,
+branch work/stock-beta-intraday-ops-20260909, clean base2e528590d415641d718ca598d564003e5b303aeb.
+This source equals coordinator0c63e453 for relevant source. Only this worker may edit it.
+Read this FULL brief and full spec at coordinator:
+docs/superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md.
+Read target AGENTS.md; no target nested instructions found under deploy/scripts/configs.
+Task is specified implementation, intermediate/high confidence; start luna/max, escalate only
+on observed repository signals. No further delegation.
+
+Own ONLY:
+- deploy/compose/.env.example
+- scripts/ops/provision-linux.sh
+- scripts/ops/validate-production-config.sh
+- scripts/ops/stock-beta-intraday-static-check.sh
+- scripts/ops/stock-beta-intraday-self-test.sh
+No new files. Do not modify Compose, shared lib/dotenv.sh, other tests, frozen privileged release
+installer/gates, Rust/provider/API/Web/config artifacts/schema/docs/diagrams. Artifact and schema
+must remain byte-identical. Read adjacent files only for the specified dependencies.
+
+1. Non-secret example keys: OWNER_INTRADAY_QUOTES_MODE=off, KIS_READ_COORDINATION_MODE=legacy,
+   blank KIS_READ_CREDENTIAL_GENERATION, blank LAGRANGE_RUNTIME_STATE_DIR,
+   blank OWNER_INTRADAY_SESSION_WINDOWS_SHA256. Comments explain explicit operator-selected
+   absolute host root, fixed kis-read-coordination leaf and fixed container path, separate activation
+   approval and empty window evidence. Do not put credentials, actual evidence, quota overrides,
+   a production fallback path, or an enabled example into the file.
+
+2. Validator mirrors crates/kis-client/src/read_coordination_config.rs from_values:
+   absent modes -> legacy/off; present modes exact legacy|shared_required and off|owner_only;
+   present empty/disabled/uppercase/whitespace modes invalid. owner_only requires shared_required.
+   Shared-required generation must be canonical positive decimal u64 (1..18446744073709551615);
+   reject +, leading zero, whitespace, overflow, zero, missing. Do not use overflowing shell integer
+   comparisons. Legacy ignores generation semantics as runtime does.
+   Protect all five new keys from mismatching shell overrides including shell-only values with
+   absent file keys, using local guards patterned after existing V2 mode; do not widen dotenv lib.
+   Reject _FILE aliases for these non-secret configuration keys in file or shell.
+   Off ignores window hash readiness as runtime does. owner_only missing/empty hash is
+   BLOCKED_EXTERNAL, malformed nonempty hash invalid; canonical sha256: plus64 lowercase hex.
+   This is format/readiness only, not actual window parsing/date/hash verification or activation.
+   No new owner role, quota knob, runtime filesystem override inside container, or extra policy gate.
+
+3. Preserve legacy/off config and provision behavior when root absent/blank: no new host requirement,
+   no shared-leaf read/create. shared_required requires nonempty explicit absolute host root, no
+   fallback. Config mode syntax is checked in all validator scopes. Shared filesystem readiness is
+   checked only for credentialed scopes backfill/range-raw/release, not KIS-free infrastructure,
+   serving-prereqs or provider-free range-raw-recovery. An explicitly supplied path must be safe even
+   in legacy mode; shared file metadata is inspected only when shared-required in credentialed scope.
+   Reject relative paths, dot/dotdot traversal, broad roots, symlink ancestors/leaf, and use of the
+   existing Raw/Curated/artifact/source-secret/runtime-secret trees as this dedicated runtime store.
+   Do not read content, hash or parse token state; diagnostics report stable labels/metadata only.
+
+4. Host contract: dedicated parent LAGRANGE_RUNTIME_STATE_DIR is root:10001 mode0750;
+   leaf <parent>/kis-read-coordination is 10001:10001 mode0700. Existing parent/leaf must be
+   nonsymlink directories with exact ownership/modes; never chmod/chown-repair unsafe existing
+   state. provisioner only when explicit root supplied extends dry-run/preflight/apply code.
+   Apply source creates missing parent/leaf with exact numeric ownership, never another account,
+   never lock/state files; existing runtime bytes/inodes unchanged. Off/no-root old path unchanged.
+   In provisioner shared_required without root fails closed; preserve existing root-only guards
+   and account logic, no new account creation path. Do NOT execute real --apply/--preflight here.
+   At validation, empty safe leaf is an allowed uninitialized store; lock-only is allowed.
+   If state-v1.json exists but coordination.lock absent, fail invalid (runtime rejects this).
+   Present coordination.lock, state-v1.json and .state-v1.tmp.*: lstat-equivalent regular file,
+   nonsymlink, link count1, owner10001:10001, exact0600. Reject FIFO/dir/socket, symlink/hardlink,
+   wrong ownership, broad/special permission bits. Do not mutate, remove or read any such content.
+   Runtime remains responsible for locked schema/verifier/counters/crash checks; no metadata-only
+   assertion may claim complete runtime validity. Missing prerequisites -> existing exit2;
+   unsafe shape/config -> exit1, preserving existing unaffected conventions where appropriate.
+
+5. Focused self-test must exercise SAME actual production validator/provisioner, not a copied
+   implementation or constant true counter. Keep all A regex69 and baseline+11 mutation results.
+   Extend temporary copied fixtures as needed within self-test; standard library and existing
+   fakeroot/user namespace only. Establish one simulated-root fixture process; never actual root/
+   sudo, no real system account/Docker/service commands. Stub account commands for exact fixture
+   paths and deny escape; metadata tests use real private files under mktemp with fakeroot ownership
+   or clearly labelled narrow fixture simulation. Prove default absence/off unchanged and no leaf
+   creation, strict invalid mode/generation/hash/alias/shell override cases with valid positives,
+   safe uninitialized/lock-only/full store, wrong uid/gid/mode/type/symlink/hardlink/missing stable lock,
+   explicit missing/relative/broad/overlap path, dry-run no mutation and idempotent simulated apply.
+   Before/after runtime sentinel bytes and inodes must remain unchanged even on invalid cases;
+   sentinel content must not occur in stdout/stderr. Never silently skip missing fixture capability.
+   Static checks assert exact defaults and required protection hooks; mutations must independently
+   invoke same checker and produce real nonzero outcomes, retaining accepted A checks.
+
+6. Verification: bash -n all five shell-relevant changed files (env is data, not sourced), actual
+   stock-beta-intraday static/self-test complete counts/exits, git diff --check/scope/artifact hash.
+   Existing seven read-only/provider-free regressions are V2 runtime static/self-test,
+   build-production-images static/self-test, production-ops static/self-test, migration static
+   (find exact existing migration-static script by scoped rg). These are scripts with fake
+   Docker/root fixtures, NOT real builds/provision/deploy. Inspect their guards before execution.
+   If a baseline tool limitation/failure occurs, report complete evidence; no out-of-scope fixes,
+   dependency installs or actual Docker/build fallback. No Rust compiler/DB tests for this package.
+
+No actual provider/network/accounts/orders/credentials/operational DB/Docker/build/compiler/Cargo/
+npm/install/Next/browser/root/sudo/opt/host environment or clock modification/production activation/
+service restart/deploy/main merge/push. Fixture subprocess env and files under own mktemp only.
+No sibling worktree searches. QA project lagrange-intraday-qa-20260908 remains untouched/retained.
+Do not edit through any node_modules link or install dependencies. No generic schema-engine claim.
+Calendar36h separate from same-KST session-window evidence<=now; no policy changes.
+
+Report exact files/line ranges, deviations/reasons, commands and complete counts/results,
+unresolved/follow-up and not found/not verified explicitly none when empty. Commit only scoped
+files after verification. If a requirement conflicts with actual code/allowed scope, report before
+expanding; do not invent or remove a safety check.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment
+directly and report if it needs further decomposition. No Paseo run/send/daemon start/restart.
+
+Coordinator gates: actual startup acknowledgment; full five-file delta and fixture evidence;
+bounded independent sol/high review; exact integration only after ACCEPT. Then freeze B2 wiring
+from actual source (including legacy/off interpolation decision), launch promptly, and C afterwards.
+This refinement does not expand original WP6 ownership or authorize runtime operations.
