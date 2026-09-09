@@ -9,6 +9,8 @@ static=$root/scripts/ops/stock-beta-intraday-static-check.sh
 artifact_rel=configs/market-hours/krx-intraday-session-windows-v1.json
 schema_rel=configs/market-hours/krx-intraday-session-windows-v1.schema.json
 static_rel=scripts/ops/stock-beta-intraday-static-check.sh
+compose_base_rel=deploy/compose/compose.yml
+compose_overlay_rel=deploy/compose/compose.intraday.yml
 env_example_rel=deploy/compose/.env.example
 provision_rel=scripts/ops/provision-linux.sh
 validator_rel=scripts/ops/validate-production-config.sh
@@ -55,6 +57,8 @@ copy_fixture() {
   cp -- "$root/$artifact_rel" "$fixture/$artifact_rel"
   cp -- "$root/$schema_rel" "$fixture/$schema_rel"
   cp -- "$root/$static_rel" "$fixture/$static_rel"
+  cp -- "$root/$compose_base_rel" "$fixture/$compose_base_rel"
+  cp -- "$root/$compose_overlay_rel" "$fixture/$compose_overlay_rel"
   cp -- "$root/$env_example_rel" "$fixture/$env_example_rel"
   cp -- "$root/$provision_rel" "$fixture/$provision_rel"
   cp -- "$root/$validator_rel" "$fixture/$validator_rel"
@@ -138,6 +142,114 @@ raw = path.read_text(encoding="utf-8")
 needle = '  "exchange": "KRX",\n'
 if raw.count(needle) != 1:
     raise SystemExit("fixture duplicate target is not unique")
+path.write_text(raw.replace(needle, needle + needle, 1), encoding="utf-8")
+PY
+}
+
+rewrite_overlay() {
+  local path=$1
+  local mutation=$2
+  python3 - "$path" "$mutation" <<'PY'
+import json
+import pathlib
+import sys
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate fixture key")
+        result[key] = value
+    return result
+
+
+path = pathlib.Path(sys.argv[1])
+mutation = sys.argv[2]
+document = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+services = document["services"]
+shared_services = (
+    "research-worker",
+    "research-range-raw",
+    "research-action-range-raw",
+    "research-stock-price-beta-raw",
+    "owner-equity-v2-runner",
+)
+
+if mutation.startswith("remove-shared-"):
+    service = shared_services[int(mutation.rsplit("-", 1)[1])]
+    del services[service]["volumes"][0]
+elif mutation == "shared-source":
+    services["research-worker"]["volumes"][0]["source"] = "/wrong/kis-read-coordination"
+elif mutation == "shared-target":
+    services["research-worker"]["volumes"][0]["target"] = "/run/wrong/kis-read-coordination"
+elif mutation == "shared-read-only":
+    services["research-worker"]["volumes"][0]["read_only"] = True
+elif mutation == "shared-create-host-path":
+    services["research-worker"]["volumes"][0]["bind"]["create_host_path"] = True
+elif mutation == "shared-root-fallback":
+    services["research-worker"]["volumes"][0]["source"] = (
+        "${LAGRANGE_RUNTIME_STATE_DIR:-/var/lib/lagrange}/kis-read-coordination"
+    )
+elif mutation == "remove-generation":
+    del services["research-worker"]["environment"]["KIS_READ_CREDENTIAL_GENERATION"]
+elif mutation == "diverge-coordination":
+    services["research-worker"]["environment"]["KIS_READ_COORDINATION_MODE"] = (
+        "${KIS_READ_COORDINATION_MODE:-legacy}"
+    )
+elif mutation == "enabled-default":
+    services["research-worker"]["environment"]["OWNER_INTRADAY_QUOTES_MODE"] = (
+        "${OWNER_INTRADAY_QUOTES_MODE:-owner_only}"
+    )
+elif mutation == "api-kis-environment":
+    services["api-server"]["environment"]["KIS_READ_COORDINATION_MODE"] = (
+        "${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}"
+    )
+elif mutation == "api-shared-mount":
+    services["api-server"]["volumes"].append(services["research-worker"]["volumes"][0])
+elif mutation == "web-override":
+    services["research-worker"]["environment"]["WEB_PORT"] = "8080"
+elif mutation == "materializer-override":
+    services["research-worker"]["environment"]["OWNER_INTRADAY_QUOTES_MATERIALIZER"] = (
+        "fixture"
+    )
+elif mutation == "runner-window-absent":
+    del services["owner-equity-v2-runner"]["volumes"][1]
+elif mutation == "api-window-writable":
+    services["api-server"]["volumes"][0]["read_only"] = False
+elif mutation == "window-source":
+    services["api-server"]["volumes"][0]["source"] = (
+        "../../configs/market-hours/wrong-session-windows.json"
+    )
+elif mutation == "window-target":
+    services["api-server"]["volumes"][0]["target"] = (
+        "/opt/lagrange/configs/market-hours/wrong-session-windows.json"
+    )
+elif mutation == "missing-hash":
+    del services["owner-equity-v2-runner"]["environment"][
+        "OWNER_INTRADAY_SESSION_WINDOWS_SHA256"
+    ]
+elif mutation == "service-image":
+    services["research-worker"]["image"] = "fixture-image"
+else:
+    raise ValueError("unknown overlay fixture mutation")
+
+path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+}
+
+duplicate_overlay_key() {
+  local path=$1
+  python3 - "$path" <<'PY'
+import pathlib
+import sys
+
+
+path = pathlib.Path(sys.argv[1])
+raw = path.read_text(encoding="utf-8")
+needle = '    "api-server": {\n'
+if raw.count(needle) != 1:
+    raise SystemExit("fixture duplicate overlay target is not unique")
 path.write_text(raw.replace(needle, needle + needle, 1), encoding="utf-8")
 PY
 }
@@ -309,6 +421,63 @@ expect_failure schema-boolean-const "$fixture"
   die "COUNT_MISMATCH checker_mutations=$expected_failure_count expected=11"
 [ "$actual_nonzero_count" -eq 11 ] ||
   die "COUNT_MISMATCH checker_nonzero=$actual_nonzero_count expected=11"
+
+overlay_mutation_count=0
+overlay_nonzero_count=0
+expect_overlay_failure() {
+  local name=$1
+  local fixture=$2
+  expect_failure "overlay-$name" "$fixture"
+  overlay_mutation_count=$((overlay_mutation_count + 1))
+  overlay_nonzero_count=$((overlay_nonzero_count + 1))
+}
+
+for mutation in \
+  remove-shared-0 \
+  remove-shared-1 \
+  remove-shared-2 \
+  remove-shared-3 \
+  remove-shared-4; do
+  fixture=$tmp/overlay-$mutation
+  copy_fixture "$fixture"
+  rewrite_overlay "$fixture/$compose_overlay_rel" "$mutation"
+  expect_overlay_failure "$mutation" "$fixture"
+done
+
+for mutation in \
+  shared-source \
+  shared-target \
+  shared-read-only \
+  shared-create-host-path \
+  shared-root-fallback \
+  remove-generation \
+  diverge-coordination \
+  enabled-default \
+  api-kis-environment \
+  api-shared-mount \
+  web-override \
+  materializer-override \
+  runner-window-absent \
+  api-window-writable \
+  window-source \
+  window-target \
+  missing-hash \
+  service-image; do
+  fixture=$tmp/overlay-$mutation
+  copy_fixture "$fixture"
+  rewrite_overlay "$fixture/$compose_overlay_rel" "$mutation"
+  expect_overlay_failure "$mutation" "$fixture"
+done
+
+fixture=$tmp/overlay-duplicate-key
+copy_fixture "$fixture"
+duplicate_overlay_key "$fixture/$compose_overlay_rel"
+expect_overlay_failure duplicate-key "$fixture"
+
+[ "$overlay_mutation_count" -eq 24 ] ||
+  die "COUNT_MISMATCH overlay_mutations=$overlay_mutation_count expected=24"
+[ "$overlay_nonzero_count" -eq 24 ] ||
+  die "COUNT_MISMATCH overlay_nonzero=$overlay_nonzero_count expected=24"
 
 rewrite_text() {
   local path=$1 old=$2 new=$3
@@ -1122,6 +1291,7 @@ validator_store_expect final-valid-store 0 "$empty_env"
 
 printf 'STOCK_BETA_INTRADAY_SELF_TEST: b1_static_mutations=%s validator_cases=%s validator_passes=%s validator_expected_failures=%s provision_fixture=PASS idempotent=PASS sentinel=PASS socket_fixture=%s\n' \
   "$b1_static_mutations" "$validator_cases" "$validator_passes" "$validator_failures" "$socket_fixture_mode"
-printf 'STOCK_BETA_INTRADAY_SELF_TEST: PASS regex_cases=%s regex_passed=%s checker_mutations=%s checker_nonzero=%s total_cases=%s\n' \
+printf 'STOCK_BETA_INTRADAY_SELF_TEST: PASS regex_cases=%s regex_passed=%s checker_mutations=%s checker_nonzero=%s overlay_mutations=%s overlay_nonzero=%s total_cases=%s\n' \
   "$regex_case_count" "$regex_case_count" "$expected_failure_count" "$actual_nonzero_count" \
+  "$overlay_mutation_count" "$overlay_nonzero_count" \
   "$((pass_count + expected_failure_count))"

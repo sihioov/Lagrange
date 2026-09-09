@@ -1,0 +1,121 @@
+{
+  "services": {
+    "research-worker": {
+      "environment": {
+        "KIS_READ_COORDINATION_MODE": "${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}",
+        "KIS_READ_CREDENTIAL_GENERATION": "${KIS_READ_CREDENTIAL_GENERATION:?KIS_READ_CREDENTIAL_GENERATION must be explicitly set}",
+        "OWNER_INTRADAY_QUOTES_MODE": "${OWNER_INTRADAY_QUOTES_MODE:-off}"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-read-coordination",
+          "target": "/run/lagrange/kis-read-coordination",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    },
+    "research-range-raw": {
+      "environment": {
+        "KIS_READ_COORDINATION_MODE": "${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}",
+        "KIS_READ_CREDENTIAL_GENERATION": "${KIS_READ_CREDENTIAL_GENERATION:?KIS_READ_CREDENTIAL_GENERATION must be explicitly set}",
+        "OWNER_INTRADAY_QUOTES_MODE": "${OWNER_INTRADAY_QUOTES_MODE:-off}"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-read-coordination",
+          "target": "/run/lagrange/kis-read-coordination",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    },
+    "research-action-range-raw": {
+      "environment": {
+        "KIS_READ_COORDINATION_MODE": "${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}",
+        "KIS_READ_CREDENTIAL_GENERATION": "${KIS_READ_CREDENTIAL_GENERATION:?KIS_READ_CREDENTIAL_GENERATION must be explicitly set}",
+        "OWNER_INTRADAY_QUOTES_MODE": "${OWNER_INTRADAY_QUOTES_MODE:-off}"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-read-coordination",
+          "target": "/run/lagrange/kis-read-coordination",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    },
+    "research-stock-price-beta-raw": {
+      "environment": {
+        "KIS_READ_COORDINATION_MODE": "${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}",
+        "KIS_READ_CREDENTIAL_GENERATION": "${KIS_READ_CREDENTIAL_GENERATION:?KIS_READ_CREDENTIAL_GENERATION must be explicitly set}",
+        "OWNER_INTRADAY_QUOTES_MODE": "${OWNER_INTRADAY_QUOTES_MODE:-off}"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-read-coordination",
+          "target": "/run/lagrange/kis-read-coordination",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    },
+    "owner-equity-v2-runner": {
+      "environment": {
+        "KIS_READ_COORDINATION_MODE": "${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}",
+        "KIS_READ_CREDENTIAL_GENERATION": "${KIS_READ_CREDENTIAL_GENERATION:?KIS_READ_CREDENTIAL_GENERATION must be explicitly set}",
+        "OWNER_INTRADAY_QUOTES_MODE": "${OWNER_INTRADAY_QUOTES_MODE:-off}",
+        "OWNER_INTRADAY_SESSION_WINDOWS_SHA256": "${OWNER_INTRADAY_SESSION_WINDOWS_SHA256:-}"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-read-coordination",
+          "target": "/run/lagrange/kis-read-coordination",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "../../configs/market-hours/krx-intraday-session-windows-v1.json",
+          "target": "/opt/lagrange/configs/market-hours/krx-intraday-session-windows-v1.json",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    },
+    "api-server": {
+      "environment": {
+        "OWNER_INTRADAY_SESSION_WINDOWS_SHA256": "${OWNER_INTRADAY_SESSION_WINDOWS_SHA256:-}",
+        "OWNER_INTRADAY_QUOTES_MODE": "${OWNER_INTRADAY_QUOTES_MODE:-off}"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "../../configs/market-hours/krx-intraday-session-windows-v1.json",
+          "target": "/opt/lagrange/configs/market-hours/krx-intraday-session-windows-v1.json",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    }
+  }
+}

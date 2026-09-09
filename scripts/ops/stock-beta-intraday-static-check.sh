@@ -12,6 +12,8 @@ env_example=$root/deploy/compose/.env.example
 provision=$root/scripts/ops/provision-linux.sh
 validator=$root/scripts/ops/validate-production-config.sh
 self_test=$root/scripts/ops/stock-beta-intraday-self-test.sh
+compose_base=$root/deploy/compose/compose.yml
+compose_overlay=$root/deploy/compose/compose.intraday.yml
 
 die() {
   echo "STOCK_BETA_INTRADAY_STATIC: $*" >&2
@@ -19,7 +21,9 @@ die() {
 }
 
 command -v python3 >/dev/null 2>&1 || die 'PYTHON3_MISSING'
-for path in "$artifact" "$schema" "$env_example" "$provision" "$validator" "$self_test"; do
+for path in \
+  "$artifact" "$schema" "$env_example" "$provision" "$validator" "$self_test" \
+  "$compose_base" "$compose_overlay"; do
   [ -f "$path" ] || die 'REQUIRED_FILE_MISSING'
   [ ! -L "$path" ] || die 'REQUIRED_FILE_SYMLINK'
 done
@@ -127,9 +131,10 @@ for expected in \
   grep -Fq -- "$expected" "$self_test" || die "SELF_TEST_HOOK_MISSING:$expected"
 done
 
-python3 - "$artifact" "$schema" <<'PY'
+python3 - "$artifact" "$schema" "$compose_base" "$compose_overlay" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 
@@ -169,6 +174,39 @@ SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 SCHEMA_ID = (
     "https://lagrange.local/schemas/market-hours/"
     "krx-intraday-session-windows-v1.schema.json"
+)
+COMPOSE_SERVICES = (
+    "research-worker",
+    "research-range-raw",
+    "research-action-range-raw",
+    "research-stock-price-beta-raw",
+    "owner-equity-v2-runner",
+    "api-server",
+)
+COMPOSE_SHARED_SERVICES = (
+    "research-worker",
+    "research-range-raw",
+    "research-action-range-raw",
+    "research-stock-price-beta-raw",
+    "owner-equity-v2-runner",
+)
+KIS_READ_COORDINATION_MODE = (
+    "${KIS_READ_COORDINATION_MODE:?KIS_READ_COORDINATION_MODE must be explicitly set}"
+)
+KIS_READ_CREDENTIAL_GENERATION = (
+    "${KIS_READ_CREDENTIAL_GENERATION:?KIS_READ_CREDENTIAL_GENERATION must be explicitly set}"
+)
+OWNER_INTRADAY_QUOTES_MODE = "${OWNER_INTRADAY_QUOTES_MODE:-off}"
+OWNER_INTRADAY_SESSION_WINDOWS_SHA256 = "${OWNER_INTRADAY_SESSION_WINDOWS_SHA256:-}"
+SHARED_SOURCE = (
+    "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}"
+    "/kis-read-coordination"
+)
+SHARED_TARGET = "/run/lagrange/kis-read-coordination"
+WINDOW_SOURCE = "../../configs/market-hours/krx-intraday-session-windows-v1.json"
+WINDOW_TARGET = (
+    "/opt/lagrange/configs/market-hours/"
+    "krx-intraday-session-windows-v1.json"
 )
 
 
@@ -238,6 +276,116 @@ def exact_string(value, expected, code):
 def exact_bool(value, expected, code):
     if type(value) is not bool or value is not expected:
         violation(code)
+
+
+def check_compose_base(path):
+    try:
+        lines = pathlib.Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        violation("COMPOSE_BASE_UNREADABLE")
+
+    in_services = False
+    service_names = []
+    for line in lines:
+        if not in_services:
+            if line == "services:":
+                in_services = True
+            continue
+        if line and not line[0].isspace():
+            if line.lstrip().startswith("#"):
+                continue
+            break
+        match = re.fullmatch(r"  ([A-Za-z0-9][A-Za-z0-9_.-]*):", line)
+        if match:
+            service_names.append(match.group(1))
+
+    if not in_services or not set(COMPOSE_SERVICES).issubset(set(service_names)):
+        violation("COMPOSE_BASE_SERVICES_INVALID")
+
+
+def check_compose_environment(value, expected, code):
+    exact_keys(value, tuple(expected), code)
+    for key, expected_value in expected.items():
+        exact_string(value[key], expected_value, code)
+
+
+def check_compose_volume(value, expected, code):
+    exact_keys(value, ("type", "source", "target", "read_only", "bind"), code)
+    exact_string(value["type"], "bind", code)
+    exact_string(value["source"], expected["source"], code)
+    exact_string(value["target"], expected["target"], code)
+    exact_bool(value["read_only"], expected["read_only"], code)
+    exact_keys(value["bind"], ("create_host_path",), code)
+    exact_bool(value["bind"]["create_host_path"], False, code)
+
+
+def check_compose_volumes(value, expected, code):
+    if type(value) is not list or len(value) != len(expected):
+        violation(code)
+    for actual, wanted in zip(value, expected):
+        check_compose_volume(actual, wanted, code)
+
+
+def check_compose_overlay(document):
+    exact_keys(document, ("services",), "COMPOSE_OVERLAY_TOP_LEVEL_KEYS_INVALID")
+    services = document["services"]
+    exact_keys(services, COMPOSE_SERVICES, "COMPOSE_OVERLAY_SERVICES_INVALID")
+
+    shared_environment = {
+        "KIS_READ_COORDINATION_MODE": KIS_READ_COORDINATION_MODE,
+        "KIS_READ_CREDENTIAL_GENERATION": KIS_READ_CREDENTIAL_GENERATION,
+        "OWNER_INTRADAY_QUOTES_MODE": OWNER_INTRADAY_QUOTES_MODE,
+    }
+    shared_volume = {
+        "source": SHARED_SOURCE,
+        "target": SHARED_TARGET,
+        "read_only": False,
+    }
+    window_volume = {
+        "source": WINDOW_SOURCE,
+        "target": WINDOW_TARGET,
+        "read_only": True,
+    }
+
+    for service_name in COMPOSE_SHARED_SERVICES:
+        service = services[service_name]
+        exact_keys(service, ("environment", "volumes"), "COMPOSE_OVERLAY_SERVICE_KEYS_INVALID")
+        if service_name == "owner-equity-v2-runner":
+            runner_environment = dict(shared_environment)
+            runner_environment["OWNER_INTRADAY_SESSION_WINDOWS_SHA256"] = (
+                OWNER_INTRADAY_SESSION_WINDOWS_SHA256
+            )
+            check_compose_environment(
+                service["environment"],
+                runner_environment,
+                "COMPOSE_OVERLAY_RUNNER_ENVIRONMENT_INVALID",
+            )
+            check_compose_volumes(
+                service["volumes"],
+                (shared_volume, window_volume),
+                "COMPOSE_OVERLAY_RUNNER_VOLUMES_INVALID",
+            )
+        else:
+            check_compose_environment(
+                service["environment"], shared_environment, "COMPOSE_OVERLAY_ENVIRONMENT_INVALID"
+            )
+            check_compose_volumes(
+                service["volumes"], (shared_volume,), "COMPOSE_OVERLAY_SHARED_VOLUMES_INVALID"
+            )
+
+    api = services["api-server"]
+    exact_keys(api, ("environment", "volumes"), "COMPOSE_OVERLAY_SERVICE_KEYS_INVALID")
+    check_compose_environment(
+        api["environment"],
+        {
+            "OWNER_INTRADAY_SESSION_WINDOWS_SHA256": OWNER_INTRADAY_SESSION_WINDOWS_SHA256,
+            "OWNER_INTRADAY_QUOTES_MODE": OWNER_INTRADAY_QUOTES_MODE,
+        },
+        "COMPOSE_OVERLAY_API_ENVIRONMENT_INVALID",
+    )
+    check_compose_volumes(
+        api["volumes"], (window_volume,), "COMPOSE_OVERLAY_API_VOLUMES_INVALID"
+    )
 
 
 def check_artifact(document):
@@ -470,12 +618,15 @@ def check_conditionals(all_of, entry_properties):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 5:
         violation("ARGUMENTS_INVALID")
     artifact = load_json(sys.argv[1], "ARTIFACT")
     schema = load_json(sys.argv[2], "SCHEMA")
+    overlay = load_json(sys.argv[4], "COMPOSE_OVERLAY")
     check_artifact(artifact)
     check_schema(schema)
+    check_compose_base(sys.argv[3])
+    check_compose_overlay(overlay)
 
 
 try:
@@ -488,4 +639,4 @@ except (KeyError, IndexError, TypeError, ValueError):
     sys.exit(1)
 PY
 
-echo 'STOCK_BETA_INTRADAY_STATIC: PASS artifact=empty schema=closed conditionals=checked runtime_semantics=not_claimed'
+echo 'STOCK_BETA_INTRADAY_STATIC: PASS artifact=empty schema=closed conditionals=checked compose=closed overlay_contract=checked compose_merge_interpolation=not_claimed runtime_semantics=not_claimed'
