@@ -3533,3 +3533,10 @@ Native subagents: prohibited for worker packages
 Coordinator gates: inspect four-file diff and actual mutation evidence, independent sol/high
 bounded review before acceptance, then exact integration and WP6-B frozen brief. No repeated
 broad mapping or idle-transition delay. Keep retained QA untouched for later authorized DB work.
+
+- WP6-A active binding: c15df593-2419-4942-9799-402e9d160d9e, Codex luna/max auto-review,
+  workspace wks_42028f6f939c65ac at the isolated ops worktree above. Current profiles inspected;
+  luna profile plus explicit repository effort selected. CLI local6767 sandbox EPERM was retried
+  with precise escalation, never daemon start/restart. Startup wait JSON timeout included actual
+  acknowledgment and git/instruction inspection; this is a running implementation, not an idle
+  record. Reviewer1c3827ae remains idle ACCEPT. Replace old30692211 heartbeat with this worker.
