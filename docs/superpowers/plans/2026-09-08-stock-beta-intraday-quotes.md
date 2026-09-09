@@ -1614,3 +1614,63 @@ Native subagents: prohibited for worker packages
   맡겼다. 당일 경계/실제 zero-attempt 및 기존 positive evidence를 독립 확인하고, literal
   midnight 평가 사례와 state_if_present의 read-error 처리에 따른 증거 한계도 판단한다.
   C1/C2/C3 scoped ACCEPT는 유지하며 D1 독립 수락 전 전체 chain은 미통합이다.
+
+### B2b-D1 ACCEPT 및 producer chain 통합 (2026-09-09)
+
+- D1-R 독립 ACCEPT: collector4/4, 실제 QA pipeline10/10 (41.69초), producer6/6
+  (8.85초), scoped strict clippy/fmt/diff 및 clean을 reviewer가 확인했다. High/Medium 없음.
+  coordinator는 full delta와 최종 보고를 근거로 수락한다. literal midnight evaluation 부재와
+  test helper의 fs read-error/None 구분 한계는 Low 증거 한계로 남기며 blocker로 반복하지 않는다.
+- 수락된 9개 commit을 coordinator feature branch에 순서대로 통합했다:
+
+| Source | Integrated |
+|---|---|
+| 7dd9483 | 0c8b1a2 |
+| b34198f | 7d23f71 |
+| 18b8b33 | ec5b663 |
+| c5e0592 | e9fe25a |
+| f1c1fe1 | b04dbbd |
+| 31ab97f | 7705982 |
+| 18f96a6 | 6997ac3 |
+| 60bebf0 | afe5006 |
+| ffc4e06 | 5998e5d |
+
+- source `ffc4e06`와 integrated `5998e5d` 사이 `crates/` 및 `data-pipelines/` 전체 diff는
+  비어 있으며 변경 19파일은 source와 동일하다. 통합 diff-check 및 clean 확인. 실제
+  provider/배포 활성화는 없고, 다음 integrated 회귀 전 전체 feature 완료를 주장하지 않는다.
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal / boundaries / classification
+
+- B2b-IV: coordinator workspace `/data/worktrees/3puw275b/enhanced-pig`의 통합 source
+  `5998e5d`를 읽기 전용 검증한다. source/문서 수정·commit 없음; build artifacts 및 own
+  disposable QA fixtures만 허용. root AGENTS/사용자 모델 규칙 적용, target 하위 지침 없음.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| B2b-IV | simple | 이미 수락된 exact source의 지정 명령 재실행/결과 수집, 설계 판단 없음 | high | 실패는 정확한 증거로 반환, 임의 수정/반복 재설계 금지 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| B2b-IV | 1 | simple | 통합 회귀 | read-only specified Rust targets + own QA test DB | D1-R ACCEPT/9 commits integrated | 새 Codex luna/medium auto-review | 명령/exit/count/time/failures 보고 | 아래 순차 테스트 및 strict scoped clippy/fmt/diff |
+
+#### Worker brief / coordinator gates
+
+- `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true` 모든 cargo에 적용, `--locked --offline`.
+  한 compiler만 허용. crates와 data-pipelines가 source `ffc4e06`와 동일한지 확인한다.
+- 순차 tests: kis-client `--test intraday_attempt --test read_coordination --test transport_agreement`;
+  collectors `--test intraday_quotes`; job-queue `--test intraday_producer_pipeline
+  --test intraday_producer --test intraday_producer_scheduling --test intraday_producer_lifecycle
+  --test intraday_quotes -- --test-threads=1`; job-queue `--bin owner-equity-v2-runner`.
+- 같은 scoped target들에 strict clippy `-- -D warnings`, `cargo fmt --all -- --check`,
+  `git diff --check`. 예상과 다르거나 0 tests/skip이면 명시하고 PASS로 숨기지 않는다.
+- DB는 existing QA `postgres://postgres:lagrange@127.0.0.1:55438/postgres` own per-test DB만.
+  coordinator-owned exact tmpfs project/container 보존. worker Docker lifecycle/운영 DB/root/
+  provider/network/account/order/실제 main/Next/browser/의존성 다운로드/production/deploy 금지.
+- 정상 sandbox의 loopback EPERM은 동일 테스트의 precise escalation으로만 처리한다.
+  원인 미확인 실패를 flaky라고 단정하거나 무작정 반복하지 말고 반환한다. 수정 권한 없음.
+- 보고: verified HEAD, 명령/exit code/count/time, 변경 파일(없음 기대), deviations/이유,
+  미해결 및 미확인 명시. coordinator는 결과 회수·실패 판단·plan 갱신 후 WP4 상세 범위를
+  확정하고 다음 authorized package로 진행한다. 반복 heartbeat는 active worker에 맞게 교체한다.
