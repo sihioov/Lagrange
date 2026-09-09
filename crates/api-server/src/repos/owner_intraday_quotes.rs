@@ -24,11 +24,8 @@ impl OwnerIntradayQuoteRepo {
         Self { pool }
     }
 
-    /// Observe the actor-visible current admission before delegating the
-    /// mutation.  The durable repository repeats this check after its own
-    /// owner lock; the observation here is intentionally non-authoritative so
-    /// an exact durable replay can still succeed after a later disable or
-    /// generation change.
+    /// Delegate to the durable repository's same-transaction current-identity
+    /// mutation seam, which makes the authoritative check after its own locks.
     pub async fn create_or_renew_demand(
         &self,
         actor: &Actor,

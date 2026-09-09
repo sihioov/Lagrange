@@ -926,6 +926,9 @@ impl OwnerIntradayQuoteRepository {
                     .await?
                 }
             };
+            if !demand_matches_admission(row, &admission) {
+                return Err(IntradayStorageError::IdentityMismatch);
+            }
             let expected_next_sequence = row
                 .renewal_sequence
                 .checked_add(1)
