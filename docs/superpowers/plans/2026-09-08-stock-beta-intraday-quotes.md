@@ -3201,3 +3201,71 @@ Native subagents: prohibited for worker packages
   reading the complete current F1 brief and full spec. This is active work, not completion.
   Send CLI terminal4702 may remain waiting normally; do not resend or interrupt. Reviewer1c3827ae
   is IDLE REJECT and relinquished compiler/QA. Heartbeat now targets only F1 writer39da45eb.
+
+### WP4-C3-F1 completion / bounded independent re-review (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+- Writer39da45eb is IDLE, clean source8326a6d9694470d15494334ddacae4b79ee29fab,
+  parentbc5e7654618d834d3e2a16b1053ceb2d32fedc0b, UNINTEGRATED. Exactly two owned files
+  +914/-134. Coordinator read full production/inline-test delta and full HTTP-test delta.
+- Writer reports before-fix projection9:7pass/2fail (observed_at+1ms and success24h+1ms), then
+  lib103/cacheHTTP3/mutation5/chart4/OpenAPI16, strict scoped clippy/fmt/diff all pass. Verify
+  independently; neither reported counts nor case labels alone establish acceptance.
+- Production delta removes only calendar read-time/API comparison and aged_out reason branch;
+  no mutation/adapter/repository/config/OpenAPI changes. Calendar36h actual retrieval checks stay
+  in repository. Cache missing/old-age and eligible failure/demand precedence remain review targets.
+- Writer cannot supply distinct admin HTTP actor: coordinator confirms auth::entitlement::Role
+  has only Member/Owner (crates/auth/src/entitlement/identity.rs:82). Do not invent an admin role
+  or expand auth. Member non-owner route denial is the available HTTP role test; DB admin grant
+  policy remains distinct. npm remains unverified with absent authorized dependencies; no new
+  link/install/network was reported. No OpenAPI edit occurred in F1.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C3-F1-R | intermediate | Exact two-file remediation and prior findings, bounded real-role test matrix | high | Confirmed remaining defect or vacuous required case returns narrowed correction; repeat failure triggers model-only escalation |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C3-F1-R | 1 | intermediate | Verify prior two Medium defects and required HTTP evidence/cleanup | read-only two-file delta and necessary source anchors; no edits/commits | idle clean8326a6d | reuse original Codex sol/high auto-review reviewer1c3827ae | ACCEPT/REJECT with precise evidence and proportional limits | independent lib/cacheHTTP/mutation/chart/OpenAPI complete counts, strict clippy/fmt |
+
+- Target /data/worktrees/3puw275b/stock-beta-intraday-api workspacewks_3249856abbf32750.
+  Read current coordinator absolute plan frozen C3 table, F1 brief and full spec, then actual
+  bc5e765..8326a6d delta. Reviewer sole compiler/QA owner; writer idle. No subdelegation.
+- Independently verify both source fixes, reproduce assertions through actual production helper,
+  preserve byte-identical POST/DELETE and accepted calendar/repository/producer/config boundaries.
+  Audit actual 1/10/100 calls and populated full-row fingerprints, privacy and real HTTP states.
+- Confirm/refute coordinator concerns WITHOUT predetermined verdict:
+  1. Inline mismatch array mutates the same record cumulatively; after membership mismatch it resets
+     membership to UUID1 rather than baseline UUID2, so later generation/session/hash cases may
+     pass due to leftover membership mismatch. Require case isolation proportional to required
+     negative-evidence claims; inspect actual baseline and all array elements.
+  2. HTTP new-generation case follows old-hash mutation without restoring window hash, so current
+     generation null cache could be explained by old hash rather than generation fence. Old-path
+     404 still provides evidence; evaluate what's required and source complements, not blanket reject.
+  3. API test clock fixed11:00KST, seed cache_at=min(API-10s,DB-1s), plus another10s subtraction:
+     before11:00 real DB time, assertions RECENT may be time-of-day dependent. Static API global
+     clock test interference should be assessed against explicitly serial test invocation.
+  4. Prior required Harness::new().expect was replaced by Option None return in both DB test bodies.
+     Is missing DATABASE_URL now a silent pass despite no-skip contract? Independently count actual
+     QA-backed cases; report source skip path separately from actual executed run.
+  5. Restart test restarts same config at unchanged API time after manually making cache stale;
+     does this prove fresh per-request/restart recalculation? Missing-window pure case and malformed
+     Member input privacy assertion may still be absent/removed. Compare exact frozen matrix.
+  6. CatchUnwindFuture wraps scenario and awaits teardown before rethrow; helper test only asserts
+     panic captured, not actual teardown executed. Assess source ownership and meaningful remaining
+     failure/cancellation limits proportionately, no unrelated shared-harness redesign.
+- No new patch/repro source edits by reviewer. Run sequential CARGO_BUILD_JOBS=2
+  CARGO_NET_OFFLINE=true cargo test -p api-server --locked --offline --lib -- --test-threads=1,
+  then cacheHTTP/mutationHTTP/chart/OpenAPI targets DBthreads1; strict scoped clippy -- -D warnings,
+  fmt/diff. Recover COMPLETE final summaries/exits and no DB skips. No npm command absent deps.
+- Only syntheticURL postgres://postgres:lagrange@127.0.0.1:55438/postgres own per-test DBs,
+  exact retained lagrange-intraday-qa-20260908/container lagrange-intraday-qa-20260908-qa-db-1
+  pinnedPG18.4tmpfs. No Docker lifecycle/operationalDB/provider/network/account/order/opt/env/
+  migration/Cargo/Compose/other source/production/deploy/mainmerge/push/activation. EPERM precise
+  identical escalation only; NEVER daemon start/restart or unapproved node_modules link.
+- Return verdict, severity/file:line, actual complete commands/counts, covered versus missing
+  requirements, deviations/unresolved/not verified explicit none if empty. Coordinator evaluates
+  proportionality, then bounded fix if needed (model-only tier increase upon confirmed repeat
+  failure) or acceptance/integration; no redundant mapping or overall API completion claim.
