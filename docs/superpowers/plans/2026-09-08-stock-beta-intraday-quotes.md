@@ -2178,3 +2178,20 @@ Native subagents: prohibited for worker packages
   availability and root instructions were checked. Local daemon sandbox EPERM was resolved with
   the identical precise CLI escalation, without restarting the daemon. Prior writer and reviewer
   remain idle; only F1b owns the source/compiler until completion.
+
+### WP4-B-F1b completion / independent re-review (2026-09-09)
+
+- Writer idle clean at `3f97d1c1641c54f1ae007daf3ebbf711b85c9d97`, parent `7c1988f2`.
+  Exactly three owned files (+378/-5): three-line unconditional identity guard, corrected adapter
+  doc only, new 373-line direct legacy API test. Coordinator read the entire delta and all tests.
+- Writer reports actual pre-fix two mismatches returned Ok(Renewed), updating sequence 0 to1,
+  expiry/digests/updated_at while retaining the old identity. Post-fix direct tests4 (2.42s),
+  HTTP5 (5.20s), B1quotes24 (30.96s), readstate1 (0.73s), scoped strict clippy/fmt/diff pass.
+  Mutation connection is explicitly asserted app; fixture setup uses test-only migration_owner.
+  Complete retained-row columns are compared for rejection and legacy replay after disable.
+- Existing reviewer `4b2c514f-a69f-4562-949c-68b1b1675618` is assigned bounded read-only
+  F1b-R: confirm restoration at the old non-replay position, preserve guarded HTTP checks and
+  old replay ordering; validate real-role fixtures, complete row comparisons and full test summaries.
+  These are writer-reported counts until independent verification, not automatic acceptance.
+- No integration yet. F2 rounded OpenAPI maximum remains separate and pending; do not reopen
+  accepted unrelated producer/EOD limits or require extra source changes without a concrete finding.
