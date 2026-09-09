@@ -1524,3 +1524,74 @@ Native subagents: prohibited for worker packages
   이 결정은 실제 provider 활성화 권한을 추가하지 않는다. C3까지 모든 담당자는 idle이며
   사용자 결정 대기 동안 반복 heartbeat를 종료한다. QA는 후속 DB 작업을 위해 기존 정확한
   tmpfs project만 유지하고, 운영 DB/provider에는 접근하지 않는다.
+
+### B2b-D1 당일 운영시간 증빙 승인 및 실행 계약 (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- 사용자가 “해당 거래일에 확인한 자료만 사용하고 미확인 시 장중 수집을 하지 않으며 EOD는
+  유지”하는 제안을 승인했다. spec 7.1을 same KST civil date + non-future 규칙으로 명확히 했다.
+  기존 36시간 calendar 규칙, window hash/schema/반개구간, 기본 off와 실제 활성화 금지는 유지한다.
+- 목표: 오래된 window 증빙은 UNKNOWN/zero attempts, 같은 KST 날짜의 유효 증빙은 기존 동작을
+  유지하는 결정적 경계 및 실제 guarded pipeline 회귀. 유효기간 사용자 결정 blocker는 해소됐다.
+- 대상은 producer workspace `/data/worktrees/3puw275b/stock-beta-intraday-producer`,
+  clean base `60bebf09c274e65b14c7a409e9cf9eefc099899f`. root AGENTS와 사용자 모델 규칙 적용;
+  대상 하위 AGENTS/CLAUDE 없음. coordinator만 spec/plan을 수정한다.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| B2b-D1 | intermediate | 확정된 날짜 비교와 기존 실제 pipeline fixture/테스트의 제한된 연동 | high | 다른 production 파일/스키마 필요 시 보고; 같은 수정 반복 실패 시 모델만 한 tier 상향 |
+| B2b-D1-R | intermediate | 날짜 경계 및 zero-dispatch 증거의 독립 검증 | high | 새로운 source defect 발견 시 bounded 재현 후 coordinator 판단 |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| B2b-D1 | 1 | intermediate | 당일 증빙만 허용 | collector intraday module/test, producer test, pipeline test/support의 아래 5파일만 | 사용자 승인, C3 ACCEPT | 새 Codex luna/max auto-review | bounded commit + pre/post 증거 | offline focused unit/QA pipeline/producer 및 기존 회귀, strict scoped clippy/fmt |
+| B2b-D1-R | 2 | intermediate | 계약과 비활성/정상 경로 검증 | D1 delta read-only | D1 완료 | idle reviewer terra/high | scoped ACCEPT/REJECT와 실제 검증 | focused tests/clippy/fmt + 직접 diff |
+
+#### Worker brief: B2b-D1
+
+- production 소유는 `data-pipelines/collectors/src/intraday_quotes.rs`의 `state_at` 당일 증빙
+  판정과 최소 설명만. 날짜가 맞는 entry 선택 후 기존 미래시각 거부에 KST evidence 날짜
+  일치 조건을 더하고, CLOSED/OPEN/HALTED 판정 전에 UNKNOWN 처리한다. 24h/36h 수치 도입 금지.
+- test 소유는 `data-pipelines/collectors/tests/intraday_quotes.rs`,
+  `crates/job-queue/tests/intraday_producer.rs`,
+  `crates/job-queue/tests/intraday_producer_pipeline.rs`,
+  `crates/job-queue/tests/intraday_producer_pipeline_support/mod.rs`의 필요한 fixture/회귀뿐.
+  기존 1970/전날 timestamp를 쓰는 positive fixture를 해당 session date의 KST 시작시각 또는
+  실제 샘플 DB 시각으로 맞춘다. 현재 DB를 전역 변경하거나 evidence 값을 production에서
+  재작성하지 않는다. pipeline support의 now-1s가 자정에 전날이 되는 문제도 피한다.
+- 결정적 collector matrix: 이전 KST 날짜 자료(자정 직전 1초 포함) UNKNOWN, 같은 KST 날짜
+  미래 시각 UNKNOWN, 정확히 now 허용, UTC 날짜는 달라도 같은 KST 날짜면 허용, KST 자정
+  전후와 entry date mismatch/missing UNKNOWN. REGULAR/SPECIAL/CLOSED/HALTED 및 open-inclusive,
+  close-exclusive 기존 동작 유지. stale CLOSED도 UNKNOWN. 실제 clock 대기 없이 명시 fixture 사용.
+- 실제 QA pipeline은 기존 actual client/ReadCoordinator/parser/producer 경로와 fake transport/
+  issuer만 이용한다. valid calendar/READY/demand/열린 window 상태에서 evidence만 전날로 만든
+  exact-hash contract로 run_cycle을 호출해 attempts_started=0, GET=0, token issuance=0,
+  ledger/cache unchanged를 관찰한다. 대응 당일 evidence positive는 실제 성공 publish와 실제
+  reservation/receipt를 검증한다. metadata/receipt 조작 및 source 스코프 확장 금지.
+- 새 stale regression을 먼저 실행해 이전 production 코드에서 실패하는지 확인한 뒤 수정한다.
+  기존 positive tests를 삭제/완화하지 않는다. production producer/repository/runner/EOD/KIS/Cargo/
+  schema/migration/API/Web/Compose/운영파일 변경 금지. 새 결함이나 모순 발견 시 재현과 함께 보고.
+- one compiler `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true`, Cargo `--locked --offline`.
+  collectors intraday_quotes 및 job-queue intraday_producer_pipeline/intraday_producer tests,
+  scheduling/lifecycle/quotes 회귀를 순차 실행하고 scoped strict clippy/fmt/diff 확인.
+  기존 collector artifact warning의 검증된 parent 예외만 명시 가능하며 새 warning 억제 금지.
+- QA는 coordinator 소유 `lagrange-intraday-qa-20260908`, tmpfs PG18.4/127.0.0.1:55438,
+  synthetic fixture URL `postgres://postgres:lagrange@127.0.0.1:55438/postgres`의 own per-test DB만.
+  Docker lifecycle/운영 DB/root/provider/network/실제 main/credentials/환경 전역변경/opt 쓰기 금지.
+- 보고: full commit/parent, 파일·라인, pre/post 명령·결과 및 matrix, 명세와 차이 및 이유,
+  미해결/미확인(없으면 없음). 완료 후 idle. 하위 위임 금지.
+
+#### Coordinator gates
+
+1. profile notes/availability와 clean base/소유를 확인한 뒤 D1 시작, active heartbeat 재개.
+2. 결과 전체 delta와 실제 증거를 읽고 독립 D1-R 실행. 기존 C1/C2/C3 scoped ACCEPT는 유지한다.
+3. D1 수락 후 전체 B2b verified chain만 통합하고 integrated 회귀 후 plan 갱신한다.
+   WP4 이후 작업은 기존 승인 범위로만 진행하며 실제 provider 활성화/배포/main merge/push 금지.

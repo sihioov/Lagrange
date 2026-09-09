@@ -376,6 +376,23 @@ hours. A regular entry uses 09:00-15:30 only with the current official KRX hours
 entry supplies its exact reviewed window. Missing, stale, malformed, unpinned, conflicting, or
 out-of-range proof yields `UNKNOWN` and **zero provider calls**.
 
+Owner-approved clarification (2026-09-09): session-window evidence must have been checked on
+the **same KST civil date** as the entry and the current evaluation date. Use the existing
+`evidence_retrieved_at` as the actual evidence retrieval/check timestamp; its instant must be
+`<= now`, and its `Asia/Seoul` date must equal `entry.date` and the current KST date. Prior-day
+evidence is stale even if only one second old; this is neither a rolling 24-hour allowance nor
+the separate calendar proof's 36-hour allowance. An entry with future or prior-day evidence
+resolves to `UNKNOWN`, including a nominal `CLOSED` entry. A UTC date difference alone does not
+make evidence stale when both instants are on the same KST date. At KST midnight, the preceding
+date's evidence cannot authorize the new date. All existing exact hash, schema, calendar lineage,
+and half-open session-window checks remain required.
+
+This does not authorize automatic evidence retrieval or restamping old evidence. An operator
+must genuinely check the official evidence on that date before producing and pinning the entry.
+Absent such evidence, only intraday quote collection stays off; existing EOD collection behavior
+is unchanged. Fixture implementation may proceed; actual provider activation remains separately
+gated.
+
 The baseline does not yet produce same-day pre-session KIS calendar rows reliably: the recorded
 daily job is after market close, and its production recovery is incomplete. Nor does it contain the
 date-specific file above. Therefore fixture implementation may proceed after the response gate,
