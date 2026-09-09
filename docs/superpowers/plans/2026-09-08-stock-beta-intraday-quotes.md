@@ -2276,3 +2276,20 @@ Native subagents: prohibited for worker packages
 - F2 writer `b51d39ed-cb1e-4635-abad-3fffad52e193` (Codex luna/max, auto-review) launched
   in the isolated API workspace at `3f97d1c`. Current profile notes/provider checked; F1b writer
   and independent reviewer are idle. Only F2 now owns the scoped files/compiler.
+
+### WP4-B-F2 completion / independent review (2026-09-09)
+
+- Writer idle clean at `949d4502e7d47973bd6931a037f284bffa49f8e5`, parent `3f97d1c`.
+  Exactly three changed owned files: rawJSON constant/five uses, five JSON maxima, focused Rust
+  contract test. Generated TypeScript unchanged; temporary dependency symlink absent afterwards.
+  Coordinator read the complete delta. No runtime or shared generator changes.
+- Writer reports pre-fix14 pass/1 exact-bound failure, post-fix15 pass, 87-operation OpenAPI
+  generation/typecheck clean on second run, strict clippy/fmt/diff pass. No DB/network used.
+- Existing reviewer `4b2c514f-a69f-4562-949c-68b1b1675618` receives read-only F2-R:
+  exact integer maxima and minima across five properties, raw numeric DTO/public parameter
+  validation, unchanged generated types and clean existing-dependency regeneration. Assess the
+  absence of a separate oversized POST sequence assertion against the actual shared validation
+  implementation proportionately; no predetermined finding or new runtime scope.
+- Do not integrate until F2 independently accepted. If accepted, integrate exact four-commit
+  WP4-B chain (9f9e904, 7c1988f2, 3f97d1c, 949d450), verify source equivalence/regressions,
+  then freeze the next cache GET/config package. No actual collection activation.
