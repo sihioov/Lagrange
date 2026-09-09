@@ -1674,3 +1674,8 @@ Native subagents: prohibited for worker packages
 - 보고: verified HEAD, 명령/exit code/count/time, 변경 파일(없음 기대), deviations/이유,
   미해결 및 미확인 명시. coordinator는 결과 회수·실패 판단·plan 갱신 후 WP4 상세 범위를
   확정하고 다음 authorized package로 진행한다. 반복 heartbeat는 active worker에 맞게 교체한다.
+
+- 통합 검증 작업자 `508c7a2f-e57e-45df-98d6-122479f1a212` (Codex luna/medium,
+  auto-review)를 coordinator workspace `wks_c8105f3859e0ad64`의 `361dc2c`에서 시작했다.
+  source는 `5998e5d`이며 이후 docs-only 기록은 coordinator 소유다. 모든 구현자/독립
+  reviewer는 idle이고, 이 작업자만 Rust compiler를 사용한다. source 수정 권한은 없다.
