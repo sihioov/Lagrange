@@ -1849,3 +1849,7 @@ Native subagents: prohibited for worker packages
   demand identity 일치, materialized DB 시각, invalid/None 분류, 읽기 반복 fingerprints 및
   calendar baseline 한계의 중요도를 판단한다. production 결함을 미리 단정하지 않는다.
   테스트 count 하나가 여러 matrix 분기를 포함하므로 count만으로 수락하지 않는다.
+
+- WP4-A-R reviewer `30b92e99-63ed-4ad0-8b4a-390e0f34c2aa` (Codex terra/high,
+  auto-review), API worktree/workspace에서 read-only 검토 시작. profile/provider 확인 완료.
+  구현자는 idle이며 reviewer만 지정된 순차 Rust/QA 검증을 실행한다.
