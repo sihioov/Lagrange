@@ -3623,3 +3623,29 @@ broad mapping or idle-transition delay. Keep retained QA untouched for later aut
   logs confirmed new acknowledgment and actual clean-base/brief inspection. Only writer active;
   reviewer3e00a43f idle REJECT. Send CLI terminal63223 may remain waiting normally, do not resend
   or interrupt. Replace heartbeat211a83b0 to monitor this F1 writer.
+
+### WP6-A-F1 completion / bounded re-review (2026-09-09)
+
+- Writerc15df593 is IDLE clean at2e528590d415641d718ca598d564003e5b303aeb, parent1bfe15e3.
+  Exact3files +74/-8; schema URL line and mirrored checker constant plus self-test additions only.
+  Both source commits remain UNINTEGRATED. Coordinator read FULL delta, recovered full report,
+  and verified operational artifact hash still f53e05f951ad6e8bf216cc62e0302b9171c886fe9a9b8303bbbdbf55b738f0d0.
+- Writer reports before-fix NUL/DEL interior/suffix and terminalLF accepted; after-fix regex69/69,
+  same-checker mutations11 actual nonzero +baseline0, syntax/static/JSON/diff PASS. Pattern now
+  excludes ASCII controls and uses (?![\s\S]) to require end-of-input under search semantics.
+- F1-R reuses idle independent reviewer3e00a43f-314e-4d06-a58f-b58401a6a86e Codex sol/high
+  auto-review in /data/worktrees/3puw275b/stock-beta-intraday-ops wks_42028f6f939c65ac. Bounded
+  intermediate/high-confidence review of prior Medium resolution and exact3file delta only.
+  Verify actual schema/checker regex agreement, all33 control bytes interior/suffix incl LF/CR,
+  retained valid URL positive and prior10 mutation cases plus restored weak-pattern case. Read
+  F1 exact brief/full original A brief/spec as needed; accepted UTCZ/format/runtime limits not reopened.
+- Independently run syntax/static/self-test complete outputs/counts/exit codes; JSON parse,
+  exact scope, hash and clean state. Existing Node built-in RegExp only may check ECMAScript
+  compatibility offline if available, no npm/packages/install/network and no full schema-engine claim.
+  No source/docs/commits/delegation or broader schema/runtime audit; no Rust/Cargo/compiler/build/
+  DB/Docker/provider/credentials/operational paths/env/clock/activation/deploy/main merge/push.
+- Report ACCEPT/REJECT, concrete severity/fileline, prior finding disposition, actual commands/
+  counts, deviations, unresolved/follow-up/notverified explicit none when empty. Do not use native
+  subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report
+  if it needs further decomposition. No Paseo run/send/daemon commands. Coordinator integrates
+  exact two-commit A chain only on independently verified ACCEPT, then freezes next WP6-B.
