@@ -4077,3 +4077,10 @@ empty. If scope or requirements conflict, report before expanding, don't invent 
 Coordinator reads full delta then reuses sol/high reviewer. No integration until all Medium resolved.
 Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
 No Paseo run/send/daemon start/restart.
+
+- B1-F2 active binding: NEW writer873f830e-bc8e-480c-8fa6-2abecea4ffa4 Codex terra/max
+  auto-review, ops workspace wks_42028f6f939c65ac, cleanbase8f1db6b. Current profiles/notes and
+  provider capability inspected; model-only escalation per observed repeat path-safety failure.
+  Startup wait timeout includes direct-assignment ACK, exact checkout checks and instruction reads.
+  Original writer50c5f35c and reviewer5f6d978f idle. Replaced88696a5f with heartbeat5c0747fd.
+  No implementation/tests or acceptance claimed yet; no integration.
