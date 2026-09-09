@@ -1831,3 +1831,21 @@ Native subagents: prohibited for worker packages
   branch `work/stock-beta-intraday-api-20260909`, workspace `wks_3249856abbf32750`.
   profile notes/provider 및 target 지침을 확인했고 기존 QA의 healthy/pinned image/tmpfs/
   loopback port를 재확인했다. WP4-P/IV/모든 이전 작업자는 idle이며 이 작업자만 compiler 사용.
+
+### WP4-A 완료 / 독립 검토 진입
+
+- writer idle/clean, source `7147a3276a4337301686dcde2985611acadff55f`, parent `8dee43c`.
+  정확히 intraday.rs +114와 새 intraday_read_state.rs +620, 2파일이며 미통합이다.
+  coordinator는 production 전체 delta와 test 620줄을 읽었다. MATERIALIZED clock CTE,
+  READY/current admission 및 exact demand EXISTS, 기존 actor transaction 재사용을 확인했다.
+- worker 보고: 새 real-app-role matrix 1/1 (0.90초), 기존 intraday_quotes 24/24 (30.91초),
+  strict scoped clippy/fmt/diff 통과. producer SELECT는 42501로 거부된다. 최초 expiry fixture는
+  created_at 제약을 맞춰 수정했다. schema/권한/기존 쓰기 동작 변경 없음.
+- 증거 한계: shared harness의 append-only calendar baseline은 남아 있다. cache/window proof
+  없이 최초 읽기가 성공하며 SQL이 calendar를 전혀 읽지 않는다는 근거를 검토한다. calendar를
+  지우기 위해 trigger/권한을 우회하지 않는다. expiry는 QA fixture를 DB 현재시각 이전으로
+  옮겨 검사한다. 이 패키지는 blocking publication 경로가 아닌 read-time snapshot이다.
+- WP4-A-R는 위 2파일 전체와 실제 role 테스트를 독립 확인한다. current generation/owner/
+  demand identity 일치, materialized DB 시각, invalid/None 분류, 읽기 반복 fingerprints 및
+  calendar baseline 한계의 중요도를 판단한다. production 결함을 미리 단정하지 않는다.
+  테스트 count 하나가 여러 matrix 분기를 포함하므로 count만으로 수락하지 않는다.
