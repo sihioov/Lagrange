@@ -1504,75 +1504,80 @@ mod tests {
         );
 
         let win = window("REGULAR", Some("09:00:00"), Some("15:30:00"));
-        let mut record = cache(&identity(true), &cal, &win, at);
-        for mismatch in [
-            {
+        let baseline = cache(&identity(true), &cal, &win, at);
+        let valid = project(true, &cal, win.clone(), Some(&baseline), at);
+        assert_eq!(valid.market_state, IntradayQuoteMarketState::Open);
+        assert_eq!(valid.freshness, IntradayQuoteFreshness::Recent);
+        assert!(valid.reason_code.is_none() && valid.quote.is_some());
+
+        let mismatches = [
+            ("owner", {
+                let mut record = baseline.clone();
                 record.owner_user_id = Uuid::from_u128(99);
-                record.clone()
-            },
-            {
-                record.owner_user_id = Uuid::from_u128(1);
+                record
+            }),
+            ("membership", {
+                let mut record = baseline.clone();
                 record.membership_id = Uuid::from_u128(99);
-                record.clone()
-            },
-            {
-                record.membership_id = Uuid::from_u128(1);
+                record
+            }),
+            ("generation_id", {
+                let mut record = baseline.clone();
                 record.generation_id = Uuid::from_u128(99);
-                record.clone()
-            },
-            {
-                record.generation_id = Uuid::from_u128(3);
-                record.clone()
-            },
-            {
+                record
+            }),
+            ("generation", {
+                let mut record = baseline.clone();
                 record.generation = 2;
-                record.clone()
-            },
-            {
-                record.generation = 1;
+                record
+            }),
+            ("instrument", {
+                let mut record = baseline.clone();
                 record.instrument_id = "229200.KRX".to_owned();
-                record.clone()
-            },
-            {
-                record.instrument_id = INSTRUMENT.to_owned();
+                record
+            }),
+            ("session_date", {
+                let mut record = baseline.clone();
                 record.session_date = Some(date() - Duration::days(1));
-                record.clone()
-            },
-            {
-                record.session_date = Some(date());
+                record
+            }),
+            ("calendar_source", {
+                let mut record = baseline.clone();
                 record.calendar_source = Some("other".to_owned());
-                record.clone()
-            },
-            {
-                record.calendar_source = Some("kis".to_owned());
+                record
+            }),
+            ("calendar_source_version", {
+                let mut record = baseline.clone();
                 record.calendar_source_version = Some("other".to_owned());
-                record.clone()
-            },
-            {
-                record.calendar_source_version = Some("kis-chk-holiday-v1:schema-1".to_owned());
+                record
+            }),
+            ("calendar_source_batch_id", {
+                let mut record = baseline.clone();
                 record.calendar_source_batch_id = Some(Uuid::from_u128(99));
-                record.clone()
-            },
-            {
-                record.calendar_source_batch_id = Some(Uuid::from_u128(4));
+                record
+            }),
+            ("calendar_content_sha256", {
+                let mut record = baseline.clone();
                 record.calendar_content_sha256 = Some("d".repeat(64));
-                record.clone()
-            },
-            {
-                record.calendar_content_sha256 = Some(CALENDAR_HASH.to_owned());
+                record
+            }),
+            ("window_contract_sha256", {
+                let mut record = baseline.clone();
                 record.window_contract_sha256 = Some("sha256:wrong".to_owned());
-                record.clone()
-            },
-        ] {
+                record
+            }),
+        ];
+        for (field, mismatch) in mismatches {
             let mismatch = project(true, &cal, win.clone(), Some(&mismatch), at);
             assert_eq!(
                 mismatch.reason_code,
-                Some(IntradayQuoteReasonCode::QuotePending)
+                Some(IntradayQuoteReasonCode::QuotePending),
+                "{field} mismatch must hide the quote"
             );
-            assert!(mismatch.quote.is_none());
+            assert!(mismatch.quote.is_none(), "{field} mismatch quote");
         }
 
-        record = cache(&identity(true), &cal, &win, at);
+        let mut record = baseline;
         record.quote_version = 0;
         let invalid = project(true, &cal, win.clone(), Some(&record), at);
         assert_eq!(invalid.freshness, IntradayQuoteFreshness::Unavailable);

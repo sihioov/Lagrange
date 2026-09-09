@@ -10,8 +10,8 @@ mod common;
 use api_server::http::state::OwnerIntradayQuoteReadConfig;
 use auth::entitlement::Role;
 use axum::http::StatusCode;
-use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Utc};
-use collectors::intraday_quotes::IntradaySessionWindowContract;
+use chrono::{DateTime, Duration, FixedOffset, NaiveDate, TimeZone, Utc};
+use collectors::intraday_quotes::{IntradayMarketState, IntradaySessionWindowContract};
 use common::{Harness, UserCtx, status};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -40,6 +40,19 @@ struct MembershipFixture {
     generation: u64,
 }
 
+#[derive(Clone)]
+struct FixtureTimeBundle {
+    db_now: DateTime<Utc>,
+    session_date: NaiveDate,
+    evidence_at: DateTime<Utc>,
+    api_initial: DateTime<Utc>,
+    api_after_stale: DateTime<Utc>,
+    receipt_at: DateTime<Utc>,
+    attempt_at: DateTime<Utc>,
+    failure_at: DateTime<Utc>,
+    window: Arc<IntradaySessionWindowContract>,
+}
+
 fn set_api_clock(now: DateTime<Utc>) {
     *API_CLOCK
         .get_or_init(|| Mutex::new(now))
@@ -60,15 +73,12 @@ fn current_kst_date(now: DateTime<Utc>) -> NaiveDate {
         .date_naive()
 }
 
-fn window_for(date: NaiveDate) -> Arc<IntradaySessionWindowContract> {
-    window_for_kind(date, "REGULAR", Some("09:00:00"), Some("15:30:00"))
-}
-
 fn window_for_kind(
     date: NaiveDate,
     disposition: &str,
     open_local: Option<&str>,
     close_local: Option<&str>,
+    evidence_at: DateTime<Utc>,
 ) -> Arc<IntradaySessionWindowContract> {
     let bytes = serde_json::to_vec(&json!({
         "schema_version": 1,
@@ -80,7 +90,7 @@ fn window_for_kind(
             "open_local": open_local,
             "close_local": close_local,
             "evidence_url": "https://global.krx.co.kr/contents/test",
-            "evidence_retrieved_at": format!("{date}T00:00:00+09:00"),
+            "evidence_retrieved_at": evidence_at.to_rfc3339(),
             "evidence_sha256": format!("sha256:{}", "b".repeat(64)),
         }],
     }))
@@ -89,13 +99,87 @@ fn window_for_kind(
     Arc::new(IntradaySessionWindowContract::from_bytes(&bytes, &hash).unwrap())
 }
 
-fn api_time_for_date(date: NaiveDate) -> DateTime<Utc> {
+fn kst_instant(date: NaiveDate, hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
     FixedOffset::east_opt(9 * 60 * 60)
         .expect("KST offset")
-        .from_local_datetime(&date.and_hms_opt(11, 0, 0).expect("11:00 KST"))
+        .from_local_datetime(
+            &date
+                .and_hms_opt(hour, minute, second)
+                .expect("valid KST fixture time"),
+        )
         .single()
         .expect("unambiguous KST time")
         .with_timezone(&Utc)
+}
+
+fn fixture_time_bundle(db_now: DateTime<Utc>) -> FixtureTimeBundle {
+    let session_date = current_kst_date(db_now);
+    let evidence_at = kst_instant(session_date, 0, 0, 0);
+    // Preserve enough same-date room to advance only the injected API clock
+    // beyond the 30-second freshness boundary, even if the DB is read near
+    // KST midnight.
+    let latest_initial = kst_instant(session_date, 23, 59, 20);
+    let api_initial = std::cmp::min(db_now, latest_initial);
+    let api_after_stale = api_initial + Duration::seconds(31);
+    let window = window_for_kind(
+        session_date,
+        "SPECIAL",
+        Some("00:00:00"),
+        Some("23:59:59"),
+        evidence_at,
+    );
+    let bundle = FixtureTimeBundle {
+        db_now,
+        session_date,
+        evidence_at,
+        api_initial,
+        api_after_stale,
+        receipt_at: api_initial,
+        attempt_at: api_initial,
+        failure_at: api_initial,
+        window,
+    };
+    assert_fixture_time_bundle(&bundle);
+    bundle
+}
+
+fn assert_fixture_time_bundle(bundle: &FixtureTimeBundle) {
+    assert_eq!(current_kst_date(bundle.db_now), bundle.session_date);
+    assert_eq!(current_kst_date(bundle.evidence_at), bundle.session_date);
+    assert_eq!(current_kst_date(bundle.api_initial), bundle.session_date);
+    assert_eq!(
+        current_kst_date(bundle.api_after_stale),
+        bundle.session_date
+    );
+    assert!(bundle.api_initial <= bundle.db_now);
+    for (name, instant) in [
+        ("evidence", bundle.evidence_at),
+        ("receipt", bundle.receipt_at),
+        ("attempt", bundle.attempt_at),
+        ("failure", bundle.failure_at),
+    ] {
+        assert_eq!(
+            current_kst_date(instant),
+            bundle.session_date,
+            "{name} date"
+        );
+        assert!(instant <= bundle.db_now, "{name} must not be future to DB");
+        assert!(
+            instant <= bundle.api_initial,
+            "{name} must not be future to initial API clock"
+        );
+    }
+    let initial_age = bundle.api_initial - bundle.receipt_at;
+    assert!(initial_age >= Duration::zero() && initial_age <= Duration::seconds(30));
+    assert!(bundle.api_after_stale - bundle.receipt_at > Duration::seconds(30));
+    assert_eq!(
+        bundle.window.state_at(bundle.api_initial, false),
+        IntradayMarketState::Open
+    );
+    assert_eq!(
+        bundle.window.state_at(bundle.api_after_stale, false),
+        IntradayMarketState::Open
+    );
 }
 
 async fn seed_ready_membership(
@@ -181,15 +265,22 @@ async fn seed_ready_membership(
     }
 }
 
-async fn seed_calendar_rows(harness: &Harness, session_date: NaiveDate, disposition: &str) -> Uuid {
+async fn seed_calendar_rows(
+    harness: &Harness,
+    times: &FixtureTimeBundle,
+    disposition: &str,
+) -> Uuid {
     let batch_id = Uuid::new_v4();
+    let session_date = times.session_date;
+    let retrieved_at = times.db_now.to_rfc3339();
     harness
         .seed_shared(&format!(
             "INSERT INTO data_batches \
              (id, provider, market, batch_date, kind, storage_path, content_sha256, \
               bytes_size, retrieved_at) \
              VALUES ('{batch_id}', 'KIS', 'KR', '{session_date}', 'CALENDAR', \
-                     'synthetic/wp4-c3-calendar', '{CALENDAR_HASH}', 1, clock_timestamp())"
+                     'synthetic/wp4-c3-calendar', '{CALENDAR_HASH}', 1, \
+                     '{retrieved_at}'::timestamptz)"
         ))
         .await;
     harness
@@ -199,7 +290,7 @@ async fn seed_calendar_rows(harness: &Harness, session_date: NaiveDate, disposit
               source_batch_id, content_sha256, retrieved_at) \
              VALUES ('KRX', '{session_date}', '{disposition}', 'Asia/Seoul', 'kis', \
                      'kis-chk-holiday-v1:schema-1', '{batch_id}', '{CALENDAR_HASH}', \
-                     clock_timestamp())"
+                     '{retrieved_at}'::timestamptz)"
         ))
         .await;
     harness
@@ -209,7 +300,7 @@ async fn seed_calendar_rows(harness: &Harness, session_date: NaiveDate, disposit
               source_batch_id, content_sha256, retrieved_at) \
              VALUES ('KRX', '{session_date}', '{disposition}', 'Asia/Seoul', 'kis', \
                      'kis-chk-holiday-v1:schema-1', '{batch_id}', '{CALENDAR_HASH}', \
-                     clock_timestamp())"
+                     '{retrieved_at}'::timestamptz)"
         ))
         .await;
     batch_id
@@ -219,12 +310,11 @@ async fn seed_calendar_and_cache(
     harness: &Harness,
     owner: &UserCtx,
     fixture: MembershipFixture,
-    window: &IntradaySessionWindowContract,
-    session_date: NaiveDate,
+    times: &FixtureTimeBundle,
     calendar_disposition: &str,
-    cache_at: DateTime<Utc>,
 ) {
-    let batch_id = seed_calendar_rows(harness, session_date, calendar_disposition).await;
+    let batch_id = seed_calendar_rows(harness, times, calendar_disposition).await;
+    let session_date = times.session_date;
     let snapshot_id = Uuid::new_v4();
     let universe_sha256 = format!("sha256:{}", common::sha256_hex(INSTRUMENT.as_bytes()));
     harness
@@ -240,7 +330,8 @@ async fn seed_calendar_and_cache(
             ),
         )
         .await;
-    let cache_at = cache_at.to_rfc3339();
+    let receipt_at = times.receipt_at.to_rfc3339();
+    let attempt_at = times.attempt_at.to_rfc3339();
     harness
         .seed_migration_owner(
             owner,
@@ -289,13 +380,12 @@ async fn seed_calendar_and_cache(
                  VALUES ('{}', '{}', '{}', '{INSTRUMENT}', 1, '{session_date}', 'kis', \
                          'kis-chk-holiday-v1:schema-1', '{batch_id}', '{CALENDAR_HASH}', \
                          '{}', 100.25, 99.00, 1.25, 1.26, 'UP', false, \
-                         '{cache_at}'::timestamptz - interval '10 seconds', \
-                         '{cache_at}'::timestamptz - interval '10 seconds', 1, \
-                         '{cache_at}'::timestamptz - interval '1 second', 1)",
+                         '{receipt_at}'::timestamptz, '{receipt_at}'::timestamptz, 1, \
+                         '{attempt_at}'::timestamptz, 1)",
                 owner.user_id,
                 fixture.membership_id,
                 fixture.generation_id,
-                window.window_contract_sha256()
+                times.window.window_contract_sha256()
             ),
         )
         .await;
@@ -369,10 +459,12 @@ async fn set_cache_good(
     harness: &Harness,
     owner: &UserCtx,
     fixture: MembershipFixture,
-    at: DateTime<Utc>,
+    receipt_at: DateTime<Utc>,
+    attempt_at: DateTime<Utc>,
     failure: Option<(&str, DateTime<Utc>)>,
 ) {
-    let at = at.to_rfc3339();
+    let receipt_at = receipt_at.to_rfc3339();
+    let attempt_at = attempt_at.to_rfc3339();
     let (failure_code, failure_at) = failure
         .map(|(code, failure_at)| {
             (
@@ -388,9 +480,9 @@ async fn set_cache_good(
                 "UPDATE owner_intraday_quote_cache \
                     SET price = 100.25, base_price = 99.00, change_amount = 1.25, \
                         change_percent = 1.26, direction = 'UP', halted = false, \
-                        received_at = '{at}'::timestamptz - interval '10 seconds', \
-                        last_success_at = '{at}'::timestamptz - interval '10 seconds', \
-                        quote_version = 1, last_attempt_at = '{at}'::timestamptz - interval '1 second', \
+                        received_at = '{receipt_at}'::timestamptz, \
+                        last_success_at = '{receipt_at}'::timestamptz, \
+                        quote_version = 1, last_attempt_at = '{attempt_at}'::timestamptz, \
                         last_failure_code = {failure_code}, last_failure_at = {failure_at}, \
                         updated_at = now() \
                   WHERE owner_user_id = '{}' AND membership_id = '{}'",
@@ -573,18 +665,39 @@ fn catch_unwind_async<F: Future>(future: F) -> CatchUnwindFuture<F> {
     }
 }
 
-async fn database_now(harness: &Harness) -> DateTime<Utc> {
-    sqlx::query_scalar("SELECT clock_timestamp()")
+async fn fixture_time_bundle_from_database(harness: &Harness) -> FixtureTimeBundle {
+    let db_now = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&harness.owner_pool)
         .await
-        .expect("database clock")
+        .expect("captured database clock");
+    fixture_time_bundle(db_now)
 }
 
-fn db_safe_cache_at(api_now: DateTime<Utc>, db_now: DateTime<Utc>) -> DateTime<Utc> {
-    std::cmp::min(
-        api_now - chrono::Duration::seconds(10),
-        db_now - chrono::Duration::seconds(1),
-    )
+#[test]
+fn fixture_time_bundle_covers_kst_day_edges_without_changing_db_time() {
+    // Pure planner coverage: these are synthetic captured DB instants, not
+    // mutations of the database clock.
+    let date = NaiveDate::from_ymd_opt(2026, 9, 9).expect("synthetic date");
+    let cases = [
+        ("early midnight", kst_instant(date, 0, 0, 1)),
+        ("08:00", kst_instant(date, 8, 0, 0)),
+        ("before 11:00", kst_instant(date, 10, 59, 59)),
+        ("11:00", kst_instant(date, 11, 0, 0)),
+        ("after close", kst_instant(date, 15, 30, 1)),
+        ("late 23:59", kst_instant(date, 23, 59, 55)),
+        (
+            "UTC/KST boundary",
+            Utc.with_ymd_and_hms(2026, 9, 8, 15, 0, 1)
+                .single()
+                .expect("UTC boundary instant"),
+        ),
+    ];
+
+    for (name, db_now) in cases {
+        let bundle = fixture_time_bundle(db_now);
+        assert_eq!(bundle.session_date, date, "{name} KST date");
+        assert_fixture_time_bundle(&bundle);
+    }
 }
 
 fn assert_quote_dto(
@@ -660,31 +773,11 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
         )
         .await;
     let foreign_fixture = seed_ready_membership(harness, &other_owner, INSTRUMENT).await;
-    let db_date: NaiveDate =
-        sqlx::query_scalar("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date")
-            .fetch_one(&harness.owner_pool)
-            .await
-            .expect("database KST date");
-    let db_now = database_now(harness).await;
-    let api_now = api_time_for_date(db_date);
-    set_api_clock(api_now);
-    let api_date = current_kst_date(api_now);
-    assert_eq!(
-        db_date, api_date,
-        "fixture must use the exact current DB KST date"
-    );
-    let window = window_for(db_date);
-    let cache_at = db_safe_cache_at(api_now, db_now);
-    seed_calendar_and_cache(
-        harness,
-        &harness.owner,
-        owner_fixture,
-        &window,
-        db_date,
-        "TRADING",
-        cache_at,
-    )
-    .await;
+    let times = fixture_time_bundle_from_database(harness).await;
+    let db_date = times.session_date;
+    set_api_clock(times.api_initial);
+    let window = times.window.clone();
+    seed_calendar_and_cache(harness, &harness.owner, owner_fixture, &times, "TRADING").await;
     seed_queue_row(harness, &harness.owner).await;
 
     harness
@@ -717,6 +810,9 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
         owner_fixture.membership_id
     );
     let body = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(body["market_state"], "OPEN");
+    assert_eq!(body["freshness"], "RECENT");
+    assert!(body["reason_code"].is_null());
     assert_quote_dto(&body, owner_fixture, &window, db_date);
     let _ = assert_get_batch(harness, &path, &harness.owner, 10, Some(&body)).await;
     let _ = assert_get_batch(harness, &path, &harness.owner, 100, Some(&body)).await;
@@ -750,8 +846,13 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
         "SESSION_EXPIRED",
     )
     .await;
-    let member_invalid = harness.get(&path, Some(&harness.member)).await;
-    assert_error(member_invalid, StatusCode::FORBIDDEN, "FORBIDDEN").await;
+    let member_malformed = harness
+        .get(
+            &format!("{GET_PATH_PREFIX}?membership_id=not-a-uuid&generation=not-a-generation"),
+            Some(&harness.member),
+        )
+        .await;
+    assert_error(member_malformed, StatusCode::FORBIDDEN, "FORBIDDEN").await;
     let owner_invalid = harness
         .get(
             &format!(
@@ -876,7 +977,7 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
     assert!(no_demand["quote"].is_object());
 
     set_demand_expiry(harness, &harness.owner, owner_fixture, true).await;
-    set_cache_pending(harness, &harness.owner, owner_fixture, cache_at).await;
+    set_cache_pending(harness, &harness.owner, owner_fixture, times.attempt_at).await;
     let pending = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
     assert_eq!(pending["market_state"], "OPEN");
     assert_eq!(pending["freshness"], "UNAVAILABLE");
@@ -887,8 +988,9 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
         harness,
         &harness.owner,
         owner_fixture,
-        cache_at,
-        Some(("PROVIDER_TIMEOUT", cache_at)),
+        times.receipt_at,
+        times.attempt_at,
+        Some(("PROVIDER_TIMEOUT", times.failure_at)),
     )
     .await;
     let failure = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
@@ -897,16 +999,21 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
     assert_eq!(failure["reason_code"], "PROVIDER_TIMEOUT");
     assert!(failure["quote"].is_object());
 
-    set_cache_good(harness, &harness.owner, owner_fixture, cache_at, None).await;
-    let stale_at = std::cmp::min(
-        api_now - chrono::Duration::seconds(31),
-        database_now(harness).await - chrono::Duration::seconds(1),
-    );
-    set_cache_good(harness, &harness.owner, owner_fixture, stale_at, None).await;
-    let stale = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
-    assert_eq!(stale["market_state"], "OPEN");
-    assert_eq!(stale["freshness"], "STALE");
-    assert_eq!(stale["reason_code"], "QUOTE_STALE");
+    set_cache_good(
+        harness,
+        &harness.owner,
+        owner_fixture,
+        times.receipt_at,
+        times.attempt_at,
+        None,
+    )
+    .await;
+    let recent_before_restart = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(recent_before_restart["market_state"], "OPEN");
+    assert_eq!(recent_before_restart["freshness"], "RECENT");
+    assert!(recent_before_restart["reason_code"].is_null());
+    let before_restart = fingerprint(harness, harness.owner.user_id).await;
+    set_api_clock(times.api_after_stale);
     harness
         .restart_api_with_intraday_read_config(
             OwnerIntradayQuoteReadConfig::OwnerOnly {
@@ -915,10 +1022,24 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
             injected_api_clock,
         )
         .await;
-    let restarted_stale = assert_get_batch(harness, &path, &harness.owner, 1, Some(&stale)).await;
-    assert_eq!(restarted_stale, stale);
-
-    set_cache_good(harness, &harness.owner, owner_fixture, cache_at, None).await;
+    let restarted_stale = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(restarted_stale["market_state"], "OPEN");
+    assert_eq!(restarted_stale["freshness"], "STALE");
+    assert_eq!(restarted_stale["reason_code"], "QUOTE_STALE");
+    assert_eq!(restarted_stale["quote"], recent_before_restart["quote"]);
+    assert_eq!(
+        restarted_stale["quote"]["quote_version"],
+        recent_before_restart["quote"]["quote_version"]
+    );
+    assert_eq!(
+        restarted_stale["quote"]["last_success_at"],
+        recent_before_restart["quote"]["last_success_at"]
+    );
+    assert_eq!(
+        fingerprint(harness, harness.owner.user_id).await,
+        before_restart
+    );
+    set_api_clock(times.api_initial);
     harness
         .seed_migration_owner(
             &harness.owner,
@@ -952,6 +1073,24 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
     let old_hash = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
     assert_eq!(old_hash["reason_code"], "QUOTE_PENDING");
     assert!(old_hash["quote"].is_null());
+
+    harness
+        .seed_migration_owner(
+            &harness.owner,
+            &format!(
+                "UPDATE owner_intraday_quote_cache SET window_contract_sha256 = '{}' \
+                  WHERE owner_user_id = '{}' AND membership_id = '{}'",
+                window.window_contract_sha256(),
+                harness.owner.user_id,
+                owner_fixture.membership_id
+            ),
+        )
+        .await;
+    let restored_old_generation = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(restored_old_generation["market_state"], "OPEN");
+    assert_eq!(restored_old_generation["freshness"], "RECENT");
+    assert!(restored_old_generation["reason_code"].is_null());
+    assert_quote_dto(&restored_old_generation, owner_fixture, &window, db_date);
 
     let next_fixture = seed_next_generation(harness, &harness.owner, owner_fixture).await;
     let next_path = format!(
@@ -1017,9 +1156,9 @@ async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
 
 #[tokio::test]
 async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
-    let Some(mut harness) = Harness::new().await else {
-        return;
-    };
+    let mut harness = Harness::new()
+        .await
+        .expect("DATABASE_URL is required for real-role cache HTTP coverage");
     let result = catch_unwind_async(run_owner_intraday_quote_cache_matrix(&mut harness)).await;
     harness.teardown().await;
     if let Err(payload) = result {
@@ -1029,14 +1168,10 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
 
 async fn run_intraday_quote_evidence_matrix(harness: &mut Harness) {
     let fixture = seed_ready_membership(harness, &harness.owner, INSTRUMENT).await;
-    let db_date: NaiveDate =
-        sqlx::query_scalar("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date")
-            .fetch_one(&harness.owner_pool)
-            .await
-            .expect("database KST date");
-    let api_now = api_time_for_date(db_date);
-    set_api_clock(api_now);
-    let window = window_for(db_date);
+    let times = fixture_time_bundle_from_database(harness).await;
+    let db_date = times.session_date;
+    set_api_clock(times.api_initial);
+    let window = times.window.clone();
     let path = format!(
         "{GET_PATH_PREFIX}?membership_id={}&generation=1",
         fixture.membership_id
@@ -1063,17 +1198,7 @@ async fn run_intraday_quote_evidence_matrix(harness: &mut Harness) {
     assert!(missing_calendar_body["session"].is_null());
     assert!(missing_calendar_body["quote"].is_null());
 
-    let db_now = database_now(harness).await;
-    seed_calendar_and_cache(
-        harness,
-        &harness.owner,
-        fixture,
-        &window,
-        db_date,
-        "CLOSED",
-        db_safe_cache_at(api_now, db_now),
-    )
-    .await;
+    seed_calendar_and_cache(harness, &harness.owner, fixture, &times, "CLOSED").await;
     harness
         .restart_api_with_intraday_read_config(
             OwnerIntradayQuoteReadConfig::OwnerOnly {
@@ -1109,7 +1234,7 @@ async fn run_intraday_quote_evidence_matrix(harness: &mut Harness) {
     );
     assert!(missing_window_body["session"].is_null() && missing_window_body["quote"].is_null());
 
-    let closed_window = window_for_kind(db_date, "CLOSED", None, None);
+    let closed_window = window_for_kind(db_date, "CLOSED", None, None, times.evidence_at);
     harness
         .restart_api_with_intraday_read_config(
             OwnerIntradayQuoteReadConfig::OwnerOnly {
@@ -1129,9 +1254,9 @@ async fn run_intraday_quote_evidence_matrix(harness: &mut Harness) {
 
 #[tokio::test]
 async fn owner_intraday_quote_cache_evidence_states_are_real_role_read_only() {
-    let Some(mut harness) = Harness::new().await else {
-        return;
-    };
+    let mut harness = Harness::new()
+        .await
+        .expect("DATABASE_URL is required for real-role cache HTTP coverage");
     let result = catch_unwind_async(run_intraday_quote_evidence_matrix(&mut harness)).await;
     harness.teardown().await;
     if let Err(payload) = result {
