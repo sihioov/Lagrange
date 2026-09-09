@@ -206,6 +206,16 @@ impl IntradayQuoteIdentity {
     }
 }
 
+/// Read-time owner identity state for the future application API.  This is a
+/// snapshot only; it is not a publication permission, lease fence, or lock
+/// guarantee after the read returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntradayIdentityReadState {
+    pub identity: IntradayQuoteIdentity,
+    pub has_active_demand: bool,
+    pub observed_at: DateTime<Utc>,
+}
+
 /// Input for POST create/renew.  The raw idempotency key is transient and is
 /// never placed in the database; only its SHA-256 digest is stored.
 pub struct IntradayQuoteDemandRequest {
@@ -1109,6 +1119,79 @@ impl OwnerIntradayQuoteRepository {
             .await
             .map_err(|_| IntradayStorageError::CommitUnknown)?;
         Ok(identities)
+    }
+
+    /// Read the exact current READY admission and whether any matching demand
+    /// is active at one database-clock observation.  This intentionally does
+    /// not inspect cache, calendar, producer, session, budget, or provider
+    /// state and does not establish a later publication or fencing authority.
+    pub async fn read_current_identity_state(
+        &self,
+        owner_user_id: Uuid,
+        membership_id: Uuid,
+        instrument_id: &str,
+        generation: u64,
+    ) -> Result<Option<IntradayIdentityReadState>, IntradayStorageError> {
+        if owner_user_id.is_nil()
+            || membership_id.is_nil()
+            || !canonical_instrument(instrument_id)
+            || generation == 0
+        {
+            return Err(IntradayStorageError::InvalidInput);
+        }
+        let generation =
+            i64::try_from(generation).map_err(|_| IntradayStorageError::InvalidInput)?;
+        let mut tx = self.begin_actor_transaction(owner_user_id).await?;
+        let row: Option<IntradayIdentityReadDbRow> = sqlx::query_as(
+            "WITH observed AS MATERIALIZED (
+                    SELECT pg_catalog.clock_timestamp() AS observed_at
+             )
+             SELECT admission.owner_user_id, admission.membership_id,
+                    admission.generation_id, admission.instrument_id,
+                    admission.generation, observed.observed_at,
+                    EXISTS (
+                        SELECT 1
+                          FROM public.owner_intraday_quote_demands AS demand
+                         WHERE demand.owner_user_id = admission.owner_user_id
+                           AND demand.membership_id = admission.membership_id
+                           AND demand.generation_id = admission.generation_id
+                           AND demand.instrument_id = admission.instrument_id
+                           AND demand.generation = admission.generation
+                           AND demand.state = 'ACTIVE'
+                           AND demand.lease_expires_at > observed.observed_at
+                    ) AS has_active_demand
+               FROM public.owner_equity_memberships AS membership
+               JOIN public.owner_equity_generation_admissions AS admission
+                 ON admission.owner_user_id = membership.owner_user_id
+                AND admission.membership_id = membership.id
+                AND admission.instrument_id = membership.instrument_id
+                AND admission.generation = $4
+              CROSS JOIN observed
+              WHERE membership.owner_user_id = $1
+                AND membership.id = $2
+                AND membership.instrument_id = $3
+                AND membership.state = 'READY'
+                AND NOT EXISTS (
+                    SELECT 1
+                      FROM public.owner_equity_generation_admissions AS newer
+                     WHERE newer.owner_user_id = admission.owner_user_id
+                       AND newer.membership_id = admission.membership_id
+                       AND newer.instrument_id = admission.instrument_id
+                       AND newer.generation > admission.generation
+                )",
+        )
+        .bind(owner_user_id)
+        .bind(membership_id)
+        .bind(instrument_id)
+        .bind(generation)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        let state = row.map(IntradayIdentityReadDbRow::into_state).transpose()?;
+        tx.commit()
+            .await
+            .map_err(|_| IntradayStorageError::CommitUnknown)?;
+        Ok(state)
     }
 
     /// Enumerate owner scopes with at least one non-expired demand on a READY
@@ -2144,6 +2227,37 @@ struct AdmissionDbRow {
     generation_id: Uuid,
     instrument_id: String,
     generation: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct IntradayIdentityReadDbRow {
+    owner_user_id: Uuid,
+    membership_id: Uuid,
+    generation_id: Uuid,
+    instrument_id: String,
+    generation: i64,
+    observed_at: DateTime<Utc>,
+    has_active_demand: bool,
+}
+
+impl IntradayIdentityReadDbRow {
+    fn into_state(self) -> Result<IntradayIdentityReadState, IntradayStorageError> {
+        let generation =
+            u64::try_from(self.generation).map_err(|_| IntradayStorageError::DatabaseIntegrity)?;
+        let identity = IntradayQuoteIdentity::new(
+            self.owner_user_id,
+            self.membership_id,
+            self.generation_id,
+            self.instrument_id,
+            generation,
+        )
+        .map_err(|_| IntradayStorageError::DatabaseIntegrity)?;
+        Ok(IntradayIdentityReadState {
+            identity,
+            has_active_demand: self.has_active_demand,
+            observed_at: self.observed_at,
+        })
+    }
 }
 
 #[derive(Debug, FromRow)]
