@@ -101,8 +101,9 @@ The calendar freshness rule and the same-KST-date/nonfuture evidence rule are se
 retrieved on the prior KST date is stale even if only one second old; a UTC date difference is
 acceptable when both instants are on the same KST civil date. Runtime must not retrieve, infer
 weekday hours, use a historical XKRX substitute, invent dates, or restamp evidence. Missing,
-stale, malformed, unpinned, conflicting, or out-of-range proof yields `UNKNOWN` and zero
-provider calls. The checked-in [window artifact](../../configs/market-hours/krx-intraday-session-windows-v1.json#L1-L6)
+stale, malformed, unpinned, conflicting, or otherwise invalid/out-of-contract evidence yields
+`UNKNOWN` and zero provider calls. Valid proof outside the trading interval is not invalid
+evidence: it yields `CLOSED`, with zero quote calls. The checked-in [window artifact](../../configs/market-hours/krx-intraday-session-windows-v1.json#L1-L6)
 has intentionally empty `entries`; it is an empty/default-off artifact, not evidence for a live
 date. EOD behavior is unchanged when this intraday seam is unavailable.
 
@@ -117,16 +118,16 @@ The default configuration is explicit and conservative:
 | `OWNER_INTRADAY_SESSION_WINDOWS_SHA256` | In `owner_only`, exact `sha256:` plus 64 lowercase hex characters and the actual whole-file hash |
 
 The [environment example](../../deploy/compose/.env.example#L25-L40) is blank/default-off by
-design. The protected coordination root is
-`${LAGRANGE_RUNTIME_STATE_DIR}/kis-read-coordination`, mounted at
-`/run/lagrange/kis-read-coordination`; it is owned by `10001:10001`, mode `0700`. The lock,
-state, and temporary files are regular non-symlinks owned by `10001:10001`, mode `0600`, with
-the lock link count fixed at one. The provisioner and validator enforce canonical absolute
-paths, protected-tree overlap rejection, and these ownership/mode checks in [provisioning](../../scripts/ops/provision-linux.sh#L106-L188)
-and [validation](../../scripts/ops/validate-production-config.sh#L185-L228). Missing roots,
-invalid proofs, unsafe overlaps, bad modes, or generation/verifier mismatches fail closed. Do
-not chmod, chown, symlink, repoint, delete, or otherwise repair state as an ad hoc quota reset;
-rotation and rollback are gated procedures.
+design. The protected parent `LAGRANGE_RUNTIME_STATE_DIR` is owned by `0:10001`, mode `0750`;
+its fixed coordination leaf `${LAGRANGE_RUNTIME_STATE_DIR}/kis-read-coordination` is owned by
+`10001:10001`, mode `0700`, and is mounted at `/run/lagrange/kis-read-coordination`. The lock,
+state, and every temporary state file are regular non-symlinks owned by `10001:10001`, mode
+`0600`, with link count one. The [provisioner leaf check](../../scripts/ops/provision-linux.sh#L334-L337)
+and [validator metadata checks](../../scripts/ops/validate-production-config.sh#L495-L545)
+enforce canonical absolute paths, protected-tree overlap rejection, and these ownership/mode
+checks. Missing roots, invalid proofs, unsafe overlaps, bad modes, or generation/verifier
+mismatches fail closed. Do not chmod, chown, symlink, repoint, delete, or otherwise repair state
+as an ad hoc quota reset; rotation and rollback are gated procedures.
 
 The shared credentialed service set is exactly:
 
@@ -151,7 +152,8 @@ merge/interpolation or installed-release overlay selection.
 Before any separately approved activation, an owner/operator review must establish all of the
 following without treating this document as authorization:
 
-- separate owner approval for live owner-only polling and the private market-data entitlement;
+- separate owner approval for live owner-only polling; verify the already-settled private
+  market-data entitlement reference and scope without reopening or requesting reapproval;
 - actual engine merge/interpolation, approved installed-release/all-reader wiring, and no
   legacy reader left on a divergent bind, generation, or mode;
 - all-reader drain before credential rotation, mount and generation consistency, and exact
@@ -201,10 +203,13 @@ source/fixture evidence only, not product or WP6 completion.
 
 ## Safety and evidence handling
 
-Never print or persist an App Key, App Secret, access token, account identifier, response body,
-coordination state contents, verifier, or free-form broker/provider message. The coordination
-state contains only token metadata, expiry, counters, generation, and verifier material; it is
-not a response cache. Raw and Curated data rights remain owner-confirmed and private. No order,
+Never print, log, or persist to diagnostics an App Key, App Secret, account identifier, response
+body, coordination state contents, verifier, or free-form broker/provider message. The shared
+coordination state persists the actual reusable bearer access-token value with its expiry,
+counters, generation, verifier, and other coordination metadata; see [PersistedToken](../../crates/kis-client/src/read_coordination.rs#L1220)
+and [PersistedState](../../crates/kis-client/src/read_coordination.rs#L1254). Treat the entire
+coordination file and token as secret: never dump it, log it, or persist a copy in diagnostics.
+It is not a response cache. Raw and Curated data rights remain owner-confirmed and private. No order,
 correction, cancellation, reservation, balance, account, WebSocket, live profile, provider
 network, Docker/Compose activation, database operation, root/sudo operation, deployment, or
 host-clock procedure is authorized by this runbook.
