@@ -1600,3 +1600,17 @@ Native subagents: prohibited for worker packages
   clean `60bebf0`에서 시작했다. profile notes/provider 및 target instructions를 확인했고
   coordinator는 기존 QA container의 healthy/정확한 loopback port/tmpfs/pinned image를
   read-only 확인했다. 이전 writer/reviewer는 idle이며 중복 작업하지 않는다.
+
+### B2b-D1 완료 및 독립 검토
+
+- writer는 `ffc4e06bf08d750664fc8e8089de65011fe84d7a` (parent `60bebf0`)로 완료,
+  idle/clean이다. coordinator는 정확히 허용된 5파일 +223/-7 전체 delta를 읽었다.
+  production은 `state_at`의 non-future/same-KST-date 판정과 설명만 바뀌었다.
+- worker 보고: 수정 전 stale collector가 OPEN, stale pipeline attempts_started가 1로
+  실패했고, 수정 후 collector4/pipeline10/producer6/scheduling5/lifecycle9/quotes24 및
+  strict scoped clippy/fmt/diff 통과. 병렬 pipeline 첫 실행의 role bootstrap race는
+  test-threads=1 재실행에서 해소됐으며 이를 production 결함으로 주장하지 않는다.
+- idle reviewer `f9652834-45af-425c-8be0-fdfbe2753984` (Codex terra/high)에게 D1-R을
+  맡겼다. 당일 경계/실제 zero-attempt 및 기존 positive evidence를 독립 확인하고, literal
+  midnight 평가 사례와 state_if_present의 read-error 처리에 따른 증거 한계도 판단한다.
+  C1/C2/C3 scoped ACCEPT는 유지하며 D1 독립 수락 전 전체 chain은 미통합이다.
