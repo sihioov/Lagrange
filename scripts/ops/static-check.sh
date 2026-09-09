@@ -19,7 +19,7 @@ for script in provision-linux.sh provision-db-secrets.sh provision-auth0-secret.
   build-production-images.sh build-production-images-static-check.sh \
   build-production-images-self-test.sh deploy-production-release.sh \
   owner-equity-v2-verify.sh owner-equity-v2-runtime-static-check.sh \
-  owner-equity-v2-runtime-self-test.sh \
+  owner-equity-v2-runtime-self-test.sh stock-beta-intraday-static-check.sh \
   run-production-backup.sh install-production-backup.sh \
   production-ops-static-check.sh production-ops-self-test.sh \
   kis-range-raw-backfill.sh kis-action-range-raw-backfill.sh \
@@ -504,6 +504,8 @@ bash "$ops/owner-equity-v2-runtime-static-check.sh" >/dev/null ||
   die 'Owner Equity V2 runtime static check failed'
 bash "$ops/owner-equity-v2-runtime-self-test.sh" >/dev/null ||
   die 'Owner Equity V2 runtime fake self-test failed'
+bash "$ops/stock-beta-intraday-static-check.sh" >/dev/null ||
+  die 'Stock Beta intraday static check failed'
 bash "$ops/production-ops-static-check.sh" >/dev/null ||
   die 'production release/backup static check failed'
 
