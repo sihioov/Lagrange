@@ -55,6 +55,10 @@ for expected in \
   'coordination_leaf_name=kis-read-coordination' \
   'coordination_mode=${KIS_READ_COORDINATION_MODE-legacy}' \
   'safe_runtime_state_path' \
+  'canonical_compare_path' \
+  'realpath -m' \
+  'must use canonical absolute spelling' \
+  'must not have a trailing slash' \
   'reject_runtime_state_overlap' \
   'shared_required coordination requires explicit LAGRANGE_RUNTIME_STATE_DIR' \
   'check_coordination_tree' \
@@ -79,7 +83,12 @@ for expected in \
   'coordination_mode=legacy' \
   '18446744073709551615' \
   'generation_length' \
+  'realpath -m -- "$path"' \
+  'must use canonical absolute spelling' \
+  'must not have a trailing slash' \
+  "type_hex=\$(stat -c '%f'" \
   'coordination_path_safe' \
+  'missing+=("LAGRANGE_RUNTIME_STATE_DIR (run provision-linux.sh)")' \
   'backfill|range-raw|release' \
   'state-v1.json requires coordination.lock' \
   "'0:10001:750'" \
@@ -91,6 +100,9 @@ done
 if grep -Eiq 'cat[[:space:]].*(coordination|state-v1)|sha(256|sum).*state-v1' "$validator"; then
   die 'VALIDATOR_READS_COORDINATION_CONTENT'
 fi
+if grep -Fq "stat -c '%F'" "$validator"; then
+  die 'VALIDATOR_USES_HUMAN_READABLE_FILETYPE'
+fi
 
 for expected in \
   'LAGRANGE_B1_ROOT_FIXTURE_CHILD' \
@@ -99,7 +111,19 @@ for expected in \
   'provision-linux.sh' \
   'coordination.lock' \
   'sentinel' \
-  'idempotent'; do
+  'idempotent' \
+  'write_range_env' \
+  'B1_ENV_HELPER_ARITY' \
+  'snapshot_store_files' \
+  'assert_store_files_unchanged' \
+  'validator_store_expect' \
+  'safe-nonempty-lock-store' \
+  'safe-lock-only-store' \
+  'relative-source-overlap' \
+  'relative-runtime-overlap' \
+  'canonical-sibling-positive' \
+  '//var//' \
+  "[ \"\${1:-}\" = -c ] && [ \"\${2:-}\" = '%f' ]"; do
   grep -Fq -- "$expected" "$self_test" || die "SELF_TEST_HOOK_MISSING:$expected"
 done
 

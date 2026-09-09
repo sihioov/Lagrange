@@ -107,6 +107,12 @@ safe_runtime_state_path() {
   local path=$1 label=$2
   is_absolute "$path" || die "$label must be absolute: $path"
   case "$path" in
+    *//*) die "$label must use canonical absolute spelling: $path" ;;
+  esac
+  if [ "$path" != / ] && [[ "$path" == */ ]]; then
+    die "$label must not have a trailing slash: $path"
+  fi
+  case "$path" in
     */../*|*/..|*/./*|*/.) die "$label must not contain dot traversal: $path" ;;
   esac
   case "$path" in
@@ -120,6 +126,15 @@ safe_runtime_state_path() {
     probe=${probe%/*}
     [ -n "$probe" ] || probe=/
   done
+}
+
+canonical_compare_path() {
+  local path=$1 canonical
+  canonical=$(realpath -m -- "$path") ||
+    die "cannot canonicalize protected path for LAGRANGE_RUNTIME_STATE_DIR"
+  is_absolute "$canonical" ||
+    die "canonical protected path is not absolute for LAGRANGE_RUNTIME_STATE_DIR"
+  printf '%s' "$canonical"
 }
 
 path_overlaps() {
@@ -136,8 +151,9 @@ path_overlaps() {
 }
 
 reject_runtime_state_overlap() {
-  local forbidden runtime_secret_root
+  local forbidden forbidden_canonical runtime_secret_root runtime_state_canonical
   runtime_secret_root=${LAGRANGE_RUNTIME_SECRET_DIR:-$secret_root/runtime}
+  runtime_state_canonical=$(canonical_compare_path "$runtime_state_root")
   for forbidden in \
     "$data_root/raw" \
     "$data_root/curated" \
@@ -147,7 +163,8 @@ reject_runtime_state_overlap() {
     "$secret_root/runtime" \
     "$runtime_secret_root"; do
     [ -n "$forbidden" ] || continue
-    if path_overlaps "$runtime_state_root" "$forbidden"; then
+    forbidden_canonical=$(canonical_compare_path "$forbidden")
+    if path_overlaps "$runtime_state_canonical" "$forbidden_canonical"; then
       die "LAGRANGE_RUNTIME_STATE_DIR overlaps an existing protected tree: $forbidden"
     fi
   done

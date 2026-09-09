@@ -393,12 +393,22 @@ path_overlaps() {
 }
 
 check_runtime_state_path() {
-  local path=$1 probe
+  local path=$1 probe canonical_path canonical_forbidden
   coordination_path_safe=yes
   case "$path" in
     ''|/*) ;;
     *) invalid+=("LAGRANGE_RUNTIME_STATE_DIR must be absolute") ; coordination_path_safe=no ;;
   esac
+  case "$path" in
+    *//*)
+      invalid+=("LAGRANGE_RUNTIME_STATE_DIR must use canonical absolute spelling")
+      coordination_path_safe=no
+      ;;
+  esac
+  if [ "$path" != / ] && [[ "$path" == */ ]]; then
+    invalid+=("LAGRANGE_RUNTIME_STATE_DIR must not have a trailing slash")
+    coordination_path_safe=no
+  fi
   case "$path" in
     */../*|*/..|*/./*|*/.)
       invalid+=("LAGRANGE_RUNTIME_STATE_DIR must not contain dot traversal")
@@ -424,6 +434,16 @@ check_runtime_state_path() {
     done
   fi
   if [ "$coordination_path_safe" = yes ]; then
+    canonical_path=$(realpath -m -- "$path") || {
+      invalid+=("LAGRANGE_RUNTIME_STATE_DIR protected-path canonicalization failed")
+      coordination_path_safe=no
+      return
+    }
+    [[ "$canonical_path" = /* ]] || {
+      invalid+=("LAGRANGE_RUNTIME_STATE_DIR canonical path is not absolute")
+      coordination_path_safe=no
+      return
+    }
     local forbidden
     for forbidden in \
       "$data_dir/raw" \
@@ -434,7 +454,17 @@ check_runtime_state_path() {
       "$source_dir" \
       "$runtime_dir"; do
       [[ "$forbidden" = /* ]] || continue
-      if path_overlaps "$path" "$forbidden"; then
+      canonical_forbidden=$(realpath -m -- "$forbidden") || {
+        invalid+=("LAGRANGE_RUNTIME_STATE_DIR protected-path canonicalization failed")
+        coordination_path_safe=no
+        break
+      }
+      [[ "$canonical_forbidden" = /* ]] || {
+        invalid+=("LAGRANGE_RUNTIME_STATE_DIR canonical protected path is not absolute")
+        coordination_path_safe=no
+        break
+      }
+      if path_overlaps "$canonical_path" "$canonical_forbidden"; then
         invalid+=("LAGRANGE_RUNTIME_STATE_DIR overlaps a protected tree")
         coordination_path_safe=no
         break
@@ -447,7 +477,7 @@ coordination_path_safe=yes
 if [ -n "$runtime_state_root" ]; then
   check_runtime_state_path "$runtime_state_root"
 elif [ "$coordination_mode" = shared_required ]; then
-  invalid+=("LAGRANGE_RUNTIME_STATE_DIR required for shared coordination")
+  missing+=("LAGRANGE_RUNTIME_STATE_DIR (run provision-linux.sh)")
   coordination_path_safe=no
 fi
 
@@ -462,17 +492,20 @@ if [ -n "$runtime_state_root" ]; then
 fi
 
 check_coordination_file() {
-  local path=$1 label=$2 kind actual
+  local path=$1 label=$2 type_hex actual
   if [ -L "$path" ]; then
     invalid+=("$label must be a nonsymlink regular file")
     return
   fi
   [ -e "$path" ] || return 0
-  kind=$(stat -c '%F' -- "$path") || die "cannot stat $label"
-  [ "$kind" = 'regular file' ] || {
+  type_hex=$(stat -c '%f' -- "$path") || die "cannot stat $label"
+  case "$type_hex" in
+    8*) ;;
+    *)
     invalid+=("$label must be a regular file")
     return
-  }
+    ;;
+  esac
   actual=$(stat -c '%u:%g:%a:%h' -- "$path") || die "cannot stat $label"
   [ "$actual" = '10001:10001:600:1' ] ||
     invalid+=("$label has unsafe metadata")

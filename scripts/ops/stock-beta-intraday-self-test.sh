@@ -479,17 +479,19 @@ prov_runtime_secrets=$b1/runtime-secrets
 prov_state=$b1/runtime-state
 provision_output() {
   local coordination=$1 state_root=$2 action=$3 output=$4
-  if env \
+  local runtime_secret=${5:-$prov_runtime_secrets}
+  local working_dir=${6:-$b1}
+  if (cd "$working_dir" && env \
     "PATH=$fake_bin:$PATH" \
     "LAGRANGE_CONFIG_ROOT=$prov_config" \
     "LAGRANGE_DEPLOY_ROOT=$prov_deploy" \
     "LAGRANGE_DATA_ROOT=$prov_data" \
     "LAGRANGE_ARTIFACTS_DIR=$prov_artifacts" \
     "LAGRANGE_HOST_SECRET_ROOT=$prov_secrets" \
-    "LAGRANGE_RUNTIME_SECRET_DIR=$prov_runtime_secrets" \
+    "LAGRANGE_RUNTIME_SECRET_DIR=$runtime_secret" \
     "LAGRANGE_RUNTIME_STATE_DIR=$state_root" \
     "KIS_READ_COORDINATION_MODE=$coordination" \
-    bash "$root/$provision_rel" "$action" >"$output" 2>&1; then
+    bash "$root/$provision_rel" "$action" >"$output" 2>&1); then
     return 0
   else
     local status=$?
@@ -562,11 +564,42 @@ if provision_output legacy "$b1/path-link-parent/link/state" --dry-run "$b1/prov
 fi
 grep -Fq 'must not traverse a symlink' "$b1/provision-symlink.out" ||
   die 'B1_PROVISION_SYMLINK_ERROR_MISSING'
-if provision_output legacy "$prov_data/raw" --dry-run "$b1/provision-overlap.out"; then
-  die 'B1_PROVISION_OVERLAP_PATH_PASSED'
+prov_state_sibling=$b1/runtime-state-sibling
+provision_output legacy "$prov_state_sibling" --dry-run "$b1/provision-sibling.out" ||
+  die 'B1_PROVISION_SIBLING_PATH_FAILED'
+grep -Fq 'coordination-leaf=' "$b1/provision-sibling.out" ||
+  die 'B1_PROVISION_SIBLING_PLAN_MISSING'
+
+for invalid_state_root in ../secret "$prov_state/" "$b1/repeated//root" /var/ //var//; do
+  invalid_name=$(printf '%s' "$invalid_state_root" | tr '/.' '__')
+  invalid_output=$b1/provision-invalid-$invalid_name.out
+  if provision_output legacy "$invalid_state_root" --dry-run "$invalid_output"; then
+    die "B1_PROVISION_CANONICAL_PATH_PASSED_$invalid_name"
+  fi
+done
+
+relative_runtime_base=$b1/relative-runtime
+mkdir -p "$relative_runtime_base/child" "$relative_runtime_base/secrets"
+if provision_output legacy "$relative_runtime_base/secrets/state" --dry-run \
+  "$b1/provision-relative-runtime-descendant.out" ../secrets "$relative_runtime_base/child"; then
+  die 'B1_PROVISION_RELATIVE_RUNTIME_DESCENDANT_PASSED'
 fi
-grep -Fq 'overlaps an existing protected tree' "$b1/provision-overlap.out" ||
-  die 'B1_PROVISION_OVERLAP_ERROR_MISSING'
+if provision_output legacy "$relative_runtime_base" --dry-run \
+  "$b1/provision-relative-runtime-ancestor.out" .. "$relative_runtime_base/child"; then
+  die 'B1_PROVISION_RELATIVE_RUNTIME_ANCESTOR_PASSED'
+fi
+
+for protected_state_root in \
+  "$prov_data/raw/child" "$prov_data/curated/child" "$prov_artifacts/child" \
+  "$prov_data" "$prov_secrets/state" "$prov_runtime_secrets/state"; do
+  protected_name=$(printf '%s' "$protected_state_root" | tr '/.' '__')
+  protected_output=$b1/provision-protected-$protected_name.out
+  if provision_output legacy "$protected_state_root" --dry-run "$protected_output"; then
+    die "B1_PROVISION_PROTECTED_PATH_PASSED_$protected_name"
+  fi
+  grep -Fq 'overlaps an existing protected tree' "$protected_output" ||
+    die "B1_PROVISION_PROTECTED_ERROR_MISSING_$protected_name"
+done
 
 validator=$root/$validator_rel
 validator_source=$b1/validator-source
@@ -583,14 +616,31 @@ chown 10001:10001 "$validator_runtime/research-range-raw/kis_app_key" \
 chmod 0440 "$validator_runtime/research-range-raw/kis_app_key" \
   "$validator_runtime/research-range-raw/kis_app_secret"
 
+relative_config=$b1/relative-config
+relative_source=$b1/secrets
+relative_runtime=$b1/runtime
+mkdir -p "$relative_config" "$relative_source" "$relative_runtime/research-range-raw"
+printf '%s' fixture-relative-key >"$relative_source/kis_app_key"
+printf '%s' fixture-relative-secret >"$relative_source/kis_app_secret"
+chmod 0400 "$relative_source/kis_app_key" "$relative_source/kis_app_secret"
+printf '%s' fixture-relative-runtime-key >"$relative_runtime/research-range-raw/kis_app_key"
+printf '%s' fixture-relative-runtime-secret >"$relative_runtime/research-range-raw/kis_app_secret"
+chown 10001:10001 "$relative_runtime/research-range-raw/kis_app_key" \
+  "$relative_runtime/research-range-raw/kis_app_secret"
+chmod 0440 "$relative_runtime/research-range-raw/kis_app_key" \
+  "$relative_runtime/research-range-raw/kis_app_secret"
+
 validator_commit=0000000000000000000000000000000000000000
 valid_window_hash=sha256:0000000000000000000000000000000000000000000000000000000000000000
+range_env_source=$validator_source
+range_env_runtime=$validator_runtime
 write_range_env() {
+  [ "$#" -eq 7 ] || die "B1_ENV_HELPER_ARITY_$#"
   local path=$1 include_new=$2 coordination=$3 intraday=$4 generation=$5 state_root=$6 window_hash=$7
   {
     printf 'LAGRANGE_DATA_DIR=%s\n' "$validator_data"
-    printf 'LAGRANGE_SECRET_SOURCE_DIR=%s\n' "$validator_source"
-    printf 'LAGRANGE_RUNTIME_SECRET_DIR=%s\n' "$validator_runtime"
+    printf 'LAGRANGE_SECRET_SOURCE_DIR=%s\n' "$range_env_source"
+    printf 'LAGRANGE_RUNTIME_SECRET_DIR=%s\n' "$range_env_runtime"
     printf 'RESEARCH_APP_ENV=production\n'
     printf 'RESEARCH_FETCH_MODE=credentialed\n'
     printf 'RESEARCH_ENTITLEMENT_REFERENCE=fixture-entitlement\n'
@@ -641,18 +691,118 @@ validator_expect() {
     "$name" "$status" "$([ "$expected" -eq 0 ] && echo PASS || echo EXPECTED_FAILURE)"
 }
 
+store_snapshots=$b1/store-snapshots
+snapshot_store_files() {
+  local snapshot_dir=$1 name path
+  rm -rf -- "$snapshot_dir"
+  mkdir -p "$snapshot_dir"
+  if [ -L "$prov_state" ] || [ -L "$coordination_leaf" ]; then
+    printf 'skip\n' >"$snapshot_dir/parent-kind"
+    return
+  fi
+  printf 'check\n' >"$snapshot_dir/parent-kind"
+  for name in coordination.lock state-v1.json; do
+    path=$coordination_leaf/$name
+    if [ -L "$path" ]; then
+      printf 'symlink\n' >"$snapshot_dir/$name.kind"
+    elif [ -f "$path" ]; then
+      printf 'regular\n' >"$snapshot_dir/$name.kind"
+      stat -c '%i' -- "$path" >"$snapshot_dir/$name.inode"
+      cp -- "$path" "$snapshot_dir/$name.bytes"
+    elif [ -e "$path" ]; then
+      printf 'nonregular\n' >"$snapshot_dir/$name.kind"
+    else
+      printf 'missing\n' >"$snapshot_dir/$name.kind"
+    fi
+  done
+}
+
+assert_store_files_unchanged() {
+  local snapshot_dir=$1 name path kind current_inode
+  [ "$(cat "$snapshot_dir/parent-kind")" = skip ] && return 0
+  for name in coordination.lock state-v1.json; do
+    path=$coordination_leaf/$name
+    kind=$(cat "$snapshot_dir/$name.kind")
+    case "$kind" in
+      regular)
+        [ ! -L "$path" ] && [ -f "$path" ] ||
+          die "B1_STORE_CHANGED_TYPE_$name"
+        current_inode=$(stat -c '%i' -- "$path")
+        [ "$current_inode" = "$(cat "$snapshot_dir/$name.inode")" ] ||
+          die "B1_STORE_CHANGED_INODE_$name"
+        cmp -s -- "$snapshot_dir/$name.bytes" "$path" ||
+          die "B1_STORE_CHANGED_BYTES_$name"
+        ;;
+      symlink)
+        [ -L "$path" ] || die "B1_STORE_CHANGED_SYMLINK_$name" ;;
+      nonregular)
+        [ -e "$path" ] && [ ! -f "$path" ] && [ ! -L "$path" ] ||
+          die "B1_STORE_CHANGED_NONREGULAR_$name"
+        ;;
+      missing)
+        [ ! -e "$path" ] && [ ! -L "$path" ] ||
+          die "B1_STORE_CREATED_$name"
+        ;;
+    esac
+  done
+}
+
+validator_store_expect() {
+  local name=$1 expected=$2 env_file=$3 snapshot_dir
+  snapshot_dir=$store_snapshots/$name
+  snapshot_store_files "$snapshot_dir"
+  validator_expect "$@"
+  assert_store_files_unchanged "$snapshot_dir"
+}
+
 old_env=$b1/validator-old.env
-write_range_env "$old_env" no '' '' '' '' '' ''
+write_range_env "$old_env" no '' '' '' '' ''
 validator_expect defaults-absent 0 "$old_env"
 
 off_env=$b1/validator-off.env
-write_range_env "$off_env" yes legacy off not-a-number '' '' not-a-hash
+write_range_env "$off_env" yes legacy off not-a-number '' not-a-hash
 validator_expect explicit-off-ignores-hash 0 "$off_env"
 
 valid_env=$b1/validator-valid.env
 write_range_env "$valid_env" yes shared_required owner_only 18446744073709551615 \
   "$prov_state" "$valid_window_hash"
 validator_expect valid-shared-owner-only 0 "$valid_env"
+
+range_env_source=../secrets
+range_env_runtime=../runtime
+relative_source_overlap_env=$relative_config/relative-source-overlap.env
+write_range_env "$relative_source_overlap_env" yes legacy off '' "$relative_source/state" ''
+validator_expect relative-source-overlap 1 "$relative_source_overlap_env"
+relative_runtime_overlap_env=$relative_config/relative-runtime-overlap.env
+write_range_env "$relative_runtime_overlap_env" yes legacy off '' "$relative_runtime/state" ''
+validator_expect relative-runtime-overlap 1 "$relative_runtime_overlap_env"
+relative_root_env=$relative_config/relative-root.env
+write_range_env "$relative_root_env" yes legacy off '' ../secret ''
+validator_expect relative-runtime-root 1 "$relative_root_env"
+canonical_source_ancestor_env=$relative_config/canonical-source-ancestor.env
+write_range_env "$canonical_source_ancestor_env" yes legacy off '' "$b1" ''
+validator_expect canonical-source-ancestor 1 "$canonical_source_ancestor_env"
+range_env_source=$validator_source
+range_env_runtime=$validator_runtime
+
+validator_state_sibling=$b1/validator-state-sibling
+validator_state_sibling_leaf=$validator_state_sibling/kis-read-coordination
+mkdir -p "$validator_state_sibling_leaf"
+chown 0:10001 "$validator_state_sibling"
+chmod 0750 "$validator_state_sibling"
+chown 10001:10001 "$validator_state_sibling_leaf"
+chmod 0700 "$validator_state_sibling_leaf"
+: >"$validator_state_sibling_leaf/coordination.lock"
+chown 10001:10001 "$validator_state_sibling_leaf/coordination.lock"
+chmod 0600 "$validator_state_sibling_leaf/coordination.lock"
+validator_sibling_env=$b1/validator-state-sibling.env
+write_range_env "$validator_sibling_env" yes shared_required off 17 \
+  "$validator_state_sibling" ''
+validator_expect canonical-sibling-positive 0 "$validator_sibling_env"
+
+missing_root_env=$b1/validator-missing-root.env
+write_range_env "$missing_root_env" yes shared_required off 17 '' ''
+validator_expect shared-required-missing-root 2 "$missing_root_env"
 
 missing_state_env=$b1/validator-missing-state.env
 write_range_env "$missing_state_env" yes shared_required off 17 "$b1/missing-state" ''
@@ -700,17 +850,26 @@ validator_expect shell-override-mismatch 1 "$valid_env" KIS_READ_COORDINATION_MO
 validator_expect shell-only-mode-mismatch 1 "$old_env" OWNER_INTRADAY_QUOTES_MODE=owner_only
 validator_expect shell-only-root-mismatch 1 "$old_env" LAGRANGE_RUNTIME_STATE_DIR="$prov_state"
 
-for path_case in relative/state /./state /var /; do
+for path_case in relative/state ../secret /./state /var /var/ //var// /; do
   case_env=$b1/validator-path-${#path_case}.env
   write_range_env "$case_env" yes legacy off '' "$path_case" ''
   validator_expect "unsafe-path-${#path_case}" 1 "$case_env"
 done
-overlap_data_env=$b1/validator-overlap-data.env
-write_range_env "$overlap_data_env" yes legacy off '' "$validator_data/raw" ''
-validator_expect overlap-raw-tree 1 "$overlap_data_env"
-overlap_secret_env=$b1/validator-overlap-secret.env
-write_range_env "$overlap_secret_env" yes legacy off '' "$validator_source/state" ''
-validator_expect overlap-source-tree 1 "$overlap_secret_env"
+overlap_index=0
+for protected_state_root in \
+  "$validator_data/raw/child" "$validator_data/curated/child" \
+  "$validator_data/artifacts/child" "$validator_data"; do
+  overlap_index=$((overlap_index + 1))
+  overlap_env=$b1/validator-overlap-data-$overlap_index.env
+  write_range_env "$overlap_env" yes legacy off '' "$protected_state_root" ''
+  validator_expect "overlap-data-$overlap_index" 1 "$overlap_env"
+done
+overlap_source_env=$b1/validator-overlap-source.env
+write_range_env "$overlap_source_env" yes legacy off '' "$validator_source/state" ''
+validator_expect overlap-source-tree 1 "$overlap_source_env"
+overlap_runtime_env=$b1/validator-overlap-runtime.env
+write_range_env "$overlap_runtime_env" yes legacy off '' "$validator_runtime/state" ''
+validator_expect overlap-runtime-tree 1 "$overlap_runtime_env"
 
 mkdir -p "$b1/symlink-parent/real"
 ln -s "$b1/symlink-parent/real" "$b1/symlink-parent/link"
@@ -743,59 +902,45 @@ fi
 find "$coordination_leaf" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 empty_env=$b1/validator-empty.env
 write_range_env "$empty_env" yes shared_required off 17 "$prov_state" ''
-validator_expect safe-empty-store 0 "$empty_env"
-printf '%s' lock-fixture >"$coordination_leaf/coordination.lock"
+validator_store_expect safe-empty-store 0 "$empty_env"
+printf '%s' nonempty-lock-fixture >"$coordination_leaf/coordination.lock"
 chown 10001:10001 "$coordination_leaf/coordination.lock"
 chmod 0600 "$coordination_leaf/coordination.lock"
-validator_expect safe-lock-only-store 0 "$empty_env"
+validator_store_expect safe-nonempty-lock-store 0 "$empty_env"
+: >"$coordination_leaf/coordination.lock"
+validator_store_expect safe-lock-only-store 0 "$empty_env"
 printf '%s' "$sentinel_value" >"$coordination_leaf/state-v1.json"
 printf '%s' temp-fixture >"$coordination_leaf/.state-v1.tmp.001"
-printf '%s' fixture-sentinel >"$coordination_leaf/.fixture-sentinel"
 chown 10001:10001 "$coordination_leaf/state-v1.json" \
-  "$coordination_leaf/.state-v1.tmp.001" "$coordination_leaf/.fixture-sentinel"
+  "$coordination_leaf/.state-v1.tmp.001"
 chmod 0600 "$coordination_leaf/state-v1.json" \
-  "$coordination_leaf/.state-v1.tmp.001" "$coordination_leaf/.fixture-sentinel"
-sentinel_inode=$(stat -c '%i' -- "$coordination_leaf/.fixture-sentinel")
-sentinel_snapshot=$b1/sentinel.snapshot
-cp -- "$coordination_leaf/.fixture-sentinel" "$sentinel_snapshot"
-assert_sentinel_unchanged() {
-  [ "$(stat -c '%i' -- "$coordination_leaf/.fixture-sentinel")" = "$sentinel_inode" ] ||
-    die 'B1_VALIDATOR_CHANGED_SENTINEL_INODE'
-  cmp -s -- "$coordination_leaf/.fixture-sentinel" "$sentinel_snapshot" ||
-    die 'B1_VALIDATOR_CHANGED_SENTINEL_BYTES'
-}
-validator_expect safe-full-store 0 "$empty_env"
-assert_sentinel_unchanged
+  "$coordination_leaf/.state-v1.tmp.001"
+validator_store_expect safe-full-store 0 "$empty_env"
 
 rm -f -- "$coordination_leaf/coordination.lock"
-validator_expect state-without-lock 1 "$empty_env"
-assert_sentinel_unchanged
-printf '%s' lock-fixture >"$coordination_leaf/coordination.lock"
+validator_store_expect state-without-lock 1 "$empty_env"
+: >"$coordination_leaf/coordination.lock"
 chown 10001:10001 "$coordination_leaf/coordination.lock"
 chmod 0600 "$coordination_leaf/coordination.lock"
 
 chown 1000:1000 "$coordination_leaf/coordination.lock"
-validator_expect wrong-lock-owner 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect wrong-lock-owner 1 "$empty_env"
 chown 10001:10001 "$coordination_leaf/coordination.lock"
 chmod 0640 "$coordination_leaf/coordination.lock"
-validator_expect wrong-lock-mode 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect wrong-lock-mode 1 "$empty_env"
 chmod 0600 "$coordination_leaf/coordination.lock"
 
 rm -f -- "$coordination_leaf/coordination.lock"
 mkdir -- "$coordination_leaf/coordination.lock"
-validator_expect lock-directory 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect lock-directory 1 "$empty_env"
 rmdir -- "$coordination_leaf/coordination.lock"
-printf '%s' lock-fixture >"$coordination_leaf/coordination.lock"
+: >"$coordination_leaf/coordination.lock"
 chown 10001:10001 "$coordination_leaf/coordination.lock"
 chmod 0600 "$coordination_leaf/coordination.lock"
 
 rm -f -- "$coordination_leaf/coordination.lock"
 mkfifo -- "$coordination_leaf/coordination.lock"
-validator_expect lock-fifo 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect lock-fifo 1 "$empty_env"
 rm -f -- "$coordination_leaf/coordination.lock"
 if [ "$socket_fixture_mode" = real ]; then
   python3 - "$coordination_leaf/coordination.lock" <<'PY'
@@ -810,9 +955,9 @@ else
   cat >"$fake_bin/stat" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-if [ "${1:-}" = -c ] && [ "${2:-}" = '%F' ] &&
+if [ "${1:-}" = -c ] && [ "${2:-}" = '%f' ] &&
    [ "${!#}" = "${B1_SOCKET_FIXTURE_PATH:?}" ]; then
-  printf 'socket\n'
+  printf 'c000\n'
   exit 0
 fi
 exec /usr/bin/stat "$@"
@@ -821,8 +966,7 @@ SH
   export B1_SOCKET_FIXTURE_PATH="$coordination_leaf/coordination.lock"
   : >"$coordination_leaf/coordination.lock"
 fi
-validator_expect lock-socket 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect lock-socket 1 "$empty_env"
 # The narrow socket simulation is scoped to this one validator invocation.
 # Restore the real stat implementation before the lock-only and remaining
 # metadata cases so a regular coordination.lock cannot be misclassified.
@@ -832,60 +976,65 @@ if [ "$socket_fixture_mode" = narrow-simulation ]; then
 fi
 rm -f -- "$coordination_leaf/coordination.lock"
 ln -s state-v1.json "$coordination_leaf/coordination.lock"
-validator_expect lock-symlink 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect lock-symlink 1 "$empty_env"
 rm -f -- "$coordination_leaf/coordination.lock"
-printf '%s' lock-fixture >"$coordination_leaf/coordination.lock"
+: >"$coordination_leaf/coordination.lock"
 ln -- "$coordination_leaf/coordination.lock" "$coordination_leaf/lock-hardlink"
-validator_expect lock-hardlink 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect lock-hardlink 1 "$empty_env"
 rm -f -- "$coordination_leaf/coordination.lock" "$coordination_leaf/lock-hardlink"
-printf '%s' lock-fixture >"$coordination_leaf/coordination.lock"
+: >"$coordination_leaf/coordination.lock"
 chown 10001:10001 "$coordination_leaf/coordination.lock"
 chmod 0600 "$coordination_leaf/coordination.lock"
 
+rm -f -- "$coordination_leaf/state-v1.json"
+ln -s coordination.lock "$coordination_leaf/state-v1.json"
+validator_store_expect state-symlink 1 "$empty_env"
+rm -f -- "$coordination_leaf/state-v1.json"
+printf '%s' "$sentinel_value" >"$coordination_leaf/state-v1.json"
+chown 10001:10001 "$coordination_leaf/state-v1.json"
+chmod 0600 "$coordination_leaf/state-v1.json"
+rm -f -- "$coordination_leaf/state-v1.json"
+ln -- "$coordination_leaf/coordination.lock" "$coordination_leaf/state-v1.json"
+validator_store_expect state-hardlink 1 "$empty_env"
+rm -f -- "$coordination_leaf/state-v1.json"
+printf '%s' "$sentinel_value" >"$coordination_leaf/state-v1.json"
+chown 10001:10001 "$coordination_leaf/state-v1.json"
+chmod 0600 "$coordination_leaf/state-v1.json"
+
 chmod 0640 "$coordination_leaf/.state-v1.tmp.001"
-validator_expect temp-wrong-mode 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect temp-wrong-mode 1 "$empty_env"
 chmod 0600 "$coordination_leaf/.state-v1.tmp.001"
 rm -f -- "$coordination_leaf/state-v1.json"
 mkdir -- "$coordination_leaf/state-v1.json"
-validator_expect state-directory 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect state-directory 1 "$empty_env"
 rmdir -- "$coordination_leaf/state-v1.json"
 printf '%s' "$sentinel_value" >"$coordination_leaf/state-v1.json"
 chown 10001:10001 "$coordination_leaf/state-v1.json"
 chmod 0600 "$coordination_leaf/state-v1.json"
 
 chmod 0755 "$prov_state"
-validator_expect wrong-parent-mode 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect wrong-parent-mode 1 "$empty_env"
 chmod 0750 "$prov_state"
 chown 1000:1000 "$prov_state"
-validator_expect wrong-parent-owner 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect wrong-parent-owner 1 "$empty_env"
 chown 0:10001 "$prov_state"
 chmod 0755 "$coordination_leaf"
-validator_expect wrong-leaf-mode 1 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect wrong-leaf-mode 1 "$empty_env"
 chmod 0700 "$coordination_leaf"
 
 mv -- "$coordination_leaf" "$b1/leaf-real"
 ln -s "$b1/leaf-real" "$coordination_leaf"
-validator_expect leaf-symlink 1 "$empty_env"
+validator_store_expect leaf-symlink 1 "$empty_env"
 rm -- "$coordination_leaf"
 mv -- "$b1/leaf-real" "$coordination_leaf"
-assert_sentinel_unchanged
 
 mv -- "$prov_state" "$b1/state-root-real"
 ln -s "$b1/state-root-real" "$prov_state"
-validator_expect parent-symlink 1 "$empty_env"
+validator_store_expect parent-symlink 1 "$empty_env"
 rm -- "$prov_state"
 mv -- "$b1/state-root-real" "$prov_state"
-assert_sentinel_unchanged
 
-validator_expect final-valid-store 0 "$empty_env"
-assert_sentinel_unchanged
+validator_store_expect final-valid-store 0 "$empty_env"
 
 printf 'STOCK_BETA_INTRADAY_SELF_TEST: b1_static_mutations=%s validator_cases=%s validator_passes=%s validator_expected_failures=%s provision_fixture=PASS idempotent=PASS sentinel=PASS socket_fixture=%s\n' \
   "$b1_static_mutations" "$validator_cases" "$validator_passes" "$validator_failures" "$socket_fixture_mode"
