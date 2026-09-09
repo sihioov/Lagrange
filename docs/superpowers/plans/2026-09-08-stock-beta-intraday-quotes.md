@@ -2577,3 +2577,66 @@ Native subagents: prohibited for worker packages
 - Independent reviewer `47d0abde-0c58-4486-9699-f8c8ae723367` (Codex terra/high,
   auto-review) launched read-only at `461b4e9`. Profile notes/provider verified; C1 writer
   and all older workers idle. Only this reviewer owns the sequential compiler/QA slot.
+
+### WP4-C1 ACCEPT / integrated regression (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- C1-R idle ACCEPT, no severity findings. Coordinator recovered full report/logs and accepts
+  the additive implementation after prior full source/test inspection. Independent calendar5,
+  read-state1, producer6 and strict four-target clippy/fmt/diff passed. For quotes24, reviewer
+  observed first22 named passes and separately reran final tests; this is not a complete single-run
+  final summary. Integrated regression must recover that complete summary before next implementation.
+- Non-blocking limits remain recorded, not repeated fixes: no near36h positive, type rejection
+  also fails version join, actor-GUC assertion precedes repeated reads, panic cleanup may leave
+  disposable DB. Explicit SQL/transaction-local actor setting supports implementation; duplicate
+  fixture is unreachable under existing uniqueness constraints. No schema bypass or invented test.
+- Source `461b4e99be0159e20c9c1b386c1bfb10ddd344c6` integrated as
+  `aad527d9b477727ffefa50f2571148fc95e456ae`. Exact three-file cherry-pick, clean; coordinator
+  confirmed empty source-versus-integrated crates/apps/data-pipelines diff. No overall API or live
+  activation claim. Cache GET/config scope is still next.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C1-IV | simple | Exact source equivalence and fixed four-target regression with complete output | high | Failure or missing summary must be reported, not inferred or patched |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C1-IV | 1 | simple | Verify exact integrated read seam | coordinator source read-only | C1-R ACCEPT and exact integration | NEW luna/medium auto-review | complete four-target summaries | real QA, scoped clippy/fmt, clean source equality |
+
+#### Worker brief: WP4-C1-IV
+
+- Cwd `/data/worktrees/3puw275b/enhanced-pig`, workspace `wks_c8105f3859e0ad64`, integrated
+  source `aad527d`. No source/docs edits or commits. Read current plan/spec/root instructions.
+- Sequential job-queue tests `intraday_calendar_read_state`5, `intraday_quotes`24,
+  `intraday_read_state`1, `intraday_producer`6. Use `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true`
+  cargo `--locked --offline`, DB `-- --test-threads=1`. Actual complete summaries mandatory;
+  preserve enough bounded output to include process exit and final test result. Do not replace
+  missing suite completion with individually named passes or absent ignore annotations.
+- Strict clippy for these four targets, fmt/diff, clean status and exact source equality to
+  `461b4e99be0159e20c9c1b386c1bfb10ddd344c6` across crates/apps/data-pipelines.
+- Only fixed QA URL postgres://postgres:lagrange@127.0.0.1:55438/postgres, own generated per-test
+  DBs. Coordinator project/container lagrange-intraday-qa-20260908 retained, pinnedPG18.4tmpfs,
+  no Docker lifecycle. Sandbox loopback denial may use identical narrowly escalated command.
+- No implementation, HTTP/config/OpenAPI/producer/provider changes, external network/accounts/
+  orders/operationalDB/root/Next/browser/migration changes/Cargo/Compose/ops/production/deploy/
+  main merge/push/activation. Stop idle after complete command/count/timing report, deviations,
+  unresolved/not verified explicitly none if empty. Failure returns to bounded reproduction.
+
+#### Coordinator gates
+
+1. Only IV owns compiler/DB slot; old writer/reviewer idle. Replace review heartbeat.
+2. Verify complete regression output and clean source; then freeze next GET/config implementation
+   with explicit DTO/demand/freshness decisions. Do not copy C0's unapproved visibility proposal.
+3. Calendar36h and same-KST window evidence stay independent; no production activation inferred.
+
+- IV worker `28e0e6ae-7794-41a5-ba2b-72c41b944ff6` (Codex luna/medium, auto-review)
+  launched read-only in coordinator workspace at `aad527d`. Current profiles/provider checked;
+  all previous workers idle. Only IV runs compiler and QA regression targets.
