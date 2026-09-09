@@ -3943,3 +3943,10 @@ when empty. Missing scope/capability must be reported, not invented. Coordinator
 delta then reuse sol/high reviewer; no integration until High/Medium resolved.
 Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
 No Paseo run/send/daemon start/restart.
+
+- B1-F1 active binding (2026-09-09): reused writer50c5f35c-d28f-4c75-bd62-31cc99042cd0
+  Codex luna/max auto-review in ops workspace wks_42028f6f939c65ac. Exact follow-up based on
+  coordinator602c26e sent once. Startup wait timeout and logs confirm direct-assignment ACK and
+  actual full brief/spec reads; no implementation/test completion claimed. Reviewer5f6d978f idle.
+  Send terminal58992 may remain waiting normally; do not resend/interrupt. Replaced heartbeat
+  a779d37e with f6472491 to follow writer; no integration. Next bounded review remains sol/high.
