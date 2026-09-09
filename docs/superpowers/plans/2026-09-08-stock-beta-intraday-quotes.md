@@ -3085,3 +3085,113 @@ Native subagents: prohibited for worker packages
   auto-review) launched through CLI at cleanbc5e765 in API workspace. Current profiles/provider
   checked. Only reviewer owns compiler/QA slot; implementation writer39da45eb is idle and
   redundant parent0eabccf8 remains stopped. Monitor now targets this independent review.
+
+### WP4-C3 review REJECT / F1 projection and HTTP evidence remediation (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Recovered result and coordinator judgment
+
+- Reviewer1c3827ae-711c-4d8f-8f66-2ce6e8039970 is IDLE, REJECT for C3 only.
+  Independently completed lib102, HTTPcache1, mutations5, chart4, OpenAPI16, strict scoped
+  clippy/fmt/diff. Initial listener/DB sandbox EPERM was followed by identical precise escalation;
+  final suites passed, no DB skips. Clean source remains bc5e7654618d834d3e2a16b1053ceb2d32fedc0b.
+- Coordinator confirms two Medium source defects against the frozen table: valid_calendar compares
+  DB read-time observed_at to API now and treats it as 36-hour evidence age; aged-out unusable
+  cache selects QUOTE_STALE before missing usable quote QUOTE_PENDING. Both are source-confirmed
+  counterexamples, not yet newly executed failing repros. Repository retrieval-time checks remain
+  authoritative; do not remove calendar freshness from the repository or introduce a skew tolerance.
+- Medium acceptance evidence gap: only two successful HTTP reads, missing required real HTTP
+  states/restart/no-demand/new-admission and explicit1/10/100 no-write runs. Pure projection boundary
+  coverage is incomplete. Low cleanup gap: assertion/helper panic skips explicit teardown.
+- EOD-empty-fingerprint concern is REFUTED: common harness lines310-316 seeds three krx_eod_bars
+  dataset_versions. Existing fingerprint includes them. Preserve and assert their presence; no new
+  EOD fixture family is needed. Earlier producer/calendar/config limits are not reopened.
+- npm regeneration/typecheck remains unverified: authorized API/coordinator dependencies absent.
+  Do not use huchen or another worktree, install dependencies, change packages, or fabricate npm
+  verification. Committed OpenAPI artifacts passed independent Rust checks. This F1 changes no
+  OpenAPI files; dependency verification is separately tracked, not permission for broader access.
+
+#### Goal, classification and execution graph
+
+- Complete the existing frozen C3 GET contract, not a redesign. Target API workspace
+  wks_3249856abbf32750 at cleanbc5e765. Applicable root AGENTS and current user delegation policy
+  read; no nested instructions found for owned paths. First C3 acceptance rejection: retain
+  original implementation worker39da45eb, Codex luna/max auto-review; no preemptive model increase.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C3-F1 | intermediate | Two exact projection fixes plus bounded existing HTTP/fixture matrix | high | Repeated failed remediation or required out-of-scope capability: report, model-only one-tier escalation if observed |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C3-F1 | 1 | intermediate | Repair projection and complete frozen C3 evidence | HTTP intraday GET/projection inline tests; existing cache HTTP test; optional new local support only | recovered C3-R and cleanbc5e765 | reused Codex luna/max auto-review | scoped commit, before/after repros, explicit matrix | lib/cacheHTTP/mutations/chart/OpenAPI complete counts, strict clippy/fmt |
+
+#### Exact worker brief
+
+- cwd /data/worktrees/3puw275b/stock-beta-intraday-api. Own ONLY
+  crates/api-server/src/http/owner_intraday_quotes.rs (GET projection and inline tests only),
+  crates/api-server/tests/http_owner_intraday_quote_cache.rs, optionally NEW
+  crates/api-server/tests/intraday_quote_cache_support/mod.rs. Preserve POST/DELETE byte-for-byte.
+  No adapter/router/contract/OpenAPI/common/runtime/state/jobqueue/provider/producer edits. Existing
+  common restart wrapper is available; if truly insufficient, report before expanding ownership.
+- Reproduce both defects with tests FIRST on unchanged production code. Calendar typed read with
+  observed_at=API now+1ms and otherwise valid current-date lineage must remain usable. A returned
+  matching cache with success=receipt=API now-24h-1ms, recent nonfuture last_attempt, active demand,
+  no eligible failure, valid open session must yield null quote/UNAVAILABLE/QUOTE_PENDING. Label
+  these production-projection repros, not actual DB/provider observations.
+- Remove only observed_at/API ordering and invented read-time age check from valid_calendar;
+  preserve current KST date, lineage validation and repository's three real36h retrieval checks.
+  Preserve failure/no-demand precedence, but missing usable quote precedes stale usable quote.
+  Do not change DB age filtering, same-day window evidence, real future-cache rejection or DTO.
+- Complete pure production-helper matrix: exact30s and +epsilon, exact24h and +epsilon; before/at
+  open and before/at close; Special and bothClosed; valid calendar/missing window; future/prior-day
+  window evidence and rollover; both disagreement directions; incomplete quote/version0 and each
+  identity/session/hash mismatch. Preserve all prior halt/no-demand/typed failure/older-failure tests.
+  Replace obsolete observed_at-staleness assertion with repository-evidence semantics, not an
+  invented retrieval timestamp on the typed API read. Show actual test names and expected outputs.
+- Real production router + app/RLS HTTP matrix must cover: missing calendar, missing window,
+  disagreement; valid last-good exact DTO; no active demand preserving quote; active pending;
+  typed failure preserves last good; valid Closed; stale quote and restart recalculates age;
+  old session/generation/hash suppressed; actual new admission invalidates old generation (404),
+  current generation cannot expose old cache; admin403 and owner unknown/duplicate query400.
+  Preserve existing anonymous/expired/member/foreign/disabled/mismatched/defaultoff cases.
+- Use initial immutable fixtures for calendar/version/batch, no trigger bypass or mutable immutable
+  versions. Actual admission transition uses existing permitted test setup/lifecycle. Fake API clock
+  may be injected through existing wrapper, never fake DB clock or mutate process environment.
+  Make session cases work outside real market hours using valid synthetic window/current DB KST
+  date and a controlled API instant; ensure timestamps are internally nonfuture. No provider call.
+- Run separate1,10,100 real GET batches with UPDATE-sensitive full-row fingerprints before/after.
+  Prepopulate and explicitly verify demand/cache/producer, existing three EOD dataset versions and
+  representative signal rows; include membership/admission/calendar/version/batch/jobs. Assert
+  no-store and expected DTO/status throughout; include unauthorized401/403/404 no-write paths.
+  HTTP uses app role; preserve actual current_user=app and producer SELECT42501. Setup-only admin
+  fingerprint access is not serving privilege. No fabricated provider counters; source call chain.
+- Ensure a successfully-created harness is torn down on test assertion/helper failure as well as
+  normal return before propagating failure. Implement bounded local ownership/catch-unwind cleanup
+  using existing dependencies, no detached cleanup task, shared-harness redesign or dependency edit.
+  Include a small focused check of failure-path cleanup if adding a helper; report any unavoidable
+  pre-construction limitation precisely. Own generated test databases only, no broad cleanup.
+- Sole compiler/QA owner: CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test -p api-server
+  --locked --offline --lib -- --test-threads=1, then separate --test http_owner_intraday_quote_cache,
+  http_owner_intraday_quotes, http_owner_equity_v2_chart, openapi_contract with DBthreads1. Complete
+  final summaries/exits, no skips. Strict clippy those targets -- -D warnings; fmt all check/diff.
+  Do not rerun unrelated B1/C1/C2 suites or npm without authorized dependencies.
+- QA ONLY retained lagrange-intraday-qa-20260908 project/container
+  lagrange-intraday-qa-20260908-qa-db-1 pinnedPG18.4tmpfs127.0.0.1:55438;
+  syntheticURL postgres://postgres:lagrange@127.0.0.1:55438/postgres, own per-test databases.
+  No Docker lifecycle, real provider/network/accounts/orders, operational DB, /opt/env, migration/
+  Cargo/Compose/KIS/collector/runner/Web/ops/production/deploy/main merge/push/activation.
+  Local EPERM permits identical precise escalation only, NEVER daemon start/restart.
+- No subdelegation or Paseo worker/daemon commands: complete directly. Commit only owned files;
+  report full commit/parent, files/line ranges, deviations/reasons, actual pre/post repro outputs,
+  full test counts/commands and matrix, unresolved/follow-ups/not verified explicitly none if empty.
+
+#### Coordinator gates
+
+1. Confirm original writer idle/clean/model before follow-up; reviewer relinquishes compiler slot.
+2. Recover complete F1 result and inspect exact delta/matrix, then reuse idle sol/high reviewer for
+   bounded re-review. No integration before all Medium defects/evidence gaps are resolved.
+3. Keep npm verification limitation explicit; integrate only verified accepted source, then advance
+   authorized next package without redundant mapping or idle transition gaps. Retain exact QA.
