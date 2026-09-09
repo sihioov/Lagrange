@@ -3274,3 +3274,108 @@ Native subagents: prohibited for worker packages
   Codex sol/high auto-review. Startup wait reports timeout with new acknowledgment of bounded
   two-file re-review and serial QA. Only this reviewer is active; writer39da45eb is idle.
   Send terminal52488 may wait normally: do not resend/interrupt. Replace heartbeat accordingly.
+
+### WP4-C3-F1-R REJECT / F2 deterministic evidence repair (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Recovered result and coordinator judgment
+
+- Reviewer1c3827ae is IDLE REJECT at clean8326a6d9694470d15494334ddacae4b79ee29fab.
+  Complete independent results: lib103, cacheHTTP3 (both DB scenarios actually executed),
+  mutation5, chart4, OpenAPI16; strict scoped clippy/fmt/diff pass. Initial lib listener EPERM
+  was resolved by identical narrow escalation. No npm verification; authorized dependencies absent.
+- Both prior production defects are resolved. No new production correction is authorized.
+  Coordinator inspected actual helper/clock, HTTP assertions/wrappers, mismatch array and shared
+  harness missing-URL path, and accepts the two remaining Medium findings: fixed11:00 API time
+  makes pre-11:00 RECENT assertions time-dependent; missing DATABASE_URL silently passes both
+  HTTP DB tests. The reviewer ran at17:32KST, not an executed pre-11:00 reproduction.
+- Low evidence defects are in the same two files and will be repaired in this bounded pass:
+  cumulative mismatch membership reset UUID1 instead of baseline2, old hash left in generation
+  case, restart using unchanged API time. Restore malformed-Member assertion and explicit initial
+  OPEN/RECENT/null-reason assertions while touching these same cases.
+- Existing catch/teardown/rethrow control flow resolves normal assertion-panic cleanup. Its helper
+  test demonstrates capture only, not an independently observed teardown; retain this limitation
+  without a shared-harness redesign. EOD three populated versions and 13 full-row fingerprints
+  are verified, not a new fixture-expansion task. Role has only Owner/Member; do not invent admin.
+- This is confirmed repeat acceptance failure after luna/max remediation. Escalate MODEL ONLY
+  one tier to NEW Codex terra/max auto-review; effort remains max. Original writer39da45eb stays
+  idle; reviewer relinquishes compiler/QA. No user decision is blocking this test-only correction.
+
+#### Goal, classification and execution graph
+
+- Target /data/worktrees/3puw275b/stock-beta-intraday-api, workspacewks_3249856abbf32750,
+  branch work/stock-beta-intraday-api-20260909, clean base8326a6d. Root AGENTS and current user
+  replacement model rules govern; no nested instructions for these paths. Provider/profile and
+  exact retained QA health/port/image were checked before launch.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C3-F2 | intermediate | Two test files, known clock/fixture isolation defects, unchanged production | high | Required production/shared-harness change or unresolved date constraint: report before expanding |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C3-F2 | 1 | intermediate | Make required GET evidence deterministic and nonvacuous | inline tests only in http/owner_intraday_quotes.rs; http_owner_intraday_quote_cache.rs | recovered F1-R, clean8326a6d | NEW Codex terra/max auto-review, model-only escalation | test-only commit and before/after evidence | focused fixture tests plus complete five API targets and strict clippy/fmt |
+
+#### Exact worker brief
+
+- Read current coordinator absolute plan frozen C3 table/F1/F2 and full contract. Own ONLY
+  crates/api-server/src/http/owner_intraday_quotes.rs **inside existing cfg(test) module**, and
+  crates/api-server/tests/http_owner_intraday_quote_cache.rs. No new files. Preserve ALL production
+  code byte-for-byte, including GET fixes, POST/DELETE, adapter/router/OpenAPI/common/runtime/state,
+  jobqueue/provider/producer, and dependency/lockfiles. Do not replan or subdelegate.
+- Replace fixed11:00/min-double-subtraction fixture design with an explicit time bundle based on
+  a captured actual DB instant/current KST date and a valid synthetic SPECIAL window enclosing
+  the API instants. Receipt/success/attempt/failure fixtures must be nonfuture to both DB and API
+  and recent where asserted. Keep receipt on that KST date, including near midnight. Reserve
+  same-date room for a >30s API advancement near day end by choosing a bounded earlier API anchor
+  if needed; do not shift DB time, restamp operational evidence, wait for market hours, or use
+  arbitrary time-of-day skips. Synthetic window remains schema-valid, not a changed runtime rule.
+  Avoid hidden repeated timestamp subtraction. Reuse the actual local fixture planner in pure
+  tests at early midnight,08:00,before11:00,11:00,after close,and late23:59:xx including UTC/KST
+  boundary. Assert nonfuture timestamps, same-date evidence, open window for both API instants,
+  initial <=30s and advanced >30s. Demonstrate the old helper's 08:00 failure with a focused
+  deterministic test before replacement; do not claim changing a synthetic DB input changed DB.
+- Both DB scenario wrappers must require Harness::new().await.expect("DATABASE_URL is required")
+  (or equivalent explicit failure), retaining catch/teardown/rethrow. Do not mutate process/global
+  environment in tests. Verify the Option-None expectation with a focused injected local check
+  if needed; actual QA commands always supply the prescribed URL. No silent skip/success fallback.
+- Build each named identity/session/hash negative case from a fresh known-good cache baseline,
+  mutate exactly its intended field and first assert the unmodified baseline exposes the quote.
+  Remove accidental all-valid/reset-only array elements. Preserve actual production-helper calls.
+- After old-hash HTTP rejection, restore the exact current window hash and assert a valid old-
+  generation quote is visible immediately before admitting generation2. Then old path404 and
+  generation2 Pending/null must isolate the generation fence; retain cache row and fingerprints.
+- Restart evidence: start with RECENT at injected API t0, snapshot unchanged cache/all fingerprints,
+  advance only API time beyond30s (same KST date, same valid window), restart through existing
+  wrapper, assert STALE/QUOTE_STALE with identical quote/version/success and unchanged DB rows.
+  Do not manufacture the transition by updating cache timestamps. Preserve existing stale case.
+- Explicit initial success asserts OPEN, RECENT, null reason plus existing exact DTO. Restore a
+  malformed membership/generation query as Member and assert403 before parsing/resource lookup,
+  alongside Owner400 and existing fingerprint assertions. Preserve separate1/10/100 GET batches,
+  all13 populated UPDATE-sensitive fingerprints, EOD3 versions, app/producer42501 and full state
+  matrix. No added EOD families, fake provider counters, auth roles or unrelated coverage work.
+- Sequential sole compiler: CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test -p api-server
+  --locked --offline --lib -- --test-threads=1; separate targets http_owner_intraday_quote_cache,
+  http_owner_intraday_quotes, http_owner_equity_v2_chart, openapi_contract with --test-threads=1.
+  Strict scoped clippy lib plus those four targets -- -D warnings; cargo fmt --all -- --check;
+  git diff --check. Complete final summaries/exits and named matrix; no counting DB skips.
+- QA only synthetic postgres://postgres:lagrange@127.0.0.1:55438/postgres, own per-test DBs;
+  project lagrange-intraday-qa-20260908, container lagrange-intraday-qa-20260908-qa-db-1,
+  pinnedPG18.4tmpfs healthy127.0.0.1:55438. No Docker lifecycle/otherDB/provider/external network/
+  accounts/orders/root/Next/browser/opt/env/migration/Cargo/Compose/KIS/collector/runner/Web/ops/
+  production/deploy/main merge/push/activation. No npm install, command or dependencies link:
+  authorized deps absent; npm regeneration remains unverified, F2 changes no OpenAPI artifact.
+  Local listener/DB EPERM: identical precise escalation only, never daemon start/restart.
+- Commit only the two owned test scopes. Report full commit/parent, file/line ranges, deviations
+  and reasons, executed before/after repros versus source-only evidence, complete commands/counts,
+  explicit case matrix, production-byte-equivalence check, unresolved/follow-ups/not verified
+  explicitly none when empty. If a required invariant cannot be met, report rather than invent.
+
+#### Coordinator gates
+
+1. New single writer on clean8326a6d only after idle reviewer; no overlapping compiler/edits.
+2. Inspect exact test-only delta and evidence, reuse idle sol/high reviewer for bounded acceptance.
+3. Integrate C3 chain only after all Medium findings resolved and verified ACCEPT; keep npm limit
+   visible, promptly proceed to next authorized package without redundant mapping/IV.
