@@ -3617,3 +3617,9 @@ broad mapping or idle-transition delay. Keep retained QA untouched for later aut
   subagent, Task, Agent, team, or delegation features. Complete this assignment directly and
   report if it needs further decomposition. No Paseo run/send/daemon commands. Reviewer remains
   idle for bounded re-review after completion; integration only after Medium resolved/ACCEPT.
+
+- WP6-A-F1 active binding: reused writerc15df593-2419-4942-9799-402e9d160d9e luna/max
+  auto-review in same ops workspace. Startup wait timeout showed delivered F1; subsequent bounded
+  logs confirmed new acknowledgment and actual clean-base/brief inspection. Only writer active;
+  reviewer3e00a43f idle REJECT. Send CLI terminal63223 may remain waiting normally, do not resend
+  or interrupt. Replace heartbeat211a83b0 to monitor this F1 writer.
