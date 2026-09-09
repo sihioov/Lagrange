@@ -1595,3 +1595,8 @@ Native subagents: prohibited for worker packages
 2. 결과 전체 delta와 실제 증거를 읽고 독립 D1-R 실행. 기존 C1/C2/C3 scoped ACCEPT는 유지한다.
 3. D1 수락 후 전체 B2b verified chain만 통합하고 integrated 회귀 후 plan 갱신한다.
    WP4 이후 작업은 기존 승인 범위로만 진행하며 실제 provider 활성화/배포/main merge/push 금지.
+
+- D1 작업자 `23db3695-0cc7-4d22-a4ed-d91e8033ad08` (Codex luna/max, auto-review)을
+  clean `60bebf0`에서 시작했다. profile notes/provider 및 target instructions를 확인했고
+  coordinator는 기존 QA container의 healthy/정확한 loopback port/tmpfs/pinned image를
+  read-only 확인했다. 이전 writer/reviewer는 idle이며 중복 작업하지 않는다.
