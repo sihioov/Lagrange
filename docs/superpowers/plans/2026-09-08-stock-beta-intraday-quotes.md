@@ -4469,3 +4469,38 @@ C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain
   reviewer heartbeat29d69d16 with C1 heartbeatf5154c4e. Reviewer5f6d978f remains IDLE ACCEPT.
   C2 renderer preliminary check: java/plantuml/dot not on PATH; no install, Docker probe or rendering
   executed. This does not block C1 and does not establish that no local image/renderer exists.
+
+### WP6-C1 completion / bounded acceptance review (2026-09-09)
+
+- Writer8ed8dd00 is IDLE at a92720326e04c31c225859bc88ff4b804ead8491 parent79b0aab;
+  clean exact two files +216/-1. Coordinator recovered final/full relevant logs and read FULL
+  213-line runbook plus static delta. One guard and fail-propagating Stock-static call; no nested
+  full Stock self-test. Source not integrated pending review.
+- Writer reports syntax/direct Stock static/diff/20 link anchors PASS. Top-level static exits1
+  on untouched post-backfill-health.sh filesystem mode775 versus required0755 BEFORE new call.
+  Do not claim top-level PASS or integration execution coverage. No adjacent permission repair.
+  Accepted previous B2 suites are not repeated. Completion notification root cause remains unverified.
+- C1-R reuse idle reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 Codex sol/high auto-review,
+  ops workspacewks_42028f6f939c65ac pinneda927203. Read C1 frozen brief above/fullspec and exact
+  two-file delta, readonly bounded intermediate/high-confidence review. Verify source-bound DTO/
+  reasons/age/proof precedence, calendar36h versus window sameKST/nonfuture, defaultoff config,
+  five-reader/API isolation, protected parent+leaf and all-file metadata, rotation/ledger and actual
+  persisted token sensitivity, explicit overlay preparation versus release gates. Confirm/refute
+  runbook omissions or misstatements proportionately: parentroot:10001/0750 omitted; nlink1 described
+  only for lock; state contains access token versus "only token metadata"; hash wording actual
+  validator versus runtime; broad UNKNOWN proof claim versus outside-window CLOSED; activation
+  entitlement wording must not reopen settled rights. No predetermined findings or broad redesign.
+- Verify static invocation once/failure propagation/no full-selftest nesting. Independently syntax,
+  direct Stock static, links/anchors and scope/clean; inspect guards and confirm top-level existing
+  mode failure if rerun needed, but do not change mode, shadow tools or patch adjacent files to fake
+  success. A bounded private source-level invocation/failure-path probe is allowed if useful, not
+  a full-top-level-pass claim. No seven-suite/Rust/API repeat. Evidence limits alone are not a
+  predetermined rejection; distinguish source correctness from unavailable integrated run.
+- No edits/docs/commits/delegation. No actualDocker/Compose/DB/root/sudo/provider/network/credentials/
+  accounts/orders/opt/hostenvclock/Rust/compiler/Cargo/build/npm/install/liveops/activation/deploy/
+  mainmerge/push/siblingsearch. Ownmktemp/subprocess fixtures only after guard inspection; QA untouched.
+  No reopening accepted B1/B2/engine/uutils/socket limits. Report ACCEPT/REJECT severity/fileline/
+  evidence/impact; full commands/exits, deviations, unresolved/follow-up/notverified explicitly none
+  when empty. Coordinator decides bounded remediation or exact integration; C2 separate, not launched.
+  Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+  No Paseo run/send/daemon start/restart. Read coordinator absolute plan/spec, own sourcea927203.
