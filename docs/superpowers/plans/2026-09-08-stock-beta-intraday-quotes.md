@@ -2293,3 +2293,65 @@ Native subagents: prohibited for worker packages
 - Do not integrate until F2 independently accepted. If accepted, integrate exact four-commit
   WP4-B chain (9f9e904, 7c1988f2, 3f97d1c, 949d450), verify source equivalence/regressions,
   then freeze the next cache GET/config package. No actual collection activation.
+
+### WP4-B ACCEPT / integrated verification IV (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- F2-R independently ACCEPT, no findings: OpenAPI15/15 (0.20s), strict clippy/fmt/diff,
+  clean 87-operation generation/typecheck and identical generated TS hash. Exact five numeric
+  bounds confirmed. Missing standalone oversized POST sequence case is a coverage limit supported
+  by the independent i64 conversion in actual validation, not a blocker. Temporary dependency
+  links were removed; no tracked drift. Previous High/Medium findings are all resolved.
+- Integrated exact four commits: `9f9e904` -> `b66156c`, `7c1988f2` -> `b509161`,
+  `3f97d1c` -> `f751ae3`, `949d450` -> `381dfa8`. Source `949d450` versus integrated
+  `381dfa8` has empty crates/apps/data-pipelines diff; aggregate thirteen source files, clean.
+  This completes reviewed demand mutation implementation, not cache GET or overall API.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-B-IV | simple | Exact integrated source and fixed sequential regression commands | high | Any failure or missing QA evidence: report exact failure, do not fix or infer pass |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-B-IV | 1 | simple | Verify integrated demand package | read-only coordinator source | F2 ACCEPT and exact integration | NEW luna/medium auto-review | complete results and clean-state report | Seven exact Rust targets, OpenAPI generation and scoped clippy/fmt |
+
+#### Worker brief: WP4-B-IV
+
+- Cwd `/data/worktrees/3puw275b/enhanced-pig`, workspace `wks_c8105f3859e0ad64`, integrated
+  source `381dfa8`. Read current plan/spec/root instructions. No source/docs/commits edits.
+- Sequentially run api-server tests `http_owner_intraday_quotes` (5),
+  `http_owner_equity_v2_chart` (4), `openapi_contract` (15), `--lib` (85 baseline), and job-queue
+  tests `intraday_demand_identity` (4), `intraday_quotes` (24), `intraday_read_state` (1).
+  Actual counts are authoritative, report missing/ignored tests rather than matching by assumption.
+- One compiler: `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true`, cargo `--locked --offline`;
+  DB targets `-- --test-threads=1`, only `DATABASE_URL=postgres://postgres:lagrange@127.0.0.1:55438/postgres`
+  own per-test DBs. Precise localhost escalation for QA/listener denied by sandbox, no actual network.
+- Scoped strict clippy for these targets, `cargo fmt --all -- --check`, diff check and
+  `npm run openapi:check --workspace @lagrange/api-server` using existing deps. No installs.
+  Generation should be clean; if drift occurs report and preserve it, never reset tracked files.
+- Verify source equality to `949d450` across crates/apps/data-pipelines and clean status after
+  checks. Capture complete final summaries; zero/absent-DB skips are not success. Report actual
+  command/count/timing/error evidence, any limitations and unresolved items explicitly none if empty.
+- No implementation, root/operational DB/provider/account/order/external network/Next/browser/
+  migrations/Cargo/Compose/ops/production/deploy/main merge/push or activation. QA exact project
+  `lagrange-intraday-qa-20260908` is coordinator-owned and retained; no Docker lifecycle.
+  All old workers idle; no additional delegation. Stop idle after report.
+
+#### Coordinator gates
+
+1. Launch only read-only IV after clean exact integration and profile/provider confirmation.
+2. Inspect complete results and source integrity; failure becomes a bounded reproduction package.
+3. After passing IV, record verified integration and freeze next cache GET/config package.
+   Retain QA for subsequent API DB work. No further user decision or live activation inferred.
+
+- IV worker `528445a7-30a3-465c-974b-07c2e91d5ebc` (Codex luna/medium, auto-review)
+  launched read-only in coordinator workspace at source `381dfa8`. Only this worker runs
+  the sequential compiler/QA targets; all prior implementers and reviewers remain idle.
