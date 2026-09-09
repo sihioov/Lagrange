@@ -3806,3 +3806,42 @@ This refinement does not expand original WP6 ownership or authorize runtime oper
   Startup wait JSON timeout contained direct-assignment acknowledgment (explicit no delegation);
   subsequent logs showed actual instruction/context-scope reads. No implementation/test success
   claimed yet. A reviewer3e00a43f and writerc15df593 are idle. Replace feec383a heartbeat with B1.
+
+### WP6-B1 completion / independent acceptance review (2026-09-09)
+
+- Writer50c5f35c-d28f-4c75-bd62-31cc99042cd0 is IDLE clean at
+  a661bfc5ab3bb0c02ac0652c2ac22fe550bfe147, parent2e528590. UNINTEGRATED.
+  Exact five files +1081/-5. Coordinator recovered full result and read FULL five-file delta;
+  artifact/schema diff empty and target instructions unchanged.
+- Writer reports syntax/static PASS; regex69, A baseline+11 negative mutations,3 B1 mutations,
+  52 validator cases plus provision/idempotence/sentinel checks PASS; seven existing offline
+  regressions PASS. Socket creation unavailable; explicitly labelled exact-path stat simulation
+  through actual validator used, not real socket coverage. No unresolved implementation claimed.
+- B1-R: intermediate/high-confidence conclusion-only review, NEW Codex sol/high auto-review,
+  same ops worktree/workspace, pinned source above. Own NO source/docs/commits. Read full B1 brief
+  and full spec. Verify strict modes/u64/hash/override/alias, legacy-off no-root compatibility,
+  opt-in scoped metadata, protected-tree separation, provision no repair/content writes and
+  actual-script private fixture evidence. No broader runtime/Compose redesign.
+- Independently confirm/refute specific source questions, no predetermined verdict:
+  GNU stat %F exact 'regular file' versus zero-byte real runtime coordination.lock;
+  path spelling repeated/trailing slash and symlink-leaf behavior versus overlap/broad checks;
+  source/runtime-secret overlap with supported relative configuration; missing-root exit class;
+  sentinel currently distinct .fixture-sentinel rather than checking actual state/lock per call;
+  extra off-env argument may leave purported malformed hash untested. Assess coverage limits
+  proportionately; don't demand full runtime state parsing or re-open accepted A limits.
+  Coordinator has source concerns, not newly executed defect reproductions yet.
+- Run syntax/static/focused self-test complete counts and seven existing offline regressions:
+  owner-equity-v2-runtime-static-check.sh / self-test.sh; build-production-images-static-check.sh /
+  self-test.sh; production-ops-static-check.sh / self-test.sh (all under scripts/ops);
+  deploy/db/migrate-static-check.sh. Inspect guards before running; fake-root/private mktemp
+  fixture only, no actual root/sudo/account/Docker/DB/compiler/build/provider operation.
+  Missing capability is explicit not PASS-on-skip. Allow bounded throw-away repro of concrete
+  suspected defect against actual source, never patch tracked files. No content from real tokens.
+- Report ACCEPT/REJECT with severity/fileline/repro/impact; actual commands/counts/exits;
+  scope/deviations/coverage limits/unresolved/notverified explicitly none when empty.
+  No network/npm/install/other links/credentials/operational paths/clock changes/production/
+  activation/deploy/main merge/push or sibling searches. QA remains untouched/retained.
+  Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment
+  directly and report if it needs further decomposition. No Paseo run/send/daemon operations.
+  Coordinator will recover evidence and either boundedly remediate via idle writer or accept
+  and integrate exactly, then freeze B2 wiring; no idle-transition gap or redundant C3 IV.
