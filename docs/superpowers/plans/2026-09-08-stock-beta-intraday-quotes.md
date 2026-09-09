@@ -3027,3 +3027,56 @@ Native subagents: prohibited for worker packages
   On idle recover full result and owned diff, require complete verification and independent
   terra/high C3 review before integration. Repeated inspection without implementation is not
   completion evidence. All previous accepted packages and safety/QA boundaries remain unchanged.
+
+### WP4-C3 completion / independent contract review (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+- Writer39da45eb is now IDLE with clean source
+  bc5e7654618d834d3e2a16b1053ceb2d32fedc0b, parent21ebf1ea1887d07020da852d88d59cd94e030a76.
+  Ten owned files +2666/-9, UNINTEGRATED. Report claims lib102/projection8 (subset), HTTPcache1,
+  mutation5/chart4/OpenAPI16, scoped clippy/fmt and npm88 operations/typecheck. Counts are writer
+  reports pending independent verification; no C3 acceptance yet.
+- Coordinator inspected production GET/projection and adapter/router/contract/common delta and
+  the HTTP fixture. Review must independently confirm/refute: only two successful HTTP GETs rather
+  than explicit1/10/100; omitted real HTTP state matrix versus pure projection coverage; EOD
+  dataset fingerprint potentially empty; valid_calendar comparing DB observed_at to API now despite
+  the frozen no-submillisecond-skew rule; aged-out quote reason versus QUOTE_PENDING precedence;
+  incomplete error-path fixture cleanup. Assess realistic reachability and severity, no predetermined
+  verdict. Do not reopen accepted producer/calendar/C2 implementation limits.
+- Execution deviation: writer logs show temporary node_modules symlink to
+  /data/worktrees/lagrange/huchen/node_modules, not the expressly allowed coordinator node_modules.
+  Link removal is logged and both API/coordinator node_modules are currently absent. No dependency
+  installation or target edits are established by these logs. This is not reported as no deviation.
+  Reviewer must not repeat that unapproved link target; npm verification may be reported unavailable
+  with current authorized dependencies while checking committed schema/generated artifacts.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C3-R | intermediate | Frozen GET policy, bounded10-file diff, production pure projection and real-role QA | high | Concrete failing counterexample or missing required evidence returns bounded fix |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C3-R | 1 | intermediate | Independent acceptance audit of cache-only GET | read-only source/test/artifact review; no edits/commits | idle clean bc5e765 | NEW Codex sol/high auto-review | ACCEPT/REJECT with severity/file:line and explicit coverage limits | complete lib/HTTPcache/mutation/chart/OpenAPI summaries, strict scoped clippy/fmt |
+
+- The user's replacement AGENTS instructions select sol/high for code review, superseding old
+  prospective terra/high review selection. Current profiles/provider checked. No new implementation,
+  mapping, IV package or C2 rerun. Reviewer is sole compiler/QA owner during this bounded review.
+- Read current full frozen C3 table/brief, contract and actual10-file diff. Verify owner/session
+  ordering, typed inputs/exact DTO, accepted actor-RLS reads/final identity fence, real evidence,
+  no-demand last-good visibility, freshness/reason precedence, no writes/provider/token calls,
+  unchanged POST/DELETE and OpenAPI exactness. Source comments are not executed evidence.
+- Run serial CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true locked/offline lib, newHTTPcache,
+  existingintradayHTTP, chart, OpenAPI; DB threads1. Recover complete final summaries and exits,
+  no silent skips. Strict scoped clippy on those targets, fmt/diff. Do not patch to create repro;
+  report a precise bounded test scenario if new source edits would be required.
+- QA only exact retained project lagrange-intraday-qa-20260908/container
+  lagrange-intraday-qa-20260908-qa-db-1 pinnedPG18.4 tmpfs127.0.0.1:55438, syntheticURL
+  postgres://postgres:lagrange@127.0.0.1:55438/postgres own generated per-test databases.
+  No Docker lifecycle, external/provider calls, actual main, /opt/env mutation, account/order,
+  operational DB, migration/Cargo/Compose/other source edits, production/deploy/main merge/push.
+  Local permission denial permits only identical precisely escalated test/CLI, never daemon start.
+- Return independent ACCEPT/REJECT, severity/file:line rationale, exact commands/counts, requirement
+  coverage versus remaining limits, deviations, unresolved/not verified explicitly none if empty.
+  Coordinator integrates only after acceptance; otherwise assign the smallest bounded remediation.
