@@ -4508,3 +4508,37 @@ C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain
 - C1-R active binding: reviewer5f6d978f sol/high at ops workspacewks_42028f6f939c65ac sourcea927203.
   Nonblocking CLI send accepted; startup wait includes NEW C1-R ACK, scope and actual fullbrief/
   spec reads. Writer8ed8dd00 IDLE. Replaced heartbeatf5154c4e with3f5fc580; no integration yet.
+
+### WP6-C1-R REJECT / C1-F1 four-paragraph correction (2026-09-09)
+
+- Reviewer5f6d978f IDLE REJECT: Medium incomplete parent/all-file metadata, Medium actual bearer
+  token understated as only metadata, Low invalid proof versus valid outside-hours ambiguity,
+  Low settled entitlement reopened. Coordinator recovered full result/logs and confirmed source.
+  Static source is ACCEPT-correct; hash concern refuted. Only runbook needs correction.
+- Evidence correction: prior writer/coordinator "Stock call UNREACHED" was WRONG. Independent
+  bash-x trace confirms line507 Stock call runs, then line817 existing0775/0755 guard fails.
+  Top-level still exit1, not PASS; source order confirms this. Syntax/directStockstatic20links/
+  diffscope clean passed. No unrelated mode repair or broader reruns are warranted.
+- C1-F1 reuse idle original writer8ed8dd00 luna/max (first rejection, unchanged model/effort),
+  ops workspacewks_42028f6f939c65ac basea92720326e04c31c225859bc88ff4b804ead8491. Own ONLY
+  docs/runbooks/stock-beta-intraday-quotes.md, four existing paragraphs/bullet plus relevant source
+  links. ALL other bytes unchanged, especially static-check.sh. No fullspec/codebase reread needed;
+  original C1 context remains authoritative, these are exact local corrections, not another audit.
+  1. Parent LAGRANGE_RUNTIME_STATE_DIR is root(0):10001 mode0750, leaf10001:10001 mode0700;
+     lock/state/every temporary state file nonsymlink regular10001:10001 mode0600 nlink1.
+     Cite validate-production-config.sh:495-545/provision-linux.sh:334 as appropriate.
+  2. State persists reusable bearer access-token value plus expiry/coordination metadata; explicitly
+     treat entire file as secret, retain no dump/log/persist-to-diagnostics warning. No actual token
+     or state read. Cite read_coordination.rs PersistedToken:1220/PersistedState:1254.
+  3. Replace ambiguous out-of-range-proof phrase with invalid/out-of-contract evidence -> UNKNOWN;
+     explicitly distinguish valid proof outside trading interval -> CLOSED and zero quote calls.
+  4. Separate approval for live polling only; verify existing settled entitlement reference/scope,
+     do not ask to reapprove private entitlement. Preserve all other activation gates.
+- Verify exactly those changes against these source snippets, local links/anchors, gitdiffcheck and
+  one-file-only scope; no shelltest/Rust/7suite repeat for prose-only fix. Commit only runbook, clean.
+  Report exact changes/commands/exits, deviations, unresolved/follow-up/notverified. No new files,
+  docs restructuring or adjacent fixes. No actualDocker/Compose/DB/root/sudo/provider/network/
+  credentials/accounts/orders/opt/hostenvclock/compiler/build/Cargo/npm/install/liveops/activation/
+  deploy/mainmerge/push/siblingsearch; QA untouched. Engine/npm/render gates unchanged.
+  Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+  No Paseo run/send/daemon start/restart. Coordinator verifies focused delta, no repeated broad review.
