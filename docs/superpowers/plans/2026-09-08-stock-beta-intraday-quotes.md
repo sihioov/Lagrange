@@ -4353,3 +4353,38 @@ reviewer; no integration before Medium findings resolved. C and activation gates
   NEW direct single-file remediation ACK and instruction activity. Reviewer5f6d978f idle REJECT.
   Replaced heartbeat207b9d45 with76b3b141. Send terminal53061 may remain waiting normally;
   do not resend/interrupt. No fix/test completion or integration claimed yet.
+
+### WP6-B2-F1 completion / acceptance re-review (2026-09-09)
+
+- Writer9ba07de6 is IDLE clean at79b0aab0e4a6f72d7c47acc203cda7b7c05d6fb5, parentaa0b414.
+  Exact ONE self-test file +102/-15. Coordinator recovered full final/logs and read FULL delta.
+  Actual web/materializer service insertions replace worker-env extras. Balanced identical duplicate
+  API values have permissive parse/baseline equivalence/pair-count assertions. Exact marker helper
+  is now attached to the correct 18-case loop and duplicate call; counters separate A11/overlay24/
+  inclusive35/total36. Overlay/checker and all other files unchanged. B2+F1 UNINTEGRATED.
+- Writer reports actual pre ENVIRONMENT_INVALID twice / JSON_INVALID, post SERVICES_INVALID twice /
+  DUPLICATE_KEY, all exit1, ordinary duplicate parse0/count2/equivalence PASS. Final syntax/strict
+  JSON/static, focused regex69/A11/overlay24/B1mut3/validator77 and seven guarded offline regressions
+  all0. During own final audit, writer corrected marker-case loop placement and amended its own
+  unintegrated F1 commit; final rerun reports complete. No new acceptance claim from earlier run.
+- B2-F1-R: reuse idle reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 sol/high auto-review,
+  same ops workspacewks_42028f6f939c65ac pinned79b0aab. Read full F1/frozen B2 brief/fullspec and
+  exact one-file delta. Read-only intermediate/high-confidence bounded conclusion. Verify prior two
+  Mediums and counter Low resolved: fresh actual forbidden-service insertions preserve baseline;
+  duplicate fixture is balanced, identical values, actually duplicated and ordinary-parse equivalent;
+  SAME checker produces exact intended markers, assertions execute in correct loop/call; counters
+  derive from execution without double-count. No predetermined verdict, no broad redesign or old
+  accepted production/base/engine/uutils/socket/metadata-limit reopening.
+- Independently complete syntax/static/self-test with exact69/11/24/35/36/3/77 counts and seven
+  guarded offline checks from B2 brief, confirming scope/clean and all other bytes unchanged.
+  Private same-checker probes permitted if needed, no tracked edits/docs/commits. Inspect guards
+  first; fake-root/fakeDocker fixtures ONLY. No actualDocker/Compose/DB/root/sudo/provider/network/
+  credentials/accounts/orders/opt/hostenvclock/Rust/compiler/Cargo/build/npm/install/liveops/
+  activation/deploy/mainmerge/push/siblingsearch. QA untouched. Engine merge/interpolation explicitly
+  UNVERIFIED, not a rejection by itself; release overlay selection remains future approval gate.
+  Report ACCEPT/REJECT severity/fileline/repro/impact; complete commands/counts/exits; deviations/
+  reasons; unresolved/follow-up/notverified explicitly none when empty. Coordinator owns verdict.
+  Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+  No Paseo run/send/daemon start/restart. Only verified ACCEPT permits exact B2+F1 integration then
+  freeze C docs/diagrams/invocation; no redundant C3 IV. If remaining confirmed failure, bounded
+  remediation with model-only escalation only upon observed repeat failure, not preemptively.
