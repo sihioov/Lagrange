@@ -4242,3 +4242,11 @@ notverified explicitly none when empty (Compose engine verification remains an e
 Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
 No Paseo run/send/daemon start/restart. Coordinator full-delta review then independent sol/high;
 only verified ACCEPT permits integration. C documentation/diagrams/invocation remains separate.
+
+- B2 active binding: NEW writer9ba07de6-c67e-4b92-b26d-39010f0549c4 Codex luna/max
+  auto-review, ops workspacewks_42028f6f939c65ac cleanbase039a458. Current profile notes/provider
+  capability inspected. Local CLI EPERM resolved with exact launch escalation, no daemon lifecycle.
+  Startup wait JSON timeout includes actual instruction/context-loader activity and scoped context
+  fallback acknowledgement; this proves provider start, not implementation/test completion or yet
+  a full-brief-read claim. No redirect/resend. All prior workers/reviewer idle.
+  Replaced heartbeatcda75f12 with a077177c. Only active worker above; no B2 acceptance yet.
