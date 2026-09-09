@@ -569,6 +569,10 @@ provision_output legacy "$prov_state_sibling" --dry-run "$b1/provision-sibling.o
   die 'B1_PROVISION_SIBLING_PATH_FAILED'
 grep -Fq 'coordination-leaf=' "$b1/provision-sibling.out" ||
   die 'B1_PROVISION_SIBLING_PLAN_MISSING'
+provision_output legacy "$prov_data/raw-sibling" --dry-run "$b1/provision-data-raw-sibling.out" ||
+  die 'B1_PROVISION_DATA_RAW_SIBLING_PATH_FAILED'
+grep -Fq 'coordination-leaf=' "$b1/provision-data-raw-sibling.out" ||
+  die 'B1_PROVISION_DATA_RAW_SIBLING_PLAN_MISSING'
 
 for invalid_state_root in ../secret "$prov_state/" "$b1/repeated//root" /var/ //var//; do
   invalid_name=$(printf '%s' "$invalid_state_root" | tr '/.' '__')
@@ -656,15 +660,25 @@ write_range_env() {
   chmod 0600 "$path"
 }
 
+write_range_env_with_artifact() {
+  [ "$#" -eq 8 ] || die "B1_ARTIFACT_ENV_HELPER_ARITY_$#"
+  local artifact=${8}
+  write_range_env "$1" "$2" "$3" "$4" "$5" "$6" "$7"
+  printf 'LAGRANGE_ARTIFACTS_DIR=%s\n' "$artifact" >>"$1"
+}
+
 validator_cases=0
 validator_passes=0
 validator_failures=0
+validator_working_dir=$root
 validator_expect() {
   local name=$1 expected=$2 env_file=$3 output status marker
   shift 3
   output=$b1/validator-$name.out
-  if env LAGRANGE_ENV_FILE="$env_file" LAGRANGE_CODE_COMMIT="$validator_commit" "$@" \
-       bash "$validator" --scope range-raw >"$output" 2>&1; then
+  [ -d "$validator_working_dir" ] || die "B1_VALIDATOR_WORKING_DIR_MISSING"
+  if (cd "$validator_working_dir" &&
+      env LAGRANGE_ENV_FILE="$env_file" LAGRANGE_CODE_COMMIT="$validator_commit" "$@" \
+        bash "$validator" --scope range-raw >"$output" 2>&1); then
     status=0
   else
     status=$?
@@ -799,6 +813,76 @@ validator_sibling_env=$b1/validator-state-sibling.env
 write_range_env "$validator_sibling_env" yes shared_required off 17 \
   "$validator_state_sibling" ''
 validator_expect canonical-sibling-positive 0 "$validator_sibling_env"
+
+mkdir -p "$validator_data/raw-sibling"
+data_raw_sibling_env=$b1/validator-data-raw-sibling.env
+write_range_env "$data_raw_sibling_env" yes legacy off '' "$validator_data/raw-sibling" ''
+validator_expect data-raw-sibling-positive 0 "$data_raw_sibling_env"
+
+relative_artifact_fixture=$b1/relative-artifact-fixture
+relative_artifact_config=$relative_artifact_fixture/config
+relative_artifact_store=$relative_artifact_fixture/artifact-store
+relative_artifact_state=$relative_artifact_fixture/independent-state
+relative_artifact_working_dir=$relative_artifact_fixture/invocation-cwd
+mkdir -p "$relative_artifact_config" "$relative_artifact_working_dir" \
+  "$relative_artifact_store/kis-read-coordination" \
+  "$relative_artifact_state/kis-read-coordination"
+for relative_artifact_coordination_root in \
+  "$relative_artifact_store" "$relative_artifact_state"; do
+  relative_artifact_leaf=$relative_artifact_coordination_root/kis-read-coordination
+  chown 0:10001 "$relative_artifact_coordination_root"
+  chmod 0750 "$relative_artifact_coordination_root"
+  chown 10001:10001 "$relative_artifact_leaf"
+  chmod 0700 "$relative_artifact_leaf"
+  : >"$relative_artifact_leaf/coordination.lock"
+  chown 10001:10001 "$relative_artifact_leaf/coordination.lock"
+  chmod 0600 "$relative_artifact_leaf/coordination.lock"
+done
+
+validator_working_dir=$relative_artifact_working_dir
+[ "$validator_working_dir" != "$relative_artifact_config" ] ||
+  die 'B1_RELATIVE_ARTIFACT_CWD_NOT_DISTINCT'
+
+relative_artifact_equal_env=$relative_artifact_config/equal.env
+write_range_env_with_artifact "$relative_artifact_equal_env" yes shared_required off 17 \
+  "$relative_artifact_store" '' ../artifact-store
+validator_expect relative-artifact-equality 1 "$relative_artifact_equal_env"
+
+relative_artifact_dot_repeated_env=$relative_artifact_config/dot-repeated.env
+write_range_env_with_artifact "$relative_artifact_dot_repeated_env" yes shared_required off 17 \
+  "$relative_artifact_store" '' ./../artifact-store//
+validator_expect relative-artifact-dot-repeated-equality 1 "$relative_artifact_dot_repeated_env"
+
+relative_artifact_ancestor_env=$relative_artifact_config/ancestor.env
+write_range_env_with_artifact "$relative_artifact_ancestor_env" yes shared_required off 17 \
+  "$relative_artifact_fixture" '' ../artifact-store
+validator_expect relative-artifact-ancestor 1 "$relative_artifact_ancestor_env"
+
+relative_artifact_descendant_env=$relative_artifact_config/descendant.env
+write_range_env_with_artifact "$relative_artifact_descendant_env" yes shared_required off 17 \
+  "$relative_artifact_store/coordination-state" '' ../artifact-store
+validator_expect relative-artifact-descendant 1 "$relative_artifact_descendant_env"
+
+relative_artifact_nonoverlap_env=$relative_artifact_config/nonoverlap.env
+write_range_env_with_artifact "$relative_artifact_nonoverlap_env" yes shared_required off 17 \
+  "$relative_artifact_state" '' ../artifact-store
+validator_expect relative-artifact-nonoverlap 0 "$relative_artifact_nonoverlap_env"
+
+relative_artifact_empty_env=$relative_artifact_config/empty.env
+write_range_env_with_artifact "$relative_artifact_empty_env" yes shared_required off 17 \
+  "$relative_artifact_state" '' ''
+validator_expect relative-artifact-empty 0 "$relative_artifact_empty_env"
+
+relative_artifact_absent_env=$relative_artifact_config/absent.env
+write_range_env "$relative_artifact_absent_env" yes shared_required off 17 \
+  "$relative_artifact_state" ''
+validator_expect relative-artifact-absent 0 "$relative_artifact_absent_env"
+
+absolute_artifact_overlap_env=$relative_artifact_config/absolute-overlap.env
+write_range_env_with_artifact "$absolute_artifact_overlap_env" yes shared_required off 17 \
+  "$relative_artifact_state" '' "$relative_artifact_state"
+validator_expect absolute-artifact-overlap 1 "$absolute_artifact_overlap_env"
+validator_working_dir=$root
 
 missing_root_env=$b1/validator-missing-root.env
 write_range_env "$missing_root_env" yes shared_required off 17 '' ''

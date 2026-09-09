@@ -393,7 +393,7 @@ path_overlaps() {
 }
 
 check_runtime_state_path() {
-  local path=$1 probe canonical_path canonical_forbidden
+  local path=$1 probe canonical_path canonical_forbidden forbidden_path
   coordination_path_safe=yes
   case "$path" in
     ''|/*) ;;
@@ -453,8 +453,9 @@ check_runtime_state_path() {
       "$artifacts_dir" \
       "$source_dir" \
       "$runtime_dir"; do
-      [[ "$forbidden" = /* ]] || continue
-      canonical_forbidden=$(realpath -m -- "$forbidden") || {
+      [ -n "$forbidden" ] || continue
+      forbidden_path=$(resolve_config_path "$forbidden")
+      canonical_forbidden=$(realpath -m -- "$forbidden_path") || {
         invalid+=("LAGRANGE_RUNTIME_STATE_DIR protected-path canonicalization failed")
         coordination_path_safe=no
         break
