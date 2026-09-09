@@ -2355,3 +2355,79 @@ Native subagents: prohibited for worker packages
 - IV worker `528445a7-30a3-465c-974b-07c2e91d5ebc` (Codex luna/medium, auto-review)
   launched read-only in coordinator workspace at source `381dfa8`. Only this worker runs
   the sequential compiler/QA targets; all prior implementers and reviewers remain idle.
+
+### WP4-B-IV ACCEPT / WP4-C0 cache-read seam adjudication (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- IV is idle PASS. Complete counts: HTTP intraday5 (5.90s), chart4 (3.48s), OpenAPI15
+  (0.18s), API lib85 (30.00s), demand identity4 (2.62s), quotes24 (31.42s), read-state1
+  (0.70s): **138 tests**, no DB skips. All seven scoped strict clippy targets, fmt/diff,
+  existing-dependency OpenAPI87 operations/typecheck passed. Sandbox-only DB/listener denials
+  were followed by identical precisely escalated passing checks, not implementation changes.
+- Coordinator recovered final result/logs and independently confirmed clean status and empty
+  source `949d4502e7d47973bd6931a037f284bffa49f8e5` versus HEAD crates/apps/data-pipelines
+  diff. Integrated source is `381dfa8`; documentation HEAD at verification is `e926b9e`.
+  Demand API is verified; cache GET/config is not yet implemented or accepted.
+- Direct inspection found a narrower question not settled by the original broad WP4-P map:
+  `resolve_current_session_proof` filters TRADING and `read_current_cache` requires that proof,
+  while sections7/8 require distinguishing a valid CLOSED calendar from absent evidence and
+  retaining eligible last good outside trading hours. API already depends on collectors.
+  Resolve only this projection/config seam before freezing implementation; do not repeat the
+  completed authentication/mutation analysis or reopen accepted fixes.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C0 | intermediate | Bounded evidence-based read-seam/config analysis; concrete existing functions and frozen DTO | high | Missing policy/grant/dependency must be reported, never invented or implemented |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C0 | 1 | intermediate | Resolve cache projection and config implementation seams | read-only source named below | WP4-B-IV ACCEPT | NEW Codex terra/high auto-review | file-line evidence and smallest implementation split | Coordinator source comparison and contract adjudication |
+
+#### Worker brief: WP4-C0
+
+- Cwd `/data/worktrees/3puw275b/enhanced-pig`, workspace `wks_c8105f3859e0ad64`, source
+  `381dfa8`, latest coordinator plan/spec. Read root instructions and full spec. No edits,
+  commits, build/tests, DB, network, environment mutation or runtime file reads under /opt.
+- Read only API `runtime.rs`, `http/state.rs`, existing intraday HTTP/repo/contract modules,
+  existing config/HTTP test constructors, job-queue `owner_equity_v2/intraday.rs` and relevant
+  tests, collectors `intraday_quotes.rs`, existing calendar schema/grants read-only, and
+  already integrated Web intraday DTO validation/reason mapping read-only if needed.
+- Answer three bounded questions with exact file:line evidence:
+  1. Can existing app-role methods distinguish current valid TRADING/CLOSED calendar lineage
+     from missing/stale/conflicting proof? Enumerate actual stored calendar dispositions.
+     Determine minimal additive read-only seam if needed, preserving existing producer methods,
+     privileges and schema. Explain closed-window same-session last-good and null-proof rows.
+  2. Propose a complete deterministic DTO decision table using only authorized observable state:
+     mode, current identity/demand, independent calendar/window proofs, cache success/failure.
+     Separate frozen requirements from proposed precedence; do not invent producer heartbeat
+     access, a new timeout threshold, stateful GET version tracking or new failure codes.
+     Identify any essential contract ambiguity explicitly for coordinator judgment.
+  3. Map exact minimal config/state/runtime constructor and test edits for default-off mode,
+     fixed window path/pin and deterministic injected clock/window tests, reusing collectors.
+     Identify how to keep absent/malformed proof from aborting unrelated API/EOD startup.
+     List all actual struct-literal callsites needing mechanical updates; no broad redesign.
+- Return <=1500 words: evidence map, smallest sequential implementation split with exact owned
+  files and recommended test matrix/commands, proposed decisions versus mandatory rules,
+  changed files (none), deviations, unresolved/not found/not verified explicitly none if empty.
+  No new dependencies/grants/schema, producer/KIS/collector changes, actual provider, operations,
+  browser/Next, deployment/main merge/push/activation. QA retained untouched.
+
+#### Coordinator gates
+
+1. Verify current profile notes/provider, launch only read-only C0 and replace completed IV monitor.
+2. Inspect result and decide exact additive seam/DTO/config scope before implementation. C0 is
+   analysis, not a default promotion of implementation workers: frozen implementation starts luna/max.
+3. Independently review implementation and real-role no-write GET1/10/100 tests before integration.
+   Calendar36h and same-KST-day window evidence remain separate; no live activation inferred.
+
+- C0 worker `9c5be574-388a-49ba-a853-c7a0ad44276c` (Codex terra/high, auto-review)
+  launched read-only in coordinator workspace. Current profile notes/provider verified. IV and
+  all prior writers/reviewers are idle; C0 has no compiler, DB or mutation authority.
