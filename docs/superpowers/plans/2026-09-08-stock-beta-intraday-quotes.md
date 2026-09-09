@@ -4462,3 +4462,10 @@ edit plan/spec/release wiring/other ops files; report scope conflict before expa
 Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
 No Paseo run/send/daemon start/restart. Coordinator reviews full delta, then bounded sol/high review.
 C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain separate packages.
+
+- C1 active binding: NEW writer8ed8dd00-16e0-400b-8aa0-4f021d247ab4 Codex luna/max auto-review,
+  ops workspacewks_42028f6f939c65ac base79b0aab. Startup wait JSON timeout contains direct exact
+  two-file ACK plus actual instruction/plan/spec/git reads; not a completed result. Replaced old
+  reviewer heartbeat29d69d16 with C1 heartbeatf5154c4e. Reviewer5f6d978f remains IDLE ACCEPT.
+  C2 renderer preliminary check: java/plantuml/dot not on PATH; no install, Docker probe or rendering
+  executed. This does not block C1 and does not establish that no local image/renderer exists.
