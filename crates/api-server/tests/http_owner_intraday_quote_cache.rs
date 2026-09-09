@@ -10,12 +10,17 @@ mod common;
 use api_server::http::state::OwnerIntradayQuoteReadConfig;
 use auth::entitlement::Role;
 use axum::http::StatusCode;
-use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Utc};
 use collectors::intraday_quotes::IntradaySessionWindowContract;
 use common::{Harness, UserCtx, status};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::any::Any;
+use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::task::{Context, Poll};
 use uuid::Uuid;
 
 const GET_PATH_PREFIX: &str =
@@ -26,6 +31,8 @@ const ENTITLEMENT_SHA256: &str =
     "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const CALENDAR_HASH: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
+static API_CLOCK: OnceLock<Mutex<DateTime<Utc>>> = OnceLock::new();
+
 #[derive(Debug, Clone, Copy)]
 struct MembershipFixture {
     membership_id: Uuid,
@@ -33,8 +40,19 @@ struct MembershipFixture {
     generation: u64,
 }
 
-fn test_clock() -> DateTime<Utc> {
-    Utc::now()
+fn set_api_clock(now: DateTime<Utc>) {
+    *API_CLOCK
+        .get_or_init(|| Mutex::new(now))
+        .lock()
+        .expect("API clock mutex") = now;
+}
+
+fn injected_api_clock() -> DateTime<Utc> {
+    *API_CLOCK
+        .get()
+        .expect("API clock initialized before router restart")
+        .lock()
+        .expect("API clock mutex")
 }
 
 fn current_kst_date(now: DateTime<Utc>) -> NaiveDate {
@@ -43,15 +61,24 @@ fn current_kst_date(now: DateTime<Utc>) -> NaiveDate {
 }
 
 fn window_for(date: NaiveDate) -> Arc<IntradaySessionWindowContract> {
+    window_for_kind(date, "REGULAR", Some("09:00:00"), Some("15:30:00"))
+}
+
+fn window_for_kind(
+    date: NaiveDate,
+    disposition: &str,
+    open_local: Option<&str>,
+    close_local: Option<&str>,
+) -> Arc<IntradaySessionWindowContract> {
     let bytes = serde_json::to_vec(&json!({
         "schema_version": 1,
         "exchange": "KRX",
         "timezone": "Asia/Seoul",
         "entries": [{
             "date": date.to_string(),
-            "disposition": "REGULAR",
-            "open_local": "09:00:00",
-            "close_local": "15:30:00",
+            "disposition": disposition,
+            "open_local": open_local,
+            "close_local": close_local,
             "evidence_url": "https://global.krx.co.kr/contents/test",
             "evidence_retrieved_at": format!("{date}T00:00:00+09:00"),
             "evidence_sha256": format!("sha256:{}", "b".repeat(64)),
@@ -60,6 +87,15 @@ fn window_for(date: NaiveDate) -> Arc<IntradaySessionWindowContract> {
     .expect("window fixture serializes");
     let hash = format!("sha256:{:x}", Sha256::digest(&bytes));
     Arc::new(IntradaySessionWindowContract::from_bytes(&bytes, &hash).unwrap())
+}
+
+fn api_time_for_date(date: NaiveDate) -> DateTime<Utc> {
+    FixedOffset::east_opt(9 * 60 * 60)
+        .expect("KST offset")
+        .from_local_datetime(&date.and_hms_opt(11, 0, 0).expect("11:00 KST"))
+        .single()
+        .expect("unambiguous KST time")
+        .with_timezone(&Utc)
 }
 
 async fn seed_ready_membership(
@@ -145,13 +181,7 @@ async fn seed_ready_membership(
     }
 }
 
-async fn seed_calendar_and_cache(
-    harness: &Harness,
-    owner: &UserCtx,
-    fixture: MembershipFixture,
-    window: &IntradaySessionWindowContract,
-    session_date: NaiveDate,
-) {
+async fn seed_calendar_rows(harness: &Harness, session_date: NaiveDate, disposition: &str) -> Uuid {
     let batch_id = Uuid::new_v4();
     harness
         .seed_shared(&format!(
@@ -167,7 +197,7 @@ async fn seed_calendar_and_cache(
             "INSERT INTO trading_calendar_versions \
              (exchange, session_date, session_type, timezone, source, source_version, \
               source_batch_id, content_sha256, retrieved_at) \
-             VALUES ('KRX', '{session_date}', 'TRADING', 'Asia/Seoul', 'kis', \
+             VALUES ('KRX', '{session_date}', '{disposition}', 'Asia/Seoul', 'kis', \
                      'kis-chk-holiday-v1:schema-1', '{batch_id}', '{CALENDAR_HASH}', \
                      clock_timestamp())"
         ))
@@ -177,11 +207,24 @@ async fn seed_calendar_and_cache(
             "INSERT INTO trading_calendars \
              (exchange, session_date, session_type, timezone, source, source_version, \
               source_batch_id, content_sha256, retrieved_at) \
-             VALUES ('KRX', '{session_date}', 'TRADING', 'Asia/Seoul', 'kis', \
+             VALUES ('KRX', '{session_date}', '{disposition}', 'Asia/Seoul', 'kis', \
                      'kis-chk-holiday-v1:schema-1', '{batch_id}', '{CALENDAR_HASH}', \
                      clock_timestamp())"
         ))
         .await;
+    batch_id
+}
+
+async fn seed_calendar_and_cache(
+    harness: &Harness,
+    owner: &UserCtx,
+    fixture: MembershipFixture,
+    window: &IntradaySessionWindowContract,
+    session_date: NaiveDate,
+    calendar_disposition: &str,
+    cache_at: DateTime<Utc>,
+) {
+    let batch_id = seed_calendar_rows(harness, session_date, calendar_disposition).await;
     let snapshot_id = Uuid::new_v4();
     let universe_sha256 = format!("sha256:{}", common::sha256_hex(INSTRUMENT.as_bytes()));
     harness
@@ -197,6 +240,7 @@ async fn seed_calendar_and_cache(
             ),
         )
         .await;
+    let cache_at = cache_at.to_rfc3339();
     harness
         .seed_migration_owner(
             owner,
@@ -245,9 +289,9 @@ async fn seed_calendar_and_cache(
                  VALUES ('{}', '{}', '{}', '{INSTRUMENT}', 1, '{session_date}', 'kis', \
                          'kis-chk-holiday-v1:schema-1', '{batch_id}', '{CALENDAR_HASH}', \
                          '{}', 100.25, 99.00, 1.25, 1.26, 'UP', false, \
-                         now() - interval '10 seconds', \
-                         now() - interval '10 seconds', 1, \
-                         now() - interval '1 second', 1)",
+                         '{cache_at}'::timestamptz - interval '10 seconds', \
+                         '{cache_at}'::timestamptz - interval '10 seconds', 1, \
+                         '{cache_at}'::timestamptz - interval '1 second', 1)",
                 owner.user_id,
                 fixture.membership_id,
                 fixture.generation_id,
@@ -255,6 +299,150 @@ async fn seed_calendar_and_cache(
             ),
         )
         .await;
+}
+
+async fn seed_queue_row(harness: &Harness, owner: &UserCtx) {
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "INSERT INTO jobs \
+             (owner_user_id, job_type, status, idempotency_key, payload_json) \
+             VALUES ('{}', 'wp4_c3_fingerprint', 'QUEUED', \
+                     'wp4-c3-fingerprint', '{{}}'::jsonb)",
+                owner.user_id
+            ),
+        )
+        .await;
+}
+
+async fn set_demand_expiry(
+    harness: &Harness,
+    owner: &UserCtx,
+    fixture: MembershipFixture,
+    active: bool,
+) {
+    let expiry = if active {
+        "now() + interval '1 hour'"
+    } else {
+        "now() - interval '1 second'"
+    };
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "UPDATE owner_intraday_quote_demands \
+                    SET lease_expires_at = {expiry}, updated_at = now() \
+                  WHERE owner_user_id = '{}' AND membership_id = '{}' AND generation = {} \
+                    AND state = 'ACTIVE'",
+                owner.user_id, fixture.membership_id, fixture.generation
+            ),
+        )
+        .await;
+}
+
+async fn set_cache_pending(
+    harness: &Harness,
+    owner: &UserCtx,
+    fixture: MembershipFixture,
+    at: DateTime<Utc>,
+) {
+    let at = at.to_rfc3339();
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "UPDATE owner_intraday_quote_cache \
+                    SET price = NULL, base_price = NULL, change_amount = NULL, \
+                        change_percent = NULL, direction = NULL, halted = NULL, \
+                        received_at = NULL, last_success_at = NULL, quote_version = 0, \
+                        last_attempt_at = '{at}'::timestamptz, \
+                        last_failure_code = NULL, last_failure_at = NULL, updated_at = now() \
+                  WHERE owner_user_id = '{}' AND membership_id = '{}'",
+                owner.user_id, fixture.membership_id
+            ),
+        )
+        .await;
+}
+
+async fn set_cache_good(
+    harness: &Harness,
+    owner: &UserCtx,
+    fixture: MembershipFixture,
+    at: DateTime<Utc>,
+    failure: Option<(&str, DateTime<Utc>)>,
+) {
+    let at = at.to_rfc3339();
+    let (failure_code, failure_at) = failure
+        .map(|(code, failure_at)| {
+            (
+                format!("'{code}'"),
+                format!("'{}'::timestamptz", failure_at.to_rfc3339()),
+            )
+        })
+        .unwrap_or_else(|| ("NULL".to_owned(), "NULL".to_owned()));
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "UPDATE owner_intraday_quote_cache \
+                    SET price = 100.25, base_price = 99.00, change_amount = 1.25, \
+                        change_percent = 1.26, direction = 'UP', halted = false, \
+                        received_at = '{at}'::timestamptz - interval '10 seconds', \
+                        last_success_at = '{at}'::timestamptz - interval '10 seconds', \
+                        quote_version = 1, last_attempt_at = '{at}'::timestamptz - interval '1 second', \
+                        last_failure_code = {failure_code}, last_failure_at = {failure_at}, \
+                        updated_at = now() \
+                  WHERE owner_user_id = '{}' AND membership_id = '{}'",
+                owner.user_id, fixture.membership_id
+            ),
+        )
+        .await;
+}
+
+async fn seed_next_generation(
+    harness: &Harness,
+    owner: &UserCtx,
+    fixture: MembershipFixture,
+) -> MembershipFixture {
+    let generation_id = Uuid::new_v4();
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "INSERT INTO owner_equity_instrument_generations \
+                 (id, membership_id, owner_user_id, instrument_id, generation, \
+                  target_observed_sessions, minimum_observed_sessions, observed_sessions, \
+                  first_session, last_session) \
+                 VALUES ('{generation_id}', '{}', '{}', '{INSTRUMENT}', 2, \
+                         261, 121, 121, '2026-04-15', '2026-08-13')",
+                fixture.membership_id, owner.user_id
+            ),
+        )
+        .await;
+    harness
+        .seed_migration_owner(
+            owner,
+            &format!(
+                "INSERT INTO owner_equity_generation_admissions \
+                 (generation_id, owner_user_id, membership_id, instrument_id, generation, \
+                  raw_manifest_sha256, artifact_manifest_sha256, entitlement_sha256, \
+                  capture_code_commit, materializer_code_commit) \
+                 VALUES ('{generation_id}', '{}', '{}', '{INSTRUMENT}', 2, \
+                         'sha256:{}', 'sha256:{}', '{ENTITLEMENT_SHA256}', \
+                         '{CODE_COMMIT}', '{CODE_COMMIT}')",
+                owner.user_id,
+                fixture.membership_id,
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                "2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        )
+        .await;
+    MembershipFixture {
+        membership_id: fixture.membership_id,
+        generation_id,
+        generation: 2,
+    }
 }
 
 fn demand_body(fixture: MembershipFixture) -> Value {
@@ -327,74 +515,92 @@ async fn assert_app_role_and_producer_is_forbidden(harness: &Harness) {
     );
 }
 
-#[tokio::test]
-async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
-    let mut harness = Harness::new().await.expect("DATABASE_URL is required");
-    let owner_fixture = seed_ready_membership(&harness, &harness.owner, INSTRUMENT).await;
-    let other_owner = harness
-        .seed_user(
-            Role::Owner,
-            "intraday-cache-other@lagrange.test",
-            "intraday-cache-other-iss",
-            "intraday-cache-other-sub",
-        )
-        .await;
-    let foreign_fixture = seed_ready_membership(&harness, &other_owner, INSTRUMENT).await;
-    let db_date: NaiveDate =
-        sqlx::query_scalar("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date")
-            .fetch_one(&harness.owner_pool)
-            .await
-            .expect("database KST date");
-    let api_date = current_kst_date(test_clock());
-    assert_eq!(
-        db_date, api_date,
-        "fixture must use the exact current DB KST date"
-    );
-    let window = window_for(db_date);
-    seed_calendar_and_cache(&harness, &harness.owner, owner_fixture, &window, db_date).await;
+fn assert_seed_fingerprints(values: &[String]) {
+    assert_eq!(values.len(), 13);
+    for (index, value) in values.iter().enumerate() {
+        assert_ne!(value, "[]", "fingerprint slot {index} must be seeded");
+    }
+    let eod_rows: Value = serde_json::from_str(&values[12]).expect("EOD fingerprint JSON");
+    assert_eq!(eod_rows.as_array().expect("EOD rows array").len(), 3);
+}
 
-    harness
-        .restart_api_with_intraday_read_config(
-            OwnerIntradayQuoteReadConfig::OwnerOnly {
-                window: Some(window.clone()),
-            },
-            test_clock,
-        )
-        .await;
-    let demand = harness
-        .send(
-            "POST",
-            "/api/v1/research/owner-beta/equity-universe-v2/quote-demands",
-            Some(&harness.owner),
-            true,
-            Some("cache-demand-rid"),
-            Some("cache-demand-key"),
-            Some(demand_body(owner_fixture)),
-        )
-        .await;
-    assert_eq!(status(&demand), StatusCode::OK);
+async fn assert_get_batch(
+    harness: &Harness,
+    path: &str,
+    user: &UserCtx,
+    count: usize,
+    expected: Option<&Value>,
+) -> Value {
+    assert!(matches!(count, 1 | 10 | 100));
+    let before = fingerprint(harness, user.user_id).await;
+    let mut first = None;
+    for _ in 0..count {
+        let response = harness.get(path, Some(user)).await;
+        assert_eq!(status(&response), StatusCode::OK);
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+        let body = Harness::body_json(response).await;
+        if let Some(expected) = expected {
+            assert_eq!(&body, expected);
+        }
+        if first.is_none() {
+            first = Some(body);
+        }
+    }
+    assert_eq!(fingerprint(harness, user.user_id).await, before);
+    first.expect("GET batch has one response")
+}
 
-    assert_app_role_and_producer_is_forbidden(&harness).await;
-    let before = fingerprint(&harness, harness.owner.user_id).await;
+struct CatchUnwindFuture<F> {
+    future: Pin<Box<F>>,
+}
 
-    let path = format!(
-        "{GET_PATH_PREFIX}?membership_id={}&generation=1",
-        owner_fixture.membership_id
-    );
-    let first = harness.get(&path, Some(&harness.owner)).await;
-    assert_eq!(status(&first), StatusCode::OK);
-    assert_eq!(first.headers().get("cache-control").unwrap(), "no-store");
-    let body = Harness::body_json(first).await;
+impl<F: Future> Future for CatchUnwindFuture<F> {
+    type Output = Result<F::Output, Box<dyn Any + Send>>;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        match catch_unwind(AssertUnwindSafe(|| this.future.as_mut().poll(context))) {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
+            Err(payload) => Poll::Ready(Err(payload)),
+        }
+    }
+}
+
+fn catch_unwind_async<F: Future>(future: F) -> CatchUnwindFuture<F> {
+    CatchUnwindFuture {
+        future: Box::pin(future),
+    }
+}
+
+async fn database_now(harness: &Harness) -> DateTime<Utc> {
+    sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&harness.owner_pool)
+        .await
+        .expect("database clock")
+}
+
+fn db_safe_cache_at(api_now: DateTime<Utc>, db_now: DateTime<Utc>) -> DateTime<Utc> {
+    std::cmp::min(
+        api_now - chrono::Duration::seconds(10),
+        db_now - chrono::Duration::seconds(1),
+    )
+}
+
+fn assert_quote_dto(
+    body: &Value,
+    fixture: MembershipFixture,
+    window: &IntradaySessionWindowContract,
+    session_date: NaiveDate,
+) {
     let fields = body
         .as_object()
         .expect("quote DTO")
         .keys()
-        .collect::<Vec<_>>();
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
-        fields
-            .into_iter()
-            .map(String::as_str)
-            .collect::<std::collections::BTreeSet<_>>(),
+        fields,
         [
             "schema_version",
             "membership_id",
@@ -412,15 +618,14 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
         .into_iter()
         .collect()
     );
-    assert_eq!(
-        body["membership_id"],
-        owner_fixture.membership_id.to_string()
-    );
+    assert_eq!(body["schema_version"], 1);
+    assert_eq!(body["membership_id"], fixture.membership_id.to_string());
     assert_eq!(body["instrument_id"], INSTRUMENT);
     assert_eq!(body["venue"], "KRX");
     assert_eq!(body["currency"], "KRW");
-    assert_eq!(body["generation"], 1);
+    assert_eq!(body["generation"], fixture.generation);
     assert_eq!(body["next_poll_after_ms"], 5000);
+    assert_eq!(body["session"]["date"], session_date.to_string());
     assert_eq!(body["session"]["timezone"], "Asia/Seoul");
     assert_eq!(body["session"]["calendar_source"], "kis");
     assert_eq!(
@@ -432,6 +637,7 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
         body["session"]["window_contract_sha256"],
         window.window_contract_sha256()
     );
+    assert!(body.get("owner").is_none() && body.get("generation_id").is_none());
     assert_eq!(body["quote"]["price"], "100.25000000");
     assert_eq!(body["quote"]["base_price"], "99.00000000");
     assert_eq!(body["quote"]["change_from_previous_day"], "1.25000000");
@@ -441,13 +647,81 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
     );
     assert_eq!(body["quote"]["direction"], "UP");
     assert_eq!(body["quote"]["quote_version"], "1");
-    assert!(body["owner"].is_null() && body["generation_id"].is_null());
+}
 
-    let second = harness.get(&path, Some(&harness.owner)).await;
-    assert_eq!(status(&second), StatusCode::OK);
-    assert_eq!(second.headers().get("cache-control").unwrap(), "no-store");
-    assert_eq!(Harness::body_json(second).await, body);
+async fn run_owner_intraday_quote_cache_matrix(harness: &mut Harness) {
+    let owner_fixture = seed_ready_membership(harness, &harness.owner, INSTRUMENT).await;
+    let other_owner = harness
+        .seed_user(
+            Role::Owner,
+            "intraday-cache-other@lagrange.test",
+            "intraday-cache-other-iss",
+            "intraday-cache-other-sub",
+        )
+        .await;
+    let foreign_fixture = seed_ready_membership(harness, &other_owner, INSTRUMENT).await;
+    let db_date: NaiveDate =
+        sqlx::query_scalar("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date")
+            .fetch_one(&harness.owner_pool)
+            .await
+            .expect("database KST date");
+    let db_now = database_now(harness).await;
+    let api_now = api_time_for_date(db_date);
+    set_api_clock(api_now);
+    let api_date = current_kst_date(api_now);
+    assert_eq!(
+        db_date, api_date,
+        "fixture must use the exact current DB KST date"
+    );
+    let window = window_for(db_date);
+    let cache_at = db_safe_cache_at(api_now, db_now);
+    seed_calendar_and_cache(
+        harness,
+        &harness.owner,
+        owner_fixture,
+        &window,
+        db_date,
+        "TRADING",
+        cache_at,
+    )
+    .await;
+    seed_queue_row(harness, &harness.owner).await;
 
+    harness
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::OwnerOnly {
+                window: Some(window.clone()),
+            },
+            injected_api_clock,
+        )
+        .await;
+    let demand = harness
+        .send(
+            "POST",
+            "/api/v1/research/owner-beta/equity-universe-v2/quote-demands",
+            Some(&harness.owner),
+            true,
+            Some("cache-demand-rid"),
+            Some("cache-demand-key"),
+            Some(demand_body(owner_fixture)),
+        )
+        .await;
+    assert_eq!(status(&demand), StatusCode::OK);
+
+    assert_app_role_and_producer_is_forbidden(harness).await;
+    let before = fingerprint(harness, harness.owner.user_id).await;
+    assert_seed_fingerprints(&before);
+
+    let path = format!(
+        "{GET_PATH_PREFIX}?membership_id={}&generation=1",
+        owner_fixture.membership_id
+    );
+    let body = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_quote_dto(&body, owner_fixture, &window, db_date);
+    let _ = assert_get_batch(harness, &path, &harness.owner, 10, Some(&body)).await;
+    let _ = assert_get_batch(harness, &path, &harness.owner, 100, Some(&body)).await;
+
+    let before_auth_errors = fingerprint(harness, harness.owner.user_id).await;
     let unauthenticated = harness.get(&path, None).await;
     assert_error(unauthenticated, StatusCode::UNAUTHORIZED, "SESSION_UNKNOWN").await;
     let expired = harness
@@ -476,12 +750,7 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
         "SESSION_EXPIRED",
     )
     .await;
-    let member_invalid = harness
-        .get(
-            "/api/v1/research/owner-beta/equity-universe-v2/instruments/not-an-instrument/quote?unknown=1",
-            Some(&harness.member),
-        )
-        .await;
+    let member_invalid = harness.get(&path, Some(&harness.member)).await;
     assert_error(member_invalid, StatusCode::FORBIDDEN, "FORBIDDEN").await;
     let owner_invalid = harness
         .get(
@@ -493,6 +762,30 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
         )
         .await;
     assert_error(owner_invalid, StatusCode::BAD_REQUEST, "INVALID_PARAMETER").await;
+    let owner_unknown_query = harness
+        .get(&format!("{path}&unknown=1"), Some(&harness.owner))
+        .await;
+    assert_error(
+        owner_unknown_query,
+        StatusCode::BAD_REQUEST,
+        "INVALID_PARAMETER",
+    )
+    .await;
+    let owner_duplicate_query = harness
+        .get(
+            &format!(
+                "{GET_PATH_PREFIX}?membership_id={}&membership_id={}&generation=1",
+                owner_fixture.membership_id, owner_fixture.membership_id
+            ),
+            Some(&harness.owner),
+        )
+        .await;
+    assert_error(
+        owner_duplicate_query,
+        StatusCode::BAD_REQUEST,
+        "INVALID_PARAMETER",
+    )
+    .await;
     let owner_mismatched_instrument = harness
         .get(
             &format!(
@@ -543,10 +836,16 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
         )
         .await;
     assert_error(missing, StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND").await;
-    assert_eq!(fingerprint(&harness, harness.owner.user_id).await, before);
+    assert_eq!(
+        fingerprint(harness, harness.owner.user_id).await,
+        before_auth_errors
+    );
 
     harness
-        .restart_api_with_intraday_read_config(OwnerIntradayQuoteReadConfig::Disabled, test_clock)
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::Disabled,
+            injected_api_clock,
+        )
         .await;
     let disabled = harness.get(&path, Some(&harness.owner)).await;
     assert_eq!(status(&disabled), StatusCode::OK);
@@ -556,7 +855,138 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
     assert_eq!(disabled_body["freshness"], "UNAVAILABLE");
     assert_eq!(disabled_body["reason_code"], "FEATURE_DISABLED");
     assert!(disabled_body["session"].is_null() && disabled_body["quote"].is_null());
-    assert_eq!(fingerprint(&harness, harness.owner.user_id).await, before);
+    assert_eq!(
+        fingerprint(harness, harness.owner.user_id).await,
+        before_auth_errors
+    );
+
+    harness
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::OwnerOnly {
+                window: Some(window.clone()),
+            },
+            injected_api_clock,
+        )
+        .await;
+    set_demand_expiry(harness, &harness.owner, owner_fixture, false).await;
+    let no_demand = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(no_demand["market_state"], "OPEN");
+    assert_eq!(no_demand["freshness"], "RECENT");
+    assert_eq!(no_demand["reason_code"], "NO_ACTIVE_DEMAND");
+    assert!(no_demand["quote"].is_object());
+
+    set_demand_expiry(harness, &harness.owner, owner_fixture, true).await;
+    set_cache_pending(harness, &harness.owner, owner_fixture, cache_at).await;
+    let pending = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(pending["market_state"], "OPEN");
+    assert_eq!(pending["freshness"], "UNAVAILABLE");
+    assert_eq!(pending["reason_code"], "QUOTE_PENDING");
+    assert!(pending["quote"].is_null());
+
+    set_cache_good(
+        harness,
+        &harness.owner,
+        owner_fixture,
+        cache_at,
+        Some(("PROVIDER_TIMEOUT", cache_at)),
+    )
+    .await;
+    let failure = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(failure["market_state"], "OPEN");
+    assert_eq!(failure["freshness"], "RECENT");
+    assert_eq!(failure["reason_code"], "PROVIDER_TIMEOUT");
+    assert!(failure["quote"].is_object());
+
+    set_cache_good(harness, &harness.owner, owner_fixture, cache_at, None).await;
+    let stale_at = std::cmp::min(
+        api_now - chrono::Duration::seconds(31),
+        database_now(harness).await - chrono::Duration::seconds(1),
+    );
+    set_cache_good(harness, &harness.owner, owner_fixture, stale_at, None).await;
+    let stale = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(stale["market_state"], "OPEN");
+    assert_eq!(stale["freshness"], "STALE");
+    assert_eq!(stale["reason_code"], "QUOTE_STALE");
+    harness
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::OwnerOnly {
+                window: Some(window.clone()),
+            },
+            injected_api_clock,
+        )
+        .await;
+    let restarted_stale = assert_get_batch(harness, &path, &harness.owner, 1, Some(&stale)).await;
+    assert_eq!(restarted_stale, stale);
+
+    set_cache_good(harness, &harness.owner, owner_fixture, cache_at, None).await;
+    harness
+        .seed_migration_owner(
+            &harness.owner,
+            &format!(
+                "UPDATE owner_intraday_quote_cache SET session_date = '{}' \
+                  WHERE owner_user_id = '{}' AND membership_id = '{}'",
+                db_date - chrono::Duration::days(1),
+                harness.owner.user_id,
+                owner_fixture.membership_id
+            ),
+        )
+        .await;
+    let old_session = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(old_session["reason_code"], "QUOTE_PENDING");
+    assert!(old_session["quote"].is_null());
+
+    harness
+        .seed_migration_owner(
+            &harness.owner,
+            &format!(
+                "UPDATE owner_intraday_quote_cache SET session_date = '{}', \
+                        window_contract_sha256 = 'sha256:{}' \
+                  WHERE owner_user_id = '{}' AND membership_id = '{}'",
+                db_date,
+                "a".repeat(64),
+                harness.owner.user_id,
+                owner_fixture.membership_id
+            ),
+        )
+        .await;
+    let old_hash = assert_get_batch(harness, &path, &harness.owner, 1, None).await;
+    assert_eq!(old_hash["reason_code"], "QUOTE_PENDING");
+    assert!(old_hash["quote"].is_null());
+
+    let next_fixture = seed_next_generation(harness, &harness.owner, owner_fixture).await;
+    let next_path = format!(
+        "{GET_PATH_PREFIX}?membership_id={}&generation=2",
+        next_fixture.membership_id
+    );
+    let next_demand = harness
+        .send(
+            "POST",
+            "/api/v1/research/owner-beta/equity-universe-v2/quote-demands",
+            Some(&harness.owner),
+            true,
+            Some("cache-next-demand-rid"),
+            Some("cache-next-demand-key"),
+            Some(demand_body(next_fixture)),
+        )
+        .await;
+    assert_eq!(status(&next_demand), StatusCode::OK);
+    let before_new_admission_gets = fingerprint(harness, harness.owner.user_id).await;
+    let old_generation = harness.get(&path, Some(&harness.owner)).await;
+    assert_error(old_generation, StatusCode::NOT_FOUND, "RESOURCE_NOT_FOUND").await;
+    let current_generation = harness.get(&next_path, Some(&harness.owner)).await;
+    assert_eq!(status(&current_generation), StatusCode::OK);
+    assert_eq!(
+        current_generation.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+    let current_generation_body = Harness::body_json(current_generation).await;
+    assert_eq!(current_generation_body["generation"], 2);
+    assert_eq!(current_generation_body["reason_code"], "QUOTE_PENDING");
+    assert!(current_generation_body["quote"].is_null());
+    assert_eq!(
+        fingerprint(harness, harness.owner.user_id).await,
+        before_new_admission_gets
+    );
 
     harness
         .seed_migration_owner(
@@ -571,17 +1001,146 @@ async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
     harness
         .restart_api_with_intraday_read_config(
             OwnerIntradayQuoteReadConfig::OwnerOnly {
-                window: Some(window),
+                window: Some(window.clone()),
             },
-            test_clock,
+            injected_api_clock,
         )
         .await;
-    let disabled_identity = harness.get(&path, Some(&harness.owner)).await;
+    let disabled_identity = harness.get(&next_path, Some(&harness.owner)).await;
     assert_error(
         disabled_identity,
         StatusCode::NOT_FOUND,
         "RESOURCE_NOT_FOUND",
     )
     .await;
+}
+
+#[tokio::test]
+async fn owner_intraday_quote_cache_get_is_read_only_and_owner_scoped() {
+    let Some(mut harness) = Harness::new().await else {
+        return;
+    };
+    let result = catch_unwind_async(run_owner_intraday_quote_cache_matrix(&mut harness)).await;
     harness.teardown().await;
+    if let Err(payload) = result {
+        resume_unwind(payload);
+    }
+}
+
+async fn run_intraday_quote_evidence_matrix(harness: &mut Harness) {
+    let fixture = seed_ready_membership(harness, &harness.owner, INSTRUMENT).await;
+    let db_date: NaiveDate =
+        sqlx::query_scalar("SELECT (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date")
+            .fetch_one(&harness.owner_pool)
+            .await
+            .expect("database KST date");
+    let api_now = api_time_for_date(db_date);
+    set_api_clock(api_now);
+    let window = window_for(db_date);
+    let path = format!(
+        "{GET_PATH_PREFIX}?membership_id={}&generation=1",
+        fixture.membership_id
+    );
+
+    harness
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::OwnerOnly {
+                window: Some(window.clone()),
+            },
+            injected_api_clock,
+        )
+        .await;
+    let missing_calendar = harness.get(&path, Some(&harness.owner)).await;
+    assert_eq!(status(&missing_calendar), StatusCode::OK);
+    assert_eq!(
+        missing_calendar.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
+    let missing_calendar_body = Harness::body_json(missing_calendar).await;
+    assert_eq!(missing_calendar_body["market_state"], "UNKNOWN");
+    assert_eq!(missing_calendar_body["freshness"], "UNAVAILABLE");
+    assert_eq!(missing_calendar_body["reason_code"], "CALENDAR_UNAVAILABLE");
+    assert!(missing_calendar_body["session"].is_null());
+    assert!(missing_calendar_body["quote"].is_null());
+
+    let db_now = database_now(harness).await;
+    seed_calendar_and_cache(
+        harness,
+        &harness.owner,
+        fixture,
+        &window,
+        db_date,
+        "CLOSED",
+        db_safe_cache_at(api_now, db_now),
+    )
+    .await;
+    harness
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::OwnerOnly {
+                window: Some(window.clone()),
+            },
+            injected_api_clock,
+        )
+        .await;
+    let disagreement = harness.get(&path, Some(&harness.owner)).await;
+    assert_eq!(status(&disagreement), StatusCode::OK);
+    let disagreement_body = Harness::body_json(disagreement).await;
+    assert_eq!(disagreement_body["market_state"], "UNKNOWN");
+    assert_eq!(disagreement_body["freshness"], "UNAVAILABLE");
+    assert_eq!(
+        disagreement_body["reason_code"],
+        "SESSION_WINDOW_UNAVAILABLE"
+    );
+    assert!(disagreement_body["session"].is_null() && disagreement_body["quote"].is_null());
+
+    harness
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::OwnerOnly { window: None },
+            injected_api_clock,
+        )
+        .await;
+    let missing_window = harness.get(&path, Some(&harness.owner)).await;
+    assert_eq!(status(&missing_window), StatusCode::OK);
+    let missing_window_body = Harness::body_json(missing_window).await;
+    assert_eq!(missing_window_body["market_state"], "UNKNOWN");
+    assert_eq!(
+        missing_window_body["reason_code"],
+        "SESSION_WINDOW_UNAVAILABLE"
+    );
+    assert!(missing_window_body["session"].is_null() && missing_window_body["quote"].is_null());
+
+    let closed_window = window_for_kind(db_date, "CLOSED", None, None);
+    harness
+        .restart_api_with_intraday_read_config(
+            OwnerIntradayQuoteReadConfig::OwnerOnly {
+                window: Some(closed_window),
+            },
+            injected_api_clock,
+        )
+        .await;
+    let closed = harness.get(&path, Some(&harness.owner)).await;
+    assert_eq!(status(&closed), StatusCode::OK);
+    let closed_body = Harness::body_json(closed).await;
+    assert_eq!(closed_body["market_state"], "CLOSED");
+    assert_eq!(closed_body["freshness"], "UNAVAILABLE");
+    assert_eq!(closed_body["reason_code"], "SESSION_CLOSED");
+    assert!(closed_body["session"].is_object() && closed_body["quote"].is_null());
+}
+
+#[tokio::test]
+async fn owner_intraday_quote_cache_evidence_states_are_real_role_read_only() {
+    let Some(mut harness) = Harness::new().await else {
+        return;
+    };
+    let result = catch_unwind_async(run_intraday_quote_evidence_matrix(&mut harness)).await;
+    harness.teardown().await;
+    if let Err(payload) = result {
+        resume_unwind(payload);
+    }
+}
+
+#[tokio::test]
+async fn async_projection_scenario_panic_is_captured_before_teardown() {
+    let result = catch_unwind_async(async { panic!("synthetic WP4-C3 scenario failure") }).await;
+    assert!(result.is_err());
 }

@@ -434,14 +434,10 @@ pub fn project_owner_intraday_quote(
         eligible_failure(record, now)
             .map(reason_from_failure)
             .or_else(|| {
-                let aged_out = usable_quote.is_none()
-                    && record.last_success_at.is_some_and(|success| {
-                        age_since(success, now).is_some_and(|age| age >= Duration::hours(24))
-                    });
                 let stale_quote = usable_quote
                     .as_ref()
                     .is_some_and(|(_, freshness)| *freshness == IntradayQuoteFreshness::Stale);
-                if aged_out || stale_quote {
+                if stale_quote {
                     Some(IntradayQuoteReasonCode::QuoteStale)
                 } else if usable_quote.is_none() {
                     Some(IntradayQuoteReasonCode::QuotePending)
@@ -516,8 +512,6 @@ fn valid_calendar(calendar: &IntradayCalendarReadState, now: DateTime<Utc>) -> b
     calendar.session_date == now.with_timezone(&kst).date_naive()
         && !calendar.calendar_source_batch_id.is_nil()
         && canonical_unprefixed_sha256(&calendar.calendar_content_sha256)
-        && calendar.observed_at <= now
-        && age_since(calendar.observed_at, now).is_some_and(|age| age <= Duration::hours(36))
 }
 
 fn calendar_agrees_with_window(
@@ -997,6 +991,15 @@ mod tests {
         open: Option<&str>,
         close: Option<&str>,
     ) -> Arc<IntradaySessionWindowContract> {
+        window_with_evidence(disposition, open, close, "2026-09-07T15:00:00Z")
+    }
+
+    fn window_with_evidence(
+        disposition: &str,
+        open: Option<&str>,
+        close: Option<&str>,
+        evidence_retrieved_at: &str,
+    ) -> Arc<IntradaySessionWindowContract> {
         let bytes = serde_json::to_vec(&json!({
             "schema_version": 1,
             "exchange": "KRX",
@@ -1007,13 +1010,22 @@ mod tests {
                 "open_local": open,
                 "close_local": close,
                 "evidence_url": "https://global.krx.co.kr/contents/test",
-                "evidence_retrieved_at": "2026-09-07T15:00:00Z",
+                "evidence_retrieved_at": evidence_retrieved_at,
                 "evidence_sha256": format!("sha256:{}", "b".repeat(64)),
             }],
         }))
         .unwrap();
         let hash = format!("sha256:{:x}", Sha256::digest(&bytes));
         Arc::new(IntradaySessionWindowContract::from_bytes(&bytes, &hash).unwrap())
+    }
+
+    fn kst(hour: u32, minute: u32, second: u32) -> DateTime<Utc> {
+        FixedOffset::east_opt(9 * 60 * 60)
+            .unwrap()
+            .from_local_datetime(&date().and_hms_opt(hour, minute, second).unwrap())
+            .single()
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     fn config(window: Option<Arc<IntradaySessionWindowContract>>) -> OwnerIntradayQuoteReadConfig {
@@ -1074,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_disabled_and_evidence_gates_are_fail_closed() {
+    fn projection_disabled_and_calendar_window_gates_are_fail_closed() {
         let owner = identity(true);
         let disabled = project_owner_intraday_quote(
             &OwnerIntradayQuoteReadConfig::Disabled,
@@ -1098,21 +1110,68 @@ mod tests {
             Some(IntradayQuoteReasonCode::CalendarUnavailable)
         );
 
-        let stale = calendar(
+        let old_read_time = calendar(
             IntradayCalendarDisposition::Trading,
             now() - Duration::hours(36) - Duration::seconds(1),
         );
         let result = project(
             true,
-            &stale,
+            &old_read_time,
+            window("REGULAR", Some("09:00:00"), Some("15:30:00")),
+            None,
+            now(),
+        );
+        assert_eq!(result.market_state, IntradayQuoteMarketState::Open);
+        assert_eq!(result.freshness, IntradayQuoteFreshness::Unavailable);
+        assert_eq!(
+            result.reason_code,
+            Some(IntradayQuoteReasonCode::QuotePending)
+        );
+        assert!(result.session.is_some());
+
+        let mut invalid_calendar = calendar(IntradayCalendarDisposition::Trading, now());
+        invalid_calendar.calendar_source_batch_id = Uuid::nil();
+        let invalid = project(
+            true,
+            &invalid_calendar,
             window("REGULAR", Some("09:00:00"), Some("15:30:00")),
             None,
             now(),
         );
         assert_eq!(
-            result.reason_code,
+            invalid.reason_code,
             Some(IntradayQuoteReasonCode::CalendarUnavailable)
         );
+        let unavailable = project_owner_intraday_quote(
+            &config(Some(window("REGULAR", Some("09:00:00"), Some("15:30:00")))),
+            &owner,
+            Some(&calendar(IntradayCalendarDisposition::Trading, now())),
+            None,
+            true,
+            now(),
+        );
+        assert_eq!(
+            unavailable.reason_code,
+            Some(IntradayQuoteReasonCode::CalendarUnavailable)
+        );
+
+        let db_read_after_api_sample = calendar(
+            IntradayCalendarDisposition::Trading,
+            now() + Duration::milliseconds(1),
+        );
+        let result = project(
+            true,
+            &db_read_after_api_sample,
+            window("REGULAR", Some("09:00:00"), Some("15:30:00")),
+            None,
+            now(),
+        );
+        assert_eq!(result.market_state, IntradayQuoteMarketState::Open);
+        assert_eq!(
+            result.reason_code,
+            Some(IntradayQuoteReasonCode::QuotePending)
+        );
+        assert!(result.session.is_some());
 
         let rollover = calendar(IntradayCalendarDisposition::Trading, now());
         let result = project(
@@ -1129,6 +1188,36 @@ mod tests {
     }
 
     #[test]
+    fn projection_aged_out_quote_is_pending_without_a_usable_last_good() {
+        let at = now();
+        let cal = calendar(IntradayCalendarDisposition::Trading, at);
+        let win = window("REGULAR", Some("09:00:00"), Some("15:30:00"));
+        let mut record = cache(&identity(true), &cal, &win, at);
+        let exactly_at_boundary = at - Duration::hours(24);
+        record.received_at = Some(exactly_at_boundary);
+        record.last_success_at = Some(exactly_at_boundary);
+        record.last_attempt_at = at - Duration::seconds(1);
+        let stale = project(true, &cal, win.clone(), Some(&record), at);
+        assert_eq!(stale.freshness, IntradayQuoteFreshness::Stale);
+        assert_eq!(stale.reason_code, Some(IntradayQuoteReasonCode::QuoteStale));
+        assert!(stale.quote.is_some());
+
+        let aged_out = at - Duration::hours(24) - Duration::milliseconds(1);
+        record.received_at = Some(aged_out);
+        record.last_success_at = Some(aged_out);
+        record.last_attempt_at = at - Duration::seconds(1);
+
+        let result = project(true, &cal, win, Some(&record), at);
+        assert_eq!(result.market_state, IntradayQuoteMarketState::Open);
+        assert_eq!(result.freshness, IntradayQuoteFreshness::Unavailable);
+        assert_eq!(
+            result.reason_code,
+            Some(IntradayQuoteReasonCode::QuotePending)
+        );
+        assert!(result.quote.is_none());
+    }
+
+    #[test]
     fn projection_open_freshness_demand_and_failure_precedence_are_independent() {
         let at = now();
         let cal = calendar(IntradayCalendarDisposition::Trading, at);
@@ -1140,7 +1229,13 @@ mod tests {
         assert_eq!(recent.freshness, IntradayQuoteFreshness::Recent);
         assert!(recent.reason_code.is_none() && recent.quote.is_some());
 
-        record.last_success_at = Some(at - Duration::seconds(31));
+        record.last_success_at = Some(at - Duration::seconds(30));
+        record.received_at = record.last_success_at;
+        let exact_recent = project(true, &cal, win.clone(), Some(&record), at);
+        assert_eq!(exact_recent.freshness, IntradayQuoteFreshness::Recent);
+        assert!(exact_recent.reason_code.is_none());
+
+        record.last_success_at = Some(at - Duration::seconds(30) - Duration::milliseconds(1));
         record.received_at = record.last_success_at;
         let stale = project(true, &cal, win.clone(), Some(&record), at);
         assert_eq!(stale.freshness, IntradayQuoteFreshness::Stale);
@@ -1307,22 +1402,22 @@ mod tests {
     fn projection_session_boundaries_closed_halted_and_closed_calendar_are_exact() {
         let cal = calendar(IntradayCalendarDisposition::Trading, now());
         let win = window("REGULAR", Some("09:00:00"), Some("15:30:00"));
-        let mut record = cache(&identity(true), &cal, &win, now());
-        let open_cal = calendar(
-            IntradayCalendarDisposition::Trading,
-            Utc.with_ymd_and_hms(2026, 9, 7, 15, 0, 0).single().unwrap(),
+        let before_open = project(true, &cal, win.clone(), None, kst(8, 59, 59));
+        assert_eq!(before_open.market_state, IntradayQuoteMarketState::Closed);
+        assert_eq!(
+            before_open.reason_code,
+            Some(IntradayQuoteReasonCode::SessionClosed)
         );
-        let open_boundary = project(
-            true,
-            &open_cal,
-            win.clone(),
-            None,
-            Utc.with_ymd_and_hms(2026, 9, 8, 0, 0, 0).single().unwrap(),
-        );
+
+        let open_boundary = project(true, &cal, win.clone(), None, kst(9, 0, 0));
         assert_eq!(open_boundary.market_state, IntradayQuoteMarketState::Open);
 
-        let close = Utc.with_ymd_and_hms(2026, 9, 8, 6, 30, 0).single().unwrap();
-        let closed_boundary = project(true, &cal, win.clone(), Some(&record), close);
+        let before_close = project(true, &cal, win.clone(), None, kst(15, 29, 59));
+        assert_eq!(before_close.market_state, IntradayQuoteMarketState::Open);
+
+        let close = kst(15, 30, 0);
+        let record_at_close = cache(&identity(true), &cal, &win, close);
+        let closed_boundary = project(true, &cal, win.clone(), Some(&record_at_close), close);
         assert_eq!(
             closed_boundary.market_state,
             IntradayQuoteMarketState::Closed
@@ -1333,6 +1428,7 @@ mod tests {
         );
         assert!(closed_boundary.quote.is_some());
 
+        let mut record = cache(&identity(true), &cal, &win, now());
         record.halted = Some(true);
         let halted = project(true, &cal, win.clone(), Some(&record), now());
         assert_eq!(halted.market_state, IntradayQuoteMarketState::Halted);
@@ -1351,6 +1447,15 @@ mod tests {
             Some(IntradayQuoteReasonCode::SessionClosed)
         );
         assert!(closed.quote.is_none());
+
+        let special = window("SPECIAL", Some("10:00:00"), Some("14:00:00"));
+        let special_open = project(true, &cal, special.clone(), None, kst(10, 0, 0));
+        assert_eq!(special_open.market_state, IntradayQuoteMarketState::Open);
+        let special_closed = project(true, &cal, special, None, kst(14, 0, 0));
+        assert_eq!(
+            special_closed.market_state,
+            IntradayQuoteMarketState::Closed
+        );
     }
 
     #[test]
@@ -1362,18 +1467,112 @@ mod tests {
             closed.reason_code,
             Some(IntradayQuoteReasonCode::SessionWindowUnavailable)
         );
+        let closed_calendar = calendar(IntradayCalendarDisposition::Closed, at);
+        let reverse = project(
+            true,
+            &closed_calendar,
+            window("REGULAR", Some("09:00:00"), Some("15:30:00")),
+            None,
+            at,
+        );
+        assert_eq!(
+            reverse.reason_code,
+            Some(IntradayQuoteReasonCode::SessionWindowUnavailable)
+        );
+
+        let future_evidence = window_with_evidence(
+            "REGULAR",
+            Some("09:00:00"),
+            Some("15:30:00"),
+            "2026-09-08T15:00:00Z",
+        );
+        let future_window = project(true, &cal, future_evidence, None, at);
+        assert_eq!(
+            future_window.reason_code,
+            Some(IntradayQuoteReasonCode::SessionWindowUnavailable)
+        );
+        let prior_day_evidence = window_with_evidence(
+            "REGULAR",
+            Some("09:00:00"),
+            Some("15:30:00"),
+            "2026-09-06T15:00:00Z",
+        );
+        let prior_window = project(true, &cal, prior_day_evidence, None, at);
+        assert_eq!(
+            prior_window.reason_code,
+            Some(IntradayQuoteReasonCode::SessionWindowUnavailable)
+        );
 
         let win = window("REGULAR", Some("09:00:00"), Some("15:30:00"));
         let mut record = cache(&identity(true), &cal, &win, at);
-        record.membership_id = Uuid::from_u128(99);
-        let mismatch = project(true, &cal, win.clone(), Some(&record), at);
-        assert_eq!(
-            mismatch.reason_code,
-            Some(IntradayQuoteReasonCode::QuotePending)
-        );
-        assert!(mismatch.quote.is_none());
+        for mismatch in [
+            {
+                record.owner_user_id = Uuid::from_u128(99);
+                record.clone()
+            },
+            {
+                record.owner_user_id = Uuid::from_u128(1);
+                record.membership_id = Uuid::from_u128(99);
+                record.clone()
+            },
+            {
+                record.membership_id = Uuid::from_u128(1);
+                record.generation_id = Uuid::from_u128(99);
+                record.clone()
+            },
+            {
+                record.generation_id = Uuid::from_u128(3);
+                record.clone()
+            },
+            {
+                record.generation = 2;
+                record.clone()
+            },
+            {
+                record.generation = 1;
+                record.instrument_id = "229200.KRX".to_owned();
+                record.clone()
+            },
+            {
+                record.instrument_id = INSTRUMENT.to_owned();
+                record.session_date = Some(date() - Duration::days(1));
+                record.clone()
+            },
+            {
+                record.session_date = Some(date());
+                record.calendar_source = Some("other".to_owned());
+                record.clone()
+            },
+            {
+                record.calendar_source = Some("kis".to_owned());
+                record.calendar_source_version = Some("other".to_owned());
+                record.clone()
+            },
+            {
+                record.calendar_source_version = Some("kis-chk-holiday-v1:schema-1".to_owned());
+                record.calendar_source_batch_id = Some(Uuid::from_u128(99));
+                record.clone()
+            },
+            {
+                record.calendar_source_batch_id = Some(Uuid::from_u128(4));
+                record.calendar_content_sha256 = Some("d".repeat(64));
+                record.clone()
+            },
+            {
+                record.calendar_content_sha256 = Some(CALENDAR_HASH.to_owned());
+                record.window_contract_sha256 = Some("sha256:wrong".to_owned());
+                record.clone()
+            },
+        ] {
+            let mismatch = project(true, &cal, win.clone(), Some(&mismatch), at);
+            assert_eq!(
+                mismatch.reason_code,
+                Some(IntradayQuoteReasonCode::QuotePending)
+            );
+            assert!(mismatch.quote.is_none());
+        }
 
-        record.membership_id = Uuid::from_u128(2);
+        record = cache(&identity(true), &cal, &win, at);
         record.quote_version = 0;
         let invalid = project(true, &cal, win.clone(), Some(&record), at);
         assert_eq!(invalid.freshness, IntradayQuoteFreshness::Unavailable);
@@ -1381,6 +1580,28 @@ mod tests {
             invalid.reason_code,
             Some(IntradayQuoteReasonCode::QuotePending)
         );
+
+        for incomplete_field in 0..8 {
+            let mut incomplete = cache(&identity(true), &cal, &win, at);
+            match incomplete_field {
+                0 => incomplete.price = None,
+                1 => incomplete.base_price = None,
+                2 => incomplete.change_amount = None,
+                3 => incomplete.change_percent = None,
+                4 => incomplete.direction = None,
+                5 => incomplete.halted = None,
+                6 => incomplete.received_at = None,
+                7 => incomplete.last_success_at = None,
+                _ => unreachable!(),
+            }
+            let result = project(true, &cal, win.clone(), Some(&incomplete), at);
+            assert_eq!(result.freshness, IntradayQuoteFreshness::Unavailable);
+            assert_eq!(
+                result.reason_code,
+                Some(IntradayQuoteReasonCode::QuotePending)
+            );
+            assert!(result.quote.is_none());
+        }
 
         record.quote_version = 1;
         record.last_success_at = Some(at + Duration::seconds(1));
