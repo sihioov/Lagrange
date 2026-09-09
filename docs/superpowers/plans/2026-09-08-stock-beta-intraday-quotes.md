@@ -4291,3 +4291,59 @@ only verified ACCEPT permits integration. C documentation/diagrams/invocation re
   direct read-only ACK and exact checkout/scope inspection (not merely the old B1 ACCEPT report).
   Writer9ba07de6 idle clean. Replaced heartbeata077177c with207b9d45. Send terminal36583 may
   remain waiting normally; no resend/interrupt. B2 still UNINTEGRATED pending independent verdict.
+
+### WP6-B2-R REJECT / B2-F1 exact test-evidence remediation (2026-09-09)
+
+- Reviewer5f6d978f is IDLE REJECT: two Medium test-evidence findings (two forbidden-service cases
+  mutate worker environment; duplicate-key case is unbalanced malformed JSON), plus Low ambiguous
+  inclusive counter wording. Coordinator recovered full report/logs and reconfirmed exact source.
+  Actual overlay/checker protections meet frozen contract; independent correct service insertions
+  exit1 COMPOSE_OVERLAY_SERVICES_INVALID and balanced duplicate exit1 COMPOSE_OVERLAY_DUPLICATE_KEY.
+  Current cases instead exit1 ENVIRONMENT_INVALID / JSON_INVALID. No runtime source defect found.
+- Independent checks complete: syntax/JSON/static and focused regex69, baseline1, A11, reported
+  overlay24 with above three gaps, B1mut3, validator77 (13 pass64 expected failure), aggregate35/
+  total36; seven guarded offline regressions all0. Exact3files+447/-5 cleanaa0b414. Base SHA256
+  07f66eb04af3083db6496e5a9914f979f24b319d2ad05e5557b031cd72b232bb unchanged; no release selection.
+  Engine merge/interpolation still UNVERIFIED by instruction. B2 remains UNINTEGRATED.
+- B2-F1 reuses original idle writer9ba07de6-c67e-4b92-b26d-39010f0549c4 Codex luna/max
+  auto-review (first rejection, no model/effort change). Simple/high-confidence bounded fixture fix,
+  same ops workspacewks_42028f6f939c65ac cleanbaseaa0b41460dc4db4e0b6508cd419947c31a42b15d.
+  Own ONLY scripts/ops/stock-beta-intraday-self-test.sh. ALL other files BYTE UNCHANGED, including
+  overlay/static checker/base/env/provision/validator/schema/artifact/release/Rust/apps/docs.
+  Read this complete brief, preceding frozen B2 brief and fullspec at coordinator absolute paths.
+
+1. Before editing, reproduce the actual existing three fixture failures using the SAME checker in
+   private copies: two wrong ENVIRONMENT_INVALID markers, duplicate JSON_INVALID and ordinary JSON
+   syntax failure. Record actual exits/markers. No tracked checker edits or invented test evidence.
+2. Fix web-override to add services["web"] with an otherwise well-formed environment/volumes
+   object. Fix materializer-override similarly using literal research-stock-price-beta-materialize.
+   Keep all six authorized service objects untouched and assert the intended new service exists.
+   Both fixtures must parse as ordinary JSON and SAME checker must exit1 with exact
+   COMPOSE_OVERLAY_SERVICES_INVALID, not merely any nonzero or environment error.
+3. Duplicate fixture must be syntactically valid JSON with duplicate api-server keys in services,
+   both values identical to the valid baseline API object. Use balanced serialization/insertion;
+   ordinary json.loads must succeed and return baseline-equivalent object (its permissive duplicate
+   handling is only fixture syntax control). Count actual duplicate occurrences with a pairs hook
+   or equivalent fixture assertion so an ordinary no-duplicate baseline cannot masquerade as case.
+   SAME unmodified checker must exit1 COMPOSE_OVERLAY_DUPLICATE_KEY, not JSON_INVALID. Assert exact
+   markers for these three cases through an optional expected-code helper argument or local helper;
+   preserve current checks for all other cases. No broad harness or checker rewrite.
+4. Preserve independent fresh baseline per mutation, pristine positive, all existing 24 overlay
+   negatives and A11/B1mut3/regex69/validator77 snapshots. Correct final summary to show separate A
+   count and overlay count plus clearly inclusive total; derive counts from executed cases, no
+   fabricated constants. Avoid double-counting overlay24 as additional to inclusive35. Do not
+   expand cases outside these findings or reopen previously accepted semantics/limits.
+5. Syntax self-test; focused actual static/self-test complete summaries/counts/exits; seven guarded
+   offline regressions named in B2 brief after inspecting guards, fake-root/fakeDocker fixtures ONLY.
+   Confirm all others byte-equivalent, diffcheck, commit ONLY self-test and clean tree. Report
+   files/lines, pre/post exact exits/markers, full commands/counts, deviations/reasons, unresolved/
+   follow-up and notverified explicitly none when empty. Actual Compose engine remains UNVERIFIED.
+
+No actual Docker/Compose/DB/root/sudo/provider/network/credentials/accounts/orders/opt/hostenvclock/
+Rust/compiler/Cargo/build/npm/install/liveops/activation/deploy/mainmerge/push/siblingsearch. Own
+mktemp/fakeroot subprocess fixtures only, no QA activity. No production code or configuration edits,
+new files, dependency installation, other-worktree links, or docs/diagram edits. If scope or required
+capability conflicts, report before expanding. No overall decision blocker: perform this bounded fix.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No Paseo run/send/daemon start/restart. Coordinator full one-file delta review then reuse sol/high
+reviewer; no integration before Medium findings resolved. C and activation gates unchanged.
