@@ -2544,3 +2544,36 @@ Native subagents: prohibited for worker packages
 - C1 writer `41b84c11-a9ad-47f8-b71f-cbb803357762` (Codex luna/max, auto-review)
   launched in isolated API workspace at clean `949d450`. Profile notes/provider verified.
   C0 and all older workers are idle; only C1 owns the three files and compiler/QA test slot.
+
+### WP4-C1 completion / independent review (2026-09-09)
+
+- Writer idle clean at `461b4e99be0159e20c9c1b386c1bfb10ddd344c6`, parent
+  `949d4502e7d47973bd6931a037f284bffa49f8e5`, UNINTEGRATED. Exactly three owned files,
+  +882/-7: additive132 production lines, new732-line test, minimal optional harness setup.
+  Coordinator recovered full report/logs and read complete production/support delta and all tests.
+  Existing proof/cache/producer methods are unchanged in the additive-only production diff.
+- Writer reports new calendar5, quotes24, read-state1, producer6 all PASS/no skips, strict four
+  target clippy/fmt/diff PASS. Sandbox-only loopback denial followed by identical passing precise
+  escalation. Treat these as reported until independent C1-R checks.
+- NEW independent terra/high auto-review C1-R is read-only in API worktree at `461b4e9`.
+  Review exact prior C1 brief and all three files: canonical TRADING/CLOSED joins, one clock/SQL
+  snapshot, all three retrieval ages, invalid-vs-infrastructure distinction, nil actor, global
+  calendar versus private actor scope, no writes/locks/new authority, unchanged old functions.
+- Independently run the four exact job-queue targets (calendar5, quotes24, read1, producer6)
+  and scoped strict clippy/fmt/diff, serial locked/offline jobs2 and DBthreads1. Fixed QA URL
+  and own per-test DB only; no Docker lifecycle, source edits, grants/schema or additional tests.
+  Verify complete actual counts and no skipped DB results rather than accepting counts alone.
+- Assess evidence limits proportionately, with no predetermined finding: positive fixture is
+  one hour old, stale37h, future1h (no near36h positive); bad type also mismatches immutable
+  type; pool-based actor-setting check precedes repeated reads; run_without_calendar cleans up
+  Result errors but test assertions that panic may bypass cleanup. Defensive duplicate branch
+  is schema-unreachable; constraints are inspected, not bypassed. Source can complement bounded
+  coverage, but report any real blocker with concrete file:line/reproduction evidence.
+- Report ACCEPT/REJECT with severity, exact source/test evidence, complete commands/counts,
+  deviations and unresolved/not verified explicitly none when empty. Do not reopen prior WP4-B
+  or producer findings and do not implement a fix. Only coordinator may integrate after ACCEPT
+  and then freeze GET/config scope; no overall API completion or activation claim.
+
+- Independent reviewer `47d0abde-0c58-4486-9699-f8c8ae723367` (Codex terra/high,
+  auto-review) launched read-only at `461b4e9`. Profile notes/provider verified; C1 writer
+  and all older workers idle. Only this reviewer owns the sequential compiler/QA slot.
