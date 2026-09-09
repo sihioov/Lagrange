@@ -2070,3 +2070,23 @@ Native subagents: prohibited for worker packages
 2. Read full fix and independent scoped acceptance before F2 detailed brief. No integration of
    original WP4-B or fixes before all High/Medium findings are resolved and regression evidence accepted.
 3. GET/config remains next package; no user decision block or actual collection activation.
+
+### WP4-B-F1 completion / bounded re-review (2026-09-09)
+
+- Writer idle clean at `7c1988f2b3e8d9c2ced8d728b6c9e05dc6676651`, parent `9f9e904`;
+  exactly three authorized files (+493/-107). Reports pre-fix real HTTP statuses
+  `[200,204,204,200,204]` instead of404, then HTTP5/chart4/B1quotes24/readstate1/OpenAPI14/lib85
+  and strict clippy/fmt/diff pass. Current invalidation matrix includes six cases; do not conflate
+  the reported five-case initial repro with all final cases. F2 OpenAPI maximum remains unresolved.
+- Coordinator read the full three-file delta. Same-transaction guarded entrypoints replace the
+  adapter preflight and check after owner/demand locks. New test observes an ungranted matching
+  advisory lock and committed disable before POST replay proceeds. No extra grants/row locks.
+- Independent F1 re-review must specifically confirm/refute a possible old-B1 regression:
+  the shared renewal refactor removed the unconditional retained-row/admission comparison, while
+  `demand_matches_admission` is now only checked when `require_current_identity=true`.
+  Could an old public caller reuse a consumer with another READY membership/current generation
+  and extend the original row? Existing B1 semantics must remain unchanged, not merely its tests.
+  Also inspect stale adapter documentation, barrier identity/cleanup and coverage proportionately.
+- Original reviewer `4b2c514f-a69f-4562-949c-68b1b1675618` receives read-only bounded F1
+  re-review; no F2 fix, no integration yet. Preserve previously accepted limits instead of reopening
+  unrelated producer/EOD scope.
