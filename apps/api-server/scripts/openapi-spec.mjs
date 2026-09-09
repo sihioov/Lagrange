@@ -96,6 +96,18 @@ const ROUTES = [
     idem: true,
     audit: true,
   }],
+  ["POST", "/api/v1/research/owner-beta/equity-universe-v2/quote-demands", {
+    owner: true,
+    ownerIntradayQuotes: true,
+    mutating: true,
+    idem: true,
+  }],
+  ["DELETE", "/api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}", {
+    owner: true,
+    ownerIntradayQuotes: true,
+    mutating: true,
+    idem: true,
+  }],
   ["GET", "/api/v1/research/owner-beta/equity-universe-v2/signals/latest", {
     owner: true,
     ownerEquityV2: true,
@@ -210,6 +222,10 @@ const ERROR_CODES = [
   ["OWNER_EQUITY_INTEGRITY_FAILED", 503],
   ["OWNER_EQUITY_CHART_UNAVAILABLE", 503],
   ["OWNER_EQUITY_SNAPSHOT_UNAVAILABLE", 503],
+  ["IDEMPOTENCY_MISMATCH", 409],
+  ["QUOTE_DEMAND_SEQUENCE_CONFLICT", 409],
+  ["QUOTE_DEMAND_CAPACITY", 429],
+  ["QUOTE_CACHE_UNAVAILABLE", 503],
   ["REBALANCE_PREVIEW_CAPACITY_EXCEEDED", 429],
   ["REBALANCE_PREVIEW_BINDING_REQUIRED", 409],
   ["REBALANCE_PREVIEW_NOT_READY", 409],
@@ -234,6 +250,19 @@ if (ERROR_CODES_SET.size !== ERROR_CODES.length) {
 const ENVELOPE = { $ref: "#/components/schemas/ErrorEnvelope" };
 
 function errorResponses(route) {
+  if (route?.[2]?.ownerIntradayQuotes) {
+    return {
+      "400": { $ref: "#/components/responses/Error400" },
+      "401": { $ref: "#/components/responses/Error401" },
+      "403": { $ref: "#/components/responses/Error403" },
+      "404": { $ref: "#/components/responses/Error404" },
+      "409": { $ref: "#/components/responses/Error409" },
+      "413": { $ref: "#/components/responses/Error413" },
+      "429": { $ref: "#/components/responses/Error429" },
+      "500": { $ref: "#/components/responses/Error500" },
+      "503": { $ref: "#/components/responses/Error503" },
+    };
+  }
   if (route?.[2]?.ownerBetaSupportedAsOf) {
     return {
       "401": { $ref: "#/components/responses/Error401" },
@@ -305,6 +334,8 @@ function operation(route) {
           ? "Owner role; sealed historical price-only input"
           : flags.ownerBetaPriceRead
           ? "Owner role; actor-scoped sealed historical price-only read model"
+          : flags.ownerIntradayQuotes
+          ? "Owner role; actor-scoped durable intraday quote demand lease"
           : owner
           ? "Owner role; all admin operations are audited"
           : shared
@@ -319,6 +350,12 @@ function operation(route) {
       idempotency: mutating
         ? natural
           ? { required: false, natural: true, note: "idempotent by nature; no key required" }
+          : flags.ownerIntradayQuotes
+          ? {
+              required: idemRequired,
+              header: "Idempotency-Key",
+              replay: "same key + same body + renewal sequence returns the durable demand result; mismatch is 409 IDEMPOTENCY_MISMATCH",
+            }
           : {
               required: idemRequired,
               header: "Idempotency-Key",
@@ -347,7 +384,7 @@ function operation(route) {
   };
 
   for (const [n, k] of Object.entries(pathParams(path))) {
-    const schema = n === "membership_id"
+    const schema = n === "membership_id" || n === "demand_id"
       ? { type: "string", format: "uuid" }
       : n === "instrument_id" && flags.ownerEquityV2
         ? { type: "string", pattern: "^[0-9]{6}\\.KRX$" }
@@ -371,6 +408,19 @@ function operation(route) {
   if (flags.ownerEquityV2Chart) {
     op.parameters.push(param("snapshot_id", "query", { type: "string", format: "uuid" }, true));
     op.parameters.push(param("range", "query", { $ref: "#/components/schemas/OwnerEquityV2ChartRange" }, true));
+  }
+  if (flags.ownerIntradayQuotes) {
+    op.parameters.push(param(
+      "Idempotency-Key",
+      "header",
+      {
+        type: "string",
+        minLength: 1,
+        maxLength: 128,
+        description: "Visible ASCII, excluding colon and backslash; only a digest is stored.",
+      },
+      true,
+    ));
   }
 
   if ((mutating && flags.noBody !== true) || flags.body === true) {
@@ -428,6 +478,12 @@ function successResponsesFor(method, path) {
   }
   if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrument_id}/chart" && method === "get") {
     return { "200": json("Snapshot-pinned owner equity EOD chart from a verified admitted artifact", "#/components/schemas/OwnerEquityV2Chart") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/quote-demands" && method === "post") {
+    return { "200": json("Owner intraday quote demand lease", "#/components/schemas/OwnerIntradayQuoteDemand") };
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}" && method === "delete") {
+    return { "204": { description: "Owner intraday quote demand lease released; exact replay is also empty" } };
   }
   if (path === "/api/v1/recommendations/owner-beta/price-only/runs" && method === "get") {
     return { "200": json("Owner-beta price-only recommendation history", "#/components/schemas/OwnerBetaPriceOnlyReadPage") };
@@ -496,6 +552,12 @@ function bodySchemaRef(path) {
   if (path === "/api/v1/research/owner-beta/equity-universe-v2/memberships") {
     return "#/components/schemas/OwnerEquityV2AddBody";
   }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/quote-demands") {
+    return "#/components/schemas/OwnerIntradayQuoteDemandBody";
+  }
+  if (path === "/api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}") {
+    return "#/components/schemas/OwnerIntradayQuoteReleaseBody";
+  }
   if (path === "/api/v1/research/owner-beta/equity-universe-v2/signals/screen") {
     return "#/components/schemas/OwnerEquityV2ScreenBody";
   }
@@ -518,6 +580,22 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (flags.ownerIntradayQuotes) {
+    return [
+      "SESSION_UNKNOWN",
+      "SESSION_EXPIRED",
+      "FORBIDDEN",
+      "CSRF_DENIED",
+      "INVALID_PARAMETER",
+      "RESOURCE_NOT_FOUND",
+      "IDEMPOTENCY_MISMATCH",
+      "QUOTE_DEMAND_SEQUENCE_CONFLICT",
+      "QUOTE_DEMAND_CAPACITY",
+      "QUOTE_CACHE_UNAVAILABLE",
+      "PAYLOAD_TOO_LARGE",
+      "INTERNAL",
+    ];
+  }
   if (flags.ownerBetaEquitySignals) {
     const codes = [
       "SESSION_UNKNOWN",
@@ -1222,6 +1300,54 @@ const SCHEMAS = {
     additionalProperties: false,
     properties: {
       instrument_code: { type: "string", pattern: "^[0-9]{6}$", example: "005930" },
+    },
+  },
+  OwnerIntradayQuoteDemandBody: {
+    type: "object",
+    required: ["schema_version", "consumer_id", "membership_id", "generation", "renewal_sequence"],
+    additionalProperties: false,
+    properties: {
+      schema_version: { type: "integer", const: 1 },
+      consumer_id: uuid,
+      membership_id: uuid,
+      generation: { type: "integer", minimum: 1, maximum: 9223372036854775807 },
+      renewal_sequence: { type: "integer", minimum: 0, maximum: 9223372036854775807 },
+    },
+  },
+  OwnerIntradayQuoteReleaseBody: {
+    type: "object",
+    required: ["schema_version", "consumer_id", "renewal_sequence"],
+    additionalProperties: false,
+    properties: {
+      schema_version: { type: "integer", const: 1 },
+      consumer_id: uuid,
+      renewal_sequence: { type: "integer", minimum: 0, maximum: 9223372036854775807 },
+    },
+  },
+  OwnerIntradayQuoteDemand: {
+    type: "object",
+    required: [
+      "schema_version",
+      "demand_id",
+      "consumer_id",
+      "membership_id",
+      "instrument_id",
+      "generation",
+      "renewal_sequence",
+      "lease_expires_at",
+      "renew_after_ms",
+    ],
+    additionalProperties: false,
+    properties: {
+      schema_version: { type: "integer", const: 1 },
+      demand_id: uuid,
+      consumer_id: uuid,
+      membership_id: uuid,
+      instrument_id: { type: "string", pattern: "^[0-9]{6}\\.KRX$" },
+      generation: { type: "integer", minimum: 1, maximum: 9223372036854775807 },
+      renewal_sequence: { type: "integer", minimum: 0, maximum: 9223372036854775807 },
+      lease_expires_at: ts,
+      renew_after_ms: { type: "integer", const: 15000 },
     },
   },
   OwnerEquityV2Lifecycle: {

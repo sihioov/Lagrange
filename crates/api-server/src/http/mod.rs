@@ -17,6 +17,7 @@ pub mod middleware;
 pub mod notifications;
 pub mod owner_beta;
 pub mod owner_equity_v2;
+pub mod owner_intraday_quotes;
 pub mod pagination;
 pub mod paper;
 pub mod recommendations;
@@ -338,6 +339,14 @@ pub fn api_router(state: ApiState) -> Router {
         .route(
             "/research/owner-beta/equity-universe-v2/memberships/{membership_id}/disable",
             post(owner_equity_v2::disable_membership),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/quote-demands",
+            post(owner_intraday_quotes::create_or_renew),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}",
+            axum::routing::delete(owner_intraday_quotes::release),
         )
         .route(
             "/research/owner-beta/equity-universe-v2/signals/latest",

@@ -361,6 +361,11 @@ impl ApiState {
     pub fn owner_equity_v2(&self) -> crate::repos::owner_equity_v2::OwnerEquityV2Repo {
         crate::repos::owner_equity_v2::OwnerEquityV2Repo::new(self.app_pool.clone())
     }
+    pub fn owner_intraday_quotes(
+        &self,
+    ) -> crate::repos::owner_intraday_quotes::OwnerIntradayQuoteRepo {
+        crate::repos::owner_intraday_quotes::OwnerIntradayQuoteRepo::new(self.app_pool.clone())
+    }
     pub fn candidates(&self) -> CandidateRepo {
         CandidateRepo::with_close_clock(
             self.app_pool.clone(),

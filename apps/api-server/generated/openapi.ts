@@ -376,6 +376,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/research/owner-beta/equity-universe-v2/quote-demands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** POST /api/v1/research/owner-beta/equity-universe-v2/quote-demands */
+        post: operations["post__api_v1_research_owner_beta_equity_universe_v2_quote_demands"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** DELETE /api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id} */
+        delete: operations["delete__api_v1_research_owner_beta_equity_universe_v2_quote_demands__demand_id_"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/research/owner-beta/equity-universe-v2/signals/latest": {
         parameters: {
             query?: never;
@@ -1301,7 +1335,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "IDEMPOTENCY_MISMATCH" | "QUOTE_DEMAND_SEQUENCE_CONFLICT" | "QUOTE_DEMAND_CAPACITY" | "QUOTE_CACHE_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1623,6 +1657,40 @@ export interface components {
         OwnerEquityV2AddBody: {
             /** @example 005930 */
             instrument_code: string;
+        };
+        OwnerIntradayQuoteDemandBody: {
+            /** @constant */
+            schema_version: 1;
+            /** Format: uuid */
+            consumer_id: string;
+            /** Format: uuid */
+            membership_id: string;
+            generation: number;
+            renewal_sequence: number;
+        };
+        OwnerIntradayQuoteReleaseBody: {
+            /** @constant */
+            schema_version: 1;
+            /** Format: uuid */
+            consumer_id: string;
+            renewal_sequence: number;
+        };
+        OwnerIntradayQuoteDemand: {
+            /** @constant */
+            schema_version: 1;
+            /** Format: uuid */
+            demand_id: string;
+            /** Format: uuid */
+            consumer_id: string;
+            /** Format: uuid */
+            membership_id: string;
+            instrument_id: string;
+            generation: number;
+            renewal_sequence: number;
+            /** Format: date-time */
+            lease_expires_at: string;
+            /** @constant */
+            renew_after_ms: 15000;
         };
         /** @enum {string} */
         OwnerEquityV2Lifecycle: "REQUESTED" | "VALIDATING" | "BACKFILLING" | "MATERIALIZING" | "READY" | "INSUFFICIENT_HISTORY" | "FAILED" | "DISABLED";
@@ -3372,6 +3440,76 @@ export interface operations {
             429: components["responses"]["Error429"];
             500: components["responses"]["Error500"];
             501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    post__api_v1_research_owner_beta_equity_universe_v2_quote_demands: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerIntradayQuoteDemandBody"];
+            };
+        };
+        responses: {
+            /** @description Owner intraday quote demand lease */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerIntradayQuoteDemand"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    delete__api_v1_research_owner_beta_equity_universe_v2_quote_demands__demand_id_: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                demand_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerIntradayQuoteReleaseBody"];
+            };
+        };
+        responses: {
+            /** @description Owner intraday quote demand lease released; exact replay is also empty */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
             503: components["responses"]["Error503"];
         };
     };

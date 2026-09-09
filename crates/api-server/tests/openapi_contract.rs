@@ -273,6 +273,166 @@ fn openapi_owner_equity_v2_routes_and_dtos_are_exact() {
 }
 
 #[test]
+fn openapi_owner_intraday_quote_demand_routes_and_dtos_are_exact() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let paths = spec["paths"].as_object().expect("paths object");
+    let base = "/api/v1/research/owner-beta/equity-universe-v2/quote-demands";
+    let release_path = format!("{base}/{{demand_id}}");
+    assert!(
+        paths[base]
+            .as_object()
+            .expect("quote demand path")
+            .contains_key("post")
+    );
+    assert!(
+        !paths[base]
+            .as_object()
+            .expect("quote demand path")
+            .contains_key("get"),
+        "WP4-B must not advertise the deferred cache GET"
+    );
+    let post = &paths[base]["post"];
+    let delete = &paths[&release_path]["delete"];
+
+    for (method, operation) in [("post", post), ("delete", delete)] {
+        assert_eq!(operation["x-lagrange"]["ownership"]["owner_only"], true);
+        assert_eq!(operation["x-lagrange"]["entitlement"]["use"], Value::Null);
+        assert_eq!(operation["x-lagrange"]["audit"]["writer"], Value::Null);
+        assert_eq!(operation["x-lagrange"]["cache"]["policy"], "no-store");
+        assert_eq!(operation["x-lagrange"]["idempotency"]["required"], true);
+        assert_eq!(operation["parameters"][0]["required"], true);
+        let key_parameter = operation["parameters"]
+            .as_array()
+            .expect("operation parameters")
+            .iter()
+            .find(|parameter| parameter["name"] == "Idempotency-Key")
+            .unwrap_or_else(|| panic!("{method} must require Idempotency-Key"));
+        assert_eq!(key_parameter["in"], "header");
+        assert_eq!(key_parameter["schema"]["minLength"], 1);
+        assert_eq!(key_parameter["schema"]["maxLength"], 128);
+        assert!(
+            key_parameter["schema"]["description"]
+                .as_str()
+                .expect("key description")
+                .contains("excluding colon and backslash")
+        );
+        assert_eq!(
+            operation["x-lagrange"]["errors"],
+            serde_json::json!([
+                "SESSION_UNKNOWN",
+                "SESSION_EXPIRED",
+                "FORBIDDEN",
+                "CSRF_DENIED",
+                "INVALID_PARAMETER",
+                "RESOURCE_NOT_FOUND",
+                "IDEMPOTENCY_MISMATCH",
+                "QUOTE_DEMAND_SEQUENCE_CONFLICT",
+                "QUOTE_DEMAND_CAPACITY",
+                "QUOTE_CACHE_UNAVAILABLE",
+                "PAYLOAD_TOO_LARGE",
+                "INTERNAL"
+            ])
+        );
+    }
+
+    assert_eq!(
+        post["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerIntradayQuoteDemandBody"
+    );
+    assert_eq!(
+        delete["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerIntradayQuoteReleaseBody"
+    );
+    assert_eq!(
+        post["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerIntradayQuoteDemand"
+    );
+    assert!(
+        delete["responses"]["204"]["content"].is_null(),
+        "DELETE 204 must be bodyless"
+    );
+    let path_parameter = delete["parameters"]
+        .as_array()
+        .expect("DELETE parameters")
+        .iter()
+        .find(|parameter| parameter["name"] == "demand_id")
+        .expect("demand_id path parameter");
+    assert_eq!(path_parameter["schema"]["format"], "uuid");
+
+    let schemas = &spec["components"]["schemas"];
+    let exact_fields = [
+        (
+            "OwnerIntradayQuoteDemandBody",
+            [
+                "schema_version",
+                "consumer_id",
+                "membership_id",
+                "generation",
+                "renewal_sequence",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        ),
+        (
+            "OwnerIntradayQuoteReleaseBody",
+            ["schema_version", "consumer_id", "renewal_sequence"]
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+        ),
+        (
+            "OwnerIntradayQuoteDemand",
+            [
+                "schema_version",
+                "demand_id",
+                "consumer_id",
+                "membership_id",
+                "instrument_id",
+                "generation",
+                "renewal_sequence",
+                "lease_expires_at",
+                "renew_after_ms",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        ),
+    ];
+    for (name, expected) in exact_fields {
+        let schema = &schemas[name];
+        assert_eq!(schema["additionalProperties"], false, "{name} is closed");
+        let actual = schema["properties"]
+            .as_object()
+            .expect("schema properties")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected, "{name} fields changed");
+        let required = schema["required"]
+            .as_array()
+            .expect("schema required")
+            .iter()
+            .map(|field| field.as_str().expect("required field"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(required, expected, "{name} required fields changed");
+    }
+    assert_eq!(
+        schemas["OwnerIntradayQuoteDemandBody"]["properties"]["schema_version"]["const"],
+        1
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteReleaseBody"]["properties"]["schema_version"]["const"],
+        1
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteDemand"]["properties"]["renew_after_ms"]["const"],
+        15_000
+    );
+    assert_eq!(
+        schemas["OwnerIntradayQuoteDemand"]["properties"]["instrument_id"]["pattern"],
+        "^[0-9]{6}\\.KRX$"
+    );
+}
+
+#[test]
 fn openapi_contract_every_operation_has_required_metadata() {
     let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
     let spec_paths = spec["paths"].as_object().expect("paths");
@@ -368,6 +528,9 @@ fn openapi_contract_error_codes_match_constants() {
         "PAYLOAD_TOO_LARGE",
         "IDEMPOTENCY_KEY_REQUIRED",
         "IDEMPOTENCY_KEY_MISMATCH",
+        "QUOTE_DEMAND_SEQUENCE_CONFLICT",
+        "QUOTE_DEMAND_CAPACITY",
+        "QUOTE_CACHE_UNAVAILABLE",
     ] {
         assert!(const_codes.contains(stable), "stable code {stable} missing");
     }

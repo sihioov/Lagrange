@@ -15,6 +15,7 @@ pub mod ops;
 pub mod order_intents;
 pub mod owner_beta;
 pub mod owner_equity_v2;
+pub mod owner_intraday_quotes;
 pub mod paper;
 pub mod parity;
 pub mod pending_targets;

@@ -2440,6 +2440,232 @@
         }
       }
     },
+    "/api/v1/research/owner-beta/equity-universe-v2/quote-demands": {
+      "post": {
+        "operationId": "post__api_v1_research_owner_beta_equity_universe_v2_quote_demands",
+        "summary": "POST /api/v1/research/owner-beta/equity-universe-v2/quote-demands",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Visible ASCII, excluding colon and backslash; only a digest is stored."
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner intraday quote demand lease",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerIntradayQuoteDemand"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-scoped durable intraday quote demand lease"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body + renewal sequence returns the durable demand result; mismatch is 409 IDEMPOTENCY_MISMATCH"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "IDEMPOTENCY_MISMATCH",
+            "QUOTE_DEMAND_SEQUENCE_CONFLICT",
+            "QUOTE_DEMAND_CAPACITY",
+            "QUOTE_CACHE_UNAVAILABLE",
+            "PAYLOAD_TOO_LARGE",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerIntradayQuoteDemandBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}": {
+      "delete": {
+        "operationId": "delete__api_v1_research_owner_beta_equity_universe_v2_quote_demands__demand_id_",
+        "summary": "DELETE /api/v1/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "demand_id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Visible ASCII, excluding colon and backslash; only a digest is stored."
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Owner intraday quote demand lease released; exact replay is also empty"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-scoped durable intraday quote demand lease"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + same body + renewal sequence returns the durable demand result; mismatch is 409 IDEMPOTENCY_MISMATCH"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "IDEMPOTENCY_MISMATCH",
+            "QUOTE_DEMAND_SEQUENCE_CONFLICT",
+            "QUOTE_DEMAND_CAPACITY",
+            "QUOTE_CACHE_UNAVAILABLE",
+            "PAYLOAD_TOO_LARGE",
+            "INTERNAL"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerIntradayQuoteReleaseBody"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/research/owner-beta/equity-universe-v2/signals/latest": {
       "get": {
         "operationId": "get__api_v1_research_owner_beta_equity_universe_v2_signals_latest",
@@ -8226,6 +8452,10 @@
           "OWNER_EQUITY_INTEGRITY_FAILED",
           "OWNER_EQUITY_CHART_UNAVAILABLE",
           "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE",
+          "IDEMPOTENCY_MISMATCH",
+          "QUOTE_DEMAND_SEQUENCE_CONFLICT",
+          "QUOTE_DEMAND_CAPACITY",
+          "QUOTE_CACHE_UNAVAILABLE",
           "REBALANCE_PREVIEW_CAPACITY_EXCEEDED",
           "REBALANCE_PREVIEW_BINDING_REQUIRED",
           "REBALANCE_PREVIEW_NOT_READY",
@@ -9582,6 +9812,120 @@
             "type": "string",
             "pattern": "^[0-9]{6}$",
             "example": "005930"
+          }
+        }
+      },
+      "OwnerIntradayQuoteDemandBody": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "consumer_id",
+          "membership_id",
+          "generation",
+          "renewal_sequence"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "consumer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "membership_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854776000
+          },
+          "renewal_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854776000
+          }
+        }
+      },
+      "OwnerIntradayQuoteReleaseBody": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "consumer_id",
+          "renewal_sequence"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "consumer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "renewal_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854776000
+          }
+        }
+      },
+      "OwnerIntradayQuoteDemand": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "demand_id",
+          "consumer_id",
+          "membership_id",
+          "instrument_id",
+          "generation",
+          "renewal_sequence",
+          "lease_expires_at",
+          "renew_after_ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "demand_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "consumer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "membership_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "instrument_id": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9223372036854776000
+          },
+          "renewal_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854776000
+          },
+          "lease_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "renew_after_ms": {
+            "type": "integer",
+            "const": 15000
           }
         }
       },
