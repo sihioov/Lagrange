@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-2B·WP-5·WP-3A·WP-3B1·WP-3B2a 통합 완료; WP-3B2b 수집 루프 연결 진행; 운영 활성화 미실행
+상태: WP-1~5 및 WP-6 설정·운영 안내서 통합 완료; WP6-C2 다이어그램 진행 중; WP-7 전체 리뷰·WP-8 최종 통합 QA 미완료; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
