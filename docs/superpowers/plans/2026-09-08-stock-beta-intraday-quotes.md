@@ -4250,3 +4250,38 @@ only verified ACCEPT permits integration. C documentation/diagrams/invocation re
   fallback acknowledgement; this proves provider start, not implementation/test completion or yet
   a full-brief-read claim. No redirect/resend. All prior workers/reviewer idle.
   Replaced heartbeatcda75f12 with a077177c. Only active worker above; no B2 acceptance yet.
+
+### WP6-B2 completion / independent acceptance review (2026-09-09)
+
+- Writer9ba07de6 is IDLE clean at aa0b41460dc4db4e0b6508cd419947c31a42b15d, parent039a458.
+  Exact three owned files +447/-5, UNINTEGRATED. Coordinator recovered full final/logs and read
+  FULL three-file delta. Overlay matches frozen six-service source contract; base unchanged.
+  Writer reports strict JSON/syntax/static exit0, regex69/A11/overlay24 rejected/validator77 and
+  seven guarded offline regressions exit0. No deviations reported. Actual Compose engine remains
+  UNVERIFIED by instruction; no activation, no installed-release consumption claim.
+- B2-R reuse idle reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 Codex sol/high auto-review,
+  ops workspacewks_42028f6f939c65ac pinnedaa0b414. Intermediate/high-confidence read-only task.
+  Read full frozen B2 brief/fullspec and exact three-file delta. No source/docs edits or commits.
+  Independently verify exact environments/binds, no fallback/create_host_path false, default off,
+  API only mode/hash+RO window, no Web/provider-free/new services, unchanged base and release paths.
+  No wider design or previously accepted B1-limit reopening. Overlay source checking is not a
+  general YAML/Compose engine, and engine execution is forbidden; preserve explicit limitation.
+- Confirm/refute coordinator source concerns proportionately, no predetermined verdict:
+  web-override and materializer-override mutate research-worker environment instead of adding the
+  named service keys, so they do not execute the required service-exclusion cases; duplicate key
+  fixture inserts another opening api-server object without balancing it, apparently malformed JSON
+  rather than well-formed duplicate-key JSON. Existing exact_keys/unique_object source appears to
+  enforce protections but distinguish source evidence from tests that actually prove each case.
+  Inspect final checker_mutations aggregation (A11+overlay24) versus report wording. No new executed
+  coordinator repro claimed. Bounded private actual-checker probes allowed to settle these questions.
+- Independently complete syntax/strict JSON/static/self-test with all actual counts/exits and seven
+  guarded offline regression commands named in B2 brief. Inspect guards first; fake-root/private
+  fixture/fakeDocker ONLY, no actual Docker/Compose/DB/root/sudo/provider/network/build/compiler/
+  Cargo/npm/install/credentials/accounts/orders/opt/hostenvclock/liveops/deploy/mainmerge/push or
+  sibling search. QA retained untouched. All other files byte-equivalent, clean scope evidence.
+  Report ACCEPT/REJECT severity/fileline/repro/impact; commands/counts/exits; deviations/reasons;
+  unresolved/follow-up/notverified explicitly none when empty. Coordinator owns final verdict.
+  Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+  No Paseo run/send/daemon start/restart. No integration until all High/Medium resolved. If findings,
+  bounded original writer follow-up first rejection retains luna/max; otherwise integrate exact B2
+  then freeze C docs/diagrams/invocation. No redundant C3/132-test IV or idle transition gap.
