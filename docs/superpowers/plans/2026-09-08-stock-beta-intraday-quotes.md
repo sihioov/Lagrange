@@ -3442,3 +3442,10 @@ Native subagents: prohibited for worker packages
   explicit none if empty. Accepted EOD3/adminRoleabsence/cleanupcapture-only/npm limits remain.
 - Coordinator gate: inspect independent evidence, bounded follow-up only if concrete unresolved
   Medium; otherwise accept exact C3 chain and advance authorized next package promptly.
+
+- F2-R active binding: follow-up delivered to idle reviewer1c3827ae-711c-4d8f-8f66-2ce6e8039970
+  Codex sol/high auto-review. Startup wait returned timeout with new F2 acknowledgment and actual
+  git/brief inspection at75c764aa. Only reviewer is active; writer e3fed58b idle/clean. Send CLI
+  terminal63224 may wait normally; do not resend or interrupt. Coordinator independently compared
+  production prefix SHA256083287d7172592e234b0a8e8abfe30e51d4b602e7ffb27d271090c3a47271963
+  identical on both commits. Replace heartbeatc2e8deb1 to target F2-R.
