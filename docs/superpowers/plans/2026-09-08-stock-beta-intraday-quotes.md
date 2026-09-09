@@ -3269,3 +3269,8 @@ Native subagents: prohibited for worker packages
   requirements, deviations/unresolved/not verified explicit none if empty. Coordinator evaluates
   proportionality, then bounded fix if needed (model-only tier increase upon confirmed repeat
   failure) or acceptance/integration; no redundant mapping or overall API completion claim.
+
+- F1-R follow-up delivered to idle reviewer1c3827ae-711c-4d8f-8f66-2ce6e8039970,
+  Codex sol/high auto-review. Startup wait reports timeout with new acknowledgment of bounded
+  two-file re-review and serial QA. Only this reviewer is active; writer39da45eb is idle.
+  Send terminal52488 may wait normally: do not resend/interrupt. Replace heartbeat accordingly.
