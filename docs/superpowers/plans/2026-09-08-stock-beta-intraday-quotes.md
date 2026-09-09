@@ -2195,3 +2195,84 @@ Native subagents: prohibited for worker packages
   These are writer-reported counts until independent verification, not automatic acceptance.
 - No integration yet. F2 rounded OpenAPI maximum remains separate and pending; do not reopen
   accepted unrelated producer/EOD limits or require extra source changes without a concrete finding.
+
+### WP4-B-F1b ACCEPT / F2 exact integer serialization (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- Independent F1b-R ACCEPT, no findings: direct legacy4 (2.57s), HTTP5 (5.36s), B1quotes24
+  (31.16s complete summary), readstate1 (0.77s), strict clippy all four targets/fmt/diff pass.
+  Exact three-file clean source `3f97d1c` accepted; no integration until remaining F2 resolved.
+- F2 fixes only five OpenAPI maximum values for intraday request/response generation/sequence,
+  currently rounded to 9223372036854776000 instead of exact 9223372036854775807. API wire types
+  remain integers and runtime bigint limits remain unchanged; no MAX_SAFE_INTEGER policy change.
+- Coordinator verified root Node engine >=24 <25, CI Node24, local24.13.1 with JSON.rawJSON.
+  Read-only experiment setting the five bounds to JSON.rawJSON("9223372036854775807") serialized
+  all five exactly and passed installed openapi-typescript generation with unchanged number types.
+  Existing generator JSON.stringify(build()) requires no change for this solution.
+- Installed dependencies exist at coordinator node_modules, absent in API worktree. Existing
+  modules may be reused via a temporary, untracked API-worktree node_modules symlink only if absent;
+  remove only that symlink after checks, never its target. No package installation or network.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-B-F2 | intermediate | Exact serialization capability and generator compatibility verified; focused boundary assertions | high | Existing dependency harness or raw JSON handling contradicts experiment: report, no adjacent rewrite |
+| WP4-B-F2-R | intermediate | Exact wire contract/generated artifact audit | high | Rounded or string-valued bounds, drift or changed runtime semantics require fix |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-B-F2 | 1 | intermediate | Serialize exact bigint bounds | Four files below | F1b ACCEPT | NEW luna/max auto-review | scoped commit and failing-before/passing-after boundary tests | OpenAPI Rust tests, regeneration/typecheck, scoped clippy/fmt |
+| WP4-B-F2-R | 2 | intermediate | Independent acceptance | read-only delta | F2 complete | terra/high | ACCEPT/REJECT | exact five numeric bounds and clean generation |
+
+#### Worker brief: WP4-B-F2
+
+- API worktree `/data/worktrees/3puw275b/stock-beta-intraday-api`, workspace
+  `wks_3249856abbf32750`, clean base `3f97d1c1641c54f1ae007daf3ebbf711b85c9d97`.
+  Read root AGENTS and current coordinator plan/full spec, not stale worktree plan.
+- Own ONLY `apps/api-server/scripts/openapi-spec.mjs`, `apps/api-server/openapi.json`,
+  `apps/api-server/generated/openapi.ts` (only if regeneration changes it), and
+  `crates/api-server/tests/openapi_contract.rs` for focused tests. Existing openapi-check.mjs,
+  package manifests/locks, runtime Rust, HTTP/DB tests, shared harnesses remain read-only.
+- Use one clearly named exact constant from JSON.rawJSON("9223372036854775807") for the five
+  intraday maxima: DemandBody generation/renewal_sequence, ReleaseBody renewal_sequence,
+  Demand response generation/renewal_sequence. Preserve integer/minima/schema shapes and all
+  unrelated schemas. No string-valued maximum, rounded Number conversion, text replacement
+  serializer, broad generator rewrite, dependency or Node version change.
+- Add regression BEFORE fix that parses committed JSON through serde_json and checks each exact
+  maximum via as_u64 against i64::MAX as u64; do not compare JS floating point numbers. Assert
+  integer types and existing minima. Use raw JSON numeric literals to verify request DTO u64
+  parsing plus existing public IntradayQuoteDemandRequest/ReleaseRequest validation accepts the
+  numeric domain at i64::MAX and rejects i64::MAX+1 and the previously rounded value. This is
+  parameter validation evidence, not successful DB sequence/capacity mutation at those values.
+  No production behavior changes. If APIs needed for the test are inaccessible, report first.
+- Run existing `npm run openapi:check --workspace @lagrange/api-server` with existing deps only;
+  expected first drift regeneration then second clean generation/typecheck, exact JSON diff and
+  unchanged generated type semantics. The temporary node_modules symlink target is exactly
+  `/data/worktrees/3puw275b/enhanced-pig/node_modules`, no edits through it; remove link on completion.
+- Sequential `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true cargo test -p api-server --test
+  openapi_contract --locked --offline`; scoped clippy -D warnings, fmt/diff. No DB needed.
+  Report complete counts and initial exact-bound failure separately; no skipped test claims.
+- No actual provider/external network/account/order/operational DB/root/Next/browser/migration/
+  Cargo/Compose/producer/KIS/collector/runner/Web/ops/deploy/main merge/push or activation.
+  Retain coordinator QA untouched for later work. Do not edit coordinator docs or integrate.
+- Report full commit/parent, exact files/lines, deviations/reasons, commands/counts/results,
+  before/after exact boundary proof, clean regeneration, unresolved/unverified explicitly none
+  when empty. Commit only owned files; stop idle, no further delegation or inferred requirements.
+
+#### Coordinator gates
+
+1. Clean source and profile/provider checked before launching only F2; all old workers idle.
+2. Inspect exact diff/results and independent F2-R acceptance before integrating WP4-B chain.
+3. After verified integration/regressions, freeze cache GET/config scope separately. Still no live
+   activation or overall user decision block; accepted previous findings are not reopened.
+
+- F2 writer `b51d39ed-cb1e-4635-abad-3fffad52e193` (Codex luna/max, auto-review) launched
+  in the isolated API workspace at `3f97d1c`. Current profile notes/provider checked; F1b writer
+  and independent reviewer are idle. Only F2 now owns the scoped files/compiler.
