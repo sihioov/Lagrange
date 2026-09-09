@@ -4084,3 +4084,38 @@ No Paseo run/send/daemon start/restart.
   Startup wait timeout includes direct-assignment ACK, exact checkout checks and instruction reads.
   Original writer50c5f35c and reviewer5f6d978f idle. Replaced88696a5f with heartbeat5c0747fd.
   No implementation/tests or acceptance claimed yet; no integration.
+
+### WP6-B1-F2 completion / acceptance re-review (2026-09-09)
+
+- Writer873f830e-bc8e-480c-8fa6-2abecea4ffa4 terra/max is IDLE clean at
+  039a458564aedf54c2e297877fd4f8c6335de98e, parent8f1db6b95f7afb28fa5116679e0ffca31a72ff0d.
+  Exact two files +90/-5. Coordinator recovered full result/logs and read FULL two-file delta.
+  B1+F1+F2 remain UNINTEGRATED. Production delta only skips empty operands, applies existing
+  resolve_config_path before realpath-m and retains global artifacts_dir/requiredness unchanged.
+- Writer reports actual same-validator private pre exit0 -> post exit1 protected-overlap; syntax/
+  static/self-test PASS with regex69, A baseline+11 negatives, B1 mutations3, validator77 (13 positive/
+  64 expected failures; prior68+9), all seven guarded offline regressions exit0. Added representative
+  data/raw-sibling positives in provision/validator fixtures. Scope/hash/clean PASS; no deviations or
+  unresolved items reported; uutils/socket-simulation limits retained. No operational activity.
+- B1-F2-R: reuse idle reviewer5f6d978f-5da0-41de-a269-b64e53d4dbf9 Codex sol/high auto-review,
+  same ops workspace wks_42028f6f939c65ac pinned039a458. Intermediate/high-confidence bounded
+  conclusion-only task, NO source/docs/commits. Read full F2 brief/full spec and exact two-file delta.
+  Verify remaining relative-artifact Medium and representative sibling Low resolved, preserving
+  prior accepted path/filetype/exit/hash/snapshot behavior. No broad new audit or old-limit reopening.
+  Assess the different-cwd test proportionately: config and invocation-cwd are siblings, so ../artifact
+  points to the same place from both; source explicitly calls env-dir helper, but fixture alone does
+  not discriminate a cwd-base regression. Also distinguish overlap failure from invalid parent
+  metadata in ancestry fixtures by exact error evidence where needed. No predetermined finding.
+- Independently run complete focused syntax/static/self-test counts plus seven offline regressions
+  named in B1 brief; guard inspection/private fake-root only. Bounded throwaway actual-script repro
+  allowed, no tracked patch. Verify production comparisons use env-file-dir, nonoverlap/empty/absent
+  partial-scope compatibility, unchanged serving/release absolute constraint, exact scope and other
+  files byte-equivalent to parent. Missing capability explicit, no silent skip/install fallback.
+  Report ACCEPT/REJECT with severity/fileline/repro/impact, actual commands/counts/exits, deviations,
+  unresolved/notverified explicitly none when empty. Coordinator owns verdict and integration.
+  No actual root/sudo/credentials/accounts/orders/network/provider/DB/Docker/Compose/compiler/build/
+  Cargo/npm/install/opt/hostenvclock/liveops/activation/deploy/mainmerge/push/siblingsearch. QA retained
+  untouched; accepted uutils/socket/no-runtime-content coverage limits unchanged. No C3 revalidation.
+  Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+  No Paseo run/send/daemon start/restart. Only verified ACCEPT permits exact B1/F1/F2 integration,
+  then coordinator freezes B2 compatibility before launch; no idle gap or redundant mapping/IV.
