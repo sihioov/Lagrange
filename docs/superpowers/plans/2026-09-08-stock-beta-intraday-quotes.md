@@ -2930,3 +2930,47 @@ Native subagents: prohibited for worker packages
 2. Review full C3 scope, response table and evidence; independent terra/high ACCEPT before merge.
 3. Integrate exact accepted source and relevant regressions, then advance to authorized WP6/WP7
    without claiming live activation or overall completion early.
+
+### WP4-C2 completion / independent acceptance review (2026-09-09)
+
+- C2 writer099c080b-0cac-4770-8a7e-00f27d0bf32a IDLE, clean source
+  21ebf1ea1887d07020da852d88d59cd94e030a76, parent461b4e99be0159e20c9c1b386c1bfb10ddd344c6.
+  UNINTEGRATED, exactly four owned files +447/-1. Coordinator read entire delta including all
+  inline tests; runtime+state add typed settings/clock, other two files only two literal fields.
+- Writer reports complete final lib94/94, paper-runner5/5, HTTP target --no-run, strict3clippy/fmt/diff.
+  Earlier wrong UTC test instant corrected; sandbox listener/socket failures rerun with precise
+  escalation. Earlier lib run had all names but no summary; writer performed another full final run.
+  Independent reviewer must recover complete summary and exit, not count individual names.
+- C2-R: NEW Codex terra/high auto-review, read-only in API workspace at21ebf1ea. Initial
+  classification intermediate/high confidence per C2 graph. Own no source/docs edits or commits.
+  Read exact C2 brief, current full spec/root instructions and four-file delta.
+- Audit actual production load_config_from -> injected get/reader helper, strict absent/off/
+  owner_only mode, alias rejection, defaultoff does not consult hash/read file, canonical hash
+  (ContentHash normalizes uppercase but explicit equality rejects it), unavailable not global abort,
+  exact fixed path and 1MiB+1 bound, cloned parsed contract and independently injected live clock.
+  No new provider/secret/DB/route/EOD behavior. Keep lifecycle/config consumers unchanged.
+- Assess limits proportionately without predetermined findings: missing hash key has direct ? early
+  return but no standalone test; "missing" and "io error" fixtures both return NotFound; byte-limit
+  behavior inspected in private production reader, oversized fixture only exercises parser; contract
+  state_at test parses directly rather than via loaded config (valid load+clone covered separately);
+  defaultoff reader counted but hash-get not instrumented. Do not demand unrelated provider/DB
+  activation tests or reopen already accepted calendar/producer constraints.
+- Independently run serial jobs2 locked/offline api-server --lib (expected94), --bin paper-runner
+  (expected5), --test http_owner_intraday_quotes --no-run, strict scoped clippy for those three,
+  cargo fmt/diff. Existing local socket tests may need identical narrow require_escalated command.
+  No actual main/server, DB tests, /opt read/write, global env mutation, network/install or provider.
+  No other compiler active. Test-run completion/counts must be complete, not inferred.
+- Return ACCEPT/REJECT, severity + file:line evidence, commands/counts, coverage limits,
+  deviations/unresolved/not verified explicitly none when empty. No patches. Writer is idle for
+  bounded followup only if evidence requires it. Only accepted source may integrate.
+- QA pinnedPG18.4tmpfs exactproject lagrange-intraday-qa-20260908 stays retained/untouched;
+  no Docker lifecycle. No operational DB/accounts/orders/root/Next/browser/migration/Cargo/
+  Compose/KIS/collector/other runner/Web/ops/production/deploy/main merge/push/activation.
+- C3 full GET decision table and exact implementation brief already frozen above. On C2-R ACCEPT,
+  verify exact integration and bind ApiConfig.owner_intraday_quotes, intraday_now and
+  OwnerIntradayQuoteReadConfig::{Disabled,OwnerOnly{window}} in C3 launch. Advance promptly,
+  no broad mapping or redundant C1 verification.
+
+- C2-R reviewer `8cc81e83-0baf-45f5-8c40-511ca67546f5` (Codex terra/high,
+  auto-review) launched read-only at21ebf1ea. Current profile notes/provider checked;
+  only reviewer owns compiler slot. C2 writer and all older workers idle.
