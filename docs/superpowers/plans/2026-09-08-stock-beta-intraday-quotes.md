@@ -1985,3 +1985,88 @@ Native subagents: prohibited for worker packages
 - Independent reviewer `4b2c514f-a69f-4562-949c-68b1b1675618` (Codex terra/high,
   auto-review) started in the API workspace after profile/provider checks. Only this reviewer
   runs the sequential compiler/QA checks; writer and prior reviewers remain idle.
+
+### WP4-B REJECT / bounded remediation (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Goal and boundaries
+
+- Reviewer `4b2c514f-a69f-4562-949c-68b1b1675618` is idle REJECT: two High current-identity
+  bypasses (POST replay and DELETE) and Medium rounded OpenAPI bigint maximum. Coordinator
+  confirmed the target adapter and B1 replay/release ordering; failing new HTTP reproductions
+  have not yet been executed. Original `9f9e904` remains unintegrated.
+- Independent existing tests pass: HTTP3 (4.03s), chart4 (3.41s), OpenAPI14 (0.40s), library84
+  plus sandbox-blocked listener1 rerun (0.06s), strict clippy/fmt/diff. Reviewer could not rerun npm
+  OpenAPI because its worktree lacks dependency resolution; no install. Do not claim this independently
+  passed. Populated EOD fingerprint evidence is limited, complemented by direct no-write source review.
+- DELETE using the current retained renewal sequence matches accepted B1; do not change that protocol.
+  Current membership privacy precedes both POST and DELETE replay at the HTTP boundary.
+- App has SELECT/INSERT but no membership UPDATE grant (0053:315-325). Do not introduce app
+  row-lock queries requiring UPDATE, new grants, SECURITY DEFINER helpers, admin serving, or
+  external transaction locks. A race-sensitive check belongs in the same demand transaction after
+  its blocking owner/demand locks, before replay or mutation. A committed invalidation before that
+  final check must yield 404 with no demand change. Do not claim that a read-only membership
+  observation excludes concurrent later invalidation; producer guards remain authoritative for dispatch.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-B-F1 | intermediate | Existing demand transaction factored into opt-in HTTP-current identity gate, real-role race tests | medium | Required privileges or lifecycle serialization exceed existing grants: report before implementation expansion; repeated failure raises model only |
+| WP4-B-F1-R | intermediate | Independent post-lock/privacy and old-API regression audit | high | Evidence failure returns bounded fix |
+| WP4-B-F2 | intermediate | Exact OpenAPI integer representation and focused generated-contract evidence | medium | Resolve serializer capability and dependency path before freezing implementation brief |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-B-F1 | 1 | intermediate | Fix two High identity bypasses | B1 intraday repo, API intraday repo, existing new HTTP tests only | REJECT | original luna/max writer | bounded fix commit and before/after failures | real-role HTTP, B1 regression, observed SQL barrier |
+| WP4-B-F1-R | 2 | intermediate | Review F1 only | read-only delta | F1 | existing terra/high reviewer | scoped ACCEPT/REJECT | same boundaries, tests |
+| WP4-B-F2 | 3 | intermediate | Exact generated bigint contract | OpenAPI source/generated artifacts and scoped contract tests; final serialization scope later | F1-R | luna/max | bounded commit | exact numeric boundary proof, clean regeneration |
+
+#### Worker brief: WP4-B-F1
+
+- Target API worktree `/data/worktrees/3puw275b/stock-beta-intraday-api` at clean `9f9e904`.
+  Read root AGENTS and current coordinator plan/spec. Original writer remains luna/max because this
+  is the first rejection; do not increase effort/model together or delegate further.
+- Own only `crates/job-queue/src/owner_equity_v2/intraday.rs`,
+  `crates/api-server/src/repos/owner_intraday_quotes.rs`,
+  `crates/api-server/tests/http_owner_intraday_quotes.rs`. No HTTP DTO, OpenAPI, migrations,
+  grants, dependencies, provider, runner, worker lifecycle, Web or existing shared test harness edits.
+- Add narrow opt-in current-identity-guarded public mutation entry points for HTTP, factoring shared
+  internals rather than cloning demand algorithms. Existing B1 public mutation APIs keep accepted
+  replay/release behavior for existing callers. HTTP must use only the guarded entry points.
+- Derive owner solely from Actor; DELETE first proves demand/consumer ownership, then verifies exact
+  row membership/generation_id/instrument/generation against READY/current admission. POST verifies
+  request current identity and any retained row's exact identity. Unknown/foreign/disabled/stale
+  resolves to existing typed 404. Preserve typed key/sequence, exact retained expiry and tombstones
+  when identity is still current; missing row/consumer isolation must not leak details.
+- Validation is after all blocking owner mutex/demand row acquisition, in the same transaction,
+  before each replay/terminal result or mutation; no `.map(|_| ())` swallowing absent identity.
+  Preserve post-lock DB time, capacities and lock order. Use existing app-readable inputs; no
+  FOR SHARE/UPDATE of membership under app. A new needed privilege or unavoidable source scope
+  gap must be reported rather than invented. Remove misleading adapter observation/comments.
+- Reproduce first with real HTTP/app role: create then disable or advance admission, exact POST
+  replay returns 404; retained ACTIVE DELETE after each invalidation returns 404 and full demand
+  row unchanged; committed release replay after invalidation also404. Keep valid-identity replay,
+  expired ACTIVE recovery and release replay positive tests unchanged.
+- Add real observed SQL lock barrier on owner mutex or demand row, start HTTP mutation, verify the
+  blocked connection/lock, commit membership invalidation while it waits, release blocker, then
+  assert404 and unchanged demand fingerprints. No sleep-only assertion, no mocked repository.
+  Use existing local fixture patterns for newer admission; report exact pre-fix failures separately.
+- Sequential QA commands with `CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true`, `--locked --offline`:
+  api-server `http_owner_intraday_quotes`, `http_owner_equity_v2_chart`; job-queue `intraday_quotes`
+  and `intraday_read_state`, DB `-- --test-threads=1`; scoped strict clippy/fmt/diff. Only pinned
+  `postgres://postgres:lagrange@127.0.0.1:55438/postgres` own per-test DBs. No Docker lifecycle,
+  npm/build dependency install, operational DB, provider/network, activation or push.
+- Report full commit/parent, exact files/lines, before/after evidence, real roles and lock observation,
+  commands/count/timing, deviations and unresolved/unverified explicitly. Stop idle after this fix.
+
+#### Coordinator gates
+
+1. F1 only is authorized now; old B1 APIs and no-grant boundary must stay unchanged.
+2. Read full fix and independent scoped acceptance before F2 detailed brief. No integration of
+   original WP4-B or fixes before all High/Medium findings are resolved and regression evidence accepted.
+3. GET/config remains next package; no user decision block or actual collection activation.
