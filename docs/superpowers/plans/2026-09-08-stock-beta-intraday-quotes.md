@@ -4542,3 +4542,25 @@ C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain
   deploy/mainmerge/push/siblingsearch; QA untouched. Engine/npm/render gates unchanged.
   Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
   No Paseo run/send/daemon start/restart. Coordinator verifies focused delta, no repeated broad review.
+
+### WP6-C1-F1 ACCEPT / integration / C2 renderer authority gate (2026-09-09)
+
+- Original writer8ed8dd00 IDLE completed d573c5b79c9f4add0d788b898b83ed07143cc2c4,
+  one runbook +22/-17, clean. Coordinator read FULL four-hunk delta and original reviewer report,
+  verified parent/all-file metadata and actual persisted bearer token against source, outside-hours
+  CLOSED semantics and settled-entitlement correction. All four findings resolved: ACCEPT.
+  Writer focused checks22links/anchors0errors, diff/scope/snippets PASS; no broad reruns.
+- Integrated a927203->a7cc914 andd573c5b->3d1dfcc, exact source equality across crates/apps/
+  data-pipelines/configs/scripts/deploy plus new runbook, clean. Existing top-level mode guard still
+  fails AFTER successful Stock call; not an all-static-pass claim, no adjacent mode change.
+- Continuity: deleted completed-reviewer heartbeat3f5fc580, created NO replacement. Follow-up CLI
+  send waited to completion and returned completed; then idle/result/logs verified without waiting
+  for next cron. This verifies direct CLI wait, NOT automatic parent notification delivery.
+  All workers now idle; no active implementation or review. No redundant C1 re-review.
+- Next C2 owns evidence-bound PUML and locally rendered PNGs, but cannot launch full package yet:
+  java/plantuml/dot absent on PATH; docker binary /usr/bin/docker exists. No Docker command/image
+  inspection/render has been run. Current explicit no-actual-Docker scope conflicts with required
+  local renderer path. Ask owner for bounded permission to inspect existing local PlantUML image,
+  and render ONLY diagram files with no network/pull/install and no QA/service lifecycle changes.
+  If image absent, report capability gap rather than pulling/installing. This is a genuine scoped
+  authority decision, not worker idle timeout. No heartbeat at this gate; no overall completion.
