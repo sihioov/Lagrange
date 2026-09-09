@@ -3649,3 +3649,8 @@ broad mapping or idle-transition delay. Keep retained QA untouched for later aut
   subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report
   if it needs further decomposition. No Paseo run/send/daemon commands. Coordinator integrates
   exact two-commit A chain only on independently verified ACCEPT, then freezes next WP6-B.
+
+- F1-R active binding: reused reviewer3e00a43f-314e-4d06-a58f-b58401a6a86e sol/high auto-review
+  in same ops workspace at2e528590. Startup wait timeout included NEW acknowledgment and actual
+  plan/git inspection. Writer c15df593 idle clean. Send terminal65065 may remain waiting normally;
+  do not resend/interrupt. Replace heartbeat09c3d5c1 to monitor reviewer, not completed writer.
