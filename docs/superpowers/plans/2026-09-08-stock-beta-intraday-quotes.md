@@ -4579,3 +4579,63 @@ C1 is not overall WP6/product completion; C2 diagrams and later review/QA remain
 - Historical ops/API/etc paths in older briefs are now ARCHIVED, not current launch targets.
   Do not resume old worker IDs or assume those directories still exist. Continue from integrated
   coordinator source; C2 renderer authority gate remains unresolved. No cleanup heartbeat created.
+
+### WP6-C2a diagram source brief (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+Goal: update the two existing architecture sources for integrated intraday/default-off structure,
+without claiming runtime activation. Use CURRENT coordinator workspacewks_c8105f3859e0ad64,
+/data/worktrees/3puw275b/enhanced-pig. No new workspace. All previous intraday workspaces archived.
+Root AGENTS applies; no nested diagram instructions found. C1 integrated through3d1dfcc, cleanup
+record8bc41b6. Coordinator owns plan; only worker edits PUML, so mutable scopes do not overlap.
+
+| Package | Complexity | Basis | Confidence | Escalation signal |
+| --- | --- | --- | --- | --- |
+| C2a | intermediate | existing two diagrams, frozen topology, source evidence verification | high | missing structural evidence or repeated failed checks, not renderer absence |
+| C2b | simple | existing local render of accepted sources | medium | existing renderer unavailable or permission absent; no install/pull inferred |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| C2a | 1 | intermediate | source diagrams track intraday | two existing PUML only | C1 accepted | Codex luna/max auto-review CLI | scoped diff, no commit yet | source citation/edge checks + coordinator read |
+| C2b | 2 | simple | local PNG render | matching two PNGs only | C2a and owner renderer approval | coordinator bounded command | source+PNG pair committed together | local render exits, image inspection |
+
+C2a worker exact scope: docs/diagrams/component_architecture.puml and runtime_deployment.puml.
+Read these FULL existing files, this brief, runbook stock-beta-intraday-quotes.md, and contract
+sections4,7-10,WP6/activation gates as needed. No full historical plan/repeated test investigation.
+1. Preserve existing diagram organization/aliases and unrelated structural edges. Extend existing
+   component labels/edges rather than drawing a second fictional service: Web intraday client ->
+   API types/GET-demand HTTP; API -> job-queue actor repository; API -> collectors window validation
+   is provider-free despite Cargo dependency; job-queue producer -> collectors guarded quote adapter
+   -> market-data/kis-client shared coordinator and typed parser. Cite actual manifests plus callsites.
+   No new Cargo crate/image/process is implied. Existing EOD/chart edges remain separate.
+2. Runtime add owner-private intraday demand/cache/producer DB table group (0054; app actorRLS and
+   worker fenced writes). Annotate current Web/API edge for cache-only GET vs explicit POST/DELETE;
+   GET never writes demand/token/provider or EOD. Reuse oev2 runner: optional independent quote loop,
+   defaultoff, current-price REST only. Do not draw API/Web->KIS/state-root or intraday->Raw/Curated.
+3. Add explicit OVERLAY PREPARATION ONLY section/note for compose.intraday.yml, not deployed-base
+   activation. Protected /run/lagrange/kis-read-coordination file store (contains bearer token) has
+   five credentialed readers: research, grouped rangejobs THREE, and oev2; one identical bind.
+   Label grouped reader count accurately. Read-only window file -> API and oev2 ONLY; hash-pinned,
+   committed entries empty. No Web/materializer bind. Distinguish code capability from explicit
+   overlay future selection; installed-release wrappers do not select it, actual engine unverified.
+4. Every new/modified arrow needs adjacent real current file:line evidence. Relevant starting paths:
+   API http/owner_intraday_quotes.rs and repos/owner_intraday_quotes.rs; HTTP router; API runtime/state;
+   job-queue owner_equity_v2/intraday.rs and intraday_producer.rs, bin/owner-equity-v2-runner.rs;
+   collectors/src/intraday_quotes.rs; market-data/src/intraday_quotes.rs; kis-client/read_coordination.rs;
+   Web intraday-quotes-client.ts; migration0054; exact overlay. Check existing cited anchors in files
+   whose lines moved with this change, repair stale anchors without unrelated architecture redesign.
+   Header/legend clearly scope intraday delta and no activation. Never fabricate evidence.
+5. Validate source references and arrow coverage, inspect exact diff/whitespace and two-file scope;
+   no tests/build/Rust/API/ops suites. No PlantUML syntax/render PASS without actual renderer.
+   Leave changes UNCOMMITTED so coordinator can pair PNGs in the same final commit. Do not stage
+   plan or touch PNGs/other source. Report changedfile/lines, evidence checks, deviations, unresolved/
+   notverified explicit none when empty. Report missing renderer as expected limitation, not looping.
+
+No actualDocker/Compose/DB/root/sudo/provider/network/credentials/accounts/orders/opt/hostenvclock/
+compiler/Cargo/build/npm/install/liveops/activation/deploy/mainmerge/push. No memory-tool calls or
+sibling search. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No Paseo run/send/daemon start/restart. Coordinator review then renderer gate; no heartbeat creation.
+Owner has been asked asynchronously about existing-image inspect+networkless render ONLY, with no
+pull/install/QA change; answer pending. Proceed C2a independently, not blocked on that answer.
