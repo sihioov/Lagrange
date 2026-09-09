@@ -2431,3 +2431,116 @@ Native subagents: prohibited for worker packages
 - C0 worker `9c5be574-388a-49ba-a853-c7a0ad44276c` (Codex terra/high, auto-review)
   launched read-only in coordinator workspace. Current profile notes/provider verified. IV and
   all prior writers/reviewers are idle; C0 has no compiler, DB or mutation authority.
+
+### WP4-C0 recovered / WP4-C1 calendar disposition read (2026-09-09)
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+#### Coordinator findings and decisions
+
+- C0 idle, full result/logs recovered; no edits. Coordinator confirmed producer proof filters
+  TRADING, canonical immutable calendar versions allow only TRADING/CLOSED, and app already has
+  calendar/version/batch SELECT. Existing producer proof/cache methods must remain unchanged.
+- Accept the narrow additive calendar-read seam, not the report's entire proposed DTO policy.
+  In particular, its phrase “no active demand is immediately unreadable” is not independently
+  established as a cache-visibility rule by §8.3: cache freshness and demand eligibility are
+  distinct. Freeze the eventual GET decision table explicitly before HTTP work; do not silently
+  copy that assertion. No stateful GET version history or inferred producer-heartbeat timeout.
+- Proof disagreement will be fail-closed UNKNOWN/SESSION_WINDOW_UNAVAILABLE after independently
+  validating the calendar. This stays within the existing whitelist, not a new source policy.
+- Calendar evidence is independent of window evidence: unlike C0's proposed Trading(SessionProof)
+  return, C1 returns only typed calendar disposition/lineage and observed DB time, with no window
+  argument or fabricated CLOSED trading proof. Later code may construct existing session proof
+  only for Trading with a separately validated window; CLOSED is never dispatch authority.
+- C1 does not implement HTTP/config/DTO. Existing collector dependency and four ApiConfig literal
+  callsites are recorded for later exact ownership: runtime.rs, http/state.rs, tests/common/mod.rs,
+  bin/paper-runner.rs. No edits to them in this package.
+
+#### Goal and boundaries
+
+- Target isolated API worktree `/data/worktrees/3puw275b/stock-beta-intraday-api`, workspace
+  `wks_3249856abbf32750`, branch `work/stock-beta-intraday-api-20260909`, clean base
+  `949d4502e7d47973bd6931a037f284bffa49f8e5` (identical integrated coordinator source).
+- Add one read-only app-role repository method plus focused real-role tests. Exact ownership:
+  `crates/job-queue/src/owner_equity_v2/intraday.rs`, new
+  `crates/job-queue/tests/intraday_calendar_read_state.rs`, and only the minimal optional no-calendar
+  setup path in existing `tests/intraday_quotes_support/mod.rs`. Existing create() behavior unchanged.
+  Existing wildcard re-export requires no module edit. No other files.
+
+#### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP4-C1 | intermediate | Exact additive SELECT/typed result and real-role fixtures; no mutation policy changes | high | Missing privilege/contract or repeated failing verification: report; no silent scope expansion |
+| WP4-C1-R | intermediate | Independent lineage, no-write and producer-isolation review | high | Concrete counterexample returns to bounded implementation |
+
+#### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP4-C1 | 1 | intermediate | Read validated TRADING/CLOSED calendar independently | exact three files above | C0 coordinator decisions | NEW Codex luna/max auto-review | scoped commit and complete evidence | new real-app tests plus existing quotes/read-state/producer targets |
+| WP4-C1-R | 2 | intermediate | Verify additive read and unchanged old methods | read-only C1 diff | C1 complete | terra/high auto-review | ACCEPT/REJECT with evidence | independent scoped real-role checks and direct review |
+
+#### Worker brief: WP4-C1
+
+- Read root instructions, latest coordinator plan and full spec (API worktree plan may be older).
+  Add public `IntradayCalendarDisposition { Trading, Closed }` and `IntradayCalendarReadState`
+  with `session_date`, `disposition`, `calendar_source_batch_id`, `calendar_content_sha256`,
+  `observed_at: DateTime<Utc>`. Source/source-version accessors return the existing fixed constants.
+  No window hash, owner/private data, quote or provider state in this result.
+- Add `read_current_calendar_disposition(owner_user_id: Uuid)` returning
+  `Result<Option<IntradayCalendarReadState>, IntradayStorageError>`. Nil owner -> InvalidInput.
+  Begin existing actor transaction; one SELECT snapshot with MATERIALIZED clock_timestamp CTE
+  reused for current KST date, all age checks and observed_at. No caller-supplied now/date.
+- Use exact current KRX projection + matching immutable version + matching KIS/KR/CALENDAR
+  data_batch lineage as existing resolve_current_session_proof: exact session date/type/timezone,
+  source `kis`, source-version `kis-chk-holiday-v1:schema-1`, matching batch/hash; all three
+  retrieved_at <= observed_at and >= observed_at -36 hours. Permit only TRADING/CLOSED.
+  Canonical non-nil batch UUID and unprefixed lowercase64 hash required. No rows or incomplete,
+  stale/future/mismatched/noncanonical evidence -> None; duplicate valid results -> existing typed
+  CalendarProofUnavailable, not arbitrary first row. DB/commit failure remains typed infrastructure
+  error, never swallowed as missing evidence. This is read evidence only, not later-call authority.
+- Preserve byte-for-byte existing resolve_current_session_proof/read_current_cache and all producer,
+  eligibility, mutations and fencing logic. Add new types/method/private conversion only. No locks,
+  writes, grants, migration/schema/trigger changes, SECURITY DEFINER, network/file access or newdep.
+- Fixtures: existing harness automatically installs today's immutable TRADING row. Add optional
+  `create_without_calendar()` using shared internal setup with an install boolean (or equivalent
+  minimal private factoring), preserving create() exactly, so each new case can insert its own
+  baseline. Never disable/bypass append-only trigger, mutate immutable version rows, fake DB clock,
+  or alter existing shared fixtures to make assertions pass. New test local run wrapper must drop
+  only its own generated DB on error. Fixture writes are confined to disposable QA setup.
+- Real app connection tests: valid Trading and Closed with exact lineage/source/DB observation;
+  missing projection/version/batch; separate malformed source/version/timezone/date/type/hash/batch
+  lineage rejection; each of the three retrieval timestamps stale (>36h) or future while others
+  valid; within-36h positive; nil owner typed error. Use independent seeded cases preserving immutable
+  rows. If duplicate case is prevented by current uniqueness constraints, cite those constraints
+  and inspect defensive branch rather than weakening schema or claiming a runtime reproduction.
+- Demonstrate calendar independence from demand/cache/window: no such input is needed; populated
+  demand/cache/producer and membership/admission rows remain byte-for-byte unchanged under 1/10/100
+  reads, with UPDATE-sensitive full-row fingerprints including calendar/version/batch inputs.
+  Assert actual app current_user and actor scoping pattern, app producer SELECT still SQLSTATE42501.
+  Calendar is globally readable existing data: do not invent an owner-private calendar guarantee.
+- New test file targeted run, then existing job-queue `intraday_quotes`24, `intraday_read_state`1,
+  `intraday_producer`6; complete summaries, no DB skips. Sequential CARGO_BUILD_JOBS=2,
+  CARGO_NET_OFFLINE=true cargo --locked --offline, DB testthreads1. Strict clippy for those four
+  targets, fmt/diff. DATABASE_URL only postgres://postgres:lagrange@127.0.0.1:55438/postgres.
+  Existing harness migration application is only in own generated QA DB, no operational migration.
+- QA exact project lagrange-intraday-qa-20260908/container lagrange-intraday-qa-20260908-qa-db-1
+  independently inspected running/healthy, pinned PG18.4 tmpfs and only127.0.0.1:55438. Worker has
+  no Docker lifecycle; retain coordinator QA. No API/HTTP/config/OpenAPI/collector/KIS/runner/Web/
+  ops/Cargo/Compose/production/deploy/main merge/push/activation or actual provider/external network.
+- Commit only owned files; report full commit/parent, files/line ranges, deviations/reasons,
+  actual commands/counts, no-write and lineage proof, limitations/unresolved/not verified explicitly
+  none if empty. Stop idle; missing requirement or scope gap must be reported, never invented.
+
+#### Coordinator gates
+
+1. Clean API source/profile/provider and exact QA checked; launch only C1, replace C0 monitor.
+2. Recover actual diff/results, then independent C1-R before integration. No other active compiler.
+3. After acceptance, integrate exact source/regressions and freeze GET/config decision table and
+   exact file scope separately. No overall user decision blocker or live activation now.
+
+- C1 writer `41b84c11-a9ad-47f8-b71f-cbb803357762` (Codex luna/max, auto-review)
+  launched in isolated API workspace at clean `949d450`. Profile notes/provider verified.
+  C0 and all older workers are idle; only C1 owns the three files and compiler/QA test slot.
