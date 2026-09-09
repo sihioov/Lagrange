@@ -4639,3 +4639,25 @@ sibling search. Do not use native subagent, Task, Agent, team, or delegation fea
 No Paseo run/send/daemon start/restart. Coordinator review then renderer gate; no heartbeat creation.
 Owner has been asked asynchronously about existing-image inspect+networkless render ONLY, with no
 pull/install/QA change; answer pending. Proceed C2a independently, not blocked on that answer.
+
+### C2a source review / WP-7 read-only review continuity (2026-09-09)
+
+- C2a worker693e09fa completed directly in the coordinator workspace; idle result/logs recovered,
+  then agent archived. Coordinator read the full two-file delta and corrected stale moved anchors
+  for API auth assembly, collector stores, runner imports, V2 SQL, and the typed-error mapping.
+  Source checks: 84 arrow-adjacency checks and 64 changed full-path reference starts PASS;
+  diff/whitespace PASS, PNGs unchanged. These checks are NOT PlantUML syntax or render validation.
+- Both PUML files remain uncommitted for the required paired PNG commit. SHA256 component:
+  f9ab39b7a4c608db63a775720934ed539e00a981a652cb4e39b8a65badb63b0c;
+  runtime: 3730dd467cc3aeda95744d8a02aa61f3e94a5fa6424aa3ff83f63eb214ddfc92.
+- C2b still requires the requested bounded local-render permission/capability. No Docker invoked.
+  Root/Web/API node_modules and installed Next docs are absent; no dependency installation or
+  browser/build execution is authorized by this continuity step.
+- Advance only the already-planned WP-7 SOURCE review while the non-code render gate is pending:
+  current coordinator workspace, Codex sol/high auto-review under the user's current review policy,
+  baseline d1baf9da through HEAD7d76e49 plus the two pinned PUML sources. Sole reviewer write:
+  2026-09-08-stock-beta-intraday-quotes-review.md. No code fixes, delegation, tests/builds, DB,
+  Docker, provider/network, installs, host operations or activation. Report source findings and
+  coverage limits, not final acceptance. WP6 completion / WP8 / release gates are NOT waived.
+  This is an early independent read-only review, not a new implementation plan or completed WP7.
+  Keep one active reviewer; no new workspace or heartbeat.
