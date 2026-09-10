@@ -4681,3 +4681,19 @@ pull/install/QA change; answer pending. Proceed C2a independently, not blocked o
   toolchain/fixture-QA allowance and actual dependency capability, with no provider/production use.
   These are genuine remaining execution gates, not unfinished source review or another code plan.
   Do not claim overall WP6/WP7/WP8 completion, activation, or verified PNG/Compose/browser tests.
+
+### Development execution approval / local diagrams rendered (2026-09-10)
+
+- Owner explicitly approved development dependency installation, local Docker rendering, and
+  synthetic-data QA. This supersedes the pending development execution gates above, not the
+  prohibitions on provider/account/order traffic, production operations, deployment or activation.
+- Locked `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` completed: 324 packages;
+  package manifests and lockfile unchanged. Installed Next Playwright/standalone guides read.
+- Both PNGs rendered successfully (exit 0) from the reviewed PUML sources using existing local
+  image sha256:f2c8916a795483bf32ea61ca63b1c6726845c0085c997d86431e20b52ca1c257,
+  network disabled, no pull, uid/gid 1000, resource-limited temporary container. Coordinator viewed
+  both images: component 2349x1396, runtime 2305x2736. Commit sources and PNGs together.
+- Resume the original WP-8 scope above in this current workspace with one direct QA worker;
+  no new workspaces or heartbeats. Existing synthetic QA PostgreSQL remains healthy at
+  127.0.0.1:55438 and is not restarted. Compose engine verification, integrated test results and
+  final acceptance are not implied by rendering or dependency installation.

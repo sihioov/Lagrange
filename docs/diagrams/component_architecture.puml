@@ -2,6 +2,9 @@
 ' =====================================================================
 ' Lagrange Station — static component / code-dependency architecture
 ' Generated 2026-09-04 from manifest + code-usage evidence.
+' WP6-C2a source delta 2026-09-09: integrated intraday topology only;
+' runtime remains default-off and unactivated. Existing EOD/chart/Raw/
+' Curated edges remain separate from the cache-only intraday path.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -47,19 +50,19 @@ skinparam ArrowColor #555555
 skinparam noteBackgroundColor #FFFFF0
 
 package "Frontend (TypeScript / Node 24)" #E8F1FB {
-  component "apps/web\n(Next.js 16 shell)" as web
+  component "apps/web\n(Next.js 16 shell;\nintraday quote client)" as web
   component "apps/api-server\n(OpenAPI contract pkg:\nopenapi.json + generated/openapi.ts)" as api_contract
 }
 
 package "Rust workspace (edition 2024)" {
 
   package "HTTP layer" #FDEEDC {
-    component "crates/api-server\n(Axum REST authority,\nActor+RLS repos;\nalso hosts paper-runner bin)" as api_server
+    component "crates/api-server\n(Axum REST authority,\nActor+RLS repos;\nowner-intraday cache/demand HTTP;\nalso hosts paper-runner bin)" as api_server
     component "apps/api-server/auth\n(api-server-auth:\nOIDC/session HTTP router)" as api_server_auth
   }
 
   package "Orchestration" #FBE4EC {
-    component "crates/job-queue\n(PG job queue + runner bins:\nbacktest / recommendation /\ncandidate / owner-beta /\nowner-equity-v2)" as job_queue
+    component "crates/job-queue\n(PG job queue + runner bins:\nbacktest / recommendation /\ncandidate / owner-beta /\nowner-equity-v2;\nowner-intraday producer)" as job_queue
   }
 
   package "Research & results" #F1E6F7 {
@@ -74,12 +77,12 @@ package "Rust workspace (edition 2024)" {
   }
 
   package "Data layer" #E5F3E7 {
-    component "crates/market-data\n(EOD contract, RawStore,\nCurateStore, providers)" as market_data
-    component "data-pipelines/collectors\n(research-worker + raw-capture\n& materialize bins)" as collectors
+    component "crates/market-data\n(EOD contract, RawStore,\nCurateStore, providers;\nintraday typed parser)" as market_data
+    component "data-pipelines/collectors\n(research-worker + raw-capture\n& materialize bins;\nowner intraday adapter)" as collectors
   }
 
   package "External source clients" #FCF8DE {
-    component "crates/kis-client\n(KIS REST, read-only allowlist)" as kis_client
+    component "crates/kis-client\n(KIS REST, read-only allowlist;\nshared read coordination)" as kis_client
     component "crates/opendart-client\n(OpenDART, 3 approved paths)" as opendart_client
     component "crates/data-go-client\n(FSC KRX listed-info)" as data_go_client
   }
@@ -116,22 +119,22 @@ package "Operator tools (Node)" #F2F2F2 {
 
 ' ---------------- Frontend edges ----------------
 
-' evidence: apps/web/lib/api/server-client.ts:23-38 (ky transport), apps/web/lib/api/server-session.ts:18-29 (API_INTERNAL_URL)
-web --> api_server : HTTP /api/v1/*, /auth/*\n(session cookie only)
+' evidence: apps/web/lib/api/server-client.ts:23-38 (ky transport), apps/web/lib/api/server-session.ts:18-29 (API_INTERNAL_URL); apps/web/lib/products/intraday-quotes-client.ts:201-230 (demand POST/DELETE), 232-254 (cache GET); crates/api-server/src/http/mod.rs:344-354
+web --> api_server : HTTP /api/v1/*, /auth/*\n(session cookie only);\nintraday cache-only GET;\nPOST/DELETE demand mutations
 
-' evidence: apps/web/tsconfig.json:28 (path alias), apps/web/lib/api/contracts.ts:1 (import type only)
-web ..> api_contract : types only
+' evidence: apps/web/tsconfig.json:28 (path alias), apps/web/lib/api/contracts.ts:1,26-44 (route types); apps/web/lib/products/intraday-quotes-client.ts:3,6-19 (intraday DTO/path types); apps/api-server/generated/openapi.ts:379-425
+web ..> api_contract : types + intraday route paths
 
 ' evidence: apps/api-server/scripts/openapi-spec.mjs:1-9 (mirrors crates/api-server/src/contract.rs CONTRACT_ROUTES 1:1)
 api_contract ..> api_server : generated from\nCONTRACT_ROUTES
 
 ' ---------------- api-server edges ----------------
 
-' evidence: crates/api-server/src/runtime.rs:13,1119-1121 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
+' evidence: crates/api-server/src/runtime.rs:14,1203-1207 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
 api_server --> api_server_auth : mounts /auth
 
-' evidence: crates/api-server/Cargo.toml:27 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,691-735 (imports and invokes read_owner_equity_artifact)
-api_server --> collectors : reads and verifies V2 artifacts
+' evidence: crates/api-server/Cargo.toml:27 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,691-735 (imports and invokes read_owner_equity_artifact); crates/api-server/src/runtime.rs:20-23,247-310; data-pipelines/collectors/src/intraday_quotes.rs:129-179 (provider-free window validation)
+api_server --> collectors : reads/verifies V2 artifacts;\nprovider-free intraday window validation
 
 ' evidence: crates/api-server/src/repos/owner_equity_v2.rs:10 (use factor_engine::owner_equity_v2::OwnerEquitySignalRow)
 api_server --> factor_engine
@@ -139,8 +142,8 @@ api_server --> factor_engine
 api_server --> risk_gateway
 ' evidence: crates/api-server/src/live_order.rs:43 (use kis_client::mapping::{OrderRequest,..})
 api_server --> kis_client
-' evidence: crates/api-server/src/actor_tx.rs:16, crates/api-server/src/http/backtests.rs:496 (job_queue::batch::cancel_batch)
-api_server --> job_queue
+' evidence: crates/api-server/src/actor_tx.rs:16, crates/api-server/src/http/backtests.rs:496 (job_queue::batch::cancel_batch); crates/api-server/Cargo.toml:35; crates/api-server/src/repos/owner_intraday_quotes.rs:10-14,30-95
+api_server --> job_queue : actor-scoped intraday repository\n(+ existing queue routes)
 ' evidence: crates/api-server/src/risk_snapshot.rs:148 (market_data::freshness::applicable_eod_age)
 api_server --> market_data
 ' evidence: crates/api-server/src/http/backtests.rs:93 (portfolio_model::cost::CostProfile::resolve)
@@ -158,12 +161,12 @@ job_queue --> factor_engine
 job_queue --> selector
 ' evidence: crates/job-queue/src/paper_valuation.rs:17 (use portfolio_model::cost::CostProfile)
 job_queue --> portfolio_model
-' evidence: crates/job-queue/src/paper_valuation.rs:15 (use market_data::CurateStore)
-job_queue --> market_data
-' evidence: crates/job-queue/src/owner_equity_v2/runtime.rs:11 (use collectors::owner_equity_v2::materialize_owner_equity_from_raw_allow_insufficient)
-job_queue --> collectors
-' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:17-18 (use kis_client::clock::Clock, kis_client::live_transport::LiveTransport)
-job_queue --> kis_client
+' evidence: crates/job-queue/src/paper_valuation.rs:15 (use market_data::CurateStore); crates/job-queue/Cargo.toml:20; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:22,611-614 (typed quote error mapping)
+job_queue --> market_data : EOD types + intraday error seam
+' evidence: crates/job-queue/src/owner_equity_v2/runtime.rs:11 (use collectors::owner_equity_v2::materialize_owner_equity_from_raw_allow_insufficient); crates/job-queue/Cargo.toml:22; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:14-17,402-437
+job_queue --> collectors : guarded intraday quote adapter\n(+ existing EOD materialization)
+' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:19-20 (use kis_client::clock::Clock, kis_client::live_transport::LiveTransport); crates/job-queue/Cargo.toml:23; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:18-21,42-70; crates/job-queue/src/bin/owner-equity-v2-runner.rs:478-540
+job_queue --> kis_client : current-price reader\n(shared coordination; EOD remains separate)
 
 ' ---------------- research / results edges ----------------
 
@@ -190,12 +193,12 @@ market_data --> opendart_client
 ' evidence: crates/market-data/src/providers/fsc_krx_listed.rs:17,36 (use data_go_client::{..})
 market_data --> data_go_client
 
-' evidence: data-pipelines/collectors/src/worker.rs:22 (use market_data::contract), worker.rs:960 (RawStore::new), worker.rs:2635 (CurateStore::new)
-collectors --> market_data
+' evidence: data-pipelines/collectors/src/worker.rs:24 (use market_data::contract), worker.rs:981 (RawStore::new), worker.rs:2656 (CurateStore::new); data-pipelines/collectors/Cargo.toml:9; data-pipelines/collectors/src/intraday_quotes.rs:16,297-317
+collectors --> market_data : EOD stores + intraday typed parser
 ' evidence: data-pipelines/collectors/src/stock_price_beta_materialize.rs:9 (use factor_engine::{..})
 collectors --> factor_engine
-' evidence: data-pipelines/collectors/src/worker.rs:14 (use kis_client::clock::Clock)
-collectors --> kis_client
+' evidence: data-pipelines/collectors/src/worker.rs:14 (use kis_client::clock::Clock); data-pipelines/collectors/Cargo.toml:12; data-pipelines/collectors/src/intraday_quotes.rs:12-16,249-317
+collectors --> kis_client : EOD clock + intraday attempt metadata
 ' evidence: data-pipelines/collectors/src/bin/opendart-raw.rs:55 (use opendart_client::{..})
 collectors --> opendart_client
 
@@ -232,6 +235,11 @@ legend right
   | blue bold | cross-language child-process spawn |
   Folded (not drawn): 9 service crates -> domain; api-server,
   api-server-auth, market-data, selector -> auth.
+  Intraday delta: web cache-only GET is distinct from POST/DELETE
+  demand mutations; the producer uses the existing collectors,
+  market-data parser, and shared kis-client read boundary. No new
+  crate, image, process, or intraday API/Web provider or state-root edge, or
+  intraday Raw/Curated edge, is implied.
   Evidence for folded edges is in this file's header comment.
   All drawn edges carry a "' evidence:" comment in this file's source.
 endlegend
