@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-1~5 및 WP-6 설정·운영 안내서 통합 완료; 다이어그램 소스 검토·WP-7 SOURCE_ACCEPT 완료; PNG·전체 수락·WP-8 통합 QA 미완료; 운영 활성화 미실행
+상태: WP-1~6 구현·운영 안내서·로컬 PNG 통합 및 WP-7 SOURCE_ACCEPT 완료; WP-8 합성 통합 QA 진행 중, 최종 수락 미완료; 운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -4697,3 +4697,19 @@ pull/install/QA change; answer pending. Proceed C2a independently, not blocked o
   no new workspaces or heartbeats. Existing synthetic QA PostgreSQL remains healthy at
   127.0.0.1:55438 and is not restarted. Compose engine verification, integrated test results and
   final acceptance are not implied by rendering or dependency installation.
+- Active WP-8 writer: e9d73ea1-4168-495c-b9ee-dfe30b946bad, Codex luna/max auto-review,
+  current workspace wks_c8105f3859e0ad64, baseline 6cfa1ac. Startup JSON showed the actual
+  direct-execution acknowledgement. Original WP-8 QA-file ownership only, no production edits;
+  ports 33041/38191 after availability checks, sequential builds/tests and existing synthetic DB.
+  A direct CLI completion wait is running; no heartbeat or additional workspace was created.
+- Coordinator actual Compose 5.4.0 config-only verification completed independently while QA
+  worker writes tests: 57 assertions, all PASS. Six cases: legacy base/no new root exit 0;
+  explicit overlay missing root/mode/generation each exit 1 with exact variable marker;
+  valid explicit overlay default-off and owner-only interpolation each exit 0. Compared actual
+  merged model: unchanged service set/unrelated services, exactly five shared binds, two RO
+  windows at correct resolved repository path, no auto-created paths, no API coordination env,
+  and no live service selected. Synthetic env only, --env-file /dev/null, --no-env-resolution,
+  empty Docker config directory and deliberately nonexistent DOCKER_HOST; no daemon or secrets
+  read, image/network/service operation. Evidence: /tmp/stock-beta-compose-qa.RlXR8c/check.mjs
+  and its six JSON/stderr pairs. This closes local engine merge/interpolation only; installed
+  release wiring, host metadata/permissions and actual activation remain separate gates.

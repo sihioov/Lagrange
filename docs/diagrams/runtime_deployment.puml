@@ -90,8 +90,8 @@ note right of intraday_windows
   The committed artifact starts with empty entries/default-off.
   The base Compose definition is unchanged; the explicit
   overlay is not auto-loaded, installed-release wrappers do
-  not select it. No Web/materializer bind. Engine
-  merge/interpolation is unverified.
+  not select it. No Web/materializer bind. Installed
+  deployment remains unverified.
 end note
 
 ' ---------------- Edge / web ----------------
