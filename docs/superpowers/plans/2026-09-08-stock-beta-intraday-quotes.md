@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-1~6 구현·운영 안내서·로컬 PNG 통합 및 WP-7 SOURCE_ACCEPT 완료; WP-8 합성 통합 QA 진행 중, 최종 수락 미완료; 운영 활성화 미실행
+상태: WP-1~6 구현·운영 안내서·로컬 PNG 통합, WP-7 독립 검토 및 WP-8 합성/default-off QA_ACCEPT 완료; 기존 비관련 lint/static 예외 기록; 배포·운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -4713,3 +4713,98 @@ pull/install/QA change; answer pending. Proceed C2a independently, not blocked o
   read, image/network/service operation. Evidence: /tmp/stock-beta-compose-qa.RlXR8c/check.mjs
   and its six JSON/stderr pairs. This closes local engine merge/interpolation only; installed
   release wiring, host metadata/permissions and actual activation remain separate gates.
+
+### WP-8 executed / bounded remediation underway (2026-09-10)
+
+- e9d73ea1 completed with QA_INCOMPLETE, not a pass: two builds exit 0, focused browser
+  5 pass/3 fail each, whole Web 77 pass/5 fail; JS316 and focused Rust/API432 passed.
+  Detailed counts, limits and retained logs: 2026-09-08-stock-beta-intraday-quotes-qa.md.
+- Coordinator confirmed detail RSC failure from passing function-valued whole dictionary into
+  CurrentQuoteWidget, plus synthetic READY generation 0 versus signal generation 1. Narrow fix:
+  server-compatible quote wrapper forwards only typed string copy and quote inputs to a separate
+  client hook component; no whole page/client conversion or weakened identity matcher. Fixture
+  READY generation fixed after a failing regression. Both locale cloneable-props regressions
+  plus existing focused widget/architecture tests: 29 passed; Web typecheck/scoped format passed.
+- Same QA worker now performs one new standalone build + unchanged Stock Beta browser suites,
+  read-only on tracked files. Independent sol/high reviewer 975eaeff-a765-4ea7-aff4-814b3d943cfb
+  audits original four QA files read-only in parallel. No overlapping writes or concurrent heavy
+  tests. New QA artifacts remain uncommitted pending review. Exact 30-minute endurance/memory
+  proof and catalog lifecycle evidence remain open; no new customization UI is assumed.
+- Bounded fresh standalone follow-up /tmp/stock-beta-intraday-followup-oF0qdm: build/actual
+  page/JS PASS, existing Stock Beta 29/29 PASS, intraday 7/8 PASS. Remaining test enumerates
+  detail DOM immediately after navigation; require destination readiness before enumeration.
+  Servers cleaned, build output retained. This is not the final two-build acceptance rerun.
+- Independent QA review 975eaeff confirmed five bounded evidence gaps: same-instrument re-add,
+  synthetic-vs-real caps/fairness attribution, actual prior-session/quote-change coverage,
+  explicit WebSocket observation, and real catalog composition (not nonexistent customizer UI).
+  Original QA writer e9d73ea1 now owns four browser/fixture test files only for remediation;
+  no browser build is running. Same reviewer separately audits the frozen three quote component
+  changes. No production API changes or repeated broad Rust regression requested.
+- Coordinator added real dashboard/detail catalog insertion/removal/reorder/hidden-placement
+  tests and a 30-simulated-minute coordinator loop: 361 polls, 121 serialized demand calls,
+  one consumer, bounded timers, zero timers/one release after unmount. Focused two files:
+  32 tests PASS. Simulated scheduled-work bounds are not RSS or real-time endurance evidence.
+- Active writer 13b4e1ea-f2bc-4f92-9dc9-dd7252f0922f (Codex luna/max, same workspace)
+  owns ONLY new crates/job-queue/tests/intraday_endurance.rs, write-only until heavy QA is free.
+  Existing real-DB producer seam, synthetic transport and exact 1,800-second opt-in soak with
+  20 consumers, attempt/row bounds and process RSS samples; no production clock injection.
+  Code and execution remain unverified. Direct CLI completion waits, no heartbeat/workspace.
+- Subsequent bounded source reviews accepted the production boundary, catalog/fake-clock tests
+  and repaired browser assertions. Three focused Vitest files now pass 36 tests; TypeScript and
+  scoped format pass. Browser writer/reviewer are idle; repaired E2E has not yet executed.
+- The frozen actual-DB soak compiled and passed strict target Clippy/Rust-2024 formatting. An
+  initial sandbox-denied loopback setup failed before execution; the approved-loopback real
+  1,800-second run started around 13:53 KST, with actual 20-consumer/attempt/RSS checkpoints.
+  No final endurance pass yet. Its completion wait stays active; no heartbeat or new workspace.
+  Final two fresh builds, focused browser replay twice and whole Web follow immediately after
+  this sole heavy test ends. Preserve all initial failures and subsequent evidence separately.
+- Actual soak completed at 14:23:23 KST: 1 PASS/0 failed/0 ignored, 1,800.73s, 1,767 cycles,
+  354 successful attempts, 3,580 renewals, 181 RSS samples; 11,868 KiB baseline/11,900 max/
+  11,768 final. Twenty active consumers, bounded 20/1/1 rows, release-all plus three idle
+  zero-request cycles and EOD count invariants passed. Source SHA-256 unchanged; evidence
+  /tmp/stock-beta-intraday-endurance-MIDSCL/intraday-endurance-approved-loopback-1800s.log.
+  Existing e9d73ea1 immediately resumed final read-only Web QA from the frozen current source:
+  root checks, two fresh standalone builds/focused replays, whole Web. No 432-test Rust repeat,
+  new workspace or heartbeat. Final QA verdict awaits these executions.
+- All DB work finished. Coordinator verified exact QA project/container/image/tmpfs/55438 and
+  zero active other clients, then removed only lagrange-intraday-qa-20260908 via its explicit
+  deploy/qa/qa-db.compose.yml. Container/network gone, historical synthetic tmpfs DBs discarded,
+  evidence retained; no production/other Docker resource or permanent volume touched.
+- Final Web execution /tmp/stock-beta-final-web-qa-3iPZ43: type/lint/OpenAPI88 and JS325 PASS;
+  two fresh builds PASS, corrected owner-only runtime focused10/10 each and whole84/84 PASS.
+  Initial runtime flag omission (coordinator brief error) produced1/9 and was corrected only
+  in synthetic subprocess env. Both complete failure and passing logs retained.
+- Coordinator viewed successful widget captures and found detail quote only~81px wide despite
+  semantic pass. Independent975eaeff confirmed Medium:12-column detail grid did not consume
+  current-quote full placement. Added only desktop/tablet full-span CSS rules before six existing
+  named rules, preserving their rows/spans; added1280/900/390 geometry, after-policy and contained
+  price/timestamp assertions/screenshots to existing first intraday test. Tsc/scopedBiome PASS.
+  Same QA worker resumes old-artifact red reproduction then two new builds/focused+whole;
+  same independent reviewer reviews these two deltas read-only in parallel. No DB/Rust rerun,
+  new workspace/heartbeat, production activation or final acceptance before visual verification.
+
+### WP-8 final acceptance / development scope closed (2026-09-10)
+
+- Independent sol/high reviewer 975eaeff returned `QA_EVIDENCE_ACCEPT` after inspecting final
+  logs, both builds'1280/900/390 screenshots, source hashes and real endurance evidence.
+  No substantiated Medium+ source/evidence defect remains in this bounded scope. Coordinator
+  accepts WP-8 as `QA_ACCEPT`; final mapping and retained failed-run history are in
+  [the QA report](2026-09-08-stock-beta-intraday-quotes-qa.md).
+- Final corrected source: 46 Vitest files/325 tests, typecheck, lint (four existing warnings/
+  one info), OpenAPI88; two fresh standalone builds; focused Chromium10/10 on each; whole
+  Web84/84. All complete exit0. Earlier focused Rust/API432 plus real1800.73s endurance1 passed;
+  no redundant Rust rerun or new build was needed after the model-capacity interruption.
+- Real soak:20 consumers,1767 cycles,354 attempts/successes,3580 renewals,181 RSS samples;
+  test-process RSS baseline11868/max11900/final11768KiB, rows20/1/1, release then idle no-call
+  checks passed. Process sampling is bounded evidence, not PostgreSQL memory or leak proof.
+- At18:47 KST coordinator confirmed all six final QA recorded PIDs absent, both33041/38191
+  ports free, no Cargo/rustc/Next-build/Playwright-test process and no active apps/web/.next.
+  Both build artifacts/logs/screenshots remain in /tmp/stock-beta-final-web-qa-followup-ztkt27/.
+  Exact synthetic DB project was already removed after DB work; no production resource touched.
+- Unrelated collectors all-targets test lint and operations mode0775 static failure remain
+  explicit exceptions. Local Compose config-only57 assertions and paired local PNG render
+  gates passed; installed-release wiring, live-provider smoke, deployment/activation, main
+  merge and push remain outside this development acceptance.
+- No active implementation/review package remains. Finished QA/review agents are archived
+  after their results are recovered; current coordinator workspace and evidence are retained.
+  Historical active/pending bindings above are execution history, not current worker status.

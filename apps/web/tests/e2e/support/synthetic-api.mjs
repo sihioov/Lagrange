@@ -9,6 +9,11 @@ import {
   recommendationResponse,
 } from "./recommendation-fixture.mjs";
 import { resetStockBetaFixture, stockBetaResponse } from "./stock-beta-fixture.mjs";
+import {
+  resetStockBetaIntradayFixture,
+  stockBetaIntradayResponse,
+  stockBetaIntradayTestState,
+} from "./stock-beta-intraday-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
 const defaultScenario = Object.freeze({
@@ -128,7 +133,12 @@ const server = createServer(async (request, response) => {
     // documented defaults for the rest, which is now what it gets.
     scenario = { ...defaultScenario, ...body };
     resetStockBetaFixture(scenario);
+    resetStockBetaIntradayFixture();
     json(response, 200, { scenario });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/__test/stock-beta/intraday-state") {
+    json(response, 200, stockBetaIntradayTestState());
     return;
   }
   const sessionFailure = authSessionFailure(scenario);
@@ -186,6 +196,20 @@ const server = createServer(async (request, response) => {
     const { delayMs = 0, ...stockBetaResponseData } = stockBeta;
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     json(response, stockBetaResponseData.status, stockBetaResponseData.body);
+    return;
+  }
+  const stockBetaIntraday = stockBetaIntradayResponse({
+    body,
+    headers: request.headers,
+    method: request.method ?? "GET",
+    pathname: url.pathname,
+    query: url.search,
+    scenario,
+  });
+  if (stockBetaIntraday !== null) {
+    const { delayMs = 0, ...stockBetaIntradayResponseData } = stockBetaIntraday;
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    json(response, stockBetaIntradayResponseData.status, stockBetaIntradayResponseData.body);
     return;
   }
   const backtest = backtestResponse({

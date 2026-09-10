@@ -61,6 +61,10 @@ class FakeClock implements IntradayQuoteClock {
   jump(delayMs: number): void {
     this.current += delayMs;
   }
+
+  pendingTimerCount(): number {
+    return this.timers.size;
+  }
 }
 
 async function flush(): Promise<void> {
@@ -200,6 +204,106 @@ function startContext(coordinator: IntradayQuoteLoadCoordinator, identity = IDEN
 }
 
 describe("Stock Beta intraday quote lifecycle", () => {
+  it("keeps timers and requests bounded over 30 simulated minutes and releases on unmount", async () => {
+    const clock = new FakeClock();
+    let creates = 0;
+    let gets = 0;
+    let releases = 0;
+    let inFlight = 0;
+    let maximumInFlight = 0;
+    let consumerIdsCreated = 0;
+    const consumerId = "00000000-0000-4000-8000-000000000010";
+    const demandId = "00000000-0000-4000-8000-000000000011";
+    const client: IntradayQuoteClient = {
+      createDemand: async (body) => {
+        expect(body.consumer_id).toBe(consumerId);
+        expect(body.renewal_sequence).toBe(creates++);
+        return {
+          ...demandFor(
+            IDENTITY_A,
+            consumerId,
+            body.renewal_sequence,
+            new Date(clock.now() + 30_000).toISOString(),
+          ),
+          demand_id: demandId,
+        };
+      },
+      getQuote: async (identity) => {
+        expect(identity).toEqual(IDENTITY_A);
+        gets += 1;
+        inFlight += 1;
+        maximumInFlight = Math.max(maximumInFlight, inFlight);
+        try {
+          await Promise.resolve();
+          const response = quoteFor(identity, clock);
+          if (response.quote === null) throw new Error("missing test quote");
+          return { ...response, quote: { ...response.quote, quote_version: String(gets) } };
+        } finally {
+          inFlight -= 1;
+        }
+      },
+      releaseDemand: async (id, body) => {
+        expect(id).toBe(demandId);
+        expect(body.consumer_id).toBe(consumerId);
+        releases += 1;
+      },
+    };
+    const coordinator = new IntradayQuoteLoadCoordinator({
+      client,
+      clock,
+      createConsumerId: () => {
+        consumerIdsCreated += 1;
+        return consumerId;
+      },
+    });
+    try {
+      startContext(coordinator);
+      await flush();
+      const baselineTimers = clock.pendingTimerCount();
+      expect(baselineTimers).toBeGreaterThan(0);
+      expect(baselineTimers).toBeLessThanOrEqual(5);
+      // Exercise every poll boundary, rather than jumping directly to the endpoint.
+      for (let tick = 0; tick < 360; tick += 1) {
+        clock.advance(5_000);
+        await flush();
+        expect(clock.pendingTimerCount()).toBe(baselineTimers);
+        expect(coordinator.getState()).toMatchObject({ phase: "ready", consumerId });
+        expect(inFlight).toBe(0);
+      }
+      expect(clock.now() - NOW_MS).toBe(1_800_000);
+      expect(gets).toBe(361);
+      expect(creates).toBe(121);
+      expect(consumerIdsCreated).toBe(1);
+      expect(maximumInFlight).toBe(1);
+      expect(releases).toBe(0);
+      coordinator.setContext({
+        enabled: true,
+        identity: IDENTITY_A,
+        mounted: false,
+        online: true,
+        snapshotKey: `${IDENTITY_A.instrument_id}:snapshot-1`,
+        visible: true,
+      });
+      await flush();
+      expect(clock.pendingTimerCount()).toBe(0);
+      expect(releases).toBe(1);
+      expect(coordinator.getState()).toMatchObject({
+        phase: "idle",
+        quote: null,
+        consumerId: null,
+      });
+      clock.advance(60_000);
+      await flush();
+      expect(gets).toBe(361);
+      expect(creates).toBe(121);
+      expect(releases).toBe(1);
+      expect(clock.pendingTimerCount()).toBe(0);
+    } finally {
+      coordinator.destroy();
+    }
+    // This measures scheduled work under an injected clock, not process RSS or real elapsed time.
+  });
+
   it("creates sequence zero, polls after demand, renews independently, and never overlaps GETs", async () => {
     const clock = new FakeClock();
     const get = deferred<IntradayQuoteResponse>();

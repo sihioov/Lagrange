@@ -137,3 +137,28 @@ Therefore SOURCE_ACCEPT does not imply overall WP-6/WP-7/release ACCEPT. Render,
 ## Decomposition status
 
 The independent SOURCE review and this bounded adjudication do **not** need further decomposition. No code, test, lock, schema, or runtime change was made or requested by the final finding disposition.
+
+## Coordinator-recorded WP-8 follow-up — 2026-09-10
+
+This addendum records subsequent independent adjudication; it does not change the historical
+source-only scope or imply that the original reviewer executed tests.
+
+- Read-only sol/high reviewer `975eaeff-a765-4ea7-aff4-814b3d943cfb` accepted the narrow
+  serializable quote Server/Client boundary, real catalog/coordinator additions and repaired
+  browser/fixture evidence. The later detail-width Medium was reproduced on an old build,
+  fixed only by desktop/tablet full-span rules and covered by responsive containment checks.
+  Its bounded two-file source review accepted that correction.
+- The same reviewer returned `QA_EVIDENCE_ACCEPT`: root325/46 tests, OpenAPI88, two build
+  exits0, focused10/10 twice, whole84/84, real1800.73-second endurance and all six final detail
+  screenshots were inspected. No substantiated Medium+ evidence defect remained.
+- Accepted CSS hash `129db3565b1eceddc78a6e1082b04925268b03696f33c8a0ae413b9652eb4a9e`,
+  E2E hash `413f53887a290003312ee49f4b145ad0c1e416837cd120a99106516104745c76`, endurance hash
+  `09f841c4a2b9452da1f346c22cc4ee51c5663f750d9d10a1fc459034c127789b`; coordinator rechecked all three.
+- At review time final PID cleanup was not independently evidenced. Coordinator subsequently
+  confirmed six recorded QA PIDs absent, ports33041/38191 free and no compiler/test processes
+  at18:47 KST. The [final QA report](2026-09-08-stock-beta-intraday-quotes-qa.md) records exact
+  checks, final mapping, process-RSS limits and retained evidence locations.
+- Owner-approved local rendering, actual config-only Compose validation and Web toolchain QA
+  close those earlier development gates. Existing collectors test-target Clippy and unrelated
+  operations mode0775 static failures remain explicit. No actual provider traffic, release
+  install, production activation, main merge or push is approved by this acceptance.

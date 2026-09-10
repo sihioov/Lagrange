@@ -239,6 +239,10 @@
   display: none;
 }
 
+.detailWidget[data-desktop-size="full"] {
+  grid-column: 1 / -1;
+}
+
 .detailWidget[data-widget-id="instrument-header"] {
   grid-column: 1 / -1;
   grid-row: 1;
@@ -638,6 +642,10 @@
 
   .detailWidget[data-tablet-visible="false"] {
     display: none;
+  }
+
+  .detailWidget[data-tablet-size="full"] {
+    grid-column: 1 / -1;
   }
 
   .detailWidget[data-widget-id="instrument-header"] {

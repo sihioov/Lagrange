@@ -4,6 +4,11 @@ import { type StockBetaWidgetFrameState, WidgetFrame } from "../shared/widget-fr
 import styles from "./current-quote.module.css";
 import type { IntradayQuoteLoadState } from "./quote-load-coordinator";
 
+export type IntradayQuoteDictionary = Pick<
+  StockBetaDictionary,
+  Extract<keyof StockBetaDictionary, `intradayQuote${string}`>
+>;
+
 function groupedInteger(value: string): string {
   const groups: string[] = [];
   for (let end = value.length; end > 0; end -= 3) {
@@ -28,7 +33,7 @@ export function formatIntradayQuoteSigned(value: string, locale: Locale): string
 
 function directionLabel(
   direction: NonNullable<NonNullable<IntradayQuoteLoadState["quote"]>["quote"]>["direction"],
-  t: StockBetaDictionary,
+  t: IntradayQuoteDictionary,
 ): string {
   return direction === "UP"
     ? t.intradayQuoteDirectionUp
@@ -50,7 +55,7 @@ function hasRetainedRefreshFailure(state: IntradayQuoteLoadState): boolean {
   );
 }
 
-function statusText(state: IntradayQuoteLoadState, t: StockBetaDictionary): string {
+function statusText(state: IntradayQuoteLoadState, t: IntradayQuoteDictionary): string {
   if (state.phase === "offline") return t.intradayQuoteOffline;
   if (state.phase === "demanding") return t.intradayQuoteDemanding;
   const retainedRefreshFailure = hasRetainedRefreshFailure(state);
@@ -84,7 +89,7 @@ function statusText(state: IntradayQuoteLoadState, t: StockBetaDictionary): stri
 
 function frameState(
   state: IntradayQuoteLoadState,
-  t: StockBetaDictionary,
+  t: IntradayQuoteDictionary,
 ): StockBetaWidgetFrameState {
   if (state.quote?.quote !== null && state.quote !== null) return { kind: "ready" };
   if (state.phase === "demanding" || state.phase === "polling") {
@@ -94,7 +99,7 @@ function frameState(
 }
 
 export type CurrentQuoteViewProps = {
-  readonly copy: StockBetaDictionary;
+  readonly copy: IntradayQuoteDictionary;
   readonly locale: Locale;
   readonly state: IntradayQuoteLoadState;
 };

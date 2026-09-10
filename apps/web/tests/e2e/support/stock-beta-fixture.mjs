@@ -12,11 +12,16 @@ const CHART_CHANGES = [80, -50, 0, 120, -90, 45, -35, 0, 60, -70, 25];
 const JOB_ID = "00000000-0000-4000-8000-000000000701";
 const REQUEST_ID = "request-synthetic-stock-beta-v2";
 
-let runtime = {
-  disabledInstrumentIds: new Set(),
-  memberships: [],
-  pollCount: 0,
-};
+function createRuntime() {
+  return {
+    disabledInstrumentIds: new Set(),
+    memberships: [],
+    nextMembershipNumber: 1,
+    pollCount: 0,
+  };
+}
+
+let runtime = createRuntime();
 
 function rowCountFor(scenario) {
   const count = Number(scenario.stockBetaRows ?? 31);
@@ -60,12 +65,12 @@ function lifecycleCoverage(lifecycle) {
   };
 }
 
-function membership(code, lifecycle, failure) {
+function membership(code, lifecycle, failure, id = membershipIdFor(code)) {
   return {
     coverage: lifecycleCoverage(lifecycle),
     ...(failure === undefined ? {} : { failure }),
     generation: ["READY", "DISABLED"].includes(lifecycle) ? 1 : 0,
-    id: membershipIdFor(code),
+    id,
     instrument_id: instrumentIdForCode(code),
     lifecycle,
     requested_at: BASE_TIME,
@@ -101,6 +106,7 @@ function advancePendingMemberships() {
       ...item,
       coverage: lifecycleCoverage(nextLifecycle),
       failure: undefined,
+      generation: nextLifecycle === "READY" ? 1 : item.generation,
       lifecycle: nextLifecycle,
       updated_at: BASE_TIME,
     };
@@ -116,34 +122,50 @@ function seededCodes(count, seedCode) {
   return codes;
 }
 
+function freshMembershipId() {
+  const suffix = String(999_000_000_000 + runtime.nextMembershipNumber).padStart(12, "0");
+  runtime.nextMembershipNumber += 1;
+  return `00000000-0000-4000-8000-${suffix}`;
+}
+
 export function resetStockBetaFixture(scenario = {}) {
   const seed = scenario.stockBetaSeed ?? "ready";
   const seedCode = normalizeCode(scenario.stockBetaSeedCode ?? "000001");
   const count = rowCountFor(scenario);
 
   if (seed === "empty" || count === 0) {
-    runtime = { disabledInstrumentIds: new Set(), memberships: [], pollCount: 0 };
+    runtime = createRuntime();
     return;
   }
 
   if (seed === "failed") {
-    runtime = {
-      disabledInstrumentIds: new Set(),
-      memberships: [
-        membership(seedCode, "FAILED", {
-          code: "OWNER_EQUITY_BACKFILL_RETRYABLE",
-          retryable: true,
-        }),
-      ],
-      pollCount: 0,
-    };
+    runtime = createRuntime();
+    runtime.memberships = [
+      membership(seedCode, "FAILED", {
+        code: "OWNER_EQUITY_BACKFILL_RETRYABLE",
+        retryable: true,
+      }),
+    ];
     return;
   }
 
-  runtime = {
-    disabledInstrumentIds: new Set(),
-    memberships: seededCodes(count, seedCode).map((code) => membership(code, "READY")),
-    pollCount: 0,
+  runtime = createRuntime();
+  runtime.memberships = seededCodes(count, seedCode).map((code) => membership(code, "READY"));
+}
+
+export function stockBetaMembershipForIntraday(membershipId) {
+  const item = runtime.memberships.find((candidate) => candidate.id === membershipId);
+  if (
+    item === undefined ||
+    item.lifecycle !== "READY" ||
+    runtime.disabledInstrumentIds.has(item.instrument_id)
+  ) {
+    return null;
+  }
+  return {
+    generation: item.generation,
+    instrument_id: item.instrument_id,
+    membership_id: item.id,
   };
 }
 
@@ -406,7 +428,8 @@ export function stockBetaResponse(request) {
     if (existing !== undefined) {
       return { body: { duplicate_active: true, job_id: JOB_ID, resource: existing }, status: 200 };
     }
-    const resource = membership(body.instrument_code, "REQUESTED");
+    const resource = membership(body.instrument_code, "REQUESTED", undefined, freshMembershipId());
+    runtime.disabledInstrumentIds.delete(instrumentId);
     runtime.memberships = [...runtime.memberships, resource];
     runtime.pollCount = 0;
     return { body: { duplicate_active: false, job_id: JOB_ID, resource }, status: 202 };
