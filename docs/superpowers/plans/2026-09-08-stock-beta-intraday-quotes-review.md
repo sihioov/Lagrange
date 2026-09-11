@@ -22,6 +22,11 @@ Branch: `feature/stock-beta-intraday-quotes-20260908`
 
 **SOURCE_ACCEPT**
 
+Historical verdict for the original pin. Additional independent review of `f587396` by
+`37b54534-4389-4484-bda7-394983af4705` returned `REVIEW_REJECT` on 2026-09-10 for the
+retained-price plus failure/pause status issue. Coordinator confirmed and corrected it on
+2026-09-11. The final addendum records restored source and QA acceptance after re-review.
+
 No substantiated source finding remains after bounded adjudication of the initially reported HTTP demand-mutation concern. No Critical, High, Medium, or Low source defect was identified in the reviewed scope.
 
 This SOURCE_ACCEPT is limited to the inspected source. It is not an overall WP-6, WP-7, QA, or release acceptance; the independent render/runtime/Web QA gates listed below remain unresolved.
@@ -162,3 +167,34 @@ source-only scope or imply that the original reviewer executed tests.
   close those earlier development gates. Existing collectors test-target Clippy and unrelated
   operations mode0775 static failures remain explicit. No actual provider traffic, release
   install, production activation, main merge or push is approved by this acceptance.
+
+## Additional review correction — 2026-09-11
+
+The fresh review on `f587396` identified a Medium: a production-shaped HTTP200 response can
+retain a valid RECENT quote while carrying provider failure or `NO_ACTIVE_DEMAND`; the widget
+incorrectly displayed validated cache. CLOSED wording was also duplicated. This was reproduced
+before production edits:10 failed/33 passed in the two focused files.
+
+The same independent sol/high reviewer `37b54534-4389-4484-bda7-394983af4705` subsequently
+returned **ACCEPT, no findings** after reading the full eight-file Web correction and tracing
+the API response contract. Seven failure reasons now show retained refresh failure, no demand
+shows paused without hiding a valid quote, and market/semantic status text is deduplicated.
+The 30-second timer preserves the reason; a later clean response clears it. Cache-age phase
+and the existing null-quote retention/demand policies remain unchanged.
+
+The reviewer inspected final focused44/44 and whole Vitest336/336 logs (exit0) and the old-code
+red evidence in `/tmp/stock-beta-web-remediation.C78Afq/`, and ran read-only diff checks.
+It did not execute tests or rescan the prior111-file branch, Rust/DB/ops or coordinator docs.
+Source acceptance was followed by **QA_EVIDENCE_ACCEPT**, no findings or remaining source/QA
+followup, from the same reviewer. It read both fresh build exits0, focused11/11 on each,
+whole Web85/85, final typecheck/scoped Biome exits0, unchanged eight-file hashes and cleanup
+records in `/tmp/stock-beta-final-web-qa-current.LUM1ei/`. It viewed the four retained-failure/
+paused intermediate PNGs at original resolution, not every screenshot, trace or video.
+
+The initial server-launch, inline-wrapper, port-assertion and wrong-cwd config failures are
+preserved as harness errors; none is counted as a successful test or source regression.
+For inline exit127, the reviewer relied on the provided failure record because a separate
+retained command log was not found. Final cleanup aggregation initially lacked its own exit
+marker; coordinator independently confirmed recorded PIDs absent, both ports free, `.next`
+absent and both artifacts retained with an explicit exit0 at00:52:22UTC. The final QA report
+records those exact checks and limitations. No further source fix was requested or made.

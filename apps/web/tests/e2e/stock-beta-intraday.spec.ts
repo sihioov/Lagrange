@@ -883,7 +883,11 @@ test.describe("provider-free Stock Beta intraday integration", () => {
           }
         }
       }
-      await expect(quoteStatus(widget)).toContainText(scenarioCase.text);
+      if (scenarioCase.state === "closed") {
+        await expect(quoteStatus(widget)).toHaveText(scenarioCase.text);
+      } else {
+        await expect(quoteStatus(widget)).toContainText(scenarioCase.text);
+      }
       if (scenarioCase.marketState === null) {
         await expect(quoteStatus(widget)).not.toHaveAttribute("data-market-state", /.+/);
       } else {
@@ -909,6 +913,110 @@ test.describe("provider-free Stock Beta intraday integration", () => {
       await expect(quoteStatus(widget)).toContainText("Current quote is unavailable");
       await stopSyntheticDemand(page, request);
       await page.goto("about:blank");
+    }
+  });
+
+  test("surfaces retained production failure and paused responses, then recovers normally", async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(45_000);
+    const cases = [
+      {
+        state: "retained-provider-timeout",
+        reason: "PROVIDER_TIMEOUT",
+        status: "Quote refresh failed; the last successful quote is retained.",
+      },
+      {
+        state: "retained-no-active-demand",
+        reason: "NO_ACTIVE_DEMAND",
+        status:
+          "Quote collection is paused because there is no active demand; the last quote is retained.",
+      },
+    ] as const;
+
+    for (const [index, scenarioCase] of cases.entries()) {
+      if (index > 0) {
+        await stopSyntheticDemand(page, request);
+        await page.goto("about:blank");
+      }
+      const firstResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" && response.url().includes(quotePathFragment),
+        { timeout: 15_000 },
+      );
+      const widget = await openDashboard(
+        page,
+        request,
+        ownerScenario({
+          stockBetaRows: 1,
+          stockBetaIntradayQuoteSequence: [scenarioCase.state, "open"],
+        }),
+      );
+      const response = await firstResponse;
+      expect(response.status()).toBe(200);
+      const body = (await response.json()) as {
+        readonly freshness: string;
+        readonly quote: {
+          readonly last_success_at: string;
+          readonly price: string;
+        } | null;
+        readonly reason_code: string | null;
+      };
+      expect(body.freshness).toBe("RECENT");
+      expect(body.reason_code).toBe(scenarioCase.reason);
+      expect(body.quote).not.toBeNull();
+      if (body.quote === null) throw new Error("retained fixture omitted its quote");
+      expect(body.quote.price).toBe("101200.00");
+
+      await expect(widget.getByTestId("stock-beta-current-quote")).toBeVisible();
+      await expect(widget.locator(`[data-quote-value="${body.quote.price}"]`)).toHaveCount(1);
+      await expect(widget.locator("[data-last-success-at]")).toHaveAttribute(
+        "data-last-success-at",
+        body.quote.last_success_at,
+      );
+      await expect(quoteStatus(widget)).toHaveText(scenarioCase.status);
+      await expect(quoteStatus(widget)).not.toHaveText("Validated cache");
+      await widget.screenshot({
+        animations: "disabled",
+        path: test.info().outputPath(`stock-beta-${scenarioCase.state}.png`),
+      });
+
+      const beforeRecovery = await syntheticState(request);
+      const recoveryResponse = page.waitForResponse(
+        (candidate) =>
+          candidate.request().method() === "GET" && candidate.url().includes(quotePathFragment),
+        { timeout: 15_000 },
+      );
+      await expect
+        .poll(async () => (await syntheticState(request)).quote_gets, {
+          timeout: 15_000,
+          intervals: [100, 250, 500, 1_000],
+        })
+        .toBeGreaterThan(beforeRecovery.quote_gets);
+      const recovered = await recoveryResponse;
+      expect(recovered.status()).toBe(200);
+      const recoveredBody = (await recovered.json()) as {
+        readonly freshness: string;
+        readonly quote: {
+          readonly last_success_at: string;
+          readonly price: string;
+        } | null;
+        readonly reason_code: string | null;
+      };
+      expect(recoveredBody.freshness).toBe("RECENT");
+      expect(recoveredBody.reason_code).toBeNull();
+      expect(recoveredBody.quote).not.toBeNull();
+      if (recoveredBody.quote === null) throw new Error("recovery fixture omitted its quote");
+      expect(recoveredBody.quote.price).toBe("101200.00");
+      await expect(quoteStatus(widget)).toHaveText("Validated cache");
+      await expect(widget.locator(`[data-quote-value="${recoveredBody.quote.price}"]`)).toHaveCount(
+        1,
+      );
+      await expect(widget.locator("[data-last-success-at]")).toHaveAttribute(
+        "data-last-success-at",
+        recoveredBody.quote.last_success_at,
+      );
     }
   });
 

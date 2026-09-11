@@ -46,12 +46,27 @@ function directionLabel(
           : t.intradayQuoteDirectionLimitDown;
 }
 
+const RETAINED_REFRESH_FAILURE_REASONS = new Set<NonNullable<IntradayQuoteLoadState["reasonCode"]>>(
+  [
+    "PROVIDER_TIMEOUT",
+    "PROVIDER_RATE_LIMITED",
+    "PROVIDER_UNAVAILABLE",
+    "PROVIDER_RESPONSE_INVALID",
+    "QUOTE_VALUE_INVALID",
+    "QUOTE_BUDGET_EXHAUSTED",
+    "PRODUCER_UNAVAILABLE",
+  ],
+);
+
+function hasVisibleQuote(state: IntradayQuoteLoadState): boolean {
+  return state.quote !== null && state.quote.quote !== null;
+}
+
 function hasRetainedRefreshFailure(state: IntradayQuoteLoadState): boolean {
   return (
-    state.errorCode !== null &&
-    state.reasonCode === "PRODUCER_UNAVAILABLE" &&
-    state.lastSuccessAt !== null &&
-    state.quote?.quote !== null
+    hasVisibleQuote(state) &&
+    state.reasonCode !== null &&
+    RETAINED_REFRESH_FAILURE_REASONS.has(state.reasonCode)
   );
 }
 
@@ -59,23 +74,29 @@ function statusText(state: IntradayQuoteLoadState, t: IntradayQuoteDictionary): 
   if (state.phase === "offline") return t.intradayQuoteOffline;
   if (state.phase === "demanding") return t.intradayQuoteDemanding;
   const retainedRefreshFailure = hasRetainedRefreshFailure(state);
-  const semanticStatus = retainedRefreshFailure
-    ? t.intradayQuoteRefreshFailed
-    : state.phase === "polling" && state.quote !== null
-      ? state.quote.freshness === "STALE"
-        ? t.intradayQuoteStale
-        : t.intradayQuoteReady
-      : state.phase === "polling"
-        ? t.intradayQuotePolling
-        : state.reasonCode === "SESSION_CLOSED"
-          ? t.intradayQuoteClosed
-          : state.phase === "stale"
-            ? t.intradayQuoteStale
-            : state.phase === "unavailable" || state.phase === "error"
-              ? t.intradayQuoteUnavailable
-              : state.phase === "ready"
-                ? t.intradayQuoteReady
-                : t.intradayQuoteUnavailable;
+  let semanticStatus: string;
+  if (retainedRefreshFailure) {
+    semanticStatus = t.intradayQuoteRefreshFailed;
+  } else if (state.reasonCode === "NO_ACTIVE_DEMAND" && hasVisibleQuote(state)) {
+    semanticStatus = t.intradayQuoteNoActiveDemand;
+  } else if (state.reasonCode === "SESSION_CLOSED") {
+    semanticStatus = t.intradayQuoteClosed;
+  } else if (state.reasonCode === "INSTRUMENT_HALTED") {
+    semanticStatus = t.intradayQuoteHalted;
+  } else if (state.phase === "polling" && state.quote !== null) {
+    semanticStatus =
+      state.quote.freshness === "STALE" ? t.intradayQuoteStale : t.intradayQuoteReady;
+  } else if (state.phase === "polling") {
+    semanticStatus = t.intradayQuotePolling;
+  } else if (state.phase === "stale") {
+    semanticStatus = t.intradayQuoteStale;
+  } else if (state.phase === "unavailable" || state.phase === "error") {
+    semanticStatus = t.intradayQuoteUnavailable;
+  } else if (state.phase === "ready") {
+    semanticStatus = t.intradayQuoteReady;
+  } else {
+    semanticStatus = t.intradayQuoteUnavailable;
+  }
   const marketStatus =
     state.marketState === "HALTED"
       ? t.intradayQuoteHalted
@@ -84,7 +105,9 @@ function statusText(state: IntradayQuoteLoadState, t: IntradayQuoteDictionary): 
         : state.marketState === "UNKNOWN"
           ? t.intradayQuoteUnknown
           : null;
-  return marketStatus === null ? semanticStatus : `${marketStatus} · ${semanticStatus}`;
+  return marketStatus === null || marketStatus === semanticStatus
+    ? semanticStatus
+    : `${marketStatus} · ${semanticStatus}`;
 }
 
 function frameState(

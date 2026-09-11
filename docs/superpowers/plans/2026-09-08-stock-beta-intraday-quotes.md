@@ -4,7 +4,7 @@ Native subagents: prohibited for worker packages
 # Stock Beta 장중 현재가 반영 실행 계획
 
 작성일: 2026-09-08 (Asia/Seoul)
-상태: WP-1~6 구현·운영 안내서·로컬 PNG 통합, WP-7 독립 검토 및 WP-8 합성/default-off QA_ACCEPT 완료; 기존 비관련 lint/static 예외 기록; 배포·운영 활성화 미실행
+상태: 추가 독립 리뷰의 retained quote 표시 Medium 수정·검증 완료; source ACCEPT 및 QA_EVIDENCE_ACCEPT, 개발 QA 수락 복원; 배포·운영 활성화 미실행
 기준 커밋: `d1baf9da9b13fcb61649b1c26de56aed87a83418` (main 통합·원격 푸시 확인)
 
 ## Goal and boundaries
@@ -4808,3 +4808,42 @@ pull/install/QA change; answer pending. Proceed C2a independently, not blocked o
 - No active implementation/review package remains. Finished QA/review agents are archived
   after their results are recovered; current coordinator workspace and evidence are retained.
   Historical active/pending bindings above are execution history, not current worker status.
+
+### Additional independent review / bounded Web correction (2026-09-11)
+
+- The later reviewer `37b54534-4389-4484-bda7-394983af4705` found one Medium on
+  `f587396`: HTTP200 can retain a valid RECENT quote while reporting provider failure or
+  `NO_ACTIVE_DEMAND`, but the widget labels it as validated cache. CLOSED text also repeats.
+  This supersedes the earlier development acceptance for that case, not the recorded tests.
+- Red-first regression:10 failed/33 passed. Correction preserves valid price and receipt time,
+  displays the typed failure/pause independently of cache age, preserves reason through the
+  30-second timer, clears it on clean recovery and deduplicates market status. No API/Rust,
+  null-quote retention policy, demand lifecycle, provider or default-off change is needed.
+- Coordinator inspected the eight-file Web delta, removed an unnecessary null-quote policy
+  expansion and added the no-demand timer case. Final focused44/44 and whole Vitest336/336
+  passed with complete exit0 logs in `/tmp/stock-beta-web-remediation.C78Afq/`.
+- Same-workspace writer `b7ca1418-c858-44e9-8f32-41129322e48f` (luna/max) now performs
+  read-only fresh-build browser QA; original reviewer37 (sol/high) independently reviews the
+  frozen correction. Their scopes are read-only and do not share a compiler. Browser results
+  and final acceptance are pending; no DB recreation, new workspace or heartbeat is used.
+
+### Additional correction accepted / closure (2026-09-11)
+
+- Reviewer37 returned source `ACCEPT` and subsequent `QA_EVIDENCE_ACCEPT`, both without
+  findings or remaining source/QA followup. The coordinator accepts the bounded correction;
+  it does not invalidate earlier successful Rust/DB/soak evidence or authorize activation.
+- Final source:44 focused/336 whole Vitest; two fresh builds; focused Chromium11/11 on each;
+  whole Web85/85; final Web typecheck and scoped Biome8files. All complete exits0. Four new
+  intermediate screenshots were inspected by coordinator and reviewer. No source changes
+  or repeated Rust/DB suite were needed after the frozen Web correction.
+- Test harness command errors are retained in the QA report, not hidden or confused with
+  code failures. Eight source hashes stayed identical throughout the two builds and tests.
+- Coordinator confirmed QA PIDs absent,33041/38191 free, `.next` absent and both fresh
+  artifacts retained at09:52KST. Existing logs/builds and current coordinator workspace stay;
+  finished worker/reviewer records are archived once their full results are recovered.
+- Final evidence: `/tmp/stock-beta-web-remediation.C78Afq/` and
+  `/tmp/stock-beta-final-web-qa-current.LUM1ei/`. The QA/review reports record counts,
+  screenshots, failure history, cleanup and limits. Default-off and the production boundary
+  remain unchanged; no provider call, DB recreation, deployment, main merge or push occurred.
+- Both completed records (writer b7ca1418 and reviewer37b54534) were archived at09:54KST
+  after full result recovery. No active package remains; the coordinator workspace is retained.

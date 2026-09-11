@@ -70,6 +70,7 @@ export function CurrentQuoteWidget({
         intradayQuoteHalted: t.intradayQuoteHalted,
         intradayQuoteHeading: t.intradayQuoteHeading,
         intradayQuoteLastSuccessLabel: t.intradayQuoteLastSuccessLabel,
+        intradayQuoteNoActiveDemand: t.intradayQuoteNoActiveDemand,
         intradayQuoteOffline: t.intradayQuoteOffline,
         intradayQuotePolling: t.intradayQuotePolling,
         intradayQuotePriceLabel: t.intradayQuotePriceLabel,

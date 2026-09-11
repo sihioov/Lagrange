@@ -955,7 +955,10 @@ export class IntradayQuoteLoadCoordinator {
           errorCode: session.pollFailureCode,
           fetching: session.getInFlight !== null,
           phase: "stale",
-          reasonCode: session.pollFailureCode === null ? "QUOTE_STALE" : "PRODUCER_UNAVAILABLE",
+          reasonCode:
+            session.pollFailureCode === null
+              ? (this.state.reasonCode ?? lastGood.reason_code ?? "QUOTE_STALE")
+              : "PRODUCER_UNAVAILABLE",
           lastSuccessAt: lastGood.quote?.last_success_at ?? null,
         });
       },

@@ -139,6 +139,68 @@ describe("Stock Beta current quote widget", () => {
     expect(english).not.toContain(stockBetaDictionary.en.intradayQuoteReady);
   });
 
+  it("renders a production-shaped retained provider failure without a browser error code", () => {
+    const failed = state({
+      errorCode: null,
+      phase: "ready",
+      quote: { ...RESPONSE, reason_code: "PROVIDER_TIMEOUT" },
+      reasonCode: "PROVIDER_TIMEOUT",
+    });
+    const english = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.en} locale="en" state={failed} />,
+    );
+    const korean = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.ko} locale="ko" state={failed} />,
+    );
+
+    expect(english).toContain(stockBetaDictionary.en.intradayQuoteRefreshFailed);
+    expect(korean).toContain(stockBetaDictionary.ko.intradayQuoteRefreshFailed);
+    expect(english).not.toContain(stockBetaDictionary.en.intradayQuoteReady);
+    expect(english).toContain('data-quote-value="100123456789.12345678"');
+    expect(english).toContain('data-last-success-at="2026-09-08T02:59:00Z"');
+  });
+
+  it("labels a retained quote as paused when there is no active demand", () => {
+    const paused = state({
+      errorCode: null,
+      quote: { ...RESPONSE, reason_code: "NO_ACTIVE_DEMAND" },
+      reasonCode: "NO_ACTIVE_DEMAND",
+    });
+    const english = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.en} locale="en" state={paused} />,
+    );
+    const korean = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.ko} locale="ko" state={paused} />,
+    );
+
+    expect(english).toContain(
+      "Quote collection is paused because there is no active demand; the last quote is retained.",
+    );
+    expect(korean).toContain(
+      "활성 수요가 없어 현재가 수집을 일시 중지했으며 마지막 현재가를 유지합니다.",
+    );
+    expect(english).toContain('data-quote-value="100123456789.12345678"');
+  });
+
+  it("does not repeat the same closed market status in the status header", () => {
+    const closed = state({
+      lastSuccessAt: null,
+      marketState: "CLOSED",
+      phase: "unavailable",
+      quote: null,
+      reasonCode: "SESSION_CLOSED",
+    });
+    const english = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.en} locale="en" state={closed} />,
+    );
+    const korean = renderToStaticMarkup(
+      <CurrentQuoteView copy={stockBetaDictionary.ko} locale="ko" state={closed} />,
+    );
+
+    expect(english).toContain('data-status-phase="unavailable">Market closed</span>');
+    expect(korean).toContain('data-status-phase="unavailable">장 마감</span>');
+  });
+
   it("renders halted and closed market state independently of a retained quote", () => {
     const halted = intradayQuoteResponseSchema.parse({ ...RESPONSE, market_state: "HALTED" });
     const closed = intradayQuoteResponseSchema.parse({ ...RESPONSE, market_state: "CLOSED" });

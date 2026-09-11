@@ -91,6 +91,7 @@ export type StockBetaDictionary = {
   readonly intradayQuoteHalted: string;
   readonly intradayQuoteHeading: string;
   readonly intradayQuoteLastSuccessLabel: string;
+  readonly intradayQuoteNoActiveDemand: string;
   readonly intradayQuoteOffline: string;
   readonly intradayQuotePolling: string;
   readonly intradayQuotePriceLabel: string;
@@ -318,6 +319,8 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuoteHalted: "Instrument halted",
     intradayQuoteHeading: "Intraday price · periodic refresh",
     intradayQuoteLastSuccessLabel: "Last successful quote",
+    intradayQuoteNoActiveDemand:
+      "Quote collection is paused because there is no active demand; the last quote is retained.",
     intradayQuoteOffline: "Updates paused while offline or hidden.",
     intradayQuotePolling: "Waiting for the next validated quote…",
     intradayQuotePriceLabel: "Current price",
@@ -544,6 +547,8 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuoteHalted: "종목 거래 정지",
     intradayQuoteHeading: "장중 현재가 · 주기적 조회",
     intradayQuoteLastSuccessLabel: "마지막 성공 조회",
+    intradayQuoteNoActiveDemand:
+      "활성 수요가 없어 현재가 수집을 일시 중지했으며 마지막 현재가를 유지합니다.",
     intradayQuoteOffline: "오프라인이거나 화면이 숨겨져 있어 조회를 멈췄습니다.",
     intradayQuotePolling: "다음 검증된 현재가를 기다리는 중…",
     intradayQuotePriceLabel: "현재가",

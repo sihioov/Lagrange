@@ -1,6 +1,6 @@
 # Stock Beta intraday quotes — WP-8 synthetic integration QA
 
-Date: 2026-09-10
+Date: 2026-09-11 (final correction; earlier executions retained)
 
 Branch: `feature/stock-beta-intraday-quotes-20260908`
 
@@ -11,7 +11,90 @@ development approval, and the accepted `SOURCE_ACCEPT` review.
 
 ## Verdict
 
-`QA_ACCEPT` — bounded synthetic/default-off development scope, 2026-09-10.
+`QA_ACCEPT` — 2026-09-11: the additional retained-quote status defect is reproduced, fixed
+and independently accepted, including fresh-build browser evidence and final cleanup.
+The temporary `QA_REOPENED` state is closed. Earlier failed and passing execution records
+below remain historical evidence; no deployment or operational activation is implied.
+
+### Additional review remediation
+
+Reviewer `37b54534-4389-4484-bda7-394983af4705` returned `REVIEW_REJECT` for one Medium:
+HTTP200 with a valid recent quote plus provider failure or `NO_ACTIVE_DEMAND` reason can
+render as normal validated cache. Existing typed-failure browser fixtures omit the quote
+and miss this production-shaped combination. CLOSED text is also duplicated. Coordinator
+confirmed the API/coordinator/view/fixture source mismatch; no new provider or DB run is
+needed to reproduce it. Bounded Web repair, regression execution and independent re-review
+are now complete. Earlier QA/cleanup results are preserved below.
+
+First regression execution against unchanged production code: **10 failed / 33 passed**
+across two focused files. Seven failures cover reason loss at the 30-second timer; three
+rendered-state failures cover HTTP200 retained provider failure, retained no-demand pause,
+and duplicated CLOSED text. Evidence: `/tmp/stock-beta-web-remediation.C78Afq/red-focused.log`.
+This is expected red evidence, not a new test-suite pass or an executed browser regression.
+
+The bounded correction now passes focused44/44 and whole Vitest336/336 (46 files), both
+with explicit exit0 in `coordinator-final-focused.log` and `coordinator-final-vitest.log` in
+that directory. The original reviewer37 returned **source ACCEPT, no findings** after
+reading all eight Web deltas and those logs. It did not rerun tests. Subsequent browser
+execution, screenshot inspection and cleanup below restore development acceptance.
+
+### Corrected execution — 2026-09-11
+
+Browser evidence: `/tmp/stock-beta-final-web-qa-current.LUM1ei/`. Source is the eight-file
+Web correction on `f587396`, not a Rust/API/DB change. All counts below are complete summaries,
+not observed progress lines. The two new build artifacts remain under each `next-output/`.
+
+| Check | Result | Log relative to browser evidence directory unless noted |
+| --- | --- | --- |
+| Focused unit regressions |44 passed, exit0|`/tmp/stock-beta-web-remediation.C78Afq/coordinator-final-focused.log`|
+| Whole Vitest |336 passed,46 files, exit0|`/tmp/stock-beta-web-remediation.C78Afq/coordinator-final-vitest.log`|
+| Fresh standalone builds |Both exit0|`build-1/build-1.log`, `build-2/build-2.log`|
+| Focused Chromium on build1 |11/11, exit0|`build-1/build-1-focused.log`|
+| Focused Chromium on build2 |11/11, exit0|`build-2/build-2-focused.log`|
+| Whole Web Chromium on build2 |85/85, exit0|`build-2/build-2-whole-final.log`|
+| Final Web typecheck / scoped Biome |Both exit0;8 files checked without fixes|`final-web-typecheck.log`, `final-scoped-biome.log`|
+| Final provenance and cleanup |8 source hashes unchanged; distinct build IDs; QA resources stopped|`final-provenance-and-cleanup.log`, `coordinator-cleanup-confirmation.log`|
+
+Successful page/JavaScript/synthetic-state preflights returned200; widget preflights showed
+price101200.00, ready state and a receipt time, with zero guarded external/forbidden requests
+or WebSocket attempts. Logs are `build-1/build-1-{page-js,widget}-preflight.log` and the
+corresponding `build-2/build-2-{page-js,widget}-preflight-{focused,whole-final}.log` files.
+
+The new focused test checks actual HTTP200 JSON with RECENT/non-null price and receipt time,
+the retained failure/no-demand reason and exact visible status, then the next clean response
+and normal status recovery. In both builds, coordinator viewed the two intermediate PNGs in
+`focused-results-owner/stock-beta-intraday-provid-55062-nses-then-recovers-normally-chromium/`:
+`stock-beta-retained-provider-timeout.png` and `stock-beta-retained-no-active-demand.png`.
+The tested desktop captures are readable and contained; they do not establish every possible
+status at every viewport. The eight-reason unit table separately covers the30-second timer.
+The synthetic fixture stamps each returned quote: this is not evidence that a real broker or
+database refresh preserved one timestamp across multiple failed polls.
+
+Harness failures are retained rather than presented as application failures or hidden:
+the first detached-server preflight failed to connect (exit7); an inline harness attempt
+exited127; a free-port assertion while the synthetic fixture was active exited1; and the
+first whole-Web command used a root-relative missing config and failed before tests started.
+Corrected same-session server/test execution and the proper Web config yielded the passes
+above without source weakening or another build. Lower-level sandbox/network-isolation cause
+was not independently established. Earlier failed logs and runtime-cleanup records remain.
+
+No Rust, DB, soak, OpenAPI or Compose suite was rerun for this Web-only correction. Their
+earlier accepted evidence and known unrelated lint/static limitations below remain unchanged.
+Both build/runtime test subprocesses explicitly set owner_only; operational default-off,
+installed-release wiring, external providers, production activation, main merge and push
+remain untouched.
+
+Reviewer37 returned **QA_EVIDENCE_ACCEPT, no findings, no remaining source/QA followup**
+after reading the complete browser logs, final type/format/provenance/cleanup records and
+all four specified intermediate PNGs. It did not execute tests or inspect every trace/video.
+It relied on the reported inline exit127 failure because a separate retained command log
+was not found; that failed attempt is not used as successful evidence.
+
+Coordinator additionally confirmed cleanup at00:52:21–22UTC (09:52KST), with explicit exit0:
+recorded PIDs906051/917698/924094/930674/917664/924082/930662 absent, ports33041/38191 free,
+no active `.next` or link, both build artifacts retained and `git diff --check` passing.
+Post-suite available memory was7.9GiB. This is a resource snapshot, not a memory-leak or
+kernel-wide OOM proof. The historical DB cleanup remains unchanged; no DB was recreated.
 
 The initial browser/API/database QA ran sequentially and exposed the failures below.
 This report retains those initial results; the remediation addendum records later runs.

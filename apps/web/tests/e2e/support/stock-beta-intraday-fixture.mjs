@@ -5,6 +5,16 @@ const CACHE_PATH = "/api/v1/research/owner-beta/equity-universe-v2/instruments";
 const REQUEST_ID = "request-synthetic-stock-beta-intraday";
 const CALENDAR_HASH = "a".repeat(64);
 const WINDOW_HASH = `sha256:${"b".repeat(64)}`;
+const RETAINED_REASON_BY_STATE = {
+  "retained-provider-timeout": "PROVIDER_TIMEOUT",
+  "retained-provider-rate-limited": "PROVIDER_RATE_LIMITED",
+  "retained-provider-unavailable": "PROVIDER_UNAVAILABLE",
+  "retained-provider-response-invalid": "PROVIDER_RESPONSE_INVALID",
+  "retained-quote-value-invalid": "QUOTE_VALUE_INVALID",
+  "retained-quote-budget-exhausted": "QUOTE_BUDGET_EXHAUSTED",
+  "retained-producer-unavailable": "PRODUCER_UNAVAILABLE",
+  "retained-no-active-demand": "NO_ACTIVE_DEMAND",
+};
 
 let runtime = createRuntime();
 
@@ -162,6 +172,10 @@ function quotePayload(instrumentId, state) {
   return payload;
 }
 
+function retainedReasonForState(state) {
+  return RETAINED_REASON_BY_STATE[state] ?? null;
+}
+
 function quoteResponse(instrumentId, membershipId, generation, state) {
   if (state === "unknown-calendar" || state === "session-window-unknown") {
     return {
@@ -215,7 +229,7 @@ function quoteResponse(instrumentId, membershipId, generation, state) {
       membership_id: membershipId,
       next_poll_after_ms: 5_000,
       quote,
-      reason_code: null,
+      reason_code: retainedReasonForState(state),
       schema_version: 1,
       session: sessionFor(quote.last_success_at),
       venue: "KRX",

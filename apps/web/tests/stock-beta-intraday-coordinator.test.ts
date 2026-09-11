@@ -829,6 +829,93 @@ describe("Stock Beta intraday quote lifecycle", () => {
     });
   });
 
+  it.each([
+    "NO_ACTIVE_DEMAND",
+    "PROVIDER_TIMEOUT",
+    "PROVIDER_RATE_LIMITED",
+    "PROVIDER_UNAVAILABLE",
+    "PROVIDER_RESPONSE_INVALID",
+    "QUOTE_VALUE_INVALID",
+    "QUOTE_BUDGET_EXHAUSTED",
+    "PRODUCER_UNAVAILABLE",
+  ] as const)(
+    "retains production-shaped %s through polling and staleness until a clean response",
+    async (reasonCode) => {
+      const clock = new FakeClock();
+      const pending = deferred<IntradayQuoteResponse>();
+      const client = fakeClient(clock, {
+        createDemand: vi.fn(async (body) =>
+          demandFor(
+            IDENTITY_A,
+            body.consumer_id,
+            body.renewal_sequence,
+            new Date(clock.now() + INTRADAY_QUOTE_CACHE_MAX_AGE_MS * 2)
+              .toISOString()
+              .replace(".000", ""),
+          ),
+        ),
+        getQuote: vi
+          .fn()
+          .mockResolvedValueOnce(
+            quoteFor(IDENTITY_A, clock, {
+              reason_code: reasonCode,
+              freshness: "RECENT",
+            }),
+          )
+          .mockReturnValueOnce(pending.promise),
+      });
+      const coordinator = new IntradayQuoteLoadCoordinator({ client, clock });
+
+      startContext(coordinator);
+      await flush();
+      expect(coordinator.getState()).toMatchObject({
+        errorCode: null,
+        fetching: false,
+        phase: "ready",
+        quote: expect.objectContaining({
+          freshness: "RECENT",
+          quote: expect.objectContaining({ price: "101200.00" }),
+          reason_code: reasonCode,
+        }),
+        reasonCode,
+      });
+
+      clock.advance(5_000);
+      await flush();
+      expect(coordinator.getState()).toMatchObject({
+        errorCode: null,
+        fetching: true,
+        phase: "ready",
+        reasonCode,
+      });
+
+      clock.advance(25_001);
+      await flush();
+      expect(coordinator.getState()).toMatchObject({
+        fetching: true,
+        phase: "stale",
+        quote: expect.objectContaining({
+          quote: expect.objectContaining({ price: "101200.00" }),
+        }),
+        reasonCode,
+      });
+
+      pending.resolve(quoteFor(IDENTITY_A, clock, { reason_code: null, freshness: "RECENT" }));
+      await flush();
+      expect(coordinator.getState()).toMatchObject({
+        errorCode: null,
+        fetching: false,
+        phase: "ready",
+        quote: expect.objectContaining({
+          freshness: "RECENT",
+          quote: expect.objectContaining({ price: "101200.00" }),
+          reason_code: null,
+        }),
+        reasonCode: null,
+      });
+    },
+  );
+
   it("replays an ambiguous demand with the same sequence and key, then releases only its demand id", async () => {
     const clock = new FakeClock();
     const first = deferred<IntradayQuoteDemandResponse>();
