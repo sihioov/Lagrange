@@ -1,6 +1,6 @@
 # Stock Beta intraday current quotes
 
-Status: WP6-C1 fixture/source acceptance and operator runbook only. This document does not
+Status: source/fixture acceptance and conditional release wiring; not live activation. This document does not
 authorize live activation, provider access, credential handling, deployment, or a production
 health claim. The implementation is bounded by the [intraday quote contract](../superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md)
 and the checked-in source linked below.
@@ -139,15 +139,22 @@ Those five use the same coordination bind and explicit `KIS_READ_COORDINATION_MO
 only `owner-equity-v2-runner` receives the session-window file as a read-only bind and its hash
 pin. `api-server` receives only the read-only session-window bind plus the intraday mode/hash
 settings; it receives no coordination bind. No other service receives this state, credential
-scope, or window. The exact preparation wiring is in [compose.intraday.yml](../../deploy/compose/compose.intraday.yml#L1-L118).
+scope, or window. Web receives only the default-off server-side mode, not a build argument or public variable. The exact bind wiring is in [compose.intraday.yml](../../deploy/compose/compose.intraday.yml#L1-L118).
 
 ## Preparation overlay and activation gates
 
-`compose.intraday.yml` is preparation-only and must be explicitly selected. It is not
-auto-loaded by the unchanged base compose definition, and existing immutable-release wrappers
-do not select it. There is no manual compose-up or alternate-installer recipe in this runbook.
-The static check validates the checked-in overlay contract as data; it does not prove engine
-merge/interpolation or installed-release overlay selection.
+The installed [release wrapper](../../scripts/ops/compose-release.sh) selects the fixed
+`compose.intraday.yml` only for `--scope release` when the validated, parsed coordination mode
+is `shared_required`. Compose order is base, this optional overlay, then the immutable image-ID
+and build-reset override. Default-off/legacy releases omit the overlay; no arbitrary overlay
+path or alternate source-checkout activation is supported. The base [Web environment](../../deploy/compose/compose.yml#L113-L123)
+passes only `OWNER_INTRADAY_QUOTES_MODE`, default `off`, at server runtime.
+
+This selection support is not permission to activate. Existing standalone Raw/backfill/daily
+wrappers do not select this overlay: they must not run alongside shared-mode readers until
+their invocation paths are reviewed and made consistent. No manual compose-up or alternate
+installer is authorized here. Fake-Docker tests establish wrapper selection/order and guard
+behavior, not actual engine merging, all-reader coordination, or production readiness.
 
 Before any separately approved activation, an owner/operator review must establish all of the
 following without treating this document as authorization:
@@ -214,5 +221,5 @@ correction, cancellation, reservation, balance, account, WebSocket, live profile
 network, Docker/Compose activation, database operation, root/sudo operation, deployment, or
 host-clock procedure is authorized by this runbook.
 
-The diagrams, rendered PNGs, OpenAPI output, installed-release wiring, engine merge/interpolation,
-npm regeneration, and runtime/live semantics are separate gates and remain outside WP6-C1.
+Actual engine merge/interpolation, all-reader invocation coverage, same-day evidence,
+npm regeneration, and runtime/live semantics remain separate deployment/activation gates.

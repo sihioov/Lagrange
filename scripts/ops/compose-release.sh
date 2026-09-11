@@ -21,6 +21,9 @@ mode=plan
 scope=release
 release_override=
 release_commit=
+intraday_overlay_file=
+owner_intraday_quotes_mode=off
+kis_read_coordination_mode=legacy
 owner_beta_access_mode=disabled
 owner_beta_paper_mode=disabled
 owner_equity_v2_runtime_mode=disabled
@@ -118,6 +121,33 @@ dotenv_load "$env_file" || die "cannot parse production env file: $env_file"
 data_dir=$(dotenv_effective_get LAGRANGE_DATA_DIR)
 [ -n "$data_dir" ] || die 'production env is missing LAGRANGE_DATA_DIR'
 [[ "$data_dir" = /* ]] || die 'LAGRANGE_DATA_DIR must be absolute'
+if dotenv_has OWNER_INTRADAY_QUOTES_MODE; then
+  owner_intraday_quotes_mode=$(dotenv_effective_get OWNER_INTRADAY_QUOTES_MODE)
+else
+  owner_intraday_quotes_mode=off
+fi
+if dotenv_has KIS_READ_COORDINATION_MODE; then
+  kis_read_coordination_mode=$(dotenv_effective_get KIS_READ_COORDINATION_MODE)
+else
+  kis_read_coordination_mode=legacy
+fi
+case "$owner_intraday_quotes_mode" in
+  off|owner_only) ;;
+  *) die 'owner_intraday_quotes_mode_invalid' ;;
+esac
+case "$kis_read_coordination_mode" in
+  legacy|shared_required) ;;
+  *) die 'kis_read_coordination_mode_invalid' ;;
+esac
+if [ "$owner_intraday_quotes_mode" = owner_only ] &&
+   [ "$kis_read_coordination_mode" != shared_required ]; then
+  die 'owner_intraday_quotes_requires_shared'
+fi
+if [ "$scope" = release ] && [ "$kis_read_coordination_mode" = shared_required ]; then
+  intraday_overlay_file=$root/deploy/compose/compose.intraday.yml
+  [ -f "$intraday_overlay_file" ] && [ ! -L "$intraday_overlay_file" ] ||
+    die "intraday overlay missing or symlinked: $intraday_overlay_file"
+fi
 owner_beta_access_mode=$(dotenv_effective_get OWNER_BETA_ACCESS_MODE)
 [ -n "$owner_beta_access_mode" ] || owner_beta_access_mode=disabled
 owner_beta_paper_mode=$(dotenv_effective_get OWNER_BETA_PAPER_MODE)
@@ -281,6 +311,7 @@ verify_running_container() {
 
 compose() {
   local -a files=(--env-file "$env_file" -f "$compose_file")
+  [ -z "$intraday_overlay_file" ] || files+=(-f "$intraday_overlay_file")
   [ -z "$release_override" ] || files+=(-f "$release_override")
   # The range profile is never selected here. The live profile is explicitly
   # disabled rather than inheriting a shell/ambient COMPOSE_PROFILES value.
