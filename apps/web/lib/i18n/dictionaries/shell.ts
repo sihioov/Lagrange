@@ -95,7 +95,8 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     signingOut: "Signing out",
     skipToMain: "Skip to main content",
     strategiesDescription: "Review approved strategies and their constrained parameters.",
-    stockBetaDescription: "Explore read-only price and volume signals for the fixed Owner list.",
+    stockBetaDescription:
+      "Add instruments to your Owner list and prepare daily price and volume signals.",
     themeToggleToDark: "Switch to dark theme",
     themeToggleToLight: "Switch to light theme",
     tryAgain: "Try again",
@@ -146,7 +147,7 @@ export const shellDictionary: LocaleDictionary<ShellDictionary> = {
     signingOut: "로그아웃 중",
     skipToMain: "본문으로 건너뛰기",
     strategiesDescription: "승인된 전략과 제한된 파라미터를 확인하세요.",
-    stockBetaDescription: "오너 전용 고정 목록의 읽기 전용 가격·거래량 신호를 확인하세요.",
+    stockBetaDescription: "오너 목록에 종목을 추가하고 일별 가격·거래량 신호 분석을 준비하세요.",
     themeToggleToDark: "다크 테마로 전환",
     themeToggleToLight: "라이트 테마로 전환",
     tryAgain: "다시 시도",

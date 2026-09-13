@@ -305,6 +305,9 @@ test.describe("provider-free Stock Beta V2", () => {
     await expect(page.getByRole("heading", { name: "Signal snapshot unavailable" })).toBeVisible();
     await expectNoSignalWidgets(page);
     await expect(page.getByLabel("KRX code")).toBeVisible();
+    await expect(page.getByTestId("stock-beta-intraday-disabled")).toHaveText(
+      "Intraday quote collection is not enabled.",
+    );
     await expect(page.locator('[data-terminal-utility-content="stock-beta"]')).toHaveCount(0);
   });
 
@@ -533,10 +536,11 @@ test.describe("provider-free Stock Beta V2", () => {
     });
     await page.goto("/stock-beta");
     await expect(
-      page.getByRole("heading", { name: "Signal snapshot integrity failed" }),
+      page.getByText("Request failed with typed code OWNER_EQUITY_INTEGRITY_FAILED."),
     ).toBeVisible();
     await expectNoSignalWidgets(page);
-    await expect(page.getByText("000001.KRX")).toHaveCount(0);
+    await expect(membershipCards(page)).toHaveCount(31);
+    await expect(page.getByLabel("KRX code")).toBeVisible();
   });
 
   test("renders a typed detail not-found state without signal data", async ({ page, request }) => {
@@ -941,8 +945,20 @@ test.describe("provider-free Stock Beta V2", () => {
         "integrity",
         { kind: "profile", text: "Chart integrity could not be verified. No price data is shown." },
       ],
-      ["not_found", { kind: "boundary", text: "RESOURCE_NOT_FOUND" }],
-      ["forbidden", { kind: "boundary", text: "FORBIDDEN" }],
+      [
+        "not_found",
+        {
+          kind: "profile",
+          text: "The EOD chart could not be loaded. No previous price data is shown.",
+        },
+      ],
+      [
+        "forbidden",
+        {
+          kind: "profile",
+          text: "The EOD chart could not be loaded. No previous price data is shown.",
+        },
+      ],
     ] as const) {
       await resetScenario(request, {
         authSession: "valid",

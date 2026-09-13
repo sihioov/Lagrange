@@ -1335,12 +1335,14 @@ impl OwnerIntradayQuoteRepository {
                 AND version.source_batch_id = calendar.source_batch_id
                 AND version.content_sha256 = calendar.content_sha256
                JOIN public.data_batches AS batch
-                 ON batch.id = calendar.source_batch_id
-                AND batch.provider = 'KIS'
+                 ON batch.source_batch_id = calendar.source_batch_id
+                AND batch.provider = 'KRX'
                 AND batch.market = 'KR'
                 AND batch.kind = 'CALENDAR'
                 AND batch.batch_date = calendar.session_date
                 AND batch.content_sha256 = calendar.content_sha256
+                AND batch.source_file_name = 'calendar.json'
+                AND batch.fetch_mode = 'credentialed'
              CROSS JOIN observed
               WHERE calendar.exchange = 'KRX'
                 AND calendar.session_date =
@@ -1524,12 +1526,14 @@ impl OwnerIntradayQuoteRepository {
                 AND version.source_batch_id = calendar.source_batch_id
                 AND version.content_sha256 = calendar.content_sha256
                JOIN public.data_batches AS batch
-                 ON batch.id = calendar.source_batch_id
-                AND batch.provider = 'KIS'
+                 ON batch.source_batch_id = calendar.source_batch_id
+                AND batch.provider = 'KRX'
                 AND batch.market = 'KR'
                 AND batch.kind = 'CALENDAR'
                 AND batch.batch_date = calendar.session_date
                 AND batch.content_sha256 = calendar.content_sha256
+                AND batch.source_file_name = 'calendar.json'
+                AND batch.fetch_mode = 'credentialed'
               WHERE calendar.exchange = 'KRX'
                 AND calendar.session_date =
                     ($1::timestamptz AT TIME ZONE 'Asia/Seoul')::date
@@ -3018,12 +3022,14 @@ async fn validate_session_lineage(
             AND version.source_batch_id = calendar.source_batch_id
             AND version.content_sha256 = calendar.content_sha256
           JOIN public.data_batches AS batch
-            ON batch.id = calendar.source_batch_id
-           AND batch.provider = 'KIS'
+            ON batch.source_batch_id = calendar.source_batch_id
+           AND batch.provider = 'KRX'
            AND batch.market = 'KR'
            AND batch.kind = 'CALENDAR'
            AND batch.batch_date = calendar.session_date
            AND batch.content_sha256 = calendar.content_sha256
+           AND batch.source_file_name = 'calendar.json'
+           AND batch.fetch_mode = 'credentialed'
           WHERE calendar.exchange = 'KRX'
             AND calendar.session_date = $1
             AND calendar.session_type = 'TRADING'
