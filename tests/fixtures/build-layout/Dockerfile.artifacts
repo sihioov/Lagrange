@@ -1,0 +1,138 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder-env
+ARG TARGETPLATFORM
+RUN <<'EOF'
+set -eu
+apk add --no-cache bash python3
+mkdir -p /identity
+rustc -vV > /tmp/rustc-vv
+cargo -V > /tmp/cargo-version
+apk info -vv | LC_ALL=C sort > /tmp/native-packages
+TARGET_PLATFORM="$TARGETPLATFORM" python3 - <<'PY'
+import json, os
+value={"cargo_version":open("/tmp/cargo-version",encoding="utf-8").read().rstrip("\n"),"format":"lagrange-build-layout-native-v1","native_packages":open("/tmp/native-packages",encoding="utf-8").read().splitlines(),"rustc_vv":open("/tmp/rustc-vv",encoding="utf-8").read(),"target_platform":os.environ["TARGET_PLATFORM"]}
+with open("/identity/identity.json","w",encoding="utf-8",newline="\n") as out: out.write(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")
+PY
+EOF
+ENV CARGO_BUILD_JOBS=2
+ENV CARGO_TARGET_DIR=/cargo-target
+WORKDIR /build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+FROM scratch AS identity
+COPY --from=builder-env /identity/identity.json /identity.json
+
+FROM builder-env AS artifact-builder
+ARG TARGETPLATFORM
+ARG BIN
+ARG VARIANT=base
+ARG RUNTIME_FILE
+ARG CACHE_FIXTURE_COMMIT
+ARG CACHE_FIXTURE_BUILD_SETTING=default
+ARG CACHE_FIXTURE_RUN_TOKEN=initial
+ARG PROBE_SHARED_CACHE_ID
+ARG PROBE_TARGET_CACHE_ID
+ARG PROBE_CACHE_KEY
+ARG PROBE_INPUT_SHA256
+ARG PROBE_COMPILE_INPUT_SHA256
+ARG PROBE_LIB_HASH
+ARG PROBE_APP_HASH
+ARG PROBE_RECIPE_SHA256
+ARG PROBE_PLATFORM=linux/amd64
+ARG PROBE_HOST_TRIPLE
+ARG PROBE_EXPECTED_NATIVE_SHA256
+ARG PROBE_CARGO_CONFIG=default
+ARG PROBE_LEDGER_INJECT=none
+ARG PROBE_INJECT=none
+ENV CACHE_FIXTURE_COMMIT="$CACHE_FIXTURE_COMMIT"
+ENV CACHE_FIXTURE_BUILD_SETTING="$CACHE_FIXTURE_BUILD_SETTING"
+COPY Cargo.toml Cargo.lock rust-toolchain.toml layout.json layout-helper.sh ./
+COPY fixture-lib ./fixture-lib
+COPY fixture-app ./fixture-app
+COPY runtime ./runtime
+RUN set -euo pipefail; \
+    install -m 0755 /build/layout-helper.sh /usr/local/bin/layout-helper.sh; \
+    printf '%s  %s\n' "$PROBE_EXPECTED_NATIVE_SHA256" /identity/identity.json | sha256sum -c -; \
+    [[ "$(/usr/local/bin/layout-helper.sh identity-validate /identity/identity.json "$PROBE_PLATFORM")" = "$PROBE_HOST_TRIPLE" ]]; \
+    /usr/local/bin/layout-helper.sh guard-inputs /build "$PROBE_COMPILE_INPUT_SHA256" "$PROBE_LIB_HASH" "$PROBE_APP_HASH"; \
+    [[ "$CACHE_FIXTURE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; \
+    [[ "$BIN" = cache-bin-a || "$BIN" = cache-bin-b ]]; \
+    [[ "$VARIANT" = base || "$VARIANT" = wide ]]; \
+    [[ "$RUNTIME_FILE" = web.txt || "$RUNTIME_FILE" = python.txt ]]; \
+    [[ -n "$PROBE_HOST_TRIPLE" ]]; \
+    [[ "$PROBE_LEDGER_INJECT" = none || "$PROBE_LEDGER_INJECT" = unknown-pending ]]; \
+    [[ "$PROBE_INJECT" = none || "$PROBE_INJECT" = export-fail-p2 ]]
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${PROBE_SHARED_CACHE_ID}-registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,id=${PROBE_SHARED_CACHE_ID}-git,sharing=locked \
+    --mount=type=cache,target=/cargo-target,id=${PROBE_TARGET_CACHE_ID},sharing=locked <<'EOF'
+set -euo pipefail
+ledger=/cargo-target/.build-layout-ledger.json
+if [[ "$PROBE_LEDGER_INJECT" = unknown-pending ]]; then
+  printf '%s\n' '{"format":"unknown-probe-version","pending":true}' > "$ledger"
+fi
+plan=$(/usr/local/bin/layout-helper.sh ledger-plan "$ledger" "$PROBE_CACHE_KEY" "$PROBE_LIB_HASH" "$PROBE_APP_HASH")
+rebuild=$(sed -n 's/^rebuild=\([^ ]*\).*$/\1/p' <<<"$plan")
+packages=$(sed -n 's/.* packages=\([^ ]*\).*/\1/p' <<<"$plan")
+case "$rebuild" in
+  all)
+    /usr/local/bin/layout-helper.sh ledger-pending "$ledger" "$PROBE_CACHE_KEY" "$PROBE_LIB_HASH" "$PROBE_APP_HASH"
+    /usr/local/bin/layout-helper.sh ledger-reset-target /cargo-target
+    /usr/local/bin/layout-helper.sh ledger-pending "$ledger" "$PROBE_CACHE_KEY" "$PROBE_LIB_HASH" "$PROBE_APP_HASH"
+    ;;
+  packages)
+    /usr/local/bin/layout-helper.sh ledger-pending "$ledger" "$PROBE_CACHE_KEY" "$PROBE_LIB_HASH" "$PROBE_APP_HASH"
+    IFS=, read -r -a package_list <<<"$packages"
+    for package in "${package_list[@]}"; do
+      [[ "$package" = build-cache-fixture-lib || "$package" = build-cache-fixture-app ]] || exit 64
+      cargo clean --locked --release -p "$package"
+    done
+    ;;
+  none)
+    /usr/local/bin/layout-helper.sh ledger-pending "$ledger" "$PROBE_CACHE_KEY" "$PROBE_LIB_HASH" "$PROBE_APP_HASH"
+    ;;
+  *) exit 64 ;;
+esac
+[[ -n "$CACHE_FIXTURE_RUN_TOKEN" ]]
+started=$(python3 -c 'import time; print(time.time_ns() // 1000000)')
+mkdir -p /out/bin
+if [[ "$VARIANT" = wide ]]; then
+  if [[ "$PROBE_CARGO_CONFIG" = build.jobs=2 ]]; then
+    cargo build --locked --release --verbose --message-format=json-render-diagnostics --config build.jobs=2 --package build-cache-fixture-app --bin "$BIN" --features wide 2>&1 | tee /out/cargo.jsonl
+  else
+    cargo build --locked --release --verbose --message-format=json-render-diagnostics --package build-cache-fixture-app --bin "$BIN" --features wide 2>&1 | tee /out/cargo.jsonl
+  fi
+else
+  if [[ "$PROBE_CARGO_CONFIG" = build.jobs=2 ]]; then
+    cargo build --locked --release --verbose --message-format=json-render-diagnostics --config build.jobs=2 --package build-cache-fixture-app --bin "$BIN" 2>&1 | tee /out/cargo.jsonl
+  else
+    cargo build --locked --release --verbose --message-format=json-render-diagnostics --package build-cache-fixture-app --bin "$BIN" 2>&1 | tee /out/cargo.jsonl
+  fi
+fi
+finished=$(python3 -c 'import time; print(time.time_ns() // 1000000)')
+[[ -x "/cargo-target/release/$BIN" ]]
+install -m 0755 "/cargo-target/release/$BIN" "/out/bin/$BIN"
+cp -- "/build/runtime/$RUNTIME_FILE" /out/runtime.txt
+printf '{"cargo_ms":%s,"finished_ms":%s,"started_ms":%s}\n' "$((finished - started))" "$finished" "$started" > /out/timing.json
+printf 'BUILD_LAYOUT_CARGO_MS=%s\n' "$((finished - started))"
+features='[]'
+[[ "$VARIANT" = wide ]] && features='["wide"]'
+/usr/local/bin/layout-helper.sh cargo-summary /out/cargo.jsonl "$BIN" /out/cargo-summary.json "$PROBE_HOST_TRIPLE"
+if [[ "$PROBE_INJECT" = export-fail-p2 ]]; then
+  # Export a visibly incomplete private tree. The host-side fixture helper
+  # verifies this marker and returns the specified 73 without publication.
+  printf '%s\n' fixture-export-failure > /out/INCOMPLETE
+else
+  compile_env=$(printf '%s' '{"CACHE_FIXTURE_BUILD_SETTING":"'"$CACHE_FIXTURE_BUILD_SETTING"'","CACHE_FIXTURE_COMMIT":"'"$CACHE_FIXTURE_COMMIT"'","CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target"}')
+  /usr/local/bin/layout-helper.sh artifact-write /out "$CACHE_FIXTURE_COMMIT" build-cache-fixture-app "$BIN" "$PROBE_PLATFORM" "$PROBE_HOST_TRIPLE" release "$features" "$compile_env" "$PROBE_CACHE_KEY" "$PROBE_INPUT_SHA256" "$PROBE_RECIPE_SHA256" "/out/bin/$BIN" true
+  # The receipt and mount-outside artifact now exist. Only this final operation
+  # clears pending; a crash earlier forces a full owned-target regeneration.
+  /usr/local/bin/layout-helper.sh ledger-complete "$ledger" "$PROBE_CACHE_KEY" "$PROBE_LIB_HASH" "$PROBE_APP_HASH"
+fi
+EOF
+
+# Local exporter target. It intentionally exports only /out, never the builder
+# filesystem or the mutable target cache.
+FROM scratch AS artifacts
+COPY --from=artifact-builder /out/ /
