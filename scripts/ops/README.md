@@ -163,8 +163,10 @@ sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
 
 After Docker/Compose config expansion passes, the explicit root-only apply
 builds exactly the release image list sequentially, one Compose service per
-invocation, using `--pull=false`. Production Rust builder stages fix Cargo to
-two parallel jobs so a release build remains within the host memory boundary:
+invocation, using `--pull=false`. The helper forces
+`COMPOSE_PARALLEL_LIMIT=1` for every Compose call even if the caller exports a
+higher value. Production Rust builder stages fix Cargo to two parallel jobs so
+a release build remains within the host memory boundary:
 
 ```sh
 sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
@@ -179,6 +181,19 @@ containers. A build can still fetch base-image or language dependencies when
 the local Docker cache is incomplete, so network access is an expected build
 caveat. This image preparation step is independent of the later infrastructure,
 backfill, and full serving execution scopes.
+
+Each service emits only its name, start/success/failure status, and elapsed
+seconds. A failed service stops the loop before any image inspection or manifest
+write; rerunning the same apply command is the resume contract and lets Docker
+reuse the cache before the helper revalidates all twelve canonical images and
+writes the immutable V2 manifest. The manifest output and its parent are
+validated before the first build and revalidated at publication; an existing
+file, dangling symlink, missing/non-directory parent, or symlinked path fails
+without a Docker build. There is no image-existence shortcut and no alternate
+batch mode.
+
+The existing-host cache warm-up batches and the required between-batch resource
+gates are recorded in [`docs/runbooks/production-release-and-backup.md`](../../docs/runbooks/production-release-and-backup.md).
 
 ## Provision the read-only KIS app credentials
 

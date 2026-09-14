@@ -49,6 +49,43 @@ Rust builder also fixes `CARGO_BUILD_JOBS=2`. These limits are required on the
 14 GiB production host so concurrent release compilation cannot starve the
 running control plane or serving containers.
 
+### Existing-host cache warm-up and resume
+
+The cache warm-up is a prebuild activity only. It does not install a release,
+switch `current`, start or restart a service, enable a profile, call a provider,
+or write the immutable manifest. Use the existing per-service Compose build
+call with `COMPOSE_PARALLEL_LIMIT=1`; never pass multiple service names to one
+Compose build call. Run each long build in a background systemd service with
+lowered CPU and I/O priority (for example, `CPUWeight=20` and `IOWeight=20`)
+so a terminal or Paseo disconnect does not terminate it. Set
+`CARGO_BUILD_JOBS=2`, and do not begin a service while any earlier build
+invocation or compiler process is still active.
+
+Use these four progress batches, issuing exactly one Compose build call for
+each service in the listed order:
+
+1. `db-role-bootstrap`, `db-migrate`, `api-server`
+2. `web`, `research-worker`, `owner-equity-v2-runner`
+3. `recommendation-runner`, `candidate-runner`, `owner-beta-runner`
+4. `nt-backtest-worker-1`, `nt-backtest-worker-2`, `paper-scheduler`
+
+Between batches, wait for the preceding systemd unit to finish successfully
+and verify all of the following before continuing: available memory, swap
+state, kernel journal for OOM or killed-compiler events, the unit's final
+`Result`, and the existing production service-health checks. A failed build,
+OOM event, compiler/control-plane termination, or unhealthy production service
+stops progression. Do not submit the next batch or retry an all-image parallel
+command; after correction, rerun the same single-service command so Docker can
+resume from its cache.
+
+After all four batches are complete and their gates pass, run the official
+root-only `build-production-images.sh --apply` with the exact commit and a new
+V2 manifest output path. It reuses cached layers but still builds the canonical
+twelve services one at a time, inspects every local image ID and OCI revision,
+checks the exact commit, and atomically publishes the immutable manifest. This
+final validation is not a production rollout; later installation and Compose
+activation remain separately authorized actions.
+
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
 # Output must be empty or exactly the one allowlisted workbook above.

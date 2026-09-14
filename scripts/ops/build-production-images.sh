@@ -105,6 +105,17 @@ safe_path() {
   done
 }
 
+validate_manifest_output() {
+  local parent
+  [ -n "$manifest_file" ] || die '--apply requires --manifest-file for the strict V2 release manifest'
+  safe_path "$manifest_file" manifest-file
+  [ ! -e "$manifest_file" ] && [ ! -L "$manifest_file" ] ||
+    die 'manifest-file already exists; refusing to overwrite it'
+  parent=$(dirname -- "$manifest_file")
+  [ -d "$parent" ] && [ ! -L "$parent" ] ||
+    die 'manifest-file parent directory is missing or a symlink'
+}
+
 check_inputs() {
   local commit=${LAGRANGE_CODE_COMMIT:-} head status
   safe_path "$compose_file" compose-file
@@ -134,7 +145,7 @@ check_inputs() {
       die 'build root worktree is not clean (tracked or unapproved untracked changes present)'
   done <<<"$status"
   if [ -n "$manifest_file" ]; then
-    safe_path "$manifest_file" manifest-file
+    validate_manifest_output
   fi
 }
 
@@ -168,12 +179,8 @@ inspect_built_images() {
 
 write_manifest() {
   local temporary parent
-  safe_path "$manifest_file" manifest-file
-  [ ! -e "$manifest_file" ] && [ ! -L "$manifest_file" ] ||
-    die 'manifest-file already exists; refusing to overwrite it'
+  validate_manifest_output
   parent=$(dirname -- "$manifest_file")
-  [ -d "$parent" ] && [ ! -L "$parent" ] ||
-    die 'manifest-file parent directory is missing or a symlink'
   temporary=$(mktemp -- "$parent/.lagrange-release-manifest.XXXXXX") ||
     die 'cannot create manifest staging file'
   chmod 0600 -- "$temporary"
@@ -213,6 +220,7 @@ print_plan() {
 compose() {
   # Compose expands inactive services. These process-local values are inert,
   # never written to .env, and are not passed to a container lifecycle command.
+  COMPOSE_PARALLEL_LIMIT=1 \
   LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   RESEARCH_APP_ENV=prebuild-disabled \
   RESEARCH_ENTITLEMENT_REFERENCE=prebuild-disabled \
@@ -244,7 +252,15 @@ if [ "$mode" = preflight ]; then
 fi
 
 for service in "${local_image_services[@]}"; do
-  compose build --pull=false "$service"
+  build_start_seconds=$SECONDS
+  echo "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=start elapsed_seconds=0"
+  if compose build --pull=false "$service"; then
+    echo "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=success elapsed_seconds=$((SECONDS - build_start_seconds))"
+  else
+    build_elapsed_seconds=$((SECONDS - build_start_seconds))
+    echo "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=failure elapsed_seconds=$build_elapsed_seconds" >&2
+    exit 1
+  fi
 done
 inspect_built_images
 write_manifest

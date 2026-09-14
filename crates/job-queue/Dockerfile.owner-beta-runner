@@ -2,7 +2,9 @@
 # child runtime, or broker credentials; approved artifact bytes arrive read-only.
 FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder
 
+ARG TARGETPLATFORM
 ENV CARGO_BUILD_JOBS=2
+ENV CARGO_TARGET_DIR=/cargo-target
 
 RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
 WORKDIR /build
@@ -25,7 +27,13 @@ ARG LAGRANGE_CODE_COMMIT
 RUN test -n "$LAGRANGE_CODE_COMMIT" \
     && printf '%s' "$LAGRANGE_CODE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
 ENV LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT"
-RUN cargo build --locked --release --package job-queue --bin owner-beta-runner
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-registry-v1,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,id=lagrange-cargo-git-v1,sharing=locked \
+    --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-rust-1.97.1-alpine-3c38f3f82c2f-${TARGETPLATFORM}-release,sharing=locked \
+    cargo clean --workspace --release --locked \
+    && cargo build --locked --release --package job-queue --bin owner-beta-runner \
+    && mkdir -p /build/target/release \
+    && cp /cargo-target/release/owner-beta-runner /build/target/release/owner-beta-runner
 
 FROM alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 

@@ -59,6 +59,9 @@ cat >"$fake_bin/docker" <<'EOF'
 set -euo pipefail
 joined=$*
 printf 'commit=%s args=%s\n' "${LAGRANGE_CODE_COMMIT:-missing}" "$joined" >>"${IMAGE_BUILD_DOCKER_LOG:?}"
+if [ "${1:-}" = compose ] && [[ "$joined" == *' build --pull=false '* ]]; then
+  printf 'parallel=%s\n' "${COMPOSE_PARALLEL_LIMIT:-missing}" >>"${IMAGE_BUILD_DOCKER_LOG:?}"
+fi
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   image_ref=${!#}
   case "$image_ref" in
@@ -80,6 +83,16 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   printf '%s|%s\n' "${IMAGE_BUILD_FAKE_IMAGE_ID:-$image_id}" \
     "${IMAGE_BUILD_FAKE_REVISION:-${LAGRANGE_CODE_COMMIT:-missing}}"
   exit 0
+fi
+if [[ "$joined" == *' build --pull=false '* ]]; then
+  [ "${COMPOSE_PARALLEL_LIMIT:-}" = 1 ] || {
+    echo 'fake Docker: Compose parallel limit was not forced to one' >&2
+    exit 1
+  }
+  build_service=${!#}
+  if [ "${IMAGE_BUILD_FAIL_SERVICE:-}" = "$build_service" ]; then
+    exit 42
+  fi
 fi
 case "$joined" in
   *' version') exit 0 ;;
@@ -106,8 +119,84 @@ bash "$helper" --preflight --compose-file "$compose_file" --env-file "$env_file"
 grep -Fq 'PRODUCTION_IMAGE_BUILD_PREFLIGHT: PASS' "$out_dir/preflight.out"
 grep -Fq 'config --quiet' "$docker_log"
 
+# Manifest output shape is rejected before any Docker command. Cover existing
+# regular files, dangling symlinks, missing/non-directory parents, and symlink
+# parents without changing the fixture worktree.
+: >"$docker_log"
+printf '%s\n' existing >"$out_dir/early-existing.manifest"
+if COMPOSE_PARALLEL_LIMIT=37 bash "$helper" --apply --compose-file "$compose_file" \
+  --env-file "$env_file" --manifest-file "$out_dir/early-existing.manifest" \
+  >"$out_dir/early-existing.out" 2>&1; then
+  echo 'self-test: existing manifest output unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'manifest-file already exists; refusing to overwrite it' "$out_dir/early-existing.out"
+[ ! -s "$docker_log" ]
+
+ln -s "$out_dir/no-manifest-target" "$out_dir/early-dangling.manifest"
+if COMPOSE_PARALLEL_LIMIT=37 bash "$helper" --apply --compose-file "$compose_file" \
+  --env-file "$env_file" --manifest-file "$out_dir/early-dangling.manifest" \
+  >"$out_dir/early-dangling.out" 2>&1; then
+  echo 'self-test: dangling manifest output unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'manifest-file must not traverse a symlink' "$out_dir/early-dangling.out"
+[ ! -s "$docker_log" ]
+
+if COMPOSE_PARALLEL_LIMIT=37 bash "$helper" --apply --compose-file "$compose_file" \
+  --env-file "$env_file" --manifest-file "$out_dir/missing-parent/manifest" \
+  >"$out_dir/missing-parent.out" 2>&1; then
+  echo 'self-test: missing manifest parent unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'manifest-file parent directory is missing or a symlink' "$out_dir/missing-parent.out"
+[ ! -s "$docker_log" ]
+
+printf '%s\n' not-a-directory >"$out_dir/non-directory-parent"
+if COMPOSE_PARALLEL_LIMIT=37 bash "$helper" --apply --compose-file "$compose_file" \
+  --env-file "$env_file" --manifest-file "$out_dir/non-directory-parent/manifest" \
+  >"$out_dir/non-directory-parent.out" 2>&1; then
+  echo 'self-test: non-directory manifest parent unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'manifest-file parent directory is missing or a symlink' "$out_dir/non-directory-parent.out"
+[ ! -s "$docker_log" ]
+
+mkdir "$out_dir/real-manifest-parent"
+ln -s "$out_dir/real-manifest-parent" "$out_dir/symlink-manifest-parent"
+if COMPOSE_PARALLEL_LIMIT=37 bash "$helper" --apply --compose-file "$compose_file" \
+  --env-file "$env_file" --manifest-file "$out_dir/symlink-manifest-parent/manifest" \
+  >"$out_dir/symlink-parent.out" 2>&1; then
+  echo 'self-test: symlinked manifest parent unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'manifest-file must not traverse a symlink' "$out_dir/symlink-parent.out"
+[ ! -s "$docker_log" ]
+
 before_env=$(sha256sum "$env_file")
-bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
+if IMAGE_BUILD_FAIL_SERVICE=web COMPOSE_PARALLEL_LIMIT=37 \
+  bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
+  --manifest-file "$manifest_file" >"$out_dir/middle-failure.out" 2>&1; then
+  echo 'self-test: middle-service failure unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'service=web status=failure elapsed_seconds=' "$out_dir/middle-failure.out"
+if grep -Fq 'service=web status=success' "$out_dir/middle-failure.out" ||
+   grep -Fq 'service=research-worker status=start' "$out_dir/middle-failure.out"; then
+  echo 'self-test: build loop continued after the first failed service' >&2
+  exit 1
+fi
+grep -Fq 'build --pull=false api-server' "$docker_log"
+if grep -Fq 'build --pull=false research-worker' "$docker_log" ||
+   grep -Fq ' image inspect ' "$docker_log"; then
+  echo 'self-test: failed build inspected images or continued to a later service' >&2
+  exit 1
+fi
+[ ! -e "$manifest_file" ]
+
+: >"$docker_log"
+IMAGE_BUILD_FAIL_SERVICE= COMPOSE_PARALLEL_LIMIT=37 \
+  bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
   --manifest-file "$manifest_file" >"$out_dir/apply.out"
 grep -Fq 'PRODUCTION_IMAGE_BUILD: PASS' "$out_dir/apply.out"
 [ "$before_env" = "$(sha256sum "$env_file")" ]
@@ -115,6 +204,14 @@ grep -Fq 'PRODUCTION_IMAGE_BUILD: PASS' "$out_dir/apply.out"
 grep -Fxq 'LAGRANGE_RELEASE_MANIFEST_V2' "$manifest_file"
 grep -Fxq "commit|$commit" "$manifest_file"
 [ "$(grep -c '^image|' "$manifest_file")" -eq 12 ]
+for service in db-role-bootstrap db-migrate api-server web research-worker \
+  recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
+  nt-backtest-worker-2 paper-scheduler; do
+  grep -Fq "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=start elapsed_seconds=" \
+    "$out_dir/apply.out"
+  grep -Fq "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=success elapsed_seconds=" \
+    "$out_dir/apply.out"
+done
 index=0
 for service in db-role-bootstrap db-migrate api-server web research-worker \
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
@@ -127,8 +224,14 @@ done
 
 config_count=$(grep -Fc "commit=$commit args=compose --env-file $env_file --file $compose_file config --quiet" "$docker_log")
 build_count=$(grep -Fc "commit=$commit args=compose --env-file $env_file --file $compose_file build --pull=false" "$docker_log")
-[ "$config_count" -eq 2 ]
+[ "$config_count" -eq 1 ]
 [ "$build_count" -eq 12 ]
+while IFS= read -r parallel_line; do
+  [ "$parallel_line" = parallel=1 ] || {
+    echo "self-test: caller-supplied Compose parallel limit was not forced to one: $parallel_line" >&2
+    exit 1
+  }
+done < <(grep -E '^parallel=' "$docker_log")
 for service in db-role-bootstrap db-migrate api-server web research-worker \
   recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
   nt-backtest-worker-2 paper-scheduler; do

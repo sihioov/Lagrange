@@ -5,6 +5,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ops=$root/scripts/ops
+build=$ops/build-production-images.sh
 systemd=$root/deploy/systemd
 release=$ops/deploy-production-release.sh
 compose_release=$ops/compose-release.sh
@@ -16,7 +17,7 @@ installer=$ops/install-production-backup.sh
 
 die() { echo "production-ops-static: $*" >&2; exit 1; }
 
-for script in "$release" "$compose_release" "$production_config" "$artifact_wrapper" \
+for script in "$release" "$build" "$compose_release" "$production_config" "$artifact_wrapper" \
   "$manifest_lib" "$backup" "$installer"; do
   [ -f "$script" ] || die "required script missing: $script"
   bash -n "$script" || die "shell syntax failure: $script"
@@ -96,6 +97,23 @@ grep -Fq 'owner_beta_price_input_shell_override_mismatch' "$production_config" |
   die 'sealed price-input shell override must not bypass the protected env file'
 grep -Fq 'owner_beta_paper_evidence_unavailable' "$production_config" ||
   die 'Paper must remain blocked without a future evidence checker'
+
+grep -Fq 'COMPOSE_PARALLEL_LIMIT=1' "$build" ||
+  die 'image build helper must force Compose parallelism to one'
+grep -Fq 'COMPOSE_PARALLEL_LIMIT=1' "$compose_release" ||
+  die 'infrastructure/backfill Compose builds must force parallelism to one'
+grep -Fq 'validate_manifest_output' "$build" ||
+  die 'image build helper must validate manifest output before and at publication'
+for service in db-role-bootstrap db-migrate research-worker; do
+  grep -Fq "build --pull=false $service" "$compose_release" ||
+    die "Compose build plan/call missing single-service build: $service"
+done
+if grep -Eq 'build --pull=false[[:space:]]+db-role-bootstrap[[:space:]]+db-migrate([[:space:]]|$)' \
+   "$compose_release" ||
+   grep -Eq 'build --pull=false[[:space:]]+db-role-bootstrap[[:space:]]+db-migrate[[:space:]]+research-worker([[:space:]]|$)' \
+   "$compose_release"; then
+  die 'infrastructure/backfill must not submit multiple services to one Compose build call'
+fi
 grep -Fq 'run_owner_beta_approval_gate' "$compose_release" ||
   die 'owner-beta pre-start approval gate missing'
 approval_gate_line=$(grep -n '^run_owner_beta_approval_gate$' "$compose_release" | tail -n1 | cut -d: -f1)
