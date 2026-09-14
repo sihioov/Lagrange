@@ -2,10 +2,7 @@ import type { StockBetaDashboardWidgetViewModel } from "../dashboard/types";
 import type { StockBetaDetailWidgetViewModel } from "../detail/types";
 import type { StockBetaWidgetProps } from "../shared/widget-types";
 import { CurrentQuoteClient } from "./current-quote-client";
-import {
-  intradayQuoteIdentityForMembership,
-  matchReadyIntradayQuoteMembership,
-} from "./membership";
+import { dashboardIntradayQuoteMembership, intradayQuoteIdentityForMembership } from "./membership";
 
 type CurrentQuoteWidgetViewModel =
   | StockBetaDashboardWidgetViewModel
@@ -30,18 +27,20 @@ export function CurrentQuoteWidget({
       null)
     : viewModel.detail.signal;
   const selectedMembership = dashboard
-    ? matchReadyIntradayQuoteMembership(viewModel.memberships, {
-        instrument_id: signal?.instrument_id ?? "000000.KRX",
-        generation: signal?.generation ?? 0,
-      })
+    ? dashboardIntradayQuoteMembership(
+        viewModel.memberships,
+        viewModel.selectedInstrumentId,
+        signal,
+      )
     : (viewModel.intradayMembership ?? null);
-  const identity =
-    signal === null || selectedMembership === null
-      ? null
-      : intradayQuoteIdentityForMembership(selectedMembership);
+  const identity = intradayQuoteIdentityForMembership(selectedMembership);
   const snapshotKey =
     signal === null
-      ? null
+      ? identity === null
+        ? null
+        : ["membership", identity.membership_id, identity.instrument_id, identity.generation].join(
+            "\u0000",
+          )
       : [
           dashboard
             ? viewModel.signals?.snapshot.snapshot_id

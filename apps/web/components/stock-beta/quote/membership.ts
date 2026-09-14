@@ -25,3 +25,22 @@ export function intradayQuoteIdentityForMembership(
     membership_id: membership.id,
   };
 }
+
+/** A published analysis snapshot is not needed to quote an admitted membership. */
+export function dashboardIntradayQuoteMembership(
+  memberships: readonly OwnerEquityV2MembershipModel[],
+  selectedInstrumentId: string | null | undefined,
+  signalIdentity: Pick<IntradayQuoteIdentity, "instrument_id" | "generation"> | null,
+): OwnerEquityV2MembershipModel | null {
+  if (signalIdentity !== null) {
+    return matchReadyIntradayQuoteMembership(memberships, signalIdentity);
+  }
+  const ready = memberships.filter(
+    (membership) => membership.lifecycle === "READY" && membership.generation > 0,
+  );
+  return (
+    ready.find((membership) => membership.instrument_id === selectedInstrumentId) ??
+    ready[0] ??
+    null
+  );
+}

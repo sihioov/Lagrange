@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { isStockBetaIntradayQuotesEnabled } from "@/components/stock-beta/quote/intraday-quotes-mode";
-import { matchReadyIntradayQuoteMembership } from "@/components/stock-beta/quote/membership";
+import {
+  dashboardIntradayQuoteMembership,
+  matchReadyIntradayQuoteMembership,
+} from "@/components/stock-beta/quote/membership";
 import { ownerEquityV2MembershipSchema } from "@/lib/products/equity-signals-contracts";
 
 function membership(lifecycle: "READY" | "DISABLED", instrumentId = "069500.KRX") {
@@ -26,6 +29,30 @@ function membership(lifecycle: "READY" | "DISABLED", instrumentId = "069500.KRX"
 }
 
 describe("Stock Beta intraday server flag and membership seam", () => {
+  it("quotes a READY membership without waiting for an analysis snapshot", () => {
+    const first = membership("READY");
+    const selected = membership("READY", "005930.KRX");
+    const disabled = membership("DISABLED", "000020.KRX");
+    expect(dashboardIntradayQuoteMembership([disabled, first, selected], null, null)).toEqual(
+      first,
+    );
+    expect(
+      dashboardIntradayQuoteMembership([first, selected], selected.instrument_id, null),
+    ).toEqual(selected);
+    expect(dashboardIntradayQuoteMembership([disabled], null, null)).toBeNull();
+    expect(dashboardIntradayQuoteMembership([], null, null)).toBeNull();
+  });
+
+  it("does not fall back to another membership when an existing signal generation mismatches", () => {
+    const ready = membership("READY");
+    expect(
+      dashboardIntradayQuoteMembership([ready], ready.instrument_id, {
+        instrument_id: ready.instrument_id,
+        generation: ready.generation + 1,
+      }),
+    ).toBeNull();
+  });
+
   it("enables only the exact owner_only server value", () => {
     for (const value of [undefined, "", "off", "owner-only", "OWNER_ONLY"]) {
       if (value === undefined) vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", undefined);

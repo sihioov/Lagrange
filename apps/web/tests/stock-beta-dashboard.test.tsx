@@ -259,7 +259,13 @@ describe("stock-beta V2 dashboard composition", () => {
       stockBetaDashboardArchitecture.layout.desktop
         .filter((placement) => placement.empty.visible)
         .map((placement) => placement.id),
-    ).toEqual(["universe-management", "membership-status", "signal-state", "policy-boundary"]);
+    ).toEqual([
+      "universe-management",
+      "membership-status",
+      "signal-state",
+      "policy-boundary",
+      "current-quote",
+    ]);
   });
 
   it.each([0, 31, 100])(
