@@ -1364,6 +1364,7 @@ mkdir -p "$out_dir/infra/scripts/ops/lib" "$out_dir/infra/bin"
 cp "$ops/compose-release.sh" "$out_dir/infra/scripts/ops/compose-release.sh"
 cp "$ops/lib/dotenv.sh" "$out_dir/infra/scripts/ops/lib-dotenv.tmp"
 mv "$out_dir/infra/scripts/ops/lib-dotenv.tmp" "$out_dir/infra/scripts/ops/lib/dotenv.sh"
+cp "$ops/lib/kis-read-compose.sh" "$out_dir/infra/scripts/ops/lib/kis-read-compose.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$out_dir/infra/scripts/ops/validate-production-config.sh"
 chmod 0755 "$out_dir/infra/scripts/ops/compose-release.sh" \
   "$out_dir/infra/scripts/ops/validate-production-config.sh"

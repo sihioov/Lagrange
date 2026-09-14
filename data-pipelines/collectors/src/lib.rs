@@ -1,3 +1,5 @@
+pub mod calendar_bootstrap;
+mod calendar_claim;
 mod candidate_pipeline;
 mod candidate_sink;
 pub mod intraday_quotes;
@@ -28,7 +30,8 @@ pub use pipeline::{
     recover_unpublished_with_scope, store_failure_class,
 };
 pub use sink::{
-    PostgresPublicationSink, PublicationSink, PublicationState, PublishOutcome, SinkError,
+    CalendarPublicationSink, PostgresPublicationSink, PublicationSink, PublicationState,
+    PublishOutcome, SinkError,
 };
 pub use v3_historical_input::{
     BATCH_JSON_MAX_BYTES, HistoricalPriceOnlyV3Input, HistoricalPriceOnlyV3InputError,

@@ -1,8 +1,8 @@
 # Stock Beta intraday current quotes
 
-Status: source/fixture acceptance and conditional release wiring; not live activation. This document does not
-authorize live activation, provider access, credential handling, deployment, or a production
-health claim. The implementation is bounded by the [intraday quote contract](../superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md)
+Status (2026-09-14): implementation and fixture acceptance; production activation is not yet verified.
+The owner authorized deployment, owner-only polling, and the operational session-artifact
+contract in this work session. This runbook records the implementation, not a production health claim. The implementation is bounded by the [intraday quote contract](../superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md)
 and the checked-in source linked below.
 
 ## Boundary and source contract
@@ -86,10 +86,11 @@ Intraday eligibility requires two independent proofs:
 1. The exact current KST date in `trading_calendars` and immutable
    `trading_calendar_versions`, with exchange `KRX`, timezone `Asia/Seoul`, matching batch and
    hash, source `kis`, source version `kis-chk-holiday-v1:schema-1`, and retrieval no older than
-   `36h`. This proof is reused for the daily run; the quote loop does not call or paginate
-   `chk-holiday`. See the [calendar and identity repository](../../crates/job-queue/src/owner_equity_v2/intraday.rs#L1234-L1304)
+   `36h`. The quote loop does not call or paginate `chk-holiday`. The calendar-only path below
+   publishes this proof independently of EOD; same-day EOD reuse remains deferred. See the [calendar and identity repository](../../crates/job-queue/src/owner_equity_v2/intraday.rs#L1234-L1304)
    and [calendar lineage checks](../../crates/job-queue/src/owner_equity_v2/intraday.rs#L3002-L3065).
-2. The commit-pinned, provider-free
+2. A provider-free session artifact. With `OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=release_v1`
+   (default), use the existing commit-pinned
    `configs/market-hours/krx-intraday-session-windows-v1.json`, whose whole-file SHA-256 must
    equal `OWNER_INTRADAY_SESSION_WINDOWS_SHA256`. Each entry has the same KST civil date,
    timezone, explicit open/close, `REGULAR`, `SPECIAL`, or `CLOSED` disposition, and official
@@ -105,7 +106,8 @@ stale, malformed, unpinned, conflicting, or otherwise invalid/out-of-contract ev
 `UNKNOWN` and zero provider calls. Valid proof outside the trading interval is not invalid
 evidence: it yields `CLOSED`, with zero quote calls. The checked-in [window artifact](../../configs/market-hours/krx-intraday-session-windows-v1.json#L1-L6)
 has intentionally empty `entries`; it is an empty/default-off artifact, not evidence for a live
-date. EOD behavior is unchanged when this intraday seam is unavailable.
+date. Invalid session evidence does not enable quote production. The calendar bootstrap introduces the
+explicit EOD recapture stop described below.
 
 The default configuration is explicit and conservative:
 
@@ -115,7 +117,8 @@ The default configuration is explicit and conservative:
 | `KIS_READ_COORDINATION_MODE` | `legacy` or `shared_required`; `owner_only` requires `shared_required` |
 | `KIS_READ_CREDENTIAL_GENERATION` | In `shared_required`, positive canonical decimal, at most uint64 max `18446744073709551615` |
 | `LAGRANGE_RUNTIME_STATE_DIR` | In shared mode, an explicit canonical absolute host root; no fallback path |
-| `OWNER_INTRADAY_SESSION_WINDOWS_SHA256` | In `owner_only`, exact `sha256:` plus 64 lowercase hex characters and the actual whole-file hash |
+| `OWNER_INTRADAY_SESSION_WINDOWS_SOURCE` | `release_v1` (default) or `operational_v1`; unknown/empty values fail closed |
+| `OWNER_INTRADAY_SESSION_WINDOWS_SHA256` | Required for `release_v1`: exact whole-file `sha256:` plus 64 lowercase hex; operational mode reads the protected activation pin |
 
 The [environment example](../../deploy/compose/.env.example#L25-L40) is blank/default-off by
 design. The protected parent `LAGRANGE_RUNTIME_STATE_DIR` is owned by `0:10001`, mode `0750`;
@@ -134,47 +137,87 @@ The shared credentialed service set is exactly:
 `research-worker`, `research-range-raw`, `research-action-range-raw`,
 `research-stock-price-beta-raw`, and `owner-equity-v2-runner`.
 
-Those five use the same coordination bind and explicit `KIS_READ_COORDINATION_MODE`,
-`KIS_READ_CREDENTIAL_GENERATION`, and `OWNER_INTRADAY_QUOTES_MODE` settings. Of those five,
-only `owner-equity-v2-runner` receives the session-window file as a read-only bind and its hash
-pin. `api-server` receives only the read-only session-window bind plus the intraday mode/hash
-settings; it receives no coordination bind. No other service receives this state, credential
-scope, or window. Web receives only the default-off server-side mode, not a build argument or public variable. The exact bind wiring is in [compose.intraday.yml](../../deploy/compose/compose.intraday.yml#L1-L118).
+Those five use the same coordination bind, mode, and credential generation. The API has no
+coordination bind or KIS secret. Web receives the server-side feature mode only. The shared
+[Compose selector](../../scripts/ops/lib/kis-read-compose.sh) is used by the installed release,
+daily/backfill, range, action, and stock-price wrappers. Order is base, shared intraday overlay,
+optional operational overlay, then the immutable image-ID/build-reset override. Legacy/off
+omits the overlays; shared mode must not coexist with a legacy reader using divergent state.
 
-## Preparation overlay and activation gates
+## Operational day evidence and manual activation
 
-The installed [release wrapper](../../scripts/ops/compose-release.sh) selects the fixed
-`compose.intraday.yml` only for `--scope release` when the validated, parsed coordination mode
-is `shared_required`. Compose order is base, this optional overlay, then the immutable image-ID
-and build-reset override. Default-off/legacy releases omit the overlay; no arbitrary overlay
-path or alternate source-checkout activation is supported. The base [Web environment](../../deploy/compose/compose.yml#L113-L123)
-passes only `OWNER_INTRADAY_QUOTES_MODE`, default `off`, at server runtime.
+`operational_v1` reads only `/run/lagrange/intraday-session-windows/activation.json` with exactly
+`schema_version: 1` and `window_sha256`. The hash selects `windows-<64 lowercase hex>.json` in
+that directory; no path is accepted from the descriptor. The leaf is `0:10001` mode `0750`;
+regular single-link files are `0:10001` mode `0640`. Ancestors must be root-owned and not writable
+by group/others. Symlinks, special files, oversized/malformed content, bad hashes, and stale
+same-day evidence fail closed. Both API and runner use the common provider-free loader.
 
-This selection support is not permission to activate. Existing standalone Raw/backfill/daily
-wrappers do not select this overlay: they must not run alongside shared-mode readers until
-their invocation paths are reviewed and made consistent. No manual compose-up or alternate
-installer is authorized here. Fake-Docker tests establish wrapper selection/order and guard
-behavior, not actual engine merging, all-reader coordination, or production readiness.
+The [operational overlay](../../deploy/compose/compose.intraday-operational.yml) mounts the leaf
+read-only to exactly `research-worker`, `api-server`, and `owner-equity-v2-runner`. The first
+mount supports only the explicit calendar command; it does not schedule a new collection job.
+The existing release artifact binds remain present but are unused by the operational loader.
 
-Before any separately approved activation, an owner/operator review must establish all of the
-following without treating this document as authorization:
+Prepare an input with an actual current-KST-day official KRX observation, retrieval instant,
+and original-byte hash. Never restamp yesterday's evidence or infer holiday status from regular
+hours. The installer validates before mutation, fsyncs a new immutable file, and atomically
+replaces activation last. Existing content-addressed files are retained. With the explicitly
+configured protected runtime root and a prepared input, run as root:
 
-- separate owner approval for live owner-only polling; verify the already-settled private
-  market-data entitlement reference and scope without reopening or requesting reapproval;
-- actual engine merge/interpolation, approved installed-release/all-reader wiring, and no
-  legacy reader left on a divergent bind, generation, or mode;
-- all-reader drain before credential rotation, mount and generation consistency, and exact
-  current-KST-date evidence plus its immutable hash;
-- migration state, recovery/rollback path, entitlement scope, forbidden-path audit, and the
-  no-order/no-account/read-only boundary;
-- daily attempt counters, coordination-ledger continuity, lease/renewal behavior, and a
-  reviewed rollback plan.
+```bash
+/opt/lagrange/current/scripts/ops/install-intraday-session-window.py --apply \
+  --root "$LAGRANGE_RUNTIME_STATE_DIR/intraday-session-windows" \
+  --date YYYY-MM-DD --input /absolute/path/to/verified-current-day-window.json
+/opt/lagrange/current/scripts/ops/install-intraday-session-window.py --check \
+  --root "$LAGRANGE_RUNTIME_STATE_DIR/intraday-session-windows" --date YYYY-MM-DD
+```
 
-Rotation must atomically replace the shared credential state only after all readers drain;
-increment generation; and restart the approved readers so old scopes fail closed. Turning the
-feature off and restoring the legacy mode is likewise a reviewed rollback, with the coordination
-ledger preserved. Never delete state or reset counters to recover quota. These gates are
-requirements only; they have not been executed or verified here.
+Daily evidence renewal is manual. This change does not automate KRX browsing. The installer
+requires the explicit date to equal the current KST date. The immutable installed release must
+already select owner-only quotes, shared coordination, operational windows, and Owner V2 mode.
+Drain legacy readers before activating shared mode; preserve the token/coordination ledger and
+all counters. Do not rotate credentials or reset quota as part of this procedure.
+
+## Calendar-only publication and refresh
+
+The installed wrapper provides `--bootstrap-intraday-calendar` with one retained
+`--calendar-source-batch-id` UUID. The research daemon must already be stopped/absent and the
+daily timer inactive. The command verifies the installed immutable manifest, then runs exactly
+one `research-worker --calendar-once` using `research_writer`, shared KIS coordination, and the
+same day proof. This is independent of historical price curation:
+
+```bash
+/opt/lagrange/current/scripts/ops/compose-release.sh --scope release \
+  --bootstrap-intraday-calendar --calendar-source-batch-id <retained-lowercase-UUID> --preflight
+/opt/lagrange/current/scripts/ops/compose-release.sh --scope release \
+  --bootstrap-intraday-calendar --calendar-source-batch-id <same-retained-lowercase-UUID> --apply
+/opt/lagrange/current/scripts/ops/compose-release.sh --scope release --refresh-intraday --apply
+```
+
+Replace placeholders with real values; they are not runnable defaults. Existing Owner V2
+rollout gates remain in force. No direct source-checkout activation or manual Compose-up is an
+alternate release path. Refresh verifies current API/runner image IDs and revisions before
+recreating only those two services sequentially, without building or starting other services.
+
+The [calendar bootstrap](../../data-pipelines/collectors/src/calendar_bootstrap.rs) consumes a
+durable date attempt before the sole `chk-holiday` GET. It validates and commits Raw, derives a
+canonical single-file calendar publication, and publishes the exact Raw lineage. A repeat can
+reuse only a committed source with the matching day claim. An interrupted attempt without Raw
+is indeterminate and never triggers recapture. General EOD publication still requires four files.
+
+**Same-day EOD reuse is not implemented in this release.** A bootstrap attempt or committed
+calendar makes full EOD stop before provider calls with
+`KIS_CALENDAR_BOOTSTRAP_EOD_REUSE_REQUIRED`. Keep global research and its daily timer stopped
+for this manual current-quote path. Future EOD integration must reuse the committed calendar
+with exact lineage; do not remove the stop or re-fetch to work around it. The existing global
+mixed-reference curation failure is also separate unfinished work.
+
+A real Owner-added READY membership and matching generation/admission remain required. An
+analysis snapshot is no longer required for the dashboard current-quote widget. If a snapshot
+exists, its instrument/generation must match. Never manufacture READY or use a test session to
+stand in for the owner. Acceptance requires actual demand, allowed KIS reads, validated cache
+updates, and browser price/receipt-time updates; fixture success or healthy containers alone
+do not establish that acceptance.
 
 The runtime bounds are part of the contract and must remain unchanged: one in-flight read under
 the shared OS lock; at least `1s` global/channel spacing and `5s` intraday spacing; a `3s`
@@ -182,16 +225,17 @@ per-attempt quote deadline; at most three total attempts with bounded `Retry-Aft
 `5,000` quote GET attempts per credential/live-host/path/TR/KST date (the regular `09:00` to
 `15:30` target is `4,680` slots); twenty active consumers across at most five identities;
 `30s` demand leases with `15s` renewal; and a `20s` producer lease with `5s` heartbeat.
-Halted instruments use the `60s` target rather than the normal `5s` target. These are bounds,
-not an SLA or permission to activate.
+Halted instruments use the `60s` target rather than the normal `5s` target. These are operational bounds, not a latency SLA.
 
 ## Offline acceptance commands
 
-Run only the provider-free checks below when the bounded C1 validation is requested:
+Provider-free regression commands:
 
 ```bash
 bash scripts/ops/stock-beta-intraday-static-check.sh
 bash scripts/ops/stock-beta-intraday-self-test.sh
+bash scripts/ops/kis-read-compose-self-test.sh
+python3 -m unittest discover -s scripts/ops -p test_install_intraday_session_window.py
 ```
 
 The first command checks the empty artifact, closed schema, exact environment defaults, the

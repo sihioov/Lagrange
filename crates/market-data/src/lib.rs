@@ -92,10 +92,10 @@ pub use contract::{
     ALL_RESPONSE_KINDS, CANDIDATE_MASTER_RESPONSE_KINDS, CANDIDATE_RESPONSE_KINDS,
     DISCLOSURE_RESPONSE_KINDS, EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIND_DISCLOSURE,
     PROVIDER_KIND_DISCLOSURE_CORRECTION, PROVIDER_KIND_DISCLOSURE_CORRECTION_NORMALIZED,
-    PROVIDER_KIND_DISCLOSURE_NORMALIZED, PROVIDER_KIS, PROVIDER_KIS_CANDIDATE,
-    PROVIDER_KIS_CANDIDATE_NORMALIZED, PROVIDER_KIS_DAILY_RANGE,
-    PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, PROVIDER_OPENDART,
-    RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    PROVIDER_KIND_DISCLOSURE_NORMALIZED, PROVIDER_KIS, PROVIDER_KIS_CALENDAR,
+    PROVIDER_KIS_CALENDAR_NORMALIZED, PROVIDER_KIS_CANDIDATE, PROVIDER_KIS_CANDIDATE_NORMALIZED,
+    PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED,
+    PROVIDER_KRX, PROVIDER_OPENDART, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
@@ -164,8 +164,9 @@ pub use historical_price_only_v3_artifact::{
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
     ingest_kis_action_range, ingest_kis_action_range_with_batch_id, ingest_kis_bundle,
-    ingest_kis_candidate_bundle, ingest_kis_candidate_bundle_with_kinds,
-    ingest_kis_daily_bars_range, ingest_kis_daily_bars_range_with_batch_id,
+    ingest_kis_calendar, ingest_kis_calendar_with_batch_id, ingest_kis_candidate_bundle,
+    ingest_kis_candidate_bundle_with_kinds, ingest_kis_daily_bars_range,
+    ingest_kis_daily_bars_range_with_batch_id,
 };
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,
@@ -185,8 +186,12 @@ pub use kind_normalize::{
     normalize_kind_disclosure_batch, parse_kind_disclosure_pages,
 };
 pub use normalize::{
-    NormalizationLineage, NormalizationOutcome, NormalizationSourceFile, NormalizeError,
-    deterministic_kis_normalized_batch_id, normalize_kis_batch, normalize_kis_envelopes,
+    KIS_CALENDAR_DOCUMENT_ID, KIS_CALENDAR_NORMALIZED_ENDPOINT_PREFIX, KIS_CALENDAR_NORMALIZER,
+    KIS_CALENDAR_NORMALIZER_SCHEMA_VERSION, KIS_CALENDAR_SOURCE_VERSION, NormalizationLineage,
+    NormalizationOutcome, NormalizationSourceFile, NormalizeError,
+    deterministic_kis_calendar_normalized_batch_id, deterministic_kis_normalized_batch_id,
+    normalize_kis_batch, normalize_kis_calendar_batch, normalize_kis_calendar_envelopes,
+    normalize_kis_envelopes,
 };
 pub use provider::{
     CredentialRef, EodProvider, FetchRequest, KrxMode, KrxProvider, ProviderError, RecordedBundle,
@@ -235,8 +240,8 @@ pub use providers::opendart::{
     OpenDartRead,
 };
 pub use publication::{
-    CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle, PublicationError,
-    PublicationFile,
+    CalendarFact, CalendarPublicationBundle, CalendarSessionType, DataBatchKind, PublicationBundle,
+    PublicationError, PublicationFile,
 };
 pub use quality::{
     AdminApproval, ApprovalAudit, DataUse, DataUseDenial, ExclusionRecord, FreshnessPolicy,

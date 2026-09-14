@@ -19,6 +19,7 @@ use tokio::sync::{Mutex, watch};
 
 const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
+research-worker --calendar-once --date YYYY-MM-DD --source-batch-id UUID
 research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
 research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD [--existing-source-batch-id UUID]
 research-worker healthcheck
@@ -32,6 +33,7 @@ DATABASE_URL is not used by this worker.
 enum Command {
     Daemon,
     Once(TradingDate),
+    CalendarOnce(TradingDate, domain::BatchId),
     BackfillSessionDates(Vec<TradingDate>),
     DailyRangeRaw {
         start: TradingDate,
@@ -194,6 +196,27 @@ async fn main() -> ExitCode {
     let target_date = command_target_date(&command);
     let range_raw = matches!(&command, Command::DailyRangeRaw { .. });
     let values = environment_map();
+    if let Command::CalendarOnce(date, source_batch_id) = command {
+        return match collectors::calendar_bootstrap::run_calendar_once(
+            &values,
+            date,
+            source_batch_id,
+        )
+        .await
+        {
+            Ok(summary) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&summary).expect("calendar summary serializes")
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{}", error);
+                ExitCode::from(2)
+            }
+        };
+    }
     let result = match command {
         Command::Healthcheck => run_healthcheck(&values).await,
         Command::Once(date) => run_once(&values, date).await,
@@ -207,6 +230,7 @@ async fn main() -> ExitCode {
         Command::InternalRecover(after) => run_internal_recover(&values, after).await,
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
         Command::Help => unreachable!("help returned before worker setup"),
+        Command::CalendarOnce(_, _) => unreachable!("calendar bootstrap returned before EOD setup"),
     };
     match result {
         Ok(record) => {
@@ -226,7 +250,9 @@ async fn main() -> ExitCode {
 
 fn command_target_date(command: &Command) -> Option<TradingDate> {
     match command {
-        Command::Once(date) | Command::InternalIngest(date, _) => Some(*date),
+        Command::Once(date) | Command::InternalIngest(date, _) | Command::CalendarOnce(date, _) => {
+            Some(*date)
+        }
         Command::Daemon
         | Command::BackfillSessionDates(_)
         | Command::Healthcheck
@@ -241,6 +267,18 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         [] => Ok(Command::Daemon),
         [flag] if flag == "--help" || flag == "-h" => Ok(Command::Help),
         [command] if command == "healthcheck" => Ok(Command::Healthcheck),
+        [mode, date_flag, date, batch_flag, batch_id]
+            if mode == "--calendar-once"
+                && date_flag == "--date"
+                && batch_flag == "--source-batch-id" =>
+        {
+            let date = TradingDate::parse(date)
+                .map_err(|_| WorkerError::InvalidConfig { key: "--date" })?;
+            let batch_id = batch_id.parse().map_err(|_| WorkerError::InvalidConfig {
+                key: "--source-batch-id",
+            })?;
+            Ok(Command::CalendarOnce(date, batch_id))
+        }
         [command, recovery_args @ ..] if command == "__research-internal-recover" => {
             parse_internal_recovery_args(recovery_args).map(Command::InternalRecover)
         }
@@ -745,6 +783,26 @@ mod tests {
     use collectors::{FailureClass, WorkerPhase};
 
     use super::*;
+
+    #[test]
+    fn calendar_bootstrap_requires_explicit_date_and_attempt_identity() {
+        let batch = domain::BatchId::generate();
+        let args = [
+            "--calendar-once".to_owned(),
+            "--date".to_owned(),
+            "2026-09-14".to_owned(),
+            "--source-batch-id".to_owned(),
+            batch.to_string(),
+        ];
+        assert!(matches!(parse_args(&args).unwrap(), Command::CalendarOnce(_, id) if id == batch));
+        assert!(parse_args(&args[..3]).is_err());
+        let mut invalid = args.clone();
+        invalid[4] = "not-a-batch-id".to_owned();
+        assert!(parse_args(&invalid).is_err());
+        invalid = args;
+        invalid[2] = "2026-02-30".to_owned();
+        assert!(parse_args(&invalid).is_err());
+    }
 
     #[test]
     fn helper_failure_event_exposes_only_safe_provider_diagnostic() {

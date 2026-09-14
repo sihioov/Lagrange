@@ -137,6 +137,7 @@ mkdir -p "$no_call_root/scripts/ops/lib" "$no_call_root/data/calendars/xkrx" "$n
 cp -- "$script_dir/backfill-production.sh" "$no_call_root/scripts/ops/backfill-production.sh"
 cp -- "$script_dir/xkrx-calendar-bootstrap.py" "$no_call_root/scripts/ops/xkrx-calendar-bootstrap.py"
 cp -- "$script_dir/lib/dotenv.sh" "$no_call_root/scripts/ops/lib/dotenv.sh"
+cp -- "$script_dir/lib/kis-read-compose.sh" "$no_call_root/scripts/ops/lib/kis-read-compose.sh"
 cp -- "$script_dir/../../data/calendars/xkrx/calendar.json" \
   "$no_call_root/data/calendars/xkrx/calendar.json"
 cp -- "$script_dir/../../data/calendars/xkrx/manifest.json" \

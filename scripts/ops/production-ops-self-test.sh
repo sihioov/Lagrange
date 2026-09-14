@@ -118,6 +118,7 @@ cp "$ops/deploy-production-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/compose-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/lib/release-image-manifest.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
+cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   >"$release_fixture/repo/scripts/ops/validate-production-config.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
@@ -567,6 +568,7 @@ mkdir -p "$source_apply_fixture/scripts/ops/lib" "$source_apply_fixture/deploy/c
 cp "$ops/compose-release.sh" "$source_apply_fixture/scripts/ops/"
 cp "$ops/lib/release-image-manifest.sh" "$source_apply_fixture/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$source_apply_fixture/scripts/ops/lib/"
+cp "$ops/lib/kis-read-compose.sh" "$source_apply_fixture/scripts/ops/lib/"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   >"$source_apply_fixture/scripts/ops/validate-production-config.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \

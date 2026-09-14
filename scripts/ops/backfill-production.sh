@@ -7,6 +7,7 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
+source "$script_dir/lib/kis-read-compose.sh"
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
 state_file=${LAGRANGE_BACKFILL_STATE:-}
 calendar_dir=${LAGRANGE_XKRX_CALENDAR_DIR:-$root/data/calendars/xkrx}
@@ -119,6 +120,9 @@ if ! dotenv_load "$env_file"; then
   echo 'INVALID_CONFIG: production env file is malformed' >&2
   printf '  - %s\n' "${DOTENV_ERRORS[@]}" >&2
   exit 1
+fi
+if ! kis_read_compose_configure "$root"; then
+  die "$KIS_READ_COMPOSE_ERROR"
 fi
 data_dir=$(dotenv_get LAGRANGE_DATA_DIR)
 [ -n "$data_dir" ] || die 'production env is missing LAGRANGE_DATA_DIR'
@@ -553,6 +557,7 @@ docker compose version >/dev/null 2>&1 ||
 # placeholder; export it so both `compose` uses below inherit it.
 export RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled}
 compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
+compose+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
 
 # Keep the exact validated session sequence in one bounded argv value.  The
 # worker rejects unsorted/duplicate/empty input and iterates these dates only;

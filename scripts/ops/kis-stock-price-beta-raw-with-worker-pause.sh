@@ -7,6 +7,7 @@ set -euo pipefail
 script_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 root=$(cd -P "$script_dir/../.." && pwd -P)
 source "$script_dir/lib/dotenv.sh"
+source "$script_dir/lib/kis-read-compose.sh"
 
 fixed_start=2025-08-04
 fixed_end=2026-08-28
@@ -146,6 +147,9 @@ fi
 if ! dotenv_validate_shell_overrides; then
   die 'shell overrides do not match the installed env file'
 fi
+if ! kis_read_compose_configure "$release_root"; then
+  die "$KIS_READ_COMPOSE_ERROR"
+fi
 installed_commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
 [[ "$installed_commit" =~ ^[0-9a-f]{40}$ ]] ||
   die 'installed LAGRANGE_CODE_COMMIT must be exactly 40 lowercase hexadecimal characters'
@@ -162,7 +166,7 @@ compose() {
   LAGRANGE_CODE_COMMIT="$commit" \
   RANGE_RAW_BATCH_ID="$compose_range_raw_batch_id" \
     docker compose --profile stock-price-beta-raw --env-file "$env_file" \
-    --file "$compose_file" "$@"
+    --file "$compose_file" "${KIS_READ_COMPOSE_FILE_ARGS[@]}" "$@"
 }
 
 prepare_exact_raw_image() {

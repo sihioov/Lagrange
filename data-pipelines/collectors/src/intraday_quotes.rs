@@ -6,6 +6,7 @@
 //! no job-queue dependency and never writes Raw or provider response bodies.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::Path;
 
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -23,12 +24,24 @@ pub const INTRADAY_QUOTE_TR_ID: &str = "FHKST01010100";
 pub const INTRADAY_SESSION_WINDOWS_PATH: &str =
     "/opt/lagrange/configs/market-hours/krx-intraday-session-windows-v1.json";
 pub const INTRADAY_SESSION_WINDOWS_SHA256_ENV: &str = "OWNER_INTRADAY_SESSION_WINDOWS_SHA256";
+pub const INTRADAY_SESSION_WINDOWS_SOURCE_ENV: &str = "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE";
+pub const INTRADAY_OPERATIONAL_SESSION_WINDOWS_PATH: &str =
+    "/run/lagrange/intraday-session-windows";
+pub const INTRADAY_OPERATIONAL_SESSION_WINDOWS_ACTIVATION: &str = "activation.json";
 pub const INTRADAY_SESSION_SCHEMA_VERSION: u32 = 1;
 pub const INTRADAY_SESSION_EXCHANGE: &str = "KRX";
 pub const INTRADAY_SESSION_TIMEZONE: &str = "Asia/Seoul";
 
 const MAX_WINDOW_BYTES: usize = 1_048_576;
+const MAX_OPERATIONAL_ACTIVATION_BYTES: usize = 4096;
 const KST_SECONDS_EAST: i32 = 9 * 60 * 60;
+
+pub const INTRADAY_OPERATIONAL_DIRECTORY_UID: u32 = 0;
+pub const INTRADAY_OPERATIONAL_DIRECTORY_GID: u32 = 10001;
+pub const INTRADAY_OPERATIONAL_DIRECTORY_MODE: u32 = 0o750;
+pub const INTRADAY_OPERATIONAL_FILE_UID: u32 = 0;
+pub const INTRADAY_OPERATIONAL_FILE_GID: u32 = 10001;
+pub const INTRADAY_OPERATIONAL_FILE_MODE: u32 = 0o640;
 
 pub type IntradayUtcBounds = (DateTime<Utc>, DateTime<Utc>);
 
@@ -42,6 +55,110 @@ pub enum IntradaySessionWindowError {
     HashMismatch,
     #[error("INTRADAY_SESSION_WINDOW_UNSUPPORTED")]
     Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum IntradaySessionWindowSourceError {
+    #[error("INTRADAY_SESSION_WINDOW_SOURCE_INVALID")]
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntradaySessionWindowSource {
+    ReleaseV1,
+    OperationalV1,
+}
+
+impl IntradaySessionWindowSource {
+    pub fn from_optional_str(
+        value: Option<&str>,
+    ) -> Result<Self, IntradaySessionWindowSourceError> {
+        match value {
+            None | Some("release_v1") => Ok(Self::ReleaseV1),
+            Some("operational_v1") => Ok(Self::OperationalV1),
+            Some(_) => Err(IntradaySessionWindowSourceError::Invalid),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReleaseV1 => "release_v1",
+            Self::OperationalV1 => "operational_v1",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationalSessionWindowActivation {
+    schema_version: u32,
+    window_sha256: String,
+}
+
+impl OperationalSessionWindowActivation {
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    pub fn window_sha256(&self) -> &str {
+        &self.window_sha256
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationalSessionWindowMetadata {
+    pub is_directory: bool,
+    pub is_symlink: bool,
+    pub is_regular: bool,
+    pub uid: u32,
+    pub gid: u32,
+    pub mode: u32,
+    pub link_count: u64,
+}
+
+pub fn validate_operational_ancestor_metadata(
+    metadata: OperationalSessionWindowMetadata,
+) -> Result<(), IntradaySessionWindowError> {
+    if metadata.is_symlink
+        || !metadata.is_directory
+        || metadata.uid != 0
+        || metadata.mode & 0o022 != 0
+    {
+        Err(IntradaySessionWindowError::Invalid)
+    } else {
+        Ok(())
+    }
+}
+
+pub fn validate_operational_directory_metadata(
+    metadata: OperationalSessionWindowMetadata,
+) -> Result<(), IntradaySessionWindowError> {
+    if metadata.is_symlink
+        || !metadata.is_directory
+        || metadata.uid != INTRADAY_OPERATIONAL_DIRECTORY_UID
+        || metadata.gid != INTRADAY_OPERATIONAL_DIRECTORY_GID
+        || metadata.mode != INTRADAY_OPERATIONAL_DIRECTORY_MODE
+    {
+        Err(IntradaySessionWindowError::Invalid)
+    } else {
+        Ok(())
+    }
+}
+
+pub fn validate_operational_file_metadata(
+    metadata: OperationalSessionWindowMetadata,
+) -> Result<(), IntradaySessionWindowError> {
+    if metadata.is_symlink
+        || metadata.is_directory
+        || !metadata.is_regular
+        || metadata.uid != INTRADAY_OPERATIONAL_FILE_UID
+        || metadata.gid != INTRADAY_OPERATIONAL_FILE_GID
+        || metadata.mode != INTRADAY_OPERATIONAL_FILE_MODE
+        || metadata.link_count != 1
+    {
+        Err(IntradaySessionWindowError::Invalid)
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +296,46 @@ impl IntradaySessionWindowContract {
         Self::from_bytes(&bytes, &expected_hash)
     }
 
+    /// Load the selected source through the single session-window startup
+    /// boundary. `ReleaseV1` retains the existing fixed path and environment
+    /// hash contract; `OperationalV1` can only read the fixed operational
+    /// directory and derives the immutable filename from `activation.json`.
+    pub fn from_source(
+        source: IntradaySessionWindowSource,
+    ) -> Result<Self, IntradaySessionWindowError> {
+        match source {
+            IntradaySessionWindowSource::ReleaseV1 => Self::from_fixed_path(),
+            IntradaySessionWindowSource::OperationalV1 => from_operational_path(),
+        }
+    }
+
+    /// Resolve the source setting from the process environment and then use
+    /// the common loader. Non-UTF-8 or unknown source values fail closed.
+    pub fn from_configured_source() -> Result<Self, IntradaySessionWindowError> {
+        let source = std::env::var_os(INTRADAY_SESSION_WINDOWS_SOURCE_ENV)
+            .map(|value| {
+                let value = value
+                    .into_string()
+                    .map_err(|_| IntradaySessionWindowError::Invalid)?;
+                IntradaySessionWindowSource::from_optional_str(Some(&value))
+                    .map_err(|_| IntradaySessionWindowError::Invalid)
+            })
+            .transpose()?
+            .unwrap_or(IntradaySessionWindowSource::ReleaseV1);
+        Self::from_source(source)
+    }
+
+    /// Provider-free fixture seam for the operational descriptor and exact
+    /// immutable content bytes. No path or filesystem metadata is accepted.
+    pub fn from_operational_bytes(
+        activation_bytes: &[u8],
+        window_bytes: &[u8],
+    ) -> Result<Self, IntradaySessionWindowError> {
+        let activation = parse_operational_activation(activation_bytes)?;
+        let _filename = operational_window_filename(activation.window_sha256())?;
+        Self::from_bytes(window_bytes, activation.window_sha256())
+    }
+
     pub fn window_contract_sha256(&self) -> &str {
         &self.window_contract_sha256
     }
@@ -234,6 +391,48 @@ impl IntradaySessionWindowContract {
             })
             .transpose()
             .map(|value| value.flatten())
+    }
+}
+
+pub fn parse_operational_activation(
+    bytes: &[u8],
+) -> Result<OperationalSessionWindowActivation, IntradaySessionWindowError> {
+    if bytes.is_empty() || bytes.len() > MAX_OPERATIONAL_ACTIVATION_BYTES {
+        return Err(IntradaySessionWindowError::Invalid);
+    }
+    let activation: WireOperationalActivation =
+        serde_json::from_slice(bytes).map_err(|_| IntradaySessionWindowError::Invalid)?;
+    if activation.schema_version != INTRADAY_SESSION_SCHEMA_VERSION
+        || !is_prefixed_sha256(&activation.window_sha256)
+    {
+        return Err(IntradaySessionWindowError::Invalid);
+    }
+    Ok(OperationalSessionWindowActivation {
+        schema_version: activation.schema_version,
+        window_sha256: activation.window_sha256,
+    })
+}
+
+pub fn operational_window_filename(
+    window_sha256: &str,
+) -> Result<String, IntradaySessionWindowError> {
+    let Some(hex) = window_sha256.strip_prefix("sha256:") else {
+        return Err(IntradaySessionWindowError::Invalid);
+    };
+    if !is_prefixed_sha256(window_sha256) {
+        return Err(IntradaySessionWindowError::Invalid);
+    }
+    Ok(format!("windows-{hex}.json"))
+}
+
+fn from_operational_path() -> Result<IntradaySessionWindowContract, IntradaySessionWindowError> {
+    #[cfg(unix)]
+    {
+        return unix::load_operational();
+    }
+    #[cfg(not(unix))]
+    {
+        Err(IntradaySessionWindowError::Unsupported)
     }
 }
 
@@ -337,6 +536,134 @@ fn is_prefixed_sha256(value: &str) -> bool {
         && hex
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireOperationalActivation {
+    schema_version: u32,
+    window_sha256: String,
+}
+
+#[cfg(unix)]
+mod unix {
+    use super::*;
+    use rustix::fs::{FileType, Mode, OFlags, fstat, open, openat};
+    use rustix::io::Errno;
+    use std::fs::File;
+    use std::os::fd::{AsFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    const DIRECTORY_FLAGS: OFlags = OFlags::RDONLY
+        .union(OFlags::DIRECTORY)
+        .union(OFlags::NOFOLLOW)
+        .union(OFlags::CLOEXEC);
+    const FILE_FLAGS: OFlags = OFlags::RDONLY
+        .union(OFlags::NONBLOCK)
+        .union(OFlags::NOFOLLOW)
+        .union(OFlags::CLOEXEC);
+
+    fn map_open_error(error: Errno) -> IntradaySessionWindowError {
+        if error == Errno::NOENT {
+            IntradaySessionWindowError::Missing
+        } else {
+            IntradaySessionWindowError::Invalid
+        }
+    }
+
+    fn stat_metadata(stat: &rustix::fs::Stat) -> OperationalSessionWindowMetadata {
+        let file_type = FileType::from_raw_mode(stat.st_mode);
+        OperationalSessionWindowMetadata {
+            is_directory: file_type == FileType::Directory,
+            // Every opened component and file is opened with NOFOLLOW. A
+            // symlink therefore fails before fstat; the explicit field keeps
+            // the metadata validation seam useful for provider-free fixtures.
+            is_symlink: false,
+            is_regular: file_type == FileType::RegularFile,
+            uid: stat.st_uid,
+            gid: stat.st_gid,
+            mode: Mode::from_raw_mode(stat.st_mode).bits() & 0o7777,
+            link_count: stat.st_nlink,
+        }
+    }
+
+    fn open_operational_root() -> Result<OwnedFd, IntradaySessionWindowError> {
+        let components = Path::new(INTRADAY_OPERATIONAL_SESSION_WINDOWS_PATH)
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(name) => Some(name.as_bytes().to_owned()),
+                std::path::Component::RootDir => None,
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut directory =
+            open(Path::new("/"), DIRECTORY_FLAGS, Mode::empty()).map_err(map_open_error)?;
+        for component in components {
+            let next = openat(&directory, &component, DIRECTORY_FLAGS, Mode::empty())
+                .map_err(map_open_error)?;
+            let stat = fstat(&next).map_err(|_| IntradaySessionWindowError::Invalid)?;
+            let metadata = stat_metadata(&stat);
+            validate_operational_ancestor_metadata(metadata)?;
+            directory = next;
+        }
+        let stat = fstat(&directory).map_err(|_| IntradaySessionWindowError::Invalid)?;
+        validate_operational_directory_metadata(stat_metadata(&stat))?;
+        Ok(directory)
+    }
+
+    fn read_file(
+        directory: &impl AsFd,
+        name: &[u8],
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, IntradaySessionWindowError> {
+        let fd = openat(directory, name, FILE_FLAGS, Mode::empty()).map_err(map_open_error)?;
+        let mut file = File::from(fd);
+        let before = fstat(&file).map_err(|_| IntradaySessionWindowError::Invalid)?;
+        let before_type = FileType::from_raw_mode(before.st_mode);
+        if before_type != FileType::RegularFile {
+            return Err(IntradaySessionWindowError::Invalid);
+        }
+        let before_metadata = stat_metadata(&before);
+        validate_operational_file_metadata(before_metadata)?;
+        let before_size =
+            usize::try_from(before.st_size).map_err(|_| IntradaySessionWindowError::Invalid)?;
+        if before_size > max_bytes {
+            return Err(IntradaySessionWindowError::Invalid);
+        }
+        let mut bytes = Vec::with_capacity(before_size);
+        file.by_ref()
+            .take(max_bytes.saturating_add(1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| IntradaySessionWindowError::Invalid)?;
+        if bytes.len() > max_bytes {
+            return Err(IntradaySessionWindowError::Invalid);
+        }
+        let after = fstat(&file).map_err(|_| IntradaySessionWindowError::Invalid)?;
+        let after_metadata = stat_metadata(&after);
+        validate_operational_file_metadata(after_metadata)?;
+        if after.st_dev != before.st_dev
+            || after.st_ino != before.st_ino
+            || after.st_size != before.st_size
+            || bytes.len() != before_size
+        {
+            return Err(IntradaySessionWindowError::Invalid);
+        }
+        Ok(bytes)
+    }
+
+    pub(super) fn load_operational()
+    -> Result<IntradaySessionWindowContract, IntradaySessionWindowError> {
+        let directory = open_operational_root()?;
+        let activation_bytes = read_file(
+            &directory,
+            INTRADAY_OPERATIONAL_SESSION_WINDOWS_ACTIVATION.as_bytes(),
+            MAX_OPERATIONAL_ACTIVATION_BYTES,
+        )?;
+        let activation = parse_operational_activation(&activation_bytes)?;
+        let filename = operational_window_filename(activation.window_sha256())?;
+        let window_bytes = read_file(&directory, filename.as_bytes(), MAX_WINDOW_BYTES)?;
+        IntradaySessionWindowContract::from_bytes(&window_bytes, activation.window_sha256())
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -303,6 +303,8 @@ pub fn normalize_failure_class(error: &NormalizeError) -> FailureClass {
         NormalizeError::Store(source) => normalize_store_failure_class(source),
         NormalizeError::UnsupportedScope { .. }
         | NormalizeError::UnsupportedMode
+        | NormalizeError::InvalidCalendarSource { .. }
+        | NormalizeError::CalendarSourceManifestConflict { .. }
         | NormalizeError::ExistingBatchConflict { .. }
         | NormalizeError::EvidenceCountMismatch { .. }
         | NormalizeError::EvidenceMissing { .. }
@@ -361,6 +363,9 @@ fn publication_error_is_retryable(error: &PublicationError) -> bool {
         PublicationError::Store(source) => store_failure_class(source) == FailureClass::Retryable,
         PublicationError::UnsupportedManifestScope { .. }
         | PublicationError::UnsupportedManifestMode { .. }
+        | PublicationError::NonCanonicalCalendarManifest { .. }
+        | PublicationError::CalendarSourceMissing { .. }
+        | PublicationError::InvalidCalendarSource { .. }
         | PublicationError::NonCanonicalNormalizedManifest { .. }
         | PublicationError::InvalidCanonicalFile { .. }
         | PublicationError::InvalidCanonicalProvenance { .. }
@@ -968,6 +973,9 @@ fn publication_error_variant(error: &PublicationError) -> &'static str {
         PublicationError::Store(_) => "Store",
         PublicationError::UnsupportedManifestScope { .. } => "UnsupportedManifestScope",
         PublicationError::UnsupportedManifestMode { .. } => "UnsupportedManifestMode",
+        PublicationError::NonCanonicalCalendarManifest { .. } => "NonCanonicalCalendarManifest",
+        PublicationError::CalendarSourceMissing { .. } => "CalendarSourceMissing",
+        PublicationError::InvalidCalendarSource { .. } => "InvalidCalendarSource",
         PublicationError::NonCanonicalNormalizedManifest { .. } => "NonCanonicalNormalizedManifest",
         PublicationError::InvalidCanonicalFile { .. } => "InvalidCanonicalFile",
         PublicationError::InvalidCanonicalProvenance { .. } => "InvalidCanonicalProvenance",

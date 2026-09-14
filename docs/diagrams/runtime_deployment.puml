@@ -5,6 +5,7 @@
 ' migrations/, and code spawn/publication sites.
 ' WP6-C2a source delta 2026-09-09: intraday code/cache topology and
 ' explicit preparation overlay only; no runtime activation is claimed.
+' 2026-09-14: operational day proof and calendar-only bootstrap; activation unverified.
 ' 2026-09-11: release wrapper conditionally selects the fixed shared overlay;
 ' Web receives server-only mode. Source wiring is not a deployment claim.
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
@@ -70,31 +71,29 @@ folder "Artifact tree\n/data/artifacts\n(backtest/runs, paper,\nhistorical-price
 folder "stock-price-beta-artifacts\n(sealed fixed-30 signals)" as spba
 folder "owner-equity-v2-artifacts" as oeva
 
-package "INTRADAY OVERLAY — CONDITIONAL RELEASE WIRING\ncompose.intraday.yml\nDEFAULT OFF • ACTIVATION GATED" #FFF4D6 {
+package "INTRADAY OVERLAY — SHARED READ + OPERATIONAL DAY PROOF\ncompose.intraday.yml\nDEFAULT OFF • ACTIVATION GATED" #FFF4D6 {
   folder "Protected KIS read coordination\n/run/lagrange/kis-read-coordination\nshared host leaf; contains bearer token\n+ durable coordination ledger" as kis_coordination
   folder "KST session-window artifact\n/opt/lagrange/configs/market-hours/\nkrx-intraday-session-windows-v1.json\nread-only; hash-pinned; committed entries empty" as intraday_windows
+  folder "Operational day proof\n/run/lagrange/intraday-session-windows\nactivation.json + immutable windows-<sha>.json\nroot protected; read-only" as operational_windows
 }
 
-' evidence: deploy/compose/compose.intraday.yml:1-118; scripts/ops/compose-release.sh:124-150,313-316
+' evidence: deploy/compose/compose.intraday.yml:3-99; scripts/ops/lib/kis-read-compose.sh:97-121
 note right of kis_coordination
-  Conditional bind declarations. Exactly five credentialed readers
-  share one identical coordination bind:
-  research-worker (1) + grouped range jobs (3)
-  + owner-equity-v2-runner (1) = 5.
-  API, Web, and materializer receive no coordination bind.
-  The coordination file contains the reusable bearer token;
-  its contents are never diagram evidence or runtime output.
+  Five credentialed readers share one coordination bind.
+  API, Web, and materializer have no coordination bind.
+  All read wrappers select the same fixed overlays.
+  The durable ledger contains the reusable bearer token;
+  contents never enter diagnostics or diagram evidence.
 end note
 
-' evidence: deploy/compose/compose.intraday.yml:75-118; scripts/ops/compose-release.sh:124-150,313-316; deploy/compose/compose.yml:113-123
-note right of intraday_windows
-  Exactly two read-only window binds: API and oev2 only.
-  The committed artifact starts with empty entries/default-off.
-  Release scope selects the fixed overlay only for
-  shared_required, before the image-ID/build-reset override.
-  Legacy/off omits it. Web gets server-only mode, no bind.
-  Standalone Raw/daily invocation consistency and actual
-  deployment remain separate gates; no activation is claimed.
+' evidence: deploy/compose/compose.intraday-operational.yml:4-42; scripts/ops/install-intraday-session-window.py:1-8
+note right of operational_windows
+  Operational proof: three read-only binds (research/API/oev2).
+  Manual same-day evidence install; no automated KRX fetch.
+  The legacy commit-pinned artifact remains the default.
+  Calendar-only publication requires stopped research daemon.
+  Same-day full EOD reuse is deferred and fails closed.
+  Source wiring only; deployment is not yet verified.
 end note
 
 ' ---------------- Edge / web ----------------
@@ -122,7 +121,7 @@ end note
 
 ' ---------------- api-server ----------------
 
-' evidence: compose.yml:165-179 (DB_USER app + ADMIN_DB_USER admin + AUDIT_DB_USER audit_writer); crates/api-server/src/http/session.rs:1-6 (admin-role session read, app-role + RLS actor GUC for row access); crates/api-server/src/repos/owner_intraday_quotes.rs:30-95; crates/job-queue/src/owner_equity_v2/intraday.rs:2317-2335; migrations/0054_owner_intraday_quotes.up.sql:221-247,290-360
+' evidence: compose.yml:165-179 (DB_USER app + ADMIN_DB_USER admin + AUDIT_DB_USER audit_writer); crates/api-server/src/http/session.rs:1-6 (admin-role session read, app-role + RLS actor GUC for row access); crates/api-server/src/repos/owner_intraday_quotes.rs:30-95; crates/job-queue/src/owner_equity_v2/intraday.rs:2321-2339; migrations/0054_owner_intraday_quotes.up.sql:221-247,290-360
 api --> pg : SQL (roles: app,\nadmin ro, audit_writer);\nowner-intraday demand/cache\n(app actor-scoped RLS)
 ' evidence: compose.yml:187-192 (AUTH0_* + callback), docs/decisions/0002-auth0-oidc-and-sessions.md; apps/api-server/auth/src/lib.rs:160 (router)
 api --> auth0 : OIDC code exchange\n(confidential client)
@@ -148,12 +147,12 @@ oneshots --> curated : ownership fence
 
 ' evidence: compose.yml:580-581 (KIS_APP_KEY_FILE/SECRET_FILE secrets); crates/market-data/src/providers/kis.rs:59-63 (DAILY_BARS_PATH, CALENDAR_PATH request paths); AGENTS.md KIS read-only allowlist
 research --> kis : GET daily bars, quotes,\nchk-holiday, KSD actions
-' evidence: compose.yml:599 (raw rw mount); data-pipelines/collectors/src/worker.rs:981 (RawStore::new)
+' evidence: compose.yml:599 (raw rw mount); data-pipelines/collectors/src/worker.rs:984 (RawStore::new)
 research --> raw : immutable Raw batches\n(hash-committed)
-' evidence: compose.yml:600 (curated mount); data-pipelines/collectors/src/worker.rs:2656 (CurateStore::new)
+' evidence: compose.yml:600 (curated mount); data-pipelines/collectors/src/worker.rs:2659 (CurateStore::new)
 research --> curated : curated Parquet bars
-' evidence: compose.yml:575-579 (DB_USER research_writer); data-pipelines/collectors/src/sink.rs:489,539,702 (INSERT data_batches, trading_calendar_versions, trading_calendars); candidate_sink.rs:389 (SECURITY DEFINER begin_candidate_raw_batch)
-research --> pg : catalog publication\n(research_writer,\nSECURITY DEFINER procs)
+' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:162-172; data-pipelines/collectors/src/sink.rs:215-234,713,780,966; compose.yml:575-579 (DB_USER research_writer); data-pipelines/collectors/src/sink.rs:713,780,966 (INSERT data_batches, trading_calendar_versions, trading_calendars); candidate_sink.rs:389 (SECURITY DEFINER begin_candidate_raw_batch)
+research --> pg : catalog + calendar-only publication\n(research_writer,\nSECURITY DEFINER procs)
 
 ' ---------------- recommendation pipeline ----------------
 
@@ -198,9 +197,9 @@ obr --> pg : claim + publish\n(worker, owner-beta-db net)
 ' evidence: compose.yml:1056 (historical-price-beta-root ro mount)
 artifacts --> obr : ro (approved\nartifact leaf only)
 
-' evidence: compose.yml:1130-1131,1153-1154 (KIS secrets, owner-equity-v2-egress net); crates/job-queue/src/bin/owner-equity-v2-runner.rs:17-24,478-540,762-789; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:42-70,168-232
+' evidence: compose.yml:1130-1131,1153-1154 (KIS secrets, owner-equity-v2-egress net); crates/job-queue/src/bin/owner-equity-v2-runner.rs:19-26,492-554,777-804; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:42-70,168-232
 oev2 --> kis : read-only EOD equity bars;\noptional independent current-price REST quote loop\n(default off; /inquire-price only)
-' evidence: compose.yml:1105-1109 (worker role); crates/job-queue/src/owner_equity_v2.rs:680,1090 (owner_equity_memberships, owner_equity_signal_snapshots); crates/job-queue/src/owner_equity_v2/intraday.rs:1383-1422,1726-1900,1912-2037; migrations/0054_owner_intraday_quotes.up.sql:249-288,316-379
+' evidence: compose.yml:1105-1109 (worker role); crates/job-queue/src/owner_equity_v2.rs:680,1090 (owner_equity_memberships, owner_equity_signal_snapshots); crates/job-queue/src/owner_equity_v2/intraday.rs:1385-1424,1730-1904,1916-2041; migrations/0054_owner_intraday_quotes.up.sql:249-288,316-379
 oev2 --> pg : universe V2 state (worker);\nowner-intraday demand/cache/producer\n(worker fenced writes)
 ' evidence: compose.yml:1151 (raw rw mount); data-pipelines/collectors/src/owner_equity_v2.rs:45,144 (capture + materialize from raw)
 oev2 --> raw : rw (EOD V2 capture only;\nno intraday quote data)
@@ -209,16 +208,23 @@ oev2 --> oeva : rw (EOD V2 artifacts only)
 
 ' ---------------- intraday overlay: conditional source wiring ----------------
 
-' evidence: deploy/compose/compose.intraday.yml:3-18; docs/runbooks/stock-beta-intraday-quotes.md:132-142
+' evidence: deploy/compose/compose.intraday.yml:3-18
 research ..> kis_coordination : shared coordination bind\n(1 credentialed reader of 5)
-' evidence: deploy/compose/compose.intraday.yml:21-73; docs/runbooks/stock-beta-intraday-quotes.md:132-142
+' evidence: deploy/compose/compose.intraday.yml:21-73
 rangejobs ..> kis_coordination : same bind\n(3 grouped credentialed readers of 5)
-' evidence: deploy/compose/compose.intraday.yml:75-101; docs/runbooks/stock-beta-intraday-quotes.md:132-142
+' evidence: deploy/compose/compose.intraday.yml:75-101
 oev2 ..> kis_coordination : shared coordination bind\n(1 credentialed reader of 5)
-' evidence: deploy/compose/compose.intraday.yml:92-100; docs/runbooks/stock-beta-intraday-quotes.md:137-142
+' evidence: deploy/compose/compose.intraday.yml:92-100
 intraday_windows ..> oev2 : read-only window bind\n(1 of 2; hash pin)
-' evidence: deploy/compose/compose.intraday.yml:103-118; docs/runbooks/stock-beta-intraday-quotes.md:137-142
+' evidence: deploy/compose/compose.intraday.yml:103-118
 intraday_windows ..> api : read-only window bind\n(2 of 2; mode/hash settings)
+
+' evidence: deploy/compose/compose.intraday-operational.yml:4-14
+operational_windows ..> research : ro (explicit calendar-only command)
+' evidence: deploy/compose/compose.intraday-operational.yml:16-28
+operational_windows ..> api : ro (operational_v1)
+' evidence: deploy/compose/compose.intraday-operational.yml:30-42
+operational_windows ..> oev2 : ro (operational_v1)
 
 ' evidence: compose.yml:653-654,700-701,750-751 (KIS secrets), 668-669,715-716,766-767 (range-raw-egress net)
 rangejobs --> kis : one-shot historical\n/ corporate-action capture
