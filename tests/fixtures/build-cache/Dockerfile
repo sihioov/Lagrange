@@ -17,10 +17,12 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY fixture-lib ./fixture-lib
 COPY fixture-app ./fixture-app
 
+ARG CACHE_FIXTURE_RUN_TOKEN=initial
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=build-cache-fixture-registry-v1-${TARGETPLATFORM},sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,id=build-cache-fixture-git-v1-${TARGETPLATFORM},sharing=locked \
     --mount=type=cache,target=/cargo-target,id=build-cache-fixture-target-v1-${TARGETPLATFORM},sharing=locked \
     cargo clean --workspace --release --locked \
+    && test -n "$CACHE_FIXTURE_RUN_TOKEN" \
     && printf '%s\n' 'SMOKE_CARGO_PHASE bin=cache-bin-a' \
     && cargo build --locked --release --verbose --package build-cache-fixture-app --bin cache-bin-a \
     && printf '%s\n' 'SMOKE_CARGO_PHASE bin=cache-bin-b' \

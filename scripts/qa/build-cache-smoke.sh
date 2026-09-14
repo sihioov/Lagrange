@@ -172,6 +172,10 @@ validate_fixture() {
     die 'fixture build script must watch the build setting'
   grep -Fq 'ENV CARGO_BUILD_JOBS=2' "$fixture_dir/Dockerfile" ||
     die 'fixture Dockerfile must cap Cargo parallelism at two jobs'
+  grep -Fq 'ARG CACHE_FIXTURE_RUN_TOKEN=initial' "$fixture_dir/Dockerfile" ||
+    die 'fixture Dockerfile must declare the compile RUN invalidation argument'
+  grep -Fq 'test -n "$CACHE_FIXTURE_RUN_TOKEN"' "$fixture_dir/Dockerfile" ||
+    die 'fixture compile RUN must consume its invalidation argument'
   [ "$(grep -Foc 'cargo clean --workspace --release --locked' "$fixture_dir/Dockerfile" || true)" -eq 1 ] ||
     die 'fixture Dockerfile must clean the workspace exactly once before building'
   [ "$(grep -Foc 'cargo build --locked --release --verbose --package build-cache-fixture-app --bin cache-bin-a' "$fixture_dir/Dockerfile" || true)" -eq 1 ] ||
@@ -478,19 +482,28 @@ cleanup_apply() {
 }
 
 run_fixture_build() {
-  local source=$1 tag=$2 commit=$3 setting=$4 namespace=$5 log=$6 no_cache=$7
-  local args start_ms end_ms status
+  local source=$1 tag=$2 commit=$3 setting=$4 namespace=$5 log=$6 build_mode=$7
+  local args start_ms end_ms status run_token
+  # Mode 0 repeats the first cold build's exact inputs. Mode 1 invalidates
+  # only the compile RUN through an ARG, preserving Cargo cache mounts.
+  # Mode 2 is genuinely cold: a new namespace plus disabled layer reuse.
+  case "$build_mode" in
+    0) run_token="lagrange-build-cache-smoke-${smoke_nonce}-cache-absent" ;;
+    1|2) run_token=$tag ;;
+    *) die 'invalid fixture build mode' ;;
+  esac
   args=(
     build
     --pull=false
     --progress=plain
     --build-arg "CACHE_FIXTURE_COMMIT=$commit"
     --build-arg "CACHE_FIXTURE_BUILD_SETTING=$setting"
+    --build-arg "CACHE_FIXTURE_RUN_TOKEN=$run_token"
     --build-arg "BUILDKIT_CACHE_MOUNT_NS=$namespace"
     -f "$source/Dockerfile"
     -t "$tag"
   )
-  [ "$no_cache" -eq 1 ] && args+=(--no-cache)
+  [ "$build_mode" -eq 2 ] && args+=(--no-cache)
   args+=("$source")
   SMOKE_LAST_BUILD_COMMAND=$(render_command docker "${args[@]}")
   register_owned_image_tag "$tag"
@@ -532,7 +545,7 @@ assert_fixture_binaries() {
 
 run_success_case() {
   local source=$1 name=$2 commit=$3 setting=$4 marker_a=$5 marker_b=$6 embedded=$7
-  local generated=$8 shared=$9 namespace=${10} external_expectation=${11} no_cache=${12}
+  local generated=$8 shared=$9 namespace=${10} external_expectation=${11} build_mode=${12}
   local tag log cargo_cache
   SMOKE_ASSERT_ERROR=
   if ! assert_source_at_commit "$source" "$commit" 1; then
@@ -550,7 +563,7 @@ run_success_case() {
   SMOKE_CURRENT_BIN_B_REL=binaries/${name}.cache-bin-b.out
   SMOKE_LAST_BUILD_COMMAND=-
   SMOKE_LAST_TOTAL_MS=-
-  if ! run_fixture_build "$source" "$tag" "$commit" "$setting" "$namespace" "$log" "$no_cache"; then
+  if ! run_fixture_build "$source" "$tag" "$commit" "$setting" "$namespace" "$log" "$build_mode"; then
     finish_current_case FAIL build-failed 'docker-build-failed;sanitized-log-retained'
     die "fixture Docker build failed: $name; sanitized evidence retained under $output_dir"
   fi
@@ -558,7 +571,7 @@ run_success_case() {
     finish_current_case FAIL event-parse-failed "build-event-parse-failed;${SMOKE_PARSE_ERROR}"
     die "fixture build evidence was invalid: $name; sanitized evidence retained under $output_dir"
   fi
-  if [ "$no_cache" -eq 1 ]; then
+  if [ "$build_mode" -ne 0 ]; then
     if ! assert_forced_compile_evidence "$name" "$external_expectation"; then
       finish_current_case FAIL forced-evidence-failed "$SMOKE_ASSERT_ERROR"
       die "fixture forced-RUN evidence was invalid: $name; sanitized evidence retained under $output_dir"
@@ -821,7 +834,7 @@ run_apply() {
   echo 'SMOKE_RUN cold-no-cache, normal-layer-cached-repeat, forced-RUN Cargo reuse, semantic source changes, missing-source recovery'
   echo 'SMOKE_RUN cases=cache-absent,repeat-same-source,different-bin,changed-local-source,changed-workspace-library,changed-build-script-source,changed-external-dependency-lockfile,changed-embedded-data,changed-build-setting,commit-only-change,older-mtimes-branch-reversion,source-deletion-failure,restore-after-source-deletion,cache-repopulate-absent,cache-repopulate'
 
-  run_success_case "$source_dir" cache-absent "$base_commit" default source-v1 source-v1 embedded-v1 generated-v1 42 "$namespace" cold 1
+  run_success_case "$source_dir" cache-absent "$base_commit" default source-v1 source-v1 embedded-v1 generated-v1 42 "$namespace" cold 2
   run_success_case "$source_dir" repeat-same-source "$base_commit" default source-v1 source-v1 embedded-v1 generated-v1 42 "$namespace" warm 0
   # A new tag alone does not prove within-RUN reuse. This forced RUN proves it
   # from the two phase markers: local lib compiles for A then is Fresh for B.
@@ -851,7 +864,7 @@ run_apply() {
   restore_fixture_commit "$source_dir" "$base_commit"
   [ -f "$source_dir/fixture-app/src/bin/cache-bin-a.rs" ] || die 'disposable fixture source was not restored after the deletion case'
   record_restore_after_deletion "$namespace"
-  run_success_case "$source_dir" cache-repopulate-absent "$base_commit" default source-v1 source-v1 embedded-v1 generated-v1 42 "$repopulate_namespace" cold 1
+  run_success_case "$source_dir" cache-repopulate-absent "$base_commit" default source-v1 source-v1 embedded-v1 generated-v1 42 "$repopulate_namespace" cold 2
   run_success_case "$source_dir" cache-repopulate "$base_commit" default source-v1 source-v1 embedded-v1 generated-v1 42 "$repopulate_namespace" warm 1
 
   echo "SMOKE_RESULT PASS output_dir=$output_dir case_records=$(($(wc -l <"$case_report") - 1))"
@@ -910,10 +923,11 @@ case "${1:-}" in
   build)
     shift
     args=("$@")
-    tag= namespace= commit= setting=
+    tag= namespace= commit= setting= run_token= no_cache=0
     for ((index = 0; index < ${#args[@]}; index += 1)); do
       argument=${args[$index]}
       case "$argument" in
+        --no-cache) no_cache=1 ;;
         -t)
           index=$((index + 1)); tag=${args[$index]}
           ;;
@@ -922,12 +936,24 @@ case "${1:-}" in
           case "$build_arg" in
             CACHE_FIXTURE_COMMIT=*) commit=${build_arg#CACHE_FIXTURE_COMMIT=} ;;
             CACHE_FIXTURE_BUILD_SETTING=*) setting=${build_arg#CACHE_FIXTURE_BUILD_SETTING=} ;;
+            CACHE_FIXTURE_RUN_TOKEN=*) run_token=${build_arg#CACHE_FIXTURE_RUN_TOKEN=} ;;
             BUILDKIT_CACHE_MOUNT_NS=*) namespace=${build_arg#BUILDKIT_CACHE_MOUNT_NS=} ;;
           esac
           ;;
       esac
     done
     record build "${args[@]}"
+    case "$tag" in
+      *-cache-absent|*-cache-repopulate-absent)
+        [ "$no_cache" -eq 1 ] && [ "$run_token" = "$tag" ] || exit 64 ;;
+      *-repeat-same-source)
+        [ "$no_cache" -eq 0 ] && [ "$run_token" = "${tag%-repeat-same-source}-cache-absent" ] || exit 64 ;;
+      *)
+        [ "$no_cache" -eq 0 ] && [ "$run_token" = "$tag" ] || {
+          echo 'fake Docker: warm RUN must preserve mounts and invalidate only the compile step' >&2
+          exit 64
+        } ;;
+    esac
     [[ "$tag" =~ ^lagrange-build-cache-smoke-r[0-9a-f]+-[a-z0-9-]+$ ]] || {
       printf '%s\n' 'fake Docker: invalid fixture repository name' >&2
       exit 64
