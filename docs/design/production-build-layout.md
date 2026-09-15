@@ -455,6 +455,20 @@ case-scope를 사용하고 group suffix는 L2의 base/wide뿐이다.
 만든다. 이 token은 `K/P/H`에서 제외하고 fixture 출력에도 넣지 않는다. `--no-cache`를 warm
 수단으로 쓰지 않는다. 동일 입력 layer-hit 시험과 forced warm 시험을 별개로 기록한다.
 
+2026-09-15 실제 `layout-03`의 L0 cold P2가 `unexpected-recompile-set-itoa`로
+실패했다. 같은 cache ID인데 두 호출 모두 `Removed 0 files`와 itoa 재컴파일이
+관측됐다. 별도 고정 Alpine cache-file 시험은 동일 namespace에 대해 연속
+`--no-cache`, `--no-cache`, token 변경만 사용했을 때 `MISS, MISS, HIT`를
+재현했다. 증거는
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/no-cache-diagnostic-f90688b3acac/result.json`이다.
+따라서 cold/setup/empty-cache의 `--no-cache`는 P0와 첫 compile P1에만
+적용한다. P2–P4는 새 run/scope/K의 cache ID, 각 bin/feature 및 소비된 token으로
+이전 시험의 layer 재사용을 차단하면서 이번 묶음이 생성한 mount를 보존한다.
+그룹별 새 target도 고유 namespace로 비어 있음을 보장한다. warm 단계에는
+`--no-cache`를 사용하지 않는다. 예상 Cargo 재사용 집합이나 실패 판정은 바꾸지
+않으며 fake 실행기도 이 호스트에서 재현한 mount 초기화를 반영해야 한다.
+route-contract의 단독 P1 source/producer 호출은 기존 cold 동작을 유지한다.
+
 ### 5.3 예상 재컴파일 집합
 
 단위는 `(package, target kind/name, feature set, target/host, profile)`이다.
