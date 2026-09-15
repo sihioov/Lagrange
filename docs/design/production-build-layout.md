@@ -1,6 +1,6 @@
 # 운영 이미지 빌드 구조 비교와 WP-3 실험 명세
 
-상태: **G1 오프라인 실험 명세 동결. 제품 구조 선택과 G2는 미정이다.**
+상태: **G2 통과. L1 common 제품 구현 명세는 §10에 동결했다. 제품 C와 최종 인수는 남아 있다.**
 
 2026-09-15 실행 재개: 소유자 승인에 따라 [재개 조건](../superpowers/plans/2026-09-15-production-build-resume.md)의
 정확한 기존 research-worker 장애만 image-only 시험 중 별도 감시할 수 있다.
@@ -9,8 +9,8 @@
 실제 실행에서 드러난 커널 로그 1,000건 절단 한계는 같은 재개 문서의
 `Complete kernel journal capture` 계약으로 보완한다. 전체 구간의 EOF·성공 종료와
 자원 상한을 함께 검증하며, §5.7의 OOM·건강·자원·재개 조건은 유지한다.
-이 문서는 실험 구현 명세를 제공한다. 실제 Docker/Rust 빌드, 프로토타입 구현,
-운영 변경, 성능 인수 또는 G2 선택을 완료했다는 뜻이 아니다.
+§1–9는 G1과 당시 관측의 기록이다. 이후 실제 검증·G2 선택은 §10을 따른다.
+운영 rollout 및 제품 전체 성능 인수는 이 문서의 G2 통과와 별개다.
 
 ## 1. 기준, 범위, 현재 실행 가능성
 
@@ -932,3 +932,554 @@ WP-1의 QA syntax 및 smoke/benchmark 자체 검사 로그와 SHA256SUMS는
 구분한다. §5.7의 health unit 목록은 실제 실행 전 외부 입력이며 임의로 만들지 않는다.
 실제 구조 정확성을 확인하지 못하면 G2를 통과시키지 않으며 WP-4/5 제품 구현도 시작하지
 않는다. 성능 개선이나 12개 이미지/V2 인수를 완료했다는 결론은 없다.
+
+## 10. G2 제품 적용 명세 (2026-09-15 동결)
+
+선택과 근거: **L1 common을 제품 구현 대상으로 선택한다.** 하나의 공통 target namespace와
+content guard를 사용하되, 기존 package/bin/feature/ENV를 유지한 한 bin씩의
+producer 실행과 검증된 산출물 전달을 채택한다. L2는 동일 warm 재사용 집합에
+cold 외부 unit 중복이 추가됐고, 운영 병렬화를 허용하지 않는 환경에서
+그룹별 target을 유지할 실측 이점이 없었다. L0 B는 성공한 RUN마다 workspace를
+정리하여 변경과 무관한 내부 unit도 반복 컴파일했다. L0에 guard만 추가하는
+변형은 이번 실제 비교 대상이 아니므로 측정한 대안처럼 주장하지 않는다.
+
+소형 fixture의 유효 normal 관측은 다음과 같다. 각 셀은
+`재컴파일 unit 수 / Cargo compile+link ms / gate 포함 case 경과 ms`이다.
+setup은 제외하며 layout별 순차 1회 관측이다.
+
+| 시나리오 | L0 baseline | L1 common | L2 grouped |
+|---|---|---|---|
+| cold | 13 / 1253 / 37566 | 9 / 1122 / 42433 | 10 / 1284 / 42398 |
+| exact-repeat | 0 / 0 / 34210 | 0 / 0 / 37213 | 0 / 0 / 37678 |
+| forced-warm | 12 / 1148 / 31943 | 0 / 152 / 35889 | 0 / 150 / 37014 |
+| commit-only | 12 / 1172 / 31911 | 4 / 711 / 36138 | 4 / 773 / 36655 |
+| web-only | 12 / 1171 / 32579 | 4 / 713 / 36991 | 4 / 750 / 36766 |
+| python-only | 12 / 1146 / 32845 | 4 / 716 / 36995 | 4 / 712 / 37066 |
+| app-source-old-mtime | 12 / 1229 / 32707 | 6 / 939 / 36734 | 6 / 969 / 37358 |
+| lib-source | 12 / 1156 / 32685 | 8 / 944 / 37095 | 8 / 928 / 37283 |
+
+**소형 전체 시간은 L1/L2가 더 느렸다.** 수백 ms 규모 Cargo 작업에서는
+export/검사 추가 비용이 절약량보다 컸다. 선택 근거는 실제 확인한 내부 unit
+재사용과 정확성, 공통안의 작은 중복 집합이다. Polars 등 제품 의존성에서
+이 절감이 전체 비용을 상쇄할지는 아직 가설이다. 따라서 L1 구현은 제품
+실측을 위한 선택이며, 목표 달성 또는 개선율 확정이 아니다. B 대비 C의
+대표 변경 전체 시간이 개선되지 않으면 성능 인수를 통과시키지 않는다.
+
+G2 증거: `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/`
+아래 `layout-09-composite-root-audit.json`, SHA-256
+`b46b319bd00649fb60e23d7f8fcda8bc463753e9db4337a516ee91b140ff2128`.
+현재 시험 소스는 `2976752bcdd9ce52ea0378de3053e554fc377209`; 이전 baseline
+prefix는 보고서가 명시한 `4df1554...`, `534feb9...`와 원본 해시로 별도 대조했다.
+84개 고유 case, 90개 trial PASS, binary 결과 354개, Cargo observation 365개,
+예상 중단/재개 27개, source/artifact route 6개, PASS gate 1930개를 확인했다.
+run09의 남은 15개는 1325.314초에 완료했고 background unit 종료는 exit0/MainPID0이다.
+
+기존 실패 실행 06/07/08은 실패로 보존한다. 통과한 prefix만 원본 bytes,
+event chain, Cargo log와 source receipt를 확인해 합산했다. 특히 run08의
+SwapFree 522000KiB 실패를 PASS로 바꾸지 않았다. 사용자가 추가한 임시
+4GiB swap 후 재개했다. 정상 시간 비교 8개는 swap 추가 전의 완료된 관측이며,
+추가 후 실행한 실패/재개 case의 wall time은 비교 표에 섞지 않는다.
+전체 검증의 최소 MemAvailable 7863572KiB, 최소 SwapFree 743624KiB였다.
+기존 research-worker 장애는 승인된 image-only 예외로 감시했으며 아직
+서비스 정상 또는 배포 준비 완료를 뜻하지 않는다. 향후 A/B/C 측정은 같은
+swap 구성과 자원 조건으로 수행하고 실제 값을 기록한다.
+
+기존 cache smoke 실제 통과 증거는 `reports/smoke-02.json` 및 연결된 run에
+보존돼 있다. 이 G2는 제품 소스를 바꾸지 않은 현재 도구/fixture 시험을
+인수한다. 제품 C의 12개 이미지·V2·전체 성능 인수는 WP6에 남는다.
+
+이 절은 §6의 제품 초안과 충돌하는 인터페이스·소유권·상태 경로를 대체한다.
+§2의 서비스·바이너리·컴파일 환경·런타임 계약과 §4의 cache/source 출처 원칙은
+유지한다. 과거 G1 관측과 실패 실행은 그 시점의 기록으로 남긴다.
+제품 C는 G3에서 따로 고정하며, G2 합격을 실제 12개 이미지/V2 또는 성능
+인수 완료로 보고하지 않는다.
+
+대표 성능 시나리오: `rust-leaf`: `crates/api-server/src/bin/api-server.rs`에 pair별 동일 Rust 주석 추가. B/C 독립 warm-up 이후 3쌍을
+B/C, C/B, B/C 순서로 실행한다. A와 cold/기타 시나리오는 우선 1회다.
+
+### 10.1 구현 소유권
+
+WP4(Codex Luna/max)는 D7 7개, `scripts/ops/build-production-images.sh`, 신규
+`scripts/ops/lib/release-build-layout.sh`, `deploy/build/Dockerfile.rust-artifacts`,
+`deploy/build/release-build-layout.json`만 수정한다. 이미지 archive parser도
+이 제품 helper에 두며, §6의 WP5 parser 구현 배정을 대체한다.
+WP5(Codex Terra/max)는 승인된 기존 ops 검사 4개, benchmark, ops README,
+release runbook 및 필요한 도표만 수정한다. parser 시험은 WP5가 작성한다.
+Wave3에서는 실제 Docker/Rust 빌드를 하지 않는다. 명세와 모순된 설계는
+추측하지 말고 코디네이터에 반환한다. JSON 내부 표현 등 명시적으로 열어둔
+구현 선택은 계약을 유지하는 범위에서 작업자가 정한다.
+
+### 10.2 고정 입력 목록
+
+원본 root 입력 조사에서 확인한 모든 workspace package는 다음과 같다.
+이 표의 경로 아래 Git 추적 파일 전체를 package 입력으로 해시하고, 외부
+입력은 별도로 포함한다. 의존성 표는 §2.2와 같으며 pinned Cargo metadata로
+현재 manifest의 경로 그래프와 일치함을 검사한다. mtime은 hash에서 제외한다.
+
+| Package | 경로 | 외부 컴파일 입력 |
+|---|---|---|
+| domain | `crates/domain` | 없음 |
+| auth | `crates/auth` | 없음 |
+| market-data | `crates/market-data` | `configs/evidence/kis-historical-price-only-beta-approved-artifacts.json`, `configs/evidence/kis-historical-price-only-v3-approved-artifacts.json`, `configs/evidence/kis-range-canonical-approved-manifests.json`, `data/calendars/xkrx/calendar.json`, `data/calendars/xkrx/manifest.json`, `data/calendars/xkrx/overrides.json`, `configs/universes/kr-etf-core-v1.yaml` |
+| data-go-client | `crates/data-go-client` | 없음 |
+| kis-client | `crates/kis-client` | 없음 |
+| opendart-client | `crates/opendart-client` | 없음 |
+| factor-engine | `crates/factor-engine` | 없음 |
+| selector | `crates/selector` | 없음 |
+| portfolio-model | `crates/portfolio-model` | 없음 |
+| job-queue | `crates/job-queue` | `configs/universes/kr-etf-core-v1.yaml` |
+| collectors | `data-pipelines/collectors` | 없음 |
+| result-model | `crates/result-model` | 없음 |
+| risk-gateway | `crates/risk-gateway` | 없음 |
+| api-server | `crates/api-server` | `configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json`, `migrations` |
+| api-server-auth | `apps/api-server/auth` | 없음 |
+| migration-contract | `tests/integration/migration-contract` | 없음 |
+
+### 10.3 확정 계약의 상세
+
+#### Host and producer interfaces
+
+- Keep product Compose/runtime, compose-release, manifest library, Web/DB
+  Dockerfiles and all application files untouched. Seven source Dockerfile
+  fallbacks keep B's commands/ARG/ENV/features and can build without named context.
+- Official builder CLI/root/clean-HEAD/manifest preflight checks remain. It
+  sources the new helper, holds one nonblocking lock covering preparation,
+  all 12 builds and verification, and performs the same ordered metadata/V2
+  validation only after all strict bytes checks succeed.
+- Direct D7 source fallback retains B's source compilation policy for existing
+  callers. The new content-addressed host transport is guaranteed by the
+  official helper/benchmark, not arbitrary manual Docker invocations. Do not
+  claim the simple fixture source-fallback route test proves every legacy
+  caller's old-mtime source-transfer behavior. Preserve its build compatibility;
+  document the tested entrypoint scope precisely.
+- Helper state ownership is current effective UID; the official root-only
+  entrypoint therefore produces root-owned state. Benchmark can use the same
+  narrow host functions in a separate user-owned private directory. This is
+  not an alternate official root bypass or release-ready path.
+- A helper initialization function needs source root, commit, state root,
+  cache namespace. Source root is bound to the helper's actual checkout, clean
+  Git tree and commit. State is outside that tree, canonical, private 0700,
+  immutable run identity bound to source/helper/recipe/schema and gate inputs.
+- Cache namespace is bounded lowercase local identifier, default product
+  namespace; changing it creates a separate performance cache, never skips
+  validation or enables pruning. Benchmark uses its own namespace for each
+  side, retains that side's namespace across its warm-up/three measurements.
+- Prepare(service, commit, state-root) emits ONLY the validated absolute bundle
+  path to stdout; logs to stderr. DB/Web return an explicit no-producer result.
+  Candidate/recommendation and both backtest services must revalidate and reuse
+  the same current-commit bundle, without adding another Cargo invocation.
+- Verify-bundle(service, commit, path) fails on any missing/extra/noncanonical
+  entry, duplicate JSON key, unknown schema, wrong source/helper/recipe identity,
+  missing success record, bad mode/ELF/hash or mismatch against current input.
+- Override(service, bundle, new-file) writes JSON (valid Compose YAML) with
+  exactly one service and build.args/additional_contexts only. No image tag,
+  lifecycle, runtime settings or service/URL context. Existing original
+  LAGRANGE_CODE_COMMIT path stays in force. Product provenance is unchanged.
+- Host and builder use the same helper-owned strict request/receipt parser;
+  builder execution uses POSIX sh + Python stdlib. No new Cargo crate, shell
+  eval, fixture dependency or test seam reachable through real --apply.
+- First native identity export includes exact rustc -vV, Cargo version, apk
+  package inventory, target platform/host triple and effective compiler env.
+  Existing five native packages remain; new build-only Python is included in
+  identity and costs. Unknown platform/compiler/config inputs fail closed.
+  Recheck identity after COPY under /build before Cargo; a changed toolchain
+  file must not silently select a compiler different from the exported native
+  identity. Do not introduce a requirement for host Cargo or a host TOML parser:
+  existing member manifests include TOML syntax unsupported by host Python3.12.
+  Builder Cargo --locked --offline --no-deps metadata can validate the fixed
+  local graph before compilation, using the actual pinned toolchain. Root
+  inventory and raw manifest hashing determine planned inputs without pretending
+  Python parsed all Cargo semantics.
+- K contains root/toolchain/lock/member manifest bytes, helper+recipe+schema,
+  actual native identity, effective default release/config/flags, fixed paths;
+  not source commit. P covers each whole package and frozen external inputs,
+  actual types/modes/content/presence, no mtime. Reverse local closure cleans
+  exactly changed packages and dependents, registry/git preserved. H includes
+  K, ordered bin/package, transitive P, compile-env presence/value and the
+  frozen dependency/feature-resolution inputs. Do not call a hash of resolver
+  inputs an observed resolved feature graph; final Cargo unit features are
+  recorded separately. If a real precomputed resolved signature is required,
+  freeze the extra metadata/tree operation and include its cost before WP4.
+- Git-tracked source inventory only: root Cargo files/toolchain; all fixed
+  workspace package trees; declared embedded files and API migrations. Preserve
+  host modes/old mtimes. Context basename context-<full-transport-content-hash>,
+  immutable per-attempt copy and rehash; COPY . ./ from this validated Rust-only
+  context preserves directory metadata. Do not copy .env/.git, NT/Web, or host
+  .cargo config into the Rust compiler filesystem.
+- Fixed 16 workspace members, 15 production-reachable packages and local graph
+  come from /tmp/lagrange-g2-root-input-inventory.json. External includes and
+  API build script are inventoried. New member/build-script/external include
+  or applied Cargo configuration requires inventory review; do not pretend a
+  regex proves arbitrary Rust macro expansion. Existing source/config/lock
+  content changes still hash/invalidate. Future layout-schema review is an
+  explicit source change, not a silent broad glob fallback.
+- Compile LAGRANGE_CODE_COMMIT presence must follow each D7 recipe, including
+  ARG-visible environment in collectors. D1/D2/D7 compile has it unset;
+  D3/D4/D5/D6 present. Only backtest is the current compile-time consumer.
+  Always-current receipt source_commit is independent of this ENV policy.
+- Guard pending is on the locked target before clean/Cargo and stays until
+  mount-outside output + success receipt exist. Pending/malformed/unknown
+  ledger forces only this K's target recreation. No cargo workspace clean on
+  every successful artifact call, no global prune, no fingerprint edits.
+- Single-bin Cargo commands retain --locked --release and existing package/bin
+  order, no features/target/profile union. Capture Cargo JSON success/executable
+  and stderr verbose Fresh/Compiling evidence; executable must be the exact
+  requested target in /cargo-target/release, regular ELF, executable mode.
+- Native setup gate, each producer gate, collectors 3+3+2+2 checkpoints,
+  consumer batches 3+3+3+3, no compiler alive at boundaries; jobs2/parallel1.
+  Reuse complete bounded journal collector and exact bounded research exception
+  semantics from accepted fixture helper, but production must not source tests.
+  Runtime host list remains explicit validated inputs, not invented unit names.
+- Background systemd proof must accept explicitly chosen system/user manager
+  and verify the real current service/cgroup/priority; default remains strict.
+  Never accept the ordinary foreground shell as a low-priority background unit.
+
+#### Image-save verification (WP4 implementation, WP5 tests)
+
+Separate an offline archive parser from strict product binding. Parser input:
+canonical archive path, exact Docker image ID, platform linux/amd64, source
+commit and explicit fixed selected paths/prefixes. Output a new immutable JSON
+record of verified OCI identity/revision and final selected file bytes hashes,
+modes/types/ELF/required literal status. It never extracts or runs a binary.
+Host product caller matches every D7 binary hash to current validated bundles,
+NT/collector/DB/Paper payloads to current source and requires Web generated paths.
+Low-level generic parsing does not authorize skipping strict product binding.
+
+Actual saved fixture archives prove installed format. Root image ID may identify
+an OCI image manifest OR a provenance index (NOT necessarily the config). Bind
+root digest -> exact single runnable linux/amd64 manifest -> config/layers;
+validate each referenced size/digest. Attestation descriptors may be present;
+do not disable product provenance. Support legacy config-ID export only with
+an explicit validated legacy format path, otherwise fail closed.
+
+Tar is streamed/read, not extracted. Reject noncanonical/duplicate entries,
+escaping paths and unresolved selected-path links; apply whiteout and opaque
+directory precedence, including replacement of ancestor directories. Legitimate
+unrelated Alpine symlinks are permitted. Selected binaries/payload paths must
+resolve to regular files under directories, never follow an escaping link.
+Verify ELF headers and execute bits; backtest also contains exact current
+commit bytes and has current compile receipt. String presence alone is not
+build provenance. Size limits must accommodate real Polars binaries; do not
+invent small fixture-only archive limits for product images.
+
+Inputs for offline format regression:
+disk reports/image-save-format-37713dd843ad and image-save-format-a8f50139b629,
+under /data/worktrees/3puw275b/build-verification-20260915-02bthtb5.
+These are synthetic images; no production archive/env is inspected in those
+records. D7=17 bins; Paper Rust /usr/local/bin/paper-runner-bin plus wrapper;
+NT tracked files survive uv extras; collector four payload source roots;
+DB sqlx ELF/executable + wrappers/SQL/config exact; Web standalone server.js,
+.next required generated files/static. No healthcheck/help/default entrypoint.
+
+#### Benchmark integration
+
+- The representative WP1 scenario is rust-leaf, fixed above. B/C independent
+  warm-up followed by >=3 paired changes, alternating order B/C,C/B,B/C;
+  repeat source transformation makes distinct synthetic child commits, same
+  transformation each side. A and cold/other scenarios start with one sample.
+- Existing benchmark accepts two commits. Keep options and add the bounded
+  --repetitions/--order interface specified below, default one pair for
+  compatibility. An A/C invocation supplies A as baseline; report actual source
+  kind A/B/C without conflating baseline argument with product B.
+- C uses same helper prepare/verify and one-service Compose artifact path as
+  official. A/B retain their source recipes with only explicit instrumentation.
+  Include all 12 image builds, native/input prep, export, image-save validation
+  and V2 serialization/revalidation/no-clobber publish. Source checkout/tool
+  preparation and warm-up are reported separately and not hidden in net gain.
+- Temporary benchmark repositories/tags remain separate from production. To
+  preserve strict manifest parsing without production tags, use a reviewed
+  benchmark-local instrumented copy of the unchanged manifest library that
+  changes ONLY the literal image repository prefix to one frozen safe run/side
+  prefix. Same exact 12 order, commit, ID/revision, grammar and no-clobber/mode
+  checks apply. Record original/instrumented hashes and exact patch. This is
+  a benchmark V2 document; never present it as official production manifest.
+  No product manifest-library change or arbitrary skip mode is needed.
+- Final bytes checks for A/B use current frozen parser and current-source
+  payload/required-binary checks plus actual Cargo logs and backtest commit;
+  their absent artifact receipts must not be invented. C additionally binds
+  actual producer receipts. Report this deliberate implementation difference.
+- Current benchmark lacks whole strict verification and repeated-pair support;
+  do not relabel its existing per-service sum as full release elapsed.
+- Cold: fresh side namespace AND force relevant Docker layer misses once per
+  unique recipe while preserving within-run shared targets/duplicate service
+  recipe hits. On installed builder repeated --no-cache empties locked targets.
+  Prefer explicit recorded one-time nonce-consuming instrumentation in the
+  earliest builder stage to invalidate following cold layers without resetting
+  mounts on every subsequent bin. Freeze the exact algorithm and negative
+  tests; never call --no-cache alone proof of empty Cargo cache. C producer
+  cold sequence must retain P1->P2 target reuse as actual fixtures proved.
+- Warm instrumented recipe stays identical through warm-up and measured pairs;
+  no random per-measurement RUN token that destroys intended layer caching.
+  Actual source/revision changes invalidate naturally. Force-warm is a distinct
+  diagnostic scenario, not the representative product comparison.
+- Build context names must bind content to prevent installed Buildx same-basename
+  old-mtime transport bug; preserve original source bytes/modes/mtime and record
+  the actual measured source tree/tool instrumentation separately.
+- Existing benchmark date +%s:%N works on this host. Do not replace it just
+  because the separate layout controller's %s%3N was broken.
+- Complete journal/known research exception semantics, actual systemd manager,
+  resources and one-build lock must be applied consistently across A/B/C. Don't
+  relax existing strict defaults or invent another authorization envelope.
+- Separate non-overlapping preparation/producer/consumer/verification intervals.
+  Each shared producer counted once; Cargo JSON fresh flags/unit identities are
+  not durations. Report compile+link unless true split evidence exists. Include
+  all gates in whole elapsed; report cache/artifact/image disk deltas and peaks.
+- Product root-only --apply still needs real sudo authorization on this host;
+  current sudo -n fails and old wrapper has expired. Finish code, offline checks,
+  fixed candidate and exact root command before any owner authentication ask.
+  No fakeroot/userns/expired-wrapper workaround for actual official release.
+
+
+Execution boundary: image-only authorization also
+covers the runbook's prebuild batches before final official validation. If real
+root authentication remains unavailable after product implementation, finish all
+authorized user-level C artifact preparation and twelve-image prebuild/bytes
+checks first, with the exact clean C tags and the same gates. This does not
+replace official root-only --apply/V2 and must not be called official acceptance.
+Only then present the concrete root command/validated candidate for the remaining
+official cached rebuild and manifest publication. No fake-root/expired-wrapper
+or metadata-only bypass. A/B/C performance still follows official V2 acceptance
+as the approved WP6 order requires. Reusable helper state ownership=current euid
+permits isolated benchmark/prebuild state while official root check remains.
+
+Identity and locking:
+- Use an explicitly named resolution-input signature: hash exact K/package/bin/
+  frozen one-package one-bin argv/default features/host target inputs. Actual
+  resolved unit features are emitted separately from Cargo JSON. Locked manifests
+  and pinned Cargo fix resolution; do not claim this input hash is a measured
+  cargo-tree graph or add feature union/host Cargo dependency.
+- Official --apply processes all have euid0: hold a canonical 0700 directory
+  inode flock at /tmp/lagrange-production-image-build-0 for the whole operation,
+  never unlink it. Library benchmark/prebuild uses the same fixed prefix plus
+  actual euid so independent runs under that identity cannot overlap. The
+  coordinator's existing actual-build.lock remains the cross-experiment slot
+  for all authorized actual operations, including fixture/prebuild/root phase.
+  Do not claim a UID-local lock excludes arbitrary unrelated manual Docker
+  commands. Preserve no-active-compiler gates and one-service invocation.
+- D7 verified-artifacts stage may use the already pinned runtime Alpine image
+  plus build-only Python for validation, avoiding another Rust compiler path.
+  It copies the validated bundle into existing /build outputs, with source
+  fallback unchanged. Preserve Paper line26 by using existing header/blank
+  slots for frontend/globalARG if necessary; no mandatory extra line above the
+  cited source Cargo command. Actual final citation must be checked by WP5.
+
+
+Named-context trust boundary:
+- Repository .dockerignore default-denies scripts/ops/** and deploy/build/**.
+  Keep it unchanged. D7 verified stage cannot COPY the helper/config from its
+  ordinary source context. Include exact helper and layout-config bytes in the
+  verified named-context bundle, plus bin receipts/payload. Before executing
+  any bundle-supplied helper, the D7 stage must sha256-check it against an
+  additional frozen `RUST_ARTIFACT_HELPER_SHA256` build ARG supplied from the
+  checkout helper by the official host. Then the trusted helper checks the
+  full expected `RUST_ARTIFACT_BUNDLE_SHA256`, exact entry/schema/commit/bin
+  receipts, and exports only original /build paths. No arbitrary executable
+  is trusted merely because it claims its own bundle is valid. Add this one
+  exact build ARG to the override allowlist in the frozen interface.
+  Default source-builder route still has no dependency on any named context.
+
+
+Exact host API:
+- `release_build_layout_init <source-root> <commit> <state-root> <cache-namespace>`
+  validates immutable run binding, obtains the uid-local whole-run directory
+  lock, snapshots exact gate inputs/current source/tool/schema identity, and
+  exports only library-local state variables. Called once before any build.
+  Reinitializing in the same shell must fail; it must not release the lock
+  between command substitutions for prepare. Shell parent owns its lock FD.
+- `release_build_layout_gate <label> <previous-exit>` invokes complete strict
+  host observation; configuration comes from explicit environment names
+  `RELEASE_BUILD_SYSTEMD_UNIT`, `RELEASE_BUILD_SYSTEMD_MANAGER=system|user`,
+  `RELEASE_BUILD_HEALTH_UNITS`, `RELEASE_BUILD_HEALTH_CONTAINERS`, optional
+  `RELEASE_BUILD_RESEARCH_EXCEPTION` (exact same bounded schema as fixture).
+  Default manager system, no missing target/foreground/unknown-health bypass.
+  Timestamp origin is immutable per state; resume preserves it and grant hash.
+- `release_build_layout_prepare <service> <commit> <state-root>` prints exactly
+  one canonical bundle path for Rust service, `NONE` for the three Web/DB service
+  records. `NONE` is allowed only for those explicit records; errors nonzero.
+  It performs native initialization once, bin-by-bin producer with post gates,
+  collector sub-batch gates, current commit publication and bundle validation.
+- verify_bundle and write_override keep the §6 signatures. verify_bundle
+  prints bundle digest only; write_override emits no stdout and never overwrites.
+  Host/D7 verify all 17 bin receipt names via the exact per-recipe bin set.
+- `release_build_layout_verify_image <service> <commit> <image-id> <state-root>`
+  requires current validated bundle for every D7 service, obtains/caches exact
+  image-save archive by ID in private state, checks configured selected bytes
+  and current source payload, writes a new verification record. All twelve
+  service bindings retained even if identical image archive reused. No product
+  entrypoint, health, help or container create/run. Final official inspection
+  and manifest validation still use the existing release-image-manifest library.
+- Offline `release_build_layout_archive_scan <archive> <image-id> <platform>
+  <commit> <request-json> <new-result-json>` is the generic parser only. JSON
+  request provides exact canonical selected file requirements: kind regular,
+  optional expected sha256, execute/ELF requirements and required literal bytes
+  (backtest current SHA), plus nonempty generated-directory requirements.
+  Strict product caller constructs requirements from frozen service inventory
+  and validated receipts; no public official CLI to substitute a weaker request.
+  A/B benchmark uses the same offline parser with source-path/ELF/current-commit
+  requirements and independently bound actual Cargo evidence, since A/B had no
+  producer receipts. Do not fabricate C-style artifact attestations for A/B.
+- Rust input hash covers precisely the validated Rust tracked inventory. The
+  transport context also holds fixed helper/config/request under one reserved
+  `.release-build` subtree. Avoid recursive hash definitions: request binds Rust
+  inventory/K/P/H/tool hashes; content-addressed transport basename hashes the
+  *entire assembled context* including that request, without storing its own
+  final digest inside itself. Builder verifies Rust inventory and tool/request
+  identities before Cargo. This preserves mode-sensitive whole-context COPY.
+
+
+Benchmark evidence:
+- Existing benchmark sanitizer redacts entire lines containing words such as
+  cookie/token and truncates long lines. Do not parse Cargo JSON only after
+  that transformation: it can destroy legitimate package events. Parse exact
+  BuildKit compile-vertex Cargo JSON first into strict bounded structured unit
+  records (package_id/target/features/profile/fresh/executable/build-success),
+  record original log hash, then retain sanitized human diagnostics separately.
+  Both A/B workspace `cargo build` and DB `cargo install` accept explicit
+  --message-format=json-render-diagnostics alongside verbose instrumentation;
+  root confirmed the installed Cargo install --help, read-only, on2026-09-15.
+  Actual pinned builder invocation/parser remains a WP6 check, not proven by
+  host --help. Include DB unit compilation in whole cost without relabeling it
+  as shared workspace work. Retain enough structured evidence to audit counts.
+- Read-only tracked-runtime inventory check found240 files across NT, collector
+  two contract directories, migrations and deploy/db, with no files matching
+  current final Dockerignore security/generated exclusions. Do not treat this
+  one observation as a generic Dockerignore implementation; freeze runtime
+  inventory and reject new excluded/symlink/special entries before claims.
+
+- A/B/C native build identity in performance evidence must be actual, not only
+  FROM text. For instrumented A/B Rust stages, record rustc -vV, cargo -V and
+  apk info -vv after their existing native package setup, using bounded markers
+  and shell tools already present (do not add Python/native dependencies just
+  for baseline instrumentation). C has its genuine native identity export.
+  Preserve source native-package lists; record candidate-only build Python
+  and its full dependency cost. Same pinned builder does not prove identical
+  dynamically resolved apk inventories; report actual differences explicitly.
+
+- Bundle identity is per D7 recipe (D1..D7), not per consumer service. The
+  recommendation/candidate services both map to the identical D2 bundle;
+  both NT workers map to D5. D7 consumer verification passes its fixed recipe
+  ID, so no additional per-service build ARG should invalidate otherwise equal
+  duplicate consumer stages. Host verify_bundle(service,...) resolves the same
+  recipe ID and preserves every final manifest service record. Current commit
+  and all expected bin receipts are still verified on each consumer binding.
+
+
+Cross-worker JSON schemas:
+- Freeze the public offline archive request to JSON object with exactly
+  `format="lagrange-image-files-v1"`, `files` (nonempty list) and
+  `nonempty_directories` (list). Each file requirement has exactly `path`
+  (canonical relative POSIX image path, no leading slash), `sha256` (64 lower
+  hex or null), `executable` (bool), `elf` (bool), `contains_hex` (list of
+  nonempty lower-hex literal byte strings). Duplicate paths/keys, parent-path
+  conflicts, unknown fields, invalid booleans and paths fail. Directory entries
+  are canonical relative paths; a required directory must resolve to a real
+  directory with at least one regular descendant. This is a fixed internal
+  schema consumed by both workers, not a new official CLI override.
+- Archive result format is `lagrange-image-files-result-v1`; fields are
+  `image_id`, `manifest_digest`, `config_digest`, `platform`, `source_commit`,
+  `archive_sha256`, `request_sha256`, `files` (path-keyed map with `sha256`,
+  `mode` as four octal digits, `size` integer, `elf` bool), and
+  `nonempty_directories` (the verified requested paths). `format` is included.
+  Hash the actual canonical request bytes supplied. `image_id` remains the
+  exact supplied Docker identity. Success requires every requirement; failure
+  must leave no final result path. Result is canonical UTF-8 JSON (sorted keys,
+  separators comma/colon, final newline), created without overwriting. Extra
+  internal diagnostic records live outside this successful result schema.
+- Image paths for `files` are deduplicated by strict product caller before
+  invoking the generic parser. The parser never implicitly selects additional
+  credentials or reports arbitrary image config ENV. Config is decoded only to
+  validate OS/architecture and exact OCI revision; never log config content.
+- Producer/cache/bundle private JSON may use implementation-local field names
+  beyond the G1 required artifact receipt fields, but schema/version/strict
+  exact-key validation and all declared bindings remain mandatory. WP5 tests
+  should generate and mutate artifacts through the frozen public helper
+  interfaces or import the fixed layout config, not invent a second private
+  implementation schema. WP4 reports its private schema in the final report.
+  This permits routine representation choices, not any unfrozen architecture.
+- Benchmark options: `--repetitions N` allows integer 1..3 (default1), `--order
+  baseline-first|candidate-first|alternating` (defaultbaseline-first). For
+  N>1 require alternating; first pair baseline then candidate, second candidate
+  then baseline, third baseline then candidate. Single-pair candidate-first
+  remains available for an explicit controlled observation. Keep existing --cold
+  semantics and reject its combination with N>1. For each measured pair,
+  append a deterministic pair-indexed version of the same scenario marker to
+  the previous measured tree and create a new synthetic child commit; both
+  sides use identical change bytes and common deterministic commit metadata.
+  Independent warm-up is once per side, then caches remain on their side.
+  Metadata records order, all warm-up/preparation costs, and each pair; do not
+  silently average independent source versions or include warm-up in a warm
+  release interval. Commit-only changes its child commit metadata deterministically.
+
+- Archive blob/layer/binary validation must hash and scan in bounded chunks,
+  not read an entire Polars binary or image layer into RAM. Keep only metadata,
+  per-selected-file hashes and a rolling overlap for required literal bytes.
+  A 1MiB chunk with literal overlap is sufficient; this is part of honoring
+  the 14GiB host rather than another parser mode. ELF requirements for the
+  fixed linux/amd64 target mean ELF64 little-endian EM_X86_64, not magic-only.
+  This does not claim application execution or dynamic-link correctness.
+
+- Retain the G1 public host function `release_build_layout_plan <commit>`:
+  validate the exact source/layout locally and print producer, consumer and gate
+  order without Docker calls, state creation or mutation. Official --preflight
+  keeps its existing read-only Compose/version validation; background systemd
+  proof and state lock are required for actual preparation/apply, not --plan.
+  Do not make unchanged read-only CLI modes depend on running in a build unit.
+
+Cold/native context:
+- Product artifact Dockerfile declares `ARG RUST_ARTIFACT_CACHE_NAMESPACE`
+  before the native apk RUN and consumes it with a nonempty validation in that
+  same RUN. Host supplies exactly init's validated namespace; it is stable for
+  a production cache and a benchmark side's warm-up/measured series. A fresh
+  namespace therefore forces native and subsequent layer misses while fresh
+  namespace-qualified mount IDs ensure empty initial Cargo caches. Subsequent
+  bin calls keep the same namespace and mounts; never repeat --no-cache.
+  This nonsemantic cache-control value is excluded from K/P/H compiler identity
+  but recorded as cache state. Source commit is never in its production value.
+- C benchmarking does not rewrite its tracked helper/config/producer to add
+  instrumentation: the product helper already emits Cargo JSON/native/phase
+  evidence, and namespace controls cold isolation. Its temporary checkout must
+  remain clean and bound to its current synthetic commit. A/B instrumented
+  recipes stay outside their clean source checkouts, as the existing benchmark
+  already does. Add a stable side-cache nonce before native apk in each unique
+  A/B Rust recipe; record the exact patch and use it unchanged across warm-up
+  and measurements. DB/Web instrumentation similarly stays outside checkout.
+  Runtime/D7 producer actions and final checks are still included in elapsed.
+
+Whole-benchmark lock ownership:
+- Expose `release_build_layout_lock` with no arguments as the narrow common
+  lock-acquisition function; init calls it too. Benchmark calls it once in its
+  parent before A/B/C work, retaining the canonical uid directory FD across
+  the whole invocation. Each C measured release calls init in a fresh subshell
+  so its source/commit/state binding is independent, while inheriting the same
+  held FD. Do not reinitialize a bound release state in its existing shell.
+- Reuse a held FD only after checking /proc/self/fd and fstat identify the exact
+  current canonical uid directory inode, expected owner/mode/type, and a real
+  nonblocking flock on that FD succeeds. Otherwise acquire a fresh FD on the
+  canonical directory or fail if occupied. No env-only "already locked" flag,
+  no unlocked init mode, no unlink of the lock directory. The shell parent owns
+  the descriptor; a command substitution cannot release the parent's copy.
+  Official builder retains it through all12builds/bytes/V2; benchmark retains
+  it through both sides/allpairs. Coordinator actual-build.lock also remains
+  held by the real execution supervisor for cross-UID/fixture slot ownership.
+
+Implementation details not changing this contract may be selected directly.
+The sole existing untracked workbook exception in the official input check is
+preserved; it is excluded from compiler contexts. No other dirty/untracked
+source exception is added. State root defaults to the manifest parent's
+`.lagrange-build-state/<commit>` outside checkout for the official builder;
+benchmark supplies its own equally validated private state. The declaration
+layout is exactly `common`; there is no product layout-switch CLI. Native
+registry/git/target cache IDs all include the validated namespace, and target
+also includes K/platform/release/guard-version, never the source commit.
+
+### 10.4 G2 and next acceptance
+
+G2 passes correctness and freezes WP4/WP5's implementation interfaces. Product
+B remains unchanged at this commit. Workers receive this document's exact Git
+commit and disjoint file lists. The coordinator integrates their actual diffs,
+checks contracts/offline verification, and freezes a separate clean C. WP6
+must evaluate the full twelve-image/revision/bytes/V2 and product timing
+contracts. Previously passed fixture results may be reused only by verifying
+their exact unchanged tool/fixture identities and original evidence; rerun any
+changed or unresolved mechanism. No product-speedup conclusion follows from
+these fixture results alone.
