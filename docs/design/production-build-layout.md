@@ -1149,8 +1149,16 @@ Actual saved fixture archives prove installed format. Root image ID may identify
 an OCI image manifest OR a provenance index (NOT necessarily the config). Bind
 root digest -> exact single runnable linux/amd64 manifest -> config/layers;
 validate each referenced size/digest. Attestation descriptors may be present;
-do not disable product provenance. Support legacy config-ID export only with
-an explicit validated legacy format path, otherwise fail closed.
+do not disable product provenance. This implementation accepts the two observed
+OCI root forms only: an image manifest or a provenance index. Reject a supplied
+config digest as the image root; do not fall back through unbound `manifest.json`
+layer names. No validated legacy config-ID export path was established. A
+synthetic counterexample retained identical config bytes/ID while substituting
+a different hash-valid layer, proving that checking individual blob hashes does
+not bind such a fallback to the image identity. This applies the existing
+fail-closed condition for optional legacy support; it does not change the
+official CLI, V2 manifest, or supported current-host OCI formats. Result field
+`manifest_digest` always identifies the selected, digest-verified OCI manifest.
 
 Tar is streamed/read, not extracted. Reject noncanonical/duplicate entries,
 escaping paths and unresolved selected-path links; apply whiteout and opaque
