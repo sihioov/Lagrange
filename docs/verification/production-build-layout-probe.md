@@ -562,3 +562,126 @@ Capture elapsed was 17.414 ms. The gate reason was
 Actual complete-range host proof is therefore **PASS** for this helper.
 Actual all-layout execution and G2 remain pending; the failed `layout-02` run
 will not be resumed against changed sources.
+
+## 2026-09-15 — cold-chain P1-only no-cache correction (offline)
+
+Starting clean HEAD: `8e976c50f1d35d5789e3a0eb459dc2ea74174ddd`.
+This implements the coordinator's §5.2 cold-chain clarification after the accepted
+journal correction at `1a600159c7ccc3f5b2bfa669103106be5cd77f36`.
+Only the controller and this appended section change.
+
+### Change and preserved failure
+
+`artifact_build` and `compose_build` now add `--no-cache` only when
+`CUR_COLD=1` and their phase argument is `p1`. P0's existing identity policy is
+unchanged. Cold/setup/empty-cache P2–P4 retain the target populated earlier in
+the same chain. The single-P1 route calls retain their cold behavior.
+
+The private fake reuses `load_state(target, reset=True)` at source compilation
+when argv contains `--no-cache`. It resets only that target; verified artifact
+consumers never enter source compilation. Selected build arguments, source path,
+target namespace, reset flag, previous pending state and observed Fresh values
+are added to the fake call evidence.
+
+The namespace/scope/K/H construction, token consumption, Cargo/guard/artifact
+policies, oracle Fresh sets, routes, failure/resume behavior, CLI and all prior
+tests remain unchanged. The helper, Dockerfiles, compose fixture and design are
+byte-for-byte unchanged. No cache namespace redesign or cache removal occurred.
+
+The original actual `layout-03` failure remains **exit 1**, source unchanged,
+at baseline/cold P2. Both retained P1/P2 logs show `Removed 0 files` and
+`itoa` with `fresh=false`. Existing evidence was read and hashed, never rewritten:
+
+- Receipt: `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/layout-03.json`, SHA-256 `b8858d12c3d6649c44028f1d8edb790a5b84597d39dc4c6b47d7b940bc175243`.
+- P1/P2 log SHA-256: `5f9d6b3d7b7919a30f3be45971bf55af6bed0973c410411b6ec263eb0c5de211` / `37f62cf7f0e1e363cfd9d67e789086509df2557b390ac5387c1f5bdc3172b8a3`.
+- Coordinator's marker diagnostic: `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/no-cache-diagnostic-f90688b3acac/result.json`, SHA-256 `d898bb4d12dca6d683cf069ac434a4b07871fd3283bfb8d54ce8aee94f2d9066`; actual recorded sequence `MISS,MISS,HIT`, exits `0,0,0`.
+
+### Focused verification
+
+Evidence root: `/tmp/lagrange-wp3-cold-c_wckq30`.
+Each command ran through `python3 <evidence-root>/run-check.py <label> <command>`.
+Receipts retain exact argv, actual exit, elapsed time, source hashes before/after,
+stdout/stderr hashes and sentinel counts. The environment contains only the
+private sentinel PATH, `LC_ALL=C` and private TMPDIR, with umask 022.
+All 16 Docker/Cargo/host/network/provider sentinels recorded **zero calls**.
+
+| Label / exact command | Result |
+|---|---|
+| `syntax-final` / `bash -n scripts/qa/build-layout-probe.sh` | Exit 0, PASS. |
+| `plan-final` / `bash scripts/qa/build-layout-probe.sh --plan --layout all --case all --output-dir /tmp/lagrange-wp3-cold-c_wckq30/plan-output` | Exit 0, PASS; no health inputs or output-directory creation. |
+| `focused-final` / `python3 /tmp/lagrange-wp3-cold-c_wckq30/focused-loader.py focused-final` | Exit 0, PASS; 100.022 seconds. |
+| `evidence-audit-final` / `python3 /tmp/lagrange-wp3-cold-c_wckq30/audit.py focused-final` | Exit 0, PASS. |
+
+The private loader removes only the final main invocation, binds canonical
+script paths and invokes the actual `self_cold_chain` function under the existing
+private self-test flags. That function uses `run_case` for each ordered
+cold → exact-repeat → forced-warm → empty-cache chain and `self_controller` for
+failure/resume and route cases. The bounded prefix does not claim an all/all
+completion. The public CLI is exercised separately by `--plan`.
+
+The final block verifies **21 controller invocations, 155 synthetic build calls
+and 75 source-compilation observations**, across baseline/common/grouped:
+
+- P0 no-cache, P1 compile no-cache, P2–P4 compile without no-cache; Compose selects
+  exactly one service with jobs=2/parallel-limit=1, and artifact compile jobs=2
+  remains fixed in the unchanged Dockerfiles.
+- Same warm-chain target namespace through cold/repeat/forced-warm, only the
+  existing grouped base/wide split, and distinct empty-cache namespaces. Exact
+  repeat produces Docker hits and identical image results; forced-warm executes
+  with retained target contents and the unchanged Fresh oracle.
+- `compile-fail-p2` in every layout: cold warmup, command exit 42 retained in
+  EXPECTED_CAUSE/EXPECTED_STOP and command status files; expected-stop 75 then
+  complete 0, passing post-failure gate, reused P1, resumed P2–P4, preserved
+  namespace and pending-ledger rebuild. Already-complete resume invokes no build.
+- Both route contracts per layout: P0/source P1/artifact P1 remain cold, artifact
+  consumers produce no source-compilation observation, and existing image and
+  artifact checks pass.
+- A private copy of only `artifact_build`/`compose_build` restores exactly the
+  two old predicates. All three original variants fail at P2 with exit 1, no
+  expected-stop normalization and no P3/P4. L0 reproduces
+  `unexpected-recompile-set-itoa`; L1/L2's unchanged oracle checks the library
+  first and reports `unexpected-recompile-set-lib`. Their retained observations
+  also prove `itoa` rebuilt. The check order and Fresh requirements are preserved.
+
+Development evidence remains intact: `focused-01` completed its controller
+cases but exited 1 in the new namespace assertion, which initially omitted the
+existing `-target` suffix. `assertion-recheck-01` exited 1 on the new diagnostic
+expectation; `assertion-recheck-02` passed after accounting for the existing
+wrapper diagnostic and L1/L2 library-first order. Only these new assertions
+changed before the final focused rerun. The successful final block was not
+repeated. The accepted full 84/F1–F9/62-journal/124-exception suite was not rerun.
+
+### Source identities and scope audit
+
+| Source | SHA-256 before | SHA-256 after |
+|---|---|---|
+| Controller | `a5ddb9ea01f4e4b28358ac8007991c89a9a022e04235793343c8c41b3a16cfab` | `dd4effc44520fdc6fa190babfa19a7211ceaed924b55c63b917d36887b05894d` |
+| Helper (unchanged) | `eaaa043416d7b83f7cd30895e30ef3eeb0cc8d448a0b122c34c2276b144b7e52` | `eaaa043416d7b83f7cd30895e30ef3eeb0cc8d448a0b122c34c2276b144b7e52` |
+
+- Final focused stdout/stderr SHA-256: `a8e1cc3d15616955aeeb6ec1b95c06a5c72c8c810fffa56218b5b0fd559fb894` / `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- Final focused receipt SHA-256: `4f1d002858acf2d311263204bbeb4e0109c7135af2fdcc1c86609d8444e413bf`.
+- Raw focused evidence: `<evidence-root>/focused-final`; 5067 files covered by
+  `focused-evidence.SHA256SUMS`, SHA-256 `6da34feb7b822f674ed01a71d65799dc478bf992336c1473d28409d1d5a8b966`.
+- `before.json`, `after.json`, `original-evidence.json`, `audit.json` and
+  `final.diff` retain the source/report identities, original failure evidence,
+  exact scope proof and final diff.
+
+The audit reconstructs the entire controller from HEAD using only the two
+predicate/comment edits, selected fake changes and the new private test block
+plus its self-test call. This proves the original oracle, gate/resume code,
+84-case loop/final assertions, F1–F9, journal and exception tests are unchanged.
+
+Changed line spans: controller **321–322, 365** (predicates/comment),
+**1327–1329, 1360–1363, 1385, 1432, 1464** (private fake), **1931–2100**
+(focused regressions), **2520** (existing self-test integration); this report
+**565–687**, append only.
+
+Implementation/scope deviations and further decomposition required: **없음**.
+The negative-test diagnostic ordering is explained above; no acceptance criterion
+was relaxed. Unresolved implementation defects: **없음**.
+Coordinator follow-up: review/commit, then actual full84/layout execution in the
+exclusive build slot. Corrected actual layout is **NOT_RETESTED; G2 NOT_PASSED**.
+Actual Docker/Cargo/cache/host/runtime behavior was not verified by this offline
+package. Other unverified items: **없음**. No stage/commit, actual host/network/
+provider command, lifecycle action, production source audit or Basic Memory
+operation occurred.

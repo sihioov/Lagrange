@@ -318,7 +318,8 @@ artifact_build() {
   local phase=$1 destination=$2 log=$3 status bin variant runtime
   bin=${p_bin[$phase]} variant=${p_variant[$phase]} runtime=${p_runtime[$phase]}
   mkdir -p -m 0700 -- "$destination"
-  local no_cache=(); [ "$CUR_COLD" = 1 ] && no_cache=(--no-cache)
+  # Later phases retain the target mount populated by this cold chain.
+  local no_cache=(); [ "$CUR_COLD" = 1 ] && [ "$phase" = p1 ] && no_cache=(--no-cache)
   local inject=none
   if [ "$CUR_CASE/$phase" = export-fail-p2/p2 ] && first_trial_injection; then inject=export-fail-p2; fi
   if DOCKER_BUILDKIT=1 "$docker_bin" buildx build --progress plain "${no_cache[@]}" --file "$CUR_SOURCE/Dockerfile.artifacts" --target artifacts --platform linux/amd64 --output "type=local,dest=$destination,platform-split=false" \
@@ -361,7 +362,7 @@ compose_build() {
     write_override "$file" "$service" "$route" || return 1
     override=(-f "$file")
   fi
-  [ "$CUR_COLD" = 1 ] && no_cache=(--no-cache)
+  [ "$CUR_COLD" = 1 ] && [ "$phase" = p1 ] && no_cache=(--no-cache)
   local inject=none
   if [ "$CUR_CASE/$phase" = export-fail-p2/p2 ] && first_trial_injection; then inject=export-fail-p2; fi
   if [ "$CUR_LAYOUT" = baseline ] && [ "$phase" = p2 ] && first_trial_injection; then
@@ -1323,9 +1324,9 @@ def identity_bytes():
 
 def image_dir(tag):return root/"images"/hashlib.sha256(tag.encode()).hexdigest()
 def state_path(target):return root/"targets"/(hashlib.sha256(target.encode()).hexdigest()+".json")
-def load_state(target):
+def load_state(target,reset=False):
     path=state_path(target)
-    if path.exists():return json.loads(path.read_text())
+    if not reset and path.exists():return json.loads(path.read_text())
     return {"app":{},"app_hash":None,"build":{},"build_run":{},"compatibility_key":None,"itoa":False,"lib":{},"lib_hash":None,"pending":False}
 def save_state(target,value):atomic_json(state_path(target),value)
 
@@ -1356,6 +1357,10 @@ def expected_stdout(source,bin_name,variant,commit,setting):
 
 def compile_observation(source,values,baseline=False):
     target=values["PROBE_TARGET_CACHE_ID"]; state=load_state(target)
+    pending_before=state["pending"]; reset="--no-cache" in args
+    # Observed BuildKit behavior: a no-cache source RUN starts an empty target.
+    # Verified artifact consumers never enter this source-compilation function.
+    if reset:state=load_state(target,reset=True)
     key=values.get("PROBE_CACHE_KEY","source-route")
     lib_hash=values.get("PROBE_LIB_HASH",tree_digest(source/"fixture-lib")); app_hash=values.get("PROBE_APP_HASH",tree_digest(source/"fixture-app"))
     if baseline:
@@ -1377,6 +1382,7 @@ def compile_observation(source,values,baseline=False):
     run_build=run_key not in state["build_run"]
     state["compatibility_key"]=key;state["lib_hash"]=lib_hash;state["app_hash"]=app_hash
     if not baseline:state["ledger"]=True
+    record("source-compile",{"baseline":baseline,"bin":bin_name,"fresh":fresh,"no_cache_reset":reset,"pending_before":pending_before,"target_namespace":target,"token":values["CACHE_FIXTURE_RUN_TOKEN"],"variant":variant})
     return state,fresh,run_build,(app_key,lib_key,build_key,run_key)
 
 def complete_compile_state(target,state,keys,pending=False):
@@ -1423,7 +1429,7 @@ def layer_path(key):return root/"layers"/key
 def cache_key(operation,source,values):return hashlib.sha256(json.dumps({"operation":operation,"source":tree_digest(source),"values":values},sort_keys=True,separators=(",",":" )).encode()).hexdigest()
 
 if args[:2]==["buildx","build"]:
-    target=get_option("--target");source=pathlib.Path(args[-1]);destination=output_dest(get_option("--output"));values=build_args();record("buildx",{"target":target})
+    target=get_option("--target");source=pathlib.Path(args[-1]);destination=output_dest(get_option("--output"));values=build_args();record("buildx",{"build_args":values,"source":str(source),"target":target})
     if get_option("--platform")!="linux/amd64" or values.get("TARGETPLATFORM")!="linux/amd64":raise SystemExit(92)
     if target=="identity":
         destination.mkdir(parents=True,exist_ok=True);(destination/"identity.json").write_bytes(identity_bytes());print("#1 identity export complete");raise SystemExit(0)
@@ -1455,7 +1461,7 @@ if args and args[0]=="compose" and "build" in args:
         match=re.search(r"release_artifacts: (.+)$",text,re.M)
         route=pathlib.Path(json.loads(match.group(1))) if match else pathlib.Path("source")
     dockerfile="consumer" if overrides else ("baseline" if os.environ.get("PROBE_DOCKERFILE")=="Dockerfile.baseline" else "consumer")
-    record("compose-build",{"dockerfile":dockerfile,"route":"source" if route==pathlib.Path("source") else (str(route) if route else "baseline"),"service":service,"tag":tag})
+    record("compose-build",{"build_args":values,"dockerfile":dockerfile,"route":"source" if route==pathlib.Path("source") else (str(route) if route else "baseline"),"service":service,"source":str(source),"tag":tag})
     if os.environ.get("CARGO_BUILD_JOBS")!="2" or os.environ.get("COMPOSE_PARALLEL_LIMIT")!="1" or values["PROBE_EXPECTED_NATIVE_SHA256"]!=hashlib.sha256(identity_bytes()).hexdigest():raise SystemExit(92)
     if dockerfile=="consumer" and route is not None and route!=pathlib.Path("source"):
         if os.environ[f"PROBE_SOURCE_TRAP_{suffix}"]!="1":raise SystemExit(92)
@@ -1922,6 +1928,176 @@ PY
   printf '%s\n' 'F5 PASS: script fresh true/false and 0/1/2 runs observed; missing verbose and all app/lib/itoa H changes rejected'
 }
 
+self_cold_chain() (
+  local root=$1 layout case_id status
+  [ "$internal_self_test" = 1 ] && gate_test_allowed || exit 90
+  mkdir -p -m 0700 -- "$root/chains" "$root/resume" "$root/routes" "$root/legacy"
+  export FAKE_DOCKER_ROOT="$root/fake-state" FAKE_DOCKER_CALLS="$root/fake-calls.jsonl"
+  # Revert only the two predicates in a private function copy.  The loaded
+  # controller, oracle and fake executor otherwise remain the corrected source.
+  python3 - "$script_path" "$root" <<'PY'
+import hashlib,json,pathlib,sys
+text=pathlib.Path(sys.argv[1]).read_text();root=pathlib.Path(sys.argv[2])
+fixed='[ "$CUR_COLD" = 1 ] && [ "$phase" = p1 ] && no_cache=(--no-cache)'
+old='[ "$CUR_COLD" = 1 ] && no_cache=(--no-cache)'
+parts=[]
+for name,next_name in (("artifact_build","write_override"),("compose_build","verify_export_failure")):
+    part=text.split('\n'+name+'() {\n',1)[1].split('\n'+next_name+'() {\n',1)[0]
+    part=name+'() {\n'+part
+    if part.count(fixed)!=1:raise SystemExit("cold-predicate-copy-ambiguous")
+    parts.append(part)
+current='\n'.join(parts);legacy=current.replace(fixed,old)
+assert current.count(fixed)==2 and legacy.replace(old,fixed)==current
+for name,data in (("current-functions.sh",current),("legacy-functions.sh",legacy)):
+    (root/name).write_text(data)
+(root/"mutation.json").write_text(json.dumps({"controller_sha256":hashlib.sha256(text.encode()).hexdigest(),"current_functions_sha256":hashlib.sha256(current.encode()).hexdigest(),"legacy_functions_sha256":hashlib.sha256(legacy.encode()).hexdigest(),"predicate_replacements":2},sort_keys=True)+"\n")
+PY
+  [ "$?" = 0 ] || exit 1
+  for layout in "${layouts[@]}"; do
+    reset_runtime_globals_for_resume_test
+    layout_selection=$layout case_selection=all output_dir="$root/chains/$layout"
+    init_run || exit 1
+    # A bounded prefix via the actual controller, without claiming all/all
+    # completion or changing its immutable case inventory and final assertions.
+    for case_id in cold exact-repeat forced-warm empty-cache; do
+      if run_case "$layout" "$case_id"; then status=0; else status=$?; fi
+      printf 'chain\t%s\t%s\t%s\n' "$layout" "$case_id" "$status" >>"$root/exits.tsv"
+      [ "$status" = 0 ] || exit 1
+    done
+    validate_event_chain || exit 1
+    printf 'cold-chain controller PASS: %s/cold,exact-repeat,forced-warm,empty-cache\n' "$layout"
+    if self_controller "$root/resume" "$layout" compile-fail-p2; then status=0; else status=$?; fi
+    printf 'resume\t%s\tcompile-fail-p2\t%s\n' "$layout" "$status" >>"$root/exits.tsv"
+    [ "$status" = 0 ] || exit 1
+    if self_controller "$root/routes" "$layout" route-contract; then status=0; else status=$?; fi
+    printf 'route\t%s\troute-contract\t%s\n' "$layout" "$status" >>"$root/exits.tsv"
+    [ "$status" = 0 ] || exit 1
+    if (
+      source "$root/legacy-functions.sh"
+      reset_runtime_globals_for_resume_test
+      self_controller "$root/legacy" "$layout" cold
+    ) >"$root/legacy-$layout.stdout" 2>"$root/legacy-$layout.stderr"; then status=0; else status=$?; fi
+    printf 'legacy\t%s\tcold\t%s\n' "$layout" "$status" >>"$root/exits.tsv"
+    [ "$status" = 1 ] || exit 1
+    printf 'cold-chain controller PASS: %s/resume,route,legacy-rejected\n' "$layout"
+  done
+  python3 - "$root" "$fixture_dir" <<'PY'
+import json,pathlib,sys
+root=pathlib.Path(sys.argv[1]);fixture=pathlib.Path(sys.argv[2])
+def read(path):return json.loads(path.read_text())
+def jsonl(path):return [json.loads(line) for line in path.read_text().splitlines()]
+def require(ok,why):
+    if not ok:raise SystemExit(why)
+calls=jsonl(root/"fake-calls.jsonl")
+builds=[v for v in calls if v["operation"] in ("buildx","compose-build")]
+compiles=[v for v in calls if v["operation"]=="source-compile"]
+phase_for={("cache-bin-a","base"):"p1",("cache-bin-b","base"):"p2",("cache-bin-a","wide"):"p3",("cache-bin-b","wide"):"p4"}
+services={"p1":"probe-a-base","p2":"probe-b-base","p3":"probe-a-wide","p4":"probe-b-wide"}
+for name in ("baseline","artifacts","consumer"):
+    require('\nENV CARGO_BUILD_JOBS=2\n' in (fixture/f"Dockerfile.{name}").read_text(),"compile-jobs-changed")
+for v in builds:
+    argv=v["argv"];source=pathlib.Path(v["source"]);identity=v.get("target")=="identity"
+    require(argv.count("--no-cache")<=1,"duplicate-no-cache")
+    if identity:
+        require("--no-cache" in argv,"cold-p0-cache-policy-changed")
+        continue
+    values=v["build_args"];phase=phase_for[(values["BIN"],values["VARIANT"])];token=values["CACHE_FIXTURE_RUN_TOKEN"]
+    cold=token in ("cold","empty-cache","route-source","route-artifact") or token.endswith("-setup")
+    if "exact-repeat" in source.parts:cold=False
+    legacy="legacy" in source.relative_to(root).parts
+    require(("--no-cache" in argv)==(cold and (legacy or phase=="p1")),"wrong-phase-no-cache")
+    if v["operation"]=="compose-build":
+        require(v["cargo_build_jobs"]=="2" and v["compose_parallel_limit"]=="1","compile-concurrency-changed")
+        require(argv[argv.index("build")+1:]==["--progress","plain"]+(["--no-cache"] if "--no-cache" in argv else [])+[services[phase]],"compose-not-single-service")
+    else:
+        require(v["target"]=="artifacts" and argv[argv.index("--platform")+1]=="linux/amd64","artifact-target-changed")
+    shared=values["PROBE_SHARED_CACHE_ID"];target=values["PROBE_TARGET_CACHE_ID"]
+    require(shared.endswith("-"+values["PROBE_CACHE_KEY"]),"cache-key-binding-lost")
+    require(target==shared+"-target"+("-"+values["VARIANT"] if "-grouped-" in shared else ""),"target-group-split-changed")
+# Every observed compile belongs to its immediately preceding source build;
+# artifact-only consumers and Docker hits emit no source-compilation event.
+last=None
+for v in calls:
+    if v["operation"] in ("buildx","compose-build"):last=v
+    if v["operation"]=="source-compile":
+        require(last is not None and last["argv"]==v["argv"],"compile-without-build")
+        require(last.get("target")=="artifacts" or last.get("route") in ("baseline","source"),"artifact-consumer-compiled")
+        require(v["no_cache_reset"]==("--no-cache" in v["argv"]),"no-cache-reset-not-modeled")
+        v["source"]=last["source"]
+
+def for_source(items,source):return [v for v in items if pathlib.Path(v["source"])==source]
+def compile_phases(items):return [phase_for[(v["bin"],v["variant"])] for v in items]
+def states(run,layout,scope,token):return [read(run/"state"/layout/scope/token/f"p{i}.json") for i in range(1,5)]
+run_ids=[];namespaces=[]
+for layout in ("baseline","common","grouped"):
+    run=root/"chains"/layout;run_ids.append(read(run/"run.json")["run_id"])
+    events=jsonl(run/"events.jsonl")
+    passed=[v["case"] for v in events if v["type"]=="CASE" and v["status"]=="PASS"]
+    require(passed==["cold","exact-repeat","forced-warm","empty-cache"],"cold-chain-order-changed")
+    tokens={"cold":"cold","exact-repeat":"exact-repeat","forced-warm":"forced-warm","empty-cache":"empty-cache"}
+    chain=[]
+    for case,token in tokens.items():
+        source=run/layout/"cases"/case/"attempt-001/source"
+        observed=for_source(compiles,source)
+        require(compile_phases(observed)==([] if case=="exact-repeat" else ["p1","p2","p3","p4"]),"cold-chain-compile-count")
+        s=states(run,layout,"empty-cache" if case=="empty-cache" else "warm-chain",token)
+        ns=[v["target_namespace"] for v in s];chain.append(ns)
+        require(len(set(ns))==(2 if layout=="grouped" else 1),"wrong-namespace-count")
+        require(ns[0]==ns[1] and ns[2]==ns[3],"per-group-namespace-drift")
+        if case in ("cold","empty-cache"):
+            require([v["no_cache_reset"] for v in observed]==[True,False,False,False],"cold-target-reset-after-p1")
+            require([v["fresh"][2] for v in observed]==[False,True,layout!="grouped",True],"cold-itoa-observation-changed")
+        if case=="forced-warm":require(all(v["fresh"][2] and not v["no_cache_reset"] for v in observed),"warm-target-lost")
+    require(chain[0]==chain[1]==chain[2] and not set(chain[0])&set(chain[3]),"warm-chain-or-empty-cache-namespace-changed")
+    for p in range(4):
+        originals=states(run,layout,"warm-chain","cold");repeats=states(run,layout,"warm-chain","exact-repeat")
+        require(originals[p]["input_sha256"]==repeats[p]["input_sha256"] and originals[p]["result"]==repeats[p]["result"],"exact-repeat-identity-changed")
+    namespaces.append(set(chain[0]+chain[3]))
+    run=root/"resume"/f"{layout}-compile-fail-p2";run_ids.append(read(run/"run.json")["run_id"])
+    events=jsonl(run/"events.jsonl");gates=jsonl(run/"gates.jsonl")
+    cause=[v for v in events if v["type"]=="EXPECTED_CAUSE"];stop=[v for v in events if v["type"]=="EXPECTED_STOP"]
+    require(len(cause)==len(stop)==1 and cause[0]["exit"]==stop[0]["exit"]==42,"compile-failure-status-lost")
+    post=[v for v in gates if v["phase"]=="p2-after-expected-failure"]
+    require(len(post)==1 and post[0]["status"]=="PASS" and post[0]["previous_exit"]==0,"post-failure-gate-changed")
+    require([(v["status"],v["exit"]) for v in events if v["type"]=="RUN_STATUS"]==[("expected-stop",75),("complete",0)],"resume-status-changed")
+    require([(v["phase"],v["attempt"]) for v in events if v["type"]=="RESUME_REUSE"]==[("p1",2)],"resume-reuse-changed")
+    case_dir=run/layout/"cases/compile-fail-p2"
+    setup=for_source(compiles,case_dir/"setup/attempt-001/source")
+    failed=for_source(compiles,case_dir/"attempt-001/source")
+    resumed=for_source(compiles,case_dir/"attempt-002/source")
+    require(compile_phases(setup)==["p1","p2","p3","p4"] and [v["no_cache_reset"] for v in setup]==[True,False,False,False],"resume-cold-warmup-changed")
+    require(compile_phases(failed)==["p1","p2"] and compile_phases(resumed)==["p2","p3","p4"],"failure-or-resume-phase-order")
+    require(not any(v["no_cache_reset"] for v in failed+resumed),"resumed-target-reset")
+    require(resumed[0]["pending_before"]==(layout!="baseline") and resumed[0]["fresh"][2]==(layout=="baseline"),"pending-rebuild-lost")
+    require(resumed[0]["target_namespace"]==failed[-1]["target_namespace"]==setup[1]["target_namespace"],"resume-namespace-drift")
+    log=case_dir/("attempt-001/logs/p2.log" if layout=="baseline" else "attempt-001/logs/p2-producer.log")
+    require(read(pathlib.Path(str(log)+".status.json"))==({"compose_exit":42} if layout=="baseline" else {"buildx_exit":42,"helper_exit":None}),"command-failure-exit-lost")
+    run=root/"routes"/f"{layout}-route-contract";run_ids.append(read(run/"run.json")["run_id"])
+    source=run/layout/"cases/route-contract/attempt-001/source"
+    route_builds=for_source(builds,source);route_compiles=for_source(compiles,source)
+    require(len(route_builds)==4 and all("--no-cache" in v["argv"] for v in route_builds),"single-p1-route-cold-policy-changed")
+    require([v["token"] for v in route_compiles]==["route-source","route-artifact"] and all(v["no_cache_reset"] for v in route_compiles),"route-consumer-compiled-or-producer-skipped")
+    require([v["phase"] for v in jsonl(run/"events.jsonl") if v["type"]=="ROUTE" and v["status"]=="PASS"]==["source-fallback","artifact-present"],"route-contract-not-proved")
+    run=root/"legacy"/f"{layout}-cold";run_ids.append(read(run/"run.json")["run_id"])
+    source=run/layout/"cases/cold/attempt-001/source";observed=for_source(compiles,source)
+    require(compile_phases(observed)==["p1","p2"] and all(v["no_cache_reset"] and not v["fresh"][2] for v in observed),"legacy-bug-not-reproduced")
+    events=jsonl(run/"events.jsonl")
+    require(events[-1]["status"]=="failed" and events[-1]["exit"]==1 and not any(v["type"]=="EXPECTED_STOP" for v in events),"legacy-failure-normalized")
+    require([v["phase"] for v in events if v["type"]=="VERIFY" and v["status"]=="PASS"]==["p1"],"legacy-ran-after-p2")
+    # Artifact P2 expects both lib and itoa Fresh; the unchanged oracle checks
+    # lib first.  Baseline reproduces L0's itoa diagnostic, and both paths above
+    # must show itoa rebuilt in the retained compiler-artifact observation.
+    reason="itoa" if layout=="baseline" else "lib"
+    require((root/f"legacy-{layout}.stderr").read_text()==f"unexpected-recompile-set-{reason}\nbuild-layout-probe: FAILED_UNRESOLVED: unexpected-recompile-set\n","legacy-failed-for-wrong-reason")
+require(len(set(run_ids))==12 and all(not a&b for i,a in enumerate(namespaces) for b in namespaces[i+1:]),"run-or-layout-cache-collision")
+exits=[line.split('\t') for line in (root/"exits.tsv").read_text().splitlines()]
+require(len(exits)==21 and all(int(v[-1])==(1 if v[0]=="legacy" else 0) for v in exits),"focused-command-exits")
+report={"status":"PASS","controller_calls":len(exits),"build_calls":len(builds),"source_compiles":len(compiles),"legacy_rejections":3,"layouts":["baseline","common","grouped"],"actual_builds":"NOT_RETESTED","G2":"NOT_PASSED"}
+(root/"result.json").write_text(json.dumps(report,sort_keys=True,indent=2)+"\n")
+print("cold-chain PASS: P0/P1 cold; P2-P4 retained; repeat/warm/empty-cache, pending resume and routes; old predicates rejected at P2 (L0 itoa; L1/L2 lib first, itoa also rebuilt)")
+PY
+)
+
 self_corrective_regressions() (
   local root=$1
   mkdir -p -m 0700 -- "$root"
@@ -2341,6 +2517,7 @@ self_test() {
   ( export BUILD_LAYOUT_SELF_TEST_ACTIVE=1 LAYOUT_GATE_TEST_SEAM=build-layout-self-test LAYOUT_GATE_MODE=fake LAYOUT_FAKE_GATE_RESULT=pass LAYOUT_GATE_PROC_ROOT=/forbidden LAYOUT_GATE_DOCKER_BIN=/forbidden; sanitize_actual_environment; [ -z "${BUILD_LAYOUT_SELF_TEST_ACTIVE-}${LAYOUT_GATE_TEST_SEAM-}${LAYOUT_GATE_MODE-}${LAYOUT_FAKE_GATE_RESULT-}${LAYOUT_GATE_PROC_ROOT-}${LAYOUT_GATE_DOCKER_BIN-}" ] ) || return 1
   self_wrapper_boundaries "$root/wrappers" || return 1
   self_corrective_regressions "$root/corrective" || return 1
+  self_cold_chain "$root/cold-chain" || return 1
   local layout case_id
   for layout in "${layouts[@]}"; do
     for case_id in "${case_ids[@]}"; do
