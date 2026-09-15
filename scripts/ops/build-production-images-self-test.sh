@@ -9,6 +9,68 @@ source_helper=$script_dir/build-production-images.sh
 source_manifest_lib=$script_dir/lib/release-image-manifest.sh
 source_layout_helper=$script_dir/lib/release-build-layout.sh
 
+# Exercise the product gate functions without a live journal or Docker daemon.
+# Query bounds must preserve the same microseconds that the parser validates.
+python3 - "$source_layout_helper" <<'PY'
+import ast
+import datetime
+import json
+from pathlib import Path
+import re
+import sys
+
+source = Path(sys.argv[1]).read_text()
+gate = source.split("release_build_layout_gate() {", 1)[1]
+body = gate.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+names = {"utc_text", "parse_range", "pairs", "reject_constant", "normalized_boot"}
+functions = [node for node in ast.parse(body).body
+             if isinstance(node, ast.FunctionDef) and node.name in names]
+assert {node.name for node in functions} == names
+scope = {"datetime": datetime, "json": json, "re": re}
+exec(compile(ast.Module(body=functions, type_ignores=[]), sys.argv[1], "exec"), scope)
+
+epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+def parsed_query_us(value):
+    stamp = datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f UTC").replace(
+        tzinfo=datetime.timezone.utc)
+    delta = stamp - epoch
+    return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
+
+since = 1789494421803534
+until = since + 1800 * 1000000
+for stamp in (0, 1, 999999, 1000000, since, until):
+    assert parsed_query_us(scope["utc_text"](stamp)) == stamp
+assert scope["utc_text"](since) == "2026-09-15 17:47:01.803534 UTC"
+assert scope["utc_text"](until) == "2026-09-15 18:17:01.803534 UTC"
+
+boot = "a" * 32
+def record(stamp, message="fixture kernel healthy"):
+    return (json.dumps({"__REALTIME_TIMESTAMP": str(stamp), "__CURSOR": "fixture",
+                        "_BOOT_ID": boot, "_TRANSPORT": "kernel", "MESSAGE": message}) + "\n").encode()
+
+for stamp in (since, since + 1, until - 1, until):
+    assert scope["parse_range"](record(stamp), boot, since, until, 1) == (1, 0)
+for stamp in (since - 671516, since - 1, until + 1):
+    try:
+        scope["parse_range"](record(stamp), boot, since, until, 1)
+    except ValueError as error:
+        assert str(error) == "range-outside-window"
+    else:
+        raise AssertionError("journal parser accepted a genuinely out-of-window record")
+
+# Simulate journalctl's selection using the actual formatted query bounds.
+# A whole-second formatter incorrectly admits the first timestamp here.
+stamps = (since - 671516, since, until, until + 1)
+selected = [stamp for stamp in stamps
+            if parsed_query_us(scope["utc_text"](since)) <= stamp
+            <= parsed_query_us(scope["utc_text"](until))]
+assert selected == [since, until]
+assert scope["parse_range"](b"".join(map(record, selected)), boot, since, until, 2) == (2, 0)
+assert scope["parse_range"](record(since, "Out of memory: Killed process fixture"),
+                            boot, since, until, 1) == (1, 1)
+print("PRODUCTION_IMAGE_BUILD_JOURNAL_PRECISION_SELF_TEST: PASS")
+PY
+
 # Exercise the frozen public image-save parser with private synthetic OCI
 # archives. The two positive shapes match the observed Docker `image save`
 # forms: an index directly naming a runnable manifest and an index naming a

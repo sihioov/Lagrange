@@ -2112,7 +2112,11 @@ def timestamp(text):
     return int(datetime.datetime.strptime(text,"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp())
 
 def utc_text(microseconds):
-    return datetime.datetime.fromtimestamp(microseconds/1000000,datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    # Query exactly the interval that parse_range validates, including the
+    # fractional first and last seconds. Avoid a floating-point round trip.
+    seconds, fraction = divmod(microseconds, 1000000)
+    return datetime.datetime.fromtimestamp(seconds,datetime.timezone.utc).replace(
+        microsecond=fraction).strftime("%Y-%m-%d %H:%M:%S.%f UTC")
 
 def secure_exception(path,now_ns):
     if not path:
