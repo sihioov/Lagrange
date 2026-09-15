@@ -16,6 +16,7 @@ manifest_library=$repo_root/scripts/ops/lib/release-image-manifest.sh
 
 readonly product_a_commit=d1baf9da9b13fcb61649b1c26de56aed87a83418
 readonly product_b_commit=f4eb4f83abb7c3f43ede072d0077a1a74edd0ee3
+readonly benchmark_compose_env_sha256_expected=df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6
 
 # G2 makes the helper's parent-held lock part of the whole-release benchmark
 # contract. Sourcing it only exposes library functions; plan/self-test still
@@ -171,6 +172,8 @@ release_total_report=
 source_manifest_report=
 release_comparison_report=
 failure_report=
+benchmark_compose_env_file=
+benchmark_compose_env_sha256=
 apply_record_failures=0
 failure_stage=validation
 last_build_exit=not-started
@@ -446,6 +449,35 @@ sha256_text() {
   digest=$(printf '%s' "$value" | sha256sum | awk '{print $1}')
   printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$' || die 'could not hash benchmark metadata'
   printf '%s' "$digest"
+}
+
+write_benchmark_compose_env() {
+  local destination=$1 parent digest mode
+  case "$destination" in /*) ;; *) die 'benchmark image-only Compose env path must be absolute' ;; esac
+  parent=${destination%/*}
+  [ -d "$parent" ] && [ ! -L "$parent" ] ||
+    die 'benchmark image-only Compose env parent is not a private regular directory'
+  [ "$(stat -c %a -- "$parent")" = 700 ] ||
+    die 'benchmark image-only Compose env parent mode must be 0700'
+  [ ! -e "$destination" ] && [ ! -L "$destination" ] ||
+    die 'benchmark image-only Compose env already exists; refusing to overwrite it'
+  if ! (
+    umask 077
+    set -o noclobber
+    printf 'RESEARCH_ENTITLEMENT_SHA256=%064d\n' 0 >"$destination"
+  ); then
+    die 'could not create the private benchmark image-only Compose env'
+  fi
+  chmod 0600 -- "$destination" || die 'could not protect the benchmark image-only Compose env'
+  [ -f "$destination" ] && [ ! -L "$destination" ] ||
+    die 'benchmark image-only Compose env is not a regular file'
+  mode=$(stat -c %a -- "$destination")
+  [ "$mode" = 600 ] || die 'benchmark image-only Compose env mode must be 0600'
+  digest=$(sha256_file "$destination")
+  [ "$digest" = "$benchmark_compose_env_sha256_expected" ] ||
+    die 'benchmark image-only Compose env content did not match the frozen inactive sentinel'
+  benchmark_compose_env_file=$destination
+  benchmark_compose_env_sha256=$digest
 }
 
 csv_or_dash() {
@@ -1100,10 +1132,15 @@ PY
 }
 
 common_compose_build() {
-  local checkout=$1 commit=$2 image_override=$3 artifact_override=$4 service=$5
-  local -a args=(compose --env-file "$checkout/deploy/compose/.env" --file "$checkout/deploy/compose/compose.yml" --file "$image_override")
-  [ -f "$checkout/deploy/compose/.env" ] && [ ! -L "$checkout/deploy/compose/.env" ] ||
-    return 1
+  local checkout=$1 commit=$2 image_override=$3 artifact_override=$4 service=$5 compose_env=$6 compose_env_hash
+  local -a args=(compose --env-file "$compose_env" --file "$checkout/deploy/compose/compose.yml" --file "$image_override")
+  [ "$compose_env" = "$benchmark_compose_env_file" ] &&
+    [ "$benchmark_compose_env_sha256" = "$benchmark_compose_env_sha256_expected" ] &&
+    [ -f "$compose_env" ] && [ ! -L "$compose_env" ] &&
+    [ "$(stat -c %a -- "$compose_env")" = 600 ] || return 1
+  case "$compose_env" in "$checkout"|"$checkout"/*) return 1 ;; esac
+  compose_env_hash=$(sha256sum -- "$compose_env" 2>/dev/null | awk '{print $1}') || return 1
+  [ "$compose_env_hash" = "$benchmark_compose_env_sha256_expected" ] || return 1
   [ -f "$checkout/deploy/compose/compose.yml" ] && [ ! -L "$checkout/deploy/compose/compose.yml" ] ||
     return 1
   [ -f "$image_override" ] && [ ! -L "$image_override" ] || return 1
@@ -2736,7 +2773,7 @@ run_common_c_release() (
       die "common-C disk evidence was unavailable before consumer build: $service"
     start_resource_sampler "$revision" "$measurement_phase" "$service" ||
       die "common-C resource sampler could not start for consumer build: $service"
-    if common_compose_build "$checkout" "$commit" "$image_override" "$override" "$service" >"$raw_log" 2>&1; then
+    if common_compose_build "$checkout" "$commit" "$image_override" "$override" "$service" "$benchmark_compose_env_file" >"$raw_log" 2>&1; then
       last_build_exit=0
     else
       status=$?
@@ -4019,8 +4056,10 @@ initialize_output() {
   evidence_dir=$output_dir/evidence
   mkdir -m 0700 -- "$evidence_dir" || die 'could not create evidence directory'
   mkdir -m 0700 -- "$output_dir/cargo-units" "$output_dir/native-identities" "$output_dir/archive-requests" "$output_dir/archive-results" \
+    "$output_dir/inputs" \
     "$output_dir/common-manifests" "$output_dir/source-manifests" ||
     die 'could not create strict benchmark evidence directories'
+  write_benchmark_compose_env "$output_dir/inputs/image-only-compose.env"
   metadata_report=$output_dir/metadata.tsv
   results_report=$output_dir/service-results.tsv
   resource_report=$output_dir/batch-resources.tsv
@@ -4167,6 +4206,9 @@ write_metadata() {
     printf 'git_identity\t%s\n' "$git_identity"
     printf 'python_identity\t%s\n' "$python_identity"
     printf 'benchmark_script_sha256\t%s\n' "$benchmark_script_hash"
+    printf 'image_only_compose_env\tinputs/image-only-compose.env\n'
+    printf 'image_only_compose_env_sha256\t%s\n' "$benchmark_compose_env_sha256"
+    printf 'image_only_compose_env_policy\tprivate-external-input; mode-0600; inactive-research-entitlement-sentinel-only; never copied from an operational environment\n'
     printf 'cargo_build_jobs\t2\n'
     printf 'service_order\t%s\n' "${services[*]}"
     printf 'batch_policy\tup-to-three-services; one Docker invocation at a time\n'
@@ -4361,9 +4403,10 @@ new_self_test_nonce() {
 run_self_test() {
   local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log invalid_json_log
   local current parent plan_output first_nonce second_nonce foreign_tag build_count remove_count
+  local clean_clone clean_clone_input clean_clone_env
   local case_variant_one case_variant_two health_mode health_reason saved_health_containers scenario_case scenario_path
   local -a saved_services=()
-  test_dir=$(mktemp -d /tmp/lagrange-build-cache-benchmark-self-test.XXXXXXXXXX)
+  test_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-build-cache-benchmark-self-test.XXXXXXXXXX")
   trap 'rm -rf -- "$test_dir"' RETURN
   # Exercise the real lock API without leaving fake-test state at its fixed
   # apply prefix. This assignment is internal to --self-test and never comes
@@ -4724,6 +4767,35 @@ else:
 PY
   }
 
+  # Use a real detached clone before installing the fake Git function.  This
+  # proves the tracked source snapshot neither supplies nor needs the ignored
+  # operational Compose .env, while the only image-build interpolation input
+  # remains a separately created private file outside that clean checkout.
+  clean_clone=$test_dir/clean-clone
+  clean_clone_input=$test_dir/clean-clone-input
+  clean_clone_env=$clean_clone_input/image-only-compose.env
+  git clone --quiet --no-local "$repo_root" "$clean_clone" ||
+    die 'self-test could not create a real clean clone for the image-only Compose env contract'
+  git -C "$clean_clone" checkout --quiet --detach "$(git -C "$repo_root" rev-parse HEAD)" ||
+    die 'self-test could not detach the real clean clone'
+  [ -z "$(git -C "$clean_clone" status --porcelain=v1 --untracked-files=all)" ] ||
+    die 'self-test real clone was dirty before image-only Compose input creation'
+  [ ! -e "$clean_clone/deploy/compose/.env" ] && [ ! -L "$clean_clone/deploy/compose/.env" ] ||
+    die 'self-test real clean clone unexpectedly contained an operational Compose .env'
+  if git -C "$clean_clone" ls-files --error-unmatch deploy/compose/.env >/dev/null 2>&1; then
+    die 'self-test operational Compose .env unexpectedly became a tracked benchmark input'
+  fi
+  mkdir -m 0700 -- "$clean_clone_input"
+  write_benchmark_compose_env "$clean_clone_env"
+  case "$clean_clone_env" in "$clean_clone"|"$clean_clone"/*)
+    die 'self-test image-only Compose env was created inside the clean checkout'
+  esac
+  [ "$benchmark_compose_env_sha256" = "$benchmark_compose_env_sha256_expected" ] &&
+    [ "$(stat -c %a -- "$clean_clone_env")" = 600 ] ||
+    die 'self-test external image-only Compose env binding was malformed'
+  [ -z "$(git -C "$clean_clone" status --porcelain=v1 --untracked-files=all)" ] ||
+    die 'self-test image-only Compose input dirtied the real clean clone'
+
 
   # All following observations are shell fakes.  In particular, `docker` is a
   # function, so no client binary or daemon can be reached by this self-test.
@@ -4872,8 +4944,13 @@ EOF
         fi
         [ "${1:-}" = build ] && [ "${2:-}" = --pull=false ] && [ -n "${3:-}" ] && [ "$#" -eq 3 ] || return 92
         service=$3
-        [ -f "$env_file" ] && [ ! -L "$env_file" ] && [ -f "$base_file" ] && [ ! -L "$base_file" ] &&
+        [ "$env_file" = "$benchmark_compose_env_file" ] &&
+          [ -f "$env_file" ] && [ ! -L "$env_file" ] && [ "$(stat -c %a -- "$env_file")" = 600 ] &&
+          [ "$(sha256sum -- "$env_file" | awk '{print $1}')" = "$benchmark_compose_env_sha256_expected" ] &&
+          [ -f "$base_file" ] && [ ! -L "$base_file" ] &&
           [ -f "$image_file" ] && [ ! -L "$image_file" ] || return 92
+        case "$env_file" in "$baseline_checkout"|"$baseline_checkout"/*|"$candidate_checkout"|"$candidate_checkout"/*) return 92 ;; esac
+        [ ! -e "${base_file%/*}/.env" ] && [ ! -L "${base_file%/*}/.env" ] || return 92
         image_ref=$(RBL_BENCH_IMAGE_OVERRIDE=$image_file RBL_BENCH_SERVICE=$service python3 - <<'PY'
 import json, os, re
 path=os.environ["RBL_BENCH_IMAGE_OVERRIDE"]
@@ -5208,7 +5285,6 @@ EOF
         "$checkout/deploy/build/release-build-layout.json"
       cp -a -- "$repo_root/deploy/build/Dockerfile.rust-artifacts" \
         "$checkout/deploy/build/Dockerfile.rust-artifacts"
-      printf '%s\n' 'LAGRANGE_CODE_COMMIT=fixture' >"$checkout/deploy/compose/.env"
       printf '%s\n' 'services: {}' >"$checkout/deploy/compose/compose.yml"
     fi
   }
@@ -6017,7 +6093,7 @@ PY
   if ! awk -F '\t' '
     $1 == "compose" {
       count[$2]++
-      if ($3 !~ /\/deploy\/compose\/\.env$/ || $4 !~ /\/deploy\/compose\/compose\.yml$/ ||
+      if ($3 !~ /\/inputs\/image-only-compose\.env$/ || $4 !~ /\/deploy\/compose\/compose\.yml$/ ||
           $5 !~ /\/common-compose-overrides\/.*-images\.json$/) bad=1
       if ($2 == "db-role-bootstrap" || $2 == "db-migrate" || $2 == "web") {
         if ($6 != "-") bad=1
@@ -6097,6 +6173,10 @@ PY
     grep -Fq $'candidate_product_kind\tC' "$output_dir/metadata.tsv" &&
     grep -Fq 'BENCHMARK_SYSTEMD_SERVICE->RELEASE_BUILD_SYSTEMD_UNIT' "$output_dir/metadata.tsv" ||
     die 'self-test common-C explicit helper gate environment mapping was not retained'
+  grep -Fq $'image_only_compose_env\tinputs/image-only-compose.env' "$output_dir/metadata.tsv" &&
+    grep -Fq $'image_only_compose_env_sha256\t'"$benchmark_compose_env_sha256_expected" "$output_dir/metadata.tsv" &&
+    grep -Fq $'image_only_compose_env_policy\tprivate-external-input; mode-0600; inactive-research-entitlement-sentinel-only; never copied from an operational environment' "$output_dir/metadata.tsv" ||
+    die 'self-test common-C private image-only Compose env evidence was not retained'
   if ( run_apply ) >"$test_dir/common-nonempty-output.out" 2>&1; then
     die 'self-test common-C accepted a non-empty output directory for a second private V2 publication'
   fi
@@ -6190,6 +6270,7 @@ if [ "$mode" = plan ]; then
   echo '  cold=fresh revision namespaces plus a stable side nonce consumed before native setup; one independent cold pair only, not a warm changed-source comparison'
   echo '  paired_order=baseline-first or candidate-first for one pair; alternating is B/C,C/B,B/C for up to three warm pairs'
   echo '  instrumentation=A/B temporary Dockerfile copies add Cargo verbosity and a stable pre-native nonce; original Dockerfiles/commands/binary sets remain unchanged; C helper/config/producer remains clean'
+  echo '  compose_env=--apply creates one private external image-only env with the inactive research-entitlement sentinel; no checkout or operational .env is read'
   echo '  services=all twelve release services, batches up to three, sequential one-service Docker builds'
   echo "  resource_gates=MemAvailable >= ${default_min_mem_available_kib} KiB; SwapFree >= ${default_min_swap_free_kib} KiB; recent OOM, prior compiler/exit, systemd and health checks fail closed"
   echo '  apply_prerequisite=already-running low-priority systemd service containing this process plus explicit read-only health units; the harness never starts it'

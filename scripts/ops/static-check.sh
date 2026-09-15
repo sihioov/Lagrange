@@ -776,8 +776,30 @@ grep -Fq 'DB source secrets must be distinct' "$ops/validate-production-config.s
 grep -Fq 'cmp -s' "$ops/validate-production-config.sh" || die 'DB secret equality check missing'
 grep -Fq 'run --rm --no-deps db-role-bootstrap' "$ops/compose-release.sh" || die 'role bootstrap ordering missing'
 grep -Fq 'run --rm --no-deps db-migrate' "$ops/compose-release.sh" || die 'migration ordering missing'
-grep -Fq 'build --pull=false \' "$ops/compose-release.sh" || die 'Compose build gate missing'
-grep -Fq 'db-role-bootstrap db-migrate' "$ops/compose-release.sh" || die 'one-shot images are not built before run'
+python3 - "$ops/compose-release.sh" <<'PY' || die 'Compose sequential build gate missing'
+import pathlib, re, shlex, sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+expected = {
+    "infrastructure": ["db-role-bootstrap", "db-migrate"],
+    "backfill": ["db-role-bootstrap", "db-migrate", "research-worker"],
+}
+for scope, services in expected.items():
+    marker = f'if [ "$scope" = {scope} ]; then'
+    blocks = re.findall(r"^" + re.escape(marker) + r"\n(.*?)^fi$", source, re.M | re.S)
+    build_blocks = [[shlex.split(line) for line in block.splitlines()
+                     if re.match(r"\s*compose\s+build\b", line)] for block in blocks]
+    build_blocks = [commands for commands in build_blocks if commands]
+    assert len(build_blocks) == 1, f"missing or ambiguous {scope} build block"
+    commands = build_blocks[0]
+    assert commands == [["compose", "build", "--pull=false", service]
+                        for service in services], f"{scope} must build one service at a time in order"
+    active_block = next(block for block in blocks if re.search(r"^\s*compose\s+build\b", block, re.M))
+    compose_commands = [shlex.split(line) for line in active_block.splitlines()
+                        if re.match(r"\s*compose\s+", line)]
+    assert compose_commands[:len(services)] == commands, f"{scope} must finish builds before running services"
+assert source.count("COMPOSE_PARALLEL_LIMIT=1") == 2, "both Compose branches must limit parallelism"
+PY
 grep -Fq 'up --wait --no-deps api-server' "$ops/compose-release.sh" || die 'serving stage must not rerun removed one-shots'
 grep -Fq -- '--scope infrastructure|backfill|release' "$ops/compose-release.sh" || die 'Compose scope contract missing'
 if grep -Fq 'serving-prereqs' "$ops/compose-release.sh"; then
@@ -786,8 +808,6 @@ fi
 grep -Fq 'LAGRANGE_DATA_ROOT="$data_dir"' "$ops/compose-release.sh" || die 'Compose preflight must use env-file data root'
 grep -Fq 'COMPOSE_BACKFILL_BOOTSTRAP_ORDER' "$ops/compose-release.sh" || die 'backfill Compose bootstrap order missing'
 grep -Fq 'COMPOSE_INFRASTRUCTURE_ORDER' "$ops/compose-release.sh" || die 'infrastructure Compose order missing'
-grep -Fq 'compose build --pull=false db-role-bootstrap db-migrate' "$ops/compose-release.sh" \
-  || die 'infrastructure Compose build gate missing'
 grep -Fq 'COMPOSE_INFRASTRUCTURE: PASS' "$ops/compose-release.sh" \
   || die 'infrastructure Compose apply gate missing'
 grep -Fq 'RESEARCH_APP_ENV=infrastructure-disabled' "$ops/compose-release.sh" \

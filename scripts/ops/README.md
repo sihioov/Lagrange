@@ -152,13 +152,27 @@ pins are available. It requires the exact lowercase 40-hex
 `LAGRANGE_CODE_COMMIT` from the process environment; it never derives the
 value from the mutable checkout and never writes `deploy/compose/.env`.
 
-Inspect the plan, then run the read-only Compose config preflight:
+Create a private, credential-free Compose interpolation input outside the clean
+checkout. It contains only the approved inactive research-entitlement sentinel;
+do not copy or read the operational `deploy/compose/.env`. Record the printed
+path and hash with the build evidence and retain that same private input through
+any resume of the build. Then inspect the plan and run the read-only Compose
+config preflight with its path explicitly bound:
 
 ```sh
 export LAGRANGE_CODE_COMMIT="<approved-40-hex-commit>"
-scripts/ops/build-production-images.sh --plan
+image_build_env_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-image-only-env.XXXXXXXXXX")
+chmod 0700 "$image_build_env_dir"
+image_build_env=$image_build_env_dir/compose.env
+(umask 077; printf '%s\n' 'RESEARCH_ENTITLEMENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000' >"$image_build_env")
+chmod 0600 "$image_build_env"
+image_build_env_sha256=$(sha256sum "$image_build_env" | awk '{print $1}')
+[ "$image_build_env_sha256" = df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6 ]
+printf 'image_build_env=%s sha256=%s\n' "$image_build_env" "$image_build_env_sha256"
+
+scripts/ops/build-production-images.sh --plan --env-file "$image_build_env"
 sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
-  scripts/ops/build-production-images.sh --preflight
+  scripts/ops/build-production-images.sh --preflight --env-file "$image_build_env"
 ```
 
 After Docker/Compose config expansion passes, the explicit root-only apply
@@ -208,9 +222,10 @@ transfer guarantee, and are not a substitute for artifact receipt/image-byte
 verification.
 
 The helper performs no `up`, `run`, restart, migration, database, provider/API,
-or secret provisioning action, and keeps the live profile disabled. It supplies
-only process-local fail-closed interpolation sentinels needed to parse the
-complete Compose file; these are not written to the env file or used to start
+or secret provisioning action, and keeps the live profile disabled. The
+external image-only env supplies only the inactive entitlement interpolation
+sentinel above; the helper supplies the remaining fail-closed sentinels in its
+process environment. Neither is an operational environment or used to start
 containers. A build can still fetch base-image or language dependencies when
 the local Docker cache is incomplete, so network access is an expected build
 caveat. This image preparation step is independent of the later infrastructure,

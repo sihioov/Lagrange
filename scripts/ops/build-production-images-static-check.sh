@@ -111,10 +111,21 @@ for literal in \
   'side_product_kind' 'publish_source_manifest_and_revalidate' \
   'publish_common_manifest_and_revalidate' \
   'source-manifests.tsv' 'release-totals.tsv' 'release-comparison.tsv' \
-  'BENCHMARK_SYSTEMD_SERVICE->RELEASE_BUILD_SYSTEMD_UNIT'
+  'BENCHMARK_SYSTEMD_SERVICE->RELEASE_BUILD_SYSTEMD_UNIT' \
+  'write_benchmark_compose_env' \
+  'df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6' \
+  'inputs/image-only-compose.env' \
+  'inactive-research-entitlement-sentinel-only' \
+  '${TMPDIR:-/tmp}/lagrange-build-cache-benchmark-self-test.XXXXXXXXXX' \
+  'ls-files --error-unmatch deploy/compose/.env'
 do
   require_literal "$benchmark" "$literal" 'whole-release benchmark contract is missing'
 done
+require_literal "$benchmark" 'compose --env-file "$compose_env"' \
+  'common-C benchmark must pass its explicit private image-only Compose env'
+if grep -Fq '$checkout/deploy/compose/.env' "$benchmark"; then
+  die 'benchmark must not read or require an operational Compose env from a clean checkout'
+fi
 if grep -Eiq '(^|[[:space:]])(curl|wget|psql)([[:space:]]|$)|KIS_APP_(KEY|SECRET)' "$smoke" "$benchmark"; then
   die 'build-cache verification tools contain a forbidden provider/credential channel'
 fi
@@ -185,10 +196,21 @@ for literal in \
   'validate_manifest_output' 'docker image inspect' \
   'built image_id is not an exact local Docker image ID' \
   'built image revision label does not match source commit' \
+  'final image_id differs from byte-verified image' \
   'release_image_manifest_write' \
   'release_image_manifest_load' 'COMPOSE_PARALLEL_LIMIT=1'
 do
   require_literal "$build" "$literal" 'public builder safety contract is missing'
+done
+for literal in \
+  'IMAGE_BUILD_FAKE_TAG_SWAP_SERVICE' \
+  'changed same-revision final image tag unexpectedly passed' \
+  'tag swap did not preserve twelve valid saved roots and exact per-service final identity binding' \
+  'expect_host_path_reject' \
+  'dot dotdot relative redundant-separator symlink-ancestor' \
+  'host-path-not-canonical'
+do
+  require_literal "$self_test" "$literal" 'focused image verification regression is missing'
 done
 require_literal "$build" 'source "$script_dir/lib/release-build-layout.sh"' \
   'official builder must source the G2 layout helper'
@@ -266,6 +288,10 @@ do
     die "G2 helper/artifact contract is missing: $literal"
   fi
 done
+require_literal "$layout_helper" 'os.path.normpath(value)!=value' \
+  'archive API must reject noncanonical dot/dotdot/redundant caller text before normalization'
+require_literal "$layout_helper" 'os.path.realpath(value)!=value' \
+  'archive API must reject caller paths with a symlinked ancestor'
 require_any_regex 'EM_X86_64|prefix\[18:20\].*62|struct\.[A-Za-z_]+\([^)]*62' \
   'archive parser must check the linux/amd64 ELF machine, not magic alone' \
   "$layout_helper" "$artifact_dockerfile" "$build"

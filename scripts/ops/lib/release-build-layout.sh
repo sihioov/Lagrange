@@ -2689,9 +2689,18 @@ release_build_layout_archive_scan() {
   RBL_COMMIT=$rbl_commit RBL_REQUEST=$rbl_request RBL_RESULT=$rbl_result python3 - <<'PY'
 import gzip, hashlib, io, json, os, posixpath, re, stat, tarfile, tempfile
 
-archive=os.path.abspath(os.environ["RBL_ARCHIVE"])
-request_path=os.path.abspath(os.environ["RBL_REQUEST"])
-result_path=os.path.abspath(os.environ["RBL_RESULT"])
+def canonical_host_path(value):
+    # Reject aliases before reading any input or creating a verification result.
+    # Normalizing here would hide a violation of the public path contract.
+    if (not os.path.isabs(value) or
+            any(ord(ch)<32 or ord(ch)==127 for ch in value) or
+            os.path.normpath(value)!=value or os.path.realpath(value)!=value):
+        raise SystemExit("host-path-not-canonical")
+    return value
+
+archive=canonical_host_path(os.environ["RBL_ARCHIVE"])
+request_path=canonical_host_path(os.environ["RBL_REQUEST"])
+result_path=canonical_host_path(os.environ["RBL_RESULT"])
 image_id=os.environ["RBL_IMAGE_ID"]
 platform=os.environ["RBL_PLATFORM"]
 commit=os.environ["RBL_COMMIT"]

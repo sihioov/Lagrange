@@ -124,6 +124,14 @@ validator_self_tests() (
   done
   cp "$test_compose.baseline" "$test_compose"
   cp "$test_dockerfile" "$test_dockerfile.baseline"
+  sed 's/^ARG RUST_ARTIFACT_SOURCE=source-builder$/ARG RUST_ARTIFACT_SOURCE=unapproved:latest/' "$test_dockerfile.baseline" >"$test_dockerfile"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted an external default artifact source'; fi
+  sed 's/^FROM ${RUST_ARTIFACT_SOURCE} AS builder$/FROM alpine:latest AS builder/' "$test_dockerfile.baseline" >"$test_dockerfile"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted an external builder selector'; fi
+  sed 's/^FROM alpine:3\.21@sha256:[0-9a-f]* AS verified-artifacts$/FROM alpine:latest AS verified-artifacts/' "$test_dockerfile.baseline" >"$test_dockerfile"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted an unpinned artifact verification stage'; fi
+  { cat "$test_dockerfile.baseline"; printf '\nFROM alpine:latest AS unexpected\n'; } >"$test_dockerfile"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted an additional external stage'; fi
   awk '!changed && /^FROM / { sub(/^FROM /, "from "); changed=1 } { print }' "$test_dockerfile.baseline" >"$test_dockerfile"
   bash "$test_script" --static-only >/dev/null 2>&1 || fail 'validator rejected a lowercase digest-pinned FROM'
   awk '!changed && /^from[[:space:]]+rust:1\.97\.1-alpine@sha256:[0-9a-f]{64}/ { sub(/@sha256:[0-9a-f]{64}/, ""); changed=1 } { print }' "$test_dockerfile" >"$test_dockerfile.unpinned"
@@ -274,8 +282,34 @@ contains "$probe_text" 'File::open(&path)' 'read-only fsync probe'
 contains "$probe_text" 'file.sync_all()' 'read-only fsync probe'
 if printf '%s\n' "$probe_text" | grep -Eq 'OpenOptions|\.write[[:space:]]*\('; then fail 'read-only fsync probe must not request write access'; fi
 docker_text="$(<"$dockerfile")"
-printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+rust:1\.97\.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900[[:space:]]+AS[[:space:]]+builder[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Rust builder'
-printf '%s\n' "$docker_text" | grep -Eiq '^FROM[[:space:]]+alpine:3\.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d[[:space:]]*$' || fail 'Dockerfile missing the approved digest-pinned Alpine runtime'
+# The selector references the two declared build stages. Every external base
+# still has its exact approved digest, including artifact verification.
+python3 - "$dockerfile" <<'PY' || fail 'Dockerfile has an unapproved base image or artifact-stage binding'
+import pathlib, re, sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+rust = "rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900"
+alpine = "alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d"
+stages = []
+for line in text.splitlines():
+    if re.match(r"^FROM\s", line, re.I):
+        parts = line.split()
+        parts[0] = parts[0].upper()
+        if len(parts) == 4:
+            parts[2] = parts[2].upper()
+        stages.append(parts)
+expected = [
+    ["FROM", rust, "AS", "source-builder"],
+    ["FROM", alpine, "AS", "verified-artifacts"],
+    ["FROM", "${RUST_ARTIFACT_SOURCE}", "AS", "builder"],
+    ["FROM", alpine],
+]
+if stages != expected:
+    raise SystemExit("collector-stage-binding-invalid")
+defaults = re.findall(r"^ARG\s+RUST_ARTIFACT_SOURCE(?:=(\S+))?\s*$", text, re.M | re.I)
+if defaults != ["source-builder", ""]:
+    raise SystemExit("collector-source-default-invalid")
+PY
 contains "$docker_text" 'cargo build --locked --release --package collectors --bin research-worker' 'Dockerfile'
 contains "$docker_text" 'cargo build --locked --release --package collectors --bin kis-historical-price-beta-approval-check' 'Dockerfile'
 contains "$docker_text" 'cargo build --locked --release --package collectors --bin kis-historical-price-v3-artifact' 'Dockerfile'
@@ -294,12 +328,6 @@ for build_dockerfile in "$dockerfile" "$candidate_dockerfile"; do
     contains "$build_text" "$embedded_copy" "${build_dockerfile#$root/}"
   done
 done
-from_count=0
-while IFS= read -r line; do
-  from_count=$((from_count + 1))
-  printf '%s\n' "$line" | grep -Eiq '^FROM[[:space:]]+[^[:space:]]+@sha256:[0-9a-f]{64}([[:space:]]+AS[[:space:]]+[A-Za-z0-9._-]+)?$' || fail "Dockerfile FROM is not immutable: $line"
-done < <(grep -i '^FROM[[:space:]]' "$dockerfile" || true)
-[ "$from_count" -gt 0 ] || fail 'Dockerfile has no FROM instructions'
 
 for pattern in '**' '!Cargo.toml' '!Cargo.lock' '!rust-toolchain.toml' '!crates/**' '!data-pipelines/collectors/**' '!apps/api-server/auth/**' '!configs/evidence/kis-historical-price-only-beta-approved-artifacts.json' '!configs/evidence/kis-historical-price-only-v3-approved-artifacts.json' '!tests/integration/migration-contract/**' '!tests/fixtures/kr-etf/contract/**' '**/target/**' '**/.git/**' '**/.worktrees/**' '**/.env.*' '**/credentials/**' '**/secrets/**' '**/raw/**' '**/*.pem' '**/*.key' '**/*.p12' '**/*.pfx'; do
   grep -Fxq -- "$pattern" "$dockerignore" || fail "Docker build-context policy is missing: $pattern"

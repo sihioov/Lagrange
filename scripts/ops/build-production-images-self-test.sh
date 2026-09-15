@@ -28,6 +28,7 @@ run_archive_parser_tests() (
   source "$source_layout_helper"
 
   local archive_dir request result expected_map direct_archive direct_id index_archive index_id root_record root_archive root_id
+  local path_kind archive_arg request_arg result_arg canonical_result
   archive_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-image-archive-self-test.XXXXXX")
   trap 'rm -rf -- "$archive_dir"' RETURN
   chmod 0700 -- "$archive_dir"
@@ -393,6 +394,25 @@ PY
       return 1
     }
   }
+  expect_host_path_reject() {
+    local label=$1 archive_arg=$2 request_arg=$3 result_arg=$4 canonical_result=$5
+    if (
+      cd "$archive_dir"
+      release_build_layout_archive_scan "$archive_arg" "$direct_id" linux/amd64 "$archive_commit" \
+        "$request_arg" "$result_arg"
+    ) >"$archive_dir/$label.out" 2>"$archive_dir/$label.err"; then
+      echo "self-test: archive parser accepted noncanonical host path: $label" >&2
+      return 1
+    fi
+    grep -Fxq 'host-path-not-canonical' "$archive_dir/$label.err" || {
+      echo "self-test: archive parser rejected noncanonical host path for the wrong reason: $label" >&2
+      return 1
+    }
+    [ ! -e "$canonical_result" ] && [ ! -L "$canonical_result" ] || {
+      echo "self-test: archive parser published a result after noncanonical host path rejection: $label" >&2
+      return 1
+    }
+  }
 
   # These root controls are deliberately one-layer archives. The rejection
   # cases append whitespace to root bytes while retaining the old digest
@@ -435,6 +455,50 @@ PY
   result=$archive_dir/index-result.json
   release_build_layout_archive_scan "$index_archive" "$index_id" linux/amd64 "$archive_commit" "$request" "$result"
   assert_record_result provenance_index "$result"
+
+  # The public helper requires caller text itself to be canonical before it
+  # reads either input or creates a result. Exercise every path position with
+  # dot/dotdot aliases, relative text, redundant separators, and a symlinked
+  # ancestor. A normalization-before-validation regression would publish each
+  # otherwise valid direct-manifest result below.
+  mkdir "$archive_dir/path-parent"
+  ln -s "$archive_dir" "$archive_dir/symlink-ancestor"
+  for path_kind in dot dotdot relative redundant-separator symlink-ancestor; do
+    case "$path_kind" in
+      dot) archive_arg=$archive_dir/./direct-manifest.tar ;;
+      dotdot) archive_arg=$archive_dir/path-parent/../direct-manifest.tar ;;
+      relative) archive_arg=direct-manifest.tar ;;
+      redundant-separator) archive_arg=$archive_dir//direct-manifest.tar ;;
+      symlink-ancestor) archive_arg=$archive_dir/symlink-ancestor/direct-manifest.tar ;;
+    esac
+    canonical_result=$archive_dir/noncanonical-archive-$path_kind-result.json
+    expect_host_path_reject "noncanonical-archive-$path_kind" "$archive_arg" "$request" \
+      "$canonical_result" "$canonical_result"
+  done
+  for path_kind in dot dotdot relative redundant-separator symlink-ancestor; do
+    case "$path_kind" in
+      dot) request_arg=$archive_dir/./request.json ;;
+      dotdot) request_arg=$archive_dir/path-parent/../request.json ;;
+      relative) request_arg=request.json ;;
+      redundant-separator) request_arg=$archive_dir//request.json ;;
+      symlink-ancestor) request_arg=$archive_dir/symlink-ancestor/request.json ;;
+    esac
+    canonical_result=$archive_dir/noncanonical-request-$path_kind-result.json
+    expect_host_path_reject "noncanonical-request-$path_kind" "$direct_archive" "$request_arg" \
+      "$canonical_result" "$canonical_result"
+  done
+  for path_kind in dot dotdot relative redundant-separator symlink-ancestor; do
+    canonical_result=$archive_dir/noncanonical-result-$path_kind.json
+    case "$path_kind" in
+      dot) result_arg=$archive_dir/./noncanonical-result-$path_kind.json ;;
+      dotdot) result_arg=$archive_dir/path-parent/../noncanonical-result-$path_kind.json ;;
+      relative) result_arg=noncanonical-result-$path_kind.json ;;
+      redundant-separator) result_arg=$archive_dir//noncanonical-result-$path_kind.json ;;
+      symlink-ancestor) result_arg=$archive_dir/symlink-ancestor/noncanonical-result-$path_kind.json ;;
+    esac
+    expect_host_path_reject "noncanonical-result-$path_kind" "$direct_archive" "$request" \
+      "$result_arg" "$canonical_result"
+  done
 
   expect_archive_reject tampered "$(archive_value tampered archive)" "$(archive_value tampered image_id)" "$archive_dir/tampered-result.json"
   expect_archive_reject whiteout "$(archive_value whiteout archive)" "$(archive_value whiteout image_id)" "$archive_dir/whiteout-result.json"
@@ -943,9 +1007,23 @@ if args[0:2] == ["image", "inspect"]:
     reference = args[-1]
     service = service_for_ref(reference)
     override_id = os.environ.get("IMAGE_BUILD_FAKE_IMAGE_ID", "")
-    image_id = override_id or write_archive(service, commit)
+    resolved_service = service
+    swap_service = os.environ.get("IMAGE_BUILD_FAKE_TAG_SWAP_SERVICE", "")
+    if not override_id and swap_service == service:
+        prior = sum(
+            f" image-inspect service={service} image_id=" in line
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+        ) if log_path.exists() else 0
+        if prior >= 1:
+            resolved_service = os.environ.get("IMAGE_BUILD_FAKE_TAG_SWAP_TO_SERVICE", "")
+            if not resolved_service or resolved_service == service:
+                raise SystemExit("fake-docker-tag-swap-target-invalid")
+            service_for_ref(f"lagrange-station-{resolved_service}:{commit}")
+    image_id = override_id or write_archive(resolved_service, commit)
     revision = os.environ.get("IMAGE_BUILD_FAKE_REVISION", commit)
     log(f"image-inspect service={service} image_id={image_id}")
+    if resolved_service != service:
+        log(f"tag-swap service={service} resolved_service={resolved_service} image_id={image_id}")
     print(image_id + "|" + revision)
     raise SystemExit(0)
 if args[0:2] == ["image", "save"]:
@@ -1238,6 +1316,64 @@ if grep -Eiq ' (up|run|restart|start)( |$)' "$docker_log"; then
   echo 'self-test: image helper invoked a container lifecycle command' >&2
   exit 1
 fi
+
+# A same-revision tag may be retargeted after all saved archives have been
+# verified but before final V2 publication.  Give every first inspection a
+# valid, service-specific saved OCI root, then make only paper-scheduler's
+# final lookup resolve to api-server's otherwise valid root.  Exact equality
+# with the per-service byte-verified identity must fail closed.
+tag_swap_dir=$out_dir/tag-swap
+tag_swap_manifest=$tag_swap_dir/production-images.manifest
+mkdir -m 0700 -- "$tag_swap_dir"
+: >"$docker_log"
+if IMAGE_BUILD_FAKE_TAG_SWAP_SERVICE=paper-scheduler \
+  IMAGE_BUILD_FAKE_TAG_SWAP_TO_SERVICE=api-server \
+  COMPOSE_PARALLEL_LIMIT=37 \
+  bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
+  --manifest-file "$tag_swap_manifest" >"$tag_swap_dir/apply.out" 2>&1; then
+  echo 'self-test: changed same-revision final image tag unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'final image_id differs from byte-verified image: paper-scheduler' "$tag_swap_dir/apply.out"
+[ ! -e "$tag_swap_manifest" ] && [ ! -L "$tag_swap_manifest" ]
+awk '
+  index($0, " image-inspect service=") {
+    detail=$0
+    sub(/^.* image-inspect service=/, "", detail)
+    split(detail, fields, " image_id=")
+    service=fields[1]
+    image_id=fields[2]
+    inspect_count[service]++
+    if (inspect_count[service] == 1) first[service]=image_id
+    else if (inspect_count[service] == 2) second[service]=image_id
+    else bad=1
+  }
+  index($0, " image-save image_id=") {
+    image_id=$0
+    sub(/^.* image-save image_id=/, "", image_id)
+    saved[image_id]++
+    save_count++
+  }
+  END {
+    split("db-role-bootstrap db-migrate api-server web research-worker recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler", expected, " ")
+    for (i=1; i<=12; i++) {
+      service=expected[i]
+      image_id=first[service]
+      if (inspect_count[service] != 2 || image_id !~ /^sha256:[0-9a-f]+$/ || length(image_id) != 71 || saved[image_id] != 1) bad=1
+      if (seen_first[image_id]++) bad=1
+      if (service == "paper-scheduler") {
+        if (second[service] == image_id || second[service] != first["api-server"]) bad=1
+      } else if (second[service] != image_id) bad=1
+    }
+    exit !(save_count == 12 && !bad)
+  }
+' "$docker_log" || {
+  echo 'self-test: tag swap did not preserve twelve valid saved roots and exact per-service final identity binding' >&2
+  exit 1
+}
+grep -Fq "tag-swap service=paper-scheduler resolved_service=api-server image_id=" "$docker_log"
+cp -- "$docker_log" "$tag_swap_dir/docker.log"
+chmod 0600 -- "$tag_swap_dir/docker.log"
 
 if bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
   >"$out_dir/missing-manifest.out" 2>&1; then

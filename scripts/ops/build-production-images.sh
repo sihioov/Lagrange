@@ -154,7 +154,8 @@ check_inputs() {
 inspect_built_images() {
   local service image_ref inspected image_id revision
   command -v docker >/dev/null 2>&1 || die 'docker is not installed'
-  release_image_manifest_reset
+  # Keep the identities already bound to saved-image bytes in inspect_one_image.
+  # A same-revision tag can still be changed by another Docker client.
   for service in "${local_image_services[@]}"; do
     image_ref=$(release_image_manifest_ref_for "$service" "$LAGRANGE_CODE_COMMIT") ||
       die "cannot derive configured image reference: $service"
@@ -173,9 +174,12 @@ inspect_built_images() {
       die "built image revision label is missing or invalid: $service"
     [ "$revision" = "$LAGRANGE_CODE_COMMIT" ] ||
       die "built image revision label does not match source commit: $service"
-    RELEASE_IMAGE_MANIFEST_REFS["$service"]=$image_ref
-    RELEASE_IMAGE_MANIFEST_IDS["$service"]=$image_id
-    RELEASE_IMAGE_MANIFEST_REVISIONS["$service"]=$revision
+    [ "${RELEASE_IMAGE_MANIFEST_REFS[$service]:-}" = "$image_ref" ] ||
+      die "final image reference differs from byte-verified image: $service"
+    [ "${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}" = "$image_id" ] ||
+      die "final image_id differs from byte-verified image: $service"
+    [ "${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}" = "$revision" ] ||
+      die "final revision differs from byte-verified image: $service"
   done
 }
 

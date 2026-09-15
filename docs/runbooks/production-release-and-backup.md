@@ -161,6 +161,9 @@ that waiting terminal. `--collect` releases the transient unit after exit, so
 a failed attempt can reuse the same unit name and unchanged gate inputs.
 Retain its journal and helper attempt logs before retrying, and require a
 successful build exit and completed V2 verification before installation.
+Prepare the credential-free file below outside the clean source checkout. It
+contains only the approved inactive interpolation sentinel and must never be
+copied from, or replaced by, the operational `deploy/compose/.env`.
 
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
@@ -168,8 +171,15 @@ release_source_root=$(git rev-parse --show-toplevel)
 # Output must be empty or exactly the one allowlisted workbook above.
 git status --porcelain=v1 --untracked-files=all
 
-sudo install -o root -g root -m 0600 deploy/compose/.env \
-  /etc/lagrange/compose.env.pending
+image_build_env_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-image-only-env.XXXXXXXXXX")
+chmod 0700 "$image_build_env_dir"
+image_build_env=$image_build_env_dir/compose.env
+(umask 077; printf '%s\n' 'RESEARCH_ENTITLEMENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000' >"$image_build_env")
+chmod 0600 "$image_build_env"
+image_build_env_sha256=$(sha256sum "$image_build_env" | awk '{print $1}')
+[ "$image_build_env_sha256" = df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6 ]
+printf 'image_build_env=%s sha256=%s\n' "$image_build_env" "$image_build_env_sha256"
+
 sudo install -d -o root -g root -m 0755 /etc/lagrange/release-manifests
 
 sudo systemd-run --unit="$RELEASE_BUILD_SYSTEMD_UNIT" \
@@ -185,12 +195,20 @@ sudo systemd-run --unit="$RELEASE_BUILD_SYSTEMD_UNIT" \
   RELEASE_BUILD_HEALTH_CONTAINERS="$RELEASE_BUILD_HEALTH_CONTAINERS" \
   RELEASE_BUILD_RESEARCH_EXCEPTION="${RELEASE_BUILD_RESEARCH_EXCEPTION:-}" \
   /bin/bash "$release_source_root/scripts/ops/build-production-images.sh" --apply \
+  --env-file "$image_build_env" \
   --manifest-file "/etc/lagrange/release-manifests/$LAGRANGE_CODE_COMMIT.manifest"
 ```
+
+The printed path/hash is part of the build attempt evidence. Keep that exact
+mode-0600 input at the recorded external path for same-unit retries; it is not
+the protected operational Compose environment and contains no credential or
+active provider value.
 
 After that build succeeds, the separately authorized installation is:
 
 ```bash
+sudo install -o root -g root -m 0600 deploy/compose/.env \
+  /etc/lagrange/compose.env.pending
 scripts/ops/deploy-production-release.sh --dry-run \
   --commit "$LAGRANGE_CODE_COMMIT" \
   --env-source /etc/lagrange/compose.env.pending

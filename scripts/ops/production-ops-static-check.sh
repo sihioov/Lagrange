@@ -152,6 +152,59 @@ do
   grep -Fq -- "$literal" "$ops_readme" ||
     die "ops README omitted frozen G2 operation contract: $literal"
 done
+
+# Parse the documented shell commands as logical continuation lines so a prose
+# mention of --env-file cannot conceal its omission from plan, preflight, or
+# the official background apply. The image-only input is external, exact, and
+# must be prepared before the build; the operational env is installed only
+# after the builder finishes successfully.
+if ! python3 - "$ops_readme" "$release_runbook" <<'PY'
+import pathlib
+import sys
+
+readme_path, runbook_path = map(pathlib.Path, sys.argv[1:])
+readme = readme_path.read_text(encoding="utf-8")
+runbook = runbook_path.read_text(encoding="utf-8")
+sentinel = "RESEARCH_ENTITLEMENT_SHA256=" + "0" * 64
+sentinel_hash = "df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6"
+
+def collapsed(text):
+    return text.replace("\\\n", " ")
+
+def require_one(document, marker, label):
+    matches = [line for line in collapsed(document).splitlines() if marker in line]
+    if len(matches) != 1:
+        raise SystemExit(label + "-command-count")
+    if matches[0].count('--env-file "$image_build_env"') != 1:
+        raise SystemExit(label + "-env-binding")
+
+readme_section = readme.split("## Prebuild production service images", 1)[1].split("\n## ", 1)[0]
+for document, label in ((readme_section, "readme"), (runbook, "runbook")):
+    if sentinel not in document or sentinel_hash not in document:
+        raise SystemExit(label + "-sentinel-binding")
+    if 'mktemp -d "${TMPDIR:-/tmp}/lagrange-image-only-env.XXXXXXXXXX"' not in document:
+        raise SystemExit(label + "-private-external-parent")
+    if 'chmod 0700 "$image_build_env_dir"' not in document or 'chmod 0600 "$image_build_env"' not in document:
+        raise SystemExit(label + "-private-mode")
+    if "printf 'image_build_env=%s sha256=%s" not in document:
+        raise SystemExit(label + "-path-hash-record")
+
+require_one(readme_section, "scripts/ops/build-production-images.sh --plan", "readme-plan")
+require_one(readme_section, "scripts/ops/build-production-images.sh --preflight", "readme-preflight")
+apply_marker = '/bin/bash "$release_source_root/scripts/ops/build-production-images.sh" --apply'
+require_one(runbook, apply_marker, "runbook-background-apply")
+
+runbook_flat = collapsed(runbook)
+prepare_at = runbook_flat.index('image_build_env_dir=$(mktemp -d')
+apply_at = runbook_flat.index(apply_marker)
+operational_install = 'sudo install -o root -g root -m 0600 deploy/compose/.env'
+install_at = runbook_flat.index(operational_install)
+if not prepare_at < apply_at < install_at:
+    raise SystemExit("runbook-image-build-operational-env-order")
+PY
+then
+  die 'operator examples do not bind the private credential-free image-only Compose env'
+fi
 for service in db-role-bootstrap db-migrate research-worker; do
   grep -Fq "build --pull=false $service" "$compose_release" ||
     die "Compose build plan/call missing single-service build: $service"
