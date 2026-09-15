@@ -303,3 +303,101 @@ dependencies, release validator and diagrams were not edited by this worker.
 No stage/commit, service/session operation, global prune or provider operation was
 performed. Actual Docker/Cargo builds, host health, cache/route/runtime behavior,
 release/performance acceptance and G2 remain **NOT_RUN / NOT_PASSED** for this package.
+
+## 2026-09-15 fixture snapshot COPY correction
+
+This bounded correction starts from clean HEAD
+`257d199fc7e77bf7c633033218486f4bc0bed98e`. **Corrected offline checks: PASS;
+corrected real layout: NOT_RETESTED.** The coordinator retains the actual build
+slot and must rerun the real layout from a new clean commit.
+
+### Retained failure and diagnosis
+
+The following actual-run facts and evidence paths were supplied by the
+coordinator; this correction did not rerun or modify those records:
+
+- Corrected cache smoke passed all 15 scenarios at the starting HEAD, with
+  pre/post gates PASS. Receipt:
+  `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/smoke-02.json`;
+  run tree: `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/runs/smoke-02`.
+- Actual layout `all/all` then failed its first baseline cold P1 before Cargo at
+  `guard_inputs`, with a compile input hash mismatch. The original receipt records
+  unchanged source and actual exit 1:
+  `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/layout-02.json`.
+  Exact log:
+  `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/runs/layout-02/baseline/cases/cold/attempt-001/logs/p1.log`.
+  No test or gate waiver was used.
+- Two coordinator scratch-only local exports isolated the COPY behavior:
+  `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/copy-mode-diagnostic/result.json`.
+  Individual package COPY instructions created destination package roots with
+  mode `0755` from source roots with mode `0775`, changing the mode-sensitive
+  compile hash from
+  `df295e7d5eb51e7ea03d649fe13db940203c2825d7b1b364a5b0b358b8753dc5`
+  to `b44f4e6ad17731290a0364511f6ffbdbddb4c60fc4d1a32f90479beb044d4159`.
+  Copying the whole validated synthetic fixture snapshot preserved its child
+  directory modes and reproduced the expected hash in that diagnostic.
+
+### Exact correction and source identities
+
+Each source stage now uses one `COPY . ./` at the original location under the
+inherited `WORKDIR /build`, with a two-line comment explaining the package-root
+metadata requirement. The byte comparison against HEAD permits exactly this
+replacement of the four consecutive COPY lines. Every other stage, ARG/ENV,
+native-identity operation, command order, cache mount, guard, check, artifact,
+runtime COPY and failure injection is unchanged. In particular, the entire
+`verified-artifacts` stage and its separate
+`COPY layout-helper.sh /tmp/layout-helper.sh` are unchanged. File modes are
+unchanged; mode hashing and guard assertions remain enforced.
+
+| Changed fixture file | Corrected lines | SHA-256 before | SHA-256 after |
+|---|---|---|---|
+| `tests/fixtures/build-layout/Dockerfile.baseline` | 49–51 | `146f753514b928448cc38018c6fca2f0f44f9c8bb4639416603577594c08a1e3` | `36ac4a5458e20ff022848008e63f2380410cac417434abbb8ec9d40c12d0d6ae` |
+| `tests/fixtures/build-layout/Dockerfile.artifacts` | 50–52 | `5109cd156a3ee6672909065d27050225ad6649c93dbdeefdb58b2acc393a4e57` | `edc45bfd7063e71a9310cc3bf7fcdef99c2fe2b89f393f945df0b18b843c9a7a` |
+| `tests/fixtures/build-layout/Dockerfile.consumer` | 48–50 | `d0e0442f632042010ffacf9eab1b4c4bef62015613d880333aeebc1592607eab` | `7196764401fccf834f17b0b97554f4c0fc583f313d60017d1f9ef8d238983ed4` |
+
+The controller remains
+`f3d7072f7ada68fbf8586e78505e273ca4ed1af769a954298a5fd491e91922da`;
+the helper remains
+`d89b8e8d8647706c5639426688a364c8bfc7de4c61881f724fb47788950ed666`.
+All report content through the preceding section is preserved byte-for-byte.
+The original report SHA-256 is
+`c8a44af8406e56160ab2fe49bce3d6c2db899d2f90336f4613156816f02cc6e9`;
+its final appended-file hash is recorded in `after.json` below.
+
+### Focused offline verification
+
+Evidence root: `/tmp/lagrange-wp3-copy-fix-9e55jnc5`.
+`before.json` records the clean starting HEAD and six source/report hashes and
+modes. `checks.json` records exact command argv, exits, stdout/stderr hashes,
+the focused assertions, and matching source hashes before/after the checks.
+`after.json` records final file hashes, the append-only report check and the
+four-file unstaged diff scope. The exact final diff is retained as `final.diff`.
+
+| Command/check | Result |
+|---|---|
+| `python3 /tmp/lagrange-wp3-copy-fix-9e55jnc5/check-copy-correction.py` | Exit 0, PASS: exactly one `COPY . ./` in each intended source stage, inherited `/build` workdir, only the specified replacement relative to HEAD, unchanged file modes, and byte-identical verified-artifacts stage/helper COPY. |
+| `bash scripts/qa/build-layout-probe.sh --plan --layout all --case all --output-dir /tmp/lagrange-wp3-copy-fix-9e55jnc5/plan-output` | Exit 0, PASS: existing static contract validation; no health inputs; output directory not created; actual Docker/Cargo results remain `NOT_RUN` in plan output. |
+| `bash -n scripts/qa/build-layout-probe.sh` | Exit 0, PASS. |
+| `bash -n tests/fixtures/build-layout/layout-helper.sh` | Exit 0, PASS. |
+| `git diff --check` over the four owned paths | Exit 0, PASS; exact argv retained with the evidence. |
+
+The check environment supplies only a fixed PATH and `LC_ALL=C`. Sixteen
+forbidden-command sentinels, covering Docker, Cargo/rustc/rustdoc, host observation,
+network and provider commands, recorded **zero calls**. The successful plan's
+stdout SHA-256 is
+`7629b0455c92c3b31d9b6dbc02c0c7859b7f7c41008dd994149fd7d84e678d16`.
+
+Scope/specification deviations: **없음**. Static-check contradictions, unresolved
+implementation items and further decomposition required: **없음**. Only the
+three fixture Dockerfiles and this appended report section changed; no staging,
+commit, root `.dockerignore` change, test weakening, lifecycle action or cache
+removal occurred. No production application source or env/credentials was read.
+The prior 124 focused checks, F1–F9, 84 controller cases and publication PASS
+remain historical evidence on the recorded prior sources; the full self-test
+was not rerun for this COPY-only correction.
+
+Not verified here: corrected actual Docker/BuildKit/Cargo execution, real layout,
+cache/route/runtime behavior, host health or release/performance acceptance.
+Corrected real layout remains **NOT_RETESTED**, with the actual rerun reserved
+to the coordinator's existing build slot after a new clean commit. Other
+unresolved/follow-up/unverified items: **없음**.

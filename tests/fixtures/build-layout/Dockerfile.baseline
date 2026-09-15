@@ -46,10 +46,9 @@ ARG PROBE_CARGO_CONFIG=default
 ARG PROBE_INJECT=none
 ENV CACHE_FIXTURE_COMMIT="$CACHE_FIXTURE_COMMIT"
 ENV CACHE_FIXTURE_BUILD_SETTING="$CACHE_FIXTURE_BUILD_SETTING"
-COPY Cargo.toml Cargo.lock rust-toolchain.toml layout.json layout-helper.sh ./
-COPY fixture-lib ./fixture-lib
-COPY fixture-app ./fixture-app
-COPY runtime ./runtime
+# Copy the validated fixture snapshot to preserve package-root directory
+# metadata required by the mode-sensitive input guard.
+COPY . ./
 RUN set -euo pipefail; \
     install -m 0755 /build/layout-helper.sh /usr/local/bin/layout-helper.sh; \
     printf '%s  %s\n' "$PROBE_EXPECTED_NATIVE_SHA256" /identity/identity.json | sha256sum -c -; \

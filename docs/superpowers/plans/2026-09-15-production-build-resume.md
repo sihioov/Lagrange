@@ -66,3 +66,28 @@ run in background systemd units at lower CPU/I/O priority with 2–3-service log
 batches and one service invocation at a time. Production image verification uses
 a clean candidate commit. Performance must include shared preparation and final
 verification; no speedup is claimed from fixture results alone.
+
+## Complete kernel journal capture
+
+Actual fixture activity exposed an observation limit: the fixed interval
+2026-09-15 02:18:21–02:48:21 UTC contained 1,014 kernel entries, so the existing
+`-n 1000` range query correctly failed as truncated. A separate diagnostic read
+found Docker network messages and no OOM matches; that diagnostic was not a gate
+PASS. Evidence: `reports/real-gate.vliy1a/gates.jsonl` under
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5`.
+More build activity must not silently discard earlier entries.
+
+Replace only that tail-limited range collection with a complete streaming
+`journalctl --no-tail` read of the same fixed since/until interval. Preserve the
+current-boot access probe, all schema/boot/time checks, OOM matching, empty-stderr
+and successful-exit requirements, fixed resume origin, and all service/resource
+checks. EOF and successful process termination must be proven. Bound collection
+to 10 seconds, 64 MiB stdout, 64 KiB stderr, 1 MiB per JSONL line and fewer than
+100,000 records; exceeding a limit, partial output or any unknown result fails
+closed. Retain completion/limit metadata, counts and hashes, not kernel message
+text. The obsolete 1,000-record rejection is replaced by this complete-capture
+contract for both strict and explicitly exceptional runs. No caller limit
+override or new CLI bypass is introduced. Verify earlier-than-last-1,000 OOMs,
+complete/incomplete output and the existing full offline suite before another
+actual layout run. This is a coordinator correction within the approved
+verification scope, not a service-health exception.
