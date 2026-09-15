@@ -729,3 +729,46 @@ Tested controller SHA-256:
 `8f0b867425fb342e1b02e0bf7c662d9418bd1e5972a6dc8f434736283c836ce4`.
 No successful test was repeated. Actual all-layout rerun is pending; **G2 remains
 NOT_PASSED**. Other unresolved implementation items: 없음.
+
+## 2026-09-15 actual layout-05: branch return and host clock
+
+The all-layout run at `ab3965876ee6b705ac8b7c4e667f6be3be90d5ac`
+ended with exit 1 after 1028.195 seconds. Fifteen baseline scenarios passed,
+including both feature-switch trials. Branch-return's forward trial passed;
+its return trial failed before Cargo because the copied compile input hash did
+not match the host source. No G2 or product acceptance is claimed.
+
+Evidence root:
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/`.
+The immutable supervisor receipt is `reports/layout-05.json`, the failed build
+log is `runs/layout-05/baseline/cases/branch-return/attempt-002/logs/p1.log`,
+and the suite rejection is `reports/layout-05-suite.json`. The source stayed
+unchanged and the unit ended with MainPID 0 / ExecMainStatus 1. All 345 recorded
+host gates passed; this is the bounded image-only incident allowance, not a
+healthy-production-release claim.
+
+A separate two-call scratch COPY/local-export diagnostic reproduced the stale
+transfer without compiling or running a binary. See
+`reports/branch-copy-diagnostic-7ea7b7f5e3f5/result.json`: the returned source had
+compile hash `df295e7d5eb51e7ea03d649fe13db940203c2825d7b1b364a5b0b358b8753dc5`,
+but the export retained the forward source hash
+`a2d3ce14841669465be24345df2ec93162fe790585258525e111f6a5c86a90d9`.
+Only `fixture-app/src/bin/cache-bin-a.rs` differed. The content guard rejected
+this mismatch; a transport correction and actual retest remain required.
+
+Separately, host uutils date 0.8.0 did not honor `%s%3N` as milliseconds. Its
+variable-width fractional output corrupted `timing.tsv`, including negative
+intervals. Those wall-time records are invalid and must not be divided or
+otherwise reconstructed as measured performance. Cargo JSON, binary/hash
+assertions, Python event timestamps and the supervisor's monotonic total are
+separate evidence; their passing checks do not validate the corrupt timing TSV.
+
+The controller now obtains integer epoch milliseconds with Python
+`time.time_ns() // 1000000` and rejects malformed/oversized/backward intervals
+before appending a timing record. Its focused self-test checks independence
+from the incompatible date output, valid/zero intervals and nine negative
+inputs. Syntax and focused tests passed; a real 100 ms clock check measured
+116 ms. Exact source/driver hashes and command receipts are in
+`/tmp/lagrange-clock-root-lmxvw7m0/result.json`. No Docker/Cargo command ran in
+that clock check. Corrected actual timing remains unverified; fresh measurements
+will accompany the transport retest. Existing raw run evidence is retained.

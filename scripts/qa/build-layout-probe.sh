@@ -49,7 +49,11 @@ LAYOUT_RESEARCH_BINDING=null LAYOUT_RESEARCH_SNAPSHOT=
 
 die() { printf '%s\n' "build-layout-probe: $*" >&2; exit 2; }
 unresolved() { printf '%s\n' "build-layout-probe: FAILED_UNRESOLVED: $*" >&2; return 1; }
-now_ms() { date +%s%3N; }
+now_ms() {
+  # uutils date may ignore %3N and omit leading fractional zeroes. Keep the
+  # epoch-millisecond field independent of date's formatting implementation.
+  python3 -c 'import time; print(time.time_ns() // 1000000)'
+}
 requested_features() { [ "$1" = wide ] && printf '%s\n' '["wide"]' || printf '%s\n' '[]'; }
 resolved_features() { [ "$1" = wide ] && printf '%s\n' '["default","wide"]' || printf '%s\n' '["default"]'; }
 compile_env() { printf '{"CACHE_FIXTURE_BUILD_SETTING":"%s","CACHE_FIXTURE_COMMIT":"%s","CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target"}\n' "$1" "$2"; }
@@ -283,8 +287,42 @@ PY
 
 record_timing() {
   local category=$1 scope=$2 started=$3 ended=$4 cargo=${5:-not-separated}
-  printf '%s\t%s\t%s\t%s\t%s\n' "$category" "$scope" "$((ended-started))" "$cargo" "$ended" >>"$timing_file"
+  [[ "$started" =~ ^[0-9]{1,15}$ && "$ended" =~ ^[0-9]{1,15}$ ]] || {
+    unresolved 'invalid millisecond clock'; return 1;
+  }
+  [ "$((10#$ended))" -ge "$((10#$started))" ] || {
+    unresolved 'millisecond clock moved backwards'; return 1;
+  }
+  printf '%s\t%s\t%s\t%s\t%s\n' "$category" "$scope" "$((10#$ended-10#$started))" "$cargo" "$ended" >>"$timing_file"
 }
+
+self_clock() (
+  local root=${1:?clock evidence} before after measured
+  mkdir -p -m 0700 -- "$root"
+  # A date implementation emitting nanoseconds must never determine this clock.
+  date() { printf '%s\n' date-called >>"$root/date-calls"; printf '1789446808528727218\n'; }
+  before=$(python3 -c 'import time; print(time.time_ns() // 1000000)')
+  measured=$(now_ms)
+  after=$(python3 -c 'import time; print(time.time_ns() // 1000000)')
+  [[ "$measured" =~ ^[0-9]{13}$ ]] && [ "$measured" -ge "$before" ] && [ "$measured" -le "$after" ] || return 1
+  [ ! -e "$root/date-calls" ] || return 1
+  timing_file="$root/timing.tsv"
+  record_timing execution clock 1789446808000 1789446808250 100 || return 1
+  record_timing preparation zero 1789446808250 1789446808250 not-applicable || return 1
+  local bad
+  for bad in 1789446808528727218 -1 invalid ''; do
+    if record_timing execution rejected "$bad" 1789446808250 0; then return 1; fi
+    if record_timing execution rejected 1789446808000 "$bad" 0; then return 1; fi
+  done
+  if record_timing execution backwards 1789446808250 1789446808000 0; then return 1; fi
+  python3 - "$timing_file" <<'PY'
+import pathlib, sys
+assert pathlib.Path(sys.argv[1]).read_text().splitlines() == [
+    'execution\tclock\t250\t100\t1789446808250',
+    'preparation\tzero\t0\tnot-applicable\t1789446808250',
+]
+PY
+)
 
 write_run_json() {
   PROBE_RESEARCH="$LAYOUT_RESEARCH_BINDING" PROBE_PATH="$run_json" PROBE_HEAD="$origin_head" PROBE_FIXTURE="$fixture_sha" PROBE_TOOL="$tool_sha" PROBE_DESIGN="$design_sha" PROBE_BASELINE="$baseline_sha" PROBE_RUN="$run_id" PROBE_LAYOUT="$layout_selection" PROBE_CASE="$case_selection" PROBE_UNITS="${BUILD_LAYOUT_HEALTH_UNITS:-}" PROBE_CONTAINERS="${BUILD_LAYOUT_HEALTH_CONTAINERS:-}" PROBE_SINCE_US="$LAYOUT_JOURNAL_SINCE_US" PROBE_SINCE="$LAYOUT_JOURNAL_SINCE" PROBE_HELPER="$(sha256sum -- "$helper_path" | awk '{print $1}')" PROBE_LAYOUT_JSON="$(sha256sum -- "$fixture_dir/layout.json" | awk '{print $1}')" PROBE_COMPOSE="$(sha256sum -- "$fixture_dir/compose.yml" | awk '{print $1}')" PROBE_DOCKER_BASELINE="$(sha256sum -- "$fixture_dir/Dockerfile.baseline" | awk '{print $1}')" PROBE_DOCKER_ARTIFACTS="$(sha256sum -- "$fixture_dir/Dockerfile.artifacts" | awk '{print $1}')" PROBE_DOCKER_CONSUMER="$(sha256sum -- "$fixture_dir/Dockerfile.consumer" | awk '{print $1}')" PROBE_RECIPE_BASELINE="$(recipe_hash baseline)" PROBE_RECIPE_COMMON="$(recipe_hash common)" PROBE_RECIPE_GROUPED="$(recipe_hash grouped)" python3 - <<'PY'
@@ -2513,6 +2551,7 @@ self_test() {
   mkdir -p -m 0700 -- "$FAKE_DOCKER_ROOT" "$root/runs"
   create_fake_docker "$root/fake-docker"
   docker_bin="$root/fake-docker" internal_self_test=1
+  self_clock "$root/clock" || return 1
   self_journal_complete "$root/journal-complete" || return 1
   self_research_exception "$root/research-exception" || return 1
   self_gate_boundaries "$root/gate"
