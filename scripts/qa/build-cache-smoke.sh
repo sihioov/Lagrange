@@ -396,6 +396,16 @@ assert_compile_layer_cached() {
 assert_missing_source_evidence() {
   local log=$1
   [ -s "$log" ] || { assert_fail 'missing-source fixture failure did not retain a build log'; return 1; }
+  # Cargo 1.97 can reject an explicitly declared missing bin during target
+  # resolution, before rustc emits a file-read error. Bind that diagnostic to
+  # this exact bin and source path; unrelated build failures must still fail.
+  if python3 - "$log" <<'PY'
+import re,sys
+expected="error: can't find bin `cache-bin-a` at path `/build/fixture-app/src/bin/cache-bin-a.rs`"
+lines=open(sys.argv[1],encoding="utf-8").read().splitlines()
+raise SystemExit(0 if any(re.sub(r"^(?:#\d+\s+)?(?:\d+\.\d+\s+)?", "", line)==expected for line in lines) else 1)
+PY
+  then return 0; fi
   if ! grep -Eiq "(could not read|couldn't read|No such file or directory|failed to read).*(fixture-app/src/bin/cache-bin-a[.]rs|cache-bin-a[.]rs)|(fixture-app/src/bin/cache-bin-a[.]rs|cache-bin-a[.]rs).*(could not read|couldn't read|No such file or directory|failed to read)" "$log"; then
     assert_fail 'source-deletion case failed for an unexpected reason instead of the missing Rust source'
     return 1
@@ -1100,6 +1110,18 @@ EOF
   assert_compile_layer_cached parser-cached || die "self-test cached parser evidence failed: $SMOKE_ASSERT_ERROR"
   parse_build_events "$unrelated_cached_log" || die "self-test unrelated-cache parser failed: $SMOKE_PARSE_ERROR"
   if assert_compile_layer_cached parser-unrelated-cache; then die 'unrelated FROM/COPY CACHED evidence incorrectly passed as a cached compile RUN'; fi
+
+  cat >"$test_dir/missing-bin-current.log" <<'EOF'
+#15 0.145 error: can't find bin `cache-bin-a` at path `/build/fixture-app/src/bin/cache-bin-a.rs`
+#15 0.145 error: could not compile due to 1 previous target resolution error
+EOF
+  assert_missing_source_evidence "$test_dir/missing-bin-current.log" || die 'current Cargo missing-bin diagnostic was rejected'
+  sed 's/`cache-bin-a`/`cache-bin-b`/' "$test_dir/missing-bin-current.log" >"$test_dir/wrong-bin.log"
+  sed 's@/build/fixture-app/src/bin/@/build/another-package/src/bin/@' "$test_dir/missing-bin-current.log" >"$test_dir/wrong-path.log"
+  printf '%s\n' '#15 0.145 error: failed to download dependency' >"$test_dir/download-failure.log"
+  for log in "$test_dir/wrong-bin.log" "$test_dir/wrong-path.log" "$test_dir/download-failure.log"; do
+    if assert_missing_source_evidence "$log"; then die 'unrelated diagnostic incorrectly proved missing Rust source'; fi
+  done
 
   if bash "$script_dir/build-cache-smoke.sh" --apply --fixture-dir "$fixture_dir" >"$test_dir/missing-output.out" 2>&1; then die 'apply accepted a missing output directory'; fi
   grep -Fq -- '--apply requires --output-dir' "$test_dir/missing-output.out" || die 'missing output-dir failure was not reported'
