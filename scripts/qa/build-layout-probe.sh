@@ -1547,6 +1547,9 @@ record=json.loads(open(sys.argv[1],encoding="utf-8").read().splitlines()[-1]);ca
 if record["status"]!="PASS" or record["reason"]!="healthy":raise SystemExit(1)
 journal=record["journal"]
 if journal["probe"]["exit"]!=0 or journal["range"]["exit"]!=0 or journal["count"]!=1 or journal["oom_count"]!=0:raise SystemExit(1)
+capture=journal["range"]["capture"]
+if capture["complete"] is not True or capture["stdout_eof"] is not True or capture["stderr_eof"] is not True or capture["child_reaped"] is not True or capture["record_count"]!=1:raise SystemExit(1)
+if capture["argv"][1:5]!=["-k","-b","--no-pager","-o"] or capture["argv"][-1]!="--no-tail" or "-n" in capture["argv"]:raise SystemExit(1)
 if set(record["evidence"]["units"]["alpha.service"]["selected"])!={"active_state","exec_main_status","load_state","main_pid","n_restarts","sub_state"}:raise SystemExit(1)
 if set(record["evidence"]["containers"]["api-1"]["selected"])!={"health_status","id","oom_killed","project","restart_count","restarting","running"}:raise SystemExit(1)
 if "quiet kernel" in open(sys.argv[1],encoding="utf-8").read():raise SystemExit(1)
@@ -1932,6 +1935,181 @@ self_corrective_regressions() (
   self_export_failures "$root/export" || exit 1
 )
 
+self_journal_complete() (
+  local root=$1
+  gate_test_allowed || exit 90
+  mkdir -p -m 0700 -- "$root/bin" "$root/proc/sys/kernel/random"
+  printf 'MemAvailable: 8388608 kB\nSwapFree: 1048576 kB\n' >"$root/proc/meminfo"
+  printf '01234567-89ab-cdef-0123-456789abcdef\n' >"$root/proc/sys/kernel/random/boot_id"
+  # Use the loaded controller/helper functions, without a public test mode or
+  # substituted collector, parser, limits, clock, or process implementation.
+  {
+    printf 'set -euo pipefail\n'
+    declare -f
+    cat <<'SH'
+gate_test_allowed || exit 90
+LAYOUT_RESEARCH_BINDING=null LAYOUT_RESEARCH_SNAPSHOT=
+unset LAYOUT_JOURNAL_SINCE_US LAYOUT_JOURNAL_SINCE LAYOUT_JOURNAL_BOOT_ID
+LAYOUT_GATE_MODE=real
+LAYOUT_GATE_RECORD_FILE="$2/gates.jsonl" LAYOUT_GATE_STATE_FILE="$2/gate-state.json" LAYOUT_GATE_PRIVATE_DIR="$2/private"
+case "$1" in
+  collect) gate_collect_range "$(gate_command journalctl)" "$2/stdout" "$2/stderr" "$2/capture.json" '2026-09-15 02:18:21 UTC' '2026-09-15 02:48:21 UTC' ;;
+  parse) gate_parse_range "$2/stdout" 0123456789abcdef0123456789abcdef 1789438701000000 1789440501000000 ;;
+  gate) probe_gate cold journal-complete 0 ;;
+  prior) probe_gate cold journal-prior 37 ;;
+  *) exit 90 ;;
+esac
+SH
+  } >"$root/driver.sh"
+  cat >"$root/host-fake.py" <<'PY'
+#!/usr/bin/env python3
+import datetime,json,os,pathlib,sys,time
+if os.environ.get("BUILD_LAYOUT_SELF_TEST_ACTIVE")!="1" or os.environ.get("LAYOUT_GATE_TEST_SEAM")!="build-layout-self-test":sys.exit(90)
+name=pathlib.Path(sys.argv[0]).name;args=sys.argv[1:]
+spec=json.load(open(os.environ["JOURNAL_TEST_DATA"]))
+with open(os.environ["JOURNAL_TEST_CALLS"],"a") as handle:handle.write(json.dumps({"command":name,"argv":args,"pid":os.getpid(),"lc_all":os.environ.get("LC_ALL")})+"\n")
+if name=="ps":
+    assert args==["-eo","comm="];sys.exit(0)
+if name=="systemctl":
+    assert len(args)==3 and args[0]=="show" and args[1] in ("alpha.service","beta.service") and args[2]=="--property=LoadState,ActiveState,SubState,ExecMainStatus,MainPID,NRestarts"
+    print("LoadState=loaded\nActiveState=active\nSubState=running\nExecMainStatus=0\nMainPID=123\nNRestarts=0");sys.exit(0)
+if name=="docker":
+    assert len(args)==6 and args[:4]==["inspect","--type","container","--format"]
+    print("a"*64+"\ttrue\tfalse\tfalse\thealthy\t0\tlagrange-station");sys.exit(0)
+assert name=="journalctl" and os.environ.get("LC_ALL")=="C"
+probe=args==["-k","-b","--no-pager","-o","json","-n","1"]
+assert probe or (len(args)==10 and args[:6]==["-k","-b","--no-pager","-o","json","--since"] and args[7]=="--until" and args[9]=="--no-tail")
+timestamp=time.time_ns()//1000 if probe else int(datetime.datetime.strptime(args[8],"%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=datetime.timezone.utc).timestamp()*1000000)-500000
+base={"__REALTIME_TIMESTAMP":str(timestamp),"__CURSOR":"synthetic","_BOOT_ID":"0123456789abcdef0123456789abcdef","_TRANSPORT":"kernel","MESSAGE":"synthetic-journal-message"}
+def line(value=None,size=None):
+    value=dict(base if value is None else value)
+    raw=(json.dumps(value,separators=(",",":"))+"\n").encode()
+    if size is not None:
+        assert size>=len(raw);value["MESSAGE"]+="x"*(size-len(raw));raw=(json.dumps(value,separators=(",",":"))+"\n").encode();assert len(raw)==size
+    return raw
+if probe:
+    mode=spec.get("probe","")
+    if mode=="empty":sys.exit(0)
+    if mode=="stderr":sys.stderr.write("synthetic warning\n")
+    if mode=="wrong-boot":base["_BOOT_ID"]="f"*32
+    sys.stdout.buffer.write(line());sys.exit(0)
+mode=spec.get("mode","complete");count=spec.get("count",1)
+if mode=="stdout-bytes":
+    total=spec["bytes"];size=65536
+    while total>size and total-size>=len(line()):sys.stdout.buffer.write(line(size=size));total-=size
+    sys.stdout.buffer.write(line(size=total))
+elif mode=="line-bytes":sys.stdout.buffer.write(line(size=spec["bytes"]))
+elif mode=="stderr-bytes":sys.stderr.buffer.write(b"x"*spec["bytes"])
+else:
+    for index in range(count):
+        value=dict(base)
+        if index==0:
+            if mode=="early-oom":value["MESSAGE"]="Out of memory: Killed process synthetic"
+            if mode=="early-malformed":sys.stdout.buffer.write(b"{\n");continue
+            if mode=="wrong-boot":value["_BOOT_ID"]="f"*32
+            if mode=="wrong-transport":value["_TRANSPORT"]="stdout"
+            if mode=="missing-field":del value["MESSAGE"]
+            if mode=="before-since":value["__REALTIME_TIMESTAMP"]=str(int(datetime.datetime.strptime(args[6],"%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=datetime.timezone.utc).timestamp()*1000000)-1)
+            if mode=="after-until":value["__REALTIME_TIMESTAMP"]=str(timestamp+500001)
+        raw=line(value)
+        if index==count-1 and mode=="partial":raw=raw[:-1]
+        if index==count-1 and mode=="partial-json":raw=b'{"MESSAGE":'
+        sys.stdout.buffer.write(raw)
+sys.stdout.buffer.flush();sys.stderr.buffer.flush()
+if mode=="stderr":sys.stderr.write("synthetic warning\n");sys.stderr.flush()
+if mode in ("eof-nonzero","eof-timeout"):
+    os.close(1);os.close(2)
+    time.sleep(60 if mode=="eof-timeout" else 0.05)
+if spec.get("hold") or mode=="timeout":time.sleep(60)
+os._exit(23 if mode in ("nonzero","eof-nonzero") else 0)
+PY
+  chmod 0755 -- "$root/host-fake.py"
+  for name in ps systemctl journalctl docker; do ln -s ../host-fake.py "$root/bin/$name"; done
+  python3 - "$root" <<'PY'
+import hashlib,json,os,pathlib,subprocess,sys,time
+root=pathlib.Path(sys.argv[1]);driver=str(root/"driver.sh");data=root/"data.json";calls=root/"calls.jsonl"
+env={**os.environ,"BUILD_LAYOUT_SELF_TEST_ACTIVE":"1","LAYOUT_GATE_TEST_SEAM":"build-layout-self-test","LAYOUT_GATE_MODE":"real","BUILD_LAYOUT_HEALTH_UNITS":"alpha.service,beta.service","BUILD_LAYOUT_HEALTH_CONTAINERS":"lagrange-station-research-worker-1,api-1","LAYOUT_GATE_PROC_ROOT":str(root/"proc"),"JOURNAL_TEST_DATA":str(data),"JOURNAL_TEST_CALLS":str(calls)}
+env.pop("BUILD_LAYOUT_RESEARCH_EXCEPTION",None)
+for name in ("PS","SYSTEMCTL","JOURNALCTL","DOCKER"):env["LAYOUT_GATE_"+name+"_BIN"]=str(root/"bin"/name.lower())
+limits={"deadline_ms":10000,"stdout_bytes":67108864,"stderr_bytes":65536,"line_bytes":1048576,"records":100000}
+results=[]
+def command(label,operation,directory,expected):
+    argv=["bash",driver,operation,str(directory)];started=time.monotonic_ns()
+    result=subprocess.run(argv,env=env,capture_output=True,timeout=30)
+    (root/(label+".stdout.log")).write_bytes(result.stdout);(root/(label+".stderr.log")).write_bytes(result.stderr)
+    results.append({"label":label,"argv":argv,"exit":result.returncode,"elapsed_ns":time.monotonic_ns()-started,"stdout_sha256":hashlib.sha256(result.stdout).hexdigest(),"stderr_sha256":hashlib.sha256(result.stderr).hexdigest()})
+    (root/"results.json").write_text(json.dumps(results,indent=2)+"\n")
+    assert result.returncode==expected,(label,result.returncode,expected)
+    assert b"synthetic-journal-message" not in result.stdout+result.stderr,label
+    return result
+def captured(label,spec,reason=None,parse_result=0,expected_count=None):
+    directory=root/label;directory.mkdir(mode=0o700);data.write_text(json.dumps(spec))
+    command(label,"collect",directory,0 if reason is None else 1)
+    receipt=json.loads((directory/"capture.json").read_text())
+    assert receipt["limits"]==limits and receipt["bounds_exclusive"] is True,label
+    assert receipt["failure"]==reason and receipt["complete"]==(reason is None),(label,receipt)
+    assert receipt["lc_all"]=="C" and receipt["argv"]==[str(root/"bin/journalctl"),"-k","-b","--no-pager","-o","json","--since","2026-09-15 02:18:21 UTC","--until","2026-09-15 02:48:21 UTC","--no-tail"],label
+    for stream in ("stdout","stderr"):
+        raw=(directory/stream).read_bytes()
+        assert receipt[stream+"_sha256"]==hashlib.sha256(raw).hexdigest() and receipt[stream+"_bytes"]==len(raw),label
+        assert len(raw)<=limits[stream+"_bytes"],label
+    if reason is None:
+        assert receipt["stdout_eof"] and receipt["stderr_eof"] and receipt["command_exit"]==0 and receipt["child_reaped"] and receipt["elapsed_ns"]<10**10,label
+        parsed=command(label+"-parse","parse",directory,parse_result)
+        if expected_count is not None:assert parsed.stdout==f"{expected_count} {1 if spec.get('mode')=='early-oom' else 0}\n".encode(),label
+    else:
+        assert receipt["complete"] is False,label
+        if reason=="command-nonzero":assert receipt["command_exit"]==23 and receipt["stdout_eof"] and receipt["stderr_eof"],label
+        if reason=="deadline":assert receipt["elapsed_ns"]>=10**10 and receipt["stop_requested"],label
+    fake_calls=[json.loads(line) for line in calls.read_text().splitlines()]
+    child=fake_calls[-1]["pid"]
+    try:os.kill(child,0)
+    except ProcessLookupError:pass
+    else:raise AssertionError((label,"synthetic collector child remains alive or unreaped"))
+    if reason!="deadline":assert receipt["child_reaped"],label
+    return receipt,directory
+for count in (0,999,1000,1014,99999):captured("complete-"+str(count),{"count":count},expected_count=count)
+# A complete 1,000-line EOF replaces the obsolete tail-truncation rejection.
+# Incompleteness is now exercised by live pipes, missing LF, bounds and failed exit.
+captured("early-oom",{"mode":"early-oom","count":1014},expected_count=1014)
+for mode in ("early-malformed","wrong-boot","wrong-transport","missing-field","before-since","after-until"):
+    captured(mode,{"mode":mode,"count":1014},parse_result=1)
+for mode,reason in (("stderr","stderr-nonempty"),("nonzero","command-nonzero"),("eof-nonzero","command-nonzero"),("partial","partial-final-record"),("partial-json","partial-final-record"),("timeout","deadline"),("eof-timeout","deadline")):
+    captured(mode,{"mode":mode},reason)
+captured("stdout-below",{"mode":"stdout-bytes","bytes":67108863},expected_count=1024)
+for size in (67108864,67108865):
+    receipt,directory=captured("stdout-"+str(size),{"mode":"stdout-bytes","bytes":size,"hold":True},"stdout-byte-limit")
+    assert receipt["stdout_bytes"]==67108864 and receipt["stop_requested"]
+captured("line-below",{"mode":"line-bytes","bytes":1048575},expected_count=1)
+for size in (1048576,1048577):captured("line-"+str(size),{"mode":"line-bytes","bytes":size,"hold":True},"line-byte-limit")
+captured("stderr-below",{"mode":"stderr-bytes","bytes":65535},"stderr-nonempty")
+for size in (65536,65537):captured("stderr-"+str(size),{"mode":"stderr-bytes","bytes":size,"hold":True},"stderr-byte-limit")
+for count in (100000,100001):captured("records-"+str(count),{"count":count,"hold":True},"record-limit")
+# Parser-only defense still rejects bounded files independently of collection.
+for label in ("partial","partial-json","line-1048576","stdout-67108864","records-100000"):
+    command(label+"-parser-bound","parse",root/label,1)
+# Run the actual controller gate functions with synthetic host executables.
+gate_cases=[("empty",{"count":0},0,"healthy"),("999",{"count":999},0,"healthy"),("1000",{"count":1000},0,"healthy"),("1014",{"count":1014},0,"healthy"),("oom",{"mode":"early-oom","count":1014},1,"kernel-oom-observed"),("malformed",{"mode":"early-malformed","count":1014},1,"journal-range-invalid-or-oom"),("partial",{"mode":"partial"},1,"journal-range-invalid-or-oom"),("stderr",{"mode":"stderr"},1,"journal-range-invalid-or-oom"),("nonzero",{"mode":"eof-nonzero"},1,"journal-range-invalid-or-oom"),("empty-probe",{"probe":"empty"},1,"kernel-journal-unestablished"),("probe-stderr",{"probe":"stderr"},1,"kernel-journal-unestablished"),("wrong-probe-boot",{"probe":"wrong-boot"},1,"kernel-journal-unestablished")]
+for label,spec,status,reason in gate_cases:
+    directory=root/("gate-"+label);directory.mkdir(mode=0o700);data.write_text(json.dumps(spec))
+    command("gate-"+label,"gate",directory,status)
+    raw=(directory/"gates.jsonl").read_bytes();gate=json.loads(raw)
+    assert gate["reason"]==reason and gate["status"]==("PASS" if status==0 else "FAIL"),label
+    assert b"synthetic-journal-message" not in raw and b"Killed process synthetic" not in raw,label
+    assert not list((directory/"private").glob("build-layout-gate.*")),label
+    if status==0 or reason=="kernel-oom-observed":
+        capture=gate["journal"]["range"]["capture"]
+        assert capture["complete"] and capture["child_reaped"] and capture["limits"]==limits,label
+        assert gate["journal"]["count"]==spec["count"] and gate["journal"]["oom_count"]==int(reason=="kernel-oom-observed"),label
+        assert capture["argv"][7]==gate["journal"]["since"] and capture["argv"][9]==gate["journal"]["until"],label
+        for stream in ("stdout","stderr"):assert gate["journal"]["range"][stream+"_sha256"]==capture[stream+"_sha256"],label
+directory=root/"prior";directory.mkdir(mode=0o700);before=calls.read_bytes()
+command("previous-exit","prior",directory,1)
+gate=json.loads((directory/"gates.jsonl").read_text());assert gate["previous_exit"]==37 and gate["reason"]=="previous-step-failed" and calls.read_bytes()==before
+print(f"Complete journal PASS: {len(results)} focused invocations; real collector/parser/controller; fixed limits, EOF/exit, early OOM, child reaping and private cleanup")
+PY
+)
+
 self_research_exception() (
   local root=$1
   mkdir -p -m 0700 -- "$root/bin" "$root/proc/sys/kernel/random"
@@ -1991,7 +2169,7 @@ elif name=="systemctl":
     for k,v in unit.items():print(k+"="+v)
 elif name=="journalctl":
     probe=args==["-k","-b","--no-pager","-o","json","-n","1"]
-    assert probe or (len(args)==11 and args[:5]==["-k","-b","--no-pager","-o","json"] and args[5]=="--since" and args[7]=="--until" and args[9:]==["-n","1000"])
+    assert probe or (len(args)==10 and args[:5]==["-k","-b","--no-pager","-o","json"] and args[5]=="--since" and args[7]=="--until" and args[9:]==["--no-tail"])
     mode=s.get("journal","")
     if mode=="denied":print("synthetic permission failure",file=sys.stderr);sys.exit(1)
     if mode=="empty-probe" and probe:sys.exit(0)
@@ -2157,6 +2335,7 @@ self_test() {
   mkdir -p -m 0700 -- "$FAKE_DOCKER_ROOT" "$root/runs"
   create_fake_docker "$root/fake-docker"
   docker_bin="$root/fake-docker" internal_self_test=1
+  self_journal_complete "$root/journal-complete" || return 1
   self_research_exception "$root/research-exception" || return 1
   self_gate_boundaries "$root/gate"
   ( export BUILD_LAYOUT_SELF_TEST_ACTIVE=1 LAYOUT_GATE_TEST_SEAM=build-layout-self-test LAYOUT_GATE_MODE=fake LAYOUT_FAKE_GATE_RESULT=pass LAYOUT_GATE_PROC_ROOT=/forbidden LAYOUT_GATE_DOCKER_BIN=/forbidden; sanitize_actual_environment; [ -z "${BUILD_LAYOUT_SELF_TEST_ACTIVE-}${LAYOUT_GATE_TEST_SEAM-}${LAYOUT_GATE_MODE-}${LAYOUT_FAKE_GATE_RESULT-}${LAYOUT_GATE_PROC_ROOT-}${LAYOUT_GATE_DOCKER_BIN-}" ] ) || return 1

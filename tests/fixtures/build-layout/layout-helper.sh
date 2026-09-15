@@ -792,17 +792,23 @@ gate_record() {
   PROBE_JSTATUS="${LAYOUT_GATE_JOURNAL_STATUS:-unknown}" PROBE_JCOUNT="${LAYOUT_GATE_JOURNAL_COUNT:-unknown}" PROBE_JOOM="${LAYOUT_GATE_JOURNAL_OOM:-unknown}" \
   PROBE_JPROBE_EXIT="${LAYOUT_GATE_PROBE_EXIT:-unknown}" PROBE_JPROBE_OUT="${LAYOUT_GATE_PROBE_STDOUT_SHA:-unknown}" PROBE_JPROBE_ERR="${LAYOUT_GATE_PROBE_STDERR_SHA:-unknown}" \
   PROBE_JRANGE_EXIT="${LAYOUT_GATE_RANGE_EXIT:-unknown}" PROBE_JRANGE_OUT="${LAYOUT_GATE_RANGE_STDOUT_SHA:-unknown}" PROBE_JRANGE_ERR="${LAYOUT_GATE_RANGE_STDERR_SHA:-unknown}" \
+  PROBE_JCAPTURE="${LAYOUT_GATE_RANGE_CAPTURE:-null}" \
   PROBE_JBOOT="${LAYOUT_JOURNAL_BOOT_ID:-unknown}" PROBE_JSINCE_US="${LAYOUT_JOURNAL_SINCE_US:-unknown}" PROBE_JSINCE="${LAYOUT_JOURNAL_SINCE:-unknown}" PROBE_JUNTIL="${LAYOUT_GATE_JOURNAL_UNTIL:-unknown}" PROBE_EVIDENCE="$evidence" python3 - <<'PY' >>"$path"
 import json, os, time
 evidence = json.loads(os.environ["PROBE_EVIDENCE"])
 if not isinstance(evidence, dict): raise SystemExit("gate-evidence-invalid")
 bound=json.loads(os.environ["PROBE_RESEARCH"])
+capture=json.loads(os.environ["PROBE_JCAPTURE"])
+if capture is not None and not isinstance(capture, dict): raise SystemExit("gate-capture-invalid")
 if bound is not None:
     evidence["research_exception"]={k:bound[k] for k in ("path","sha256","fields")}
 def integer_or_text(name):
     value=os.environ[name]
     return int(value) if value.isdigit() else value
 value = {"case": os.environ["PROBE_CASE"], "evidence": evidence, "journal": {"boot_id":os.environ["PROBE_JBOOT"],"count": integer_or_text("PROBE_JCOUNT"),"oom_count":integer_or_text("PROBE_JOOM"),"probe":{"exit":integer_or_text("PROBE_JPROBE_EXIT"),"stderr_sha256":os.environ["PROBE_JPROBE_ERR"],"stdout_sha256":os.environ["PROBE_JPROBE_OUT"]},"range":{"exit":integer_or_text("PROBE_JRANGE_EXIT"),"stderr_sha256":os.environ["PROBE_JRANGE_ERR"],"stdout_sha256":os.environ["PROBE_JRANGE_OUT"]},"since": os.environ["PROBE_JSINCE"],"since_us":integer_or_text("PROBE_JSINCE_US"),"status": os.environ["PROBE_JSTATUS"],"until": os.environ["PROBE_JUNTIL"]}, "mem_available_kib": integer_or_text("PROBE_MEM"), "phase": os.environ["PROBE_PHASE"], "previous_exit": int(os.environ["PROBE_PREVIOUS"]), "reason": os.environ["PROBE_REASON"], "status": os.environ["PROBE_STATUS"], "swap_free_kib": integer_or_text("PROBE_SWAP"), "time_unix": time.time()}
+value["journal"]["range"]["capture"] = capture
+if capture is not None:
+    value["journal"]["range"]["exit"] = capture["command_exit"] if capture["command_exit"] is not None else "unknown"
 print(json.dumps(value, sort_keys=True, separators=(",", ":")))
 PY
 }
@@ -837,10 +843,141 @@ print(norm(value["_BOOT_ID"]))
 PY
 }
 
+# The command and limits are internal constants. Only gate_command's existing
+# private self-test seam can select a synthetic executable; there is no new CLI.
+gate_collect_range() {
+  local journal_bin=${1:?journal command} output=${2:?output} errors=${3:?errors} receipt=${4:?receipt} since=${5:?since} until=${6:?until}
+  LC_ALL=C python3 - "$journal_bin" "$output" "$errors" "$receipt" "$since" "$until" <<'PY'
+import hashlib, json, os, selectors, subprocess, sys, time
+command, output, errors, receipt, since, until = sys.argv[1:]
+argv = [command, "-k", "-b", "--no-pager", "-o", "json", "--since", since, "--until", until, "--no-tail"]
+limits = {"deadline_ms": 10000, "stdout_bytes": 64 * 1024 * 1024,
+          "stderr_bytes": 64 * 1024, "line_bytes": 1024 * 1024, "records": 100000}
+started = time.monotonic_ns(); deadline = started + limits["deadline_ms"] * 1000000
+result = {"format": "lagrange-journal-complete-capture-v1", "argv": argv, "lc_all": "C",
+          "limits": limits, "bounds_exclusive": True, "complete": False,
+          "stdout_eof": False, "stderr_eof": False, "command_exit": None,
+          "child_reaped": False, "stop_requested": False, "failure": None,
+          "stdout_bytes": 0, "stderr_bytes": 0, "line_count": 0,
+          "record_count": 0, "max_line_bytes": 0, "partial_final_line_bytes": 0}
+hashes = {name: hashlib.sha256() for name in ("stdout", "stderr")}
+child = None; files = {}; selector = selectors.DefaultSelector()
+line_bytes = 0; line_nonblank = False
+
+class CaptureFailure(Exception):
+    pass
+
+def remaining():
+    return max(0, (deadline - time.monotonic_ns()) / 1000000000)
+
+def check_deadline():
+    if time.monotonic_ns() >= deadline:
+        raise CaptureFailure("deadline")
+
+def count_lines(data):
+    global line_bytes, line_nonblank
+    parts = data.split(b"\n")
+    for index, part in enumerate(parts):
+        ended = index < len(parts) - 1
+        line_bytes += len(part) + int(ended)
+        line_nonblank = line_nonblank or bool(part.strip())
+        result["max_line_bytes"] = max(result["max_line_bytes"], line_bytes)
+        result["partial_final_line_bytes"] = line_bytes
+        if line_bytes >= limits["line_bytes"]:
+            raise CaptureFailure("line-byte-limit")
+        if ended:
+            result["line_count"] += 1
+            result["record_count"] += int(line_nonblank)
+            if result["record_count"] >= limits["records"]:
+                raise CaptureFailure("record-limit")
+            line_bytes = 0; line_nonblank = False
+            result["partial_final_line_bytes"] = 0
+
+try:
+    files = {"stdout": open(output, "wb", buffering=0), "stderr": open(errors, "wb", buffering=0)}
+    child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, env={**os.environ, "LC_ALL": "C"})
+    for name, stream in (("stdout", child.stdout), ("stderr", child.stderr)):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, name)
+    while selector.get_map():
+        check_deadline()
+        events = selector.select(remaining())
+        check_deadline()
+        for key, unused in events:
+            name = key.data
+            allowance = limits[name + "_bytes"] - result[name + "_bytes"]
+            data = os.read(key.fd, min(32768, allowance))
+            if not data:
+                result[name + "_eof"] = True
+                selector.unregister(key.fileobj)
+                key.fileobj.close()
+                continue
+            files[name].write(data)
+            hashes[name].update(data)
+            result[name + "_bytes"] += len(data)
+            if result[name + "_bytes"] >= limits[name + "_bytes"]:
+                raise CaptureFailure(name + "-byte-limit")
+            if name == "stdout":
+                count_lines(data)
+            check_deadline()
+    child.wait(timeout=remaining())
+    check_deadline()
+    if child.returncode != 0:
+        raise CaptureFailure("command-nonzero")
+    if result["stderr_bytes"]:
+        raise CaptureFailure("stderr-nonempty")
+    if line_bytes:
+        raise CaptureFailure("partial-final-record")
+    result["complete"] = True
+except CaptureFailure as error:
+    result["failure"] = str(error)
+except subprocess.TimeoutExpired:
+    result["failure"] = "deadline"
+except (OSError, ValueError):
+    result["failure"] = "capture-io-or-spawn"
+finally:
+    if child is not None:
+        if child.poll() is None:
+            result["stop_requested"] = True
+            try:
+                child.kill()  # Only this Popen child, never a process group/service.
+                # Reaping uses the same absolute deadline, with no extra grace
+                # budget. At expiry yield once, then make a nonblocking reap.
+                if remaining():
+                    child.wait(timeout=remaining())
+                else:
+                    time.sleep(0)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        for stream in (child.stdout, child.stderr):
+            stream.close()
+    selector.close()
+    for handle in files.values():
+        handle.close()
+    if child is not None:
+        result["command_exit"] = child.poll()
+        result["child_reaped"] = child.returncode is not None
+    result["elapsed_ns"] = time.monotonic_ns() - started
+    for name in hashes:
+        result[name + "_sha256"] = hashes[name].hexdigest()
+    result["hash_scope"] = "complete-streams" if result["stdout_eof"] and result["stderr_eof"] else "captured-prefixes"
+    if not result["child_reaped"]:
+        result["complete"] = False
+        result["failure"] = result["failure"] or "termination-unproven"
+    if result["elapsed_ns"] >= limits["deadline_ms"] * 1000000:
+        result["complete"] = False
+        result["failure"] = result["failure"] or "deadline"
+    with open(receipt, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+sys.exit(0 if result["complete"] else 1)
+PY
+}
+
 gate_parse_range() {
   local output=${1:?output} boot=${2:?boot} since_us=${3:?since} until_us=${4:?until}
   python3 - "$output" "$boot" "$since_us" "$until_us" <<'PY'
-import json, re, sys
+import json, os, re, sys
 path, expected, since, until = sys.argv[1:]
 since, until = int(since), int(until)
 def norm(value):
@@ -849,19 +986,29 @@ def norm(value):
     if not re.fullmatch(r"[0-9a-f]{32}", value): raise ValueError("boot-id")
     return value
 expected = norm(expected); count = 0; oom = 0
-for raw in open(path, encoding="utf-8"):
-    if not raw.strip(): continue
-    value = json.loads(raw)
-    required = ("__REALTIME_TIMESTAMP", "__CURSOR", "_BOOT_ID", "_TRANSPORT", "MESSAGE")
-    if not isinstance(value, dict) or any(key not in value for key in required): raise SystemExit("range-fields")
-    if value["_TRANSPORT"] != "kernel" or not isinstance(value["MESSAGE"], str) or not isinstance(value["__CURSOR"], str): raise SystemExit("range-contract")
-    if not isinstance(value["__REALTIME_TIMESTAMP"], str) or not re.fullmatch(r"[0-9]+", value["__REALTIME_TIMESTAMP"]): raise SystemExit("range-timestamp")
-    timestamp = int(value["__REALTIME_TIMESTAMP"])
-    if timestamp < since or timestamp > until: raise SystemExit("range-outside-window")
-    if norm(value["_BOOT_ID"]) != expected: raise SystemExit("range-boot")
-    if re.search(r"out of memory|oom[-_ ]?kill|killed process", value["MESSAGE"], re.I): oom += 1
-    count += 1
-if count >= 1000: raise SystemExit("range-truncated")
+try:
+    if os.path.getsize(path) >= 64 * 1024 * 1024: raise SystemExit("range-byte-limit")
+    with open(path, "rb") as handle:
+        while True:
+            raw = handle.readline(1024 * 1024)
+            if not raw: break
+            if len(raw) >= 1024 * 1024: raise SystemExit("range-line-limit")
+            if not raw.endswith(b"\n"): raise SystemExit("range-partial-final-record")
+            raw = raw.decode("utf-8")
+            if not raw.strip(): continue
+            value = json.loads(raw)
+            required = ("__REALTIME_TIMESTAMP", "__CURSOR", "_BOOT_ID", "_TRANSPORT", "MESSAGE")
+            if not isinstance(value, dict) or any(key not in value for key in required): raise SystemExit("range-fields")
+            if value["_TRANSPORT"] != "kernel" or not isinstance(value["MESSAGE"], str) or not isinstance(value["__CURSOR"], str): raise SystemExit("range-contract")
+            if not isinstance(value["__REALTIME_TIMESTAMP"], str) or not re.fullmatch(r"[0-9]+", value["__REALTIME_TIMESTAMP"]): raise SystemExit("range-timestamp")
+            timestamp = int(value["__REALTIME_TIMESTAMP"])
+            if timestamp < since or timestamp > until: raise SystemExit("range-outside-window")
+            if norm(value["_BOOT_ID"]) != expected: raise SystemExit("range-boot")
+            if re.search(r"out of memory|oom[-_ ]?kill|killed process", value["MESSAGE"], re.I): oom += 1
+            count += 1
+            if count >= 100000: raise SystemExit("range-record-limit")
+except (OSError, ValueError, UnicodeError, RecursionError):
+    raise SystemExit("range-json-invalid")
 print(f"{count} {oom}")
 PY
 }
@@ -980,6 +1127,7 @@ gate_fake() {
   LAYOUT_GATE_MEM=8388608 LAYOUT_GATE_SWAP=1048576 LAYOUT_GATE_JOURNAL_STATUS=PASS LAYOUT_GATE_JOURNAL_COUNT=0 LAYOUT_GATE_JOURNAL_OOM=0
   LAYOUT_GATE_PROBE_EXIT=0 LAYOUT_GATE_PROBE_STDOUT_SHA=fake-probe-stdout LAYOUT_GATE_PROBE_STDERR_SHA=fake-probe-stderr
   LAYOUT_GATE_RANGE_EXIT=0 LAYOUT_GATE_RANGE_STDOUT_SHA=fake-range-stdout LAYOUT_GATE_RANGE_STDERR_SHA=fake-range-stderr LAYOUT_GATE_JOURNAL_UNTIL=1970-01-01T00:00:00Z
+  LAYOUT_GATE_RANGE_CAPTURE=null
   : "${LAYOUT_JOURNAL_SINCE_US:=0}" "${LAYOUT_JOURNAL_SINCE:=1970-01-01 00:00:00 UTC}" "${LAYOUT_JOURNAL_BOOT_ID:=00000000000000000000000000000000}"
   case ${LAYOUT_FAKE_GATE_RESULT:-pass} in
     pass) gate_record "$case_id" "$phase" "$previous" PASS fake-pass '{}' ;;
@@ -1011,6 +1159,7 @@ gate_real() {
   LAYOUT_GATE_MEM=unknown LAYOUT_GATE_SWAP=unknown LAYOUT_GATE_JOURNAL_STATUS=unknown LAYOUT_GATE_JOURNAL_COUNT=unknown LAYOUT_GATE_JOURNAL_OOM=unknown
   LAYOUT_GATE_PROBE_EXIT=unknown LAYOUT_GATE_PROBE_STDOUT_SHA=unknown LAYOUT_GATE_PROBE_STDERR_SHA=unknown
   LAYOUT_GATE_RANGE_EXIT=unknown LAYOUT_GATE_RANGE_STDOUT_SHA=unknown LAYOUT_GATE_RANGE_STDERR_SHA=unknown LAYOUT_GATE_JOURNAL_UNTIL=unknown
+  LAYOUT_GATE_RANGE_CAPTURE=null
   [ "$previous" -eq 0 ] || { gate_fail "$case_id" "$phase" "$previous" previous-step-failed '{}'; return 1; }
   gate_validate_list "${BUILD_LAYOUT_HEALTH_UNITS-}" unit || { gate_fail "$case_id" "$phase" "$previous" invalid-health-units '{}'; return 1; }
   gate_validate_list "${BUILD_LAYOUT_HEALTH_CONTAINERS-}" container || { gate_fail "$case_id" "$phase" "$previous" invalid-health-containers '{}'; return 1; }
@@ -1070,10 +1219,13 @@ gate_real() {
   fi
   until_text=$(date -u -d "@$((until_us / 1000000))" '+%Y-%m-%d %H:%M:%S UTC') || { rm -rf -- "$temp"; gate_fail "$case_id" "$phase" "$previous" time-unreadable '{}'; return 1; }
   range_status=0
-  LC_ALL=C timeout 10s "$journal_bin" -k -b --no-pager -o json --since "$LAYOUT_JOURNAL_SINCE" --until "$until_text" -n 1000 >"$temp/range.out" 2>"$temp/range.err" || range_status=$?
+  gate_collect_range "$journal_bin" "$temp/range.out" "$temp/range.err" "$temp/range.capture.json" "$LAYOUT_JOURNAL_SINCE" "$until_text" || range_status=$?
+  if [ ! -f "$temp/range.capture.json" ] || ! LAYOUT_GATE_RANGE_CAPTURE=$(cat "$temp/range.capture.json"); then
+    rm -rf -- "$temp"; gate_fail "$case_id" "$phase" "$previous" journal-range-unestablished '{}'; return 1
+  fi
   range_out_hash=$(sha256_file "$temp/range.out") || { rm -rf -- "$temp"; return 1; }
   range_err_hash=$(sha256_file "$temp/range.err") || { rm -rf -- "$temp"; return 1; }
-  LAYOUT_GATE_RANGE_EXIT=$range_status LAYOUT_GATE_RANGE_STDOUT_SHA=$range_out_hash LAYOUT_GATE_RANGE_STDERR_SHA=$range_err_hash LAYOUT_GATE_JOURNAL_UNTIL=$until_text
+  LAYOUT_GATE_RANGE_STDOUT_SHA=$range_out_hash LAYOUT_GATE_RANGE_STDERR_SHA=$range_err_hash LAYOUT_GATE_JOURNAL_UNTIL=$until_text
   if [ "$range_status" -ne 0 ] || [ -s "$temp/range.err" ] || ! range_result=$(gate_parse_range "$temp/range.out" "$boot" "$since_us" "$until_us"); then
     LAYOUT_GATE_JOURNAL_STATUS=FAIL LAYOUT_GATE_JOURNAL_COUNT=unknown
     evidence=$(gate_evidence_json "$units_lines" "$containers_lines" "$ps_status" "$ps_out_hash" "$ps_err_hash"); rm -rf -- "$temp"

@@ -401,3 +401,164 @@ cache/route/runtime behavior, host health or release/performance acceptance.
 Corrected real layout remains **NOT_RETESTED**, with the actual rerun reserved
 to the coordinator's existing build slot after a new clean commit. Other
 unresolved/follow-up/unverified items: **없음**.
+
+## 2026-09-15 complete journal range correction
+
+Starting checkpoint: clean `f34bdf74107ebfe15bc4781c372f1cd813e842e5`.
+This implements the committed
+[complete kernel journal capture amendment](../superpowers/plans/2026-09-15-production-build-resume.md#complete-kernel-journal-capture).
+**Offline correction and full self-test: PASS. Actual full-range host proof:
+NOT_RUN. Layout G2: NOT_PASSED.** The coordinator retains the actual build slot.
+
+### Retained observation and exact scope
+
+The coordinator supplied a second actual preflight failure at the old journal
+1,000-record cap, retained at
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/real-gate.vliy1a/gates.jsonl`.
+Its frozen interval was **2026-09-15 02:18:21–02:48:21 UTC**, with
+`since_us=1789438701000000`. A separate read-only diagnostic of that same interval
+with cap 10,000 returned exit 0, empty stderr and 1,014 valid-looking Docker
+veth/bridge entries with zero OOM matches. Its supplied SHA-256 is
+`79ac55041ce3fce5440b9d596be10d9cf967dbb43d8bdb60656e3025dd3727aa`.
+That diagnostic was **not a gate PASS**. These historical records, the previous
+actual smoke result, COPY diagnosis and COPY correction remain intact; none was
+rerun or modified by this worker.
+
+Only the two synthetic QA sources and this appended report section changed.
+The three accepted fixture Dockerfiles, mode-sensitive source/compile guards,
+artifact code, coordinator design/resume documents and product files are
+unchanged. No production application source, credentials or env files were read.
+
+### Collection and validation
+
+- The access probe remains exactly the existing current-boot kernel query with
+  `timeout 10s` and `-n 1`, including its existing schema/boot validation.
+  The range command uses the existing resolved journal executable and
+  `LC_ALL=C journalctl -k -b --no-pager -o json --since <fixed run since>
+  --until <frozen gate until> --no-tail`. It has no tail limit or message filter.
+- `gate_collect_range` uses `Popen`, nonblocking pipes and a selector. It writes
+  stdout/stderr to the existing private gate temporary files in chunks of at most
+  32 KiB, with incremental hashes and JSONL framing counters. It does not collect
+  an unbounded command-output buffer. Both streams must reach EOF, the child must
+  be reaped with actual exit 0, and stderr must be empty before collection passes.
+- Limits are internal constants: a single 10-second monotonic deadline, 64 MiB
+  stdout, 64 KiB stderr, 1 MiB per JSONL line including its terminating LF, and
+  fewer than 100,000 nonblank records. As explicitly required in the brief,
+  reaching a bound fails closed. There is no public mode, limit override or new
+  command-selection seam. Unterminated final records, timeout, failed exit,
+  stderr, I/O/spawn failure and unproven termination all reject the capture.
+- On a bound or timeout, only the collector's own subprocess receives SIGKILL.
+  Reaping uses any remaining portion of the same deadline; at expiry the
+  collector yields once and tries a nonblocking reap, without adding a grace
+  budget. An unproven exit remains `null` in the capture receipt and `unknown` in
+  the public range exit, with `child_reaped=false` and capture failure. The two
+  focused timeout cases exercised that failure outcome. Their synthetic PIDs
+  were gone after the caller returned; no successful termination was invented.
+  Bound failures with remaining time proved reaping and recorded actual exit -9.
+- The range parser keeps its required fields, boot/transport/time checks and
+  case-insensitive OOM expression. The obsolete `count >= 1000` rejection is
+  replaced by the 100,000-record bound. It also independently rejects byte/line
+  bounds and missing final LF, and emits fixed diagnostics for invalid JSON.
+  A successful complete empty range is still valid only after the access probe.
+  Validated record/OOM counts remain separate from collection/framing metadata.
+- Public range evidence adds exact argv/locale, limits, elapsed nanoseconds,
+  stream EOF flags, completion, actual child exit/reap state, stop/failure state,
+  captured byte counts, framing counts and hash scope. Existing stdout/stderr
+  hashes, validated count/OOM result and private-temp cleanup remain in use.
+  Raw kernel MESSAGE text is not published or retained outside the private temp.
+
+The fixed since origin and frozen until, boot continuity, service/resource and
+research-exception checks, execution lock, public CLI, failure/resume behavior,
+and helper/controller hash bindings are preserved. Old source-bound failed runs
+cannot be resumed against changed sources through the unchanged metadata checks.
+
+Changed source line spans:
+
+| Owned file | Changed lines |
+|---|---|
+| `tests/fixtures/build-layout/layout-helper.sh` | 795, 801–802, 809–811: capture evidence; 846–976: collector; 980, 989–1011: parser; 1130, 1162, 1222–1225, 1228: initialization and range integration. |
+| `scripts/qa/build-layout-probe.sh` | 1550–1552: completion assertions; 1938–2112: focused regressions; 2172: existing fake's exact range argv; 2338: full self-test integration. |
+| This report | This appended correction section only. |
+
+### Tests and retained evidence
+
+Evidence root: `/tmp/lagrange-wp3-journal-9puf3vkm`.
+Every command below ran as
+`python3 <evidence-root>/run-check.py <label> <command>`. Each label's JSON records
+actual argv/exit, exact source hashes before/after, separate stdout/stderr hashes,
+elapsed time and forbidden-command counts. Children use umask 022 and an explicit
+environment containing only the private sentinel PATH, `LC_ALL=C` and private
+TMPDIR. All 16 Docker/Cargo/host/network/provider sentinels recorded **zero calls**.
+
+| Label / exact command | Result |
+|---|---|
+| `syntax-helper` / `bash -n tests/fixtures/build-layout/layout-helper.sh` | Exit 0, PASS. |
+| `syntax-controller` / `bash -n scripts/qa/build-layout-probe.sh` | Exit 0, PASS. |
+| `plan` / `bash scripts/qa/build-layout-probe.sh --plan --layout all --case all --output-dir /tmp/lagrange-wp3-journal-9puf3vkm/plan-output` | Exit 0, PASS; no health inputs or output-directory creation. |
+| `focused-01` / `python3 /tmp/lagrange-wp3-journal-9puf3vkm/focused-loader.py focused-01` | Exit 0, PASS; 62 focused collector/parser/controller invocations in 29.737 seconds. The loader removes only the final main invocation and binds the script directory before calling the actual test function. |
+| `self-test-final` / `bash scripts/qa/build-layout-probe.sh --self-test` | **Exit 0, complete PASS**, 1,162.020 seconds (19m22s): new 62-invocation block, existing 124 research/default checks, F1–F9, original 84 ordered controller cases and post-matrix publication checks. Ran once; no full-suite repeat. |
+| `evidence-audit` / `python3 /tmp/lagrange-wp3-journal-9puf3vkm/audit.py` | Exit 0, PASS: exact source/log hashes, protected source and original tests, 84 unique ordered runs, 27 expected stops with immediate passing gates and preserved original exits, and zero sentinels. |
+
+Focused coverage includes complete 0/999/1000/1014/99999-record captures, OOM and
+malformed records earlier than the latest 1,000, wrong boot/transport/time or
+missing fields, stderr, nonzero exit, EOF before a failed exit, open-pipe and
+post-EOF timeouts, partial JSON/final LF, and below/at/above byte/line/record bounds.
+It verifies child disappearance/reaping evidence, private-temp cleanup, access
+probe failures, complete-empty gate behavior and preservation of previous exit 37.
+
+A proven complete 1,000-record interval is intentionally accepted now. The
+existing research fake changed only its exact expected range query from
+`-n 1000` to `--no-tail`; no health/failure assertions were removed. Missing EOF,
+partial final records, bound exhaustion and failed termination are the actual
+incomplete-capture regressions. The audit reconstructs the original controller
+byte-for-byte after removing the new test additions and restoring that one query
+expectation, and compares protected helper sections directly with HEAD.
+
+Baseline and final source identities. The final identities were unchanged
+before and after the successful full invocation:
+
+| Source | SHA-256 before | SHA-256 after |
+|---|---|---|
+| Controller | `f3d7072f7ada68fbf8586e78505e273ca4ed1af769a954298a5fd491e91922da` | `a5ddb9ea01f4e4b28358ac8007991c89a9a022e04235793343c8c41b3a16cfab` |
+| Helper | `d89b8e8d8647706c5639426688a364c8bfc7de4c61881f724fb47788950ed666` | `eaaa043416d7b83f7cd30895e30ef3eeb0cc8d448a0b122c34c2276b144b7e52` |
+
+- Focused stdout SHA-256: `dea4dd338f38fb997edf0dcff2ae095ce1baddb32d27830ec6f93e7b35cc469f`.
+- Full stdout SHA-256: `2f1e49dd10aac8875034829ead64a7b587e000d89b6bfa2a886d61d756321dce`.
+- Full stderr SHA-256: `21e9dfecd860c3b93bd0fb81c0c1c283f023a026e50f44b06a873ef19a81a5d3` (11 expected negative image/artifact diagnostics; retained).
+- Full invocation JSON SHA-256: `e3c3dc8f780b3964de43cd247689d8a96a128ba63a357fafdac3fa92c133e7ab`.
+- Audit JSON SHA-256: `d68d8d61036941822b416139200cb48db6aa129ed40945cc0b938cb793ee0bec`.
+
+Raw full-suite evidence is retained at
+`<evidence-root>/tmp/build-layout-self-test.sFc0RY`. The manifest hashes all
+45,084 regular files; 12 deliberate synthetic symlinks are recorded separately
+without following them. `full-evidence.SHA256SUMS` SHA-256:
+`a3509d6a5861c6510fc7d49e30154c7fe9b1e835794db0d1c13069f1e1d6c738`.
+The final three-file diff, report append-only check and before/after file hashes
+are retained in `<evidence-root>/final.diff` and `<evidence-root>/after.json`.
+
+Scope/contract deviations, unresolved implementation defects and further
+decomposition required: **없음**. No stage/commit, actual Docker/Cargo/host/network/
+provider command, service/lifecycle operation, cache removal or Basic Memory
+operation occurred. The actual full-range host proof and real layout rerun from
+a new clean commit remain coordinator follow-up: **NOT_RUN / G2 NOT_PASSED**.
+Real host health, cache/runtime behavior and release/performance acceptance were
+not verified here. Other unresolved/follow-up/unverified items: **없음**.
+
+### Coordinator acceptance and actual read-only journal proof
+
+The coordinator recovered the worker's `idle` result and independently checked
+the five command receipts, source/log hashes, all 84 ordered cases, 62 journal
+invocations and 124 exception checks. Evidence:
+`/tmp/lagrange-journal-root-acceptance.json`. No full-suite repeat was needed.
+
+The final helper SHA above also matches the helper before and after the actual
+read-only host gate recorded in
+`/tmp/lagrange-journal-complete-root-preflight.json`. Its gate evidence is
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/real-gate.CBox4Y/gates.jsonl`.
+The same formerly truncated interval passed with 1,014 validated kernel records,
+zero OOM matches, 687,850 captured bytes, both EOFs and a reaped command exit 0.
+Capture elapsed was 17.414 ms. The gate reason was
+`image-build-only-known-incident`; this is not a healthy-release claim.
+Actual complete-range host proof is therefore **PASS** for this helper.
+Actual all-layout execution and G2 remain pending; the failed `layout-02` run
+will not be resumed against changed sources.
