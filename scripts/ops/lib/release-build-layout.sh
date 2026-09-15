@@ -3441,6 +3441,65 @@ files={}
 expected={}
 directories=set()
 
+# These are the only source-payload modes changed by the frozen final-image
+# recipes.  Keep source inventory modes intact; this table describes only the
+# mode expected after the named Dockerfile instruction has run.
+runtime_mode_transforms={
+    ("db-role-bootstrap","database","deploy/db/migrate.sh","/usr/local/bin/lagrange-migrate"):0o755,
+    ("db-role-bootstrap","database","deploy/db/bootstrap-roles.sh","/usr/local/bin/lagrange-bootstrap-roles"):0o755,
+    ("db-migrate","database","deploy/db/migrate.sh","/usr/local/bin/lagrange-migrate"):0o755,
+    ("db-migrate","database","deploy/db/bootstrap-roles.sh","/usr/local/bin/lagrange-bootstrap-roles"):0o755,
+    ("paper-scheduler","paper","deploy/runtime/paper-runner-entrypoint","/usr/local/bin/paper-runner"):0o755,
+}
+runtime_mode_contracts={
+    "database":{
+        "dockerfile":"deploy/db/Dockerfile",
+        "instruction":"RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles",
+        "destinations":("/usr/local/bin/lagrange-migrate","/usr/local/bin/lagrange-bootstrap-roles"),
+    },
+    "paper":{
+        "dockerfile":"deploy/runtime/Dockerfile.paper-runner",
+        "instruction":"RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin",
+        "destinations":("/usr/local/bin/paper-runner","/usr/local/bin/paper-runner-bin"),
+    },
+}
+
+def service_runtime_group(name):
+    record=layout.get("services",{}).get(name)
+    if not isinstance(record,dict): return None
+    if record.get("kind")=="database": return "database"
+    if record.get("kind")=="rust":
+        recipe=layout.get("recipes",{}).get(record.get("recipe"))
+        if isinstance(recipe,dict): return recipe.get("runtime_payload")
+    return None
+
+for key,mode in runtime_mode_transforms.items():
+    mode_service,group,source,image=key
+    contract=runtime_mode_contracts.get(group)
+    declared=layout.get("runtime_payloads",{}).get(group)
+    if (mode!=0o755 or contract is None or image not in contract["destinations"] or
+            service_runtime_group(mode_service)!=group or not isinstance(declared,list) or
+            {"source":source,"image":image} not in declared):
+        raise SystemExit("product-image-mode-contract-drift")
+for group,contract in runtime_mode_contracts.items():
+    dockerfile=source_path(contract["dockerfile"])
+    try: info=os.lstat(dockerfile)
+    except FileNotFoundError: raise SystemExit("product-image-mode-contract-drift")
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or
+            os.path.realpath(dockerfile)!=dockerfile):
+        raise SystemExit("product-image-mode-contract-drift")
+    try:
+        with open(dockerfile,encoding="utf-8",newline="") as handle: lines=handle.read().split("\n")
+    except UnicodeError: raise SystemExit("product-image-mode-contract-drift")
+    instruction=contract["instruction"]
+    related=[line for line in lines if ("chmod" in line or "--chmod" in line) and
+             any(destination in line for destination in contract["destinations"])]
+    if lines.count(instruction)!=1 or related!=[instruction]:
+        raise SystemExit("product-image-mode-contract-drift")
+
+def runtime_image_mode(group,source,image,source_mode):
+    return runtime_mode_transforms.get((service,group,source,image),source_mode)
+
 def add_file(image, digest, executable, elf, patterns, mode):
     image=canonical_image(image)
     item={"path":image,"sha256":digest,"executable":bool(executable),"elf":bool(elf),"contains_hex":sorted(patterns)}
@@ -3465,7 +3524,7 @@ def selected_source(entry):
     else: raise SystemExit("product-source-kind-invalid")
     return path,info
 
-def add_source_entry(payload):
+def add_source_entry(group,payload):
     if not isinstance(payload,dict) or set(payload)!={"entries","image","source","tree_sha256"}:
         raise SystemExit("product-runtime-payload-invalid")
     source=source_rel(payload["source"])
@@ -3478,8 +3537,10 @@ def add_source_entry(payload):
     if root_entry.get("kind")=="file":
         if len(entries)!=1: raise SystemExit("product-runtime-file-payload-invalid")
         path,info=selected_source(root_entry)
-        add_file("/"+image,root_entry["sha256"],bool(stat.S_IMODE(info.st_mode)&0o111),
-                 is_elf(path),[],stat.S_IMODE(info.st_mode))
+        source_mode=stat.S_IMODE(info.st_mode)
+        image_mode=runtime_image_mode(group,root_entry["path"],"/"+image,source_mode)
+        add_file("/"+image,root_entry["sha256"],bool(image_mode&0o111),
+                 is_elf(path),[],image_mode)
         return
     if root_entry.get("kind")!="directory": raise SystemExit("product-runtime-directory-payload-invalid")
     directories.add(image)
@@ -3489,8 +3550,11 @@ def add_source_entry(payload):
         relative=posixpath.relpath(entry["path"],source)
         if relative=="." or relative.startswith("../"):
             raise SystemExit("product-runtime-entry-outside-payload")
-        add_file("/"+image+"/"+relative,entry["sha256"],bool(stat.S_IMODE(info.st_mode)&0o111),
-                 is_elf(path),[],stat.S_IMODE(info.st_mode))
+        source_mode=stat.S_IMODE(info.st_mode)
+        image_path="/"+image+"/"+relative
+        image_mode=runtime_image_mode(group,entry["path"],image_path,source_mode)
+        add_file(image_path,entry["sha256"],bool(image_mode&0o111),
+                 is_elf(path),[],image_mode)
 
 def add_payloads(name):
     values=runtime_inventory.get("payload_groups",{}).get(name)
@@ -3500,7 +3564,7 @@ def add_payloads(name):
     if ([{"source":item.get("source"),"image":item.get("image")} for item in values]
             != declared):
         raise SystemExit("product-runtime-payload-declaration-mismatch")
-    for item in values: add_source_entry(item)
+    for item in values: add_source_entry(name,item)
 
 record=layout["services"].get(service)
 if record is None: raise SystemExit("product-service-unknown")

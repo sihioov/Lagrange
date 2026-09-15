@@ -1082,12 +1082,21 @@ for rel in (
     ".gitignore",
     "deploy/build/Dockerfile.rust-artifacts",
     "deploy/build/release-build-layout.json",
+    "deploy/db/Dockerfile",
     "scripts/ops/build-production-images.sh",
     "scripts/ops/lib/release-image-manifest.sh",
     "scripts/ops/lib/release-build-layout.sh",
 ):
     copy_rel(rel)
 PY
+# Model this host's clean executable source modes explicitly inside the
+# private fixture.  The final image recipe independently normalizes only the
+# three wrapper destinations below to 0755; source inventory must retain 0775.
+chmod 0775 -- "$repo_dir/deploy/db/migrate.sh" \
+  "$repo_dir/deploy/db/bootstrap-roles.sh" \
+  "$repo_dir/deploy/runtime/paper-runner-entrypoint" \
+  "$repo_dir/nt/backtest-worker/runtime/backtest-worker-entrypoint"
+chmod 0664 -- "$repo_dir/migrations/0001_identity.down.sql"
 chmod 0755 "$helper" "$layout_helper"
 printf 'services: {}\n' >"$compose_file"
 printf 'COMPOSE_TEST=1\n' >"$env_file"
@@ -1133,6 +1142,14 @@ images = Path(os.environ["IMAGE_BUILD_FAKE_IMAGES"]).resolve()
 images.mkdir(mode=0o700, parents=True, exist_ok=True)
 log_path = Path(os.environ["IMAGE_BUILD_DOCKER_LOG"])
 commit = os.environ.get("LAGRANGE_CODE_COMMIT", "missing")
+
+# Model the Dockerfiles directly, independently of product expectations.
+# These destination modes must not be inferred from generated request JSON.
+runtime_image_modes = {
+    "usr/local/bin/lagrange-migrate": 0o755,
+    "usr/local/bin/lagrange-bootstrap-roles": 0o755,
+    "usr/local/bin/paper-runner": 0o755,
+}
 
 def log(detail):
     with log_path.open("a", encoding="utf-8", newline="\n") as handle:
@@ -1346,6 +1363,17 @@ def write_archive(service, source_commit):
         entries["app/apps/web/.next/static/fixture"] = (b"fixture\n", 0o644)
     else:
         raise SystemExit("fake-docker-service-kind-invalid")
+    for path, mode in runtime_image_modes.items():
+        if path in entries:
+            entries[path] = (entries[path][0], mode)
+    drift_service = os.environ.get("IMAGE_BUILD_FAKE_MODE_DRIFT_SERVICE", "")
+    if drift_service == service:
+        drift_path = os.environ.get("IMAGE_BUILD_FAKE_MODE_DRIFT_PATH", "")
+        drift_mode = os.environ.get("IMAGE_BUILD_FAKE_MODE_DRIFT_MODE", "")
+        if drift_path not in runtime_image_modes or drift_path not in entries or drift_mode != "0775":
+            raise SystemExit("fake-docker-runtime-mode-drift-invalid")
+        entries[drift_path] = (entries[drift_path][0], int(drift_mode, 8))
+        log(f"runtime-mode-drift service={service} path={drift_path} mode={drift_mode}")
     directories = {""}
     for name in entries:
         parent = name.rsplit("/", 1)[0] if "/" in name else ""
@@ -1630,6 +1658,54 @@ grep -Fq 'manifest-file must not traverse a symlink' "$out_dir/symlink-parent.ou
 [ ! -s "$docker_log" ]
 
 before_env=$(sha256sum "$env_file")
+
+# Each negative uses a fresh state root.  The fake image applies an explicit
+# 0775 drift independently of the real expectation generator, so the real
+# request -> archive scanner -> final product validator path must reject an
+# executable-but-inexact wrapper mode without leaving a release manifest.
+expect_runtime_mode_reject() {
+  local label=$1 target_service=$2 target_path=$3
+  local case_dir=$out_dir/mode-$label
+  local case_state=$case_dir/.lagrange-build-state/$commit
+  local case_manifest=$case_dir/production-images.manifest
+  mkdir -m 0700 -- "$case_dir"
+  : >"$docker_log"
+  if IMAGE_BUILD_FAKE_MODE_DRIFT_SERVICE="$target_service" \
+    IMAGE_BUILD_FAKE_MODE_DRIFT_PATH="$target_path" \
+    IMAGE_BUILD_FAKE_MODE_DRIFT_MODE=0775 \
+    IMAGE_BUILD_FAIL_SERVICE= COMPOSE_PARALLEL_LIMIT=37 \
+    bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
+    --manifest-file "$case_manifest" >"$case_dir/apply.out" 2>&1; then
+    echo "self-test: inexact final wrapper mode unexpectedly passed: $label" >&2
+    exit 1
+  fi
+  grep -Fxq 'product-file-mode-invalid' "$case_dir/apply.out"
+  [ ! -e "$case_manifest" ] && [ ! -L "$case_manifest" ]
+  grep -Fq "runtime-mode-drift service=$target_service path=$target_path mode=0775" "$docker_log"
+  python3 - "$case_state/verification/$target_service-request.json" \
+    "$case_state/verification/$target_service-expectations.json" \
+    "$case_state/verification/$target_service.json" "$target_path" <<'PY'
+import json, pathlib, sys
+request_path, expected_path, result_path, target = sys.argv[1:]
+request = json.loads(pathlib.Path(request_path).read_text(encoding="utf-8"))
+expected = json.loads(pathlib.Path(expected_path).read_text(encoding="utf-8"))
+result = json.loads(pathlib.Path(result_path).read_text(encoding="utf-8"))
+selected = {item["path"]: item for item in request["files"]}
+assert selected[target]["executable"] is True
+assert expected["files"][target]["mode"] == "0755"
+assert result["files"][target]["mode"] == "0775"
+PY
+  cp -- "$docker_log" "$case_dir/docker.log"
+  chmod 0600 -- "$case_dir/docker.log"
+}
+
+expect_runtime_mode_reject db-role-bootstrap db-role-bootstrap \
+  usr/local/bin/lagrange-bootstrap-roles
+expect_runtime_mode_reject db-migrate db-migrate usr/local/bin/lagrange-migrate
+expect_runtime_mode_reject paper-wrapper paper-scheduler usr/local/bin/paper-runner
+[ "$before_env" = "$(sha256sum "$env_file")" ]
+: >"$docker_log"
+
 # Product init owns creation of the fresh official state parent.  Keeping it
 # absent here ensures the fixture cannot hide a state-initialization defect.
 [ ! -e "$out_dir/.lagrange-build-state" ]
@@ -1742,25 +1818,130 @@ PY
 runtime_inventory_file=$out_dir/runtime-payload-inventory.json
 bash -c '. "$1"; rbl_runtime_payload_inventory "$2" "$3"' \
   fixture "$layout_helper" "$repo_dir" "$layout_config" >"$runtime_inventory_file"
-python3 - "$runtime_inventory_file" "$out_dir/.lagrange-build-state/$commit/verification" <<'PY'
+python3 - "$runtime_inventory_file" "$layout_config" \
+  "$out_dir/.lagrange-build-state/$commit/verification" <<'PY'
 import json, pathlib, sys
 inventory=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-verification=pathlib.Path(sys.argv[2])
-payload=inventory["payload_groups"]["backtest"][0]
-source=payload["source"]
-image=payload["image"].lstrip("/")
-expected=[]
-for entry in payload["entries"]:
-    if entry["kind"]!="file": continue
-    relative=entry["path"][len(source)+1:]
-    expected.append(image+"/"+relative)
-for service in ("recommendation-runner","candidate-runner","nt-backtest-worker-1","nt-backtest-worker-2"):
-    request=json.loads((verification/f"{service}-request.json").read_text(encoding="utf-8"))
-    observed=sorted(item["path"] for item in request["files"] if item["path"].startswith(image+"/"))
-    assert observed==sorted(expected)
-    assert image in request["nonempty_directories"]
-    assert not any(".venv" in path or "__pycache__" in path or path.endswith((".pyc",".pyo",".pyd")) for path in observed)
+layout=json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+verification=pathlib.Path(sys.argv[3])
+transforms={
+    ("db-role-bootstrap","database","deploy/db/migrate.sh","usr/local/bin/lagrange-migrate"),
+    ("db-role-bootstrap","database","deploy/db/bootstrap-roles.sh","usr/local/bin/lagrange-bootstrap-roles"),
+    ("db-migrate","database","deploy/db/migrate.sh","usr/local/bin/lagrange-migrate"),
+    ("db-migrate","database","deploy/db/bootstrap-roles.sh","usr/local/bin/lagrange-bootstrap-roles"),
+    ("paper-scheduler","paper","deploy/runtime/paper-runner-entrypoint","usr/local/bin/paper-runner"),
+}
+
+def service_group(service):
+    record=layout["services"][service]
+    if record["kind"]=="database": return "database"
+    if record["kind"]=="rust": return layout["recipes"][record["recipe"]].get("runtime_payload")
+    return None
+
+def load(service,suffix):
+    return json.loads((verification/f"{service}-{suffix}.json").read_text(encoding="utf-8"))
+
+observed_transforms=set()
+for service in sorted(layout["services"]):
+    group=service_group(service)
+    if group is None: continue
+    request=load(service,"request")
+    expected=load(service,"expectations")
+    result=json.loads((verification/f"{service}.json").read_text(encoding="utf-8"))
+    selected={item["path"]:item for item in request["files"]}
+    for payload in inventory["payload_groups"][group]:
+        source=payload["source"]
+        image=payload["image"].lstrip("/")
+        root=next(item for item in payload["entries"] if item["path"]==source)
+        if root["kind"]=="directory":
+            assert image in request["nonempty_directories"]
+        for entry in payload["entries"]:
+            if entry["kind"]!="file": continue
+            if root["kind"]=="file":
+                assert entry["path"]==source
+                image_path=image
+            else:
+                prefix=source+"/"
+                assert entry["path"].startswith(prefix)
+                image_path=image+"/"+entry["path"][len(prefix):]
+            key=(service,group,entry["path"],image_path)
+            final_mode="0755" if key in transforms else entry["mode"]
+            if final_mode!=entry["mode"]: observed_transforms.add(key)
+            assert selected[image_path]["sha256"]==entry["sha256"]
+            assert selected[image_path]["executable"] is bool(int(final_mode,8)&0o111)
+            assert expected["files"][image_path]=={"mode":final_mode,"sha256":entry["sha256"]}
+            assert result["files"][image_path]["mode"]==final_mode
+            assert result["files"][image_path]["sha256"]==entry["sha256"]
+            assert ".venv" not in image_path and "__pycache__" not in image_path
+            assert not image_path.endswith((".pyc",".pyo",".pyd"))
+assert observed_transforms==transforms
+
+def source_mode(group,source,path):
+    payload=next(item for item in inventory["payload_groups"][group] if item["source"]==source)
+    return next(item["mode"] for item in payload["entries"] if item["path"]==path)
+
+assert source_mode("database","deploy/db/migrate.sh","deploy/db/migrate.sh")=="0775"
+assert source_mode("database","deploy/db/bootstrap-roles.sh","deploy/db/bootstrap-roles.sh")=="0775"
+assert source_mode("paper","deploy/runtime/paper-runner-entrypoint","deploy/runtime/paper-runner-entrypoint")=="0775"
+assert source_mode("database","migrations","migrations/0001_identity.down.sql")=="0664"
+assert source_mode("backtest","nt","nt/backtest-worker/runtime/backtest-worker-entrypoint")=="0775"
+
+paper_request=load("paper-scheduler","request")
+paper_expected=load("paper-scheduler","expectations")
+paper_result=json.loads((verification/"paper-scheduler.json").read_text(encoding="utf-8"))
+paper_selected={item["path"]:item for item in paper_request["files"]}
+assert paper_selected["usr/local/bin/paper-runner-bin"]["executable"] is True
+assert paper_selected["usr/local/bin/paper-runner-bin"]["elf"] is True
+assert paper_expected["files"]["usr/local/bin/paper-runner-bin"]["mode"]=="0755"
+assert paper_result["files"]["usr/local/bin/paper-runner-bin"]["mode"]=="0755"
 PY
+
+# The narrow mode table is valid only while the two recipe instructions stay
+# byte-exact.  Mutate each private Dockerfile independently, require the real
+# generator to fail before publishing request/expectation files, then restore
+# the clean fixture bytes and modes.
+mode_contract_dir=$out_dir/mode-contract-drift
+mkdir -m 0700 -- "$mode_contract_dir"
+runtime_inventory_hash=$(sha256sum "$runtime_inventory_file" | awk '{print $1}')
+expect_mode_contract_drift() {
+  local label=$1 dockerfile=$2 service=$3 old_instruction=$4 new_instruction=$5
+  local backup=$mode_contract_dir/$label.Dockerfile
+  local request_path=$mode_contract_dir/$label-request.json
+  local expected_path=$mode_contract_dir/$label-expectations.json
+  local status
+  cp -p -- "$dockerfile" "$backup"
+  python3 - "$dockerfile" "$old_instruction" "$new_instruction" <<'PY'
+import pathlib, sys
+path=pathlib.Path(sys.argv[1]); old=sys.argv[2]; new=sys.argv[3]
+value=path.read_text(encoding="utf-8")
+if value.count(old)!=1 or old==new: raise SystemExit("fixture-mode-contract-mutation-invalid")
+path.write_text(value.replace(old,new),encoding="utf-8",newline="")
+PY
+  if RELEASE_BUILD_LAYOUT_SOURCE_ROOT="$repo_dir" \
+    RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256="$runtime_inventory_hash" \
+    bash -c '. "$1"; rbl_product_request "$2" "$3" "$4" "$5" "$6"' \
+      fixture "$layout_helper" "$service" "$commit" "" "$request_path" "$expected_path" \
+      >"$mode_contract_dir/$label.out" 2>"$mode_contract_dir/$label.err"; then
+    status=0
+  else
+    status=$?
+  fi
+  cp -p -- "$backup" "$dockerfile"
+  [ "$status" -ne 0 ] || {
+    echo "self-test: drifted image-mode Dockerfile contract unexpectedly passed: $label" >&2
+    exit 1
+  }
+  grep -Fxq 'product-image-mode-contract-drift' "$mode_contract_dir/$label.err"
+  [ ! -e "$request_path" ] && [ ! -L "$request_path" ]
+  [ ! -e "$expected_path" ] && [ ! -L "$expected_path" ]
+  [ -z "$(git -C "$repo_dir" status --porcelain=v1 --untracked-files=all)" ]
+}
+expect_mode_contract_drift database "$repo_dir/deploy/db/Dockerfile" db-role-bootstrap \
+  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles' \
+  'RUN chmod 0750 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles'
+expect_mode_contract_drift paper "$repo_dir/deploy/runtime/Dockerfile.paper-runner" paper-scheduler \
+  'RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin' \
+  'RUN chmod 0750 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin'
 
 compose_prefix="commit=$commit args=compose --env-file $env_file --file $compose_file"
 config_count=$(grep -Fc "$compose_prefix config --quiet compose" "$docker_log")
