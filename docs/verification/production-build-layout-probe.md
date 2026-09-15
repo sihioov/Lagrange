@@ -835,3 +835,75 @@ items: 없음. Actual corrected layout is **NOT_RETESTED**, **G2 NOT_PASSED**.
 The full offline 84-case/journal/exception suite was not repeated. Coordinator
 follow-up is the actual focused acceptance and full matrix from a clean commit;
 no actual build or product performance/adoption claim is made here.
+
+## Actual branch acceptance and missing-image normalization (2026-09-15)
+
+The coordinator ran the corrected branch-return case for all three layouts on
+clean `4df1554c6d59ed42716b0468471b6e031b74c875`. All nine setup/forward/return
+CASE records passed, with 39 valid millisecond timing rows and 102 real host
+gates. Elapsed time was 328.065 seconds; minimum available RAM was 6,521,880 KiB
+and minimum free swap 738,600 KiB. Source stayed unchanged and the background
+unit exited zero. Evidence is `reports/layout-06-branch-root-audit.json` under
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5` (the disk root
+used below). This is fixture correctness, not product performance acceptance.
+
+Before the full run, two completed private offline evidence directories were
+copied with metadata preservation and file-by-file hash verification from
+tmpfs to the disk root. Original paths remain symlinks to the verified copies.
+No Docker/Rust cache was pruned. Receipt:
+`reports/evidence-relocation-cfa0629125d5.json`; following real gate:
+`reports/real-gate.Z7j8Co/gates.jsonl` PASS.
+
+The full `layout-06` run on the same clean commit passed the first 16 baseline
+cases, including both feature-switch and branch-return trials. It stopped at
+the expected `compile-fail-p2` injection: Cargo correctly reported the exact
+injected error and nonzero build result, but `image_absent` rejected the Docker
+diagnostic because Docker appended `:latest` to the untagged fixture image.
+The original `[]\n` stdout and exact stderr are retained in
+`runs/layout-06/baseline/cases/compile-fail-p2/attempt-001/results/p2-absence/`.
+No EXPECTED_STOP or overall PASS was issued. `reports/layout-06.json` records
+exit 1 after 1,142.211 seconds, unchanged source and no supervisor stop reason.
+All 371 resource gates passed; the unit terminated with MainPID=0/exit 1.
+The bounded existing research-worker incident remains open.
+
+Read-only inspection of that exact untagged reference and its explicit
+`:latest` equivalent confirmed absence. Both returned exit 1, `[]\n`, and
+exactly `Error response from daemon: No such image: <reference>:latest\n`.
+Evidence: `/tmp/lagrange-image-absence-observation-13ahsb8f/result.json`.
+The stdout SHA-256 is
+`37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570`;
+stderr SHA-256 is
+`e70c8f8b7effe122d9cb98a36481bf39aea250bc7c961f9e320cac028a75d5c5`.
+
+The coordinator changed only `image_absent` and its focused self-test: accept
+the exact requested reference or its exact implicit-latest normalization,
+still requiring exit 1 and the existing empty/empty-array stdout grammar.
+Explicit tags/digests do not normalize to latest. Other names/suffixes, extra
+errors, permission failures, nonempty output and other exit codes fail closed.
+No compilation, Cargo oracle, cache key, transport, resource gate, recipe,
+fixture source, provenance or product code changed.
+
+`/tmp/lagrange-image-absence-focused-mcfxr0k2/result.json` records syntax and
+focused regression PASS: seven controller cases, 101 fake builds and six
+expected failure/resume sequences using the installed Docker diagnostic form
+(compile and export failure in each layout). Direct inspection cases retain
+the old diagnostic/present/error checks and add one normalized positive plus
+seven negative cases. No actual Docker/Cargo was called by that self-test.
+Controller SHA-256 after correction:
+`9ab39dad81c21766191d75f72fa4e649e3569c2bc0b78affa8de741b9511e33b`.
+
+Remaining actual validation uses new immutable runs through the existing CLI:
+baseline cases 17–28, then all cases for common and grouped. The failed run
+will not be rewritten or resumed under a changed tool. The earlier 16 baseline
+passes remain attributable to 4df1554; their compile/verification paths are
+unchanged by this diagnostic-only correction. Final matrix acceptance must
+bind both tool versions, all 84 unique cases, 90 non-setup PASS events, six
+route checks and 27 expected stops/resumes. It must not claim that layout-06
+itself completed. The private sequential tail runner was checked offline for
+the complete 41-invocation path and four failure/stop boundaries; evidence:
+`/tmp/lagrange-tail-suite-self-test-cz07ihp1/result.json`.
+
+Actual remaining matrix: **NOT_RUN** at this checkpoint. **G2 NOT_PASSED**;
+product structure C, twelve-image/V2 acceptance and product speedup remain
+unverified. No additional permission, runtime action or provider call is
+introduced by this correction.

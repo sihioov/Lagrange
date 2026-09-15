@@ -544,9 +544,12 @@ image_absent() {
 import hashlib,json,pathlib,sys
 tag,status,directory=sys.argv[1],int(sys.argv[2]),pathlib.Path(sys.argv[3])
 out=(directory/"stdout").read_bytes();err=(directory/"stderr").read_bytes()
-# Docker's single-image inspect emits [] and this exact diagnostic for a miss.
+# Docker resolves an untagged image reference to :latest in its diagnostic.
+# Accept only the exact requested reference or that exact normalization.
 # A daemon/transport/permission failure is never absence, even with exit 1.
-missing=status==1 and out in (b"",b"[]\n") and err==f"Error response from daemon: No such image: {tag}\n".encode()
+normalized=tag+":latest" if "@" not in tag and ":" not in tag.rsplit("/",1)[-1] else tag
+diagnostics={f"Error response from daemon: No such image: {reference}\n".encode() for reference in (tag,normalized)}
+missing=status==1 and out in (b"",b"[]\n") and err in diagnostics
 cause="missing-image" if missing else ("image-present" if status==0 else "inspection-failed")
 record={"command_exit":status,"cause":cause,"stderr_sha256":hashlib.sha256(err).hexdigest(),"stdout_sha256":hashlib.sha256(out).hexdigest(),"tag":tag}
 (directory/"result.json").write_text(json.dumps(record,sort_keys=True,separators=(",",":"))+"\n")
@@ -1963,10 +1966,35 @@ PY
   printf '%s\n' '#!/bin/sh' 'printf "[]\n"' 'printf "%s\n" "Error response from daemon: permission denied" >&2' 'exit 1' >"$docker_bin"
   chmod 0755 -- "$docker_bin"
   self_expect_failure image_absent build-layout-missing "$root/permission" || exit 1
+  # Real Docker 29.7 resolves the generated, untagged fixture name to :latest.
+  # Exercise both accepted forms and close variants that must remain errors.
+  local diagnostic_case
+  for diagnostic_case in latest wrong-tag wrong-suffix explicit-tag digest extra-line wrong-status wrong-stdout; do
+    printf '%s\n' '#!/bin/sh' \
+      'printf "%s" "$INSPECTION_STDOUT"' \
+      'printf "%s" "$INSPECTION_STDERR" >&2' \
+      'exit "$INSPECTION_STATUS"' >"$docker_bin"
+    chmod 0755 -- "$docker_bin"
+    local requested=build-layout-missing expected_status=1 diagnostic='Error response from daemon: No such image: build-layout-missing:latest' stdout=$'[]\n'
+    case "$diagnostic_case" in
+      wrong-tag) diagnostic='Error response from daemon: No such image: build-layout-other:latest' ;;
+      wrong-suffix) diagnostic='Error response from daemon: No such image: build-layout-missing:latest-extra' ;;
+      explicit-tag) requested=build-layout-missing:pinned ;;
+      digest) requested=build-layout-missing@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+      extra-line) diagnostic+=$'\nError response from daemon: permission denied' ;;
+      wrong-status) expected_status=125 ;;
+      wrong-stdout) stdout=$'[{}]\n' ;;
+    esac
+    if INSPECTION_STDOUT="$stdout" INSPECTION_STDERR="$diagnostic"$'\n' INSPECTION_STATUS="$expected_status" image_absent "$requested" "$root/$diagnostic_case"; then
+      [ "$diagnostic_case" = latest ] || exit 1
+    else
+      [ "$diagnostic_case" != latest ] || exit 1
+    fi
+  done
   python3 - "$root" <<'PY'
 import json,pathlib,sys
 root=pathlib.Path(sys.argv[1])
-for name,status,cause in [("missing",1,"missing-image"),("present",0,"image-present"),("permission",1,"inspection-failed")]+[(f"unknown-{s}",s,"inspection-failed") for s in (1,7,125)]:
+for name,status,cause in [("missing",1,"missing-image"),("latest",1,"missing-image"),("present",0,"image-present"),("permission",1,"inspection-failed")]+[(f"unknown-{s}",s,"inspection-failed") for s in (1,7,125)]+[(name,125 if name=="wrong-status" else 1,"inspection-failed") for name in ("wrong-tag","wrong-suffix","explicit-tag","digest","extra-line","wrong-status","wrong-stdout")]:
     v=json.load(open(root/name/"result.json"))
     if v["command_exit"]!=status or v["cause"]!=cause:raise SystemExit("inspection-cause-lost")
 print("F6/F7 PASS: exact template enforced; only precise missing image proves absence")
