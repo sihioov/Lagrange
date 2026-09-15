@@ -685,3 +685,47 @@ Actual Docker/Cargo/cache/host/runtime behavior was not verified by this offline
 package. Other unverified items: **없음**. No stage/commit, actual host/network/
 provider command, lifecycle action, production source audit or Basic Memory
 operation occurred.
+
+## 2026-09-15 — fixture exporter metadata correction
+
+Actual `layout-04`, at `b43415afcaff9142fc7c62a3739368db78edbe6c`, passed
+all four baseline cold binaries. P2 reused `itoa` (`fresh=true`), confirming the
+cold-chain fix. Exact-repeat P1 then used the cached compile vertex but failed
+the unchanged full result/image-ID equality check. The run exited 1 after
+48.011 seconds; `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/layout-04.json`
+retains the actual receipt and unchanged-source proof.
+
+Cold/repeat had identical binary bytes/stdout, runtime payload, revision, image
+config (`87d6c5f00c4948b95d5a6512adfb7370d398ea2882cf640b81025b447e213342`)
+and runnable manifest (`0d7f114ab41f2f93327ff809bd6741c116377807f9745e90a6c38468da583cc2`).
+Only the newly exported attestation and enclosing index/image ID differed.
+The retained export lines are in `/tmp/lagrange-layout04-export-identity.json`.
+An attempt to inspect the previous index by ID failed after the same tag was
+rebuilt; that failed lookup is not treated as proof of the old image's contents.
+The cold result and its original BuildKit log provide the recorded comparison.
+
+A separate marker-only Compose test with YAML `provenance: false` still exported
+attestations and failed identity equality. Its logs remain in
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/provenance-diagnostic-e6d9ae1fb5da`.
+The follow-up using explicit `--provenance=false` passed: no attestation export,
+two exit-0 builds and the same image ID
+`sha256:c409ddb79c4a14cd1863150ec28da24d19cd1f26abd1ef5ac4c7fc074c67165d`.
+Its exact commands/hashes are in sibling
+`provenance-diagnostic-5a18ab6d5ca6/result.json`.
+
+The coordinator therefore added that explicit flag only to the synthetic probe's
+Compose call. The fake rejects a missing flag and the existing exact-argv audit
+requires it. Image-ID/binary/payload/revision equality, Cargo oracles, artifacts,
+gates and resume checks are unchanged. Product Compose, provenance and V2 remain
+unchanged; this is fixture reproducibility, not product performance evidence.
+The corresponding policy and official Docker/Compose references are in design §5.2.
+
+`bash -n`, public `--plan`, and the actual private `self_cold_chain` block passed.
+The focused block took 99.721 seconds: 21 controller invocations, 155 fake build
+calls, 75 source observations and three legacy rejection cases. Sixteen denied
+command sentinels recorded zero calls. Source/log hashes and original exits are
+in `/tmp/lagrange-provenance-root-882qagqk/{syntax,plan,focused}.json`.
+Tested controller SHA-256:
+`8f0b867425fb342e1b02e0bf7c662d9418bd1e5972a6dc8f434736283c836ce4`.
+No successful test was repeated. Actual all-layout rerun is pending; **G2 remains
+NOT_PASSED**. Other unresolved implementation items: 없음.

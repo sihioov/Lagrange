@@ -469,6 +469,18 @@ case-scope를 사용하고 group suffix는 L2의 base/wide뿐이다.
 않으며 fake 실행기도 이 호스트에서 재현한 mount 초기화를 반영해야 한다.
 route-contract의 단독 P1 source/producer 호출은 기존 cold 동작을 유지한다.
 
+fixture 소비 이미지의 Compose 호출에는 `--provenance=false`를 명시한다.
+실제 `layout-04`는 L0 cold 전체와 Cargo layer 재사용을 통과했지만, 반복 P1의
+동일 config/실행 manifest에 새 attestation이 붙어 상위 image ID만 달라졌다.
+[Compose 5.4.0의 contentDigest 설명](https://github.com/docker/compose/blob/v5.4.0/pkg/compose/images.go#L176)과
+[Docker attestation 문서](https://docs.docker.com/build/metadata/attestations/)도
+이 차이를 설명한다. 작은 실제 Compose 시험에서 YAML `provenance: false`만으로는
+attestation이 남았고, 명시적인 CLI 옵션으로 두 빌드의 image ID가 같아졌다.
+증거: `/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/provenance-diagnostic-5a18ab6d5ca6/result.json`.
+이 조건은 소형 시험의 exporter 메타데이터만 고정하며 실제 image ID, binary,
+payload, OCI revision의 동일성 비교를 보존한다. 제품 build/provenance/V2 설정에는
+적용하지 않는다. 제품 인수는 관측된 실제 image ID를 계속 검증한다.
+
 ### 5.3 예상 재컴파일 집합
 
 단위는 `(package, target kind/name, feature set, target/host, profile)`이다.

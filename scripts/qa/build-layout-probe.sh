@@ -376,7 +376,8 @@ compose_build() {
     "PROBE_RECIPE_${suffix}=$CUR_RECIPE" "PROBE_PLATFORM_${suffix}=linux/amd64" "PROBE_HOST_${suffix}=$CUR_HOST" "PROBE_NATIVE_${suffix}=$CUR_IDENTITY_SHA" "PROBE_CARGO_CONFIG_${suffix}=$CUR_CONFIG"
     "PROBE_FEATURES_${suffix}=$(requested_features "${p_variant[$phase]}")" "PROBE_SOURCE_TRAP_${suffix}=$CUR_SOURCE_TRAP" "PROBE_LEDGER_INJECT_${suffix}=$CUR_LEDGER_INJECT" "PROBE_INJECT_${suffix}=$inject"
   )
-  if env CARGO_BUILD_JOBS=2 COMPOSE_PARALLEL_LIMIT=1 "${envs[@]}" "$docker_bin" compose -p "build-layout-$run_id-$CUR_LAYOUT-$CUR_SCOPE" -f "$CUR_SOURCE/compose.yml" "${override[@]}" build --progress plain "${no_cache[@]}" "$service" >"$log" 2>&1; then status=0; else status=$?; fi
+  # Fixture-only: exclude per-invocation attestations from exact-repeat image IDs.
+  if env CARGO_BUILD_JOBS=2 COMPOSE_PARALLEL_LIMIT=1 "${envs[@]}" "$docker_bin" compose -p "build-layout-$run_id-$CUR_LAYOUT-$CUR_SCOPE" -f "$CUR_SOURCE/compose.yml" "${override[@]}" build --progress plain --provenance=false "${no_cache[@]}" "$service" >"$log" 2>&1; then status=0; else status=$?; fi
   printf '{"compose_exit":%s}\n' "$status" >"$log.status.json"
   return "$status"
 }
@@ -1451,6 +1452,7 @@ if args[:2]==["buildx","build"]:
     raise SystemExit(0)
 
 if args and args[0]=="compose" and "build" in args:
+    if args.count("--provenance=false")!=1:raise SystemExit("fixture-provenance-policy-missing")
     service=args[-1];mapping={"probe-a-base":("A_BASE","cache-bin-a","base","web.txt"),"probe-b-base":("B_BASE","cache-bin-b","base","python.txt"),"probe-a-wide":("A_WIDE","cache-bin-a","wide","web.txt"),"probe-b-wide":("B_WIDE","cache-bin-b","wide","python.txt")}
     if service not in mapping or args.count("build")!=1:raise SystemExit(92)
     suffix,bin_name,variant,runtime=mapping[service];source=pathlib.Path(args[args.index("-f")+1]).parent
@@ -2008,7 +2010,7 @@ for v in builds:
     require(("--no-cache" in argv)==(cold and (legacy or phase=="p1")),"wrong-phase-no-cache")
     if v["operation"]=="compose-build":
         require(v["cargo_build_jobs"]=="2" and v["compose_parallel_limit"]=="1","compile-concurrency-changed")
-        require(argv[argv.index("build")+1:]==["--progress","plain"]+(["--no-cache"] if "--no-cache" in argv else [])+[services[phase]],"compose-not-single-service")
+        require(argv[argv.index("build")+1:]==["--progress","plain","--provenance=false"]+(["--no-cache"] if "--no-cache" in argv else [])+[services[phase]],"compose-not-single-service")
     else:
         require(v["target"]=="artifacts" and argv[argv.index("--platform")+1]=="linux/amd64","artifact-target-changed")
     shared=values["PROBE_SHARED_CACHE_ID"];target=values["PROBE_TARGET_CACHE_ID"]
