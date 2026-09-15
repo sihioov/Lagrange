@@ -89,7 +89,7 @@ run_archive_parser_tests() (
   # its private receipt schema into this test.
   source "$source_layout_helper"
 
-  local archive_dir request result expected_map direct_archive direct_id index_archive index_id root_record root_archive root_id
+  local archive_dir request hardlink_directory_request result expected_map direct_archive direct_id index_archive index_id root_record root_archive root_id
   local path_kind archive_arg request_arg result_arg canonical_result
   archive_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-image-archive-self-test.XXXXXX")
   trap 'rm -rf -- "$archive_dir"' RETURN
@@ -128,10 +128,16 @@ def add_layer_entry(handle, name, kind, payload=b"", mode=0o644, linkname=""):
         info.type = tarfile.SYMTYPE
         info.linkname = linkname
         info.size = 0
-    else:
+    elif kind == "hardlink":
+        info.type = tarfile.LNKTYPE
+        info.linkname = linkname
+        info.size = len(payload)
+    elif kind == "file":
         info.type = tarfile.REGTYPE
         info.size = len(payload)
-    handle.addfile(info, io.BytesIO(payload) if kind == "file" else None)
+    else:
+        raise AssertionError("fixture-layer-kind-invalid")
+    handle.addfile(info, io.BytesIO(payload) if kind in ("file", "hardlink") else None)
 
 def layer(entries):
     raw = io.BytesIO()
@@ -155,12 +161,21 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
     # whiteout/opaque marker would incorrectly accept the corresponding
     # negative archive by finding this exact valid lower-layer file.
     base_entries = [
+        (".", "dir", b"", 0o755),
         ("usr", "dir"),
+        ("usr/bin", "dir"),
+        ("usr/bin/perl", "file", b"fixture base perl\n", 0o755),
+        ("usr/bin/perl5.40.1", "hardlink", b"", 0o755, "usr/bin/perl"),
         ("usr/local", "dir"),
         ("usr/local/bin", "dir"),
         ("usr/local/bin/test-bin", "file", binary, 0o755),
         ("usr/local/bin/obsolete", "file", b"obsolete"),
     ]
+    if negative == "root-nondirectory":
+        base_entries[0] = (".", "file", b"not-a-directory")
+    elif negative == "hardlink-selected-path":
+        base_entries = [entry for entry in base_entries if entry[0] != "usr/local/bin/test-bin"]
+        base_entries.append(("usr/local/bin/test-bin", "hardlink", b"", 0o755, "usr/bin/perl"))
     base = layer(base_entries)
     final_entries = [
         ("usr", "dir"),
@@ -182,6 +197,51 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
                          ("usr/local/bin/test-bin", "symlink", b"", 0o777, "../../etc/passwd")]
     elif negative == "traversal":
         final_entries.append(("../../escape", "file", b"escape"))
+    elif negative == "root-slash":
+        final_entries.append(("./", "file", b"not-a-root-directory"))
+    elif negative == "leading-dot-descendant":
+        final_entries.append(("./child", "file", b"escape"))
+    elif negative == "absolute":
+        final_entries.append(("/absolute", "file", b"escape"))
+    elif negative == "internal-dot":
+        final_entries.append(("usr/./escape", "file", b"escape"))
+    elif negative == "double-separator":
+        final_entries.append(("usr//escape", "file", b"escape"))
+    elif negative == "canonical-alias-duplicate":
+        final_entries.extend((("usr/local/bin/alias", "dir"),
+                              ("usr/local/bin/alias/", "dir")))
+    elif negative == "hardlink-selected-ancestor":
+        final_entries = [("usr", "dir"), ("usr/local", "dir"),
+                         ("usr/local/bin", "hardlink", b"", 0o755, "usr/bin/perl")]
+    elif negative == "hardlink-target-traversal":
+        final_entries.append(("usr/bin/bad-target", "hardlink", b"", 0o755, "../../escape"))
+    elif negative == "hardlink-target-absolute":
+        final_entries.append(("usr/bin/bad-target", "hardlink", b"", 0o755, "/usr/bin/perl"))
+    elif negative == "hardlink-target-dot":
+        final_entries.append(("usr/bin/bad-target", "hardlink", b"", 0o755, "."))
+    elif negative == "hardlink-target-missing":
+        final_entries.append(("usr/bin/bad-target", "hardlink", b"", 0o755, "usr/bin/missing"))
+    elif negative == "hardlink-target-directory":
+        final_entries.append(("usr/bin/bad-target", "hardlink", b"", 0o755, "usr/bin"))
+    elif negative == "hardlink-target-symlink":
+        final_entries.extend((("usr/bin/perl-symlink", "symlink", b"", 0o777, "perl"),
+                              ("usr/bin/bad-target", "hardlink", b"", 0o755, "usr/bin/perl-symlink")))
+    elif negative == "hardlink-target-parent-symlink":
+        final_entries.extend((("usr/bin/target-parent", "symlink", b"", 0o777, "perl"),
+                              ("usr/bin/bad-target", "hardlink", b"", 0o755,
+                               "usr/bin/target-parent/child")))
+    elif negative == "hardlink-target-hardlink":
+        final_entries.append(("usr/bin/bad-target", "hardlink", b"", 0o755, "usr/bin/perl5.40.1"))
+    elif negative == "hardlink-self-target":
+        final_entries.append(("usr/bin/self", "hardlink", b"", 0o755, "usr/bin/self"))
+    elif negative == "hardlink-nonzero-body":
+        final_entries.append(("usr/bin/body", "hardlink", b"x", 0o755, "usr/bin/perl"))
+    elif negative == "hardlink-shadow-selected":
+        final_entries = [("usr", "dir"), ("usr/local", "dir"), ("usr/local/bin", "dir"),
+                         ("usr/local/bin/test-bin", "hardlink", b"", 0o755, "usr/bin/perl")]
+    elif negative == "hardlink-only-directory":
+        final_entries.extend((("opt", "dir"), ("opt/hardlink-only", "dir"),
+                              ("opt/hardlink-only/perl", "hardlink", b"", 0o755, "usr/bin/perl")))
     elif negative == "same-layer-whiteout-marker-first":
         final_entries = [
             ("usr", "dir"), ("usr/local", "dir"), ("usr/local/bin", "dir"),
@@ -206,9 +266,14 @@ def make_archive(name, root_kind, negative=None, single_layer=False):
             ("usr/local/bin/test-bin", "file", binary, 0o755),
             ("usr/local/bin/.wh..wh..opq", "file", b""),
         ]
-    if not any(entry[0] == "usr/local/bin/test-bin" and entry[1] == "file" and entry[2] == binary
-               for entry in base_entries):
+    if negative != "hardlink-selected-path" and not any(
+            entry[0] == "usr/local/bin/test-bin" and entry[1] == "file" and entry[2] == binary
+            for entry in base_entries):
         raise AssertionError("fixture-selected-lower-binary-missing")
+    if negative == "hardlink-selected-path" and not any(
+            entry[0] == "usr/local/bin/test-bin" and entry[1] == "hardlink"
+            for entry in base_entries):
+        raise AssertionError("fixture-selected-hardlink-missing")
     if negative is None and any(entry[0] == "usr/local/bin/test-bin" for entry in final_entries):
         raise AssertionError("fixture-positive-must-resolve-selected-binary-from-lower-layer")
     if negative in ("whiteout", "opaque", "ancestor") and any(entry[0] == "usr/local/bin/test-bin"
@@ -374,12 +439,34 @@ records = {
     "same_layer_opaque_addition_first": make_archive("same-layer-opaque-addition-first.tar", "manifest", "same-layer-opaque-addition-first"),
     "direct": make_archive("direct-manifest.tar", "manifest"),
     "provenance_index": make_archive("provenance-index.tar", "index"),
+    "hardlink_valid": make_archive("hardlink-valid.tar", "manifest"),
     "tampered": make_archive("tampered.tar", "manifest", "tampered"),
     "whiteout": make_archive("whiteout.tar", "manifest", "whiteout"),
     "opaque": make_archive("opaque.tar", "manifest", "opaque"),
     "ancestor": make_archive("ancestor.tar", "manifest", "ancestor"),
     "symlink": make_archive("symlink.tar", "manifest", "symlink"),
     "traversal": make_archive("traversal.tar", "manifest", "traversal"),
+    "root_nondirectory": make_archive("root-nondirectory.tar", "manifest", "root-nondirectory"),
+    "root_slash": make_archive("root-slash.tar", "manifest", "root-slash"),
+    "leading_dot_descendant": make_archive("leading-dot-descendant.tar", "manifest", "leading-dot-descendant"),
+    "absolute": make_archive("absolute.tar", "manifest", "absolute"),
+    "internal_dot": make_archive("internal-dot.tar", "manifest", "internal-dot"),
+    "double_separator": make_archive("double-separator.tar", "manifest", "double-separator"),
+    "canonical_alias_duplicate": make_archive("canonical-alias-duplicate.tar", "manifest", "canonical-alias-duplicate"),
+    "hardlink_selected_path": make_archive("hardlink-selected-path.tar", "manifest", "hardlink-selected-path"),
+    "hardlink_selected_ancestor": make_archive("hardlink-selected-ancestor.tar", "manifest", "hardlink-selected-ancestor"),
+    "hardlink_target_traversal": make_archive("hardlink-target-traversal.tar", "manifest", "hardlink-target-traversal"),
+    "hardlink_target_absolute": make_archive("hardlink-target-absolute.tar", "manifest", "hardlink-target-absolute"),
+    "hardlink_target_dot": make_archive("hardlink-target-dot.tar", "manifest", "hardlink-target-dot"),
+    "hardlink_target_missing": make_archive("hardlink-target-missing.tar", "manifest", "hardlink-target-missing"),
+    "hardlink_target_directory": make_archive("hardlink-target-directory.tar", "manifest", "hardlink-target-directory"),
+    "hardlink_target_symlink": make_archive("hardlink-target-symlink.tar", "manifest", "hardlink-target-symlink"),
+    "hardlink_target_parent_symlink": make_archive("hardlink-target-parent-symlink.tar", "manifest", "hardlink-target-parent-symlink"),
+    "hardlink_target_hardlink": make_archive("hardlink-target-hardlink.tar", "manifest", "hardlink-target-hardlink"),
+    "hardlink_self_target": make_archive("hardlink-self-target.tar", "manifest", "hardlink-self-target"),
+    "hardlink_nonzero_body": make_archive("hardlink-nonzero-body.tar", "manifest", "hardlink-nonzero-body"),
+    "hardlink_shadow_selected": make_archive("hardlink-shadow-selected.tar", "manifest", "hardlink-shadow-selected"),
+    "hardlink_only_directory": make_archive("hardlink-only-directory.tar", "manifest", "hardlink-only-directory"),
     "duplicate_index": make_archive("duplicate-index.tar", "manifest", "duplicate-index"),
     "archive_path": make_archive("archive-path.tar", "manifest", "archive-path"),
 }
@@ -397,6 +484,15 @@ print(json.dumps({"format": "lagrange-image-files-v1", "files": [{
     "contains_hex": [commit.encode("ascii").hex()], "elf": True, "executable": True,
     "path": "usr/local/bin/test-bin", "sha256": record["binary_sha256"]}],
     "nonempty_directories": ["usr/local/bin"]}, sort_keys=True, separators=(",", ":")))
+PY
+  hardlink_directory_request=$archive_dir/hardlink-directory-request.json
+  python3 - "$request" "$hardlink_directory_request" <<'PY'
+import json, sys
+source, output = sys.argv[1:]
+value = json.load(open(source, encoding="utf-8"))
+value["nonempty_directories"].append("opt/hardlink-only")
+with open(output, "w", encoding="utf-8", newline="\n") as handle:
+    handle.write(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")
 PY
 
   archive_value() {
@@ -441,6 +537,22 @@ PY
     fi
     [ ! -e "$result_path" ] && [ ! -L "$result_path" ] || {
       echo "self-test: archive parser published a result after rejection: $label" >&2
+      return 1
+    }
+  }
+  expect_archive_reject_reason() {
+    local label=$1 expected_reason=$2 archive=$3 image_id=$4 result_path=$5 scan_request=${6:-$request}
+    if release_build_layout_archive_scan "$archive" "$image_id" linux/amd64 "$archive_commit" \
+      "$scan_request" "$result_path" >"$archive_dir/$label.out" 2>"$archive_dir/$label.err"; then
+      echo "self-test: archive parser accepted invalid case: $label" >&2
+      return 1
+    fi
+    [ ! -e "$result_path" ] && [ ! -L "$result_path" ] || {
+      echo "self-test: archive parser published a result after rejection: $label" >&2
+      return 1
+    }
+    grep -Fq -- "$expected_reason" "$archive_dir/$label.err" || {
+      echo "self-test: archive parser rejected $label for the wrong reason" >&2
       return 1
     }
   }
@@ -518,6 +630,46 @@ PY
   release_build_layout_archive_scan "$index_archive" "$index_id" linux/amd64 "$archive_commit" "$request" "$result"
   assert_record_result provenance_index "$result"
 
+  # The valid control contains an unrelated hardlink whose target is an
+  # already-seen regular file. It remains non-regular virtual-tree state and
+  # contributes no selected bytes or nonempty-directory evidence.
+  root_archive=$(archive_value hardlink_valid archive)
+  root_id=$(archive_value hardlink_valid image_id)
+  result=$archive_dir/hardlink-valid-result.json
+  release_build_layout_archive_scan "$root_archive" "$root_id" linux/amd64 "$archive_commit" "$request" "$result"
+  assert_record_result hardlink_valid "$result"
+
+  while IFS='|' read -r root_record expected_reason; do
+    [ -n "$root_record" ] || continue
+    expect_archive_reject_reason "$root_record" "$expected_reason" \
+      "$(archive_value "$root_record" archive)" "$(archive_value "$root_record" image_id)" \
+      "$archive_dir/$root_record-result.json"
+  done <<'EOF'
+root_nondirectory|layer-root-entry-not-directory
+root_slash|tar-path-invalid
+leading_dot_descendant|tar-path-invalid
+absolute|tar-path-invalid
+internal_dot|tar-path-invalid
+double_separator|tar-path-invalid
+canonical_alias_duplicate|layer-duplicate-entry
+hardlink_selected_path|selected-path-not-regular
+hardlink_selected_ancestor|selected-parent-not-directory
+hardlink_target_traversal|tar-path-invalid
+hardlink_target_absolute|tar-path-invalid
+hardlink_target_dot|tar-path-invalid
+hardlink_target_missing|layer-hardlink-target-missing
+hardlink_target_directory|layer-hardlink-target-not-regular
+hardlink_target_symlink|layer-hardlink-target-not-regular
+hardlink_target_parent_symlink|layer-hardlink-target-parent-not-directory
+hardlink_target_hardlink|layer-hardlink-target-not-regular
+hardlink_self_target|layer-hardlink-self-target
+hardlink_nonzero_body|layer-hardlink-body-invalid
+hardlink_shadow_selected|selected-path-not-regular
+EOF
+  expect_archive_reject_reason hardlink_only_directory selected-directory-empty \
+    "$(archive_value hardlink_only_directory archive)" "$(archive_value hardlink_only_directory image_id)" \
+    "$archive_dir/hardlink_only_directory-result.json" "$hardlink_directory_request"
+
   # The public helper requires caller text itself to be canonical before it
   # reads either input or creates a result. Exercise every path position with
   # dot/dotdot aliases, relative text, redundant separators, and a symlinked
@@ -567,7 +719,8 @@ PY
   expect_archive_reject opaque "$(archive_value opaque archive)" "$(archive_value opaque image_id)" "$archive_dir/opaque-result.json"
   expect_archive_reject ancestor "$(archive_value ancestor archive)" "$(archive_value ancestor image_id)" "$archive_dir/ancestor-result.json"
   expect_archive_reject symlink "$(archive_value symlink archive)" "$(archive_value symlink image_id)" "$archive_dir/symlink-result.json"
-  expect_archive_reject traversal "$(archive_value traversal archive)" "$(archive_value traversal image_id)" "$archive_dir/traversal-result.json"
+  expect_archive_reject_reason traversal tar-path-invalid \
+    "$(archive_value traversal archive)" "$(archive_value traversal image_id)" "$archive_dir/traversal-result.json"
   expect_archive_reject duplicate-index "$(archive_value duplicate_index archive)" "$(archive_value duplicate_index image_id)" "$archive_dir/duplicate-index-result.json"
   expect_archive_reject archive-path "$(archive_value archive_path archive)" "$(archive_value archive_path image_id)" "$archive_dir/archive-path-result.json"
   expect_archive_reject wrong-image-id "$direct_archive" sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$archive_dir/wrong-image-result.json"

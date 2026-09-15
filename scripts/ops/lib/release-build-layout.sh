@@ -3237,6 +3237,19 @@ try:
             # layer for whiteout/opaque precedence, even if the directory was
             # inherited rather than emitted as a separate tar member.
             layer_entries.add(current)
+    def hardlink_target(name,raw_target):
+        target=tar_name(raw_target)
+        if target==name: raise SystemExit("layer-hardlink-self-target")
+        current=""
+        for part in target.split("/")[:-1]:
+            current=part if not current else current+"/"+part
+            ancestor=entries.get(current)
+            if ancestor is None: raise SystemExit("layer-hardlink-target-missing")
+            if ancestor["kind"]!="dir": raise SystemExit("layer-hardlink-target-parent-not-directory")
+        target_entry=entries.get(target)
+        if target_entry is None: raise SystemExit("layer-hardlink-target-missing")
+        if target_entry["kind"]!="file": raise SystemExit("layer-hardlink-target-not-regular")
+        return target
     def apply_layer(item):
         lower_entries=set(entries)
         layer_entries=set()
@@ -3249,7 +3262,15 @@ try:
         with tarfile.open(fileobj=stream,mode="r|") as layer:
             for member in layer:
                 raw=member.name
-                name=tar_name(raw,member.isdir())
+                # Python tarfile exposes the conventional root directory
+                # header as exactly ".".  It is the sole layer-only exception
+                # to tar_name: no non-directory dot entry or dot-prefixed
+                # descendant is accepted, and outer archive paths stay strict.
+                if raw==".":
+                    if not member.isdir(): raise SystemExit("layer-root-entry-not-directory")
+                    name=""
+                else:
+                    name=tar_name(raw,member.isdir())
                 if name in layer_seen: raise SystemExit("layer-duplicate-entry")
                 layer_seen.add(name)
                 base=posixpath.basename(name); parent=posixpath.dirname(name)
@@ -3270,6 +3291,17 @@ try:
                     if existing is not None and existing["kind"]!="dir":
                         remove_tree(name,layer_entries)
                     entries[name]={"kind":"dir","mode":member.mode & 0o7777}
+                    layer_entries.add(name)
+                    continue
+                if member.islnk():
+                    if member.size!=0: raise SystemExit("layer-hardlink-body-invalid")
+                    target=hardlink_target(name,member.linkname)
+                    remove_tree(name,layer_entries)
+                    # A hardlink is retained only as non-regular overlay state.
+                    # Its target bytes are never copied into this entry, so it
+                    # cannot satisfy a selected file or make a selected
+                    # directory nonempty.
+                    entries[name]={"kind":"hardlink","mode":member.mode & 0o7777,"target":target}
                     layer_entries.add(name)
                     continue
                 if member.issym():
