@@ -1370,10 +1370,18 @@ Cross-worker JSON schemas:
   `nonempty_directories` (list). Each file requirement has exactly `path`
   (canonical relative POSIX image path, no leading slash), `sha256` (64 lower
   hex or null), `executable` (bool), `elf` (bool), `contains_hex` (list of
-  nonempty lower-hex literal byte strings). Duplicate paths/keys, parent-path
-  conflicts, unknown fields, invalid booleans and paths fail. Directory entries
-  are canonical relative paths; a required directory must resolve to a real
-  directory with at least one regular descendant. This is a fixed internal
+  nonempty lower-hex literal byte strings). Duplicate paths/keys, unknown fields,
+  invalid booleans and noncanonical paths fail. A required regular file cannot
+  also be a required directory or be an ancestor of another requested path.
+  A required directory MAY contain required files or other required directories:
+  requesting file `usr/local/bin/test-bin` and directory `usr/local/bin` is valid.
+  Directory entries are canonical relative paths; each must resolve to a real
+  directory with at least one regular descendant. This type-aware rule clarifies
+  the initial implementation's observed `request-parent-path-conflict` on that
+  valid example; it does not relax path traversal, links or whiteout checks.
+  Whiteout/opaque/ancestor-replacement negative tests must place a valid selected
+  file in a lower layer before removing or hiding it, so ignoring the removal
+  would actually produce an incorrect success. This is a fixed internal
   schema consumed by both workers, not a new official CLI override.
 - Archive result format is `lagrange-image-files-result-v1`; fields are
   `image_id`, `manifest_digest`, `config_digest`, `platform`, `source_commit`,
