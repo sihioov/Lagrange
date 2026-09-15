@@ -907,3 +907,50 @@ Actual remaining matrix: **NOT_RUN** at this checkpoint. **G2 NOT_PASSED**;
 product structure C, twelve-image/V2 acceptance and product speedup remain
 unverified. No additional permission, runtime action or provider call is
 introduced by this correction.
+
+## Actual compile-failure resume and export-log excerpt correction
+
+On clean `534feb9edeb0b7de11c6302abe116cac3c363be1`, the first remaining
+baseline case, `compile-fail-p2`, passed its actual injected failure and resume.
+Its new run is `runs/layout-07-tail-01-baseline-compile-fail-p2` under the disk
+root above. The initial invocation exited 75; the resumed invocation exited 0
+and reused the completed first phase. This adds the seventeenth baseline case
+to the sixteen preserved by `reports/layout-06-prefix-root-audit.json`.
+
+The next case reached the intended export failure after successful Cargo, with
+the exact marked RUN exiting 73. Its client exited 1 as expected, but mode
+detection saw two timing lines: the executed `#15 0.427 BUILD_LAYOUT_CARGO_MS=288`
+line and Docker's unprefixed error-tail repetition. It failed closed as
+`compile-vertex-evidence-ambiguous`; the runner terminated rather than issuing
+an EXPECTED_STOP. Original evidence:
+`runs/layout-07-tail-02-baseline-export-fail-p2`,
+`reports/layout-07-tail-suite.json`. All observed gates passed; the stopped
+unit has MainPID=0/exit 1. No product image or service was changed.
+
+The baseline export-failure verifier already validates one marked RUN, its
+compile vertex, exact inner exit 73 and client status, then extracts only that
+vertex's timestamped output for Cargo parsing. The correction uses this same
+verified stream for mode detection. The observation keeps the full original
+build-log hash and additionally binds the executed stream hash. Normal build
+mode detection and common/grouped export paths are unchanged. No helper,
+recipe, fixture input, cache key, Cargo oracle or resource gate changed.
+
+Focused evidence `/tmp/lagrange-export-stream-focused-7i6peqmq/result.json`:
+syntax PASS, all three export-failure/resume controller cases PASS, three
+positive log forms and twelve negative variants PASS, and exact retained
+actual-log replay PASS. The actual raw log SHA-256 is
+`4dc2668f7390b1a0f4e6ddab4748650f0e1151c0d420933648247c534333cf33`;
+the corrected controller SHA-256 is
+`08441a4f8c2952f79e4adfc474a9adfba709cf0194bd176638b569f9b2393073`.
+This check did not call real Docker/Cargo. Repeated executed timing lines,
+excerpt-only markers and the previous wrong-service/vertex/exit/bin/daemon
+cases still fail. No assertion or expected Cargo set was reduced.
+
+The next immutable run starts at baseline case 18 (`export-fail-p2`), then
+checks the remaining baseline cases and all common/grouped cases. It does not
+rewrite or resume failed runs under changed source. The private tail runner's
+39-invocation success path and four failure boundaries passed offline at
+`/tmp/lagrange-tail-suite-self-test-jlmmyx__/result.json`.
+The final composite audit must bind the 17 prior baseline cases and all
+remaining cases to their actual tool/source hashes. **G2 remains NOT_PASSED**;
+no product structure or speedup has been accepted.

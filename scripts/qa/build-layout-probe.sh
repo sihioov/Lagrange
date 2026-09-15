@@ -527,7 +527,14 @@ PY
   if [ "$CUR_LAYOUT" != baseline ]; then
     cmp -s -- "$summary" "$private/cargo-summary.json" || { unresolved 'incomplete export Cargo evidence differs'; return 1; }
   fi
-  assert_cargo_observation "$summary" "$phase" "$log" "$CUR_ATTEMPT_DIR/results/$phase-export-cargo-observation.json" || return 1
+  # Failed BuildKit output repeats its tail in an unprefixed error excerpt.
+  # The baseline stream above is already bound to the unique marked RUN and
+  # exact exit-73 vertex; use it for mode detection while retaining the raw log.
+  if [ "$CUR_LAYOUT" = baseline ]; then
+    assert_cargo_observation "$summary" "$phase" "$log" "$CUR_ATTEMPT_DIR/results/$phase-export-cargo-observation.json" "$raw" || return 1
+  else
+    assert_cargo_observation "$summary" "$phase" "$log" "$CUR_ATTEMPT_DIR/results/$phase-export-cargo-observation.json" || return 1
+  fi
   python3 - "$CUR_LAYOUT" "$status" "$log" "$summary" "$partial_hash" "$CUR_ATTEMPT_DIR/results/$phase-export-failure.json" <<'PY'
 import hashlib,json,sys
 layout,status,log,summary,partial,output=sys.argv[1:]
@@ -618,9 +625,10 @@ h_oracle() {
 
 assert_cargo_observation() {
   local summary=$1 phase=$2 build_log=$3 observation=$4 expected mode app lib itoa
+  local mode_log=${5:-$build_log}
   expected=$(h_oracle "$CUR_LAYOUT" "$CUR_CASE" "$phase" "$CUR_TOKEN" "${RESUMING:-0}")
   IFS=, read -r mode app lib itoa <<<"$expected"
-  local actual_mode; actual_mode=$(bash "$helper_path" build-log-mode "$build_log") || return 1
+  local actual_mode; actual_mode=$(bash "$helper_path" build-log-mode "$mode_log") || return 1
   if [ "$mode" = cache-hit-or-fresh ]; then
     case "$actual_mode" in cache-hit) ;; executed) mode=executed ;; *) unresolved "unexpected-recompile-set: expected-mode=cache-hit-or-fresh actual-mode=$actual_mode"; return 1 ;; esac
   else
@@ -629,11 +637,13 @@ assert_cargo_observation() {
   if [ "$actual_mode" = executed ]; then
     bash "$helper_path" cargo-assert "$summary" "${p_bin[$phase]}" "$(requested_features "${p_variant[$phase]}")" "$(resolved_features "${p_variant[$phase]}")" "$CUR_HOST" "$app" "$lib" "$itoa" || { unresolved 'unexpected-recompile-set'; return 1; }
   fi
-  PROBE_PATH="$observation" PROBE_MODE="$actual_mode" PROBE_EXPECTED="$expected" PROBE_BUILD_LOG="$build_log" PROBE_SUMMARY="$summary" python3 - <<'PY'
+  PROBE_PATH="$observation" PROBE_MODE="$actual_mode" PROBE_EXPECTED="$expected" PROBE_BUILD_LOG="$build_log" PROBE_MODE_LOG="$mode_log" PROBE_SUMMARY="$summary" python3 - <<'PY'
 import hashlib,json,os
 def digest(path):
     with open(path,"rb") as handle:return hashlib.sha256(handle.read()).hexdigest()
 value={"build_log_sha256":digest(os.environ["PROBE_BUILD_LOG"]),"expected_h":os.environ["PROBE_EXPECTED"],"mode":os.environ["PROBE_MODE"],"summary_sha256":digest(os.environ["PROBE_SUMMARY"]) if os.path.isfile(os.environ["PROBE_SUMMARY"]) else None}
+if os.environ["PROBE_MODE_LOG"]!=os.environ["PROBE_BUILD_LOG"]:
+    value["executed_stream_sha256"]=digest(os.environ["PROBE_MODE_LOG"])
 with open(os.environ["PROBE_PATH"],"x",encoding="utf-8",newline="\n") as out:out.write(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")
 PY
 }
@@ -2019,8 +2029,9 @@ import json,pathlib,sys
 source=pathlib.Path(sys.argv[1]).read_text();root=pathlib.Path(sys.argv[2]);service=sys.argv[3]
 header=f"#12 [{service} builder 5/5] RUN --mount=type=cache,target=/usr/local/cargo/registry"
 if source.splitlines().count(header)!=1:raise SystemExit("fake-compose-service-prefix-missing")
-positive={"compose-prefix":source,"unprefixed":source.replace(f"[{service} builder ","[builder ")}
-negative={"no-marker":source.replace("BUILD_LAYOUT_INJECTED_EXPORT_FAILURE","REMOVED"),"wrong-vertex":source.replace("#12 ERROR:","#13 ERROR:"),"wrong-header-vertex":source.replace(header,header.replace("#12 ","#13 ")),"wrong-service":source.replace(f"[{service} builder ","[probe-a-base builder "),"wrong-stage":source.replace(f"[{service} builder ",f"[{service} runtime "),"wrong-exit":source.replace("exit code: 73","exit code: 74"),"cargo-failed":source.replace('"success":true','"success":false'),"wrong-bin":source.replace("FAILURE bin=cache-bin-b","FAILURE bin=cache-bin-a"),"wrong-client-status":source,"daemon":"Error response from daemon: connection failed\n"}
+excerpt="------\n > [builder 5/5] RUN --mount=type=cache,target=/usr/local/cargo/registry:\n0.001 BUILD_LAYOUT_CARGO_MS=1\n0.001 BUILD_LAYOUT_INJECTED_EXPORT_FAILURE bin=cache-bin-b inner_exit=73 cargo_success=true\n------\n"
+positive={"compose-prefix":source,"unprefixed":source.replace(f"[{service} builder ","[builder "),"error-excerpt":source+excerpt}
+negative={"no-marker":source.replace("BUILD_LAYOUT_INJECTED_EXPORT_FAILURE","REMOVED"),"wrong-vertex":source.replace("#12 ERROR:","#13 ERROR:"),"wrong-header-vertex":source.replace(header,header.replace("#12 ","#13 ")),"wrong-service":source.replace(f"[{service} builder ","[probe-a-base builder "),"wrong-stage":source.replace(f"[{service} builder ",f"[{service} runtime "),"wrong-exit":source.replace("exit code: 73","exit code: 74"),"cargo-failed":source.replace('"success":true','"success":false'),"wrong-bin":source.replace("FAILURE bin=cache-bin-b","FAILURE bin=cache-bin-a"),"wrong-client-status":source,"daemon":"Error response from daemon: connection failed\n","duplicate-executed-timing":source+"#12 0.001 BUILD_LAYOUT_CARGO_MS=1\n","excerpt-only-marker":source.replace("#12 0.003 BUILD_LAYOUT_INJECTED_EXPORT_FAILURE","#12 0.003 REMOVED")+excerpt}
 for category,variants in (("positive",positive),("negative",negative)):
     for name,text in variants.items():
         p=root/category/name;p.mkdir();(p/"build.log").write_text(text)
