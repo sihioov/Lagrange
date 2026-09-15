@@ -645,6 +645,130 @@ gate_test_allowed() {
   [ "${BUILD_LAYOUT_SELF_TEST_ACTIVE-}" = 1 ] && [ "${LAYOUT_GATE_TEST_SEAM-}" = build-layout-self-test ]
 }
 
+# Internal to the image-only layout controller; no helper CLI or health bypass.
+# The binding includes exact bytes, so even whitespace changes require a new run.
+research_exception_check() {
+  local expected=${1-} snapshot=${2-} action=${3:-verify}
+  python3 - "${BUILD_LAYOUT_RESEARCH_EXCEPTION-}" "$expected" "$snapshot" "$action" "${BUILD_LAYOUT_RESEARCH_EXCEPTION+x}" <<'PY'
+import base64,datetime,hashlib,json,os,re,stat,sys,time
+path,expected,snapshot,action,supplied=sys.argv[1:]
+def fail(reason):raise SystemExit("research-exception-"+reason)
+def pairs(items):
+    value={}
+    for key,item in items:
+        if key in value:fail("duplicate-key")
+        value[key]=item
+    return value
+def parent_fd(path):
+    if (not path.startswith("/") or path.startswith("//") or os.path.normpath(path)!=path or
+            any(ord(c)<32 or ord(c)==127 for c in path) or path=="/"):fail("path-invalid")
+    fd=os.open("/",os.O_RDONLY|os.O_DIRECTORY)
+    try:
+        for part in path.split("/")[1:-1]:
+            nxt=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+            os.close(fd);fd=nxt
+        return fd
+    except BaseException:
+        os.close(fd);raise
+def read_private(path):
+    parent=parent_fd(path)
+    try:
+        fd=os.open(os.path.basename(path),os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent)
+        with os.fdopen(fd,"rb") as handle:
+            info=os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):fail("not-regular")
+            if info.st_uid!=os.geteuid():fail("owner-invalid")
+            if stat.S_IMODE(info.st_mode)!=0o600:fail("mode-invalid")
+            raw=handle.read()
+            after=os.fstat(handle.fileno())
+            if (info.st_size,info.st_mtime_ns,info.st_ctime_ns)!=(after.st_size,after.st_mtime_ns,after.st_ctime_ns):fail("changed-during-read")
+            return raw
+    finally:os.close(parent)
+try:
+    value=None;raw=None
+    if supplied and not path:fail("path-invalid")
+    if path:
+        raw=read_private(path)
+        fields=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs)
+        fixed={"format":"lagrange-build-research-exception-v1","scope":"image-build-only",
+               "container_name":"lagrange-station-research-worker-1","known_error_code":"PRICE_CURATION_FAILED"}
+        keys=set(fixed)|{"container_id","image_id","observed_at_utc","expires_at_utc","initial_restart_count","known_exit_code"}
+        if type(fields) is not dict or set(fields)!=keys:fail("keys-invalid")
+        if any(type(fields[k]) is not str or fields[k]!=v for k,v in fixed.items()):fail("contract-invalid")
+        for key,pattern in (("container_id",r"[0-9a-f]{64}"),("image_id",r"sha256:[0-9a-f]{64}")):
+            if type(fields[key]) is not str or not re.fullmatch(pattern,fields[key]):fail("identity-invalid")
+        if type(fields["initial_restart_count"]) is not int or fields["initial_restart_count"]<0:fail("restart-type-invalid")
+        if type(fields["known_exit_code"]) is not int or fields["known_exit_code"]!=2:fail("exit-type-invalid")
+        def timestamp(key):
+            text=fields[key]
+            if type(text) is not str or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",text):fail("time-format-invalid")
+            return int(datetime.datetime.strptime(text,"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp())
+        observed=timestamp("observed_at_utc");expires=timestamp("expires_at_utc");now=time.time_ns()
+        if not observed*10**9<=now<expires*10**9 or expires>observed+86400:fail("validity-invalid")
+        value={"path":path,"sha256":hashlib.sha256(raw).hexdigest(),"bytes_base64":base64.b64encode(raw).decode("ascii"),"fields":fields}
+    if expected and value!=json.loads(expected,object_pairs_hook=pairs):fail("binding-changed")
+    if snapshot:
+        if value is None:
+            if os.path.lexists(snapshot):fail("unexpected-snapshot")
+        elif action=="create":
+            parent=parent_fd(snapshot)
+            try:
+                fd=os.open(os.path.basename(snapshot),os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=parent)
+                with os.fdopen(fd,"wb") as handle:
+                    os.fchmod(handle.fileno(),0o600);handle.write(raw);handle.flush();os.fsync(handle.fileno())
+            finally:os.close(parent)
+        elif action=="verify":
+            if read_private(snapshot)!=raw:fail("snapshot-changed")
+        else:fail("action-invalid")
+    print(json.dumps(value,sort_keys=True,separators=(",",":")))
+except (OSError,ValueError,UnicodeError,OverflowError):fail("input-invalid")
+PY
+}
+
+research_exception_validate_bound() {
+  research_exception_check "${LAYOUT_RESEARCH_BINDING:-null}" "${LAYOUT_RESEARCH_SNAPSHOT-}" >/dev/null
+}
+
+research_exception_resume_check() {
+  python3 - "$1" "$2" "$3" "${LAYOUT_RESEARCH_BINDING:-null}" <<'PY'
+import datetime,json,os,stat,sys
+state_path,gates_path,run_path,binding=sys.argv[1:];bound=json.loads(binding)
+def read(path):
+    info=os.lstat(path)
+    if not stat.S_ISREG(info.st_mode) or os.path.realpath(path)!=path or info.st_uid!=os.geteuid() or stat.S_IMODE(info.st_mode)!=0o600:raise ValueError()
+    return open(path,encoding="utf-8").read()
+try:
+    state=json.loads(read(state_path));records=[json.loads(line) for line in read(gates_path).splitlines()]
+    gate=json.loads(read(run_path))["gate"];name=bound["fields"]["container_name"]
+    expected={k:bound[k] for k in ("path","sha256","fields")}
+    passed=[]
+    for record in records:
+        if record["evidence"].get("research_exception")!=expected:raise ValueError()
+        if record["status"]=="PASS":
+            if record["reason"]!="image-build-only-known-incident":raise ValueError()
+            passed.append(record)
+    if not passed:raise ValueError()
+    def selected(record,kind):return {k:v["selected"] for k,v in record["evidence"][kind].items()}
+    first=selected(passed[0],"containers");units=selected(passed[0],"units")
+    if set(first)!=set(gate["containers"]) or set(units)!=set(gate["units"]):raise ValueError()
+    if state["containers"]!=first or state["units"]!=units:raise ValueError()
+    if state["journal_since_us"]!=gate["journal_since_us"] or state["journal_since"]!=gate["journal_since"]:raise ValueError()
+    prior=bound["fields"]["initial_restart_count"];prior_time=0
+    def stamp(text):return int(datetime.datetime.strptime(text,"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp())*10**9
+    observed=stamp(bound["fields"]["observed_at_utc"]);expires=stamp(bound["fields"]["expires_at_utc"])
+    for record in passed:
+        containers=selected(record,"containers");sample=containers[name];ts=sample["monitored_at_unix_ns"];count=int(sample["restart_count"])
+        if set(containers)!=set(first) or any(v!=first[k] for k,v in containers.items() if k!=name) or selected(record,"units")!=units:raise ValueError()
+        if record["journal"]["boot_id"]!=state["boot_id"] or record["journal"]["since_us"]!=gate["journal_since_us"] or record["journal"]["since"]!=gate["journal_since"]:raise ValueError()
+        if sample["id"]!=bound["fields"]["container_id"] or sample["image_id"]!=bound["fields"]["image_id"]:raise ValueError()
+        limit=bound["fields"]["initial_restart_count"]+(ts-observed+30*10**9-1)//(30*10**9)+2
+        if not observed<=ts<expires or ts<prior_time or not prior<=count<=limit or sample["restart_limit"]!=limit:raise ValueError()
+        prior=count;prior_time=ts
+    if state["research_exception"]!={"binding_sha256":bound["sha256"],"first_observation":first[name],"latest_observation":sample}:raise ValueError()
+except (OSError,ValueError,KeyError,TypeError,IndexError):raise SystemExit("research-exception-resume-state-invalid")
+PY
+}
+
 gate_proc_root() {
   if gate_test_allowed && [ -n "${LAYOUT_GATE_PROC_ROOT-}" ]; then printf '%s\n' "$LAYOUT_GATE_PROC_ROOT"; else printf '%s\n' /proc; fi
 }
@@ -663,7 +787,7 @@ gate_command() {
 gate_record() {
   local case_id=$1 phase=$2 previous=$3 status=$4 reason=$5 evidence=${6:-'{}'} path=${LAYOUT_GATE_RECORD_FILE:?gate record}
   mkdir -p -- "$(dirname -- "$path")"
-  PROBE_RECORD="$path" PROBE_CASE="$case_id" PROBE_PHASE="$phase" PROBE_PREVIOUS="$previous" PROBE_STATUS="$status" PROBE_REASON="$reason" \
+  PROBE_RESEARCH="${LAYOUT_RESEARCH_BINDING:-null}" PROBE_RECORD="$path" PROBE_CASE="$case_id" PROBE_PHASE="$phase" PROBE_PREVIOUS="$previous" PROBE_STATUS="$status" PROBE_REASON="$reason" \
   PROBE_MEM="${LAYOUT_GATE_MEM:-unknown}" PROBE_SWAP="${LAYOUT_GATE_SWAP:-unknown}" \
   PROBE_JSTATUS="${LAYOUT_GATE_JOURNAL_STATUS:-unknown}" PROBE_JCOUNT="${LAYOUT_GATE_JOURNAL_COUNT:-unknown}" PROBE_JOOM="${LAYOUT_GATE_JOURNAL_OOM:-unknown}" \
   PROBE_JPROBE_EXIT="${LAYOUT_GATE_PROBE_EXIT:-unknown}" PROBE_JPROBE_OUT="${LAYOUT_GATE_PROBE_STDOUT_SHA:-unknown}" PROBE_JPROBE_ERR="${LAYOUT_GATE_PROBE_STDERR_SHA:-unknown}" \
@@ -672,6 +796,9 @@ gate_record() {
 import json, os, time
 evidence = json.loads(os.environ["PROBE_EVIDENCE"])
 if not isinstance(evidence, dict): raise SystemExit("gate-evidence-invalid")
+bound=json.loads(os.environ["PROBE_RESEARCH"])
+if bound is not None:
+    evidence["research_exception"]={k:bound[k] for k in ("path","sha256","fields")}
 def integer_or_text(name):
     value=os.environ[name]
     return int(value) if value.isdigit() else value
@@ -777,20 +904,69 @@ print(json.dumps({"health_status":health,"id":ident,"oom_killed":oom,"project":p
 PY
 }
 
+gate_parse_research_container() {
+  local output=${1:?container output} name=${2:?container name}
+  python3 - "$output" "$name" "${LAYOUT_RESEARCH_BINDING:-null}" <<'PY'
+import datetime,json,re,sys,time
+path,name,binding=sys.argv[1:];bound=json.loads(binding)
+if bound is None or name!="lagrange-station-research-worker-1":raise SystemExit("research-container-unbound")
+grant=bound["fields"];data=open(path,encoding="utf-8").read();values=data.rstrip("\n").split("\t")
+# Keep safely typed counts even when another field rejects the observation.
+def field(index,pattern):
+    return values[index] if len(values)>index and re.fullmatch(pattern,values[index]) else "unknown"
+ident=field(0,r"[0-9a-f]{64}");running=field(1,r"true|false");restarting=field(2,r"true|false")
+oom=field(3,r"true|false");health=field(4,r"healthy|unhealthy|starting");restarts=field(5,r"[0-9]+")
+project=field(6,r"lagrange-station");image=field(7,r"sha256:[0-9a-f]{64}");exit_code=field(8,r"[0-9]+")
+now=time.time_ns()
+def stamp(text):return int(datetime.datetime.strptime(text,"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp())*10**9
+observed=stamp(grant["observed_at_utc"]);expires=stamp(grant["expires_at_utc"])
+limit=grant["initial_restart_count"]+(now-observed+30*10**9-1)//(30*10**9)+2
+reason=None
+if not data.endswith("\n") or data.count("\n")!=1 or len(values)!=9:reason="research-container-columns"
+elif ident!=grant["container_id"] or image!=grant["image_id"]:reason="research-container-identity"
+elif running!="true" or oom!="false" or project!="lagrange-station" or health=="unknown":reason="research-container-state"
+elif restarting not in ("true","false") or exit_code not in (("2",) if restarting=="true" else ("0","2")):reason="research-container-exit"
+elif not observed<=now<expires:reason="research-container-expired"
+elif restarts=="unknown" or not grant["initial_restart_count"]<=int(restarts)<=limit:reason="research-container-restart-bound"
+value={"health_status":health,"id":ident,"image_id":image,"exit_code":exit_code,"oom_killed":oom,"project":project,
+       "restart_count":restarts,"restarting":restarting,"running":running,"monitored_at_unix_ns":now,
+       "monitored_at_utc":datetime.datetime.fromtimestamp(now//10**9,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),"restart_limit":limit}
+if reason:value["validation_error"]=reason
+print(json.dumps(value,sort_keys=True,separators=(",",":")))
+if reason:raise SystemExit(reason)
+PY
+}
+
 gate_state_check_and_write() {
   local state=${1:?state} boot=${2:?boot} since_us=${3:?since microseconds} since=${4:?since text} units=${5:?units json} containers=${6:?containers json}
-  PROBE_GATE_STATE="$state" PROBE_GATE_BOOT="$boot" PROBE_GATE_SINCE_US="$since_us" PROBE_GATE_SINCE="$since" PROBE_GATE_UNITS="$units" PROBE_GATE_CONTAINERS="$containers" python3 - <<'PY'
+  PROBE_RESEARCH="${LAYOUT_RESEARCH_BINDING:-null}" PROBE_GATE_STATE="$state" PROBE_GATE_BOOT="$boot" PROBE_GATE_SINCE_US="$since_us" PROBE_GATE_SINCE="$since" PROBE_GATE_UNITS="$units" PROBE_GATE_CONTAINERS="$containers" python3 - <<'PY'
 import json, os, tempfile
 state_path = os.environ["PROBE_GATE_STATE"]
 new = {"boot_id": os.environ["PROBE_GATE_BOOT"], "containers": json.loads(os.environ["PROBE_GATE_CONTAINERS"]), "journal_since": os.environ["PROBE_GATE_SINCE"], "journal_since_us": int(os.environ["PROBE_GATE_SINCE_US"]), "units": json.loads(os.environ["PROBE_GATE_UNITS"])}
 if not isinstance(new["boot_id"],str) or not isinstance(new["containers"],dict) or not isinstance(new["units"],dict) or not isinstance(new["journal_since"],str) or new["journal_since_us"] < 0: raise SystemExit("gate-state-new-invalid")
+bound=json.loads(os.environ["PROBE_RESEARCH"]);name="lagrange-station-research-worker-1"
+if bound is not None:
+    new["research_exception"]={"binding_sha256":bound["sha256"],"first_observation":new["containers"][name],"latest_observation":new["containers"][name]}
+write=not os.path.exists(state_path)
 if os.path.exists(state_path):
     old = json.load(open(state_path, encoding="utf-8"))
     if old.get("boot_id") != new["boot_id"]: raise SystemExit("boot-id-changed")
     if old.get("journal_since") != new["journal_since"] or old.get("journal_since_us") != new["journal_since_us"]: raise SystemExit("journal-since-changed")
     if ({k:(v.get("main_pid"),v.get("n_restarts")) for k,v in old.get("units",{}).items()} != {k:(v.get("main_pid"),v.get("n_restarts")) for k,v in new["units"].items()}): raise SystemExit("unit-identity-or-restart-changed")
-    if ({k:(v.get("id"),v.get("restart_count")) for k,v in old.get("containers",{}).items()} != {k:(v.get("id"),v.get("restart_count")) for k,v in new["containers"].items()}): raise SystemExit("container-identity-or-restart-changed")
-else:
+    def strict(containers):
+        return {k:(v.get("id"),v.get("restart_count")) for k,v in containers.items() if bound is None or k!=name}
+    if set(old.get("containers",{}))!=set(new["containers"]) or strict(old["containers"])!=strict(new["containers"]):raise SystemExit("container-identity-or-restart-changed")
+    if bound is None:
+        if "research_exception" in old:raise SystemExit("research-exception-removed")
+    else:
+        prior=old.get("research_exception",{});latest=prior.get("latest_observation",{});current=new["containers"][name]
+        if prior.get("binding_sha256")!=bound["sha256"] or prior.get("first_observation")!=old["containers"][name]:raise SystemExit("research-exception-state-changed")
+        for sample in (old["containers"][name],latest,current):
+            if sample.get("id")!=bound["fields"]["container_id"] or sample.get("image_id")!=bound["fields"]["image_id"]:raise SystemExit("research-identity-changed")
+        if int(current["restart_count"])<int(latest["restart_count"]) or current["monitored_at_unix_ns"]<latest["monitored_at_unix_ns"]:raise SystemExit("research-restart-or-time-decreased")
+        # Preserve initial identities/journal origin; advance only the monitored sample.
+        old["research_exception"]["latest_observation"]=current;new=old;write=True
+if write:
     parent = os.path.dirname(state_path); os.makedirs(parent, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".gate-state-", dir=parent)
     with os.fdopen(fd, "w", encoding="utf-8") as handle: json.dump(new, handle, sort_keys=True, separators=(",", ":")); handle.write("\n")
@@ -838,6 +1014,7 @@ gate_real() {
   [ "$previous" -eq 0 ] || { gate_fail "$case_id" "$phase" "$previous" previous-step-failed '{}'; return 1; }
   gate_validate_list "${BUILD_LAYOUT_HEALTH_UNITS-}" unit || { gate_fail "$case_id" "$phase" "$previous" invalid-health-units '{}'; return 1; }
   gate_validate_list "${BUILD_LAYOUT_HEALTH_CONTAINERS-}" container || { gate_fail "$case_id" "$phase" "$previous" invalid-health-containers '{}'; return 1; }
+  research_exception_validate_bound || { gate_fail "$case_id" "$phase" "$previous" research-exception-invalid '{}'; return 1; }
   local proc_root mem swap
   proc_root=$(gate_proc_root) || return 1
   if ! mem=$(awk '$1 == "MemAvailable:" {print $2; found=1} END {if (!found) exit 1}' "$proc_root/meminfo"); then gate_fail "$case_id" "$phase" "$previous" meminfo-unreadable '{}'; return 1; fi
@@ -925,13 +1102,20 @@ gate_real() {
   done
   docker_bin=$(gate_command docker) || { rm -rf -- "$temp"; return 1; }
   local container_format='{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}'
+  local research_format="$container_format"'{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}' selected_format parser parser_status
   IFS=',' read -r -a gate_containers <<<"$BUILD_LAYOUT_HEALTH_CONTAINERS"
   for container in "${gate_containers[@]}"; do
     container_status=0
-    timeout 10s "$docker_bin" inspect --type container --format "$container_format" "$container" >"$temp/container.out" 2>"$temp/container.err" || container_status=$?
+    selected_format=$container_format; parser=gate_parse_container
+    if [ "${LAYOUT_RESEARCH_BINDING:-null}" != null ] && [ "$container" = lagrange-station-research-worker-1 ]; then selected_format=$research_format; parser=gate_parse_research_container; fi
+    timeout 10s "$docker_bin" inspect --type container --format "$selected_format" "$container" >"$temp/container.out" 2>"$temp/container.err" || container_status=$?
     container_out_hash=$(sha256_file "$temp/container.out") || { rm -rf -- "$temp"; return 1; }; container_err_hash=$(sha256_file "$temp/container.err") || { rm -rf -- "$temp"; return 1; }
-    if [ "$container_status" -ne 0 ] || [ -s "$temp/container.err" ] || ! container_value=$(gate_parse_container "$temp/container.out"); then
-      printf '%s\t%s\t%s\t%s\tnull\n' "$container" "$container_status" "$container_out_hash" "$container_err_hash" >>"$containers_lines"
+    parser_status=0; container_value=null
+    if [ "$container_status" -eq 0 ] && [ ! -s "$temp/container.err" ]; then
+      container_value=$("$parser" "$temp/container.out" "$container") || parser_status=$?
+    fi
+    if [ "$container_status" -ne 0 ] || [ -s "$temp/container.err" ] || [ "$parser_status" -ne 0 ]; then
+      printf '%s\t%s\t%s\t%s\t%s\n' "$container" "$container_status" "$container_out_hash" "$container_err_hash" "${container_value:-null}" >>"$containers_lines"
       evidence=$(gate_evidence_json "$units_lines" "$containers_lines" "$ps_status" "$ps_out_hash" "$ps_err_hash"); rm -rf -- "$temp"; gate_fail "$case_id" "$phase" "$previous" container-health-invalid "$evidence"; return 1
     fi
     printf '%s\t%s\t%s\t%s\t%s\n' "$container" "$container_status" "$container_out_hash" "$container_err_hash" "$container_value" >>"$containers_lines"
@@ -956,10 +1140,13 @@ print(json.dumps(value, sort_keys=True, separators=(",",":")))
 PY
 ) || { rm -rf -- "$temp"; return 1; }
   state_file=${LAYOUT_GATE_STATE_FILE:?gate state file}
+  if ! research_exception_validate_bound; then evidence=$(gate_evidence_json "$units_lines" "$containers_lines" "$ps_status" "$ps_out_hash" "$ps_err_hash"); rm -rf -- "$temp"; gate_fail "$case_id" "$phase" "$previous" research-exception-invalid "$evidence"; return 1; fi
   if ! gate_state_check_and_write "$state_file" "$parsed_boot" "$LAYOUT_JOURNAL_SINCE_US" "$LAYOUT_JOURNAL_SINCE" "$units_json" "$containers_json"; then evidence=$(gate_evidence_json "$units_lines" "$containers_lines" "$ps_status" "$ps_out_hash" "$ps_err_hash"); rm -rf -- "$temp"; gate_fail "$case_id" "$phase" "$previous" gate-identity-changed "$evidence"; return 1; fi
   evidence=$(gate_evidence_json "$units_lines" "$containers_lines" "$ps_status" "$ps_out_hash" "$ps_err_hash") || { rm -rf -- "$temp"; return 1; }
   rm -rf -- "$temp"
-  gate_record "$case_id" "$phase" "$previous" PASS healthy "$evidence"
+  local reason=healthy
+  [ "${LAYOUT_RESEARCH_BINDING:-null}" = null ] || reason=image-build-only-known-incident
+  gate_record "$case_id" "$phase" "$previous" PASS "$reason" "$evidence"
 }
 
 probe_gate() {

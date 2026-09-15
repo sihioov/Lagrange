@@ -206,3 +206,100 @@ long production image measurements additionally require a valid image-only
 execution scope for the exact candidate. The expired historical exception is
 not reused. Product C has not been selected or implemented, and the 12-image,
 strict V2 manifest and A/B/C performance acceptance remain unverified.
+
+## 2026-09-15 resume-gate implementation and verification
+
+This section records the bounded continuation from
+`ff4a67dd0c113955ac1bca98db7d9825fa4fef20` under the accepted
+[resume specification](../superpowers/plans/2026-09-15-production-build-resume.md).
+The preceding F9 results are retained historical evidence, not proof for these
+changed sources. **Final offline verification: PASS; actual execution: NOT_RUN.**
+
+### Implementation
+
+- `BUILD_LAYOUT_RESEARCH_EXCEPTION` is the sole opt-in. Its JSON must have exactly
+  the specified keys and actual types, the fixed image-only scope/name/incident,
+  and a currently valid observation/expiry interval of at most 24 hours.
+  Absolute canonical paths are traversed using directory descriptors and
+  `O_NOFOLLOW`; the regular file must belong to the executing UID with mode 0600.
+- Immutable `run.json` binds the original path, fields, SHA-256 and exact bytes
+  encoded as base64. The private `research-exception.json` snapshot contains the
+  original bytes with mode 0600. Every real gate revalidates the input and snapshot
+  before host commands and before recording PASS. Resume also checks prior gate
+  evidence against the first/latest saved observations and journal origin.
+  Missing, altered, substituted, renewed or expired inputs fail closed; a strict
+  run cannot acquire an exception on resume. Plans remain read-only without
+  requiring health inputs, and validate any supplied/bound exception.
+- Only the exact pinned research container uses the additional fixed `.Image`
+  and `.State.ExitCode` fields. Other containers retain the original seven-field
+  template and strict parser. Research must be running without OOM, with the
+  pinned container/image IDs and project; only the specified health/restart/exit
+  combinations pass. Each parsed count and its observation time/limit are retained,
+  including counts in rejected observations. Counts cannot decrease or exceed
+  `initial_restart_count + ceil(elapsed_seconds / 30) + 2`.
+- First container/unit identities and journal-since remain unchanged. Only the
+  exceptional worker's latest observation advances. Its passing gate reason is
+  `image-build-only-known-incident`, with the exception fields/hash in evidence;
+  strict healthy gates still use `healthy`. This is not service recovery or a
+  release-ready health result. Other services, RAM/swap thresholds, compiler scan,
+  kernel proof/range scan, execution-slot lock and failure statuses remain enforced.
+
+Changed line spans in the final sources:
+
+| Owned file | Lines |
+|---|---|
+| `scripts/qa/build-layout-probe.sh` | 47–48, 290–293, 1011–1024, 1144, 1199–1218, 1260, 1558, 1935–2160, 2229: binding, immutable metadata/resume, and focused self-test integration. |
+| `tests/fixtures/build-layout/layout-helper.sh` | 648–772, 790–801, 907–980, 1017, 1105–1149: private input validation, monitored observations/state, and gate integration. |
+| This report | 210 onward: this separate resume-gate evidence section only. |
+
+### Commands and retained evidence
+
+Evidence root: `/tmp/lagrange-wp3-research-dl1yFnLV` (private directory).
+Commands ran through `python3 <evidence-root>/run-check.py <label> <command>`.
+Each label's JSON retains actual argv/exit, controller/helper/fixture file hashes
+before and after, the raw log hash and counts for 15 forbidden-command sentinels.
+All sentinel counts are zero, including Docker, Cargo, rustc/rustdoc,
+systemctl/journalctl and provider/network executable boundaries.
+
+| Label / command | Actual result |
+|---|---|
+| `focused-01` / `python3 <evidence-root>/focused-loader.py` | exit 1; a quoted test label caused output-path rejection before the intended type check. Failed evidence retained; the test label was corrected. |
+| `focused-02` / `python3 <evidence-root>/focused-loader.py 02` | exit 0; 124 focused checks, including a complete synthetic exception-bound P2 stop/resume controller. |
+| `syntax-probe-final` / `bash -n scripts/qa/build-layout-probe.sh` | exit 0. |
+| `syntax-helper-final` / `bash -n tests/fixtures/build-layout/layout-helper.sh` | exit 0. |
+| `self-test-final` / `bash scripts/qa/build-layout-probe.sh --self-test` | **exit 1**, retained. The evidence wrapper's inherited umask 077 made F2's requested 0755 test directory become 0700; the existing F2 assertion failed before the matrix. This is not a full PASS. |
+| `f2-recheck` / `bash <evidence-root>/f2-recheck.sh` | exit 0 after setting only the private wrapper's child umask to 022. Controller/helper code and F2 assertions were unchanged. |
+| `self-test-final-02` / `bash scripts/qa/build-layout-probe.sh --self-test` | **exit 0**, complete PASS: 124 focused checks, F1–F9, exactly 84 controller cases in their original order, and the post-matrix publication checks. |
+| `evidence-audit` / `python3 <evidence-root>/audit.py` | exit 0: unchanged final source hashes, 84 distinct IDs, all 27 expected stops with immediate passing gates and preserved original exits, 28 exception-assisted controller gates, and zero sentinels. Original corrected controller/assertion and strict-parser function bodies were also compared with the base commit. |
+
+Focused checks use actual parser/controller functions with private synthetic
+executables. They cover schema/types/duplicates/unknown keys, unsafe paths/modes,
+missing/changed/substituted resume grants and snapshots, immutable initial/latest
+state, identity/health/exit/OOM/restart bounds, other-service failures, RAM/swap,
+kernel failures, active compiler rejection and read-only plans. The owner check
+uses a synthetic executing UID against the unchanged parser body; no real chown
+or UID change is used for that test. Expiry during observation is
+tested with the actual clock and a delayed synthetic inspect, without a time seam.
+
+Final source identities (identical before/after the successful full command):
+
+- Controller SHA-256: `f3d7072f7ada68fbf8586e78505e273ca4ed1af769a954298a5fd491e91922da`.
+- Helper SHA-256: `d89b8e8d8647706c5639426688a364c8bfc7de4c61881f724fb47788950ed666`.
+- Fixture input tree SHA-256: `66a1949d34a5265634d7a66c5eeb647c7e11627f0dd2a813dcefa81e653b84ca`.
+- Full log SHA-256: `b42c020be52b667d648df6b85790d7b1702be4e3c639e94be580fc97ee7530a5`.
+- Full invocation JSON SHA-256: `ef9c995d2ac27f0c1fdb086911812b97eb7b0a90f402b8c37dd5b3d992a21add`.
+- Audit JSON SHA-256: `7b5dca70c3d3676460f553675824086455160ad1c474ce27ac1615d0aede2f5e`.
+
+Raw final evidence: `<evidence-root>/tmp/build-layout-self-test.nUjbcd`.
+`full-evidence.SHA256SUMS` hashes 44,846 regular files; eight deliberate symlinks
+are recorded separately without following them. The manifest SHA-256 is
+`dfed4e12d15b7a52c82552c3af5c0a9dad3098f6892ff06e27e7dacd04388bf2`.
+
+Scope/specification deviations: **none**. The two failed invocations and the
+focused reproduction justify the corrected reruns above. Implementation defects,
+unresolved implementation items and further decomposition required: **none**.
+The coordinator-owned design/resume files, other QA tools, all Dockerfiles,
+dependencies, release validator and diagrams were not edited by this worker.
+No stage/commit, service/session operation, global prune or provider operation was
+performed. Actual Docker/Cargo builds, host health, cache/route/runtime behavior,
+release/performance acceptance and G2 remain **NOT_RUN / NOT_PASSED** for this package.

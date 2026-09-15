@@ -44,6 +44,8 @@ CUR_COMPILE= CUR_LIB= CUR_APP= CUR_RUNTIME= CUR_RECIPE= CUR_GUARD= CUR_K= CUR_H=
 CUR_SHARED_CACHE= CUR_TARGET_CACHE= CUR_LEDGER_INJECT=none CUR_SOURCE_TRAP=0
 
 source "$helper_path"
+# Internal bindings are never inherited from the caller's environment.
+LAYOUT_RESEARCH_BINDING=null LAYOUT_RESEARCH_SNAPSHOT=
 
 die() { printf '%s\n' "build-layout-probe: $*" >&2; exit 2; }
 unresolved() { printf '%s\n' "build-layout-probe: FAILED_UNRESOLVED: $*" >&2; return 1; }
@@ -285,9 +287,10 @@ record_timing() {
 }
 
 write_run_json() {
-  PROBE_PATH="$run_json" PROBE_HEAD="$origin_head" PROBE_FIXTURE="$fixture_sha" PROBE_TOOL="$tool_sha" PROBE_DESIGN="$design_sha" PROBE_BASELINE="$baseline_sha" PROBE_RUN="$run_id" PROBE_LAYOUT="$layout_selection" PROBE_CASE="$case_selection" PROBE_UNITS="${BUILD_LAYOUT_HEALTH_UNITS:-}" PROBE_CONTAINERS="${BUILD_LAYOUT_HEALTH_CONTAINERS:-}" PROBE_SINCE_US="$LAYOUT_JOURNAL_SINCE_US" PROBE_SINCE="$LAYOUT_JOURNAL_SINCE" PROBE_HELPER="$(sha256sum -- "$helper_path" | awk '{print $1}')" PROBE_LAYOUT_JSON="$(sha256sum -- "$fixture_dir/layout.json" | awk '{print $1}')" PROBE_COMPOSE="$(sha256sum -- "$fixture_dir/compose.yml" | awk '{print $1}')" PROBE_DOCKER_BASELINE="$(sha256sum -- "$fixture_dir/Dockerfile.baseline" | awk '{print $1}')" PROBE_DOCKER_ARTIFACTS="$(sha256sum -- "$fixture_dir/Dockerfile.artifacts" | awk '{print $1}')" PROBE_DOCKER_CONSUMER="$(sha256sum -- "$fixture_dir/Dockerfile.consumer" | awk '{print $1}')" PROBE_RECIPE_BASELINE="$(recipe_hash baseline)" PROBE_RECIPE_COMMON="$(recipe_hash common)" PROBE_RECIPE_GROUPED="$(recipe_hash grouped)" python3 - <<'PY'
+  PROBE_RESEARCH="$LAYOUT_RESEARCH_BINDING" PROBE_PATH="$run_json" PROBE_HEAD="$origin_head" PROBE_FIXTURE="$fixture_sha" PROBE_TOOL="$tool_sha" PROBE_DESIGN="$design_sha" PROBE_BASELINE="$baseline_sha" PROBE_RUN="$run_id" PROBE_LAYOUT="$layout_selection" PROBE_CASE="$case_selection" PROBE_UNITS="${BUILD_LAYOUT_HEALTH_UNITS:-}" PROBE_CONTAINERS="${BUILD_LAYOUT_HEALTH_CONTAINERS:-}" PROBE_SINCE_US="$LAYOUT_JOURNAL_SINCE_US" PROBE_SINCE="$LAYOUT_JOURNAL_SINCE" PROBE_HELPER="$(sha256sum -- "$helper_path" | awk '{print $1}')" PROBE_LAYOUT_JSON="$(sha256sum -- "$fixture_dir/layout.json" | awk '{print $1}')" PROBE_COMPOSE="$(sha256sum -- "$fixture_dir/compose.yml" | awk '{print $1}')" PROBE_DOCKER_BASELINE="$(sha256sum -- "$fixture_dir/Dockerfile.baseline" | awk '{print $1}')" PROBE_DOCKER_ARTIFACTS="$(sha256sum -- "$fixture_dir/Dockerfile.artifacts" | awk '{print $1}')" PROBE_DOCKER_CONSUMER="$(sha256sum -- "$fixture_dir/Dockerfile.consumer" | awk '{print $1}')" PROBE_RECIPE_BASELINE="$(recipe_hash baseline)" PROBE_RECIPE_COMMON="$(recipe_hash common)" PROBE_RECIPE_GROUPED="$(recipe_hash grouped)" python3 - <<'PY'
 import json,os,time
 v={"baseline_document_sha256":os.environ["PROBE_BASELINE"],"cases":["cold","exact-repeat","forced-warm","commit-only","web-only","python-only","app-source-old-mtime","lib-source","embedded","build-script","build-setting","manifest-key","lock-key","config-key","feature-switch","branch-return","compile-fail-p2","export-fail-p2","wrong-commit","missing-bin","tampered-bin","missing-complete","stop-after-p2","delete-input","delete-source","empty-cache","broken-ledger","route-contract"],"command_contract":{"cargo_build_jobs":"2","cargo_target_dir":"/cargo-target","compose_parallel_limit":"1","platform":"linux/amd64","profile":"release","workdir":"/build"},"document_sha256":os.environ["PROBE_DESIGN"],"fixture_source_input_sha256":os.environ["PROBE_FIXTURE"],"gate":{"containers":os.environ["PROBE_CONTAINERS"].split(",") if os.environ["PROBE_CONTAINERS"] else [],"journal_since":os.environ["PROBE_SINCE"],"journal_since_us":int(os.environ["PROBE_SINCE_US"]),"mem_available_kib":2097152,"swap_free_kib":524288,"units":os.environ["PROBE_UNITS"].split(",") if os.environ["PROBE_UNITS"] else []},"initial_state":"created","layouts":["baseline","common","grouped"],"origin_head":os.environ["PROBE_HEAD"],"recipes":{"Dockerfile.artifacts":os.environ["PROBE_DOCKER_ARTIFACTS"],"Dockerfile.baseline":os.environ["PROBE_DOCKER_BASELINE"],"Dockerfile.consumer":os.environ["PROBE_DOCKER_CONSUMER"],"compose.yml":os.environ["PROBE_COMPOSE"],"layout-helper.sh":os.environ["PROBE_HELPER"],"layout.json":os.environ["PROBE_LAYOUT_JSON"],"layout_recipe":{"baseline":os.environ["PROBE_RECIPE_BASELINE"],"common":os.environ["PROBE_RECIPE_COMMON"],"grouped":os.environ["PROBE_RECIPE_GROUPED"]}},"run_id":os.environ["PROBE_RUN"],"schema":"lagrange-build-layout-probe-v3","selection":{"case":os.environ["PROBE_CASE"],"layout":os.environ["PROBE_LAYOUT"]},"source":{"build_setting":"default","commit":"1111111111111111111111111111111111111111","embedded":"embedded-v1","generated_prefix":"generated-v1","lib_base":42,"lib_wide":84,"marker":"source-v1"},"started_at_unix":time.time(),"synthetic_commits":["1111111111111111111111111111111111111111","2222222222222222222222222222222222222222","3333333333333333333333333333333333333333"],"tool_sha256":os.environ["PROBE_TOOL"]}
+v["gate"]["research_exception"]=json.loads(os.environ["PROBE_RESEARCH"])
 with open(os.environ["PROBE_PATH"],"x",encoding="utf-8",newline="\n") as o:o.write(json.dumps(v,sort_keys=True,separators=(",",":"))+"\n")
 PY
   chmod 0600 -- "$run_json"
@@ -1005,8 +1008,11 @@ run_suite() {
 }
 
 init_run() {
+  research_exception_validate_bound || return 1
   run_dir=$output_dir; run_id=$(python3 -c 'import secrets; print(secrets.token_hex(16))') || return 1
   mkdir -p -m 0700 -- "$run_dir"
+  LAYOUT_RESEARCH_SNAPSHOT="$run_dir/research-exception.json"
+  research_exception_check "$LAYOUT_RESEARCH_BINDING" "$LAYOUT_RESEARCH_SNAPSHOT" create >/dev/null || return 1
   events_file="$run_dir/events.jsonl"; gate_file="$run_dir/gates.jsonl"; run_json="$run_dir/run.json"; timing_file="$run_dir/timing.tsv"
   : >"$events_file"; : >"$gate_file"; printf 'category\tscope\twall_ms\tcargo_ms\tfinished_ms\n' >"$timing_file"
   chmod 0600 -- "$events_file" "$gate_file" "$timing_file"
@@ -1015,7 +1021,7 @@ init_run() {
   LAYOUT_JOURNAL_SINCE=$(date -u -d "@$((LAYOUT_JOURNAL_SINCE_US / 1000000))" '+%Y-%m-%d %H:%M:%S UTC')
   LAYOUT_JOURNAL_BOOT_ID=
   export LAYOUT_JOURNAL_SINCE_US LAYOUT_JOURNAL_SINCE LAYOUT_JOURNAL_BOOT_ID
-  write_run_json
+  write_run_json || return 1
   export LAYOUT_GATE_RECORD_FILE=$gate_file LAYOUT_GATE_STATE_FILE="$run_dir/gate-state.json" LAYOUT_GATE_PRIVATE_DIR="$run_dir/private-gates"
   emit_event RUN "$layout_selection" "$case_selection" prepare 0 START 0 new-run
 }
@@ -1135,6 +1141,7 @@ load_resume_state() {
   run_dir=$resume_dir; run_id=; events_file="$run_dir/events.jsonl"; gate_file="$run_dir/gates.jsonl"; run_json="$run_dir/run.json"; timing_file="$run_dir/timing.tsv"
   local recorded_hash serialized; recorded_hash=$(tr -d '\n' <"$run_dir/run.json.sha256")
   [[ "$recorded_hash" =~ ^[0-9a-f]{64}$ ]] && [ "$(sha256sum -- "$run_json" | awk '{print $1}')" = "$recorded_hash" ] || { unresolved 'initial run.json changed'; return 1; }
+  load_research_exception_binding || return 1
   validate_event_chain || { unresolved 'event ledger changed'; return 1; }
   serialized=$(PROBE_HEAD="$origin_head" PROBE_TOOL="$tool_sha" PROBE_FIXTURE="$fixture_sha" PROBE_DESIGN="$design_sha" PROBE_BASELINE="$baseline_sha" PROBE_UNITS="$BUILD_LAYOUT_HEALTH_UNITS" PROBE_CONTAINERS="$BUILD_LAYOUT_HEALTH_CONTAINERS" PROBE_RUN="$run_id" PROBE_HELPER="$(sha256sum -- "$helper_path" | awk '{print $1}')" PROBE_LAYOUT_JSON="$(sha256sum -- "$fixture_dir/layout.json" | awk '{print $1}')" PROBE_COMPOSE="$(sha256sum -- "$fixture_dir/compose.yml" | awk '{print $1}')" PROBE_DOCKER_BASELINE="$(sha256sum -- "$fixture_dir/Dockerfile.baseline" | awk '{print $1}')" PROBE_DOCKER_ARTIFACTS="$(sha256sum -- "$fixture_dir/Dockerfile.artifacts" | awk '{print $1}')" PROBE_DOCKER_CONSUMER="$(sha256sum -- "$fixture_dir/Dockerfile.consumer" | awk '{print $1}')" python3 - "$run_json" <<'PY'
 import json,os,re,sys
@@ -1189,11 +1196,26 @@ validate_health_inputs() {
   gate_validate_list "$BUILD_LAYOUT_HEALTH_CONTAINERS" container || die 'invalid BUILD_LAYOUT_HEALTH_CONTAINERS'
 }
 
+load_research_exception_binding() {
+  local expected
+  expected=$(python3 - "$run_json" <<'PY'
+import json,sys
+print(json.dumps(json.load(open(sys.argv[1]))["gate"].get("research_exception"),sort_keys=True,separators=(",",":")))
+PY
+) || return 1
+  LAYOUT_RESEARCH_SNAPSHOT="$run_dir/research-exception.json"
+  LAYOUT_RESEARCH_BINDING=$(research_exception_check "$expected" "$LAYOUT_RESEARCH_SNAPSHOT") || return 1
+  if [ "$LAYOUT_RESEARCH_BINDING" != null ]; then
+    research_exception_resume_check "$run_dir/gate-state.json" "$run_dir/gates.jsonl" "$run_json" || return 1
+  fi
+}
+
 print_resume_plan() {
   run_dir=$resume_dir; events_file="$run_dir/events.jsonl"; run_json="$run_dir/run.json"
   local recorded_hash terminal
   recorded_hash=$(tr -d '\n' <"$run_dir/run.json.sha256")
   [[ "$recorded_hash" =~ ^[0-9a-f]{64}$ ]] && [ "$(sha256sum -- "$run_json" | awk '{print $1}')" = "$recorded_hash" ] || { unresolved 'initial run.json changed'; return 1; }
+  load_research_exception_binding || return 1
   validate_event_chain || { unresolved 'event ledger changed'; return 1; }
   terminal=$(resume_terminal) || { unresolved 'resume cursor is invalid'; return 1; }
   printf 'build-layout-probe: resume plan is read-only: %s\nterminal=%s\nactual_docker_cargo_results=NOT_RUN\nG2=NOT_PASSED\n' "$resume_dir" "${terminal%%$'\t'*}"
@@ -1235,6 +1257,7 @@ parse_cli() {
 
 sanitize_actual_environment() {
   unset BUILD_LAYOUT_SELF_TEST_ACTIVE LAYOUT_GATE_TEST_SEAM LAYOUT_GATE_MODE LAYOUT_FAKE_GATE_RESULT LAYOUT_GATE_PROC_ROOT LAYOUT_GATE_PS_BIN LAYOUT_GATE_SYSTEMCTL_BIN LAYOUT_GATE_JOURNALCTL_BIN LAYOUT_GATE_DOCKER_BIN
+  LAYOUT_RESEARCH_BINDING=null LAYOUT_RESEARCH_SNAPSHOT=
 }
 
 self_expect_failure() {
@@ -1532,6 +1555,7 @@ PY
 }
 
 reset_runtime_globals_for_resume_test() {
+  LAYOUT_RESEARCH_BINDING=null LAYOUT_RESEARCH_SNAPSHOT=
   run_dir= run_id= events_file= gate_file= run_json= timing_file=
   layout_selection=all case_selection=all output_dir=
   CUR_LAYOUT= CUR_CASE= CUR_SCOPE= CUR_TOKEN= CUR_SOURCE= CUR_ATTEMPT=0 CUR_ATTEMPT_DIR= CUR_COMMIT= CUR_SETTING= CUR_CONFIG= CUR_COLD=0 CUR_PHASE=
@@ -1908,7 +1932,219 @@ self_corrective_regressions() (
   self_export_failures "$root/export" || exit 1
 )
 
+self_research_exception() (
+  local root=$1
+  mkdir -p -m 0700 -- "$root/bin" "$root/proc/sys/kernel/random"
+  # Snapshot the actual loaded functions and explicit non-secret controller inputs.
+  # This driver is private to --self-test; it adds no public mode or runtime seam.
+  {
+    printf 'set -euo pipefail\n'
+    declare -p script_path repo_root fixture_dir helper_path design_path baseline_doc layouts case_ids case_numbers p_bin p_variant p_runtime p_group phases c1 c2 c3 origin_head fixture_sha tool_sha design_sha baseline_sha
+    declare -f
+    cat <<'SH'
+[ "${BUILD_LAYOUT_SELF_TEST_ACTIVE-}" = 1 ] && [ "${LAYOUT_GATE_TEST_SEAM-}" = build-layout-self-test ] || exit 90
+mode=apply internal_self_test=1 layout_selection=common case_selection=cold execution_lock_fd=
+LAYOUT_RESEARCH_BINDING=null LAYOUT_RESEARCH_SNAPSHOT=
+run_dir= run_id= events_file= gate_file= run_json= timing_file= output_dir= resume_dir=
+CUR_LAYOUT= CUR_CASE= CUR_SCOPE= CUR_TOKEN= CUR_SOURCE= CUR_ATTEMPT=0 CUR_ATTEMPT_DIR= CUR_COMMIT= CUR_SETTING= CUR_CONFIG= CUR_COLD=0 CUR_PHASE=
+CUR_COMPILE= CUR_LIB= CUR_APP= CUR_RUNTIME= CUR_RECIPE= CUR_GUARD= CUR_K= CUR_H= CUR_HOST= CUR_IDENTITY_SHA= CUR_SHARED_CACHE= CUR_TARGET_CACHE= CUR_LEDGER_INJECT=none CUR_SOURCE_TRAP=0
+RESUME_ACTIVE=0 RESUMING=0 RESUME_COMPLETE=0
+unset LAYOUT_JOURNAL_SINCE_US LAYOUT_JOURNAL_SINCE LAYOUT_JOURNAL_BOOT_ID
+export LAYOUT_GATE_MODE=real
+case "$1" in
+  check) research_exception_check ;;
+  new)
+    LAYOUT_RESEARCH_BINDING=$(research_exception_check) || exit 1
+    output_dir=$2
+    init_run || exit 1
+    mkdir -m 0700 -- "$run_dir/state"
+    probe_gate cold first 0 || exit 1
+    set_run_status complete 0 ;;
+  load|sample)
+    resume_dir=$2
+    load_resume_state || exit 1
+    if [ "$1" = sample ]; then probe_gate complete resume-sample 0 || exit 1; fi ;;
+  controller)
+    LAYOUT_RESEARCH_BINDING=$(research_exception_check) || exit 1
+    export FAKE_DOCKER_ROOT="$2/build-state" FAKE_DOCKER_CALLS="$2/build-calls.jsonl" FAKE_LAYOUT_HELPER="$helper_path"
+    mkdir -p -m 0700 -- "$FAKE_DOCKER_ROOT" "$2/controller"
+    create_fake_docker "$2/build-docker"
+    docker_bin="$2/build-docker"
+    self_controller "$2/controller" common stop-after-p2 || exit 1 ;;
+  *) exit 90 ;;
+esac
+SH
+  } >"$root/driver.sh"
+  cat >"$root/host-fake.py" <<'PY'
+#!/usr/bin/env python3
+import datetime,json,os,pathlib,sys,time
+if os.environ.get("BUILD_LAYOUT_SELF_TEST_ACTIVE")!="1" or os.environ.get("LAYOUT_GATE_TEST_SEAM")!="build-layout-self-test":sys.exit(90)
+name=pathlib.Path(sys.argv[0]).name;args=sys.argv[1:];s=json.load(open(os.environ["RESEARCH_TEST_DATA"]))
+with open(os.environ["RESEARCH_TEST_CALLS"],"a") as f:f.write(json.dumps({"command":name,"argv":args})+"\n")
+if name=="ps":
+    assert args==["-eo","comm="]
+    if s.get("compiler"):print("rustc")
+elif name=="systemctl":
+    assert len(args)==3 and args[0]=="show" and args[1] in ("alpha.service","beta.service") and args[2]=="--property=LoadState,ActiveState,SubState,ExecMainStatus,MainPID,NRestarts"
+    unit={"LoadState":"loaded","ActiveState":"active","SubState":"running","ExecMainStatus":"0","MainPID":"123","NRestarts":"0"}
+    if args[1]=="beta.service":unit.update(s.get("unit",{}))
+    for k,v in unit.items():print(k+"="+v)
+elif name=="journalctl":
+    probe=args==["-k","-b","--no-pager","-o","json","-n","1"]
+    assert probe or (len(args)==11 and args[:5]==["-k","-b","--no-pager","-o","json"] and args[5]=="--since" and args[7]=="--until" and args[9:]==["-n","1000"])
+    mode=s.get("journal","")
+    if mode=="denied":print("synthetic permission failure",file=sys.stderr);sys.exit(1)
+    if mode=="empty-probe" and probe:sys.exit(0)
+    if mode=="bad-range" and not probe:print("{");sys.exit(0)
+    t=time.time_ns()//1000 if probe else int(datetime.datetime.strptime(args[8],"%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=datetime.timezone.utc).timestamp()*1000000)-500000
+    print(json.dumps({"__REALTIME_TIMESTAMP":str(t),"__CURSOR":"synthetic","_BOOT_ID":("f"*32 if mode=="wrong-boot" else "0123456789abcdef0123456789abcdef"),"_TRANSPORT":"kernel","MESSAGE":("Killed process synthetic" if mode=="oom" and not probe else "quiet kernel")}))
+elif name=="docker":
+    assert len(args)==6 and args[:4]==["inspect","--type","container","--format"]
+    strict=r'{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}'
+    exceptional=args[5]=="lagrange-station-research-worker-1" and bool(os.environ.get("BUILD_LAYOUT_RESEARCH_EXCEPTION"))
+    expected=strict+(r'{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}' if exceptional else '')
+    assert args[4]==expected
+    v=s["research" if args[5]=="lagrange-station-research-worker-1" else "other"]
+    if v.get("missing"):sys.exit(1)
+    if v.get("delay"):time.sleep(v["delay"])
+    row=[v[k] for k in ("id","running","restarting","oom","health","count","project")]
+    if exceptional:row += [v["image"],v["exit"]]
+    if v.get("short"):row=row[:-1]
+    print("\t".join(str(x) for x in row))
+else:sys.exit(90)
+PY
+  chmod 0755 "$root/host-fake.py"
+  for name in ps systemctl journalctl docker; do ln -s ../host-fake.py "$root/bin/$name"; done
+  python3 - "$root" "$script_path" <<'PY'
+import base64,copy,datetime,hashlib,json,os,pathlib,shutil,subprocess,sys,time
+root=pathlib.Path(sys.argv[1]);controller=sys.argv[2];driver=str(root/"driver.sh");calls=root/"host-calls.jsonl";data=root/"host-data.json"
+name="lagrange-station-research-worker-1";ident="a"*64;image="sha256:"+"b"*64
+unit_env="alpha.service,beta.service";container_env=name+",api-1"
+def utc(seconds):return datetime.datetime.fromtimestamp(seconds,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+now=int(time.time());grant={"format":"lagrange-build-research-exception-v1","scope":"image-build-only","container_name":name,"container_id":ident,"image_id":image,"observed_at_utc":utc(now-3600),"expires_at_utc":utc(now+3600),"initial_restart_count":100,"known_error_code":"PRICE_CURATION_FAILED","known_exit_code":2}
+valid=root/"grant.json"
+def write_grant(path,fields):
+    path.write_bytes(fields if isinstance(fields,bytes) else (json.dumps(fields,indent=2)+"\n").encode());path.chmod(0o600);return str(path)
+write_grant(valid,grant);raw=valid.read_bytes();digest=hashlib.sha256(raw).hexdigest()
+base={"research":{"id":ident,"image":image,"running":"true","restarting":"true","oom":"false","health":"unhealthy","count":100,"project":"lagrange-station","exit":2},"other":{"id":"c"*64,"running":"true","restarting":"false","oom":"false","health":"healthy","count":0,"project":"lagrange-station"}}
+def fixture(state=None,mem=8388608,swap=1048576):
+    data.write_text(json.dumps(base if state is None else state));(root/"proc/meminfo").write_text(f"MemAvailable: {mem} kB\nSwapFree: {swap} kB\n");(root/"proc/sys/kernel/random/boot_id").write_text("01234567-89ab-cdef-0123-456789abcdef\n")
+env={**os.environ,"BUILD_LAYOUT_SELF_TEST_ACTIVE":"1","LAYOUT_GATE_TEST_SEAM":"build-layout-self-test","BUILD_LAYOUT_HEALTH_UNITS":unit_env,"BUILD_LAYOUT_HEALTH_CONTAINERS":container_env,"RESEARCH_TEST_DATA":str(data),"RESEARCH_TEST_CALLS":str(calls),"LAYOUT_GATE_PROC_ROOT":str(root/"proc")}
+for cmd in ("PS","SYSTEMCTL","JOURNALCTL","DOCKER"):env["LAYOUT_GATE_"+cmd+"_BIN"]=str(root/"bin"/cmd.lower())
+results=[]
+def count_calls():return len(calls.read_text().splitlines()) if calls.exists() else 0
+def run(label,args,expected=0,exception=valid,external=None,extra=None):
+    e={**env};e.pop("BUILD_LAYOUT_RESEARCH_EXCEPTION",None)
+    if exception is not None:e["BUILD_LAYOUT_RESEARCH_EXCEPTION"]=str(exception)
+    if extra:e.update(extra)
+    before=count_calls();result=subprocess.run(args,env=e,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=180)
+    log=result.stdout+result.stderr;(root/(label+".log")).write_bytes(log)
+    record={"label":label,"argv":args,"exit":result.returncode,"stdout_sha256":hashlib.sha256(result.stdout).hexdigest(),"stderr_sha256":hashlib.sha256(result.stderr).hexdigest(),"log_sha256":hashlib.sha256(log).hexdigest(),"host_fake_calls":count_calls()-before}
+    results.append(record);(root/"results.json").write_text(json.dumps(results,indent=2)+"\n")
+    if result.returncode!=expected or (external is False and record["host_fake_calls"]!=0):raise SystemExit(f"research regression failed: {label}, exit={result.returncode}, expected={expected}")
+    return result
+fixture()
+run("default-unhealthy",["bash",driver,"new",str(root/"strict-unhealthy")],1,exception=None)
+run("valid",["bash",driver,"new",str(root/"valid")])
+def gates(path):return [json.loads(line) for line in (path/"gates.jsonl").read_text().splitlines()]
+runroot=root/"valid";metadata=json.loads((runroot/"run.json").read_text());bound=metadata["gate"]["research_exception"]
+assert bound=={"path":str(valid),"fields":grant,"sha256":digest,"bytes_base64":base64.b64encode(raw).decode()}
+assert (runroot/"research-exception.json").read_bytes()==raw and (runroot/"research-exception.json").stat().st_mode&0o777==0o600
+first=gates(runroot)[0];assert first["reason"]=="image-build-only-known-incident" and first["evidence"]["research_exception"]["sha256"]==digest
+assert first["evidence"]["containers"][name]["selected"]["restart_count"]=="100"
+base["research"]["count"]=102;fixture();run("resume-increase",["bash",driver,"sample",str(runroot)])
+state=json.loads((runroot/"gate-state.json").read_text());assert state["containers"][name]["restart_count"]=="100" and state["research_exception"]["latest_observation"]["restart_count"]=="102"
+assert (runroot/"run.json").read_text()==json.dumps(metadata,sort_keys=True,separators=(",",":"))+"\n"
+# Invalid grants fail in the actual CLI before output creation or any host command.
+invalids={"expired":{**grant,"expires_at_utc":utc(now-1)},"future":{**grant,"observed_at_utc":utc(now+60)},"overlong":{**grant,"expires_at_utc":utc(now+86400)},"unknown-key":{**grant,"extra":0},"wrong-name":{**grant,"container_name":"api-1"},"wrong-scope":{**grant,"scope":"release"},"wrong-error":{**grant,"known_error_code":"OTHER"},"wrong-format":{**grant,"format":"other"},"duplicate":raw.rstrip()[:-1]+b',"known_exit_code":2}\n',"malformed":b'{',"array":b'[]',"non-utf8":b'\xff'}
+for key in grant:invalids["missing-"+key]={k:v for k,v in grant.items() if k!=key}
+for index,value in enumerate((True,-1,1.5,"1",None)):invalids["restart-type-"+str(index)]={**grant,"initial_restart_count":value}
+for index,value in enumerate((True,2.0,"2",0)):invalids["exit-type-"+str(index)]={**grant,"known_exit_code":value}
+for key,value in grant.items():
+    if isinstance(value,str):invalids["string-type-"+key]={**grant,key:2}
+for key,value in (("container_id","A"*64),("image_id","sha256:"+"B"*64),("observed_at_utc","2026-02-30T00:00:00Z"),("expires_at_utc",utc(now+600).replace("Z","+00:00")),("observed_at_utc",utc(now-60).replace("Z",".0Z"))):invalids["bad-value-"+key]={**grant,key:value}
+for label,value in invalids.items():
+    path=root/(label+".json");write_grant(path,value);out=root/("out-"+label)
+    run(label,["bash",controller,"--apply","--output-dir",str(out)],1,exception=path,external=False)
+    assert not out.exists()
+# Filesystem validation uses only private fixtures; wrong UID uses a synthetic
+# Python executable running the unchanged parser body with a foreign executing UID.
+unsafe={"empty":"","relative":os.path.relpath(valid),"dotdot":str(root/"x/../grant.json"),"double-slash":str(root)+"//grant.json","trailing-slash":str(valid)+"/","missing-file":str(root/"missing.json"),"directory":str(root)}
+for label,mode in (("public-mode",0o644),("executable-mode",0o700),("special-mode",0o4600)):
+    path=root/(label+".json");write_grant(path,grant);path.chmod(mode);unsafe[label]=str(path)
+link=root/"symlink.json";link.symlink_to(valid);unsafe["symlink"]=str(link)
+linkdir=root/"linked-parent";linkdir.symlink_to(root,target_is_directory=True);unsafe["symlink-parent"]=str(linkdir/"grant.json")
+fifo=root/"fifo";os.mkfifo(fifo,0o600);unsafe["fifo"]=str(fifo)
+for label,path in unsafe.items():run("unsafe-"+label,["bash",driver,"check"],1,exception=path,external=False)
+shim=root/"uid-shim";shim.mkdir(mode=0o700);python=shim/"python3"
+python.write_text('#!'+sys.executable+'\nimport os,sys\nassert os.environ.get("BUILD_LAYOUT_SELF_TEST_ACTIVE")=="1" and os.environ.get("LAYOUT_GATE_TEST_SEAM")=="build-layout-self-test" and sys.argv[1]=="-"\ncode=sys.stdin.read();sys.argv=sys.argv[1:];uid=os.geteuid();os.geteuid=lambda: uid+1\nexec(compile(code,"<actual-exception-parser>","exec"))\n');python.chmod(0o755)
+result=run("unsafe-owner",["bash",driver,"check"],1,external=False,extra={"PATH":str(shim)+os.pathsep+env["PATH"]});assert b"research-exception-owner-invalid" in result.stderr
+# Validity edges and final-gate expiry use the actual clock, with no time override.
+edge={**grant,"observed_at_utc":utc(int(time.time())-5),"expires_at_utc":utc(int(time.time())+600)}
+write_grant(valid,edge);good=copy.deepcopy(base);good["research"]["count"]=103;fixture(good)
+run("ceil-bound",["bash",driver,"new",str(root/"ceil-bound")])
+good["research"]["count"]=10000;fixture(good);run("ceil-overrun",["bash",driver,"new",str(root/"ceil-overrun")],1)
+write_grant(valid,{**grant,"expires_at_utc":utc(now-3600+86400)});run("exact-24h",["bash",driver,"check"],external=False)
+write_grant(valid,{**grant,"expires_at_utc":utc(int(time.time())+3)});good=copy.deepcopy(base);good["other"]["delay"]=4;fixture(good)
+run("gate-expired-during-observation",["bash",driver,"new",str(root/"gate-expired")],1)
+assert gates(root/"gate-expired")[-1]["reason"]=="research-exception-invalid"
+write_grant(valid,raw)
+# Identity/health/exit/rate failures retain typed observations and counts.
+changes=[("wrong-container-id","id","d"*64),("wrong-image","image","sha256:"+"e"*64),("wrong-project","project","other"),("stopped","running","false"),("oom","oom","true"),("unknown-health","health","absent"),("unknown-running","running","unknown"),("unknown-restarting","restarting","unknown"),("unknown-oom","oom","unknown"),("other-exit","exit",3),("restart-exit-zero","exit",0),("unknown-exit","exit","unknown"),("negative-count","count",-1),("unknown-count","count","unknown"),("restart-rate","count",10000),("initial-decrease","count",99),("missing-container","missing",True),("missing-field","short",True)]
+for label,key,value in changes:
+    bad=copy.deepcopy(base);bad["research"][key]=value;fixture(bad);target=root/("gate-"+label)
+    run(label,["bash",driver,"new",str(target)],1)
+    selected=gates(target)[-1]["evidence"]["containers"][name]["selected"]
+    if key=="count" and value==10000:assert selected["restart_count"]=="10000"
+bad=copy.deepcopy(base);bad["research"].update(restarting="false",exit=3);fixture(bad)
+run("nonrestarting-exit-three",["bash",driver,"new",str(root/"nonrestarting-exit-three")],1)
+for health,restarting,exit_code in (("healthy","false",0),("unhealthy","false",2),("starting","true",2),("starting","false",0)):
+    good=copy.deepcopy(base);good["research"].update(health=health,restarting=restarting,exit=exit_code);fixture(good)
+    run("allowed-"+health+restarting+str(exit_code),["bash",driver,"new",str(root/("allowed-"+health+restarting+str(exit_code)))])
+for label,kind,key,value in (("latest-decrease","research","count",101),("other-health","other","health","unhealthy"),("other-restart","other","count",1),("other-id","other","id","d"*64),("unit-restart","unit","NRestarts","1"),("unit-id","unit","MainPID","999"),("unit-health","unit","ActiveState","failed")):
+    bad=copy.deepcopy(base);bad.setdefault(kind,{})[key]=value;fixture(bad);clone=root/label;shutil.copytree(runroot,clone)
+    run(label,["bash",driver,"sample",str(clone)],1)
+for label,settings in (("ram",{"mem":2097151}),("swap",{"swap":524287})):
+    fixture(**settings);run(label,["bash",driver,"new",str(root/("resource-"+label))],1)
+for mode in ("oom","empty-probe","denied","bad-range","wrong-boot"):
+    bad=copy.deepcopy(base);bad["journal"]=mode;fixture(bad);run("kernel-"+mode,["bash",driver,"new",str(root/("kernel-"+mode))],1)
+bad=copy.deepcopy(base);bad["compiler"]=True;fixture(bad);run("compiler",["bash",driver,"new",str(root/"compiler")],1)
+fixture(mem=2097152,swap=524288);run("exact-resources",["bash",driver,"new",str(root/"exact-resources")])
+fixture();run("resume-missing-input",["bash",driver,"load",str(runroot)],1,exception=None,external=False)
+valid.unlink();run("resume-missing-file",["bash",driver,"load",str(runroot)],1,external=False);write_grant(valid,raw)
+substitute=root/"substitute.json";write_grant(substitute,raw);run("resume-substitute",["bash",driver,"load",str(runroot)],1,exception=substitute,external=False)
+for label,content in (("changed",raw+b" "),("extended",{**grant,"expires_at_utc":utc(now+7200)}),("expired",{**grant,"expires_at_utc":utc(now-1)})):
+    write_grant(valid,content);run("resume-"+label,["bash",driver,"load",str(runroot)],1,external=False);write_grant(valid,raw)
+for label in ("missing-snapshot","changed-snapshot","unsafe-snapshot","missing-state","changed-latest","changed-first","changed-journal"):
+    clone=root/label;shutil.copytree(runroot,clone)
+    if label=="missing-snapshot":(clone/"research-exception.json").unlink()
+    elif label=="changed-snapshot":(clone/"research-exception.json").write_bytes(raw+b" ")
+    elif label=="unsafe-snapshot":(clone/"research-exception.json").chmod(0o644)
+    elif label=="missing-state":(clone/"gate-state.json").unlink()
+    else:
+        state=json.loads((clone/"gate-state.json").read_text())
+        if label=="changed-latest":state["research_exception"]["latest_observation"]["restart_count"]="100"
+        elif label=="changed-first":state["containers"][name]["restart_count"]="101"
+        else:state["journal_since_us"]+=1000000
+        (clone/"gate-state.json").write_text(json.dumps(state))
+    run(label,["bash",driver,"load",str(clone)],1,external=False)
+good=copy.deepcopy(base);good["research"].update(health="healthy",restarting="false");fixture(good)
+run("strict-healthy",["bash",driver,"new",str(root/"strict-healthy")],exception=None)
+run("strict-gain",["bash",driver,"load",str(root/"strict-healthy")],1,external=False)
+# Public plans must neither acquire the actual slot nor mutate the saved run.
+def hashes(directory):return {str(p.relative_to(directory)):hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.rglob("*") if p.is_file()}
+planenv={"BUILD_LAYOUT_HEALTH_UNITS":"","BUILD_LAYOUT_HEALTH_CONTAINERS":""}
+for label,args,exception in (("default-plan",["--output-dir",str(root/"never-created")],None),("explicit-plan",["--plan","--output-dir",str(root/"never-created")],valid),("resume-plan",["--plan","--resume-from",str(runroot)],valid),("strict-resume-plan",["--plan","--resume-from",str(root/"strict-healthy")],None)):
+    before=hashes(runroot);run(label,["bash",controller,*args],exception=exception,external=False,extra=planenv);assert hashes(runroot)==before and not (root/"never-created").exists()
+run("invalid-resume-plan",["bash",controller,"--plan","--resume-from",str(runroot)],1,exception=substitute,external=False,extra=planenv)
+fixture();run("full-exception-controller",["bash",driver,"controller",str(root)],external=True)
+print(f"Research exception PASS: {len(results)} focused checks; real parser/controller, synthetic executables; image-only incident evidence retained")
+PY
+)
+
 self_test() {
+  unset BUILD_LAYOUT_RESEARCH_EXCEPTION
+  LAYOUT_RESEARCH_BINDING=null LAYOUT_RESEARCH_SNAPSHOT=
   validate_fixture
   hash_inputs
   [ "${#case_ids[@]}" = 28 ] || return 1
@@ -1921,6 +2157,7 @@ self_test() {
   mkdir -p -m 0700 -- "$FAKE_DOCKER_ROOT" "$root/runs"
   create_fake_docker "$root/fake-docker"
   docker_bin="$root/fake-docker" internal_self_test=1
+  self_research_exception "$root/research-exception" || return 1
   self_gate_boundaries "$root/gate"
   ( export BUILD_LAYOUT_SELF_TEST_ACTIVE=1 LAYOUT_GATE_TEST_SEAM=build-layout-self-test LAYOUT_GATE_MODE=fake LAYOUT_FAKE_GATE_RESULT=pass LAYOUT_GATE_PROC_ROOT=/forbidden LAYOUT_GATE_DOCKER_BIN=/forbidden; sanitize_actual_environment; [ -z "${BUILD_LAYOUT_SELF_TEST_ACTIVE-}${LAYOUT_GATE_TEST_SEAM-}${LAYOUT_GATE_MODE-}${LAYOUT_FAKE_GATE_RESULT-}${LAYOUT_GATE_PROC_ROOT-}${LAYOUT_GATE_DOCKER_BIN-}" ] ) || return 1
   self_wrapper_boundaries "$root/wrappers" || return 1
@@ -1989,6 +2226,7 @@ main() {
   fi
   [ "$output_seen" = 1 ] || die '--output-dir is required for a new run'
   validate_output
+  LAYOUT_RESEARCH_BINDING=$(research_exception_check) || return 1
   [ "$mode" = plan ] && { print_plan; return 0; }
   validate_health_inputs
   acquire_execution_slot || return 1
