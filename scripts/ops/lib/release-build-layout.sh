@@ -13,6 +13,8 @@ RBL_ARCHIVE_RESULT_FORMAT=lagrange-image-files-result-v1
 RBL_GUARD_VERSION=common-1
 RBL_PLATFORM=linux/amd64
 RBL_LOCK_PREFIX=/tmp/lagrange-production-image-build
+RBL_RUNTIME_INVENTORY_FORMAT=lagrange-runtime-payload-inventory-v1
+RBL_DOCKERIGNORE_SHA256=0b69fbfaf5417fdd0be8ef3bb4b6cf7eaebffb16a1883809e9fe21713adf863e
 
 rbl_die() {
   printf '%s\n' "release-build-layout: $*" >&2
@@ -239,6 +241,378 @@ rbl_clean_worktree() {
   done <<EOF
 $rbl_status
 EOF
+}
+
+# Produce the one authoritative host-side runtime payload view. Git's index
+# selects files without descending into ignored/untracked directories; every
+# selected worktree ancestor, type, mode and byte hash is then measured. The
+# matcher below intentionally implements only the frozen final security and
+# generated-output deny rules, and the exact .dockerignore hash forces review
+# before that policy may change.
+rbl_runtime_payload_inventory() {
+  rbl_runtime_source=$1
+  rbl_runtime_layout=$2
+  RBL_RUNTIME_SOURCE=$rbl_runtime_source RBL_RUNTIME_LAYOUT=$rbl_runtime_layout \
+  RBL_RUNTIME_FORMAT=$RBL_RUNTIME_INVENTORY_FORMAT \
+  RBL_DOCKERIGNORE_HASH=$RBL_DOCKERIGNORE_SHA256 python3 - <<'PY'
+import hashlib, json, os, posixpath, re, stat, subprocess
+
+root=os.path.abspath(os.environ["RBL_RUNTIME_SOURCE"])
+layout_path=os.path.abspath(os.environ["RBL_RUNTIME_LAYOUT"])
+expected_ignore=os.environ["RBL_DOCKERIGNORE_HASH"]
+
+def pairs(items):
+    value={}
+    for key,item in items:
+        if key in value: raise ValueError("duplicate-json-key")
+        value[key]=item
+    return value
+def reject(value): raise ValueError("non-finite-json-number")
+def sha(path):
+    digest=hashlib.sha256()
+    with open(path,"rb") as handle:
+        for chunk in iter(lambda:handle.read(1024*1024),b""): digest.update(chunk)
+    return digest.hexdigest()
+def relative(value):
+    if (not isinstance(value,str) or not value or value.startswith("/") or "\\" in value or
+            any(ord(char)<32 or ord(char)==127 for char in value) or
+            posixpath.normpath(value)!=value or value=="." or value.startswith("../") or
+            "/../" in value or value.endswith("/..") or "//" in value):
+        raise SystemExit("runtime-payload-path-invalid")
+    return value
+def image_path(value):
+    if not isinstance(value,str) or not value.startswith("/") or value.endswith("/") or "\\" in value:
+        raise SystemExit("runtime-payload-image-path-invalid")
+    relative(value[1:])
+    return value
+def docker_excluded(value):
+    parts=value.split("/")
+    exact={".git",".worktrees","target",".venv","node_modules",".next",
+           "__pycache__",".pytest_cache","credentials","secrets","raw"}
+    for name in parts:
+        if name in exact or name==".env" or name.startswith(".env.") or name.endswith(".env"):
+            return True
+        if re.search(r"\.py[cod]$",name) or name.endswith((".pem",".key",".p12",".pfx")):
+            return True
+    return False
+def lstat(path,reason):
+    try: return os.lstat(path)
+    except FileNotFoundError: raise SystemExit(reason)
+def require_ancestors(rel,terminal):
+    parts=rel.split("/")
+    for index in range(1,len(parts)+1):
+        current="/".join(parts[:index])
+        info=lstat(os.path.join(root,current),"runtime-payload-entry-missing")
+        if index<len(parts):
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise SystemExit("runtime-payload-ancestor-invalid")
+        elif terminal=="file":
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise SystemExit("runtime-payload-entry-invalid")
+        elif stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise SystemExit("runtime-payload-directory-invalid")
+
+root_info=lstat(root,"runtime-payload-root-missing")
+if (stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode) or
+        os.path.realpath(root)!=root):
+    raise SystemExit("runtime-payload-root-invalid")
+layout_info=lstat(layout_path,"runtime-payload-layout-missing")
+if stat.S_ISLNK(layout_info.st_mode) or not stat.S_ISREG(layout_info.st_mode):
+    raise SystemExit("runtime-payload-layout-invalid")
+ignore_path=os.path.join(root,".dockerignore")
+ignore_info=lstat(ignore_path,"runtime-payload-dockerignore-missing")
+if stat.S_ISLNK(ignore_info.st_mode) or not stat.S_ISREG(ignore_info.st_mode):
+    raise SystemExit("runtime-payload-dockerignore-invalid")
+ignore_hash=sha(ignore_path)
+if ignore_hash!=expected_ignore: raise SystemExit("runtime-payload-dockerignore-policy-drift")
+
+layout=json.load(open(layout_path,encoding="utf-8",newline=""),
+                 object_pairs_hook=pairs,parse_constant=reject)
+groups=layout.get("runtime_payloads")
+if not isinstance(groups,dict) or set(groups)!={"backtest","collectors","database","paper"}:
+    raise SystemExit("runtime-payload-groups-invalid")
+
+result={}
+for group in sorted(groups):
+    values=groups[group]
+    if not isinstance(values,list) or not values:
+        raise SystemExit("runtime-payload-group-invalid")
+    observed=[]
+    seen_sources=set()
+    for item in values:
+        if not isinstance(item,dict) or set(item)!={"source","image"}:
+            raise SystemExit("runtime-payload-record-invalid")
+        source=relative(item["source"]); image=image_path(item["image"])
+        if source in seen_sources: raise SystemExit("runtime-payload-source-duplicate")
+        seen_sources.add(source)
+        if docker_excluded(source): raise SystemExit("runtime-payload-docker-excluded")
+        source_path=os.path.join(root,source)
+        source_info=lstat(source_path,"runtime-payload-source-missing")
+        if stat.S_ISLNK(source_info.st_mode) or not (stat.S_ISREG(source_info.st_mode) or stat.S_ISDIR(source_info.st_mode)):
+            raise SystemExit("runtime-payload-source-invalid")
+        raw=subprocess.run(
+            ["git","-c","safe.directory="+root,"-C",root,"ls-files","--stage","-z","--",source],
+            check=True,stdout=subprocess.PIPE).stdout
+        tracked={}
+        for row in raw.split(b"\0"):
+            if not row: continue
+            try:
+                metadata,path_bytes=row.split(b"\t",1)
+                mode,_object_id,stage=metadata.decode("ascii").split()
+                path=path_bytes.decode("utf-8")
+            except (ValueError,UnicodeDecodeError):
+                raise SystemExit("runtime-payload-git-record-invalid")
+            path=relative(path)
+            if path in tracked or stage!="0" or mode not in ("100644","100755"):
+                raise SystemExit("runtime-payload-tracked-type-invalid")
+            if docker_excluded(path): raise SystemExit("runtime-payload-docker-excluded")
+            tracked[path]=mode
+        if not tracked: raise SystemExit("runtime-payload-untracked-or-empty")
+        if stat.S_ISREG(source_info.st_mode):
+            if set(tracked)!={source}: raise SystemExit("runtime-payload-file-selection-invalid")
+        elif any(not path.startswith(source+"/") for path in tracked):
+            raise SystemExit("runtime-payload-directory-selection-invalid")
+
+        directories=set()
+        if stat.S_ISDIR(source_info.st_mode): directories.add(source)
+        for path in tracked:
+            require_ancestors(path,"file")
+            parent=posixpath.dirname(path)
+            while parent and (parent==source or parent.startswith(source+"/")):
+                directories.add(parent)
+                parent=posixpath.dirname(parent)
+        entries=[]
+        for path in sorted(directories):
+            require_ancestors(path,"directory")
+            info=os.lstat(os.path.join(root,path))
+            entries.append({"kind":"directory","mode":format(stat.S_IMODE(info.st_mode),"04o"),
+                            "path":path,"sha256":None})
+        for path in sorted(tracked):
+            info=os.lstat(os.path.join(root,path))
+            entries.append({"kind":"file","mode":format(stat.S_IMODE(info.st_mode),"04o"),
+                            "path":path,"sha256":sha(os.path.join(root,path))})
+        # Match the strict in-image walk: a directory and its descendants
+        # precede the next sibling, including names such as config-old.
+        entries.sort(key=lambda entry:entry["path"].split("/"))
+        rows=[]
+        for entry in entries:
+            marker="d" if entry["kind"]=="directory" else "f"
+            digest="-" if entry["sha256"] is None else entry["sha256"]
+            rows.append(f'{marker}\t{entry["mode"]}\t{entry["path"]}\t{digest}\n'.encode())
+        observed.append({"entries":entries,"image":image,"source":source,
+                         "tree_sha256":hashlib.sha256(b"".join(rows)).hexdigest()})
+    result[group]=observed
+value={"dockerignore_sha256":ignore_hash,"format":os.environ["RBL_RUNTIME_FORMAT"],
+       "payload_groups":result}
+print(json.dumps(value,sort_keys=True,separators=(",",":")))
+PY
+}
+
+rbl_runtime_payload_inventory_current() {
+  rbl_runtime_current=$(rbl_runtime_payload_inventory \
+    "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" \
+    "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json") || return 1
+  rbl_runtime_current_hash=$(printf '%s\n' "$rbl_runtime_current" | sha256sum | awk '{print $1}') || return 1
+  [ "$rbl_runtime_current_hash" = "$RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256" ] || {
+    rbl_die 'runtime payload inventory changed after initialization'
+    return 1
+  }
+  printf '%s\n' "$rbl_runtime_current"
+}
+
+# Copy only entries selected by rbl_runtime_payload_inventory. No directory is
+# enumerated here; each selected source is revalidated against its recorded
+# type/mode/hash immediately before and after copying.
+rbl_runtime_payload_copy() {
+  rbl_runtime_copy_source=$1
+  rbl_runtime_copy_destination=$2
+  rbl_runtime_copy_group=$3
+  rbl_runtime_copy_inventory=$4
+  RBL_RUNTIME_COPY_SOURCE=$rbl_runtime_copy_source \
+  RBL_RUNTIME_COPY_DESTINATION=$rbl_runtime_copy_destination \
+  RBL_RUNTIME_COPY_GROUP=$rbl_runtime_copy_group \
+  RBL_RUNTIME_COPY_INVENTORY=$rbl_runtime_copy_inventory \
+  RBL_RUNTIME_FORMAT=$RBL_RUNTIME_INVENTORY_FORMAT \
+  RBL_DOCKERIGNORE_HASH=$RBL_DOCKERIGNORE_SHA256 python3 - <<'PY'
+import hashlib,json,os,shutil,stat
+
+source=os.path.abspath(os.environ["RBL_RUNTIME_COPY_SOURCE"])
+destination=os.path.abspath(os.environ["RBL_RUNTIME_COPY_DESTINATION"])
+group=os.environ["RBL_RUNTIME_COPY_GROUP"]
+inventory=json.loads(os.environ["RBL_RUNTIME_COPY_INVENTORY"])
+if (inventory.get("format")!=os.environ["RBL_RUNTIME_FORMAT"] or
+        inventory.get("dockerignore_sha256")!=os.environ["RBL_DOCKERIGNORE_HASH"]):
+    raise SystemExit("runtime-copy-inventory-invalid")
+groups=inventory.get("payload_groups")
+if not isinstance(groups,dict): raise SystemExit("runtime-copy-groups-invalid")
+selected_payloads=[] if not group else groups.get(group)
+if not isinstance(selected_payloads,list): raise SystemExit("runtime-copy-group-invalid")
+if not os.path.isdir(source) or os.path.islink(source) or not os.path.isdir(destination) or os.path.islink(destination):
+    raise SystemExit("runtime-copy-root-invalid")
+def sha(path):
+    digest=hashlib.sha256()
+    with open(path,"rb") as handle:
+        for chunk in iter(lambda:handle.read(1024*1024),b""): digest.update(chunk)
+    return digest.hexdigest()
+def under(root,path):
+    return os.path.commonpath((root,os.path.abspath(path)))==root
+def selected_path(root,rel):
+    path=os.path.join(root,rel)
+    if not under(root,path): raise SystemExit("runtime-copy-path-escape")
+    return path
+def verify(entry):
+    path=selected_path(source,entry["path"])
+    try: info=os.lstat(path)
+    except FileNotFoundError: raise SystemExit("runtime-copy-source-missing")
+    mode=format(stat.S_IMODE(info.st_mode),"04o")
+    if mode!=entry["mode"]: raise SystemExit("runtime-copy-source-mode-changed")
+    if entry["kind"]=="directory":
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or entry["sha256"] is not None:
+            raise SystemExit("runtime-copy-source-directory-invalid")
+    elif entry["kind"]=="file":
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or sha(path)!=entry["sha256"]:
+            raise SystemExit("runtime-copy-source-file-invalid")
+    else: raise SystemExit("runtime-copy-entry-kind-invalid")
+    return path,info
+payloads=[]
+for payload in selected_payloads:
+    if not isinstance(payload,dict) or set(payload)!={"entries","image","source","tree_sha256"}:
+        raise SystemExit("runtime-copy-payload-invalid")
+    entries=payload["entries"]
+    if not isinstance(entries,list) or not entries: raise SystemExit("runtime-copy-entries-invalid")
+    directories=[entry for entry in entries if entry.get("kind")=="directory"]
+    files=[entry for entry in entries if entry.get("kind")=="file"]
+    for entry in sorted(directories,key=lambda value:(value["path"].count("/"),value["path"])):
+        src,info=verify(entry); dst=selected_path(destination,entry["path"])
+        if os.path.lexists(dst):
+            current=os.lstat(dst)
+            if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+                raise SystemExit("runtime-copy-destination-conflict")
+        else: os.makedirs(dst,exist_ok=False)
+        os.chmod(dst,stat.S_IMODE(info.st_mode))
+    for entry in sorted(files,key=lambda value:value["path"]):
+        src,before=verify(entry); dst=selected_path(destination,entry["path"])
+        os.makedirs(os.path.dirname(dst),exist_ok=True)
+        if os.path.lexists(dst): raise SystemExit("runtime-copy-destination-conflict")
+        shutil.copyfile(src,dst)
+        os.chmod(dst,stat.S_IMODE(before.st_mode))
+        os.utime(dst,ns=(before.st_atime_ns,before.st_mtime_ns))
+        _src,after=verify(entry)
+        if ((before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)!=
+                (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns) or
+                sha(dst)!=entry["sha256"] or
+                format(stat.S_IMODE(os.lstat(dst).st_mode),"04o")!=entry["mode"]):
+            raise SystemExit("runtime-copy-source-changed")
+    for entry in sorted(directories,key=lambda value:(-value["path"].count("/"),value["path"])):
+        src,info=verify(entry); dst=selected_path(destination,entry["path"])
+        os.chmod(dst,stat.S_IMODE(info.st_mode)); os.utime(dst,ns=(info.st_atime_ns,info.st_mtime_ns))
+    payloads.append({"source":payload["source"],"image":payload["image"],
+                     "tree_sha256":payload["tree_sha256"]})
+print(json.dumps(payloads,sort_keys=True,separators=(",",":")))
+PY
+}
+
+# Compare an actual bundle payload tree with the selected source inventory.
+# Expected paths come from Git, but actual payload roots are walked in full so
+# no unexpected regular file, directory, symlink or special entry is filtered.
+rbl_runtime_payload_verify_copy() {
+  rbl_runtime_verify_bundle=$1
+  rbl_runtime_verify_group=$2
+  rbl_runtime_verify_inventory=$3
+  RBL_RUNTIME_VERIFY_BUNDLE=$rbl_runtime_verify_bundle \
+  RBL_RUNTIME_VERIFY_GROUP=$rbl_runtime_verify_group \
+  RBL_RUNTIME_VERIFY_INVENTORY=$rbl_runtime_verify_inventory \
+  RBL_RUNTIME_FORMAT=$RBL_RUNTIME_INVENTORY_FORMAT \
+  RBL_DOCKERIGNORE_HASH=$RBL_DOCKERIGNORE_SHA256 python3 - <<'PY'
+import hashlib,json,os,stat
+
+bundle=os.path.abspath(os.environ["RBL_RUNTIME_VERIFY_BUNDLE"])
+group=os.environ["RBL_RUNTIME_VERIFY_GROUP"]
+inventory=json.loads(os.environ["RBL_RUNTIME_VERIFY_INVENTORY"])
+if (inventory.get("format")!=os.environ["RBL_RUNTIME_FORMAT"] or
+        inventory.get("dockerignore_sha256")!=os.environ["RBL_DOCKERIGNORE_HASH"]):
+    raise SystemExit("runtime-verify-inventory-invalid")
+groups=inventory.get("payload_groups")
+if not isinstance(groups,dict): raise SystemExit("runtime-verify-groups-invalid")
+payloads=[] if not group else groups.get(group)
+if not isinstance(payloads,list): raise SystemExit("runtime-verify-group-invalid")
+if not os.path.isdir(bundle) or os.path.islink(bundle): raise SystemExit("runtime-verify-bundle-invalid")
+def sha(path):
+    digest=hashlib.sha256()
+    with open(path,"rb") as handle:
+        for chunk in iter(lambda:handle.read(1024*1024),b""): digest.update(chunk)
+    return digest.hexdigest()
+def path(rel):
+    candidate=os.path.abspath(os.path.join(bundle,rel))
+    if os.path.commonpath((bundle,candidate))!=bundle: raise SystemExit("runtime-verify-path-escape")
+    return candidate
+expected={}
+payload_roots=set()
+for payload in payloads:
+    if not isinstance(payload,dict) or set(payload)!={"entries","image","source","tree_sha256"}:
+        raise SystemExit("runtime-verify-payload-invalid")
+    payload_roots.add(payload["source"].split("/",1)[0])
+    for entry in payload["entries"]:
+        old=expected.get(entry["path"])
+        if old is not None and old!=entry: raise SystemExit("runtime-verify-entry-conflict")
+        expected[entry["path"]]=entry
+        parent=os.path.dirname(entry["path"])
+        while parent and parent!=".":
+            expected.setdefault(parent,{"kind":"ancestor","mode":None,"path":parent,"sha256":None})
+            parent=os.path.dirname(parent)
+for root in sorted(payload_roots):
+    root_path=path(root)
+    try: root_info=os.lstat(root_path)
+    except FileNotFoundError: raise SystemExit("runtime-verify-payload-missing")
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        raise SystemExit("runtime-verify-root-invalid")
+    for current,dirs,files in os.walk(root_path,topdown=True,followlinks=False):
+        dirs.sort(); files.sort()
+        current_rel=os.path.relpath(current,bundle).replace(os.sep,"/")
+        if current_rel not in expected: raise SystemExit("runtime-verify-extra-entry")
+        for name in dirs:
+            candidate=os.path.join(current,name); rel=os.path.relpath(candidate,bundle).replace(os.sep,"/")
+            info=os.lstat(candidate)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise SystemExit("runtime-verify-directory-invalid")
+            if rel not in expected: raise SystemExit("runtime-verify-extra-entry")
+        for name in files:
+            candidate=os.path.join(current,name); rel=os.path.relpath(candidate,bundle).replace(os.sep,"/")
+            info=os.lstat(candidate)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise SystemExit("runtime-verify-file-invalid")
+            if rel not in expected: raise SystemExit("runtime-verify-extra-entry")
+for rel,entry in sorted(expected.items()):
+    candidate=path(rel)
+    try: info=os.lstat(candidate)
+    except FileNotFoundError: raise SystemExit("runtime-verify-entry-missing")
+    if entry["kind"] in ("directory","ancestor"):
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise SystemExit("runtime-verify-directory-invalid")
+        if entry["kind"]=="directory" and format(stat.S_IMODE(info.st_mode),"04o")!=entry["mode"]:
+            raise SystemExit("runtime-verify-mode-mismatch")
+    elif entry["kind"]=="file":
+        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or
+                format(stat.S_IMODE(info.st_mode),"04o")!=entry["mode"] or sha(candidate)!=entry["sha256"]):
+            raise SystemExit("runtime-verify-file-mismatch")
+    else: raise SystemExit("runtime-verify-kind-invalid")
+def digest(candidate,rel):
+    info=os.lstat(candidate)
+    if stat.S_ISLNK(info.st_mode): raise SystemExit("runtime-verify-symlink")
+    if stat.S_ISDIR(info.st_mode):
+        rows=[f"d\t{stat.S_IMODE(info.st_mode):04o}\t{rel}\t-\n".encode()]
+        for child in sorted(os.listdir(candidate)):
+            rows+=digest(os.path.join(candidate,child),rel+"/"+child)
+        return rows
+    if not stat.S_ISREG(info.st_mode): raise SystemExit("runtime-verify-special")
+    return [f"f\t{stat.S_IMODE(info.st_mode):04o}\t{rel}\t{sha(candidate)}\n".encode()]
+result=[]
+for payload in payloads:
+    actual=hashlib.sha256(b"".join(digest(path(payload["source"]),payload["source"]))).hexdigest()
+    if actual!=payload["tree_sha256"]: raise SystemExit("runtime-verify-tree-mismatch")
+    result.append({"source":payload["source"],"image":payload["image"],"tree_sha256":actual})
+print(json.dumps(result,sort_keys=True,separators=(",",":")))
+PY
 }
 
 rbl_hash_source() {
@@ -635,12 +1009,16 @@ release_build_layout_plan() {
   rbl_assert_root_commit "$rbl_root_path" "$rbl_commit" || return 1
   rbl_layout=$rbl_root_path/deploy/build/release-build-layout.json
   rbl_validate_layout "$rbl_layout" || return 1
+  rbl_runtime_inventory=$(rbl_runtime_payload_inventory "$rbl_root_path" "$rbl_layout") || return 1
+  rbl_runtime_inventory_hash=$(printf '%s\n' "$rbl_runtime_inventory" | sha256sum | awk '{print $1}') || return 1
   rbl_source_hash=$(rbl_hash_source "$rbl_root_path" "$rbl_layout" 1) || return 1
   rbl_helper_hash=$(rbl_sha256_file "$(rbl_helper_path)") || return 1
   rbl_layout_hash=$(rbl_sha256_file "$rbl_layout") || return 1
   printf 'RELEASE_BUILD_LAYOUT_PLAN format=%s layout=common platform=%s\n' "$RBL_FORMAT" "$RBL_PLATFORM"
   printf '  source_root=%s commit=%s source_input_sha256=%s\n' "$rbl_root_path" "$rbl_commit" "$rbl_source_hash"
   printf '  helper_sha256=%s layout_sha256=%s cache_namespace=product\n' "$rbl_helper_hash" "$rbl_layout_hash"
+  printf '  runtime_payload_inventory_sha256=%s dockerignore_sha256=%s\n' \
+    "$rbl_runtime_inventory_hash" "$RBL_DOCKERIGNORE_SHA256"
   printf '%s\n' '  producer_order=D1:api-server,D6:collectors[3+3+2+2],D2:job-queue,D3:owner-beta,D4:owner-equity-v2,D5:backtest,D7:paper'
   printf '%s\n' '  consumer_batches=B1[db-role-bootstrap,db-migrate,api-server],B2[web,research-worker,recommendation-runner],B3[candidate-runner,owner-beta-runner,owner-equity-v2-runner],B4[nt-backtest-worker-1,nt-backtest-worker-2,paper-scheduler]'
   printf '%s\n' '  gate_order=prepare,native,producer-after-each-bin,collector-3+3+2+2,consumer-B1+B2+B3+B4,final-bytes'
@@ -768,6 +1146,11 @@ release_build_layout_init() {
   esac
   rbl_layout=$rbl_source_root/deploy/build/release-build-layout.json
   rbl_validate_layout "$rbl_layout" || return 1
+  # Validate every runtime group before the whole-build lock, state mutation,
+  # native setup or producer compilation. Later consumers independently
+  # rederive this inventory and must match this initialized binding.
+  rbl_runtime_inventory=$(rbl_runtime_payload_inventory "$rbl_source_root" "$rbl_layout") || return 1
+  rbl_runtime_inventory_hash=$(printf '%s\n' "$rbl_runtime_inventory" | sha256sum | awk '{print $1}') || return 1
   # The descriptor is held before any state directory is created or mutated.
   release_build_layout_lock || return 1
   # The official CLI derives state as <manifest-parent>/.lagrange-build-state/<commit>.
@@ -788,7 +1171,8 @@ release_build_layout_init() {
   rbl_run_path=$rbl_state_root/run.json
   RBL_RUN_PATH=$rbl_run_path RBL_SOURCE_ROOT=$rbl_source_root RBL_COMMIT=$rbl_commit \
   RBL_STATE_ROOT=$rbl_state_root RBL_NAMESPACE=$rbl_namespace RBL_SOURCE_HASH=$rbl_source_hash \
-  RBL_HELPER_HASH=$rbl_helper_hash RBL_LAYOUT_HASH=$rbl_layout_hash python3 - <<'PY' || return 1
+  RBL_HELPER_HASH=$rbl_helper_hash RBL_LAYOUT_HASH=$rbl_layout_hash \
+  RBL_RUNTIME_INVENTORY_HASH=$rbl_runtime_inventory_hash python3 - <<'PY' || return 1
 import json, os, stat, time
 path = os.environ["RBL_RUN_PATH"]
 value = {
@@ -798,6 +1182,7 @@ value = {
   "state_root":os.environ["RBL_STATE_ROOT"],
   "cache_namespace":os.environ["RBL_NAMESPACE"],
   "source_input_sha256":os.environ["RBL_SOURCE_HASH"],
+  "runtime_payload_inventory_sha256":os.environ["RBL_RUNTIME_INVENTORY_HASH"],
   "helper_sha256":os.environ["RBL_HELPER_HASH"],
   "layout_sha256":os.environ["RBL_LAYOUT_HASH"],
   "guard_version":"common-1",
@@ -819,7 +1204,8 @@ if os.path.lexists(path):
         raise SystemExit("run-record-unsafe")
     current = json.loads(open(path, "rb").read().decode())
     for key in ("format","source_root","source_commit","state_root","cache_namespace",
-                "source_input_sha256","helper_sha256","layout_sha256","guard_version",
+                "source_input_sha256","runtime_payload_inventory_sha256",
+                "helper_sha256","layout_sha256","guard_version",
                 "platform","gate_inputs"):
         if current.get(key) != value[key]:
             raise SystemExit("run-binding-changed")
@@ -836,10 +1222,11 @@ PY
   RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256=$rbl_source_hash
   RELEASE_BUILD_LAYOUT_HELPER_SHA256=$rbl_helper_hash
   RELEASE_BUILD_LAYOUT_CONFIG_SHA256=$rbl_layout_hash
+  RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256=$rbl_runtime_inventory_hash
   export RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
   export RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
   export RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
-  export RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+  export RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
 }
 
 rbl_make_context() {
@@ -1580,51 +1967,24 @@ rbl_bundle_create() {
   install -m 0600 -- "$RELEASE_BUILD_LAYOUT_STATE_ROOT/native-identity.json" \
     "$rbl_partial/.release-build/native-identity.json" || return 1
   rbl_recipe_json_value=$(rbl_recipe_json "$rbl_recipe" "$rbl_layout") || return 1
+  rbl_runtime_inventory_value=$(rbl_runtime_payload_inventory_current) || return 1
+  rbl_runtime_payload_group=$(printf '%s\n' "$rbl_recipe_json_value" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime_payload",""))') || return 1
+  rbl_payloads_json=$(rbl_runtime_payload_copy "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" \
+    "$rbl_partial" "$rbl_runtime_payload_group" "$rbl_runtime_inventory_value") || return 1
   RBL_PARTIAL=$rbl_partial RBL_RECIPE=$rbl_recipe RBL_REQUEST=$rbl_partial/.release-build/request.json \
   RBL_RECIPE_JSON=$rbl_recipe_json_value RBL_SOURCE_COMMIT=$RELEASE_BUILD_LAYOUT_COMMIT \
-  RBL_SOURCE_ROOT=$RELEASE_BUILD_LAYOUT_SOURCE_ROOT RBL_SOURCE_HASH=$RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 \
+  RBL_SOURCE_HASH=$RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RBL_PAYLOADS_JSON=$rbl_payloads_json \
   RBL_RECIPE_HASH=$(rbl_recipe_hash "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" "$rbl_recipe" "$rbl_layout") \
   RBL_HELPER_HASH=$RELEASE_BUILD_LAYOUT_HELPER_SHA256 RBL_LAYOUT_HASH=$RELEASE_BUILD_LAYOUT_CONFIG_SHA256 \
   RBL_CACHE_NAMESPACE=$RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RBL_CACHE_KEY=$(rbl_request_value "$rbl_request" cache_key) \
   RBL_K_HASH=$(rbl_request_value "$rbl_request" k_sha256) \
   python3 - <<'PY' || return 1
-import json, os, stat, shutil
+import json, os
 partial=os.path.abspath(os.environ["RBL_PARTIAL"])
 request=json.load(open(os.environ["RBL_REQUEST"],encoding="utf-8"))
 recipe=json.loads(os.environ["RBL_RECIPE_JSON"])
-payloads=[]
-layout=json.load(open(os.path.join(partial,".release-build","release-build-layout.json"),encoding="utf-8"))
-def copy_one(a,b):
-    i=os.lstat(a)
-    if stat.S_ISLNK(i.st_mode) or not (stat.S_ISREG(i.st_mode) or stat.S_ISDIR(i.st_mode)):
-        raise SystemExit("bundle-payload-entry-invalid")
-    if stat.S_ISDIR(i.st_mode):
-        os.makedirs(b,exist_ok=True); os.chmod(b,stat.S_IMODE(i.st_mode))
-        for n in sorted(os.listdir(a)): copy_one(os.path.join(a,n),os.path.join(b,n))
-        os.utime(b,ns=(i.st_atime_ns,i.st_mtime_ns))
-    else:
-        os.makedirs(os.path.dirname(b),exist_ok=True); shutil.copyfile(a,b)
-        os.chmod(b,stat.S_IMODE(i.st_mode)); os.utime(b,ns=(i.st_atime_ns,i.st_mtime_ns))
-def entry_hash(path, rel):
-    records=[]
-    def walk(current,name):
-        info=os.lstat(current)
-        if stat.S_ISLNK(info.st_mode) or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
-            raise SystemExit("bundle-payload-entry-invalid")
-        if stat.S_ISDIR(info.st_mode):
-            records.append(f"d\t{stat.S_IMODE(info.st_mode):04o}\t{name}\t-\n".encode())
-            for child in sorted(os.listdir(current)): walk(os.path.join(current,child),name+"/"+child)
-        else:
-            digest=__import__("hashlib").sha256()
-            with open(current,"rb") as handle:
-                for chunk in iter(lambda:handle.read(1024*1024),b""): digest.update(chunk)
-            records.append(f"f\t{stat.S_IMODE(info.st_mode):04o}\t{name}\t{digest.hexdigest()}\n".encode())
-    walk(path,rel)
-    return __import__("hashlib").sha256(b"".join(records)).hexdigest()
-for item in layout["runtime_payloads"].get(recipe.get("runtime_payload",""),[]):
-    source=item["source"]; src=os.path.join(os.environ["RBL_SOURCE_ROOT"],source)
-    copy_one(src,os.path.join(partial,source))
-    payloads.append({"source":source,"image":item["image"],"tree_sha256":entry_hash(src,source)})
+payloads=json.loads(os.environ["RBL_PAYLOADS_JSON"])
 bundle={
   "format":"lagrange-rust-artifact-bundle-v1","recipe":os.environ["RBL_RECIPE"],
   "bins":recipe["bins"],"source_commit":os.environ["RBL_SOURCE_COMMIT"],
@@ -1657,11 +2017,17 @@ rbl_bundle_verify() {
   rbl_current_package_hashes=$(rbl_package_hashes "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" "$rbl_layout" 1) || return 1
   rbl_current_recipe_hash=$(rbl_recipe_hash "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" "$rbl_recipe" "$rbl_layout") || return 1
   [ -d "$rbl_bundle" ] && [ ! -L "$rbl_bundle" ] || return 1
+  rbl_runtime_inventory_value=$(rbl_runtime_payload_inventory_current) || return 1
+  rbl_runtime_payload_group=$(rbl_recipe_json "$rbl_recipe" "$rbl_layout" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime_payload",""))') || return 1
+  rbl_verified_payloads=$(rbl_runtime_payload_verify_copy "$rbl_bundle" \
+    "$rbl_runtime_payload_group" "$rbl_runtime_inventory_value") || return 1
   RBL_BUNDLE=$rbl_bundle RBL_RECIPE=$rbl_recipe RBL_LAYOUT=$rbl_layout \
   RBL_SOURCE_ROOT=$RELEASE_BUILD_LAYOUT_SOURCE_ROOT RBL_SOURCE_COMMIT=$RELEASE_BUILD_LAYOUT_COMMIT \
   RBL_SOURCE_HASH=$RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RBL_HELPER_HASH=$RELEASE_BUILD_LAYOUT_HELPER_SHA256 \
   RBL_LAYOUT_HASH=$RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RBL_PACKAGE_HASHES=$rbl_current_package_hashes \
-  RBL_RECIPE_HASH=$rbl_current_recipe_hash python3 - <<'PY' || return 1
+  RBL_RECIPE_HASH=$rbl_current_recipe_hash RBL_VERIFIED_PAYLOADS=$rbl_verified_payloads \
+  python3 - <<'PY' || return 1
 import hashlib, json, os, re, stat
 bundle=os.path.abspath(os.environ["RBL_BUNDLE"])
 layout=json.load(open(os.environ["RBL_LAYOUT"],encoding="utf-8"))
@@ -1734,34 +2100,14 @@ if set(os.listdir(os.path.join(bundle,"target"))) != {"release"} or set(os.listd
     raise SystemExit("bundle-target-entries-invalid")
 if not directory(os.path.join(release,"producer")) or set(os.listdir(os.path.join(release,"producer"))) != set(recipe["bins"]):
     raise SystemExit("bundle-producer-entries-invalid")
-def canonical_rel(value):
-    if (not isinstance(value,str) or not value or value.startswith("/") or "\\" in value or
-            os.path.normpath(value)!=value or value=="." or value.startswith("../") or "/../" in value):
-        raise SystemExit("bundle-payload-path-invalid")
-    return value
-payload_expected=set()
-def source_tree(path,rel):
-    info=os.lstat(path)
-    if stat.S_ISLNK(info.st_mode) or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
-        raise SystemExit("bundle-payload-source-invalid")
-    payload_expected.add(rel)
-    parent=os.path.dirname(rel)
-    while parent and parent != ".":
-        payload_expected.add(parent); parent=os.path.dirname(parent)
-    if stat.S_ISDIR(info.st_mode):
-        for child in sorted(os.listdir(path)):
-            source_tree(os.path.join(path,child),rel+"/"+child)
-for item in layout["runtime_payloads"].get(recipe.get("runtime_payload",""),[]):
-    source_tree(os.path.join(os.environ["RBL_SOURCE_ROOT"],canonical_rel(item["source"])),canonical_rel(item["source"]))
-allowed_roots={".release-build","target"}|{path.split("/",1)[0] for path in payload_expected}
+verified_payloads=json.loads(os.environ["RBL_VERIFIED_PAYLOADS"])
+expected_payload_descriptors=[{"source":item["source"],"image":item["image"]}
+                              for item in layout["runtime_payloads"].get(recipe.get("runtime_payload",""),[])]
+if ([{"source":item["source"],"image":item["image"]} for item in verified_payloads]
+        != expected_payload_descriptors or record.get("payloads")!=verified_payloads):
+    raise SystemExit("bundle-payload-record-invalid")
+allowed_roots={".release-build","target"}|{item["source"].split("/",1)[0] for item in verified_payloads}
 if set(os.listdir(bundle)) != allowed_roots: raise SystemExit("bundle-root-entries-invalid")
-for root_name in sorted(allowed_roots-{ ".release-build", "target"}):
-    actual_root=os.path.join(bundle,root_name)
-    for current,dirs,files in os.walk(actual_root,topdown=True,followlinks=False):
-        dirs.sort(); files.sort()
-        for name in dirs+files:
-            candidate=os.path.relpath(os.path.join(current,name),bundle).replace(os.sep,"/")
-            if candidate not in payload_expected: raise SystemExit("bundle-payload-extra-entry")
 for rel in ("release-build-layout.sh","release-build-layout.json"):
     digest=__import__("hashlib").sha256(open(os.path.join(release,rel),"rb").read()).hexdigest()
     if digest != (record["helper_sha256"] if rel.endswith(".sh") else record["layout_sha256"]):
@@ -1784,35 +2130,6 @@ PY
       return 1
     }
   rbl_expected_digest=$(rbl_tree_hash "$rbl_bundle") || return 1
-  RBL_BUNDLE=$rbl_bundle RBL_SOURCE_ROOT=$RELEASE_BUILD_LAYOUT_SOURCE_ROOT RBL_LAYOUT=$rbl_layout \
-  RBL_RECIPE=$rbl_recipe RBL_RECORD=$rbl_bundle/.release-build/bundle.json python3 - <<'PY' || return 1
-import hashlib, json, os, stat
-bundle=os.path.abspath(os.environ["RBL_BUNDLE"])
-source=os.path.abspath(os.environ["RBL_SOURCE_ROOT"])
-layout=json.load(open(os.environ["RBL_LAYOUT"],encoding="utf-8"))
-record=json.load(open(os.environ["RBL_RECORD"],encoding="utf-8"))
-recipe=layout["recipes"][os.environ["RBL_RECIPE"]]
-def digest(path, rel):
-    info=os.lstat(path)
-    if stat.S_ISLNK(info.st_mode): raise SystemExit("bundle-payload-symlink")
-    if stat.S_ISDIR(info.st_mode):
-        rows=[f"d\t{stat.S_IMODE(info.st_mode):04o}\t{rel}\t-\n".encode()]
-        for child in sorted(os.listdir(path)): rows += digest(os.path.join(path,child),rel+"/"+child)
-        return rows
-    if not stat.S_ISREG(info.st_mode): raise SystemExit("bundle-payload-special")
-    h=hashlib.sha256()
-    with open(path,"rb") as handle:
-        for chunk in iter(lambda:handle.read(1024*1024),b""): h.update(chunk)
-    return [f"f\t{stat.S_IMODE(info.st_mode):04o}\t{rel}\t{h.hexdigest()}\n".encode()]
-expected=[]
-for item in layout["runtime_payloads"].get(recipe.get("runtime_payload",""),[]):
-    rel=item["source"]; a=os.path.join(source,rel); b=os.path.join(bundle,rel)
-    source_hash=hashlib.sha256(b"".join(digest(a,rel))).hexdigest()
-    if not os.path.lexists(b) or source_hash!=hashlib.sha256(b"".join(digest(b,rel))).hexdigest():
-        raise SystemExit("bundle-payload-binding-invalid")
-    expected.append({"source":rel,"image":item["image"],"tree_sha256":source_hash})
-if record.get("payloads") != expected: raise SystemExit("bundle-payload-record-invalid")
-PY
   printf '%s\n' "$rbl_expected_digest"
 }
 
@@ -3037,10 +3354,14 @@ rbl_product_request() {
   rbl_bundle=$3
   rbl_request_path=$4
   rbl_expected_path=$5
+  rbl_runtime_inventory_value=$(rbl_runtime_payload_inventory_current) || return 1
   RBL_SERVICE=$rbl_service RBL_COMMIT=$rbl_commit RBL_BUNDLE=$rbl_bundle \
   RBL_SOURCE_ROOT=$RELEASE_BUILD_LAYOUT_SOURCE_ROOT \
   RBL_LAYOUT=$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json \
-  RBL_REQUEST_PATH=$rbl_request_path RBL_EXPECTED_PATH=$rbl_expected_path python3 - <<'PY'
+  RBL_REQUEST_PATH=$rbl_request_path RBL_EXPECTED_PATH=$rbl_expected_path \
+  RBL_RUNTIME_INVENTORY=$rbl_runtime_inventory_value \
+  RBL_RUNTIME_FORMAT=$RBL_RUNTIME_INVENTORY_FORMAT \
+  RBL_DOCKERIGNORE_HASH=$RBL_DOCKERIGNORE_SHA256 python3 - <<'PY'
 import hashlib, json, os, posixpath, stat, struct
 
 service=os.environ["RBL_SERVICE"]
@@ -3048,6 +3369,10 @@ commit=os.environ["RBL_COMMIT"]
 source_root=os.path.abspath(os.environ["RBL_SOURCE_ROOT"])
 layout=json.load(open(os.environ["RBL_LAYOUT"],encoding="utf-8"))
 bundle=os.path.abspath(os.environ["RBL_BUNDLE"]) if os.environ["RBL_BUNDLE"] else None
+runtime_inventory=json.loads(os.environ["RBL_RUNTIME_INVENTORY"])
+if (runtime_inventory.get("format")!=os.environ["RBL_RUNTIME_FORMAT"] or
+        runtime_inventory.get("dockerignore_sha256")!=os.environ["RBL_DOCKERIGNORE_HASH"]):
+    raise SystemExit("product-runtime-inventory-invalid")
 
 def canonical_image(value):
     if not isinstance(value,str) or not value.startswith("/") or value.endswith("/") or "\\" in value:
@@ -3092,33 +3417,58 @@ def add_file(image, digest, executable, elf, patterns, mode):
     files[image]=item
     expected[image]={"sha256":digest,"mode":(format(mode,"04o") if mode is not None else None)}
 
-def add_source_entry(source, image):
-    source=source_rel(source)
-    image=canonical_image(image)
-    root=source_path(source)
-    info=os.lstat(root)
-    if stat.S_ISLNK(info.st_mode) or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
-        raise SystemExit("product-source-entry-invalid")
-    if stat.S_ISREG(info.st_mode):
-        add_file("/"+image,sha256_file(root),bool(stat.S_IMODE(info.st_mode)&0o111),is_elf(root),[],stat.S_IMODE(info.st_mode))
+def selected_source(entry):
+    path=source_path(entry["path"])
+    try: info=os.lstat(path)
+    except FileNotFoundError: raise SystemExit("product-source-entry-missing")
+    if format(stat.S_IMODE(info.st_mode),"04o")!=entry["mode"]:
+        raise SystemExit("product-source-mode-changed")
+    if entry["kind"]=="directory":
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or entry["sha256"] is not None:
+            raise SystemExit("product-source-directory-invalid")
+    elif entry["kind"]=="file":
+        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or
+                sha256_file(path)!=entry["sha256"]):
+            raise SystemExit("product-source-file-invalid")
+    else: raise SystemExit("product-source-kind-invalid")
+    return path,info
+
+def add_source_entry(payload):
+    if not isinstance(payload,dict) or set(payload)!={"entries","image","source","tree_sha256"}:
+        raise SystemExit("product-runtime-payload-invalid")
+    source=source_rel(payload["source"])
+    image=canonical_image(payload["image"])
+    entries=payload["entries"]
+    if not isinstance(entries,list) or not entries:
+        raise SystemExit("product-runtime-payload-entries-invalid")
+    root_entry=next((entry for entry in entries if entry.get("path")==source),None)
+    if root_entry is None: raise SystemExit("product-runtime-payload-root-missing")
+    if root_entry.get("kind")=="file":
+        if len(entries)!=1: raise SystemExit("product-runtime-file-payload-invalid")
+        path,info=selected_source(root_entry)
+        add_file("/"+image,root_entry["sha256"],bool(stat.S_IMODE(info.st_mode)&0o111),
+                 is_elf(path),[],stat.S_IMODE(info.st_mode))
         return
+    if root_entry.get("kind")!="directory": raise SystemExit("product-runtime-directory-payload-invalid")
     directories.add(image)
-    for current, dirs, names in os.walk(root,topdown=True,followlinks=False):
-        dirs.sort(); names.sort()
-        for name in dirs:
-            child=os.path.join(current,name); child_info=os.lstat(child)
-            if stat.S_ISLNK(child_info.st_mode) or not stat.S_ISDIR(child_info.st_mode):
-                raise SystemExit("product-source-directory-invalid")
-        for name in names:
-            child=os.path.join(current,name); child_info=os.lstat(child)
-            if stat.S_ISLNK(child_info.st_mode) or not stat.S_ISREG(child_info.st_mode):
-                raise SystemExit("product-source-file-invalid")
-            relative=os.path.relpath(child,root).replace(os.sep,"/")
-            add_file("/"+image+"/"+relative,sha256_file(child),bool(stat.S_IMODE(child_info.st_mode)&0o111),is_elf(child),[],stat.S_IMODE(child_info.st_mode))
+    for entry in entries:
+        path,info=selected_source(entry)
+        if entry["kind"]!="file": continue
+        relative=posixpath.relpath(entry["path"],source)
+        if relative=="." or relative.startswith("../"):
+            raise SystemExit("product-runtime-entry-outside-payload")
+        add_file("/"+image+"/"+relative,entry["sha256"],bool(stat.S_IMODE(info.st_mode)&0o111),
+                 is_elf(path),[],stat.S_IMODE(info.st_mode))
 
 def add_payloads(name):
-    for item in layout["runtime_payloads"].get(name,[]):
-        add_source_entry(item["source"],item["image"])
+    values=runtime_inventory.get("payload_groups",{}).get(name)
+    declared=layout["runtime_payloads"].get(name)
+    if not isinstance(values,list) or not isinstance(declared,list):
+        raise SystemExit("product-runtime-payload-group-invalid")
+    if ([{"source":item.get("source"),"image":item.get("image")} for item in values]
+            != declared):
+        raise SystemExit("product-runtime-payload-declaration-mismatch")
+    for item in values: add_source_entry(item)
 
 record=layout["services"].get(service)
 if record is None: raise SystemExit("product-service-unknown")

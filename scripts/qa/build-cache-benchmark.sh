@@ -1934,11 +1934,15 @@ record_cargo_units() {
 }
 
 write_source_archive_request() {
-  local checkout=$1 service=$2 commit=$3 destination=$4
+  local checkout=$1 service=$2 commit=$3 destination=$4 runtime_inventory
   [ -d "$checkout" ] && [ ! -L "$checkout" ] || return 1
   [ ! -e "$destination" ] && [ ! -L "$destination" ] || return 1
+  runtime_inventory=$(rbl_runtime_payload_inventory \
+    "$checkout" "$repo_root/deploy/build/release-build-layout.json") || return 1
   RBL_BENCH_SOURCE_ROOT=$checkout RBL_BENCH_LAYOUT=$repo_root/deploy/build/release-build-layout.json \
-    RBL_BENCH_SERVICE=$service RBL_BENCH_COMMIT=$commit RBL_BENCH_REQUEST=$destination python3 - <<'PY'
+    RBL_BENCH_SERVICE=$service RBL_BENCH_COMMIT=$commit RBL_BENCH_REQUEST=$destination \
+    RBL_BENCH_RUNTIME_INVENTORY=$runtime_inventory RBL_RUNTIME_FORMAT=$RBL_RUNTIME_INVENTORY_FORMAT \
+    RBL_DOCKERIGNORE_HASH=$RBL_DOCKERIGNORE_SHA256 python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -1951,6 +1955,7 @@ layout_path = os.environ["RBL_BENCH_LAYOUT"]
 service = os.environ["RBL_BENCH_SERVICE"]
 commit = os.environ["RBL_BENCH_COMMIT"]
 out_path = os.environ["RBL_BENCH_REQUEST"]
+runtime_inventory = json.loads(os.environ["RBL_BENCH_RUNTIME_INVENTORY"])
 
 def exact_commit(value):
     return isinstance(value, str) and len(value) == 40 and all(char in "0123456789abcdef" for char in value)
@@ -1962,6 +1967,9 @@ if not os.path.isfile(layout_path) or os.path.islink(layout_path):
 layout = json.load(open(layout_path, encoding="utf-8"))
 if layout.get("format") != "lagrange-build-layout-v1" or layout.get("schema_version") != 1:
     raise SystemExit("benchmark-layout-schema-invalid")
+if (runtime_inventory.get("format") != os.environ["RBL_RUNTIME_FORMAT"]
+        or runtime_inventory.get("dockerignore_sha256") != os.environ["RBL_DOCKERIGNORE_HASH"]):
+    raise SystemExit("benchmark-runtime-inventory-invalid")
 
 def image_path(value):
     if not isinstance(value, str) or not value.startswith("/") or value.endswith("/") or "\\" in value:
@@ -2007,40 +2015,64 @@ def add_file(path, sha, executable, is_elf, literals):
         raise SystemExit("benchmark-source-request-path-conflict")
     files[path] = item
 
-def add_source(source, image):
-    source = source_path(source)
-    image = image_path(image)
-    info = os.lstat(source)
-    if stat.S_ISLNK(info.st_mode) or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
-        raise SystemExit("benchmark-source-entry-invalid")
-    if stat.S_ISREG(info.st_mode):
-        add_file("/" + image, digest(source), bool(stat.S_IMODE(info.st_mode) & 0o111), elf(source), [])
+def selected_source(entry):
+    path = source_path(entry["path"])
+    try: info = os.lstat(path)
+    except FileNotFoundError: raise SystemExit("benchmark-source-entry-missing")
+    if format(stat.S_IMODE(info.st_mode), "04o") != entry["mode"]:
+        raise SystemExit("benchmark-source-mode-changed")
+    if entry["kind"] == "directory":
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or entry["sha256"] is not None:
+            raise SystemExit("benchmark-source-directory-invalid")
+    elif entry["kind"] == "file":
+        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+                or digest(path) != entry["sha256"]):
+            raise SystemExit("benchmark-source-file-invalid")
+    else:
+        raise SystemExit("benchmark-source-kind-invalid")
+    return path, info
+
+def add_source(payload):
+    if not isinstance(payload, dict) or set(payload) != {"entries", "image", "source", "tree_sha256"}:
+        raise SystemExit("benchmark-runtime-payload-invalid")
+    source = payload["source"]
+    image = image_path(payload["image"])
+    entries = payload["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise SystemExit("benchmark-runtime-payload-entries-invalid")
+    root_entry = next((entry for entry in entries if entry.get("path") == source), None)
+    if root_entry is None:
+        raise SystemExit("benchmark-runtime-payload-root-missing")
+    if root_entry.get("kind") == "file":
+        if len(entries) != 1:
+            raise SystemExit("benchmark-runtime-file-payload-invalid")
+        path, info = selected_source(root_entry)
+        add_file("/" + image, root_entry["sha256"],
+                 bool(stat.S_IMODE(info.st_mode) & 0o111), elf(path), [])
         return
+    if root_entry.get("kind") != "directory":
+        raise SystemExit("benchmark-runtime-directory-payload-invalid")
     directories.add(image)
-    for current, names_dirs, names_files in os.walk(source, topdown=True, followlinks=False):
-        names_dirs.sort()
-        names_files.sort()
-        for name in names_dirs:
-            item = os.lstat(os.path.join(current, name))
-            if stat.S_ISLNK(item.st_mode) or not stat.S_ISDIR(item.st_mode):
-                raise SystemExit("benchmark-source-directory-invalid")
-        for name in names_files:
-            path = os.path.join(current, name)
-            item = os.lstat(path)
-            if stat.S_ISLNK(item.st_mode) or not stat.S_ISREG(item.st_mode):
-                raise SystemExit("benchmark-source-file-invalid")
-            relative = os.path.relpath(path, source).replace(os.sep, "/")
-            add_file("/" + image + "/" + relative, digest(path),
-                     bool(stat.S_IMODE(item.st_mode) & 0o111), elf(path), [])
+    for entry in entries:
+        path, info = selected_source(entry)
+        if entry["kind"] != "file":
+            continue
+        relative = posixpath.relpath(entry["path"], source)
+        if relative == "." or relative.startswith("../"):
+            raise SystemExit("benchmark-runtime-entry-outside-payload")
+        add_file("/" + image + "/" + relative, entry["sha256"],
+                 bool(stat.S_IMODE(info.st_mode) & 0o111), elf(path), [])
 
 def add_payloads(name):
-    values = layout.get("runtime_payloads", {}).get(name)
-    if not isinstance(values, list):
+    values = runtime_inventory.get("payload_groups", {}).get(name)
+    declared = layout.get("runtime_payloads", {}).get(name)
+    if not isinstance(values, list) or not isinstance(declared, list):
         raise SystemExit("benchmark-runtime-payload-invalid")
+    if ([{"source": item.get("source"), "image": item.get("image")} for item in values]
+            != declared):
+        raise SystemExit("benchmark-runtime-payload-declaration-mismatch")
     for item in values:
-        if not isinstance(item, dict) or set(item) != {"source", "image"}:
-            raise SystemExit("benchmark-runtime-payload-entry-invalid")
-        add_source(item["source"], item["image"])
+        add_source(item)
 
 record = layout.get("services", {}).get(service)
 if not isinstance(record, dict) or set(record) != {"kind", "recipe"}:
@@ -4403,9 +4435,10 @@ new_self_test_nonce() {
 run_self_test() {
   local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log invalid_json_log
   local current parent plan_output first_nonce second_nonce foreign_tag build_count remove_count
-  local clean_clone clean_clone_input clean_clone_env
+  local clean_clone clean_clone_input clean_clone_env real_git_bin
   local case_variant_one case_variant_two health_mode health_reason saved_health_containers scenario_case scenario_path
   local -a saved_services=()
+  real_git_bin=$(command -v git) || die 'self-test could not resolve the real Git executable'
   test_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-build-cache-benchmark-self-test.XXXXXXXXXX")
   trap 'rm -rf -- "$test_dir"' RETURN
   # Exercise the real lock API without leaving fake-test state at its fixed
@@ -5224,7 +5257,7 @@ EOF
     esac
   }
   prepare_checkout() {
-    local commit=$1 checkout=$2 service dockerfile path parent
+    local commit=$1 checkout=$2 service dockerfile path parent tracked_path
     mkdir -p -- "$checkout"
     printf '%s\n' "$commit" >"$checkout/.benchmark-commit"
     printf '%s\n' '[toolchain]' 'channel = "1.97.1"' >"$checkout/rust-toolchain.toml"
@@ -5256,10 +5289,9 @@ EOF
         *) return 97 ;;
       esac
     done
-    # The strict A/B archive-request writer reads the frozen layout config and
-    # hashes these real tracked runtime payload paths. Copy only those inputs
-    # into the private fake checkout; no product image or source checkout is
-    # changed by the self-test.
+    # The strict A/B archive-request writer uses the product Git-tracked runtime
+    # selector. Materialize only `git ls-files` results from the real source;
+    # never recursively copy the ignored user nt/.venv into test data.
     for path in \
       tests/fixtures/kr-etf/contract tests/fixtures/kr-candidates/contract \
       configs/universes/kr-stock-price-beta-v1.json \
@@ -5267,8 +5299,10 @@ EOF
       nt deploy/runtime/paper-runner-entrypoint migrations \
       configs/strategies/baseline-v1.json deploy/db/sync-baseline-strategy-catalog.sql \
       deploy/db/migrate.sh deploy/db/bootstrap-roles.sh; do
-      mkdir -p -- "$checkout/${path%/*}"
-      cp -a -- "$repo_root/$path" "$checkout/$path"
+      while IFS= read -r -d '' tracked_path; do
+        mkdir -p -- "$checkout/${tracked_path%/*}"
+        cp -p -- "$repo_root/$tracked_path" "$checkout/$tracked_path"
+      done < <("$real_git_bin" -C "$repo_root" ls-files -z -- "$path")
     done
     # Every clean checkout, including an A/B fallback fixture, retains the
     # unchanged manifest library.  A C fixture additionally receives its own
@@ -5287,6 +5321,23 @@ EOF
         "$checkout/deploy/build/Dockerfile.rust-artifacts"
       printf '%s\n' 'services: {}' >"$checkout/deploy/compose/compose.yml"
     fi
+    cp -p -- "$repo_root/.dockerignore" "$checkout/.dockerignore"
+    cp -p -- "$repo_root/.gitignore" "$checkout/.gitignore"
+    # Python subprocesses invoked by the product inventory helper resolve the
+    # real Git executable, so give each otherwise synthetic checkout a real
+    # tracked index. The shell-level fake still controls benchmark commit/order
+    # behavior and no repository source is changed.
+    "$real_git_bin" -C "$checkout" init -q
+    "$real_git_bin" -C "$checkout" add -- .
+    "$real_git_bin" -C "$checkout" -c user.name=fixture \
+      -c user.email=fixture@example.invalid commit -qm fixture
+    mkdir -p -- "$checkout/nt/.venv/bin" "$checkout/nt/__pycache__"
+    [ -L "$checkout/nt/.venv/bin/python" ] || \
+      ln -s ../python-fixture-target "$checkout/nt/.venv/bin/python"
+    printf '%s\n' 'ignored benchmark virtualenv bytes' >"$checkout/nt/.venv/ignored.txt"
+    printf '%s\n' 'ignored benchmark pycache bytes' >"$checkout/nt/__pycache__/ignored.pyc"
+    [ -z "$("$real_git_bin" -C "$checkout" status --porcelain=v1 --untracked-files=all)" ] ||
+      return 97
   }
   benchmark_validate_common_fixture() {
     local revision=$1 checkout=$2 helper=$3 config=$4 artifact=$5 commit=$6
@@ -5883,6 +5934,24 @@ PY
   fi
   [ "$(wc -l <"$output_dir/common-phases.tsv")" -eq 89 ] ||
     die 'self-test source whole-release phase accounting omitted a setup, gate, consumer, or final V2 interval'
+  # Both fake A/B checkouts have a real tracked index plus ignored NT tooling.
+  # Archive requests must retain tracked NT bytes while never selecting the
+  # synthetic virtualenv or Python cache, and selection must not disturb them.
+  for checkout in "$baseline_checkout" "$candidate_checkout"; do
+    [ -L "$checkout/nt/.venv/bin/python" ] &&
+      [ "$(readlink -- "$checkout/nt/.venv/bin/python")" = ../python-fixture-target ] &&
+      grep -Fxq 'ignored benchmark virtualenv bytes' "$checkout/nt/.venv/ignored.txt" &&
+      grep -Fxq 'ignored benchmark pycache bytes' "$checkout/nt/__pycache__/ignored.pyc" ||
+      die 'self-test tracked runtime selection modified ignored NT tooling'
+    if "$real_git_bin" -C "$checkout" ls-files | grep -Eq '(^|/)(\.venv|__pycache__)(/|$)|\.py[cod]$'; then
+      die 'self-test ignored NT tooling entered the tracked fixture index'
+    fi
+  done
+  if grep -R -Eq '(^|/)(\.venv|__pycache__)(/|$)|\.py[cod]' "$output_dir/archive-requests"; then
+    die 'self-test A/B source archive request selected ignored NT tooling'
+  fi
+  grep -R -Fq 'opt/lagrange/nt/' "$output_dir/archive-requests" ||
+    die 'self-test A/B source archive requests omitted tracked NT payloads'
   if ( run_apply ) >"$test_dir/nonempty-output.out" 2>&1; then die 'self-test accepted a non-empty output directory'; fi
   [ "$(awk -F '\t' '$1 == "build" { count++ } END { print count + 0 }' "$BENCH_TEST_DOCKER_RECORD")" -eq 48 ] ||
     die 'self-test non-empty output check started a build'

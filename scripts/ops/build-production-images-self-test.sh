@@ -618,6 +618,228 @@ PY
 # later fixture setup failure.
 run_archive_parser_tests
 
+# Exercise the host runtime selector independently of Docker and producer state.
+# A real tiny Git index supplies Python/config/data payloads while ignored
+# virtualenv/cache entries remain on disk. Selection, copying and source-side
+# expectations must use only tracked regular entries; actual copied trees stay
+# strict and reject every missing/extra/link/special mutation.
+run_runtime_payload_inventory_tests() (
+  set -euo pipefail
+  source "$source_layout_helper"
+  local test_root fixture inventory inventory_hash selected copy_root verified control_hash ignored_before ignored_after
+  local case_root changed_hash changed_tree original_tree group
+  test_root=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-runtime-payload-self-test.XXXXXX")
+  trap 'rm -rf -- "$test_root"' RETURN
+  chmod 0700 -- "$test_root"
+  fixture=$test_root/source
+  mkdir -p -- "$fixture/nt/config" "$fixture/nt/data" \
+    "$fixture/data-pipelines/collectors/runtime" "$fixture/migrations" \
+    "$fixture/configs/strategies" "$fixture/deploy/db" "$fixture/deploy/runtime"
+  cp -p -- "$source_root/.dockerignore" "$fixture/.dockerignore"
+  printf '%s\n' '**/.venv/' '**/__pycache__/' '**/*.py[cod]' >"$fixture/.gitignore"
+  printf '%s\n' '# tracked worker' >"$fixture/nt/worker.py"
+  printf '%s\n' '{"setting":true}' >"$fixture/nt/config/settings.json"
+  # A sibling sharing a directory's prefix distinguishes path-string sorting
+  # from the depth-first order used by the existing in-image payload hash.
+  printf '%s\n' 'tracked-prefix-sibling' >"$fixture/nt/config-old"
+  printf '%s\n' 'tracked-data' >"$fixture/nt/data/value.dat"
+  printf '%s\n' '# collector runtime' >"$fixture/data-pipelines/collectors/runtime/collector.py"
+  printf '%s\n' '-- migration' >"$fixture/migrations/001.sql"
+  printf '%s\n' '{"strategy":"fixture"}' >"$fixture/configs/strategies/baseline.json"
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/deploy/db/run.sh"
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"$fixture/deploy/runtime/paper"
+  chmod 0755 -- "$fixture/deploy/db/run.sh" "$fixture/deploy/runtime/paper"
+  cat >"$fixture/layout.json" <<'JSON'
+{"runtime_payloads":{"backtest":[{"image":"/opt/lagrange/nt","source":"nt"}],"collectors":[{"image":"/opt/lagrange/collectors","source":"data-pipelines/collectors/runtime"}],"database":[{"image":"/opt/lagrange/migrations","source":"migrations"},{"image":"/opt/lagrange/configs/baseline.json","source":"configs/strategies/baseline.json"},{"image":"/usr/local/bin/db-run","source":"deploy/db/run.sh"}],"paper":[{"image":"/usr/local/bin/paper","source":"deploy/runtime/paper"}]}}
+JSON
+  git -C "$fixture" init -q
+  git -C "$fixture" config user.email fixture@example.invalid
+  git -C "$fixture" config user.name fixture
+  git -C "$fixture" add -- .
+  git -C "$fixture" commit -qm fixture
+  mkdir -p -- "$fixture/nt/.venv/bin" "$fixture/nt/.venv/lib/__pycache__" "$fixture/nt/__pycache__"
+  ln -s ../python-fixture-target "$fixture/nt/.venv/bin/python"
+  printf '%s\n' 'ignored venv bytes' >"$fixture/nt/.venv/lib/__pycache__/ignored.pyc"
+  printf '%s\n' 'ignored cache bytes' >"$fixture/nt/__pycache__/ignored.pyc"
+  [ -z "$(git -C "$fixture" status --porcelain=v1 --untracked-files=all)" ] || {
+    echo 'self-test: ignored runtime fixture was not Git-clean' >&2
+    return 1
+  }
+  ignored_before=$(python3 - "$fixture" <<'PY'
+import hashlib, json, os, stat, sys
+root=sys.argv[1]; link=os.path.join(root,"nt/.venv/bin/python")
+cache=os.path.join(root,"nt/__pycache__/ignored.pyc")
+info=os.lstat(link)
+print(json.dumps({"link":os.readlink(link),"link_mode":stat.S_IMODE(info.st_mode),
+                  "cache":hashlib.sha256(open(cache,"rb").read()).hexdigest()},sort_keys=True))
+PY
+  )
+  inventory=$(rbl_runtime_payload_inventory "$fixture" "$fixture/layout.json")
+  inventory_hash=$(printf '%s\n' "$inventory" | sha256sum | awk '{print $1}')
+  [[ "$inventory_hash" =~ ^[0-9a-f]{64}$ ]]
+  RBL_TEST_RUNTIME_INVENTORY=$inventory python3 - <<'PY'
+import json, os
+value=json.loads(os.environ["RBL_TEST_RUNTIME_INVENTORY"])
+assert value["format"]=="lagrange-runtime-payload-inventory-v1"
+assert set(value["payload_groups"])=={"backtest","collectors","database","paper"}
+paths=[entry["path"] for entry in value["payload_groups"]["backtest"][0]["entries"]]
+assert {"nt","nt/worker.py","nt/config","nt/config/settings.json","nt/config-old","nt/data","nt/data/value.dat"}==set(paths)
+assert not any(".venv" in path or "__pycache__" in path or path.endswith((".pyc",".pyo",".pyd")) for path in paths)
+PY
+  for group in backtest collectors database paper; do
+    copy_root=$test_root/copy-$group
+    mkdir -m 0700 -- "$copy_root"
+    selected=$(rbl_runtime_payload_copy "$fixture" "$copy_root" "$group" "$inventory")
+    verified=$(rbl_runtime_payload_verify_copy "$copy_root" "$group" "$inventory")
+    [ "$selected" = "$verified" ] || {
+      echo "self-test: selected/copied runtime payload binding differed: $group" >&2
+      return 1
+    }
+  done
+  copy_root=$test_root/copy-backtest
+  control_hash=$(rbl_entry_hash "$copy_root" nt)
+  RBL_TEST_RUNTIME_INVENTORY=$inventory RBL_TEST_CONTROL_HASH=$control_hash python3 - <<'PY'
+import json, os
+payload=json.loads(os.environ["RBL_TEST_RUNTIME_INVENTORY"])["payload_groups"]["backtest"][0]
+assert payload["tree_sha256"]==os.environ["RBL_TEST_CONTROL_HASH"]
+PY
+  ignored_after=$(python3 - "$fixture" <<'PY'
+import hashlib, json, os, stat, sys
+root=sys.argv[1]; link=os.path.join(root,"nt/.venv/bin/python")
+cache=os.path.join(root,"nt/__pycache__/ignored.pyc")
+info=os.lstat(link)
+print(json.dumps({"link":os.readlink(link),"link_mode":stat.S_IMODE(info.st_mode),
+                  "cache":hashlib.sha256(open(cache,"rb").read()).hexdigest()},sort_keys=True))
+PY
+  )
+  [ "$ignored_before" = "$ignored_after" ] || {
+    echo 'self-test: runtime inventory/copy read path modified ignored tooling' >&2
+    return 1
+  }
+
+  runtime_tree_hash() {
+    RBL_TEST_RUNTIME_INVENTORY=$1 python3 - <<'PY'
+import json,os
+print(json.loads(os.environ["RBL_TEST_RUNTIME_INVENTORY"])["payload_groups"]["backtest"][0]["tree_sha256"])
+PY
+  }
+  original_tree=$(runtime_tree_hash "$inventory")
+  case_root=$test_root/ignored-change
+  git clone -q --no-local "$fixture" "$case_root"
+  mkdir -p -- "$case_root/nt/.venv/bin" "$case_root/nt/__pycache__"
+  ln -s ../first-target "$case_root/nt/.venv/bin/python"
+  printf '%s\n' before >"$case_root/nt/__pycache__/ignored.pyc"
+  changed_hash=$(rbl_runtime_payload_inventory "$case_root" "$case_root/layout.json")
+  printf '%s\n' after >"$case_root/nt/__pycache__/ignored.pyc"
+  ln -sfn ../second-target "$case_root/nt/.venv/bin/python"
+  [ "$(runtime_tree_hash "$changed_hash")" = "$(runtime_tree_hash "$(rbl_runtime_payload_inventory "$case_root" "$case_root/layout.json")")" ] || {
+    echo 'self-test: ignored runtime tooling changed the selected payload hash' >&2
+    return 1
+  }
+
+  case_root=$test_root/byte-change
+  git clone -q --no-local "$fixture" "$case_root"
+  printf '%s\n' '# changed tracked worker' >"$case_root/nt/worker.py"
+  changed_tree=$(runtime_tree_hash "$(rbl_runtime_payload_inventory "$case_root" "$case_root/layout.json")")
+  [ "$changed_tree" != "$original_tree" ] || {
+    echo 'self-test: tracked runtime byte edit did not change its tree hash' >&2
+    return 1
+  }
+  case_root=$test_root/mode-change
+  git clone -q --no-local "$fixture" "$case_root"
+  chmod 0600 -- "$case_root/nt/worker.py"
+  changed_tree=$(runtime_tree_hash "$(rbl_runtime_payload_inventory "$case_root" "$case_root/layout.json")")
+  [ "$changed_tree" != "$original_tree" ] || {
+    echo 'self-test: tracked runtime mode edit did not change its tree hash' >&2
+    return 1
+  }
+
+  expect_runtime_inventory_failure() {
+    local label=$1 expected=$2 root=$3 layout=$4
+    if rbl_runtime_payload_inventory "$root" "$layout" \
+      >"$test_root/$label.out" 2>"$test_root/$label.err"; then
+      echo "self-test: invalid runtime inventory unexpectedly passed: $label" >&2
+      return 1
+    fi
+    grep -Fxq "$expected" "$test_root/$label.err" || {
+      echo "self-test: invalid runtime inventory failed for the wrong reason: $label" >&2
+      return 1
+    }
+  }
+  case_root=$test_root/tracked-symlink
+  git clone -q --no-local "$fixture" "$case_root"
+  ln -s worker.py "$case_root/nt/tracked-link"
+  git -C "$case_root" add -- nt/tracked-link
+  expect_runtime_inventory_failure tracked-symlink runtime-payload-tracked-type-invalid "$case_root" "$case_root/layout.json"
+
+  case_root=$test_root/ancestor-symlink
+  git clone -q --no-local "$fixture" "$case_root"
+  mv -- "$case_root/nt/config" "$case_root/nt/config-real"
+  ln -s config-real "$case_root/nt/config"
+  expect_runtime_inventory_failure ancestor-symlink runtime-payload-ancestor-invalid "$case_root" "$case_root/layout.json"
+
+  case_root=$test_root/special
+  git clone -q --no-local "$fixture" "$case_root"
+  unlink -- "$case_root/nt/data/value.dat"
+  mkfifo -- "$case_root/nt/data/value.dat"
+  expect_runtime_inventory_failure special runtime-payload-entry-invalid "$case_root" "$case_root/layout.json"
+
+  case_root=$test_root/missing
+  git clone -q --no-local "$fixture" "$case_root"
+  unlink -- "$case_root/nt/data/value.dat"
+  expect_runtime_inventory_failure missing runtime-payload-entry-missing "$case_root" "$case_root/layout.json"
+
+  case_root=$test_root/excluded
+  git clone -q --no-local "$fixture" "$case_root"
+  mkdir -p -- "$case_root/nt/__pycache__"
+  printf '%s\n' tracked-excluded >"$case_root/nt/__pycache__/tracked.pyc"
+  git -C "$case_root" add -f -- nt/__pycache__/tracked.pyc
+  expect_runtime_inventory_failure excluded runtime-payload-docker-excluded "$case_root" "$case_root/layout.json"
+
+  case_root=$test_root/noncanonical
+  git clone -q --no-local "$fixture" "$case_root"
+  python3 - "$case_root/layout.json" <<'PY'
+import json,sys
+path=sys.argv[1]; value=json.load(open(path,encoding="utf-8"))
+value["runtime_payloads"]["backtest"][0]["source"]="nt/./worker.py"
+open(path,"w",encoding="utf-8").write(json.dumps(value,separators=(",",":"))+"\n")
+PY
+  expect_runtime_inventory_failure noncanonical runtime-payload-path-invalid "$case_root" "$case_root/layout.json"
+
+  case_root=$test_root/dockerignore-drift
+  git clone -q --no-local "$fixture" "$case_root"
+  printf '%s\n' '# drift' >>"$case_root/.dockerignore"
+  expect_runtime_inventory_failure dockerignore-drift runtime-payload-dockerignore-policy-drift "$case_root" "$case_root/layout.json"
+
+  copy_root=$test_root/copy-extra
+  cp -a -- "$test_root/copy-backtest" "$copy_root"
+  printf '%s\n' unexpected >"$copy_root/nt/unexpected.txt"
+  if rbl_runtime_payload_verify_copy "$copy_root" backtest "$inventory" \
+    >"$test_root/copy-extra.out" 2>"$test_root/copy-extra.err"; then
+    echo 'self-test: unexpected runtime bundle file passed verification' >&2
+    return 1
+  fi
+  copy_root=$test_root/copy-symlink
+  cp -a -- "$test_root/copy-backtest" "$copy_root"
+  ln -s worker.py "$copy_root/nt/unexpected-link"
+  if rbl_runtime_payload_verify_copy "$copy_root" backtest "$inventory" \
+    >"$test_root/copy-symlink.out" 2>"$test_root/copy-symlink.err"; then
+    echo 'self-test: unexpected runtime bundle symlink passed verification' >&2
+    return 1
+  fi
+  copy_root=$test_root/copy-missing
+  cp -a -- "$test_root/copy-backtest" "$copy_root"
+  unlink -- "$copy_root/nt/data/value.dat"
+  if rbl_runtime_payload_verify_copy "$copy_root" backtest "$inventory" \
+    >"$test_root/copy-missing.out" 2>"$test_root/copy-missing.err"; then
+    echo 'self-test: missing runtime bundle file passed verification' >&2
+    return 1
+  fi
+  echo 'PRODUCTION_RUNTIME_PAYLOAD_INVENTORY_SELF_TEST: PASS (tiny tracked Git fixture only)'
+)
+
+run_runtime_payload_inventory_tests
+
 # The build helper's --apply contract is root-only. Establish one root-like
 # fixture process once; commands inside that child run directly, never through
 # a nested fakeroot wrapper. A missing runner is a test-environment failure,
@@ -703,6 +925,8 @@ for payloads in layout["runtime_payloads"].values():
 for recipe in layout["recipes"].values():
     tracked(recipe["dockerfile"])
 for rel in (
+    ".dockerignore",
+    ".gitignore",
     "deploy/build/Dockerfile.rust-artifacts",
     "deploy/build/release-build-layout.json",
     "scripts/ops/build-production-images.sh",
@@ -720,6 +944,17 @@ git -C "$repo_dir" config user.name fixture
 git -C "$repo_dir" add -- .
 git -C "$repo_dir" commit -qm fixture
 commit=$(git -C "$repo_dir" rev-parse HEAD)
+# Model the original clean-checkout defect without ever copying or inspecting
+# the user's real virtualenv. These synthetic ignored entries must remain
+# absent from tracked payload bundles and image expectations.
+mkdir -p -- "$repo_dir/nt/.venv/bin" "$repo_dir/nt/__pycache__"
+ln -s ../python-fixture-target "$repo_dir/nt/.venv/bin/python"
+printf '%s\n' 'ignored image fixture virtualenv bytes' >"$repo_dir/nt/.venv/ignored.txt"
+printf '%s\n' 'ignored image fixture pycache bytes' >"$repo_dir/nt/__pycache__/ignored.pyc"
+[ -z "$(git -C "$repo_dir" status --porcelain=v1 --untracked-files=all)" ] || {
+  echo 'self-test: synthetic ignored NT tooling dirtied the source fixture' >&2
+  exit 1
+}
 
 cat >"$fake_bin/docker" <<'PY'
 #!/usr/bin/env python3
@@ -944,7 +1179,10 @@ def write_archive(service, source_commit):
             entries[item["image"].lstrip("/")] = (path.read_bytes(), 0o755)
         payload_name = recipe.get("runtime_payload")
         for item in layout["runtime_payloads"].get(payload_name, []):
-            add_source_tree(entries, repo / item["source"], item["image"])
+            # The verified-artifacts route consumes the host-selected bundle,
+            # which mirrors Docker's frozen tracked/excluded context rather
+            # than recursively walking ignored tooling from the checkout.
+            add_source_tree(entries, Path(bundle) / item["source"], item["image"])
     elif record["kind"] == "database":
         entries["usr/local/bin/sqlx"] = (elf_binary(source_commit, "sqlx"), 0o755)
         for item in layout["runtime_payloads"]["database"]:
@@ -1313,6 +1551,63 @@ for service in db-role-bootstrap db-migrate api-server web research-worker \
     "$manifest_file"
 done
 [ "${#observed_image_ids[@]}" -eq 12 ]
+
+# The full successful run must have selected only tracked NT payloads for both
+# shared D2/D5 bundles while preserving their duplicate-consumer reuse. The
+# ignored virtualenv/cache remain byte/link-identical and absent from bundle and
+# source-derived archive-request evidence.
+ignored_bundle_entry=$(find "$out_dir/.lagrange-build-state/$commit/bundles" \
+  \( -path '*/.venv' -o -path '*/.venv/*' -o -path '*/__pycache__' -o -path '*/__pycache__/*' \) \
+  -print -quit)
+[ -z "$ignored_bundle_entry" ] || {
+  echo "self-test: ignored NT tooling entered a runtime bundle: $ignored_bundle_entry" >&2
+  exit 1
+}
+if grep -R -Eq '(^|/)(\.venv|__pycache__)(/|$)|\.py[cod]' \
+  "$out_dir/.lagrange-build-state/$commit/verification"; then
+  echo 'self-test: ignored NT tooling entered saved-image source expectations' >&2
+  exit 1
+fi
+[ -L "$repo_dir/nt/.venv/bin/python" ] &&
+  [ "$(readlink -- "$repo_dir/nt/.venv/bin/python")" = ../python-fixture-target ] &&
+  grep -Fxq 'ignored image fixture virtualenv bytes' "$repo_dir/nt/.venv/ignored.txt" &&
+  grep -Fxq 'ignored image fixture pycache bytes' "$repo_dir/nt/__pycache__/ignored.pyc" &&
+  [ -z "$(git -C "$repo_dir" status --porcelain=v1 --untracked-files=all)" ] || {
+    echo 'self-test: runtime payload selection modified ignored NT tooling or dirtied the source fixture' >&2
+    exit 1
+  }
+python3 - "$out_dir/fake-images" "$out_dir/.lagrange-build-state/$commit/bundles" <<'PY'
+import json, pathlib, sys
+images=pathlib.Path(sys.argv[1]); bundles=pathlib.Path(sys.argv[2])
+def selected(service):
+    return json.loads((images/f"service-{service}.json").read_text(encoding="utf-8"))["bundle"]
+d2=selected("recommendation-runner")
+d5=selected("nt-backtest-worker-1")
+assert d2==selected("candidate-runner")==str(bundles/"D2")
+assert d5==selected("nt-backtest-worker-2")==str(bundles/"D5")
+PY
+runtime_inventory_file=$out_dir/runtime-payload-inventory.json
+bash -c '. "$1"; rbl_runtime_payload_inventory "$2" "$3"' \
+  fixture "$layout_helper" "$repo_dir" "$layout_config" >"$runtime_inventory_file"
+python3 - "$runtime_inventory_file" "$out_dir/.lagrange-build-state/$commit/verification" <<'PY'
+import json, pathlib, sys
+inventory=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+verification=pathlib.Path(sys.argv[2])
+payload=inventory["payload_groups"]["backtest"][0]
+source=payload["source"]
+image=payload["image"].lstrip("/")
+expected=[]
+for entry in payload["entries"]:
+    if entry["kind"]!="file": continue
+    relative=entry["path"][len(source)+1:]
+    expected.append(image+"/"+relative)
+for service in ("recommendation-runner","candidate-runner","nt-backtest-worker-1","nt-backtest-worker-2"):
+    request=json.loads((verification/f"{service}-request.json").read_text(encoding="utf-8"))
+    observed=sorted(item["path"] for item in request["files"] if item["path"].startswith(image+"/"))
+    assert observed==sorted(expected)
+    assert image in request["nonempty_directories"]
+    assert not any(".venv" in path or "__pycache__" in path or path.endswith((".pyc",".pyo",".pyd")) for path in observed)
+PY
 
 compose_prefix="commit=$commit args=compose --env-file $env_file --file $compose_file"
 config_count=$(grep -Fc "$compose_prefix config --quiet compose" "$docker_log")
