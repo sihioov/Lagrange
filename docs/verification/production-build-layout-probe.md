@@ -778,3 +778,60 @@ when the surrounding trial runs in a Bash conditional (where `set -e` alone
 would not stop the trial). Focused checks after that propagation fix passed;
 the exact receipt is `/tmp/lagrange-clock-root-4lkcus56/result.json` and its
 100 ms interval measured 115 ms. This supersedes the earlier clock source hash.
+
+## 2026-09-15 source transport correction: digest context directories
+
+Implemented against clean `02974c31f00b9a1169829d5d087452dbdf2ce328`, following
+design §5.2. The controller now copies each attempt's current synthetic source
+into a private sibling `source-transport/context-<full source-input-hash>`.
+It requires the existing execution-slot descriptor and private attempt root,
+copies with `cp -a` into a fresh partial directory, and verifies source/copy
+tree hashes and descendant modes/mtimes before publication or reuse. Symlinks,
+special entries and mismatched existing destinations fail before Docker.
+P0, artifact Buildx and the first Compose `-f` all use that snapshot. Per-phase
+injection happens first; the existing preparation/execution wrapper intervals
+include materialization. Outputs, overrides, K/P/H, cache namespaces and Cargo
+oracles retain their existing paths and contracts.
+
+The original layout-05 failure and same-basename diagnostic above remain intact.
+The coordinator supplied the successful three-export forward/return/forward
+diagnostic at `reports/content-context-diagnostic-476dbe78b6ea/result.json`
+under the same evidence root (SHA-256
+`c34859e97696327e018352afc5949cb1865f580cffe1edf6583619faab043ce0`).
+That actual evidence was read, not rerun by this worker. Host transport preserves
+the original mtimes, including the old-mtime scenarios. Exact mtimes inside a
+reused Docker COPY layer are not guaranteed or added as an acceptance criterion;
+the unchanged content/mode guard and Cargo/binary assertions remain mandatory.
+
+Offline evidence: `/tmp/lagrange-wp3-context-rap8bk3_/`. All 12 focused controller
+checks passed: branch-return (both trials), route-contract, compile-fail-p2 plus
+resume, and export-fail-p2 plus resume, for each layout. Their 167 fake build calls
+all validated the actual context path and copied inventory/mtime; 96 source
+compilations passed the unchanged oracle or retained their expected failure.
+The checks preserved original exits 42/1/73, expected-stop 75, resumed completion
+0, P1 reuse, pending rebuilds, cache namespaces, P1-only cold compilation,
+single-service/jobs=2 and explicit `--provenance=false`.
+
+The private transport regression passed five host-copy cases, three original
+flat-basename rejections and 24 pre-Docker rejection checks. Sixty-six paired
+wrapper comparisons against starting HEAD differed only in source path arguments.
+Existing `self_clock`, wrapper status tests, syntax, public `--plan`, diff checks
+and the scope audit passed. The first wrapper test rejected its old 0775 test
+root; `checks/wrappers-01.json` and its log retain exit 1. Its setup now explicitly
+creates a private 0700 root; `wrappers-02` passed with every assertion preserved.
+Twenty-one denied command sentinels recorded zero invocations.
+
+Controller SHA-256 changed from
+`e84c8dbd0fcf4b13dc004f3803fb6c54b129a36fa33b566638599bdf54573576` to
+`c1084359a6358f6191bef52f05fc89fc01829dbc816d98fb90aea36e4b4f47cf`.
+Exact argv/exits/times/source/log hashes are in `checks/*.json`,
+`focused-result.json`, `argv-result.json`, `scope-audit.json` and the final
+evidence manifest. Only the controller and this appended section changed;
+clock functions/self_clock, helper, Dockerfiles, Compose and source fixtures
+are unchanged. No staging or commit occurred.
+
+Implementation deviations / further decomposition: 없음. Unresolved implementation
+items: 없음. Actual corrected layout is **NOT_RETESTED**, **G2 NOT_PASSED**.
+The full offline 84-case/journal/exception suite was not repeated. Coordinator
+follow-up is the actual focused acceptance and full matrix from a clean commit;
+no actual build or product performance/adoption claim is made here.

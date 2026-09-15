@@ -190,6 +190,65 @@ source_copy() {
   [ "$(bash "$helper_path" source-input-hash "$dst")" = "$fixture_sha" ] || { unresolved 'fixture copy identity changed'; return 1; }
 }
 
+source_transport() {
+  # Buildx shares local transfer state by context basename. Bind that basename
+  # to the full tree, while keeping each attempt's original host mtimes intact.
+  python3 - "$1" "$CUR_ATTEMPT_DIR" "$helper_path" "$execution_lock_fd" <<'PY'
+import hashlib,json,os,pathlib,re,shutil,stat,subprocess,sys,tempfile
+source,attempt,helper=map(pathlib.Path,sys.argv[1:4])
+def reject(reason):raise SystemExit("source-transport-"+reason)
+def private_directory(path):
+    info=path.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.geteuid() or
+            stat.S_IMODE(info.st_mode)!=0o700 or path.resolve()!=path):reject("private-directory-invalid")
+if not sys.argv[4].isdigit():reject("execution-slot-missing")
+# The controller acquired this descriptor before entering any build wrapper.
+lock=os.fstat(int(sys.argv[4]))
+if not stat.S_ISDIR(lock.st_mode) or lock.st_uid!=os.geteuid() or stat.S_IMODE(lock.st_mode)!=0o700:
+    reject("execution-slot-invalid")
+private_directory(attempt)
+if source!=attempt/"source" or source.resolve()!=source or not source.is_dir():reject("source-path-invalid")
+parent=attempt/"source-transport"
+try:parent.mkdir(mode=0o700)
+except FileExistsError:pass
+private_directory(parent)
+def digest(path):
+    result=subprocess.run(["bash",str(helper),"source-input-hash",str(path)],stdout=subprocess.PIPE,text=True)
+    if result.returncode or not re.fullmatch(r"[0-9a-f]{64}\n",result.stdout):reject("tree-invalid")
+    return result.stdout.strip()
+def metadata(path):
+    # Root directory metadata is not a source input. Descendant mtimes must
+    # match even on reuse: the content/mode tree hash deliberately omits time.
+    records=[]
+    for current,dirs,files in os.walk(path,followlinks=False):
+        for name in sorted(dirs+files):
+            item=pathlib.Path(current)/name;info=item.lstat()
+            if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):reject("entry-invalid")
+            records.append((str(item.relative_to(path)),info.st_mode,info.st_mtime_ns))
+    return hashlib.sha256(json.dumps(sorted(records),separators=(",",":")).encode()).hexdigest()
+expected=digest(source);original_metadata=metadata(source)
+destination=parent/("context-"+expected)
+def verify(path):
+    if path.is_symlink() or not path.is_dir() or digest(path)!=expected:reject("copy-hash-mismatch")
+    if metadata(path)!=original_metadata:reject("copy-metadata-mismatch")
+    if digest(source)!=expected or metadata(source)!=original_metadata:reject("source-changed")
+partial=None
+try:
+    if os.path.lexists(destination):
+        verify(destination)
+    else:
+        partial=pathlib.Path(tempfile.mkdtemp(prefix=".partial-",dir=parent))
+        subprocess.run(["cp","-a","--",str(source)+"/.",str(partial)+"/"],check=True)
+        verify(partial)
+        # The held execution lock and private attempt parent serialize publish.
+        if os.path.lexists(destination):reject("destination-appeared")
+        partial.rename(destination);partial=None
+    print(destination)
+finally:
+    if partial is not None:shutil.rmtree(partial)
+PY
+}
+
 old_mtime() { find "$1" -type f -exec touch -d '2000-01-01 00:00:00 UTC' {} +; }
 mutate_source() {
   local source=$1 case_id=$2 step=${3:-normal}
@@ -342,31 +401,33 @@ set_run_status() {
 }
 
 identity_build() {
-  local source=$1 destination=$2 log=$3 dockerfile status
+  local source=$1 destination=$2 log=$3 dockerfile status transport
+  transport=$(source_transport "$source" 2>"$log") || return 1
   mkdir -p -m 0700 -- "$destination"
   dockerfile=Dockerfile.artifacts; [ "$CUR_LAYOUT" = baseline ] && dockerfile=Dockerfile.baseline
   local no_cache=(); [ "$CUR_COLD" = 1 ] && no_cache=(--no-cache)
-  if DOCKER_BUILDKIT=1 "$docker_bin" buildx build --progress plain "${no_cache[@]}" --file "$source/$dockerfile" --target identity --platform linux/amd64 --output "type=local,dest=$destination,platform-split=false" --build-arg TARGETPLATFORM=linux/amd64 "$source" >"$log" 2>&1; then status=0; else status=$?; fi
+  if DOCKER_BUILDKIT=1 "$docker_bin" buildx build --progress plain "${no_cache[@]}" --file "$transport/$dockerfile" --target identity --platform linux/amd64 --output "type=local,dest=$destination,platform-split=false" --build-arg TARGETPLATFORM=linux/amd64 "$transport" >"$log" 2>&1; then status=0; else status=$?; fi
   [ "$status" -eq 0 ] || return "$status"
   [ -f "$destination/identity.json" ] && [ ! -L "$destination/identity.json" ] || return 1
   bash "$helper_path" identity-validate "$destination/identity.json" linux/amd64 >/dev/null
 }
 
 artifact_build() {
-  local phase=$1 destination=$2 log=$3 status bin variant runtime
+  local phase=$1 destination=$2 log=$3 status bin variant runtime transport
+  transport=$(source_transport "$CUR_SOURCE" 2>"$log") || return 1
   bin=${p_bin[$phase]} variant=${p_variant[$phase]} runtime=${p_runtime[$phase]}
   mkdir -p -m 0700 -- "$destination"
   # Later phases retain the target mount populated by this cold chain.
   local no_cache=(); [ "$CUR_COLD" = 1 ] && [ "$phase" = p1 ] && no_cache=(--no-cache)
   local inject=none
   if [ "$CUR_CASE/$phase" = export-fail-p2/p2 ] && first_trial_injection; then inject=export-fail-p2; fi
-  if DOCKER_BUILDKIT=1 "$docker_bin" buildx build --progress plain "${no_cache[@]}" --file "$CUR_SOURCE/Dockerfile.artifacts" --target artifacts --platform linux/amd64 --output "type=local,dest=$destination,platform-split=false" \
+  if DOCKER_BUILDKIT=1 "$docker_bin" buildx build --progress plain "${no_cache[@]}" --file "$transport/Dockerfile.artifacts" --target artifacts --platform linux/amd64 --output "type=local,dest=$destination,platform-split=false" \
     --build-arg TARGETPLATFORM=linux/amd64 --build-arg "BIN=$bin" --build-arg "VARIANT=$variant" --build-arg "RUNTIME_FILE=$runtime" \
     --build-arg "CACHE_FIXTURE_COMMIT=$CUR_COMMIT" --build-arg "CACHE_FIXTURE_BUILD_SETTING=$CUR_SETTING" --build-arg "CACHE_FIXTURE_RUN_TOKEN=$CUR_TOKEN" \
     --build-arg "PROBE_SHARED_CACHE_ID=$CUR_SHARED_CACHE" --build-arg "PROBE_TARGET_CACHE_ID=$CUR_TARGET_CACHE" --build-arg "PROBE_CACHE_KEY=$CUR_K" \
     --build-arg "PROBE_INPUT_SHA256=$CUR_H" --build-arg "PROBE_COMPILE_INPUT_SHA256=$CUR_COMPILE" --build-arg "PROBE_LIB_HASH=$CUR_LIB" --build-arg "PROBE_APP_HASH=$CUR_APP" \
     --build-arg "PROBE_RECIPE_SHA256=$CUR_RECIPE" --build-arg PROBE_PLATFORM=linux/amd64 --build-arg "PROBE_HOST_TRIPLE=$CUR_HOST" --build-arg "PROBE_EXPECTED_NATIVE_SHA256=$CUR_IDENTITY_SHA" --build-arg "PROBE_CARGO_CONFIG=$CUR_CONFIG" \
-    --build-arg "PROBE_LEDGER_INJECT=$CUR_LEDGER_INJECT" --build-arg "PROBE_INJECT=$inject" "$CUR_SOURCE" >"$log" 2>&1; then status=0; else status=$?; fi
+    --build-arg "PROBE_LEDGER_INJECT=$CUR_LEDGER_INJECT" --build-arg "PROBE_INJECT=$inject" "$transport" >"$log" 2>&1; then status=0; else status=$?; fi
   if [ "$status" -ne 0 ]; then
     printf '{"buildx_exit":%s,"helper_exit":null}\n' "$status" >"$log.status.json"
     return "$status"
@@ -393,7 +454,8 @@ PY
 }
 
 compose_build() {
-  local phase=$1 service=$2 tag=$3 route=$4 log=$5 suffix override=() no_cache=() status
+  local phase=$1 service=$2 tag=$3 route=$4 log=$5 suffix override=() no_cache=() status transport
+  transport=$(source_transport "$CUR_SOURCE" 2>"$log") || return 1
   case "$phase" in p1) suffix=A_BASE ;; p2) suffix=B_BASE ;; p3) suffix=A_WIDE ;; p4) suffix=B_WIDE ;; esac
   if [ "$route" != baseline ]; then
     local file="$CUR_ATTEMPT_DIR/compose-$phase-$(printf '%s' "$route" | sha256sum | awk '{print $1}').yml"
@@ -415,7 +477,7 @@ compose_build() {
     "PROBE_FEATURES_${suffix}=$(requested_features "${p_variant[$phase]}")" "PROBE_SOURCE_TRAP_${suffix}=$CUR_SOURCE_TRAP" "PROBE_LEDGER_INJECT_${suffix}=$CUR_LEDGER_INJECT" "PROBE_INJECT_${suffix}=$inject"
   )
   # Fixture-only: exclude per-invocation attestations from exact-repeat image IDs.
-  if env CARGO_BUILD_JOBS=2 COMPOSE_PARALLEL_LIMIT=1 "${envs[@]}" "$docker_bin" compose -p "build-layout-$run_id-$CUR_LAYOUT-$CUR_SCOPE" -f "$CUR_SOURCE/compose.yml" "${override[@]}" build --progress plain --provenance=false "${no_cache[@]}" "$service" >"$log" 2>&1; then status=0; else status=$?; fi
+  if env CARGO_BUILD_JOBS=2 COMPOSE_PARALLEL_LIMIT=1 "${envs[@]}" "$docker_bin" compose -p "build-layout-$run_id-$CUR_LAYOUT-$CUR_SCOPE" -f "$transport/compose.yml" "${override[@]}" build --progress plain --provenance=false "${no_cache[@]}" "$service" >"$log" 2>&1; then status=0; else status=$?; fi
   printf '{"compose_exit":%s}\n' "$status" >"$log.status.json"
   return "$status"
 }
@@ -1339,6 +1401,26 @@ def tree_digest(path):
             records.append(f"f\t{stat.S_IMODE(info.st_mode):04o}\t{item.relative_to(path)}\t{hashlib.sha256(item.read_bytes()).hexdigest()}\n".encode())
     return hashlib.sha256(b"".join(sorted(records))).hexdigest()
 
+def transport_observation(source,recipe):
+    if not re.fullmatch(r"context-[0-9a-f]{64}",source.name):
+        record("transport-rejected",{"source":str(source),"reason":"basename"})
+        raise SystemExit("source-transport-basename-invalid")
+    original=source.parent.parent/"source"
+    if source.parent.name!="source-transport" or source.is_symlink() or not source.is_dir():raise SystemExit("source-transport-path-invalid")
+    if recipe.parent!=source or not recipe.is_file() or recipe.is_symlink():raise SystemExit("source-transport-recipe-invalid")
+    copied=tree_digest(source);expected=tree_digest(original)
+    if source.name!="context-"+copied or copied!=expected:raise SystemExit("source-transport-inventory-mismatch")
+    def metadata(path):
+        entries=[]
+        for current,dirs,files in os.walk(path,followlinks=False):
+            for name in dirs+files:
+                item=pathlib.Path(current)/name;info=item.lstat()
+                entries.append((str(item.relative_to(path)),info.st_mode,info.st_mtime_ns))
+        return hashlib.sha256(json.dumps(sorted(entries),separators=(",",":")).encode()).hexdigest()
+    before=metadata(original);after=metadata(source)
+    if before!=after:raise SystemExit("source-transport-metadata-mismatch")
+    return {"source":str(source),"original":str(original),"source_sha256":expected,"transport_sha256":copied,"source_metadata_sha256":before,"transport_metadata_sha256":after}
+
 def get_option(name,values=args):
     positions=[i for i,x in enumerate(values) if x==name]
     if len(positions)!=1 or positions[0]+1>=len(values): raise SystemExit(92)
@@ -1397,6 +1479,8 @@ def expected_stdout(source,bin_name,variant,commit,setting):
     return f"{bin_name}|commit={commit}|setting={setting}|source={marker}|embedded={embedded}|{generated}|commit={commit}|setting={setting}|embedded={embedded}|shared={shared}\n"
 
 def compile_observation(source,values,baseline=False):
+    checked=subprocess.run(["bash",os.environ["FAKE_LAYOUT_HELPER"],"guard-inputs",str(source),values["PROBE_COMPILE_INPUT_SHA256"],values["PROBE_LIB_HASH"],values["PROBE_APP_HASH"]])
+    if checked.returncode:raise SystemExit(checked.returncode)
     target=values["PROBE_TARGET_CACHE_ID"]; state=load_state(target)
     pending_before=state["pending"]; reset="--no-cache" in args
     # Observed BuildKit behavior: a no-cache source RUN starts an empty target.
@@ -1471,6 +1555,7 @@ def cache_key(operation,source,values):return hashlib.sha256(json.dumps({"operat
 
 if args[:2]==["buildx","build"]:
     target=get_option("--target");source=pathlib.Path(args[-1]);destination=output_dest(get_option("--output"));values=build_args();record("buildx",{"build_args":values,"source":str(source),"target":target})
+    record("source-transport",transport_observation(source,pathlib.Path(get_option("--file"))))
     if get_option("--platform")!="linux/amd64" or values.get("TARGETPLATFORM")!="linux/amd64":raise SystemExit(92)
     if target=="identity":
         destination.mkdir(parents=True,exist_ok=True);(destination/"identity.json").write_bytes(identity_bytes());print("#1 identity export complete");raise SystemExit(0)
@@ -1504,6 +1589,7 @@ if args and args[0]=="compose" and "build" in args:
         route=pathlib.Path(json.loads(match.group(1))) if match else pathlib.Path("source")
     dockerfile="consumer" if overrides else ("baseline" if os.environ.get("PROBE_DOCKERFILE")=="Dockerfile.baseline" else "consumer")
     record("compose-build",{"build_args":values,"dockerfile":dockerfile,"route":"source" if route==pathlib.Path("source") else (str(route) if route else "baseline"),"service":service,"source":str(source),"tag":tag})
+    record("source-transport",transport_observation(source,pathlib.Path(args[args.index("-f")+1])))
     if os.environ.get("CARGO_BUILD_JOBS")!="2" or os.environ.get("COMPOSE_PARALLEL_LIMIT")!="1" or values["PROBE_EXPECTED_NATIVE_SHA256"]!=hashlib.sha256(identity_bytes()).hexdigest():raise SystemExit(92)
     if dockerfile=="consumer" and route is not None and route!=pathlib.Path("source"):
         if os.environ[f"PROBE_SOURCE_TRAP_{suffix}"]!="1":raise SystemExit(92)
@@ -1659,6 +1745,7 @@ PY
 self_wrapper_boundaries() {
   local root=$1 source identity status saved_docker=$docker_bin
   source="$root/source" identity="$root/identity"
+  mkdir -p -m 0700 -- "$root"
   mkdir -p -m 0700 -- "$root/logs" "$root/results" "$root/run/artifacts"
   source_copy "$source" || return 1
   run_dir="$root/run" run_id=wrapper CUR_LAYOUT=common CUR_CASE=cold CUR_SCOPE=warm-chain CUR_TOKEN=cold CUR_SOURCE=$source CUR_ATTEMPT=1 CUR_ATTEMPT_DIR=$root CUR_COMMIT=$c1 CUR_SETTING=default CUR_CONFIG=default CUR_COLD=1 CUR_PHASE=p1 CUR_LEDGER_INJECT=none RESUMING=0
@@ -1970,6 +2057,114 @@ PY
   printf '%s\n' 'F5 PASS: script fresh true/false and 0/1/2 runs observed; missing verbose and all app/lib/itoa H changes rejected'
 }
 
+self_source_transport() (
+  local root=$1 kind source transport repeated status wrapper before after
+  [ "$internal_self_test" = 1 ] && gate_test_allowed || exit 90
+  mkdir -p -m 0700 -- "$root"
+  export FAKE_DOCKER_ROOT="$root/fake-state" FAKE_DOCKER_CALLS="$root/fake-calls.jsonl"
+  : >"$FAKE_DOCKER_CALLS"
+  # Use the real scenario mutations; a new attempt owns every host snapshot.
+  for kind in modern old forward return repeat; do
+    CUR_ATTEMPT_DIR="$root/$kind"; source="$CUR_ATTEMPT_DIR/source"
+    source_copy "$source" || exit 1
+    case "$kind" in
+      old|return|repeat) mutate_source "$source" branch-return return ;;
+      forward) mutate_source "$source" branch-return forward ;;
+    esac
+    transport=$(source_transport "$source") || exit 1
+    repeated=$(source_transport "$source") || exit 1
+    [ "$transport" = "$repeated" ] || exit 1
+    printf '%s\t%s\t%s\n' "$kind" "$source" "$transport" >>"$root/copies.tsv"
+  done
+  # Exercise actual wrappers, then change only their transport binding in an
+  # isolated subshell. The fake must reject the original flat source basename.
+  CUR_ATTEMPT_DIR="$root/wrappers"; CUR_SOURCE="$CUR_ATTEMPT_DIR/source"
+  source_copy "$CUR_SOURCE" || exit 1
+  mkdir -p -m 0700 -- "$CUR_ATTEMPT_DIR/logs" "$root/run/artifacts"
+  run_dir="$root/run" run_id=transport CUR_LAYOUT=common CUR_CASE=cold CUR_SCOPE=warm-chain CUR_TOKEN=cold CUR_ATTEMPT=1 CUR_COMMIT=$c1 CUR_SETTING=default CUR_CONFIG=default CUR_COLD=1 CUR_PHASE=p1 CUR_LEDGER_INJECT=none CUR_SOURCE_TRAP=0 RESUMING=0
+  identity_build "$CUR_SOURCE" "$root/identity" "$CUR_ATTEMPT_DIR/logs/identity.log" || exit 1
+  compute_inputs "$root/identity/identity.json" || exit 1
+  artifact_build p1 "$root/artifact" "$CUR_ATTEMPT_DIR/logs/artifact.log" || exit 1
+  compose_build p1 probe-a-base transport-source source "$CUR_ATTEMPT_DIR/logs/compose.log" || exit 1
+  for wrapper in identity artifact compose; do
+    if (
+      source_transport() { printf '%s\n' "$1"; }
+      case "$wrapper" in
+        identity) identity_build "$CUR_SOURCE" "$root/legacy-identity" "$root/legacy-identity.log" ;;
+        artifact) artifact_build p1 "$root/legacy-artifact" "$root/legacy-artifact.log" ;;
+        compose) compose_build p1 probe-a-base transport-legacy baseline "$root/legacy-compose.log" ;;
+      esac
+    ); then status=0; else status=$?; fi
+    [ "$status" = 1 ] && grep -Fqx source-transport-basename-invalid "$root/legacy-$wrapper.log" || exit 1
+    printf 'legacy-%s\t%s\n' "$wrapper" "$status" >>"$root/exits.tsv"
+  done
+  # Tampering or unsupported entries must fail before any fake Docker call.
+  for kind in tamper metadata symlink special destination-link destination-special unlocked nested; do
+    CUR_ATTEMPT_DIR="$root/reject-$kind"; CUR_SOURCE="$CUR_ATTEMPT_DIR/source"
+    source_copy "$CUR_SOURCE" || exit 1
+    mkdir -p -m 0700 -- "$CUR_ATTEMPT_DIR/logs"
+    transport=$(source_transport "$CUR_SOURCE") || exit 1
+    python3 - "$kind" "$CUR_SOURCE" "$transport" <<'PY'
+import os,pathlib,sys
+kind,source,copy=sys.argv[1],pathlib.Path(sys.argv[2]),pathlib.Path(sys.argv[3])
+if kind=="tamper":(copy/"runtime/web.txt").write_text("tampered\n")
+elif kind=="metadata":
+    path=copy/"runtime/web.txt";s=path.stat();os.utime(path,ns=(s.st_atime_ns,s.st_mtime_ns+1))
+elif kind=="symlink":(source/"invalid-link").symlink_to(source/"runtime/web.txt")
+elif kind=="special":os.mkfifo(source/"invalid-fifo")
+elif kind.startswith("destination-"):
+    copy.rename(copy.with_name("retained-"+copy.name))
+    if kind=="destination-link":copy.symlink_to(source,target_is_directory=True)
+    else:os.mkfifo(copy)
+PY
+    [ "$?" = 0 ] || exit 1
+    before=$(wc -l <"$FAKE_DOCKER_CALLS")
+    for wrapper in identity artifact compose; do
+      if (
+        [ "$kind" != unlocked ] || execution_lock_fd=
+        [ "$kind" != nested ] || CUR_ATTEMPT_DIR=$CUR_SOURCE
+        case "$wrapper" in
+          identity) identity_build "$CUR_SOURCE" "$root/rejected-identity" "$root/reject-$kind/$wrapper.log" ;;
+          artifact) artifact_build p1 "$root/rejected-artifact" "$root/reject-$kind/$wrapper.log" ;;
+          compose) compose_build p1 probe-a-base rejected baseline "$root/reject-$kind/$wrapper.log" ;;
+        esac
+      ); then status=0; else status=$?; fi
+      [ "$status" = 1 ] || exit 1
+      printf '%s-%s\t%s\n' "$kind" "$wrapper" "$status" >>"$root/exits.tsv"
+    done
+    after=$(wc -l <"$FAKE_DOCKER_CALLS")
+    [ "$before" = "$after" ] || exit 1
+  done
+  python3 - "$root" <<'PY'
+import hashlib,json,pathlib,stat,sys
+root=pathlib.Path(sys.argv[1]);rows={}
+def inventory(path):
+    result={}
+    for p in sorted(path.rglob("*")):
+        s=p.lstat();result[str(p.relative_to(path))]=[stat.S_IFMT(s.st_mode),stat.S_IMODE(s.st_mode),s.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None]
+    return result
+for line in (root/"copies.tsv").read_text().splitlines():
+    kind,source,copy=line.split("\t");source=pathlib.Path(source);copy=pathlib.Path(copy)
+    original=inventory(source);copied=inventory(copy)
+    assert original==copied and not copy.is_relative_to(source)
+    assert not any("source-transport" in p for p in original)
+    if kind!="modern":assert all(v[2]==946684800000000000 for p,v in original.items() if v[0]==stat.S_IFREG)
+    rows[kind]={"basename":copy.name,"inventory":original}
+assert rows["old"]["basename"]==rows["return"]["basename"]==rows["repeat"]["basename"]==rows["modern"]["basename"]
+assert rows["forward"]["basename"]!=rows["old"]["basename"]
+marker="fixture-app/src/bin/cache-bin-a.rs"
+a=root/"old/source"/marker;b=root/"forward/source"/marker
+assert a.stat().st_size==b.stat().st_size and a.stat().st_mtime_ns==b.stat().st_mtime_ns and a.read_bytes()!=b.read_bytes()
+calls=[json.loads(x) for x in (root/"fake-calls.jsonl").read_text().splitlines()]
+assert len([v for v in calls if v["operation"]=="source-transport"])==3
+assert len([v for v in calls if v["operation"]=="transport-rejected"])==3
+exits=[line.split("\t") for line in (root/"exits.tsv").read_text().splitlines()]
+assert len(exits)==27 and all(v[1]=="1" for v in exits)
+(root/"result.json").write_text(json.dumps({"status":"PASS","host_copies":rows,"negative_exits":exits,"actual_builds":"NOT_RUN"},sort_keys=True,indent=2)+"\n")
+print("source-transport PASS: host inventory/mtime, digest identity/return/reuse, three wrappers, flat-path regression and 24 pre-Docker rejections")
+PY
+)
+
 self_cold_chain() (
   local root=$1 layout case_id status
   [ "$internal_self_test" = 1 ] && gate_test_allowed || exit 90
@@ -2067,7 +2262,7 @@ for v in calls:
         require(v["no_cache_reset"]==("--no-cache" in v["argv"]),"no-cache-reset-not-modeled")
         v["source"]=last["source"]
 
-def for_source(items,source):return [v for v in items if pathlib.Path(v["source"])==source]
+def for_source(items,source):return [v for v in items if pathlib.Path(v["source"]).parent.parent/"source"==source]
 def compile_phases(items):return [phase_for[(v["bin"],v["variant"])] for v in items]
 def states(run,layout,scope,token):return [read(run/"state"/layout/scope/token/f"p{i}.json") for i in range(1,5)]
 run_ids=[];namespaces=[]
@@ -2553,6 +2748,7 @@ self_test() {
   mkdir -p -m 0700 -- "$FAKE_DOCKER_ROOT" "$root/runs"
   create_fake_docker "$root/fake-docker"
   docker_bin="$root/fake-docker" internal_self_test=1
+  acquire_execution_slot "$root/execution-slot" || return 1
   self_clock "$root/clock" || return 1
   self_journal_complete "$root/journal-complete" || return 1
   self_research_exception "$root/research-exception" || return 1
@@ -2560,6 +2756,7 @@ self_test() {
   ( export BUILD_LAYOUT_SELF_TEST_ACTIVE=1 LAYOUT_GATE_TEST_SEAM=build-layout-self-test LAYOUT_GATE_MODE=fake LAYOUT_FAKE_GATE_RESULT=pass LAYOUT_GATE_PROC_ROOT=/forbidden LAYOUT_GATE_DOCKER_BIN=/forbidden; sanitize_actual_environment; [ -z "${BUILD_LAYOUT_SELF_TEST_ACTIVE-}${LAYOUT_GATE_TEST_SEAM-}${LAYOUT_GATE_MODE-}${LAYOUT_FAKE_GATE_RESULT-}${LAYOUT_GATE_PROC_ROOT-}${LAYOUT_GATE_DOCKER_BIN-}" ] ) || return 1
   self_wrapper_boundaries "$root/wrappers" || return 1
   self_corrective_regressions "$root/corrective" || return 1
+  self_source_transport "$root/source-transport" || return 1
   self_cold_chain "$root/cold-chain" || return 1
   local layout case_id
   for layout in "${layouts[@]}"; do
