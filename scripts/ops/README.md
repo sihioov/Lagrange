@@ -168,10 +168,44 @@ invocation, using `--pull=false`. The helper forces
 higher value. Production Rust builder stages fix Cargo to two parallel jobs so
 a release build remains within the host memory boundary:
 
-```sh
-sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
-  scripts/ops/build-production-images.sh --apply
-```
+Use the [background systemd invocation in the release runbook](../../docs/runbooks/production-release-and-backup.md#g2-common-artifact-preparation-checkpoints-and-resume).
+It starts the approved build unit with `Nice=10`, `IOSchedulingClass=idle`,
+the complete current production health inventory, and a new `--manifest-file`.
+The build must run inside that unit's cgroup. Keep the same unit name and gate
+inputs when resuming its immutable state.
+
+The selected G2 `common` layout initializes a helper-owned, current-EUID state
+directory and validated cache namespace before any Rust producer. Its immutable
+run identity binds the clean checkout/commit, helper, layout recipe/schema, and
+gate inputs. The official root entrypoint therefore owns root state; a
+benchmark or separately authorized private prebuild may use an isolated
+current-EUID state directory, but cannot bypass the official root-only apply or
+publish or claim an official release manifest. `RELEASE_BUILD_SYSTEMD_UNIT`,
+`RELEASE_BUILD_SYSTEMD_MANAGER=system|user`,
+`RELEASE_BUILD_HEALTH_UNITS`, and `RELEASE_BUILD_HEALTH_CONTAINERS` are explicit
+gate inputs. The optional `RELEASE_BUILD_RESEARCH_EXCEPTION` is accepted only
+when it is the separately approved bounded exception contract.
+
+The common compile-cache key excludes the source commit. Its validated
+namespace and compatibility inputs allow reuse across source changes, while
+each run state and final image remain bound to their exact source commit.
+
+`release_build_layout_prepare` produces only a verified bundle path for a Rust
+service (or the literal `NONE` for the explicit DB/Web records). The helper
+checks source/input/receipt/ELF/bundle identity before a one-service override
+can reference that bundle. The native identity gate runs first; producer bins
+remain sequential, with collectors checked at `3+3+2+2`, then consumers at
+`3+3+3+3`. A pending, malformed, missing, or tampered receipt/binary is not
+reused. It recreates only the affected compatibility target and never permits a
+global cache prune, fingerprint edit, or cargo clean on every successful
+artifact use.
+
+The seven Dockerfile source fallbacks remain build-compatible for callers that
+do not supply a named context. They retain B's source-compilation, OCI-revision,
+and compile-ENV provenance contracts. They are not the content-addressed G2
+transport, do not carry the official/helper/benchmark content or old-mtime
+transfer guarantee, and are not a substitute for artifact receipt/image-byte
+verification.
 
 The helper performs no `up`, `run`, restart, migration, database, provider/API,
 or secret provisioning action, and keeps the live profile disabled. It supplies
@@ -183,14 +217,28 @@ caveat. This image preparation step is independent of the later infrastructure,
 backfill, and full serving execution scopes.
 
 Each service emits only its name, start/success/failure status, and elapsed
-seconds. A failed service stops the loop before any image inspection or manifest
-write; rerunning the same apply command is the resume contract and lets Docker
-reuse the cache before the helper revalidates all twelve canonical images and
-writes the immutable V2 manifest. The manifest output and its parent are
-validated before the first build and revalidated at publication; an existing
-file, dangling symlink, missing/non-directory parent, or symlinked path fails
-without a Docker build. There is no image-existence shortcut and no alternate
-batch mode.
+seconds. A failed producer or consumer stops the loop before a later service,
+final image verification, or manifest write; rerunning the same approved route
+first revalidates the current bundle/receipts and can then safely reuse cache.
+After all twelve one-service builds, the builder saves the exact image IDs to
+private state and performs strict offline OCI/layer/file verification before
+the existing image-ID/revision and immutable V2 checks. The manifest output and
+its parent are validated before the first build and revalidated at publication;
+an existing file, dangling symlink, missing/non-directory parent, or symlinked
+path fails without a Docker build. There is no image-existence shortcut,
+verification-bypass mode, or alternate batch mode.
+
+The official finish includes all producer, consumer, image-save/bytes, and V2
+intervals. A successful offline/fake test or prebuild is not actual image or
+performance acceptance; WP6 owns that production evidence.
+
+The benchmark's canonical twelve-service route records the actual product kind
+(`A`, `B`, or `C`), reports setup/warm-up separately, writes complete release
+intervals to `release-totals.tsv`, and publishes only private benchmark V2
+documents under `source-manifests/` or `common-manifests/`. Its source route
+uses current-source byte checks plus actual Cargo/native records; C additionally
+binds producer receipts. These private documents and fake self-tests are not
+official manifests or actual twelve-image/performance acceptance.
 
 The existing-host cache warm-up batches and the required between-batch resource
 gates are recorded in [`docs/runbooks/production-release-and-backup.md`](../../docs/runbooks/production-release-and-backup.md).

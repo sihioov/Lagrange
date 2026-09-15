@@ -12,16 +12,26 @@ compose_release=$ops/compose-release.sh
 production_config=$ops/validate-production-config.sh
 artifact_wrapper=$ops/kis-historical-price-beta-artifact.sh
 manifest_lib=$ops/lib/release-image-manifest.sh
+layout_helper=$ops/lib/release-build-layout.sh
+layout_config=$root/deploy/build/release-build-layout.json
 backup=$ops/run-production-backup.sh
 installer=$ops/install-production-backup.sh
+release_runbook=$root/docs/runbooks/production-release-and-backup.md
+ops_readme=$ops/README.md
 
 die() { echo "production-ops-static: $*" >&2; exit 1; }
 
 for script in "$release" "$build" "$compose_release" "$production_config" "$artifact_wrapper" \
-  "$manifest_lib" "$backup" "$installer"; do
+  "$manifest_lib" "$layout_helper" "$backup" "$installer"; do
   [ -f "$script" ] || die "required script missing: $script"
   bash -n "$script" || die "shell syntax failure: $script"
 done
+[ -f "$layout_config" ] && [ ! -L "$layout_config" ] ||
+  die 'G2 release-build layout config is missing or a symlink'
+[ -f "$release_runbook" ] && [ ! -L "$release_runbook" ] ||
+  die 'G2 production release runbook is missing or a symlink'
+[ -f "$ops_readme" ] && [ ! -L "$ops_readme" ] ||
+  die 'ops image-build documentation is missing or a symlink'
 self_test=$ops/production-ops-self-test.sh
 bash -n "$self_test" || die 'production ops self-test has shell syntax errors'
 grep -Fq 'TEST_ENVIRONMENT_ERROR: production-ops root fixture requires user namespaces or fakeroot' \
@@ -104,6 +114,44 @@ grep -Fq 'COMPOSE_PARALLEL_LIMIT=1' "$compose_release" ||
   die 'infrastructure/backfill Compose builds must force parallelism to one'
 grep -Fq 'validate_manifest_output' "$build" ||
   die 'image build helper must validate manifest output before and at publication'
+grep -Fq 'release_build_layout_init' "$build" ||
+  die 'image build helper must initialize the G2 common-artifact state before builds'
+grep -Fq 'release_build_layout_verify_image' "$build" ||
+  die 'image build helper must bind every saved image through G2 byte verification'
+grep -Fq 'release_build_layout_lock' "$layout_helper" ||
+  die 'G2 helper must retain the whole-run lock API'
+grep -Fq 'release_build_layout_archive_scan' "$layout_helper" ||
+  die 'G2 helper must retain the offline image-save parser API'
+
+# Keep the operator-facing instructions aligned with the frozen G2 route. The
+# check intentionally asserts contracts and checkpoint order, rather than a
+# copy of the helper's private receipt representation.
+for literal in \
+  'scripts/ops/lib/release-build-layout.sh' \
+  'release_build_layout_init <source-root> <commit> <state-root> <cache-namespace>' \
+  '3 + 3 + 2 + 2' \
+  'web`, `research-worker`, `recommendation-runner' \
+  'candidate-runner`, `owner-beta-runner`, `owner-equity-v2-runner' \
+  'strict saved-image byte/OCI checks' \
+  'release-totals.tsv' \
+  'private evidence, never official release manifests' \
+  'reserved for WP6'
+do
+  grep -Fq -- "$literal" "$release_runbook" ||
+    die "release runbook omitted frozen G2 operation contract: $literal"
+done
+for literal in \
+  'current-EUID state directory' \
+  '3+3+2+2' \
+  '3+3+3+3' \
+  'source fallbacks remain build-compatible' \
+  '--manifest-file' \
+  'release-totals.tsv' \
+  'WP6 owns that production evidence'
+do
+  grep -Fq -- "$literal" "$ops_readme" ||
+    die "ops README omitted frozen G2 operation contract: $literal"
+done
 for service in db-role-bootstrap db-migrate research-worker; do
   grep -Fq "build --pull=false $service" "$compose_release" ||
     die "Compose build plan/call missing single-service build: $service"
@@ -217,5 +265,10 @@ grep -Fq -- '--run --config-file /etc/lagrange/production-backup.conf' \
   "$systemd/lagrange-production-backup.service" || die 'daily service command mismatch'
 grep -Fq -- '--verify-latest --config-file /etc/lagrange/production-backup.conf' \
   "$systemd/lagrange-production-backup-verify.service" || die 'verify service command mismatch'
+
+# This invokes only a repository static checker; it never contacts Docker or
+# production state. Keep the build-DAG safety contract coupled to the release
+# installer/backup checks that consume its immutable V2 output.
+bash "$ops/build-production-images-static-check.sh" >/dev/null
 
 echo 'PRODUCTION_OPS_STATIC: PASS'

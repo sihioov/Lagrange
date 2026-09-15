@@ -1,0 +1,53 @@
+# The product Rust producer has a separate measured native stage. The native
+# export is P0; the derived builder performs exactly one package/bin Cargo
+# invocation and exports only its mount-outside receipt and binary.
+ARG TARGETPLATFORM=linux/amd64
+
+FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS native-base
+
+ARG TARGETPLATFORM
+ARG RUST_ARTIFACT_CACHE_NAMESPACE
+ENV CARGO_BUILD_JOBS=2
+ENV CARGO_TARGET_DIR=/cargo-target
+WORKDIR /build
+
+RUN set -e \
+    && test "$TARGETPLATFORM" = "linux/amd64" \
+    && test -n "$RUST_ARTIFACT_CACHE_NAMESPACE" \
+    && printf '%s' "$RUST_ARTIFACT_CACHE_NAMESPACE" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,47}$' \
+    && apk add --no-cache build-base musl-dev openssl-dev pkgconf postgresql-dev python3
+
+# This is the validated Rust-only transport context. It contains the helper,
+# layout and request under .release-build; it has no .git, .env, NT or Web tree.
+COPY . .
+
+# P0 measures the compiler/native identity after source COPY and before any
+# Cargo metadata or compile operation. It intentionally emits no executable.
+RUN mkdir -p /native-out \
+    && TARGETPLATFORM="$TARGETPLATFORM" RELEASE_BUILD_LAYOUT_EXECUTION=1 \
+       /bin/sh -e /build/.release-build/release-build-layout.sh --native /native-out
+
+FROM native-base AS builder
+
+ARG RUST_ARTIFACT_CACHE_NAMESPACE
+ARG CARGO_PACKAGE
+ARG CARGO_BIN
+ARG RUST_ARTIFACT_CACHE_KEY
+ARG RUST_ARTIFACT_INPUT_SHA256
+ARG RUST_ARTIFACT_RECIPE_SHA256
+ARG RUST_ARTIFACT_HELPER_SHA256
+ARG RUST_ARTIFACT_LAYOUT_SHA256
+ARG LAGRANGE_CODE_COMMIT
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-registry-v1-${RUST_ARTIFACT_CACHE_NAMESPACE},sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,id=lagrange-cargo-git-v1-${RUST_ARTIFACT_CACHE_NAMESPACE},sharing=locked \
+    --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-${RUST_ARTIFACT_CACHE_NAMESPACE}-${RUST_ARTIFACT_CACHE_KEY}-linux-amd64-release-common-1,sharing=locked \
+    RELEASE_BUILD_LAYOUT_EXECUTION=1 \
+    /bin/sh -e /build/.release-build/release-build-layout.sh \
+      --builder /build/.release-build/request.json /artifact-out
+
+FROM scratch AS native
+COPY --from=native-base /native-out/ /
+
+FROM scratch AS artifacts
+COPY --from=builder /artifact-out/ /

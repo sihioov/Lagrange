@@ -1,4 +1,5 @@
-FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder
+ARG RUST_ARTIFACT_SOURCE=source-builder
+FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS source-builder
 
 ARG TARGETPLATFORM
 ENV CARGO_BUILD_JOBS=2
@@ -30,6 +31,24 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-regist
     && mkdir -p /build/target/release \
     && cp /cargo-target/release/recommendation-runner /build/target/release/recommendation-runner \
     && cp /cargo-target/release/candidate-runner /build/target/release/candidate-runner
+
+FROM python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db AS verified-artifacts
+
+ARG RUST_ARTIFACT_BUNDLE_SHA256
+ARG RUST_ARTIFACT_HELPER_SHA256
+COPY --from=release_artifacts / /release-artifacts
+RUN set -e \
+    && test -n "$RUST_ARTIFACT_BUNDLE_SHA256" \
+    && test -n "$RUST_ARTIFACT_HELPER_SHA256" \
+    && test "$(sha256sum /release-artifacts/.release-build/release-build-layout.sh | awk '{print $1}')" = "$RUST_ARTIFACT_HELPER_SHA256" \
+    && RUST_ARTIFACT_BUNDLE_SHA256="$RUST_ARTIFACT_BUNDLE_SHA256" \
+       RUST_ARTIFACT_HELPER_SHA256="$RUST_ARTIFACT_HELPER_SHA256" \
+       RELEASE_BUILD_LAYOUT_EXECUTION=1 \
+       /bin/sh -e /release-artifacts/.release-build/release-build-layout.sh \
+         --guard-build /release-artifacts/.release-build/request.json /release-artifacts /build
+
+ARG RUST_ARTIFACT_SOURCE
+FROM ${RUST_ARTIFACT_SOURCE} AS builder
 
 FROM python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db
 

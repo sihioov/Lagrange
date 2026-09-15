@@ -49,45 +49,122 @@ Rust builder also fixes `CARGO_BUILD_JOBS=2`. These limits are required on the
 14 GiB production host so concurrent release compilation cannot starve the
 running control plane or serving containers.
 
-### Existing-host cache warm-up and resume
+### G2 common-artifact preparation, checkpoints, and resume
 
-The cache warm-up is a prebuild activity only. It does not install a release,
-switch `current`, start or restart a service, enable a profile, call a provider,
-or write the immutable manifest. Use the existing per-service Compose build
-call with `COMPOSE_PARALLEL_LIMIT=1`; never pass multiple service names to one
-Compose build call. Run each long build in a background systemd service with
-lowered CPU and I/O priority (for example, `CPUWeight=20` and `IOWeight=20`)
-so a terminal or Paseo disconnect does not terminate it. Set
-`CARGO_BUILD_JOBS=2`, and do not begin a service while any earlier build
-invocation or compiler process is still active.
+The selected C layout is `common`: it prepares one verified Rust artifact
+bundle per D7 recipe and gives the relevant final-image build that immutable
+bundle as a named context. It is not a parallel Rust-build authorization. The
+checked-in `build-production-images.sh` sources
+`scripts/ops/lib/release-build-layout.sh`; its run state is bound to the exact
+clean source commit, helper, layout recipe/schema, validated cache namespace,
+and gate inputs before the first producer action. The common compile-cache
+key excludes the source commit so compatible outputs can survive source
+changes; the run state and final images still require their exact commit.
+
+The official root-only entrypoint owns root state. A separately authorized
+user-level prebuild or benchmark may use the same narrow helper API with its
+own `0700` state root and current effective UID, but that never bypasses the
+official root check, does not publish an official release manifest, and is not
+release acceptance. Do not hand-write a Compose override or invoke an arbitrary
+Docker build to substitute for the helper transport.
+
+For the checked-in helper API, the fixed setup is:
+
+```bash
+export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
+export RELEASE_BUILD_SYSTEMD_UNIT='<approved-background-build.service>'
+export RELEASE_BUILD_SYSTEMD_MANAGER=system
+export RELEASE_BUILD_HEALTH_UNITS='<approved-unit-1.service>,<approved-unit-2.service>'
+export RELEASE_BUILD_HEALTH_CONTAINERS='<approved-container-1>,<approved-container-2>'
+# Set RELEASE_BUILD_RESEARCH_EXCEPTION only to the exact separately approved,
+# currently valid exception file owned by the build's effective UID.
+```
+
+Replace the health placeholders with the complete inventory confirmed at
+preflight: both control units and all current serving containers. On the
+current host the control units are `docker.service` and `containerd.service`;
+the Paseo process is monitored separately, without inventing a system unit.
+
+The helper obtains the whole-run lock before preparation. It records the first
+gate time and reuses that immutable origin on resume.
+`release_build_layout_init <source-root> <commit> <state-root> <cache-namespace>`
+is called once in its own shell before any `release_build_layout_prepare`;
+reinitializing that shell is an error. `prepare` prints only a verified bundle
+path for a Rust service or the literal `NONE` for the explicit DB/Web records.
+It is the checked-in build helper and benchmark, rather than an operator's
+hand-built context, that call `verify_bundle`, write the one-service override,
+and bind final image bytes.
+
+Run every long action in the approved background systemd service with
+`Nice=10` and `IOSchedulingClass=idle`; `CPUWeight=20` and `IOWeight=20`
+also lower the unit's scheduling weights. The service continues after a
+terminal or Paseo disconnect. Keep `CARGO_BUILD_JOBS=2` and
+`COMPOSE_PARALLEL_LIMIT=1`; never begin a service while an earlier build or
+compiler is alive.
+
+The producer checks are separate from consumer progress. The native identity
+gate runs first; Rust producers run one requested bin at a time, with the
+collector producer checkpoints fixed as `3 + 3 + 2 + 2`. A pending or malformed
+guard/receipt recreates only that compatibility target; no successful reuse
+may run `cargo clean` for every artifact call, edit a fingerprint, or prune a
+global cache. A producer failure leaves no usable success receipt or bundle;
+resume revalidates the current source/receipt/bundle before reusing it.
 
 Use these four progress batches, issuing exactly one Compose build call for
 each service in the listed order:
 
 1. `db-role-bootstrap`, `db-migrate`, `api-server`
-2. `web`, `research-worker`, `owner-equity-v2-runner`
-3. `recommendation-runner`, `candidate-runner`, `owner-beta-runner`
+2. `web`, `research-worker`, `recommendation-runner`
+3. `candidate-runner`, `owner-beta-runner`, `owner-equity-v2-runner`
 4. `nt-backtest-worker-1`, `nt-backtest-worker-2`, `paper-scheduler`
 
-Between batches, wait for the preceding systemd unit to finish successfully
-and verify all of the following before continuing: available memory, swap
-state, kernel journal for OOM or killed-compiler events, the unit's final
-`Result`, and the existing production service-health checks. A failed build,
-OOM event, compiler/control-plane termination, or unhealthy production service
-stops progression. Do not submit the next batch or retry an all-image parallel
-command; after correction, rerun the same single-service command so Docker can
-resume from its cache.
+The consumer checkpoints are likewise `3 + 3 + 3 + 3`. Between every producer
+or consumer checkpoint, require the preceding one-service build to have
+returned successfully, then verify available memory, swap state, the complete
+bounded kernel-journal capture for OOM/killed-compiler events, no live
+compiler, the approved production health inputs, and that the already-running
+background build unit still has its required service/cgroup/priority state. A
+failed build, OOM event, compiler/control-plane termination, invalid
+receipt/bundle, or unhealthy production service stops progression. Do not
+submit the next batch or retry an all-image parallel command; after correction,
+resume only the same one-service route so the helper can revalidate and reuse
+safe cache/bundle state.
 
-After all four batches are complete and their gates pass, run the official
-root-only `build-production-images.sh --apply` with the exact commit and a new
-V2 manifest output path. It reuses cached layers but still builds the canonical
-twelve services one at a time, inspects every local image ID and OCI revision,
-checks the exact commit, and atomically publishes the immutable manifest. This
-final validation is not a production rollout; later installation and Compose
-activation remain separately authorized actions.
+The seven Dockerfile source fallbacks remain for existing callers that build
+without a named context. They retain B's source-compilation, OCI-revision, and
+compile-ENV provenance contracts. The stronger content-addressed transport and
+old-mtime guarantees are specific to the official/helper/benchmark route; do
+not infer them from a legacy source-fallback build. Do not treat a
+source-fallback test as C artifact-route or performance acceptance.
+
+For A/B/C measurement, `scripts/qa/build-cache-benchmark.sh` records actual
+product kind independently of baseline/candidate position. Every canonical
+twelve-service release includes preparation or producers, all consumers,
+image-save and strict byte checks, and final private V2 publication/revalidation
+in `release-totals.tsv`; `release-comparison.tsv` compares only complete warm
+releases. Source A/B retain actual Cargo/native evidence without invented
+producer receipts, while C additionally binds its producer receipts. The
+benchmark manifests under `source-manifests/` and `common-manifests/` are
+private evidence, never official release manifests.
+
+The official root-only `build-production-images.sh --apply` invocation itself
+performs preparation, the producer checkpoints, and the four consumer batches
+before it may finish the release. Run it with the exact commit and a new V2
+manifest output path. It holds its lock through preparation, all twelve
+sequential builds, strict saved-image byte/OCI checks, exact image-ID/revision
+checks, and V2 serialization plus revalidation before an atomic no-clobber
+publish. This final validation is not a production rollout; later installation
+and Compose activation remain separately authorized actions. The command below
+starts the approved unit and runs the builder inside its required cgroup.
+`--wait` returns the build's exit status; the service runs independently of
+that waiting terminal. `--collect` releases the transient unit after exit, so
+a failed attempt can reuse the same unit name and unchanged gate inputs.
+Retain its journal and helper attempt logs before retrying, and require a
+successful build exit and completed V2 verification before installation.
 
 ```bash
 export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
+release_source_root=$(git rev-parse --show-toplevel)
 # Output must be empty or exactly the one allowlisted workbook above.
 git status --porcelain=v1 --untracked-files=all
 
@@ -95,10 +172,25 @@ sudo install -o root -g root -m 0600 deploy/compose/.env \
   /etc/lagrange/compose.env.pending
 sudo install -d -o root -g root -m 0755 /etc/lagrange/release-manifests
 
-sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
-  scripts/ops/build-production-images.sh --apply \
+sudo systemd-run --unit="$RELEASE_BUILD_SYSTEMD_UNIT" \
+  --service-type=exec --wait --collect \
+  --working-directory="$release_source_root" \
+  --property=Nice=10 --property=IOSchedulingClass=idle \
+  --property=CPUWeight=20 --property=IOWeight=20 \
+  /usr/bin/env CARGO_BUILD_JOBS=2 COMPOSE_PARALLEL_LIMIT=1 \
+  LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
+  RELEASE_BUILD_SYSTEMD_UNIT="$RELEASE_BUILD_SYSTEMD_UNIT" \
+  RELEASE_BUILD_SYSTEMD_MANAGER="$RELEASE_BUILD_SYSTEMD_MANAGER" \
+  RELEASE_BUILD_HEALTH_UNITS="$RELEASE_BUILD_HEALTH_UNITS" \
+  RELEASE_BUILD_HEALTH_CONTAINERS="$RELEASE_BUILD_HEALTH_CONTAINERS" \
+  RELEASE_BUILD_RESEARCH_EXCEPTION="${RELEASE_BUILD_RESEARCH_EXCEPTION:-}" \
+  /bin/bash "$release_source_root/scripts/ops/build-production-images.sh" --apply \
   --manifest-file "/etc/lagrange/release-manifests/$LAGRANGE_CODE_COMMIT.manifest"
+```
 
+After that build succeeds, the separately authorized installation is:
+
+```bash
 scripts/ops/deploy-production-release.sh --dry-run \
   --commit "$LAGRANGE_CODE_COMMIT" \
   --env-source /etc/lagrange/compose.env.pending
@@ -109,6 +201,10 @@ sudo scripts/ops/deploy-production-release.sh --apply \
 sudo scripts/ops/deploy-production-release.sh --check \
   --commit "$LAGRANGE_CODE_COMMIT"
 ```
+
+Do not call this a product-performance result. Actual twelve-image correctness,
+OCI/byte verification under production resources, and whole-release timing are
+reserved for WP6.
 
 Each immutable directory is `/opt/lagrange/releases/<commit>`. `current` is an
 atomically replaced relative symlink. Compatibility links such as
