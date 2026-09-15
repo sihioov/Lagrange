@@ -772,3 +772,9 @@ inputs. Syntax and focused tests passed; a real 100 ms clock check measured
 `/tmp/lagrange-clock-root-lmxvw7m0/result.json`. No Docker/Cargo command ran in
 that clock check. Corrected actual timing remains unverified; fresh measurements
 will accompany the transport retest. Existing raw run evidence is retained.
+
+The caller paths also propagate clock/read-record failures explicitly, including
+when the surrounding trial runs in a Bash conditional (where `set -e` alone
+would not stop the trial). Focused checks after that propagation fix passed;
+the exact receipt is `/tmp/lagrange-clock-root-4lkcus56/result.json` and its
+100 ms interval measured 115 ms. This supersedes the earlier clock source hash.

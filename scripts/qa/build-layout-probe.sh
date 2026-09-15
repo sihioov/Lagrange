@@ -794,7 +794,7 @@ PY
 ) || return 1
   fi
   probe_gate "$CUR_CASE" "$phase-before" 0 || return 1
-  started=$(now_ms)
+  started=$(now_ms) || return 1
   emit_event PHASE "$CUR_LAYOUT" "$CUR_CASE" "$phase" "$CUR_ATTEMPT" START 0 "K=$CUR_K;H=$CUR_H;bin=$bin"
   if [ "$CUR_LAYOUT" = baseline ]; then
     CUR_SOURCE_TRAP=0
@@ -849,7 +849,8 @@ PY
     else cargo=0
     fi
   fi
-  ended=$(now_ms); record_timing execution "$CUR_LAYOUT/$CUR_CASE/$CUR_TOKEN/$phase" "$started" "$ended" "$cargo"
+  ended=$(now_ms) || return 1
+  record_timing execution "$CUR_LAYOUT/$CUR_CASE/$CUR_TOKEN/$phase" "$started" "$ended" "$cargo" || return 1
   probe_gate "$CUR_CASE" "$phase-after-build" 0 || return 1
   verify_image "$phase" "$tag" "$CUR_ATTEMPT_DIR/results/$phase" || { emit_event VERIFY "$CUR_LAYOUT" "$CUR_CASE" "$phase" "$CUR_ATTEMPT" FAIL 1 image-contract; return 1; }
   if [ "$skip" = 2 ]; then
@@ -878,12 +879,13 @@ run_trial() {
   local identity started ended
   if [ "$do_p0" = 1 ]; then
     probe_gate "$case_id" p0-before 0 || return 1
-    started=$(now_ms)
+    started=$(now_ms) || return 1
     local p0="$attempt_dir/p0-identity"
     if identity_build "$source" "$p0" "$attempt_dir/logs/p0.log"; then :; else local identity_status=$?; emit_event PHASE "$layout" "$case_id" p0 "$attempt" FAIL "$identity_status" identity-build-failed; return 1; fi
     [ -f "$p0/identity.json" ] && [ ! -L "$p0/identity.json" ] || return 1
     write_identity "$p0/identity.json" || return 1
-    ended=$(now_ms); record_timing preparation "$layout/$case_id/$token/p0" "$started" "$ended" not-applicable
+    ended=$(now_ms) || return 1
+    record_timing preparation "$layout/$case_id/$token/p0" "$started" "$ended" not-applicable || return 1
     emit_event PHASE "$layout" "$case_id" p0 "$attempt" COMPLETE 0 "identity=$(sha256sum -- "$p0/identity.json" | awk '{print $1}')"
     identity="$p0/identity.json"
   else
