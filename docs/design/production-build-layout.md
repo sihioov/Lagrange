@@ -469,6 +469,28 @@ case-scope를 사용하고 group suffix는 L2의 base/wide뿐이다.
 않으며 fake 실행기도 이 호스트에서 재현한 mount 초기화를 반영해야 한다.
 route-contract의 단독 P1 source/producer 호출은 기존 cold 동작을 유지한다.
 
+2026-09-15 실제 `layout-05`의 branch-return은 Cargo 전에 입력 해시 검사가
+실패했다. 서로 다른 경로가 모두 `source`라는 basename을 사용했을 때 같은
+크기·mtime의 이전 파일이 COPY 결과에 남는 현상을 scratch export로 재현했다.
+[Buildx 0.36.1의 local context key](https://github.com/docker/buildx/blob/v0.36.1/build/opt.go#L820-L829)는
+context 경로의 basename을 사용한다. 이는 관측한 경로 간 간섭을 설명하는 근거이며,
+파일 크기나 mtime을 source identity로 신뢰할 이유가 되지 않는다.
+
+전송 경로 보완: P0, producer, Compose의 첫 context 모두 기존 전체 source tree
+해시를 basename에 포함한 `context-<64hex>` 스냅샷을 사용한다. 원본 source 밖의
+전용 임시 경로에 bytes/type/mode와 원래 mtime을 보존해 복사하고, 원본 및 복사본을
+다시 해시 검증한 뒤 공개한다. 동일 목적지가 있으면 검증하고 불일치 시 거부한다.
+이전 attempt의 다른 mtime을 가진 복사본으로 old-mtime 시험을 대체하지 않는다.
+phase별 실패 주입 뒤의 실제 source를 스냅샷하며 K/P/H, guard, Cargo 명령과
+예상 Fresh 집합을 바꾸지 않는다. Compose는 스냅샷의 `compose.yml`을 첫 `-f`로
+사용하여 기존 `context: .`와 named directory artifact 경로를 유지한다.
+전송 준비 비용은 기존 준비/실행 시간에 포함한다. 소스 mtime을 새 값으로 바꾸거나
+warm `--no-cache`로 우회하지 않는다. 작은 실제 forward/return/forward COPY 세 번은
+원래 mtime을 그대로 유지한 채 모두 일치했고 마지막 COPY cache hit도 정확했다.
+증거는
+`/data/worktrees/3puw275b/build-verification-20260915-02bthtb5/reports/content-context-diagnostic-476dbe78b6ea/result.json`이다.
+이 보완의 전체 실제 fixture 인수는 아직 남아 있으며 G2 통과를 뜻하지 않는다.
+
 fixture 소비 이미지의 Compose 호출에는 `--provenance=false`를 명시한다.
 실제 `layout-04`는 L0 cold 전체와 Cargo layer 재사용을 통과했지만, 반복 P1의
 동일 config/실행 manifest에 새 attestation이 붙어 상위 image ID만 달라졌다.
