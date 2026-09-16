@@ -4258,8 +4258,10 @@ PY
   fi
   export CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/cargo-target
   unset RUSTFLAGS
+  # -vv mixes build-script text into JSON stdout. Single -v keeps the
+  # Fresh/Compiling evidence on stderr without that additional stdout.
   cargo build --locked --release --package "$CARGO_PACKAGE" --bin "$CARGO_BIN" \
-    --message-format=json-render-diagnostics -vv >"$rbl_producer/cargo.jsonl" \
+    --message-format=json-render-diagnostics -v >"$rbl_producer/cargo.jsonl" \
     2>"$rbl_producer/cargo.stderr" || rbl_cargo_status=$?
   rbl_end=$(python3 -c 'import time; print(time.time_ns())')
   rbl_cargo_ms=$(( (rbl_end - rbl_start) / 1000000 ))

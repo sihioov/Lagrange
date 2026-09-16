@@ -2406,7 +2406,8 @@ for raw in cargo_raw.splitlines():
                 not isinstance(target.get("name"), str) or not isinstance(target.get("kind"), list) or
                 not isinstance(target.get("crate_types"), list) or not isinstance(profile, dict) or
                 not isinstance(event.get("features"), list) or not isinstance(event.get("fresh"), bool) or
-                not isinstance(event.get("executable"), str)):
+                "executable" not in event or
+                (event["executable"] is not None and not isinstance(event["executable"], str))):
             raise SystemExit("common-cargo-unit-invalid")
         unit = {"package_id": event["package_id"], "target": {"name": target["name"],
                 "kind": sorted(target["kind"]), "crate_types": sorted(target["crate_types"])},
