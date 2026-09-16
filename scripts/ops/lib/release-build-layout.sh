@@ -883,10 +883,10 @@ def pairs(items):
 def reject(value): raise ValueError("non-finite-json-number")
 value=json.load(open(path,encoding="utf-8",newline=""),object_pairs_hook=pairs,parse_constant=reject)
 expected={"format","target_platform","host_triple","rustc_vv","cargo_version",
-          "apk_info_vv","native_packages","compiler_env"}
+          "apk_info_vv","apk_installed_packages","native_packages","compiler_env"}
 if not isinstance(value,dict) or set(value) != expected:
     raise SystemExit("native-identity-schema-invalid")
-if value["format"] != "lagrange-build-layout-native-v2" or value["target_platform"] != "linux/amd64":
+if value["format"] != "lagrange-build-layout-native-v3" or value["target_platform"] != "linux/amd64":
     raise SystemExit("native-identity-binding-invalid")
 rustc=value["rustc_vv"]
 if not isinstance(rustc,str) or not rustc.endswith("\n"):
@@ -904,12 +904,72 @@ packages=value["native_packages"]
 fixed=["build-base","musl-dev","openssl-dev","pkgconf","postgresql-dev"]
 if packages != fixed:
     raise SystemExit("native-package-set-invalid")
+inventory=value["apk_installed_packages"]
+if not isinstance(inventory,list) or not inventory:
+    raise SystemExit("native-apk-packages-invalid")
+normalized=[]
+names=set()
+provide_aliases=set()
+primary_name=re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
+provided_name=re.compile(r"[A-Za-z0-9,\[\]:/][A-Za-z0-9._+,\[\]:/\-]*")
+apk_version=re.compile(r"[0-9]+(?:\.[0-9]+)*[a-z]?(?:_(?:alpha|beta|pre|rc|cvs|svn|git|hg|p)[0-9]*)*(?:~[0-9a-f]+)?(?:-r[0-9]+)?")
+def exact(value,pattern,label):
+    if not isinstance(value,str) or pattern.fullmatch(value) is None:
+        raise SystemExit(label)
+    return value
+def provide_alias(value):
+    if not isinstance(value,str):
+        raise SystemExit("native-apk-provides-invalid")
+    if value.count("=")>1:
+        raise SystemExit("native-apk-provides-invalid")
+    if "=" in value:
+        alias,version=value.split("=",1)
+        if provided_name.fullmatch(alias) is None or apk_version.fullmatch(version) is None:
+            raise SystemExit("native-apk-provides-invalid")
+        return alias
+    return exact(value,provided_name,"native-apk-provides-invalid")
+for record in inventory:
+    if not isinstance(record,dict) or set(record)!={"name","version","provides","status"}:
+        raise SystemExit("native-apk-package-schema-invalid")
+    name=exact(record["name"],primary_name,"native-apk-package-name-invalid")
+    version=exact(record["version"],apk_version,"native-apk-package-version-invalid")
+    if record["status"] != ["installed"]:
+        raise SystemExit("native-apk-package-status-invalid")
+    provides=record["provides"]
+    if not isinstance(provides,list):
+        raise SystemExit("native-apk-provides-invalid")
+    if name in names:
+        raise SystemExit("native-apk-package-duplicate")
+    names.add(name)
+    local_tokens=set()
+    local_aliases=set()
+    for provided in provides:
+        alias=provide_alias(provided)
+        if provided in local_tokens or alias in local_aliases:
+            raise SystemExit("native-apk-provides-duplicate")
+        local_tokens.add(provided)
+        local_aliases.add(alias)
+        provide_aliases.add(alias)
+    normalized.append({"name":name,"version":version,"provides":sorted(provides),
+                       "status":["installed"]})
+normalized.sort(key=lambda record:record["name"])
+if inventory != normalized:
+    raise SystemExit("native-apk-inventory-not-normalized")
 for package in fixed:
-    if not re.search(r"(?:^|[ \t\n])"+re.escape(package)+r"(?:[- \t\n]|$)",value["apk_info_vv"]):
+    if package not in names and package not in provide_aliases:
         raise SystemExit("native-package-inventory-missing")
 if value["compiler_env"] != {"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>"}:
     raise SystemExit("native-compiler-env-invalid")
 PY
+}
+
+rbl_compare_native_identity() {
+  rbl_expected_native=$1
+  rbl_current_native=$2
+  cmp -s -- "$rbl_expected_native" "$rbl_current_native" || {
+    rbl_die 'native identity changed after COPY under /build'
+    return 1
+  }
 }
 
 rbl_k_hash() {
@@ -954,7 +1014,7 @@ if os.path.isfile(identity) and not os.path.islink(identity):
     if stat.S_IMODE(info.st_mode)!=0o600 or info.st_uid!=os.geteuid(): raise SystemExit("native-identity-permission-invalid")
     raw=open(identity,"rb").read()
     native=json.loads(raw.decode("utf-8"))
-    if native.get("format")!="lagrange-build-layout-native-v2" or native.get("target_platform")!="linux/amd64" or native.get("host_triple")!="x86_64-unknown-linux-musl":
+    if native.get("format")!="lagrange-build-layout-native-v3" or native.get("target_platform")!="linux/amd64" or native.get("host_triple")!="x86_64-unknown-linux-musl":
         raise SystemExit("native-identity-contract-invalid")
     if native.get("compiler_env") != value["compiler_env"]: raise SystemExit("native-identity-env-invalid")
     value["native_identity_sha256"]=hashlib.sha256(raw).hexdigest()
@@ -3761,28 +3821,94 @@ rbl_builder_native_identity() {
     rbl_die 'apk identity export failed'
     return 1
   }
+  apk query --installed --all-matches --format json \
+    --fields name,version,provides,status '*' >"$rbl_native_dir/.apk-installed-json" || {
+    rbl_die 'installed APK identity export failed'
+    return 1
+  }
   RBL_NATIVE_DIR=$rbl_native_dir RBL_TARGET_PLATFORM=$rbl_target_platform python3 - <<'PY' || return 1
 import json, os, stat
 directory=os.path.abspath(os.environ["RBL_NATIVE_DIR"])
 rustc=open(os.path.join(directory,".rustc-vv"),encoding="utf-8").read()
 cargo=open(os.path.join(directory,".cargo-version"),encoding="utf-8").read().strip()
 apk=open(os.path.join(directory,".apk-info"),encoding="utf-8").read()
+def pairs(items):
+    value={}
+    for key,item in items:
+        if key in value: raise ValueError("duplicate-json-key")
+        value[key]=item
+    return value
+def reject(value): raise ValueError("non-finite-json-number")
+installed=json.load(open(os.path.join(directory,".apk-installed-json"),encoding="utf-8",newline=""),
+                    object_pairs_hook=pairs,parse_constant=reject)
 import re
 hosts=re.findall(r"^host:\s*(\S+)\s*$",rustc,re.MULTILINE)
 if not rustc.endswith("\n") or not cargo.startswith("cargo ") or hosts != ["x86_64-unknown-linux-musl"]:
     raise SystemExit("native-tool-identity-invalid")
 if os.environ["RBL_TARGET_PLATFORM"] != "linux/amd64": raise SystemExit("native-platform-invalid")
+if not isinstance(installed,list) or not installed:
+    raise SystemExit("native-apk-packages-invalid")
+normalized=[]
+names=set()
+provide_aliases=set()
+primary_name=re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
+provided_name=re.compile(r"[A-Za-z0-9,\[\]:/][A-Za-z0-9._+,\[\]:/\-]*")
+apk_version=re.compile(r"[0-9]+(?:\.[0-9]+)*[a-z]?(?:_(?:alpha|beta|pre|rc|cvs|svn|git|hg|p)[0-9]*)*(?:~[0-9a-f]+)?(?:-r[0-9]+)?")
+def exact(value,pattern,label):
+    if not isinstance(value,str) or pattern.fullmatch(value) is None:
+        raise SystemExit(label)
+    return value
+def provide_alias(value):
+    if not isinstance(value,str):
+        raise SystemExit("native-apk-provides-invalid")
+    if value.count("=")>1:
+        raise SystemExit("native-apk-provides-invalid")
+    if "=" in value:
+        alias,version=value.split("=",1)
+        if provided_name.fullmatch(alias) is None or apk_version.fullmatch(version) is None:
+            raise SystemExit("native-apk-provides-invalid")
+        return alias
+    return exact(value,provided_name,"native-apk-provides-invalid")
+for record in installed:
+    if not isinstance(record,dict) or not {"name","version","status"}.issubset(record) or set(record)-{"name","version","provides","status"}:
+        raise SystemExit("native-apk-package-schema-invalid")
+    name=exact(record["name"],primary_name,"native-apk-package-name-invalid")
+    version=exact(record["version"],apk_version,"native-apk-package-version-invalid")
+    if record["status"] != ["installed"]:
+        raise SystemExit("native-apk-package-status-invalid")
+    provides=record.get("provides",[])
+    if not isinstance(provides,list):
+        raise SystemExit("native-apk-provides-invalid")
+    if name in names:
+        raise SystemExit("native-apk-package-duplicate")
+    names.add(name)
+    local_tokens=set()
+    local_aliases=set()
+    for provided in provides:
+        alias=provide_alias(provided)
+        if provided in local_tokens or alias in local_aliases:
+            raise SystemExit("native-apk-provides-duplicate")
+        local_tokens.add(provided)
+        local_aliases.add(alias)
+        provide_aliases.add(alias)
+    normalized.append({"name":name,"version":version,"provides":sorted(provides),
+                       "status":["installed"]})
+normalized.sort(key=lambda record:record["name"])
+fixed=["build-base","musl-dev","openssl-dev","pkgconf","postgresql-dev"]
+for package in fixed:
+    if package not in names and package not in provide_aliases:
+        raise SystemExit("native-package-inventory-missing")
 value={
-  "format":"lagrange-build-layout-native-v2","target_platform":"linux/amd64",
+  "format":"lagrange-build-layout-native-v3","target_platform":"linux/amd64",
   "host_triple":hosts[0],"rustc_vv":rustc,"cargo_version":cargo,
-  "apk_info_vv":apk,"native_packages":["build-base","musl-dev","openssl-dev","pkgconf","postgresql-dev"],
+  "apk_info_vv":apk,"apk_installed_packages":normalized,"native_packages":fixed,
   "compiler_env":{"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>"}
 }
 path=os.path.join(directory,"native-identity.json")
 with open(path,"w",encoding="utf-8",newline="\n") as handle:
     handle.write(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")
 os.chmod(path,0o600)
-for name in (".rustc-vv",".cargo-version",".apk-info"):
+for name in (".rustc-vv",".cargo-version",".apk-info",".apk-installed-json"):
     os.unlink(os.path.join(directory,name))
 PY
   rbl_validate_native_identity "$rbl_native_dir/native-identity.json" || return 1
@@ -4030,10 +4156,8 @@ if value.get("h_sha256") != hashlib.sha256(json.dumps(h_material,sort_keys=True,
 PY
   rbl_validate_native_identity "$rbl_expected_native" || return 1
   rbl_builder_native_identity "$rbl_output" || return 1
-  cmp -s -- "$rbl_expected_native" "$rbl_output/.release-build/native-identity.json" || {
-    rbl_die 'native identity changed after COPY under /build'
-    return 1
-  }
+  rbl_compare_native_identity "$rbl_expected_native" \
+    "$rbl_output/.release-build/native-identity.json" || return 1
   rbl_metadata=/tmp/lagrange-build-layout-metadata-$$.json
   cargo metadata --locked --offline --no-deps --format-version 1 >"$rbl_metadata" ||
     {
@@ -4163,6 +4287,7 @@ rbl_guard_build() {
       rbl_die 'verified artifact tools are missing'
       return 1
     }
+  rbl_validate_native_identity "$rbl_bundle/.release-build/native-identity.json" || return 1
   RBL_REQUEST=$rbl_request RBL_BUNDLE=$rbl_bundle RBL_LAYOUT=$rbl_layout \
   RBL_HELPER=$rbl_helper RBL_OUTPUT=$rbl_output python3 - <<'PY'
 import hashlib, json, os, re, shutil, stat, struct
@@ -4304,10 +4429,10 @@ for key in ("bins","cache_key","cache_namespace","compile_env","features","guard
 if bundle_record.get("source_input_sha256")!=request.get("input_sha256"): raise SystemExit("guard-bundle-source-invalid")
 
 native,_=raw_json(os.path.join(release,"native-identity.json"))
-native_keys={"apk_info_vv","cargo_version","compiler_env","format","host_triple","native_packages","rustc_vv","target_platform"}
-if set(native)!=native_keys or native.get("format")!="lagrange-build-layout-native-v2" or native.get("target_platform")!="linux/amd64" or native.get("host_triple")!="x86_64-unknown-linux-musl": raise SystemExit("guard-native-schema-invalid")
+native_keys={"apk_info_vv","apk_installed_packages","cargo_version","compiler_env","format","host_triple","native_packages","rustc_vv","target_platform"}
+if set(native)!=native_keys or native.get("format")!="lagrange-build-layout-native-v3" or native.get("target_platform")!="linux/amd64" or native.get("host_triple")!="x86_64-unknown-linux-musl": raise SystemExit("guard-native-schema-invalid")
 if native.get("compiler_env")!={"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>"}: raise SystemExit("guard-native-env-invalid")
-if native.get("native_packages")!=["build-base","musl-dev","openssl-dev","pkgconf","postgresql-dev"] or not isinstance(native.get("apk_info_vv"),str) or not native["apk_info_vv"] or not isinstance(native.get("rustc_vv"),str) or not re.search(r"^host:\s*x86_64-unknown-linux-musl\s*$",native["rustc_vv"],re.MULTILINE) or not isinstance(native.get("cargo_version"),str) or not native["cargo_version"].startswith("cargo "):
+if native.get("native_packages")!=["build-base","musl-dev","openssl-dev","pkgconf","postgresql-dev"] or not isinstance(native.get("apk_installed_packages"),list) or not native["apk_installed_packages"] or not isinstance(native.get("apk_info_vv"),str) or not native["apk_info_vv"] or not isinstance(native.get("rustc_vv"),str) or not re.search(r"^host:\s*x86_64-unknown-linux-musl\s*$",native["rustc_vv"],re.MULTILINE) or not isinstance(native.get("cargo_version"),str) or not native["cargo_version"].startswith("cargo "):
     raise SystemExit("guard-native-identity-invalid")
 complete=open(os.path.join(release,"complete"),"rb").read()
 if complete!=(tree_hash(bundle)+"\n").encode("ascii"): raise SystemExit("guard-complete-invalid")

@@ -900,7 +900,14 @@ PY
   }
   case_root=$test_root/mode-change
   git clone -q --no-local "$fixture" "$case_root"
-  chmod 0600 -- "$case_root/nt/worker.py"
+  # Change a non-execute bit even when the inherited umask is 077.
+  python3 - "$case_root/nt/worker.py" <<'PY'
+import os,stat,sys
+path=sys.argv[1]
+mode=stat.S_IMODE(os.stat(path).st_mode)
+os.chmod(path,mode ^ stat.S_IWUSR)
+assert stat.S_IMODE(os.stat(path).st_mode)==(mode ^ stat.S_IWUSR)
+PY
   changed_tree=$(runtime_tree_hash "$(rbl_runtime_payload_inventory "$case_root" "$case_root/layout.json")")
   [ "$changed_tree" != "$original_tree" ] || {
     echo 'self-test: tracked runtime mode edit did not change its tree hash' >&2
@@ -1030,6 +1037,298 @@ env_file=$repo_dir/deploy/compose/.env
 fake_bin=$out_dir/fake-bin
 docker_log=$out_dir/docker.log
 manifest_file=$out_dir/production-images.manifest
+
+run_native_package_identity_tests() (
+  set -euo pipefail
+  source "$source_layout_helper"
+  local fixture_dir=$source_root/tests/fixtures/build-cache/native-packages
+  local test_root=$out_dir/native-package-identity
+  local fake_bin=$test_root/fake-bin
+  local raw_dir=$test_root/raw-cases
+  local generated=$test_root/export-real/.release-build/native-identity.json
+  local layout=$source_root/deploy/build/release-build-layout.json
+  local base_k changed_k unrelated_k
+  [ "$(sha256sum "$fixture_dir/apk-installed-json.stdout" | awk '{print $1}')" = \
+    32b910c3133df4271cb4f5a08231f5c41349b52fddea8facf6ec1cd93e60a46d ]
+  [ "$(sha256sum "$fixture_dir/apk-info-vv.stdout" | awk '{print $1}')" = \
+    119064aed0d76b0c9d1b846db422c3d5f05b3cb8d7601de50b6647eafbd2699e ]
+  mkdir -m 0700 -- "$test_root" "$fake_bin"
+  mkdir -m 0700 -- "$raw_dir"
+
+  # Preserve the exact failed C6 predicate as a regression: descriptive
+  # apk-info text does not contain the requested virtual package as a package.
+  python3 - "$fixture_dir/apk-info-vv.stdout" <<'PY'
+import pathlib,re,sys
+raw=pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+old=r"(?:^|[ \t\n])"+re.escape("postgresql-dev")+r"(?:[- \t\n]|$)"
+assert re.search(old,raw) is None
+assert "postgresql18-dev-18.6-r0" in raw
+PY
+
+  cat >"$fake_bin/rustc" <<'EOF'
+#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = -vV ] || exit 64
+printf '%s\n' 'rustc 1.97.1 (fixture)' 'host: x86_64-unknown-linux-musl'
+EOF
+  cat >"$fake_bin/cargo" <<'EOF'
+#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = -V ] || exit 64
+printf '%s\n' 'cargo 1.97.1 (fixture)'
+EOF
+  cat >"$fake_bin/apk" <<'EOF'
+#!/bin/sh
+if [ "$#" -eq 2 ] && [ "$1" = info ] && [ "$2" = -vv ]; then
+  exec cat -- "$NATIVE_TEST_APK_INFO"
+fi
+if [ "$#" -eq 8 ] && [ "$1" = query ] && [ "$2" = --installed ] && \
+   [ "$3" = --all-matches ] && [ "$4" = --format ] && [ "$5" = json ] && \
+   [ "$6" = --fields ] && [ "$7" = name,version,provides,status ] && [ "$8" = '*' ]; then
+  [ "${NATIVE_TEST_APK_QUERY_EXIT:-0}" -eq 0 ] || exit "$NATIVE_TEST_APK_QUERY_EXIT"
+  exec cat -- "$NATIVE_TEST_APK_INSTALLED"
+fi
+exit 64
+EOF
+  chmod 0755 -- "$fake_bin/rustc" "$fake_bin/cargo" "$fake_bin/apk"
+
+  export_native_from_raw() (
+    local label=$1 raw=$2 query_exit=${3:-0}
+    export PATH="$fake_bin:$PATH"
+    export NATIVE_TEST_APK_INFO=$fixture_dir/apk-info-vv.stdout
+    export NATIVE_TEST_APK_INSTALLED=$raw
+    export NATIVE_TEST_APK_QUERY_EXIT=$query_exit
+    export TARGETPLATFORM=linux/amd64 RBL_PLATFORM=linux/amd64
+    rbl_builder_native_identity "$test_root/export-$label"
+  )
+
+  export_native_from_raw real "$fixture_dir/apk-installed-json.stdout"
+
+  python3 - "$generated" "$fixture_dir/apk-info-vv.stdout" <<'PY'
+import json,pathlib,sys
+identity=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+raw=pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+assert identity["format"]=="lagrange-build-layout-native-v3"
+assert identity["apk_info_vv"]==raw
+packages=identity["apk_installed_packages"]
+assert len(packages)==86
+assert packages==sorted(packages,key=lambda item:item["name"])
+assert all(item["provides"]==sorted(item["provides"]) for item in packages)
+provider=next(item for item in packages if item["name"]=="postgresql18-dev")
+assert provider["version"]=="18.6-r0" and provider["provides"]==["postgresql-dev"]
+assert not any(item["name"]=="postgresql-dev" for item in packages)
+busybox_binsh=next(item for item in packages if item["name"]=="busybox-binsh")
+assert busybox_binsh["provides"]==["/bin/sh","cmd:sh=1.37.0-r31"]
+PY
+  rbl_validate_native_identity "$generated"
+
+  python3 - "$generated" "$test_root" "$fixture_dir/apk-installed-json.stdout" <<'PY'
+import copy,json,os,pathlib,sys
+source=pathlib.Path(sys.argv[1]); root=pathlib.Path(sys.argv[2]); raw_source=pathlib.Path(sys.argv[3])
+raw_root=root/"raw-cases"
+base=json.loads(source.read_text(encoding="utf-8"))
+def write(name,value):
+    path=root/(name+".json")
+    path.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8",newline="")
+    os.chmod(path,0o600)
+def write_raw(name,value):
+    path=raw_root/(name+".json")
+    path.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8",newline="")
+    os.chmod(path,0o600)
+def provider(value):
+    return next(item for item in value["apk_installed_packages"] if item["name"]=="postgresql18-dev")
+def package(value,name):
+    return next(item for item in value["apk_installed_packages"] if item["name"]==name)
+
+value=copy.deepcopy(base); provider(value)["provides"]=[]; write("missing-provider",value)
+value=copy.deepcopy(base); provider(value)["provides"]=["postgresql-dev-tools"]
+value["apk_info_vv"] += "description mentions postgresql-dev only\n"; write("near-miss",value)
+value=copy.deepcopy(base); provider(value)["status"]=["available"]; write("uninstalled",value)
+value=copy.deepcopy(base); value["apk_installed_packages"].append(copy.deepcopy(provider(value))); write("duplicate-package",value)
+value=copy.deepcopy(base); provider(value)["provides"]=["postgresql-dev","postgresql-dev"]; write("duplicate-provide",value)
+value=copy.deepcopy(base); provider(value)["description"]="spoof"; write("wrong-record-keys",value)
+value=copy.deepcopy(base); provider(value)["provides"]=["postgresql-dev="]; write("malformed-provide",value)
+value=copy.deepcopy(base); provider(value)["provides"]=["postgresql-dev=>1"]; write("malformed-operator",value)
+value=copy.deepcopy(base); provider(value)["provides"]=["-postgresql-dev"]; write("invalid-provide-name",value)
+value=copy.deepcopy(base); package(value,"build-base")["name"]="build/base"; write("invalid-package-name",value)
+value=copy.deepcopy(base); package(value,"build-base")["name"]="build-b\u00e1se"; write("nonascii-package-name",value)
+value=copy.deepcopy(base); provider(value)["version"]="18..6-r0"; write("invalid-package-version",value)
+value=copy.deepcopy(base); provider(value)["version"]="18.6-r0\u001f"; write("control-package-version",value)
+value=copy.deepcopy(base); provider(value)["provides"]=["postgresql-dev\u0001"]; write("control-provide",value)
+value=copy.deepcopy(base); value["apk_installed_packages"].reverse(); write("unsorted",value)
+value=copy.deepcopy(base); provider(value)["provides"]=["postgresql-dev=18.6-r0"]; write("versioned-alias",value)
+value=copy.deepcopy(base); provider(value)["version"]="18.6-r1"; write("version-change",value)
+value=copy.deepcopy(base); package(value,"zlib")["version"]="1.3.2-r1"; write("unrelated-version-change",value)
+value=copy.deepcopy(base)
+value["apk_installed_packages"].append({"name":"postgresql-alt-provider","version":"1.0-r0",
+                                        "provides":["postgresql-dev"],"status":["installed"]})
+value["apk_installed_packages"].sort(key=lambda item:item["name"])
+write("shared-providers",value)
+raw=source.read_text(encoding="utf-8")
+needle='"format":"lagrange-build-layout-native-v3"'
+path=root/"duplicate-json-key.json"
+path.write_text(raw.replace(needle,needle+','+needle,1),encoding="utf-8",newline="")
+os.chmod(path,0o600)
+
+installed=json.loads(raw_source.read_text(encoding="utf-8"))
+def raw_provider(value):
+    return next(item for item in value if item["name"]=="postgresql18-dev")
+def raw_package(value,name):
+    return next(item for item in value if item["name"]==name)
+value=copy.deepcopy(installed); raw_provider(value)["provides"]=["postgresql-dev=>1"]; write_raw("malformed-operator",value)
+value=copy.deepcopy(installed); raw_provider(value)["provides"]=["-postgresql-dev"]; write_raw("invalid-provide-name",value)
+value=copy.deepcopy(installed); raw_package(value,"build-base")["name"]="build/base"; write_raw("invalid-package-name",value)
+value=copy.deepcopy(installed); raw_package(value,"build-base")["name"]="build-b\u00e1se"; write_raw("nonascii-package-name",value)
+value=copy.deepcopy(installed); raw_provider(value)["version"]="18..6-r0"; write_raw("invalid-package-version",value)
+value=copy.deepcopy(installed); raw_provider(value)["version"]="18.6-r0\u001f"; write_raw("control-package-version",value)
+value=copy.deepcopy(installed); raw_provider(value)["provides"]=["postgresql-dev\u0001"]; write_raw("control-provide",value)
+value=copy.deepcopy(installed); raw_provider(value)["provides"]=["postgresql-dev","postgresql-dev"]; write_raw("duplicate-provide",value)
+value=copy.deepcopy(installed); raw_provider(value)["description"]="spoof"; write_raw("wrong-record-keys",value)
+value=copy.deepcopy(installed)
+value.append({"name":"postgresql-alt-provider","version":"1.0-r0",
+              "provides":["postgresql-dev"],"status":["installed"]})
+write_raw("shared-providers",value)
+(raw_root/"malformed-json.json").write_text("{\n",encoding="utf-8",newline="")
+raw_text=raw_source.read_text(encoding="utf-8")
+raw_needle='    "name": "alpine-baselayout",\n'
+if raw_text.count(raw_needle) != 1:
+    raise SystemExit("raw-fixture-duplicate-key-anchor-invalid")
+(raw_root/"duplicate-json-key.json").write_text(
+    raw_text.replace(raw_needle,raw_needle+'    "name": "duplicate",\n',1),encoding="utf-8",newline="")
+PY
+
+  expect_export_reject() {
+    local label=$1 expected=$2 query_exit=${3:-0}
+    if export_native_from_raw "$label" "$raw_dir/$label.json" "$query_exit" \
+      >"$test_root/export-$label.out" 2>"$test_root/export-$label.err"; then
+      echo "self-test: invalid raw APK query unexpectedly exported: $label" >&2
+      return 1
+    fi
+    grep -Fq "$expected" "$test_root/export-$label.err" || {
+      echo "self-test: raw APK query failed for the wrong reason: $label" >&2
+      return 1
+    }
+    [ ! -e "$test_root/export-$label/.release-build/native-identity.json" ] || {
+      echo "self-test: failed raw APK query left a native identity: $label" >&2
+      return 1
+    }
+  }
+  expect_export_reject malformed-operator native-apk-provides-invalid
+  expect_export_reject invalid-provide-name native-apk-provides-invalid
+  expect_export_reject invalid-package-name native-apk-package-name-invalid
+  expect_export_reject nonascii-package-name native-apk-package-name-invalid
+  expect_export_reject invalid-package-version native-apk-package-version-invalid
+  expect_export_reject control-package-version native-apk-package-version-invalid
+  expect_export_reject control-provide native-apk-provides-invalid
+  expect_export_reject duplicate-provide native-apk-provides-duplicate
+  expect_export_reject wrong-record-keys native-apk-package-schema-invalid
+  expect_export_reject malformed-json JSONDecodeError
+  expect_export_reject duplicate-json-key duplicate-json-key
+  expect_export_reject query-nonzero 'installed APK identity export failed' 42
+
+  export_native_from_raw shared-providers "$raw_dir/shared-providers.json"
+  rbl_validate_native_identity \
+    "$test_root/export-shared-providers/.release-build/native-identity.json"
+  python3 - "$test_root/export-shared-providers/.release-build/native-identity.json" <<'PY'
+import json,pathlib,sys
+identity=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+packages=identity["apk_installed_packages"]
+assert len(packages)==87
+providers=[item["name"] for item in packages if "postgresql-dev" in item["provides"]]
+assert providers==["postgresql-alt-provider","postgresql18-dev"]
+assert packages==sorted(packages,key=lambda item:item["name"])
+PY
+
+  expect_native_reject() {
+    local label=$1 expected=$2
+    if rbl_validate_native_identity "$test_root/$label.json" \
+      >"$test_root/$label.out" 2>"$test_root/$label.err"; then
+      echo "self-test: invalid native package identity unexpectedly passed: $label" >&2
+      return 1
+    fi
+    grep -Fq "$expected" "$test_root/$label.err" || {
+      echo "self-test: native package identity failed for the wrong reason: $label" >&2
+      return 1
+    }
+  }
+  expect_native_reject missing-provider native-package-inventory-missing
+  expect_native_reject near-miss native-package-inventory-missing
+  expect_native_reject uninstalled native-apk-package-status-invalid
+  expect_native_reject duplicate-package native-apk-package-duplicate
+  expect_native_reject duplicate-provide native-apk-provides-duplicate
+  expect_native_reject wrong-record-keys native-apk-package-schema-invalid
+  expect_native_reject malformed-provide native-apk-provides-invalid
+  expect_native_reject malformed-operator native-apk-provides-invalid
+  expect_native_reject invalid-provide-name native-apk-provides-invalid
+  expect_native_reject invalid-package-name native-apk-package-name-invalid
+  expect_native_reject nonascii-package-name native-apk-package-name-invalid
+  expect_native_reject invalid-package-version native-apk-package-version-invalid
+  expect_native_reject control-package-version native-apk-package-version-invalid
+  expect_native_reject control-provide native-apk-provides-invalid
+  expect_native_reject unsorted native-apk-inventory-not-normalized
+  expect_native_reject duplicate-json-key duplicate-json-key
+  rbl_validate_native_identity "$test_root/versioned-alias.json"
+  rbl_validate_native_identity "$test_root/version-change.json"
+  rbl_validate_native_identity "$test_root/unrelated-version-change.json"
+  rbl_validate_native_identity "$test_root/shared-providers.json"
+  python3 - "$test_root/shared-providers.json" <<'PY'
+import json,pathlib,sys
+packages=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["apk_installed_packages"]
+assert len(packages)==87
+providers=[item["name"] for item in packages if "postgresql-dev" in item["provides"]]
+assert providers==["postgresql-alt-provider","postgresql18-dev"]
+PY
+
+  if rbl_compare_native_identity "$generated" "$test_root/version-change.json" \
+    >"$test_root/current-compare.out" 2>"$test_root/current-compare.err"; then
+    echo 'self-test: changed installed package version matched current native identity' >&2
+    return 1
+  fi
+  grep -Fq 'native identity changed after COPY under /build' "$test_root/current-compare.err"
+  if rbl_compare_native_identity "$generated" "$test_root/unrelated-version-change.json" \
+    >"$test_root/unrelated-current-compare.out" 2>"$test_root/unrelated-current-compare.err"; then
+    echo 'self-test: unrelated installed package version matched current native identity' >&2
+    return 1
+  fi
+  grep -Fq 'native identity changed after COPY under /build' \
+    "$test_root/unrelated-current-compare.err"
+
+  mkdir -m 0700 -- "$test_root/k-base" "$test_root/k-changed" "$test_root/k-unrelated"
+  cp -- "$generated" "$test_root/k-base/native-identity.json"
+  cp -- "$test_root/version-change.json" "$test_root/k-changed/native-identity.json"
+  cp -- "$test_root/unrelated-version-change.json" "$test_root/k-unrelated/native-identity.json"
+  chmod 0600 -- "$test_root/k-base/native-identity.json" \
+    "$test_root/k-changed/native-identity.json" \
+    "$test_root/k-unrelated/native-identity.json"
+  RELEASE_BUILD_LAYOUT_CONFIG_SHA256=$(sha256sum "$layout" | awk '{print $1}')
+  RELEASE_BUILD_LAYOUT_HELPER_SHA256=$(sha256sum "$source_layout_helper" | awk '{print $1}')
+  export RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
+  RELEASE_BUILD_LAYOUT_STATE_ROOT=$test_root/k-base
+  export RELEASE_BUILD_LAYOUT_STATE_ROOT
+  base_k=$(rbl_k_hash "$source_root" D1 "$layout")
+  RELEASE_BUILD_LAYOUT_STATE_ROOT=$test_root/k-changed
+  export RELEASE_BUILD_LAYOUT_STATE_ROOT
+  changed_k=$(rbl_k_hash "$source_root" D1 "$layout")
+  RELEASE_BUILD_LAYOUT_STATE_ROOT=$test_root/k-unrelated
+  export RELEASE_BUILD_LAYOUT_STATE_ROOT
+  unrelated_k=$(rbl_k_hash "$source_root" D1 "$layout")
+  [ "$base_k" != "$changed_k" ] || {
+    echo 'self-test: changed installed package version did not alter K' >&2
+    return 1
+  }
+  [ "$base_k" != "$unrelated_k" ] || {
+    echo 'self-test: unrelated installed package version did not alter K' >&2
+    return 1
+  }
+  printf '%s\n' "$base_k" >"$test_root/base-k.sha256"
+  printf '%s\n' "$changed_k" >"$test_root/changed-k.sha256"
+  printf '%s\n' "$unrelated_k" >"$test_root/unrelated-k.sha256"
+  echo 'PRODUCTION_NATIVE_PACKAGE_IDENTITY_SELF_TEST: PASS (captured APK inventory and fake commands only)'
+)
+
+run_native_package_identity_tests
+if [ "${IMAGE_BUILD_SELFTEST_NATIVE_PACKAGE_ONLY:-0}" = 1 ]; then
+  echo 'PRODUCTION_NATIVE_PACKAGE_FOCUSED_SELF_TEST: PASS'
+  exit 0
+fi
 
 mkdir -p "$fake_bin" "$repo_dir" "$(dirname "$compose_file")"
 # Build an intentionally small, private clean source tree from the frozen
@@ -1173,12 +1472,19 @@ def write_json(path, value, mode):
 
 def native_identity():
     return {
-        "format": "lagrange-build-layout-native-v2",
+        "format": "lagrange-build-layout-native-v3",
         "target_platform": "linux/amd64",
         "host_triple": "x86_64-unknown-linux-musl",
         "rustc_vv": "rustc 1.97.1\nhost: x86_64-unknown-linux-musl\n",
         "cargo_version": "cargo 1.97.1 (fixture)",
-        "apk_info_vv": "build-base-1\nmusl-dev-1\nopenssl-dev-1\npkgconf-1\npostgresql-dev-1\n",
+        "apk_info_vv": "build-base-0.5-r4\nmusl-dev-1.2.6-r2\nopenssl-dev-3.5.8-r0\npkgconf-2.5.1-r0\npostgresql18-dev-18.6-r0\n",
+        "apk_installed_packages": [
+            {"name": "build-base", "version": "0.5-r4", "provides": [], "status": ["installed"]},
+            {"name": "musl-dev", "version": "1.2.6-r2", "provides": [], "status": ["installed"]},
+            {"name": "openssl-dev", "version": "3.5.8-r0", "provides": [], "status": ["installed"]},
+            {"name": "pkgconf", "version": "2.5.1-r0", "provides": [], "status": ["installed"]},
+            {"name": "postgresql18-dev", "version": "18.6-r0", "provides": ["postgresql-dev"], "status": ["installed"]},
+        ],
         "native_packages": ["build-base", "musl-dev", "openssl-dev", "pkgconf", "postgresql-dev"],
         "compiler_env": {"CARGO_BUILD_JOBS": "2", "CARGO_TARGET_DIR": "/cargo-target", "RUSTFLAGS": "<unset>"},
     }

@@ -2327,6 +2327,7 @@ record_common_native_identity() {
   native=$state_root/native-identity.json
   [ -f "$native" ] && [ ! -L "$native" ] || return 1
   [ "$(stat -c '%u:%a' -- "$native")" = "$(id -u):600" ] || return 1
+  rbl_validate_native_identity "$native" || return 1
   fields=$(RBL_BENCH_NATIVE=$native python3 - <<'PY'
 import hashlib
 import json
@@ -2336,11 +2337,13 @@ raw = open(os.environ["RBL_BENCH_NATIVE"], "rb").read()
 value = json.loads(raw.decode("utf-8"))
 if raw != (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"):
     raise SystemExit(1)
-if (value.get("format") != "lagrange-build-layout-native-v2" or
+if (value.get("format") != "lagrange-build-layout-native-v3" or
         value.get("target_platform") != "linux/amd64" or
         value.get("host_triple") != "x86_64-unknown-linux-musl" or
         not isinstance(value.get("native_packages"), list) or
-        value.get("native_packages") != ["build-base", "musl-dev", "openssl-dev", "pkgconf", "postgresql-dev"]):
+        value.get("native_packages") != ["build-base", "musl-dev", "openssl-dev", "pkgconf", "postgresql-dev"] or
+        not isinstance(value.get("apk_installed_packages"), list) or
+        not value["apk_installed_packages"]):
     raise SystemExit(1)
 for key in ("rustc_vv", "cargo_version", "apk_info_vv"):
     if not isinstance(value.get(key), str) or not value[key]:
@@ -2349,7 +2352,7 @@ print("\t".join((hashlib.sha256(raw).hexdigest(),
                   hashlib.sha256(value["rustc_vv"].encode()).hexdigest(),
                   hashlib.sha256(value["cargo_version"].encode()).hexdigest(),
                   hashlib.sha256(value["apk_info_vv"].encode()).hexdigest(),
-                  str(len(value["native_packages"])))))
+                  str(len(value["apk_installed_packages"])))))
 PY
 ) || return 1
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -5478,7 +5481,7 @@ PY
       mkdir -m 0700 -- "$state_root" || return 1
       mkdir -m 0700 -- "$state_root/contexts" "$state_root/producers" "$state_root/bundles" "$state_root/images" "$state_root/verification" "$state_root/gates" "$state_root/logs" "$state_root/overrides" || return 1
       native=$state_root/native-identity.json
-      printf '%s\n' '{"apk_info_vv":"build-base-0\\nmusl-dev-0\\nopenssl-dev-0\\npkgconf-0\\npostgresql-dev-0\\n","cargo_version":"cargo 1.97.1 (fixture)","compiler_env":{"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>"},"format":"lagrange-build-layout-native-v2","host_triple":"x86_64-unknown-linux-musl","native_packages":["build-base","musl-dev","openssl-dev","pkgconf","postgresql-dev"],"rustc_vv":"rustc 1.97.1 (fixture)\\nhost: x86_64-unknown-linux-musl\\n","target_platform":"linux/amd64"}' >"$native"
+      printf '%s\n' '{"apk_info_vv":"build-base-0.5-r4\nmusl-dev-1.2.6-r2\nopenssl-dev-3.5.8-r0\npkgconf-2.5.1-r0\npostgresql18-dev-18.6-r0\n","apk_installed_packages":[{"name":"build-base","provides":[],"status":["installed"],"version":"0.5-r4"},{"name":"musl-dev","provides":[],"status":["installed"],"version":"1.2.6-r2"},{"name":"openssl-dev","provides":[],"status":["installed"],"version":"3.5.8-r0"},{"name":"pkgconf","provides":[],"status":["installed"],"version":"2.5.1-r0"},{"name":"postgresql18-dev","provides":["postgresql-dev"],"status":["installed"],"version":"18.6-r0"}],"cargo_version":"cargo 1.97.1 (fixture)","compiler_env":{"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>"},"format":"lagrange-build-layout-native-v3","host_triple":"x86_64-unknown-linux-musl","native_packages":["build-base","musl-dev","openssl-dev","pkgconf","postgresql-dev"],"rustc_vv":"rustc 1.97.1 (fixture)\nhost: x86_64-unknown-linux-musl\n","target_platform":"linux/amd64"}' >"$native"
       chmod 0600 -- "$native"
       RELEASE_BUILD_LAYOUT_INITIALIZED=1
       RELEASE_BUILD_LAYOUT_SOURCE_ROOT=$source_root
