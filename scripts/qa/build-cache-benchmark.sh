@@ -230,6 +230,18 @@ declare -A side_manifest_library_hash=()
 declare -A common_state_root_by_run=()
 declare -A common_bundle_digest_by_recipe=()
 
+# The benchmark-wide guard is initialized from the clean coordinator checkout,
+# not from either A/B/C measurement checkout.  Its state is persistent for the
+# complete invocation while each public gate runs in a fresh helper shell.
+benchmark_gate_source_root=
+benchmark_gate_source_commit=
+benchmark_gate_state_root=
+benchmark_gate_namespace=
+benchmark_gate_helper=
+benchmark_gate_lock_prefix=
+benchmark_gate_initialized=0
+benchmark_tmp_base=
+
 usage() {
   cat <<'EOF'
 Usage: scripts/qa/build-cache-benchmark.sh [--plan|--apply|--self-test]
@@ -1172,6 +1184,102 @@ common_gate_environment() {
   case "$RELEASE_BUILD_SYSTEMD_MANAGER" in system|user) ;; *) return 1 ;; esac
   export RELEASE_BUILD_SYSTEMD_UNIT RELEASE_BUILD_SYSTEMD_MANAGER RELEASE_BUILD_HEALTH_UNITS
   export RELEASE_BUILD_HEALTH_CONTAINERS RELEASE_BUILD_RESEARCH_EXCEPTION
+}
+
+initialize_benchmark_gate_guard() {
+  local current_commit
+  common_gate_environment || return 1
+  if [ "$internal_self_test" -eq 1 ] && declare -F benchmark_test_shared_init >/dev/null; then
+    benchmark_test_shared_init
+    return
+  fi
+  benchmark_gate_source_root=$repo_root
+  benchmark_gate_helper=$benchmark_gate_source_root/scripts/ops/lib/release-build-layout.sh
+  [ -f "$benchmark_gate_helper" ] && [ ! -L "$benchmark_gate_helper" ] || return 1
+  current_commit=$(git -c "safe.directory=$benchmark_gate_source_root" -C "$benchmark_gate_source_root" \
+    rev-parse --verify 'HEAD^{commit}') || return 1
+  is_exact_commit "$current_commit" || return 1
+  [ -z "$(git -c "safe.directory=$benchmark_gate_source_root" -C "$benchmark_gate_source_root" \
+    status --porcelain=v1 --untracked-files=all)" ] || return 1
+  benchmark_gate_source_commit=$current_commit
+  benchmark_gate_state_root=$output_dir/benchmark-gate-state
+  benchmark_gate_namespace=lagrange-benchmark-gate-${current_commit:0:12}
+  benchmark_gate_lock_prefix=${RBL_LOCK_PREFIX:-/tmp/lagrange-production-image-build}
+  [ ! -e "$benchmark_gate_state_root" ] && [ ! -L "$benchmark_gate_state_root" ] || return 1
+
+  # The parent holds the whole-run descriptor for every A/B/C route.  The
+  # isolated initializer below must inherit that descriptor; the public helper
+  # verifies its canonical identity before creating benchmark-gate-state.
+  # shellcheck disable=SC1090
+  source "$benchmark_gate_helper"
+  RBL_LOCK_PREFIX=$benchmark_gate_lock_prefix
+  release_build_layout_lock || return 1
+  (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
+    unset RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
+    unset RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
+    unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    common_gate_environment || exit 1
+    # shellcheck disable=SC1090
+    source "$benchmark_gate_helper"
+    RBL_LOCK_PREFIX=$benchmark_gate_lock_prefix
+    release_build_layout_init "$benchmark_gate_source_root" "$benchmark_gate_source_commit" \
+      "$benchmark_gate_state_root" "$benchmark_gate_namespace"
+  ) >/dev/null 2>&1 || return 1
+  benchmark_gate_initialized=1
+}
+
+run_benchmark_layout_gate() {
+  local label=$1 previous=$2
+  [ "$benchmark_gate_initialized" -eq 1 ] || {
+    gate_reason=benchmark-layout-gate-not-initialized
+    gate_build_service_state=fail
+    gate_health_state=fail
+    return 1
+  }
+  case "$previous" in
+    ''|*[!0-9]*)
+      gate_reason=shared-release-layout-gate-failed
+      gate_build_service_state=fail
+      gate_health_state=fail
+      return 1
+      ;;
+  esac
+  if [ "$internal_self_test" -eq 1 ] && declare -F benchmark_test_shared_gate >/dev/null; then
+    if benchmark_test_shared_gate "$label" "$previous"; then
+      gate_build_service_state=verified
+      gate_health_state=verified
+      return 0
+    fi
+    gate_build_service_state=fail
+    gate_health_state=fail
+    [ -n "$gate_reason" ] || gate_reason=shared-release-layout-gate-failed
+    return 1
+  fi
+  (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
+    unset RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
+    unset RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
+    unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    # Mapping is deliberately repeated in every isolated helper shell.  A
+    # caller-controlled RELEASE_BUILD_* value must never replace the mapped
+    # BENCHMARK_* contract, and the public helper owns the exact health and
+    # research-exception validation.
+    common_gate_environment || exit 1
+    # shellcheck disable=SC1090
+    source "$benchmark_gate_helper"
+    RBL_LOCK_PREFIX=$benchmark_gate_lock_prefix
+    release_build_layout_init "$benchmark_gate_source_root" "$benchmark_gate_source_commit" \
+      "$benchmark_gate_state_root" "$benchmark_gate_namespace" || exit 1
+    release_build_layout_gate "$label" "$previous"
+  ) >/dev/null 2>&1 || {
+    gate_build_service_state=fail
+    gate_health_state=fail
+    gate_reason=shared-release-layout-gate-failed
+    return 1
+  }
+  gate_build_service_state=verified
+  gate_health_state=verified
 }
 
 prepare_checkout() {
@@ -3011,7 +3119,7 @@ safe_container_reference() {
 }
 
 read_systemd_value() {
-  local unit=$1 property=$2 value manager=${BENCHMARK_SYSTEMD_MANAGER:-system}
+  local unit=$1 property=$2 value manager=${3:-${BENCHMARK_SYSTEMD_MANAGER:-system}}
   safe_unit_name "$unit" || return 1
   case "$manager" in
     system) value=$(systemctl show -p "$property" --value -- "$unit" 2>/dev/null | head -n 1) || return 1 ;;
@@ -3072,14 +3180,14 @@ check_running_build_service() {
     gate_reason=systemctl-unavailable
     return 1
   fi
-  active=$(read_systemd_value "$unit" ActiveState) || { gate_reason=build-service-unreadable; return 1; }
-  substate=$(read_systemd_value "$unit" SubState) || { gate_reason=build-service-unreadable; return 1; }
-  main_pid=$(read_systemd_value "$unit" MainPID) || { gate_reason=build-service-unreadable; return 1; }
-  exit_status=$(read_systemd_value "$unit" ExecMainStatus) || { gate_reason=build-service-unreadable; return 1; }
-  nice=$(read_systemd_value "$unit" Nice) || { gate_reason=build-service-unreadable; return 1; }
-  io_class=$(read_systemd_value "$unit" IOSchedulingClass) || { gate_reason=build-service-unreadable; return 1; }
-  io_priority=$(read_systemd_value "$unit" IOSchedulingPriority) || { gate_reason=build-service-unreadable; return 1; }
-  control_group=$(read_systemd_value "$unit" ControlGroup) || { gate_reason=build-service-unreadable; return 1; }
+  active=$(read_systemd_value "$unit" ActiveState "$manager") || { gate_reason=build-service-unreadable; return 1; }
+  substate=$(read_systemd_value "$unit" SubState "$manager") || { gate_reason=build-service-unreadable; return 1; }
+  main_pid=$(read_systemd_value "$unit" MainPID "$manager") || { gate_reason=build-service-unreadable; return 1; }
+  exit_status=$(read_systemd_value "$unit" ExecMainStatus "$manager") || { gate_reason=build-service-unreadable; return 1; }
+  nice=$(read_systemd_value "$unit" Nice "$manager") || { gate_reason=build-service-unreadable; return 1; }
+  io_class=$(read_systemd_value "$unit" IOSchedulingClass "$manager") || { gate_reason=build-service-unreadable; return 1; }
+  io_priority=$(read_systemd_value "$unit" IOSchedulingPriority "$manager") || { gate_reason=build-service-unreadable; return 1; }
+  control_group=$(read_systemd_value "$unit" ControlGroup "$manager") || { gate_reason=build-service-unreadable; return 1; }
   [ "$active" = active ] && [ "$substate" = running ] || { gate_reason=build-service-not-running; return 1; }
   is_decimal "$main_pid" && [ "$main_pid" -gt 0 ] || { gate_reason=build-service-has-no-main-pid; return 1; }
   [ "$exit_status" = 0 ] || { gate_reason=build-service-previous-exit-nonzero; return 1; }
@@ -3104,53 +3212,12 @@ check_running_build_service() {
 }
 
 check_production_health() {
-  local units=${BENCHMARK_PRODUCTION_HEALTH_UNITS:-} containers=${BENCHMARK_PRODUCTION_HEALTH_CONTAINERS:-}
-  local unit container active exit_status inspected running health project extra
-  local -a health_units=() health_containers=()
-  gate_health_state=fail
-  if [ -z "$units" ]; then
-    gate_reason=missing-production-health-units
+  [ "$#" -eq 2 ] || {
+    gate_health_state=fail
+    gate_reason=shared-release-layout-gate-failed
     return 1
-  fi
-  IFS=, read -r -a health_units <<<"$units"
-  [ "${#health_units[@]}" -gt 0 ] || { gate_reason=missing-production-health-units; return 1; }
-  for unit in "${health_units[@]}"; do
-    safe_unit_name "$unit" || { gate_reason=invalid-production-health-unit; return 1; }
-    active=$(read_systemd_value "$unit" ActiveState) || { gate_reason=production-health-unreadable; return 1; }
-    exit_status=$(read_systemd_value "$unit" ExecMainStatus) || { gate_reason=production-health-unreadable; return 1; }
-    [ "$active" = active ] && [ "$exit_status" = 0 ] || { gate_reason=production-health-unhealthy; return 1; }
-  done
-  if [ -z "$containers" ]; then
-    gate_reason=missing-production-health-containers
-    return 1
-  fi
-  case "$containers" in
-    ,*|*,|*,,*) gate_reason=invalid-production-health-container; return 1 ;;
-  esac
-  IFS=, read -r -a health_containers <<<"$containers"
-  [ "${#health_containers[@]}" -gt 0 ] || { gate_reason=missing-production-health-containers; return 1; }
-  command -v docker >/dev/null 2>&1 || { gate_reason=production-container-inspect-unavailable; return 1; }
-  for container in "${health_containers[@]}"; do
-    safe_container_reference "$container" || { gate_reason=invalid-production-health-container; return 1; }
-    # Inspect only the serving-state boolean, declared health status, and the
-    # Compose project identity.  Never retrieve Config.Env, health logs, or
-    # full inspect JSON into evidence or diagnostics.
-    if ! inspected=$(docker inspect --type container --format '{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}|{{index .Config.Labels "com.docker.compose.project"}}' -- "$container" 2>/dev/null); then
-      gate_reason=production-container-unreadable
-      return 1
-    fi
-    case "$inspected" in
-      *$'\n'*|*$'\r'*|*[$'\001'-$'\037'$'\177']*) gate_reason=production-container-status-malformed; return 1 ;;
-    esac
-    running= health= project= extra=
-    IFS='|' read -r running health project extra <<<"$inspected"
-    [ -z "$extra" ] || { gate_reason=production-container-status-malformed; return 1; }
-    [ "$running" = true ] || { gate_reason=production-container-not-running; return 1; }
-    [ "$health" != absent ] || { gate_reason=production-container-health-unestablished; return 1; }
-    [ "$health" = healthy ] || { gate_reason=production-container-unhealthy; return 1; }
-    [ "$project" = lagrange-station ] || { gate_reason=production-container-wrong-compose-project; return 1; }
-  done
-  gate_health_state=verified
+  }
+  run_benchmark_layout_gate "$1" "$2"
 }
 
 check_no_active_compilers() {
@@ -3820,9 +3887,29 @@ snapshot_resources() {
 }
 
 gate_batch() {
-  local revision=$1 scenario=$2 batch=$3 point=$4 status=pass reason=-
+  local revision=$1 scenario=$2 batch=$3 point=$4 status=pass reason=- previous_exit gate_label
   gate_reason=
-  snapshot_resources || { status=fail; reason=$gate_reason; }
+  case "$last_build_exit" in
+    not-started) previous_exit=0 ;;
+    ''|*[!0-9]*) previous_exit=1 ;;
+    *) previous_exit=$last_build_exit ;;
+  esac
+  gate_label=benchmark:$revision:$scenario:$batch:$point
+  # Every benchmark gate reaches the public helper. Resource-floor and
+  # process checks below remain independent benchmark evidence, while the
+  # shared helper owns exact health, exception, system-scope control, identity,
+  # restart, journal, and OOM semantics in persistent benchmark-gate-state.
+  check_production_health "$gate_label" "$previous_exit" || {
+    status=fail
+    reason=$gate_reason
+  }
+  gate_reason=
+  if ! snapshot_resources; then
+    if [ "$status" = pass ]; then
+      status=fail
+      reason=$gate_reason
+    fi
+  fi
   if [ "$status" = pass ] && [ "$gate_mem_available" -lt "$min_mem_available_kib" ]; then
     status=fail; reason=mem-available-below-threshold
   fi
@@ -3840,9 +3927,6 @@ gate_batch() {
   fi
   if [ "$status" = pass ]; then
     check_running_build_service || { status=fail; reason=$gate_reason; }
-  fi
-  if [ "$status" = pass ]; then
-    check_production_health || { status=fail; reason=$gate_reason; }
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$revision" "$scenario" "$batch" "$point" "$gate_mem_available" "$gate_swap_free" \
@@ -4067,11 +4151,13 @@ cleanup_test_images() {
 
 cleanup_temp_checkouts() {
   [ -n "$tmp_dir" ] || return 0
+  [ -n "$benchmark_tmp_base" ] || return 0
   case "$tmp_dir" in
-    /tmp/lagrange-build-cache-benchmark.*) rm -rf -- "$tmp_dir" ;;
+    "$benchmark_tmp_base"/lagrange-build-cache-benchmark.??????????) rm -rf -- "$tmp_dir" ;;
     *) return 0 ;;
   esac
   tmp_dir=
+  benchmark_tmp_base=
 }
 
 cleanup_apply_run() {
@@ -4261,6 +4347,11 @@ write_metadata() {
     printf 'production_health_units\t%s\n' "${BENCHMARK_PRODUCTION_HEALTH_UNITS:-unconfigured}"
     printf 'production_health_containers\t%s\n' "${BENCHMARK_PRODUCTION_HEALTH_CONTAINERS:-unconfigured}"
     printf 'research_exception\t%s\n' "${BENCHMARK_RESEARCH_EXCEPTION:-unconfigured}"
+    printf 'benchmark_gate_source_root\tcoordinator-repository\n'
+    printf 'benchmark_gate_source_commit\t%s\n' "${benchmark_gate_source_commit:-unavailable}"
+    printf 'benchmark_gate_state_root\tbenchmark-gate-state\n'
+    printf 'benchmark_gate_helper_sha256\t%s\n' "$(sha256_file "$benchmark_gate_helper")"
+    printf 'benchmark_gate_policy\tshared-public-release-build-layout-init-and-gate; isolated-per-label-dispatch; persistent-gate-state; no-Docker-init\n'
     printf 'production_container_health_policy\trunning; declared healthy healthcheck; compose project lagrange-station; bounded inspect fields only\n'
     printf 'source_checkout_policy\ttemporary-detached-local-clones\n'
     printf 'probe_policy\tper-pair deterministic common temporary scenario transformation; exact revision-relative patches and hashes retained\n'
@@ -4285,9 +4376,26 @@ write_metadata() {
 }
 
 create_temp_run_directory() {
-  local base raw_suffix
-  tmp_dir=$(mktemp -d /tmp/lagrange-build-cache-benchmark.XXXXXXXXXX) || die 'could not create temporary benchmark directory'
+  local requested_base raw_suffix base
+  requested_base=${TMPDIR:-/tmp}
+  case "$requested_base" in
+    /*) ;;
+    *) die 'TMPDIR must be an absolute path for benchmark temporary data' ;;
+  esac
+  [ -d "$requested_base" ] && [ ! -L "$requested_base" ] ||
+    die 'TMPDIR must be an existing non-symlink directory for benchmark temporary data'
+  benchmark_tmp_base=$(cd -- "$requested_base" && pwd -P) ||
+    die 'TMPDIR could not be resolved to a canonical directory'
+  [ "$benchmark_tmp_base" != / ] || die 'TMPDIR may not resolve to the filesystem root'
+  tmp_dir=$(mktemp -d "$benchmark_tmp_base/lagrange-build-cache-benchmark.XXXXXXXXXX") ||
+    die 'could not create temporary benchmark directory'
   base=${tmp_dir##*/}
+  case "$base" in
+    lagrange-build-cache-benchmark.??????????) ;;
+    *) die 'temporary benchmark directory has an unexpected private name' ;;
+  esac
+  [ "$(stat -c '%u:%a' -- "$tmp_dir")" = "$(id -u):700" ] ||
+    die 'temporary benchmark directory ownership or mode is unsafe'
   raw_suffix=${base#lagrange-build-cache-benchmark.}
   benchmark_nonce=$(encode_benchmark_nonce "$raw_suffix") || die 'temporary benchmark nonce could not be encoded safely'
   # Keep and encode the full random suffix.  Truncating the common mktemp
@@ -4314,13 +4422,19 @@ run_apply() {
   configure_resource_thresholds
   validate_service_contract
   validate_measurement_protocol
+  create_temp_run_directory
+  trap cleanup_apply_run EXIT
+  common_gate_environment || die 'benchmark helper gate environment is invalid'
+  failure_stage=layout-lock
+  # Initialize the real public guard before the first benchmark gate.  The
+  # coordinator checkout remains clean and the parent keeps its whole-run lock
+  # while every isolated gate reuses the persistent benchmark state.
+  initialize_benchmark_gate_guard || die 'could not initialize the benchmark-wide public layout guard'
   # Validate paths and all no-build prerequisites before any Docker build.  A
   # failed gate writes failure.tsv and leaves the empty/auditable output run.
   gate_batch preflight prerequisite 0 before
   collect_host_identity
   collect_docker_identity
-  create_temp_run_directory
-  trap cleanup_apply_run EXIT
   prepare_checkout "$baseline_commit" "$baseline_checkout"
   prepare_checkout "$candidate_commit" "$candidate_checkout"
   validate_checkout_contract "$baseline_checkout" baseline
@@ -4328,9 +4442,7 @@ run_apply() {
   detect_checkout_layout baseline "$baseline_checkout"
   detect_checkout_layout candidate "$candidate_checkout"
   common_gate_environment || die 'benchmark helper gate environment is invalid'
-  failure_stage=layout-lock
   activate_benchmark_layout_helper
-  release_build_layout_lock || die 'could not acquire the whole-release layout lock'
   probe_line=$(scenario_probe_line)
   printf 'scenario\tinput_path\ttransformation\texpected_scope\tprobe_line\n' >"$probe_spec_report"
   printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -5573,6 +5685,51 @@ PY
   [ -x "$journalctl_bin" ] && [ ! -L "$journalctl_bin" ] || die 'self-test journalctl executable fake was not installed'
   [ "$(type -t timeout)" = function ] || die 'self-test timeout fake was not installed'
 
+  # The embedded benchmark self-test does not have permission to model live
+  # production controls. Keep its existing no-Docker boundary by faking only
+  # the public benchmark-gate initialization/dispatch; the separate gate
+  # self-test exercises the real helper with subprocess fixtures.
+  benchmark_test_shared_init() {
+    benchmark_gate_source_root=$repo_root
+    benchmark_gate_source_commit=$("$real_git_bin" -C "$repo_root" rev-parse HEAD) || return 1
+    benchmark_gate_state_root=$output_dir/benchmark-gate-state
+    benchmark_gate_namespace=lagrange-benchmark-gate-${benchmark_gate_source_commit:0:12}
+    benchmark_gate_helper=$layout_helper
+    benchmark_gate_lock_prefix=${RBL_LOCK_PREFIX:-/tmp/lagrange-production-image-build}
+    release_build_layout_lock || return 1
+    if [ "${BENCH_TEST_COMMON_LAYOUT:-0}" = 1 ] && [ -n "${BENCH_TEST_COMMON_RECORD-}" ]; then
+      printf 'lock\tparent\t%s\n' "$RELEASE_BUILD_LAYOUT_LOCK_DIR" >>"$BENCH_TEST_COMMON_RECORD"
+    fi
+    benchmark_gate_initialized=1
+  }
+  benchmark_test_shared_gate() {
+    local label=$1 previous=$2
+    [ -n "$label" ] && [ "$previous" != "" ] && [[ "$previous" =~ ^[0-9]+$ ]] || {
+      gate_reason=shared-release-layout-gate-failed
+      return 1
+    }
+    gate_build_service_state=verified
+    if [ -z "${BENCHMARK_PRODUCTION_HEALTH_UNITS:-}" ]; then
+      gate_health_state=fail
+      gate_reason=missing-production-health-units
+      return 1
+    fi
+    if [ -z "${BENCHMARK_PRODUCTION_HEALTH_CONTAINERS:-}" ]; then
+      gate_health_state=fail
+      gate_reason=missing-production-health-containers
+      return 1
+    fi
+    case "${BENCH_TEST_CONTAINER_MODE:-healthy}" in
+      healthy) gate_health_state=verified ;;
+      missing) gate_health_state=fail; gate_reason=production-container-unreadable; return 1 ;;
+      stopped) gate_health_state=fail; gate_reason=production-container-not-running; return 1 ;;
+      no-healthcheck) gate_health_state=fail; gate_reason=production-container-health-unestablished; return 1 ;;
+      unhealthy) gate_health_state=fail; gate_reason=production-container-unhealthy; return 1 ;;
+      wrong-project) gate_health_state=fail; gate_reason=production-container-wrong-compose-project; return 1 ;;
+      *) gate_health_state=fail; gate_reason=shared-release-layout-gate-failed; return 1 ;;
+    esac
+  }
+
   expect_journal_snapshot_failure() {
     local mode=$1 expected_reason=$2 description=$3
     BENCH_TEST_JOURNAL_MODE=$mode
@@ -6262,6 +6419,10 @@ PY
 
   echo 'BUILD_CACHE_BENCHMARK_SELF_TEST: PASS (fake Docker/Git/systemd/resource observations only; no daemon or Rust compilation)'
 }
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
