@@ -224,6 +224,54 @@ if (value["archive"].get("request_format") != "lagrange-image-files-v1" or
 PY
 }
 
+rbl_validate_cargo_metadata_graph() {
+  [ "$#" -eq 3 ] || {
+    rbl_die 'Cargo metadata graph validator arguments are invalid'
+    return 1
+  }
+  rbl_metadata=$1
+  rbl_layout=$2
+  rbl_build_root=$3
+  RBL_LAYOUT=$rbl_layout RBL_BUILD_ROOT=$rbl_build_root python3 - "$rbl_metadata" <<'PY'
+import json,os,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if not isinstance(value,dict) or not isinstance(value.get("packages"),list) or not isinstance(value.get("workspace_members"),list):
+    raise SystemExit("cargo-metadata-shape-invalid")
+layout=json.load(open(os.environ["RBL_LAYOUT"],encoding="utf-8"))
+root=os.path.abspath(os.environ["RBL_BUILD_ROOT"])
+expected=layout["packages"]
+records={}
+for package in value["packages"]:
+    if not isinstance(package,dict) or not isinstance(package.get("name"),str) or not isinstance(package.get("manifest_path"),str):
+        raise SystemExit("cargo-metadata-package-invalid")
+    manifest=os.path.abspath(package["manifest_path"])
+    if not manifest.startswith(root+os.sep) or not manifest.endswith("/Cargo.toml"):
+        raise SystemExit("cargo-metadata-path-invalid")
+    records[package["name"]]=package
+if set(records)!=set(expected): raise SystemExit("cargo-metadata-member-set-invalid")
+for name,record in expected.items():
+    package=records[name]
+    actual=os.path.relpath(os.path.dirname(package["manifest_path"]),root).replace(os.sep,"/")
+    if actual!=record["path"]: raise SystemExit("cargo-metadata-member-path-invalid")
+    local=[]
+    for dependency in package.get("dependencies",[]):
+        if not isinstance(dependency,dict): raise SystemExit("cargo-metadata-dependency-invalid")
+        if "kind" not in dependency:
+            raise SystemExit("cargo-metadata-dependency-kind-invalid")
+        kind=dependency["kind"]
+        if kind is not None and (not isinstance(kind,str) or kind not in ("build","dev")):
+            raise SystemExit("cargo-metadata-dependency-kind-invalid")
+        if kind == "dev":
+            continue
+        candidate=dependency.get("name")
+        path=dependency.get("path")
+        if candidate in expected and path is not None:
+            local.append(candidate)
+    if sorted(set(local)) != record["local_dependencies"]:
+        raise SystemExit("cargo-metadata-local-graph-invalid")
+PY
+}
+
 rbl_clean_worktree() {
   rbl_root_path=$1
   rbl_status=$(git -c "safe.directory=$rbl_root_path" -C "$rbl_root_path" \
@@ -4164,37 +4212,7 @@ PY
       rbl_die 'pinned Cargo metadata validation failed'
       return 1
     }
-  RBL_LAYOUT=$rbl_layout RBL_BUILD_ROOT=$rbl_build_root python3 - "$rbl_metadata" <<'PY' || return 1
-import json,os,sys
-value=json.load(open(sys.argv[1],encoding="utf-8"))
-if not isinstance(value,dict) or not isinstance(value.get("packages"),list) or not isinstance(value.get("workspace_members"),list):
-    raise SystemExit("cargo-metadata-shape-invalid")
-layout=json.load(open(os.environ["RBL_LAYOUT"],encoding="utf-8"))
-root=os.path.abspath(os.environ["RBL_BUILD_ROOT"])
-expected=layout["packages"]
-records={}
-for package in value["packages"]:
-    if not isinstance(package,dict) or not isinstance(package.get("name"),str) or not isinstance(package.get("manifest_path"),str):
-        raise SystemExit("cargo-metadata-package-invalid")
-    manifest=os.path.abspath(package["manifest_path"])
-    if not manifest.startswith(root+os.sep) or not manifest.endswith("/Cargo.toml"):
-        raise SystemExit("cargo-metadata-path-invalid")
-    records[package["name"]]=package
-if set(records)!=set(expected): raise SystemExit("cargo-metadata-member-set-invalid")
-for name,record in expected.items():
-    package=records[name]
-    actual=os.path.relpath(os.path.dirname(package["manifest_path"]),root).replace(os.sep,"/")
-    if actual!=record["path"]: raise SystemExit("cargo-metadata-member-path-invalid")
-    local=[]
-    for dependency in package.get("dependencies",[]):
-        if not isinstance(dependency,dict): raise SystemExit("cargo-metadata-dependency-invalid")
-        candidate=dependency.get("name")
-        path=dependency.get("path")
-        if candidate in expected and path is not None:
-            local.append(candidate)
-    if sorted(set(local)) != record["local_dependencies"]:
-        raise SystemExit("cargo-metadata-local-graph-invalid")
-PY
+  rbl_validate_cargo_metadata_graph "$rbl_metadata" "$rbl_layout" "$rbl_build_root" || return 1
   rm -f -- "$rbl_metadata"
   rbl_clean_mode=$(rbl_builder_guard "$rbl_request" "$rbl_layout") || return 1
   case "$rbl_clean_mode" in
