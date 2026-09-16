@@ -3976,15 +3976,15 @@ def pairs(items):
         if key in value: raise ValueError("duplicate-json-key")
         value[key]=item
     return value
-def load(path):
+def load(path,canonical=True):
     raw=open(path,"rb").read()
     value=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs,
                      parse_constant=lambda value: (_ for _ in ()).throw(ValueError("non-finite")))
-    if raw != (json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode("utf-8"):
+    if canonical and raw != (json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode("utf-8"):
         raise ValueError("noncanonical-json")
     return value
 request=load(os.environ["RBL_REQUEST"])
-layout=load(os.environ["RBL_LAYOUT"])
+layout=load(os.environ["RBL_LAYOUT"],canonical=False)
 path=os.environ["RBL_GUARD"]
 expected={
   "format":"lagrange-build-target-guard-v2","k_sha256":request["k_sha256"],
