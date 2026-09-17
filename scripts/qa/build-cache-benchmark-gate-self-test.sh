@@ -45,8 +45,66 @@ git -C "$fixture" checkout --quiet --detach "$source_commit"
 [ -z "$(git -C "$fixture" status --porcelain=v1 --untracked-files=all)" ] ||
   fail 'disposable fixture is not clean'
 
+# The self-test runs before the coordinator commits the new policy module. Use
+# the exact working-tree helper/module bytes in this disposable fixture while
+# keeping its pinned HEAD and clean-worktree contract intact. The helper is
+# hidden from status only inside the disposable clone; the module is ignored
+# by that clone's private Git exclude file. No repository commit is made.
+cp -p -- "$product_helper" "$fixture/scripts/ops/lib/release-build-layout.sh"
+cp -p -- "$self_repo_root/scripts/ops/lib/build-resource-policy.py" \
+  "$fixture/scripts/ops/lib/build-resource-policy.py"
+git -C "$fixture" update-index --assume-unchanged scripts/ops/lib/release-build-layout.sh
+printf '%s\n' 'scripts/ops/lib/build-resource-policy.py' >>"$fixture/.git/info/exclude"
+[ -z "$(git -C "$fixture" status --porcelain=v1 --untracked-files=all)" ] ||
+  fail 'working-tree policy fixture is not clean after private setup'
+
+# Keep a separate, untouched checkout of the product C10 helper. This is the
+# regression target for the common-C binding: copying the current helper here
+# would hide the old swap-only stop that blocked the real C10 route.
+c10_commit=15c13c524562fa98efb2efa2525e9b3184836293
+git cat-file -e "$c10_commit^{commit}" || fail 'frozen C10 commit is unavailable locally'
+c10_fixture=$test_dir/frozen-c10-fixture
+git clone --quiet --no-local "$self_repo_root" "$c10_fixture" ||
+  fail 'could not create the frozen C10 fixture'
+git -C "$c10_fixture" checkout --quiet --detach "$c10_commit" ||
+  fail 'could not detach the frozen C10 fixture'
+[ "$(git -C "$c10_fixture" rev-parse HEAD)" = "$c10_commit" ] ||
+  fail 'frozen C10 fixture did not retain its pinned commit'
+[ -z "$(git -C "$c10_fixture" status --porcelain=v1 --untracked-files=all)" ] ||
+  fail 'frozen C10 fixture is not clean'
+
 fake_bin=$test_dir/fake-bin
 mkdir -m 0700 -- "$fake_bin"
+
+fake_python=$test_dir/fake-python
+mkdir -m 0700 -- "$fake_python"
+cat >"$fake_python/sitecustomize.py" <<'PY'
+import builtins
+import io
+import os
+
+_real_open = builtins.open
+
+
+def open_resource_fixture(file, mode="r", *args, **kwargs):
+    path = os.fspath(file)
+    if path == "/proc/meminfo" and "r" in mode:
+        value = os.environ.get("WP16_MEMINFO_FIXTURE")
+        if value is not None:
+            if "b" in mode:
+                return io.BytesIO(value.encode("ascii"))
+            return io.StringIO(value)
+    if path == "/proc/pressure/memory" and "r" in mode:
+        value = os.environ.get("WP16_PRESSURE_FIXTURE")
+        if value is not None:
+            if "b" in mode:
+                return io.BytesIO(value.encode("ascii"))
+            return io.StringIO(value)
+    return _real_open(file, mode, *args, **kwargs)
+
+
+builtins.open = open_resource_fixture
+PY
 control_cgroup=$(awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup)
 [ -n "$control_cgroup" ] && [ "$control_cgroup" != / ] || fail 'test cgroup is not usable'
 boot_id=$(tr -d '-' </proc/sys/kernel/random/boot_id)
@@ -216,6 +274,9 @@ EOF
 
 chmod 0700 "$fake_bin/systemctl" "$fake_bin/ps" "$fake_bin/journalctl" "$fake_bin/docker"
 export PATH="$fake_bin:$PATH"
+export PYTHONPATH="$fake_python"
+export WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
+export WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
 
 write_exception() {
   local path=$1 kind=valid
@@ -282,7 +343,9 @@ evidence=record.get("evidence")
 if not isinstance(evidence,dict):
     raise SystemExit("missing-evidence")
 reason=os.environ["WP16_EXPECTED_REASON"]
-if reason in ("previous-step-failed","research-exception-invalid"):
+if reason in ("previous-step-failed","research-exception-invalid",
+              "mem-available-below-floor","memory-pressure-high",
+              "resource-observation-invalid"):
     raise SystemExit(0)
 if not isinstance(evidence.get("build_unit"),dict):
     raise SystemExit("missing-build-evidence")
@@ -295,6 +358,37 @@ if reason=="image-build-only-known-incident":
     binding=evidence.get("research_exception")
     if not isinstance(binding,dict) or binding.get("fields",{}).get("known_error_code")!="PRICE_CURATION_FAILED":
         raise SystemExit("missing-exception-binding")
+PY
+}
+
+assert_resource_evidence() {
+  local state=$1 expected_status=$2 expected_reason=$3 expected_mem=$4 expected_swap=$5 expected_full=$6
+  WP16_RECORD=$state/gates/gates.jsonl WP16_EXPECTED_STATUS=$expected_status \
+    WP16_EXPECTED_REASON=$expected_reason WP16_EXPECTED_MEM=$expected_mem \
+WP16_EXPECTED_SWAP=$expected_swap WP16_EXPECTED_FULL=$expected_full python3 - <<'PY'
+import json
+import os
+import re
+
+records=[json.loads(line) for line in open(os.environ["WP16_RECORD"],encoding="utf-8") if line.strip()]
+if not records:
+    raise SystemExit("empty-gate-record")
+record=records[-1]
+if record.get("status")!=os.environ["WP16_EXPECTED_STATUS"]:
+    raise SystemExit("resource-status")
+if record.get("reason")!=os.environ["WP16_EXPECTED_REASON"]:
+    raise SystemExit("resource-reason")
+evidence=record.get("evidence",{})
+if evidence.get("mem_available_kib") != int(os.environ["WP16_EXPECTED_MEM"]):
+    raise SystemExit("resource-memory")
+if evidence.get("swap_free_kib") != int(os.environ["WP16_EXPECTED_SWAP"]):
+    raise SystemExit("resource-swap")
+if not isinstance(evidence.get("resource_policy_sha256"),str) or not re.fullmatch(r"[0-9a-f]{64}",evidence["resource_policy_sha256"]):
+    raise SystemExit("resource-policy-hash")
+if not isinstance(evidence.get("memory_psi_some_avg10"),float) or evidence["memory_psi_some_avg10"] != 0.0:
+    raise SystemExit("resource-some-psi")
+if not isinstance(evidence.get("memory_psi_full_avg10"),float) or evidence["memory_psi_full_avg10"] != float(os.environ["WP16_EXPECTED_FULL"]):
+    raise SystemExit("resource-full-psi")
 PY
 }
 
@@ -322,6 +416,7 @@ run_gate_case() {
     unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
     unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
     unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
     unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
     export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service
     export RELEASE_BUILD_SYSTEMD_MANAGER=$manager
@@ -360,6 +455,7 @@ run_restart_growth_case() {
     unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
     unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
     unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
     unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
     export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
     export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service
@@ -401,6 +497,7 @@ run_monotonicity_case() {
     unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
     unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
     unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
     unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
     export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
     export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service
@@ -442,6 +539,7 @@ PY
     unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
     unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
     unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
     unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
     export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
     export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service
@@ -516,7 +614,7 @@ if len(records)!=1 or records[0]["label"]!="benchmark:dispatch:integration:1:bef
 if records[0]["status"]!="PASS" or records[0]["reason"]!="healthy":
     raise SystemExit("dispatch-gate-status")
 fields=open(os.environ["WP16_REPORT"],encoding="utf-8").read().splitlines()[-1].split("\t")
-if len(fields)!=29 or fields[26]!="verified" or fields[27]!="verified" or fields[28]!="pass:-":
+if len(fields)!=31 or fields[28]!="verified" or fields[29]!="verified" or fields[30]!="pass:-":
     raise SystemExit("dispatch-report-fields")
 PY
   grep -Fq $'user\twp16-build.service' "$dispatch/systemctl.tsv" ||
@@ -531,9 +629,143 @@ PY
   fi
 }
 
+run_frozen_c10_gate_case() {
+  local name=$1 meminfo=$2 pressure=$3 container_mode=$4 journal_mode=$5
+  local expected_status=$6 expected_reason=$7 nested=${8:-0}
+  local case_dir=$test_dir/frozen-c10-cases/$name
+  local public_state=$case_dir/public-gate-state
+  local c10_state=$case_dir/c10-state
+  local lock_prefix=$case_dir/whole-lock
+  local actual_status
+  mkdir -m 0700 -p -- "$case_dir"
+  WP16_MEMINFO_FIXTURE=$meminfo
+  WP16_PRESSURE_FIXTURE=$pressure
+  WP16_CONTAINER_MODE=$container_mode
+  WP16_JOURNAL_MODE=$journal_mode
+  export WP16_MEMINFO_FIXTURE WP16_PRESSURE_FIXTURE WP16_CONTAINER_MODE WP16_JOURNAL_MODE
+  unset WP16_EXCEPTION_PATH
+  export WP16_SYSTEMCTL_LOG=$case_dir/systemctl.tsv
+  : >"$WP16_SYSTEMCTL_LOG"
+  if (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    repo_root=$fixture
+    internal_self_test=0
+    benchmark_gate_initialized=1
+    benchmark_gate_source_root=$fixture
+    benchmark_gate_source_commit=$source_commit
+    benchmark_gate_state_root=$public_state
+    benchmark_gate_namespace=wp16-c10-public-$name
+    benchmark_gate_helper=$fixture/scripts/ops/lib/release-build-layout.sh
+    benchmark_gate_lock_prefix=$lock_prefix
+    BENCHMARK_SYSTEMD_SERVICE=wp16-build.service
+    BENCHMARK_SYSTEMD_MANAGER=system
+    BENCHMARK_PRODUCTION_HEALTH_UNITS=api.service,web.service
+    BENCHMARK_PRODUCTION_HEALTH_CONTAINERS=api-container,lagrange-station-research-worker-1
+    BENCHMARK_RESEARCH_EXCEPTION=
+    export BENCHMARK_SYSTEMD_SERVICE BENCHMARK_SYSTEMD_MANAGER
+    export BENCHMARK_PRODUCTION_HEALTH_UNITS BENCHMARK_PRODUCTION_HEALTH_CONTAINERS
+    export BENCHMARK_RESEARCH_EXCEPTION
+    RBL_LOCK_PREFIX=$lock_prefix
+    export RBL_LOCK_PREFIX
+    common_gate_environment || exit 1
+    # Hold the same parent lock that run_benchmark_layout_gate inherits, then
+    # replace only the helper functions with the untouched frozen C10 copy.
+    # The current public gate remains the implementation reached by binding.
+    source "$benchmark_gate_helper"
+    RBL_LOCK_PREFIX=$lock_prefix
+    release_build_layout_lock || exit 1
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    # shellcheck disable=SC1090
+    source "$c10_fixture/scripts/ops/lib/release-build-layout.sh"
+    RBL_LOCK_PREFIX=$lock_prefix
+    common_gate_environment || exit 1
+    common_c_gate_binding baseline warmup || exit 1
+    release_build_layout_init "$c10_fixture" "$c10_commit" "$c10_state" "wp16-c10-$name" >/dev/null || exit 1
+    if [ "$nested" -eq 1 ]; then
+      c10_context_root=$c10_state
+      rbl_make_context() { printf '%s\n' "$c10_context_root/contexts/fixture"; }
+      rbl_produce_native() { return 0; }
+      rbl_produce_bin() { return 0; }
+      rbl_bundle_create() { return 0; }
+      rbl_bundle_verify() { return 0; }
+    fi
+    release_build_layout_gate run-start 0 || exit 1
+    if [ "$nested" -eq 1 ]; then
+      release_build_layout_prepare api-server "$c10_commit" "$c10_state" >/dev/null || exit 1
+    fi
+  ) >"$case_dir/run.out" 2>"$case_dir/run.err"; then
+    actual_status=PASS
+  else
+    actual_status=FAIL
+  fi
+  [ "$actual_status" = "$expected_status" ] ||
+    fail "frozen C10 $name returned $actual_status, expected $expected_status"
+  assert_record "$public_state" "$expected_status" "$expected_reason" ||
+    fail "frozen C10 $name did not retain the expected public-gate record"
+  [ -f "$public_state/run.json" ] && [ -f "$public_state/gates/gates.jsonl" ] ||
+    fail "frozen C10 $name did not use persistent public-gate state"
+  if [ "$nested" -eq 1 ]; then
+    WP16_RECORD=$public_state/gates/gates.jsonl python3 - <<'PY'
+import json
+import os
+
+records=[json.loads(line) for line in open(os.environ["WP16_RECORD"],encoding="utf-8") if line.strip()]
+labels=[item.get("label") for item in records]
+required={
+    "common-C:baseline:warmup:run-start",
+    "common-C:baseline:warmup:prepare:api-server",
+    "common-C:baseline:warmup:native:D1",
+}
+if not required.issubset(labels):
+    raise SystemExit("frozen-c10-direct-or-nested-gate-missing")
+if not any(isinstance(label,str) and label.startswith("common-C:baseline:warmup:producer:D1:") for label in labels):
+    raise SystemExit("frozen-c10-producer-gate-missing")
+if any(item.get("status") != "PASS" for item in records):
+    raise SystemExit("frozen-c10-nested-gate-failed")
+PY
+  fi
+}
+
 # Every case below reaches the unchanged public initializer and gate, which
 # writes a canonical persistent record. Structured fields, not a status
 # string, determine every expected outcome.
+WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
+WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+run_gate_case swap-zero-plenty-ram healthy none PASS healthy
+assert_resource_evidence "$test_dir/cases/swap-zero-plenty-ram/state" PASS healthy 4194304 0 0.0
+WP16_MEMINFO_FIXTURE=$'MemAvailable:       1048576 kB\nSwapFree:            8388608 kB'
+run_gate_case ram-below-floor healthy none FAIL mem-available-below-floor
+assert_resource_evidence "$test_dir/cases/ram-below-floor/state" FAIL mem-available-below-floor 1048576 8388608 0.0
+WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
+WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=5.00 avg60=0.00 avg300=0.00 total=1'
+run_gate_case psi-exact-threshold healthy none FAIL memory-pressure-high
+assert_resource_evidence "$test_dir/cases/psi-exact-threshold/state" FAIL memory-pressure-high 4194304 0 5.0
+WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=4.99 avg60=0.00 avg300=0.00 total=1'
+run_gate_case psi-below-threshold healthy none PASS healthy
+assert_resource_evidence "$test_dir/cases/psi-below-threshold/state" PASS healthy 4194304 0 4.99
+WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=NaN avg60=0.00 avg300=0.00 total=1'
+run_gate_case psi-nan healthy none FAIL resource-observation-invalid
+WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+run_gate_case psi-missing-field healthy none FAIL resource-observation-invalid
+WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+WP16_MEMINFO_FIXTURE=$'MemAvailable:       8722008 kB\nSwapFree:             499484 kB'
+run_gate_case final-sample-low-psi healthy none PASS healthy
+assert_resource_evidence "$test_dir/cases/final-sample-low-psi/state" PASS healthy 8722008 499484 0.0
+WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB'
+run_gate_case meminfo-missing-swap healthy none FAIL resource-observation-invalid
+WP16_MEMINFO_FIXTURE=$'SwapFree:                  0 kB'
+run_gate_case meminfo-missing-available healthy none FAIL resource-observation-invalid
+WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
 run_gate_case valid-exception research-exception valid PASS image-build-only-known-incident
 run_gate_case absent-exception research-exception none FAIL container-health-invalid
 run_gate_case wrong-container-id wrong-id valid FAIL container-health-invalid
@@ -547,5 +779,27 @@ run_gate_case previous-exit healthy none FAIL previous-step-failed system 17
 run_restart_growth_case
 run_monotonicity_case
 run_dispatch_case
+
+# Source the real frozen C10 helper for the dispatch regression. The first
+# case proves zero swap plus low PSI reaches run-start and the frozen helper's
+# nested producer gates through the current public gate. The following cases
+# prove the public resource/OOM/health stops remain active on that same route.
+c10_low_pressure=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+run_frozen_c10_gate_case zero-swap-nested \
+  $'MemAvailable:       4194304 kB\nSwapFree:                  0 kB' \
+  "$c10_low_pressure" healthy clean PASS healthy 1
+run_frozen_c10_gate_case low-ram-plenty-swap \
+  $'MemAvailable:       1048576 kB\nSwapFree:            8388608 kB' \
+  "$c10_low_pressure" healthy clean FAIL mem-available-below-floor
+run_frozen_c10_gate_case high-full-psi \
+  $'MemAvailable:       4194304 kB\nSwapFree:                  0 kB' \
+  $'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=5.00 avg60=0.00 avg300=0.00 total=1' \
+  healthy clean FAIL memory-pressure-high
+run_frozen_c10_gate_case kernel-oom \
+  $'MemAvailable:       4194304 kB\nSwapFree:                  0 kB' \
+  "$c10_low_pressure" healthy oom FAIL kernel-oom-observed
+run_frozen_c10_gate_case unhealthy-service \
+  $'MemAvailable:       4194304 kB\nSwapFree:                  0 kB' \
+  "$c10_low_pressure" nonresearch-unhealthy clean FAIL container-health-invalid
 
 printf 'BUILD_CACHE_BENCHMARK_GATE_SELF_TEST: PASS (real public init/gate with structured subprocess fixtures; no Docker, Rust, or systemd mutation)\n'

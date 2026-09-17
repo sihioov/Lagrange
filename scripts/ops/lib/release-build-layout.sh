@@ -1122,9 +1122,16 @@ release_build_layout_plan() {
   rbl_source_hash=$(rbl_hash_source "$rbl_root_path" "$rbl_layout" 1) || return 1
   rbl_helper_hash=$(rbl_sha256_file "$(rbl_helper_path)") || return 1
   rbl_layout_hash=$(rbl_sha256_file "$rbl_layout") || return 1
+  rbl_resource_policy=$rbl_root_path/scripts/ops/lib/build-resource-policy.py
+  [ -f "$rbl_resource_policy" ] && [ ! -L "$rbl_resource_policy" ] || {
+    rbl_die 'build resource policy module is missing or symlinked'
+    return 1
+  }
+  rbl_resource_policy_hash=$(rbl_sha256_file "$rbl_resource_policy") || return 1
   printf 'RELEASE_BUILD_LAYOUT_PLAN format=%s layout=common platform=%s\n' "$RBL_FORMAT" "$RBL_PLATFORM"
   printf '  source_root=%s commit=%s source_input_sha256=%s\n' "$rbl_root_path" "$rbl_commit" "$rbl_source_hash"
-  printf '  helper_sha256=%s layout_sha256=%s cache_namespace=product\n' "$rbl_helper_hash" "$rbl_layout_hash"
+  printf '  helper_sha256=%s layout_sha256=%s resource_policy_sha256=%s cache_namespace=product\n' \
+    "$rbl_helper_hash" "$rbl_layout_hash" "$rbl_resource_policy_hash"
   printf '  runtime_payload_inventory_sha256=%s dockerignore_sha256=%s\n' \
     "$rbl_runtime_inventory_hash" "$RBL_DOCKERIGNORE_SHA256"
   printf '%s\n' '  producer_order=D1:api-server,D6:collectors[3+3+2+2],D2:job-queue,D3:owner-beta,D4:owner-equity-v2,D5:backtest,D7:paper'
@@ -1276,10 +1283,17 @@ release_build_layout_init() {
   rbl_source_hash=$(rbl_hash_source "$rbl_source_root" "$rbl_layout" 1) || return 1
   rbl_helper_hash=$(rbl_sha256_file "$rbl_source_root/scripts/ops/lib/release-build-layout.sh") || return 1
   rbl_layout_hash=$(rbl_sha256_file "$rbl_layout") || return 1
+  rbl_resource_policy=$rbl_source_root/scripts/ops/lib/build-resource-policy.py
+  [ -f "$rbl_resource_policy" ] && [ ! -L "$rbl_resource_policy" ] || {
+    rbl_die 'build resource policy module is missing or symlinked'
+    return 1
+  }
+  rbl_resource_policy_hash=$(rbl_sha256_file "$rbl_resource_policy") || return 1
   rbl_run_path=$rbl_state_root/run.json
   RBL_RUN_PATH=$rbl_run_path RBL_SOURCE_ROOT=$rbl_source_root RBL_COMMIT=$rbl_commit \
   RBL_STATE_ROOT=$rbl_state_root RBL_NAMESPACE=$rbl_namespace RBL_SOURCE_HASH=$rbl_source_hash \
   RBL_HELPER_HASH=$rbl_helper_hash RBL_LAYOUT_HASH=$rbl_layout_hash \
+  RBL_RESOURCE_POLICY_HASH=$rbl_resource_policy_hash \
   RBL_RUNTIME_INVENTORY_HASH=$rbl_runtime_inventory_hash python3 - <<'PY' || return 1
 import json, os, stat, time
 path = os.environ["RBL_RUN_PATH"]
@@ -1293,6 +1307,7 @@ value = {
   "runtime_payload_inventory_sha256":os.environ["RBL_RUNTIME_INVENTORY_HASH"],
   "helper_sha256":os.environ["RBL_HELPER_HASH"],
   "layout_sha256":os.environ["RBL_LAYOUT_HASH"],
+  "resource_policy_sha256":os.environ["RBL_RESOURCE_POLICY_HASH"],
   "guard_version":"common-1",
   "platform":"linux/amd64",
   "created_at_unix_ns":time.time_ns(),
@@ -1313,7 +1328,7 @@ if os.path.lexists(path):
     current = json.loads(open(path, "rb").read().decode())
     for key in ("format","source_root","source_commit","state_root","cache_namespace",
                 "source_input_sha256","runtime_payload_inventory_sha256",
-                "helper_sha256","layout_sha256","guard_version",
+                "helper_sha256","layout_sha256","resource_policy_sha256","guard_version",
                 "platform","gate_inputs"):
         if current.get(key) != value[key]:
             raise SystemExit("run-binding-changed")
@@ -1330,11 +1345,13 @@ PY
   RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256=$rbl_source_hash
   RELEASE_BUILD_LAYOUT_HELPER_SHA256=$rbl_helper_hash
   RELEASE_BUILD_LAYOUT_CONFIG_SHA256=$rbl_layout_hash
+  RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256=$rbl_resource_policy_hash
   RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256=$rbl_runtime_inventory_hash
   export RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
   export RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
   export RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
-  export RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+  export RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+  export RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
 }
 
 rbl_make_context() {
@@ -2374,7 +2391,7 @@ release_build_layout_gate() {
   esac
   RBL_GATE_LABEL=$rbl_gate_label RBL_GATE_PREVIOUS=$rbl_gate_previous \
   RBL_GATE_STATE=$RELEASE_BUILD_LAYOUT_STATE_ROOT python3 - <<'PY'
-import datetime, hashlib, json, os, posixpath, re, selectors, stat, subprocess, tempfile, time
+import datetime, hashlib, json, os, posixpath, re, runpy, selectors, stat, subprocess, tempfile, time
 
 state_root=os.path.abspath(os.environ["RBL_GATE_STATE"])
 label=os.environ["RBL_GATE_LABEL"]
@@ -2395,6 +2412,34 @@ def pairs(items):
 
 def reject_constant(value):
     raise ValueError("non-finite-json-number")
+
+def load_resource_policy():
+    source_root=os.path.abspath(os.environ.get("RELEASE_BUILD_LAYOUT_SOURCE_ROOT",""))
+    if (not source_root.startswith("/") or os.path.realpath(source_root)!=source_root):
+        raise ValueError("resource-policy-source-invalid")
+    path=os.path.join(source_root,"scripts/ops/lib/build-resource-policy.py")
+    if os.path.realpath(path)!=path:
+        raise ValueError("resource-policy-path-invalid")
+    info=os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise ValueError("resource-policy-file-invalid")
+    expected=os.environ.get("RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256","")
+    if not re.fullmatch(r"[0-9a-f]{64}",expected):
+        raise ValueError("resource-policy-hash-invalid")
+    with open(path,"rb") as handle:
+        raw=handle.read(256*1024+1)
+    if len(raw)>256*1024 or hashlib.sha256(raw).hexdigest()!=expected:
+        raise ValueError("resource-policy-hash-mismatch")
+    namespace=runpy.run_path(path,run_name="lagrange_build_resource_policy")
+    if (not callable(namespace.get("parse_observation")) or
+            not callable(namespace.get("read_observation")) or
+            not callable(namespace.get("failure_reason"))):
+        raise ValueError("resource-policy-api-invalid")
+    with open(path,"rb") as handle:
+        raw_after=handle.read(256*1024+1)
+        if len(raw_after)>256*1024 or hashlib.sha256(raw_after).hexdigest()!=expected:
+            raise ValueError("resource-policy-changed")
+    return namespace,expected
 
 def canonical(value):
     return (json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode("utf-8")
@@ -2458,6 +2503,8 @@ def command_evidence(result):
 empty_command=command_evidence(command_empty())
 evidence={
     "mem_available_kib":"unknown","swap_free_kib":"unknown",
+    "memory_psi_some_avg10":"unknown","memory_psi_full_avg10":"unknown",
+    "resource_policy_sha256":"unknown",
     "process_scan":empty_command,
     "build_unit":{"manager":"unknown","selected":{},"command":empty_command},
     "units":{},"containers":{},
@@ -2971,21 +3018,19 @@ try:
         fail("research-exception-invalid")
     if exception is not None:
         evidence["research_exception"]=exception["binding"]
-    meminfo={}
-    for line in open("/proc/meminfo",encoding="ascii"):
-        if ":" not in line: continue
-        key,rest=line.split(":",1)
-        matched=re.fullmatch(r"\s*([0-9]+)\s+kB\s*",rest)
-        if matched: meminfo[key]=int(matched.group(1))
-    mem,swap=meminfo.get("MemAvailable"),meminfo.get("SwapFree")
-    if mem is None or swap is None:
-        fail("meminfo-unreadable")
-    evidence["mem_available_kib"]=mem
-    evidence["swap_free_kib"]=swap
-    if mem<2097152:
-        fail("memory-threshold")
-    if swap<524288:
-        fail("swap-threshold")
+    try:
+        resource_policy,resource_policy_hash=load_resource_policy()
+        evidence["resource_policy_sha256"]=resource_policy_hash
+        observation=resource_policy["read_observation"]()
+        resource_reason=resource_policy["failure_reason"](observation)
+    except Exception:
+        fail("resource-observation-invalid")
+    evidence["mem_available_kib"]=observation["MemAvailable"]
+    evidence["swap_free_kib"]=observation["SwapFree"]
+    evidence["memory_psi_some_avg10"]=observation["memory_psi_some_avg10"]
+    evidence["memory_psi_full_avg10"]=observation["memory_psi_full_avg10"]
+    if resource_reason is not None:
+        fail(resource_reason)
     process=run_bounded(["ps","-eo","comm="])
     evidence["process_scan"]=command_evidence(process)
     if not command_ok(process):

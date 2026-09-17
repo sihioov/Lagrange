@@ -46,9 +46,10 @@ baseline_commit=
 candidate_commit=
 output_dir=
 
-# These are conservative harness gates for the documented 14 GiB host, not a
-# deployment authorization.  An operator may raise either value, never lower
-# it, through the corresponding BENCHMARK_MIN_* variable.
+# These are conservative harness settings for the documented 14 GiB host, not
+# a deployment authorization.  The memory floor may be raised, never lowered,
+# through BENCHMARK_MIN_MEM_AVAILABLE_KIB.  The swap value remains a reported
+# advisory compatibility setting; SwapFree is telemetry and never a stop.
 readonly default_min_mem_available_kib=2097152 # 2 GiB
 readonly default_min_swap_free_kib=524288      # 512 MiB
 readonly journal_lookback_seconds=1800
@@ -181,6 +182,7 @@ min_mem_available_kib=$default_min_mem_available_kib
 min_swap_free_kib=$default_min_swap_free_kib
 
 benchmark_script_hash=
+benchmark_resource_policy_hash=
 bash_identity=
 git_identity=
 python_identity=
@@ -285,9 +287,12 @@ BENCHMARK_PRODUCTION_HEALTH_UNITS list, and a comma-separated
 BENCHMARK_PRODUCTION_HEALTH_CONTAINERS list of exact current serving container
 names or full IDs.  Every named container must be running, have a declared
 healthy healthcheck, and belong to Compose project lagrange-station.  The
-harness only inspects those bounded status/identity fields.  It also requires
-at least 2 GiB MemAvailable and 512 MiB SwapFree by default; BENCHMARK_MIN_*
-may only raise those fail-closed gates.  An operator, not this script, may
+harness only inspects those bounded status/identity fields.  The shared gate
+requires at least 2 GiB MemAvailable and rejects full memory PSI avg10 at or
+above 5.0%; SwapFree remains recorded telemetry, and
+BENCHMARK_MIN_SWAP_FREE_KIB is advisory compatibility metadata only.  The 5%
+PSI threshold is a conservative workflow choice, not a kernel-prescribed
+limit.  An operator, not this script, may
 launch the background unit separately with this shape:
   systemd-run --no-block --unit=lagrange-cache-benchmark --property=Nice=10 \
     --property=IOSchedulingClass=idle \
@@ -1220,7 +1225,8 @@ initialize_benchmark_gate_guard() {
     unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
     unset RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
     unset RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
-    unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
     common_gate_environment || exit 1
     # shellcheck disable=SC1090
     source "$benchmark_gate_helper"
@@ -1262,7 +1268,8 @@ run_benchmark_layout_gate() {
     unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
     unset RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
     unset RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
-    unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
     # Mapping is deliberately repeated in every isolated helper shell.  A
     # caller-controlled RELEASE_BUILD_* value must never replace the mapped
     # BENCHMARK_* contract, and the public helper owns the exact health and
@@ -3087,6 +3094,27 @@ publish_source_manifest_and_revalidate() {
   done
 }
 
+common_c_gate_binding() {
+  [ "$#" -eq 2 ] || return 1
+  common_c_gate_revision=$1
+  common_c_gate_measurement_phase=$2
+  case "$common_c_gate_revision:$common_c_gate_measurement_phase" in
+    ''|*[!A-Za-z0-9_.:-]*) return 1 ;;
+  esac
+  release_build_layout_gate() {
+    local label previous
+    [ "$#" -eq 2 ] || return 1
+    label=$1
+    previous=$2
+    case "$label" in
+      ''|*[!A-Za-z0-9_.:-]*) return 1 ;;
+    esac
+    run_benchmark_layout_gate \
+      "common-C:${common_c_gate_revision}:${common_c_gate_measurement_phase}:$label" \
+      "$previous"
+  }
+}
+
 run_common_c_release() (
   local revision=$1 measurement_phase=$2 checkout=$3 commit=$4 namespace=$5
   local helper lock_prefix state_root image_override image_prefix local_library local_patch local_manifest
@@ -3104,10 +3132,12 @@ run_common_c_release() (
   unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
   unset RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
   unset RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
-  unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+  unset RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
   # shellcheck disable=SC1090
   source "$helper"
   RBL_LOCK_PREFIX=$lock_prefix
+  common_c_gate_binding "$revision" "$measurement_phase" ||
+    die "common-C public gate binding failed: $revision/$measurement_phase"
   if [ "$internal_self_test" -eq 1 ] && declare -F benchmark_install_common_fake_api >/dev/null; then
     benchmark_install_common_fake_api "$helper"
   fi
@@ -3440,6 +3470,8 @@ gate_health_state=unavailable
 gate_compiler_state=unavailable
 gate_mem_available=unavailable
 gate_swap_free=unavailable
+gate_memory_psi_some_avg10=unavailable
+gate_memory_psi_full_avg10=unavailable
 gate_oom_events=unavailable
 gate_reason=
 
@@ -3538,6 +3570,39 @@ read_meminfo() {
   else
     cat /proc/meminfo
   fi
+}
+
+read_pressure() {
+  if [ "$internal_self_test" -eq 1 ]; then
+    printf '%s\n' "${BENCH_TEST_PRESSURE:-}"
+  else
+    cat /proc/pressure/memory
+  fi
+}
+
+read_resource_observation() {
+  local meminfo pressure policy
+  meminfo=$(read_meminfo) || return 1
+  pressure=$(read_pressure) || return 1
+  policy=$repo_root/scripts/ops/lib/build-resource-policy.py
+  [ -f "$policy" ] && [ ! -L "$policy" ] || return 1
+  RBL_RESOURCE_POLICY_PATH=$policy RBL_MEMINFO_TEXT=$meminfo RBL_PRESSURE_TEXT=$pressure python3 - <<'PY'
+import os
+import runpy
+
+path=os.path.abspath(os.environ["RBL_RESOURCE_POLICY_PATH"])
+if os.path.realpath(path)!=path or not os.path.isfile(path):
+    raise SystemExit("resource-policy-path-invalid")
+namespace=runpy.run_path(path,run_name="lagrange_build_resource_policy")
+parse=namespace.get("parse_observation")
+if not callable(parse):
+    raise SystemExit("resource-policy-api-invalid")
+value=parse(os.environ["RBL_MEMINFO_TEXT"],os.environ["RBL_PRESSURE_TEXT"])
+required={"MemAvailable","SwapFree","memory_psi_some_avg10","memory_psi_full_avg10"}
+if not isinstance(value,dict) or set(value)!=required:
+    raise SystemExit("resource-observation-schema-invalid")
+print("{MemAvailable}\t{SwapFree}\t{memory_psi_some_avg10}\t{memory_psi_full_avg10}".format(**value))
+PY
 }
 
 reset_journal_observation() {
@@ -4166,19 +4231,29 @@ observe_kernel_journal() {
 }
 
 snapshot_resources() {
-  local meminfo
+  local observation
   gate_mem_available=unavailable
   gate_swap_free=unavailable
+  gate_memory_psi_some_avg10=unavailable
+  gate_memory_psi_full_avg10=unavailable
   gate_oom_events=unavailable
   reset_journal_observation
-  if ! meminfo=$(read_meminfo); then
-    gate_reason=meminfo-unavailable
+  if ! observation=$(read_resource_observation); then
+    gate_reason=resource-observation-unavailable
     return 1
   fi
-  gate_mem_available=$(awk '/^MemAvailable:/ { print $2; exit }' <<<"$meminfo")
-  gate_swap_free=$(awk '/^SwapFree:/ { print $2; exit }' <<<"$meminfo")
+  IFS=$'\t' read -r gate_mem_available gate_swap_free \
+    gate_memory_psi_some_avg10 gate_memory_psi_full_avg10 <<<"$observation"
   is_decimal "$gate_mem_available" || { gate_reason=mem-available-unavailable; return 1; }
   is_decimal "$gate_swap_free" || { gate_reason=swap-free-unavailable; return 1; }
+  [[ "$gate_memory_psi_some_avg10" =~ ^(0|[0-9]+)(\.[0-9]+)?$ ]] || {
+    gate_reason=memory-psi-some-unavailable
+    return 1
+  }
+  [[ "$gate_memory_psi_full_avg10" =~ ^(0|[0-9]+)(\.[0-9]+)?$ ]] || {
+    gate_reason=memory-psi-full-unavailable
+    return 1
+  }
   observe_kernel_journal || { gate_reason=$journal_observation_reason; return 1; }
   is_decimal "$gate_oom_events" || { gate_reason=kernel-oom-observation-invalid; return 1; }
 }
@@ -4210,9 +4285,6 @@ gate_batch() {
   if [ "$status" = pass ] && [ "$gate_mem_available" -lt "$min_mem_available_kib" ]; then
     status=fail; reason=mem-available-below-threshold
   fi
-  if [ "$status" = pass ] && [ "$gate_swap_free" -lt "$min_swap_free_kib" ]; then
-    status=fail; reason=swap-free-below-threshold
-  fi
   if [ "$status" = pass ] && [ "$gate_oom_events" -ne 0 ]; then
     status=fail; reason=recent-kernel-oom-observed
   fi
@@ -4225,8 +4297,9 @@ gate_batch() {
   if [ "$status" = pass ]; then
     check_running_build_service || { status=fail; reason=$gate_reason; }
   fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$revision" "$scenario" "$batch" "$point" "$gate_mem_available" "$gate_swap_free" \
+    "$gate_memory_psi_some_avg10" "$gate_memory_psi_full_avg10" \
     "$min_mem_available_kib" "$min_swap_free_kib" "$gate_oom_events" \
     "$journal_probe_status" "$journal_probe_entry_count" "$journal_probe_stdout_sha256" "$journal_probe_stderr_sha256" \
     "$journal_lookback_status" "$journal_lookback_entry_count" "$journal_lookback_oom_count" "$journal_lookback_stdout_sha256" "$journal_lookback_stderr_sha256" \
@@ -4506,7 +4579,7 @@ initialize_output() {
   failure_report=$output_dir/failure.tsv
   apply_record_failures=1
   printf 'revision\tmeasurement_phase\tservice\tindex\timage_tag\tcache_mount_namespace\tbuild_commit\tmeasured_source_identity_sha256\timage_build_ms\tcargo_ms\timage_verification_ms\timage_id\timage_revision\tcompiler_vertex\tcompiler_vertex_state\tcompiler_cache\tnoncompiler_cached_vertices\tcargo_cache_state\tcompiled_packages\tfresh_packages\tworkspace_clean\ttoolchain_identity\tsource_dockerfile_sha256\tinstrumented_dockerfile_sha256\tinstrumentation_patch_sha256\tsanitized_evidence\tselected_scenario\n' >"$results_report"
-  printf 'revision\tmeasurement_phase\tbatch\tgate\tmem_available_kib\tswap_free_kib\tminimum_mem_available_kib\tminimum_swap_free_kib\trecent_kernel_oom_events\tjournal_probe_status\tjournal_probe_entries\tjournal_probe_stdout_sha256\tjournal_probe_stderr_sha256\tjournal_lookback_status\tjournal_lookback_entries\tjournal_lookback_oom_matches\tjournal_lookback_stdout_sha256\tjournal_lookback_stderr_sha256\tjournal_capture_status\tjournal_capture_receipt_sha256\tjournal_capture_failure\tjournal_since_utc\tjournal_until_utc\tjournal_reason\tprevious_build_exit\tcompiler_processes\tbackground_build_service\tproduction_health\tstatus\n' >"$resource_report"
+  printf 'revision\tmeasurement_phase\tbatch\tgate\tmem_available_kib\tswap_free_kib\tmemory_psi_some_avg10\tmemory_psi_full_avg10\tminimum_mem_available_kib\tminimum_swap_free_kib\trecent_kernel_oom_events\tjournal_probe_status\tjournal_probe_entries\tjournal_probe_stdout_sha256\tjournal_probe_stderr_sha256\tjournal_lookback_status\tjournal_lookback_entries\tjournal_lookback_oom_matches\tjournal_lookback_stdout_sha256\tjournal_lookback_stderr_sha256\tjournal_capture_status\tjournal_capture_receipt_sha256\tjournal_capture_failure\tjournal_since_utc\tjournal_until_utc\tjournal_reason\tprevious_build_exit\tcompiler_processes\tbackground_build_service\tproduction_health\tstatus\n' >"$resource_report"
   printf 'revision\tmeasurement_phase\tservice\tpoint\ttimestamp_ms\tmem_available_kib\tswap_free_kib\trepository_disk_available_kib\tdocker_root_disk_available_kib\n' >"$resource_samples_report"
   printf 'scope\tsample_count\tminimum_mem_available_kib\tminimum_swap_free_kib\tminimum_repository_disk_available_kib\tminimum_docker_root_disk_available_kib\tinterpretation\n' >"$peak_resource_report"
   printf 'phase\trevision\tscenario\tstarted_ms\tfinished_ms\telapsed_ms\tstatus\tdetail\n' >"$phase_report"
@@ -4538,14 +4611,16 @@ configure_resource_thresholds() {
     die "BENCHMARK_MIN_MEM_AVAILABLE_KIB must be an integer at least $default_min_mem_available_kib"
   min_mem_available_kib=$requested
   requested=${BENCHMARK_MIN_SWAP_FREE_KIB:-$default_min_swap_free_kib}
-  is_decimal "$requested" && [ "$requested" -ge "$default_min_swap_free_kib" ] ||
-    die "BENCHMARK_MIN_SWAP_FREE_KIB must be an integer at least $default_min_swap_free_kib"
+  is_decimal "$requested" ||
+    die 'BENCHMARK_MIN_SWAP_FREE_KIB must be a nonnegative integer advisory value'
   min_swap_free_kib=$requested
 }
 
 collect_host_identity() {
-  local value
+  local value resource_policy
   benchmark_script_hash=$(sha256_file "$script_dir/build-cache-benchmark.sh")
+  resource_policy=$script_dir/../ops/lib/build-resource-policy.py
+  benchmark_resource_policy_hash=$(sha256_file "$resource_policy")
   value=$(bash --version 2>/dev/null | head -n 1) || die 'Bash version is unavailable for benchmark evidence'
   bash_identity=$(safe_scalar "$value")
   [ "$bash_identity" != unavailable ] || die 'Bash version identity is unavailable'
@@ -4659,6 +4734,7 @@ write_metadata() {
     printf 'git_identity\t%s\n' "$git_identity"
     printf 'python_identity\t%s\n' "$python_identity"
     printf 'benchmark_script_sha256\t%s\n' "$benchmark_script_hash"
+    printf 'resource_policy_module_sha256\t%s\n' "$benchmark_resource_policy_hash"
     printf 'image_only_compose_env\tinputs/image-only-compose.env\n'
     printf 'image_only_compose_env_sha256\t%s\n' "$benchmark_compose_env_sha256"
     printf 'image_only_compose_env_policy\tprivate-external-input; mode-0600; inactive-research-entitlement-sentinel-only; never copied from an operational environment\n'
@@ -4666,7 +4742,9 @@ write_metadata() {
     printf 'service_order\t%s\n' "${services[*]}"
     printf 'batch_policy\tup-to-three-services; one Docker invocation at a time\n'
     printf 'resource_min_mem_available_kib\t%s\n' "$min_mem_available_kib"
-    printf 'resource_min_swap_free_kib\t%s\n' "$min_swap_free_kib"
+    printf 'resource_advisory_min_swap_free_kib\t%s\n' "$min_swap_free_kib"
+    printf 'resource_swap_policy\tSwapFree is validated and recorded as telemetry; BENCHMARK_MIN_SWAP_FREE_KIB is advisory compatibility metadata and never a stop condition\n'
+    printf 'resource_psi_policy\tshared build-resource-policy.py stops when full memory PSI avg10 is at least 5.0 percent; 10-second moving-average operational threshold, not kernel-prescribed or universally proven\n'
     printf 'kernel_journal_probe\tLC_ALL=C timeout 10s journalctl -k -b --no-pager -o json -n 1; require exit-0, no-stderr, exactly-one valid current-boot kernel entry\n'
     printf 'kernel_journal_lookback\tLC_ALL=C bounded complete-stream collector invokes journalctl -k -b --no-pager -o json --since <fixed-first-gate-minus-1800s> --until <gate-utc> --no-tail; require EOF on both streams, child reaping, exit-0, no-stderr, valid bounded current-boot JSON, and a complete capture receipt\n'
     printf 'kernel_journal_lookback_seconds\t%s\n' "$journal_lookback_seconds"
@@ -5132,7 +5210,8 @@ PY
   BENCHMARK_PRODUCTION_HEALTH_UNITS=api.service,web.service
   BENCHMARK_PRODUCTION_HEALTH_CONTAINERS=api-current,web-current
   BENCH_TEST_CGROUP_TEXT='0::/test.slice/benchmark.service'
-  BENCH_TEST_MEMINFO=$'MemAvailable:    4194304 kB\nSwapFree:        2097152 kB'
+  BENCH_TEST_MEMINFO=$'MemAvailable:    4194304 kB\nSwapFree:                  0 kB'
+  BENCH_TEST_PRESSURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
   BENCH_TEST_JOURNAL_MODE=clean
   BENCH_TEST_BOOT_ID=11111111-1111-1111-1111-111111111111
   BENCH_TEST_BOOT_ID_MODE=readable
@@ -6212,6 +6291,12 @@ PY
   reset_journal_run_state
   snapshot_resources || die 'self-test rejected readable probe plus legitimate quiet kernel window'
   [ "$gate_oom_events" = 0 ] || die 'self-test quiet kernel window did not record zero OOM matches'
+  BENCH_TEST_MEMINFO=$'MemAvailable:    4194304 kB\nSwapFree:                  0 kB'
+  gate_reason=
+  reset_journal_run_state
+  snapshot_resources || die 'self-test rejected zero SwapFree with plentiful RAM and low PSI'
+  [ "$gate_swap_free" = 0 ] || die 'self-test zero SwapFree telemetry was not retained'
+  BENCH_TEST_MEMINFO=$'MemAvailable:    4194304 kB\nSwapFree:        2097152 kB'
   [ "$journal_probe_status" = exit-0 ] && [ "$journal_probe_entry_count" = 1 ] ||
     die 'self-test readable kernel probe evidence was incomplete'
   [ "$journal_lookback_status" = exit-0 ] && [ "$journal_lookback_entry_count" = 0 ] && [ "$journal_lookback_oom_count" = 0 ] ||
@@ -6224,7 +6309,7 @@ PY
   [[ "$journal_probe_stdout_sha256" =~ ^[0-9a-f]{64}$ ]] && [[ "$journal_probe_stderr_sha256" =~ ^[0-9a-f]{64}$ ]] &&
     [[ "$journal_lookback_stdout_sha256" =~ ^[0-9a-f]{64}$ ]] && [[ "$journal_lookback_stderr_sha256" =~ ^[0-9a-f]{64}$ ]] ||
     die 'self-test kernel journal hashes were not retained'
-  awk -F '\t' '$1 == "probe" && $2 == "clean" { probe++ } $1 == "range" && $2 == "clean" { range++ } END { exit !(probe == 1 && range == 1) }' "$BENCH_TEST_JOURNAL_RECORD" ||
+  awk -F '\t' '$1 == "probe" && $2 == "clean" { probe++ } $1 == "range" && $2 == "clean" { range++ } END { exit !(probe == 2 && range == 2) }' "$BENCH_TEST_JOURNAL_RECORD" ||
     die 'self-test kernel journal probe/complete-range calls were not both made'
 
   # Query failure, a successful query with a warning, unavailable boot ID,
@@ -6402,7 +6487,9 @@ PY
   reset_self_test_whole_lock warm
   BENCH_TEST_ARCHIVE_SCAN_LIMIT=12
   BENCH_TEST_ARCHIVE_SCAN_COUNT=0
-  BENCH_TEST_MEMINFO=$'MemAvailable:    4194304 kB\nSwapFree:        2097152 kB'
+  # Exercise every standalone batch gate with zero swap while retaining the
+  # historical 512 MiB advisory value in the report and metadata.
+  BENCH_TEST_MEMINFO=$'MemAvailable:    4194304 kB\nSwapFree:                  0 kB'
   : >"$BENCH_TEST_DOCKER_RECORD"
   output_dir=$test_dir/warm-output
   cache_mode=warm
@@ -6462,14 +6549,14 @@ PY
     die 'self-test kernel journal fixed lookback metadata was not retained'
   if ! awk -F '\t' '
     NR == 1 {
-      if (NF != 29 || $10 != "journal_probe_status" || $14 != "journal_lookback_status" || $19 != "journal_capture_status" || $24 != "journal_reason") bad=1
+      if (NF != 31 || $12 != "journal_probe_status" || $16 != "journal_lookback_status" || $21 != "journal_capture_status" || $26 != "journal_reason") bad=1
       next
     }
-    NF != 29 { bad=1 }
-    $9 != "0" || $10 != "exit-0" || $11 != "1" || $12 !~ /^[0-9a-f]{64}$/ || $13 !~ /^[0-9a-f]{64}$/ { bad=1 }
-    $14 != "exit-0" || $15 != "0" || $16 != "0" || $17 !~ /^[0-9a-f]{64}$/ || $18 !~ /^[0-9a-f]{64}$/ { bad=1 }
-    $19 != "complete" || $20 !~ /^[0-9a-f]{64}$/ || $21 != "none" { bad=1 }
-    $22 != "2029-12-31T23:30:00Z" || $23 != "2030-01-01T00:00:00Z" || $24 != "established" { bad=1 }
+    NF != 31 { bad=1 }
+    $6 != "0" || $7 != "0.0" || $8 != "0.0" || $9 != "2097152" || $10 != "524288" || $12 != "exit-0" || $13 != "1" || $14 !~ /^[0-9a-f]{64}$/ || $15 !~ /^[0-9a-f]{64}$/ { bad=1 }
+    $16 != "exit-0" || $17 != "0" || $18 != "0" || $19 !~ /^[0-9a-f]{64}$/ || $20 !~ /^[0-9a-f]{64}$/ { bad=1 }
+    $21 != "complete" || $22 !~ /^[0-9a-f]{64}$/ || $23 != "none" { bad=1 }
+    $24 != "2029-12-31T23:30:00Z" || $25 != "2030-01-01T00:00:00Z" || $26 != "established" { bad=1 }
     END { exit !(NR > 1 && !bad) }
   ' "$output_dir/batch-resources.tsv"; then
     die 'self-test bounded kernel journal status/count/hash/reason evidence was malformed'
@@ -6479,6 +6566,13 @@ PY
   if ! awk -F '\t' '$1 == "benchmark_script_sha256" && $2 ~ /^[0-9a-f]{64}$/ { found=1 } END { exit !found }' "$output_dir/metadata.tsv"; then
     die 'self-test benchmark tool SHA metadata was not retained'
   fi
+  if ! awk -F '\t' '$1 == "resource_policy_module_sha256" && $2 ~ /^[0-9a-f]{64}$/ { found=1 } END { exit !found }' "$output_dir/metadata.tsv"; then
+    die 'self-test resource policy module SHA metadata was not retained'
+  fi
+  grep -Fq $'resource_swap_policy\tSwapFree is validated and recorded as telemetry; BENCHMARK_MIN_SWAP_FREE_KIB is advisory compatibility metadata and never a stop condition' "$output_dir/metadata.tsv" ||
+    die 'self-test advisory SwapFree policy metadata was not retained'
+  grep -Fq $'resource_advisory_min_swap_free_kib\t524288' "$output_dir/metadata.tsv" ||
+    die 'self-test advisory SwapFree compatibility value was not retained'
   if ! awk -F '\t' '
     NR == 1 { next }
     NF != 27 { bad=1 }
@@ -6965,7 +7059,7 @@ if [ "$mode" = plan ]; then
   echo '  instrumentation=A/B temporary Dockerfile copies add Cargo verbosity and a stable pre-native nonce; original Dockerfiles/commands/binary sets remain unchanged; C helper/config/producer remains clean'
   echo '  compose_env=--apply creates one private external image-only env with the inactive research-entitlement sentinel; no checkout or operational .env is read'
   echo '  services=all twelve release services, batches up to three, sequential one-service Docker builds'
-  echo "  resource_gates=MemAvailable >= ${default_min_mem_available_kib} KiB; SwapFree >= ${default_min_swap_free_kib} KiB; recent OOM, prior compiler/exit, systemd and health checks fail closed"
+  echo "  resource_gates=shared resource policy requires MemAvailable >= ${default_min_mem_available_kib} KiB and full memory PSI avg10 < 5.0%; SwapFree telemetry/advisory only; recent OOM, prior compiler/exit, systemd and health checks fail closed"
   echo '  apply_prerequisite=already-running low-priority systemd service containing this process plus explicit read-only health units; the harness never starts it'
   echo '  outputs=sanitized build evidence, source/probe/instrumentation hashes, tool identities, per-image build/Cargo/inspection timings, sampled resource minima, phase timings, package/cache state'
   echo '  timing_limits=Cargo RUN duration is not linker time; benchmark-local strict V2 image inspection and publication are retained separately from the official release manifest'

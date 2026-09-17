@@ -1342,6 +1342,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import shlex
 
 source, target = map(os.path.abspath, sys.argv[1:])
 layout_path = os.path.join(source, "deploy/build/release-build-layout.json")
@@ -1357,6 +1358,17 @@ def copy_rel(rel):
         raise SystemExit("fixture-copy-source-invalid:" + rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copy2(src, dst, follow_symlinks=False)
+    if rel == "scripts/ops/lib/release-build-layout.sh":
+        # The helper fixes its lock prefix when sourced, overriding an exported
+        # value. Isolate only this disposable fixture before its Git commit.
+        with open(dst, encoding="utf-8") as handle:
+            text = handle.read()
+        old = "RBL_LOCK_PREFIX=/tmp/lagrange-production-image-build"
+        if text.count(old) != 1:
+            raise SystemExit("fixture-lock-prefix-contract-changed")
+        prefix = os.path.join(os.path.dirname(target), "whole-release-lock")
+        with open(dst, "w", encoding="utf-8") as handle:
+            handle.write(text.replace(old, "RBL_LOCK_PREFIX=" + shlex.quote(prefix)))
 
 def tracked(spec):
     raw = subprocess.run(
@@ -1381,6 +1393,7 @@ for rel in (
     ".gitignore",
     "deploy/build/Dockerfile.rust-artifacts",
     "deploy/build/release-build-layout.json",
+    "scripts/ops/lib/build-resource-policy.py",
     "deploy/db/Dockerfile",
     "scripts/ops/build-production-images.sh",
     "scripts/ops/lib/release-image-manifest.sh",

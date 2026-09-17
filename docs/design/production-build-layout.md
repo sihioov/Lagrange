@@ -711,9 +711,19 @@ no-new-privileges, nonroot 방식으로 실행한다 (`docs/verification/product
   container 목록에는 `lagrange-station-research-worker-1`을 반드시 포함한다. 그 밖의 운영 health
   대상도 코디네이터의 목록 그대로 검사하며 실패한 대상을 빼거나 stopped로 바꿔 통과하지 않는다.
   실제 control-plane unit 목록은 외부 실행 입력이며 이 문서가 알 수 없는 이름을 만들어 넣지 않는다.
-- 임계값은 `/proc/meminfo`의 **MemAvailable ≥ 2097152 KiB**, **SwapFree ≥ 524288 KiB**이다.
-  값 누락/비정수/읽기 실패는 거부한다. threshold CLI/ENV override, fixture용 lowered threshold,
-  fake 값으로 actual gate를 대체하는 모드는 없다. host `cargo/rustc/rustdoc`가 남아 있으면 거부한다.
+- 자원 판정의 단일 구현은 source-pinned trusted path인
+  `scripts/ops/lib/build-resource-policy.py`이며, `parse_observation()`은
+  `/proc/meminfo`의 `MemAvailable`/`SwapFree`와 `/proc/pressure/memory`의 `some`/`full`
+  `avg10`, `avg60`, `avg300`, `total`을 모두 검증한다. 필드 누락/중복/비정수/잘못된 단위,
+  음수·비유한·범위 밖 PSI, 읽기 실패는 거부한다. `MemAvailable ≥ 2097152 KiB`가 RAM
+  floor이며, `full avg10 ≥ 5.0%`도 거부한다. 5%는 10초 moving average를 사용하는 이
+  운영 workflow의 보수적 threshold일 뿐 kernel이 정한 값이나 보편적으로 입증된 안전 한계가
+  아니다.
+- `SwapFree`는 검증하여 memory와 PSI 옆에 telemetry로 기록하지만 단독으로 gate를 멈추지
+  않는다. 기존 `BENCHMARK_MIN_SWAP_FREE_KIB`는 benchmark 출력/호환성을 위한 advisory 값일
+  뿐이며 stop condition이 아니다. threshold CLI/ENV override, fixture용 lowered RAM floor,
+  fake 값으로 actual gate를 대체하는 production 모드는 없다. host `cargo/rustc/rustdoc`가
+  남아 있으면 거부한다.
 - unit마다 `LC_ALL=C timeout 10s systemctl show <unit> --property=LoadState,ActiveState,SubState,ExecMainStatus,MainPID,NRestarts`
   의 정해진 필드만 읽는다. loaded/active/running, exit=0, MainPID>0이어야 한다. 첫 gate와 비교해
   MainPID 변경/NRestarts 증가/누락/경고/timeout/nonzero면 거부한다. 명령·환경·서비스 로그를 읽지 않는다.

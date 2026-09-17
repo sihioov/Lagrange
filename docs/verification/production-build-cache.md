@@ -184,7 +184,17 @@ Before the parent fixture run, approximately 1.7 GiB RAM was available, swap had
 free, and no active Cargo/Rust compiler was observed. After it stopped, the reviewer observed
 `MemAvailable: 1854608 kB` and `SwapFree: 152 kB`; a later coordinator observation still reported
 about 1.7 GiB available and zero usable swap. These values fail the benchmark's minimum 2 GiB RAM
-and 512 MiB swap gates.
+and 512 MiB swap gates recorded by that historical run.
+
+WP-20's bounded resource-policy follow-up records a separate B/C warm run that stopped after
+299 seconds. Its final sample was `MemAvailable: 8722008 kB`, `SwapFree: 499484 kB`;
+the bounded kernel OOM query found no matching event. That supervisor did not record PSI.
+An offline regression combines those retained memory/swap values with explicit low-PSI fixture
+input and passes the current shared policy in `scripts/ops/lib/build-resource-policy.py`.
+This is not retrospective proof of the run's PSI: live acceptance requires a fresh observation.
+`MemAvailable` must be at least 2097152 KiB and full PSI `avg10`
+must remain below 5.0%; `SwapFree` is telemetry/advisory only. The 5% value is a conservative
+10-second moving-average workflow threshold, not a kernel-prescribed or universally proven limit.
 
 The bounded post-run Docker status read showed ten production containers healthy and
 `research-worker` restarting. A bounded inspection returned
@@ -204,8 +214,9 @@ It produced no count. Because journal errors were suppressed and the pipeline re
 this evidence cannot distinguish no matching OOM event from unavailable journal access. Absence of
 recent OOM is therefore **not established**.
 
-Do not start another build until production health is satisfied, memory/swap gates pass, journal
-OOM access is established, and no prior compiler remains active. A production-sized run additionally
+Do not start another build until production health is satisfied, the shared MemAvailable/PSI gate
+passes, journal OOM access is established, and no prior compiler remains active. SwapFree must still
+be observed and recorded, but does not independently block resumption. A production-sized run additionally
 requires explicit scope resolution, background low-priority systemd execution, batches of at most
 three with exactly one service per Compose call, `COMPOSE_PARALLEL_LIMIT=1`, `CARGO_BUILD_JOBS=2`,
 and resource/OOM/health checks between batches.
