@@ -4261,6 +4261,37 @@ collect_host_identity() {
   [ "$host_platform_identity" != unavailable ] || die 'host OS/platform identity is unavailable'
 }
 
+parse_builder_identity() {
+  # Buildx inspect has no --format option. Only the header identifies the
+  # builder; Name fields below Nodes belong to individual nodes.
+  awk '
+    /^Nodes:[[:space:]]*$/ { exit }
+    /^Name:[[:space:]]*/ { names++; name=$0; sub(/^Name:[[:space:]]*/, "", name) }
+    /^Driver:[[:space:]]*/ { drivers++; driver=$0; sub(/^Driver:[[:space:]]*/, "", driver) }
+    END {
+      if (names != 1 || drivers != 1 ||
+          name !~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/ ||
+          driver !~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/) exit 1
+      print name "|" driver
+    }
+  '
+}
+
+test_builder_identity_parser() {
+  local value invalid
+  value=$(printf '%s\n' 'Name:          default' 'Driver:        docker' \
+    '' 'Nodes:' 'Name:          node-one' 'Name:          node-two' | parse_builder_identity) || return 1
+  [ "$value" = 'default|docker' ] || return 1
+  value=$(printf '%s\n' 'Name: fixture-builder' 'Driver: docker-container' | parse_builder_identity) || return 1
+  [ "$value" = 'fixture-builder|docker-container' ] || return 1
+  for invalid in '' $'Name: default' $'Name: default\nDriver:' \
+    $'Name: default\nName: duplicate\nDriver: docker' \
+    $'Name: default\nDriver: docker\nDriver: duplicate' \
+    $'Name: invalid|name\nDriver: docker'; do
+    if printf '%s\n' "$invalid" | parse_builder_identity >/dev/null; then return 1; fi
+  done
+}
+
 collect_docker_identity() {
   local value os_type architecture kernel root extra
   command -v docker >/dev/null 2>&1 || die 'Docker is required for --apply; use --plan or --self-test without a daemon'
@@ -4274,10 +4305,11 @@ collect_docker_identity() {
   fi
   buildx_identity=$(safe_scalar "$value")
   [ "$buildx_identity" != unavailable ] || die 'Docker Buildx identity is unavailable'
-  if ! value=$(docker buildx inspect --format '{{.Name}}|{{.Driver}}' 2>/dev/null); then
+  if ! value=$(docker buildx inspect 2>/dev/null); then
     die 'Docker builder identity is unavailable for --apply'
   fi
-  builder_identity=$(safe_scalar "$value")
+  builder_identity=$(printf '%s\n' "$value" | parse_builder_identity) ||
+    die 'Docker builder identity is malformed'
   [ "$builder_identity" != unavailable ] || die 'Docker builder identity is unavailable'
   if ! value=$(docker info --format '{{.OSType}}|{{.Architecture}}|{{.KernelVersion}}|{{.DockerRootDir}}' 2>/dev/null); then
     die 'Docker platform identity is unavailable for --apply'
@@ -4549,6 +4581,7 @@ new_self_test_nonce() {
 }
 
 run_self_test() {
+  test_builder_identity_parser || die 'self-test builder identity parser failed'
   local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log invalid_json_log
   local current parent plan_output first_nonce second_nonce foreign_tag build_count remove_count
   local clean_clone clean_clone_input clean_clone_env real_git_bin
@@ -4957,7 +4990,10 @@ PY
       buildx)
         case "${1:-}" in
           version) printf '%s\n' 'github.com/docker/buildx v0.18.0 fixture' ;;
-          inspect) printf '%s\n' 'fixture-builder|docker-container' ;;
+          inspect)
+            [ "$#" -eq 1 ] || return 91
+            printf '%s\n' 'Name: fixture-builder' 'Driver: docker-container' '' 'Nodes:' 'Name: fixture-node'
+            ;;
           *) return 91 ;;
         esac
         ;;
