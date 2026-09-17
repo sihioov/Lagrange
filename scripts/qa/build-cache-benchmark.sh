@@ -229,6 +229,8 @@ declare -A side_layout_artifact_hash=()
 declare -A side_manifest_library_hash=()
 declare -A common_state_root_by_run=()
 declare -A common_bundle_digest_by_recipe=()
+declare -A native_identity_source_by_recipe=()
+declare -A native_identity_source_hash_by_recipe=()
 
 # The benchmark-wide guard is initialized from the clean coordinator checkout,
 # not from either A/B/C measurement checkout.  Its state is persistent for the
@@ -1901,11 +1903,174 @@ write_disk_summary() {
   chmod 0600 -- "$disk_summary_report"
 }
 
+native_identity_recipe_binding() {
+  local dockerfile=$1 namespace=$2 cold_nonce=$3 commit=$4
+  RBL_BENCH_DOCKERFILE=$dockerfile \
+    RBL_BENCH_NAMESPACE=$namespace \
+    RBL_BENCH_COLD_NONCE=$cold_nonce \
+    RBL_BENCH_CODE_COMMIT=$commit \
+    RBL_BENCH_BUILDER_IDENTITY=$builder_identity \
+    RBL_BENCH_BUILDX_IDENTITY=$buildx_identity \
+    RBL_BENCH_DOCKER_IDENTITY=$docker_identity \
+    RBL_BENCH_DOCKER_PLATFORM=$docker_platform_identity \
+    python3 - <<'PY'
+import hashlib
+import json
+import os
+import re
+
+path = os.environ["RBL_BENCH_DOCKERFILE"]
+raw = open(path, "r", encoding="utf-8", newline="").read()
+logical = []
+buffer = ""
+for physical in raw.splitlines():
+    piece = physical.rstrip()
+    continued = piece.endswith("\\")
+    if continued:
+        piece = piece[:-1]
+    buffer = (buffer + " " + piece.strip()).strip()
+    if continued:
+        continue
+    if buffer and not buffer.lstrip().startswith("#"):
+        logical.append(buffer)
+    buffer = ""
+if buffer:
+    raise SystemExit("benchmark-native-recipe-unterminated-instruction")
+
+instructions = []
+in_rust_stage = False
+found = False
+marker_instruction = None
+for line in logical:
+    match = re.match(r"^([A-Za-z]+)(?:\s+(.*))?$", line)
+    if match is None:
+        raise SystemExit("benchmark-native-recipe-instruction-invalid")
+    keyword = match.group(1).upper()
+    body = re.sub(r"\s+", " ", (match.group(2) or "").strip())
+    normalized = keyword + ((" " + body) if body else "")
+    if keyword == "FROM":
+        image = body.split(" ", 1)[0].lower() if body else ""
+        in_rust_stage = image.startswith("rust:")
+        instructions = [normalized] if in_rust_stage else []
+        continue
+    if not in_rust_stage:
+        continue
+    instructions.append(normalized)
+    if keyword == "RUN" and "LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN" in body:
+        if found:
+            raise SystemExit("benchmark-native-recipe-marker-duplicate")
+        found = True
+        marker_instruction = normalized
+        break
+if not found or marker_instruction is None:
+    raise SystemExit("benchmark-native-recipe-marker-missing")
+
+referenced = set()
+for instruction in instructions:
+    referenced.update(re.findall(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))", instruction))
+referenced = {left or right for left, right in referenced}
+known_args = {
+    "LAGRANGE_CODE_COMMIT": os.environ["RBL_BENCH_CODE_COMMIT"],
+    "LAGRANGE_BENCHMARK_COLD_NONCE": os.environ["RBL_BENCH_COLD_NONCE"],
+    "BUILDKIT_CACHE_MOUNT_NS": os.environ["RBL_BENCH_NAMESPACE"],
+    "CARGO_BUILD_JOBS": "2",
+}
+binding = {
+    "format": "lagrange-benchmark-native-recipe-v1",
+    "instructions": instructions,
+    "build_inputs": {
+        "builder_identity": os.environ["RBL_BENCH_BUILDER_IDENTITY"],
+        "buildx_identity": os.environ["RBL_BENCH_BUILDX_IDENTITY"],
+        "docker_identity": os.environ["RBL_BENCH_DOCKER_IDENTITY"],
+        "docker_platform_identity": os.environ["RBL_BENCH_DOCKER_PLATFORM"],
+        "cache_mount_namespace": os.environ["RBL_BENCH_NAMESPACE"],
+        "cold_nonce": os.environ["RBL_BENCH_COLD_NONCE"],
+        "cargo_build_jobs": "2",
+        "referenced_build_args": {name: value for name, value in known_args.items() if name in referenced},
+    },
+}
+encoded = json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8")
+print(hashlib.sha256(encoded).hexdigest() + "\t" + hashlib.sha256(marker_instruction.encode("utf-8")).hexdigest())
+PY
+}
+
+inspect_native_identity_vertex() {
+  local log=$1 expected_marker_hash=$2 fields
+  fields=$(RBL_BENCH_LOG=$log RBL_BENCH_MARKER_HASH=$expected_marker_hash python3 - <<'PY'
+import hashlib
+import os
+import re
+
+raw = open(os.environ["RBL_BENCH_LOG"], "rb").read()
+if len(raw) > 256 * 1024 * 1024:
+    raise SystemExit("benchmark-native-log-too-large")
+try:
+    lines = raw.decode("utf-8").splitlines()
+except UnicodeDecodeError:
+    raise SystemExit("benchmark-native-log-not-utf8")
+
+markers = {
+    "LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN",
+    "LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN",
+    "LAGRANGE_BENCH_NATIVE_RUSTC_END",
+    "LAGRANGE_BENCH_NATIVE_CARGO_BEGIN",
+    "LAGRANGE_BENCH_NATIVE_CARGO_END",
+    "LAGRANGE_BENCH_NATIVE_APK_BEGIN",
+    "LAGRANGE_BENCH_NATIVE_APK_END",
+    "LAGRANGE_BENCH_NATIVE_IDENTITY_END",
+}
+headers = []
+for line in lines:
+    match = re.match(r"^#([0-9]+)\s+\[[^]]+\]\s+(RUN\s+.*)$", line)
+    if match and "LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN" in match.group(2):
+        headers.append((match.group(1), match.group(2)))
+if len(headers) != 1:
+    raise SystemExit("benchmark-native-identity-vertex-invalid")
+vertex, command = headers[0]
+normalized = re.sub(r"\s+", " ", command.strip())
+marker_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+if marker_hash != os.environ["RBL_BENCH_MARKER_HASH"]:
+    raise SystemExit("benchmark-native-identity-vertex-recipe-mismatch")
+
+cached = sum(line == f"#{vertex} CACHED" for line in lines)
+done = sum(re.match(rf"^#{re.escape(vertex)} DONE [0-9]+(?:\.[0-9]+)?s$", line) is not None for line in lines)
+if any(re.match(rf"^#{re.escape(vertex)}\s+.*ERROR", line) for line in lines):
+    raise SystemExit("benchmark-native-identity-vertex-error")
+outputs = []
+prefix = re.compile(r"^#([0-9]+)\s+(?:[0-9]+(?:\.[0-9]+)?s?\s+)?(.*)$")
+for line in lines:
+    match = prefix.match(line)
+    if match and match.group(2) in markers:
+        outputs.append((match.group(1), match.group(2)))
+if any(item[0] != vertex for item in outputs):
+    raise SystemExit("benchmark-native-marker-vertex-mismatch")
+if cached:
+    if cached != 1 or done != 0 or outputs:
+        raise SystemExit("benchmark-native-cached-vertex-output-invalid")
+    state = "cached"
+else:
+    if done != 1:
+        raise SystemExit("benchmark-native-executed-vertex-done-invalid")
+    state = "executed"
+print("\t".join((state, vertex, hashlib.sha256(raw).hexdigest())))
+PY
+) || return 1
+  IFS=$'\t' read -r BENCH_NATIVE_VERTEX_STATE BENCH_NATIVE_VERTEX BENCH_NATIVE_RAW_LOG_SHA256 <<<"$fields"
+  case "$BENCH_NATIVE_VERTEX_STATE" in cached|executed) ;; *) return 1 ;; esac
+  [[ "$BENCH_NATIVE_VERTEX" =~ ^[0-9]+$ ]] || return 1
+  [[ "$BENCH_NATIVE_RAW_LOG_SHA256" =~ ^[0-9a-f]{64}$ ]] || return 1
+}
+
 parse_native_identity() {
-  local log=$1 destination=$2
+  local log=$1 destination=$2 recipe_hash=$3 marker_hash=$4 vertex=$5
+  local revision=$6 measurement_phase=$7 service=$8 index=$9
   [ -d "${destination%/*}" ] && [ ! -L "${destination%/*}" ] || return 1
   [ ! -e "$destination" ] && [ ! -L "$destination" ] || return 1
-  RBL_BENCH_LOG=$log RBL_BENCH_NATIVE=$destination python3 - <<'PY'
+  RBL_BENCH_LOG=$log RBL_BENCH_NATIVE=$destination \
+    RBL_BENCH_RECIPE_HASH=$recipe_hash RBL_BENCH_MARKER_HASH=$marker_hash \
+    RBL_BENCH_VERTEX=$vertex RBL_BENCH_REVISION=$revision \
+    RBL_BENCH_PHASE=$measurement_phase RBL_BENCH_SERVICE=$service \
+    RBL_BENCH_INDEX=$index python3 - <<'PY'
 import hashlib
 import json
 import os
@@ -1921,7 +2086,8 @@ try:
 except UnicodeDecodeError:
     raise SystemExit("benchmark-native-log-not-utf8")
 
-prefix = re.compile(r"^#[0-9]+\s+(?:[0-9]+(?:\.[0-9]+)?s?\s+)?(.*)$")
+prefix = re.compile(r"^#([0-9]+)\s+(?:[0-9]+(?:\.[0-9]+)?s?\s+)?(.*)$")
+vertex = os.environ["RBL_BENCH_VERTEX"]
 markers = [
     "LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN",
     "LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN",
@@ -1939,8 +2105,10 @@ for line in lines:
     match = prefix.match(line)
     if match is None:
         continue
-    value = match.group(1)
+    value = match.group(2)
     if value in markers:
+        if match.group(1) != vertex:
+            raise SystemExit("benchmark-native-marker-vertex-mismatch")
         if expected >= len(markers) or value != markers[expected]:
             raise SystemExit("benchmark-native-marker-order-invalid")
         expected += 1
@@ -1973,6 +2141,17 @@ if len(apk.encode("utf-8")) > 4 * 1024 * 1024:
     raise SystemExit("benchmark-native-apk-output-too-large")
 result = {
     "format": "lagrange-benchmark-native-identity-v1",
+    "evidence_mode": "executed",
+    "native_recipe_sha256": os.environ["RBL_BENCH_RECIPE_HASH"],
+    "native_marker_run_sha256": os.environ["RBL_BENCH_MARKER_HASH"],
+    "native_vertex": vertex,
+    "native_vertex_state": "executed",
+    "build": {
+        "revision": os.environ["RBL_BENCH_REVISION"],
+        "measurement_phase": os.environ["RBL_BENCH_PHASE"],
+        "service": os.environ["RBL_BENCH_SERVICE"],
+        "index": int(os.environ["RBL_BENCH_INDEX"]),
+    },
     "raw_log_sha256": hashlib.sha256(raw).hexdigest(),
     "rustc_vv": rustc,
     "cargo_version": cargo,
@@ -1992,8 +2171,94 @@ with os.fdopen(fd, "wb") as handle:
 PY
 }
 
+reuse_cached_native_identity() {
+  local source=$1 source_hash=$2 destination=$3 current_log=$4 recipe_hash=$5 marker_hash=$6 vertex=$7
+  local revision=$8 measurement_phase=$9 service=${10} index=${11}
+  [ -f "$source" ] && [ ! -L "$source" ] || return 1
+  [ "$(sha256_file "$source")" = "$source_hash" ] || return 1
+  [ -d "${destination%/*}" ] && [ ! -L "${destination%/*}" ] || return 1
+  [ ! -e "$destination" ] && [ ! -L "$destination" ] || return 1
+  RBL_BENCH_SOURCE=$source RBL_BENCH_SOURCE_HASH=$source_hash \
+    RBL_BENCH_SOURCE_REL=${source#$output_dir/} RBL_BENCH_NATIVE=$destination \
+    RBL_BENCH_LOG=$current_log RBL_BENCH_RECIPE_HASH=$recipe_hash \
+    RBL_BENCH_MARKER_HASH=$marker_hash RBL_BENCH_VERTEX=$vertex \
+    RBL_BENCH_REVISION=$revision RBL_BENCH_PHASE=$measurement_phase \
+    RBL_BENCH_SERVICE=$service RBL_BENCH_INDEX=$index python3 - <<'PY'
+import hashlib
+import json
+import os
+import re
+
+source_raw = open(os.environ["RBL_BENCH_SOURCE"], "rb").read()
+if hashlib.sha256(source_raw).hexdigest() != os.environ["RBL_BENCH_SOURCE_HASH"]:
+    raise SystemExit("benchmark-native-source-hash-mismatch")
+source = json.loads(source_raw.decode("utf-8"))
+if (source.get("format") != "lagrange-benchmark-native-identity-v1" or
+        source.get("evidence_mode") != "executed" or
+        source.get("native_vertex_state") != "executed" or
+        source.get("native_recipe_sha256") != os.environ["RBL_BENCH_RECIPE_HASH"] or
+        source.get("native_marker_run_sha256") != os.environ["RBL_BENCH_MARKER_HASH"] or
+        not re.fullmatch(r"[0-9]+", source.get("native_vertex", ""))):
+    raise SystemExit("benchmark-native-source-provenance-invalid")
+
+text_fields = (
+    ("rustc_vv", "rustc_vv_sha256"),
+    ("cargo_version", "cargo_version_sha256"),
+    ("apk_info_vv", "apk_info_vv_sha256"),
+)
+for value_name, hash_name in text_fields:
+    value = source.get(value_name)
+    digest = source.get(hash_name)
+    if not isinstance(value, str) or hashlib.sha256(value.encode("utf-8")).hexdigest() != digest:
+        raise SystemExit("benchmark-native-source-content-hash-invalid")
+if source.get("host_triple") != "x86_64-unknown-linux-musl":
+    raise SystemExit("benchmark-native-source-host-invalid")
+if not isinstance(source.get("apk_package_line_count"), int) or source["apk_package_line_count"] <= 0:
+    raise SystemExit("benchmark-native-source-apk-count-invalid")
+if not re.fullmatch(r"[0-9a-f]{64}", source.get("raw_log_sha256", "")):
+    raise SystemExit("benchmark-native-source-log-hash-invalid")
+if not isinstance(source.get("build"), dict):
+    raise SystemExit("benchmark-native-source-build-invalid")
+
+current_raw = open(os.environ["RBL_BENCH_LOG"], "rb").read()
+result = {key: source[key] for key in (
+    "format", "rustc_vv", "cargo_version", "apk_info_vv", "host_triple",
+    "rustc_vv_sha256", "cargo_version_sha256", "apk_info_vv_sha256",
+    "apk_package_line_count", "raw_log_sha256",
+)}
+result.update({
+    "evidence_mode": "cached-reuse",
+    "native_recipe_sha256": os.environ["RBL_BENCH_RECIPE_HASH"],
+    "native_marker_run_sha256": os.environ["RBL_BENCH_MARKER_HASH"],
+    "native_vertex": os.environ["RBL_BENCH_VERTEX"],
+    "native_vertex_state": "cached",
+    "current_raw_log_sha256": hashlib.sha256(current_raw).hexdigest(),
+    "build": {
+        "revision": os.environ["RBL_BENCH_REVISION"],
+        "measurement_phase": os.environ["RBL_BENCH_PHASE"],
+        "service": os.environ["RBL_BENCH_SERVICE"],
+        "index": int(os.environ["RBL_BENCH_INDEX"]),
+    },
+    "source_evidence": {
+        "path": os.environ["RBL_BENCH_SOURCE_REL"],
+        "sha256": os.environ["RBL_BENCH_SOURCE_HASH"],
+        "raw_log_sha256": source["raw_log_sha256"],
+        "native_vertex": source["native_vertex"],
+        "build": source["build"],
+    },
+})
+data = (json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+fd = os.open(os.environ["RBL_BENCH_NATIVE"], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(data)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+}
+
 record_native_identity() {
-  local revision=$1 measurement_phase=$2 service=$3 index=$4 raw_log=$5 cargo_mode=$6 path hash fields
+  local revision=$1 measurement_phase=$2 service=$3 index=$4 raw_log=$5 cargo_mode=$6
+  local dockerfile=$7 namespace=$8 cold_nonce=$9 commit=${10} path hash fields binding recipe_hash marker_hash source source_hash
   if [ "$cargo_mode" -eq 0 ]; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$revision" "$measurement_phase" "$service" "$index" not-applicable not-applicable \
@@ -2001,18 +2266,49 @@ record_native_identity() {
     return 0
   fi
   path=$output_dir/native-identities/${revision}-${measurement_phase}-${index}-${service}.json
-  parse_native_identity "$raw_log" "$path" || return 1
+  binding=$(native_identity_recipe_binding "$dockerfile" "$namespace" "$cold_nonce" "$commit") || return 1
+  IFS=$'\t' read -r recipe_hash marker_hash <<<"$binding"
+  [[ "$recipe_hash" =~ ^[0-9a-f]{64}$ ]] && [[ "$marker_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+  inspect_native_identity_vertex "$raw_log" "$marker_hash" || return 1
+  if [ "$BENCH_NATIVE_VERTEX_STATE" = executed ]; then
+    parse_native_identity "$raw_log" "$path" "$recipe_hash" "$marker_hash" "$BENCH_NATIVE_VERTEX" \
+      "$revision" "$measurement_phase" "$service" "$index" || return 1
+  else
+    source=${native_identity_source_by_recipe[$recipe_hash]:-}
+    source_hash=${native_identity_source_hash_by_recipe[$recipe_hash]:-}
+    [ -n "$source" ] && [[ "$source_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+    reuse_cached_native_identity "$source" "$source_hash" "$path" "$raw_log" \
+      "$recipe_hash" "$marker_hash" "$BENCH_NATIVE_VERTEX" \
+      "$revision" "$measurement_phase" "$service" "$index" || return 1
+  fi
   hash=$(sha256_file "$path") || return 1
   fields=$(python3 - "$path" <<'PY'
-import json, re, sys
+import hashlib, json, re, sys
 value=json.load(open(sys.argv[1],encoding="utf-8"))
 if value.get("format") != "lagrange-benchmark-native-identity-v1": raise SystemExit(1)
 items=[value.get("rustc_vv_sha256"),value.get("cargo_version_sha256"),value.get("apk_info_vv_sha256"),value.get("apk_package_line_count")]
 if not all(isinstance(item,str) and re.fullmatch(r"[0-9a-f]{64}",item) for item in items[:3]): raise SystemExit(1)
 if not isinstance(items[3],int) or items[3] <= 0: raise SystemExit(1)
+for name, digest in (("rustc_vv",items[0]),("cargo_version",items[1]),("apk_info_vv",items[2])):
+    item=value.get(name)
+    if not isinstance(item,str) or hashlib.sha256(item.encode()).hexdigest()!=digest: raise SystemExit(1)
 print("\t".join([*items[:3],str(items[3])]))
 PY
 ) || return 1
+  if [ "$BENCH_NATIVE_VERTEX_STATE" = executed ]; then
+    if [ -n "${native_identity_source_by_recipe[$recipe_hash]:-}" ]; then
+      source=${native_identity_source_by_recipe[$recipe_hash]}
+      python3 - "$source" "$path" <<'PY' || return 1
+import json, sys
+left=json.load(open(sys.argv[1],encoding="utf-8")); right=json.load(open(sys.argv[2],encoding="utf-8"))
+keys=("rustc_vv_sha256","cargo_version_sha256","apk_info_vv_sha256","apk_package_line_count","host_triple")
+if any(left.get(key)!=right.get(key) for key in keys): raise SystemExit(1)
+PY
+    else
+      native_identity_source_by_recipe[$recipe_hash]=$path
+      native_identity_source_hash_by_recipe[$recipe_hash]=$hash
+    fi
+  fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$revision" "$measurement_phase" "$service" "$index" "${path#$output_dir/}" "$hash" $fields >>"$native_identity_report"
 }
@@ -2366,7 +2662,8 @@ build_one_service() {
     failure_stage=cargo-unit-evidence
     die "Cargo JSON unit evidence could not be retained for $revision/$measurement_phase/$service"
   fi
-  if ! record_native_identity "$revision" "$measurement_phase" "$service" "$index" "$raw_log" "${service_cargo_mode[$service]}"; then
+  if ! record_native_identity "$revision" "$measurement_phase" "$service" "$index" "$raw_log" \
+    "${service_cargo_mode[$service]}" "${instrumented_dockerfile[$revision:$service]}" "$namespace" "$cold_nonce" "$commit"; then
     failure_stage=native-identity-evidence
     die "native tool identity evidence could not be retained for $revision/$measurement_phase/$service"
   fi
@@ -4167,6 +4464,8 @@ cleanup_apply_run() {
 }
 
 initialize_output() {
+  native_identity_source_by_recipe=()
+  native_identity_source_hash_by_recipe=()
   if [ -e "$output_dir" ]; then
     [ -d "$output_dir" ] && [ ! -L "$output_dir" ] || die 'output-dir is not a regular directory'
     [ -z "$(find "$output_dir" -mindepth 1 -maxdepth 1 -print -quit)" ] ||
@@ -4583,6 +4882,7 @@ new_self_test_nonce() {
 run_self_test() {
   test_builder_identity_parser || die 'self-test builder identity parser failed'
   local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log invalid_json_log
+  local native_test_dir native_dockerfile native_changed_dockerfile native_executed_log native_cached_log native_partial_log native_reordered_log native_source native_source_copy
   local current parent plan_output first_nonce second_nonce foreign_tag build_count remove_count
   local clean_clone clean_clone_input clean_clone_env real_git_bin
   local case_variant_one case_variant_two health_mode health_reason saved_health_containers scenario_case scenario_path
@@ -4697,6 +4997,119 @@ EOF
   expect_parse_failure "$missing_finish_log" 1 baseline missing-finish
   expect_parse_failure "$failed_log" 1 baseline compiler-error
   expect_parse_failure "$invalid_json_log" 1 baseline missing-cargo-json-units "$parser_dir/invalid-json-units.json"
+
+  # Native identity cache evidence is reusable only from a directly executed
+  # vertex with the same complete native recipe binding in this invocation.
+  native_test_dir=$parser_dir/native-identity
+  mkdir -p -- "$native_test_dir/native-identities"
+  output_dir=$native_test_dir
+  native_identity_report=$native_test_dir/native-identities.tsv
+  printf 'revision\tmeasurement_phase\tservice\tindex\tnative_identity\tnative_identity_sha256\trustc_vv_sha256\tcargo_version_sha256\tapk_info_vv_sha256\tapk_package_line_count\n' >"$native_identity_report"
+  builder_identity='fixture-builder|docker'
+  buildx_identity='fixture-buildx'
+  docker_identity='fixture-client|fixture-server'
+  docker_platform_identity='linux|amd64|fixture-kernel'
+  native_identity_source_by_recipe=()
+  native_identity_source_hash_by_recipe=()
+  native_dockerfile=$native_test_dir/native.Dockerfile
+  native_changed_dockerfile=$native_test_dir/native-changed.Dockerfile
+  cat >"$native_dockerfile" <<'EOF'
+FROM rust:1.97.1-alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS builder
+ARG TARGETPLATFORM
+ENV CARGO_BUILD_JOBS=2
+ARG LAGRANGE_CODE_COMMIT
+RUN test -n "$LAGRANGE_CODE_COMMIT"
+ARG LAGRANGE_BENCHMARK_COLD_NONCE
+RUN test -n "$LAGRANGE_BENCHMARK_COLD_NONCE"
+RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
+RUN set -eu; \
+    printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN; \
+    printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_END; \
+    printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_END; \
+    printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_END; \
+    printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END
+RUN cargo build --locked --release
+EOF
+  sed 's/postgresql-dev/postgresql-dev git/' "$native_dockerfile" >"$native_changed_dockerfile"
+  native_executed_log=$native_test_dir/executed.log
+  native_cached_log=$native_test_dir/cached.log
+  native_partial_log=$native_test_dir/partial.log
+  native_reordered_log=$native_test_dir/reordered.log
+  cat >"$native_executed_log" <<'EOF'
+#11 [builder 4/5] RUN set -eu;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN;     printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END
+#11 0.01 LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN
+#11 0.02 LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN
+#11 0.03 rustc 1.97.1 (fixture)
+#11 0.04 host: x86_64-unknown-linux-musl
+#11 0.05 release: 1.97.1
+#11 0.06 LAGRANGE_BENCH_NATIVE_RUSTC_END
+#11 0.07 LAGRANGE_BENCH_NATIVE_CARGO_BEGIN
+#11 0.08 cargo 1.97.1 (fixture)
+#11 0.09 LAGRANGE_BENCH_NATIVE_CARGO_END
+#11 0.10 LAGRANGE_BENCH_NATIVE_APK_BEGIN
+#11 0.11 build-base-0
+#11 0.12 musl-dev-0
+#11 0.13 LAGRANGE_BENCH_NATIVE_APK_END
+#11 0.14 LAGRANGE_BENCH_NATIVE_IDENTITY_END
+#11 DONE 0.2s
+EOF
+  cat >"$native_cached_log" <<'EOF'
+#9 [builder 4/5] RUN set -eu;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN;     printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END
+#9 CACHED
+EOF
+  cat >"$native_partial_log" <<'EOF'
+#7 [builder 4/5] RUN set -eu;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN;     printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END
+#7 0.01 LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN
+#7 DONE 0.1s
+EOF
+  cat >"$native_reordered_log" <<'EOF'
+#8 [builder 4/5] RUN set -eu;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN;     printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END
+#8 0.01 LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN
+#8 0.02 LAGRANGE_BENCH_NATIVE_CARGO_BEGIN
+#8 DONE 0.1s
+EOF
+  record_native_identity baseline warmup first-native 1 "$native_executed_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+    die 'self-test rejected executed native identity evidence'
+  native_source=$native_test_dir/native-identities/baseline-warmup-1-first-native.json
+  record_native_identity baseline warmup cached-native 2 "$native_cached_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ||
+    die 'self-test rejected same-recipe cached native identity evidence'
+  python3 - "$native_test_dir/native-identities/baseline-warmup-2-cached-native.json" "$native_source" <<'PY' ||
+import hashlib, json, sys
+cached=json.load(open(sys.argv[1],encoding="utf-8")); source=open(sys.argv[2],"rb").read()
+if cached.get("evidence_mode")!="cached-reuse" or cached.get("native_vertex_state")!="cached": raise SystemExit(1)
+provenance=cached.get("source_evidence",{})
+if provenance.get("sha256")!=hashlib.sha256(source).hexdigest() or provenance.get("native_vertex")!="11": raise SystemExit(1)
+PY
+    die 'self-test cached native identity provenance was malformed'
+  if record_native_identity baseline warmup nonce-mismatch 3 "$native_cached_log" 1 "$native_dockerfile" namespace-a nonce-b aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test accepted cached native identity with a different cold nonce'
+  fi
+  if record_native_identity baseline warmup commit-mismatch 9 "$native_cached_log" 1 "$native_dockerfile" namespace-a nonce-a bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >/dev/null 2>&1; then
+    die 'self-test accepted cached native identity with a different relevant build argument'
+  fi
+  if record_native_identity baseline warmup recipe-mismatch 4 "$native_cached_log" 1 "$native_changed_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test accepted cached native identity with different apk packages'
+  fi
+  builder_identity='different-builder|docker'
+  if record_native_identity baseline warmup builder-mismatch 5 "$native_cached_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test accepted cached native identity from a different builder binding'
+  fi
+  builder_identity='fixture-builder|docker'
+  native_source_copy=$native_test_dir/native-source-copy.json
+  cp -- "$native_source" "$native_source_copy"
+  printf '%s\n' modified >>"$native_source"
+  if record_native_identity baseline warmup modified-source 6 "$native_cached_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test accepted modified prior native identity evidence'
+  fi
+  mv -- "$native_source_copy" "$native_source"
+  if record_native_identity baseline warmup partial-executed 7 "$native_partial_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test reused old native evidence over partial executed markers'
+  fi
+  if record_native_identity baseline warmup reordered-executed 8 "$native_reordered_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test reused old native evidence over reordered executed markers'
+  fi
+  [ "$(wc -l <"$native_identity_report")" -eq 3 ] ||
+    die 'self-test native identity failures published unexpected report rows'
 
   # Preserve the public default-plan CLI without contacting Docker.
   current=$(git -c "safe.directory=$repo_root" -C "$repo_root" rev-parse HEAD)
@@ -5030,7 +5443,7 @@ PY
         esac
         ;;
       build)
-        local arg next_is_build_arg=0 code_commit=
+        local arg next_is_build_arg=0 code_commit= dockerfile=
         for arg in "$@"; do
           if [ "$next_is_build_arg" -eq 1 ]; then
             case "$arg" in
@@ -5044,9 +5457,11 @@ PY
           case "$arg" in
             --build-arg) next_is_build_arg=1 ;;
             -t) next_is_build_arg=2 ;;
+            -f) next_is_build_arg=3 ;;
             --no-cache) return 92 ;;
             *)
               if [ "$next_is_build_arg" -eq 2 ]; then tag=$arg; next_is_build_arg=0
+              elif [ "$next_is_build_arg" -eq 3 ]; then dockerfile=$arg; next_is_build_arg=0
               elif [ "${arg:0:1}" = / ]; then context=$arg
               fi
               ;;
@@ -5055,7 +5470,7 @@ PY
         namespace=$build_arg
         host_namespace=${BUILDKIT_CACHE_MOUNT_NS-unset}
         [[ "$code_commit" =~ ^[0-9a-f]{40}$ ]] || return 92
-        [ -n "$tag" ] && [ -n "$context" ] && [ -n "${BENCH_TEST_ARCHIVE_REQUEST:-}" ] &&
+        [ -n "$tag" ] && [ -f "$dockerfile" ] && [ -n "$context" ] && [ -n "${BENCH_TEST_ARCHIVE_REQUEST:-}" ] &&
           [ "$BENCH_TEST_ARCHIVE_COMMIT" = "$code_commit" ] || return 92
         if [ "${BENCH_TEST_ARCHIVE_SCAN_COUNT:-0}" -lt "${BENCH_TEST_ARCHIVE_SCAN_LIMIT:-0}" ]; then
           mkdir -p -- "$test_dir/fake-images" || return 92
@@ -5081,7 +5496,11 @@ PY
           printf '%s\n' '#9 ERROR: fixture build failure'
           return 88
         fi
-        cat <<'EOF'
+        printf '%s\n' "#5 [builder 4/7] RUN set -eu;     printf '%s\\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN;     printf '%s\\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\\n' LAGRANGE_BENCH_NATIVE_RUSTC_END;     printf '%s\\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\\n' LAGRANGE_BENCH_NATIVE_CARGO_END;     printf '%s\\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\\n' LAGRANGE_BENCH_NATIVE_APK_END;     printf '%s\\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END"
+        if [[ "$tag" == *-db-migrate:* ]]; then
+          printf '%s\n' '#5 CACHED'
+        else
+          cat <<'EOF'
 #2 [builder 2/7] COPY Cargo.toml ./
 #2 CACHED
 #5 0.01 LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN
@@ -5099,6 +5518,10 @@ PY
 #5 0.13 musl-dev-0
 #5 0.14 LAGRANGE_BENCH_NATIVE_APK_END
 #5 0.15 LAGRANGE_BENCH_NATIVE_IDENTITY_END
+#5 DONE 0.15s
+EOF
+        fi
+        cat <<'EOF'
 #9 [builder 7/7] RUN cargo clean --workspace --release --locked && cargo build -vv --message-format=json-render-diagnostics --locked --release
 #9 0.10 Fresh itoa v1.0.18
 #9 0.20 Compiling benchmark-fixture v0.1.0 (/build)
