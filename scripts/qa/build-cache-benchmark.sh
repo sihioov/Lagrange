@@ -5137,8 +5137,14 @@ gate_batch() {
 }
 
 namespace_for_revision() {
-  local revision=$1 commit=$2
-  printf 'lagrange-benchmark-%s-%s-%s' "$benchmark_nonce" "$revision" "${commit:0:12}"
+  local revision=$1 commit=$2 namespace
+  case "$revision" in baseline|candidate) ;; *) return 1 ;; esac
+  is_exact_commit "$commit" || return 1
+  [[ "$benchmark_nonce" =~ ^[0-9a-f]{20}$ ]] || return 1
+  # Keep every byte of the encoded ten-character run nonce. The compact
+  # prefix/side fit the frozen public helper's 48-byte namespace contract.
+  namespace="lb-${benchmark_nonce}-${revision:0:1}-${commit:0:12}"
+  printf '%s' "$namespace"
 }
 
 cold_nonce_for_revision() {
@@ -5680,8 +5686,11 @@ run_apply() {
   record_layout_identity baseline "$baseline_checkout"
   record_layout_identity candidate "$candidate_checkout"
   instrumentation_manifest_hash=$(sha256_text "$(sha256_file "$instrumentation_report")\n$(sha256_file "$cargo_invocations_report")")
-  baseline_namespace=$(namespace_for_revision baseline "$baseline_commit")
-  candidate_namespace=$(namespace_for_revision candidate "$candidate_commit")
+  baseline_namespace=$(namespace_for_revision baseline "$baseline_commit") || die 'invalid baseline cache namespace inputs'
+  candidate_namespace=$(namespace_for_revision candidate "$candidate_commit") || die 'invalid candidate cache namespace inputs'
+  # Check both sides before spending time on either warmup.
+  rbl_namespace_ok "$baseline_namespace" && rbl_namespace_ok "$candidate_namespace" ||
+    die 'generated cache namespace violates the public helper contract'
   baseline_cold_nonce=$(cold_nonce_for_revision baseline)
   candidate_cold_nonce=$(cold_nonce_for_revision candidate)
   prep_finished=$(now_ms)
@@ -5934,7 +5943,28 @@ new_self_test_nonce() {
   printf '%s' "$nonce"
 }
 
+test_benchmark_namespace_contract() (
+  local helper=${1:-$repo_root/scripts/ops/lib/release-build-layout.sh} a b changed old
+  source "$helper"
+  benchmark_nonce=5a4a796c504862664839
+  a=$(namespace_for_revision baseline 1111111111111111111111111111111111111111) || return 1
+  b=$(namespace_for_revision candidate 1111111111111111111111111111111111111111) || return 1
+  rbl_namespace_ok "$a" && rbl_namespace_ok "$b" || return 1
+  [ "${#a}" -eq 38 ] && [ "$a" != "$b" ] || return 1
+  old="lagrange-benchmark-${benchmark_nonce}-candidate-111111111111"
+  if rbl_namespace_ok "$old"; then return 1; fi
+  changed=$(namespace_for_revision baseline 2222222222222222222222222222222222222222) || return 1
+  [ "$changed" != "$a" ] || return 1
+  benchmark_nonce=5a4a796c504862664838
+  changed=$(namespace_for_revision baseline 1111111111111111111111111111111111111111) || return 1
+  [ "$changed" != "$a" ] || return 1
+  if namespace_for_revision unknown 1111111111111111111111111111111111111111; then return 1; fi
+  benchmark_nonce=invalid
+  if namespace_for_revision baseline 1111111111111111111111111111111111111111; then return 1; fi
+)
+
 run_self_test() {
+  test_benchmark_namespace_contract || die 'self-test real helper namespace contract failed'
   test_builder_identity_parser || die 'self-test builder identity parser failed'
   local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log terminal_error_log invalid_json_log
   local cargo_identity_log cargo_exact_duplicate_log cargo_reordered_duplicate_log cargo_bad_features_log cargo_bad_profile_log cargo_nonfinite_log cargo_failed_build_log
@@ -7501,7 +7531,7 @@ PY
       local source_root=$1 commit=$2 state_root=$3 namespace=$4 native
       [ "${RELEASE_BUILD_LAYOUT_INITIALIZED:-0}" != 1 ] && [ ! -e "$state_root" ] && [ ! -L "$state_root" ] || return 1
       [ -d "$source_root" ] && [ -f "$source_root/deploy/build/release-build-layout.json" ] &&
-        is_exact_commit "$commit" && [[ "$namespace" =~ ^[a-z0-9][a-z0-9_.-]{0,127}$ ]] || return 1
+        is_exact_commit "$commit" && rbl_namespace_ok "$namespace" || return 1
       release_build_layout_lock || return 1
       # This is the fake helper's normal init implementation.  The test setup
       # deliberately did not create this root, so a fresh-output defect cannot
@@ -8088,7 +8118,7 @@ PY
   [ "$first_nonce" != "$second_nonce" ] || die 'self-test invocation nonce collision'
   [ "lagrange-cb-$first_nonce-baseline-measured-1" != "lagrange-cb-$second_nonce-baseline-measured-1" ] ||
     die 'self-test invocation tags are not disjoint'
-  [ "lagrange-benchmark-$first_nonce-baseline-${baseline_commit:0:12}" != "lagrange-benchmark-$second_nonce-baseline-${baseline_commit:0:12}" ] ||
+  [ "lb-$first_nonce-b-${baseline_commit:0:12}" != "lb-$second_nonce-b-${baseline_commit:0:12}" ] ||
     die 'self-test invocation namespaces are not disjoint'
   foreign_tag="lagrange-cb-${second_nonce}-baseline-measured-1"
   cleanup_test_images
