@@ -633,6 +633,10 @@ def text_list(value, label, limit):
         raise SystemExit("benchmark-cargo-%s-duplicate" % label)
     return sorted(output)
 
+def unit_identity(package_id, target_name, kinds, crate_types, features, profile):
+    return (package_id, target_name, tuple(kinds), tuple(crate_types),
+            tuple(features), profile)
+
 prefix = re.compile(r"^#" + re.escape(vertex) + r"\s+(?:[0-9]+(?:\.[0-9]+)?s?\s+)?(?P<payload>\{.*\})\s*$")
 units = []
 unit_keys = set()
@@ -688,15 +692,20 @@ for line in text.splitlines():
             executable = bounded_text(executable, "executable")
             if not executable.startswith("/") or "/../" in executable or executable.endswith("/.."):
                 raise SystemExit("benchmark-cargo-executable-invalid")
-        key = (package_id, target_name, tuple(kinds), tuple(crate_types))
+        canonical_features = text_list(features, "features", 512)
+        canonical_profile = json.dumps(
+            {key: safe_profile[key] for key in sorted(safe_profile)},
+            sort_keys=True, separators=(",", ":"))
+        key = unit_identity(package_id, target_name, kinds, crate_types,
+                            canonical_features, canonical_profile)
         if key in unit_keys:
             raise SystemExit("benchmark-cargo-unit-duplicate")
         unit_keys.add(key)
         units.append({
             "package_id": package_id,
             "target": {"name": target_name, "kind": kinds, "crate_types": crate_types},
-            "features": text_list(features, "features", 512),
-            "profile": {key: safe_profile[key] for key in sorted(safe_profile)},
+            "features": canonical_features,
+            "profile": json.loads(canonical_profile),
             "fresh": fresh,
             "executable": executable,
             "build_success": None,
@@ -712,7 +721,10 @@ if finished != [True]:
     raise SystemExit("benchmark-cargo-build-success-invalid")
 for unit in units:
     unit["build_success"] = True
-units.sort(key=lambda item: (item["package_id"], item["target"]["name"], item["target"]["kind"], item["target"]["crate_types"]))
+units.sort(key=lambda item: unit_identity(
+    item["package_id"], item["target"]["name"], item["target"]["kind"],
+    item["target"]["crate_types"], item["features"],
+    json.dumps(item["profile"], sort_keys=True, separators=(",", ":"))))
 result = {
     "format": "lagrange-benchmark-cargo-units-v1",
     "raw_log_sha256": hashlib.sha256(raw).hexdigest(),
@@ -778,7 +790,7 @@ parse_build_events() {
   }
   BENCH_COMPILER_VERTEX=${vertices[0]}
 
-  if grep -Eq "^#${BENCH_COMPILER_VERTEX}[[:space:]]+.*ERROR" "$log"; then
+  if grep -Eq "^#${BENCH_COMPILER_VERTEX}[[:space:]]+ERROR(:|[[:space:]]*$)" "$log"; then
     parse_fail 'Cargo compiler vertex reported a BuildKit error'
     return 1
   fi
@@ -2041,7 +2053,7 @@ if marker_hash != os.environ["RBL_BENCH_MARKER_HASH"]:
 
 cached = sum(line == f"#{vertex} CACHED" for line in lines)
 done = sum(re.match(rf"^#{re.escape(vertex)} DONE [0-9]+(?:\.[0-9]+)?s$", line) is not None for line in lines)
-if any(re.match(rf"^#{re.escape(vertex)}\s+.*ERROR", line) for line in lines):
+if any(re.match(rf"^#{re.escape(vertex)}\s+ERROR(?::|\s*$)", line) for line in lines):
     raise SystemExit("benchmark-native-identity-vertex-error")
 outputs = []
 prefix = re.compile(r"^#([0-9]+)\s+(?:[0-9]+(?:\.[0-9]+)?s?\s+)?(.*)$")
@@ -4959,8 +4971,9 @@ new_self_test_nonce() {
 
 run_self_test() {
   test_builder_identity_parser || die 'self-test builder identity parser failed'
-  local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log invalid_json_log
-  local native_test_dir native_dockerfile native_changed_dockerfile native_executed_log native_cached_log native_partial_log native_reordered_log native_source native_source_copy
+  local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log terminal_error_log invalid_json_log
+  local cargo_identity_log cargo_exact_duplicate_log cargo_reordered_duplicate_log cargo_bad_features_log cargo_bad_profile_log cargo_nonfinite_log cargo_failed_build_log
+  local native_test_dir native_dockerfile native_changed_dockerfile native_executed_log native_cached_log native_error_executed_log native_error_cached_log native_partial_log native_reordered_log native_source native_source_copy
   local current parent plan_output first_nonce second_nonce foreign_tag build_count remove_count
   local clean_clone clean_clone_input clean_clone_env real_git_bin
   local case_variant_one case_variant_two health_mode health_reason saved_health_containers scenario_case scenario_path
@@ -5009,6 +5022,8 @@ run_self_test() {
 #2 CACHED
 #9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
 #9 0.10 Fresh itoa v1.0.18
+#9 0.19 warning: constant `Z_STREAM_ERROR` is never used
+#9 0.195 ERROR: timestamped compiler output is not a BuildKit status
 #9 0.20 Compiling benchmark-baseline v0.1.0 (/build)
 #9 0.21 {"reason":"compiler-artifact","package_id":"benchmark-baseline 0.1.0 (path+file:///build)","target":{"name":"benchmark-baseline","kind":["bin"],"crate_types":["bin"]},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false,"doc":false},"features":[],"fresh":false,"executable":"/cargo-target/release/benchmark-baseline"}
 #9 0.22 {"reason":"build-finished","success":true}
@@ -5045,15 +5060,108 @@ EOF
 #9 DONE 1.25s
 EOF
   cat >"$failed_log" <<'EOF'
-#9 [builder 7/7] RUN cargo build -vv --locked --release
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 Compiling benchmark-failed-with-success-looking-evidence v0.1.0 (/build)
+#9 0.11 {"reason":"compiler-artifact","package_id":"benchmark-failed-with-success-looking-evidence 0.1.0 (path+file:///build)","target":{"name":"benchmark-failed-with-success-looking-evidence","kind":["bin"],"crate_types":["bin"]},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false,"doc":false},"features":[],"fresh":false,"executable":"/cargo-target/release/benchmark-failed-with-success-looking-evidence"}
+#9 0.12 {"reason":"build-finished","success":true}
+#9 0.30 Finished `release` profile [optimized] target(s) in 1.25s
+#9 DONE 1.25s
+#9 CACHED
 #9 ERROR: process "/bin/sh -c cargo build" did not complete successfully
 EOF
+  terminal_error_log=$parser_dir/terminal-error.log
+  cp -- "$baseline_log" "$terminal_error_log"
+  printf '%s\n' '#9 ERROR' >>"$terminal_error_log"
   cat >"$invalid_json_log" <<'EOF'
 #9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
 #9 0.10 Compiling benchmark-invalid-json v0.1.0 (/build)
 #9 0.20 Finished `release` profile [optimized] target(s) in 1.25s
 #9 DONE 1.25s
 EOF
+  cargo_identity_log=$parser_dir/cargo-identity-variants.log
+  cat >"$cargo_identity_log" <<'EOF'
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":3},"features":["feature-a"],"fresh":false,"executable":null}
+#9 0.11 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":3},"features":["feature-b"],"fresh":false,"executable":null}
+#9 0.12 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"opt_level":2,"debug_assertions":false},"features":["feature-a"],"fresh":false,"executable":null}
+#9 0.13 {"reason":"build-finished","success":true}
+#9 0.14 Finished `release` profile [optimized] target(s) in 0.20s
+#9 DONE 0.20s
+EOF
+  cargo_exact_duplicate_log=$parser_dir/cargo-exact-duplicate.log
+  cat >"$cargo_exact_duplicate_log" <<'EOF'
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":3},"features":["feature-a"],"fresh":false,"executable":null}
+#9 0.11 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":3},"features":["feature-a"],"fresh":false,"executable":null}
+#9 0.12 {"reason":"build-finished","success":true}
+#9 0.13 Finished `release` profile [optimized] target(s) in 0.20s
+#9 DONE 0.20s
+EOF
+  cargo_reordered_duplicate_log=$parser_dir/cargo-reordered-duplicate.log
+  cat >"$cargo_reordered_duplicate_log" <<'EOF'
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":3},"features":["feature-a","feature-b"],"fresh":false,"executable":null}
+#9 0.11 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"opt_level":3,"debug_assertions":false},"features":["feature-b","feature-a"],"fresh":false,"executable":null}
+#9 0.12 {"reason":"build-finished","success":true}
+#9 0.13 Finished `release` profile [optimized] target(s) in 0.20s
+#9 DONE 0.20s
+EOF
+  cargo_bad_features_log=$parser_dir/cargo-bad-features.log
+  cat >"$cargo_bad_features_log" <<'EOF'
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":3},"features":"feature-a","fresh":false,"executable":null}
+#9 0.11 {"reason":"build-finished","success":true}
+#9 0.12 Finished `release` profile [optimized] target(s) in 0.20s
+#9 DONE 0.20s
+EOF
+  cargo_bad_profile_log=$parser_dir/cargo-bad-profile.log
+  cat >"$cargo_bad_profile_log" <<'EOF'
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":1.5},"features":["feature-a"],"fresh":false,"executable":null}
+#9 0.11 {"reason":"build-finished","success":true}
+#9 0.12 Finished `release` profile [optimized] target(s) in 0.20s
+#9 DONE 0.20s
+EOF
+  cargo_nonfinite_log=$parser_dir/cargo-nonfinite-profile.log
+  cat >"$cargo_nonfinite_log" <<'EOF'
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"opt_level":NaN},"features":["feature-a"],"fresh":false,"executable":null}
+#9 0.11 {"reason":"build-finished","success":true}
+#9 0.12 Finished `release` profile [optimized] target(s) in 0.20s
+#9 DONE 0.20s
+EOF
+  cargo_failed_build_log=$parser_dir/cargo-failed-build.log
+  cat >"$cargo_failed_build_log" <<'EOF'
+#9 [builder 7/7] RUN cargo build -vv --message-format=json-render-diagnostics --locked --release
+#9 0.10 {"reason":"compiler-artifact","package_id":"benchmark-identity 0.1.0 (path+file:///build)","target":{"name":"benchmark-identity","kind":["bin"],"crate_types":["bin"]},"profile":{"debug_assertions":false,"opt_level":3},"features":["feature-a"],"fresh":false,"executable":null}
+#9 0.11 {"reason":"build-finished","success":false}
+#9 0.12 Finished `release` profile [optimized] target(s) in 0.20s
+#9 DONE 0.20s
+EOF
+  parse_build_events "$cargo_identity_log" 1 baseline "$parser_dir/cargo-identity-variants.json"
+  [ "$BENCH_CARGO_UNITS_COUNT" = 3 ] || die 'self-test Cargo feature/profile variants were merged or dropped'
+  python3 - "$parser_dir/cargo-identity-variants.json" <<'PY' || die 'self-test Cargo feature/profile identities were not distinct'
+import json, sys
+units = json.load(open(sys.argv[1], encoding="utf-8"))["units"]
+features = {tuple(item["features"]) for item in units}
+profiles = {json.dumps(item["profile"], sort_keys=True, separators=(",", ":")) for item in units}
+feature_a_profiles = {
+    json.dumps(item["profile"], sort_keys=True, separators=(",", ":"))
+    for item in units if item["features"] == ["feature-a"]
+}
+if features != {("feature-a",), ("feature-b",)}:
+    raise SystemExit(1)
+if profiles != {"{\"debug_assertions\":false,\"opt_level\":2}", "{\"debug_assertions\":false,\"opt_level\":3}"}:
+    raise SystemExit(1)
+if feature_a_profiles != profiles:
+    raise SystemExit(1)
+PY
+  expect_parse_failure "$cargo_exact_duplicate_log" 1 baseline cargo-exact-duplicate "$parser_dir/cargo-exact-duplicate.json"
+  expect_parse_failure "$cargo_reordered_duplicate_log" 1 baseline cargo-reordered-duplicate "$parser_dir/cargo-reordered-duplicate.json"
+  expect_parse_failure "$cargo_bad_features_log" 1 baseline cargo-malformed-features "$parser_dir/cargo-bad-features.json"
+  expect_parse_failure "$cargo_bad_profile_log" 1 baseline cargo-malformed-profile "$parser_dir/cargo-bad-profile.json"
+  expect_parse_failure "$cargo_nonfinite_log" 1 baseline cargo-nonfinite-profile "$parser_dir/cargo-nonfinite-profile.json"
+  expect_parse_failure "$cargo_failed_build_log" 1 baseline cargo-build-failed "$parser_dir/cargo-failed-build.json"
   parse_build_events "$baseline_log" 1 baseline "$parser_dir/baseline-units.json"
   [ "$BENCH_COMPILER_VERTEX_STATE" = executed ] || die 'self-test baseline compiler should execute'
   [ "$BENCH_COMPILER_CACHE" = miss ] || die 'self-test unrelated CACHED was counted as compiler hit'
@@ -5074,6 +5182,7 @@ EOF
   expect_parse_failure "$malformed_log" 1 baseline malformed-duration
   expect_parse_failure "$missing_finish_log" 1 baseline missing-finish
   expect_parse_failure "$failed_log" 1 baseline compiler-error
+  expect_parse_failure "$terminal_error_log" 1 baseline terminal-error-token
   expect_parse_failure "$invalid_json_log" 1 baseline missing-cargo-json-units "$parser_dir/invalid-json-units.json"
 
   # Native identity cache evidence is reusable only from a directly executed
@@ -5120,6 +5229,8 @@ EOF
 #11 0.03 rustc 1.97.1 (fixture)
 #11 0.04 host: x86_64-unknown-linux-musl
 #11 0.05 release: 1.97.1
+#11 0.055 warning: source contains Z_STREAM_ERROR
+#11 0.065 ERROR: timestamped process output is not a BuildKit status
 #11 0.06 LAGRANGE_BENCH_NATIVE_RUSTC_END
 #11 0.07 LAGRANGE_BENCH_NATIVE_CARGO_BEGIN
 #11 0.08 cargo 1.97.1 (fixture)
@@ -5135,6 +5246,12 @@ EOF
 #9 [builder 4/5] RUN set -eu;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN;     printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END
 #9 CACHED
 EOF
+  native_error_executed_log=$native_test_dir/error-executed.log
+  cp -- "$native_executed_log" "$native_error_executed_log"
+  printf '%s\n' '#11 ERROR: process failed after successful-looking native output' >>"$native_error_executed_log"
+  native_error_cached_log=$native_test_dir/error-cached.log
+  cp -- "$native_cached_log" "$native_error_cached_log"
+  printf '%s\n' '#9 ERROR' >>"$native_error_cached_log"
   cat >"$native_partial_log" <<'EOF'
 #7 [builder 4/5] RUN set -eu;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN;     printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_BEGIN; rustc -vV; printf '%s\n' LAGRANGE_BENCH_NATIVE_RUSTC_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_BEGIN; cargo -V; printf '%s\n' LAGRANGE_BENCH_NATIVE_CARGO_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_BEGIN; apk info -vv; printf '%s\n' LAGRANGE_BENCH_NATIVE_APK_END;     printf '%s\n' LAGRANGE_BENCH_NATIVE_IDENTITY_END
 #7 0.01 LAGRANGE_BENCH_NATIVE_IDENTITY_BEGIN
@@ -5185,6 +5302,12 @@ PY
   fi
   if record_native_identity baseline warmup reordered-executed 8 "$native_reordered_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
     die 'self-test reused old native evidence over reordered executed markers'
+  fi
+  if record_native_identity baseline warmup buildkit-error-executed 9 "$native_error_executed_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test accepted native executed BuildKit error with success-looking evidence'
+  fi
+  if record_native_identity baseline warmup buildkit-error-cached 10 "$native_error_cached_log" 1 "$native_dockerfile" namespace-a nonce-a aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1; then
+    die 'self-test accepted native cached BuildKit terminal error'
   fi
   [ "$(wc -l <"$native_identity_report")" -eq 3 ] ||
     die 'self-test native identity failures published unexpected report rows'
