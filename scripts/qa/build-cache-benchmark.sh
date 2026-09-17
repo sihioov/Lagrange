@@ -53,6 +53,14 @@ output_dir=
 readonly default_min_mem_available_kib=2097152 # 2 GiB
 readonly default_min_swap_free_kib=524288      # 512 MiB
 readonly journal_lookback_seconds=1800
+# Cargo's JSON protocol is retained outside BuildKit stdout.  These caps keep
+# the private benchmark image evidence finite even if a compiler diagnostic
+# becomes unexpectedly verbose.  A cap is a failed measurement, never a
+# reason to silently omit an artifact record.
+readonly cargo_evidence_invocation_limit=32
+readonly cargo_evidence_byte_limit=$((16 * 1024 * 1024))
+readonly cargo_evidence_builder_path=/tmp/lagrange-benchmark-cargo-evidence
+readonly cargo_evidence_image_path=/__lagrange_benchmark_cargo_evidence
 
 # --self-test changes this internal value only after the CLI has selected the
 # test mode.  It is intentionally not an environment-controlled bypass for
@@ -158,6 +166,7 @@ phase_report=
 comparison_report=
 source_identity_report=
 instrumentation_report=
+cargo_invocations_report=
 probe_spec_report=
 instrumentation_manifest_hash=
 cargo_units_report=
@@ -218,6 +227,8 @@ declare -A source_dockerfile_hash=()
 declare -A instrumented_dockerfile_hash=()
 declare -A instrumentation_patch_hash=()
 declare -A instrumentation_transform=()
+declare -A cargo_evidence_spec=()
+declare -A cargo_evidence_spec_sha256=()
 declare -A service_toolchain_identity=()
 declare -A source_identity_by_revision_scenario=()
 declare -A scenario_commit_by_revision=()
@@ -583,28 +594,53 @@ count_csv() {
 
 parse_cargo_json_units() {
   local log=$1 vertex=$2 cargo_mode=$3 destination=$4
+  local invocation_spec=${5:-} invocation_evidence=${6:-} invocation_spec_sha256=${7:-}
+  local expected_revision=${8:-} expected_service=${9:-}
   [ -n "$destination" ] || return 0
   [ -d "${destination%/*}" ] && [ ! -L "${destination%/*}" ] || return 1
   [ ! -e "$destination" ] && [ ! -L "$destination" ] || return 1
   RBL_BENCH_LOG=$log RBL_BENCH_VERTEX=$vertex RBL_BENCH_CARGO_MODE=$cargo_mode \
-    RBL_BENCH_UNITS=$destination python3 - <<'PY'
+    RBL_BENCH_UNITS=$destination RBL_BENCH_INVOCATION_SPEC=$invocation_spec \
+    RBL_BENCH_INVOCATION_EVIDENCE=$invocation_evidence \
+    RBL_BENCH_INVOCATION_SPEC_SHA256=$invocation_spec_sha256 \
+    RBL_BENCH_EXPECTED_REVISION=$expected_revision \
+    RBL_BENCH_EXPECTED_SERVICE=$expected_service \
+    RBL_BENCH_CARGO_EVIDENCE_LIMIT=$cargo_evidence_byte_limit \
+    RBL_BENCH_CARGO_EVIDENCE_INVOCATION_LIMIT=$cargo_evidence_invocation_limit \
+    RBL_BENCH_CARGO_EVIDENCE_BUILDER_PATH=$cargo_evidence_builder_path \
+    RBL_BENCH_CARGO_EVIDENCE_IMAGE_PATH=$cargo_evidence_image_path python3 - <<'PY'
 import hashlib
 import json
 import os
 import re
+import stat
 
 log_path = os.environ["RBL_BENCH_LOG"]
 vertex = os.environ["RBL_BENCH_VERTEX"]
 cargo_mode = os.environ["RBL_BENCH_CARGO_MODE"]
 out_path = os.environ["RBL_BENCH_UNITS"]
+spec_path = os.environ["RBL_BENCH_INVOCATION_SPEC"]
+evidence_path = os.environ["RBL_BENCH_INVOCATION_EVIDENCE"]
+expected_spec_sha256 = os.environ["RBL_BENCH_INVOCATION_SPEC_SHA256"]
+expected_revision = os.environ["RBL_BENCH_EXPECTED_REVISION"]
+expected_service = os.environ["RBL_BENCH_EXPECTED_SERVICE"]
+evidence_limit = int(os.environ["RBL_BENCH_CARGO_EVIDENCE_LIMIT"])
+invocation_limit = int(os.environ["RBL_BENCH_CARGO_EVIDENCE_INVOCATION_LIMIT"])
+builder_path = os.environ["RBL_BENCH_CARGO_EVIDENCE_BUILDER_PATH"]
+image_path = os.environ["RBL_BENCH_CARGO_EVIDENCE_IMAGE_PATH"]
 
 if not re.fullmatch(r"[0-9]+", vertex) or cargo_mode not in {"1", "2"}:
     raise SystemExit("benchmark-cargo-units-arguments-invalid")
-raw = open(log_path, "rb").read()
-if len(raw) > 256 * 1024 * 1024:
+if bool(spec_path) != bool(evidence_path):
+    raise SystemExit("benchmark-cargo-invocation-evidence-arguments-invalid")
+if spec_path and (expected_revision not in {"baseline", "candidate"} or
+                  not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", expected_service)):
+    raise SystemExit("benchmark-cargo-invocation-spec-binding-arguments-invalid")
+raw_log = open(log_path, "rb").read()
+if len(raw_log) > 256 * 1024 * 1024:
     raise SystemExit("benchmark-cargo-log-too-large")
 try:
-    text = raw.decode("utf-8")
+    text = raw_log.decode("utf-8")
 except UnicodeDecodeError:
     raise SystemExit("benchmark-cargo-log-not-utf8")
 
@@ -616,123 +652,358 @@ def pairs(items):
         value[key] = item
     return value
 
+def fail(label):
+    raise SystemExit("benchmark-cargo-" + label)
+
 def bounded_text(value, label, limit=4096):
     if not isinstance(value, str) or not value or len(value) > limit:
-        raise SystemExit("benchmark-cargo-%s-invalid" % label)
+        fail(label + "-invalid")
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise SystemExit("benchmark-cargo-%s-control" % label)
+        fail(label + "-control")
     return value
 
 def text_list(value, label, limit):
     if not isinstance(value, list) or len(value) > limit:
-        raise SystemExit("benchmark-cargo-%s-list-invalid" % label)
+        fail(label + "-list-invalid")
     output = []
     for item in value:
         output.append(bounded_text(item, label, 512))
     if len(set(output)) != len(output):
-        raise SystemExit("benchmark-cargo-%s-duplicate" % label)
+        fail(label + "-duplicate")
     return sorted(output)
 
 def unit_identity(package_id, target_name, kinds, crate_types, features, profile):
     return (package_id, target_name, tuple(kinds), tuple(crate_types),
             tuple(features), profile)
 
-prefix = re.compile(r"^#" + re.escape(vertex) + r"\s+(?:[0-9]+(?:\.[0-9]+)?s?\s+)?(?P<payload>\{.*\})\s*$")
-units = []
-unit_keys = set()
-finished = []
-json_lines = 0
-for line in text.splitlines():
-    match = prefix.match(line)
-    if match is None:
-        continue
-    payload = match.group("payload")
-    if len(payload.encode("utf-8")) > 1024 * 1024:
-        raise SystemExit("benchmark-cargo-json-line-too-large")
-    try:
-        event = json.loads(payload, object_pairs_hook=pairs,
-                           parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("invalid-json-constant")))
-    except (ValueError, json.JSONDecodeError):
-        raise SystemExit("benchmark-cargo-json-invalid")
-    if not isinstance(event, dict):
-        raise SystemExit("benchmark-cargo-json-object-invalid")
-    json_lines += 1
-    if json_lines > 100000:
-        raise SystemExit("benchmark-cargo-json-too-many-events")
-    reason = event.get("reason")
-    if reason == "compiler-artifact":
-        package_id = bounded_text(event.get("package_id"), "package-id")
-        target = event.get("target")
-        profile = event.get("profile")
-        features = event.get("features")
-        fresh = event.get("fresh")
-        executable = event.get("executable")
-        if not isinstance(target, dict) or not {"name", "kind", "crate_types"} <= set(target):
-            raise SystemExit("benchmark-cargo-target-invalid")
-        target_name = bounded_text(target.get("name"), "target-name", 512)
-        kinds = text_list(target.get("kind"), "target-kind", 32)
-        crate_types = text_list(target.get("crate_types"), "target-crate-types", 32)
-        if not isinstance(profile, dict) or not profile or len(profile) > 24:
-            raise SystemExit("benchmark-cargo-profile-invalid")
-        safe_profile = {}
-        for key, value in profile.items():
-            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                raise SystemExit("benchmark-cargo-profile-key-invalid")
-            if isinstance(value, bool) or value is None:
-                safe_profile[key] = value
-            elif isinstance(value, int) and not isinstance(value, bool) and -1 <= value <= 100:
-                safe_profile[key] = value
-            elif isinstance(value, str) and len(value) <= 128 and not any(ord(char) < 32 or ord(char) == 127 for char in value):
-                safe_profile[key] = value
-            else:
-                raise SystemExit("benchmark-cargo-profile-value-invalid")
-        if not isinstance(fresh, bool):
-            raise SystemExit("benchmark-cargo-fresh-invalid")
-        if executable is not None:
-            executable = bounded_text(executable, "executable")
-            if not executable.startswith("/") or "/../" in executable or executable.endswith("/.."):
-                raise SystemExit("benchmark-cargo-executable-invalid")
-        canonical_features = text_list(features, "features", 512)
-        canonical_profile = json.dumps(
-            {key: safe_profile[key] for key in sorted(safe_profile)},
-            sort_keys=True, separators=(",", ":"))
-        key = unit_identity(package_id, target_name, kinds, crate_types,
-                            canonical_features, canonical_profile)
-        if key in unit_keys:
-            raise SystemExit("benchmark-cargo-unit-duplicate")
-        unit_keys.add(key)
-        units.append({
-            "package_id": package_id,
-            "target": {"name": target_name, "kind": kinds, "crate_types": crate_types},
-            "features": canonical_features,
-            "profile": json.loads(canonical_profile),
-            "fresh": fresh,
-            "executable": executable,
-            "build_success": None,
-        })
-    elif reason == "build-finished":
-        if set(event) != {"reason", "success"} or not isinstance(event["success"], bool):
-            raise SystemExit("benchmark-cargo-finish-invalid")
-        finished.append(event["success"])
+def canonical_json(value):
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
-if not units:
-    raise SystemExit("benchmark-cargo-units-missing")
-if finished != [True]:
-    raise SystemExit("benchmark-cargo-build-success-invalid")
-for unit in units:
-    unit["build_success"] = True
-units.sort(key=lambda item: unit_identity(
+def package_label(package_id):
+    # Cargo 1.97 uses URL-like package IDs (for example
+    # path+file:///build/crates/api-server#0.1.0) while older output used a
+    # display-name prefix.  The build-selection contract is a package name,
+    # not the raw package-id spelling, so derive one canonical safe label for
+    # both selection checking and aggregate reporting.
+    fragment = package_id.rsplit("#", 1)[-1]
+    if "@" in fragment:
+        candidate = fragment.rsplit("@", 1)[0]
+    elif package_id.startswith("path+"):
+        candidate = package_id.split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+    else:
+        candidate = package_id.split(" ", 1)[0]
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", candidate):
+        return candidate
+    return "pkg-" + hashlib.sha256(package_id.encode("utf-8")).hexdigest()[:16]
+
+def read_regular(path, label, limit=None):
+    try:
+        entry = os.lstat(path)
+    except OSError:
+        fail(label + "-missing")
+    if not stat.S_ISREG(entry.st_mode) or stat.S_ISLNK(entry.st_mode) or entry.st_nlink != 1:
+        fail(label + "-not-regular")
+    if limit is not None and entry.st_size > limit:
+        fail(label + "-too-large")
+    try:
+        with open(path, "rb") as handle:
+            value = handle.read()
+    except OSError:
+        fail(label + "-unreadable")
+    if limit is not None and len(value) > limit:
+        fail(label + "-too-large")
+    return value
+
+def load_json(raw, label):
+    try:
+        value = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=pairs,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("invalid-json-constant")),
+        )
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        fail(label + "-invalid")
+    return value
+
+def parse_artifact(event, ordinal, command_sha256, unit_keys):
+    package_id = bounded_text(event.get("package_id"), "package-id")
+    target = event.get("target")
+    profile = event.get("profile")
+    features = event.get("features")
+    fresh = event.get("fresh")
+    executable = event.get("executable")
+    if not isinstance(target, dict) or not {"name", "kind", "crate_types"} <= set(target):
+        fail("target-invalid")
+    target_name = bounded_text(target.get("name"), "target-name", 512)
+    kinds = text_list(target.get("kind"), "target-kind", 32)
+    crate_types = text_list(target.get("crate_types"), "target-crate-types", 32)
+    if not isinstance(profile, dict) or not profile or len(profile) > 24:
+        fail("profile-invalid")
+    safe_profile = {}
+    for key, value in profile.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            fail("profile-key-invalid")
+        if isinstance(value, bool) or value is None:
+            safe_profile[key] = value
+        elif isinstance(value, int) and not isinstance(value, bool) and -1 <= value <= 100:
+            safe_profile[key] = value
+        elif isinstance(value, str) and len(value) <= 128 and not any(ord(char) < 32 or ord(char) == 127 for char in value):
+            safe_profile[key] = value
+        else:
+            fail("profile-value-invalid")
+    if not isinstance(fresh, bool):
+        fail("fresh-invalid")
+    if executable is not None:
+        executable = bounded_text(executable, "executable")
+        if not executable.startswith("/") or "/../" in executable or executable.endswith("/.."):
+            fail("executable-invalid")
+    canonical_features = text_list(features, "features", 512)
+    canonical_profile = json.dumps(
+        {key: safe_profile[key] for key in sorted(safe_profile)},
+        sort_keys=True, separators=(",", ":"))
+    key = unit_identity(package_id, target_name, kinds, crate_types,
+                        canonical_features, canonical_profile)
+    if key in unit_keys:
+        fail("unit-duplicate")
+    unit_keys.add(key)
+    return {
+        "invocation_ordinal": ordinal,
+        "invocation_command_sha256": command_sha256,
+        "package_id": package_id,
+        "target": {"name": target_name, "kind": kinds, "crate_types": crate_types},
+        "features": canonical_features,
+        "profile": json.loads(canonical_profile),
+        "fresh": fresh,
+        "executable": executable,
+        "build_success": True,
+    }, key
+
+def parse_invocation(payload, expected, source):
+    ordinal = expected["ordinal"]
+    command_sha256 = expected["command_sha256"]
+    if not payload or not payload.endswith(b"\n"):
+        fail("invocation-jsonl-incomplete")
+    if len(payload) > evidence_limit:
+        fail("invocation-jsonl-too-large")
+    try:
+        lines = payload.splitlines()
+    except ValueError:
+        fail("invocation-jsonl-invalid")
+    if not lines:
+        fail("invocation-jsonl-empty")
+    units = []
+    unit_keys = set()
+    finished = []
+    finish_seen = False
+    event_count = 0
+    for line in lines:
+        if not line or len(line) > 1024 * 1024:
+            fail("json-line-too-large")
+        event_count += 1
+        if event_count > 100000:
+            fail("too-many-events")
+        event = load_json(line, "json")
+        if not isinstance(event, dict):
+            fail("json-object-invalid")
+        reason = event.get("reason")
+        if not isinstance(reason, str) or not reason:
+            fail("json-reason-invalid")
+        if finish_seen:
+            fail("finish-reordered")
+        if reason == "compiler-artifact":
+            unit, _identity = parse_artifact(event, ordinal, command_sha256, unit_keys)
+            units.append(unit)
+        elif reason == "build-finished":
+            if set(event) != {"reason", "success"} or not isinstance(event["success"], bool):
+                fail("finish-invalid")
+            finished.append(event["success"])
+            finish_seen = True
+    if not units:
+        fail("units-missing")
+    if finished != [True]:
+        fail("build-success-invalid")
+    selected_bin = expected.get("selected_bin")
+    selected_package = expected.get("package")
+    if selected_bin is not None:
+        selected_path = "/cargo-target/release/" + selected_bin
+        if not any(
+            unit["target"]["name"] == selected_bin and
+            package_label(unit["package_id"]) == selected_package and
+            unit["executable"] == selected_path
+            for unit in units
+        ):
+            fail("selected-target-missing")
+    elif expected.get("kind") == "install" and not any(unit["executable"] is not None for unit in units):
+        fail("install-executable-missing")
+    return {
+        "ordinal": ordinal,
+        "command_sha256": command_sha256,
+        "kind": expected["kind"],
+        "package": selected_package,
+        "selected_bin": selected_bin,
+        "raw_sha256": hashlib.sha256(payload).hexdigest(),
+        "raw_bytes": len(payload),
+        "unit_count": len(units),
+        "build_success": True,
+        "source": source,
+        "units": units,
+    }
+
+def load_external_spec():
+    spec_raw = read_regular(spec_path, "invocation-spec", 1024 * 1024)
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_spec_sha256 or ""):
+        fail("invocation-spec-hash-invalid")
+    if hashlib.sha256(spec_raw).hexdigest() != expected_spec_sha256:
+        fail("invocation-spec-hash-mismatch")
+    spec = load_json(spec_raw, "invocation-spec")
+    if not isinstance(spec, dict) or spec_raw != canonical_json(spec):
+        fail("invocation-spec-noncanonical")
+    required = {
+        "format", "revision", "service", "cargo_mode", "source_dockerfile_sha256",
+        "instrumented_dockerfile_sha256", "instrumentation_patch_sha256", "nonce",
+        "evidence_builder_path", "evidence_image_path", "byte_limit", "invocations",
+    }
+    if set(spec) != required or spec.get("format") != "lagrange-benchmark-cargo-invocations-v1":
+        fail("invocation-spec-schema")
+    if spec.get("cargo_mode") != int(cargo_mode) or spec.get("byte_limit") != evidence_limit:
+        fail("invocation-spec-contract")
+    if spec.get("evidence_builder_path") != builder_path or spec.get("evidence_image_path") != image_path:
+        fail("invocation-spec-path")
+    for field in ("revision", "service"):
+        bounded_text(spec.get(field), "invocation-spec-" + field, 128)
+    if spec.get("revision") != expected_revision or spec.get("service") != expected_service:
+        fail("invocation-spec-binding")
+    for field in ("source_dockerfile_sha256", "instrumented_dockerfile_sha256", "instrumentation_patch_sha256", "nonce"):
+        if not isinstance(spec.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", spec[field]):
+            fail("invocation-spec-hash")
+    invocations = spec.get("invocations")
+    if not isinstance(invocations, list) or not invocations or len(invocations) > invocation_limit:
+        fail("invocation-spec-count")
+    expected = []
+    for ordinal, item in enumerate(invocations, 1):
+        if not isinstance(item, dict) or set(item) != {"ordinal", "command_sha256", "kind", "package", "selected_bin"}:
+            fail("invocation-spec-entry")
+        if item.get("ordinal") != ordinal or not re.fullmatch(r"[0-9a-f]{64}", item.get("command_sha256", "")):
+            fail("invocation-spec-order")
+        if item.get("kind") not in {"build", "install"}:
+            fail("invocation-spec-kind")
+        package = item.get("package")
+        selected_bin = item.get("selected_bin")
+        if item["kind"] == "build":
+            if not isinstance(package, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", package):
+                fail("invocation-spec-package")
+            if not isinstance(selected_bin, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", selected_bin):
+                fail("invocation-spec-bin")
+        elif package is not None or selected_bin is not None:
+            fail("invocation-spec-install-selection")
+        expected.append(item)
+    return spec, expected
+
+def load_external_invocations(spec, expected):
+    try:
+        entry = os.lstat(evidence_path)
+    except OSError:
+        fail("invocation-evidence-missing")
+    if not stat.S_ISDIR(entry.st_mode) or stat.S_ISLNK(entry.st_mode):
+        fail("invocation-evidence-not-directory")
+    names = {"boundaries.tsv"} | {"%04d.jsonl" % item["ordinal"] for item in expected}
+    try:
+        observed = set(os.listdir(evidence_path))
+    except OSError:
+        fail("invocation-evidence-unreadable")
+    if observed != names:
+        fail("invocation-evidence-files")
+    boundaries_path = os.path.join(evidence_path, "boundaries.tsv")
+    boundaries = read_regular(boundaries_path, "invocation-boundaries", 1024 * 1024)
+    if not boundaries or not boundaries.endswith(b"\n") or b"\r" in boundaries:
+        fail("invocation-boundaries-incomplete")
+    try:
+        boundary_lines = boundaries.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        fail("invocation-boundaries-encoding")
+    if len(boundary_lines) != len(expected) * 2 + 1:
+        fail("invocation-boundaries-count")
+    prefix = "LAGRANGE_BENCH_CARGO_BOUNDARY_V1"
+    nonce = spec["nonce"]
+    payloads = []
+    for position, item in enumerate(expected):
+        begin = boundary_lines[position * 2].split("\t")
+        end = boundary_lines[position * 2 + 1].split("\t")
+        ordinal = str(item["ordinal"])
+        if begin != [prefix, nonce, ordinal, item["command_sha256"], "begin"]:
+            fail("invocation-boundaries-reordered")
+        jsonl_path = os.path.join(evidence_path, "%04d.jsonl" % item["ordinal"])
+        payload = read_regular(jsonl_path, "invocation-jsonl", evidence_limit)
+        digest = hashlib.sha256(payload).hexdigest()
+        if end != [prefix, nonce, ordinal, item["command_sha256"], "end", str(len(payload)), digest]:
+            fail("invocation-boundaries-tampered")
+        payloads.append(payload)
+    complete = boundary_lines[-1].split("\t")
+    preceding = b"".join(line.encode("ascii") + b"\n" for line in boundary_lines[:-1])
+    if complete != [prefix, nonce, "complete", str(len(expected)), hashlib.sha256(preceding).hexdigest()]:
+        fail("invocation-boundaries-incomplete")
+    return [parse_invocation(payload, item, "instrumented-image-copy-v1") for item, payload in zip(expected, payloads)]
+
+if spec_path:
+    spec, expected = load_external_spec()
+    invocations = load_external_invocations(spec, expected)
+    evidence_source = "instrumented-image-copy-v1"
+else:
+    prefix = re.compile(r"^#" + re.escape(vertex) + r"\s+(?:[0-9]+(?:\.[0-9]+)?s?\s+)?(?P<payload>\{.*\})\s*$")
+    payloads = []
+    for line in text.splitlines():
+        match = prefix.match(line)
+        if match is not None:
+            payload = match.group("payload").encode("utf-8")
+            if len(payload) > 1024 * 1024:
+                fail("json-line-too-large")
+            payloads.append(payload)
+    if not payloads:
+        fail("units-missing")
+    legacy_payload = b"\n".join(payloads) + b"\n"
+    legacy_expected = {
+        "ordinal": 1,
+        "command_sha256": hashlib.sha256(("legacy:" + vertex).encode("ascii")).hexdigest(),
+        "kind": "build" if cargo_mode == "1" else "install",
+        "package": None,
+        "selected_bin": None,
+    }
+    invocations = [parse_invocation(legacy_payload, legacy_expected, "legacy-buildkit-inline-v1")]
+    evidence_source = "legacy-buildkit-inline-v1"
+
+units = []
+package_states = {}
+for invocation in invocations:
+    units.extend(invocation["units"])
+    for unit in invocation["units"]:
+        package_name = package_label(unit["package_id"])
+        package_states.setdefault(package_name, set()).add(unit["fresh"])
+for invocation in invocations:
+    invocation["units"].sort(key=lambda item: unit_identity(
+        item["package_id"], item["target"]["name"], item["target"]["kind"],
+        item["target"]["crate_types"], item["features"],
+        json.dumps(item["profile"], sort_keys=True, separators=(",", ":"))))
+units.sort(key=lambda item: (item["invocation_ordinal"], unit_identity(
     item["package_id"], item["target"]["name"], item["target"]["kind"],
     item["target"]["crate_types"], item["features"],
-    json.dumps(item["profile"], sort_keys=True, separators=(",", ":"))))
+    json.dumps(item["profile"], sort_keys=True, separators=(",", ":")))))
+aggregate = {
+    "compiled_packages": sorted(name for name, states in package_states.items() if False in states),
+    "fresh_packages": sorted(name for name, states in package_states.items() if states == {True}),
+    "compiled_unit_count": sum(1 for unit in units if not unit["fresh"]),
+    "fresh_unit_count": sum(1 for unit in units if unit["fresh"]),
+}
 result = {
-    "format": "lagrange-benchmark-cargo-units-v1",
-    "raw_log_sha256": hashlib.sha256(raw).hexdigest(),
+    "format": "lagrange-benchmark-cargo-units-v2",
+    "raw_log_sha256": hashlib.sha256(raw_log).hexdigest(),
     "compiler_vertex": vertex,
     "cargo_mode": int(cargo_mode),
+    "evidence_source": evidence_source,
+    "invocation_count": len(invocations),
+    "invocations": invocations,
+    "aggregate": aggregate,
     "units": units,
 }
-data = (json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+data = canonical_json(result)
 fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
 with os.fdopen(fd, "wb") as handle:
     handle.write(data)
@@ -741,8 +1012,167 @@ with os.fdopen(fd, "wb") as handle:
 PY
 }
 
+cargo_compiler_vertices() {
+  local log=$1
+  awk '
+    /^#[0-9]+[[:space:]]+.*RUN/ &&
+      (/cargo[[:space:]]+(build|install)([[:space:]]|$)/ || /LAGRANGE_BENCH_CARGO_INVOKE=1/) {
+        id = $0
+        sub(/^#/, "", id)
+        sub(/[[:space:]].*$/, "", id)
+        print id
+      }
+  ' "$log" | sort -u
+}
+
+compiler_vertex_is_cached() {
+  local log=$1 vertex
+  local -a vertices=()
+  while IFS= read -r vertex; do
+    [ -n "$vertex" ] && vertices+=("$vertex")
+  done < <(cargo_compiler_vertices "$log")
+  [ "${#vertices[@]}" -eq 1 ] || return 1
+  grep -Eq "^#${vertices[0]}[[:space:]]+CACHED([[:space:]]|$)" "$log"
+}
+
+validate_cargo_invocation_spec() {
+  local spec=$1 expected_sha256=$2 cargo_mode=$3 expected_revision=${4:-} expected_service=${5:-}
+  [ -f "$spec" ] && [ ! -L "$spec" ] || return 1
+  [[ "$expected_sha256" =~ ^[0-9a-f]{64}$ ]] || return 1
+  case "$cargo_mode" in 1|2) ;; *) return 1 ;; esac
+  case "$expected_revision" in baseline|candidate) ;; *) return 1 ;; esac
+  [[ "$expected_service" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || return 1
+  RBL_BENCH_CARGO_SPEC=$spec RBL_BENCH_CARGO_SPEC_SHA256=$expected_sha256 \
+    RBL_BENCH_CARGO_MODE=$cargo_mode RBL_BENCH_EXPECTED_REVISION=$expected_revision \
+    RBL_BENCH_EXPECTED_SERVICE=$expected_service RBL_BENCH_CARGO_EVIDENCE_LIMIT=$cargo_evidence_byte_limit \
+    RBL_BENCH_CARGO_EVIDENCE_INVOCATION_LIMIT=$cargo_evidence_invocation_limit \
+    RBL_BENCH_CARGO_EVIDENCE_BUILDER_PATH=$cargo_evidence_builder_path \
+    RBL_BENCH_CARGO_EVIDENCE_IMAGE_PATH=$cargo_evidence_image_path python3 - <<'PY'
+import hashlib
+import json
+import os
+import re
+
+def pairs(items):
+    value = {}
+    for key, item in items:
+        if key in value:
+            raise ValueError("duplicate-json-key")
+        value[key] = item
+    return value
+
+path = os.environ["RBL_BENCH_CARGO_SPEC"]
+raw = open(path, "rb").read()
+if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != os.environ["RBL_BENCH_CARGO_SPEC_SHA256"]:
+    raise SystemExit(1)
+try:
+    value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs,
+                       parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("nonfinite")))
+except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+if raw != (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"):
+    raise SystemExit(1)
+required = {
+    "format", "revision", "service", "cargo_mode", "source_dockerfile_sha256",
+    "instrumented_dockerfile_sha256", "instrumentation_patch_sha256", "nonce",
+    "evidence_builder_path", "evidence_image_path", "byte_limit", "invocations",
+}
+if not isinstance(value, dict) or set(value) != required or value.get("format") != "lagrange-benchmark-cargo-invocations-v1":
+    raise SystemExit(1)
+if value.get("cargo_mode") != int(os.environ["RBL_BENCH_CARGO_MODE"]):
+    raise SystemExit(1)
+if value.get("revision") != os.environ["RBL_BENCH_EXPECTED_REVISION"] or value.get("service") != os.environ["RBL_BENCH_EXPECTED_SERVICE"]:
+    raise SystemExit(1)
+if value.get("byte_limit") != int(os.environ["RBL_BENCH_CARGO_EVIDENCE_LIMIT"]):
+    raise SystemExit(1)
+if value.get("evidence_builder_path") != os.environ["RBL_BENCH_CARGO_EVIDENCE_BUILDER_PATH"]:
+    raise SystemExit(1)
+if value.get("evidence_image_path") != os.environ["RBL_BENCH_CARGO_EVIDENCE_IMAGE_PATH"]:
+    raise SystemExit(1)
+for key in ("revision", "service"):
+    field = value.get(key)
+    if not isinstance(field, str) or not field or len(field) > 128 or any(ord(char) < 32 or ord(char) == 127 for char in field):
+        raise SystemExit(1)
+for key in ("source_dockerfile_sha256", "instrumented_dockerfile_sha256", "instrumentation_patch_sha256", "nonce"):
+    if not isinstance(value.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", value[key]):
+        raise SystemExit(1)
+items = value.get("invocations")
+limit = int(os.environ["RBL_BENCH_CARGO_EVIDENCE_INVOCATION_LIMIT"])
+if not isinstance(items, list) or not items or len(items) > limit:
+    raise SystemExit(1)
+for ordinal, item in enumerate(items, 1):
+    if not isinstance(item, dict) or set(item) != {"ordinal", "command_sha256", "kind", "package", "selected_bin"}:
+        raise SystemExit(1)
+    if item.get("ordinal") != ordinal or not isinstance(item.get("command_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", item["command_sha256"]):
+        raise SystemExit(1)
+    if item.get("kind") not in {"build", "install"}:
+        raise SystemExit(1)
+    if item["kind"] == "build":
+        if not isinstance(item.get("package"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", item["package"]):
+            raise SystemExit(1)
+        if not isinstance(item.get("selected_bin"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", item["selected_bin"]):
+            raise SystemExit(1)
+    elif item.get("package") is not None or item.get("selected_bin") is not None:
+        raise SystemExit(1)
+print(len(items))
+PY
+}
+
+extract_cargo_invocation_evidence() {
+  local image=$1 invocation_spec=$2 destination=$3 container= status=0
+  [[ "$image" =~ ^[a-z0-9]+([._-][a-z0-9]+)*:[0-9a-f]{40}$ ]] || return 1
+  [ -f "$invocation_spec" ] && [ ! -L "$invocation_spec" ] || return 1
+  [ ! -e "$destination" ] && [ ! -L "$destination" ] || return 1
+  mkdir -m 0700 -- "$destination" || return 1
+  container=$(docker create "$image") || return 1
+  # Do not pass a malformed create response back to Docker as an argument.
+  # A valid created-container ID is the only identifier this helper may remove.
+  [[ "$container" =~ ^[0-9a-f]{64}$ ]] || return 1
+  if [ "$internal_self_test" -eq 1 ]; then
+    BENCH_TEST_CARGO_EVIDENCE_SPEC=$invocation_spec \
+      docker cp "$container:$cargo_evidence_image_path/." "$destination" || status=1
+  else
+    docker cp "$container:$cargo_evidence_image_path/." "$destination" || status=1
+  fi
+  docker container rm "$container" >/dev/null 2>&1 || status=1
+  return "$status"
+}
+
+load_cargo_unit_aggregate() {
+  local units_path=$1
+  python3 - "$units_path" <<'PY'
+import json
+import re
+import sys
+
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+if value.get("format") != "lagrange-benchmark-cargo-units-v2":
+    raise SystemExit(1)
+aggregate = value.get("aggregate")
+if not isinstance(aggregate, dict) or set(aggregate) != {
+    "compiled_packages", "fresh_packages", "compiled_unit_count", "fresh_unit_count"
+}:
+    raise SystemExit(1)
+for key in ("compiled_packages", "fresh_packages"):
+    items = aggregate[key]
+    if (not isinstance(items, list) or items != sorted(set(items)) or
+            not all(isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", item) for item in items)):
+        raise SystemExit(1)
+for key in ("compiled_unit_count", "fresh_unit_count"):
+    if not isinstance(aggregate[key], int) or isinstance(aggregate[key], bool) or aggregate[key] < 0:
+        raise SystemExit(1)
+count = value.get("invocation_count")
+if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+    raise SystemExit(1)
+print("|".join((",".join(aggregate["compiled_packages"]), ",".join(aggregate["fresh_packages"]), str(count))))
+PY
+}
+
 parse_build_events() {
-  local log=$1 cargo_mode=$2 revision=$3 units_path=${4:-} vertex_header done_duration duration_ms
+  local log=$1 cargo_mode=$2 revision=$3 units_path=${4:-}
+  local invocation_spec=${5:-} invocation_evidence=${6:-} invocation_spec_sha256=${7:-}
+  local expected_service=${8:-}
+  local vertex_header done_duration duration_ms aggregate_fields expected_invocation_count
   local -a vertices=()
 
   BENCH_COMPILED_PACKAGES=
@@ -759,11 +1189,40 @@ parse_build_events() {
   BENCH_CARGO_UNITS_PATH=
   BENCH_CARGO_UNITS_SHA256=not-applicable
   BENCH_CARGO_UNITS_COUNT=0
+  BENCH_CARGO_INVOCATION_COUNT=0
   BENCH_CARGO_RAW_LOG_SHA256=$(sha256_file "$log" 2>/dev/null || true)
 
   [ -f "$log" ] || { parse_fail 'build event log is missing'; return 1; }
   case "$cargo_mode" in 0|1|2) ;; *) parse_fail 'unknown Cargo contract mode'; return 1 ;; esac
   case "$revision" in baseline|candidate) ;; *) parse_fail 'unknown revision contract'; return 1 ;; esac
+  if [ -n "$invocation_spec" ] && ! [[ "$invocation_spec_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+    parse_fail 'Cargo invocation spec hash is invalid'
+    return 1
+  fi
+  if [ -z "$invocation_spec" ] && { [ -n "$invocation_evidence" ] || [ -n "$invocation_spec_sha256" ]; }; then
+    parse_fail 'Cargo invocation evidence arguments are inconsistent'
+    return 1
+  fi
+  if [ "$cargo_mode" -eq 0 ] && { [ -n "$invocation_spec" ] || [ -n "$invocation_evidence" ] || [ -n "$invocation_spec_sha256" ]; }; then
+    parse_fail 'non-Cargo service unexpectedly supplied Cargo invocation evidence'
+    return 1
+  fi
+  if [ "$cargo_mode" -gt 0 ] && [ -n "$invocation_spec" ]; then
+    [[ "$expected_service" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || {
+      parse_fail 'Cargo invocation evidence lacks a valid expected service binding'
+      return 1
+    }
+    expected_invocation_count=$(validate_cargo_invocation_spec "$invocation_spec" "$invocation_spec_sha256" "$cargo_mode" \
+      "$revision" "$expected_service") || {
+      parse_fail 'Cargo invocation spec is malformed or no longer matches its recorded hash'
+      return 1
+    }
+    is_decimal "$expected_invocation_count" && [ "$expected_invocation_count" -gt 0 ] || {
+      parse_fail 'Cargo invocation spec has an invalid invocation count'
+      return 1
+    }
+    BENCH_CARGO_INVOCATION_COUNT=$expected_invocation_count
+  fi
 
   if [ "$cargo_mode" -eq 0 ]; then
     if grep -Eq '^#[0-9]+[[:space:]]+CACHED([[:space:]]|$)' "$log"; then
@@ -772,18 +1231,18 @@ parse_build_events() {
     return 0
   fi
 
+  if grep -Eq '^#[0-9]+[[:space:]]+ERROR(:|[[:space:]]|$)' "$log"; then
+    parse_fail 'BuildKit reported an error'
+    return 1
+  fi
+  if grep -Eq '\[output clipped(,|\])' "$log"; then
+    parse_fail 'BuildKit output is clipped; Cargo evidence is incomplete'
+    return 1
+  fi
+
   while IFS= read -r vertex; do
     [ -n "$vertex" ] && vertices+=("$vertex")
-  done < <(
-    awk '
-      /^#[0-9]+[[:space:]]+.*RUN/ && /cargo[[:space:]]+(build|install)([[:space:]]|$)/ {
-        id = $0
-        sub(/^#/, "", id)
-        sub(/[[:space:]].*$/, "", id)
-        print id
-      }
-    ' "$log" | sort -u
-  )
+  done < <(cargo_compiler_vertices "$log")
   [ "${#vertices[@]}" -eq 1 ] || {
     parse_fail 'could not identify exactly one Cargo compile/install BuildKit vertex'
     return 1
@@ -824,13 +1283,13 @@ parse_build_events() {
     }
     BENCH_CARGO_STEP_MS=$duration_ms
 
-    if [ "$cargo_mode" -eq 1 ]; then
+    if [ -z "$invocation_spec" ] && [ "$cargo_mode" -eq 1 ]; then
       if ! awk -v vertex="$BENCH_COMPILER_VERTEX" \
         '$0 ~ "^#" vertex "[[:space:]]+" && /Finished/ { found=1 } END { exit !found }' "$log"; then
         parse_fail 'executed Cargo build has no successful finish event'
         return 1
       fi
-    else
+    elif [ -z "$invocation_spec" ]; then
       if ! awk -v vertex="$BENCH_COMPILER_VERTEX" \
         '$0 ~ "^#" vertex "[[:space:]]+" && /(Installed package|Finished)/ { found=1 } END { exit !found }' "$log"; then
         parse_fail 'executed cargo-install has no successful finish event'
@@ -839,7 +1298,8 @@ parse_build_events() {
     fi
 
     vertex_header=$(awk -v vertex="$BENCH_COMPILER_VERTEX" '
-      $0 ~ "^#" vertex "[[:space:]]+.*RUN" && /cargo[[:space:]]+(build|install)([[:space:]]|$)/ { print; exit }
+      $0 ~ "^#" vertex "[[:space:]]+.*RUN" &&
+        (/cargo[[:space:]]+(build|install)([[:space:]]|$)/ || /LAGRANGE_BENCH_CARGO_INVOKE=1/) { print; exit }
     ' "$log")
     [ -n "$vertex_header" ] || {
       parse_fail 'Cargo compiler vertex header disappeared from build log'
@@ -876,7 +1336,8 @@ parse_build_events() {
   BENCH_COMPILED_COUNT=$(count_csv "$BENCH_COMPILED_PACKAGES")
   BENCH_FRESH_COUNT=$(count_csv "$BENCH_FRESH_PACKAGES")
   if [ "$BENCH_COMPILER_VERTEX_STATE" = executed ] && [ -n "$units_path" ]; then
-    if ! parse_cargo_json_units "$log" "$BENCH_COMPILER_VERTEX" "$cargo_mode" "$units_path"; then
+    if ! parse_cargo_json_units "$log" "$BENCH_COMPILER_VERTEX" "$cargo_mode" "$units_path" \
+      "$invocation_spec" "$invocation_evidence" "$invocation_spec_sha256" "$revision" "$expected_service"; then
       parse_fail 'Cargo JSON unit evidence is missing, malformed, or not a successful bounded compile record'
       return 1
     fi
@@ -900,6 +1361,21 @@ PY
       parse_fail 'Cargo JSON unit evidence count is invalid'
       return 1
     }
+    if [ -n "$invocation_spec" ]; then
+      aggregate_fields=$(load_cargo_unit_aggregate "$units_path") || {
+        parse_fail 'Cargo JSON aggregate evidence is invalid'
+        return 1
+      }
+      IFS='|' read -r BENCH_COMPILED_PACKAGES BENCH_FRESH_PACKAGES BENCH_CARGO_INVOCATION_COUNT <<<"$aggregate_fields"
+      is_decimal "$BENCH_CARGO_INVOCATION_COUNT" && [ "$BENCH_CARGO_INVOCATION_COUNT" -gt 0 ] || {
+        parse_fail 'Cargo invocation count is invalid'
+        return 1
+      }
+      BENCH_COMPILED_COUNT=$(count_csv "$BENCH_COMPILED_PACKAGES")
+      BENCH_FRESH_COUNT=$(count_csv "$BENCH_FRESH_PACKAGES")
+    else
+      BENCH_CARGO_INVOCATION_COUNT=1
+    fi
   elif [ -n "$units_path" ]; then
     # A cached compiler has no executed Cargo JSON stream. Keep that absence
     # explicit instead of fabricating unit evidence from a prior layer.
@@ -1468,22 +1944,111 @@ finally:
 PY
 }
 
-inject_cargo_json_diagnostics() {
-  local dockerfile=$1
-  python3 - "$dockerfile" <<'PY'
+instrument_cargo_invocation_evidence() {
+  local dockerfile=$1 revision=$2 service=$3 cargo_mode=$4 source_sha256=$5 nonce_seed=$6 plan=$7
+  RBL_BENCH_CARGO_EVIDENCE_BUILDER_PATH=$cargo_evidence_builder_path \
+    RBL_BENCH_CARGO_EVIDENCE_IMAGE_PATH=$cargo_evidence_image_path \
+    RBL_BENCH_CARGO_EVIDENCE_LIMIT=$cargo_evidence_byte_limit \
+    RBL_BENCH_CARGO_EVIDENCE_INVOCATION_LIMIT=$cargo_evidence_invocation_limit \
+    python3 - "$dockerfile" "$revision" "$service" "$cargo_mode" "$source_sha256" "$nonce_seed" "$plan" <<'PY'
+import hashlib
+import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 
-path = sys.argv[1]
-raw = open(path, "r", encoding="utf-8", newline="").read()
+path, revision, service, cargo_mode, source_sha256, nonce_seed, plan_path = sys.argv[1:]
+builder_path = os.environ["RBL_BENCH_CARGO_EVIDENCE_BUILDER_PATH"]
+image_path = os.environ["RBL_BENCH_CARGO_EVIDENCE_IMAGE_PATH"]
+byte_limit = int(os.environ["RBL_BENCH_CARGO_EVIDENCE_LIMIT"])
+invocation_limit = int(os.environ["RBL_BENCH_CARGO_EVIDENCE_INVOCATION_LIMIT"])
+
+if cargo_mode not in {"1", "2"} or not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+    raise SystemExit("benchmark-cargo-evidence-arguments-invalid")
+try:
+    raw_bytes = open(path, "rb").read()
+    raw = raw_bytes.decode("utf-8")
+except (OSError, UnicodeDecodeError):
+    raise SystemExit("benchmark-cargo-evidence-source-unreadable")
+if hashlib.sha256(raw_bytes).hexdigest() != source_sha256:
+    raise SystemExit("benchmark-cargo-evidence-source-hash-mismatch")
+if any(marker in raw for marker in (
+    "LAGRANGE_BENCH_CARGO_INVOKE=1", builder_path, image_path,
+)):
+    raise SystemExit("benchmark-cargo-evidence-marker-already-present")
 lines = raw.splitlines(keepends=True)
-changed = 0
-seen = 0
+if not lines:
+    raise SystemExit("benchmark-cargo-evidence-empty-dockerfile")
+
+from_re = re.compile(
+    r"^[ \t]*FROM[ \t]+(?P<image>[^ \t\r\n]+)(?:[ \t]+AS[ \t]+(?P<alias>[A-Za-z0-9][A-Za-z0-9_.-]*))?[ \t]*(?:#.*)?(?:\r?\n)?$",
+    re.IGNORECASE,
+)
+cargo_re = re.compile(r"\bcargo[ \t]+(?P<kind>build|install)(?=[ \t]|$)")
+message_re = re.compile(r"(?:^|\s)--message-format(?:=([^\s]+)|\s+([^\s]+))")
+
+def canonical_shell_segment(value):
+    value = re.sub(r"\\\r?\n", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+def command_end(value, start):
+    quote = None
+    index = start
+    while index < len(value):
+        char = value[index]
+        if quote is not None:
+            if char == "\\" and quote == '"' and index + 1 < len(value):
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in "'\"":
+            quote = char
+            index += 1
+            continue
+        if char == "\\" and index + 1 < len(value):
+            if value[index + 1] == "\r" and index + 2 < len(value) and value[index + 2] == "\n":
+                index += 3
+                continue
+            if value[index + 1] == "\n":
+                index += 2
+                continue
+            index += 2
+            continue
+        if value.startswith("&&", index) or value.startswith("||", index) or char in ";|":
+            return index
+        if char in "\r\n":
+            return index
+        index += 1
+    return len(value)
+
+def option_values(segment, option):
+    pattern = re.compile(r"(?:^|\s)" + re.escape(option) + r"(?:=([^\s]+)|\s+([^\s]+))")
+    values = []
+    for match in pattern.finditer(segment):
+        values.append(match.group(1) or match.group(2))
+    return values
+
+stage = None
+stage_number = 0
+last_from_index = None
+last_stage = None
+run_blocks = []
 index = 0
 while index < len(lines):
     line = lines[index]
+    match = from_re.match(line)
+    if match:
+        stage_number += 1
+        stage = match.group("alias") or "__unnamed_stage_%d" % stage_number
+        last_stage = stage
+        last_from_index = index
+        index += 1
+        continue
     if not re.match(r"^[ \t]*RUN(?:[ \t]|$)", line, re.IGNORECASE):
         index += 1
         continue
@@ -1492,34 +2057,149 @@ while index < len(lines):
     while block.rstrip("\r\n").endswith("\\"):
         index += 1
         if index >= len(lines):
-            raise SystemExit("benchmark-cargo-json-unterminated-run")
+            raise SystemExit("benchmark-cargo-evidence-unterminated-run")
         block += lines[index]
-
-    pattern = re.compile(r"\bcargo\s+(?:build|install)(?=\s)")
-    def replace(match):
-        global changed, seen
-        seen += 1
-        tail = block[match.end():]
-        boundary = re.search(r"(?:&&|;|\n)", tail)
-        command_tail = tail[:boundary.start()] if boundary else tail
-        if re.search(r"--message-format(?:=|\s+)json-render-diagnostics(?:\s|$)", command_tail):
-            return match.group(0)
-        changed += 1
-        return match.group(0) + " --message-format=json-render-diagnostics"
-
-    updated = pattern.sub(replace, block)
-    if updated != block:
-        replacement = updated.splitlines(keepends=True)
-        lines[start:index + 1] = replacement
-        index = start + len(replacement) - 1
+    if stage is None:
+        raise SystemExit("benchmark-cargo-evidence-run-before-from")
+    matches = list(cargo_re.finditer(block))
+    if matches:
+        run_blocks.append({"start": start, "end": index, "block": block, "stage": stage, "matches": matches})
     index += 1
-if seen == 0:
-    raise SystemExit("benchmark-cargo-json-command-missing")
-if changed == 0:
-    raise SystemExit(0)
+
+if not run_blocks:
+    raise SystemExit("benchmark-cargo-evidence-command-missing")
+if last_from_index is None or last_stage is None:
+    raise SystemExit("benchmark-cargo-evidence-final-stage-missing")
+if len(run_blocks) != 1:
+    raise SystemExit("benchmark-cargo-evidence-multiple-run-vertices")
+cargo_stage = run_blocks[0]["stage"]
+if not cargo_stage or cargo_stage.startswith("__unnamed_stage_") or cargo_stage == last_stage:
+    raise SystemExit("benchmark-cargo-evidence-stage-contract")
+
+commands = []
+for block_record in run_blocks:
+    for match in block_record["matches"]:
+        end = command_end(block_record["block"], match.end())
+        segment = canonical_shell_segment(block_record["block"][match.start():end])
+        if not segment.startswith("cargo " + match.group("kind")):
+            raise SystemExit("benchmark-cargo-evidence-command-boundary")
+        formats = [left or right for left, right in message_re.findall(segment)]
+        if formats and any(value != "json-render-diagnostics" for value in formats):
+            raise SystemExit("benchmark-cargo-evidence-message-format-conflict")
+        kind = match.group("kind")
+        package_values = option_values(segment, "--package")
+        bin_values = option_values(segment, "--bin")
+        if kind == "build":
+            if len(package_values) != 1 or len(bin_values) != 1:
+                raise SystemExit("benchmark-cargo-evidence-build-selection")
+            package, selected_bin = package_values[0], bin_values[0]
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", package):
+                raise SystemExit("benchmark-cargo-evidence-package-invalid")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", selected_bin):
+                raise SystemExit("benchmark-cargo-evidence-bin-invalid")
+            if not re.search(r"(?:^|\s)--release(?:\s|$)", segment):
+                raise SystemExit("benchmark-cargo-evidence-release-missing")
+        elif package_values or bin_values:
+            raise SystemExit("benchmark-cargo-evidence-install-selection")
+        else:
+            package = None
+            selected_bin = None
+        commands.append({
+            "block": block_record,
+            "start": match.start(),
+            "end": match.end(),
+            "kind": kind,
+            "has_message_format": bool(formats),
+            "command_sha256": hashlib.sha256(segment.encode("utf-8")).hexdigest(),
+            "package": package,
+            "selected_bin": selected_bin,
+        })
+
+if not commands or len(commands) > invocation_limit:
+    raise SystemExit("benchmark-cargo-evidence-invocation-count")
+for ordinal, command in enumerate(commands, 1):
+    command["ordinal"] = ordinal
+# This nonce is part of the generated Dockerfile, so it must describe the
+# shared recipe contract rather than a display name for one service using that
+# recipe.  Canonical service provenance stays in the external plan/spec and
+# report rows below.  Including source bytes, side, run seed, evidence limits,
+# and ordered command identities separates every material recipe/run contract
+# while allowing equivalent service recipes to share their BuildKit layer.
+nonce_binding = {
+    "format": "lagrange-benchmark-cargo-evidence-nonce-v2",
+    "revision": revision,
+    "source_dockerfile_sha256": source_sha256,
+    "nonce_seed": nonce_seed,
+    "cargo_mode": int(cargo_mode),
+    "evidence_builder_path": builder_path,
+    "evidence_image_path": image_path,
+    "byte_limit": byte_limit,
+    "invocations": [
+        {
+            "ordinal": command["ordinal"],
+            "command_sha256": command["command_sha256"],
+            "kind": command["kind"],
+            "package": command["package"],
+            "selected_bin": command["selected_bin"],
+        }
+        for command in commands
+    ],
+}
+nonce = hashlib.sha256(
+    (json.dumps(nonce_binding, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+).hexdigest()
+wrapper_script = (
+    "set -eu; root=$1; nonce=$2; ordinal=$3; expected_count=$4; identity=$5; shift 5; "
+    "case $ordinal in *[!0-9]*|'') exit 125;; esac; "
+    "case $expected_count in *[!0-9]*|'') exit 125;; esac; "
+    "mkdir -p \"$root\"; [ -d \"$root\" ] && [ ! -L \"$root\" ] || exit 125; "
+    "manifest=\"$root/boundaries.tsv\"; output=\"$root/$(printf '%04d' \"$ordinal\").jsonl\"; "
+    "fifo=\"$root/.cargo-evidence-$(printf '%04d' \"$ordinal\").fifo\"; "
+    "if [ \"$ordinal\" -eq 1 ]; then [ ! -e \"$manifest\" ] && [ ! -L \"$manifest\" ] || exit 125; "
+    "else [ -f \"$manifest\" ] && [ ! -L \"$manifest\" ] || exit 125; fi; "
+    "[ ! -e \"$output\" ] && [ ! -L \"$output\" ] && [ ! -e \"$fifo\" ] && [ ! -L \"$fifo\" ] || exit 125; umask 077; "
+    "printf '%s\\t%s\\t%s\\t%s\\tbegin\\n' LAGRANGE_BENCH_CARGO_BOUNDARY_V1 \"$nonce\" \"$ordinal\" \"$identity\" >>\"$manifest\"; "
+    "mkfifo \"$fifo\"; head -c " + str(byte_limit + 1) + " <\"$fifo\" >\"$output\" & reader=$!; "
+    "set +e; cargo \"$@\" >\"$fifo\"; cargo_status=$?; wait \"$reader\"; reader_status=$?; set -e; rm -f -- \"$fifo\"; "
+    "[ \"$cargo_status\" -eq 0 ] && [ \"$reader_status\" -eq 0 ] || exit 125; "
+    "bytes=$(wc -c <\"$output\"); case $bytes in *[!0-9]*|'') exit 125;; esac; "
+    "[ \"$bytes\" -le " + str(byte_limit) + " ] || exit 125; "
+    "digest=$(sha256sum \"$output\" | awk 'NF == 2 && $1 ~ /^[0-9a-f]{64}$/ { print $1; exit }'); "
+    "[ -n \"$digest\" ] || exit 125; "
+    "printf '%s\\t%s\\t%s\\t%s\\tend\\t%s\\t%s\\n' LAGRANGE_BENCH_CARGO_BOUNDARY_V1 \"$nonce\" \"$ordinal\" \"$identity\" \"$bytes\" \"$digest\" >>\"$manifest\"; "
+    "if [ \"$ordinal\" -eq \"$expected_count\" ]; then "
+    "manifest_digest=$(sha256sum \"$manifest\" | awk 'NF == 2 && $1 ~ /^[0-9a-f]{64}$/ { print $1; exit }'); "
+    "[ -n \"$manifest_digest\" ] || exit 125; "
+    "printf '%s\\t%s\\tcomplete\\t%s\\t%s\\n' LAGRANGE_BENCH_CARGO_BOUNDARY_V1 \"$nonce\" \"$expected_count\" \"$manifest_digest\" >>\"$manifest\"; fi"
+)
+
+for command in commands:
+    command["replacement"] = (
+        "LAGRANGE_BENCH_CARGO_INVOKE=1 /bin/sh -ec " + shlex.quote(wrapper_script) +
+        " lagrange-benchmark-cargo " + " ".join(shlex.quote(value) for value in (
+            builder_path, nonce, str(command["ordinal"]), str(len(commands)), command["command_sha256"], command["kind"],
+        )) + ("" if command["has_message_format"] else " --message-format=json-render-diagnostics")
+    )
+
+block = run_blocks[0]["block"]
+for command in reversed(commands):
+    block = block[:command["start"]] + command["replacement"] + block[command["end"]:]
+replacement_lines = block.splitlines(keepends=True)
+if len(replacement_lines) != run_blocks[0]["end"] - run_blocks[0]["start"] + 1:
+    raise SystemExit("benchmark-cargo-evidence-line-layout")
+lines[run_blocks[0]["start"]:run_blocks[0]["end"] + 1] = replacement_lines
+# Keep every original final-stage layer in its original order.  Appending the
+# temporary evidence layer avoids invalidating the product final-stage cache
+# chain before any original runtime instruction; COPY does not alter the
+# already-declared image config (ENTRYPOINT, USER, healthcheck, and so on).
+copy_line = "COPY --from=%s %s/ %s/\n" % (cargo_stage, builder_path, image_path)
+if not lines[-1].endswith(("\n", "\r")):
+    lines[-1] += "\n"
+lines.append(copy_line)
 updated = "".join(lines)
+
 directory = os.path.dirname(path)
-fd, temporary = tempfile.mkstemp(prefix=".benchmark-cargo-json-", dir=directory)
+fd, temporary = tempfile.mkstemp(prefix=".benchmark-cargo-evidence-", dir=directory)
 try:
     with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
         handle.write(updated)
@@ -1529,6 +2209,81 @@ try:
 finally:
     if os.path.exists(temporary):
         os.unlink(temporary)
+
+plan = {
+    "format": "lagrange-benchmark-cargo-invocations-plan-v1",
+    "revision": revision,
+    "service": service,
+    "cargo_mode": int(cargo_mode),
+    "nonce": nonce,
+    "evidence_builder_path": builder_path,
+    "evidence_image_path": image_path,
+    "byte_limit": byte_limit,
+    "invocations": [
+        {
+            "ordinal": command["ordinal"],
+            "command_sha256": command["command_sha256"],
+            "kind": command["kind"],
+            "package": command["package"],
+            "selected_bin": command["selected_bin"],
+        }
+        for command in commands
+    ],
+}
+data = (json.dumps(plan, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+fd = os.open(plan_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(data)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+}
+
+finalize_cargo_invocation_spec() {
+  local plan=$1 destination=$2 source_sha256=$3 instrumented_sha256=$4 patch_sha256=$5
+  RBL_BENCH_CARGO_PLAN=$plan RBL_BENCH_CARGO_SPEC=$destination \
+    RBL_BENCH_CARGO_SOURCE_SHA256=$source_sha256 \
+    RBL_BENCH_CARGO_INSTRUMENTED_SHA256=$instrumented_sha256 \
+    RBL_BENCH_CARGO_PATCH_SHA256=$patch_sha256 python3 - <<'PY'
+import json
+import os
+import re
+
+plan_path = os.environ["RBL_BENCH_CARGO_PLAN"]
+spec_path = os.environ["RBL_BENCH_CARGO_SPEC"]
+raw = open(plan_path, "rb").read()
+plan = json.loads(raw.decode("utf-8"))
+if raw != (json.dumps(plan, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"):
+    raise SystemExit("benchmark-cargo-invocation-plan-noncanonical")
+required = {"format", "revision", "service", "cargo_mode", "nonce", "evidence_builder_path", "evidence_image_path", "byte_limit", "invocations"}
+if set(plan) != required or plan.get("format") != "lagrange-benchmark-cargo-invocations-plan-v1":
+    raise SystemExit("benchmark-cargo-invocation-plan-schema")
+for name in ("RBL_BENCH_CARGO_SOURCE_SHA256", "RBL_BENCH_CARGO_INSTRUMENTED_SHA256", "RBL_BENCH_CARGO_PATCH_SHA256"):
+    if not re.fullmatch(r"[0-9a-f]{64}", os.environ[name]):
+        raise SystemExit("benchmark-cargo-invocation-hash-invalid")
+value = {
+    "format": "lagrange-benchmark-cargo-invocations-v1",
+    "revision": plan["revision"],
+    "service": plan["service"],
+    "cargo_mode": plan["cargo_mode"],
+    "source_dockerfile_sha256": os.environ["RBL_BENCH_CARGO_SOURCE_SHA256"],
+    "instrumented_dockerfile_sha256": os.environ["RBL_BENCH_CARGO_INSTRUMENTED_SHA256"],
+    "instrumentation_patch_sha256": os.environ["RBL_BENCH_CARGO_PATCH_SHA256"],
+    "nonce": plan["nonce"],
+    "evidence_builder_path": plan["evidence_builder_path"],
+    "evidence_image_path": plan["evidence_image_path"],
+    "byte_limit": plan["byte_limit"],
+    "invocations": plan["invocations"],
+}
+parent = os.path.dirname(spec_path)
+if not os.path.isdir(parent) or os.path.islink(parent) or os.path.lexists(spec_path):
+    raise SystemExit("benchmark-cargo-invocation-spec-output-invalid")
+data = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+fd = os.open(spec_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "wb") as handle:
+    handle.write(data)
+    handle.flush()
+    os.fsync(handle.fileno())
 PY
 }
 
@@ -1592,28 +2347,23 @@ PY
 instrument_dockerfile() {
   local revision=$1 checkout=$2 service=$3 index=$4 cargo_mode=${service_cargo_mode[$service]}
   local source target raw_patch evidence_patch transform diff_status base toolchain_file toolchain_hash
+  local cargo_plan cargo_spec cargo_spec_hash cargo_invocation_count
   source=$checkout/${service_dockerfile[$service]}
   target=$instrumentation_dir/${revision}-${index}-${service}.Dockerfile
   raw_patch=$tmp_dir/${revision}-${index}-${service}.instrumentation.patch.raw
   evidence_patch=$evidence_dir/instrumentation-${revision}-${index}-${service}.patch
+  source_dockerfile_hash["$revision:$service"]=$(sha256_file "$source")
   mkdir -p -- "${target%/*}"
   cp -- "$source" "$target"
   transform=none-no-cargo-vertex
   if [ "$cargo_mode" -gt 0 ]; then
-    if grep -Eq 'cargo[[:space:]]+(build|install)[[:space:]]+(-v|--verbose)' "$source"; then
-      transform=already-verbose-no-command-change
-    else
-      # The only edit is a Cargo verbosity flag in a temporary copy.  It does
-      # not change targets, package selection, binary copies, or source files.
-      sed -E -i 's/(cargo[[:space:]]+(build|install))([[:space:]])/\1 -vv\3/g' "$target"
-      transform=add-vv-to-cargo-build-and-install
-    fi
+    cargo_plan=$instrumentation_dir/${revision}-${index}-${service}.cargo-invocations.plan.json
+    instrument_cargo_invocation_evidence "$target" "$revision" "$service" "$cargo_mode" \
+      "${source_dockerfile_hash[$revision:$service]}" "$benchmark_nonce" "$cargo_plan" ||
+      die "could not add bounded Cargo invocation evidence: ${service_dockerfile[$service]}"
     cmp -s -- "$source" "$target" &&
-      [ "$transform" != already-verbose-no-command-change ] &&
-      die "temporary Cargo instrumentation did not change: ${service_dockerfile[$service]}"
-    inject_cargo_json_diagnostics "$target" ||
-      die "could not add Cargo JSON diagnostics: ${service_dockerfile[$service]}"
-    transform="${transform}+cargo-json-render-diagnostics"
+      die "temporary Cargo evidence instrumentation did not change: ${service_dockerfile[$service]}"
+    transform=bounded-cargo-json-per-invocation-image-copy
     # A/B recipes receive one fixed, side-specific build argument before the
     # native apk layer. It forces a cold layer miss once without `--no-cache`,
     # then remains identical for that side's warm-up and all measured pairs.
@@ -1640,9 +2390,36 @@ instrument_dockerfile() {
   else
     toolchain_hash=unavailable
   fi
-  source_dockerfile_hash["$revision:$service"]=$(sha256_file "$source")
   instrumented_dockerfile_hash["$revision:$service"]=$(sha256_file "$target")
   instrumentation_patch_hash["$revision:$service"]=$(sha256_file "$raw_patch")
+  if [ "$cargo_mode" -gt 0 ]; then
+    cargo_spec=$output_dir/cargo-invocations/${revision}-${index}-${service}.json
+    finalize_cargo_invocation_spec "$cargo_plan" "$cargo_spec" \
+      "${source_dockerfile_hash[$revision:$service]}" \
+      "${instrumented_dockerfile_hash[$revision:$service]}" \
+      "${instrumentation_patch_hash[$revision:$service]}" ||
+      die "could not bind Cargo invocation evidence spec: ${service_dockerfile[$service]}"
+    cargo_spec_hash=$(sha256_file "$cargo_spec") ||
+      die "could not hash Cargo invocation evidence spec: ${service_dockerfile[$service]}"
+    cargo_invocation_count=$(python3 - "$cargo_spec" <<'PY'
+import json, sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+items=value.get("invocations")
+if not isinstance(items,list) or not items: raise SystemExit(1)
+print(len(items))
+PY
+) || die "could not count Cargo invocation evidence spec: ${service_dockerfile[$service]}"
+    is_decimal "$cargo_invocation_count" && [ "$cargo_invocation_count" -gt 0 ] ||
+      die "Cargo invocation evidence spec count is invalid: ${service_dockerfile[$service]}"
+    cargo_evidence_spec["$revision:$service"]=$cargo_spec
+    cargo_evidence_spec_sha256["$revision:$service"]=$cargo_spec_hash
+  else
+    cargo_spec=not-applicable
+    cargo_spec_hash=not-applicable
+    cargo_invocation_count=0
+    cargo_evidence_spec["$revision:$service"]=
+    cargo_evidence_spec_sha256["$revision:$service"]=
+  fi
   instrumentation_transform["$revision:$service"]=$transform
   instrumented_dockerfile["$revision:$service"]=$target
   service_toolchain_identity["$revision:$service"]=$(safe_scalar "base=${base}|rust-toolchain=${toolchain_hash}")
@@ -1652,6 +2429,11 @@ instrument_dockerfile() {
     "${instrumented_dockerfile_hash[$revision:$service]}" \
     "${instrumentation_patch_hash[$revision:$service]}" \
     "${service_toolchain_identity[$revision:$service]}" >>"$instrumentation_report"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$revision" "$service" "$cargo_mode" "${cargo_spec#$output_dir/}" "$cargo_spec_hash" \
+    "$cargo_invocation_count" "${source_dockerfile_hash[$revision:$service]}" \
+    "${instrumented_dockerfile_hash[$revision:$service]}" \
+    "${instrumentation_patch_hash[$revision:$service]}" >>"$cargo_invocations_report"
 }
 
 instrument_all_dockerfiles() {
@@ -2335,25 +3117,26 @@ PY
 record_cargo_units() {
   local revision=$1 measurement_phase=$2 service=$3 index=$4 cargo_mode=$5
   if [ "$cargo_mode" -eq 0 ]; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$revision" "$measurement_phase" "$service" "$index" not-applicable not-applicable \
-      not-applicable not-applicable not-applicable >>"$cargo_units_report"
+      not-applicable not-applicable not-applicable 0 >>"$cargo_units_report"
     return 0
   fi
   if [ "$BENCH_COMPILER_VERTEX_STATE" = cached ]; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$revision" "$measurement_phase" "$service" "$index" cached-not-executed \
-      not-applicable "$BENCH_CARGO_RAW_LOG_SHA256" 0 "$BENCH_COMPILER_VERTEX" >>"$cargo_units_report"
+      not-applicable "$BENCH_CARGO_RAW_LOG_SHA256" 0 "$BENCH_COMPILER_VERTEX" "$BENCH_CARGO_INVOCATION_COUNT" >>"$cargo_units_report"
     return 0
   fi
   [ "$BENCH_CARGO_UNITS_PATH" != "" ] && [ "$BENCH_CARGO_UNITS_PATH" != not-executed-cached ] || return 1
   [[ "$BENCH_CARGO_UNITS_SHA256" =~ ^[0-9a-f]{64}$ ]] || return 1
   is_decimal "$BENCH_CARGO_UNITS_COUNT" || return 1
   [[ "$BENCH_CARGO_RAW_LOG_SHA256" =~ ^[0-9a-f]{64}$ ]] || return 1
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$revision" "$measurement_phase" "$service" "$index" \
     "${BENCH_CARGO_UNITS_PATH#$output_dir/}" "$BENCH_CARGO_UNITS_SHA256" \
-    "$BENCH_CARGO_RAW_LOG_SHA256" "$BENCH_CARGO_UNITS_COUNT" "$BENCH_COMPILER_VERTEX" >>"$cargo_units_report"
+    "$BENCH_CARGO_RAW_LOG_SHA256" "$BENCH_CARGO_UNITS_COUNT" "$BENCH_COMPILER_VERTEX" \
+    "$BENCH_CARGO_INVOCATION_COUNT" >>"$cargo_units_report"
 }
 
 write_source_archive_request() {
@@ -2594,6 +3377,7 @@ build_one_service() {
   local revision=$1 measurement_phase=$2 checkout=$3 commit=$4 service=$5 index=$6 namespace=$7 cold_nonce=$8 image_prefix=$9
   local tag raw_log evidence_rel evidence_log start_ms end_ms total_ms cargo_ms cargo_cache status
   local image_verification verify_ms image_id image_revision image_size units_path archive_request
+  local invocation_spec invocation_spec_sha256 invocation_evidence
   local -a args=()
 
   tag="${image_prefix}-${service}:${commit}"
@@ -2673,7 +3457,27 @@ build_one_service() {
   fi
   sanitize_text_file "$raw_log" "$evidence_log"
   units_path=$output_dir/cargo-units/${revision}-${measurement_phase}-${index}-${service}.json
-  if ! parse_build_events "$raw_log" "${service_cargo_mode[$service]}" "$revision" "$units_path"; then
+  invocation_spec=
+  invocation_spec_sha256=
+  invocation_evidence=
+  if [ "${service_cargo_mode[$service]}" -gt 0 ]; then
+    invocation_spec=${cargo_evidence_spec[$revision:$service]:-}
+    invocation_spec_sha256=${cargo_evidence_spec_sha256[$revision:$service]:-}
+    [ -f "$invocation_spec" ] && [ ! -L "$invocation_spec" ] &&
+      [[ "$invocation_spec_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+        failure_stage=cargo-invocation-spec
+        die "Cargo invocation evidence spec is unavailable for $revision/$measurement_phase/$service"
+      }
+    if ! compiler_vertex_is_cached "$raw_log"; then
+      invocation_evidence=$tmp_dir/${revision}-${measurement_phase}-${index}-${service}.cargo-invocations
+      if ! extract_cargo_invocation_evidence "$tag" "$invocation_spec" "$invocation_evidence"; then
+        failure_stage=cargo-invocation-evidence
+        die "Cargo invocation evidence retrieval failed for $revision/$measurement_phase/$service"
+      fi
+    fi
+  fi
+  if ! parse_build_events "$raw_log" "${service_cargo_mode[$service]}" "$revision" "$units_path" \
+    "$invocation_spec" "$invocation_evidence" "$invocation_spec_sha256" "$service"; then
     failure_stage=build-evidence
     die "invalid Cargo/BuildKit evidence for $revision/$measurement_phase/$service: $BENCH_PARSE_ERROR"
   fi
@@ -2893,9 +3697,9 @@ PY
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$revision" "$measurement_phase" "$recipe" "$bin" "${receipt#$output_dir/}" "$(sha256_file "$receipt")" \
       "${cargo#$output_dir/}" "$(sha256_file "$cargo")" "$cargo_ms" "${bundle#$output_dir/}" "$bundle_digest" >>"$common_producer_report"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$revision" "$measurement_phase" "producer-$recipe-$bin" "$index" \
-      "${units#$output_dir/}" $fields "receipt:$recipe/$bin" >>"$cargo_units_report"
+      "${units#$output_dir/}" $fields "receipt:$recipe/$bin" 1 >>"$cargo_units_report"
   done < <(RBL_BENCH_LAYOUT=$checkout/deploy/build/release-build-layout.json python3 - <<'PY'
 import json, os
 layout=json.load(open(os.environ["RBL_BENCH_LAYOUT"],encoding="utf-8"))
@@ -4561,7 +5365,7 @@ initialize_output() {
   chmod 0700 -- "$output_dir"
   evidence_dir=$output_dir/evidence
   mkdir -m 0700 -- "$evidence_dir" || die 'could not create evidence directory'
-  mkdir -m 0700 -- "$output_dir/cargo-units" "$output_dir/native-identities" "$output_dir/archive-requests" "$output_dir/archive-results" \
+  mkdir -m 0700 -- "$output_dir/cargo-units" "$output_dir/cargo-invocations" "$output_dir/native-identities" "$output_dir/archive-requests" "$output_dir/archive-results" \
     "$output_dir/inputs" \
     "$output_dir/common-manifests" "$output_dir/source-manifests" ||
     die 'could not create strict benchmark evidence directories'
@@ -4575,6 +5379,7 @@ initialize_output() {
   comparison_report=$output_dir/comparison.tsv
   source_identity_report=$output_dir/source-identities.tsv
   instrumentation_report=$output_dir/instrumentation.tsv
+  cargo_invocations_report=$output_dir/cargo-invocations.tsv
   probe_spec_report=$output_dir/probe-spec.tsv
   cargo_units_report=$output_dir/cargo-units.tsv
   native_identity_report=$output_dir/native-identities.tsv
@@ -4597,7 +5402,8 @@ initialize_output() {
   printf 'phase\trevision\tscenario\tstarted_ms\tfinished_ms\telapsed_ms\tstatus\tdetail\n' >"$phase_report"
   printf 'revision\tmeasurement_phase\tinput_commit\tcheckout_head\tcheckout_tree\tprobe_patch_sha256\tinstrumentation_manifest_sha256\tmeasured_source_identity_sha256\n' >"$source_identity_report"
   printf 'revision\tservice\tsource_dockerfile\tinstrumentation\tsource_dockerfile_sha256\tinstrumented_dockerfile_sha256\tinstrumentation_patch_sha256\ttoolchain_identity\n' >"$instrumentation_report"
-  printf 'revision\tmeasurement_phase\tservice\tindex\tstructured_units\tstructured_units_sha256\traw_log_sha256\tunit_count\tcompiler_vertex\n' >"$cargo_units_report"
+  printf 'revision\tservice\tcargo_mode\tinvocation_spec\tinvocation_spec_sha256\tinvocation_count\tsource_dockerfile_sha256\tinstrumented_dockerfile_sha256\tinstrumentation_patch_sha256\n' >"$cargo_invocations_report"
+  printf 'revision\tmeasurement_phase\tservice\tindex\tstructured_units\tstructured_units_sha256\traw_log_sha256\tunit_count\tcompiler_vertex\tinvocation_count\n' >"$cargo_units_report"
   printf 'revision\tmeasurement_phase\tservice\tindex\tnative_identity\tnative_identity_sha256\trustc_vv_sha256\tcargo_version_sha256\tapk_info_vv_sha256\tapk_package_line_count\n' >"$native_identity_report"
   printf 'revision\tmeasurement_phase\tservice\tindex\tarchive_result\tarchive_result_sha256\tarchive_sha256\trequest_sha256\tmanifest_digest\tconfig_digest\timage_id\n' >"$archive_validation_report"
   printf 'revision\tmeasurement_phase\tservice\tpoint\timage_size_bytes\tdocker_images_bytes\tdocker_build_cache_bytes\tdocker_total_bytes\n' >"$disk_report"
@@ -4610,7 +5416,7 @@ initialize_output() {
   printf 'revision\tmeasurement_phase\tproduct_kind\tlayout_kind\tstarted_ms\tfinished_ms\telapsed_ms\tstatus\tdetail\n' >"$release_total_report"
   printf 'pair_index\tpair_order\tbaseline_product_kind\tcandidate_product_kind\tbaseline_layout_kind\tcandidate_layout_kind\tbaseline_release_ms\tcandidate_release_ms\tdelta_release_ms\tstatus\tdetail\n' >"$release_comparison_report"
   chmod 0600 -- "$results_report" "$resource_report" "$resource_samples_report" \
-    "$peak_resource_report" "$phase_report" "$source_identity_report" "$instrumentation_report" \
+    "$peak_resource_report" "$phase_report" "$source_identity_report" "$instrumentation_report" "$cargo_invocations_report" \
     "$cargo_units_report" "$native_identity_report" "$archive_validation_report" "$disk_report" "$disk_summary_report" \
     "$common_layout_report" "$common_phase_report" "$common_producer_report" "$common_manifest_report" \
     "$source_manifest_report" "$release_total_report" "$release_comparison_report"
@@ -4778,9 +5584,9 @@ write_metadata() {
     printf 'probe_policy\tper-pair deterministic common temporary scenario transformation; exact revision-relative patches and hashes retained\n'
     printf 'commit_transition_policy\teach measured pair appends a pair-indexed marker to the previous measured tree and commits a deterministic synthetic child so the temporary image OCI revision and embedded code commit match its tree; commit-only is the transition control\n'
     printf 'probe_spec_sha256\t%s\n' "${probe_spec_hash:-unavailable}"
-    printf 'instrumentation_policy\ttemporary A/B Dockerfile copies only; Cargo build/install verbosity plus a stable side nonce before native apk; C helper/config/producer stays clean, is sourced from its own checkout, and uses its namespace for cold isolation\n'
+    printf 'instrumentation_policy\ttemporary A/B Dockerfile copies only; every existing Cargo build/install command is bound by ordinal-and-command-hash to a canonical invocation spec, writes bounded JSON stdout to an image-carried evidence directory, and never receives -vv; a stable side nonce remains before native apk; C helper/config/producer stays clean, is sourced from its own checkout, and uses its namespace for cold isolation\n'
     printf 'instrumentation_manifest_sha256\t%s\n' "${instrumentation_manifest_hash:-unavailable}"
-    printf 'evidence_policy\tsanitized BuildKit/Cargo logs retained; raw temporary logs removed with clones\n'
+    printf 'evidence_policy\tsanitized BuildKit logs, canonical invocation specs, and parsed per-invocation Cargo units/integrity fields retained; executed Cargo JSON/boundaries are copied only from a stopped temporary benchmark-image container via docker create/cp/container-rm, never start/run/exec, then removed with other private temporary raw evidence\n'
     printf 'image_identity_scope\ttemporary modified-source benchmark image; not an immutable official release image\n'
     printf 'timing_policy\timage_build_ms is one consumer Docker/Compose build through strict bytes; cargo_ms is only the observed compiler RUN duration; release-totals.tsv spans preparation/producers-or-source-builds/all12/image-save/strict-bytes/final-private-V2; warm-up remains separate\n'
     printf 'link_time_policy\tnot-separated; Cargo RUN duration is never reported as linker time\n'
@@ -4873,7 +5679,7 @@ run_apply() {
   probe_spec_hash=$(sha256_file "$probe_spec_report")
   record_layout_identity baseline "$baseline_checkout"
   record_layout_identity candidate "$candidate_checkout"
-  instrumentation_manifest_hash=$(sha256_file "$instrumentation_report")
+  instrumentation_manifest_hash=$(sha256_text "$(sha256_file "$instrumentation_report")\n$(sha256_file "$cargo_invocations_report")")
   baseline_namespace=$(namespace_for_revision baseline "$baseline_commit")
   candidate_namespace=$(namespace_for_revision candidate "$candidate_commit")
   baseline_cold_nonce=$(cold_nonce_for_revision baseline)
@@ -4959,6 +5765,165 @@ expect_parse_failure() {
   [ -n "$BENCH_PARSE_ERROR" ] || die "self-test parser failure lacked a reason: $description"
 }
 
+expect_external_cargo_parse_failure() {
+  local log=$1 revision=$2 description=$3 units_path=$4 spec=$5 evidence=$6 spec_sha256=$7 service=${8:-fixture-service}
+  if parse_build_events "$log" 1 "$revision" "$units_path" "$spec" "$evidence" "$spec_sha256" "$service" >/dev/null 2>&1; then
+    die "self-test external Cargo parser accepted invalid case: $description"
+  fi
+  [ -n "$BENCH_PARSE_ERROR" ] || die "self-test external Cargo parser failure lacked a reason: $description"
+}
+
+self_test_shared_recipe_nonce_contract() {
+  local root=$1 nonce_seed=${2:-shared-recipe-fixture-nonce}
+  local pair left right dockerfile_rel cargo_mode pair_root source source_sha256
+  local left_target right_target left_plan right_plan left_patch right_patch left_spec right_spec
+  local left_spec_sha256 changed_target changed_plan changed_source_sha256
+  local run_target run_plan candidate_target candidate_plan candidate_patch candidate_spec candidate_spec_sha256 empty_log diff_status
+  local -a pairs=(
+    'db-role-bootstrap|db-migrate|deploy/db/Dockerfile|2'
+    'recommendation-runner|candidate-runner|crates/job-queue/Dockerfile|1'
+    'nt-backtest-worker-1|nt-backtest-worker-2|crates/job-queue/Dockerfile.backtest-runner|1'
+  )
+
+  [ ! -e "$root" ] && [ ! -L "$root" ] || return 1
+  mkdir -m 0700 -- "$root" || return 1
+  for pair in "${pairs[@]}"; do
+    IFS='|' read -r left right dockerfile_rel cargo_mode <<<"$pair"
+    source=$repo_root/$dockerfile_rel
+    [ -f "$source" ] && [ ! -L "$source" ] || return 1
+    pair_root=$root/${left}--${right}
+    mkdir -m 0700 -- "$pair_root" || return 1
+    source_sha256=$(sha256_file "$source") || return 1
+    left_target=$pair_root/$left.Dockerfile
+    right_target=$pair_root/$right.Dockerfile
+    left_plan=$pair_root/$left.plan.json
+    right_plan=$pair_root/$right.plan.json
+    cp -- "$source" "$left_target"
+    cp -- "$source" "$right_target"
+    instrument_cargo_invocation_evidence "$left_target" baseline "$left" "$cargo_mode" \
+      "$source_sha256" "$nonce_seed" "$left_plan" || return 1
+    instrument_cargo_invocation_evidence "$right_target" baseline "$right" "$cargo_mode" \
+      "$source_sha256" "$nonce_seed" "$right_plan" || return 1
+    # These are the remaining two transformations in the actual temporary
+    # Dockerfile path. Equality here therefore covers the complete generated
+    # Dockerfile, including the appended evidence COPY layer.
+    inject_stable_cold_nonce "$left_target" || return 1
+    inject_stable_cold_nonce "$right_target" || return 1
+    inject_native_identity_marker "$left_target" || return 1
+    inject_native_identity_marker "$right_target" || return 1
+    cmp -s -- "$left_target" "$right_target" || return 1
+    left_patch=$pair_root/$left.patch
+    right_patch=$pair_root/$right.patch
+    if diff -u -U0 -- "$source" "$left_target" >"$left_patch"; then
+      return 1
+    else
+      diff_status=$?
+      [ "$diff_status" -eq 1 ] || return 1
+    fi
+    if diff -u -U0 -- "$source" "$right_target" >"$right_patch"; then
+      return 1
+    else
+      diff_status=$?
+      [ "$diff_status" -eq 1 ] || return 1
+    fi
+    left_spec=$pair_root/$left.spec.json
+    right_spec=$pair_root/$right.spec.json
+    finalize_cargo_invocation_spec "$left_plan" "$left_spec" "$source_sha256" \
+      "$(sha256_file "$left_target")" "$(sha256_file "$left_patch")" || return 1
+    finalize_cargo_invocation_spec "$right_plan" "$right_spec" "$source_sha256" \
+      "$(sha256_file "$right_target")" "$(sha256_file "$right_patch")" || return 1
+    python3 - "$left" "$right" "$source_sha256" "$(sha256_file "$left_target")" \
+      "$left_plan" "$right_plan" "$left_spec" "$right_spec" <<'PY' || return 1
+import hashlib
+import json
+import sys
+
+left, right, source_sha256, instrumented_sha256, left_plan_path, right_plan_path, left_spec_path, right_spec_path = sys.argv[1:]
+left_plan = json.load(open(left_plan_path, encoding="utf-8"))
+right_plan = json.load(open(right_plan_path, encoding="utf-8"))
+left_raw = open(left_spec_path, "rb").read()
+right_raw = open(right_spec_path, "rb").read()
+left_spec = json.loads(left_raw)
+right_spec = json.loads(right_raw)
+if (left_plan.get("service"), right_plan.get("service")) != (left, right):
+    raise SystemExit(1)
+if left_plan.get("nonce") != right_plan.get("nonce"):
+    raise SystemExit(1)
+for spec, service in ((left_spec, left), (right_spec, right)):
+    if (spec.get("service") != service or spec.get("revision") != "baseline" or
+            spec.get("source_dockerfile_sha256") != source_sha256 or
+            spec.get("instrumented_dockerfile_sha256") != instrumented_sha256 or
+            spec.get("nonce") != left_plan.get("nonce")):
+        raise SystemExit(1)
+if left_spec.get("invocations") != right_spec.get("invocations"):
+    raise SystemExit(1)
+if left_raw == right_raw or hashlib.sha256(left_raw).hexdigest() == hashlib.sha256(right_raw).hexdigest():
+    raise SystemExit(1)
+PY
+    left_spec_sha256=$(sha256_file "$left_spec") || return 1
+    empty_log=$pair_root/empty.log
+    : >"$empty_log"
+    if parse_build_events "$empty_log" "$cargo_mode" baseline "$pair_root/wrong-service-units.json" \
+      "$left_spec" '' "$left_spec_sha256" "$right" >/dev/null 2>&1; then
+      return 1
+    fi
+    [ "$BENCH_PARSE_ERROR" = 'Cargo invocation spec is malformed or no longer matches its recorded hash' ] || return 1
+    if parse_build_events "$empty_log" "$cargo_mode" baseline "$pair_root/wrong-hash-units.json" \
+      "$left_spec" '' 0000000000000000000000000000000000000000000000000000000000000000 "$left" >/dev/null 2>&1; then
+      return 1
+    fi
+    [ "$BENCH_PARSE_ERROR" = 'Cargo invocation spec is malformed or no longer matches its recorded hash' ] || return 1
+    changed_target=$pair_root/changed-recipe.Dockerfile
+    changed_plan=$pair_root/changed-recipe.plan.json
+    cp -- "$source" "$changed_target"
+    printf '%s\n' '# shared-recipe-nonce-regression-variation' >>"$changed_target"
+    if instrument_cargo_invocation_evidence "$changed_target" baseline "$left" "$cargo_mode" \
+      "$source_sha256" "$nonce_seed" "$pair_root/wrong-source-hash.plan.json" >/dev/null 2>&1; then
+      return 1
+    fi
+    changed_source_sha256=$(sha256_file "$changed_target") || return 1
+    instrument_cargo_invocation_evidence "$changed_target" baseline "$left" "$cargo_mode" \
+      "$changed_source_sha256" "$nonce_seed" "$changed_plan" || return 1
+    run_target=$pair_root/different-run.Dockerfile
+    run_plan=$pair_root/different-run.plan.json
+    cp -- "$source" "$run_target"
+    instrument_cargo_invocation_evidence "$run_target" baseline "$left" "$cargo_mode" \
+      "$source_sha256" "${nonce_seed}-different-run" "$run_plan" || return 1
+    candidate_target=$pair_root/candidate-side.Dockerfile
+    candidate_plan=$pair_root/candidate-side.plan.json
+    cp -- "$source" "$candidate_target"
+    instrument_cargo_invocation_evidence "$candidate_target" candidate "$left" "$cargo_mode" \
+      "$source_sha256" "$nonce_seed" "$candidate_plan" || return 1
+    inject_stable_cold_nonce "$candidate_target" || return 1
+    inject_native_identity_marker "$candidate_target" || return 1
+    candidate_patch=$pair_root/candidate-side.patch
+    if diff -u -U0 -- "$source" "$candidate_target" >"$candidate_patch"; then
+      return 1
+    else
+      diff_status=$?
+      [ "$diff_status" -eq 1 ] || return 1
+    fi
+    candidate_spec=$pair_root/candidate-side.spec.json
+    finalize_cargo_invocation_spec "$candidate_plan" "$candidate_spec" "$source_sha256" \
+      "$(sha256_file "$candidate_target")" "$(sha256_file "$candidate_patch")" || return 1
+    candidate_spec_sha256=$(sha256_file "$candidate_spec") || return 1
+    if parse_build_events "$empty_log" "$cargo_mode" baseline "$pair_root/wrong-side-units.json" \
+      "$candidate_spec" '' "$candidate_spec_sha256" "$left" >/dev/null 2>&1; then
+      return 1
+    fi
+    [ "$BENCH_PARSE_ERROR" = 'Cargo invocation spec is malformed or no longer matches its recorded hash' ] || return 1
+    python3 - "$left_plan" "$changed_plan" "$run_plan" "$candidate_plan" <<'PY' || return 1
+import json
+import sys
+
+plans = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
+nonces = [plan.get("nonce") for plan in plans]
+if len(set(nonces)) != 4 or plans[3].get("revision") != "candidate":
+    raise SystemExit(1)
+PY
+  done
+}
+
 new_self_test_nonce() {
   local dir base suffix nonce
   dir=$(mktemp -d /tmp/lagrange-build-cache-benchmark.self-test-nonce.XXXXXXXXXX)
@@ -4973,6 +5938,7 @@ run_self_test() {
   test_builder_identity_parser || die 'self-test builder identity parser failed'
   local test_dir parser_dir journalctl_bin baseline_log candidate_log cached_log absent_log malformed_log missing_finish_log failed_log terminal_error_log invalid_json_log
   local cargo_identity_log cargo_exact_duplicate_log cargo_reordered_duplicate_log cargo_bad_features_log cargo_bad_profile_log cargo_nonfinite_log cargo_failed_build_log
+  local multi_root multi_log multi_spec multi_evidence multi_units multi_spec_sha256 multi_dockerfile multi_plan multi_template_spec multi_source_sha256 multi_cached_log variant
   local native_test_dir native_dockerfile native_changed_dockerfile native_executed_log native_cached_log native_error_executed_log native_error_cached_log native_partial_log native_reordered_log native_source native_source_copy
   local current parent plan_output first_nonce second_nonce foreign_tag build_count remove_count
   local clean_clone clean_clone_input clean_clone_env real_git_bin
@@ -5184,6 +6150,193 @@ PY
   expect_parse_failure "$failed_log" 1 baseline compiler-error
   expect_parse_failure "$terminal_error_log" 1 baseline terminal-error-token
   expect_parse_failure "$invalid_json_log" 1 baseline missing-cargo-json-units "$parser_dir/invalid-json-units.json"
+
+  # BuildKit stdout is not a lossless Cargo transport for a RUN that invokes
+  # Cargo repeatedly. Exercise ten ordered invocations with one dependency
+  # artifact legitimately repeated across them, then prove every boundary and
+  # per-invocation completion failure is rejected before publication.
+  write_multi_invocation_fixture() {
+    local destination=$1 case_variant=$2 template_spec=$3
+    RBL_BENCH_MULTI_DESTINATION=$destination RBL_BENCH_MULTI_VARIANT=$case_variant \
+      RBL_BENCH_MULTI_TEMPLATE_SPEC=$template_spec python3 - <<'PY'
+import hashlib
+import json
+import os
+
+root = os.environ["RBL_BENCH_MULTI_DESTINATION"]
+variant = os.environ["RBL_BENCH_MULTI_VARIANT"]
+template_raw = open(os.environ["RBL_BENCH_MULTI_TEMPLATE_SPEC"], "rb").read()
+spec = json.loads(template_raw.decode("utf-8"))
+if template_raw != (json.dumps(spec, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"):
+    raise SystemExit(1)
+if spec.get("format") != "lagrange-benchmark-cargo-invocations-v1" or len(spec.get("invocations", [])) != 10:
+    raise SystemExit(1)
+invocations = spec["invocations"]
+os.mkdir(root, 0o700)
+evidence = os.path.join(root, "evidence")
+os.mkdir(evidence, 0o700)
+nonce = spec["nonce"]
+spec_path = os.path.join(root, "spec.json")
+with open(spec_path, "wb") as handle:
+    handle.write((json.dumps(spec, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+os.chmod(spec_path, 0o600)
+prefix = "LAGRANGE_BENCH_CARGO_BOUNDARY_V1"
+boundary_pairs = []
+for item in invocations:
+    ordinal = item["ordinal"]
+    shared = {
+        "reason": "compiler-artifact",
+        "package_id": "fixture-shared 0.1.0 (path+file:///build)",
+        "target": {"name": "fixture-shared", "kind": ["lib"], "crate_types": ["lib"]},
+        "profile": {"debug_assertions": False, "opt_level": "3"},
+        "features": ["shared"], "fresh": ordinal != 1, "executable": None,
+    }
+    selected = {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///build/crates/" + item["package"] + "#0.1.0",
+        "target": {"name": item["selected_bin"], "kind": ["bin"], "crate_types": ["bin"]},
+        "profile": {"debug_assertions": False, "opt_level": "3"},
+        "features": [], "fresh": False,
+        "executable": "/cargo-target/release/" + item["selected_bin"],
+    }
+    events = [shared, selected, {"reason": "build-finished", "success": True}]
+    if variant == "duplicate" and ordinal == 4:
+        events.insert(2, dict(shared))
+    if variant == "missing-finish" and ordinal == 6:
+        events.pop()
+    if variant == "false-finish" and ordinal == 7:
+        events[-1] = {"reason": "build-finished", "success": False}
+    payload = b"".join((json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8") for event in events)
+    if variant == "malformed-json" and ordinal == 8:
+        payload = b'{"reason":\n'
+    if variant == "nonfinite-json" and ordinal == 9:
+        payload = payload.replace(b'"opt_level":"3"', b'"opt_level":NaN', 1)
+    path = os.path.join(evidence, "%04d.jsonl" % ordinal)
+    with open(path, "wb") as handle:
+        handle.write(payload)
+    os.chmod(path, 0o600)
+    end_digest = hashlib.sha256(payload).hexdigest()
+    if variant == "tampered-boundary" and ordinal == 3:
+        end_digest = "0" * 64
+    boundary_pairs.append([
+        "\t".join((prefix, nonce, str(ordinal), item["command_sha256"], "begin")),
+        "\t".join((prefix, nonce, str(ordinal), item["command_sha256"], "end", str(len(payload)), end_digest)),
+    ])
+if variant == "reordered-boundaries":
+    boundary_pairs[0], boundary_pairs[1] = boundary_pairs[1], boundary_pairs[0]
+if variant == "missing-boundary":
+    boundary_pairs[4] = [boundary_pairs[4][0]]
+boundary_lines = [line for pair in boundary_pairs for line in pair]
+preceding = ("\n".join(boundary_lines) + "\n").encode("ascii")
+boundary_lines.append("\t".join((prefix, nonce, "complete", str(len(invocations)), hashlib.sha256(preceding).hexdigest())))
+boundaries_path = os.path.join(evidence, "boundaries.tsv")
+with open(boundaries_path, "wb") as handle:
+    handle.write(("\n".join(boundary_lines) + "\n").encode("ascii"))
+os.chmod(boundaries_path, 0o600)
+log = (
+    "#31 [source-builder 9/9] RUN cargo clean --workspace --release --locked && LAGRANGE_BENCH_CARGO_INVOKE=1 /bin/sh -ec fixture\n"
+    "#31 DONE 10.00s\n"
+)
+if variant == "truncated":
+    log += "#31 9.99 [output clipped, log limit 2MiB reached]\n"
+with open(os.path.join(root, "build.log"), "w", encoding="utf-8", newline="\n") as handle:
+    handle.write(log)
+PY
+  }
+  multi_root=$parser_dir/multi-invocation
+  mkdir -m 0700 -- "$multi_root"
+  multi_dockerfile=$multi_root/Dockerfile
+  RBL_BENCH_MULTI_DOCKERFILE=$multi_dockerfile python3 - <<'PY'
+import os
+
+path = os.environ["RBL_BENCH_MULTI_DOCKERFILE"]
+lines = [
+    "FROM rust:1.97.1-alpine AS source-builder\n",
+    "WORKDIR /build\n",
+    "RUN cargo clean --workspace --release --locked \\\n",
+]
+for ordinal in range(1, 11):
+    suffix = " \\\n" if ordinal < 10 else "\n"
+    lines.append(
+        "    && cargo build --locked --release --package fixture-package-%02d --bin fixture-bin-%02d%s" %
+        (ordinal, ordinal, suffix)
+    )
+lines.extend(("FROM alpine:3.21\n", "COPY --from=source-builder /build /build\n"))
+with open(path, "w", encoding="utf-8", newline="") as handle:
+    handle.writelines(lines)
+PY
+  multi_plan=$multi_root/invocations.plan.json
+  multi_source_sha256=$(sha256_file "$multi_dockerfile")
+  instrument_cargo_invocation_evidence "$multi_dockerfile" baseline fixture-service 1 \
+    "$multi_source_sha256" fixture-nonce "$multi_plan" ||
+    die 'self-test could not instrument the ten-command Cargo fixture'
+  multi_template_spec=$multi_root/invocations.json
+  finalize_cargo_invocation_spec "$multi_plan" "$multi_template_spec" \
+    "$multi_source_sha256" "$(sha256_file "$multi_dockerfile")" \
+    "$(sha256_file "$multi_dockerfile")" ||
+    die 'self-test could not bind the ten-command Cargo fixture spec'
+  RBL_BENCH_MULTI_DOCKERFILE=$multi_dockerfile RBL_BENCH_MULTI_SPEC=$multi_template_spec python3 - <<'PY' || die 'self-test ten-command Cargo instrumentation changed command selection or verbosity'
+import json
+import os
+
+dockerfile = open(os.environ["RBL_BENCH_MULTI_DOCKERFILE"], encoding="utf-8").read()
+spec = json.load(open(os.environ["RBL_BENCH_MULTI_SPEC"], encoding="utf-8"))
+items = spec.get("invocations")
+if (dockerfile.count("LAGRANGE_BENCH_CARGO_INVOKE=1") != 10 or
+        dockerfile.count("--message-format=json-render-diagnostics") != 10 or
+        " -vv" in dockerfile or "ulimit -f" in dockerfile or
+        "head -c 16777217" not in dockerfile or
+        dockerfile.count("COPY --from=source-builder /tmp/lagrange-benchmark-cargo-evidence/ /__lagrange_benchmark_cargo_evidence/") != 1 or
+        not dockerfile.rstrip("\r\n").endswith("COPY --from=source-builder /tmp/lagrange-benchmark-cargo-evidence/ /__lagrange_benchmark_cargo_evidence/") or
+        not isinstance(items, list) or len(items) != 10):
+    raise SystemExit(1)
+for ordinal, item in enumerate(items, 1):
+    if item.get("ordinal") != ordinal or item.get("package") != "fixture-package-%02d" % ordinal or item.get("selected_bin") != "fixture-bin-%02d" % ordinal:
+        raise SystemExit(1)
+PY
+  for variant in valid truncated duplicate missing-finish missing-boundary reordered-boundaries tampered-boundary false-finish malformed-json nonfinite-json; do
+    write_multi_invocation_fixture "$multi_root/$variant" "$variant" "$multi_template_spec"
+  done
+  multi_log=$multi_root/valid/build.log
+  multi_spec=$multi_root/valid/spec.json
+  multi_evidence=$multi_root/valid/evidence
+  multi_units=$multi_root/valid/units.json
+  multi_spec_sha256=$(sha256_file "$multi_spec")
+  parse_build_events "$multi_log" 1 baseline "$multi_units" "$multi_spec" "$multi_evidence" "$multi_spec_sha256" fixture-service
+  [ "$BENCH_CARGO_INVOCATION_COUNT" = 10 ] && [ "$BENCH_CARGO_UNITS_COUNT" = 20 ] ||
+    die 'self-test ten-invocation Cargo evidence was not retained per invocation'
+  [ "$BENCH_COMPILED_PACKAGES" = 'fixture-package-01,fixture-package-02,fixture-package-03,fixture-package-04,fixture-package-05,fixture-package-06,fixture-package-07,fixture-package-08,fixture-package-09,fixture-package-10,fixture-shared' ] &&
+    [ -z "$BENCH_FRESH_PACKAGES" ] ||
+    die 'self-test repeated Fresh dependency observations were counted as recompilation'
+  python3 - "$multi_units" <<'PY' || die 'self-test multi-invocation Cargo schema lost invocation identity or freshness'
+import json, sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+if value.get("format") != "lagrange-benchmark-cargo-units-v2" or value.get("invocation_count") != 10:
+    raise SystemExit(1)
+invocations=value.get("invocations")
+if not isinstance(invocations,list) or len(invocations)!=10 or any(item.get("build_success") is not True or item.get("unit_count")!=2 for item in invocations):
+    raise SystemExit(1)
+shared=[unit for unit in value.get("units",[]) if unit.get("target",{}).get("name")=="fixture-shared"]
+if len(shared)!=10 or [unit.get("fresh") for unit in shared] != [False]+[True]*9:
+    raise SystemExit(1)
+PY
+  multi_cached_log=$multi_root/cached.log
+  printf '%s\n' '#31 [source-builder 9/9] RUN LAGRANGE_BENCH_CARGO_INVOKE=1 /bin/sh -ec bounded-cargo-evidence' '#31 CACHED' >"$multi_cached_log"
+  parse_build_events "$multi_cached_log" 1 baseline "$multi_root/cached-units.json" "$multi_spec" '' "$multi_spec_sha256" fixture-service
+  [ "$BENCH_COMPILER_VERTEX_STATE" = cached ] && [ "$BENCH_CARGO_INVOCATION_COUNT" = 10 ] &&
+    [ "$BENCH_CARGO_UNITS_PATH" = not-executed-cached ] && [ ! -e "$multi_root/cached-units.json" ] ||
+    die 'self-test cached Cargo vertex did not retain its bounded invocation contract without inventing units'
+  if parse_build_events "$multi_cached_log" 1 baseline "$multi_root/cached-tampered-units.json" "$multi_spec" '' \
+    0000000000000000000000000000000000000000000000000000000000000000 fixture-service; then
+    die 'self-test cached Cargo vertex accepted a tampered invocation-spec hash'
+  fi
+  for variant in truncated duplicate missing-finish missing-boundary reordered-boundaries tampered-boundary false-finish malformed-json nonfinite-json; do
+    expect_external_cargo_parse_failure "$multi_root/$variant/build.log" baseline "$variant" \
+      "$multi_root/$variant/units.json" "$multi_root/$variant/spec.json" "$multi_root/$variant/evidence" \
+      "$(sha256_file "$multi_root/$variant/spec.json")"
+  done
+  self_test_shared_recipe_nonce_contract "$parser_dir/shared-recipe-nonce" ||
+    die 'self-test shared-recipe Cargo evidence nonce/spec isolation regressed'
 
   # Native identity cache evidence is reusable only from a directly executed
   # vertex with the same complete native recipe binding in this invocation.
@@ -5593,6 +6746,66 @@ PY
   [ -z "$(git -C "$clean_clone" status --porcelain=v1 --untracked-files=all)" ] ||
     die 'self-test image-only Compose input dirtied the real clean clone'
 
+  write_fake_cargo_invocation_evidence() {
+    local spec=$1 destination=$2
+    RBL_BENCH_FAKE_CARGO_SPEC=$spec RBL_BENCH_FAKE_CARGO_DESTINATION=$destination python3 - <<'PY'
+import hashlib
+import json
+import os
+import stat
+
+spec_path = os.environ["RBL_BENCH_FAKE_CARGO_SPEC"]
+destination = os.environ["RBL_BENCH_FAKE_CARGO_DESTINATION"]
+raw = open(spec_path, "rb").read()
+spec = json.loads(raw.decode("utf-8"))
+if raw != (json.dumps(spec, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"):
+    raise SystemExit(1)
+entry = os.lstat(destination)
+if not stat.S_ISDIR(entry.st_mode) or stat.S_ISLNK(entry.st_mode) or os.listdir(destination):
+    raise SystemExit(1)
+prefix = "LAGRANGE_BENCH_CARGO_BOUNDARY_V1"
+nonce = spec["nonce"]
+boundaries = []
+for item in spec["invocations"]:
+    ordinal = item["ordinal"]
+    if item["kind"] == "build":
+        package = item["package"]
+        selected = item["selected_bin"]
+        events = [
+            {"reason": "compiler-artifact", "package_id": "registry+https://github.com/rust-lang/crates.io-index#fixture-dependency@0.1.0",
+             "target": {"name": "fixture-dependency", "kind": ["lib"], "crate_types": ["lib"]},
+             "profile": {"debug_assertions": False, "opt_level": "3"}, "features": [],
+             "fresh": ordinal != 1, "executable": None},
+            {"reason": "compiler-artifact", "package_id": "path+file:///build/crates/" + package + "#0.1.0",
+             "target": {"name": selected, "kind": ["bin"], "crate_types": ["bin"]},
+             "profile": {"debug_assertions": False, "opt_level": "3"}, "features": [],
+             "fresh": False, "executable": "/cargo-target/release/" + selected},
+            {"reason": "build-finished", "success": True},
+        ]
+    else:
+        events = [
+            {"reason": "compiler-artifact", "package_id": "fixture-sqlx-cli 0.1.0 (registry+fixture)",
+             "target": {"name": "sqlx", "kind": ["bin"], "crate_types": ["bin"]},
+             "profile": {"debug_assertions": False, "opt_level": "3"}, "features": [],
+             "fresh": False, "executable": "/usr/local/cargo/bin/sqlx"},
+            {"reason": "build-finished", "success": True},
+        ]
+    payload = b"".join((json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8") for event in events)
+    evidence = os.path.join(destination, "%04d.jsonl" % ordinal)
+    with open(evidence, "wb") as handle:
+        handle.write(payload)
+    os.chmod(evidence, 0o600)
+    boundaries.append("\t".join((prefix, nonce, str(ordinal), item["command_sha256"], "begin")))
+    boundaries.append("\t".join((prefix, nonce, str(ordinal), item["command_sha256"], "end", str(len(payload)), hashlib.sha256(payload).hexdigest())))
+preceding = ("\n".join(boundaries) + "\n").encode("ascii")
+boundaries.append("\t".join((prefix, nonce, "complete", str(len(spec["invocations"])), hashlib.sha256(preceding).hexdigest())))
+path = os.path.join(destination, "boundaries.tsv")
+with open(path, "wb") as handle:
+    handle.write(("\n".join(boundaries) + "\n").encode("ascii"))
+os.chmod(path, 0o600)
+PY
+  }
+
 
   # All following observations are shell fakes.  In particular, `docker` is a
   # function, so no client binary or daemon can be reached by this self-test.
@@ -5600,6 +6813,44 @@ PY
     local command=${1:-} tag= namespace= build_arg=missing cold_nonce=missing context= probe_state=unknown host_namespace image_id=
     shift || true
     case "$command" in
+      create)
+        local container_image=${1:-} container_id container_record
+        [ "$#" -eq 1 ] && [ -n "${BENCH_TEST_IMAGE_COMMIT[$container_image]:-}" ] || return 92
+        container_id=$(sha256_text "fixture-cargo-container:${container_image}") || return 92
+        [[ "$container_id" =~ ^[0-9a-f]{64}$ ]] || return 92
+        mkdir -p -- "$test_dir/fake-cargo-containers" || return 92
+        container_record=$test_dir/fake-cargo-containers/$container_id
+        [ ! -e "$container_record" ] && [ ! -L "$container_record" ] || return 92
+        printf '%s\n' "$container_image" >"$container_record" || return 92
+        chmod 0600 -- "$container_record" || return 92
+        printf 'create\t%s\t%s\n' "$container_id" "$container_image" >>"$BENCH_TEST_DOCKER_RECORD"
+        printf '%s\n' "$container_id"
+        ;;
+      cp)
+        local source_ref=${1:-} destination=${2:-} container_id source_path container_record container_image
+        [ "$#" -eq 2 ] || return 92
+        container_id=${source_ref%%:*}
+        source_path=${source_ref#*:}
+        [[ "$container_id" =~ ^[0-9a-f]{64}$ ]] || return 92
+        container_record=$test_dir/fake-cargo-containers/$container_id
+        container_image=$(cat -- "$container_record" 2>/dev/null) || return 92
+        [ "$source_path" = "$cargo_evidence_image_path/." ] &&
+          [ -f "$container_record" ] && [ ! -L "$container_record" ] &&
+          [ -n "${BENCH_TEST_IMAGE_COMMIT[$container_image]:-}" ] &&
+          [ -n "${BENCH_TEST_CARGO_EVIDENCE_SPEC:-}" ] || return 92
+        write_fake_cargo_invocation_evidence "$BENCH_TEST_CARGO_EVIDENCE_SPEC" "$destination" || return 92
+        printf 'cp\t%s\t%s\t%s\n' "$container_id" "$source_path" "$destination" >>"$BENCH_TEST_DOCKER_RECORD"
+        ;;
+      container)
+        [ "${1:-}" = rm ] && [ "$#" -eq 2 ] || return 92
+        local container_id=$2 container_record
+        [[ "$container_id" =~ ^[0-9a-f]{64}$ ]] || return 92
+        container_record=$test_dir/fake-cargo-containers/$container_id
+        [ -f "$container_record" ] && [ ! -L "$container_record" ] || return 92
+        rm -f -- "$container_record" || return 92
+        printf 'container-rm\t%s\n' "$container_id" >>"$BENCH_TEST_DOCKER_RECORD"
+        printf '%s\n' "$container_id"
+        ;;
       version) printf '%s\n' '27.0.0|27.0.0' ;;
       info) printf '%s\n' 'linux|amd64|fixture-kernel|/tmp' ;;
       buildx)
@@ -5724,12 +6975,8 @@ PY
 EOF
         fi
         cat <<'EOF'
-#9 [builder 7/7] RUN cargo clean --workspace --release --locked && cargo build -vv --message-format=json-render-diagnostics --locked --release
-#9 0.10 Fresh itoa v1.0.18
-#9 0.20 Compiling benchmark-fixture v0.1.0 (/build)
-#9 0.21 {"reason":"compiler-artifact","package_id":"benchmark-fixture 0.1.0 (path+file:///build)","target":{"name":"benchmark-fixture","kind":["bin"],"crate_types":["bin"]},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false,"doc":false},"features":[],"fresh":false,"executable":"/cargo-target/release/benchmark-fixture"}
-#9 0.22 {"reason":"build-finished","success":true}
-#9 0.30 Finished `release` profile [optimized] target(s) in 0.10s
+#9 [builder 7/7] RUN cargo clean --workspace --release --locked && LAGRANGE_BENCH_CARGO_INVOKE=1 /bin/sh -ec bounded-cargo-evidence
+#9 0.10 Cargo JSON redirected to bounded per-invocation evidence
 #9 DONE 0.10s
 API_TOKEN=fake-secret-must-not-persist
 EOF
@@ -6034,7 +7281,7 @@ EOF
     esac
   }
   prepare_checkout() {
-    local commit=$1 checkout=$2 service dockerfile path parent tracked_path
+    local commit=$1 checkout=$2 service dockerfile path parent tracked_path cargo_fixture_command
     mkdir -p -- "$checkout"
     printf '%s\n' "$commit" >"$checkout/.benchmark-commit"
     printf '%s\n' '[toolchain]' 'channel = "1.97.1"' >"$checkout/rust-toolchain.toml"
@@ -6042,12 +7289,19 @@ EOF
       dockerfile=$checkout/${service_dockerfile[$service]}
       mkdir -p -- "${dockerfile%/*}"
       if [ "${service_cargo_mode[$service]}" -gt 0 ]; then
+        if [ "${service_cargo_mode[$service]}" -eq 1 ]; then
+          cargo_fixture_command='cargo build --locked --release --package fixture-package --bin fixture-bin'
+        else
+          cargo_fixture_command='cargo install fixture-sqlx-cli --locked'
+        fi
         # Keep a real earliest native setup layer in the fake recipe.  The
         # stable cold nonce must sit before it; a fixture without this layer
         # would only prove a weaker, later cache miss.
-        printf '%s\n' 'FROM rust:1.97.1-alpine' \
+        printf '%s\n' 'FROM rust:1.97.1-alpine AS source-builder' \
           'RUN apk add --no-cache build-base' \
-          'RUN cargo build --locked --release' >"$dockerfile"
+          "RUN $cargo_fixture_command" \
+          'FROM alpine:3.21' \
+          'COPY --from=source-builder /build /build' >"$dockerfile"
       else
         printf '%s\n' 'FROM node:fixture' 'RUN npm run build' >"$dockerfile"
       fi
@@ -6645,6 +7899,18 @@ PY
   ' "$BENCH_TEST_DOCKER_RECORD" || die 'self-test warm namespace, stable cold nonce, repository grammar, or warm-up ordering regressed'
   [ "$(awk -F '\t' '$1 == "build" { seen[$3]=1 } END { for (key in seen) count++; print count + 0 }' "$BENCH_TEST_DOCKER_RECORD")" -eq 2 ] ||
     die 'self-test warm revisions did not receive distinct namespaces'
+  if ! awk -F '\t' '
+    $1 == "create" { create++ }
+    $1 == "cp" { copy++ }
+    $1 == "container-rm" { remove++ }
+    $1 == "start" || $1 == "run" || $1 == "exec" { forbidden=1 }
+    END { exit !(create == 44 && copy == 44 && remove == 44 && !forbidden) }
+  ' "$BENCH_TEST_DOCKER_RECORD"; then
+    die 'self-test bounded Cargo evidence retrieval did not use create/cp/stopped-container-rm only'
+  fi
+  [ -d "$test_dir/fake-cargo-containers" ] &&
+    [ -z "$(find "$test_dir/fake-cargo-containers" -mindepth 1 -maxdepth 1 -print -quit)" ] ||
+    die 'self-test bounded Cargo evidence retrieval leaked a created container record'
   grep -R -Fq 'fake-secret-must-not-persist' "$output_dir" && die 'self-test sanitizer persisted a secret-shaped line'
   grep -R -Fq '[redacted sensitive build output]' "$output_dir/evidence" || die 'self-test sanitizer evidence was not retained'
   grep -Fq $'production_health_containers\tapi-current,web-current' "$output_dir/metadata.tsv" ||
@@ -6712,6 +7978,31 @@ PY
     END { exit !(NR == 25 && !bad) }
   ' "$output_dir/instrumentation.tsv"; then
     die 'self-test Dockerfile instrumentation evidence was malformed'
+  fi
+  if ! awk -F '\t' '
+    NR == 1 {
+      if (NF != 9 || $1 != "revision" || $4 != "invocation_spec" || $6 != "invocation_count") bad=1
+      next
+    }
+    NF != 9 || $1 !~ /^(baseline|candidate)$/ || $3 !~ /^[012]$/ ||
+      $7 !~ /^[0-9a-f]{64}$/ || $8 !~ /^[0-9a-f]{64}$/ || $9 !~ /^[0-9a-f]{64}$/ { bad=1; next }
+    $3 == "0" && !($4 == "not-applicable" && $5 == "not-applicable" && $6 == "0") { bad=1 }
+    $3 != "0" && !($4 ~ /^cargo-invocations\/[a-z]+-[0-9]+-[a-z0-9-]+\.json$/ && $5 ~ /^[0-9a-f]{64}$/ && $6 ~ /^[1-9][0-9]*$/) { bad=1 }
+    END { exit !(NR == 25 && !bad) }
+  ' "$output_dir/cargo-invocations.tsv"; then
+    die 'self-test Cargo invocation-spec evidence was malformed'
+  fi
+  if ! awk -F '\t' '
+    NR == 1 {
+      if (NF != 10 || $1 != "revision" || $5 != "structured_units" || $10 != "invocation_count") bad=1
+      next
+    }
+    NF != 10 { bad=1; next }
+    $5 == "not-applicable" && !($6 == "not-applicable" && $7 == "not-applicable" && $8 == "not-applicable" && $9 == "not-applicable" && $10 == "0") { bad=1 }
+    $5 != "not-applicable" && !($5 ~ /^cargo-units\/[a-z]+-[a-z0-9-]+-[0-9]+-[a-z0-9-]+\.json$/ && $6 ~ /^[0-9a-f]{64}$/ && $7 ~ /^[0-9a-f]{64}$/ && $8 ~ /^[1-9][0-9]*$/ && $9 ~ /^[0-9]+$/ && $10 ~ /^[1-9][0-9]*$/) { bad=1 }
+    END { exit !(NR == 49 && !bad) }
+  ' "$output_dir/cargo-units.tsv"; then
+    die 'self-test Cargo unit/invocation report schema was malformed'
   fi
   if ! awk -F '\t' '
     NR == 1 { next }
@@ -7179,7 +8470,8 @@ if [ "$mode" = plan ]; then
   echo '  warm=each revision warms unchanged temporary source once, then each pair receives the same deterministic pair-indexed scenario commit before measured builds'
   echo '  cold=fresh revision namespaces plus a stable side nonce consumed before native setup; one independent cold pair only, not a warm changed-source comparison'
   echo '  paired_order=baseline-first or candidate-first for one pair; alternating is B/C,C/B,B/C for up to three warm pairs'
-  echo '  instrumentation=A/B temporary Dockerfile copies add Cargo verbosity and a stable pre-native nonce; original Dockerfiles/commands/binary sets remain unchanged; C helper/config/producer remains clean'
+  echo '  instrumentation=A/B temporary Dockerfile copies bind every existing Cargo build/install to bounded per-invocation JSON evidence and a stable pre-native nonce; no -vv is added; original Dockerfiles/commands/binary sets remain unchanged; C helper/config/producer remains clean'
+  echo '  evidence_retrieval=executed Cargo evidence is copied from a stopped temporary benchmark-image container only (docker create/cp/container-rm; never start/run/exec)'
   echo '  compose_env=--apply creates one private external image-only env with the inactive research-entitlement sentinel; no checkout or operational .env is read'
   echo '  services=all twelve release services, batches up to three, sequential one-service Docker builds'
   echo "  resource_gates=shared resource policy requires MemAvailable >= ${default_min_mem_available_kib} KiB and full memory PSI avg10 < 5.0%; SwapFree telemetry/advisory only; recent OOM, prior compiler/exit, systemd and health checks fail closed"
