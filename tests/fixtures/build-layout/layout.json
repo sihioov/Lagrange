@@ -1,0 +1,28 @@
+{
+  "format": "lagrange-build-layout-fixture-v1",
+  "compatibility_schema": 1,
+  "workspace_members": ["fixture-lib", "fixture-app"],
+  "packages": {
+    "fixture-lib": "build-cache-fixture-lib",
+    "fixture-app": "build-cache-fixture-app"
+  },
+  "bins": ["cache-bin-a", "cache-bin-b"],
+  "variants": ["base", "wide"],
+  "producer_order": [
+    {"id": "P1", "bin": "cache-bin-a", "variant": "base", "runtime": "web.txt", "group": "base"},
+    {"id": "P2", "bin": "cache-bin-b", "variant": "base", "runtime": "python.txt", "group": "base"},
+    {"id": "P3", "bin": "cache-bin-a", "variant": "wide", "runtime": "web.txt", "group": "wide"},
+    {"id": "P4", "bin": "cache-bin-b", "variant": "wide", "runtime": "python.txt", "group": "wide"}
+  ],
+  "layouts": ["baseline", "common", "grouped"],
+  "cargo": {
+    "package": "build-cache-fixture-app",
+    "profile": "release",
+    "locked": true,
+    "jobs": 2,
+    "target_dir": "/cargo-target",
+    "host_target": true,
+    "features": {"base": [], "wide": ["wide"]}
+  },
+  "runtime": {"uid": 10001, "gid": 10001, "workdir": "/opt/fixture"}
+}

@@ -5,22 +5,33 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 ops=$root/scripts/ops
+build=$ops/build-production-images.sh
 systemd=$root/deploy/systemd
 release=$ops/deploy-production-release.sh
 compose_release=$ops/compose-release.sh
 production_config=$ops/validate-production-config.sh
 artifact_wrapper=$ops/kis-historical-price-beta-artifact.sh
 manifest_lib=$ops/lib/release-image-manifest.sh
+layout_helper=$ops/lib/release-build-layout.sh
+layout_config=$root/deploy/build/release-build-layout.json
 backup=$ops/run-production-backup.sh
 installer=$ops/install-production-backup.sh
+release_runbook=$root/docs/runbooks/production-release-and-backup.md
+ops_readme=$ops/README.md
 
 die() { echo "production-ops-static: $*" >&2; exit 1; }
 
-for script in "$release" "$compose_release" "$production_config" "$artifact_wrapper" \
-  "$manifest_lib" "$backup" "$installer"; do
+for script in "$release" "$build" "$compose_release" "$production_config" "$artifact_wrapper" \
+  "$manifest_lib" "$layout_helper" "$backup" "$installer"; do
   [ -f "$script" ] || die "required script missing: $script"
   bash -n "$script" || die "shell syntax failure: $script"
 done
+[ -f "$layout_config" ] && [ ! -L "$layout_config" ] ||
+  die 'G2 release-build layout config is missing or a symlink'
+[ -f "$release_runbook" ] && [ ! -L "$release_runbook" ] ||
+  die 'G2 production release runbook is missing or a symlink'
+[ -f "$ops_readme" ] && [ ! -L "$ops_readme" ] ||
+  die 'ops image-build documentation is missing or a symlink'
 self_test=$ops/production-ops-self-test.sh
 bash -n "$self_test" || die 'production ops self-test has shell syntax errors'
 grep -Fq 'TEST_ENVIRONMENT_ERROR: production-ops root fixture requires user namespaces or fakeroot' \
@@ -96,6 +107,114 @@ grep -Fq 'owner_beta_price_input_shell_override_mismatch' "$production_config" |
   die 'sealed price-input shell override must not bypass the protected env file'
 grep -Fq 'owner_beta_paper_evidence_unavailable' "$production_config" ||
   die 'Paper must remain blocked without a future evidence checker'
+
+grep -Fq 'COMPOSE_PARALLEL_LIMIT=1' "$build" ||
+  die 'image build helper must force Compose parallelism to one'
+grep -Fq 'COMPOSE_PARALLEL_LIMIT=1' "$compose_release" ||
+  die 'infrastructure/backfill Compose builds must force parallelism to one'
+grep -Fq 'validate_manifest_output' "$build" ||
+  die 'image build helper must validate manifest output before and at publication'
+grep -Fq 'release_build_layout_init' "$build" ||
+  die 'image build helper must initialize the G2 common-artifact state before builds'
+grep -Fq 'release_build_layout_verify_image' "$build" ||
+  die 'image build helper must bind every saved image through G2 byte verification'
+grep -Fq 'release_build_layout_lock' "$layout_helper" ||
+  die 'G2 helper must retain the whole-run lock API'
+grep -Fq 'release_build_layout_archive_scan' "$layout_helper" ||
+  die 'G2 helper must retain the offline image-save parser API'
+
+# Keep the operator-facing instructions aligned with the frozen G2 route. The
+# check intentionally asserts contracts and checkpoint order, rather than a
+# copy of the helper's private receipt representation.
+for literal in \
+  'scripts/ops/lib/release-build-layout.sh' \
+  'release_build_layout_init <source-root> <commit> <state-root> <cache-namespace>' \
+  '3 + 3 + 2 + 2' \
+  'web`, `research-worker`, `recommendation-runner' \
+  'candidate-runner`, `owner-beta-runner`, `owner-equity-v2-runner' \
+  'strict saved-image byte/OCI checks' \
+  'release-totals.tsv' \
+  'private evidence, never official release manifests' \
+  'reserved for WP6'
+do
+  grep -Fq -- "$literal" "$release_runbook" ||
+    die "release runbook omitted frozen G2 operation contract: $literal"
+done
+for literal in \
+  'current-EUID state directory' \
+  '3+3+2+2' \
+  '3+3+3+3' \
+  'source fallbacks remain build-compatible' \
+  '--manifest-file' \
+  'release-totals.tsv' \
+  'WP6 owns that production evidence'
+do
+  grep -Fq -- "$literal" "$ops_readme" ||
+    die "ops README omitted frozen G2 operation contract: $literal"
+done
+
+# Parse the documented shell commands as logical continuation lines so a prose
+# mention of --env-file cannot conceal its omission from plan, preflight, or
+# the official background apply. The image-only input is external, exact, and
+# must be prepared before the build; the operational env is installed only
+# after the builder finishes successfully.
+if ! python3 - "$ops_readme" "$release_runbook" <<'PY'
+import pathlib
+import sys
+
+readme_path, runbook_path = map(pathlib.Path, sys.argv[1:])
+readme = readme_path.read_text(encoding="utf-8")
+runbook = runbook_path.read_text(encoding="utf-8")
+sentinel = "RESEARCH_ENTITLEMENT_SHA256=" + "0" * 64
+sentinel_hash = "df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6"
+
+def collapsed(text):
+    return text.replace("\\\n", " ")
+
+def require_one(document, marker, label):
+    matches = [line for line in collapsed(document).splitlines() if marker in line]
+    if len(matches) != 1:
+        raise SystemExit(label + "-command-count")
+    if matches[0].count('--env-file "$image_build_env"') != 1:
+        raise SystemExit(label + "-env-binding")
+
+readme_section = readme.split("## Prebuild production service images", 1)[1].split("\n## ", 1)[0]
+for document, label in ((readme_section, "readme"), (runbook, "runbook")):
+    if sentinel not in document or sentinel_hash not in document:
+        raise SystemExit(label + "-sentinel-binding")
+    if 'mktemp -d "${TMPDIR:-/tmp}/lagrange-image-only-env.XXXXXXXXXX"' not in document:
+        raise SystemExit(label + "-private-external-parent")
+    if 'chmod 0700 "$image_build_env_dir"' not in document or 'chmod 0600 "$image_build_env"' not in document:
+        raise SystemExit(label + "-private-mode")
+    if "printf 'image_build_env=%s sha256=%s" not in document:
+        raise SystemExit(label + "-path-hash-record")
+
+require_one(readme_section, "scripts/ops/build-production-images.sh --plan", "readme-plan")
+require_one(readme_section, "scripts/ops/build-production-images.sh --preflight", "readme-preflight")
+apply_marker = '/bin/bash "$release_source_root/scripts/ops/build-production-images.sh" --apply'
+require_one(runbook, apply_marker, "runbook-background-apply")
+
+runbook_flat = collapsed(runbook)
+prepare_at = runbook_flat.index('image_build_env_dir=$(mktemp -d')
+apply_at = runbook_flat.index(apply_marker)
+operational_install = 'sudo install -o root -g root -m 0600 deploy/compose/.env'
+install_at = runbook_flat.index(operational_install)
+if not prepare_at < apply_at < install_at:
+    raise SystemExit("runbook-image-build-operational-env-order")
+PY
+then
+  die 'operator examples do not bind the private credential-free image-only Compose env'
+fi
+for service in db-role-bootstrap db-migrate research-worker; do
+  grep -Fq "build --pull=false $service" "$compose_release" ||
+    die "Compose build plan/call missing single-service build: $service"
+done
+if grep -Eq 'build --pull=false[[:space:]]+db-role-bootstrap[[:space:]]+db-migrate([[:space:]]|$)' \
+   "$compose_release" ||
+   grep -Eq 'build --pull=false[[:space:]]+db-role-bootstrap[[:space:]]+db-migrate[[:space:]]+research-worker([[:space:]]|$)' \
+   "$compose_release"; then
+  die 'infrastructure/backfill must not submit multiple services to one Compose build call'
+fi
 grep -Fq 'run_owner_beta_approval_gate' "$compose_release" ||
   die 'owner-beta pre-start approval gate missing'
 approval_gate_line=$(grep -n '^run_owner_beta_approval_gate$' "$compose_release" | tail -n1 | cut -d: -f1)
@@ -199,5 +318,10 @@ grep -Fq -- '--run --config-file /etc/lagrange/production-backup.conf' \
   "$systemd/lagrange-production-backup.service" || die 'daily service command mismatch'
 grep -Fq -- '--verify-latest --config-file /etc/lagrange/production-backup.conf' \
   "$systemd/lagrange-production-backup-verify.service" || die 'verify service command mismatch'
+
+# This invokes only a repository static checker; it never contacts Docker or
+# production state. Keep the build-DAG safety contract coupled to the release
+# installer/backup checks that consume its immutable V2 output.
+bash "$ops/build-production-images-static-check.sh" >/dev/null
 
 echo 'PRODUCTION_OPS_STATIC: PASS'

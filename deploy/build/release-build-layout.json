@@ -1,0 +1,410 @@
+{
+  "format": "lagrange-build-layout-v1",
+  "schema_version": 1,
+  "layout": "common",
+  "guard_version": "common-1",
+  "platform": "linux/amd64",
+  "builder": {
+    "rust_image": "rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900",
+    "runtime_image": "alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d",
+    "host_triple": "x86_64-unknown-linux-musl",
+    "target_dir": "/cargo-target",
+    "workdir": "/build",
+    "profile": "release",
+    "jobs": "2",
+    "features": [],
+    "rustflags": null,
+    "native_packages": [
+      "build-base",
+      "musl-dev",
+      "openssl-dev",
+      "pkgconf",
+      "postgresql-dev"
+    ],
+    "build_python": "python3"
+  },
+    "source_inventory": {
+    "root_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml"
+    ],
+    "package_dirs": [
+      "crates/domain",
+      "crates/auth",
+      "crates/market-data",
+      "crates/data-go-client",
+      "crates/kis-client",
+      "crates/opendart-client",
+      "crates/factor-engine",
+      "crates/selector",
+      "crates/portfolio-model",
+      "crates/job-queue",
+      "data-pipelines/collectors",
+      "crates/result-model",
+      "crates/risk-gateway",
+      "crates/api-server",
+      "apps/api-server/auth",
+      "tests/integration/migration-contract"
+    ],
+    "external_compile_inputs": [
+      "configs/evidence/kis-historical-price-only-beta-approved-artifacts.json",
+      "configs/evidence/kis-historical-price-only-v3-approved-artifacts.json",
+      "configs/evidence/kis-range-canonical-approved-manifests.json",
+      "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+      "configs/universes/kr-etf-core-v1.yaml",
+      "data/calendars/xkrx/calendar.json",
+      "data/calendars/xkrx/manifest.json",
+      "data/calendars/xkrx/overrides.json",
+            "migrations"
+        ]
+    },
+    "packages": {
+        "api-server": {
+            "path": "crates/api-server",
+            "external_compile_inputs": [
+                "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                "migrations"
+            ],
+            "local_dependencies": [
+                "api-server-auth",
+                "auth",
+                "collectors",
+                "domain",
+                "factor-engine",
+                "job-queue",
+                "kis-client",
+                "market-data",
+                "portfolio-model",
+                "result-model",
+                "risk-gateway",
+                "selector"
+            ]
+        },
+        "api-server-auth": {
+            "path": "apps/api-server/auth",
+            "external_compile_inputs": [],
+            "local_dependencies": ["auth"]
+        },
+        "auth": {
+            "path": "crates/auth",
+            "external_compile_inputs": [],
+            "local_dependencies": []
+        },
+        "collectors": {
+            "path": "data-pipelines/collectors",
+            "external_compile_inputs": [],
+            "local_dependencies": ["domain", "factor-engine", "kis-client", "market-data", "opendart-client"]
+        },
+        "data-go-client": {
+            "path": "crates/data-go-client",
+            "external_compile_inputs": [],
+            "local_dependencies": []
+        },
+        "domain": {
+            "path": "crates/domain",
+            "external_compile_inputs": [],
+            "local_dependencies": []
+        },
+        "factor-engine": {
+            "path": "crates/factor-engine",
+            "external_compile_inputs": [],
+            "local_dependencies": ["domain", "market-data"]
+        },
+        "job-queue": {
+            "path": "crates/job-queue",
+            "external_compile_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+            "local_dependencies": ["collectors", "domain", "factor-engine", "kis-client", "market-data", "portfolio-model", "selector"]
+        },
+        "kis-client": {
+            "path": "crates/kis-client",
+            "external_compile_inputs": [],
+            "local_dependencies": []
+        },
+        "market-data": {
+            "path": "crates/market-data",
+            "external_compile_inputs": [
+                "configs/evidence/kis-historical-price-only-beta-approved-artifacts.json",
+                "configs/evidence/kis-historical-price-only-v3-approved-artifacts.json",
+                "configs/evidence/kis-range-canonical-approved-manifests.json",
+                "data/calendars/xkrx/calendar.json",
+                "data/calendars/xkrx/manifest.json",
+                "data/calendars/xkrx/overrides.json",
+                "configs/universes/kr-etf-core-v1.yaml"
+            ],
+            "local_dependencies": ["auth", "data-go-client", "domain", "kis-client", "opendart-client"]
+        },
+        "migration-contract": {
+            "path": "tests/integration/migration-contract",
+            "external_compile_inputs": [],
+            "local_dependencies": []
+        },
+        "opendart-client": {
+            "path": "crates/opendart-client",
+            "external_compile_inputs": [],
+            "local_dependencies": []
+        },
+        "portfolio-model": {
+            "path": "crates/portfolio-model",
+            "external_compile_inputs": [],
+            "local_dependencies": ["domain", "selector"]
+        },
+        "result-model": {
+            "path": "crates/result-model",
+            "external_compile_inputs": [],
+            "local_dependencies": ["domain"]
+        },
+        "risk-gateway": {
+            "path": "crates/risk-gateway",
+            "external_compile_inputs": [],
+            "local_dependencies": ["domain"]
+        },
+        "selector": {
+            "path": "crates/selector",
+            "external_compile_inputs": [],
+            "local_dependencies": ["auth", "domain", "factor-engine", "market-data"]
+        }
+    },
+    "runtime_payloads": {
+    "collectors": [
+      {
+        "source": "tests/fixtures/kr-etf/contract",
+        "image": "/opt/lagrange/tests/fixtures/kr-etf/contract"
+      },
+      {
+        "source": "tests/fixtures/kr-candidates/contract",
+        "image": "/opt/lagrange/tests/fixtures/kr-candidates/contract"
+      },
+      {
+        "source": "configs/universes/kr-stock-price-beta-v1.json",
+        "image": "/opt/lagrange/configs/universes/kr-stock-price-beta-v1.json"
+      },
+      {
+        "source": "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+        "image": "/opt/lagrange/configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json"
+      }
+    ],
+    "backtest": [
+      {
+        "source": "nt",
+        "image": "/opt/lagrange/nt"
+      }
+    ],
+    "paper": [
+      {
+        "source": "deploy/runtime/paper-runner-entrypoint",
+        "image": "/usr/local/bin/paper-runner"
+      }
+    ],
+    "database": [
+      {
+        "source": "migrations",
+        "image": "/opt/lagrange/migrations"
+      },
+      {
+        "source": "configs/strategies/baseline-v1.json",
+        "image": "/opt/lagrange/configs/strategies/baseline-v1.json"
+      },
+      {
+        "source": "deploy/db/sync-baseline-strategy-catalog.sql",
+        "image": "/opt/lagrange/db/sync-baseline-strategy-catalog.sql"
+      },
+      {
+        "source": "deploy/db/migrate.sh",
+        "image": "/usr/local/bin/lagrange-migrate"
+      },
+      {
+        "source": "deploy/db/bootstrap-roles.sh",
+        "image": "/usr/local/bin/lagrange-bootstrap-roles"
+      }
+    ]
+  },
+  "recipes": {
+    "D1": {
+      "dockerfile": "crates/api-server/Dockerfile",
+      "package": "api-server",
+      "bins": ["api-server"],
+      "compile_commit": "unset",
+      "external_inputs": [
+        "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+        "migrations"
+      ],
+      "clean_packages": [
+        "api-server", "api-server-auth", "auth", "collectors", "data-go-client",
+        "domain", "factor-engine", "job-queue", "kis-client", "market-data",
+        "opendart-client", "portfolio-model", "result-model", "risk-gateway", "selector"
+      ],
+      "runtime_binaries": [
+        {"bin": "api-server", "image": "/usr/local/bin/api-server"}
+      ],
+      "checkpoints": []
+    },
+    "D2": {
+      "dockerfile": "crates/job-queue/Dockerfile",
+      "package": "job-queue",
+      "bins": ["recommendation-runner", "candidate-runner"],
+      "compile_commit": "unset",
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "clean_packages": [
+        "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+      ],
+      "runtime_binaries": [
+        {"bin": "recommendation-runner", "image": "/usr/local/bin/recommendation-runner"},
+        {"bin": "candidate-runner", "image": "/usr/local/bin/candidate-runner"}
+      ],
+      "runtime_payload": "backtest",
+      "checkpoints": []
+    },
+    "D3": {
+      "dockerfile": "crates/job-queue/Dockerfile.owner-beta-runner",
+      "package": "job-queue",
+      "bins": ["owner-beta-runner"],
+      "compile_commit": "present",
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "clean_packages": [
+        "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+      ],
+      "runtime_binaries": [
+        {"bin": "owner-beta-runner", "image": "/usr/local/bin/owner-beta-runner"}
+      ],
+      "checkpoints": []
+    },
+    "D4": {
+      "dockerfile": "crates/job-queue/Dockerfile.owner-equity-v2-runner",
+      "package": "job-queue",
+      "bins": ["owner-equity-v2-runner"],
+      "compile_commit": "present",
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "clean_packages": [
+        "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+      ],
+      "runtime_binaries": [
+        {"bin": "owner-equity-v2-runner", "image": "/usr/local/bin/owner-equity-v2-runner"}
+      ],
+      "checkpoints": []
+    },
+    "D5": {
+      "dockerfile": "crates/job-queue/Dockerfile.backtest-runner",
+      "package": "job-queue",
+      "bins": ["backtest-runner"],
+      "compile_commit": "present",
+      "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
+      "clean_packages": [
+        "auth", "collectors", "data-go-client", "domain", "factor-engine", "job-queue",
+        "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
+      ],
+      "runtime_binaries": [
+        {"bin": "backtest-runner", "image": "/usr/local/bin/backtest-runner"}
+      ],
+      "runtime_payload": "backtest",
+      "backtest_commit_literal": "/usr/local/bin/backtest-runner",
+      "checkpoints": []
+    },
+    "D6": {
+      "dockerfile": "data-pipelines/collectors/Dockerfile",
+      "package": "collectors",
+      "bins": [
+        "research-worker",
+        "kis-historical-price-beta-artifact",
+        "kis-historical-price-v3-artifact",
+        "kis-historical-price-beta-approval-check",
+        "kis-action-range-raw",
+        "kis-stock-price-beta-raw",
+        "kis-stock-price-beta-materialize",
+        "kis-historical-price-v3-input-check",
+        "owner-equity-v2-check",
+        "owner-equity-v2-materialize"
+      ],
+      "compile_commit": "present",
+      "external_inputs": [],
+      "clean_packages": [
+        "auth", "collectors", "data-go-client", "domain", "factor-engine", "kis-client",
+        "market-data", "opendart-client"
+      ],
+      "runtime_binaries": [
+        {"bin": "research-worker", "image": "/usr/local/bin/research-worker"},
+        {"bin": "kis-historical-price-beta-artifact", "image": "/usr/local/bin/kis-historical-price-beta-artifact"},
+        {"bin": "kis-historical-price-v3-artifact", "image": "/usr/local/bin/kis-historical-price-v3-artifact"},
+        {"bin": "kis-historical-price-beta-approval-check", "image": "/usr/local/bin/kis-historical-price-beta-approval-check"},
+        {"bin": "kis-action-range-raw", "image": "/usr/local/bin/kis-action-range-raw"},
+        {"bin": "kis-stock-price-beta-raw", "image": "/usr/local/bin/kis-stock-price-beta-raw"},
+        {"bin": "kis-stock-price-beta-materialize", "image": "/usr/local/bin/kis-stock-price-beta-materialize"},
+        {"bin": "kis-historical-price-v3-input-check", "image": "/usr/local/bin/kis-historical-price-v3-input-check"},
+        {"bin": "owner-equity-v2-check", "image": "/usr/local/bin/owner-equity-v2-check"},
+        {"bin": "owner-equity-v2-materialize", "image": "/usr/local/bin/owner-equity-v2-materialize"}
+      ],
+      "runtime_payload": "collectors",
+      "checkpoints": [3, 6, 8, 10]
+    },
+    "D7": {
+      "dockerfile": "deploy/runtime/Dockerfile.paper-runner",
+      "package": "api-server",
+      "bins": ["paper-runner"],
+      "compile_commit": "unset",
+      "external_inputs": [
+        "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+        "migrations"
+      ],
+      "clean_packages": [
+        "api-server", "api-server-auth", "auth", "collectors", "data-go-client",
+        "domain", "factor-engine", "job-queue", "kis-client", "market-data",
+        "opendart-client", "portfolio-model", "result-model", "risk-gateway", "selector"
+      ],
+      "runtime_binaries": [
+        {"bin": "paper-runner", "image": "/usr/local/bin/paper-runner-bin"}
+      ],
+      "runtime_payload": "paper",
+      "checkpoints": []
+    }
+  },
+  "services": {
+    "db-role-bootstrap": {"kind": "database", "recipe": null},
+    "db-migrate": {"kind": "database", "recipe": null},
+    "api-server": {"kind": "rust", "recipe": "D1"},
+    "web": {"kind": "web", "recipe": null},
+    "research-worker": {"kind": "rust", "recipe": "D6"},
+    "recommendation-runner": {"kind": "rust", "recipe": "D2"},
+    "candidate-runner": {"kind": "rust", "recipe": "D2"},
+    "owner-beta-runner": {"kind": "rust", "recipe": "D3"},
+    "owner-equity-v2-runner": {"kind": "rust", "recipe": "D4"},
+    "nt-backtest-worker-1": {"kind": "rust", "recipe": "D5"},
+    "nt-backtest-worker-2": {"kind": "rust", "recipe": "D5"},
+    "paper-scheduler": {"kind": "rust", "recipe": "D7"}
+  },
+  "batches": [
+    {
+      "id": "B1",
+      "services": ["db-role-bootstrap", "db-migrate", "api-server"]
+    },
+    {
+      "id": "B2",
+      "services": ["web", "research-worker", "recommendation-runner"]
+    },
+    {
+      "id": "B3",
+      "services": ["candidate-runner", "owner-beta-runner", "owner-equity-v2-runner"]
+    },
+    {
+      "id": "B4",
+      "services": ["nt-backtest-worker-1", "nt-backtest-worker-2", "paper-scheduler"]
+    }
+  ],
+  "gates": {
+    "mem_available_kib": 2097152,
+    "swap_free_kib": 524288,
+    "command_timeout_seconds": 10,
+    "journal_probe": {"limit": 1, "mode": "kernel-json"},
+    "journal_range": {"lookback_seconds": 1800, "limit": 1000, "mode": "kernel-json"},
+    "collector_checkpoints": [3, 6, 8, 10],
+    "consumer_batches": ["B1", "B2", "B3", "B4"]
+  },
+  "archive": {
+    "request_format": "lagrange-image-files-v1",
+    "result_format": "lagrange-image-files-result-v1",
+    "chunk_bytes": 1048576,
+    "platform": "linux/amd64"
+  }
+}

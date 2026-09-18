@@ -287,6 +287,7 @@ compose() {
   # These process-local, fail-closed sentinels exist only for inactive Compose
   # interpolation; they are never written to .env.
   if [ "$scope" = infrastructure ]; then
+    COMPOSE_PARALLEL_LIMIT=1 \
     RESEARCH_APP_ENV=infrastructure-disabled \
     RESEARCH_ENTITLEMENT_REFERENCE=infrastructure-disabled \
     BACKTEST_MIN_FREE_BYTES=0 \
@@ -297,6 +298,7 @@ compose() {
     COMPOSE_PROFILES= \
       docker compose "${files[@]}" "$@"
   else
+    COMPOSE_PARALLEL_LIMIT=1 \
     RANGE_RAW_BATCH_ID=compose-config-disabled \
     COMPOSE_PROFILES= \
       docker compose "${files[@]}" "$@"
@@ -312,25 +314,28 @@ compose config --quiet || die 'Compose interpolation/config validation failed'
 if [ "$scope" = infrastructure ]; then
   cat <<'EOF'
 COMPOSE_INFRASTRUCTURE_ORDER:
-  1. build --pull=false db-role-bootstrap db-migrate
-  2. up --wait postgres
-  3. run --rm --no-deps db-role-bootstrap (exit code is the gate)
-  4. run --rm --no-deps db-migrate (exit code is the gate)
-  5. run --rm --no-deps research-raw-init (exit code is the gate)
-  6. run --rm --no-deps research-schema-check (exit code is the gate)
-  7. ps; hand off to the explicit backfill scope only after KIS credentials are available
+  1. build --pull=false db-role-bootstrap
+  2. build --pull=false db-migrate
+  3. up --wait postgres
+  4. run --rm --no-deps db-role-bootstrap (exit code is the gate)
+  5. run --rm --no-deps db-migrate (exit code is the gate)
+  6. run --rm --no-deps research-raw-init (exit code is the gate)
+  7. run --rm --no-deps research-schema-check (exit code is the gate)
+  8. ps; hand off to the explicit backfill scope only after KIS credentials are available
 No research-worker/API/Web/recommendation/candidate/backtest/Paper/reverse-proxy or live profile is started, and no provider/API call is made.
 EOF
 elif [ "$scope" = backfill ]; then
   cat <<'EOF'
 COMPOSE_BACKFILL_BOOTSTRAP_ORDER:
-  1. build --pull=false db-role-bootstrap db-migrate research-worker (worker image only; no worker daemon)
-  2. up --wait postgres
-  3. run --rm --no-deps db-role-bootstrap (exit code is the gate)
-  4. run --rm --no-deps db-migrate (exit code is the gate)
-  5. run --rm --no-deps research-raw-init (exit code is the gate)
-  6. run --rm --no-deps research-schema-check (exit code is the gate)
-  7. ps; run backfill-production.sh one-shot dates, then post-backfill-health.sh --scope backfill --check
+  1. build --pull=false db-role-bootstrap
+  2. build --pull=false db-migrate
+  3. build --pull=false research-worker (worker image only; no worker daemon)
+  4. up --wait postgres
+  5. run --rm --no-deps db-role-bootstrap (exit code is the gate)
+  6. run --rm --no-deps db-migrate (exit code is the gate)
+  7. run --rm --no-deps research-raw-init (exit code is the gate)
+  8. run --rm --no-deps research-schema-check (exit code is the gate)
+  9. ps; run backfill-production.sh one-shot dates, then post-backfill-health.sh --scope backfill --check
 No API/Web/recommendation/candidate/backtest/Paper/reverse-proxy or live profile is started.
 EOF
 else
@@ -358,7 +363,8 @@ if [ "$mode" = preflight ]; then
 fi
 
 if [ "$scope" = infrastructure ]; then
-  compose build --pull=false db-role-bootstrap db-migrate
+  compose build --pull=false db-role-bootstrap
+  compose build --pull=false db-migrate
   compose up --wait postgres
   compose run --rm --no-deps db-role-bootstrap
   compose run --rm --no-deps db-migrate
@@ -370,8 +376,9 @@ if [ "$scope" = infrastructure ]; then
 fi
 
 if [ "$scope" = backfill ]; then
-  compose build --pull=false \
-    db-role-bootstrap db-migrate research-worker
+  compose build --pull=false db-role-bootstrap
+  compose build --pull=false db-migrate
+  compose build --pull=false research-worker
   compose up --wait postgres
   compose run --rm --no-deps db-role-bootstrap
   compose run --rm --no-deps db-migrate

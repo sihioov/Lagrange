@@ -11,10 +11,12 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/release-image-manifest.sh"
+source "$script_dir/lib/release-build-layout.sh"
 
 compose_file=$root/deploy/compose/compose.yml
 env_file=$root/deploy/compose/.env
 manifest_file=${LAGRANGE_IMAGE_MANIFEST_FILE:-}
+state_root=
 mode=plan
 mode_seen=0
 
@@ -105,6 +107,17 @@ safe_path() {
   done
 }
 
+validate_manifest_output() {
+  local parent
+  [ -n "$manifest_file" ] || die '--apply requires --manifest-file for the strict V2 release manifest'
+  safe_path "$manifest_file" manifest-file
+  [ ! -e "$manifest_file" ] && [ ! -L "$manifest_file" ] ||
+    die 'manifest-file already exists; refusing to overwrite it'
+  parent=$(dirname -- "$manifest_file")
+  [ -d "$parent" ] && [ ! -L "$parent" ] ||
+    die 'manifest-file parent directory is missing or a symlink'
+}
+
 check_inputs() {
   local commit=${LAGRANGE_CODE_COMMIT:-} head status
   safe_path "$compose_file" compose-file
@@ -134,14 +147,15 @@ check_inputs() {
       die 'build root worktree is not clean (tracked or unapproved untracked changes present)'
   done <<<"$status"
   if [ -n "$manifest_file" ]; then
-    safe_path "$manifest_file" manifest-file
+    validate_manifest_output
   fi
 }
 
 inspect_built_images() {
   local service image_ref inspected image_id revision
   command -v docker >/dev/null 2>&1 || die 'docker is not installed'
-  release_image_manifest_reset
+  # Keep the identities already bound to saved-image bytes in inspect_one_image.
+  # A same-revision tag can still be changed by another Docker client.
   for service in "${local_image_services[@]}"; do
     image_ref=$(release_image_manifest_ref_for "$service" "$LAGRANGE_CODE_COMMIT") ||
       die "cannot derive configured image reference: $service"
@@ -160,20 +174,19 @@ inspect_built_images() {
       die "built image revision label is missing or invalid: $service"
     [ "$revision" = "$LAGRANGE_CODE_COMMIT" ] ||
       die "built image revision label does not match source commit: $service"
-    RELEASE_IMAGE_MANIFEST_REFS["$service"]=$image_ref
-    RELEASE_IMAGE_MANIFEST_IDS["$service"]=$image_id
-    RELEASE_IMAGE_MANIFEST_REVISIONS["$service"]=$revision
+    [ "${RELEASE_IMAGE_MANIFEST_REFS[$service]:-}" = "$image_ref" ] ||
+      die "final image reference differs from byte-verified image: $service"
+    [ "${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}" = "$image_id" ] ||
+      die "final image_id differs from byte-verified image: $service"
+    [ "${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}" = "$revision" ] ||
+      die "final revision differs from byte-verified image: $service"
   done
 }
 
 write_manifest() {
   local temporary parent
-  safe_path "$manifest_file" manifest-file
-  [ ! -e "$manifest_file" ] && [ ! -L "$manifest_file" ] ||
-    die 'manifest-file already exists; refusing to overwrite it'
+  validate_manifest_output
   parent=$(dirname -- "$manifest_file")
-  [ -d "$parent" ] && [ ! -L "$parent" ] ||
-    die 'manifest-file parent directory is missing or a symlink'
   temporary=$(mktemp -- "$parent/.lagrange-release-manifest.XXXXXX") ||
     die 'cannot create manifest staging file'
   chmod 0600 -- "$temporary"
@@ -213,6 +226,12 @@ print_plan() {
 compose() {
   # Compose expands inactive services. These process-local values are inert,
   # never written to .env, and are not passed to a container lifecycle command.
+  local compose_override_file=${COMPOSE_BUILD_OVERRIDE_FILE:-}
+  local -a compose_args=(--env-file "$env_file" --file "$compose_file")
+  if [ -n "$compose_override_file" ]; then
+    compose_args+=(--file "$compose_override_file")
+  fi
+  COMPOSE_PARALLEL_LIMIT=1 \
   LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
   RESEARCH_APP_ENV=prebuild-disabled \
   RESEARCH_ENTITLEMENT_REFERENCE=prebuild-disabled \
@@ -224,12 +243,56 @@ compose() {
   COMPOSE_PROFILES= \
   LIVE_NODE_MODE=disabled \
   LIVE_NODE_DRY_RUN=1 \
-    docker compose --env-file "$env_file" --file "$compose_file" "$@"
+    docker compose "${compose_args[@]}" "$@"
+}
+
+image_ref_for() {
+  release_image_manifest_ref_for "$1" "$LAGRANGE_CODE_COMMIT"
+}
+
+inspect_one_image() {
+  local service=$1 image_ref inspected image_id revision
+  image_ref=$(image_ref_for "$service") || {
+    echo "build-production-images: cannot derive configured image reference: $service" >&2
+    return 1
+  }
+  if ! inspected=$(docker image inspect \
+    --format '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+    "$image_ref"); then
+    echo "build-production-images: cannot inspect built image: $service" >&2
+    return 1
+  fi
+  case "$inspected" in
+    *'|'*) ;;
+    *) echo "build-production-images: built image inspection omitted its revision label: $service" >&2; return 1 ;;
+  esac
+  image_id=${inspected%%|*}
+  revision=${inspected#*|}
+  if ! release_image_manifest_is_image_id "$image_id"; then
+    echo "build-production-images: built image_id is not an exact local Docker image ID: $service" >&2
+    return 1
+  fi
+  if ! release_image_manifest_is_commit "$revision"; then
+    echo "build-production-images: built image revision label is missing or invalid: $service" >&2
+    return 1
+  fi
+  if [ "$revision" != "$LAGRANGE_CODE_COMMIT" ]; then
+    echo "build-production-images: built image revision label does not match source commit: $service" >&2
+    return 1
+  fi
+  if ! release_build_layout_verify_image "$service" "$LAGRANGE_CODE_COMMIT" "$image_id" "$state_root"; then
+    echo "build-production-images: strict saved-image verification failed: $service" >&2
+    return 1
+  fi
+  RELEASE_IMAGE_MANIFEST_REFS["$service"]=$image_ref
+  RELEASE_IMAGE_MANIFEST_IDS["$service"]=$image_id
+  RELEASE_IMAGE_MANIFEST_REVISIONS["$service"]=$revision
 }
 
 check_inputs
 
 if [ "$mode" = plan ]; then
+  RELEASE_BUILD_LAYOUT_SOURCE_ROOT="$root" release_build_layout_plan "$LAGRANGE_CODE_COMMIT"
   print_plan
   exit 0
 fi
@@ -243,9 +306,61 @@ if [ "$mode" = preflight ]; then
   exit 0
 fi
 
-for service in "${local_image_services[@]}"; do
-  compose build --pull=false "$service"
-done
+manifest_parent=$(dirname -- "$manifest_file")
+state_root=$manifest_parent/.lagrange-build-state/$LAGRANGE_CODE_COMMIT
+release_build_layout_init "$root" "$LAGRANGE_CODE_COMMIT" "$state_root" product ||
+  die 'production build layout initialization failed'
+release_build_layout_gate "run-start" 0 || die 'initial strict build gate failed'
+
+build_service_failure() {
+  local service=$1 build_start_seconds=$2 diagnostic=${3:-}
+  echo "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=failure elapsed_seconds=$((SECONDS - build_start_seconds))"
+  if [ -n "$diagnostic" ]; then
+    die "$diagnostic"
+  fi
+  exit 1
+}
+
+build_service() {
+  local service=$1 bundle override build_start_seconds
+  build_start_seconds=$SECONDS
+  echo "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=start elapsed_seconds=0"
+  if ! bundle=$(release_build_layout_prepare "$service" "$LAGRANGE_CODE_COMMIT" "$state_root"); then
+    build_service_failure "$service" "$build_start_seconds" "artifact preparation failed: $service"
+  fi
+  if [ "$bundle" = NONE ]; then
+    if ! COMPOSE_BUILD_OVERRIDE_FILE= compose build --pull=false "$service"; then
+      build_service_failure "$service" "$build_start_seconds" "Compose build failed: $service"
+    fi
+  else
+    override=$state_root/overrides/$service-$$.json
+    if ! release_build_layout_write_override "$service" "$bundle" "$override"; then
+      build_service_failure "$service" "$build_start_seconds" "artifact Compose override failed: $service"
+    fi
+    if ! COMPOSE_BUILD_OVERRIDE_FILE=$override compose build --pull=false "$service"; then
+      build_service_failure "$service" "$build_start_seconds" "Compose artifact build failed: $service"
+    fi
+  fi
+  if ! inspect_one_image "$service"; then
+    build_service_failure "$service" "$build_start_seconds"
+  fi
+  echo "PRODUCTION_IMAGE_BUILD_SERVICE service=$service status=success elapsed_seconds=$((SECONDS - build_start_seconds))"
+}
+
+run_batch() {
+  local batch=$1 service
+  shift
+  for service in "$@"; do
+    build_service "$service"
+  done
+  release_build_layout_gate "batch:$batch" 0 || die "strict batch gate failed: $batch"
+}
+
+run_batch B1 db-role-bootstrap db-migrate api-server
+run_batch B2 web research-worker recommendation-runner
+run_batch B3 candidate-runner owner-beta-runner owner-equity-v2-runner
+run_batch B4 nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler
+release_build_layout_gate "final-bytes" 0 || die 'strict final-bytes gate failed'
 inspect_built_images
 write_manifest
 echo "PRODUCTION_IMAGE_BUILD: PASS (twelve images built and V2 manifest written: $manifest_file)"

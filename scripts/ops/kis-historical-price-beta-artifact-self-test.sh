@@ -63,7 +63,7 @@ approval_registry_hash=sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc9
   printf 'commit|%s\n' "$commit"
   index=0
   for service in db-role-bootstrap db-migrate api-server web research-worker \
-    recommendation-runner candidate-runner owner-beta-runner nt-backtest-worker-1 \
+    recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner nt-backtest-worker-1 \
     nt-backtest-worker-2 paper-scheduler; do
     index=$((index + 1))
     current_id=$image_id

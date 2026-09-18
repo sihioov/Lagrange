@@ -1,0 +1,122 @@
+name: build-layout-probe
+
+services:
+  probe-a-base:
+    image: ${PROBE_IMAGE_A_BASE:-build-layout-probe-a-base}
+    build:
+      context: .
+      dockerfile: ${PROBE_DOCKERFILE:-Dockerfile.baseline}
+      target: ${PROBE_BUILD_TARGET:-runtime}
+      args:
+        BIN: cache-bin-a
+        VARIANT: base
+        RUNTIME_FILE: web.txt
+        CACHE_FIXTURE_COMMIT: ${PROBE_COMMIT_A_BASE:-1111111111111111111111111111111111111111}
+        CACHE_FIXTURE_BUILD_SETTING: ${PROBE_SETTING_A_BASE:-default}
+        CACHE_FIXTURE_RUN_TOKEN: ${PROBE_TOKEN_A_BASE:-plan}
+        PROBE_SHARED_CACHE_ID: ${PROBE_SHARED_CACHE_ID_A_BASE:-plan-shared}
+        PROBE_TARGET_CACHE_ID: ${PROBE_TARGET_CACHE_ID_A_BASE:-plan-target}
+        PROBE_CACHE_KEY: ${PROBE_CACHE_KEY_A_BASE:-plan}
+        PROBE_INPUT_SHA256: ${PROBE_INPUT_A_BASE:-plan}
+        PROBE_COMPILE_INPUT_SHA256: ${PROBE_COMPILE_INPUT_A_BASE:-plan}
+        PROBE_LIB_HASH: ${PROBE_LIB_A_BASE:-plan}
+        PROBE_APP_HASH: ${PROBE_APP_A_BASE:-plan}
+        PROBE_RECIPE_SHA256: ${PROBE_RECIPE_A_BASE:-plan}
+        PROBE_PLATFORM: ${PROBE_PLATFORM_A_BASE:-linux/amd64}
+        PROBE_HOST_TRIPLE: ${PROBE_HOST_A_BASE:-x86_64-unknown-linux-musl}
+        PROBE_EXPECTED_NATIVE_SHA256: ${PROBE_NATIVE_A_BASE:-plan}
+        PROBE_SOURCE_TRAP: ${PROBE_SOURCE_TRAP_A_BASE:-0}
+        PROBE_CARGO_CONFIG: ${PROBE_CARGO_CONFIG_A_BASE:-default}
+        PROBE_FEATURES_JSON: ${PROBE_FEATURES_A_BASE:-[]}
+        PROBE_LEDGER_INJECT: ${PROBE_LEDGER_INJECT_A_BASE:-none}
+        PROBE_INJECT: ${PROBE_INJECT_A_BASE:-none}
+
+  probe-b-base:
+    image: ${PROBE_IMAGE_B_BASE:-build-layout-probe-b-base}
+    build:
+      context: .
+      dockerfile: ${PROBE_DOCKERFILE:-Dockerfile.baseline}
+      target: ${PROBE_BUILD_TARGET:-runtime}
+      args:
+        BIN: cache-bin-b
+        VARIANT: base
+        RUNTIME_FILE: python.txt
+        CACHE_FIXTURE_COMMIT: ${PROBE_COMMIT_B_BASE:-1111111111111111111111111111111111111111}
+        CACHE_FIXTURE_BUILD_SETTING: ${PROBE_SETTING_B_BASE:-default}
+        CACHE_FIXTURE_RUN_TOKEN: ${PROBE_TOKEN_B_BASE:-plan}
+        PROBE_SHARED_CACHE_ID: ${PROBE_SHARED_CACHE_ID_B_BASE:-plan-shared}
+        PROBE_TARGET_CACHE_ID: ${PROBE_TARGET_CACHE_ID_B_BASE:-plan-target}
+        PROBE_CACHE_KEY: ${PROBE_CACHE_KEY_B_BASE:-plan}
+        PROBE_INPUT_SHA256: ${PROBE_INPUT_B_BASE:-plan}
+        PROBE_COMPILE_INPUT_SHA256: ${PROBE_COMPILE_INPUT_B_BASE:-plan}
+        PROBE_LIB_HASH: ${PROBE_LIB_B_BASE:-plan}
+        PROBE_APP_HASH: ${PROBE_APP_B_BASE:-plan}
+        PROBE_RECIPE_SHA256: ${PROBE_RECIPE_B_BASE:-plan}
+        PROBE_PLATFORM: ${PROBE_PLATFORM_B_BASE:-linux/amd64}
+        PROBE_HOST_TRIPLE: ${PROBE_HOST_B_BASE:-x86_64-unknown-linux-musl}
+        PROBE_EXPECTED_NATIVE_SHA256: ${PROBE_NATIVE_B_BASE:-plan}
+        PROBE_SOURCE_TRAP: ${PROBE_SOURCE_TRAP_B_BASE:-0}
+        PROBE_CARGO_CONFIG: ${PROBE_CARGO_CONFIG_B_BASE:-default}
+        PROBE_FEATURES_JSON: ${PROBE_FEATURES_B_BASE:-[]}
+        PROBE_LEDGER_INJECT: ${PROBE_LEDGER_INJECT_B_BASE:-none}
+        PROBE_INJECT: ${PROBE_INJECT_B_BASE:-none}
+
+  probe-a-wide:
+    image: ${PROBE_IMAGE_A_WIDE:-build-layout-probe-a-wide}
+    build:
+      context: .
+      dockerfile: ${PROBE_DOCKERFILE:-Dockerfile.baseline}
+      target: ${PROBE_BUILD_TARGET:-runtime}
+      args:
+        BIN: cache-bin-a
+        VARIANT: wide
+        RUNTIME_FILE: web.txt
+        CACHE_FIXTURE_COMMIT: ${PROBE_COMMIT_A_WIDE:-1111111111111111111111111111111111111111}
+        CACHE_FIXTURE_BUILD_SETTING: ${PROBE_SETTING_A_WIDE:-default}
+        CACHE_FIXTURE_RUN_TOKEN: ${PROBE_TOKEN_A_WIDE:-plan}
+        PROBE_SHARED_CACHE_ID: ${PROBE_SHARED_CACHE_ID_A_WIDE:-plan-shared}
+        PROBE_TARGET_CACHE_ID: ${PROBE_TARGET_CACHE_ID_A_WIDE:-plan-target}
+        PROBE_CACHE_KEY: ${PROBE_CACHE_KEY_A_WIDE:-plan}
+        PROBE_INPUT_SHA256: ${PROBE_INPUT_A_WIDE:-plan}
+        PROBE_COMPILE_INPUT_SHA256: ${PROBE_COMPILE_INPUT_A_WIDE:-plan}
+        PROBE_LIB_HASH: ${PROBE_LIB_A_WIDE:-plan}
+        PROBE_APP_HASH: ${PROBE_APP_A_WIDE:-plan}
+        PROBE_RECIPE_SHA256: ${PROBE_RECIPE_A_WIDE:-plan}
+        PROBE_PLATFORM: ${PROBE_PLATFORM_A_WIDE:-linux/amd64}
+        PROBE_HOST_TRIPLE: ${PROBE_HOST_A_WIDE:-x86_64-unknown-linux-musl}
+        PROBE_EXPECTED_NATIVE_SHA256: ${PROBE_NATIVE_A_WIDE:-plan}
+        PROBE_SOURCE_TRAP: ${PROBE_SOURCE_TRAP_A_WIDE:-0}
+        PROBE_CARGO_CONFIG: ${PROBE_CARGO_CONFIG_A_WIDE:-default}
+        PROBE_FEATURES_JSON: ${PROBE_FEATURES_A_WIDE:-["wide"]}
+        PROBE_LEDGER_INJECT: ${PROBE_LEDGER_INJECT_A_WIDE:-none}
+        PROBE_INJECT: ${PROBE_INJECT_A_WIDE:-none}
+
+  probe-b-wide:
+    image: ${PROBE_IMAGE_B_WIDE:-build-layout-probe-b-wide}
+    build:
+      context: .
+      dockerfile: ${PROBE_DOCKERFILE:-Dockerfile.baseline}
+      target: ${PROBE_BUILD_TARGET:-runtime}
+      args:
+        BIN: cache-bin-b
+        VARIANT: wide
+        RUNTIME_FILE: python.txt
+        CACHE_FIXTURE_COMMIT: ${PROBE_COMMIT_B_WIDE:-1111111111111111111111111111111111111111}
+        CACHE_FIXTURE_BUILD_SETTING: ${PROBE_SETTING_B_WIDE:-default}
+        CACHE_FIXTURE_RUN_TOKEN: ${PROBE_TOKEN_B_WIDE:-plan}
+        PROBE_SHARED_CACHE_ID: ${PROBE_SHARED_CACHE_ID_B_WIDE:-plan-shared}
+        PROBE_TARGET_CACHE_ID: ${PROBE_TARGET_CACHE_ID_B_WIDE:-plan-target}
+        PROBE_CACHE_KEY: ${PROBE_CACHE_KEY_B_WIDE:-plan}
+        PROBE_INPUT_SHA256: ${PROBE_INPUT_B_WIDE:-plan}
+        PROBE_COMPILE_INPUT_SHA256: ${PROBE_COMPILE_INPUT_B_WIDE:-plan}
+        PROBE_LIB_HASH: ${PROBE_LIB_B_WIDE:-plan}
+        PROBE_APP_HASH: ${PROBE_APP_B_WIDE:-plan}
+        PROBE_RECIPE_SHA256: ${PROBE_RECIPE_B_WIDE:-plan}
+        PROBE_PLATFORM: ${PROBE_PLATFORM_B_WIDE:-linux/amd64}
+        PROBE_HOST_TRIPLE: ${PROBE_HOST_B_WIDE:-x86_64-unknown-linux-musl}
+        PROBE_EXPECTED_NATIVE_SHA256: ${PROBE_NATIVE_B_WIDE:-plan}
+        PROBE_SOURCE_TRAP: ${PROBE_SOURCE_TRAP_B_WIDE:-0}
+        PROBE_CARGO_CONFIG: ${PROBE_CARGO_CONFIG_B_WIDE:-default}
+        PROBE_FEATURES_JSON: ${PROBE_FEATURES_B_WIDE:-["wide"]}
+        PROBE_LEDGER_INJECT: ${PROBE_LEDGER_INJECT_B_WIDE:-none}
+        PROBE_INJECT: ${PROBE_INJECT_B_WIDE:-none}

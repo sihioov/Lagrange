@@ -152,33 +152,111 @@ pins are available. It requires the exact lowercase 40-hex
 `LAGRANGE_CODE_COMMIT` from the process environment; it never derives the
 value from the mutable checkout and never writes `deploy/compose/.env`.
 
-Inspect the plan, then run the read-only Compose config preflight:
+Create a private, credential-free Compose interpolation input outside the clean
+checkout. It contains only the approved inactive research-entitlement sentinel;
+do not copy or read the operational `deploy/compose/.env`. Record the printed
+path and hash with the build evidence and retain that same private input through
+any resume of the build. Then inspect the plan and run the read-only Compose
+config preflight with its path explicitly bound:
 
 ```sh
 export LAGRANGE_CODE_COMMIT="<approved-40-hex-commit>"
-scripts/ops/build-production-images.sh --plan
+image_build_env_dir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-image-only-env.XXXXXXXXXX")
+chmod 0700 "$image_build_env_dir"
+image_build_env=$image_build_env_dir/compose.env
+(umask 077; printf '%s\n' 'RESEARCH_ENTITLEMENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000' >"$image_build_env")
+chmod 0600 "$image_build_env"
+image_build_env_sha256=$(sha256sum "$image_build_env" | awk '{print $1}')
+[ "$image_build_env_sha256" = df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6 ]
+printf 'image_build_env=%s sha256=%s\n' "$image_build_env" "$image_build_env_sha256"
+
+scripts/ops/build-production-images.sh --plan --env-file "$image_build_env"
 sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
-  scripts/ops/build-production-images.sh --preflight
+  scripts/ops/build-production-images.sh --preflight --env-file "$image_build_env"
 ```
 
 After Docker/Compose config expansion passes, the explicit root-only apply
 builds exactly the release image list sequentially, one Compose service per
-invocation, using `--pull=false`. Production Rust builder stages fix Cargo to
-two parallel jobs so a release build remains within the host memory boundary:
+invocation, using `--pull=false`. The helper forces
+`COMPOSE_PARALLEL_LIMIT=1` for every Compose call even if the caller exports a
+higher value. Production Rust builder stages fix Cargo to two parallel jobs so
+a release build remains within the host memory boundary:
 
-```sh
-sudo env LAGRANGE_CODE_COMMIT="$LAGRANGE_CODE_COMMIT" \
-  scripts/ops/build-production-images.sh --apply
-```
+Use the [background systemd invocation in the release runbook](../../docs/runbooks/production-release-and-backup.md#g2-common-artifact-preparation-checkpoints-and-resume).
+It starts the approved build unit with `Nice=10`, `IOSchedulingClass=idle`,
+the complete current production health inventory, and a new `--manifest-file`.
+The build must run inside that unit's cgroup. Keep the same unit name and gate
+inputs when resuming its immutable state.
+
+The selected G2 `common` layout initializes a helper-owned, current-EUID state
+directory and validated cache namespace before any Rust producer. Its immutable
+run identity binds the clean checkout/commit, helper, layout recipe/schema, and
+gate inputs. The official root entrypoint therefore owns root state; a
+benchmark or separately authorized private prebuild may use an isolated
+current-EUID state directory, but cannot bypass the official root-only apply or
+publish or claim an official release manifest. `RELEASE_BUILD_SYSTEMD_UNIT`,
+`RELEASE_BUILD_SYSTEMD_MANAGER=system|user`,
+`RELEASE_BUILD_HEALTH_UNITS`, and `RELEASE_BUILD_HEALTH_CONTAINERS` are explicit
+gate inputs. The optional `RELEASE_BUILD_RESEARCH_EXCEPTION` is accepted only
+when it is the separately approved bounded exception contract.
+
+The common compile-cache key excludes the source commit. Its validated
+namespace and compatibility inputs allow reuse across source changes, while
+each run state and final image remain bound to their exact source commit.
+
+`release_build_layout_prepare` produces only a verified bundle path for a Rust
+service (or the literal `NONE` for the explicit DB/Web records). The helper
+checks source/input/receipt/ELF/bundle identity before a one-service override
+can reference that bundle. The native identity gate runs first; producer bins
+remain sequential, with collectors checked at `3+3+2+2`, then consumers at
+`3+3+3+3`. A pending, malformed, missing, or tampered receipt/binary is not
+reused. It recreates only the affected compatibility target and never permits a
+global cache prune, fingerprint edit, or cargo clean on every successful
+artifact use.
+
+The seven Dockerfile source fallbacks remain build-compatible for callers that
+do not supply a named context. They retain B's source-compilation, OCI-revision,
+and compile-ENV provenance contracts. They are not the content-addressed G2
+transport, do not carry the official/helper/benchmark content or old-mtime
+transfer guarantee, and are not a substitute for artifact receipt/image-byte
+verification.
 
 The helper performs no `up`, `run`, restart, migration, database, provider/API,
-or secret provisioning action, and keeps the live profile disabled. It supplies
-only process-local fail-closed interpolation sentinels needed to parse the
-complete Compose file; these are not written to the env file or used to start
+or secret provisioning action, and keeps the live profile disabled. The
+external image-only env supplies only the inactive entitlement interpolation
+sentinel above; the helper supplies the remaining fail-closed sentinels in its
+process environment. Neither is an operational environment or used to start
 containers. A build can still fetch base-image or language dependencies when
 the local Docker cache is incomplete, so network access is an expected build
 caveat. This image preparation step is independent of the later infrastructure,
 backfill, and full serving execution scopes.
+
+Each service emits only its name, start/success/failure status, and elapsed
+seconds. A failed producer or consumer stops the loop before a later service,
+final image verification, or manifest write; rerunning the same approved route
+first revalidates the current bundle/receipts and can then safely reuse cache.
+After all twelve one-service builds, the builder saves the exact image IDs to
+private state and performs strict offline OCI/layer/file verification before
+the existing image-ID/revision and immutable V2 checks. The manifest output and
+its parent are validated before the first build and revalidated at publication;
+an existing file, dangling symlink, missing/non-directory parent, or symlinked
+path fails without a Docker build. There is no image-existence shortcut,
+verification-bypass mode, or alternate batch mode.
+
+The official finish includes all producer, consumer, image-save/bytes, and V2
+intervals. A successful offline/fake test or prebuild is not actual image or
+performance acceptance; WP6 owns that production evidence.
+
+The benchmark's canonical twelve-service route records the actual product kind
+(`A`, `B`, or `C`), reports setup/warm-up separately, writes complete release
+intervals to `release-totals.tsv`, and publishes only private benchmark V2
+documents under `source-manifests/` or `common-manifests/`. Its source route
+uses current-source byte checks plus actual Cargo/native records; C additionally
+binds producer receipts. These private documents and fake self-tests are not
+official manifests or actual twelve-image/performance acceptance.
+
+The existing-host cache warm-up batches and the required between-batch resource
+gates are recorded in [`docs/runbooks/production-release-and-backup.md`](../../docs/runbooks/production-release-and-backup.md).
 
 ## Provision the read-only KIS app credentials
 

@@ -346,13 +346,20 @@ capture_override() {
 }
 if [ "${1:-}" = compose ]; then
   shift
+  if [[ "$*" == *' build --pull=false '* ]]; then
+    printf 'compose_parallel=%s\n' "${COMPOSE_PARALLEL_LIMIT:-missing}" >>"${COMPOSE_FAKE_LOG:?}"
+  fi
   capture_override "$@" || true
   command_name=
   for argument in "$@"; do
-    case "$argument" in version|config|up|run|ps) command_name=$argument; break ;; esac
+    case "$argument" in version|config|build|up|run|ps) command_name=$argument; break ;; esac
   done
   case "$command_name" in
     version|config|up|run) exit 0 ;;
+    build)
+      [ "${COMPOSE_PARALLEL_LIMIT:-}" = 1 ] || exit 98
+      exit 0
+      ;;
     ps)
       if [[ " $* " == *' -q '* ]]; then
         service=${!#}
@@ -568,6 +575,48 @@ if grep -Eq 'compose .* up ' "$compose_log"; then
   echo 'production-ops-self-test: pre-start image mismatch reached startup' >&2
   exit 1
 fi
+
+# Infrastructure and backfill builds must never submit a multi-service Compose
+# build graph. The fake Docker client also proves a caller-supplied parallel
+# limit is overridden to one before any build request reaches Compose.
+for scope in infrastructure backfill; do
+  : >"$compose_log"
+  if ! env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+    REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" \
+    COMPOSE_OVERRIDE_CAPTURE="$override_capture" COMPOSE_PARALLEL_LIMIT=99 \
+    PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+    bash "$release_fixture/install/current/scripts/ops/compose-release.sh" \
+    --scope "$scope" --apply >"$tmp/compose-$scope-build.out" 2>&1; then
+    echo "production-ops-self-test: $scope single-service build workflow failed" >&2
+    cat "$tmp/compose-$scope-build.out" >&2
+    exit 1
+  fi
+  case "$scope" in
+    infrastructure)
+      expected_builds=(db-role-bootstrap db-migrate)
+      expected_build_count=2
+      ;;
+    backfill)
+      expected_builds=(db-role-bootstrap db-migrate research-worker)
+      expected_build_count=3
+      ;;
+  esac
+  for service in "${expected_builds[@]}"; do
+    grep -Fq "build --pull=false $service" "$compose_log"
+  done
+  [ "$(grep -c ' build --pull=false ' "$compose_log")" -eq "$expected_build_count" ]
+  if grep -Eq 'build --pull=false db-role-bootstrap db-migrate([[:space:]]|$)' \
+     "$compose_log" ||
+     grep -Eq 'build --pull=false db-role-bootstrap db-migrate research-worker([[:space:]]|$)' \
+     "$compose_log"; then
+    echo "production-ops-self-test: $scope submitted a multi-service build" >&2
+    exit 1
+  fi
+  if grep -E '^compose_parallel=' "$compose_log" | grep -Fv 'compose_parallel=1' >/dev/null; then
+    echo "production-ops-self-test: $scope did not force Compose parallelism to one" >&2
+    exit 1
+  fi
+done
 
 # Preserve the encrypted backup fixture: fake Docker proves the backup scripts
 # use isolated commands without a daemon or protected content in output.

@@ -1,13 +1,15 @@
-FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS builder
+ARG RUST_ARTIFACT_SOURCE=source-builder
+FROM rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS source-builder
 
+ARG TARGETPLATFORM
 ENV CARGO_BUILD_JOBS=2
+ENV CARGO_TARGET_DIR=/cargo-target
 
 RUN apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
-COPY nt ./nt
 COPY configs/evidence/kis-range-canonical-approved-manifests.json ./configs/evidence/kis-range-canonical-approved-manifests.json
 COPY configs/evidence/kis-historical-price-only-beta-approved-artifacts.json ./configs/evidence/kis-historical-price-only-beta-approved-artifacts.json
 COPY configs/evidence/kis-historical-price-only-v3-approved-artifacts.json ./configs/evidence/kis-historical-price-only-v3-approved-artifacts.json
@@ -20,8 +22,33 @@ COPY data-pipelines/collectors ./data-pipelines/collectors
 COPY apps/api-server/auth ./apps/api-server/auth
 COPY tests/integration/migration-contract ./tests/integration/migration-contract
 
-RUN cargo build --locked --release --package job-queue --bin recommendation-runner \
-    && cargo build --locked --release --package job-queue --bin candidate-runner
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-registry-v1,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,id=lagrange-cargo-git-v1,sharing=locked \
+    --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-rust-1.97.1-alpine-3c38f3f82c2f-${TARGETPLATFORM}-release,sharing=locked \
+    cargo clean --workspace --release --locked \
+    && cargo build --locked --release --package job-queue --bin recommendation-runner \
+    && cargo build --locked --release --package job-queue --bin candidate-runner \
+    && mkdir -p /build/target/release \
+    && cp /cargo-target/release/recommendation-runner /build/target/release/recommendation-runner \
+    && cp /cargo-target/release/candidate-runner /build/target/release/candidate-runner
+
+FROM python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db AS verified-artifacts
+
+ARG RUST_ARTIFACT_BUNDLE_SHA256
+ARG RUST_ARTIFACT_HELPER_SHA256
+COPY --from=release_artifacts / /release-artifacts
+RUN set -e \
+    && test -n "$RUST_ARTIFACT_BUNDLE_SHA256" \
+    && test -n "$RUST_ARTIFACT_HELPER_SHA256" \
+    && test "$(sha256sum /release-artifacts/.release-build/release-build-layout.sh | awk '{print $1}')" = "$RUST_ARTIFACT_HELPER_SHA256" \
+    && RUST_ARTIFACT_BUNDLE_SHA256="$RUST_ARTIFACT_BUNDLE_SHA256" \
+       RUST_ARTIFACT_HELPER_SHA256="$RUST_ARTIFACT_HELPER_SHA256" \
+       RELEASE_BUILD_LAYOUT_EXECUTION=1 \
+       /bin/sh -e /release-artifacts/.release-build/release-build-layout.sh \
+         --guard-build /release-artifacts/.release-build/request.json /release-artifacts /build
+
+ARG RUST_ARTIFACT_SOURCE
+FROM ${RUST_ARTIFACT_SOURCE} AS builder
 
 FROM python@sha256:fd95fa221297a88e1cf49c55ec1828edd7c5a428187e67b5d1805692d11588db
 
@@ -38,7 +65,7 @@ RUN pip install --no-cache-dir uv==0.9.17 \
 WORKDIR /opt/lagrange
 COPY --from=builder /build/target/release/recommendation-runner /usr/local/bin/recommendation-runner
 COPY --from=builder /build/target/release/candidate-runner /usr/local/bin/candidate-runner
-COPY --from=builder /build/nt ./nt
+COPY nt ./nt
 RUN uv sync --project /opt/lagrange/nt --locked \
     && chown -R lagrange:lagrange /opt/lagrange
 
