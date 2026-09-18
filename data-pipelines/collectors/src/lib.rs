@@ -18,7 +18,8 @@ pub use candidate_pipeline::{
 };
 pub use candidate_sink::{
     CandidateInstrumentCatalog, CandidatePricePublication, CandidateSourcePublication,
-    PostgresCandidateSourceSink, candidate_raw_manifest_sha256,
+    PostgresCandidateSourceSink, PriceGenerationRecoveryState, PriceRawRecoveryBinding,
+    PriceRawRecoveryState, candidate_raw_manifest_sha256,
 };
 pub use pipeline::{
     FailureClass, KisNormalizationRecoveryReport, PipelineError, PipelineStage, RECOVERY_PAGE_SIZE,

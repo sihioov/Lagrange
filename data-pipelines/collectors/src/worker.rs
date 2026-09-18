@@ -47,8 +47,9 @@ use crate::pipeline::ingest_normalize_publish_kis_historical_range;
 use crate::{
     CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
     KisNormalizationRecoveryReport, PipelineError, PostgresCandidateSourceSink,
-    PostgresPublicationSink, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError, RecoveryPage,
-    RecoveryPosition, RecoveryScope, SinkError, ensure_kis_calendar_source, ingest_and_publish,
+    PostgresPublicationSink, PriceGenerationRecoveryState, PriceRawRecoveryState,
+    RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError, RecoveryPage, RecoveryPosition,
+    RecoveryScope, SinkError, ensure_kis_calendar_source, ingest_and_publish,
     ingest_normalize_publish_kis_with_calendar_source, prepare_candidate_batch,
     provider_failure_class, publish_candidate_batch, recover_candidate_batches,
     recover_kis_normalization, recover_unpublished_normalized_for_date,
@@ -2704,14 +2705,26 @@ async fn recover_price_publications(
         FetchMode::Synthetic => PROVIDER_KRX,
         FetchMode::Credentialed => PROVIDER_KIS_NORMALIZED,
     };
-    let entries = raw
+    let reconciled = raw
         .read_reconciled_manifest(provider, MARKET_KR)
         .map_err(|source| WorkerError::Pipeline(PipelineError::Manifest { source }))?;
-    let mut by_date = BTreeMap::<TradingDate, market_data::ManifestEntry>::new();
-    for entry in entries {
+    let mut partitions = BTreeMap::<String, BTreeMap<TradingDate, ManifestEntry>>::new();
+    for entry in reconciled {
         if !raw_batch_has_target_bars(raw, &entry)? {
             continue;
         }
+        let contract_reference = entry
+            .entitlement_reference
+            .as_deref()
+            .filter(|reference| !reference.trim().is_empty())
+            .ok_or_else(|| {
+                WorkerError::Curation(CurateError::MalformedManifest {
+                    context: "candidate price entitlement".to_owned(),
+                    detail: "eligible Raw EOD batch has no governing contract reference".to_owned(),
+                })
+            })?
+            .to_owned();
+        let by_date = partitions.entry(contract_reference).or_default();
         match by_date.get(&entry.date) {
             Some(previous)
                 if previous.retrieved_at > entry.retrieved_at
@@ -2722,21 +2735,38 @@ async fn recover_price_publications(
             }
         }
     }
-    let entries = by_date.into_values().collect::<Vec<_>>();
-    if entries.is_empty() {
-        return Ok(None);
+    let mut published_batch = None;
+    for (contract_reference, by_date) in partitions {
+        let entries = by_date.into_values().collect::<Vec<_>>();
+        if let Some(batch_id) = recover_price_partition(
+            raw,
+            sink,
+            &curated,
+            &dataset_id,
+            storage_path,
+            &contract_reference,
+            &entries,
+        )
+        .await?
+        {
+            published_batch = Some(batch_id);
+        }
     }
-    let anchor = entries.last().expect("nonempty cumulative source set");
-    let contract_reference = anchor
-        .entitlement_reference
-        .as_deref()
-        .filter(|reference| !reference.trim().is_empty())
-        .ok_or_else(|| {
-            WorkerError::Curation(CurateError::MalformedManifest {
-                context: "candidate price entitlement".to_owned(),
-                detail: "Raw EOD batch has no governing contract reference".to_owned(),
-            })
-        })?;
+    Ok(published_batch)
+}
+
+async fn recover_price_partition(
+    raw: &RawStore,
+    sink: &PostgresCandidateSourceSink,
+    curated: &CurateStore,
+    dataset_id: &DatasetId,
+    storage_path: &str,
+    contract_reference: &str,
+    entries: &[ManifestEntry],
+) -> Result<Option<BatchId>, WorkerError> {
+    let anchor = entries.last().ok_or_else(|| {
+        recovery_conflict("price recovery partition unexpectedly has no source entries")
+    })?;
     if entries.iter().any(|entry| {
         entry
             .entitlement_reference
@@ -2745,116 +2775,76 @@ async fn recover_price_publications(
             != Some(contract_reference)
     }) {
         return Err(WorkerError::Curation(CurateError::MalformedManifest {
-            context: "cumulative candidate price entitlement".to_owned(),
+            context: "partitioned candidate price entitlement".to_owned(),
             detail: "one immutable generation cannot mix Raw contract references".to_owned(),
         }));
     }
-
-    let (calendar, master) =
-        curation_inputs_from_raw_entries(raw, &entries).map_err(WorkerError::Curation)?;
-    let manifest = match curated
-        .latest_manifest(&dataset_id)
-        .map_err(WorkerError::Curation)?
+    if entries
+        .iter()
+        .any(|entry| entry.provider != anchor.provider || entry.mode != anchor.mode)
     {
-        // Legacy manifests predate exact artifact references. They remain
-        // parseable for migration, but must never be reused as a production
-        // generation: re-curate the same immutable Raw snapshot into the next
-        // version so every consumer can verify exact files, hashes and schema.
-        Some(manifest)
-            if !manifest.artifacts.is_empty() && manifest_matches_entries(&manifest, &entries) =>
-        {
-            manifest
-        }
-        _ => {
-            curate_generation(
-                raw,
-                &entries,
-                &calendar,
-                &master,
-                &curated,
-                &CurateRequest {
-                    dataset_id: &dataset_id,
-                    market: MARKET_KR,
-                    source: &anchor.provider,
-                    now: entries
-                        .iter()
-                        .map(|entry| entry.retrieved_at)
-                        .max()
-                        .expect("nonempty cumulative source set"),
-                },
-            )
-            .map_err(WorkerError::Curation)?
-            .manifest
-        }
-    };
-    let evidence = price_curation_evidence_for_generation(raw, &entries, &manifest, anchor)
-        .map_err(WorkerError::Curation)?;
-    if evidence.last_session != anchor.date {
         return Err(WorkerError::Curation(CurateError::MalformedManifest {
-            context: "candidate price publication".to_owned(),
-            detail: "cumulative Raw EOD source omits its latest target session".to_owned(),
+            context: "partitioned candidate price provider identity".to_owned(),
+            detail: "one immutable generation cannot mix provider or fetch mode".to_owned(),
         }));
     }
+    let (calendar, master) =
+        curation_inputs_from_raw_entries(raw, entries).map_err(WorkerError::Curation)?;
+    let (first_session, last_session) = raw_price_session_window(raw, entries)?;
+    if last_session != anchor.date {
+        return Err(WorkerError::Curation(CurateError::MalformedManifest {
+            context: "candidate price publication".to_owned(),
+            detail: "partition Raw EOD source omits its latest target session".to_owned(),
+        }));
+    }
+
+    let states = sink
+        .inspect_price_raw_batches(entries)
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Recovery,
+            source,
+        })?;
+    validate_price_recovery_states(&states)?;
     let entitlement_id = match sink
-        .resolve_price_dataset_entitlement(
-            contract_reference,
-            evidence.first_session,
-            evidence.last_session,
-        )
+        .resolve_price_dataset_entitlement(contract_reference, first_session, last_session)
         .await
     {
         Ok(entitlement_id) => entitlement_id,
-        Err(original) => {
-            let mut pending = Vec::new();
-            for entry in &entries {
-                if !sink
-                    .raw_batch_is_terminal(entry, "price")
+        Err(error) if price_rights_resolution_denied(&error) => {
+            for (entry, state) in entries.iter().zip(&states) {
+                if state.state.is_none() || state.state.as_deref() == Some("CATALOGED") {
+                    sink.block_raw_batch_for_inactive_rights(
+                        entry,
+                        "price",
+                        first_session,
+                        last_session,
+                    )
                     .await
                     .map_err(|source| WorkerError::Database {
                         phase: WorkerPhase::Recovery,
                         source,
-                    })?
-                {
-                    pending.push(entry.clone());
-                }
-            }
-            for entry in &pending {
-                if sink
-                    .block_raw_batch_for_inactive_rights(
-                        entry,
-                        "price",
-                        // Persist the exact decision window used for this
-                        // cumulative attempt.  Revalidation later may ask
-                        // for a wider window, but must include this original
-                        // blocked scope.
-                        evidence.first_session,
-                        evidence.last_session,
-                    )
-                    .await
-                    .is_err()
-                {
-                    return Err(WorkerError::Database {
-                        phase: WorkerPhase::Publication,
-                        source: original,
-                    });
+                    })?;
                 }
             }
             return Ok(None);
         }
+        Err(source) => {
+            return Err(WorkerError::Database {
+                phase: WorkerPhase::Recovery,
+                source,
+            });
+        }
     };
 
-    // A renewed price entitlement may arrive after one or more exact Raw
-    // deliveries were terminally blocked.  Re-open only those exact
-    // entitlement-inactive rows; any other terminal reason remains a hard
-    // failure in the database procedure.
-    for entry in &entries {
+    // Re-open the exact entitlement-inactive state.  The SQL procedure is a
+    // no-op for Missing/CATALOGED/PUBLISHED and preserves the original
+    // blocked window while appending one audit event for BLOCKED.
+    for entry in entries {
         sink.revalidate_price_raw_batch_after_rights(
             entry,
-            // Revalidation uses the current cumulative requested window; the
-            // database checks that it fully contains the original blocked
-            // window stored on this exact Raw ledger row.
-            evidence.first_session,
-            evidence.last_session,
+            first_session,
+            last_session,
             entitlement_id,
         )
         .await
@@ -2863,32 +2853,155 @@ async fn recover_price_publications(
             source,
         })?;
     }
-    let mut pending = Vec::new();
-    for entry in &entries {
-        if !sink
-            .raw_batch_is_terminal(entry, "price")
-            .await
-            .map_err(|source| WorkerError::Database {
-                phase: WorkerPhase::Recovery,
-                source,
-            })?
-        {
-            pending.push(entry.clone());
-        }
+    let states = sink
+        .inspect_price_raw_batches(entries)
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Recovery,
+            source,
+        })?;
+    validate_price_recovery_states(&states)?;
+    let pending = entries
+        .iter()
+        .zip(&states)
+        .filter_map(|(entry, state)| match state.state.as_deref() {
+            None | Some("CATALOGED") => Some(entry.clone()),
+            Some("PUBLISHED") => None,
+            Some("BLOCKED") => None,
+            Some(_) => None,
+        })
+        .collect::<Vec<_>>();
+
+    // A published source is successful only when its existing immutable
+    // generation and artifacts still verify.  BLOCKED never enters this set.
+    let binding_versions = states
+        .iter()
+        .filter_map(|state| {
+            state
+                .binding
+                .as_ref()
+                .map(|binding| binding.dataset_version.clone())
+        })
+        .collect::<BTreeSet<_>>();
+    let existing_generations = sink
+        .inspect_price_generations(&binding_versions.iter().cloned().collect::<Vec<_>>())
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Recovery,
+            source,
+        })?;
+    for state in states
+        .iter()
+        .filter(|state| state.state.as_deref() == Some("PUBLISHED"))
+    {
+        let binding = state.binding.as_ref().ok_or_else(|| {
+            recovery_conflict("published price Raw source has no immutable bars binding")
+        })?;
+        let generation = existing_generations
+            .iter()
+            .find(|generation| generation.dataset_version_id == binding.dataset_version_id)
+            .ok_or_else(|| {
+                recovery_conflict("published price Raw source points at a missing generation")
+            })?;
+        verify_published_price_generation(
+            raw,
+            curated,
+            storage_path,
+            generation,
+            state,
+            entries,
+            anchor,
+        )?;
     }
+    let manifests = find_verified_exact_price_manifests(curated, dataset_id, entries)?;
+    let candidate_versions = manifests
+        .iter()
+        .map(|manifest| manifest.version.to_string())
+        .collect::<BTreeSet<_>>();
+    let mut generation_versions = binding_versions;
+    generation_versions.extend(candidate_versions.iter().cloned());
+    let generation_states = sink
+        .inspect_price_generations(&generation_versions.iter().cloned().collect::<Vec<_>>())
+        .await
+        .map_err(|source| WorkerError::Database {
+            phase: WorkerPhase::Recovery,
+            source,
+        })?;
+    let selected_generation =
+        choose_exact_price_generation(manifests, &generation_states, storage_path)?;
+
     if pending.is_empty() {
+        if states
+            .iter()
+            .any(|state| state.state.as_deref() == Some("PUBLISHED"))
+            && selected_generation.is_none()
+        {
+            return Err(recovery_conflict(
+                "published price sources have no verified exact generation",
+            ));
+        }
         return Ok(None);
     }
-    // The canonical instrument master must exist before the price publication
-    // writes coverage: `publish_candidate_price_publication` inserts into
-    // `candidate_price_instrument_coverage`, whose `instrument_id` is a foreign
-    // key onto `instruments`. Commit 84e6ce1 removed this registration from the
-    // price path while keeping that insert, and left no other production writer
-    // for the table -- `register_candidate_instruments` had zero callers -- so
-    // the fixed ETF price publication could never complete against an empty
-    // `instruments`. The comment it added, that candidate instrument
-    // registration is "not required for the fixed ETF price dataset", is what
-    // the database contradicts.
+
+    let (manifest, generation) = match selected_generation {
+        Some((manifest, generation)) => (manifest, generation),
+        None => {
+            ensure_anchor_can_originate_price_generation(
+                states
+                    .iter()
+                    .find(|state| state.batch_id == anchor.batch_id.as_uuid())
+                    .expect("anchor state is present"),
+                None,
+            )?;
+            let outcome = curate_generation(
+                raw,
+                entries,
+                &calendar,
+                &master,
+                curated,
+                &CurateRequest {
+                    dataset_id,
+                    market: MARKET_KR,
+                    source: &anchor.provider,
+                    now: entries
+                        .iter()
+                        .map(|entry| entry.retrieved_at)
+                        .max()
+                        .expect("nonempty partition source set"),
+                },
+            )
+            .map_err(WorkerError::Curation)?;
+            (outcome.manifest, None)
+        }
+    };
+    if let Some(generation) = generation.as_ref() {
+        ensure_anchor_can_originate_price_generation(
+            states
+                .iter()
+                .find(|state| state.batch_id == anchor.batch_id.as_uuid())
+                .expect("anchor state is present"),
+            Some(generation),
+        )?;
+        if let Some(source_revision) = generation.publication_source_revision.as_deref()
+            && source_revision != anchor.batch_id.to_string()
+        {
+            return Err(recovery_conflict(
+                "exact curated generation is anchored to a different Raw source",
+            ));
+        }
+    }
+    let evidence = price_curation_evidence_for_generation(raw, entries, &manifest, anchor)
+        .map_err(WorkerError::Curation)?;
+    if evidence.last_session != anchor.date {
+        return Err(WorkerError::Curation(CurateError::MalformedManifest {
+            context: "candidate price publication".to_owned(),
+            detail: "curated generation omits its latest target session".to_owned(),
+        }));
+    }
+
+    // The canonical instrument master must be registered under the exact
+    // entitlement before price coverage rows can be inserted.  The fixed
+    // approved floor is stable across widened cumulative generations.
     let reference_sha256 = anchor
         .files
         .iter()
@@ -2909,10 +3022,6 @@ async fn recover_price_publications(
         reference_sha256,
         source_revision: &source_revision,
         retrieved_at: anchor.retrieved_at,
-        // Not the master's listing date: that is a fallback derived from the
-        // sessions in this generation and therefore moves as the cumulative
-        // window widens, while the registration can never overwrite what it
-        // first stored.  See CandidateInstrumentCatalog::coverage_from.
         coverage_from: TradingDate::parse(market_data::range_normalize::APPROVED_EFFECTIVE_FROM)
             .expect("approved universe coverage floor is a valid date"),
     })
@@ -2921,6 +3030,7 @@ async fn recover_price_publications(
         phase: WorkerPhase::Publication,
         source,
     })?;
+
     let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(anchor)
         .map_err(|source| WorkerError::Database {
             phase: WorkerPhase::Publication,
@@ -2952,6 +3062,17 @@ async fn recover_price_publications(
         .iter()
         .filter(|entry| entry.batch_id != anchor.batch_id)
     {
+        let state = states
+            .iter()
+            .find(|state| state.batch_id == entry.batch_id.as_uuid())
+            .expect("pending state is present");
+        if let Some(binding) = state.binding.as_ref()
+            && (!binding.reused_existing || binding.dataset_version_id != dataset_version_id)
+        {
+            return Err(recovery_conflict(
+                "pending price Raw source is already bound to a different immutable generation",
+            ));
+        }
         let raw_manifest_sha256 = crate::candidate_sink::candidate_raw_manifest_sha256(entry)
             .map_err(|source| WorkerError::Database {
                 phase: WorkerPhase::Publication,
@@ -2978,6 +3099,362 @@ async fn recover_price_publications(
     Ok(published_batch)
 }
 
+fn recovery_conflict(detail: &str) -> WorkerError {
+    WorkerError::Curation(CurateError::MalformedManifest {
+        context: "candidate price recovery".to_owned(),
+        detail: detail.to_owned(),
+    })
+}
+
+fn raw_price_session_window(
+    raw: &RawStore,
+    entries: &[ManifestEntry],
+) -> Result<(TradingDate, TradingDate), WorkerError> {
+    let mut sessions = BTreeSet::new();
+    for entry in entries {
+        let metadata = entry
+            .files
+            .iter()
+            .find(|file| file.kind == market_data::ResponseKind::Bars)
+            .ok_or(WorkerError::Curation(CurateError::MissingFile {
+                kind: market_data::ResponseKind::Bars,
+            }))?;
+        let files = raw
+            .read_batch_bytes(&entry.provider, &entry.market, entry)
+            .map_err(|source| {
+                WorkerError::Curation(CurateError::RawStore {
+                    context: "read price recovery bars".to_owned(),
+                    source: Box::new(source),
+                })
+            })?;
+        let bytes = files
+            .iter()
+            .find(|file| file.file_name == metadata.file_name)
+            .ok_or(WorkerError::Curation(CurateError::MissingFile {
+                kind: market_data::ResponseKind::Bars,
+            }))?;
+        let document =
+            market_data::curate::parse::parse_bars(&bytes.bytes).map_err(WorkerError::Curation)?;
+        for bar in document.bars {
+            let session = TradingDate::parse(&bar.date).map_err(|error| {
+                WorkerError::Curation(CurateError::MalformedBars {
+                    reason: format!("invalid price bar date {}: {error}", bar.date),
+                })
+            })?;
+            sessions.insert(session);
+        }
+    }
+    let first_session = sessions
+        .first()
+        .copied()
+        .ok_or_else(|| recovery_conflict("eligible Raw price source contains no bars"))?;
+    let last_session = sessions.last().copied().expect("nonempty session set");
+    Ok((first_session, last_session))
+}
+
+fn validate_price_recovery_states(states: &[PriceRawRecoveryState]) -> Result<(), WorkerError> {
+    let mut batch_ids = BTreeSet::new();
+    for state in states {
+        if !batch_ids.insert(state.batch_id) {
+            return Err(recovery_conflict(
+                "price Raw recovery returned duplicate batch identities",
+            ));
+        }
+        match state.state.as_deref() {
+            None => {
+                if state.reason_code.is_some() || state.binding.is_some() {
+                    return Err(recovery_conflict(
+                        "missing price Raw ledger row has durable state attached",
+                    ));
+                }
+            }
+            Some("CATALOGED") => {
+                if state.reason_code.is_some() {
+                    return Err(recovery_conflict(
+                        "CATALOGED price Raw row has a terminal reason",
+                    ));
+                }
+            }
+            Some("PUBLISHED") => {
+                if state.reason_code.is_some() || state.binding.is_none() {
+                    return Err(recovery_conflict(
+                        "PUBLISHED price Raw row lacks one exact bars binding",
+                    ));
+                }
+            }
+            Some("BLOCKED") => {
+                if state.reason_code.as_deref() != Some("ENTITLEMENT_INACTIVE")
+                    || state.binding.is_some()
+                {
+                    return Err(recovery_conflict(
+                        "price Raw row is blocked for an unsupported or bound reason",
+                    ));
+                }
+            }
+            Some(other) => {
+                return Err(recovery_conflict(&format!(
+                    "price Raw recovery returned unsupported ledger state {other}"
+                )));
+            }
+        }
+        if let Some(binding) = state.binding.as_ref()
+            && (binding.dataset_id != "krx_eod_bars"
+                || binding.dataset_version.trim().is_empty()
+                || binding.manifest_sha256.len() != 64
+                || !binding
+                    .manifest_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                || binding.storage_path.trim().is_empty())
+        {
+            return Err(recovery_conflict(
+                "price Raw bars binding has a malformed immutable identity",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn price_rights_resolution_denied(error: &SinkError) -> bool {
+    matches!(
+        error,
+        SinkError::PermanentDatabase(sqlx::Error::Database(database))
+            if database.code().is_some_and(|code| code.as_ref() == "42501")
+    )
+}
+
+fn find_verified_exact_price_manifests(
+    curated: &CurateStore,
+    dataset_id: &DatasetId,
+    entries: &[ManifestEntry],
+) -> Result<Vec<market_data::DatasetManifest>, WorkerError> {
+    let next_version = curated
+        .next_version(dataset_id)
+        .map_err(WorkerError::Curation)?;
+    let mut manifests = Vec::new();
+    for version in 1..next_version {
+        let Some(manifest) = curated
+            .read_dataset_manifest(dataset_id, version)
+            .map_err(WorkerError::Curation)?
+        else {
+            continue;
+        };
+        if !manifest_matches_entries(&manifest, entries) {
+            continue;
+        }
+        if !manifest.artifacts.is_empty() {
+            curated
+                .verify_artifacts(&manifest)
+                .map_err(WorkerError::Curation)?;
+            manifests.push(manifest);
+        }
+    }
+    Ok(manifests)
+}
+
+fn choose_exact_price_generation(
+    manifests: Vec<market_data::DatasetManifest>,
+    generation_states: &[PriceGenerationRecoveryState],
+    storage_path: &str,
+) -> Result<
+    Option<(
+        market_data::DatasetManifest,
+        Option<PriceGenerationRecoveryState>,
+    )>,
+    WorkerError,
+> {
+    let mut cataloged = Vec::new();
+    let mut crash_artifacts = Vec::new();
+    for manifest in manifests {
+        let expected_hash = manifest
+            .content_hash
+            .as_str()
+            .strip_prefix("sha256:")
+            .filter(|hash| hash.len() == 64)
+            .ok_or_else(|| recovery_conflict("exact curated manifest has a noncanonical hash"))?;
+        let state = generation_states
+            .iter()
+            .find(|state| state.dataset_version == manifest.version.to_string());
+        if let Some(state) = state {
+            if state.status != "READY" && state.status != "WARNING" {
+                return Err(recovery_conflict(
+                    "exact curated generation is not in a readable catalog state",
+                ));
+            }
+            if state.manifest_sha256 != expected_hash || state.storage_path != storage_path {
+                return Err(recovery_conflict(
+                    "cataloged exact generation differs from its immutable manifest",
+                ));
+            }
+            cataloged.push((manifest, state.clone()));
+        } else {
+            crash_artifacts.push(manifest);
+        }
+    }
+    if cataloged.len() > 1 || crash_artifacts.len() > 1 {
+        return Err(recovery_conflict(
+            "conflicting duplicate exact price generations exist",
+        ));
+    }
+    if let Some((manifest, state)) = cataloged.pop() {
+        return Ok(Some((manifest, Some(state))));
+    }
+    Ok(crash_artifacts.pop().map(|manifest| (manifest, None)))
+}
+
+fn verify_published_price_generation(
+    raw: &RawStore,
+    curated: &CurateStore,
+    storage_path: &str,
+    generation: &PriceGenerationRecoveryState,
+    state: &PriceRawRecoveryState,
+    entries: &[ManifestEntry],
+    anchor: &ManifestEntry,
+) -> Result<(), WorkerError> {
+    if generation.status != "READY" && generation.status != "WARNING" {
+        return Err(recovery_conflict(
+            "published price generation is not in a readable catalog state",
+        ));
+    }
+    if !generation.bound_batch_ids.contains(&state.batch_id)
+        || !generation.published_batch_ids.contains(&state.batch_id)
+    {
+        return Err(recovery_conflict(
+            "published price generation is missing its immutable source binding",
+        ));
+    }
+    let version = generation
+        .dataset_version
+        .parse::<u32>()
+        .map_err(|_| recovery_conflict("published price generation has an invalid version"))?;
+    let dataset_id = DatasetId::parse("krx_eod_bars")
+        .map_err(|_| recovery_conflict("canonical price dataset identity is invalid"))?;
+    let manifest = curated
+        .read_dataset_manifest(&dataset_id, version)
+        .map_err(WorkerError::Curation)?
+        .ok_or_else(|| recovery_conflict("published price generation has no manifest"))?;
+    let source_entries = entries_for_manifest(&manifest, entries)?;
+    let is_current_anchor = state.batch_id == anchor.batch_id.as_uuid();
+    if (is_current_anchor && !manifest_matches_entries(&manifest, entries))
+        || (!is_current_anchor && !manifest_matches_entry_subset(&manifest, entries))
+    {
+        return Err(recovery_conflict(
+            "published price generation is bound to a different exact Raw source set",
+        ));
+    }
+    let expected_hash = manifest
+        .content_hash
+        .as_str()
+        .strip_prefix("sha256:")
+        .filter(|hash| hash.len() == 64)
+        .ok_or_else(|| recovery_conflict("published price manifest has a noncanonical hash"))?;
+    if generation.manifest_sha256 != expected_hash || generation.storage_path != storage_path {
+        return Err(recovery_conflict(
+            "published price generation catalog identity differs from its manifest",
+        ));
+    }
+    if manifest.artifacts.is_empty() {
+        return Err(recovery_conflict(
+            "published price generation has no immutable artifacts",
+        ));
+    }
+    curated
+        .verify_artifacts(&manifest)
+        .map_err(WorkerError::Curation)?;
+    let source_revision = generation
+        .publication_source_revision
+        .as_deref()
+        .ok_or_else(|| recovery_conflict("published price generation has no anchor revision"))?;
+    let generation_anchor_id = source_revision
+        .parse::<BatchId>()
+        .map_err(|_| recovery_conflict("published price generation has an invalid anchor"))?;
+    let generation_anchor = source_entries
+        .iter()
+        .find(|entry| entry.batch_id == generation_anchor_id)
+        .ok_or_else(|| {
+            recovery_conflict("published price generation anchor is outside its manifest")
+        })?;
+    if !generation
+        .published_batch_ids
+        .contains(&generation_anchor_id.as_uuid())
+    {
+        return Err(recovery_conflict(
+            "published price generation is missing its immutable anchor publication",
+        ));
+    }
+    if is_current_anchor && generation_anchor_id != anchor.batch_id {
+        return Err(recovery_conflict(
+            "published price anchor is bound to a different immutable generation",
+        ));
+    }
+    price_curation_evidence_for_generation(raw, &source_entries, &manifest, generation_anchor)
+        .map_err(WorkerError::Curation)?;
+    Ok(())
+}
+
+fn ensure_anchor_can_originate_price_generation(
+    anchor: &PriceRawRecoveryState,
+    generation: Option<&PriceGenerationRecoveryState>,
+) -> Result<(), WorkerError> {
+    let anchor_revision = anchor.batch_id.to_string();
+    if anchor.state.as_deref() == Some("BLOCKED") {
+        return Err(recovery_conflict(
+            "blocked price Raw anchor cannot originate a generation",
+        ));
+    }
+    match (anchor.state.as_deref(), generation) {
+        (Some("PUBLISHED"), Some(generation)) => {
+            let binding = anchor.binding.as_ref().ok_or_else(|| {
+                recovery_conflict("published price anchor has no immutable bars binding")
+            })?;
+            if binding.dataset_version_id != generation.dataset_version_id
+                || generation.publication_source_revision.as_deref() != Some(&anchor_revision)
+                || !generation.published_batch_ids.contains(&anchor.batch_id)
+            {
+                return Err(recovery_conflict(
+                    "published price anchor is bound to a different exact generation",
+                ));
+            }
+        }
+        (Some("PUBLISHED"), None) => {
+            return Err(recovery_conflict(
+                "published price anchor has no cataloged exact generation",
+            ));
+        }
+        (None, Some(generation)) | (Some("CATALOGED"), Some(generation)) => {
+            if let Some(source_revision) = generation.publication_source_revision.as_deref()
+                && source_revision != anchor_revision
+            {
+                return Err(recovery_conflict(
+                    "cataloged exact generation is anchored to a different Raw source",
+                ));
+            }
+            if let Some(binding) = anchor.binding.as_ref()
+                && (binding.dataset_version_id != generation.dataset_version_id
+                    || binding.reused_existing)
+            {
+                return Err(recovery_conflict(
+                    "price anchor has a conflicting reused bars binding",
+                ));
+            }
+            if generation.publication_source_revision.is_some()
+                && !generation.published_batch_ids.contains(&anchor.batch_id)
+            {
+                return Err(recovery_conflict(
+                    "cataloged exact generation is missing its published anchor binding",
+                ));
+            }
+        }
+        (None, None) | (Some("CATALOGED"), None) => {}
+        _ => {
+            return Err(recovery_conflict(
+                "price anchor has an unsupported recovery state",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn manifest_matches_entries(
     manifest: &market_data::DatasetManifest,
     entries: &[market_data::ManifestEntry],
@@ -2985,22 +3462,44 @@ fn manifest_matches_entries(
     if manifest.source_batches.len() != entries.len() {
         return false;
     }
-    entries.iter().all(|entry| {
-        let Some(bars) = entry
-            .files
-            .iter()
-            .find(|file| file.kind == market_data::ResponseKind::Bars)
-        else {
-            return false;
-        };
-        let Some(actions) = entry
-            .files
-            .iter()
-            .find(|file| file.kind == market_data::ResponseKind::CorporateActions)
-        else {
-            return false;
-        };
-        manifest.source_batches.iter().any(|source| {
+    manifest_matches_entry_subset(manifest, entries)
+}
+
+fn manifest_matches_entry_subset(
+    manifest: &market_data::DatasetManifest,
+    entries: &[market_data::ManifestEntry],
+) -> bool {
+    let expected_ids = entries
+        .iter()
+        .map(|entry| entry.batch_id.to_string())
+        .collect::<BTreeSet<_>>();
+    let actual_ids = manifest
+        .source_batches
+        .iter()
+        .map(|source| source.batch_id.to_string())
+        .collect::<BTreeSet<_>>();
+    if expected_ids.len() != entries.len()
+        || actual_ids.len() != manifest.source_batches.len()
+        || !actual_ids.is_subset(&expected_ids)
+    {
+        return false;
+    }
+    manifest.source_batches.iter().all(|source| {
+        entries.iter().any(|entry| {
+            let Some(bars) = entry
+                .files
+                .iter()
+                .find(|file| file.kind == market_data::ResponseKind::Bars)
+            else {
+                return false;
+            };
+            let Some(actions) = entry
+                .files
+                .iter()
+                .find(|file| file.kind == market_data::ResponseKind::CorporateActions)
+            else {
+                return false;
+            };
             source.batch_id == entry.batch_id
                 && source.bars_file == bars.file_name
                 && source.bars_hash == bars.content_hash
@@ -3008,6 +3507,32 @@ fn manifest_matches_entries(
                 && source.actions_hash == actions.content_hash
         })
     })
+}
+
+fn entries_for_manifest(
+    manifest: &market_data::DatasetManifest,
+    entries: &[market_data::ManifestEntry],
+) -> Result<Vec<market_data::ManifestEntry>, WorkerError> {
+    let mut selected = Vec::with_capacity(manifest.source_batches.len());
+    for source in &manifest.source_batches {
+        let entry = entries
+            .iter()
+            .find(|entry| entry.batch_id == source.batch_id)
+            .ok_or_else(|| recovery_conflict("curated manifest source is absent from Raw"))?;
+        selected.push(entry.clone());
+    }
+    if selected
+        .iter()
+        .map(|entry| entry.batch_id)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != selected.len()
+    {
+        return Err(recovery_conflict(
+            "curated manifest repeats a Raw source identity",
+        ));
+    }
+    Ok(selected)
 }
 
 /// The target-ingest path may ask for a narrow post-fetch recovery. The
@@ -3028,6 +3553,9 @@ async fn recover_price_publication_for_entry(
 
 #[cfg(test)]
 mod price_recovery_contract_tests {
+    use super::price_rights_resolution_denied;
+    use crate::SinkError;
+
     #[test]
     fn cumulative_recovery_revalidates_blocked_price_and_registers_the_instrument_catalog() {
         let source = include_str!("worker.rs");
@@ -3062,6 +3590,16 @@ mod price_recovery_contract_tests {
             .find("revalidate_price_raw_batch_after_rights")
             .expect("price revalidation branch");
         assert!(resolve < revalidate, "active resolver must precede reopen");
+    }
+
+    #[test]
+    fn transient_price_rights_failure_is_not_an_inactive_rights_decision() {
+        assert!(!price_rights_resolution_denied(
+            &SinkError::RetryableDatabase(sqlx::Error::PoolClosed,)
+        ));
+        assert!(!price_rights_resolution_denied(&SinkError::Conflict(
+            "resolver identity conflict".to_owned(),
+        )));
     }
 }
 

@@ -6,7 +6,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, NaiveTime, Utc};
+use chrono::{DateTime, Duration, NaiveTime, Utc};
 use collectors::{
     CandidateDatasetBinding, CandidateInstrumentCatalog, CandidatePipelineError,
     CandidatePricePublication, HealthFailure, PostgresCandidateSourceSink, PostgresPublicationSink,
@@ -1152,6 +1152,183 @@ async fn research_writer_catalogs_exact_raw_sources_without_broad_dataset_dml() 
     .await
     .expect("short price rights durable state");
     assert_eq!(short_price_state, "BLOCKED");
+    let widened_first = TradingDate::parse(
+        &(evidence.first_session.as_naive_date() - Duration::days(1)).to_string(),
+    )
+    .expect("widened revalidation first date");
+    let widened_last = TradingDate::parse(
+        &(evidence.last_session.as_naive_date() + Duration::days(1)).to_string(),
+    )
+    .expect("widened revalidation last date");
+    sqlx::query(
+        "UPDATE data_entitlements
+            SET effective_from=$2
+          WHERE contract_reference=$1",
+    )
+    .bind(short_contract)
+    .bind(widened_first.as_naive_date())
+    .execute(&db.supervisor)
+    .await
+    .expect("renew short price entitlement before revalidation");
+    let short_entitlement_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM data_entitlements WHERE contract_reference=$1")
+            .bind(short_contract)
+            .fetch_one(&db.supervisor)
+            .await
+            .expect("renewed short price entitlement id");
+    assert_eq!(
+        sink.resolve_price_dataset_entitlement(short_contract, widened_first, widened_last)
+            .await
+            .expect("renewed exact price rights"),
+        short_entitlement_id
+    );
+    sink.revalidate_price_raw_batch_after_rights(
+        &short_price_outcome.entry,
+        widened_first,
+        widened_last,
+        short_entitlement_id,
+    )
+    .await
+    .expect("re-open blocked price Raw under renewed rights");
+    let reopened: (String, Option<String>, String, String) = sqlx::query_as(
+        "SELECT state, reason_code, rights_first_date::text, rights_last_date::text
+           FROM candidate_raw_batch_publications
+          WHERE batch_id=$1 AND surface='price'",
+    )
+    .bind(short_price_outcome.batch_id.as_uuid())
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("reopened price Raw state");
+    assert_eq!(reopened.0, "CATALOGED");
+    assert_eq!(reopened.1, None);
+    assert_eq!(reopened.2, evidence.first_session.to_iso());
+    assert_eq!(reopened.3, evidence.last_session.to_iso());
+    let revalidation_event: (String, String, String, String, String, String, String) =
+        sqlx::query_as(
+            "SELECT blocked_first_date::text, blocked_last_date::text,
+                    revalidated_first_date::text, revalidated_last_date::text,
+                    previous_state, reopened_state, reason_code
+               FROM candidate_price_revalidation_events
+              WHERE batch_id=$1 AND surface='price'",
+        )
+        .bind(short_price_outcome.batch_id.as_uuid())
+        .fetch_one(&db.supervisor)
+        .await
+        .expect("price revalidation audit event");
+    assert_eq!(
+        revalidation_event,
+        (
+            evidence.first_session.to_iso(),
+            evidence.last_session.to_iso(),
+            widened_first.to_iso(),
+            widened_last.to_iso(),
+            "BLOCKED".to_owned(),
+            "CATALOGED".to_owned(),
+            "ENTITLEMENT_REVALIDATED".to_owned(),
+        )
+    );
+    sqlx::query(
+        "INSERT INTO data_entitlements
+         (contract_document_sha256, contract_reference, status, covered_datasets,
+          covered_uses, effective_from, effective_until, managed_by)
+         SELECT repeat('6',64), contract_reference, 'ACTIVE', covered_datasets,
+                covered_uses, effective_from, effective_until, managed_by
+           FROM data_entitlements WHERE id=$1",
+    )
+    .bind(short_entitlement_id)
+    .execute(&db.supervisor)
+    .await
+    .expect("duplicate active price entitlement fixture");
+    let duplicate_error = sink
+        .resolve_price_dataset_entitlement(short_contract, widened_first, widened_last)
+        .await
+        .expect_err("duplicate active price entitlement must fail closed");
+    assert!(matches!(
+        duplicate_error,
+        collectors::SinkError::PermanentDatabase(error)
+            if error
+                .as_database_error()
+                .and_then(|database| database.code())
+                .as_deref()
+                == Some("42501")
+    ));
+    sqlx::query(
+        "UPDATE data_entitlements SET status='REVOKED'
+          WHERE contract_reference=$1 AND id<>$2",
+    )
+    .bind(short_contract)
+    .bind(short_entitlement_id)
+    .execute(&db.supervisor)
+    .await
+    .expect("remove duplicate active price entitlement fixture");
+    sqlx::query("UPDATE data_entitlements SET status='REVOKED' WHERE id=$1")
+        .bind(short_entitlement_id)
+        .execute(&db.supervisor)
+        .await
+        .expect("revoke price entitlement for transient fixture");
+    sink.block_raw_batch_for_inactive_rights(
+        &short_price_outcome.entry,
+        "price",
+        evidence.first_session,
+        evidence.last_session,
+    )
+    .await
+    .expect("re-block price Raw before transient fixture");
+    sqlx::query("UPDATE data_entitlements SET status='ACTIVE' WHERE id=$1")
+        .bind(short_entitlement_id)
+        .execute(&db.supervisor)
+        .await
+        .expect("reactivate price entitlement for transient fixture");
+    let mut lock_tx = db
+        .supervisor
+        .begin()
+        .await
+        .expect("price row lock transaction");
+    sqlx::query(
+        "SELECT 1 FROM candidate_raw_batch_publications
+          WHERE batch_id=$1 AND surface='price' FOR UPDATE",
+    )
+    .bind(short_price_outcome.batch_id.as_uuid())
+    .execute(&mut *lock_tx)
+    .await
+    .expect("lock blocked price Raw row");
+    let timed_pool = db.writer_with_lock_timeout().await;
+    let transient_sink = PostgresCandidateSourceSink::new(timed_pool.clone());
+    let transient_error = transient_sink
+        .revalidate_price_raw_batch_after_rights(
+            &short_price_outcome.entry,
+            widened_first,
+            widened_last,
+            short_entitlement_id,
+        )
+        .await
+        .expect_err("lock timeout must propagate as a transient database error");
+    assert!(matches!(
+        transient_error,
+        collectors::SinkError::RetryableDatabase(_)
+    ));
+    let state_after_transient: String = sqlx::query_scalar(
+        "SELECT state FROM candidate_raw_batch_publications
+          WHERE batch_id=$1 AND surface='price'",
+    )
+    .bind(short_price_outcome.batch_id.as_uuid())
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("price state after transient failure");
+    assert_eq!(state_after_transient, "BLOCKED");
+    let event_count_after_transient: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_price_revalidation_events WHERE batch_id=$1",
+    )
+    .bind(short_price_outcome.batch_id.as_uuid())
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("revalidation event count after transient failure");
+    assert_eq!(event_count_after_transient, 1);
+    timed_pool.close().await;
+    lock_tx
+        .rollback()
+        .await
+        .expect("release transient row lock");
     let mut tampered_terminal = outcome.entry.clone();
     tampered_terminal.mode = FetchMode::Credentialed;
     assert!(matches!(

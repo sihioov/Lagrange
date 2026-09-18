@@ -7,29 +7,39 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use collectors::{
-    AppEnvironment, FailureClass, HealthcheckConfig, PipelineError, PipelineStage, PublicationSink,
-    PublicationState, PublishOutcome, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError,
-    RecoveryObserver, RecoveryPosition, ResearchBackend, ResearchWorker, ResearchWorkerConfig,
-    SinkError, WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent,
-    WorkerEventClass, WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome,
-    bootstrap_worker, bootstrap_worker_with, build_postgres_pool, healthcheck, ingest_and_publish,
-    next_run_delay, publication_age, recover_unpublished, recover_unpublished_page_with,
-    recover_unpublished_with, retry_delay, run_internal_recovery_stream, store_failure_class,
+    AppEnvironment, FailureClass, HealthcheckConfig, PipelineError, PipelineStage,
+    PostgresCandidateSourceSink, PublicationSink, PublicationState, PublishOutcome,
+    RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError, RecoveryObserver, RecoveryPosition,
+    ResearchBackend, ResearchWorker, ResearchWorkerConfig, SinkError, WaitOutcome,
+    WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
+    WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker,
+    bootstrap_worker_with, build_postgres_pool, healthcheck, ingest_and_publish, next_run_delay,
+    publication_age, recover_unpublished, recover_unpublished_page_with, recover_unpublished_with,
+    retry_delay, run_internal_ingest, run_internal_recovery_stream, store_failure_class,
     validate_synthetic_policy,
 };
-use domain::{BatchId, TradingDate, UtcTimestamp};
-use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, ResponseKind};
+use domain::{BatchId, DatasetId, TradingDate, UtcTimestamp};
+use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, ResponseKind};
 use market_data::ingest::{IngestError, IngestRequest, ingest_bundle};
 use market_data::provider::{
     CredentialRef, EodProvider, FetchRequest, KrxProvider, ProviderError, RecordedBundle,
 };
 use market_data::publication::{PublicationBundle, PublicationError};
 use market_data::storage::{RawStore, StoreError};
+use market_data::{
+    CurateRequest, CurateStore, curate_generation, curation_inputs_from_raw_entries,
+};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 #[allow(dead_code)]
 mod common;
 use common::ScratchDb;
+
+#[path = "../../../tests/support/candidate_rolling_provider.rs"]
+#[allow(dead_code)]
+mod candidate_rolling_provider;
+use candidate_rolling_provider::RollingCandidateProvider;
 
 fn provider() -> KrxProvider {
     KrxProvider::synthetic(
@@ -47,6 +57,53 @@ fn request(at: &str) -> IngestRequest {
         TradingDate::parse("2020-01-31").unwrap(),
         UtcTimestamp::parse_rfc3339(at).unwrap(),
     )
+}
+
+/// The rolling fixture is deliberately broad so candidate tests can exercise
+/// listing proofs.  Price recovery needs independent daily Raw source sets in
+/// this test, so retain only the requested session while keeping the stable
+/// calendar provenance across deliveries.
+#[derive(Debug, Clone, Copy)]
+struct SingleSessionRollingProvider;
+
+impl EodProvider for SingleSessionRollingProvider {
+    fn provider_id(&self) -> &'static str {
+        "krx"
+    }
+
+    fn fetch_mode(&self) -> market_data::FetchMode {
+        FetchMode::Synthetic
+    }
+
+    fn fetch(&self, request: &FetchRequest) -> Result<Vec<RawEnvelope>, ProviderError> {
+        let mut envelopes = RollingCandidateProvider.fetch(request)?;
+        let target = request.date.to_iso();
+        for envelope in &mut envelopes {
+            if envelope.kind == ResponseKind::Bars {
+                let mut body: serde_json::Value =
+                    serde_json::from_slice(&envelope.bytes).expect("rolling bars fixture is JSON");
+                body["bars"] = body["bars"]
+                    .as_array()
+                    .expect("rolling bars array")
+                    .iter()
+                    .filter(|bar| {
+                        bar.get("date").and_then(serde_json::Value::as_str) == Some(&target)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into();
+                envelope.bytes = serde_json::to_vec(&body).expect("single-session bars JSON");
+            } else if envelope.kind == ResponseKind::Calendar {
+                let mut body: serde_json::Value = serde_json::from_slice(&envelope.bytes)
+                    .expect("rolling calendar fixture is JSON");
+                body["calendar_id"] =
+                    serde_json::Value::String("candidate-calendar-wp3b".to_owned());
+                envelope.bytes = serde_json::to_vec(&body).expect("stable calendar JSON");
+            }
+            envelope.content_hash = domain::ContentHash::from_bytes(&envelope.bytes);
+        }
+        Ok(envelopes)
+    }
 }
 
 async fn seed_candidate_entitlement(pool: &PgPool) {
@@ -2337,6 +2394,623 @@ async fn worker_price_recovery_rejects_future_sessions_before_catalog_publicatio
     .await
     .expect("no-lookahead price ledger check");
     assert_eq!(price_ledger, 0);
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn worker_price_recovery_partitions_entitlements_and_replays_exact_generations() {
+    let Some(db) = ScratchDb::create().await else {
+        panic!("WP3B recovery test requires the disposable PostgreSQL DATABASE_URL");
+    };
+    for (reference, effective_until) in [
+        ("fixture://wp3b-historical", "2026-08-14"),
+        ("fixture://wp3b-current", "2026-08-17"),
+    ] {
+        sqlx::query(
+            "INSERT INTO data_entitlements
+             (contract_document_sha256,contract_reference,status,covered_datasets,
+              covered_uses,effective_from,effective_until,managed_by)
+             VALUES (repeat('c',64),$1,'ACTIVE',
+                     '[\"krx_eod_bars\",\"krx_investor_flows\",\"krx_market_status\",\"krx_fundamentals\",\"krx_kospi200_membership\",\"krx_kosdaq150_membership\",\"krx_sector_classification\"]'::jsonb,
+                     '[\"candidate\",\"dataset\",\"recommendation\",\"backtest\",\"paper_view\"]'::jsonb,
+                     DATE '2020-01-01',$2::date,
+                     '00000000-0000-4000-8000-000000000042'::uuid)",
+        )
+        .bind(reference)
+        .bind(effective_until)
+        .execute(&db.supervisor)
+        .await
+        .expect("WP3B price entitlement fixture");
+    }
+
+    let raw_root = tempfile::tempdir().expect("WP3B Raw root");
+    let raw = RawStore::new(raw_root.path());
+    let provider = SingleSessionRollingProvider;
+    for (date, reference, retrieved_at) in [
+        (
+            "2026-08-14",
+            "fixture://wp3b-historical",
+            "2026-08-18T07:00:00Z",
+        ),
+        (
+            "2026-08-14",
+            "fixture://wp3b-current",
+            "2026-08-18T07:01:00Z",
+        ),
+        (
+            "2026-08-17",
+            "fixture://wp3b-current",
+            "2026-08-18T07:02:00Z",
+        ),
+        (
+            "2026-08-14",
+            "fixture://wp3b-third-reference",
+            "2026-08-18T07:03:00Z",
+        ),
+    ] {
+        ingest_bundle(
+            &raw,
+            &provider,
+            &IngestRequest::new(
+                MARKET_KR.to_owned(),
+                TradingDate::parse(date).expect("WP3B source date"),
+                UtcTimestamp::parse_rfc3339(retrieved_at).expect("WP3B retrieval timestamp"),
+            ),
+            Some(reference),
+        )
+        .expect("WP3B provider-free Raw source");
+    }
+    let raw_manifest_before = std::fs::read(raw.manifest_path(PROVIDER_KRX, MARKET_KR))
+        .expect("WP3B Raw manifest snapshot");
+    let dataset_id = DatasetId::parse("krx_eod_bars").expect("canonical price dataset");
+    let curated_root = raw_root.path().join("curated");
+    let curated = CurateStore::new(&curated_root);
+    let current_entries = raw
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("WP3B Raw entries")
+        .into_iter()
+        .filter(|entry| entry.entitlement_reference.as_deref() == Some("fixture://wp3b-current"))
+        .collect::<Vec<_>>();
+    assert_eq!(current_entries.len(), 2);
+    let (current_calendar, current_master) =
+        curation_inputs_from_raw_entries(&raw, &current_entries)
+            .expect("WP3B crash-artifact curation inputs");
+    let crash_artifact = curate_generation(
+        &raw,
+        &current_entries,
+        &current_calendar,
+        &current_master,
+        &curated,
+        &CurateRequest {
+            dataset_id: &dataset_id,
+            market: MARKET_KR,
+            source: PROVIDER_KRX,
+            now: current_entries
+                .iter()
+                .map(|entry| entry.retrieved_at)
+                .max()
+                .expect("WP3B current entries have retrieval times"),
+        },
+    )
+    .expect("WP3B crash-after-artifact fixture");
+    assert_eq!(crash_artifact.manifest.version, 1);
+
+    let password_file = raw_root.path().join("db-password");
+    std::fs::write(&password_file, "lagrange").expect("WP3B database password file");
+    let mut values = worker_config(&[]);
+    values.insert(
+        "RESEARCH_RAW_ROOT".to_owned(),
+        raw_root.path().to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "RESEARCH_CURATED_ROOT".to_owned(),
+        raw_root.path().to_string_lossy().into_owned(),
+    );
+    values.insert("DB_PORT".to_owned(), "55438".to_owned());
+    values.insert("DB_NAME".to_owned(), db.database_name().to_owned());
+    values.insert(
+        "DB_PASSWORD_FILE".to_owned(),
+        password_file.to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "RESEARCH_SYNTHETIC_BUNDLE".to_owned(),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/kr-etf/contract")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    sqlx::query(
+        "INSERT INTO data_batches
+         (provider, market, batch_date, kind, fetch_mode, storage_path,
+          content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name)
+         VALUES ('KRX','KR',$1,'EOD','synthetic','db://wp3b/eod',repeat('d',64),1,$2,
+                 gen_random_uuid(),'eod.json')",
+    )
+    .bind(
+        TradingDate::parse("2026-08-17")
+            .expect("WP3B target date")
+            .as_naive_date(),
+    )
+    .bind(
+        UtcTimestamp::parse_rfc3339("2026-08-18T08:00:00Z")
+            .expect("WP3B EOD timestamp")
+            .as_datetime(),
+    )
+    .execute(&db.supervisor)
+    .await
+    .expect("WP3B existing EOD guard");
+
+    run_internal_ingest(
+        &values,
+        TradingDate::parse("2026-08-17").expect("WP3B target date"),
+        UtcTimestamp::parse_rfc3339("2026-08-18T08:01:00Z").expect("WP3B ingest timestamp"),
+    )
+    .await
+    .expect("WP3B partitioned recovery");
+
+    let versions_before: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT version, manifest_sha256, storage_path
+           FROM dataset_versions
+          WHERE dataset_id='krx_eod_bars'
+          ORDER BY version::integer",
+    )
+    .fetch_all(&db.supervisor)
+    .await
+    .expect("WP3B generation catalog");
+    assert_eq!(
+        versions_before.len(),
+        2,
+        "two refs must allocate two generations"
+    );
+    assert!(versions_before.iter().all(|(_, hash, path)| {
+        hash.len() == 64 && path == raw_root.path().to_string_lossy().as_ref()
+    }));
+
+    let publications_before: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT dataset_version, license_ref, first_session::text, last_session::text
+           FROM candidate_price_publications
+          ORDER BY dataset_version::integer",
+    )
+    .fetch_all(&db.supervisor)
+    .await
+    .expect("WP3B publication identities");
+    assert_eq!(publications_before.len(), 2);
+    let historical_version = publications_before
+        .iter()
+        .find(|(_, reference, _, _)| reference == "fixture://wp3b-historical")
+        .map(|(version, _, _, _)| version.clone())
+        .expect("historical generation publication");
+    let current_version = publications_before
+        .iter()
+        .find(|(_, reference, _, _)| reference == "fixture://wp3b-current")
+        .map(|(version, _, _, _)| version.clone())
+        .expect("current generation publication");
+    assert_ne!(historical_version, current_version);
+    assert_eq!(
+        publications_before
+            .iter()
+            .find(|(version, _, _, _)| version == &historical_version)
+            .map(|(_, _, first, last)| (first.as_str(), last.as_str())),
+        Some(("2026-08-14", "2026-08-14"))
+    );
+    assert_eq!(
+        publications_before
+            .iter()
+            .find(|(version, _, _, _)| version == &current_version)
+            .map(|(_, _, first, last)| (first.as_str(), last.as_str())),
+        Some(("2026-08-14", "2026-08-17"))
+    );
+
+    let blocked_third: String = sqlx::query_scalar(
+        "SELECT state FROM candidate_raw_batch_publications
+          WHERE surface='price' AND entitlement_reference='fixture://wp3b-third-reference'",
+    )
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("third reference own-scope block");
+    assert_eq!(blocked_third, "BLOCKED");
+    let published_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_publications
+          WHERE surface='price' AND state='PUBLISHED'",
+    )
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B published Raw count");
+    assert_eq!(published_count, 3);
+    let binding_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_datasets
+          WHERE surface='price' AND response_kind='bars'",
+    )
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B bars binding count");
+    assert_eq!(binding_count, 3);
+    let coverage_counts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT dataset.version, count(*)
+           FROM candidate_price_instrument_coverage AS coverage
+           JOIN dataset_versions AS dataset ON dataset.id=coverage.dataset_version_id
+          WHERE dataset.dataset_id='krx_eod_bars'
+          GROUP BY dataset.version
+          ORDER BY dataset.version::integer",
+    )
+    .fetch_all(&db.supervisor)
+    .await
+    .expect("WP3B independent instrument coverage proofs");
+    assert_eq!(coverage_counts.len(), 2);
+    assert!(coverage_counts.iter().all(|(_, count)| *count == 7));
+
+    let snapshot_manifest = |version: &str| {
+        let version = version.parse::<u32>().expect("numeric generation version");
+        let bytes = std::fs::read(
+            curated_root
+                .join("datasets")
+                .join(dataset_id.as_str())
+                .join(format!("version={version}"))
+                .join("manifest.json"),
+        )
+        .expect("generation manifest bytes");
+        let manifest: market_data::DatasetManifest =
+            serde_json::from_slice(&bytes).expect("generation manifest JSON");
+        let artifacts = manifest
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                (
+                    artifact.path.clone(),
+                    std::fs::read(curated_root.join(&artifact.path))
+                        .expect("generation artifact bytes"),
+                )
+            })
+            .collect::<Vec<_>>();
+        (bytes, artifacts)
+    };
+    let historical_snapshot = snapshot_manifest(&historical_version);
+    let current_snapshot = snapshot_manifest(&current_version);
+
+    let replay = run_internal_ingest(
+        &values,
+        TradingDate::parse("2026-08-17").expect("WP3B target date"),
+        UtcTimestamp::parse_rfc3339("2026-08-18T08:02:00Z").expect("WP3B replay timestamp"),
+    )
+    .await
+    .expect_err("WP3B exact replay has no new batch to return");
+    assert!(matches!(replay, WorkerError::ChildOutput { .. }));
+    let versions_after: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT version, manifest_sha256, storage_path
+           FROM dataset_versions
+          WHERE dataset_id='krx_eod_bars'
+          ORDER BY version::integer",
+    )
+    .fetch_all(&db.supervisor)
+    .await
+    .expect("WP3B replay generation catalog");
+    assert_eq!(
+        versions_after, versions_before,
+        "replay must not churn versions"
+    );
+    assert_eq!(
+        std::fs::read(raw.manifest_path(PROVIDER_KRX, MARKET_KR)).expect("Raw manifest replay"),
+        raw_manifest_before,
+        "recovery must not rewrite original Raw pin bytes"
+    );
+    assert_eq!(snapshot_manifest(&historical_version), historical_snapshot);
+    assert_eq!(snapshot_manifest(&current_version), current_snapshot);
+
+    let tampered_artifact = current_snapshot
+        .1
+        .first()
+        .map(|(path, _)| curated_root.join(path))
+        .expect("WP3B current generation artifact");
+    std::fs::write(&tampered_artifact, b"tampered WP3B artifact")
+        .expect("WP3B artifact tamper fixture");
+    let tamper_error = run_internal_ingest(
+        &values,
+        TradingDate::parse("2026-08-17").expect("WP3B target date"),
+        UtcTimestamp::parse_rfc3339("2026-08-18T08:03:00Z").expect("WP3B tamper timestamp"),
+    )
+    .await
+    .expect_err("tampered published artifacts must fail closed");
+    assert!(matches!(tamper_error, WorkerError::Curation(_)));
+    let versions_after_tamper: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT version, manifest_sha256, storage_path
+           FROM dataset_versions
+          WHERE dataset_id='krx_eod_bars'
+          ORDER BY version::integer",
+    )
+    .fetch_all(&db.supervisor)
+    .await
+    .expect("WP3B tamper generation catalog");
+    assert_eq!(versions_after_tamper, versions_before);
+    assert_eq!(
+        std::fs::read(raw.manifest_path(PROVIDER_KRX, MARKET_KR)).expect("Raw manifest tamper"),
+        raw_manifest_before
+    );
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn worker_price_recovery_resumes_published_anchor_and_rejects_source_set_drift() {
+    let Some(db) = ScratchDb::create().await else {
+        panic!("WP3B anchor recovery test requires the disposable PostgreSQL DATABASE_URL");
+    };
+    seed_candidate_entitlement(&db.supervisor).await;
+    let workspace = tempfile::tempdir().expect("WP3B anchor workspace");
+    let raw_root = workspace.path().join("raw");
+    let curated_root = workspace.path().join("curated");
+    let password_file = workspace.path().join("db-password");
+    std::fs::write(&password_file, "lagrange").expect("WP3B anchor password file");
+    let raw = RawStore::new(&raw_root);
+    let provider = SingleSessionRollingProvider;
+    for (date, retrieved_at) in [
+        ("2026-08-14", "2026-08-18T07:00:00Z"),
+        ("2026-08-17", "2026-08-18T07:01:00Z"),
+    ] {
+        ingest_bundle(
+            &raw,
+            &provider,
+            &IngestRequest::new(
+                MARKET_KR.to_owned(),
+                TradingDate::parse(date).expect("WP3B anchor date"),
+                UtcTimestamp::parse_rfc3339(retrieved_at).expect("WP3B anchor retrieval"),
+            ),
+            Some("fixture://candidate-license"),
+        )
+        .expect("WP3B anchor Raw source");
+    }
+    let entries = raw
+        .read_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("WP3B anchor Raw manifest");
+    assert_eq!(entries.len(), 2);
+    let anchor = entries.last().expect("WP3B anchor source");
+    let (calendar, master) =
+        curation_inputs_from_raw_entries(&raw, &entries).expect("WP3B anchor curation inputs");
+    let dataset_id = DatasetId::parse("krx_eod_bars").expect("WP3B anchor dataset id");
+    let curated = CurateStore::new(&curated_root);
+    let curated_outcome = curate_generation(
+        &raw,
+        &entries,
+        &calendar,
+        &master,
+        &curated,
+        &CurateRequest {
+            dataset_id: &dataset_id,
+            market: MARKET_KR,
+            source: PROVIDER_KRX,
+            now: entries
+                .iter()
+                .map(|entry| entry.retrieved_at)
+                .max()
+                .expect("WP3B anchor retrieval times"),
+        },
+    )
+    .expect("WP3B anchor curated generation");
+    let evidence = market_data::price_curation_evidence_for_generation(
+        &raw,
+        &entries,
+        &curated_outcome.manifest,
+        anchor,
+    )
+    .expect("WP3B anchor publication evidence");
+    let sink = PostgresCandidateSourceSink::new(db.writer.clone());
+    let entitlement_id = sink
+        .resolve_price_dataset_entitlement(
+            "fixture://candidate-license",
+            evidence.first_session,
+            evidence.last_session,
+        )
+        .await
+        .expect("WP3B anchor entitlement");
+    let reference_sha256 = anchor
+        .files
+        .iter()
+        .find(|file| file.kind == ResponseKind::Reference)
+        .and_then(|file| file.content_hash.as_str().strip_prefix("sha256:"))
+        .expect("WP3B anchor reference hash");
+    let source_revision = anchor.batch_id.to_string();
+    sink.register_candidate_instruments(&collectors::CandidateInstrumentCatalog {
+        master: &master,
+        entitlement_id,
+        contract_reference: "fixture://candidate-license",
+        entitlement_date: anchor.date,
+        reference_sha256,
+        source_revision: &source_revision,
+        retrieved_at: anchor.retrieved_at,
+        coverage_from: TradingDate::parse(market_data::range_normalize::APPROVED_EFFECTIVE_FROM)
+            .expect("WP3B anchor coverage floor"),
+    })
+    .await
+    .expect("WP3B anchor instrument proofs");
+    let raw_manifest_sha256 =
+        collectors::candidate_raw_manifest_sha256(anchor).expect("WP3B anchor Raw hash");
+    let (anchor_dataset_version_id, anchor_outcome) = sink
+        .publish_price(&collectors::CandidatePricePublication {
+            raw_batch_id: anchor.batch_id.as_uuid(),
+            raw_manifest_sha256: &raw_manifest_sha256,
+            fetch_mode: anchor.mode,
+            entitlement_date: anchor.date,
+            evidence: &evidence,
+            dataset_version: &curated_outcome.manifest.version.to_string(),
+            storage_path: curated_root.to_str().expect("WP3B anchor storage path"),
+            provider: PROVIDER_KRX,
+            entitlement_id,
+            license_ref: "fixture://candidate-license",
+            available_at: anchor.retrieved_at,
+            retrieved_at: anchor.retrieved_at,
+        })
+        .await
+        .expect("WP3B anchor publication");
+    assert_eq!(anchor_outcome, PublishOutcome::Published);
+    let pending_id = entries[0].batch_id;
+    let pending_ledger: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_publications
+          WHERE batch_id=$1 AND surface='price'",
+    )
+    .bind(pending_id.as_uuid())
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B pending anchor boundary");
+    assert_eq!(
+        pending_ledger, 0,
+        "anchor publication leaves the older source pending"
+    );
+    let anchor_binding_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_datasets
+          WHERE dataset_version_id=$1 AND surface='price' AND response_kind='bars'",
+    )
+    .bind(anchor_dataset_version_id)
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B anchor binding");
+    assert_eq!(anchor_binding_count, 1);
+
+    sqlx::query(
+        "INSERT INTO data_batches
+         (provider, market, batch_date, kind, fetch_mode, storage_path,
+          content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name)
+         VALUES ('KRX','KR',DATE '2026-08-17','EOD','synthetic','db://wp3b/anchor-eod',
+                 repeat('e',64),1,'2026-08-18T08:00:00Z',gen_random_uuid(),'eod.json')",
+    )
+    .execute(&db.supervisor)
+    .await
+    .expect("WP3B anchor EOD guard");
+    let mut values = worker_config(&[]);
+    values.insert(
+        "RESEARCH_RAW_ROOT".to_owned(),
+        raw_root.to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "RESEARCH_CURATED_ROOT".to_owned(),
+        curated_root.to_string_lossy().into_owned(),
+    );
+    values.insert("DB_PORT".to_owned(), "55438".to_owned());
+    values.insert("DB_NAME".to_owned(), db.database_name().to_owned());
+    values.insert(
+        "DB_PASSWORD_FILE".to_owned(),
+        password_file.to_string_lossy().into_owned(),
+    );
+    values.insert(
+        "RESEARCH_SYNTHETIC_BUNDLE".to_owned(),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/kr-etf/contract")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    run_internal_ingest(
+        &values,
+        TradingDate::parse("2026-08-17").expect("WP3B anchor target date"),
+        UtcTimestamp::parse_rfc3339("2026-08-18T08:01:00Z").expect("WP3B anchor recovery time"),
+    )
+    .await
+    .expect("WP3B recovery binds the pending source to the published anchor");
+    let published_after_resume: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_publications
+          WHERE surface='price' AND state='PUBLISHED'",
+    )
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B resumed publication count");
+    assert_eq!(published_after_resume, 2);
+    let resumed_binding: (Uuid, bool) = sqlx::query_as(
+        "SELECT dataset_version_id, reused_existing
+           FROM candidate_raw_batch_datasets
+          WHERE batch_id=$1 AND surface='price' AND response_kind='bars'",
+    )
+    .bind(pending_id.as_uuid())
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B resumed pending binding");
+    assert_eq!(resumed_binding.0, anchor_dataset_version_id);
+    assert!(resumed_binding.1);
+
+    ingest_bundle(
+        &raw,
+        &provider,
+        &IngestRequest::new(
+            MARKET_KR.to_owned(),
+            TradingDate::parse("2026-08-18").expect("WP3B drift date"),
+            UtcTimestamp::parse_rfc3339("2026-08-19T07:00:00Z").expect("WP3B drift retrieval"),
+        ),
+        Some("fixture://candidate-license"),
+    )
+    .expect("WP3B drift Raw source");
+    sqlx::query(
+        "INSERT INTO data_batches
+         (provider, market, batch_date, kind, fetch_mode, storage_path,
+          content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name)
+         VALUES ('KRX','KR',DATE '2026-08-18','EOD','synthetic','db://wp3b/drift-eod',
+                 repeat('f',64),1,'2026-08-19T08:00:00Z',gen_random_uuid(),'eod.json')",
+    )
+    .execute(&db.supervisor)
+    .await
+    .expect("WP3B drift EOD guard");
+    run_internal_ingest(
+        &values,
+        TradingDate::parse("2026-08-18").expect("WP3B drift target date"),
+        UtcTimestamp::parse_rfc3339("2026-08-19T08:01:00Z").expect("WP3B drift recovery time"),
+    )
+    .await
+    .expect("WP3B current partition grows without rebinding prior sources");
+    let growth_generation_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM dataset_versions WHERE dataset_id='krx_eod_bars'")
+            .fetch_one(&db.supervisor)
+            .await
+            .expect("WP3B growth generation count");
+    assert_eq!(growth_generation_count, 2);
+    let growth_price_ledger: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_publications
+          WHERE surface='price' AND entitlement_date=DATE '2026-08-18'",
+    )
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B growth ledger state");
+    assert_eq!(growth_price_ledger, 1);
+
+    let late_outcome = ingest_bundle(
+        &raw,
+        &provider,
+        &IngestRequest::new(
+            MARKET_KR.to_owned(),
+            TradingDate::parse("2026-08-14").expect("WP3B late historical date"),
+            UtcTimestamp::parse_rfc3339("2026-08-19T07:30:00Z")
+                .expect("WP3B late historical retrieval"),
+        ),
+        Some("fixture://candidate-license"),
+    )
+    .expect("WP3B late historical Raw source");
+    sqlx::query(
+        "INSERT INTO data_batches
+         (provider, market, batch_date, kind, fetch_mode, storage_path,
+          content_sha256, bytes_size, retrieved_at, source_batch_id, source_file_name)
+         VALUES ('KRX','KR',DATE '2026-08-14','EOD','synthetic','db://wp3b/late-history-eod',
+                 repeat('a',64),1,'2026-08-19T08:30:00Z',gen_random_uuid(),'eod.json')",
+    )
+    .execute(&db.supervisor)
+    .await
+    .expect("WP3B late historical EOD guard");
+    let drift_error = run_internal_ingest(
+        &values,
+        TradingDate::parse("2026-08-14").expect("WP3B late historical target date"),
+        UtcTimestamp::parse_rfc3339("2026-08-19T08:31:00Z")
+            .expect("WP3B late historical recovery time"),
+    )
+    .await
+    .expect_err("published anchor bound to a different source set must fail honestly");
+    assert!(matches!(drift_error, WorkerError::Curation(_)));
+    let generation_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM dataset_versions WHERE dataset_id='krx_eod_bars'")
+            .fetch_one(&db.supervisor)
+            .await
+            .expect("WP3B drift generation count");
+    assert_eq!(generation_count, 2);
+    let drift_price_ledger: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM candidate_raw_batch_publications
+          WHERE batch_id=$1 AND surface='price'",
+    )
+    .bind(late_outcome.batch_id.as_uuid())
+    .fetch_one(&db.supervisor)
+    .await
+    .expect("WP3B drift ledger state");
+    assert_eq!(drift_price_ledger, 0);
     db.drop_db().await;
 }
 

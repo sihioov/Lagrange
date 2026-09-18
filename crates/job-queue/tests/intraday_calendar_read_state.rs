@@ -1,7 +1,7 @@
 #[allow(dead_code)]
 mod intraday_quotes_support;
 
-use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Days, Duration, FixedOffset, NaiveDate, TimeZone, Utc};
 use collectors::{
     PostgresPublicationSink, PublicationSink, PublishOutcome, ensure_kis_calendar_source,
     ingest_normalize_publish_kis_with_calendar_source,
@@ -701,16 +701,52 @@ async fn actual_sink_reuses_morning_calendar_for_evening_eod_and_intraday_resolu
             .map_err(|_| "could not create Raw root".to_owned())?;
         let reader = AcceptanceKisRead::default();
         let provider = KisProvider::kr_etf_core(reader.clone());
-        let request = IngestRequest::new(
+        let db_clock = database_now(&db).await?;
+        let kst = FixedOffset::east_opt(9 * 60 * 60)
+            .ok_or_else(|| "could not construct KST offset".to_owned())?;
+        let day_start = kst
+            .from_local_datetime(
+                &db.session_date
+                    .and_hms_opt(0, 0, 0)
+                    .ok_or_else(|| "could not construct session-day start".to_owned())?,
+            )
+            .single()
+            .ok_or_else(|| "session-day start was not a unique instant".to_owned())?
+            .with_timezone(&Utc);
+        let (morning_at, evening_at) = if db_clock - day_start >= Duration::seconds(120) {
+            (db_clock - Duration::seconds(90), db_clock - Duration::seconds(30))
+        } else {
+            (day_start, db_clock)
+        };
+        if morning_at == evening_at {
+            return Err("DB clock did not provide two distinct same-day timestamps".to_owned());
+        }
+        if morning_at >= evening_at {
+            return Err("DB-derived morning timestamp was not before evening timestamp".to_owned());
+        }
+        if morning_at.with_timezone(&kst).date_naive() != db.session_date
+            || evening_at.with_timezone(&kst).date_naive() != db.session_date
+        {
+            return Err("DB-derived timestamps crossed the KST session-day boundary".to_owned());
+        }
+        let morning_request = IngestRequest::new(
             MARKET_KR.to_owned(),
             target_date,
-            UtcTimestamp::now(),
+            UtcTimestamp::from_datetime(morning_at),
         );
+        let evening_request = IngestRequest::new(
+            MARKET_KR.to_owned(),
+            target_date,
+            UtcTimestamp::from_datetime(evening_at),
+        );
+        if morning_request.now == evening_request.now {
+            return Err("calendar and EOD requests unexpectedly share retrieval time".to_owned());
+        }
         let entitlement = Some("entitlement://wp1-actual");
         let calendar_source = ensure_kis_calendar_source(
             &store,
             &provider,
-            &request,
+            &morning_request,
             entitlement,
         )
         .await
@@ -744,7 +780,7 @@ async fn actual_sink_reuses_morning_calendar_for_evening_eod_and_intraday_resolu
         let evening = ingest_normalize_publish_kis_with_calendar_source(
             &store,
             &provider,
-            &request,
+            &evening_request,
             entitlement,
             &sink,
             Some(&calendar_source),

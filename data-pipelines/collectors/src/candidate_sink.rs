@@ -94,6 +94,88 @@ struct PricePublishRow {
     published: bool,
 }
 
+/// Read-only price recovery identity loaded from the immutable Raw ledger.
+///
+/// Recovery must inspect this state before deciding whether a source is still
+/// pending.  In particular, BLOCKED is not a successful publication and a
+/// published row with a different generation cannot be rebound by recovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceRawRecoveryState {
+    pub batch_id: Uuid,
+    pub state: Option<String>,
+    pub reason_code: Option<String>,
+    pub binding: Option<PriceRawRecoveryBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceRawRecoveryBinding {
+    pub dataset_version_id: Uuid,
+    pub dataset_id: String,
+    pub dataset_version: String,
+    pub manifest_sha256: String,
+    pub storage_path: String,
+    pub reused_existing: bool,
+}
+
+/// Read-only catalog and binding identity for one canonical price generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceGenerationRecoveryState {
+    pub dataset_version_id: Uuid,
+    pub dataset_version: String,
+    pub status: String,
+    pub manifest_sha256: String,
+    pub storage_path: String,
+    pub publication_source_revision: Option<String>,
+    pub bound_batch_ids: BTreeSet<Uuid>,
+    pub published_batch_ids: BTreeSet<Uuid>,
+}
+
+#[derive(Debug, FromRow)]
+struct PriceRawLedgerRow {
+    batch_id: Uuid,
+    state: String,
+    reason_code: Option<String>,
+    raw_manifest_sha256: String,
+    fetch_mode: String,
+    entitlement_reference: String,
+    entitlement_date: NaiveDate,
+}
+
+#[derive(Debug, FromRow)]
+struct PriceRawBindingRow {
+    batch_id: Uuid,
+    dataset_version_id: Uuid,
+    dataset_id: String,
+    dataset_version: String,
+    manifest_sha256: String,
+    storage_path: String,
+    reused_existing: bool,
+}
+
+#[derive(Debug, FromRow)]
+struct PriceDatasetRow {
+    dataset_version_id: Uuid,
+    dataset_version: String,
+    status: String,
+    manifest_sha256: String,
+    storage_path: String,
+}
+
+#[derive(Debug, FromRow)]
+struct PricePublicationIdentityRow {
+    dataset_version_id: Uuid,
+    dataset_version: String,
+    manifest_sha256: String,
+    source_revision: String,
+}
+
+#[derive(Debug, FromRow)]
+struct PriceGenerationBindingRow {
+    dataset_version_id: Uuid,
+    batch_id: Uuid,
+    state: String,
+}
+
 impl PostgresCandidateSourceSink {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -241,6 +323,210 @@ impl PostgresCandidateSourceSink {
             .fetch_one(&self.pool)
             .await
             .map_err(SinkError::from_sqlx)
+    }
+
+    /// Read the exact price ledger/binding identity for a recovery source set.
+    /// This performs no state transition; recovery uses it to keep published
+    /// bindings immutable and to reject conflicting ledger state early.
+    pub async fn inspect_price_raw_batches(
+        &self,
+        entries: &[market_data::ManifestEntry],
+    ) -> Result<Vec<PriceRawRecoveryState>, SinkError> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        let batch_ids = entries
+            .iter()
+            .map(|entry| entry.batch_id.as_uuid())
+            .collect::<Vec<_>>();
+        let ledger_rows: Vec<PriceRawLedgerRow> = sqlx::query_as(
+            "SELECT batch_id, state, reason_code, raw_manifest_sha256,
+                    fetch_mode, entitlement_reference, entitlement_date
+               FROM public.candidate_raw_batch_publications
+              WHERE surface='price' AND batch_id = ANY($1)",
+        )
+        .bind(&batch_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        let binding_rows: Vec<PriceRawBindingRow> = sqlx::query_as(
+            "SELECT binding.batch_id, binding.dataset_version_id,
+                    binding.dataset_id, dataset.version AS dataset_version,
+                    dataset.manifest_sha256, dataset.storage_path,
+                    binding.reused_existing
+               FROM public.candidate_raw_batch_datasets AS binding
+               JOIN public.dataset_versions AS dataset
+                 ON dataset.id = binding.dataset_version_id
+              WHERE binding.surface='price'
+                AND binding.response_kind='bars'
+                AND binding.batch_id = ANY($1)",
+        )
+        .bind(&batch_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+
+        let mut states = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let batch_id = entry.batch_id.as_uuid();
+            let rows = ledger_rows
+                .iter()
+                .filter(|row| row.batch_id == batch_id)
+                .collect::<Vec<_>>();
+            if rows.len() > 1 {
+                return Err(SinkError::Conflict(
+                    "price Raw ledger contains duplicate immutable identities".to_owned(),
+                ));
+            }
+            if let Some(row) = rows.first() {
+                let expected_reference = entry.entitlement_reference.as_deref().unwrap_or("");
+                if row.raw_manifest_sha256 != candidate_raw_manifest_sha256(entry)?
+                    || row.fetch_mode != entry.mode.as_str()
+                    || row.entitlement_reference != expected_reference
+                    || row.entitlement_date != date(entry.date)
+                {
+                    return Err(SinkError::Conflict(
+                        "price Raw ledger identity differs from immutable manifest".to_owned(),
+                    ));
+                }
+            }
+
+            let bindings = binding_rows
+                .iter()
+                .filter(|binding| binding.batch_id == batch_id)
+                .collect::<Vec<_>>();
+            if bindings.len() > 1 {
+                return Err(SinkError::Conflict(
+                    "price Raw batch has conflicting bars bindings".to_owned(),
+                ));
+            }
+            let binding = bindings.first().map(|binding| {
+                if binding.dataset_id != "krx_eod_bars" {
+                    return Err(SinkError::Conflict(
+                        "price Raw bars binding has a noncanonical dataset identity".to_owned(),
+                    ));
+                }
+                Ok(PriceRawRecoveryBinding {
+                    dataset_version_id: binding.dataset_version_id,
+                    dataset_id: binding.dataset_id.clone(),
+                    dataset_version: binding.dataset_version.clone(),
+                    manifest_sha256: binding.manifest_sha256.clone(),
+                    storage_path: binding.storage_path.clone(),
+                    reused_existing: binding.reused_existing,
+                })
+            });
+            let binding = binding.transpose()?;
+            states.push(PriceRawRecoveryState {
+                batch_id,
+                state: rows.first().map(|row| row.state.clone()),
+                reason_code: rows.first().and_then(|row| row.reason_code.clone()),
+                binding,
+            });
+        }
+        Ok(states)
+    }
+
+    /// Read canonical dataset rows, price-publication identity, and every
+    /// immutable Raw binding for the requested generation versions.
+    pub async fn inspect_price_generations(
+        &self,
+        dataset_versions: &[String],
+    ) -> Result<Vec<PriceGenerationRecoveryState>, SinkError> {
+        if dataset_versions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let dataset_rows: Vec<PriceDatasetRow> = sqlx::query_as(
+            "SELECT id AS dataset_version_id, version AS dataset_version,
+                    status, manifest_sha256, storage_path
+               FROM public.dataset_versions
+              WHERE dataset_id='krx_eod_bars' AND version = ANY($1)",
+        )
+        .bind(dataset_versions)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        let dataset_ids = dataset_rows
+            .iter()
+            .map(|row| row.dataset_version_id)
+            .collect::<Vec<_>>();
+        if dataset_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let publication_rows: Vec<PricePublicationIdentityRow> = sqlx::query_as(
+            "SELECT dataset_version_id, dataset_version, manifest_sha256,
+                    source_revision
+               FROM public.candidate_price_publications
+              WHERE dataset_version_id = ANY($1)",
+        )
+        .bind(&dataset_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        let binding_rows: Vec<PriceGenerationBindingRow> = sqlx::query_as(
+            "SELECT binding.dataset_version_id, binding.batch_id, batch.state
+               FROM public.candidate_raw_batch_datasets AS binding
+               JOIN public.candidate_raw_batch_publications AS batch
+                 ON batch.batch_id=binding.batch_id
+                AND batch.surface=binding.surface
+              WHERE binding.surface='price'
+                AND binding.response_kind='bars'
+                AND binding.dataset_version_id = ANY($1)",
+        )
+        .bind(&dataset_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+
+        let mut states = Vec::with_capacity(dataset_rows.len());
+        for row in dataset_rows {
+            let publications = publication_rows
+                .iter()
+                .filter(|publication| publication.dataset_version_id == row.dataset_version_id)
+                .collect::<Vec<_>>();
+            if publications.len() > 1 {
+                return Err(SinkError::Conflict(
+                    "price generation has duplicate publication attestations".to_owned(),
+                ));
+            }
+            let publication_source_revision = publications.first().map(|publication| {
+                if publication.dataset_version != row.dataset_version
+                    || publication.manifest_sha256 != row.manifest_sha256
+                {
+                    return Err(SinkError::Conflict(
+                        "price publication differs from its dataset catalog".to_owned(),
+                    ));
+                }
+                Ok(publication.source_revision.clone())
+            });
+            let publication_source_revision = publication_source_revision.transpose()?;
+
+            let mut bound_batch_ids = BTreeSet::new();
+            let mut published_batch_ids = BTreeSet::new();
+            for binding in binding_rows
+                .iter()
+                .filter(|binding| binding.dataset_version_id == row.dataset_version_id)
+            {
+                if !bound_batch_ids.insert(binding.batch_id) {
+                    return Err(SinkError::Conflict(
+                        "price generation has duplicate Raw binding identities".to_owned(),
+                    ));
+                }
+                if binding.state == "PUBLISHED" {
+                    published_batch_ids.insert(binding.batch_id);
+                }
+            }
+            states.push(PriceGenerationRecoveryState {
+                dataset_version_id: row.dataset_version_id,
+                dataset_version: row.dataset_version,
+                status: row.status,
+                manifest_sha256: row.manifest_sha256,
+                storage_path: row.storage_path,
+                publication_source_revision,
+                bound_batch_ids,
+                published_batch_ids,
+            });
+        }
+        Ok(states)
     }
 
     /// Re-open exactly an entitlement-inactive price Raw block after the
