@@ -19,7 +19,7 @@ use tokio::sync::{Mutex, watch};
 
 const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
-research-worker --calendar-once --date YYYY-MM-DD --source-batch-id UUID
+research-worker --calendar-once --date YYYY-MM-DD (--source-batch-id UUID|--reuse-existing-source)
 research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
 research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD [--existing-source-batch-id UUID]
 research-worker healthcheck
@@ -33,7 +33,10 @@ DATABASE_URL is not used by this worker.
 enum Command {
     Daemon,
     Once(TradingDate),
-    CalendarOnce(TradingDate, domain::BatchId),
+    CalendarOnce(
+        TradingDate,
+        collectors::calendar_bootstrap::CalendarSourceMode,
+    ),
     BackfillSessionDates(Vec<TradingDate>),
     DailyRangeRaw {
         start: TradingDate,
@@ -196,13 +199,9 @@ async fn main() -> ExitCode {
     let target_date = command_target_date(&command);
     let range_raw = matches!(&command, Command::DailyRangeRaw { .. });
     let values = environment_map();
-    if let Command::CalendarOnce(date, source_batch_id) = command {
-        return match collectors::calendar_bootstrap::run_calendar_once(
-            &values,
-            date,
-            source_batch_id,
-        )
-        .await
+    if let Command::CalendarOnce(date, source_mode) = command {
+        return match collectors::calendar_bootstrap::run_calendar_once(&values, date, source_mode)
+            .await
         {
             Ok(summary) => {
                 println!(
@@ -277,7 +276,22 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
             let batch_id = batch_id.parse().map_err(|_| WorkerError::InvalidConfig {
                 key: "--source-batch-id",
             })?;
-            Ok(Command::CalendarOnce(date, batch_id))
+            Ok(Command::CalendarOnce(
+                date,
+                collectors::calendar_bootstrap::CalendarSourceMode::Explicit(batch_id),
+            ))
+        }
+        [mode, date_flag, date, reuse_flag]
+            if mode == "--calendar-once"
+                && date_flag == "--date"
+                && reuse_flag == "--reuse-existing-source" =>
+        {
+            let date = TradingDate::parse(date)
+                .map_err(|_| WorkerError::InvalidConfig { key: "--date" })?;
+            Ok(Command::CalendarOnce(
+                date,
+                collectors::calendar_bootstrap::CalendarSourceMode::ReuseExisting,
+            ))
         }
         [command, recovery_args @ ..] if command == "__research-internal-recover" => {
             parse_internal_recovery_args(recovery_args).map(Command::InternalRecover)
@@ -794,7 +808,13 @@ mod tests {
             "--source-batch-id".to_owned(),
             batch.to_string(),
         ];
-        assert!(matches!(parse_args(&args).unwrap(), Command::CalendarOnce(_, id) if id == batch));
+        assert!(matches!(
+            parse_args(&args).unwrap(),
+            Command::CalendarOnce(
+                _,
+                collectors::calendar_bootstrap::CalendarSourceMode::Explicit(id)
+            ) if id == batch
+        ));
         assert!(parse_args(&args[..3]).is_err());
         let mut invalid = args.clone();
         invalid[4] = "not-a-batch-id".to_owned();
@@ -802,6 +822,45 @@ mod tests {
         invalid = args;
         invalid[2] = "2026-02-30".to_owned();
         assert!(parse_args(&invalid).is_err());
+    }
+
+    #[test]
+    fn calendar_bootstrap_reuse_existing_source_is_explicit_and_mutually_exclusive() {
+        let args = [
+            "--calendar-once".to_owned(),
+            "--date".to_owned(),
+            "2026-09-14".to_owned(),
+            "--reuse-existing-source".to_owned(),
+        ];
+        assert!(matches!(
+            parse_args(&args).unwrap(),
+            Command::CalendarOnce(
+                _,
+                collectors::calendar_bootstrap::CalendarSourceMode::ReuseExisting
+            )
+        ));
+        assert!(
+            parse_args(&[
+                "--calendar-once".to_owned(),
+                "--date".to_owned(),
+                "2026-09-14".to_owned(),
+                "--source-batch-id".to_owned(),
+                domain::BatchId::generate().to_string(),
+                "--reuse-existing-source".to_owned(),
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_args(&[
+                "--calendar-once".to_owned(),
+                "--date".to_owned(),
+                "2026-09-14".to_owned(),
+                "--reuse-existing-source".to_owned(),
+                "--source-batch-id".to_owned(),
+                domain::BatchId::generate().to_string(),
+            ])
+            .is_err()
+        );
     }
 
     #[test]

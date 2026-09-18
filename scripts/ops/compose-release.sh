@@ -23,6 +23,7 @@ scope=release
 refresh_intraday=0
 bootstrap_intraday_calendar=0
 calendar_source_batch_id=
+calendar_reuse_existing_source=0
 release_override=
 release_commit=
 owner_intraday_quotes_mode=off
@@ -64,7 +65,8 @@ usage() {
 Usage: scripts/ops/compose-release.sh
        [--scope infrastructure|backfill|release]
        [--plan|--preflight|--apply] [--refresh-intraday]
-       [--bootstrap-intraday-calendar --calendar-source-batch-id UUID]
+       [--bootstrap-intraday-calendar
+        (--calendar-source-batch-id UUID|--reuse-existing-source)]
 
   --plan       Validate static inputs and print the ordered commands (default).
   --preflight  Validate inputs and Compose expansion without starting services.
@@ -109,6 +111,7 @@ while [ "$#" -gt 0 ]; do
     --apply) mode=apply; shift ;;
     --refresh-intraday) refresh_intraday=1; shift ;;
     --bootstrap-intraday-calendar) bootstrap_intraday_calendar=1; shift ;;
+    --reuse-existing-source) calendar_reuse_existing_source=1; shift ;;
     --calendar-source-batch-id)
       [ "$#" -ge 2 ] || die '--calendar-source-batch-id needs a UUID'
       calendar_source_batch_id=$2
@@ -130,9 +133,14 @@ esac
 [ "$((refresh_intraday + bootstrap_intraday_calendar))" -le 1 ] ||
   die 'select only one intraday operation'
 if [ "$bootstrap_intraday_calendar" -eq 1 ]; then
-  [[ "$calendar_source_batch_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
-    die 'calendar bootstrap requires the exact persistent source batch UUID'
-elif [ -n "$calendar_source_batch_id" ]; then
+  if [ "$calendar_reuse_existing_source" -eq 1 ]; then
+    [ -z "$calendar_source_batch_id" ] ||
+      die 'calendar bootstrap selects either an explicit source UUID or --reuse-existing-source'
+  else
+    [[ "$calendar_source_batch_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
+      die 'calendar bootstrap requires the exact persistent source batch UUID or --reuse-existing-source'
+  fi
+elif [ -n "$calendar_source_batch_id" ] || [ "$calendar_reuse_existing_source" -eq 1 ]; then
   die '--calendar-source-batch-id requires --bootstrap-intraday-calendar'
 fi
 
@@ -407,10 +415,15 @@ EOF
 
 run_intraday_calendar_bootstrap() {
   local calendar_date worker_id worker_status
+  local -a calendar_command=(--calendar-once --date)
   calendar_date=$(TZ=Asia/Seoul date +%F)
   verify_manifest_images
   if [ "$mode" = plan ]; then
-    echo "CALENDAR_BOOTSTRAP_PLAN: date=$calendar_date source_batch_id=$calendar_source_batch_id"
+    if [ "$calendar_reuse_existing_source" -eq 1 ]; then
+      echo "CALENDAR_BOOTSTRAP_PLAN: date=$calendar_date mode=reuse-existing-source"
+    else
+      echo "CALENDAR_BOOTSTRAP_PLAN: date=$calendar_date mode=explicit source_batch_id=$calendar_source_batch_id"
+    fi
     echo 'PLAN_ONLY: validate the current immutable release; require the research daemon stopped; run one calendar-only command with the research_writer role'
     return 0
   fi
@@ -427,8 +440,13 @@ run_intraday_calendar_bootstrap() {
   run_owner_equity_v2_release_gate
   prepare_installed_release_manifest
   compose config --quiet || die 'Compose interpolation/config validation failed'
-  compose run --rm --no-deps research-worker --calendar-once \
-    --date "$calendar_date" --source-batch-id "$calendar_source_batch_id"
+  calendar_command+=("$calendar_date")
+  if [ "$calendar_reuse_existing_source" -eq 1 ]; then
+    calendar_command+=(--reuse-existing-source)
+  else
+    calendar_command+=(--source-batch-id "$calendar_source_batch_id")
+  fi
+  compose run --rm --no-deps research-worker "${calendar_command[@]}"
   echo 'CALENDAR_BOOTSTRAP: PASS (exact-date calendar publication; no EOD curation or quote request)'
 }
 

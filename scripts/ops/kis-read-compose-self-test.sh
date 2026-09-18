@@ -413,6 +413,19 @@ run_refresh "$tmp/calendar-plan.out" bash "$release_root/scripts/ops/compose-rel
 grep -Fq 'CALENDAR_BOOTSTRAP_PLAN:' "$tmp/calendar-plan.out"
 ! grep -Eq '^compose .* (run|up|build|stop)( |$)' "$docker_log"
 : >"$docker_log"
+run_refresh "$tmp/calendar-reuse-plan.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --bootstrap-intraday-calendar --reuse-existing-source --plan
+grep -Fq 'CALENDAR_BOOTSTRAP_PLAN: date=' "$tmp/calendar-reuse-plan.out"
+grep -Fq 'mode=reuse-existing-source' "$tmp/calendar-reuse-plan.out"
+! grep -Eq '^compose .* (run|up|build|stop)( |$)' "$docker_log"
+if run_refresh "$tmp/calendar-conflicting-flags.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --bootstrap-intraday-calendar --calendar-source-batch-id "$calendar_batch" \
+  --reuse-existing-source --plan; then
+  fail 'calendar bootstrap accepted both source-selection modes'
+fi
+grep -Fq 'either an explicit source UUID or --reuse-existing-source' \
+  "$tmp/calendar-conflicting-flags.out"
+: >"$docker_log"
 if run_refresh "$tmp/calendar-running.out" env FAKE_WORKER_STATUS=restarting \
   OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
   bash "$release_root/scripts/ops/compose-release.sh" \
@@ -433,6 +446,22 @@ case "${calendar_runs[0]}" in
   *"$expected_order"*'run --rm --no-deps research-worker --calendar-once --date '*" --source-batch-id $calendar_batch") ;;
   *) fail 'calendar bootstrap did not use the exact immutable calendar-only command' ;;
 esac
+! grep -Eq '^compose .* (up|build|stop|down)( |$)' "$docker_log"
+! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
+
+: >"$docker_log"
+run_refresh "$tmp/calendar-reuse-apply.out" \
+  env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  bash "$release_root/scripts/ops/compose-release.sh" \
+  --bootstrap-intraday-calendar --reuse-existing-source --apply
+grep -Fq 'CALENDAR_BOOTSTRAP: PASS' "$tmp/calendar-reuse-apply.out"
+mapfile -t calendar_reuse_runs < <(grep '^compose .* run ' "$docker_log")
+[ "${#calendar_reuse_runs[@]}" -eq 1 ] || fail 'calendar reuse did not run exactly one command'
+case "${calendar_reuse_runs[0]}" in
+  *"$expected_order"*'run --rm --no-deps research-worker --calendar-once --date '*" --reuse-existing-source") ;;
+  *) fail 'calendar reuse did not use the exact immutable reuse command' ;;
+esac
+! grep -Fq -- '--source-batch-id' <<<"${calendar_reuse_runs[0]}"
 ! grep -Eq '^compose .* (up|build|stop|down)( |$)' "$docker_log"
 ! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
 
