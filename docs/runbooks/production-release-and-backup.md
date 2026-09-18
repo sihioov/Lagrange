@@ -259,6 +259,274 @@ post-start inspected after `--rm`. A mismatch returns failure without printing
 container/environment configuration and without automatically stopping or
 rolling back services.
 
+### Pre-amendment Docker image and daemon gate
+
+The entitlement amendment guard proves the physically resolved installed files,
+protected env, strict manifest, Compose project, and commit tag. It deliberately
+does not call Docker and therefore does not, by itself, prove which image a later
+`db-migrate` `run` will execute. Before either amendment `--check` or `--apply`, run
+the following read-only gate in the same shell that will invoke the amendment.
+`--check` itself invokes `db-migrate`, so the full gate must precede `--check` and
+be rerun immediately before `--apply`. The gate uses bare `docker` exactly as
+`db.sh` does; it must not select a separate daemon with a context-qualified Docker
+invocation.
+
+If both `DOCKER_HOST` and `DOCKER_CONTEXT` are set, stop as ambiguous. If only
+`DOCKER_CONTEXT` is set, preserve and export that exact context. If neither is
+set, resolve `docker context show` once and export the result so later bare
+`docker` calls inherit it. If only `DOCKER_HOST` is set, preserve it unchanged.
+Do not print either endpoint variable or any endpoint credentials. The same-shell
+revalidation below checks the physical current release, selected endpoint,
+daemon, local tag/image ID/revision, and both `db-migrate` Compose resolutions.
+Do not retag, pull, or mutate images, and do not allow concurrent Docker
+operations between a successful revalidation and either action.
+
+```bash
+set -euo pipefail
+
+# `LAGRANGE_RELEASE_ROOT` is a synthetic-fixture seam for the checked-in
+# self-test. Production operators leave it unset; it is not an activation path.
+release_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
+current_link=$release_root/current
+[ -L "$current_link" ]
+release_dir=$(readlink -f -- "$current_link")
+case "$release_dir" in
+  "$release_root"/releases/*) ;;
+  *) echo 'pre-amendment image gate: current link is outside releases' >&2; exit 1 ;;
+esac
+release_commit=${release_dir##*/}
+compose_file=$release_dir/deploy/compose/compose.yml
+env_file=$release_dir/deploy/compose/.env
+manifest=$release_dir/.lagrange-release-manifest
+
+source "$release_dir/scripts/ops/lib/entitlement-amend-installed-release.sh"
+
+pre_amendment_gate_fail() {
+  printf '%s\n' "pre-amendment image gate: $1" >&2
+  return 1
+}
+
+# This repeats the installed-release guard at each action boundary. The guard
+# rereads the protected env and strict manifest, checks the physical current
+# link and entrypoint, and binds db.sh to that same release's Compose inputs.
+pre_amendment_release_revalidate() {
+  local current_release_dir
+  [ -L "$current_link" ] || {
+    pre_amendment_gate_fail 'current link is absent'
+    return 1
+  }
+  current_release_dir=$(readlink -f -- "$current_link") || {
+    pre_amendment_gate_fail 'current link cannot be resolved'
+    return 1
+  }
+  case "$current_release_dir" in
+    "$release_root"/releases/*) ;;
+    *)
+      pre_amendment_gate_fail 'current link is outside releases'
+      return 1
+      ;;
+  esac
+  [ "$current_release_dir" = "$release_dir" ] || {
+    pre_amendment_gate_fail 'current release changed'
+    return 1
+  }
+  entitlement_amend_verify_installed_release \
+    "$release_commit" "$current_link/scripts/ops/provision-entitlement.sh" || {
+    pre_amendment_gate_fail 'installed release identity changed'
+    return 1
+  }
+  [ "${ENTITLEMENT_AMEND_VERIFIED_RELEASE_REVISION:-}" = "$release_commit" ] || {
+    pre_amendment_gate_fail 'installed release revision changed'
+    return 1
+  }
+}
+
+pre_amendment_release_revalidate || exit 1
+
+if [ -n "${DOCKER_HOST:-}" ] && [ -n "${DOCKER_CONTEXT:-}" ]; then
+  echo 'pre-amendment image gate: DOCKER_HOST and DOCKER_CONTEXT are both set' >&2
+  exit 1
+fi
+if [ -n "${DOCKER_HOST:-}" ]; then
+  docker_selection=host
+  docker_host=$DOCKER_HOST
+  export DOCKER_HOST="$docker_host"
+else
+  docker_selection=context
+  docker_context=${DOCKER_CONTEXT:-}
+  if [ -z "$docker_context" ]; then
+    docker_context=$(docker context show) || {
+      echo 'pre-amendment image gate: Docker context cannot be resolved' >&2
+      exit 1
+    }
+  fi
+  [ -n "$docker_context" ] || {
+    echo 'pre-amendment image gate: Docker context is empty' >&2
+    exit 1
+  }
+  export DOCKER_CONTEXT="$docker_context"
+fi
+
+daemon_before=$(docker info --format '{{.ID}}') || {
+  echo 'pre-amendment image gate: Docker daemon cannot be resolved' >&2
+  exit 1
+}
+[ -n "$daemon_before" ] || {
+  echo 'pre-amendment image gate: Docker daemon ID is empty' >&2
+  exit 1
+}
+
+pre_amendment_docker_revalidate() {
+  if [ -n "${DOCKER_HOST:-}" ] && [ -n "${DOCKER_CONTEXT:-}" ]; then
+    echo 'pre-amendment image gate: Docker endpoint overrides became ambiguous' >&2
+    return 1
+  fi
+  if [ "$docker_selection" = host ]; then
+    [ "${DOCKER_HOST:-}" = "$docker_host" ] || {
+      echo 'pre-amendment image gate: Docker host changed' >&2
+      return 1
+    }
+    [ -z "${DOCKER_CONTEXT:-}" ] || {
+      echo 'pre-amendment image gate: Docker context changed' >&2
+      return 1
+    }
+  else
+    [ -z "${DOCKER_HOST:-}" ] || {
+      echo 'pre-amendment image gate: Docker host changed' >&2
+      return 1
+    }
+    [ "${DOCKER_CONTEXT:-}" = "$docker_context" ] || {
+      echo 'pre-amendment image gate: Docker context changed' >&2
+      return 1
+    }
+    current_context=$(docker context show) || {
+      echo 'pre-amendment image gate: Docker context cannot be resolved' >&2
+      return 1
+    }
+    [ "$current_context" = "$docker_context" ] || {
+      echo 'pre-amendment image gate: Docker context changed' >&2
+      return 1
+    }
+  fi
+  daemon_now=$(docker info --format '{{.ID}}') || {
+    echo 'pre-amendment image gate: Docker daemon cannot be resolved' >&2
+    return 1
+  }
+  [ "$daemon_now" = "$daemon_before" ] || {
+    echo 'pre-amendment image gate: Docker daemon changed' >&2
+    return 1
+  }
+}
+
+image_override=$(mktemp /tmp/lagrange-entitlement-image-override.XXXXXX)
+chmod 0600 "$image_override"
+trap 'rm -f -- "$image_override"' EXIT
+
+pre_amendment_image_daemon_gate_revalidate() {
+  local base_db_ref expected_id expected_revision inspected override_db_id ref service
+  pre_amendment_release_revalidate || return 1
+  release_image_manifest_write_compose_override "$image_override" || return 1
+
+  for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
+    ref=${RELEASE_IMAGE_MANIFEST_REFS[$service]}
+    expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]}
+    expected_revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]}
+    pre_amendment_docker_revalidate || return 1
+    inspected=$(docker image inspect \
+      --format '{{.Id}}|{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+      "$ref") || return 1
+    pre_amendment_docker_revalidate || return 1
+    [ "${inspected%%|*}" = "$expected_id" ] || {
+      pre_amendment_gate_fail 'local image ID changed'
+      return 1
+    }
+    [ "${inspected#*|}" = "$expected_revision" ] || {
+      pre_amendment_gate_fail 'local image revision changed'
+      return 1
+    }
+  done
+
+  # This uses the same bare docker-compose selection and guard-exported project
+  # as db.sh. The base configuration must retain the mutable manifest tag.
+  pre_amendment_docker_revalidate || return 1
+  base_db_ref=$(COMPOSE_PROFILES= docker compose \
+    --env-file "$env_file" -f "$compose_file" config --format json |
+    jq -r '.services["db-migrate"].image // empty') || return 1
+  pre_amendment_docker_revalidate || return 1
+  [ "$base_db_ref" = "${RELEASE_IMAGE_MANIFEST_REFS[db-migrate]}" ] || {
+    pre_amendment_gate_fail 'db-migrate base tag changed'
+    return 1
+  }
+
+  # The official override is a separate exact-ID assertion. It does not turn
+  # the mutable-tag check above into immutable image-pin enforcement.
+  pre_amendment_docker_revalidate || return 1
+  override_db_id=$(COMPOSE_PROFILES= docker compose \
+    --env-file "$env_file" -f "$compose_file" -f "$image_override" \
+    config --format json | jq -r '.services["db-migrate"].image // empty') || return 1
+  pre_amendment_docker_revalidate || return 1
+  [ "$override_db_id" = "${RELEASE_IMAGE_MANIFEST_IDS[db-migrate]}" ] || {
+    pre_amendment_gate_fail 'db-migrate exact-ID override changed'
+    return 1
+  }
+}
+
+pre_amendment_image_daemon_gate_revalidate || exit 1
+printf '%s\n' 'PRE_AMENDMENT_IMAGE_DAEMON_GATE: PASS (release identity, db-migrate tag/ID/revision, release override, and daemon unchanged)'
+```
+
+This gate performs no Compose `run`, `up`, migration, amendment, or provider
+call. If the daemon/context, base tag, exact local image ID/revision, or override
+resolution changes, stop and re-run the installed-release preflight. A verified
+mutable tag immediately before an action is not an immutable image pin, and these
+checks cannot make a Docker/image change atomic. The official immutable-release
+workflow and the operational no-mutation boundary remain required.
+
+Keep the same shell and Docker-selection variables alive for the actions. The
+following is a runnable wrapper only after its named shell variables have been
+populated from the approved protected inputs; it deliberately hardcodes no owner
+ID, target ID, document path, or approval revision. The amendment command itself
+validates the exact pins and input-file modes.
+
+```bash
+: "${AMEND_CURRENT_METADATA_FILE:?set the approved current metadata path}"
+: "${AMEND_CURRENT_DOCUMENT_FILE:?set the approved current document path}"
+: "${AMEND_ORIGINAL_METADATA_FILE:?set the approved original metadata path}"
+: "${AMEND_ORIGINAL_DOCUMENT_FILE:?set the approved original document path}"
+: "${AMEND_TARGET_ID:?set the approved entitlement UUID}"
+: "${AMEND_EXPECTED_OLD_MANAGER:?set the approved previous manager UUID}"
+: "${AMEND_CURRENT_OWNER:?set the approved current owner UUID}"
+: "${AMENDMENT_APPROVED_REVISION:?set the approved amendment revision}"
+
+amend_args=(
+  --current-metadata-file "$AMEND_CURRENT_METADATA_FILE"
+  --current-document-file "$AMEND_CURRENT_DOCUMENT_FILE"
+  --original-metadata-file "$AMEND_ORIGINAL_METADATA_FILE"
+  --original-document-file "$AMEND_ORIGINAL_DOCUMENT_FILE"
+  --target-id "$AMEND_TARGET_ID"
+  --expected-old-manager "$AMEND_EXPECTED_OLD_MANAGER"
+  --current-owner "$AMEND_CURRENT_OWNER"
+  --amendment-revision "$AMENDMENT_APPROVED_REVISION"
+  --executing-release-revision "$release_commit"
+  --env-file "$env_file"
+)
+
+pre_amendment_image_daemon_gate_revalidate || exit 1
+"$current_link/scripts/ops/provision-entitlement.sh" amend --check "${amend_args[@]}"
+pre_amendment_image_daemon_gate_revalidate || exit 1
+"$current_link/scripts/ops/provision-entitlement.sh" amend --apply "${amend_args[@]}" \
+  --confirm I_UNDERSTAND_AMEND_ACTIVE_ENTITLEMENT
+```
+
+The checked-in `scripts/qa/pre-amendment-image-gate-self-test.sh` exercises the
+exact fenced gate above against controlled synthetic release inputs and a fake
+bare-Docker command. It covers default/explicit context and lone-host positives;
+ambiguous overrides; host/context/daemon drift; mutable tag ID/revision drift;
+base-tag and exact-override mismatch; and retagging between check and apply
+revalidation. It does not prove a deployed candidate. Real installed-release/
+image-ID/daemon verification remains a coordinator/WP6 prerequisite because this
+candidate is not installed and production access is outside QA scope.
+
 When `OWNER_BETA_ACCESS_MODE=owner_only`, the command runs the installed
 networkless artifact `--approval-check` after validating all twelve manifest image
 IDs and before the first Compose `up`. It accepts only the fixed sanitized

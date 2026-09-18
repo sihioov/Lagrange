@@ -71,6 +71,31 @@ error code를 추가한다.
 `PUBLISHED` 이후 다른 상태가 붙은 conflicting state, 범위 밖 날짜, foreign identity,
 잘못된 error code는 fail-closed로 거부된다. state는 root:root 0600이어야 한다.
 
+## Recovery identity와 권리 범위
+
+재개는 날짜를 먼저 고르는 절차가 아니다. Raw manifest의 정확한
+non-empty `entitlement_reference`를 먼저 읽어 같은 reference끼리만 partition하고,
+서로 다른 reference를 union하거나 alias로 합치지 않는다. 실제 worker 순서는 각
+partition 안에서 날짜별 최신 eligible source를 먼저 고르는 것이다(`retrieved_at`,
+동률이면 `batch_id`). 그 선택이 끝난 뒤에만 `recover_price_partition`가 다음을
+검증한다.
+
+1. 선택된 source set의 provider, fetch mode, instrument/reference identity와
+   selected bars의 실제 첫/마지막 session 및 anchor를 검증한다.
+2. 그 selected `[first_session, last_session]` 전체를 하나의 canonical entitlement가
+   유효하게 덮는지 확인하고, rights state를 다시 열어 검증한다. 권리가 빠졌거나
+   inactive/invalid이거나 full window를 덮지 못하면 해당 partition을 block한다.
+3. canonical dataset ID `krx_eod_bars`와 global Curated generation allocator를
+   유지하고, exact source set/anchor/manifest를 확인한다. reference별 dataset alias,
+   cross-reference generation 또는 서로 다른 rights record를 union해 window를
+   합성하지 않는다. 권리 record가 서로 겹친다는 사실만으로 실패시키지는 않는다.
+
+권리 문서가 갱신되는 경우도 current entitlement row만 exact-current-row CAS로 바꾸고
+하나의 감사 이벤트를 남긴다. 과거 entitlement row, Raw/Curated binding, generation,
+manifest hash와 historical approval은 수정·삭제·재승인하지 않는다. amendment 뒤에도
+선택된 exact-reference partition의 full-window validation과 exact source-set/anchor
+검증을 다시 통과해야 recovery를 계속할 수 있다.
+
 ## 검증
 
 로컬 계약 테스트는 다음 명령으로 실행한다. production env, Docker, PostgreSQL,

@@ -1,5 +1,24 @@
 import { type APIRequestContext, expect, type Locator, type Page, test } from "@playwright/test";
 
+type IntradayQuotesMode = "off" | "owner_only";
+
+type SyntheticIntradayState = {
+  readonly active_consumer_count: number;
+  readonly active_identity_count: number;
+  readonly created_demands: readonly unknown[];
+  readonly demand_posts: number;
+  readonly quote_gets: number;
+};
+
+function intradayQuotesModeFromEnvironment(): IntradayQuotesMode {
+  const configured = process.env["OWNER_INTRADAY_QUOTES_MODE"] ?? "off";
+  if (configured === "off" || configured === "owner_only") return configured;
+  throw new Error(
+    `OWNER_INTRADAY_QUOTES_MODE must be "off" or "owner_only" for e2e tests; received ${JSON.stringify(configured)}`,
+  );
+}
+
+const intradayQuotesMode = intradayQuotesModeFromEnvironment();
 const appOrigin = process.env["PLAYWRIGHT_BASE_URL"] ?? "http://127.0.0.1:33000";
 const syntheticOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
 const membershipsPath = "/api/v1/research/owner-beta/equity-universe-v2/memberships";
@@ -19,6 +38,12 @@ const observedBrowserRequests = new WeakMap<Page, URL[]>();
 async function resetScenario(request: APIRequestContext, scenario: Record<string, unknown>) {
   const response = await request.post(`${syntheticOrigin}/__test/scenario`, { data: scenario });
   expect(response.ok()).toBeTruthy();
+}
+
+async function syntheticIntradayState(request: APIRequestContext): Promise<SyntheticIntradayState> {
+  const response = await request.get(`${syntheticOrigin}/__test/stock-beta/intraday-state`);
+  expect(response.ok(), "synthetic intraday state status").toBeTruthy();
+  return (await response.json()) as SyntheticIntradayState;
 }
 
 function observeBrowserRequests(page: Page) {
@@ -305,9 +330,28 @@ test.describe("provider-free Stock Beta V2", () => {
     await expect(page.getByRole("heading", { name: "Signal snapshot unavailable" })).toBeVisible();
     await expectNoSignalWidgets(page);
     await expect(page.getByLabel("KRX code")).toBeVisible();
-    await expect(page.getByTestId("stock-beta-intraday-disabled")).toHaveText(
-      "Intraday quote collection is not enabled.",
-    );
+    const disabledNotice = page
+      .getByRole("status")
+      .filter({ hasText: "Intraday quote collection is not enabled." });
+    const quoteWidget = page.getByTestId("stock-beta-widget-current-quote");
+    if (intradayQuotesMode === "off") {
+      await expect(disabledNotice).toHaveText("Intraday quote collection is not enabled.");
+      await expect(quoteWidget).toHaveCount(0);
+    } else {
+      await expect(disabledNotice).toHaveCount(0);
+      await expect(quoteWidget).toHaveCount(1);
+      await expect(quoteWidget.getByTestId("stock-beta-current-quote")).toHaveCount(0);
+      await expect(quoteWidget.locator("[data-status-phase]")).toHaveAttribute(
+        "data-status-phase",
+        "idle",
+      );
+    }
+    const intradayState = await syntheticIntradayState(request);
+    expect(intradayState.active_consumer_count).toBe(0);
+    expect(intradayState.active_identity_count).toBe(0);
+    expect(intradayState.created_demands).toEqual([]);
+    expect(intradayState.demand_posts).toBe(0);
+    expect(intradayState.quote_gets).toBe(0);
     await expect(page.locator('[data-terminal-utility-content="stock-beta"]')).toHaveCount(0);
   });
 
@@ -536,7 +580,9 @@ test.describe("provider-free Stock Beta V2", () => {
     });
     await page.goto("/stock-beta");
     await expect(
-      page.getByText("Request failed with typed code OWNER_EQUITY_INTEGRITY_FAILED."),
+      dashboardRegion(page, "Latest V2 signals").getByText(
+        "Request failed with typed code OWNER_EQUITY_INTEGRITY_FAILED.",
+      ),
     ).toBeVisible();
     await expectNoSignalWidgets(page);
     await expect(membershipCards(page)).toHaveCount(31);

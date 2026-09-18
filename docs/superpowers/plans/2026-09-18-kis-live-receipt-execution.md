@@ -130,3 +130,24 @@ These corrections may run concurrently with disjoint files; compiler/DB checks r
 ### Full-schema correction to F1
 
 WP-3CR's actual full-migration test and coordinator inspection of `0039_auth_audit_outbox.up.sql:36-42` disproved WP-4 F1's claimed INSERT denial: existing `migration_owner` SELECT/INSERT policies already support the amendment. No additional permission is needed. The proposed new 0055 restrictive-policy migration is therefore withdrawn before integration; existing auth-audit policies and role behavior must remain unchanged. WP-3CR retains F2/F3 release binding and stable replay corrections plus the complete-migration test proving actual-role execution, append-only behavior, rollback and unchanged role/policy state. Tests must not impose a new denial on audit operations the existing migration role was already intentionally permitted to perform. Repeat WP-4 must correct F1 explicitly and review the remaining actual changes.
+
+## WP-5 browser and operational evidence correction
+
+WP-4 accepted source candidate `025c27d` for integrated QA only. WP-5 completed
+fresh full-schema DB, recovery, build-layout and local Web checks, but full QA
+acceptance remains withheld: the owner-enabled browser matrix has two stale
+mode/empty-state assertions, and the new operational gate test duplicates the
+recipe instead of executing the documented code. Coordinator inspected the
+actual dashboard placement and test sources before deciding the correction.
+
+**WP-5R — intermediate, high confidence, codex/gpt-5.6-terra max.** Escalate one
+model step after repeated QA evidence gaps, preserving effort. Own the two Stock
+Beta browser specs, a narrowly necessary local QA runner, the pre-amendment
+runbook subsection and its provider-free self-test. Assert empty-state safety
+(no identity/demand/quote before READY), retain the complete registration,
+disable and new-generation lifecycle, and run explicit owner-only/off mode
+browser checks against fresh standalone builds. Execute the actual documented
+Docker gate in fixtures; revalidate release, daemon and image identity before
+both amendment actions using the same effective Docker selection. No product,
+provider, production, dependency, migration or permission changes. Root reviews
+results and exact diffs before integration; deployment remains gated.

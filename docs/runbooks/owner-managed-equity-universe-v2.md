@@ -83,6 +83,36 @@ Do not manually update a worker state or bypass the queue/API transition.
 The policy may contain fewer than 100 active members. The 100 value is a hard
 runtime maximum, not an instruction to add 100 instruments in one operation.
 
+### Installed V1 exact-30 recovery
+
+The approved recovery for the installed V1 release makes exactly 30 independent
+Owner API admissions. Submit the first approved instrument as the pilot and wait
+for its own generation, artifact checks, admission, and `READY` state. Only after
+that pilot is `READY` may the remaining 29 instruments be submitted, one at a
+time, with each prior admission reaching its terminal success/failure outcome
+before the next request. This exact count and pilot-first order describe this
+installed V1 recovery; they are not a universal cardinality or ordering rule for
+future V2 onboarding, and they do not raise the policy limit or batch Raw
+evidence identities.
+
+The acceptance script validates the mutation response, including its
+`duplicate_active` boolean, but does not treat that boolean as `READY`: it follows
+the returned membership through the normal lifecycle. An existing `READY`
+membership is preserved; a retryable `FAILED` membership uses the normal retry
+operation; `DISABLED` and non-retryable `FAILED` memberships stop with a typed
+operator/permanent-failure result. If a later admission fails, the script stops
+after the already completed prefix and does not automatically retry or disable
+earlier successes.
+
+V2 onboarding, including this recovery, may reuse existing material when it independently satisfies
+the current V2 identity, generation, entitlement, admission, and Raw/artifact
+contracts through normal validated paths. That lawful reuse does not transfer
+readiness or approval status. Never copy V1 `READY` or approval-registry status or manually assign database
+state. Never blindly import a fixed-30 artifact or generation number into V2;
+each V2 membership must retain its own validated owner-scoped lineage. If this
+installed V1 approved list is not exactly 30 or its pilot does not reach `READY`,
+stop and preserve the typed failure.
+
 ## Daily incremental run
 
 For a previously admitted generation, the runner schedules one deterministic

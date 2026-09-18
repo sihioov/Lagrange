@@ -130,6 +130,27 @@ raises SQLSTATE `55000`. With an empty surface it drops triggers/functions and
 tables in dependency order without `CASCADE`, and migration 0053 can be applied
 again.
 
+### Installed V1 exact-30 recovery and source isolation
+
+The approved recovery for the installed V1 release makes exactly 30 independent
+Owner API admissions: one pilot must complete its own generation, artifact
+checks, admission, and `READY` transition before the remaining 29 admissions
+proceed sequentially. This count and order are scoped to that installed V1
+recovery, not prescribed as a universal cardinality or ordering rule for future
+V2 onboarding, and do not alter the policy maximum or authorize a batch identity.
+
+The V2 acceptance script validates `duplicate_active` as part of each mutation
+contract but follows the returned resource lifecycle rather than treating the
+flag as readiness. It preserves existing `READY`, retries only retryable
+`FAILED`, and stops on `DISABLED` or non-retryable `FAILED`; a later partial
+failure leaves the completed prefix intact without automatically retrying or
+disabling it. V2 work, including this recovery, may reuse existing material that independently
+satisfies the current V2 identity, generation, entitlement, admission, and
+Raw/artifact contracts through normal validated paths. It must not transfer
+`READY`/approval status or blindly import fixed V1 artifacts, generations, or
+manual database state. A local QA result or synthetic fixture does not establish
+that the installed-V1 30-member recovery ran against a real Owner session.
+
 ## Consequences
 
 - The fixed-30 V1 universe remains byte- and behavior-compatible.

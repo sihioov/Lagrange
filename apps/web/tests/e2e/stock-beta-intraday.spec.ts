@@ -1,5 +1,16 @@
 import { type APIRequestContext, expect, type Page, test } from "@playwright/test";
 
+type IntradayQuotesMode = "off" | "owner_only";
+
+function intradayQuotesModeFromEnvironment(): IntradayQuotesMode {
+  const configured = process.env["OWNER_INTRADAY_QUOTES_MODE"] ?? "off";
+  if (configured === "off" || configured === "owner_only") return configured;
+  throw new Error(
+    `OWNER_INTRADAY_QUOTES_MODE must be "off" or "owner_only" for e2e tests; received ${JSON.stringify(configured)}`,
+  );
+}
+
+const intradayQuotesMode = intradayQuotesModeFromEnvironment();
 const appOrigin = process.env["PLAYWRIGHT_BASE_URL"] ?? "http://127.0.0.1:33041";
 const syntheticOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38191";
 const quotePathFragment = "/api/v1/research/owner-beta/equity-universe-v2/instruments/";
@@ -304,6 +315,13 @@ async function waitForActiveSyntheticDemand(
 }
 
 test.describe("provider-free Stock Beta intraday integration", () => {
+  test.beforeAll(() => {
+    expect(
+      intradayQuotesMode,
+      "the intraday suite exercises the explicitly owner_only standalone build",
+    ).toBe("owner_only");
+  });
+
   test.beforeEach(async ({ page }) => {
     observeBrowserRequests(page);
     await installProviderFreeNetworkGuard(page);
@@ -325,6 +343,10 @@ test.describe("provider-free Stock Beta intraday integration", () => {
         stockBetaRows: 1,
         stockBetaIntradayState: "advancing",
       }),
+    );
+    await expect(page.getByTestId("stock-beta-dashboard")).toHaveAttribute(
+      "data-has-snapshot",
+      "false",
     );
     await expectReadyQuote(widget, quoteA);
     await expect(membershipCard(page, "000001.KRX", "READY")).toBeVisible();
@@ -459,8 +481,18 @@ test.describe("provider-free Stock Beta intraday integration", () => {
     await resetScenario(request, ownerScenario({ stockBetaRows: 0, stockBetaSeed: "empty" }));
     await page.goto("/stock-beta");
     await expectStockShell(page);
-    await expect(dashboardQuoteWidget(page)).toHaveCount(0);
     const widget = dashboardQuoteWidget(page);
+    await expect(widget).toHaveCount(1);
+    await expect(widget.getByTestId("stock-beta-current-quote")).toHaveCount(0);
+    await expect(quoteStatus(widget)).toHaveAttribute("data-status-phase", "idle");
+    const emptyState = await syntheticState(request);
+    expect(emptyState.active_consumer_count).toBe(0);
+    expect(emptyState.active_identity_count).toBe(0);
+    expect(emptyState.active_identity_keys).toEqual([]);
+    expect(emptyState.created_demands).toEqual([]);
+    expect(emptyState.demand_posts).toBe(0);
+    expect(emptyState.quote_gets).toBe(0);
+    expect(emptyState.quote_gets_by_instrument).toEqual({});
     await page.getByLabel("KRX code").fill("005930");
     await page.getByRole("button", { name: "Add instrument" }).click();
     const firstCard = membershipCard(page, "005930.KRX");

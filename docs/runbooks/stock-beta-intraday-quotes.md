@@ -1,6 +1,6 @@
 # Stock Beta intraday current quotes
 
-Status (2026-09-14): implementation and fixture acceptance; production activation is not yet verified.
+Status (2026-09-19): source review and integrated local QA passed; production activation is not yet verified.
 The owner authorized deployment, owner-only polling, and the operational session-artifact
 contract in this work session. This runbook records the implementation, not a production health claim. The implementation is bounded by the [intraday quote contract](../superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md)
 and the checked-in source linked below.
@@ -86,8 +86,13 @@ Intraday eligibility requires two independent proofs:
 1. The exact current KST date in `trading_calendars` and immutable
    `trading_calendar_versions`, with exchange `KRX`, timezone `Asia/Seoul`, matching batch and
    hash, source `kis`, source version `kis-chk-holiday-v1:schema-1`, and retrieval no older than
-   `36h`. The quote loop does not call or paginate `chk-holiday`. The calendar-only path below
-   publishes this proof independently of EOD; same-day EOD reuse remains deferred. See the [calendar and identity repository](../../crates/job-queue/src/owner_equity_v2/intraday.rs#L1234-L1304)
+   `36h`. The quote loop does not call or paginate `chk-holiday`. Calendar-only publication and
+   current-day EOD use one durable calendar acquisition under the same day lock: the explicit
+   `--calendar-source-batch-id <UUID>` mode either owns that acquisition or replays that exact
+   UUID, while `--reuse-existing-source` is reuse-only and never captures. Reuse validates the
+   exact provider/market/date/mode/entitlement, nonfuture same-day retrieval time, one calendar
+   file, no continuation/copy lineage, and the stored bytes/hash before publishing. See the
+   [calendar and identity repository](../../crates/job-queue/src/owner_equity_v2/intraday.rs#L1234-L1304)
    and [calendar lineage checks](../../crates/job-queue/src/owner_equity_v2/intraday.rs#L3002-L3065).
 2. A provider-free session artifact. With `OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=release_v1`
    (default), use the existing commit-pinned
@@ -106,8 +111,8 @@ stale, malformed, unpinned, conflicting, or otherwise invalid/out-of-contract ev
 `UNKNOWN` and zero provider calls. Valid proof outside the trading interval is not invalid
 evidence: it yields `CLOSED`, with zero quote calls. The checked-in [window artifact](../../configs/market-hours/krx-intraday-session-windows-v1.json#L1-L6)
 has intentionally empty `entries`; it is an empty/default-off artifact, not evidence for a live
-date. Invalid session evidence does not enable quote production. The calendar bootstrap introduces the
-explicit EOD recapture stop described below.
+date. Invalid session evidence does not enable quote production. The calendar bootstrap and EOD
+path enforce the single-acquisition/reuse contract described below.
 
 The default configuration is explicit and conservative:
 
@@ -200,17 +205,31 @@ alternate release path. Refresh verifies current API/runner image IDs and revisi
 recreating only those two services sequentially, without building or starting other services.
 
 The [calendar bootstrap](../../data-pipelines/collectors/src/calendar_bootstrap.rs) consumes a
-durable date attempt before the sole `chk-holiday` GET. It validates and commits Raw, derives a
-canonical single-file calendar publication, and publishes the exact Raw lineage. A repeat can
-reuse only a committed source with the matching day claim. An interrupted attempt without Raw
-is indeterminate and never triggers recapture. General EOD publication still requires four files.
+durable date attempt before the sole `chk-holiday` GET. It validates and commits one dedicated
+calendar Raw source, derives a canonical single-file calendar publication, and publishes the
+exact Raw lineage. The current-day EOD path calls the same locked source resolver. When that
+source exists, EOD fetches only bars, reference, and corporate-actions and copies the calendar
+file into the EOD batch with its original source UUID, request metadata, bytes/hash, and
+retrieval time. The copied-file lineage is explicit; the calendar provider call is not repeated.
+General EOD publication still requires all four files.
 
-**Same-day EOD reuse is not implemented in this release.** A bootstrap attempt or committed
-calendar makes full EOD stop before provider calls with
-`KIS_CALENDAR_BOOTSTRAP_EOD_REUSE_REQUIRED`. Keep global research and its daily timer stopped
-for this manual current-quote path. Future EOD integration must reuse the committed calendar
-with exact lineage; do not remove the stop or re-fetch to work around it. The existing global
-mixed-reference curation failure is also separate unfinished work.
+The two operator modes are intentionally distinct:
+
+- `--calendar-source-batch-id <UUID>` is the explicit acquisition/replay mode. A new UUID may
+  claim and capture only when no source or claim exists for that KST date; a matching committed
+  source and claim are replayed, and any mismatch fails closed.
+- `--reuse-existing-source` is reuse-only. It requires the durable day claim and committed
+  calendar source to resolve to the same UUID, then revalidates the immutable source and
+  republishes it without a KIS call or recapture.
+
+Claim-only state is indeterminate (`CALENDAR_ATTEMPT_INDETERMINATE`), a missing source in reuse
+mode is `CALENDAR_EXISTING_SOURCE_MISSING`, and UUID/source mismatches, multiple sources,
+invalid lineage, or malformed Raw are typed failures such as
+`CALENDAR_ATTEMPT_ID_CONFLICT`, `CALENDAR_MULTIPLE_SOURCES`, and
+`CALENDAR_SOURCE_IDENTITY_INVALID`. An interrupted or failed attempt never triggers a second
+calendar acquisition; the operator must reconcile the exact existing source/claim or fail the
+run. No mode may recapture to work around an indeterminate state. The research daemon and timer
+still follow the stop/absence precondition for the standalone calendar command.
 
 A real Owner-added READY membership and matching generation/admission remain required. An
 analysis snapshot is no longer required for the dashboard current-quote widget. If a snapshot
@@ -267,3 +286,11 @@ host-clock procedure is authorized by this runbook.
 
 Actual engine merge/interpolation, all-reader invocation coverage, same-day evidence,
 npm regeneration, and runtime/live semantics remain separate deployment/activation gates.
+
+Elapsed cache quiescence is not proof that provider attempts stopped. After an Owner demand is
+released, the runtime producer ledger remains the required operational check: inspect the
+owner-scoped producer lease/fence and heartbeat state together with the cache's last-attempt
+fields, and establish that no lease or attempt began after the demand release. A quiet cache,
+an expired cache age, or an unchanged quote version alone cannot establish provider-attempt
+quiescence. Record only the sanitized state/result; never copy token, credential, request, or
+provider-response contents into the evidence.

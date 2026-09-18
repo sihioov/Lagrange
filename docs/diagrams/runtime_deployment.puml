@@ -6,6 +6,8 @@
 ' WP6-C2a source delta 2026-09-09: intraday code/cache topology and
 ' explicit preparation overlay only; no runtime activation is claimed.
 ' 2026-09-14: operational day proof and calendar-only bootstrap; activation unverified.
+' 2026-09-19: same-day calendar-source reuse and recovery evidence accepted;
+' installed release/image/daemon and live activation remain unverified.
 ' 2026-09-11: release wrapper conditionally selects the fixed shared overlay;
 ' Web receives server-only mode. Source wiring is not a deployment claim.
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
@@ -77,7 +79,7 @@ package "INTRADAY OVERLAY — SHARED READ + OPERATIONAL DAY PROOF\ncompose.intra
   folder "Operational day proof\n/run/lagrange/intraday-session-windows\nactivation.json + immutable windows-<sha>.json\nroot protected; read-only" as operational_windows
 }
 
-' evidence: deploy/compose/compose.intraday.yml:3-99; scripts/ops/lib/kis-read-compose.sh:97-121
+' evidence: deploy/compose/compose.intraday.yml:3-121; scripts/ops/lib/kis-read-compose.sh:97-121
 note right of kis_coordination
   Five credentialed readers share one coordination bind.
   API, Web, and materializer have no coordination bind.
@@ -86,14 +88,15 @@ note right of kis_coordination
   contents never enter diagnostics or diagram evidence.
 end note
 
-' evidence: deploy/compose/compose.intraday-operational.yml:4-42; scripts/ops/install-intraday-session-window.py:1-8
+' evidence: deploy/compose/compose.intraday-operational.yml:4-35; scripts/ops/install-intraday-session-window.py:1-8
 note right of operational_windows
   Operational proof: three read-only binds (research/API/oev2).
   Manual same-day evidence install; no automated KRX fetch.
   The legacy commit-pinned artifact remains the default.
-  Calendar-only publication requires stopped research daemon.
-  Same-day full EOD reuse is deferred and fails closed.
-  Source wiring only; deployment is not yet verified.
+  Calendar-only publication has explicit UUID and --reuse-existing-source modes.
+  Current-day EOD reuses the committed calendar source once, preserving its
+  UUID, bytes/hash, request metadata, and retrieval time; reuse never recaptures.
+  Source wiring only; installed release and deployment are not yet verified.
 end note
 
 ' ---------------- Edge / web ----------------
@@ -145,14 +148,22 @@ oneshots --> curated : ownership fence
 
 ' ---------------- research ingestion ----------------
 
-' evidence: compose.yml:580-581 (KIS_APP_KEY_FILE/SECRET_FILE secrets); crates/market-data/src/providers/kis.rs:59-63 (DAILY_BARS_PATH, CALENDAR_PATH request paths); AGENTS.md KIS read-only allowlist
+' evidence: compose.yml:580-581 (KIS_APP_KEY_FILE/SECRET_FILE secrets); crates/market-data/src/providers/kis.rs:59-63 (DAILY_BARS_PATH, CALENDAR_PATH request paths); data-pipelines/collectors/src/pipeline.rs:689-820 (shared daily calendar source); crates/market-data/src/ingest.rs:218-356 (same-day EOD calendar reuse); AGENTS.md KIS read-only allowlist
 research --> kis : GET daily bars, quotes,\nchk-holiday, KSD actions
-' evidence: compose.yml:599 (raw rw mount); data-pipelines/collectors/src/worker.rs:984 (RawStore::new)
+' evidence: compose.yml:599 (raw rw mount); data-pipelines/collectors/src/worker.rs:986-988 (RawStore::new)
 research --> raw : immutable Raw batches\n(hash-committed)
-' evidence: compose.yml:600 (curated mount); data-pipelines/collectors/src/worker.rs:2659 (CurateStore::new)
+' evidence: compose.yml:600 (curated mount); data-pipelines/collectors/src/worker.rs:2689-2697 (CurateStore::new in recovery)
 research --> curated : curated Parquet bars
-' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:162-172; data-pipelines/collectors/src/sink.rs:215-234,713,780,966; compose.yml:575-579 (DB_USER research_writer); data-pipelines/collectors/src/sink.rs:713,780,966 (INSERT data_batches, trading_calendar_versions, trading_calendars); candidate_sink.rs:389 (SECURITY DEFINER begin_candidate_raw_batch)
+' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:105-120,219-239; data-pipelines/collectors/src/sink.rs:213-251; data-pipelines/collectors/src/worker.rs:2689-3100 (partitioned recovery, exact-generation replay, and publication); data-pipelines/collectors/src/candidate_sink.rs:308-355,431-479,537-579,865-1000 (rights, ledger/generation inspection, amendment revalidation, and price publication); compose.yml:575-579 (DB_USER research_writer)
 research --> pg : catalog + calendar-only publication\n(research_writer,\nSECURITY DEFINER procs)
+
+' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:236-280; scripts/ops/lib/release-image-manifest.sh:323-347
+note right of oneshots
+  Entitlement amendment is an operator-only db-migrate path. The installed
+  release guard binds files/env/manifest/project/commit; the pre-amendment
+  image/daemon gate separately binds the db-migrate tag to its exact image ID
+  and unchanged Docker daemon. No deployed amendment is claimed here.
+end note
 
 ' ---------------- recommendation pipeline ----------------
 
@@ -223,7 +234,7 @@ intraday_windows ..> api : read-only window bind\n(2 of 2; mode/hash settings)
 operational_windows ..> research : ro (explicit calendar-only command)
 ' evidence: deploy/compose/compose.intraday-operational.yml:16-28
 operational_windows ..> api : ro (operational_v1)
-' evidence: deploy/compose/compose.intraday-operational.yml:30-42
+' evidence: deploy/compose/compose.intraday-operational.yml:30-35
 operational_windows ..> oev2 : ro (operational_v1)
 
 ' evidence: compose.yml:653-654,700-701,750-751 (KIS secrets), 668-669,715-716,766-767 (range-raw-egress net)

@@ -5,6 +5,8 @@
 ' WP6-C2a source delta 2026-09-09: integrated intraday topology only;
 ' runtime remains default-off and unactivated. Existing EOD/chart/Raw/
 ' Curated edges remain separate from the cache-only intraday path.
+' 2026-09-19: accepted calendar-source reuse and partitioned recovery evidence;
+' live activation remains unverified.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -193,7 +195,7 @@ market_data --> opendart_client
 ' evidence: crates/market-data/src/providers/fsc_krx_listed.rs:17,36 (use data_go_client::{..})
 market_data --> data_go_client
 
-' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:7-13,145-162; data-pipelines/collectors/src/worker.rs:24 (use market_data::contract), worker.rs:984 (RawStore::new), worker.rs:2659 (CurateStore::new); data-pipelines/collectors/Cargo.toml:9; data-pipelines/collectors/src/intraday_quotes.rs:17,496-516
+' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:1-15,97-120,219-239; data-pipelines/collectors/src/worker.rs:24-40,2587-2607,986-988,2689-2697; data-pipelines/collectors/Cargo.toml:9; data-pipelines/collectors/src/intraday_quotes.rs:17,496-516
 collectors --> market_data : EOD stores + calendar-only publication\n+ intraday typed parser
 ' evidence: data-pipelines/collectors/src/stock_price_beta_materialize.rs:9 (use factor_engine::{..})
 collectors --> factor_engine

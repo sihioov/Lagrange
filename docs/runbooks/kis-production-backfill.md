@@ -263,12 +263,25 @@ Stage 3 `kis-daily-range` Raw를 이 단계로 보내는 wiring은 아직 없으
 aware normalizer와 canonical per-session lineage가 승인되기 전까지는 실행할 수
 없다.
 
+Recovery는 date-first가 아니다. 먼저 각 eligible Raw delivery의 정확한 non-empty
+`entitlement_reference`를 읽어 reference별로 partition하고, reference가 다른 source를
+union하거나 alias로 합치지 않는다. 각 partition 안에서 먼저 날짜별 최신 eligible
+source를 선택한다(`retrieved_at`, 동률이면 `batch_id`). 그 selected source set에 대해
+그 다음 provider/fetch-mode identity, 실제 첫/마지막 session과 anchor를 검증하고,
+선택된 전체 `[first_session, last_session]`을 하나의 유효한 entitlement가 덮는지
+검증한다. rights record의 단순한 겹침은 실패 조건이 아니며, 권리가 빠졌거나 inactive/
+invalid이거나 full window를 덮지 못한 경우에만 fail closed한다. 최신 날짜 선택이
+partition 경계를 넘거나 다른 reference의 source를 끌어오면 역시 fail closed한다.
+
 전체 Raw/Curated manifest recovery는 range 시작에 한 번 수행한다. 신규 날짜마다
-전체 manifest를 다시 훑지 않으며, range가 끝날 때 cumulative Curated generation을
-한 번 생성한다. 마지막 날짜의 canonical event는 이 최종 Curated 단계까지 성공한
-뒤에만 출력하므로, 최종 단계 실패도 마지막 날짜가 pending인 재실행으로 반드시
-수렴한다. 중간 실패 뒤의 재실행은 시작 recovery가 앞서 완료된 날짜의 cumulative
-상태를 복구한다.
+전체 manifest를 다시 훑지 않으며, range가 끝날 때까지 canonical dataset ID
+`krx_eod_bars`의 각 reference partition에 필요한 cumulative Curated generation을
+global version allocator로 생성한다. reference별 dataset alias나 cross-reference
+generation을 만들지 않고, generation마다 exact source set, anchor, Raw/Curated
+manifest와 global version을 보존한다. 마지막 날짜의 canonical event는 이 최종 Curated
+단계까지 성공한 뒤에만 출력하므로, 최종 단계 실패도 마지막 날짜가 pending인
+재실행으로 반드시 수렴한다. 중간 실패 뒤의 재실행은 시작 recovery가 앞서 완료된
+날짜의 cumulative 상태를 복구한다.
 
 각 날짜의 승인 조건은 다음 네 단계가 모두 확인되는 것이다.
 
@@ -283,6 +296,15 @@ aware normalizer와 canonical per-session lineage가 승인되기 전까지는 �
 4. Raw/normalized manifest와 DB row count/hash를 별도 승인 기록에 남긴 뒤,
    immutable curated generation을 만들고 그 generation의 manifest SHA-256을
    pin한다.
+
+Entitlement amendment는 이 recovery identity를 바꾸지 않는다. 승인된 도구는 exact
+current entitlement row만 current-row CAS로 갱신하고 하나의 append-only audit event를
+남긴다. 기존 entitlement row, Raw/Curated binding, generation, manifest hash와
+historical approval은 보존한다. amendment 뒤에는 각 exact-reference partition의 full
+rights window를 다시 검증해야 하며, 검증하지 못한 partition은 `BLOCKED`로 남긴다.
+새 reference를 기존 reference의 alias로 취급하거나, 서로 다른 source set/anchor 또는
+rights record를 합쳐 빈 권리 범위를 메우거나 과거 승인을 재작성하는 것은 허용하지
+않는다.
 
 ## 3. 후보 데이터 백필 (현재는 계획만)
 
