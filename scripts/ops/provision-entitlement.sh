@@ -6,6 +6,7 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 source "$script_dir/lib/db.sh"
+source "$script_dir/lib/entitlement-amend.sh"
 
 action=register
 mode=plan
@@ -16,6 +17,15 @@ entitlement_id=
 activation_date=
 confirmation=
 env_file=${LAGRANGE_ENV_FILE:-}
+current_metadata_file=
+current_document_file=
+original_metadata_file=
+original_document_file=
+amend_target_id=
+amend_old_manager=
+amend_current_owner=
+amendment_revision=
+executing_release_revision=
 
 usage() {
   cat <<'USAGE'
@@ -26,6 +36,13 @@ Usage:
   provision-entitlement.sh activate [--plan|--check|--apply]
     --entitlement-id DB_UUID --managed-by OWNER_UUID --activation-date YYYY-MM-DD
     [--env-file PATH]
+  provision-entitlement.sh amend [--plan|--check|--apply]
+    --current-metadata-file PATH --current-document-file PATH
+    --original-metadata-file PATH --original-document-file PATH
+    --target-id DB_UUID --expected-old-manager OWNER_UUID
+    --current-owner OWNER_UUID --amendment-revision GIT_REVISION
+    --executing-release-revision GIT_REVISION [--env-file PATH]
+    [--confirm I_UNDERSTAND_AMEND_ACTIVE_ENTITLEMENT]
 
 Default: register --plan. Registration creates only PENDING. ACTIVE is a
 separate explicit operation. No KIS, account, order, or provider call occurs.
@@ -39,7 +56,7 @@ blocked() { echo "BLOCKED_EXTERNAL: entitlement: $*" >&2; exit 2; }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    register|activate) action=$1; shift ;;
+    register|activate|amend) action=$1; shift ;;
     --plan) mode=plan; shift ;;
     --check) mode=check; shift ;;
     --apply) mode=apply; shift ;;
@@ -48,6 +65,15 @@ while [ "$#" -gt 0 ]; do
     --managed-by) [ "$#" -ge 2 ] || die '--managed-by needs a UUID'; managed_by=$2; shift 2 ;;
     --entitlement-id) [ "$#" -ge 2 ] || die '--entitlement-id needs a UUID'; entitlement_id=$2; shift 2 ;;
     --activation-date) [ "$#" -ge 2 ] || die '--activation-date needs a date'; activation_date=$2; shift 2 ;;
+    --current-metadata-file) [ "$#" -ge 2 ] || die '--current-metadata-file needs a path'; current_metadata_file=$2; shift 2 ;;
+    --current-document-file) [ "$#" -ge 2 ] || die '--current-document-file needs a path'; current_document_file=$2; shift 2 ;;
+    --original-metadata-file) [ "$#" -ge 2 ] || die '--original-metadata-file needs a path'; original_metadata_file=$2; shift 2 ;;
+    --original-document-file) [ "$#" -ge 2 ] || die '--original-document-file needs a path'; original_document_file=$2; shift 2 ;;
+    --target-id|--expected-entitlement-id) [ "$#" -ge 2 ] || die '--target-id needs a UUID'; amend_target_id=$2; shift 2 ;;
+    --expected-old-manager|--expected-old-manager-uuid) [ "$#" -ge 2 ] || die '--expected-old-manager needs a UUID'; amend_old_manager=$2; shift 2 ;;
+    --current-owner|--current-owner-uuid) [ "$#" -ge 2 ] || die '--current-owner needs a UUID'; amend_current_owner=$2; shift 2 ;;
+    --amendment-revision|--approved-amendment-revision) [ "$#" -ge 2 ] || die '--amendment-revision needs a Git revision'; amendment_revision=$2; shift 2 ;;
+    --executing-release-revision|--accepted-release-revision) [ "$#" -ge 2 ] || die '--executing-release-revision needs a Git revision'; executing_release_revision=$2; shift 2 ;;
     --env-file) [ "$#" -ge 2 ] || die '--env-file needs a path'; env_file=$2; shift 2 ;;
     --confirm) [ "$#" -ge 2 ] || die '--confirm needs a value'; confirmation=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -57,11 +83,28 @@ done
 
 [ -z "$env_file" ] || export LAGRANGE_ENV_FILE="$env_file"
 
-[ "$action" = register ] || [ "$action" = activate ] || die 'action must be register or activate'
+[ "$action" = register ] || [ "$action" = activate ] || [ "$action" = amend ] || die 'action must be register, activate, or amend'
 [ "$mode" = plan ] || [ "$mode" = check ] || [ "$mode" = apply ] || die 'invalid mode'
 [ "$mode" != apply ] || [ "$(id -u)" -eq 0 ] || die '--apply must run as root'
 command -v jq >/dev/null 2>&1 || die 'jq is required'
 command -v sha256sum >/dev/null 2>&1 || die 'sha256sum is required'
+
+if [ "$action" = amend ]; then
+  entitlement_amend_main \
+    --mode "$mode" \
+    --current-metadata-file "$current_metadata_file" \
+    --current-document-file "$current_document_file" \
+    --original-metadata-file "$original_metadata_file" \
+    --original-document-file "$original_document_file" \
+    --target-id "$amend_target_id" \
+    --expected-old-manager "$amend_old_manager" \
+    --current-owner "$amend_current_owner" \
+    --amendment-revision "$amendment_revision" \
+    --executing-release-revision "$executing_release_revision" \
+    --env-file "$env_file" \
+    --confirm "$confirmation"
+  exit $?
+fi
 
 valid_uuid() {
   [[ "$1" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]

@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "$0")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 entitlement="$repo_root/scripts/ops/provision-entitlement.sh"
+entitlement_amend="$repo_root/scripts/ops/lib/entitlement-amend.sh"
 dataset="$repo_root/scripts/ops/register-dataset-version.sh"
 db_helper="$repo_root/scripts/ops/lib/db.sh"
 fail() { echo "OPERATOR_ATTESTATION_SELF_TEST: FAIL: $*" >&2; exit 1; }
@@ -11,7 +12,17 @@ tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 
 [ -x "$entitlement" ] || fail "entitlement helper is not executable"
+[ -x "$entitlement_amend" ] || fail "entitlement amendment helper is not executable"
 [ -x "$dataset" ] || fail "dataset helper is not executable"
+for shell_script in "$entitlement" "$entitlement_amend" "$0"; do
+  bash -n "$shell_script" || fail "shell syntax failed: $(basename "$shell_script")"
+done
+grep -Fq 'provision-entitlement.sh amend [--plan|--check|--apply]' "$entitlement" || fail 'amend mode is not exposed by the entitlement helper'
+grep -Fq 'BEGIN READ ONLY;' "$entitlement_amend" || fail 'amend check is not read-only'
+grep -Fq "SET LOCAL lock_timeout = '5s';" "$entitlement_amend" || fail 'amend lock timeout is not pinned'
+grep -Fq "SET LOCAL statement_timeout = '15s';" "$entitlement_amend" || fail 'amend statement timeout is not pinned'
+grep -Fq "I_UNDERSTAND_AMEND_ACTIVE_ENTITLEMENT" "$entitlement_amend" || fail 'amend confirmation guard is missing'
+grep -Fq "entitlement.approved_document.amended" "$entitlement_amend" || fail 'amend audit action is missing'
 grep -Fq 'run --rm --no-deps --entrypoint /bin/sh db-migrate' "$db_helper" || fail 'DB helper must use private db-migrate Compose image'
 ! grep -Fq '127.0.0.1' "$db_helper" || fail 'DB helper must not use a host PostgreSQL address'
 grep -Fq 'export PGPASSWORD="$(cat "$DB_PASSWORD_FILE")"' "$db_helper" || fail 'container secret handoff is missing'
@@ -90,6 +101,113 @@ chmod 0600 "$metadata"
 plan_output=$("$entitlement" register --plan --metadata-file "$metadata" --document-file "$doc" --managed-by 00000000-0000-4000-8000-000000000001 2>&1) || fail "entitlement plan failed: $plan_output"
 grep -Fq 'status=PENDING' <<<"$plan_output" || fail 'entitlement plan did not remain PENDING'
 ! grep -Fq 'operator-controlled rights fixture' <<<"$plan_output" || fail 'entitlement plan leaked document content'
+
+# The amendment path accepts only protected, byte-exact copies of the two
+# approved Git pairs.  These copies are disposable test inputs; the checked-in
+# source files are never chmodded or edited.
+amend_fixture="$tmp/entitlement-amend"
+mkdir -p "$amend_fixture"
+git show cdaffe6b:configs/data-rights/kis.entitlement.json >"$amend_fixture/original-metadata.json"
+git show cdaffe6b:docs/decisions/0005-kis-personal-use-entitlement.md >"$amend_fixture/original-document.md"
+git show 91a4ff68:configs/data-rights/kis.entitlement.json >"$amend_fixture/current-metadata.json"
+git show 91a4ff68:docs/decisions/0005-kis-personal-use-entitlement.md >"$amend_fixture/current-document.md"
+chmod 0600 "$amend_fixture"/*
+amend_args=(
+  amend --plan
+  --current-metadata-file "$amend_fixture/current-metadata.json"
+  --current-document-file "$amend_fixture/current-document.md"
+  --original-metadata-file "$amend_fixture/original-metadata.json"
+  --original-document-file "$amend_fixture/original-document.md"
+  --target-id 00000000-0000-4000-8000-000000000011
+  --expected-old-manager 00000000-0000-4000-8000-000000000012
+  --current-owner 00000000-0000-4000-8000-000000000013
+  --amendment-revision 91a4ff68
+  --executing-release-revision 57f34879eb93ac0f8723d64b701dfb3ee19302e9
+)
+amend_plan=$(
+  "$entitlement" "${amend_args[@]}" 2>"$tmp/amend-plan.err"
+) || fail 'valid amendment plan failed'
+grep -Fq 'ENTITLEMENT_AMEND_PLAN: PASS metadata_pairs=2 documents=2 database_queries=0 mutations=0' <<<"$amend_plan" ||
+  fail 'amendment plan did not report typed counts'
+! grep -Fq 'repo://docs/decisions/0005-kis-personal-use-entitlement.md' <<<"$amend_plan$(<"$tmp/amend-plan.err")" ||
+  fail 'amendment plan leaked the protected reference'
+amend_plan_all="$amend_plan$(<"$tmp/amend-plan.err")"
+! grep -Eq '[0-9a-f]{64}|00000000-0000-4000-8000-00000000001[123]' <<<"$amend_plan_all" ||
+  fail 'amendment plan leaked a protected digest or UUID'
+
+cp "$amend_fixture/current-metadata.json" "$amend_fixture/forged-metadata.json"
+jq '.effective_from = "2016-08-30"' "$amend_fixture/forged-metadata.json" >"$tmp/forged-metadata.json"
+chmod 0600 "$tmp/forged-metadata.json"
+if "$entitlement" amend --plan \
+    --current-metadata-file "$tmp/forged-metadata.json" \
+    --current-document-file "$amend_fixture/current-document.md" \
+    --original-metadata-file "$amend_fixture/original-metadata.json" \
+    --original-document-file "$amend_fixture/original-document.md" \
+    --target-id 00000000-0000-4000-8000-000000000011 \
+    --expected-old-manager 00000000-0000-4000-8000-000000000012 \
+    --current-owner 00000000-0000-4000-8000-000000000013 \
+    --amendment-revision 91a4ff68 \
+    --executing-release-revision 57f34879eb93ac0f8723d64b701dfb3ee19302e9 \
+    >"$tmp/forged.out" 2>"$tmp/forged.err"; then
+  fail 'forged amendment metadata unexpectedly passed'
+fi
+! grep -Eq '[0-9a-f]{64}|repo://|00000000-0000-4000-8000-00000000001[123]' "$tmp/forged.out" "$tmp/forged.err" ||
+  fail 'forged amendment failure leaked protected values'
+
+ln -s "$amend_fixture/current-metadata.json" "$amend_fixture/current-metadata-link.json"
+if "$entitlement" amend --plan \
+    --current-metadata-file "$amend_fixture/current-metadata-link.json" \
+    --current-document-file "$amend_fixture/current-document.md" \
+    --original-metadata-file "$amend_fixture/original-metadata.json" \
+    --original-document-file "$amend_fixture/original-document.md" \
+    --target-id 00000000-0000-4000-8000-000000000011 \
+    --expected-old-manager 00000000-0000-4000-8000-000000000012 \
+    --current-owner 00000000-0000-4000-8000-000000000013 \
+    --amendment-revision 91a4ff68 \
+    --executing-release-revision 57f34879eb93ac0f8723d64b701dfb3ee19302e9 \
+    >"$tmp/link.out" 2>"$tmp/link.err"; then
+  fail 'symlinked amendment input unexpectedly passed'
+fi
+
+chmod 0644 "$amend_fixture/current-document.md"
+if "$entitlement" "${amend_args[@]}" >"$tmp/mode.out" 2>"$tmp/mode.err"; then
+  fail '0644 amendment input unexpectedly passed'
+fi
+chmod 0600 "$amend_fixture/current-document.md"
+
+if [ "$(id -u)" -eq 0 ]; then
+  if "$entitlement" amend --apply \
+      --current-metadata-file "$amend_fixture/current-metadata.json" \
+      --current-document-file "$amend_fixture/current-document.md" \
+      --original-metadata-file "$amend_fixture/original-metadata.json" \
+      --original-document-file "$amend_fixture/original-document.md" \
+      --target-id 00000000-0000-4000-8000-000000000011 \
+      --expected-old-manager 00000000-0000-4000-8000-000000000012 \
+      --current-owner 00000000-0000-4000-8000-000000000013 \
+      --amendment-revision 91a4ff68 \
+      --executing-release-revision 57f34879eb93ac0f8723d64b701dfb3ee19302e9 \
+      --confirm WRONG >"$tmp/amend-confirm.out" 2>&1; then
+    fail 'amendment apply accepted incorrect confirmation'
+  fi
+  grep -Fq 'I_UNDERSTAND_AMEND_ACTIVE_ENTITLEMENT' "$tmp/amend-confirm.out" ||
+    fail 'amendment confirmation guard is missing'
+else
+  if "$entitlement" amend --apply \
+      --current-metadata-file "$amend_fixture/current-metadata.json" \
+      --current-document-file "$amend_fixture/current-document.md" \
+      --original-metadata-file "$amend_fixture/original-metadata.json" \
+      --original-document-file "$amend_fixture/original-document.md" \
+      --target-id 00000000-0000-4000-8000-000000000011 \
+      --expected-old-manager 00000000-0000-4000-8000-000000000012 \
+      --current-owner 00000000-0000-4000-8000-000000000013 \
+      --amendment-revision 91a4ff68 \
+      --executing-release-revision 57f34879eb93ac0f8723d64b701dfb3ee19302e9 \
+      --confirm I_UNDERSTAND_AMEND_ACTIVE_ENTITLEMENT >"$tmp/amend-root.out" 2>&1; then
+    fail 'non-root amendment apply unexpectedly passed'
+  fi
+  grep -Fq -- '--apply must run as root' "$tmp/amend-root.out" ||
+    fail 'amendment root fence is missing'
+fi
 
 if [ "$(id -u)" -eq 0 ]; then
   compose_env_fixture="$tmp/compose.env"
