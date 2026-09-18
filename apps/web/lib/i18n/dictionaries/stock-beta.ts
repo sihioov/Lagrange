@@ -82,6 +82,7 @@ export type StockBetaDictionary = {
   readonly intradayQuoteClosed: string;
   readonly intradayQuoteDemanding: string;
   readonly intradayQuoteDescription: string;
+  readonly intradayDisabledNotice: string;
   readonly intradayQuoteDirectionDown: string;
   readonly intradayQuoteDirectionFlat: string;
   readonly intradayQuoteDirectionLabel: string;
@@ -310,6 +311,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuoteClosed: "Market closed",
     intradayQuoteDemanding: "Starting periodic quote demand…",
     intradayQuoteDescription: "Owner-only current KRX quote cache; separate from the EOD signal.",
+    intradayDisabledNotice: "Intraday quote collection is not enabled.",
     intradayQuoteDirectionDown: "Down",
     intradayQuoteDirectionFlat: "Flat",
     intradayQuoteDirectionLabel: "Direction",
@@ -538,6 +540,7 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     intradayQuoteClosed: "장 마감",
     intradayQuoteDemanding: "장중 현재가 조회를 시작하는 중…",
     intradayQuoteDescription: "EOD 신호와 분리된 Owner 전용 KRX 현재가 캐시입니다.",
+    intradayDisabledNotice: "장중 현재가 수집이 활성화되지 않았습니다.",
     intradayQuoteDirectionDown: "하락",
     intradayQuoteDirectionFlat: "보합",
     intradayQuoteDirectionLabel: "방향",

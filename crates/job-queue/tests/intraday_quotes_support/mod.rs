@@ -5,7 +5,13 @@
 //! acceptance is required to use the coordinator-owned QA cluster only.
 
 use chrono::{DateTime, Days, NaiveDate, Utc};
+use collectors::{PostgresPublicationSink, PublicationSink, PublishOutcome};
+use domain::{BatchId, TradingDate, UtcTimestamp};
 use job_queue::owner_equity_v2::{IntradaySessionProof, OwnerIntradayQuoteRepository};
+use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED};
+use market_data::publication::{
+    CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle, PublicationFile,
+};
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool};
@@ -375,65 +381,82 @@ async fn install_calendar(
     source_batch_id: Uuid,
     content_sha256: &str,
 ) -> Result<(), String> {
-    sqlx::query(
-        "INSERT INTO public.data_batches
-            (id, provider, market, batch_date, kind, storage_path,
-             content_sha256, bytes_size, retrieved_at, source_batch_id,
-             source_file_name, fetch_mode)
-         VALUES ($1, 'KIS', 'KR', $2, 'CALENDAR',
-                 'fixture/intraday-calendar', $3, 1, pg_catalog.now(), $4,
-                 'intraday-calendar.json', 'synthetic')",
+    let target_date = TradingDate::parse(&session_date.to_string())
+        .map_err(|error| format!("could not construct calendar fixture date: {error}"))?;
+    let retrieved_at: DateTime<Utc> = sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+        .fetch_one(pool)
+        .await
+        .map_err(|_| "could not read the calendar fixture DB clock".to_owned())?;
+    let bundle = PublicationBundle {
+        source_batch_id: BatchId::from_uuid(source_batch_id),
+        provider: PROVIDER_KIS_NORMALIZED.to_owned(),
+        market: MARKET_KR.to_owned(),
+        target_date,
+        retrieved_at: UtcTimestamp::from_datetime(retrieved_at),
+        fetch_mode: FetchMode::Credentialed,
+        files: vec![
+            PublicationFile {
+                file_name: "bars.json".to_owned(),
+                kind: DataBatchKind::Eod,
+                content_sha256: "b".repeat(64),
+                storage_path: "fixture/intraday-calendar/bars.json".to_owned(),
+                bytes_size: 1,
+            },
+            PublicationFile {
+                file_name: "reference.json".to_owned(),
+                kind: DataBatchKind::Reference,
+                content_sha256: "c".repeat(64),
+                storage_path: "fixture/intraday-calendar/reference.json".to_owned(),
+                bytes_size: 1,
+            },
+            PublicationFile {
+                file_name: "calendar.json".to_owned(),
+                kind: DataBatchKind::Calendar,
+                content_sha256: content_sha256.to_owned(),
+                storage_path: "fixture/intraday-calendar/calendar.json".to_owned(),
+                bytes_size: 1,
+            },
+            PublicationFile {
+                file_name: "corporate-actions.json".to_owned(),
+                kind: DataBatchKind::CorporateActions,
+                content_sha256: "d".repeat(64),
+                storage_path: "fixture/intraday-calendar/corporate-actions.json".to_owned(),
+                bytes_size: 1,
+            },
+        ],
+        calendar_facts: vec![CalendarFact {
+            exchange: "KRX".to_owned(),
+            session_date: target_date,
+            session_type: CalendarSessionType::Trading,
+            timezone: "Asia/Seoul".to_owned(),
+            source: "kis".to_owned(),
+            source_version: KIS_CALENDAR_SOURCE_VERSION.to_owned(),
+            content_sha256: content_sha256.to_owned(),
+        }],
+    };
+    let sink = PostgresPublicationSink::new(pool.clone());
+    if sink
+        .publish(&bundle)
+        .await
+        .map_err(|error| format!("could not publish calendar source fixture: {error}"))?
+        != PublishOutcome::Published
+    {
+        return Err("fresh calendar source fixture was unexpectedly already published".to_owned());
+    }
+    let generated_batch_id: Uuid = sqlx::query_scalar(
+        "SELECT id
+           FROM public.data_batches
+          WHERE source_batch_id = $1 AND source_file_name = 'calendar.json'",
     )
     .bind(source_batch_id)
-    .bind(session_date)
-    .bind(content_sha256)
-    .bind(source_batch_id)
-    .execute(pool)
+    .fetch_one(pool)
     .await
-    .map_err(|error| {
-        format!(
-            "could not install calendar source batch fixture ({})",
-            database_error_code(&error)
-        )
-    })?;
-    sqlx::query(
-        "INSERT INTO public.trading_calendar_versions
-            (exchange, session_date, session_type, timezone, source,
-             source_version, source_batch_id, content_sha256, retrieved_at)
-         VALUES ('KRX', $1, 'TRADING', 'Asia/Seoul', 'kis', $2, $3, $4,
-                 pg_catalog.now())",
-    )
-    .bind(session_date)
-    .bind(KIS_CALENDAR_SOURCE_VERSION)
-    .bind(source_batch_id)
-    .bind(content_sha256)
-    .execute(pool)
-    .await
-    .map_err(|error| {
-        format!(
-            "could not install calendar version fixture ({})",
-            database_error_code(&error)
-        )
-    })?;
-    sqlx::query(
-        "INSERT INTO public.trading_calendars
-            (exchange, session_date, session_type, timezone, source,
-             source_version, source_batch_id, content_sha256, retrieved_at)
-         VALUES ('KRX', $1, 'TRADING', 'Asia/Seoul', 'kis', $2, $3, $4,
-                 pg_catalog.now())",
-    )
-    .bind(session_date)
-    .bind(KIS_CALENDAR_SOURCE_VERSION)
-    .bind(source_batch_id)
-    .bind(content_sha256)
-    .execute(pool)
-    .await
-    .map_err(|error| {
-        format!(
-            "could not install current calendar projection fixture ({})",
-            database_error_code(&error)
-        )
-    })?;
+    .map_err(|_| "could not inspect generated calendar data batch id".to_owned())?;
+    if generated_batch_id == source_batch_id {
+        return Err(
+            "calendar fixture reused the Raw source batch id as data_batches.id".to_owned(),
+        );
+    }
     Ok(())
 }
 
@@ -468,21 +491,6 @@ fn ddl_for(database_name: &str, statement: &str) -> AssertSqlSafe<String> {
 
 fn database_url_for(role: &str, database_name: &str) -> String {
     format!("postgres://{role}:lagrange@127.0.0.1:55438/{database_name}")
-}
-
-fn database_error_code(error: &sqlx::Error) -> String {
-    match error {
-        sqlx::Error::Database(database) => format!(
-            "sqlstate={};constraint={}",
-            database
-                .code()
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| "unknown".to_owned()),
-            database.constraint().unwrap_or("none")
-        ),
-        sqlx::Error::PoolTimedOut => "pool-timeout".to_owned(),
-        _ => "non-database-error".to_owned(),
-    }
 }
 
 /// Observe a real worker/app backend waiting on a database lock.  The

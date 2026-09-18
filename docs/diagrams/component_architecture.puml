@@ -77,8 +77,8 @@ package "Rust workspace (edition 2024)" {
   }
 
   package "Data layer" #E5F3E7 {
-    component "crates/market-data\n(EOD contract, RawStore,\nCurateStore, providers;\nintraday typed parser)" as market_data
-    component "data-pipelines/collectors\n(research-worker + raw-capture\n& materialize bins;\nowner intraday adapter)" as collectors
+    component "crates/market-data\n(EOD + calendar-only contract, RawStore,\nCurateStore, providers;\nintraday typed parser)" as market_data
+    component "data-pipelines/collectors\n(research-worker + raw-capture\n& materialize bins;\nowner intraday adapter + day bootstrap)" as collectors
   }
 
   package "External source clients" #FCF8DE {
@@ -130,10 +130,10 @@ api_contract ..> api_server : generated from\nCONTRACT_ROUTES
 
 ' ---------------- api-server edges ----------------
 
-' evidence: crates/api-server/src/runtime.rs:14,1203-1207 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
+' evidence: crates/api-server/src/runtime.rs:14,1235-1239 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
 api_server --> api_server_auth : mounts /auth
 
-' evidence: crates/api-server/Cargo.toml:27 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,691-735 (imports and invokes read_owner_equity_artifact); crates/api-server/src/runtime.rs:20-23,247-310; data-pipelines/collectors/src/intraday_quotes.rs:129-179 (provider-free window validation)
+' evidence: crates/api-server/Cargo.toml:27 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,691-735 (imports and invokes read_owner_equity_artifact); crates/api-server/src/runtime.rs:20-24,255-342; data-pipelines/collectors/src/intraday_quotes.rs:246-296 (provider-free window validation)
 api_server --> collectors : reads/verifies V2 artifacts;\nprovider-free intraday window validation
 
 ' evidence: crates/api-server/src/repos/owner_equity_v2.rs:10 (use factor_engine::owner_equity_v2::OwnerEquitySignalRow)
@@ -165,7 +165,7 @@ job_queue --> portfolio_model
 job_queue --> market_data : EOD types + intraday error seam
 ' evidence: crates/job-queue/src/owner_equity_v2/runtime.rs:11 (use collectors::owner_equity_v2::materialize_owner_equity_from_raw_allow_insufficient); crates/job-queue/Cargo.toml:22; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:14-17,402-437
 job_queue --> collectors : guarded intraday quote adapter\n(+ existing EOD materialization)
-' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:19-20 (use kis_client::clock::Clock, kis_client::live_transport::LiveTransport); crates/job-queue/Cargo.toml:23; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:18-21,42-70; crates/job-queue/src/bin/owner-equity-v2-runner.rs:478-540
+' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:21-22 (use kis_client::clock::Clock, kis_client::live_transport::LiveTransport); crates/job-queue/Cargo.toml:23; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:18-21,42-70; crates/job-queue/src/bin/owner-equity-v2-runner.rs:492-554
 job_queue --> kis_client : current-price reader\n(shared coordination; EOD remains separate)
 
 ' ---------------- research / results edges ----------------
@@ -193,11 +193,11 @@ market_data --> opendart_client
 ' evidence: crates/market-data/src/providers/fsc_krx_listed.rs:17,36 (use data_go_client::{..})
 market_data --> data_go_client
 
-' evidence: data-pipelines/collectors/src/worker.rs:24 (use market_data::contract), worker.rs:981 (RawStore::new), worker.rs:2656 (CurateStore::new); data-pipelines/collectors/Cargo.toml:9; data-pipelines/collectors/src/intraday_quotes.rs:16,297-317
-collectors --> market_data : EOD stores + intraday typed parser
+' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:7-13,145-162; data-pipelines/collectors/src/worker.rs:24 (use market_data::contract), worker.rs:984 (RawStore::new), worker.rs:2659 (CurateStore::new); data-pipelines/collectors/Cargo.toml:9; data-pipelines/collectors/src/intraday_quotes.rs:17,496-516
+collectors --> market_data : EOD stores + calendar-only publication\n+ intraday typed parser
 ' evidence: data-pipelines/collectors/src/stock_price_beta_materialize.rs:9 (use factor_engine::{..})
 collectors --> factor_engine
-' evidence: data-pipelines/collectors/src/worker.rs:14 (use kis_client::clock::Clock); data-pipelines/collectors/Cargo.toml:12; data-pipelines/collectors/src/intraday_quotes.rs:12-16,249-317
+' evidence: data-pipelines/collectors/src/worker.rs:14 (use kis_client::clock::Clock); data-pipelines/collectors/Cargo.toml:12; data-pipelines/collectors/src/intraday_quotes.rs:13-17,448-516
 collectors --> kis_client : EOD clock + intraday attempt metadata
 ' evidence: data-pipelines/collectors/src/bin/opendart-raw.rs:55 (use opendart_client::{..})
 collectors --> opendart_client

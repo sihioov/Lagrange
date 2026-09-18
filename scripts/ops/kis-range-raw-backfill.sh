@@ -5,6 +5,7 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
+source "$script_dir/lib/kis-read-compose.sh"
 
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
 default_state_file=/var/lib/lagrange/state/range-raw/state.tsv
@@ -129,6 +130,9 @@ dotenv_validate_shell_overrides || {
   printf '  - %s\n' "${DOTENV_SHELL_ERRORS[@]}" >&2
   exit 1
 }
+if ! kis_read_compose_configure "$root"; then
+  die "$KIS_READ_COMPOSE_ERROR"
+fi
 
 commit=${LAGRANGE_CODE_COMMIT:-}
 file_commit=$(dotenv_get LAGRANGE_CODE_COMMIT)
@@ -216,7 +220,8 @@ compose() {
     BACKTEST_RECONCILE_INTERVAL_SECS=0 \
     RANGE_RAW_BATCH_ID="$stored_batch_id" \
     docker compose --profile "$compose_profile" \
-    --env-file "$env_file" -f "$root/deploy/compose/compose.yml" "$@"
+    --env-file "$env_file" -f "$root/deploy/compose/compose.yml" \
+    "${KIS_READ_COMPOSE_FILE_ARGS[@]}" "$@"
 }
 
 verify_image_provenance() {

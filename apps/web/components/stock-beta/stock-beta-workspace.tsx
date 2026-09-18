@@ -129,6 +129,7 @@ export type StockBetaWorkspaceProps = {
   readonly initialChartError?: StockBetaChartError | null;
   readonly initialMemberships: OwnerEquityV2MembershipListModel;
   readonly initialSignals: OwnerEquityV2LatestSignalsModel | null;
+  readonly initialSignalError?: string | null;
   readonly initialSignalUnavailable?: boolean;
   readonly intradayEnabled?: boolean;
   readonly locale?: Locale;
@@ -139,6 +140,7 @@ export function StockBetaWorkspace({
   initialChartError = null,
   initialMemberships,
   initialSignals,
+  initialSignalError = null,
   initialSignalUnavailable = false,
   intradayEnabled = false,
   locale,
@@ -162,7 +164,7 @@ export function StockBetaWorkspace({
   const [signalUnavailable, setSignalUnavailable] = useState(
     initialSignals === null && initialSignalUnavailable,
   );
-  const [signalError, setSignalError] = useState<string | null>(null);
+  const [signalError, setSignalError] = useState<string | null>(initialSignalError);
   const [instrumentCode, setInstrumentCode] = useState("");
   const [inputError, setInputError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -286,7 +288,7 @@ export function StockBetaWorkspace({
     }
     setSignals(acceptedInitialSignals);
     setSignalUnavailable(acceptedInitialSignals === null && initialSignalUnavailable);
-    setSignalError(null);
+    setSignalError(acceptedInitialSignals === null ? initialSignalError : null);
     setSelectedInstrumentId((current) => {
       const rows = acceptedInitialSignals?.rows ?? [];
       return current !== null && rows.some((row) => row.instrument_id === current)
@@ -306,6 +308,7 @@ export function StockBetaWorkspace({
     initialChart,
     initialChartError,
     initialMemberships,
+    initialSignalError,
     initialSignalUnavailable,
     initialSignals,
     signalRefreshCoordinator,

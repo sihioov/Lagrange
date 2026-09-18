@@ -118,6 +118,7 @@ cp "$ops/deploy-production-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/compose-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/lib/release-image-manifest.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
+cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   >"$release_fixture/repo/scripts/ops/validate-production-config.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
@@ -135,7 +136,10 @@ fi
 printf '%s\n' 'HISTORICAL_PRICE_BETA_APPROVAL status=ok operation=check approval_registry_sha256=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee approval_status=APPROVED audience=OWNER_ONLY vendor_snapshot=true strict_pit=false capability=PRICE_RETURN_ONLY materialization_status=MATERIALIZED registration_status=UNREGISTERED publication_status=NOT_PUBLISHED instrument_count=11 session_count=2452 bar_count=26972'
 SH
 chmod 0755 "$release_fixture/repo/scripts/ops/"*.sh
-printf '%s\n' 'services: {}' >"$release_fixture/repo/deploy/compose/compose.yml"
+cp "$root/deploy/compose/compose.yml" \
+  "$release_fixture/repo/deploy/compose/compose.yml"
+cp "$root/deploy/compose/compose.intraday.yml" \
+  "$release_fixture/repo/deploy/compose/compose.intraday.yml"
 printf '%s\n' fixture >"$release_fixture/repo/nt/fixture"
 printf '%s\n' fixture >"$release_fixture/repo/configs/fixture"
 printf '%s\n' fixture >"$release_fixture/repo/migrations/fixture"
@@ -391,6 +395,103 @@ exit 98
 SH
 chmod 0755 "$compose_bin/docker"
 
+installed_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
+installed_base=$release_fixture/install/releases/$commit_one/deploy/compose/compose.yml
+installed_overlay=$release_fixture/install/releases/$commit_one/deploy/compose/compose.intraday.yml
+disabled_env_backup=$release_fixture/disabled.env.backup
+
+fixture_die() {
+  echo "production-ops-self-test: $*" >&2
+  exit 1
+}
+
+assert_compose_file_order() {
+  local expected_overlay=$1 line compose_calls=0 expected_files actual_files
+  while IFS= read -r line; do
+    case "$line" in
+      'compose version'|'approval-check'|'image inspect '*|'inspect '*)
+        continue
+        ;;
+      'compose '*)
+        compose_calls=$((compose_calls + 1))
+        expected_files=2
+        if [ -n "$expected_overlay" ]; then
+          expected_files=3
+          case "$line" in
+            "compose --env-file $installed_env -f $installed_base -f $expected_overlay -f $release_fixture/install/.release-image-override.$commit_one."*)
+              ;;
+            *) fixture_die "unexpected Compose file order: $line" ;;
+          esac
+        else
+          case "$line" in
+            "compose --env-file $installed_env -f $installed_base -f $release_fixture/install/.release-image-override.$commit_one."*)
+              ;;
+            *) fixture_die "unexpected default Compose file order: $line" ;;
+          esac
+        fi
+        actual_files=$(grep -o ' -f ' <<<"$line" | wc -l)
+        [ "$actual_files" -eq "$expected_files" ] ||
+          fixture_die "generated image override was not last: $line"
+        ;;
+      '')
+        ;;
+      *) fixture_die "unexpected fake Docker call: $line" ;;
+    esac
+  done <"$compose_log"
+  [ "$compose_calls" -gt 0 ] || fixture_die 'fake Compose did not receive a config/start call'
+}
+
+assert_no_compose_startup() {
+  if grep -Eq '^compose .* (config|up|run|ps)( |$)' "$compose_log"; then
+    fixture_die 'rejected release reached Compose config/startup'
+  fi
+}
+
+assert_web_runtime_contract() {
+  local web_block build_block
+  web_block=$(awk '
+    /^  web:/ { in_web = 1 }
+    in_web { print }
+    in_web && /^  [[:alnum:]_-]+:/ && $0 !~ /^  web:/ { exit }
+  ' "$installed_base")
+  [ -n "$web_block" ] || fixture_die 'installed Compose fixture has no web service'
+  grep -Fq 'OWNER_INTRADAY_QUOTES_MODE: ${OWNER_INTRADAY_QUOTES_MODE:-off}' <<<"$web_block" ||
+    fixture_die 'Web intraday mode default is not off'
+  [ "$(grep -Ec '^[[:space:]]+OWNER_INTRADAY_QUOTES_MODE:' <<<"$web_block")" -eq 1 ] ||
+    fixture_die 'Web intraday mode is not a single runtime environment value'
+  build_block=$(sed '/^    environment:/q' <<<"$web_block")
+  if grep -Fq 'OWNER_INTRADAY_QUOTES_MODE:' <<<"$build_block"; then
+    fixture_die 'Web intraday mode escaped into build configuration'
+  fi
+  if grep -Eiq '^[[:space:]]+[A-Za-z0-9_-]+:.*(KIS_|kis-read-coordination|session-windows|OWNER_INTRADAY_SESSION|NEXT_PUBLIC_|_FILE:|SECRET|PASSWORD|TOKEN)' <<<"$web_block"; then
+    fixture_die 'Web fixture gained credentials or intraday coordination/session state'
+  fi
+}
+
+run_intraday_case() {
+  local name=$1 quotes_mode=$2 coordination_mode=$3 output expected_overlay
+  cp "$disabled_env_backup" "$installed_env"
+  printf '%s\n' \
+    "OWNER_INTRADAY_QUOTES_MODE=$quotes_mode" \
+    "KIS_READ_COORDINATION_MODE=$coordination_mode" >>"$installed_env"
+  : >"$compose_log"
+  output=$tmp/compose-intraday-$name.out
+  if ! env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+    REAL_INSTALL_BIN="$real_install" \
+    COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+    PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+    bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+    >"$output" 2>&1; then
+    sed -n '1,120p' "$output" >&2
+    fixture_die "intraday case failed: $name"
+  fi
+  grep -Fq 'COMPOSE_RELEASE: PASS' "$output" ||
+    fixture_die "intraday case did not pass: $name"
+  expected_overlay=
+  [ "$coordination_mode" = shared_required ] && expected_overlay=$installed_overlay
+  assert_compose_file_order "$expected_overlay"
+}
+
 env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
   REAL_INSTALL_BIN="$real_install" \
   COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
@@ -398,6 +499,9 @@ env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$
   bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
   >"$tmp/compose-pass.out"
 grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/compose-pass.out"
+cp "$installed_env" "$disabled_env_backup"
+assert_compose_file_order ''
+assert_web_runtime_contract
 [ "$(grep -c '^    image: sha256:' "$override_capture")" -eq 12 ]
 [ "$(grep -c '^    build: !reset null$' "$override_capture")" -eq 12 ]
 if grep -Eq '(^| )build( |$)' "$compose_log"; then
@@ -427,6 +531,153 @@ if grep -Eiq '(^| )(down|stop)( |$)' "$compose_log"; then
   echo 'production-ops-self-test: successful immutable release stopped a service' >&2
   exit 1
 fi
+
+# Existing release --apply fences remain active around the new overlay choice:
+# an external protected env/base, a source checkout, and a missing installed
+# manifest must all fail before Compose config or startup.
+external_env=$release_fixture/external.env
+cp "$disabled_env_backup" "$external_env"
+chmod 0600 "$external_env"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  LAGRANGE_ENV_FILE="$external_env" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-external-env.out" 2>&1; then
+  echo 'production-ops-self-test: external env apply unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'release --apply must use the installed protected Compose env file' \
+  "$tmp/compose-external-env.out"
+assert_no_compose_startup
+
+external_compose=$release_fixture/external-compose.yml
+cp "$installed_base" "$external_compose"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  LAGRANGE_COMPOSE_FILE="$external_compose" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-external-base.out" 2>&1; then
+  echo 'production-ops-self-test: external Compose base apply unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'release --apply must use the installed release Compose file' \
+  "$tmp/compose-external-base.out"
+assert_no_compose_startup
+
+source_apply_fixture=$release_fixture/source-apply
+mkdir -p "$source_apply_fixture/scripts/ops/lib" "$source_apply_fixture/deploy/compose"
+cp "$ops/compose-release.sh" "$source_apply_fixture/scripts/ops/"
+cp "$ops/lib/release-image-manifest.sh" "$source_apply_fixture/scripts/ops/lib/"
+cp "$ops/lib/dotenv.sh" "$source_apply_fixture/scripts/ops/lib/"
+cp "$ops/lib/kis-read-compose.sh" "$source_apply_fixture/scripts/ops/lib/"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
+  >"$source_apply_fixture/scripts/ops/validate-production-config.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
+  >"$source_apply_fixture/scripts/ops/provision-linux.sh"
+cp "$installed_base" "$source_apply_fixture/deploy/compose/compose.yml"
+cp "$disabled_env_backup" "$source_apply_fixture/deploy/compose/.env"
+chmod 0755 "$source_apply_fixture/scripts/ops/"*.sh
+chmod 0600 "$source_apply_fixture/deploy/compose/.env"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$source_apply_fixture/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-source-checkout.out" 2>&1; then
+  echo 'production-ops-self-test: source checkout apply unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'release --apply must execute the installed current release script' \
+  "$tmp/compose-source-checkout.out"
+assert_no_compose_startup
+
+installed_manifest=$release_fixture/install/releases/$commit_one/.lagrange-release-manifest
+manifest_saved=$release_fixture/installed-manifest.saved
+mv "$installed_manifest" "$manifest_saved"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-missing-manifest.out" 2>&1; then
+  echo 'production-ops-self-test: missing installed manifest apply unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'installed-release-manifest must be a regular non-symlink file' \
+  "$tmp/compose-missing-manifest.out"
+assert_no_compose_startup
+mv "$manifest_saved" "$installed_manifest"
+
+# D2 overlay selection uses only the parsed protected env values. The first
+# release above proves missing keys retain legacy/off defaults; these explicit
+# cases prove that shared coordination selects the one fixed overlay regardless
+# of whether owner intraday mode is off or owner-only.
+run_intraday_case explicit-legacy-off off legacy
+run_intraday_case shared-off off shared_required
+run_intraday_case shared-owner-only owner_only shared_required
+
+cp "$disabled_env_backup" "$installed_env"
+printf '%s\n' \
+  'OWNER_INTRADAY_QUOTES_MODE=owner_only' \
+  'KIS_READ_COORDINATION_MODE=legacy' >>"$installed_env"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-intraday-contradiction.out" 2>&1; then
+  echo 'production-ops-self-test: intraday/coordination contradiction unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'owner_intraday_quotes_requires_shared' "$tmp/compose-intraday-contradiction.out"
+assert_no_compose_startup
+
+overlay_saved=$release_fixture/compose.intraday.saved
+cp "$disabled_env_backup" "$installed_env"
+printf '%s\n' \
+  'OWNER_INTRADAY_QUOTES_MODE=off' \
+  'KIS_READ_COORDINATION_MODE=shared_required' >>"$installed_env"
+mv "$installed_overlay" "$overlay_saved"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-intraday-missing.out" 2>&1; then
+  echo 'production-ops-self-test: missing intraday overlay unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'intraday overlay missing or symlinked' "$tmp/compose-intraday-missing.out"
+assert_no_compose_startup
+mv "$overlay_saved" "$installed_overlay"
+
+mv "$installed_overlay" "$overlay_saved"
+ln -s "$overlay_saved" "$installed_overlay"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" \
+  COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+  PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-intraday-symlink.out" 2>&1; then
+  echo 'production-ops-self-test: symlinked intraday overlay unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'intraday overlay missing or symlinked' "$tmp/compose-intraday-symlink.out"
+assert_no_compose_startup
+rm -f -- "$installed_overlay"
+mv "$overlay_saved" "$installed_overlay"
+cp "$disabled_env_backup" "$installed_env"
 
 # Switch only the protected fixture policy to owner-only. The release and its
 # twelve-image manifest remains unchanged; the host approval gate must run before

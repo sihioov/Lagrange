@@ -104,6 +104,7 @@ pub const WORKER_ENV_KEYS: &[&str] = &[
     "KIS_READ_COORDINATION_MODE",
     "KIS_READ_CREDENTIAL_GENERATION",
     "OWNER_INTRADAY_QUOTES_MODE",
+    "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE",
     "LAGRANGE_CODE_COMMIT",
     "RANGE_RAW_BATCH_ID",
 ];
@@ -477,6 +478,8 @@ fn normalize_diagnostic(error: &NormalizeError) -> Option<WorkerDiagnostic<'_>> 
             ("KIS_NORMALIZE_BATCH_CONFLICT", None, None, None)
         }
         NormalizeError::EvidenceCountMismatch { .. }
+        | NormalizeError::InvalidCalendarSource { .. }
+        | NormalizeError::CalendarSourceManifestConflict { .. }
         | NormalizeError::EvidenceMissing { .. }
         | NormalizeError::EvidenceUnexpected { .. }
         | NormalizeError::EvidenceHashMismatch { .. }

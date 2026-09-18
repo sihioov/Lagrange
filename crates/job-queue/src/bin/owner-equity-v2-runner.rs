@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
-use collectors::intraday_quotes::IntradaySessionWindowContract;
+use collectors::intraday_quotes::{
+    INTRADAY_SESSION_WINDOWS_SOURCE_ENV, IntradaySessionWindowContract, IntradaySessionWindowSource,
+};
 use job_queue::owner_equity_v2::{
     IntradayProducer, IntradayProducerConfig, OwnerEquityRunOutcome, OwnerEquityRunnerConfig,
     OwnerEquityRuntimeLimits, OwnerEquityScheduleError, OwnerEquitySchedulePins,
@@ -77,6 +79,7 @@ impl Environment {
 struct Config {
     mode: Mode,
     intraday_mode: IntradayQuotesMode,
+    session_window_source: IntradaySessionWindowSource,
     production: bool,
     raw_root: PathBuf,
     artifact_root: PathBuf,
@@ -212,6 +215,14 @@ fn required_string(name: &str) -> Result<String, ConfigError> {
         .ok_or(ConfigError::Invalid)
 }
 
+fn intraday_session_window_source() -> Result<IntradaySessionWindowSource, ConfigError> {
+    let value = std::env::var_os(INTRADAY_SESSION_WINDOWS_SOURCE_ENV)
+        .map(|value| value.into_string().map_err(|_| ConfigError::Invalid))
+        .transpose()?;
+    IntradaySessionWindowSource::from_optional_str(value.as_deref())
+        .map_err(|_| ConfigError::Invalid)
+}
+
 fn valid_root(path: &Path, production: bool) -> bool {
     (!production || path.is_absolute())
         && path != Path::new("/")
@@ -279,6 +290,7 @@ fn load_config() -> Result<Config, ConfigError> {
     let mode = parse_args_from(std::env::args_os().collect())?;
     let environment = Environment::read()?;
     let production = environment.production();
+    let session_window_source = intraday_session_window_source()?;
     let heartbeat = positive_duration("OWNER_EQUITY_V2_HEARTBEAT_SECS", DEFAULT_HEARTBEAT)?;
     let lease = positive_duration("OWNER_EQUITY_V2_LEASE_SECS", DEFAULT_LEASE)?;
     if heartbeat >= lease {
@@ -301,6 +313,7 @@ fn load_config() -> Result<Config, ConfigError> {
         return Ok(Config {
             mode,
             intraday_mode: IntradayQuotesMode::Disabled,
+            session_window_source,
             production,
             raw_root: PathBuf::new(),
             artifact_root: PathBuf::new(),
@@ -373,6 +386,7 @@ fn load_config() -> Result<Config, ConfigError> {
     Ok(Config {
         mode,
         intraday_mode: read_coordination.intraday_mode(),
+        session_window_source,
         production,
         raw_root,
         artifact_root,
@@ -759,10 +773,11 @@ async fn main() -> ExitCode {
         });
     }
     let quote_shutdown_rx = shutdown_rx.clone();
+    let session_window_source = config.session_window_source;
     run_intraday_quote_startup(
         config.mode,
         config.intraday_mode,
-        IntradaySessionWindowContract::from_fixed_path,
+        move || IntradaySessionWindowContract::from_source(session_window_source),
         |windows| {
             let producer_config = match IntradayProducerConfig::for_worker(&config.worker_id) {
                 Ok(config) => Some(config),
@@ -992,6 +1007,23 @@ mod tests {
             Mode::Daemon,
             IntradayQuotesMode::OwnerOnly
         ));
+    }
+
+    #[test]
+    fn session_window_source_is_explicit_and_legacy_compatible() {
+        assert_eq!(
+            IntradaySessionWindowSource::from_optional_str(None).unwrap(),
+            IntradaySessionWindowSource::ReleaseV1
+        );
+        assert_eq!(
+            IntradaySessionWindowSource::from_optional_str(Some("release_v1")).unwrap(),
+            IntradaySessionWindowSource::ReleaseV1
+        );
+        assert_eq!(
+            IntradaySessionWindowSource::from_optional_str(Some("operational_v1")).unwrap(),
+            IntradaySessionWindowSource::OperationalV1
+        );
+        assert!(IntradaySessionWindowSource::from_optional_str(Some("unknown")).is_err());
     }
 
     fn valid_window_contract_fixture() -> IntradaySessionWindowContract {

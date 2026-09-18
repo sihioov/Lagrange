@@ -9,6 +9,7 @@ set -euo pipefail
 script_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 root=$(cd -P "$script_dir/../.." && pwd -P)
 source "$script_dir/lib/dotenv.sh"
+source "$script_dir/lib/kis-read-compose.sh"
 
 compose_file=$root/deploy/compose/compose.yml
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
@@ -176,6 +177,9 @@ if ! dotenv_validate_shell_overrides; then
   printf '  - %s\n' "${DOTENV_SHELL_ERRORS[@]}" >&2
   exit 1
 fi
+if ! kis_read_compose_configure "$root"; then
+  die "$KIS_READ_COMPOSE_ERROR"
+fi
 
 commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] ||
@@ -303,7 +307,7 @@ compose() {
   LAGRANGE_CODE_COMMIT="$commit" \
   RANGE_RAW_BATCH_ID="$compose_range_raw_batch_id" \
     docker compose --profile "$compose_profile" --env-file "$env_file" \
-    --file "$compose_file" "$@"
+    --file "$compose_file" "${KIS_READ_COMPOSE_FILE_ARGS[@]}" "$@"
 }
 
 compose config --quiet || die 'Compose interpolation/config validation failed'

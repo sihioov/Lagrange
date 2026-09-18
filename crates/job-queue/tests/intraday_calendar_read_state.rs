@@ -2,7 +2,7 @@
 mod intraday_quotes_support;
 
 use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
-use intraday_quotes_support::{IntradayTestDb, MembershipFixture};
+use intraday_quotes_support::{IntradayTestDb, MembershipFixture, run_body};
 use job_queue::owner_equity_v2::{
     DemandMutationKind, IntradayCalendarDisposition, IntradayStorageError,
 };
@@ -34,6 +34,8 @@ struct CalendarSeed {
     batch_hash: String,
     batch_provider: String,
     batch_market: String,
+    batch_source_file_name: String,
+    batch_fetch_mode: String,
     batch_kind: String,
     calendar_retrieved_at: DateTime<Utc>,
     version_retrieved_at: DateTime<Utc>,
@@ -43,6 +45,7 @@ struct CalendarSeed {
 impl CalendarSeed {
     fn valid(session_date: NaiveDate, disposition: &str, observed_at: DateTime<Utc>) -> Self {
         let batch_id = Uuid::new_v4();
+        let source_batch_id = Uuid::new_v4();
         let retrieved_at = observed_at - Duration::hours(1);
         Self {
             calendar_session_date: session_date,
@@ -56,15 +59,17 @@ impl CalendarSeed {
             version_source: "kis".to_owned(),
             calendar_source_version: KIS_SOURCE_VERSION.to_owned(),
             version_source_version: KIS_SOURCE_VERSION.to_owned(),
-            calendar_source_batch_id: batch_id,
-            version_source_batch_id: batch_id,
+            calendar_source_batch_id: source_batch_id,
+            version_source_batch_id: source_batch_id,
             batch_id: Some(batch_id),
-            batch_source_batch_id: Uuid::new_v4(),
+            batch_source_batch_id: source_batch_id,
             calendar_hash: "a".repeat(64),
             version_hash: "a".repeat(64),
             batch_hash: "a".repeat(64),
-            batch_provider: "KIS".to_owned(),
+            batch_provider: "KRX".to_owned(),
             batch_market: "KR".to_owned(),
+            batch_source_file_name: "calendar.json".to_owned(),
+            batch_fetch_mode: "credentialed".to_owned(),
             batch_kind: "CALENDAR".to_owned(),
             calendar_retrieved_at: retrieved_at,
             version_retrieved_at: retrieved_at,
@@ -111,7 +116,7 @@ async fn seed_calendar_lineage(
                  content_sha256, bytes_size, retrieved_at, source_batch_id,
                  source_file_name, fetch_mode)
              VALUES ($1, $2, $3, $4, $5, 'fixture/intraday-calendar',
-                     $6, 1, $7, $8, 'intraday-calendar.json', 'synthetic')",
+                     $6, 1, $7, $8, $9, $10)",
         )
         .bind(batch_id)
         .bind(&seed.batch_provider)
@@ -121,6 +126,8 @@ async fn seed_calendar_lineage(
         .bind(&seed.batch_hash)
         .bind(seed.batch_retrieved_at)
         .bind(seed.batch_source_batch_id)
+        .bind(&seed.batch_source_file_name)
+        .bind(&seed.batch_fetch_mode)
         .execute(&db.superuser)
         .await
         .map_err(|_| "could not seed calendar data batch".to_owned())?;
@@ -195,7 +202,12 @@ enum InvalidLineage {
     WrongSource,
     WrongSourceVersion,
     WrongHash,
+    WrongBatchHash,
     WrongBatchMetadata,
+    WrongProvider,
+    WrongSourceFileName,
+    WrongFetchMode,
+    WrongRawSourceId,
     NilBatch,
 }
 
@@ -244,8 +256,28 @@ fn configure_invalid_case(seed: &mut CalendarSeed, case: InvalidLineage) -> (boo
             seed.version_hash = "b".repeat(64);
             (true, true)
         }
+        InvalidLineage::WrongBatchHash => {
+            seed.batch_hash = "b".repeat(64);
+            (true, true)
+        }
         InvalidLineage::WrongBatchMetadata => {
             seed.batch_kind = "REFERENCE".to_owned();
+            (true, true)
+        }
+        InvalidLineage::WrongProvider => {
+            seed.batch_provider = "KIS".to_owned();
+            (true, true)
+        }
+        InvalidLineage::WrongSourceFileName => {
+            seed.batch_source_file_name = "intraday-calendar.json".to_owned();
+            (true, true)
+        }
+        InvalidLineage::WrongFetchMode => {
+            seed.batch_fetch_mode = "synthetic".to_owned();
+            (true, true)
+        }
+        InvalidLineage::WrongRawSourceId => {
+            seed.batch_source_batch_id = Uuid::new_v4();
             (true, true)
         }
         InvalidLineage::NilBatch => {
@@ -571,6 +603,78 @@ async fn calendar_read_returns_current_trading_and_closed_without_quote_prerequi
 }
 
 #[tokio::test]
+async fn credentialed_sink_calendar_is_accepted_by_disposition_and_session_reads() {
+    run_body(|db| async move {
+        let owner = db.seed_owner("sink-calendar-lineage").await?;
+        let app = db.repository_as_app();
+        let state = app
+            .read_current_calendar_disposition(owner)
+            .await
+            .map_err(|error| format!("sink calendar disposition read failed: {error}"))?
+            .ok_or_else(|| "sink-published calendar disposition was not readable".to_owned())?;
+        if state.session_date != db.session_date
+            || state.disposition != IntradayCalendarDisposition::Trading
+            || state.calendar_source_batch_id != db.calendar_source_batch_id
+            || state.calendar_content_sha256 != db.calendar_content_sha256
+        {
+            return Err("sink-published calendar returned the wrong current lineage".to_owned());
+        }
+
+        let proof = app
+            .resolve_current_session_proof(owner, &db.window_contract_sha256)
+            .await
+            .map_err(|error| format!("sink calendar session proof read failed: {error}"))?
+            .ok_or_else(|| "sink-published current session proof was not readable".to_owned())?;
+        if proof.session_date != db.session_date
+            || proof.calendar_source_batch_id != db.calendar_source_batch_id
+            || proof.calendar_content_sha256 != db.calendar_content_sha256
+        {
+            return Err("sink-published session proof returned the wrong lineage".to_owned());
+        }
+
+        let persisted: (Uuid, String, String, String, String, String, Uuid) = sqlx::query_as(
+            "SELECT id, provider, market, kind, source_file_name, fetch_mode, source_batch_id
+               FROM public.data_batches
+              WHERE source_batch_id = $1 AND source_file_name = 'calendar.json'",
+        )
+        .bind(db.calendar_source_batch_id)
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not inspect sink calendar batch lineage".to_owned())?;
+        if persisted.0 == persisted.6
+            || persisted.1 != "KRX"
+            || persisted.2 != "KR"
+            || persisted.3 != "CALENDAR"
+            || persisted.4 != "calendar.json"
+            || persisted.5 != "credentialed"
+        {
+            return Err(
+                "sink calendar fixture did not preserve the DB-row/Raw-id contract".to_owned(),
+            );
+        }
+
+        sqlx::query(
+            "UPDATE public.data_batches
+                SET retrieved_at = pg_catalog.now() - INTERVAL '37 hours'
+              WHERE source_batch_id = $1 AND source_file_name = 'calendar.json'",
+        )
+        .bind(db.calendar_source_batch_id)
+        .execute(&db.superuser)
+        .await
+        .map_err(|_| "could not age the sink calendar batch proof".to_owned())?;
+        let stale = app
+            .resolve_current_session_proof(owner, &db.window_contract_sha256)
+            .await
+            .map_err(|error| format!("stale sink proof read failed: {error}"))?;
+        if stale.is_some() {
+            return Err("stale sink calendar proof remained readable".to_owned());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn calendar_read_returns_none_for_missing_or_invalid_lineage() {
     for case in [
         InvalidLineage::MissingProjection,
@@ -583,7 +687,12 @@ async fn calendar_read_returns_none_for_missing_or_invalid_lineage() {
         InvalidLineage::WrongSource,
         InvalidLineage::WrongSourceVersion,
         InvalidLineage::WrongHash,
+        InvalidLineage::WrongBatchHash,
         InvalidLineage::WrongBatchMetadata,
+        InvalidLineage::WrongProvider,
+        InvalidLineage::WrongSourceFileName,
+        InvalidLineage::WrongFetchMode,
+        InvalidLineage::WrongRawSourceId,
         InvalidLineage::NilBatch,
     ] {
         run_without_calendar(|db| async move {

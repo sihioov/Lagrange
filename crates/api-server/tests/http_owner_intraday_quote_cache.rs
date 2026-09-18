@@ -276,11 +276,11 @@ async fn seed_calendar_rows(
     harness
         .seed_shared(&format!(
             "INSERT INTO data_batches \
-             (id, provider, market, batch_date, kind, storage_path, content_sha256, \
-              bytes_size, retrieved_at) \
-             VALUES ('{batch_id}', 'KIS', 'KR', '{session_date}', 'CALENDAR', \
+             (provider, market, batch_date, kind, storage_path, content_sha256, \
+              bytes_size, retrieved_at, source_batch_id, source_file_name, fetch_mode) \
+             VALUES ('KRX', 'KR', '{session_date}', 'CALENDAR', \
                      'synthetic/wp4-c3-calendar', '{CALENDAR_HASH}', 1, \
-                     '{retrieved_at}'::timestamptz)"
+                     '{retrieved_at}'::timestamptz, '{batch_id}', 'calendar.json', 'credentialed')"
         ))
         .await;
     harness

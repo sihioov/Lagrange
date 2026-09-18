@@ -313,6 +313,35 @@ test.describe("provider-free Stock Beta intraday integration", () => {
     assertProviderFree(page);
   });
 
+  test("updates a READY membership quote without an analysis snapshot or page reload", async ({
+    page,
+    request,
+  }) => {
+    const widget = await openDashboard(
+      page,
+      request,
+      ownerScenario({
+        stockBeta: "unavailable",
+        stockBetaRows: 1,
+        stockBetaIntradayState: "advancing",
+      }),
+    );
+    await expectReadyQuote(widget, quoteA);
+    await expect(membershipCard(page, "000001.KRX", "READY")).toBeVisible();
+    const navigations = requestsFor(page).filter((url) => url.pathname === "/stock-beta").length;
+    await expect(widget.locator("[data-quote-value]")).toHaveAttribute(
+      "data-quote-value",
+      "101300.00",
+      { timeout: 10_000 },
+    );
+    expect(requestsFor(page).filter((url) => url.pathname === "/stock-beta")).toHaveLength(
+      navigations,
+    );
+    const state = await syntheticState(request);
+    expect(state.quote_gets).toBeGreaterThanOrEqual(2);
+    expect(state.created_demands[0]?.membership_id).toBe(membershipA);
+  });
+
   test("renders the signed current quote beside an unchanged EOD chart on dashboard and detail", async ({
     page,
     request,

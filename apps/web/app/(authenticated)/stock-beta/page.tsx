@@ -16,6 +16,7 @@ import {
   assertOwnerEquityV2ChartMatchesExpectation,
   OwnerEquityV2ChartIntegrityError,
   type OwnerEquityV2ChartModel,
+  type OwnerEquityV2LatestSignalsModel,
 } from "@/lib/products/equity-signals-contracts";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +39,13 @@ function errorPage(
   );
 }
 
-function chartFailure(error: unknown): StockBetaChartError | undefined {
+function signalFailureCode(error: unknown): string {
+  if (error instanceof ApiProblem) return error.code;
+  if (error instanceof ApiContractError) return "CONTRACT_ERROR";
+  return "UNCLASSIFIED_ERROR";
+}
+
+function chartFailure(error: unknown): StockBetaChartError {
   if (error instanceof ApiProblem) {
     if (error.code === "OWNER_EQUITY_CHART_UNAVAILABLE") {
       return { code: "OWNER_EQUITY_CHART_UNAVAILABLE", kind: "unavailable" };
@@ -46,6 +53,7 @@ function chartFailure(error: unknown): StockBetaChartError | undefined {
     if (error.code === "OWNER_EQUITY_INTEGRITY_FAILED") {
       return { code: "OWNER_EQUITY_INTEGRITY_FAILED", kind: "integrity" };
     }
+    return { code: error.code, kind: "error" };
   }
   if (error instanceof OwnerEquityV2ChartIntegrityError) {
     return { code: "OWNER_EQUITY_INTEGRITY_FAILED", kind: "integrity" };
@@ -53,7 +61,7 @@ function chartFailure(error: unknown): StockBetaChartError | undefined {
   if (error instanceof ApiContractError) {
     return { code: "CHART_CONTRACT_INVALID", kind: "integrity" };
   }
-  return undefined;
+  return { code: "UNCLASSIFIED_ERROR", kind: "error" };
 }
 
 async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
@@ -61,15 +69,16 @@ async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
     const intradayEnabled = isStockBetaIntradayQuotesEnabled();
     const api = await getProductApi();
     const memberships = await api.getOwnerEquityV2Memberships();
-    let signals = null;
+    let signals: OwnerEquityV2LatestSignalsModel | null = null;
     let initialSignalUnavailable = false;
+    let initialSignalError: string | null = null;
     try {
       signals = await api.getOwnerEquityV2LatestSignals();
     } catch (error) {
       if (isLoginRequiredError(error)) redirect("/login");
       if (error instanceof ApiProblem && error.code === "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE")
         initialSignalUnavailable = true;
-      else throw error;
+      else initialSignalError = signalFailureCode(error);
     }
     let initialChart: OwnerEquityV2ChartModel | null = null;
     let initialChartError: StockBetaChartError | null = null;
@@ -94,9 +103,7 @@ async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
         });
       } catch (error) {
         if (isLoginRequiredError(error)) redirect("/login");
-        const failure = chartFailure(error);
-        if (failure === undefined) throw error;
-        initialChartError = failure;
+        initialChartError = chartFailure(error);
       }
     }
     return (
@@ -104,6 +111,7 @@ async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
         initialChart={initialChart}
         initialChartError={initialChartError}
         initialMemberships={memberships}
+        initialSignalError={initialSignalError}
         initialSignalUnavailable={initialSignalUnavailable}
         initialSignals={signals}
         intradayEnabled={intradayEnabled}

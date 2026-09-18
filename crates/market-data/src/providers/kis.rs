@@ -60,8 +60,9 @@ const DAILY_BARS_PATH: &str = "/uapi/domestic-stock/v1/quotations/inquire-daily-
 const DAILY_BARS_TR_ID: &str = "FHKST03010100";
 const REFERENCE_PATH: &str = "/uapi/domestic-stock/v1/quotations/inquire-price";
 const REFERENCE_TR_ID: &str = "FHKST01010100";
-const CALENDAR_PATH: &str = "/uapi/domestic-stock/v1/quotations/chk-holiday";
-const CALENDAR_TR_ID: &str = "CTCA0903R";
+pub(crate) const CALENDAR_PATH: &str = "/uapi/domestic-stock/v1/quotations/chk-holiday";
+pub(crate) const CALENDAR_TR_ID: &str = "CTCA0903R";
+pub(crate) const CALENDAR_FILE_NAME: &str = "calendar-page-01.json";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaginationPolicy {
     SinglePage,
@@ -266,11 +267,7 @@ impl<R: KisRead> KisProvider<R> {
                     }
                 }
                 ResponseKind::Calendar => {
-                    let query = vec![
-                        ("BASS_DT".to_owned(), date.clone()),
-                        ("CTX_AREA_FK".to_owned(), String::new()),
-                        ("CTX_AREA_NK".to_owned(), String::new()),
-                    ];
+                    let query = calendar_query(req.date);
                     if self.calendar_snapshot_cache {
                         self.fetch_calendar_with_snapshot(req, query, &mut envelopes)
                             .await?;
@@ -572,7 +569,7 @@ impl<R: KisRead> KisProvider<R> {
             RawEnvelope::new(
                 req.batch_id,
                 ResponseKind::Calendar,
-                "calendar-page-01.json",
+                CALENDAR_FILE_NAME,
                 snapshot.bytes.clone(),
                 snapshot.retrieved_at,
                 snapshot.request.clone(),
@@ -691,6 +688,24 @@ impl<R: KisRead> KisProvider<R> {
 
         unreachable!("the bounded KSD pagination loop returns on every page")
     }
+}
+
+pub(crate) fn calendar_query(date: TradingDate) -> Vec<(String, String)> {
+    vec![
+        ("BASS_DT".to_owned(), kis_date_text(date)),
+        ("CTX_AREA_FK".to_owned(), String::new()),
+        ("CTX_AREA_NK".to_owned(), String::new()),
+    ]
+}
+
+pub(crate) fn calendar_request_headers() -> Vec<(String, String)> {
+    vec![
+        ("authorization".to_owned(), "[REDACTED]".to_owned()),
+        ("appkey".to_owned(), "[REDACTED]".to_owned()),
+        ("appsecret".to_owned(), "[REDACTED]".to_owned()),
+        ("tr_id".to_owned(), CALENDAR_TR_ID.to_owned()),
+        ("tr_cont".to_owned(), String::new()),
+    ]
 }
 
 impl CalendarSnapshot {

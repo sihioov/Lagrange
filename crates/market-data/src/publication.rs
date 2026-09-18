@@ -8,10 +8,15 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::contract::{
-    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind,
-    StoredFile,
+    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, PROVIDER_KIS_CALENDAR_NORMALIZED,
+    PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind, StoredFile,
 };
-use crate::normalize::{NormalizationLineage, deterministic_kis_normalized_batch_id};
+use crate::normalize::{
+    KIS_CALENDAR_NORMALIZED_ENDPOINT_PREFIX, KIS_CALENDAR_NORMALIZER,
+    KIS_CALENDAR_NORMALIZER_SCHEMA_VERSION, KIS_CALENDAR_SOURCE_VERSION, NormalizationLineage,
+    deterministic_kis_calendar_normalized_batch_id, deterministic_kis_normalized_batch_id,
+    normalize_kis_calendar_envelopes_with_batch_id, validate_kis_calendar_source_manifest,
+};
 use crate::storage::{FileEntry, ManifestEntry, RawStore, StoreError};
 use crate::validate::validate_response;
 
@@ -75,6 +80,204 @@ pub struct PublicationBundle {
     pub calendar_facts: Vec<CalendarFact>,
 }
 
+/// A validated one-file calendar publication.
+///
+/// This is intentionally a separate type from [`PublicationBundle`]. Its
+/// private fields can only be populated by [`Self::from_raw`], which verifies
+/// both the original KIS wire batch and the deterministic canonical
+/// `calendar.json`. A one-file calendar batch therefore cannot masquerade as a
+/// relaxed four-file EOD publication.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarPublicationBundle {
+    provider: String,
+    market: String,
+    source_batch_id: BatchId,
+    target_date: TradingDate,
+    retrieved_at: UtcTimestamp,
+    fetch_mode: FetchMode,
+    file: PublicationFile,
+    calendar_fact: CalendarFact,
+    entitlement_reference: Option<String>,
+}
+
+impl CalendarPublicationBundle {
+    /// Verifies a canonical one-file KIS calendar batch and its immutable Raw
+    /// source before creating the trusted sink input.
+    pub fn from_raw(store: &RawStore, manifest: &ManifestEntry) -> Result<Self, PublicationError> {
+        validate_calendar_normalized_manifest(manifest)?;
+        let committed =
+            store.read_committed_manifest(PROVIDER_KIS_CALENDAR_NORMALIZED, MARKET_KR)?;
+        let Some(committed_manifest) = committed
+            .iter()
+            .find(|entry| entry.batch_id == manifest.batch_id)
+        else {
+            return Err(PublicationError::InvalidCalendarSource {
+                reason: "canonical calendar batch is not committed in its Raw manifest".to_owned(),
+            });
+        };
+        if committed_manifest != manifest {
+            return Err(PublicationError::InvalidCalendarSource {
+                reason: "caller canonical manifest differs from the committed Raw manifest"
+                    .to_owned(),
+            });
+        }
+        let stored = store.read_batch_bytes(&manifest.provider, &manifest.market, manifest)?;
+        let verified = validate_file_metadata(&manifest.files[0], &stored[0])?;
+        validate_response(ResponseKind::Calendar, verified.bytes).map_err(|error| {
+            PublicationError::InvalidCanonicalFile {
+                kind: ResponseKind::Calendar,
+                file_name: verified.entry.file_name.clone(),
+                reason: error.to_string(),
+            }
+        })?;
+
+        let lineage = parse_normalization_lineage(&verified.entry.file_name, verified.bytes)?;
+        validate_calendar_lineage(manifest, &verified.entry.file_name, &lineage)?;
+        validate_calendar_normalized_request(verified.entry, &lineage)?;
+
+        let source_manifest = store
+            .read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?
+            .into_iter()
+            .find(|entry| entry.batch_id == lineage.upstream_batch_id)
+            .ok_or_else(|| PublicationError::CalendarSourceMissing {
+                batch_id: lineage.upstream_batch_id,
+            })?;
+        if source_manifest.date != manifest.date {
+            return Err(invalid_calendar_source(
+                "canonical and source calendar dates differ",
+            ));
+        }
+        if source_manifest.entitlement_reference != manifest.entitlement_reference {
+            return Err(invalid_calendar_source(
+                "canonical and source entitlement references differ",
+            ));
+        }
+        if source_manifest.retrieved_at != manifest.retrieved_at {
+            return Err(invalid_calendar_source(
+                "canonical and source retrieval times differ",
+            ));
+        }
+        let source_stored = store.read_batch_bytes(
+            &source_manifest.provider,
+            &source_manifest.market,
+            &source_manifest,
+        )?;
+        validate_kis_calendar_source_manifest(&source_manifest, &source_stored).map_err(
+            |error| invalid_calendar_source(format!("calendar source contract failed: {error}")),
+        )?;
+        let source_file = &source_manifest.files[0];
+        let lineage_file = &lineage.upstream_files[0];
+        if lineage_file.kind != source_file.kind
+            || lineage_file.file_name != source_file.file_name
+            || lineage_file.content_hash != source_file.content_hash
+        {
+            return Err(invalid_calendar_source(
+                "canonical lineage does not identify the immutable source file exactly",
+            ));
+        }
+
+        // Rebuild the canonical bytes from the verified source. This binds
+        // facts, lineage, request metadata, and the deterministic batch id to
+        // the reviewed normalizer instead of accepting caller-supplied hashes
+        // or UUIDs as proof.
+        let expected = normalize_kis_calendar_envelopes_with_batch_id(
+            &source_manifest,
+            &source_stored,
+            manifest.batch_id,
+        )
+        .map_err(|error| {
+            invalid_calendar_source(format!("canonical calendar derivation failed: {error}"))
+        })?;
+        let expected = expected.first().ok_or_else(|| {
+            invalid_calendar_source("canonical calendar derivation produced no file".to_owned())
+        })?;
+        if expected.bytes != verified.bytes {
+            return Err(invalid_calendar_source(
+                "canonical calendar bytes differ from deterministic normalization",
+            ));
+        }
+        if expected.content_hash != verified.entry.content_hash
+            || expected.file_name != verified.entry.file_name
+            || expected.request != verified.entry.request
+            || expected.response_continuation != verified.entry.response_continuation
+        {
+            return Err(invalid_calendar_source(
+                "canonical calendar metadata differs from deterministic normalization",
+            ));
+        }
+
+        let parsed = parse_calendar(
+            &verified.entry.file_name,
+            verified.bytes,
+            &verified.content_sha256,
+        )?;
+        if parsed.source_version != KIS_CALENDAR_SOURCE_VERSION {
+            return Err(invalid_calendar_source(
+                "canonical calendar source version is not kis-chk-holiday-v1:schema-1",
+            ));
+        }
+        if parsed.facts.len() != 1 || parsed.facts[0].session_date != manifest.date {
+            return Err(invalid_calendar_source(
+                "canonical calendar must contain exactly the requested date",
+            ));
+        }
+
+        Ok(Self {
+            provider: manifest.provider.clone(),
+            market: manifest.market.clone(),
+            source_batch_id: manifest.batch_id,
+            target_date: manifest.date,
+            retrieved_at: manifest.retrieved_at,
+            fetch_mode: manifest.mode,
+            file: PublicationFile {
+                file_name: verified.entry.file_name.clone(),
+                kind: DataBatchKind::Calendar,
+                content_sha256: verified.content_sha256,
+                storage_path: verified.storage_path,
+                bytes_size: verified.entry.size_bytes,
+            },
+            calendar_fact: parsed.facts.into_iter().next().expect("one fact validated"),
+            entitlement_reference: manifest.entitlement_reference.clone(),
+        })
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn market(&self) -> &str {
+        &self.market
+    }
+
+    pub fn source_batch_id(&self) -> BatchId {
+        self.source_batch_id
+    }
+
+    pub fn target_date(&self) -> TradingDate {
+        self.target_date
+    }
+
+    pub fn retrieved_at(&self) -> UtcTimestamp {
+        self.retrieved_at
+    }
+
+    pub fn fetch_mode(&self) -> FetchMode {
+        self.fetch_mode
+    }
+
+    pub fn file(&self) -> &PublicationFile {
+        &self.file
+    }
+
+    pub fn calendar_facts(&self) -> &[CalendarFact] {
+        std::slice::from_ref(&self.calendar_fact)
+    }
+
+    pub fn entitlement_reference(&self) -> Option<&str> {
+        self.entitlement_reference.as_deref()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicationFile {
     pub file_name: String,
@@ -114,6 +317,12 @@ pub enum PublicationError {
     },
     #[error("noncanonical normalized publication manifest: {reason}")]
     NonCanonicalNormalizedManifest { reason: String },
+    #[error("noncanonical calendar publication manifest: {reason}")]
+    NonCanonicalCalendarManifest { reason: String },
+    #[error("calendar source batch {batch_id} is not committed")]
+    CalendarSourceMissing { batch_id: BatchId },
+    #[error("calendar source evidence is invalid: {reason}")]
+    InvalidCalendarSource { reason: String },
     #[error("canonical {kind} file {file_name} failed validation: {reason}")]
     InvalidCanonicalFile {
         kind: ResponseKind,
@@ -407,12 +616,57 @@ fn validate_normalized_manifest(manifest: &ManifestEntry) -> Result<(), Publicat
     Ok(())
 }
 
+fn validate_calendar_normalized_manifest(manifest: &ManifestEntry) -> Result<(), PublicationError> {
+    if manifest.provider != PROVIDER_KIS_CALENDAR_NORMALIZED || manifest.market != MARKET_KR {
+        return Err(PublicationError::UnsupportedManifestScope {
+            expected_scopes: "kis-calendar-normalized/kr",
+            provider: manifest.provider.clone(),
+            market: manifest.market.clone(),
+        });
+    }
+    if manifest.mode != FetchMode::Credentialed {
+        return Err(PublicationError::UnsupportedManifestMode {
+            provider: manifest.provider.clone(),
+            market: manifest.market.clone(),
+            expected: FetchMode::Credentialed,
+            actual: manifest.mode,
+        });
+    }
+    if manifest.files.len() != 1 {
+        return Err(PublicationError::NonCanonicalCalendarManifest {
+            reason: format!(
+                "expected exactly one canonical calendar file, got {}",
+                manifest.files.len()
+            ),
+        });
+    }
+    let file = &manifest.files[0];
+    if file.kind != ResponseKind::Calendar || file.file_name != "calendar.json" {
+        return Err(PublicationError::NonCanonicalCalendarManifest {
+            reason: "canonical calendar scope must contain calendar.json as a CALENDAR file"
+                .to_owned(),
+        });
+    }
+    if file.request.mode != FetchMode::Credentialed || file.response_continuation.is_some() {
+        return Err(PublicationError::NonCanonicalCalendarManifest {
+            reason: "canonical calendar file request must be credentialed and terminal".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 const NORMALIZER: &str = "kis-wire-to-canonical-v2";
 const NORMALIZER_SCHEMA_VERSION: u32 = 1;
 
 fn invalid_provenance(file_name: &str, reason: impl Into<String>) -> PublicationError {
     PublicationError::InvalidCanonicalProvenance {
         file_name: file_name.to_owned(),
+        reason: reason.into(),
+    }
+}
+
+fn invalid_calendar_source(reason: impl Into<String>) -> PublicationError {
+    PublicationError::InvalidCalendarSource {
         reason: reason.into(),
     }
 }
@@ -546,6 +800,93 @@ fn validate_lineage_fields(
         return Err(invalid_provenance(
             file_name,
             "upstream_files must contain all four EOD response kinds",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_calendar_lineage(
+    manifest: &ManifestEntry,
+    file_name: &str,
+    lineage: &NormalizationLineage,
+) -> Result<(), PublicationError> {
+    if lineage.schema_version != KIS_CALENDAR_NORMALIZER_SCHEMA_VERSION {
+        return Err(invalid_provenance(
+            file_name,
+            "unsupported calendar normalizer schema version",
+        ));
+    }
+    if lineage.normalizer != KIS_CALENDAR_NORMALIZER {
+        return Err(invalid_provenance(
+            file_name,
+            "unexpected calendar normalizer",
+        ));
+    }
+    if lineage.upstream_provider != PROVIDER_KIS_CALENDAR || lineage.upstream_market != MARKET_KR {
+        return Err(invalid_provenance(
+            file_name,
+            "unexpected calendar upstream scope",
+        ));
+    }
+    if lineage.upstream_batch_id.as_uuid().is_nil()
+        || deterministic_kis_calendar_normalized_batch_id(lineage.upstream_batch_id)
+            != manifest.batch_id
+    {
+        return Err(invalid_provenance(
+            file_name,
+            "calendar canonical batch id does not match its upstream source",
+        ));
+    }
+    if lineage.upstream_files.len() != 1 {
+        return Err(invalid_provenance(
+            file_name,
+            "calendar lineage must contain exactly one upstream file",
+        ));
+    }
+    let source_file = &lineage.upstream_files[0];
+    if source_file.kind != ResponseKind::Calendar
+        || source_file.file_name != "calendar-page-01.json"
+    {
+        return Err(invalid_provenance(
+            file_name,
+            "calendar lineage must identify calendar-page-01.json",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_calendar_normalized_request(
+    file: &FileEntry,
+    lineage: &NormalizationLineage,
+) -> Result<(), PublicationError> {
+    let expected_endpoint =
+        format!("{KIS_CALENDAR_NORMALIZED_ENDPOINT_PREFIX}/{KIS_CALENDAR_NORMALIZER}/calendar");
+    if file.request.endpoint != expected_endpoint || file.request.mode != FetchMode::Credentialed {
+        return Err(invalid_provenance(
+            &file.file_name,
+            "unexpected calendar normalized request metadata",
+        ));
+    }
+    if file.request.query.len() != 2
+        || file.request.query[0].0 != "upstream_batch_id"
+        || file.request.query[0].1 != lineage.upstream_batch_id.to_string()
+        || file.request.query[1].0 != "upstream_lineage"
+    {
+        return Err(invalid_provenance(
+            &file.file_name,
+            "calendar normalized request query is not canonical",
+        ));
+    }
+    let expected_lineage = serde_json::to_string(lineage).map_err(|error| {
+        invalid_provenance(
+            &file.file_name,
+            format!("cannot serialize calendar lineage: {error}"),
+        )
+    })?;
+    if file.request.query[1].1 != expected_lineage {
+        return Err(invalid_provenance(
+            &file.file_name,
+            "calendar normalized request lineage differs from the document",
         ));
     }
     Ok(())

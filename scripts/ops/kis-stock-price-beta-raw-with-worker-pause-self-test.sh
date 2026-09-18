@@ -23,6 +23,7 @@ mkdir -p "$release_root/scripts/ops/lib" "$release_root/configs/data-rights" \
   "$release_root/configs/universes" "$release_root/deploy/compose"
 cp "$script_dir/kis-stock-price-beta-raw.sh" "$release_root/scripts/ops/kis-stock-price-beta-raw.sh"
 cp "$script_dir/lib/dotenv.sh" "$release_root/scripts/ops/lib/dotenv.sh"
+cp "$script_dir/lib/kis-read-compose.sh" "$release_root/scripts/ops/lib/kis-read-compose.sh"
 cp "$script_dir/../../configs/data-rights/kis.entitlement.json" "$release_root/configs/data-rights/kis.entitlement.json"
 cp "$script_dir/../../configs/universes/kr-stock-price-beta-v1.json" "$release_root/configs/universes/kr-stock-price-beta-v1.json"
 cp "$script_dir/../../deploy/compose/compose.yml" "$release_root/deploy/compose/compose.yml"

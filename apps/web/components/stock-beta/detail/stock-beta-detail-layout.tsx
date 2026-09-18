@@ -50,6 +50,11 @@ export function renderStockBetaDetailGrid(
 ): ReactNode {
   return (
     <div className={styles["detail"]} data-testid="stock-beta-detail-board">
+      {viewModel.intradayEnabled !== true && (
+        <p role="status" data-testid="stock-beta-intraday-disabled">
+          {viewModel.copy.intradayDisabledNotice}
+        </p>
+      )}
       <div className={styles["detailGrid"]}>
         {architecture.catalog.map((entry, catalogIndex) => {
           if (entry.id === "current-quote" && viewModel.intradayEnabled !== true) return null;

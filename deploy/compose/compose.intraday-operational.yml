@@ -1,0 +1,35 @@
+services:
+  # The explicit --calendar-once command uses the same day evidence before
+  # acquiring a calendar proof. It retains the existing research_writer role.
+  research-worker:
+    environment:
+      OWNER_INTRADAY_SESSION_WINDOWS_SOURCE: operational_v1
+    volumes:
+      - type: bind
+        source: "${LAGRANGE_RUNTIME_STATE_DIR:?}/intraday-session-windows"
+        target: /run/lagrange/intraday-session-windows
+        read_only: true
+        bind:
+          create_host_path: false
+
+  api-server:
+    environment:
+      OWNER_INTRADAY_SESSION_WINDOWS_SOURCE: operational_v1
+    volumes:
+      - type: bind
+        source: "${LAGRANGE_RUNTIME_STATE_DIR:?}/intraday-session-windows"
+        target: /run/lagrange/intraday-session-windows
+        read_only: true
+        bind:
+          create_host_path: false
+
+  owner-equity-v2-runner:
+    environment:
+      OWNER_INTRADAY_SESSION_WINDOWS_SOURCE: operational_v1
+    volumes:
+      - type: bind
+        source: "${LAGRANGE_RUNTIME_STATE_DIR:?}/intraday-session-windows"
+        target: /run/lagrange/intraday-session-windows
+        read_only: true
+        bind:
+          create_host_path: false

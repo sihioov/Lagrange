@@ -4847,3 +4847,32 @@ pull/install/QA change; answer pending. Proceed C2a independently, not blocked o
   remain unchanged; no provider call, DB recreation, deployment, main merge or push occurred.
 - Both completed records (writer b7ca1418 and reviewer37b54534) were archived at09:54KST
   after full result recovery. No active package remains; the coordinator workspace is retained.
+
+### 8443 production continuation / release wiring accepted (2026-09-11)
+
+- Owner requested production deployment at8443 and installed the bounded sudo helper.
+  Root access through `/usr/local/sbin/lagrange-deploy-72h` was verified; its recorded expiry
+  is2026-09-14 10:36:06KST. This does not authorize account/order APIs or a safety-gate bypass.
+- D2 writer a4235f2d and independent D4 reviewer71e541cd completed the release-wiring patch.
+  D4 ACCEPT: protected dotenv values retain validation; release scope selects the fixed
+  intraday overlay only for shared_required; base/overlay/immutable-image override order is
+  preserved; Web receives only the server-side default-off mode. Three source/test files
+  are +284/-1. Complete fake-Docker production fixture, both scoped static checks, shell
+  syntax and diff checks passed independently. No repeated application QA is required.
+- Runbook and affected runtime diagram were aligned with this conditional selection.
+  Runtime PNG was rendered and visually inspected using the existing pinned local image,
+  with network disabled. Component dependencies did not change; that diagram is untouched.
+- No production images, installation/current switch, migration, protected env update,
+  provider call or8443 routing change has occurred in this continuation. The existing8443
+  route still serves the older synthetic demo, not the requested updated production service.
+- Deployment gates still open: actual Compose expansion, clean pinned image set/manifest,
+  serving health and rollback. Intraday activation additionally needs consistent invocation
+  for all credentialed readers and genuine current-date calendar/session proof. The last
+  read-only DB check found no current-date eligible calendar row; checked-in windows are
+  empty. D3 public-document audit did not establish an approved dated window.
+- Owner was informed that dated evidence is this project's adopted runtime condition, not
+  a KIS current-price API request requirement, and asked to continue. Continue preparation
+  under the existing contract; do not silently remove the same-day requirement, fabricate
+  evidence, or represent an OFF deployment as working current-price activation.
+- Detailed D1-D4 evidence and bounded briefs remain in
+  `/tmp/stock-beta-8443-deploy.WxDrks/`. No new workspace or heartbeat was created.

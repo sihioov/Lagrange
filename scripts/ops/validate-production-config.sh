@@ -132,8 +132,7 @@ fi
 
 get() { dotenv_get "$1"; }
 
-# These five keys are deliberately kept out of the shared dotenv helper: they
-# are this release's local coordination/session contract and must be guarded
+# These keys are this release's local coordination/session contract and must be guarded
 # even when an operator supplies a shell-only value for a key absent from the
 # env file. Defaults match ProductionReadCoordination::from_values; the other
 # three keys have no implicit production value.
@@ -145,6 +144,7 @@ guard_new_config_shell_overrides() {
     KIS_READ_CREDENTIAL_GENERATION
     LAGRANGE_RUNTIME_STATE_DIR
     OWNER_INTRADAY_SESSION_WINDOWS_SHA256
+    OWNER_INTRADAY_SESSION_WINDOWS_SOURCE
   )
   for key in "${keys[@]}"; do
     file_value=$(get "$key")
@@ -152,6 +152,7 @@ guard_new_config_shell_overrides() {
     case "$key" in
       OWNER_INTRADAY_QUOTES_MODE) default_value=off ;;
       KIS_READ_COORDINATION_MODE) default_value=legacy ;;
+      OWNER_INTRADAY_SESSION_WINDOWS_SOURCE) default_value=release_v1 ;;
       *) default_value= ;;
     esac
     if ! dotenv_has "$key"; then
@@ -172,7 +173,8 @@ reject_new_config_file_aliases() {
     KIS_READ_COORDINATION_MODE_FILE \
     KIS_READ_CREDENTIAL_GENERATION_FILE \
     LAGRANGE_RUNTIME_STATE_DIR_FILE \
-    OWNER_INTRADAY_SESSION_WINDOWS_SHA256_FILE; do
+    OWNER_INTRADAY_SESSION_WINDOWS_SHA256_FILE \
+    OWNER_INTRADAY_SESSION_WINDOWS_SOURCE_FILE; do
     if dotenv_has "$alias" || [[ -v "$alias" ]]; then
       invalid+=("${alias,,}_forbidden")
     fi
@@ -189,6 +191,8 @@ dotenv_has KIS_READ_COORDINATION_MODE || coordination_mode=legacy
 credential_generation=$(get KIS_READ_CREDENTIAL_GENERATION)
 runtime_state_root=$(get LAGRANGE_RUNTIME_STATE_DIR)
 session_windows_hash=$(get OWNER_INTRADAY_SESSION_WINDOWS_SHA256)
+session_windows_source=$(get OWNER_INTRADAY_SESSION_WINDOWS_SOURCE)
+dotenv_has OWNER_INTRADAY_SESSION_WINDOWS_SOURCE || session_windows_source=release_v1
 
 case "$intraday_quotes_mode" in
   off|owner_only) ;;
@@ -198,6 +202,13 @@ case "$coordination_mode" in
   legacy|shared_required) ;;
   *) invalid+=("kis_read_coordination_mode_invalid") ;
 esac
+case "$session_windows_source" in
+  release_v1|operational_v1) ;;
+  *) invalid+=("owner_intraday_session_windows_source_invalid") ;;
+esac
+if [ "$session_windows_source" = operational_v1 ] && [ "$coordination_mode" != shared_required ]; then
+  invalid+=("operational_session_windows_requires_shared")
+fi
 if [ "$intraday_quotes_mode" = owner_only ] && [ "$coordination_mode" != shared_required ]; then
   invalid+=("owner_intraday_quotes_requires_shared")
 fi
@@ -219,7 +230,7 @@ if [ "$coordination_mode" = shared_required ]; then
   [ "$generation_valid" = yes ] || invalid+=("kis_read_credential_generation_invalid")
 fi
 
-if [ "$intraday_quotes_mode" = owner_only ]; then
+if [ "$intraday_quotes_mode" = owner_only ] && [ "$session_windows_source" = release_v1 ]; then
   if [ -z "$session_windows_hash" ]; then
     missing+=("OWNER_INTRADAY_SESSION_WINDOWS_SHA256")
   elif [[ ! "$session_windows_hash" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -568,6 +579,19 @@ if [ "$coordination_mode" = shared_required ] &&
    [ "$credentialed_scope" = yes ] &&
    [ "$coordination_path_safe" = yes ]; then
   check_coordination_state
+fi
+if [ "$intraday_quotes_mode" = owner_only ] &&
+   [ "$session_windows_source" = operational_v1 ] &&
+   [ "$credentialed_scope" = yes ] &&
+   [ "$coordination_path_safe" = yes ]; then
+  session_window_checker=$script_dir/install-intraday-session-window.py
+  if [ ! -f "$session_window_checker" ] || [ -L "$session_window_checker" ]; then
+    invalid+=("operational_session_window_checker_missing")
+  elif ! python3 "$session_window_checker" --check \
+    --root "${runtime_state_root%/}/intraday-session-windows" \
+    --date "$(TZ=Asia/Seoul date +%F)" >/dev/null 2>&1; then
+    invalid+=("operational_session_window_invalid")
+  fi
 fi
 if [ "$scope" = backfill ] || [ "$scope" = range-raw ] || [ "$scope" = range-raw-recovery ] || [ "$scope" = release ]; then
   [ "$(get RESEARCH_APP_ENV)" = production ] || invalid+=("RESEARCH_APP_ENV must be production")

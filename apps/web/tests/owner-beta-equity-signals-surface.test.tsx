@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import StockBetaDetailPage from "@/app/(authenticated)/stock-beta/[instrument]/page";
 import StockBetaPage from "@/app/(authenticated)/stock-beta/page";
 import { type ApiSession, apiErrorEnvelopeSchema } from "@/lib/api/contracts";
-import { ApiProblem } from "@/lib/api/response";
+import { ApiContractError, ApiProblem } from "@/lib/api/response";
 import {
   type OwnerEquityV2LatestSignalsModel,
   type OwnerEquityV2Lifecycle,
@@ -162,6 +162,7 @@ function apiFor({
   detailError,
   latest = latestFor(31),
   latestError,
+  chartError,
   memberships = membershipsFor(),
   membershipsError,
 }: {
@@ -169,10 +170,11 @@ function apiFor({
   readonly detailError?: unknown;
   readonly latest?: OwnerEquityV2LatestSignalsModel;
   readonly latestError?: unknown;
+  readonly chartError?: unknown;
   readonly memberships?: OwnerEquityV2MembershipListModel;
   readonly membershipsError?: unknown;
 } = {}) {
-  return {
+  const api = {
     getOwnerEquityV2LatestSignals: vi.fn(async () => {
       if (latestError !== undefined) throw latestError;
       return latest;
@@ -184,6 +186,13 @@ function apiFor({
     getOwnerEquityV2SignalDetail: vi.fn(async () => {
       if (detailError !== undefined) throw detailError;
       return detail;
+    }),
+  };
+  if (chartError === undefined) return api;
+  return {
+    ...api,
+    getOwnerEquityV2Chart: vi.fn(async () => {
+      throw chartError;
     }),
   };
 }
@@ -198,12 +207,20 @@ function problem(
     | "OWNER_EQUITY_INTEGRITY_FAILED"
     | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND"
     | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE"
+    | "FORBIDDEN"
+    | "INTERNAL"
     | "RESOURCE_NOT_FOUND"
     | "SESSION_EXPIRED"
     | "SESSION_UNKNOWN",
 ): ApiProblem {
   return new ApiProblem(
-    code === "SESSION_EXPIRED" || code === "SESSION_UNKNOWN" ? 401 : 503,
+    code === "SESSION_EXPIRED" || code === "SESSION_UNKNOWN"
+      ? 401
+      : code === "FORBIDDEN"
+        ? 403
+        : code === "INTERNAL"
+          ? 500
+          : 503,
     apiErrorEnvelopeSchema.parse({
       error: { code, message: "typed test failure", request_id: "request-test" },
     }),
@@ -320,6 +337,62 @@ describe("Owner stock signal beta V2 surface", () => {
     expectNoLegacyEvidence(markup);
   });
 
+  it.each([
+    ["integrity", problem("OWNER_EQUITY_INTEGRITY_FAILED"), "OWNER_EQUITY_INTEGRITY_FAILED"],
+    ["general", problem("INTERNAL"), "INTERNAL"],
+    ["contract", new ApiContractError(502, "private contract failure"), "CONTRACT_ERROR"],
+    ["unknown", new Error("private signal failure"), "UNCLASSIFIED_ERROR"],
+  ] as const)(
+    "keeps membership management when the initial latest signal request has a %s failure",
+    async (_kind, latestError, expectedCode) => {
+      session();
+      const api = apiFor({ latestError });
+      mocks.getProductApi.mockResolvedValue(api);
+
+      const markup = renderToStaticMarkup(await StockBetaPage());
+
+      expect(markup).toContain('data-testid="stock-beta-dashboard"');
+      expect(markup).toContain('data-testid="stock-beta-policy-capacity"');
+      expect(markup).toContain('id="stock-beta-instrument-code"');
+      expect(markup).toContain("Add instrument");
+      expect(markup).toContain(`Request failed with typed code ${expectedCode}.`);
+      expect(markup).not.toContain('data-testid="stock-beta-rank-table"');
+      expect(markup).not.toContain('data-testid="stock-beta-snapshot-strip"');
+      expect(markup).not.toContain("private contract failure");
+      expect(markup).not.toContain("private signal failure");
+      expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
+      expect(api.getOwnerEquityV2LatestSignals).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
+    ["FORBIDDEN", problem("FORBIDDEN")],
+    ["general", problem("INTERNAL")],
+    ["unknown", new Error("private chart failure")],
+  ] as const)(
+    "keeps management and signals when the initial chart request has a %s failure",
+    async (_kind, chartError) => {
+      session();
+      const latest = latestFor(31);
+      const api = apiFor({ chartError, latest });
+      mocks.getProductApi.mockResolvedValue(api);
+
+      const markup = renderToStaticMarkup(await StockBetaPage());
+
+      expect(markup).toContain('data-testid="stock-beta-dashboard"');
+      expect(markup).toContain('data-testid="stock-beta-policy-capacity"');
+      expect(markup).toContain('id="stock-beta-instrument-code"');
+      expect(markup).toContain("Add instrument");
+      expect(markup).toContain('data-testid="stock-beta-rank-table"');
+      expect(renderedRowIds(markup)).toEqual(latest.rows.map((row) => row.instrument_id));
+      expect(markup).toContain(
+        "The EOD chart could not be loaded. No previous price data is shown.",
+      );
+      expect(markup).not.toContain('data-testid="stock-beta-price-chart"');
+      expect(markup).not.toContain("private chart failure");
+    },
+  );
+
   it("renders every V2 detail snapshot and signal field without legacy evidence", async () => {
     session();
     const detail = detailFor(2);
@@ -412,6 +485,7 @@ describe("Owner stock signal beta V2 surface", () => {
 
     expect(markup).toContain(title);
     expect(markup).not.toContain('data-testid="stock-beta-dashboard"');
+    expect(markup).not.toContain('id="stock-beta-instrument-code"');
     expectNoLegacyEvidence(markup);
   });
 

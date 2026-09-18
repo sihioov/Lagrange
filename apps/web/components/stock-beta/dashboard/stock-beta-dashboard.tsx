@@ -83,6 +83,11 @@ export function renderStockBetaDashboardGrid(
       data-has-snapshot={hasSnapshot ? "true" : "false"}
       data-testid="stock-beta-dashboard"
     >
+      {viewModel.intradayEnabled !== true && (
+        <p role="status" data-testid="stock-beta-intraday-disabled">
+          {viewModel.copy.intradayDisabledNotice}
+        </p>
+      )}
       <div className={styles["dashboardGrid"]}>
         {architecture.catalog.map((entry, catalogIndex) => {
           if (entry.id === "current-quote" && viewModel.intradayEnabled !== true) return null;

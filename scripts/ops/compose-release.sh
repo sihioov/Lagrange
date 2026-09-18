@@ -11,6 +11,7 @@ set -euo pipefail
 script_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 root=$(cd -P "$script_dir/../.." && pwd -P)
 source "$script_dir/lib/dotenv.sh"
+source "$script_dir/lib/kis-read-compose.sh"
 
 default_compose_file=$root/deploy/compose/compose.yml
 default_env_file=$root/deploy/compose/.env
@@ -19,8 +20,14 @@ env_file=${LAGRANGE_ENV_FILE:-$default_env_file}
 release_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
 mode=plan
 scope=release
+refresh_intraday=0
+bootstrap_intraday_calendar=0
+calendar_source_batch_id=
 release_override=
 release_commit=
+owner_intraday_quotes_mode=off
+kis_read_coordination_mode=legacy
+owner_intraday_session_windows_source=release_v1
 owner_beta_access_mode=disabled
 owner_beta_paper_mode=disabled
 owner_equity_v2_runtime_mode=disabled
@@ -56,11 +63,16 @@ usage() {
   cat <<'EOF'
 Usage: scripts/ops/compose-release.sh
        [--scope infrastructure|backfill|release]
-       [--plan|--preflight|--apply]
+       [--plan|--preflight|--apply] [--refresh-intraday]
+       [--bootstrap-intraday-calendar --calendar-source-batch-id UUID]
 
   --plan       Validate static inputs and print the ordered commands (default).
   --preflight  Validate inputs and Compose expansion without starting services.
   --apply      Apply the selected scope in dependency order.
+  --refresh-intraday
+                    Narrowly reload the already installed API and owner V2
+                    quote readers; valid only for release scope and all three
+                    modes, with owner-only/shared-required/operational-v1 mode.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
@@ -95,6 +107,13 @@ while [ "$#" -gt 0 ]; do
     --plan) mode=plan; shift ;;
     --preflight) mode=preflight; shift ;;
     --apply) mode=apply; shift ;;
+    --refresh-intraday) refresh_intraday=1; shift ;;
+    --bootstrap-intraday-calendar) bootstrap_intraday_calendar=1; shift ;;
+    --calendar-source-batch-id)
+      [ "$#" -ge 2 ] || die '--calendar-source-batch-id needs a UUID'
+      calendar_source_batch_id=$2
+      shift 2
+      ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -104,6 +123,18 @@ case "$scope" in
   infrastructure|backfill|release) ;;
   *) die '--scope must be infrastructure, backfill, or release' ;;
 esac
+[ "$refresh_intraday" -eq 0 ] || [ "$scope" = release ] ||
+  die '--refresh-intraday is valid only with --scope release'
+[ "$bootstrap_intraday_calendar" -eq 0 ] || [ "$scope" = release ] ||
+  die '--bootstrap-intraday-calendar is valid only with --scope release'
+[ "$((refresh_intraday + bootstrap_intraday_calendar))" -le 1 ] ||
+  die 'select only one intraday operation'
+if [ "$bootstrap_intraday_calendar" -eq 1 ]; then
+  [[ "$calendar_source_batch_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] ||
+    die 'calendar bootstrap requires the exact persistent source batch UUID'
+elif [ -n "$calendar_source_batch_id" ]; then
+  die '--calendar-source-batch-id requires --bootstrap-intraday-calendar'
+fi
 
 [ -f "$compose_file" ] && [ ! -L "$compose_file" ] || die "Compose file missing or symlinked: $compose_file"
 [ -f "$env_file" ] && [ ! -L "$env_file" ] || blocked "production env file missing or symlinked: $env_file"
@@ -118,12 +149,29 @@ dotenv_load "$env_file" || die "cannot parse production env file: $env_file"
 data_dir=$(dotenv_effective_get LAGRANGE_DATA_DIR)
 [ -n "$data_dir" ] || die 'production env is missing LAGRANGE_DATA_DIR'
 [[ "$data_dir" = /* ]] || die 'LAGRANGE_DATA_DIR must be absolute'
+if ! kis_read_compose_configure "$root"; then
+  die "$KIS_READ_COMPOSE_ERROR"
+fi
+owner_intraday_quotes_mode=$KIS_READ_COMPOSE_OWNER_INTRADAY_QUOTES_MODE
+kis_read_coordination_mode=$KIS_READ_COMPOSE_COORDINATION_MODE
+owner_intraday_session_windows_source=$KIS_READ_COMPOSE_SESSION_WINDOWS_SOURCE
 owner_beta_access_mode=$(dotenv_effective_get OWNER_BETA_ACCESS_MODE)
 [ -n "$owner_beta_access_mode" ] || owner_beta_access_mode=disabled
 owner_beta_paper_mode=$(dotenv_effective_get OWNER_BETA_PAPER_MODE)
 [ -n "$owner_beta_paper_mode" ] || owner_beta_paper_mode=disabled
 owner_equity_v2_runtime_mode=$(dotenv_effective_get OWNER_EQUITY_V2_RUNTIME_MODE)
 [ -n "$owner_equity_v2_runtime_mode" ] || owner_equity_v2_runtime_mode=disabled
+
+if [ "$refresh_intraday" -eq 1 ] || [ "$bootstrap_intraday_calendar" -eq 1 ]; then
+  [ "$owner_intraday_quotes_mode" = owner_only ] ||
+    die 'refresh_intraday_requires_owner_only'
+  [ "$kis_read_coordination_mode" = shared_required ] ||
+    die 'refresh_intraday_requires_shared'
+  [ "$owner_intraday_session_windows_source" = operational_v1 ] ||
+    die 'refresh_intraday_requires_operational'
+  [ "$owner_equity_v2_runtime_mode" = owner_only ] ||
+    die 'refresh_intraday_requires_owner_equity_v2_owner_only'
+fi
 
 if [ "$mode" != plan ]; then
   # Host preparation remains a distinct operator action. The release workflow
@@ -135,11 +183,11 @@ cleanup_release_override() {
   [ -z "${release_override:-}" ] || rm -f -- "$release_override"
 }
 
-prepare_installed_release_manifest() {
+load_installed_release_manifest() {
   local current_link expected_root manifest
-  [ "$scope" = release ] && [ "$mode" = apply ] ||
+  [ "$scope" = release ] ||
     die 'internal installed-release manifest guard misuse'
-  [ "$(id -u)" -eq 0 ] || die 'release --apply must run as root'
+  [ "$(id -u)" -eq 0 ] || die 'installed release operation must run as root'
   [ "$compose_file" = "$default_compose_file" ] ||
     die 'release --apply must use the installed release Compose file'
   [ "$env_file" = "$default_env_file" ] ||
@@ -175,7 +223,12 @@ prepare_installed_release_manifest() {
   if ! release_image_manifest_load "$manifest" "$release_commit"; then
     die "$RELEASE_IMAGE_MANIFEST_ERROR"
   fi
+}
 
+prepare_installed_release_manifest() {
+  [ "$scope" = release ] && [ "$mode" = apply ] ||
+    die 'internal installed-release manifest guard misuse'
+  load_installed_release_manifest
   release_override=$(mktemp -- "$release_root/.release-image-override.$release_commit.XXXXXX") ||
     die 'cannot create temporary immutable image override'
   chmod 0600 -- "$release_override"
@@ -208,7 +261,6 @@ inspect_manifest_image() {
 
 verify_manifest_images() {
   local service expected_id expected_revision
-  [ -n "$release_override" ] || die 'immutable image override is not prepared'
   for service in "${local_image_services[@]}"; do
     expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
     expected_revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
@@ -249,14 +301,19 @@ run_owner_equity_v2_release_gate() {
 }
 
 verify_running_container() {
-  local service=$1 expected_id expected_revision container_id inspected actual_id actual_revision
+  local service=$1 current_running=${2:-0}
+  local expected_id expected_revision container_id inspected actual_id actual_revision
   expected_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
   expected_revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
   release_image_manifest_is_image_id "$expected_id" ||
     die "manifest lacks an exact image_id for persistent service: $service"
   release_image_manifest_is_commit "$expected_revision" ||
     die "manifest lacks an exact revision for persistent service: $service"
-  mapfile -t container_ids < <(compose ps -q "$service")
+  if [ "$current_running" -eq 1 ]; then
+    mapfile -t container_ids < <(compose ps --status running -q "$service")
+  else
+    mapfile -t container_ids < <(compose ps -q "$service")
+  fi
   [ "${#container_ids[@]}" -eq 1 ] ||
     die "persistent service did not resolve to exactly one container: $service"
   container_id=${container_ids[0]}
@@ -281,6 +338,7 @@ verify_running_container() {
 
 compose() {
   local -a files=(--env-file "$env_file" -f "$compose_file")
+  files+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
   [ -z "$release_override" ] || files+=(-f "$release_override")
   # The range profile is never selected here. The live profile is explicitly
   # disabled rather than inheriting a shell/ambient COMPOSE_PROFILES value.
@@ -305,11 +363,92 @@ compose() {
   fi
 }
 
-if [ "$scope" = release ] && [ "$mode" = apply ]; then
+run_intraday_refresh() {
+  # The trusted manifest remains the source of image IDs/revisions for every
+  # mode. Plan/preflight inspect only; apply must prove both currently running
+  # targets before the first mutating Compose up.
+  verify_manifest_images
+  if [ "$mode" = plan ]; then
+    cat <<'EOF'
+COMPOSE_REFRESH_INTRADAY_ORDER:
+  1. validate the installed current release and every trusted manifest image_id/revision
+  2. verify currently running api-server and owner-equity-v2-runner identities
+  3. recreate api-server, then verify its actual image_id/revision
+  4. recreate owner-equity-v2-runner, then verify its actual image_id/revision
+No build, migration, bootstrap, other service startup, provider call, cache/quota deletion, or live profile is allowed.
+EOF
+    echo 'PLAN_ONLY: no service mutation or provider/network call made'
+    return 0
+  fi
+  if [ "$mode" = preflight ]; then
+    echo 'COMPOSE_REFRESH_INTRADAY_PREFLIGHT: PASS (no service mutation or provider/network call made)'
+    return 0
+  fi
+
+  verify_running_container api-server 1
+  verify_running_container owner-equity-v2-runner 1
+  run_owner_equity_v2_release_gate
+
+  # Do not create the immutable override until both currently running
+  # services have passed their manifest identity gates. The second config
+  # validation below binds the eventual Compose mutation to that override.
+  if [ -z "$release_override" ]; then
+    prepare_installed_release_manifest
+    compose config --quiet || die 'Compose interpolation/config validation failed'
+  fi
+
+  compose up --no-build --pull never --no-deps --force-recreate --wait api-server
+  verify_running_container api-server 1
+  compose up --no-build --pull never --no-deps --force-recreate --wait owner-equity-v2-runner
+  verify_running_container owner-equity-v2-runner 1
+  compose ps
+  echo 'COMPOSE_REFRESH_INTRADAY: PASS (API and owner-equity-v2-runner recreated sequentially with immutable image IDs)'
+}
+
+run_intraday_calendar_bootstrap() {
+  local calendar_date worker_id worker_status
+  calendar_date=$(TZ=Asia/Seoul date +%F)
+  verify_manifest_images
+  if [ "$mode" = plan ]; then
+    echo "CALENDAR_BOOTSTRAP_PLAN: date=$calendar_date source_batch_id=$calendar_source_batch_id"
+    echo 'PLAN_ONLY: validate the current immutable release; require the research daemon stopped; run one calendar-only command with the research_writer role'
+    return 0
+  fi
+  worker_id=$(compose ps -aq research-worker) || die 'cannot inspect research daemon'
+  if [ -n "$worker_id" ]; then
+    worker_status=$(docker inspect --format '{{.State.Status}}' "$worker_id") || die 'cannot inspect research daemon status'
+    [ "$worker_status" = exited ] || [ "$worker_status" = created ] ||
+      die 'calendar bootstrap requires the research daemon stopped'
+  fi
+  if [ "$mode" = preflight ]; then
+    echo 'CALENDAR_BOOTSTRAP_PREFLIGHT: PASS (no provider call or state mutation)'
+    return 0
+  fi
+  run_owner_equity_v2_release_gate
+  prepare_installed_release_manifest
+  compose config --quiet || die 'Compose interpolation/config validation failed'
+  compose run --rm --no-deps research-worker --calendar-once \
+    --date "$calendar_date" --source-batch-id "$calendar_source_batch_id"
+  echo 'CALENDAR_BOOTSTRAP: PASS (exact-date calendar publication; no EOD curation or quote request)'
+}
+
+if [ "$refresh_intraday" -eq 1 ] || [ "$bootstrap_intraday_calendar" -eq 1 ]; then
+  load_installed_release_manifest
+elif [ "$scope" = release ] && [ "$mode" = apply ]; then
   prepare_installed_release_manifest
 fi
 
 compose config --quiet || die 'Compose interpolation/config validation failed'
+
+if [ "$bootstrap_intraday_calendar" -eq 1 ]; then
+  run_intraday_calendar_bootstrap
+  exit 0
+fi
+
+if [ "$refresh_intraday" -eq 1 ]; then
+  run_intraday_refresh
+  exit 0
+fi
 
 if [ "$scope" = infrastructure ]; then
   cat <<'EOF'

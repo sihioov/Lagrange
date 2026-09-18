@@ -19,7 +19,8 @@ use axum::{Json, Router, routing::get};
 use base64::Engine;
 use collectors::intraday_quotes::{
     INTRADAY_SESSION_WINDOWS_PATH, INTRADAY_SESSION_WINDOWS_SHA256_ENV,
-    IntradaySessionWindowContract,
+    INTRADAY_SESSION_WINDOWS_SOURCE_ENV, IntradaySessionWindowContract,
+    IntradaySessionWindowSource,
 };
 use job_queue::recommendation::input::DatasetPin;
 use serde_json::json;
@@ -77,6 +78,7 @@ pub struct RuntimeConfig {
     pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
     pub owner_equity_v2_api_artifact_root: Option<PathBuf>,
     pub owner_intraday_quotes: OwnerIntradayQuoteReadConfig,
+    pub owner_intraday_session_windows_source: IntradaySessionWindowSource,
     pub acquire_timeout: Duration,
 }
 
@@ -181,7 +183,12 @@ where
     let owner_beta_equity_signals = owner_beta_equity_signals_from(&get, owner_beta_access)?;
     let owner_equity_v2_pins = owner_equity_v2_pins_from(&get)?;
     let owner_equity_v2_api_artifact_root = owner_equity_v2_api_artifact_root_from(&get)?;
-    let owner_intraday_quotes = owner_intraday_quote_read_config_from(&get, &read_window)?;
+    let owner_intraday_session_windows_source = owner_intraday_session_windows_source_from(&get)?;
+    let owner_intraday_quotes = owner_intraday_quote_read_config_from(
+        &get,
+        &read_window,
+        owner_intraday_session_windows_source,
+    )?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
@@ -240,6 +247,7 @@ where
         owner_equity_v2_pins,
         owner_equity_v2_api_artifact_root,
         owner_intraday_quotes,
+        owner_intraday_session_windows_source,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
 }
@@ -247,6 +255,7 @@ where
 fn owner_intraday_quote_read_config_from<F, R>(
     get: &F,
     read_window: &R,
+    source: IntradaySessionWindowSource,
 ) -> Result<OwnerIntradayQuoteReadConfig, ConfigError>
 where
     F: Fn(&str) -> Option<OsString>,
@@ -275,18 +284,42 @@ where
     };
 
     Ok(OwnerIntradayQuoteReadConfig::OwnerOnly {
-        window: read_intraday_session_window_contract(get, read_window),
+        window: read_intraday_session_window_contract(get, read_window, source),
     })
+}
+
+fn owner_intraday_session_windows_source_from<F>(
+    get: &F,
+) -> Result<IntradaySessionWindowSource, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let value = get(INTRADAY_SESSION_WINDOWS_SOURCE_ENV)
+        .map(|value| {
+            value.into_string().map_err(|_| ConfigError::NonUnicode {
+                key: INTRADAY_SESSION_WINDOWS_SOURCE_ENV.to_owned(),
+            })
+        })
+        .transpose()?;
+    IntradaySessionWindowSource::from_optional_str(value.as_deref())
+        .map_err(|_| invalid(INTRADAY_SESSION_WINDOWS_SOURCE_ENV))
 }
 
 fn read_intraday_session_window_contract<F, R>(
     get: &F,
     read_window: &R,
+    source: IntradaySessionWindowSource,
 ) -> Option<Arc<IntradaySessionWindowContract>>
 where
     F: Fn(&str) -> Option<OsString>,
     R: Fn(&Path) -> std::io::Result<Vec<u8>>,
 {
+    if source == IntradaySessionWindowSource::OperationalV1 {
+        return collectors::intraday_quotes::IntradaySessionWindowContract::from_source(source)
+            .ok()
+            .map(Arc::new);
+    }
+
     let expected_hash = get(INTRADAY_SESSION_WINDOWS_SHA256_ENV)?
         .into_string()
         .ok()?;
@@ -294,7 +327,6 @@ where
     if canonical_hash.as_str() != expected_hash {
         return None;
     }
-
     let bytes = read_window(Path::new(INTRADAY_SESSION_WINDOWS_PATH)).ok()?;
     IntradaySessionWindowContract::from_bytes(&bytes, &expected_hash)
         .ok()
@@ -1543,6 +1575,72 @@ mod tests {
             );
             assert_eq!(reads.get(), 0, "disabled mode must not read the window");
         }
+    }
+
+    #[test]
+    fn owner_intraday_session_window_source_defaults_to_release_v1() {
+        let loaded = config(&base_env()).expect("default source config");
+        assert_eq!(
+            loaded.owner_intraday_session_windows_source,
+            IntradaySessionWindowSource::ReleaseV1
+        );
+    }
+
+    #[test]
+    fn owner_intraday_session_window_source_is_strict_even_when_quotes_are_off() {
+        for value in ["", "release_v2", " operational_v1", "OPERATIONAL_V1"] {
+            let mut env = base_env();
+            env.insert(
+                "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE".to_owned(),
+                value.into(),
+            );
+            assert!(matches!(
+                config(&env),
+                Err(ConfigError::Invalid { ref key })
+                    if key == "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE"
+            ));
+        }
+
+        let mut env = base_env();
+        env.insert(
+            "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE".to_owned(),
+            "operational_v1".into(),
+        );
+        let reads = Cell::new(0);
+        let loaded = config_with_reader(&env, |_| {
+            reads.set(reads.get() + 1);
+            Ok(Vec::new())
+        })
+        .expect("operational source stays input-free while disabled");
+        assert_eq!(
+            loaded.owner_intraday_session_windows_source,
+            IntradaySessionWindowSource::OperationalV1
+        );
+        assert_eq!(
+            loaded.owner_intraday_quotes,
+            OwnerIntradayQuoteReadConfig::Disabled
+        );
+        assert_eq!(reads.get(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_intraday_session_window_source_rejects_non_unicode() {
+        let mut env = base_env();
+        env.insert(
+            "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE".to_owned(),
+            OsString::from_vec(vec![0xff]),
+        );
+        let reads = Cell::new(0);
+        assert!(matches!(
+            config_with_reader(&env, |_| {
+                reads.set(reads.get() + 1);
+                Ok(Vec::new())
+            }),
+            Err(ConfigError::NonUnicode { ref key })
+                if key == "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE"
+        ));
+        assert_eq!(reads.get(), 0);
     }
 
     #[test]

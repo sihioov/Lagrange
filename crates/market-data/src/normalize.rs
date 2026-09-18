@@ -19,15 +19,28 @@ use serde_json::{Map, Number, Value};
 use uuid::Uuid;
 
 use crate::contract::{
-    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata,
-    ResponseKind, StoredFile,
+    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, PROVIDER_KIS_CALENDAR_NORMALIZED,
+    PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
 };
-use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
+use crate::providers::kis::{
+    CALENDAR_FILE_NAME, CALENDAR_PATH, KR_ETF_CORE_SYMBOLS, calendar_query,
+    calendar_request_headers,
+};
 use crate::storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
 use crate::validate::validate_response;
 
 const NORMALIZER: &str = "kis-wire-to-canonical-v2";
 const NORMALIZER_SCHEMA_VERSION: u32 = 1;
+/// Stable calendar document identity emitted by the KIS `chk-holiday` mapper.
+pub const KIS_CALENDAR_DOCUMENT_ID: &str = "kis-chk-holiday-v1";
+/// Stable source-version identity used by the calendar publication tables.
+pub const KIS_CALENDAR_SOURCE_VERSION: &str = "kis-chk-holiday-v1:schema-1";
+/// Stable normalizer identity for the calendar-only canonical scope.
+pub const KIS_CALENDAR_NORMALIZER: &str = "kis-calendar-wire-to-canonical-v1";
+/// Schema version for [`KIS_CALENDAR_NORMALIZER`].
+pub const KIS_CALENDAR_NORMALIZER_SCHEMA_VERSION: u32 = 1;
+/// Request-metadata endpoint prefix for calendar-only canonical files.
+pub const KIS_CALENDAR_NORMALIZED_ENDPOINT_PREFIX: &str = "kis-calendar.normalized";
 const COLLISION_RETRIES: usize = 100;
 const COLLISION_RETRY_DELAY: Duration = Duration::from_millis(2);
 const DAILY_BARS_ENDPOINT: &str = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice";
@@ -143,6 +156,10 @@ pub enum NormalizeError {
     Serialization { kind: ResponseKind, reason: String },
     #[error("calendar has no target-date observation for {target_date}")]
     MissingTargetObservation { target_date: String },
+    #[error("calendar source manifest is not the exact one-file contract: {reason}")]
+    InvalidCalendarSource { reason: String },
+    #[error("calendar source manifest is not the committed source: {reason}")]
+    CalendarSourceManifestConflict { reason: String },
     #[error(
         "target-date bar coverage disagrees with calendar for {target_date}: open={calendar_open}, expected={expected}, actual={actual}"
     )]
@@ -163,6 +180,15 @@ pub enum NormalizeError {
 pub fn deterministic_kis_normalized_batch_id(source_batch_id: BatchId) -> BatchId {
     let name = format!(
         "provider={PROVIDER_KIS_NORMALIZED}\nnormalizer={NORMALIZER}\nsource_batch={source_batch_id}"
+    );
+    BatchId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes()))
+}
+
+/// Returns the stable canonical batch identity for one calendar-only KIS
+/// source batch.
+pub fn deterministic_kis_calendar_normalized_batch_id(source_batch_id: BatchId) -> BatchId {
+    let name = format!(
+        "provider={PROVIDER_KIS_CALENDAR_NORMALIZED}\nnormalizer={KIS_CALENDAR_NORMALIZER}\nsource_batch={source_batch_id}"
     );
     BatchId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_URL, name.as_bytes()))
 }
@@ -200,9 +226,15 @@ pub fn normalize_kis_batch(
     };
     let expected_entry = expected_manifest_entry(source, &spec, &envelopes);
 
-    if let Some(outcome) =
-        load_existing_normalized_batch(raw, source, &expected_entry, &envelopes, lineage.clone())?
-    {
+    if let Some(outcome) = load_existing_normalized_batch(
+        raw,
+        PROVIDER_KIS_NORMALIZED,
+        MARKET_KR,
+        source,
+        &expected_entry,
+        &envelopes,
+        lineage.clone(),
+    )? {
         return Ok(outcome);
     }
 
@@ -230,6 +262,8 @@ pub fn normalize_kis_batch(
             for _ in 0..COLLISION_RETRIES {
                 if let Some(outcome) = load_existing_normalized_batch(
                     raw,
+                    PROVIDER_KIS_NORMALIZED,
+                    MARKET_KR,
                     source,
                     &expected_entry,
                     &envelopes,
@@ -242,6 +276,191 @@ pub fn normalize_kis_batch(
             Err(NormalizeError::Store(error))
         }
         Err(error) => Err(NormalizeError::Store(error)),
+    }
+}
+
+/// Reads one committed KIS calendar-only Raw batch, maps it to one canonical
+/// `calendar.json`, and stores that file under the dedicated normalized scope.
+/// The normalized batch id is derived solely from the committed source batch
+/// id, so replay verifies and returns the same immutable result.
+pub fn normalize_kis_calendar_batch(
+    raw: &RawStore,
+    source: &ManifestEntry,
+) -> Result<NormalizationOutcome, NormalizeError> {
+    validate_kis_calendar_source_scope(source)?;
+    let committed = raw.read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?;
+    let Some(committed_source) = committed
+        .iter()
+        .find(|entry| entry.batch_id == source.batch_id)
+    else {
+        return Err(NormalizeError::CalendarSourceManifestConflict {
+            reason: "calendar source batch is not committed in its Raw manifest".to_owned(),
+        });
+    };
+    if committed_source != source {
+        return Err(NormalizeError::CalendarSourceManifestConflict {
+            reason: "caller manifest differs from the committed calendar source".to_owned(),
+        });
+    }
+
+    let stored = raw.read_batch_bytes(&source.provider, &source.market, source)?;
+    validate_kis_calendar_source_manifest(source, &stored)?;
+    let batch_id = deterministic_kis_calendar_normalized_batch_id(source.batch_id);
+    let envelopes = normalize_kis_calendar_envelopes_with_batch_id(source, &stored, batch_id)?;
+    let lineage = calendar_lineage(source);
+    let spec = BatchSpec {
+        provider: PROVIDER_KIS_CALENDAR_NORMALIZED,
+        market: &source.market,
+        date: &source.date,
+        batch_id,
+        entitlement_reference: source.entitlement_reference.as_deref(),
+        mode: FetchMode::Credentialed,
+    };
+    let expected_entry = expected_manifest_entry(source, &spec, &envelopes);
+
+    if let Some(outcome) = load_existing_normalized_batch(
+        raw,
+        PROVIDER_KIS_CALENDAR_NORMALIZED,
+        MARKET_KR,
+        source,
+        &expected_entry,
+        &envelopes,
+        lineage.clone(),
+    )? {
+        return Ok(outcome);
+    }
+
+    match raw.store_batch(&spec, &envelopes) {
+        Ok(entry) => {
+            if entry != expected_entry {
+                return Err(existing_batch_conflict(
+                    batch_id,
+                    "RawStore returned manifest metadata different from the deterministic calendar contract",
+                ));
+            }
+            let files =
+                raw.read_batch_bytes(PROVIDER_KIS_CALENDAR_NORMALIZED, MARKET_KR, &entry)?;
+            validate_stored_evidence(&entry, &files)?;
+            Ok(NormalizationOutcome {
+                source_batch_id: source.batch_id,
+                entry,
+                files,
+                lineage,
+            })
+        }
+        Err(error @ StoreError::FileExists { .. }) => {
+            for _ in 0..COLLISION_RETRIES {
+                if let Some(outcome) = load_existing_normalized_batch(
+                    raw,
+                    PROVIDER_KIS_CALENDAR_NORMALIZED,
+                    MARKET_KR,
+                    source,
+                    &expected_entry,
+                    &envelopes,
+                    lineage.clone(),
+                )? {
+                    return Ok(outcome);
+                }
+                std::thread::sleep(COLLISION_RETRY_DELAY);
+            }
+            Err(NormalizeError::Store(error))
+        }
+        Err(error) => Err(NormalizeError::Store(error)),
+    }
+}
+
+/// Normalizes a verified calendar-only source in memory without persisting a
+/// canonical batch. The persisted path uses the same document builder and
+/// deterministic identity checks.
+pub fn normalize_kis_calendar_envelopes(
+    source: &ManifestEntry,
+    stored: &[StoredFile],
+) -> Result<Vec<RawEnvelope>, NormalizeError> {
+    validate_kis_calendar_source_manifest(source, stored)?;
+    normalize_kis_calendar_envelopes_with_batch_id(source, stored, BatchId::generate())
+}
+
+pub(crate) fn normalize_kis_calendar_envelopes_with_batch_id(
+    source: &ManifestEntry,
+    stored: &[StoredFile],
+    batch_id: BatchId,
+) -> Result<Vec<RawEnvelope>, NormalizeError> {
+    validate_kis_calendar_source_manifest(source, stored)?;
+    let lineage = calendar_lineage(source);
+    Ok(vec![normalize_calendar_with_contract(
+        source,
+        stored,
+        &lineage,
+        batch_id,
+        KIS_CALENDAR_NORMALIZER,
+        KIS_CALENDAR_NORMALIZED_ENDPOINT_PREFIX,
+    )?])
+}
+
+fn calendar_lineage(source: &ManifestEntry) -> NormalizationLineage {
+    NormalizationLineage {
+        schema_version: KIS_CALENDAR_NORMALIZER_SCHEMA_VERSION,
+        normalizer: KIS_CALENDAR_NORMALIZER.to_owned(),
+        upstream_provider: source.provider.clone(),
+        upstream_market: source.market.clone(),
+        upstream_batch_id: source.batch_id,
+        upstream_files: source_lineage(source),
+    }
+}
+
+fn validate_kis_calendar_source_scope(source: &ManifestEntry) -> Result<(), NormalizeError> {
+    if source.provider != PROVIDER_KIS_CALENDAR || source.market != MARKET_KR {
+        return Err(NormalizeError::UnsupportedScope {
+            expected_provider: PROVIDER_KIS_CALENDAR,
+            expected_market: MARKET_KR,
+            provider: source.provider.clone(),
+            market: source.market.clone(),
+        });
+    }
+    if source.mode != FetchMode::Credentialed {
+        return Err(NormalizeError::UnsupportedMode);
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_kis_calendar_source_manifest(
+    source: &ManifestEntry,
+    stored: &[StoredFile],
+) -> Result<(), NormalizeError> {
+    validate_kis_calendar_source_scope(source)?;
+    validate_stored_evidence(source, stored)?;
+    if source.batch_id.as_uuid().is_nil() {
+        return Err(invalid_calendar_source(
+            "calendar source batch id must not be nil",
+        ));
+    }
+    if source.files.len() != 1 {
+        return Err(invalid_calendar_source(
+            "calendar source must contain exactly one file",
+        ));
+    }
+    let file = &source.files[0];
+    if file.kind != ResponseKind::Calendar || file.file_name != CALENDAR_FILE_NAME {
+        return Err(invalid_calendar_source(
+            "calendar source must contain calendar-page-01.json as its only file",
+        ));
+    }
+    if file.request.mode != FetchMode::Credentialed
+        || file.request.endpoint != CALENDAR_PATH
+        || file.request.query != calendar_query(source.date)
+        || file.request.headers != calendar_request_headers()
+        || file.response_continuation.is_some()
+    {
+        return Err(invalid_calendar_source(
+            "calendar source request metadata is not the exact single-page contract",
+        ));
+    }
+    Ok(())
+}
+
+fn invalid_calendar_source(reason: &str) -> NormalizeError {
+    NormalizeError::InvalidCalendarSource {
+        reason: reason.to_owned(),
     }
 }
 
@@ -274,13 +493,15 @@ fn expected_manifest_entry(
 
 fn load_existing_normalized_batch(
     raw: &RawStore,
+    normalized_provider: &str,
+    normalized_market: &str,
     source: &ManifestEntry,
     expected_entry: &ManifestEntry,
     expected_envelopes: &[RawEnvelope],
     lineage: NormalizationLineage,
 ) -> Result<Option<NormalizationOutcome>, NormalizeError> {
     let existing = raw
-        .read_reconciled_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)?
+        .read_reconciled_manifest(normalized_provider, normalized_market)?
         .into_iter()
         .find(|entry| entry.batch_id == expected_entry.batch_id);
     let Some(entry) = existing else {
@@ -292,7 +513,7 @@ fn load_existing_normalized_batch(
             "manifest metadata, canonical shape, lineage, or content hash differs",
         ));
     }
-    let files = raw.read_batch_bytes(PROVIDER_KIS_NORMALIZED, MARKET_KR, &entry)?;
+    let files = raw.read_batch_bytes(normalized_provider, normalized_market, &entry)?;
     validate_stored_evidence(&entry, &files)?;
     for expected in expected_envelopes {
         let Some(actual) = files
@@ -730,6 +951,24 @@ fn normalize_calendar(
     lineage: &NormalizationLineage,
     batch_id: BatchId,
 ) -> Result<RawEnvelope, NormalizeError> {
+    normalize_calendar_with_contract(
+        source,
+        stored,
+        lineage,
+        batch_id,
+        NORMALIZER,
+        "kis.normalized",
+    )
+}
+
+fn normalize_calendar_with_contract(
+    source: &ManifestEntry,
+    stored: &[StoredFile],
+    lineage: &NormalizationLineage,
+    batch_id: BatchId,
+    normalizer: &str,
+    endpoint_prefix: &str,
+) -> Result<RawEnvelope, NormalizeError> {
     let files = source_files(source, stored, ResponseKind::Calendar)?;
     let mut dates = BTreeMap::<TradingDate, bool>::new();
     for (metadata, file) in files {
@@ -832,7 +1071,7 @@ fn normalize_calendar(
     let mut document = json_object([
         (
             "calendar_id",
-            Value::String("kis-chk-holiday-v1".to_owned()),
+            Value::String(KIS_CALENDAR_DOCUMENT_ID.to_owned()),
         ),
         ("schema_version", Value::Number(Number::from(1))),
         ("source", Value::String("kis".to_owned())),
@@ -848,13 +1087,15 @@ fn normalize_calendar(
         ("holidays", Value::Array(holidays)),
     ]);
     add_lineage(&mut document, lineage);
-    canonical_envelope(
+    canonical_envelope_with_contract(
         ResponseKind::Calendar,
         "calendar.json",
         document,
         source,
         lineage,
         batch_id,
+        normalizer,
+        endpoint_prefix,
     )
 }
 
@@ -1356,6 +1597,28 @@ fn canonical_envelope(
     lineage: &NormalizationLineage,
     batch_id: BatchId,
 ) -> Result<RawEnvelope, NormalizeError> {
+    canonical_envelope_with_contract(
+        kind,
+        file_name,
+        document,
+        source,
+        lineage,
+        batch_id,
+        NORMALIZER,
+        "kis.normalized",
+    )
+}
+
+fn canonical_envelope_with_contract(
+    kind: ResponseKind,
+    file_name: &str,
+    document: Map<String, Value>,
+    source: &ManifestEntry,
+    lineage: &NormalizationLineage,
+    batch_id: BatchId,
+    normalizer: &str,
+    endpoint_prefix: &str,
+) -> Result<RawEnvelope, NormalizeError> {
     let bytes = serde_json::to_vec(&Value::Object(document)).map_err(|error| {
         NormalizeError::Serialization {
             kind,
@@ -1378,7 +1641,7 @@ fn canonical_envelope(
         bytes,
         source.retrieved_at,
         RequestMetadata {
-            endpoint: format!("kis.normalized/{NORMALIZER}/{kind}"),
+            endpoint: format!("{endpoint_prefix}/{normalizer}/{kind}"),
             query: vec![
                 ("upstream_batch_id".to_owned(), source.batch_id.to_string()),
                 ("upstream_lineage".to_owned(), lineage_query),

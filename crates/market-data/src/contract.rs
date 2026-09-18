@@ -30,6 +30,14 @@ use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 pub const PROVIDER_KRX: &str = "krx";
 /// Canonical provider id of the Korea Investment & Securities Open API connector.
 pub const PROVIDER_KIS: &str = "kis";
+/// Provider scope for the one-day KIS `chk-holiday` proof capture.
+///
+/// This is deliberately separate from [`PROVIDER_KIS`]: the existing KIS EOD
+/// scope remains the exact four-response contract and must not admit a
+/// calendar-only batch.
+pub const PROVIDER_KIS_CALENDAR: &str = "kis-calendar";
+/// Provider scope for the canonical one-file KIS calendar proof batch.
+pub const PROVIDER_KIS_CALENDAR_NORMALIZED: &str = "kis-calendar-normalized";
 /// Provider scope for bounded historical daily-bar range captures.
 ///
 /// Range captures are immutable Raw evidence only.  They are deliberately

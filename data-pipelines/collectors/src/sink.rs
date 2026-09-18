@@ -3,8 +3,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use domain::{BatchId, TradingDate, UtcTimestamp};
-use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX};
-use market_data::publication::{CalendarFact, DataBatchKind, PublicationBundle, PublicationFile};
+use market_data::contract::{
+    FetchMode, MARKET_KR, PROVIDER_KIS_CALENDAR_NORMALIZED, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX,
+};
+use market_data::normalize::KIS_CALENDAR_SOURCE_VERSION;
+use market_data::publication::{
+    CalendarFact, CalendarPublicationBundle, DataBatchKind, PublicationBundle, PublicationFile,
+};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +141,21 @@ pub trait PublicationSink: Send + Sync {
     async fn has_eod(&self, date: TradingDate) -> Result<bool, SinkError>;
 }
 
+/// Separate sink contract for the one-file calendar bootstrap. It must not be
+/// folded into [`PublicationSink`], whose input remains the exact four-file
+/// EOD publication bundle.
+#[async_trait]
+pub trait CalendarPublicationSink: Send + Sync {
+    async fn calendar_publication_state(
+        &self,
+        batch_id: BatchId,
+    ) -> Result<PublicationState, SinkError>;
+    async fn publish_calendar(
+        &self,
+        bundle: &CalendarPublicationBundle,
+    ) -> Result<PublishOutcome, SinkError>;
+}
+
 #[derive(Clone)]
 pub struct PostgresPublicationSink {
     pool: PgPool,
@@ -163,6 +183,82 @@ impl PostgresPublicationSink {
         .fetch_one(&self.pool)
         .await
         .map_err(SinkError::from_sqlx)
+    }
+
+    /// Returns the publication state for a canonical one-file calendar batch.
+    pub async fn calendar_publication_state(
+        &self,
+        batch_id: BatchId,
+    ) -> Result<PublicationState, SinkError> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT kind, source_file_name FROM data_batches \
+             WHERE provider=$1 AND market=$2 AND source_batch_id=$3",
+        )
+        .bind(DB_PROVIDER)
+        .bind(DB_MARKET)
+        .bind(batch_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(SinkError::from_sqlx)?;
+        Ok(if rows.is_empty() {
+            PublicationState::Missing
+        } else if exact_calendar_kind_shape(&rows) {
+            PublicationState::Complete
+        } else {
+            PublicationState::Partial
+        })
+    }
+
+    /// Publishes one validated canonical KIS calendar file and its history and
+    /// projection atomically. Replays verify the original row and retain all
+    /// existing history/projection safeguards.
+    pub async fn publish_calendar(
+        &self,
+        bundle: &CalendarPublicationBundle,
+    ) -> Result<PublishOutcome, SinkError> {
+        validate_calendar_bundle(bundle)?;
+        let retrieved_at = postgres_retrieved_at(bundle.retrieved_at());
+        let mut tx = self.pool.begin().await.map_err(SinkError::from_sqlx)?;
+        let lock_key = i64::from_be_bytes(
+            bundle.source_batch_id().as_uuid().as_bytes()[..8]
+                .try_into()
+                .expect("UUID has at least eight bytes"),
+        );
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(lock_key)
+            .execute(&mut *tx)
+            .await
+            .map_err(SinkError::from_sqlx)?;
+
+        let rows = load_batch_rows(&mut tx, bundle.source_batch_id()).await?;
+        let replay = !rows.is_empty();
+        if replay {
+            calendar_batch_row_matches(&rows, bundle, retrieved_at)?;
+        } else {
+            insert_calendar_batch_row(&mut tx, bundle, retrieved_at).await?;
+        }
+        verify_or_insert_calendar_history(
+            &mut tx,
+            bundle.source_batch_id(),
+            bundle.calendar_facts(),
+            replay,
+            retrieved_at,
+        )
+        .await?;
+        verify_or_advance_calendar_projections(
+            &mut tx,
+            bundle.source_batch_id(),
+            bundle.calendar_facts(),
+            replay,
+            retrieved_at,
+        )
+        .await?;
+        tx.commit().await.map_err(SinkError::from_sqlx)?;
+        Ok(if replay {
+            PublishOutcome::AlreadyPublished
+        } else {
+            PublishOutcome::Published
+        })
     }
 }
 
@@ -382,6 +478,134 @@ fn exact_kind_shape(kinds_and_names: &[(String, String)]) -> bool {
         && count("CORPORATE_ACTIONS") == 1
 }
 
+fn exact_calendar_kind_shape(kinds_and_names: &[(String, String)]) -> bool {
+    kinds_and_names.len() == 1
+        && kinds_and_names[0].0 == DataBatchKind::Calendar.as_db_str()
+        && kinds_and_names[0].1 == "calendar.json"
+}
+
+fn canonical_database_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn validate_calendar_bundle(bundle: &CalendarPublicationBundle) -> Result<(), SinkError> {
+    if bundle.provider() != PROVIDER_KIS_CALENDAR_NORMALIZED || bundle.market() != MARKET_KR {
+        return Err(SinkError::Invariant(
+            "calendar publication must use kis-calendar-normalized/kr".to_owned(),
+        ));
+    }
+    if bundle.fetch_mode() != FetchMode::Credentialed {
+        return Err(SinkError::Invariant(
+            "calendar publication must be credentialed".to_owned(),
+        ));
+    }
+    if bundle.source_batch_id().as_uuid().is_nil() {
+        return Err(SinkError::Invariant(
+            "calendar publication source batch id must not be nil".to_owned(),
+        ));
+    }
+    let file = bundle.file();
+    if file.kind != DataBatchKind::Calendar || file.file_name != "calendar.json" {
+        return Err(SinkError::Conflict(
+            "calendar publication must contain exactly calendar.json".to_owned(),
+        ));
+    }
+    if file.storage_path.is_empty() || !canonical_database_hash(&file.content_sha256) {
+        return Err(SinkError::Invariant(
+            "calendar publication file metadata is not canonical".to_owned(),
+        ));
+    }
+    i64::try_from(file.bytes_size)
+        .map_err(|_| SinkError::Invariant("calendar file exceeds PostgreSQL bigint".to_owned()))?;
+
+    let facts = bundle.calendar_facts();
+    if facts.len() != 1 {
+        return Err(SinkError::Conflict(
+            "calendar publication must contain exactly one calendar fact".to_owned(),
+        ));
+    }
+    let fact = &facts[0];
+    if fact.exchange != DB_PROVIDER
+        || fact.session_date != bundle.target_date()
+        || fact.timezone != "Asia/Seoul"
+        || fact.source != "kis"
+        || fact.source_version != KIS_CALENDAR_SOURCE_VERSION
+        || !canonical_database_hash(&fact.content_sha256)
+        || fact.content_sha256 != file.content_sha256
+    {
+        return Err(SinkError::Invariant(
+            "calendar publication fact is outside the KIS calendar contract".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn calendar_batch_row_matches(
+    rows: &[ExistingBatchRow],
+    bundle: &CalendarPublicationBundle,
+    retrieved_at: DateTime<Utc>,
+) -> Result<(), SinkError> {
+    if rows.len() != 1
+        || !exact_calendar_kind_shape(&[(rows[0].kind.clone(), rows[0].source_file_name.clone())])
+    {
+        return Err(SinkError::Conflict(
+            "existing calendar source batch is partial or noncanonical".to_owned(),
+        ));
+    }
+    let row = &rows[0];
+    let file = bundle.file();
+    let size = i64::try_from(file.bytes_size)
+        .map_err(|_| SinkError::Invariant("calendar file exceeds PostgreSQL bigint".to_owned()))?;
+    if row.batch_date != bundle.target_date().as_naive_date()
+        || row.kind != file.kind.as_db_str()
+        || row.storage_path != file.storage_path
+        || row.content_sha256 != file.content_sha256
+        || row.bytes_size != size
+        || canonical_retrieved_at(row.retrieved_at) != retrieved_at
+        || row.source_file_name != file.file_name
+        || row.fetch_mode != bundle.fetch_mode().as_str()
+    {
+        return Err(SinkError::Conflict(
+            "existing calendar publication evidence differs".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn insert_calendar_batch_row(
+    tx: &mut Transaction<'_, Postgres>,
+    bundle: &CalendarPublicationBundle,
+    retrieved_at: DateTime<Utc>,
+) -> Result<(), SinkError> {
+    let file = bundle.file();
+    sqlx::query(
+        "INSERT INTO data_batches \
+         (provider, market, batch_date, kind, storage_path, content_sha256, bytes_size, \
+          retrieved_at, source_batch_id, source_file_name, fetch_mode) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    )
+    .bind(DB_PROVIDER)
+    .bind(DB_MARKET)
+    .bind(bundle.target_date().as_naive_date())
+    .bind(DataBatchKind::Calendar.as_db_str())
+    .bind(&file.storage_path)
+    .bind(&file.content_sha256)
+    .bind(i64::try_from(file.bytes_size).expect("calendar bundle size validated"))
+    .bind(retrieved_at)
+    .bind(bundle.source_batch_id().as_uuid())
+    .bind(&file.file_name)
+    .bind(bundle.fetch_mode().as_str())
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| {
+        semantic_conflict(error, "calendar source-file lineage is already occupied")
+    })?;
+    Ok(())
+}
+
 fn semantic_conflict(error: sqlx::Error, context: impl Into<String>) -> SinkError {
     if error
         .as_database_error()
@@ -515,8 +739,25 @@ async fn verify_or_insert_history(
     replay: bool,
     retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
-    lock_and_verify_source_versions(tx, bundle).await?;
-    for fact in &bundle.calendar_facts {
+    verify_or_insert_calendar_history(
+        tx,
+        bundle.source_batch_id,
+        &bundle.calendar_facts,
+        replay,
+        retrieved_at,
+    )
+    .await
+}
+
+async fn verify_or_insert_calendar_history(
+    tx: &mut Transaction<'_, Postgres>,
+    source_batch_id: BatchId,
+    facts: &[CalendarFact],
+    replay: bool,
+    retrieved_at: DateTime<Utc>,
+) -> Result<(), SinkError> {
+    lock_and_verify_calendar_source_versions(tx, facts).await?;
+    for fact in facts {
         let mut existing: Option<ExistingHistoryRow> = sqlx::query_as(
             "SELECT session_type, timezone, source, content_sha256 \
              FROM trading_calendar_versions \
@@ -548,7 +789,7 @@ async fn verify_or_insert_history(
             .bind(&fact.timezone)
             .bind(&fact.source)
             .bind(&fact.source_version)
-            .bind(bundle.source_batch_id.as_uuid())
+            .bind(source_batch_id.as_uuid())
             .bind(&fact.content_sha256)
             .bind(retrieved_at)
             .execute(&mut **tx)
@@ -583,8 +824,14 @@ async fn lock_and_verify_source_versions(
     tx: &mut Transaction<'_, Postgres>,
     bundle: &PublicationBundle,
 ) -> Result<(), SinkError> {
-    let keys: BTreeSet<_> = bundle
-        .calendar_facts
+    lock_and_verify_calendar_source_versions(tx, &bundle.calendar_facts).await
+}
+
+async fn lock_and_verify_calendar_source_versions(
+    tx: &mut Transaction<'_, Postgres>,
+    facts: &[CalendarFact],
+) -> Result<(), SinkError> {
+    let keys: BTreeSet<_> = facts
         .iter()
         .map(|fact| (fact.exchange.as_str(), fact.source_version.as_str()))
         .collect();
@@ -616,7 +863,7 @@ async fn lock_and_verify_source_versions(
     // source can never satisfy. The table's own UNIQUE constraint has always
     // been (exchange, session_date, source_version); this cross-date rule lived
     // only here.
-    for fact in &bundle.calendar_facts {
+    for fact in facts {
         let mismatch: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM trading_calendar_versions \
              WHERE exchange=$1 AND source_version=$2 AND session_date=$3 \
@@ -689,7 +936,24 @@ async fn verify_or_advance_projections(
     replay: bool,
     retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
-    for fact in &bundle.calendar_facts {
+    verify_or_advance_calendar_projections(
+        tx,
+        bundle.source_batch_id,
+        &bundle.calendar_facts,
+        replay,
+        retrieved_at,
+    )
+    .await
+}
+
+async fn verify_or_advance_calendar_projections(
+    tx: &mut Transaction<'_, Postgres>,
+    source_batch_id: BatchId,
+    facts: &[CalendarFact],
+    replay: bool,
+    retrieved_at: DateTime<Utc>,
+) -> Result<(), SinkError> {
+    for fact in facts {
         let mut projection = locked_projection(tx, fact).await?;
         if projection.is_none() {
             if replay {
@@ -711,7 +975,7 @@ async fn verify_or_advance_projections(
             .bind(&fact.timezone)
             .bind(&fact.source)
             .bind(&fact.source_version)
-            .bind(bundle.source_batch_id.as_uuid())
+            .bind(source_batch_id.as_uuid())
             .bind(&fact.content_sha256)
             .bind(retrieved_at)
             .execute(&mut **tx)
@@ -737,7 +1001,7 @@ async fn verify_or_advance_projections(
                     "published batch has only a legacy calendar projection".to_owned(),
                 ));
             }
-            None => update_projection(tx, bundle, fact, retrieved_at).await?,
+            None => update_projection_for_source(tx, source_batch_id, fact, retrieved_at).await?,
             Some(existing_time)
                 if incoming_time > canonical_retrieved_at(existing_time) && replay =>
             {
@@ -746,7 +1010,7 @@ async fn verify_or_advance_projections(
                 ));
             }
             Some(existing_time) if incoming_time > canonical_retrieved_at(existing_time) => {
-                update_projection(tx, bundle, fact, retrieved_at).await?
+                update_projection_for_source(tx, source_batch_id, fact, retrieved_at).await?
             }
             Some(existing_time) if incoming_time == canonical_retrieved_at(existing_time) => {
                 if !projection_matches(&projection, fact) {
@@ -768,6 +1032,15 @@ async fn update_projection(
     fact: &CalendarFact,
     retrieved_at: DateTime<Utc>,
 ) -> Result<(), SinkError> {
+    update_projection_for_source(tx, bundle.source_batch_id, fact, retrieved_at).await
+}
+
+async fn update_projection_for_source(
+    tx: &mut Transaction<'_, Postgres>,
+    source_batch_id: BatchId,
+    fact: &CalendarFact,
+    retrieved_at: DateTime<Utc>,
+) -> Result<(), SinkError> {
     sqlx::query(
         "UPDATE trading_calendars SET session_type=$3, timezone=$4, source=$5, \
          source_version=$6, source_batch_id=$7, content_sha256=$8, retrieved_at=$9 \
@@ -779,7 +1052,7 @@ async fn update_projection(
     .bind(&fact.timezone)
     .bind(&fact.source)
     .bind(&fact.source_version)
-    .bind(bundle.source_batch_id.as_uuid())
+    .bind(source_batch_id.as_uuid())
     .bind(&fact.content_sha256)
     .bind(retrieved_at)
     .execute(&mut **tx)
@@ -853,6 +1126,23 @@ impl PublicationSink for PostgresPublicationSink {
         .fetch_one(&self.pool)
         .await
         .map_err(SinkError::from_sqlx)
+    }
+}
+
+#[async_trait]
+impl CalendarPublicationSink for PostgresPublicationSink {
+    async fn calendar_publication_state(
+        &self,
+        batch_id: BatchId,
+    ) -> Result<PublicationState, SinkError> {
+        PostgresPublicationSink::calendar_publication_state(self, batch_id).await
+    }
+
+    async fn publish_calendar(
+        &self,
+        bundle: &CalendarPublicationBundle,
+    ) -> Result<PublishOutcome, SinkError> {
+        PostgresPublicationSink::publish_calendar(self, bundle).await
     }
 }
 

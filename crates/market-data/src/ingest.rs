@@ -8,13 +8,20 @@
 //! any failure leaves an exact-identity batch for [`RawStore::read_manifest`]
 //! to re-sync before recovery.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use domain::{BatchId, TradingDate, UtcTimestamp};
+use serde_json::Value;
 
-use crate::contract::{PROVIDER_KIS, PROVIDER_KIS_DAILY_RANGE, ResponseKind, StoredFile};
+use crate::contract::{
+    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, PROVIDER_KIS_DAILY_RANGE,
+    ResponseKind, StoredFile,
+};
 use crate::provider::{EodProvider, ProviderError};
-use crate::providers::kis::{KisActionRangeScope, KisProvider, KisRead, validate_kis_response};
+use crate::providers::kis::{
+    CALENDAR_FILE_NAME, CALENDAR_PATH, KisActionRangeScope, KisProvider, KisRead, calendar_query,
+    calendar_request_headers, validate_kis_response,
+};
 use crate::providers::kis_candidate::{
     KIS_CANDIDATE_SUPPORTED_KINDS, KisCandidateProvider, validate_kis_candidate_response,
 };
@@ -214,6 +221,7 @@ pub async fn ingest_kis_bundle<R: KisRead>(
     req: &IngestRequest,
     entitlement_reference: Option<&str>,
 ) -> Result<IngestOutcome, IngestError> {
+    reject_bootstrap_calendar_recapture(store, req)?;
     let batch_id = BatchId::generate();
     let fetch_req = crate::provider::FetchRequest {
         market: req.market.clone(),
@@ -246,6 +254,282 @@ pub async fn ingest_kis_bundle<R: KisRead>(
         batch_id,
         &envelopes,
     )
+}
+
+// Calendar bootstrap is a separate operational path. Until the full EOD
+// calendar-reuse contract is implemented, a consumed bootstrap allowance must
+// stop EOD before any provider call; it must never trigger another chk-holiday
+// request or invent the other three EOD response classes.
+fn reject_bootstrap_calendar_recapture(
+    store: &RawStore,
+    req: &IngestRequest,
+) -> Result<(), IngestError> {
+    let kst = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("valid KST offset");
+    let date = req.now.as_datetime().with_timezone(&kst).date_naive();
+    let blocked = || IngestError::ResponseShape {
+        detail: "KIS_CALENDAR_BOOTSTRAP_EOD_REUSE_REQUIRED".to_owned(),
+    };
+    let claim = store
+        .root()
+        .join("raw/.calendar-bootstrap")
+        .join(format!("{date}.json"));
+    match std::fs::symlink_metadata(claim) {
+        Ok(_) => return Err(blocked()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(blocked()),
+    }
+    match std::fs::symlink_metadata(store.manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)) {
+        Ok(_) => {
+            let entries = store.read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?;
+            if entries.iter().any(|entry| {
+                entry
+                    .retrieved_at
+                    .as_datetime()
+                    .with_timezone(&kst)
+                    .date_naive()
+                    == date
+            }) {
+                return Err(blocked());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(blocked()),
+    }
+    Ok(())
+}
+
+/// Fetches one credentialed KIS `chk-holiday` proof and persists it under the
+/// dedicated calendar-only Raw scope. This seam intentionally does not call
+/// the four-file EOD collector: the calendar proof is independently useful to
+/// the current-price path and must not make a partial EOD batch visible.
+pub async fn ingest_kis_calendar<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+) -> Result<IngestOutcome, IngestError> {
+    ingest_kis_calendar_with_batch_id(
+        store,
+        provider,
+        req,
+        entitlement_reference,
+        BatchId::generate(),
+    )
+    .await
+}
+
+/// Same calendar-only proof capture with a caller-owned immutable Raw batch id.
+/// The caller may persist this id in an external attempt artifact and retry
+/// the exact operation without inventing a second lineage identity.
+pub async fn ingest_kis_calendar_with_batch_id<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    batch_id: BatchId,
+) -> Result<IngestOutcome, IngestError> {
+    if req.market != MARKET_KR {
+        return Err(IngestError::ResponseShape {
+            detail: "KIS calendar capture supports market kr only".to_owned(),
+        });
+    }
+    let fetch_req = crate::provider::FetchRequest {
+        market: req.market.clone(),
+        date: req.date,
+        kinds: vec![ResponseKind::Calendar],
+        now: req.now,
+        batch_id,
+    };
+    let envelopes = provider.fetch(&fetch_req).await?;
+    validate_kis_calendar_envelopes(req, batch_id, &envelopes)?;
+    persist_bundle(
+        store,
+        PROVIDER_KIS_CALENDAR,
+        provider.fetch_mode(),
+        req,
+        entitlement_reference,
+        batch_id,
+        &envelopes,
+    )
+}
+
+fn validate_kis_calendar_envelopes(
+    req: &IngestRequest,
+    batch_id: BatchId,
+    envelopes: &[crate::contract::RawEnvelope],
+) -> Result<(), IngestError> {
+    if envelopes.len() != 1 {
+        return Err(IngestError::ResponseShape {
+            detail: format!(
+                "KIS calendar capture expected exactly one envelope, got {}",
+                envelopes.len()
+            ),
+        });
+    }
+    let envelope = &envelopes[0];
+    if envelope.kind != ResponseKind::Calendar {
+        return Err(IngestError::ResponseShape {
+            detail: "KIS calendar capture returned an unexpected response kind".to_owned(),
+        });
+    }
+    if envelope.batch_id != batch_id {
+        return Err(IngestError::ResponseShape {
+            detail: "KIS calendar envelope batch identity differs from the caller-owned id"
+                .to_owned(),
+        });
+    }
+    if envelope.file_name != CALENDAR_FILE_NAME {
+        return Err(calendar_validation_error(
+            &envelope.file_name,
+            "KIS_CALENDAR_FILE_NAME",
+            "KIS calendar response used a noncanonical file name",
+        ));
+    }
+    if envelope.retrieved_at != req.now {
+        return Err(calendar_validation_error(
+            &envelope.file_name,
+            "KIS_CALENDAR_RETRIEVED_AT",
+            "KIS calendar envelope retrieval time differs from the request clock",
+        ));
+    }
+    if envelope.request.mode != FetchMode::Credentialed
+        || envelope.request.endpoint != CALENDAR_PATH
+        || envelope.request.query != calendar_query(req.date)
+        || envelope.request.headers != calendar_request_headers()
+    {
+        return Err(calendar_validation_error(
+            &envelope.file_name,
+            "KIS_CALENDAR_REQUEST_SHAPE",
+            "KIS calendar request metadata is not the exact single-page contract",
+        ));
+    }
+    if envelope.response_continuation.is_some() {
+        return Err(calendar_validation_error(
+            &envelope.file_name,
+            "KIS_CALENDAR_CONTINUATION",
+            "KIS calendar response carried continuation metadata",
+        ));
+    }
+    validate_kis_response(ResponseKind::Calendar, CALENDAR_PATH, &envelope.bytes).map_err(
+        |error| IngestError::MalformedResponse {
+            kind: error.kind,
+            reason: error.reason,
+            diagnostic: Some(ResponseValidationDiagnostic {
+                code: error.code,
+                endpoint: envelope.request.endpoint.clone(),
+                file_name: envelope.file_name.clone(),
+            }),
+        },
+    )?;
+    validate_kis_calendar_rows(&envelope.file_name, &envelope.bytes, req.date)
+}
+
+fn validate_kis_calendar_rows(
+    file_name: &str,
+    bytes: &[u8],
+    target_date: TradingDate,
+) -> Result<(), IngestError> {
+    let document: Value = serde_json::from_slice(bytes).map_err(|_| {
+        calendar_validation_error(
+            file_name,
+            "KIS_CALENDAR_SCHEMA",
+            "KIS calendar response was not valid JSON",
+        )
+    })?;
+    let object = document.as_object().ok_or_else(|| {
+        calendar_validation_error(
+            file_name,
+            "KIS_CALENDAR_SCHEMA",
+            "KIS calendar response was not a JSON object",
+        )
+    })?;
+    let output = object.get("output").ok_or_else(|| {
+        calendar_validation_error(
+            file_name,
+            "KIS_CALENDAR_SCHEMA",
+            "KIS calendar response had no output",
+        )
+    })?;
+    let rows: Vec<&Value> = match output {
+        Value::Array(rows) => rows.iter().collect(),
+        Value::Object(_) => vec![output],
+        _ => {
+            return Err(calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_SCHEMA",
+                "KIS calendar output was not an object or array",
+            ));
+        }
+    };
+    let mut dates = BTreeMap::new();
+    for row in rows {
+        let row = row.as_object().ok_or_else(|| {
+            calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_SCHEMA",
+                "KIS calendar output row was not an object",
+            )
+        })?;
+        let date_text = row.get("bass_dt").and_then(Value::as_str).ok_or_else(|| {
+            calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_SCHEMA",
+                "KIS calendar output row had no bass_dt",
+            )
+        })?;
+        let date = parse_kis_calendar_date(date_text).ok_or_else(|| {
+            calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_DATE",
+                "KIS calendar output row had an invalid bass_dt",
+            )
+        })?;
+        let is_open = match row.get("opnd_yn").and_then(Value::as_str) {
+            Some("Y") => true,
+            Some("N") => false,
+            _ => {
+                return Err(calendar_validation_error(
+                    file_name,
+                    "KIS_CALENDAR_SESSION_TYPE",
+                    "KIS calendar output row had an invalid opnd_yn",
+                ));
+            }
+        };
+        if dates.insert(date, is_open).is_some() {
+            return Err(calendar_validation_error(
+                file_name,
+                "KIS_CALENDAR_DUPLICATE_DATE",
+                "KIS calendar output contained a duplicate date",
+            ));
+        }
+    }
+    if !dates.contains_key(&target_date) {
+        return Err(calendar_validation_error(
+            file_name,
+            "KIS_CALENDAR_TARGET_MISSING",
+            "KIS calendar output did not contain the requested date",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_kis_calendar_date(value: &str) -> Option<TradingDate> {
+    if value.len() != 8 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    TradingDate::parse(&format!("{}-{}-{}", &value[..4], &value[4..6], &value[6..])).ok()
+}
+
+fn calendar_validation_error(file_name: &str, code: &'static str, reason: &str) -> IngestError {
+    IngestError::MalformedResponse {
+        kind: ResponseKind::Calendar,
+        reason: reason.to_owned(),
+        diagnostic: Some(ResponseValidationDiagnostic {
+            code,
+            endpoint: CALENDAR_PATH.to_owned(),
+            file_name: file_name.to_owned(),
+        }),
+    }
 }
 
 /// Captures a bounded historical KIS daily-bar range as immutable Raw only.
