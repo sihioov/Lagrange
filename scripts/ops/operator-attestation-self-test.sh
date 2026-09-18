@@ -5,6 +5,7 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 entitlement="$repo_root/scripts/ops/provision-entitlement.sh"
 entitlement_amend="$repo_root/scripts/ops/lib/entitlement-amend.sh"
+entitlement_amend_release_guard="$repo_root/scripts/ops/lib/entitlement-amend-installed-release.sh"
 dataset="$repo_root/scripts/ops/register-dataset-version.sh"
 db_helper="$repo_root/scripts/ops/lib/db.sh"
 fail() { echo "OPERATOR_ATTESTATION_SELF_TEST: FAIL: $*" >&2; exit 1; }
@@ -13,8 +14,9 @@ trap 'rm -rf -- "$tmp"' EXIT
 
 [ -x "$entitlement" ] || fail "entitlement helper is not executable"
 [ -x "$entitlement_amend" ] || fail "entitlement amendment helper is not executable"
+[ -f "$entitlement_amend_release_guard" ] || fail "entitlement release guard is missing"
 [ -x "$dataset" ] || fail "dataset helper is not executable"
-for shell_script in "$entitlement" "$entitlement_amend" "$0"; do
+for shell_script in "$entitlement" "$entitlement_amend" "$entitlement_amend_release_guard" "$0"; do
   bash -n "$shell_script" || fail "shell syntax failed: $(basename "$shell_script")"
 done
 grep -Fq 'provision-entitlement.sh amend [--plan|--check|--apply]' "$entitlement" || fail 'amend mode is not exposed by the entitlement helper'
@@ -23,6 +25,13 @@ grep -Fq "SET LOCAL lock_timeout = '5s';" "$entitlement_amend" || fail 'amend lo
 grep -Fq "SET LOCAL statement_timeout = '15s';" "$entitlement_amend" || fail 'amend statement timeout is not pinned'
 grep -Fq "I_UNDERSTAND_AMEND_ACTIVE_ENTITLEMENT" "$entitlement_amend" || fail 'amend confirmation guard is missing'
 grep -Fq "entitlement.approved_document.amended" "$entitlement_amend" || fail 'amend audit action is missing'
+grep -Fq 'entitlement_amend_verify_installed_release' "$entitlement_amend" || fail 'amend release guard is not called'
+grep -Fq 'release_image_manifest_load' "$entitlement_amend_release_guard" || fail 'amend release guard does not load V2 manifest'
+grep -Fq 'current_link' "$entitlement_amend_release_guard" || fail 'amend release guard does not bind current link'
+grep -Fq 'LAGRANGE_COMPOSE_FILE' "$entitlement_amend_release_guard" || fail 'amend release guard does not bind DB Compose input'
+grep -Fq 'LAGRANGE_ENV_FILE' "$entitlement_amend_release_guard" || fail 'amend release guard does not bind DB env input'
+! grep -Eq '^[[:space:]]*(command[[:space:]]+)?git[[:space:]]' "$entitlement_amend" "$entitlement_amend_release_guard" ||
+  fail 'amend runtime identity must not depend on Git'
 grep -Fq 'run --rm --no-deps --entrypoint /bin/sh db-migrate' "$db_helper" || fail 'DB helper must use private db-migrate Compose image'
 ! grep -Fq '127.0.0.1' "$db_helper" || fail 'DB helper must not use a host PostgreSQL address'
 grep -Fq 'export PGPASSWORD="$(cat "$DB_PASSWORD_FILE")"' "$db_helper" || fail 'container secret handoff is missing'
@@ -127,13 +136,167 @@ amend_args=(
 amend_plan=$(
   "$entitlement" "${amend_args[@]}" 2>"$tmp/amend-plan.err"
 ) || fail 'valid amendment plan failed'
-grep -Fq 'ENTITLEMENT_AMEND_PLAN: PASS metadata_pairs=2 documents=2 database_queries=0 mutations=0' <<<"$amend_plan" ||
+grep -Fq 'ENTITLEMENT_AMEND_PLAN: PASS metadata_pairs=2 documents=2 database_queries=0 mutations=0 release_context=unavailable' <<<"$amend_plan" ||
   fail 'amendment plan did not report typed counts'
 ! grep -Fq 'repo://docs/decisions/0005-kis-personal-use-entitlement.md' <<<"$amend_plan$(<"$tmp/amend-plan.err")" ||
   fail 'amendment plan leaked the protected reference'
 amend_plan_all="$amend_plan$(<"$tmp/amend-plan.err")"
 ! grep -Eq '[0-9a-f]{64}|00000000-0000-4000-8000-00000000001[123]' <<<"$amend_plan_all" ||
   fail 'amendment plan leaked a protected digest or UUID'
+
+# A source checkout cannot supply installed-release evidence. Check must stop
+# at the shared guard before it can initialize the database runner.
+amend_check_args=("${amend_args[@]}")
+amend_check_args[1]=--check
+if "$entitlement" "${amend_check_args[@]}" >"$tmp/amend-check.out" 2>"$tmp/amend-check.err"; then
+  fail 'source-checkout amendment check unexpectedly passed'
+fi
+grep -Fq 'ENTITLEMENT_AMEND: BLOCKED status=release_context_entrypoint_root_mismatch' \
+  "$tmp/amend-check.err" || fail 'amendment check did not stop at installed-release guard'
+
+# Exercise the shared immutable-release guard against a synthetic, fakeroot
+# installed layout.  The guard itself is never replaced: only /tmp's metadata
+# is modeled because a disposable fixture cannot live below a real root-owned
+# parent.  It proves the exact V2/current/env/script/Compose binding and each
+# mismatch path before any database runner can be reached.
+command -v fakeroot >/dev/null 2>&1 || fail 'fakeroot is required for installed-release guard fixture'
+guard_root="$tmp/installed-release"
+guard_bin="$tmp/installed-release-guard-bin"
+guard_output="$tmp/installed-release-guard.out"
+mkdir -p "$guard_bin"
+cat >"$guard_bin/stat" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -eq 4 ] && [ "$1" = -c ] && [ "$2" = '%u:%a' ] &&
+   [ "$3" = -- ] && [ "$4" = /tmp ]; then
+  printf '0:755\n'
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+EOF
+chmod 0755 "$guard_bin/stat"
+guard_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+guard_other_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+if ! fakeroot bash -c '
+  set -euo pipefail
+  fixture_root=$1
+  source_root=$2
+  fixture_commit=$3
+  other_commit=$4
+  fake_bin=$5
+  release_dir=$fixture_root/releases/$fixture_commit
+  mkdir -p "$release_dir/scripts/ops/lib" "$release_dir/deploy/compose"
+  chmod 0755 "$fixture_root" "$fixture_root/releases" "$release_dir" \
+    "$release_dir/scripts" "$release_dir/scripts/ops" "$release_dir/scripts/ops/lib" \
+    "$release_dir/deploy" "$release_dir/deploy/compose"
+  cp "$source_root/scripts/ops/provision-entitlement.sh" "$release_dir/scripts/ops/"
+  cp "$source_root/scripts/ops/lib/entitlement-amend.sh" "$release_dir/scripts/ops/lib/"
+  cp "$source_root/scripts/ops/lib/entitlement-amend-installed-release.sh" "$release_dir/scripts/ops/lib/"
+  cp "$source_root/scripts/ops/lib/dotenv.sh" "$release_dir/scripts/ops/lib/"
+  cp "$source_root/scripts/ops/lib/release-image-manifest.sh" "$release_dir/scripts/ops/lib/"
+  cp "$source_root/scripts/ops/lib/db.sh" "$release_dir/scripts/ops/lib/"
+  chmod 0755 "$release_dir/scripts/ops/provision-entitlement.sh" "$release_dir/scripts/ops/lib/"*.sh
+  printf "%s\n" "LAGRANGE_CODE_COMMIT=$fixture_commit" "POSTGRES_DB=fixture" \
+    >"$release_dir/deploy/compose/.env"
+  printf "%s\n" "services: {}" >"$release_dir/deploy/compose/compose.yml"
+  chmod 0600 "$release_dir/deploy/compose/.env"
+  chmod 0644 "$release_dir/deploy/compose/compose.yml"
+  ln -s "releases/$fixture_commit" "$fixture_root/current"
+  source "$release_dir/scripts/ops/lib/release-image-manifest.sh"
+  release_image_manifest_reset
+  index=0
+  for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
+    index=$((index + 1))
+    RELEASE_IMAGE_MANIFEST_REFS["$service"]=$(release_image_manifest_ref_for "$service" "$fixture_commit")
+    RELEASE_IMAGE_MANIFEST_IDS["$service"]=$(printf "sha256:%064d" "$index")
+    RELEASE_IMAGE_MANIFEST_REVISIONS["$service"]=$fixture_commit
+  done
+  release_image_manifest_write "$release_dir/.lagrange-release-manifest" "$fixture_commit"
+  chmod 0600 "$release_dir/.lagrange-release-manifest"
+  unset LAGRANGE_COMPOSE_FILE LAGRANGE_ENV_FILE LAGRANGE_CODE_COMMIT
+  export LAGRANGE_RELEASE_ROOT=$fixture_root
+  PATH="$fake_bin:$PATH"
+  source "$release_dir/scripts/ops/lib/entitlement-amend-installed-release.sh"
+  if ! entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    printf "guard initial status=%s\\n" "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR"
+    exit 30
+  fi
+  [ "$ENTITLEMENT_AMEND_VERIFIED_RELEASE_REVISION" = "$fixture_commit" ]
+  [ "$LAGRANGE_COMPOSE_FILE" = "$release_dir/deploy/compose/compose.yml" ]
+  [ "$LAGRANGE_ENV_FILE" = "$release_dir/deploy/compose/.env" ]
+  [ "$COMPOSE_PROJECT_NAME" = lagrange-station ]
+  [ "$LAGRANGE_CODE_COMMIT" = "$fixture_commit" ]
+  source "$release_dir/scripts/ops/lib/db.sh"
+  db_init
+  [ "$compose_file" = "$release_dir/deploy/compose/compose.yml" ]
+  [ "$compose_env_file" = "$release_dir/deploy/compose/.env" ]
+  LAGRANGE_RELEASE_ROOT=$fixture_root/not-the-entrypoint-root
+  if entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 37
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = release_root_mismatch ]
+  LAGRANGE_RELEASE_ROOT=$fixture_root
+  unset LAGRANGE_COMPOSE_FILE LAGRANGE_ENV_FILE
+  if entitlement_amend_verify_installed_release "$other_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 31
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = claimed_revision_mismatch ]
+  LAGRANGE_COMPOSE_FILE=$fixture_root/unrelated-compose.yml
+  if entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 32
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = compose_input_mismatch ]
+  unset LAGRANGE_COMPOSE_FILE
+  LAGRANGE_ENV_FILE=$fixture_root/unrelated.env
+  if entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 33
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = env_input_mismatch ]
+  unset LAGRANGE_ENV_FILE
+  COMPOSE_PROJECT_NAME=unrelated-project
+  if entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 38
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = compose_project_mismatch ]
+  COMPOSE_PROJECT_NAME=lagrange-station
+  rm -f "$fixture_root/current"
+  ln -s "releases/$other_commit" "$fixture_root/current"
+  if entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 34
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = current_link_mismatch ]
+  rm -f "$fixture_root/current"
+  ln -s "releases/$fixture_commit" "$fixture_root/current"
+  cp "$release_dir/.lagrange-release-manifest" "$release_dir/manifest.saved"
+  printf "%s\n" malformed >"$release_dir/.lagrange-release-manifest"
+  chmod 0600 "$release_dir/.lagrange-release-manifest"
+  if entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 35
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = manifest_invalid ]
+  mv "$release_dir/manifest.saved" "$release_dir/.lagrange-release-manifest"
+  chmod 0775 "$release_dir/scripts/ops/lib"
+  if entitlement_amend_verify_installed_release "$fixture_commit" \
+      "$release_dir/scripts/ops/provision-entitlement.sh"; then
+    exit 36
+  fi
+  [ "$ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR" = release_dir_untrusted ]
+  printf "%s\n" "ENTITLEMENT_AMEND_RELEASE_GUARD_SELF_TEST: PASS"
+' _ "$guard_root" "$repo_root" "$guard_commit" "$guard_other_commit" "$guard_bin" \
+  >"$guard_output" 2>&1; then
+  sed -n '1,80p' "$guard_output" >&2
+  fail 'installed-release guard fixture failed'
+fi
+grep -Fq 'ENTITLEMENT_AMEND_RELEASE_GUARD_SELF_TEST: PASS' "$guard_output" ||
+  fail 'installed-release guard fixture did not complete'
 
 cp "$amend_fixture/current-metadata.json" "$amend_fixture/forged-metadata.json"
 jq '.effective_from = "2016-08-30"' "$amend_fixture/forged-metadata.json" >"$tmp/forged-metadata.json"

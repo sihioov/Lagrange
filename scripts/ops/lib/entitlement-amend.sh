@@ -6,6 +6,13 @@
 # installed release is allowed to have no .git directory.  The metadata-file
 # digests and the document digests are separate domains and are both checked.
 
+_amend_helper_source=${BASH_SOURCE[0]}
+_amend_helper_dir=$(cd -P "$(dirname -- "$_amend_helper_source")" && pwd -P)
+AMEND_ENTITLEMENT_HELPER_SOURCE_PATH="$_amend_helper_dir/$(basename -- "$_amend_helper_source")"
+AMEND_ENTITLEMENT_ENTRYPOINT_SOURCE=${BASH_SOURCE[1]:-}
+source "$_amend_helper_dir/entitlement-amend-installed-release.sh"
+unset _amend_helper_source _amend_helper_dir
+
 AMEND_ORIGINAL_REVISION='cdaffe6b20bfb6cabce09f8f87b1ad707ed725f9'
 AMEND_APPROVED_REVISION='91a4ff68bb38c2517fe83fca406baf4063023e9a'
 AMEND_APPROVED_REVISION_SHORT='91a4ff68'
@@ -199,6 +206,14 @@ amend_json_for_audit() {
       }' "$metadata_file" 2>/dev/null
 }
 
+# Replay identity deliberately excludes the release that first performed the
+# amendment.  The full event retains that immutable executor field; SQL below
+# validates it is one canonical commit shared by before/after rather than
+# replacing it with the release currently attempting the replay.
+amend_json_semantic_for_replay() {
+  printf '%s' "$1" | jq -c 'del(.executing_release_revision)' 2>/dev/null
+}
+
 amend_revision_is_approved() {
   [ "$1" = "$AMEND_APPROVED_REVISION" ] || [ "$1" = "$AMEND_APPROVED_REVISION_SHORT" ]
 }
@@ -237,6 +252,8 @@ SELECT pg_catalog.set_config('operator.entitlement.amend.reason', :'audit_reason
 SELECT pg_catalog.set_config('operator.entitlement.amend.correlation_id', :'correlation_id', true) AS _set_correlation_id \gset
 SELECT pg_catalog.set_config('operator.entitlement.amend.before_json', :'before_json', true) AS _set_before_json \gset
 SELECT pg_catalog.set_config('operator.entitlement.amend.after_json', :'after_json', true) AS _set_after_json \gset
+SELECT pg_catalog.set_config('operator.entitlement.amend.before_semantic_json', :'before_semantic_json', true) AS _set_before_semantic_json \gset
+SELECT pg_catalog.set_config('operator.entitlement.amend.after_semantic_json', :'after_semantic_json', true) AS _set_after_semantic_json \gset
 
 WITH target_rows AS (
     SELECT e.*
@@ -289,10 +306,18 @@ WITH target_rows AS (
                  AND a.actor_user_id = current_setting('operator.entitlement.amend.new_manager')::uuid
                  AND a.target_type = current_setting('operator.entitlement.amend.target_type')
                  AND a.target_id = current_setting('operator.entitlement.amend.target_id')
-                 AND a.before_json IS NOT DISTINCT FROM
-                     current_setting('operator.entitlement.amend.before_json')::jsonb
-                 AND a.after_json IS NOT DISTINCT FROM
-                     current_setting('operator.entitlement.amend.after_json')::jsonb
+                 AND jsonb_typeof(a.before_json) = 'object'
+                 AND jsonb_typeof(a.after_json) = 'object'
+                 AND a.before_json ? 'executing_release_revision'
+                 AND a.after_json ? 'executing_release_revision'
+                 AND (a.before_json ->> 'executing_release_revision') ~ '^[0-9a-f]{40}$'
+                 AND (a.after_json ->> 'executing_release_revision') ~ '^[0-9a-f]{40}$'
+                 AND (a.before_json ->> 'executing_release_revision') =
+                     (a.after_json ->> 'executing_release_revision')
+                 AND (a.before_json - 'executing_release_revision') IS NOT DISTINCT FROM
+                     current_setting('operator.entitlement.amend.before_semantic_json')::jsonb
+                 AND (a.after_json - 'executing_release_revision') IS NOT DISTINCT FROM
+                     current_setting('operator.entitlement.amend.after_semantic_json')::jsonb
                  AND a.reason = current_setting('operator.entitlement.amend.reason')
                  AND a.correlation_id = current_setting('operator.entitlement.amend.correlation_id')
            )::bigint AS exact_audit_count,
@@ -301,7 +326,12 @@ WITH target_rows AS (
                  AND a.target_type = current_setting('operator.entitlement.amend.target_type')
                  AND a.target_id = current_setting('operator.entitlement.amend.target_id')
                  AND a.correlation_id = current_setting('operator.entitlement.amend.correlation_id')
-           )::bigint AS correlation_count
+           )::bigint AS correlation_count,
+           count(*) FILTER (
+               WHERE a.action = current_setting('operator.entitlement.amend.action')
+                 AND a.target_type = current_setting('operator.entitlement.amend.target_type')
+                 AND a.target_id = current_setting('operator.entitlement.amend.target_id')
+           )::bigint AS target_audit_count
       FROM public.audit_logs AS a
 )
 SELECT CASE
@@ -310,13 +340,16 @@ SELECT CASE
            THEN 'INVALID_OWNER'
          WHEN reference_count <> 1 OR target_count <> 1
            THEN 'INVALID_TARGET'
-         WHEN correlation_count > 1
+         WHEN correlation_count > 1 OR target_audit_count > 1
            THEN 'INVALID_AUDIT'
-         WHEN post_match AND exact_audit_count = 1
+         WHEN post_match AND exact_audit_count = 1 AND target_audit_count = 1
            THEN 'ALREADY_APPLIED'
          WHEN post_match
            THEN 'INVALID_POSTSTATE_AUDIT'
+         WHEN target_audit_count > 0
+           THEN 'INVALID_AUDIT'
          WHEN old_match AND exact_audit_count = 0 AND correlation_count = 0
+              AND target_audit_count = 0
            THEN 'ELIGIBLE'
          ELSE 'INVALID_CAS'
        END AS state,
@@ -355,6 +388,8 @@ SELECT pg_catalog.set_config('operator.entitlement.amend.reason', :'audit_reason
 SELECT pg_catalog.set_config('operator.entitlement.amend.correlation_id', :'correlation_id', true) AS _set_correlation_id \gset
 SELECT pg_catalog.set_config('operator.entitlement.amend.before_json', :'before_json', true) AS _set_before_json \gset
 SELECT pg_catalog.set_config('operator.entitlement.amend.after_json', :'after_json', true) AS _set_after_json \gset
+SELECT pg_catalog.set_config('operator.entitlement.amend.before_semantic_json', :'before_semantic_json', true) AS _set_before_semantic_json \gset
+SELECT pg_catalog.set_config('operator.entitlement.amend.after_semantic_json', :'after_semantic_json', true) AS _set_after_semantic_json \gset
 
 SELECT pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(current_setting('operator.entitlement.amend.reference'), 0)
@@ -373,6 +408,7 @@ DECLARE
     v_other_fingerprint_after text;
     v_audit_exact_count bigint;
     v_audit_correlation_count bigint;
+    v_audit_target_count bigint;
     v_changed_count bigint;
     v_post_count bigint;
     v_post_reference_count bigint;
@@ -442,10 +478,18 @@ BEGIN
                  AND a.actor_user_id = current_setting('operator.entitlement.amend.new_manager')::uuid
                  AND a.target_type = current_setting('operator.entitlement.amend.target_type')
                  AND a.target_id = current_setting('operator.entitlement.amend.target_id')
-                 AND a.before_json IS NOT DISTINCT FROM
-                     current_setting('operator.entitlement.amend.before_json')::jsonb
-                 AND a.after_json IS NOT DISTINCT FROM
-                     current_setting('operator.entitlement.amend.after_json')::jsonb
+                 AND jsonb_typeof(a.before_json) = 'object'
+                 AND jsonb_typeof(a.after_json) = 'object'
+                 AND a.before_json ? 'executing_release_revision'
+                 AND a.after_json ? 'executing_release_revision'
+                 AND (a.before_json ->> 'executing_release_revision') ~ '^[0-9a-f]{40}$'
+                 AND (a.after_json ->> 'executing_release_revision') ~ '^[0-9a-f]{40}$'
+                 AND (a.before_json ->> 'executing_release_revision') =
+                     (a.after_json ->> 'executing_release_revision')
+                 AND (a.before_json - 'executing_release_revision') IS NOT DISTINCT FROM
+                     current_setting('operator.entitlement.amend.before_semantic_json')::jsonb
+                 AND (a.after_json - 'executing_release_revision') IS NOT DISTINCT FROM
+                     current_setting('operator.entitlement.amend.after_semantic_json')::jsonb
                  AND a.reason = current_setting('operator.entitlement.amend.reason')
                  AND a.correlation_id = current_setting('operator.entitlement.amend.correlation_id')
            )::bigint,
@@ -454,8 +498,13 @@ BEGIN
                  AND a.target_type = current_setting('operator.entitlement.amend.target_type')
                  AND a.target_id = current_setting('operator.entitlement.amend.target_id')
                  AND a.correlation_id = current_setting('operator.entitlement.amend.correlation_id')
+           )::bigint,
+           count(*) FILTER (
+               WHERE a.action = current_setting('operator.entitlement.amend.action')
+                 AND a.target_type = current_setting('operator.entitlement.amend.target_type')
+                 AND a.target_id = current_setting('operator.entitlement.amend.target_id')
            )::bigint
-      INTO v_audit_exact_count, v_audit_correlation_count
+      INTO v_audit_exact_count, v_audit_correlation_count, v_audit_target_count
       FROM public.audit_logs AS a;
 
     v_post_match := v_target.contract_document_sha256 = current_setting('operator.entitlement.amend.new_hash')
@@ -480,7 +529,8 @@ BEGIN
         AND v_target.managed_by = current_setting('operator.entitlement.amend.old_manager')::uuid;
 
     IF v_post_match THEN
-        IF v_audit_exact_count <> 1 OR v_audit_correlation_count <> 1 THEN
+        IF v_audit_exact_count <> 1 OR v_audit_correlation_count <> 1
+           OR v_audit_target_count <> 1 THEN
             RAISE EXCEPTION 'amendment post-state audit is missing or ambiguous';
         END IF;
         SELECT count(*)::bigint,
@@ -499,7 +549,8 @@ BEGIN
         RETURN;
     END IF;
 
-    IF NOT v_old_match OR v_audit_exact_count <> 0 OR v_audit_correlation_count <> 0 THEN
+    IF NOT v_old_match OR v_audit_exact_count <> 0 OR v_audit_correlation_count <> 0
+       OR v_audit_target_count <> 0 THEN
         RAISE EXCEPTION 'amendment compare-and-swap precondition failed';
     END IF;
 
@@ -568,10 +619,18 @@ BEGIN
                  AND a.actor_user_id = current_setting('operator.entitlement.amend.new_manager')::uuid
                  AND a.target_type = current_setting('operator.entitlement.amend.target_type')
                  AND a.target_id = current_setting('operator.entitlement.amend.target_id')
-                 AND a.before_json IS NOT DISTINCT FROM
-                     current_setting('operator.entitlement.amend.before_json')::jsonb
-                 AND a.after_json IS NOT DISTINCT FROM
-                     current_setting('operator.entitlement.amend.after_json')::jsonb
+                 AND jsonb_typeof(a.before_json) = 'object'
+                 AND jsonb_typeof(a.after_json) = 'object'
+                 AND a.before_json ? 'executing_release_revision'
+                 AND a.after_json ? 'executing_release_revision'
+                 AND (a.before_json ->> 'executing_release_revision') ~ '^[0-9a-f]{40}$'
+                 AND (a.after_json ->> 'executing_release_revision') ~ '^[0-9a-f]{40}$'
+                 AND (a.before_json ->> 'executing_release_revision') =
+                     (a.after_json ->> 'executing_release_revision')
+                 AND (a.before_json - 'executing_release_revision') IS NOT DISTINCT FROM
+                     current_setting('operator.entitlement.amend.before_semantic_json')::jsonb
+                 AND (a.after_json - 'executing_release_revision') IS NOT DISTINCT FROM
+                     current_setting('operator.entitlement.amend.after_semantic_json')::jsonb
                  AND a.reason = current_setting('operator.entitlement.amend.reason')
                  AND a.correlation_id = current_setting('operator.entitlement.amend.correlation_id')
            )::bigint,
@@ -580,10 +639,16 @@ BEGIN
                  AND a.target_type = current_setting('operator.entitlement.amend.target_type')
                  AND a.target_id = current_setting('operator.entitlement.amend.target_id')
                  AND a.correlation_id = current_setting('operator.entitlement.amend.correlation_id')
+           )::bigint,
+           count(*) FILTER (
+               WHERE a.action = current_setting('operator.entitlement.amend.action')
+                 AND a.target_type = current_setting('operator.entitlement.amend.target_type')
+                 AND a.target_id = current_setting('operator.entitlement.amend.target_id')
            )::bigint
-      INTO v_audit_exact_count, v_audit_correlation_count
+      INTO v_audit_exact_count, v_audit_correlation_count, v_audit_target_count
       FROM public.audit_logs AS a;
-    IF v_audit_exact_count <> 1 OR v_audit_correlation_count <> 1 THEN
+    IF v_audit_exact_count <> 1 OR v_audit_correlation_count <> 1
+       OR v_audit_target_count <> 1 THEN
         RAISE EXCEPTION 'amendment audit state is not exact';
     END IF;
 
@@ -651,6 +716,8 @@ amend_run_db() {
       -v correlation_id="$amend_correlation_id" \
       -v before_json="$amend_before_json" \
       -v after_json="$amend_after_json" \
+      -v before_semantic_json="$amend_before_semantic_json" \
+      -v after_semantic_json="$amend_after_semantic_json" \
       <"$sql_file" >"$output_file" 2>"$error_file"; then
     amend_error "${mode}_database"
   fi
@@ -710,7 +777,7 @@ entitlement_amend_main() {
   amendment_revision=$(amend_normalize_revision "$amendment_revision")
   executing_revision=$(amend_lower "$executing_revision")
 
-  local original_pair current_pair
+  local original_pair current_pair release_context
   original_pair=$(amend_validate_pair "$original_metadata_file" "$original_document_file" \
     "$AMEND_ORIGINAL_METADATA_SHA256" "$AMEND_ORIGINAL_DOCUMENT_SHA256" "$AMEND_ORIGINAL_FROM") || exit $?
   current_pair=$(amend_validate_pair "$current_metadata_file" "$current_document_file" \
@@ -730,8 +797,32 @@ entitlement_amend_main() {
   amend_new_datasets=$AMEND_DATASETS
   amend_old_uses=$AMEND_USES
   amend_new_uses=$AMEND_USES
+
+  # Check/apply must obtain executor identity from a trusted installed release.
+  # A plan remains offline even from a source checkout; it reports whether the
+  # same evidence was available instead of treating its caller claim as proof.
+  [ -z "$env_file" ] || export LAGRANGE_ENV_FILE="$env_file"
+  if [ "$mode" = plan ]; then
+    if entitlement_amend_verify_installed_release "$executing_revision" \
+        "$AMEND_ENTITLEMENT_ENTRYPOINT_SOURCE"; then
+      executing_revision=$ENTITLEMENT_AMEND_VERIFIED_RELEASE_REVISION
+      release_context=verified
+    else
+      release_context=unavailable
+    fi
+  else
+    if ! entitlement_amend_verify_installed_release "$executing_revision" \
+        "$AMEND_ENTITLEMENT_ENTRYPOINT_SOURCE"; then
+      amend_blocked "release_context_${ENTITLEMENT_AMEND_RELEASE_CONTEXT_ERROR:-unavailable}"
+    fi
+    executing_revision=$ENTITLEMENT_AMEND_VERIFIED_RELEASE_REVISION
+    release_context=verified
+  fi
+
   amend_before_json=$(amend_json_for_audit "$original_metadata_file" "$amend_old_metadata_hash" "$amend_old_document_hash" "$target_id" "$old_manager" "$amendment_revision" "$executing_revision") || amend_error audit_metadata
   amend_after_json=$(amend_json_for_audit "$current_metadata_file" "$amend_new_metadata_hash" "$amend_new_document_hash" "$target_id" "$current_owner" "$amendment_revision" "$executing_revision") || amend_error audit_metadata
+  amend_before_semantic_json=$(amend_json_semantic_for_replay "$amend_before_json") || amend_error audit_metadata
+  amend_after_semantic_json=$(amend_json_semantic_for_replay "$amend_after_json") || amend_error audit_metadata
 
   local correlation_input correlation_digest
   correlation_input=$(mktemp /tmp/lagrange-entitlement-amend-correlation.XXXXXX) || amend_error temp
@@ -739,13 +830,13 @@ entitlement_amend_main() {
   printf '%s\0' "$AMEND_AUDIT_ACTION" "$target_id" "$amend_reference" \
     "$amend_old_metadata_hash" "$amend_new_metadata_hash" "$amend_old_document_hash" \
     "$amend_new_document_hash" "$amend_old_from" "$amend_new_from" "$old_manager" \
-    "$current_owner" "$amendment_revision" "$executing_revision" >"$correlation_input"
+    "$current_owner" "$amendment_revision" >"$correlation_input"
   correlation_digest=$(sha256sum -- "$correlation_input" | awk '{print $1}') || amend_error temp
   rm -f -- "$correlation_input"
-  amend_correlation_id="entitlement.approved_document.amended:v1:$correlation_digest"
+  amend_correlation_id="entitlement.approved_document.amended:v2:$correlation_digest"
 
   if [ "$mode" = plan ]; then
-    printf 'ENTITLEMENT_AMEND_PLAN: PASS metadata_pairs=2 documents=2 database_queries=0 mutations=0\n'
+    printf 'ENTITLEMENT_AMEND_PLAN: PASS metadata_pairs=2 documents=2 database_queries=0 mutations=0 release_context=%s\n' "$release_context"
     return 0
   fi
 
@@ -756,7 +847,6 @@ entitlement_amend_main() {
   error_file=$(mktemp /tmp/lagrange-entitlement-amend-error.XXXXXX) || amend_error temp
   chmod 0600 "$db_init_output" "$sql_file" "$output_file" "$error_file"
   trap "rm -f -- '$db_init_output' '$sql_file' '$output_file' '$error_file'" EXIT
-  [ -z "$env_file" ] || export LAGRANGE_ENV_FILE="$env_file"
   amend_db_init_safely "$db_init_output"
 
   if [ "$mode" = check ]; then
