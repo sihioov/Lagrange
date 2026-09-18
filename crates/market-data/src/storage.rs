@@ -29,7 +29,9 @@ use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{FetchMode, RawEnvelope, ResponseKind, StoredFile, date_partition};
+use crate::contract::{
+    FetchMode, RawEnvelope, ResponseKind, SourceFileReference, StoredFile, date_partition,
+};
 
 /// Per-file record inside a manifest row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +47,10 @@ pub struct FileEntry {
     /// before response continuation evidence was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_continuation: Option<String>,
+    /// Optional identity of the committed immutable file copied into this
+    /// entry. Omission keeps historical manifest bytes unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copied_from: Option<SourceFileReference>,
 }
 
 /// One append-only manifest row: exactly one per ingestion batch.
@@ -693,6 +699,100 @@ impl RawStore {
         self.store_batch_with_commit_ops(spec, envelopes, &SystemBatchCommitOps)
     }
 
+    /// Verifies every copied envelope against the already committed source
+    /// before creating the destination batch directory. Keeping this check
+    /// inside the immutable store means callers cannot accidentally publish a
+    /// reference whose bytes, request metadata, entitlement, or retrieval
+    /// identity drifted between acquisition and persistence.
+    fn validate_copied_sources(
+        &self,
+        provider: &str,
+        market: &str,
+        date: &TradingDate,
+        batch_id: BatchId,
+        entitlement_reference: Option<&str>,
+        mode: FetchMode,
+        envelopes: &[RawEnvelope],
+    ) -> Result<(), StoreError> {
+        for envelope in envelopes {
+            let Some(reference) = envelope.copied_from.as_ref() else {
+                continue;
+            };
+            let invalid = |reason: &str| StoreError::InvalidBatchMetadata {
+                path: self
+                    .batch_dir(provider, market, date, &batch_id)
+                    .display()
+                    .to_string(),
+                reason: format!("copied source is invalid: {reason}"),
+            };
+            if reference.batch_id == batch_id {
+                return Err(invalid("source batch id equals destination batch id"));
+            }
+            if reference.retrieved_at > envelope.retrieved_at {
+                return Err(invalid(
+                    "source retrieval time is after destination evidence",
+                ));
+            }
+            if reference.retrieved_at > UtcTimestamp::now() {
+                return Err(invalid("source retrieval time is in the future"));
+            }
+            let source_entries =
+                self.read_committed_manifest(&reference.provider, &reference.market)?;
+            let Some(source) = source_entries
+                .iter()
+                .find(|entry| entry.batch_id == reference.batch_id)
+            else {
+                return Err(invalid("source batch is not committed"));
+            };
+            if source.date != *date
+                || source.mode != mode
+                || source.entitlement_reference.as_deref() != entitlement_reference
+            {
+                return Err(invalid(
+                    "source date, fetch mode, or entitlement does not exactly match",
+                ));
+            }
+            if source.retrieved_at != reference.retrieved_at {
+                return Err(invalid("source retrieval time does not match its manifest"));
+            }
+            let Some(source_file) = source
+                .files
+                .iter()
+                .find(|file| file.file_name == reference.file_name)
+            else {
+                return Err(invalid(
+                    "referenced source file is not in the source manifest",
+                ));
+            };
+            if source_file.kind != envelope.kind
+                || source_file.file_name != envelope.file_name
+                || source_file.content_hash != reference.content_hash
+                || source_file.content_hash != envelope.content_hash
+                || source_file.size_bytes != envelope.bytes.len() as u64
+                || source_file.request != envelope.request
+                || source_file.response_continuation != envelope.response_continuation
+            {
+                return Err(invalid(
+                    "source file metadata does not match the copied envelope",
+                ));
+            }
+            if source_file.copied_from.is_some() {
+                return Err(invalid("reference chains are not permitted"));
+            }
+            let source_stored = self.read_batch_bytes(&source.provider, &source.market, source)?;
+            let Some(source_bytes) = source_stored
+                .iter()
+                .find(|file| file.file_name == reference.file_name)
+            else {
+                return Err(invalid("referenced source bytes are missing"));
+            };
+            if source_bytes.bytes != envelope.bytes {
+                return Err(invalid("copied bytes differ from committed source bytes"));
+            }
+        }
+        Ok(())
+    }
+
     fn store_batch_with_commit_ops<O: BatchCommitOps + ?Sized>(
         &self,
         spec: &BatchSpec<'_>,
@@ -711,6 +811,15 @@ impl RawStore {
         for env in envelopes {
             validate_file_entry_name(&env.file_name)?;
         }
+        self.validate_copied_sources(
+            provider,
+            market,
+            date,
+            batch_id,
+            entitlement_reference,
+            mode,
+            envelopes,
+        )?;
 
         let dir = self.batch_dir(provider, market, date, &batch_id);
         if dir.exists() {
@@ -785,6 +894,7 @@ impl RawStore {
                     size_bytes: e.bytes.len() as u64,
                     request: e.request.clone(),
                     response_continuation: e.response_continuation.clone(),
+                    copied_from: e.copied_from.clone(),
                 })
                 .collect(),
         };
@@ -831,9 +941,25 @@ impl RawStore {
                     entry: Box::new(entry.clone()),
                     source: Box::new(source),
                 })?;
-                Ok(entry)
+                // Manifest JSON is the immutable identity returned to every
+                // downstream stage. Canonicalize the in-memory value through
+                // the same serde contract used by batch.json/manifest.jsonl
+                // so subsecond caller clocks cannot make a freshly committed
+                // entry differ from its durable bytes.
+                Self::canonical_manifest_entry(&entry)
             }
         }
+    }
+
+    fn canonical_manifest_entry(entry: &ManifestEntry) -> Result<ManifestEntry, StoreError> {
+        let bytes = serde_json::to_vec(entry).map_err(|source| StoreError::Serialization {
+            context: "canonicalize committed manifest entry".to_owned(),
+            source,
+        })?;
+        serde_json::from_slice(&bytes).map_err(|source| StoreError::Serialization {
+            context: "decode canonical committed manifest entry".to_owned(),
+            source,
+        })
     }
 
     /// Appends one manifest row (JSONL). Never rewrites existing rows.
@@ -1362,6 +1488,7 @@ impl RawStore {
         let dir = self.batch_dir(provider, market, &entry.date, &entry.batch_id);
         let (raw_root, canonical_dir) =
             self.canonical_batch_dir(provider, market, &entry.date, &entry.batch_id)?;
+        self.validate_committed_batch_metadata(&dir, &canonical_dir, entry)?;
         let mut out = Vec::with_capacity(entry.files.len());
         for file in &entry.files {
             let path = dir.join(&file.file_name);
@@ -1414,6 +1541,55 @@ impl RawStore {
             });
         }
         Ok(out)
+    }
+
+    fn validate_committed_batch_metadata(
+        &self,
+        batch_dir: &Path,
+        canonical_dir: &Path,
+        entry: &ManifestEntry,
+    ) -> Result<(), StoreError> {
+        let metadata_path = batch_dir.join(entry.batch_json_file_name());
+        let canonical_metadata = fs::canonicalize(&metadata_path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                StoreError::MissingEvidence {
+                    path: metadata_path.display().to_string(),
+                    source,
+                }
+            } else {
+                io_err(&format!("canonicalize {}", metadata_path.display()), source)
+            }
+        })?;
+        if canonical_metadata != canonical_dir.join(entry.batch_json_file_name()) {
+            return Err(StoreError::UnsafePath {
+                path: canonical_metadata.display().to_string(),
+                reason: "batch.json must be a direct file in its canonical batch directory"
+                    .to_owned(),
+            });
+        }
+        let metadata = fs::read(&canonical_metadata).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                StoreError::MissingEvidence {
+                    path: metadata_path.display().to_string(),
+                    source,
+                }
+            } else {
+                io_err(&format!("read {}", metadata_path.display()), source)
+            }
+        })?;
+        let stored: ManifestEntry = serde_json::from_slice(&metadata).map_err(|source| {
+            StoreError::CorruptBatchMetadata {
+                path: metadata_path.display().to_string(),
+                source,
+            }
+        })?;
+        if stored != *entry {
+            return Err(StoreError::InvalidBatchMetadata {
+                path: metadata_path.display().to_string(),
+                reason: "batch.json does not match the committed manifest entry".to_owned(),
+            });
+        }
+        Ok(())
     }
 
     /// The batch ids stored under one date partition (QA/diff channel).

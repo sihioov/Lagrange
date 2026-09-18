@@ -28,6 +28,33 @@ fn set_calendar_hash(bundle: &mut market_data::publication::PublicationBundle, h
     for fact in &mut bundle.calendar_facts {
         fact.content_sha256 = hash.clone();
     }
+    if let Some(file) = bundle
+        .files
+        .iter_mut()
+        .find(|file| file.kind == DataBatchKind::Calendar)
+    {
+        if let Some(evidence) = &mut file.calendar_evidence {
+            evidence.content_sha256 = hash.clone();
+        }
+    }
+    if let Some(evidence) = &mut bundle.calendar_evidence {
+        evidence.content_sha256 = hash;
+    }
+}
+
+fn set_retrieved_at(
+    bundle: &mut market_data::publication::PublicationBundle,
+    retrieved_at: UtcTimestamp,
+) {
+    bundle.retrieved_at = retrieved_at;
+    if let Some(evidence) = &mut bundle.calendar_evidence {
+        evidence.retrieved_at = retrieved_at;
+    }
+    for file in &mut bundle.files {
+        if let Some(evidence) = &mut file.calendar_evidence {
+            evidence.retrieved_at = retrieved_at;
+        }
+    }
 }
 
 async fn counts(db: &ScratchDb) -> (i64, i64, i64) {
@@ -267,8 +294,10 @@ async fn fractional_retrieval_time_replays_at_durable_manifest_precision() {
         return;
     };
     let mut fixture = synthetic_bundle("2026-08-05T07:00:00Z");
-    fixture.bundle.retrieved_at =
-        UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00.123456789Z").unwrap();
+    set_retrieved_at(
+        &mut fixture.bundle,
+        UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00.123456789Z").unwrap(),
+    );
     let sink = PostgresPublicationSink::new(db.writer.clone());
     assert_eq!(
         sink.publish(&fixture.bundle).await.unwrap(),
@@ -331,7 +360,10 @@ async fn fractional_retrieval_time_replays_at_durable_manifest_precision() {
             .await
             .unwrap();
     }
-    fixture.bundle.retrieved_at = UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").unwrap();
+    set_retrieved_at(
+        &mut fixture.bundle,
+        UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").unwrap(),
+    );
     assert_eq!(
         sink.publish(&fixture.bundle).await.unwrap(),
         PublishOutcome::AlreadyPublished
@@ -409,7 +441,10 @@ async fn conflicting_replays_and_preseeded_partial_state_are_never_repaired() {
     changed.target_date = TradingDate::parse("2020-02-01").unwrap();
     mutations.push(changed);
     let mut changed = fixture.bundle.clone();
-    changed.retrieved_at = UtcTimestamp::parse_rfc3339("2026-08-05T07:00:01Z").unwrap();
+    set_retrieved_at(
+        &mut changed,
+        UtcTimestamp::parse_rfc3339("2026-08-05T07:00:01Z").unwrap(),
+    );
     mutations.push(changed);
     for mutation in mutations {
         assert_conflict(sink.publish(&mutation).await.unwrap_err());
@@ -453,7 +488,10 @@ async fn calendar_history_is_immutable_and_projection_is_newer_wins() {
 
     let mut later = original.bundle.clone();
     later.source_batch_id = BatchId::generate();
-    later.retrieved_at = UtcTimestamp::parse_rfc3339("2026-08-06T07:00:00Z").unwrap();
+    set_retrieved_at(
+        &mut later,
+        UtcTimestamp::parse_rfc3339("2026-08-06T07:00:00Z").unwrap(),
+    );
     for fact in &mut later.calendar_facts {
         fact.source_version.push_str(":correction");
         fact.session_type = CalendarSessionType::Closed;
@@ -478,7 +516,10 @@ async fn calendar_history_is_immutable_and_projection_is_newer_wins() {
     let history_after_later = counts(&db).await.1;
     let mut older = original.bundle.clone();
     older.source_batch_id = BatchId::generate();
-    older.retrieved_at = UtcTimestamp::parse_rfc3339("2026-08-04T07:00:00Z").unwrap();
+    set_retrieved_at(
+        &mut older,
+        UtcTimestamp::parse_rfc3339("2026-08-04T07:00:00Z").unwrap(),
+    );
     for fact in &mut older.calendar_facts {
         fact.source_version.push_str(":older");
     }
@@ -713,14 +754,20 @@ async fn concurrent_different_batches_leave_the_newest_projection() {
     let fixture = synthetic_bundle("2026-08-05T07:00:00Z");
     let mut older = fixture.bundle.clone();
     older.source_batch_id = BatchId::generate();
-    older.retrieved_at = UtcTimestamp::parse_rfc3339("2026-08-04T07:00:00Z").unwrap();
+    set_retrieved_at(
+        &mut older,
+        UtcTimestamp::parse_rfc3339("2026-08-04T07:00:00Z").unwrap(),
+    );
     for fact in &mut older.calendar_facts {
         fact.source_version.push_str(":older-concurrent");
     }
     set_calendar_hash(&mut older, "1".repeat(64));
     let mut newer = fixture.bundle.clone();
     newer.source_batch_id = BatchId::generate();
-    newer.retrieved_at = UtcTimestamp::parse_rfc3339("2026-08-06T07:00:00Z").unwrap();
+    set_retrieved_at(
+        &mut newer,
+        UtcTimestamp::parse_rfc3339("2026-08-06T07:00:00Z").unwrap(),
+    );
     for fact in &mut newer.calendar_facts {
         fact.source_version.push_str(":newer-concurrent");
         fact.session_type = CalendarSessionType::Closed;

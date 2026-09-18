@@ -10,7 +10,8 @@ use domain::{BatchId, TradingDate, UtcTimestamp};
 use job_queue::owner_equity_v2::{IntradaySessionProof, OwnerIntradayQuoteRepository};
 use market_data::contract::{FetchMode, MARKET_KR, PROVIDER_KIS_NORMALIZED};
 use market_data::publication::{
-    CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle, PublicationFile,
+    CalendarEvidence, CalendarFact, CalendarSessionType, DataBatchKind, PublicationBundle,
+    PublicationFile,
 };
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
@@ -394,6 +395,11 @@ async fn install_calendar(
         target_date,
         retrieved_at: UtcTimestamp::from_datetime(retrieved_at),
         fetch_mode: FetchMode::Credentialed,
+        calendar_evidence: Some(CalendarEvidence {
+            source_batch_id: BatchId::from_uuid(source_batch_id),
+            content_sha256: content_sha256.to_owned(),
+            retrieved_at: UtcTimestamp::from_datetime(retrieved_at),
+        }),
         files: vec![
             PublicationFile {
                 file_name: "bars.json".to_owned(),
@@ -401,6 +407,7 @@ async fn install_calendar(
                 content_sha256: "b".repeat(64),
                 storage_path: "fixture/intraday-calendar/bars.json".to_owned(),
                 bytes_size: 1,
+                calendar_evidence: None,
             },
             PublicationFile {
                 file_name: "reference.json".to_owned(),
@@ -408,6 +415,7 @@ async fn install_calendar(
                 content_sha256: "c".repeat(64),
                 storage_path: "fixture/intraday-calendar/reference.json".to_owned(),
                 bytes_size: 1,
+                calendar_evidence: None,
             },
             PublicationFile {
                 file_name: "calendar.json".to_owned(),
@@ -415,6 +423,11 @@ async fn install_calendar(
                 content_sha256: content_sha256.to_owned(),
                 storage_path: "fixture/intraday-calendar/calendar.json".to_owned(),
                 bytes_size: 1,
+                calendar_evidence: Some(CalendarEvidence {
+                    source_batch_id: BatchId::from_uuid(source_batch_id),
+                    content_sha256: content_sha256.to_owned(),
+                    retrieved_at: UtcTimestamp::from_datetime(retrieved_at),
+                }),
             },
             PublicationFile {
                 file_name: "corporate-actions.json".to_owned(),
@@ -422,6 +435,7 @@ async fn install_calendar(
                 content_sha256: "d".repeat(64),
                 storage_path: "fixture/intraday-calendar/corporate-actions.json".to_owned(),
                 bytes_size: 1,
+                calendar_evidence: None,
             },
         ],
         calendar_facts: vec![CalendarFact {

@@ -76,8 +76,21 @@ pub struct PublicationBundle {
     pub target_date: TradingDate,
     pub retrieved_at: UtcTimestamp,
     pub fetch_mode: FetchMode,
+    /// The immutable calendar evidence identity. For a reused KIS calendar
+    /// this points at the standalone canonical calendar batch, not the EOD
+    /// batch that happens to carry the four-file publication. A partial
+    /// historical/unavailable read with no calendar file has no calendar
+    /// evidence and cannot be accepted by the four-file publication sink.
+    pub calendar_evidence: Option<CalendarEvidence>,
     pub files: Vec<PublicationFile>,
     pub calendar_facts: Vec<CalendarFact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarEvidence {
+    pub source_batch_id: BatchId,
+    pub content_sha256: String,
+    pub retrieved_at: UtcTimestamp,
 }
 
 /// A validated one-file calendar publication.
@@ -95,6 +108,7 @@ pub struct CalendarPublicationBundle {
     target_date: TradingDate,
     retrieved_at: UtcTimestamp,
     fetch_mode: FetchMode,
+    calendar_evidence: CalendarEvidence,
     file: PublicationFile,
     calendar_fact: CalendarFact,
     entitlement_reference: Option<String>,
@@ -229,12 +243,22 @@ impl CalendarPublicationBundle {
             target_date: manifest.date,
             retrieved_at: manifest.retrieved_at,
             fetch_mode: manifest.mode,
+            calendar_evidence: CalendarEvidence {
+                source_batch_id: manifest.batch_id,
+                content_sha256: verified.content_sha256.clone(),
+                retrieved_at: manifest.retrieved_at,
+            },
             file: PublicationFile {
                 file_name: verified.entry.file_name.clone(),
                 kind: DataBatchKind::Calendar,
-                content_sha256: verified.content_sha256,
+                content_sha256: verified.content_sha256.clone(),
                 storage_path: verified.storage_path,
                 bytes_size: verified.entry.size_bytes,
+                calendar_evidence: Some(CalendarEvidence {
+                    source_batch_id: manifest.batch_id,
+                    content_sha256: verified.content_sha256.clone(),
+                    retrieved_at: manifest.retrieved_at,
+                }),
             },
             calendar_fact: parsed.facts.into_iter().next().expect("one fact validated"),
             entitlement_reference: manifest.entitlement_reference.clone(),
@@ -269,6 +293,10 @@ impl CalendarPublicationBundle {
         &self.file
     }
 
+    pub fn calendar_evidence(&self) -> &CalendarEvidence {
+        &self.calendar_evidence
+    }
+
     pub fn calendar_facts(&self) -> &[CalendarFact] {
         std::slice::from_ref(&self.calendar_fact)
     }
@@ -285,6 +313,7 @@ pub struct PublicationFile {
     pub content_sha256: String,
     pub storage_path: String,
     pub bytes_size: u64,
+    pub calendar_evidence: Option<CalendarEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -497,12 +526,13 @@ impl PublicationBundle {
             .map(|(entry, stored_file)| validate_file_metadata(entry, stored_file))
             .collect::<Result<_, _>>()?;
         if normalized {
-            validate_normalized_provenance(manifest, &verified_files)?;
+            validate_normalized_provenance(store, manifest, &verified_files)?;
         }
 
         let mut files = Vec::with_capacity(verified_files.len());
         let mut calendar_facts = BTreeMap::new();
         let mut calendar_provenance = BTreeMap::new();
+        let mut calendar_evidence = None;
         for verified in verified_files {
             if normalized {
                 validate_response(verified.entry.kind, verified.bytes).map_err(|error| {
@@ -513,6 +543,11 @@ impl PublicationBundle {
                     }
                 })?;
             }
+            let file_calendar_evidence = if verified.entry.kind == ResponseKind::Calendar {
+                Some(calendar_evidence_for_file(store, manifest, &verified)?)
+            } else {
+                None
+            };
             let kind = match verified.entry.kind {
                 ResponseKind::Bars => {
                     classify_bars(&verified.entry.file_name, verified.bytes, manifest.date)?
@@ -552,12 +587,16 @@ impl PublicationBundle {
                     });
                 }
             };
+            if let Some(evidence) = file_calendar_evidence.as_ref() {
+                calendar_evidence = Some(evidence.clone());
+            }
             files.push(PublicationFile {
                 file_name: verified.entry.file_name.clone(),
                 kind,
-                content_sha256: verified.content_sha256,
+                content_sha256: verified.content_sha256.clone(),
                 storage_path: verified.storage_path,
                 bytes_size: verified.entry.size_bytes,
+                calendar_evidence: file_calendar_evidence,
             });
         }
         Ok(Self {
@@ -567,6 +606,7 @@ impl PublicationBundle {
             target_date: manifest.date,
             retrieved_at: manifest.retrieved_at,
             fetch_mode: manifest.mode,
+            calendar_evidence,
             files,
             calendar_facts: calendar_facts.into_values().collect(),
         })
@@ -645,6 +685,11 @@ fn validate_calendar_normalized_manifest(manifest: &ManifestEntry) -> Result<(),
         return Err(PublicationError::NonCanonicalCalendarManifest {
             reason: "canonical calendar scope must contain calendar.json as a CALENDAR file"
                 .to_owned(),
+        });
+    }
+    if file.copied_from.is_some() {
+        return Err(PublicationError::NonCanonicalCalendarManifest {
+            reason: "canonical calendar scope may not contain a copied file".to_owned(),
         });
     }
     if file.request.mode != FetchMode::Credentialed || file.response_continuation.is_some() {
@@ -961,12 +1006,136 @@ fn validate_normalized_request(
     Ok(())
 }
 
+fn calendar_evidence_for_file(
+    store: &RawStore,
+    manifest: &ManifestEntry,
+    verified: &VerifiedRawFile<'_>,
+) -> Result<CalendarEvidence, PublicationError> {
+    let Some(reference) = verified.entry.copied_from.as_ref() else {
+        return Ok(CalendarEvidence {
+            source_batch_id: manifest.batch_id,
+            content_sha256: verified.content_sha256.clone(),
+            retrieved_at: manifest.retrieved_at,
+        });
+    };
+    if reference.provider != PROVIDER_KIS_CALENDAR_NORMALIZED
+        || reference.market != MARKET_KR
+        || reference.file_name != "calendar.json"
+        || reference.batch_id == manifest.batch_id
+        || reference.retrieved_at > manifest.retrieved_at
+        || reference.retrieved_at > UtcTimestamp::now()
+    {
+        return Err(invalid_calendar_source(
+            "calendar evidence reference is outside the standalone canonical scope",
+        ));
+    }
+    let committed = store.read_committed_manifest(PROVIDER_KIS_CALENDAR_NORMALIZED, MARKET_KR)?;
+    let source = committed
+        .into_iter()
+        .find(|entry| entry.batch_id == reference.batch_id)
+        .ok_or_else(|| PublicationError::CalendarSourceMissing {
+            batch_id: reference.batch_id,
+        })?;
+    if source.date != manifest.date
+        || source.mode != FetchMode::Credentialed
+        || source.entitlement_reference != manifest.entitlement_reference
+        || source.retrieved_at != reference.retrieved_at
+    {
+        return Err(invalid_calendar_source(
+            "calendar evidence source date, mode, entitlement, or retrieval time differs",
+        ));
+    }
+    validate_calendar_normalized_manifest(&source)?;
+    let source_stored = store.read_batch_bytes(&source.provider, &source.market, &source)?;
+    let source_verified = validate_file_metadata(&source.files[0], &source_stored[0])?;
+    if source.files[0].copied_from.is_some()
+        || source.files[0].content_hash != reference.content_hash
+        || source.files[0].content_hash != verified.entry.content_hash
+        || source.files[0].request != verified.entry.request
+        || source.files[0].response_continuation != verified.entry.response_continuation
+        || source_verified.bytes != verified.bytes
+    {
+        return Err(invalid_calendar_source(
+            "calendar evidence source file, request metadata, or bytes differ",
+        ));
+    }
+    let source_lineage =
+        parse_normalization_lineage(&source.files[0].file_name, source_verified.bytes)?;
+    validate_calendar_lineage(&source, &source.files[0].file_name, &source_lineage)?;
+    validate_calendar_normalized_request(&source.files[0], &source_lineage)?;
+    let wire_source = store
+        .read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?
+        .into_iter()
+        .find(|entry| entry.batch_id == source_lineage.upstream_batch_id)
+        .ok_or_else(|| PublicationError::CalendarSourceMissing {
+            batch_id: source_lineage.upstream_batch_id,
+        })?;
+    if wire_source.date != source.date
+        || wire_source.entitlement_reference != source.entitlement_reference
+        || wire_source.retrieved_at != source.retrieved_at
+    {
+        return Err(invalid_calendar_source(
+            "standalone calendar lineage source identity differs",
+        ));
+    }
+    let wire_stored =
+        store.read_batch_bytes(&wire_source.provider, &wire_source.market, &wire_source)?;
+    validate_kis_calendar_source_manifest(&wire_source, &wire_stored).map_err(|error| {
+        invalid_calendar_source(format!("calendar lineage source contract failed: {error}"))
+    })?;
+    let wire_file = &wire_source.files[0];
+    let lineage_file = &source_lineage.upstream_files[0];
+    if lineage_file.kind != wire_file.kind
+        || lineage_file.file_name != wire_file.file_name
+        || lineage_file.content_hash != wire_file.content_hash
+    {
+        return Err(invalid_calendar_source(
+            "standalone calendar lineage does not identify its wire source exactly",
+        ));
+    }
+    let expected =
+        normalize_kis_calendar_envelopes_with_batch_id(&wire_source, &wire_stored, source.batch_id)
+            .map_err(|error| {
+                invalid_calendar_source(format!("calendar derivation failed: {error}"))
+            })?
+            .into_iter()
+            .next()
+            .ok_or_else(|| invalid_calendar_source("standalone calendar derivation is empty"))?;
+    if expected.bytes != source_verified.bytes
+        || expected.request != source.files[0].request
+        || expected.response_continuation != source.files[0].response_continuation
+    {
+        return Err(invalid_calendar_source(
+            "standalone calendar bytes or request metadata differ from deterministic derivation",
+        ));
+    }
+    let copied_lineage = parse_normalization_lineage(&verified.entry.file_name, verified.bytes)?;
+    if copied_lineage != source_lineage {
+        return Err(invalid_calendar_source(
+            "copied calendar lineage differs from the standalone canonical source",
+        ));
+    }
+    Ok(CalendarEvidence {
+        source_batch_id: source.batch_id,
+        content_sha256: verified.content_sha256.clone(),
+        retrieved_at: source.retrieved_at,
+    })
+}
+
 fn validate_normalized_provenance(
+    store: &RawStore,
     manifest: &ManifestEntry,
     verified_files: &[VerifiedRawFile<'_>],
 ) -> Result<(), PublicationError> {
     let mut lineages = Vec::with_capacity(verified_files.len());
     for verified in verified_files {
+        if verified.entry.kind == ResponseKind::Calendar && verified.entry.copied_from.is_some() {
+            // This helper validates both the standalone source identity and
+            // the byte-for-byte copied canonical document. Its lineage is
+            // intentionally separate from the three ordinary EOD files.
+            calendar_evidence_for_file(store, manifest, verified)?;
+            continue;
+        }
         let lineage = parse_normalization_lineage(&verified.entry.file_name, verified.bytes)?;
         validate_lineage_fields(&verified.entry.file_name, manifest, &lineage)?;
         validate_normalized_request(verified.entry, &lineage)?;

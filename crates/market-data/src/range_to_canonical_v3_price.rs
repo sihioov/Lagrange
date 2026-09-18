@@ -909,6 +909,7 @@ mod tests {
                 mode: FetchMode::Credentialed,
             },
             response_continuation: None,
+            copied_from: None,
         };
         let stored = StoredFile {
             file_name,

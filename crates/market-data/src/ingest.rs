@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, PROVIDER_KIS_DAILY_RANGE,
-    ResponseKind, StoredFile,
+    RawEnvelope, ResponseKind, SourceFileReference, StoredFile,
 };
 use crate::provider::{EodProvider, ProviderError};
 use crate::providers::kis::{
@@ -221,7 +221,20 @@ pub async fn ingest_kis_bundle<R: KisRead>(
     req: &IngestRequest,
     entitlement_reference: Option<&str>,
 ) -> Result<IngestOutcome, IngestError> {
-    reject_bootstrap_calendar_recapture(store, req)?;
+    if let Some(calendar_source) = committed_calendar_source(store, req, entitlement_reference)? {
+        return ingest_kis_bundle_with_calendar_source(
+            store,
+            provider,
+            req,
+            entitlement_reference,
+            &calendar_source,
+        )
+        .await;
+    }
+    reject_indeterminate_calendar_claim(store, req)?;
+    if let Some(legacy) = committed_complete_eod_source(store, req, entitlement_reference)? {
+        return reuse_committed_outcome(store, legacy);
+    }
     let batch_id = BatchId::generate();
     let fetch_req = crate::provider::FetchRequest {
         market: req.market.clone(),
@@ -256,42 +269,226 @@ pub async fn ingest_kis_bundle<R: KisRead>(
     )
 }
 
-// Calendar bootstrap is a separate operational path. Until the full EOD
-// calendar-reuse contract is implemented, a consumed bootstrap allowance must
-// stop EOD before any provider call; it must never trigger another chk-holiday
-// request or invent the other three EOD response classes.
-fn reject_bootstrap_calendar_recapture(
+/// Fetches the three non-calendar KIS EOD classes and incorporates the exact
+/// committed calendar source supplied by the shared daily calendar path.
+///
+/// The calendar envelope is copied with its original request metadata, bytes,
+/// hash, and retrieval time. The immutable store verifies the reference again
+/// before any destination metadata becomes visible.
+pub async fn ingest_kis_bundle_with_calendar_source<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    calendar_source: &ManifestEntry,
+) -> Result<IngestOutcome, IngestError> {
+    if calendar_source.provider != PROVIDER_KIS_CALENDAR
+        || calendar_source.market != MARKET_KR
+        || calendar_source.date != req.date
+        || calendar_source.mode != FetchMode::Credentialed
+        || calendar_source.entitlement_reference.as_deref() != entitlement_reference
+        || calendar_source.retrieved_at > req.now
+        || calendar_source.retrieved_at > UtcTimestamp::now()
+    {
+        return Err(IngestError::ResponseShape {
+            detail: "KIS calendar source does not exactly match the EOD request".to_owned(),
+        });
+    }
+    let calendar_stored = store.read_batch_bytes(
+        &calendar_source.provider,
+        &calendar_source.market,
+        calendar_source,
+    )?;
+    crate::normalize::validate_kis_calendar_source_manifest(calendar_source, &calendar_stored)
+        .map_err(|error| IngestError::ResponseShape {
+            detail: format!("KIS calendar source contract failed: {error}"),
+        })?;
+    let calendar_file = &calendar_source.files[0];
+    let calendar_bytes = calendar_stored
+        .iter()
+        .find(|file| file.file_name == calendar_file.file_name)
+        .ok_or_else(|| IngestError::ResponseShape {
+            detail: "KIS calendar source file is missing from verified Raw".to_owned(),
+        })?;
+    let batch_id = BatchId::generate();
+    let fetch_req = crate::provider::FetchRequest {
+        market: req.market.clone(),
+        date: req.date,
+        kinds: vec![
+            ResponseKind::Bars,
+            ResponseKind::Reference,
+            ResponseKind::CorporateActions,
+        ],
+        now: req.now,
+        batch_id,
+    };
+    let fetched = provider.fetch(&fetch_req).await?;
+    validate_kis_eod_envelopes(&fetched)?;
+    let calendar = RawEnvelope::new(
+        batch_id,
+        ResponseKind::Calendar,
+        calendar_file.file_name.clone(),
+        calendar_bytes.bytes.clone(),
+        calendar_source.retrieved_at,
+        calendar_file.request.clone(),
+    )
+    .with_response_continuation(calendar_file.response_continuation.clone())
+    .with_copied_from(Some(SourceFileReference {
+        provider: calendar_source.provider.clone(),
+        market: calendar_source.market.clone(),
+        batch_id: calendar_source.batch_id,
+        file_name: calendar_file.file_name.clone(),
+        content_hash: calendar_file.content_hash.clone(),
+        retrieved_at: calendar_source.retrieved_at,
+    }));
+    let mut envelopes = Vec::with_capacity(fetched.len() + 1);
+    for kind in [ResponseKind::Bars, ResponseKind::Reference] {
+        envelopes.extend(
+            fetched
+                .iter()
+                .filter(|envelope| envelope.kind == kind)
+                .cloned(),
+        );
+    }
+    envelopes.push(calendar);
+    envelopes.extend(
+        fetched
+            .into_iter()
+            .filter(|envelope| envelope.kind == ResponseKind::CorporateActions),
+    );
+    persist_bundle(
+        store,
+        provider.provider_id(),
+        provider.fetch_mode(),
+        req,
+        entitlement_reference,
+        batch_id,
+        &envelopes,
+    )
+}
+
+fn validate_kis_eod_envelopes(envelopes: &[RawEnvelope]) -> Result<(), IngestError> {
+    validate_returned_kinds(
+        &[
+            ResponseKind::Bars,
+            ResponseKind::Reference,
+            ResponseKind::CorporateActions,
+        ],
+        envelopes,
+    )?;
+    for envelope in envelopes {
+        validate_kis_response(envelope.kind, &envelope.request.endpoint, &envelope.bytes).map_err(
+            |error| IngestError::MalformedResponse {
+                kind: error.kind,
+                reason: error.reason,
+                diagnostic: Some(ResponseValidationDiagnostic {
+                    code: error.code,
+                    endpoint: envelope.request.endpoint.clone(),
+                    file_name: envelope.file_name.clone(),
+                }),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// A committed calendar source is preferred even when the claim artifact was
+/// written by a previous process. A claim without that exact source remains
+/// indeterminate and cannot trigger a recapture.
+fn committed_calendar_source(
+    store: &RawStore,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+) -> Result<Option<ManifestEntry>, IngestError> {
+    let path = store.manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let entries = store.read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?;
+    let matches: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| entry.date == req.date)
+        .collect();
+    if matches.is_empty() {
+        return Ok(None);
+    }
+    if matches.len() != 1 {
+        return Err(IngestError::ResponseShape {
+            detail: "multiple committed KIS calendar sources exist for the target date".to_owned(),
+        });
+    }
+    let source = matches.into_iter().next().expect("one source validated");
+    if source.mode != FetchMode::Credentialed
+        || source.entitlement_reference.as_deref() != entitlement_reference
+    {
+        return Err(IngestError::ResponseShape {
+            detail: "committed KIS calendar source has incompatible mode or entitlement".to_owned(),
+        });
+    }
+    Ok(Some(source))
+}
+
+fn committed_complete_eod_source(
+    store: &RawStore,
+    req: &IngestRequest,
+    entitlement_reference: Option<&str>,
+) -> Result<Option<ManifestEntry>, IngestError> {
+    let path = store.manifest_path(PROVIDER_KIS, MARKET_KR);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let entries = store.read_committed_manifest(PROVIDER_KIS, MARKET_KR)?;
+    let mut matches = entries.into_iter().filter(|entry| {
+        entry.date == req.date
+            && entry.mode == FetchMode::Credentialed
+            && entry.entitlement_reference.as_deref() == entitlement_reference
+            && entry.retrieved_at <= req.now
+            && entry.retrieved_at <= UtcTimestamp::now()
+            && entry.files.len() >= crate::contract::EOD_RESPONSE_KINDS.len()
+            && crate::contract::EOD_RESPONSE_KINDS
+                .iter()
+                .all(|kind| entry.files.iter().any(|file| file.kind == *kind))
+            && entry
+                .files
+                .iter()
+                .filter(|file| file.kind == ResponseKind::Calendar)
+                .count()
+                == 1
+    });
+    let first = matches.next();
+    if matches.next().is_some() {
+        return Err(IngestError::ResponseShape {
+            detail: "multiple committed KIS EOD sources exist for the target date".to_owned(),
+        });
+    }
+    Ok(first)
+}
+
+fn reuse_committed_outcome(
+    store: &RawStore,
+    entry: ManifestEntry,
+) -> Result<IngestOutcome, IngestError> {
+    let files = store.read_batch_bytes(&entry.provider, &entry.market, &entry)?;
+    Ok(IngestOutcome {
+        batch_id: entry.batch_id,
+        entry,
+        files,
+    })
+}
+
+fn reject_indeterminate_calendar_claim(
     store: &RawStore,
     req: &IngestRequest,
 ) -> Result<(), IngestError> {
-    let kst = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("valid KST offset");
-    let date = req.now.as_datetime().with_timezone(&kst).date_naive();
     let blocked = || IngestError::ResponseShape {
-        detail: "KIS_CALENDAR_BOOTSTRAP_EOD_REUSE_REQUIRED".to_owned(),
+        detail: "KIS_CALENDAR_SOURCE_INDETERMINATE".to_owned(),
     };
     let claim = store
         .root()
         .join("raw/.calendar-bootstrap")
-        .join(format!("{date}.json"));
+        .join(format!("{}.json", req.date.to_iso()));
     match std::fs::symlink_metadata(claim) {
         Ok(_) => return Err(blocked()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(_) => return Err(blocked()),
-    }
-    match std::fs::symlink_metadata(store.manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)) {
-        Ok(_) => {
-            let entries = store.read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?;
-            if entries.iter().any(|entry| {
-                entry
-                    .retrieved_at
-                    .as_datetime()
-                    .with_timezone(&kst)
-                    .date_naive()
-                    == date
-            }) {
-                return Err(blocked());
-            }
-        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err(blocked()),
     }

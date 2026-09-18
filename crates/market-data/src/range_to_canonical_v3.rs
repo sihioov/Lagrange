@@ -635,6 +635,7 @@ mod tests {
                 mode: FetchMode::Credentialed,
             },
             response_continuation: marker.map(str::to_owned),
+            copied_from: None,
         };
         let stored = StoredFile {
             file_name,

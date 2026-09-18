@@ -10,12 +10,13 @@ use market_data::contract::{
 use market_data::ingest::{IngestRequest, ingest_kis_bundle, ingest_kis_calendar_with_batch_id};
 use market_data::normalize::{
     KIS_CALENDAR_DOCUMENT_ID, KIS_CALENDAR_NORMALIZER, KIS_CALENDAR_SOURCE_VERSION,
-    deterministic_kis_calendar_normalized_batch_id, normalize_kis_calendar_batch,
-    normalize_kis_calendar_envelopes,
+    deterministic_kis_calendar_normalized_batch_id, normalize_kis_batch,
+    normalize_kis_calendar_batch, normalize_kis_calendar_envelopes,
 };
 use market_data::providers::kis::{KisProvider, KisRead};
-use market_data::publication::{CalendarPublicationBundle, PublicationError};
+use market_data::publication::{CalendarPublicationBundle, PublicationBundle, PublicationError};
 use market_data::storage::{BatchSpec, RawStore};
+use serde_json::json;
 use tempfile::TempDir;
 
 const CALENDAR_PATH: &str = "/uapi/domestic-stock/v1/quotations/chk-holiday";
@@ -58,6 +59,37 @@ impl FixtureReader {
     fn calls(&self) -> Vec<RecordedCall> {
         self.calls.lock().expect("fixture calls lock").clone()
     }
+
+    fn eod_body(path: &str, query: &[(String, String)]) -> Vec<u8> {
+        let symbol = query
+            .iter()
+            .find(|(key, _)| key == "FID_INPUT_ISCD")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or("069500");
+        let value = if path.ends_with("inquire-daily-itemchartprice") {
+            json!({
+                "rt_cd": "0",
+                "output1": {
+                    "hts_kor_isnm": format!("ETF {symbol}"),
+                    "stck_shrn_iscd": symbol
+                },
+                "output2": [{
+                    "stck_bsop_date": "20260914",
+                    "stck_oprc": "100.00",
+                    "stck_hgpr": "102.00",
+                    "stck_lwpr": "99.00",
+                    "stck_clpr": "101.00",
+                    "acml_vol": "1300",
+                    "acml_tr_pbmn": "131300"
+                }]
+            })
+        } else if path.ends_with("inquire-price") {
+            json!({"rt_cd": "0", "output": {"stck_shrn_iscd": symbol}})
+        } else {
+            json!({"rt_cd": "0", "output1": []})
+        };
+        serde_json::to_vec(&value).expect("EOD fixture JSON")
+    }
 }
 
 impl KisRead for FixtureReader {
@@ -77,8 +109,13 @@ impl KisRead for FixtureReader {
                 query: query.to_vec(),
                 continuation: continuation.map(str::to_owned),
             });
+        let body = if path.ends_with("chk-holiday") {
+            self.body.lock().expect("fixture body lock").clone()
+        } else {
+            Self::eod_body(path, query)
+        };
         Ok(MarketDataReply {
-            body: self.body.lock().expect("fixture body lock").clone(),
+            body,
             continuation: self.response_continuation.clone(),
         })
     }
@@ -145,19 +182,89 @@ fn ingest_valid() -> (TempDir, RawStore, market_data::IngestOutcome, FixtureRead
 }
 
 #[test]
-fn bootstrap_calendar_cannot_trigger_a_second_calendar_get_through_eod() {
-    let (_temp, store, _outcome, reader) = ingest_valid();
+fn bootstrap_calendar_is_reused_without_a_second_calendar_get_through_eod() {
+    let (_temp, store, calendar_outcome, reader) = ingest_valid();
     let provider = KisProvider::kr_etf_core(reader.clone());
+    let result = block_on(ingest_kis_bundle(
+        &store,
+        &provider,
+        &request(),
+        Some("entitlement://kis-calendar-v1"),
+    ));
+    let outcome = result.expect("EOD must reuse the committed calendar source");
+    assert_eq!(outcome.entry.files.len(), 30);
     assert!(
-        block_on(ingest_kis_bundle(
-            &store,
-            &provider,
-            &request(),
-            Some("entitlement://kis-calendar-v1")
-        ))
-        .is_err()
+        outcome
+            .entry
+            .files
+            .iter()
+            .find(|file| file.kind == ResponseKind::Calendar)
+            .and_then(|file| file.copied_from.as_ref())
+            .is_some_and(|reference| reference.provider == PROVIDER_KIS_CALENDAR)
     );
-    assert_one_exact_call(&reader);
+    let calls = reader.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.path == CALENDAR_PATH)
+            .count(),
+        1,
+        "the dedicated calendar source must be the only chk-holiday request"
+    );
+    assert!(calls.len() > 1, "EOD must proceed to non-calendar classes");
+    let standalone = normalize_kis_calendar_batch(&store, &calendar_outcome.entry)
+        .expect("standalone calendar normalization");
+    let normalized =
+        normalize_kis_batch(&store, &outcome.entry).expect("complete EOD normalization");
+    let standalone_bytes = store
+        .read_batch_bytes(
+            &standalone.entry.provider,
+            &standalone.entry.market,
+            &standalone.entry,
+        )
+        .expect("standalone bytes")
+        .pop()
+        .expect("standalone file")
+        .bytes;
+    let normalized_calendar = store
+        .read_batch_bytes(
+            &normalized.entry.provider,
+            &normalized.entry.market,
+            &normalized.entry,
+        )
+        .expect("normalized bytes")
+        .into_iter()
+        .find(|file| file.file_name == "calendar.json")
+        .expect("normalized calendar")
+        .bytes;
+    assert_eq!(normalized_calendar, standalone_bytes);
+    let bundle = PublicationBundle::from_raw(&store, &normalized.entry)
+        .expect("complete normalized publication");
+    assert_eq!(
+        bundle
+            .calendar_evidence
+            .as_ref()
+            .expect("calendar evidence")
+            .source_batch_id,
+        standalone.entry.batch_id
+    );
+    let later_request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        target(),
+        UtcTimestamp::parse_rfc3339("2026-09-14T00:06:00Z").expect("later retrieval"),
+    );
+    let second = block_on(ingest_kis_bundle(
+        &store,
+        &KisProvider::kr_etf_core(reader.clone()),
+        &later_request,
+        Some("entitlement://kis-calendar-v1"),
+    ))
+    .expect("second EOD source reuses the same calendar");
+    let second_normalized =
+        normalize_kis_batch(&store, &second.entry).expect("second complete EOD normalization");
+    let second_bundle = PublicationBundle::from_raw(&store, &second_normalized.entry)
+        .expect("second complete normalized publication");
+    assert_eq!(second_bundle.calendar_evidence, bundle.calendar_evidence);
 
     let temp = tempfile::tempdir().expect("raw root");
     let store = RawStore::new(temp.path());
@@ -425,6 +532,7 @@ fn calendar_normalizer_rejects_a_noncommitted_source_manifest() {
                 mode: FetchMode::Credentialed,
             },
             response_continuation: None,
+            copied_from: None,
         }],
     };
     store

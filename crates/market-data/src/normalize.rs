@@ -20,7 +20,8 @@ use uuid::Uuid;
 
 use crate::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, PROVIDER_KIS_CALENDAR_NORMALIZED,
-    PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata, ResponseKind, SourceFileReference,
+    StoredFile,
 };
 use crate::providers::kis::{
     CALENDAR_FILE_NAME, CALENDAR_PATH, KR_ETF_CORE_SYMBOLS, calendar_query,
@@ -205,7 +206,7 @@ pub fn normalize_kis_batch(
     validate_source_scope(source)?;
     let stored = raw.read_batch_bytes(&source.provider, &source.market, source)?;
     let batch_id = deterministic_kis_normalized_batch_id(source.batch_id);
-    let envelopes = normalize_kis_envelopes_with_batch_id(source, &stored, batch_id)?;
+    let envelopes = normalize_kis_envelopes_with_store(raw, source, &stored, batch_id)?;
     let source_files = source_lineage(source);
     let lineage = NormalizationLineage {
         schema_version: NORMALIZER_SCHEMA_VERSION,
@@ -445,6 +446,11 @@ pub(crate) fn validate_kis_calendar_source_manifest(
             "calendar source must contain calendar-page-01.json as its only file",
         ));
     }
+    if file.copied_from.is_some() {
+        return Err(invalid_calendar_source(
+            "calendar source may not itself be copied from another source",
+        ));
+    }
     if file.request.mode != FetchMode::Credentialed
         || file.request.endpoint != CALENDAR_PATH
         || file.request.query != calendar_query(source.date)
@@ -486,6 +492,7 @@ fn expected_manifest_entry(
                 size_bytes: envelope.bytes.len() as u64,
                 request: envelope.request.clone(),
                 response_continuation: envelope.response_continuation.clone(),
+                copied_from: envelope.copied_from.clone(),
             })
             .collect(),
     }
@@ -564,6 +571,24 @@ fn normalize_kis_envelopes_with_batch_id(
     stored: &[StoredFile],
     batch_id: BatchId,
 ) -> Result<Vec<RawEnvelope>, NormalizeError> {
+    normalize_kis_envelopes_with_store_inner(None, source, stored, batch_id)
+}
+
+fn normalize_kis_envelopes_with_store(
+    raw: &RawStore,
+    source: &ManifestEntry,
+    stored: &[StoredFile],
+    batch_id: BatchId,
+) -> Result<Vec<RawEnvelope>, NormalizeError> {
+    normalize_kis_envelopes_with_store_inner(Some(raw), source, stored, batch_id)
+}
+
+fn normalize_kis_envelopes_with_store_inner(
+    raw: Option<&RawStore>,
+    source: &ManifestEntry,
+    stored: &[StoredFile],
+    batch_id: BatchId,
+) -> Result<Vec<RawEnvelope>, NormalizeError> {
     validate_source_scope(source)?;
     validate_stored_evidence(source, stored)?;
     let source_files = source_lineage(source);
@@ -575,10 +600,23 @@ fn normalize_kis_envelopes_with_batch_id(
         upstream_batch_id: source.batch_id,
         upstream_files: source_files,
     };
+    let calendar = if let Some(reference) = source
+        .files
+        .iter()
+        .find(|file| file.kind == ResponseKind::Calendar)
+        .and_then(|file| file.copied_from.as_ref())
+    {
+        let raw = raw.ok_or_else(|| NormalizeError::InvalidCalendarSource {
+            reason: "copied calendar normalization requires the immutable Raw store".to_owned(),
+        })?;
+        normalize_reused_calendar(raw, source, reference, batch_id)?
+    } else {
+        normalize_calendar(source, stored, &lineage, batch_id)?
+    };
     let envelopes = vec![
         normalize_bars(source, stored, &lineage, batch_id)?,
         normalize_reference(source, stored, &lineage, batch_id)?,
-        normalize_calendar(source, stored, &lineage, batch_id)?,
+        calendar,
         normalize_actions(source, stored, &lineage, batch_id)?,
     ];
     validate_target_bar_coverage(source, &envelopes)?;
@@ -959,6 +997,91 @@ fn normalize_calendar(
         NORMALIZER,
         "kis.normalized",
     )
+}
+
+/// Reuses the deterministic standalone calendar document when the wire EOD
+/// calendar was copied from the dedicated daily source. The resulting bytes
+/// are taken directly from that committed canonical batch; rebuilding the
+/// document with EOD lineage here would silently change its immutable bytes.
+fn normalize_reused_calendar(
+    raw: &RawStore,
+    source: &ManifestEntry,
+    reference: &SourceFileReference,
+    batch_id: BatchId,
+) -> Result<RawEnvelope, NormalizeError> {
+    if reference.provider != PROVIDER_KIS_CALENDAR || reference.market != MARKET_KR {
+        return Err(invalid_calendar_source(
+            "EOD calendar reuse must identify the dedicated KIS calendar scope",
+        ));
+    }
+    let committed = raw.read_committed_manifest(&reference.provider, &reference.market)?;
+    let calendar_source = committed
+        .into_iter()
+        .find(|entry| entry.batch_id == reference.batch_id)
+        .ok_or_else(|| NormalizeError::CalendarSourceManifestConflict {
+            reason: "copied KIS calendar source is not committed".to_owned(),
+        })?;
+    if calendar_source.date != source.date
+        || calendar_source.mode != FetchMode::Credentialed
+        || calendar_source.entitlement_reference != source.entitlement_reference
+        || calendar_source.retrieved_at != reference.retrieved_at
+    {
+        return Err(invalid_calendar_source(
+            "copied KIS calendar source does not match the EOD source identity",
+        ));
+    }
+    let calendar_stored = raw.read_batch_bytes(
+        &calendar_source.provider,
+        &calendar_source.market,
+        &calendar_source,
+    )?;
+    validate_kis_calendar_source_manifest(&calendar_source, &calendar_stored)?;
+    let calendar_file = &calendar_source.files[0];
+    if calendar_file.file_name != reference.file_name
+        || calendar_file.content_hash != reference.content_hash
+    {
+        return Err(invalid_calendar_source(
+            "copied KIS calendar reference does not identify its source file exactly",
+        ));
+    }
+    let canonical = normalize_kis_calendar_batch(raw, &calendar_source)?;
+    let canonical_file = canonical
+        .entry
+        .files
+        .first()
+        .ok_or_else(|| invalid_calendar_source("standalone normalized calendar has no file"))?;
+    let canonical_bytes = canonical
+        .files
+        .iter()
+        .find(|file| file.file_name == canonical_file.file_name)
+        .ok_or_else(|| {
+            invalid_calendar_source("standalone normalized calendar bytes are missing")
+        })?;
+    if canonical_file.copied_from.is_some()
+        || canonical_file.file_name != "calendar.json"
+        || canonical_file.kind != ResponseKind::Calendar
+    {
+        return Err(invalid_calendar_source(
+            "standalone normalized calendar is not the one-file canonical source",
+        ));
+    }
+    Ok(RawEnvelope::new(
+        batch_id,
+        ResponseKind::Calendar,
+        canonical_file.file_name.clone(),
+        canonical_bytes.bytes.clone(),
+        canonical.entry.retrieved_at,
+        canonical_file.request.clone(),
+    )
+    .with_response_continuation(canonical_file.response_continuation.clone())
+    .with_copied_from(Some(SourceFileReference {
+        provider: canonical.entry.provider.clone(),
+        market: canonical.entry.market.clone(),
+        batch_id: canonical.entry.batch_id,
+        file_name: canonical_file.file_name.clone(),
+        content_hash: canonical_file.content_hash.clone(),
+        retrieved_at: canonical.entry.retrieved_at,
+    })))
 }
 
 fn normalize_calendar_with_contract(

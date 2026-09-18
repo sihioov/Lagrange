@@ -95,7 +95,8 @@ pub use contract::{
     PROVIDER_KIND_DISCLOSURE_NORMALIZED, PROVIDER_KIS, PROVIDER_KIS_CALENDAR,
     PROVIDER_KIS_CALENDAR_NORMALIZED, PROVIDER_KIS_CANDIDATE, PROVIDER_KIS_CANDIDATE_NORMALIZED,
     PROVIDER_KIS_DAILY_RANGE, PROVIDER_KIS_DAILY_RANGE_NORMALIZED, PROVIDER_KIS_NORMALIZED,
-    PROVIDER_KRX, PROVIDER_OPENDART, RawEnvelope, RequestMetadata, ResponseKind, StoredFile,
+    PROVIDER_KRX, PROVIDER_OPENDART, RawEnvelope, RequestMetadata, ResponseKind,
+    SourceFileReference, StoredFile,
 };
 pub use curate::actions::{CorporateAction, CorporateActionType};
 pub use curate::schema::{
@@ -164,9 +165,9 @@ pub use historical_price_only_v3_artifact::{
 pub use ingest::{
     IngestError, IngestOutcome, IngestRequest, ingest_bundle, ingest_bundle_with_kinds,
     ingest_kis_action_range, ingest_kis_action_range_with_batch_id, ingest_kis_bundle,
-    ingest_kis_calendar, ingest_kis_calendar_with_batch_id, ingest_kis_candidate_bundle,
-    ingest_kis_candidate_bundle_with_kinds, ingest_kis_daily_bars_range,
-    ingest_kis_daily_bars_range_with_batch_id,
+    ingest_kis_bundle_with_calendar_source, ingest_kis_calendar, ingest_kis_calendar_with_batch_id,
+    ingest_kis_candidate_bundle, ingest_kis_candidate_bundle_with_kinds,
+    ingest_kis_daily_bars_range, ingest_kis_daily_bars_range_with_batch_id,
 };
 pub use instrument_master::{
     AliasNamespace, Instrument, InstrumentAlias, InstrumentMaster, ListingReason, MasterError,
@@ -240,8 +241,8 @@ pub use providers::opendart::{
     OpenDartRead,
 };
 pub use publication::{
-    CalendarFact, CalendarPublicationBundle, CalendarSessionType, DataBatchKind, PublicationBundle,
-    PublicationError, PublicationFile,
+    CalendarEvidence, CalendarFact, CalendarPublicationBundle, CalendarSessionType, DataBatchKind,
+    PublicationBundle, PublicationError, PublicationFile,
 };
 pub use quality::{
     AdminApproval, ApprovalAudit, DataUse, DataUseDenial, ExclusionRecord, FreshnessPolicy,

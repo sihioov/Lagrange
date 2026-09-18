@@ -43,13 +43,15 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
+use crate::pipeline::ingest_normalize_publish_kis_historical_range;
 use crate::{
     CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
     KisNormalizationRecoveryReport, PipelineError, PostgresCandidateSourceSink,
     PostgresPublicationSink, RECOVERY_PAGE_SIZE, RecoveryBatchOutcome, RecoveryError, RecoveryPage,
-    RecoveryPosition, RecoveryScope, SinkError, ingest_and_publish, ingest_normalize_publish_kis,
-    prepare_candidate_batch, provider_failure_class, publish_candidate_batch,
-    recover_candidate_batches, recover_kis_normalization, recover_unpublished_normalized_for_date,
+    RecoveryPosition, RecoveryScope, SinkError, ensure_kis_calendar_source, ingest_and_publish,
+    ingest_normalize_publish_kis_with_calendar_source, prepare_candidate_batch,
+    provider_failure_class, publish_candidate_batch, recover_candidate_batches,
+    recover_kis_normalization, recover_unpublished_normalized_for_date,
     recover_unpublished_page_with_scope, recover_unpublished_with, store_failure_class,
 };
 
@@ -1447,6 +1449,7 @@ pub async fn run_credentialed_backfill_session_dates_stream<W: io::Write>(
         price_sink: &price_sink,
         provider: &provider,
         normalized: &normalized,
+        calendar_acquisition: CredentialedCalendarAcquisition::HistoricalRangeSnapshot,
     };
     let mut processed = 0usize;
     for &date in dates {
@@ -2250,6 +2253,7 @@ mod daily_range_source_selection_tests {
             content_hash: ContentHash::from_bytes(b"{}"),
             size_bytes: 2,
             response_continuation: None,
+            copied_from: None,
             request: RequestMetadata {
                 endpoint: "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
                     .to_owned(),
@@ -2283,6 +2287,7 @@ mod daily_range_source_selection_tests {
                     content_hash: ContentHash::from_bytes(&bytes),
                     size_bytes: bytes.len() as u64,
                     response_continuation: None,
+                    copied_from: None,
                     request: RequestMetadata {
                         endpoint: DAILY_RANGE_ENDPOINT.to_owned(),
                         query: vec![
@@ -2473,6 +2478,13 @@ struct CredentialedIngestContext<'a> {
     price_sink: &'a PostgresCandidateSourceSink,
     provider: &'a LiveKisProvider,
     normalized: &'a KisNormalizationRecoveryReport,
+    calendar_acquisition: CredentialedCalendarAcquisition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CredentialedCalendarAcquisition {
+    CurrentDayShared,
+    HistoricalRangeSnapshot,
 }
 
 async fn run_credentialed_backfill_date(
@@ -2516,6 +2528,7 @@ async fn run_credentialed_internal_ingest_with_provider(
         price_sink,
         provider,
         normalized: &normalized,
+        calendar_acquisition: CredentialedCalendarAcquisition::CurrentDayShared,
     };
     run_credentialed_target_ingest(&context, date, now, true).await
 }
@@ -2571,15 +2584,39 @@ async fn run_credentialed_target_ingest(
     }
 
     let request = IngestRequest::new(MARKET_KR.to_owned(), date, now);
-    let outcome = ingest_normalize_publish_kis(
-        context.store,
-        context.provider,
-        &request,
-        Some(&context.config.entitlement_reference),
-        context.sink,
-    )
-    .await
-    .map_err(WorkerError::Pipeline)?;
+    let outcome = match context.calendar_acquisition {
+        CredentialedCalendarAcquisition::CurrentDayShared => {
+            let calendar_source = ensure_kis_calendar_source(
+                context.store,
+                context.provider,
+                &request,
+                Some(&context.config.entitlement_reference),
+            )
+            .await
+            .map_err(WorkerError::Pipeline)?;
+            ingest_normalize_publish_kis_with_calendar_source(
+                context.store,
+                context.provider,
+                &request,
+                Some(&context.config.entitlement_reference),
+                context.sink,
+                calendar_source.as_ref(),
+            )
+            .await
+            .map_err(WorkerError::Pipeline)?
+        }
+        CredentialedCalendarAcquisition::HistoricalRangeSnapshot => {
+            ingest_normalize_publish_kis_historical_range(
+                context.store,
+                context.provider,
+                &request,
+                Some(&context.config.entitlement_reference),
+                context.sink,
+            )
+            .await
+            .map_err(WorkerError::Pipeline)?
+        }
+    };
     // Price curation is deliberately after canonical EOD publication.  A
     // crash between these two steps leaves the immutable normalized batch for
     // the next recovery pass, which will replay the exact Curated generation

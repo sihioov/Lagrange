@@ -1,19 +1,23 @@
 use std::collections::HashMap;
 use std::error::Error as _;
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use collectors::{
     FailureClass, PipelineError, PipelineStage, PublicationSink, PublicationState, PublishOutcome,
-    RecoveryScope, SinkError, ingest_normalize_publish_kis, recover_kis_normalization,
+    RecoveryScope, SinkError, ensure_kis_calendar_source, ingest_normalize_publish_kis,
+    ingest_normalize_publish_kis_historical_range,
+    ingest_normalize_publish_kis_with_calendar_source, recover_kis_normalization,
     recover_unpublished_normalized_for_date, recover_unpublished_scope,
 };
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use kis_client::{KisError, MarketDataReply};
 use market_data::contract::{
-    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, RawEnvelope, RequestMetadata,
-    ResponseKind,
+    FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, PROVIDER_KIS_NORMALIZED,
+    RawEnvelope, RequestMetadata, ResponseKind,
 };
+use market_data::ingest::{IngestRequest, ingest_kis_bundle, ingest_kis_calendar_with_batch_id};
 use market_data::normalize::NormalizeError;
 use market_data::providers::kis::KR_ETF_CORE_SYMBOLS;
 use market_data::providers::kis::{KisProvider, KisRead};
@@ -26,6 +30,7 @@ use tempfile::TempDir;
 
 const TARGET_DATE: &str = "2026-08-14";
 const OTHER_DATE: &str = "2026-08-13";
+const RANGE_SECOND_DATE: &str = "2026-08-15";
 const RETRIEVED_AT: &str = "2026-08-14T08:00:00Z";
 
 struct Wire {
@@ -162,14 +167,25 @@ fn valid_wires_for_date(date: &str) -> Vec<Wire> {
 #[derive(Debug, Clone)]
 struct FakeKisRead {
     calls: Arc<AtomicUsize>,
+    calendar_calls: Arc<AtomicUsize>,
     malformed_first_bar: bool,
+    calendar_range: bool,
 }
 
 impl FakeKisRead {
     fn new(malformed_first_bar: bool) -> Self {
         Self {
             calls: Arc::new(AtomicUsize::new(0)),
+            calendar_calls: Arc::new(AtomicUsize::new(0)),
             malformed_first_bar,
+            calendar_range: false,
+        }
+    }
+
+    fn with_calendar_range() -> Self {
+        Self {
+            calendar_range: true,
+            ..Self::new(false)
         }
     }
 
@@ -192,9 +208,13 @@ impl KisRead for FakeKisRead {
     ) -> Result<MarketDataReply, KisError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let symbol = Self::query_value(query, "FID_INPUT_ISCD");
+        let bar_date = {
+            let value = Self::query_value(query, "FID_INPUT_DATE_1");
+            if value.is_empty() { "20260814" } else { value }
+        };
         let body = if path.ends_with("inquire-daily-itemchartprice") {
             let mut row = json!({
-                "stck_bsop_date": "20260814",
+                "stck_bsop_date": bar_date,
                 "stck_oprc": "100.00",
                 "stck_hgpr": "102.00",
                 "stck_lwpr": "99.00",
@@ -219,10 +239,21 @@ impl KisRead for FakeKisRead {
                 "output": {"stck_shrn_iscd": symbol}
             })
         } else if path.ends_with("chk-holiday") {
-            json!({
-                "rt_cd": "0",
-                "output": [{"bass_dt": "20260814", "opnd_yn": "Y"}]
-            })
+            self.calendar_calls.fetch_add(1, Ordering::SeqCst);
+            if self.calendar_range {
+                json!({
+                    "rt_cd": "0",
+                    "output": [
+                        {"bass_dt": "20260814", "opnd_yn": "Y"},
+                        {"bass_dt": "20260815", "opnd_yn": "Y"}
+                    ]
+                })
+            } else {
+                json!({
+                    "rt_cd": "0",
+                    "output": [{"bass_dt": "20260814", "opnd_yn": "Y"}]
+                })
+            }
         } else {
             json!({"rt_cd": "0", "output1": []})
         };
@@ -389,6 +420,432 @@ async fn normalized_scope_recovery_replays_already_published_without_new_manifes
             ),
         ]
     );
+}
+
+#[tokio::test]
+async fn eod_first_acquisition_claims_one_calendar_and_reuses_it_for_normalization() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    std::fs::create_dir_all(store.root().join("raw")).expect("raw root");
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").expect("now"),
+    );
+    let source =
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"))
+            .await
+            .expect("calendar claim and capture")
+            .expect("dedicated calendar source");
+    let sink = ReplaySink::default();
+    let outcome = ingest_normalize_publish_kis_with_calendar_source(
+        &store,
+        &provider,
+        &request,
+        Some("entitlement://kis-live"),
+        &sink,
+        Some(&source),
+    )
+    .await
+    .expect("EOD normalization and publication");
+
+    // One calendar call for the durable daily source, then exactly the 29
+    // non-calendar KIS EOD calls. A second chk-holiday request would make 31.
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 30);
+    assert_eq!(
+        store
+            .read_reconciled_manifest("kis-calendar", MARKET_KR)
+            .expect("calendar manifest")
+            .len(),
+        1
+    );
+    assert_eq!(outcome.manifest.files.len(), 4);
+    assert_eq!(sink.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn bootstrap_first_duplicate_execution_reuses_the_exact_calendar_batch() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    std::fs::create_dir_all(store.root().join("raw")).expect("raw root");
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").expect("now"),
+    );
+
+    let first =
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"))
+            .await
+            .expect("first bootstrap")
+            .expect("dedicated source");
+    let second =
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"))
+            .await
+            .expect("duplicate bootstrap")
+            .expect("same dedicated source");
+
+    assert_eq!(second, first);
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+            .expect("calendar manifest")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn concurrent_calendar_contenders_share_one_claim_or_fail_busy_without_recapture() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    std::fs::create_dir_all(store.root().join("raw")).expect("raw root");
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").expect("now"),
+    );
+
+    let (first, second) = tokio::join!(
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"),),
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"),)
+    );
+    let successful = [first, second]
+        .into_iter()
+        .filter_map(|result| result.ok().flatten())
+        .collect::<Vec<_>>();
+    assert!(
+        !successful.is_empty(),
+        "one contender must acquire the source"
+    );
+    assert!(successful.iter().all(|source| *source == successful[0]));
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+            .expect("calendar manifest")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn claim_only_state_is_indeterminate_and_never_recaptures() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    let raw_root = store.root().join("raw");
+    let claim_root = raw_root.join(".calendar-bootstrap");
+    std::fs::create_dir_all(&claim_root).expect("claim root");
+    std::fs::set_permissions(&claim_root, std::fs::Permissions::from_mode(0o700))
+        .expect("claim permissions");
+    let claim_path = claim_root.join(format!("{TARGET_DATE}.json"));
+    std::fs::write(
+        &claim_path,
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "date": TARGET_DATE,
+            "source_batch_id": BatchId::generate(),
+        }))
+        .expect("claim json"),
+    )
+    .expect("claim file");
+    std::fs::set_permissions(&claim_path, std::fs::Permissions::from_mode(0o600))
+        .expect("claim file permissions");
+
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").expect("now"),
+    );
+    let error =
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"))
+            .await
+            .expect_err("claim without committed source must stop");
+    assert!(
+        error
+            .to_string()
+            .contains("KIS_CALENDAR_SOURCE_INDETERMINATE")
+    );
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn committed_calendar_raw_reconciles_after_manifest_interrupt_without_network() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").expect("now"),
+    );
+    let batch_id = BatchId::generate();
+    let captured = ingest_kis_calendar_with_batch_id(
+        &store,
+        &provider,
+        &request,
+        Some("entitlement://kis-live"),
+        batch_id,
+    )
+    .await
+    .expect("committed calendar raw");
+    std::fs::remove_file(store.manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR))
+        .expect("interrupt manifest publication");
+
+    let recovered =
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"))
+            .await
+            .expect("reconcile committed raw")
+            .expect("calendar source");
+    assert_eq!(recovered.batch_id, captured.entry.batch_id);
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+            .expect("reconciled calendar manifest"),
+        vec![captured.entry]
+    );
+}
+
+#[tokio::test]
+async fn retained_claim_uuid_is_reused_without_inventing_a_second_calendar_source() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").expect("now"),
+    );
+    let retained_batch_id = BatchId::generate();
+    let captured = ingest_kis_calendar_with_batch_id(
+        &store,
+        &provider,
+        &request,
+        Some("entitlement://kis-live"),
+        retained_batch_id,
+    )
+    .await
+    .expect("calendar source capture");
+    let claim_root = store.root().join("raw/.calendar-bootstrap");
+    std::fs::create_dir_all(&claim_root).expect("claim root");
+    std::fs::set_permissions(&claim_root, std::fs::Permissions::from_mode(0o700))
+        .expect("claim permissions");
+    let claim_path = claim_root.join(format!("{TARGET_DATE}.json"));
+    std::fs::write(
+        &claim_path,
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "date": TARGET_DATE,
+            "source_batch_id": retained_batch_id,
+        }))
+        .expect("claim JSON"),
+    )
+    .expect("claim file");
+    std::fs::set_permissions(&claim_path, std::fs::Permissions::from_mode(0o600))
+        .expect("claim file permissions");
+
+    let source =
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"))
+            .await
+            .expect("retained claim recovery")
+            .expect("retained source");
+    assert_eq!(source.batch_id, retained_batch_id);
+    assert_eq!(source, captured.entry);
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+            .expect("calendar manifest")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn tampered_calendar_source_fails_closed_before_non_calendar_fetches() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    std::fs::create_dir_all(store.root().join("raw")).expect("raw root");
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339("2026-08-14T08:00:00Z").expect("now"),
+    );
+    let source =
+        ensure_kis_calendar_source(&store, &provider, &request, Some("entitlement://kis-live"))
+            .await
+            .expect("capture calendar")
+            .expect("dedicated source");
+    let source_path = store
+        .batch_dir(
+            PROVIDER_KIS_CALENDAR,
+            MARKET_KR,
+            &source.date,
+            &source.batch_id,
+        )
+        .join(&source.files[0].file_name);
+    std::fs::write(&source_path, b"tampered calendar bytes").expect("tamper source");
+
+    let sink = ReplaySink::default();
+    let error = ingest_normalize_publish_kis_with_calendar_source(
+        &store,
+        &provider,
+        &request,
+        Some("entitlement://kis-live"),
+        &sink,
+        Some(&source),
+    )
+    .await
+    .expect_err("tampered source must fail closed");
+    assert!(matches!(error, PipelineError::Ingest { .. }));
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
+    assert!(sink.calls.lock().expect("sink calls").is_empty());
+}
+
+#[tokio::test]
+async fn historical_range_snapshot_keeps_one_calendar_request_for_covered_targets() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    let reader = FakeKisRead::with_calendar_range();
+    let provider = KisProvider::kr_etf_core(reader.clone()).with_calendar_snapshot_cache();
+    let sink = ReplaySink::default();
+
+    for (date, retrieved_at) in [
+        (TARGET_DATE, "2026-08-14T08:00:00Z"),
+        (RANGE_SECOND_DATE, "2026-08-15T08:00:00Z"),
+    ] {
+        let request = IngestRequest::new(
+            MARKET_KR.to_owned(),
+            TradingDate::parse(date).expect("range date"),
+            UtcTimestamp::parse_rfc3339(retrieved_at).expect("range retrieval"),
+        );
+        let outcome = ingest_normalize_publish_kis_historical_range(
+            &store,
+            &provider,
+            &request,
+            Some("entitlement://kis-live"),
+            &sink,
+        )
+        .await
+        .expect("historical range EOD publication");
+        assert_eq!(outcome.manifest.files.len(), 4);
+    }
+
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 59);
+}
+
+#[tokio::test]
+async fn composite_raw_normalization_and_publication_recovery_is_idempotent() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    let reader = FakeKisRead::new(false);
+    let calls = Arc::clone(&reader.calls);
+    let provider = KisProvider::kr_etf_core(reader);
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339(RETRIEVED_AT).expect("retrieved at"),
+    );
+    let sink = ReplaySink::default();
+    let ingested = ingest_kis_bundle(&store, &provider, &request, None)
+        .await
+        .expect("durable four-file raw EOD");
+    std::fs::remove_file(store.manifest_path(PROVIDER_KIS, MARKET_KR))
+        .expect("interrupt raw manifest tail");
+
+    let normalized = recover_kis_normalization(&store).expect("recover normalization");
+    assert_eq!(normalized.outcomes.len(), 1);
+    assert_eq!(
+        normalized.outcomes[0].source_batch_id,
+        ingested.entry.batch_id
+    );
+    let first = recover_unpublished_scope(&store, &sink, RecoveryScope::KisNormalized)
+        .await
+        .expect("recover publication");
+    let second = recover_unpublished_scope(&store, &sink, RecoveryScope::KisNormalized)
+        .await
+        .expect("replay publication");
+
+    assert_eq!(first.recovered.len(), 1);
+    assert!(first.skipped.is_empty());
+    assert!(second.recovered.is_empty());
+    assert_eq!(second.skipped.len(), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 30);
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)
+            .expect("reconciled raw manifest")
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .read_reconciled_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)
+            .expect("reconciled normalized manifest")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn legacy_complete_eod_recovery_requires_authentic_source_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let store = RawStore::new(temp.path().join("data"));
+    let source = append_kis_batch(&store, TARGET_DATE, |_| {});
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(reader.clone());
+    let request = IngestRequest::new(
+        MARKET_KR.to_owned(),
+        TradingDate::parse(TARGET_DATE).expect("date"),
+        UtcTimestamp::parse_rfc3339(RETRIEVED_AT).expect("retrieved at"),
+    );
+
+    let no_new_claim = ensure_kis_calendar_source(&store, &provider, &request, None)
+        .await
+        .expect("legacy source inspection");
+    assert!(no_new_claim.is_none());
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
+
+    let metadata_path = store
+        .batch_dir(PROVIDER_KIS, MARKET_KR, &source.date, &source.batch_id)
+        .join(source.batch_json_file_name());
+    let mut metadata: Value =
+        serde_json::from_slice(&std::fs::read(&metadata_path).expect("read source metadata"))
+            .expect("source metadata JSON");
+    metadata["retrieved_at"] = json!("2026-08-14T08:01:00Z");
+    std::fs::write(
+        &metadata_path,
+        serde_json::to_vec(&metadata).expect("tampered metadata JSON"),
+    )
+    .expect("tamper source metadata");
+
+    let sink = ReplaySink::default();
+    let error = ingest_normalize_publish_kis_with_calendar_source(
+        &store, &provider, &request, None, &sink, None,
+    )
+    .await
+    .expect_err("legacy source metadata drift must fail closed");
+    assert!(matches!(error, PipelineError::Ingest { .. }));
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 0);
+    assert!(sink.calls.lock().expect("sink calls").is_empty());
 }
 
 #[tokio::test]

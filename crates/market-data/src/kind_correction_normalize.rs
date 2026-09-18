@@ -650,6 +650,7 @@ fn expected_manifest_entry(
             size_bytes: envelope.bytes.len() as u64,
             request: envelope.request.clone(),
             response_continuation: envelope.response_continuation.clone(),
+            copied_from: envelope.copied_from.clone(),
         }],
     }
 }

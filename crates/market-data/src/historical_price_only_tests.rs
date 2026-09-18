@@ -38,6 +38,7 @@ fn source_file(symbol: &str, window: usize) -> FileEntry {
             mode: FetchMode::Credentialed,
         },
         response_continuation: None,
+        copied_from: None,
     }
 }
 

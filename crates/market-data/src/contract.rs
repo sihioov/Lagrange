@@ -294,6 +294,22 @@ pub struct RequestMetadata {
     pub mode: FetchMode,
 }
 
+/// Immutable identity of a file copied from an already committed Raw batch.
+///
+/// A reference is deliberately a complete file identity rather than a batch
+/// pointer alone: a copied file must be byte-for-byte and request-for-request
+/// identical to the committed source, and its original retrieval instant must
+/// remain visible without inventing a new fetch time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceFileReference {
+    pub provider: String,
+    pub market: String,
+    pub batch_id: BatchId,
+    pub file_name: String,
+    pub content_hash: ContentHash,
+    pub retrieved_at: UtcTimestamp,
+}
+
 /// The raw response envelope: opaque provider bytes plus immutable provenance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawEnvelope {
@@ -319,6 +335,9 @@ pub struct RawEnvelope {
     /// not carry the header. The storage manifest omits this field when it is
     /// `None` so existing metadata bytes remain stable.
     pub response_continuation: Option<String>,
+    /// Optional immutable source identity when this envelope reuses a
+    /// previously committed file instead of fetching it again.
+    pub copied_from: Option<SourceFileReference>,
 }
 
 impl RawEnvelope {
@@ -341,6 +360,7 @@ impl RawEnvelope {
             retrieved_at,
             request,
             response_continuation: None,
+            copied_from: None,
         }
     }
 
@@ -351,6 +371,12 @@ impl RawEnvelope {
     /// metadata.
     pub fn with_response_continuation(mut self, marker: Option<String>) -> Self {
         self.response_continuation = marker;
+        self
+    }
+
+    /// Records the already committed source file used for this envelope.
+    pub fn with_copied_from(mut self, reference: Option<SourceFileReference>) -> Self {
+        self.copied_from = reference;
         self
     }
 }

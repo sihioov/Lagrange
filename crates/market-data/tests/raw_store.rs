@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KRX, RawEnvelope, RequestMetadata, ResponseKind,
+    SourceFileReference,
 };
 use market_data::storage::{BatchSpec, FileEntry, ManifestEntry, RawStore, StoreError};
 
@@ -197,11 +198,216 @@ fn absent_response_continuation_is_omitted_and_defaults_when_reading_legacy_json
         size_bytes: 2,
         request: meta(FetchMode::Synthetic),
         response_continuation: None,
+        copied_from: None,
     };
     let json = serde_json::to_value(&file).expect("serialize legacy file metadata");
     assert!(json.get("response_continuation").is_none());
+    assert!(json.get("copied_from").is_none());
     let decoded: FileEntry = serde_json::from_value(json).expect("decode legacy file metadata");
     assert_eq!(decoded, file);
+}
+
+#[test]
+fn committed_entry_uses_the_durable_timestamp_precision() {
+    let root = temp_root("durable-timestamp-precision");
+    let store = RawStore::new(&root);
+    let date = date("2026-09-14");
+    let batch_id = BatchId::generate();
+    let envelope = envelope(
+        batch_id,
+        ResponseKind::Calendar,
+        "calendar.json",
+        br#"{"calendar":"source"}"#,
+        now("2026-09-14T00:05:00.123456789Z"),
+    );
+    let entry = store
+        .store_batch(&spec(batch_id, &date, None), &[envelope])
+        .expect("timestamp-precision batch");
+    let durable = now("2026-09-14T00:05:00Z");
+    assert_eq!(entry.retrieved_at, durable);
+    assert_eq!(
+        store.read_manifest(PROVIDER_KRX, MARKET_KR).unwrap(),
+        vec![entry]
+    );
+}
+
+#[test]
+fn committed_read_rejects_batch_metadata_drift() {
+    let root = temp_root("batch-metadata-drift");
+    let store = RawStore::new(&root);
+    let date = date("2026-09-14");
+    let batch_id = BatchId::generate();
+    let entry = store
+        .store_batch(
+            &spec(batch_id, &date, Some("entitlement://immutable-test")),
+            &[envelope(
+                batch_id,
+                ResponseKind::Calendar,
+                "calendar.json",
+                br#"{"calendar":"source"}"#,
+                now("2026-09-14T00:05:00Z"),
+            )],
+        )
+        .expect("metadata-drift batch");
+    let metadata_path = store
+        .batch_dir(PROVIDER_KRX, MARKET_KR, &date, &batch_id)
+        .join(entry.batch_json_file_name());
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["retrieved_at"] = serde_json::json!("2026-09-14T00:06:00Z");
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+    assert!(matches!(
+        store.read_batch_bytes(PROVIDER_KRX, MARKET_KR, &entry),
+        Err(StoreError::InvalidBatchMetadata { .. })
+    ));
+}
+
+#[test]
+fn copied_source_is_exactly_verified_and_reference_chains_are_rejected() {
+    let root = temp_root("copied-source");
+    let store = RawStore::new(&root);
+    let date = date("2026-09-14");
+    let source_batch = BatchId::generate();
+    let source_time = now("2026-09-14T00:05:00Z");
+    let target_time = now("2026-09-14T00:06:00Z");
+    let bytes = br#"{"calendar":"source"}"#;
+    let entitlement = Some("entitlement://immutable-test");
+    let source = store
+        .store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KRX,
+                market: MARKET_KR,
+                date: &date,
+                batch_id: source_batch,
+                entitlement_reference: entitlement,
+                mode: FetchMode::Synthetic,
+            },
+            &[envelope(
+                source_batch,
+                ResponseKind::Calendar,
+                "calendar.json",
+                bytes,
+                source_time,
+            )],
+        )
+        .expect("source batch");
+    let source_ref = SourceFileReference {
+        provider: source.provider.clone(),
+        market: source.market.clone(),
+        batch_id: source.batch_id,
+        file_name: source.files[0].file_name.clone(),
+        content_hash: source.files[0].content_hash.clone(),
+        retrieved_at: source.retrieved_at,
+    };
+    let copied = RawEnvelope::new(
+        BatchId::generate(),
+        ResponseKind::Calendar,
+        "calendar.json",
+        bytes.to_vec(),
+        target_time,
+        meta(FetchMode::Synthetic),
+    )
+    .with_copied_from(Some(source_ref.clone()));
+    let copied_entry = store
+        .store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KRX,
+                market: MARKET_KR,
+                date: &date,
+                batch_id: copied.batch_id,
+                entitlement_reference: entitlement,
+                mode: FetchMode::Synthetic,
+            },
+            std::slice::from_ref(&copied),
+        )
+        .expect("exact copied source");
+    assert_eq!(copied_entry.files[0].copied_from, Some(source_ref.clone()));
+
+    let tampered_batch = BatchId::generate();
+    let tampered = RawEnvelope::new(
+        tampered_batch,
+        ResponseKind::Calendar,
+        "calendar.json",
+        br#"{"calendar":"tampered"}"#.to_vec(),
+        target_time,
+        meta(FetchMode::Synthetic),
+    )
+    .with_copied_from(Some(source_ref.clone()));
+    assert!(matches!(
+        store.store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KRX,
+                market: MARKET_KR,
+                date: &date,
+                batch_id: tampered_batch,
+                entitlement_reference: entitlement,
+                mode: FetchMode::Synthetic,
+            },
+            &[tampered],
+        ),
+        Err(StoreError::InvalidBatchMetadata { .. })
+    ));
+    assert!(
+        !store
+            .batch_dir(PROVIDER_KRX, MARKET_KR, &date, &tampered_batch)
+            .exists()
+    );
+
+    let chained_batch = BatchId::generate();
+    let chained = RawEnvelope::new(
+        chained_batch,
+        ResponseKind::Calendar,
+        "calendar.json",
+        bytes.to_vec(),
+        now("2026-09-14T00:07:00Z"),
+        meta(FetchMode::Synthetic),
+    )
+    .with_copied_from(Some(source_ref));
+    let chained_entry = store
+        .store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KRX,
+                market: MARKET_KR,
+                date: &date,
+                batch_id: chained_batch,
+                entitlement_reference: entitlement,
+                mode: FetchMode::Synthetic,
+            },
+            &[chained],
+        )
+        .expect("first copied layer");
+    let second_layer_batch = BatchId::generate();
+    let second_layer = RawEnvelope::new(
+        second_layer_batch,
+        ResponseKind::Calendar,
+        "calendar.json",
+        bytes.to_vec(),
+        now("2026-09-14T00:08:00Z"),
+        meta(FetchMode::Synthetic),
+    )
+    .with_copied_from(Some(SourceFileReference {
+        provider: chained_entry.provider.clone(),
+        market: chained_entry.market.clone(),
+        batch_id: chained_entry.batch_id,
+        file_name: chained_entry.files[0].file_name.clone(),
+        content_hash: chained_entry.files[0].content_hash.clone(),
+        retrieved_at: chained_entry.retrieved_at,
+    }));
+    assert!(matches!(
+        store.store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KRX,
+                market: MARKET_KR,
+                date: &date,
+                batch_id: second_layer_batch,
+                entitlement_reference: entitlement,
+                mode: FetchMode::Synthetic,
+            },
+            &[second_layer],
+        ),
+        Err(StoreError::InvalidBatchMetadata { .. })
+    ));
 }
 
 #[test]
@@ -1634,6 +1840,7 @@ fn read_rejects_batch_ancestor_redirect_outside_trusted_raw_root() {
             size_bytes: env.bytes.len() as u64,
             request: env.request,
             response_continuation: env.response_continuation,
+            copied_from: None,
         }],
     };
 

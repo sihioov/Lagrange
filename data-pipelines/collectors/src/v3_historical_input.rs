@@ -621,6 +621,7 @@ mod tests {
                     mode: FetchMode::Credentialed,
                 },
                 response_continuation: Some("E".to_owned()),
+                copied_from: None,
             }],
         }
     }

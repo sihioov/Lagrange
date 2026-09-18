@@ -1,12 +1,19 @@
-use domain::{BatchId, TradingDate};
-use market_data::contract::{MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_NORMALIZED, PROVIDER_KRX};
-use market_data::ingest::{IngestError, IngestRequest, ingest_bundle, ingest_kis_bundle};
+use domain::{BatchId, TradingDate, UtcTimestamp};
+use market_data::contract::{
+    EOD_RESPONSE_KINDS, FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR,
+    PROVIDER_KIS_NORMALIZED, PROVIDER_KRX, ResponseKind,
+};
+use market_data::ingest::{
+    IngestError, IngestRequest, ingest_bundle, ingest_kis_bundle,
+    ingest_kis_bundle_with_calendar_source, ingest_kis_calendar_with_batch_id,
+};
 use market_data::normalize::{NormalizationOutcome, NormalizeError, normalize_kis_batch};
 use market_data::provider::{EodProvider, ProviderError};
 use market_data::providers::kis::{KisProvider, KisRead};
 use market_data::publication::{PublicationBundle, PublicationError};
 use market_data::storage::{ManifestEntry, RawStore, StoreError};
 
+use crate::calendar_claim::CalendarDayLock;
 use crate::sink::{PublicationSink, PublicationState, PublishOutcome, SinkError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -652,9 +659,188 @@ pub async fn ingest_normalize_publish_kis<R: KisRead>(
     entitlement_reference: Option<&str>,
     sink: &dyn PublicationSink,
 ) -> Result<RunOutcome, PipelineError> {
-    let ingested = ingest_kis_bundle(store, provider, request, entitlement_reference)
-        .await
-        .map_err(|source| PipelineError::Ingest { source })?;
+    ingest_normalize_publish_kis_with_calendar_source(
+        store,
+        provider,
+        request,
+        entitlement_reference,
+        sink,
+        None,
+    )
+    .await
+}
+
+/// Historical range compatibility seam. A bounded backfill may opt into the
+/// provider's reviewed one-response `chk-holiday` snapshot contract so the
+/// original request budget is preserved across covered target dates. Current
+/// day acquisition must use [`ensure_kis_calendar_source`] instead; this seam
+/// is kept as an explicitly named compatibility seam so a production caller
+/// cannot accidentally treat it as the normal daily path.
+pub async fn ingest_normalize_publish_kis_historical_range<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    request: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    sink: &dyn PublicationSink,
+) -> Result<RunOutcome, PipelineError> {
+    ingest_normalize_publish_kis(store, provider, request, entitlement_reference, sink).await
+}
+
+/// Ensures the target date has one durable dedicated calendar source. The
+/// caller holds the same day lock used by the standalone bootstrap, so an
+/// EOD-first attempt and a bootstrap-first attempt cannot consume two broker
+/// calendar allowances. `None` means a complete historical EOD source is
+/// being recovered without inventing a new calendar claim.
+pub async fn ensure_kis_calendar_source<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    request: &IngestRequest,
+    entitlement_reference: Option<&str>,
+) -> Result<Option<ManifestEntry>, PipelineError> {
+    if request.market != MARKET_KR {
+        return Err(PipelineError::Ingest {
+            source: IngestError::ResponseShape {
+                detail: "KIS calendar source requires market kr".to_owned(),
+            },
+        });
+    }
+    let guard =
+        CalendarDayLock::acquire(&store.root().join("raw"), request.date).map_err(|_| {
+            PipelineError::Ingest {
+                source: IngestError::ResponseShape {
+                    detail: "KIS_CALENDAR_ATTEMPT_STATE_INVALID_OR_BUSY".to_owned(),
+                },
+            }
+        })?;
+    let claim = guard.existing().map_err(|_| PipelineError::Ingest {
+        source: IngestError::ResponseShape {
+            detail: "KIS_CALENDAR_ATTEMPT_STATE_INVALID_OR_BUSY".to_owned(),
+        },
+    })?;
+    let calendar_entries = store
+        .read_reconciled_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+        .map_err(|source| PipelineError::Manifest { source })?;
+    let target_sources: Vec<_> = calendar_entries
+        .into_iter()
+        .filter(|entry| entry.date == request.date)
+        .collect();
+    if target_sources.len() > 1 {
+        return Err(PipelineError::Ingest {
+            source: IngestError::ResponseShape {
+                detail: "multiple committed KIS calendar sources exist for the target date"
+                    .to_owned(),
+            },
+        });
+    }
+    if let Some(source) = target_sources.into_iter().next() {
+        if claim.is_some_and(|claimed| claimed != source.batch_id) {
+            return Err(PipelineError::Ingest {
+                source: IngestError::ResponseShape {
+                    detail: "KIS_CALENDAR_ATTEMPT_ID_CONFLICT".to_owned(),
+                },
+            });
+        }
+        if source.mode != FetchMode::Credentialed
+            || source.entitlement_reference.as_deref() != entitlement_reference
+            || source.retrieved_at > request.now
+            || source.retrieved_at > UtcTimestamp::now()
+            || source.files.len() != 1
+            || source.files[0].kind != ResponseKind::Calendar
+            || source.files[0].copied_from.is_some()
+        {
+            return Err(PipelineError::Ingest {
+                source: IngestError::ResponseShape {
+                    detail: "KIS_CALENDAR_SOURCE_IDENTITY_INVALID".to_owned(),
+                },
+            });
+        }
+        return Ok(Some(source));
+    }
+    if claim.is_some() {
+        return Err(PipelineError::Ingest {
+            source: IngestError::ResponseShape {
+                detail: "KIS_CALENDAR_SOURCE_INDETERMINATE".to_owned(),
+            },
+        });
+    }
+
+    // A complete committed EOD batch is a narrow historical recovery path;
+    // let ingest_kis_bundle reuse it without creating a second calendar claim.
+    let legacy = store
+        .read_reconciled_manifest(PROVIDER_KIS, MARKET_KR)
+        .map_err(|source| PipelineError::Manifest { source })?
+        .into_iter()
+        .filter(|entry| {
+            entry.date == request.date
+                && entry.mode == FetchMode::Credentialed
+                && entry.entitlement_reference.as_deref() == entitlement_reference
+                && entry.retrieved_at <= request.now
+                && entry.retrieved_at <= UtcTimestamp::now()
+                && entry.files.len() >= EOD_RESPONSE_KINDS.len()
+                && EOD_RESPONSE_KINDS
+                    .iter()
+                    .all(|kind| entry.files.iter().any(|file| file.kind == *kind))
+                && entry
+                    .files
+                    .iter()
+                    .filter(|file| file.kind == ResponseKind::Calendar)
+                    .count()
+                    == 1
+        })
+        .collect::<Vec<_>>();
+    if legacy.len() > 1 {
+        return Err(PipelineError::Ingest {
+            source: IngestError::ResponseShape {
+                detail: "multiple committed KIS EOD sources exist for the target date".to_owned(),
+            },
+        });
+    }
+    if legacy.len() == 1 {
+        return Ok(None);
+    }
+
+    let source_batch_id = BatchId::generate();
+    guard
+        .consume(source_batch_id)
+        .map_err(|_| PipelineError::Ingest {
+            source: IngestError::ResponseShape {
+                detail: "KIS_CALENDAR_ATTEMPT_STATE_INVALID_OR_BUSY".to_owned(),
+            },
+        })?;
+    let captured = ingest_kis_calendar_with_batch_id(
+        store,
+        provider,
+        request,
+        entitlement_reference,
+        source_batch_id,
+    )
+    .await
+    .map_err(|source| PipelineError::Ingest { source })?;
+    Ok(Some(captured.entry))
+}
+
+pub async fn ingest_normalize_publish_kis_with_calendar_source<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    request: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    sink: &dyn PublicationSink,
+    calendar_source: Option<&ManifestEntry>,
+) -> Result<RunOutcome, PipelineError> {
+    let ingested = match calendar_source {
+        Some(source) => {
+            ingest_kis_bundle_with_calendar_source(
+                store,
+                provider,
+                request,
+                entitlement_reference,
+                source,
+            )
+            .await
+        }
+        None => ingest_kis_bundle(store, provider, request, entitlement_reference).await,
+    }
+    .map_err(|source| PipelineError::Ingest { source })?;
     let source_batch_id = ingested.entry.batch_id;
     let normalized =
         normalize_kis_batch(store, &ingested.entry).map_err(|source| PipelineError::Normalize {

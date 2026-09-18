@@ -998,6 +998,7 @@ pub(crate) fn artifact_test_candidate() -> HistoricalPriceOnlyCandidate {
                         mode: crate::contract::FetchMode::Credentialed,
                     },
                     response_continuation: None,
+                    copied_from: None,
                 }
             })
         })

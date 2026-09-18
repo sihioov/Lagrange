@@ -2,15 +2,103 @@
 mod intraday_quotes_support;
 
 use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
+use collectors::{
+    PostgresPublicationSink, PublicationSink, PublishOutcome, ensure_kis_calendar_source,
+    ingest_normalize_publish_kis_with_calendar_source,
+};
+use domain::{TradingDate, UtcTimestamp};
 use intraday_quotes_support::{IntradayTestDb, MembershipFixture, run_body};
 use job_queue::owner_equity_v2::{
     DemandMutationKind, IntradayCalendarDisposition, IntradayStorageError,
 };
+use kis_client::{KisError, MarketDataReply};
+use market_data::contract::{MARKET_KR, PROVIDER_KIS_CALENDAR_NORMALIZED};
+use market_data::ingest::IngestRequest;
+use market_data::normalize::normalize_kis_calendar_batch;
+use market_data::providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider, KisRead};
+use market_data::publication::CalendarPublicationBundle;
+use market_data::storage::RawStore;
 use serde_json::Value;
+use serde_json::json;
 use sqlx::PgPool;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use uuid::Uuid;
 
 const KIS_SOURCE_VERSION: &str = "kis-chk-holiday-v1:schema-1";
+
+#[derive(Debug, Clone, Default)]
+struct AcceptanceKisRead {
+    total_calls: Arc<AtomicUsize>,
+    calendar_calls: Arc<AtomicUsize>,
+}
+
+impl AcceptanceKisRead {
+    fn query_value<'a>(query: &'a [(String, String)], key: &str) -> &'a str {
+        query
+            .iter()
+            .find(|(query_key, _)| query_key == key)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_default()
+    }
+}
+
+impl KisRead for AcceptanceKisRead {
+    async fn get(
+        &self,
+        path: &str,
+        _tr_id: &str,
+        query: &[(String, String)],
+        _continuation: Option<&str>,
+    ) -> Result<MarketDataReply, KisError> {
+        self.total_calls.fetch_add(1, Ordering::SeqCst);
+        let date = Self::query_value(query, "BASS_DT");
+        let date = if date.is_empty() {
+            Self::query_value(query, "FID_INPUT_DATE_1")
+        } else {
+            date
+        };
+        let symbol = Self::query_value(query, "FID_INPUT_ISCD");
+        let body = if path.ends_with("inquire-daily-itemchartprice") {
+            json!({
+                "rt_cd": "0",
+                "output1": {
+                    "hts_kor_isnm": format!("ETF {symbol}"),
+                    "stck_shrn_iscd": symbol
+                },
+                "output2": [{
+                    "stck_bsop_date": date,
+                    "stck_oprc": "100.00",
+                    "stck_hgpr": "102.00",
+                    "stck_lwpr": "99.00",
+                    "stck_clpr": "101.00",
+                    "acml_vol": "1300",
+                    "acml_tr_pbmn": "131300"
+                }]
+            })
+        } else if path.ends_with("inquire-price") {
+            json!({
+                "rt_cd": "0",
+                "output": {"stck_shrn_iscd": symbol}
+            })
+        } else if path.ends_with("chk-holiday") {
+            self.calendar_calls.fetch_add(1, Ordering::SeqCst);
+            json!({
+                "rt_cd": "0",
+                "output": [{"bass_dt": date, "opnd_yn": "Y"}]
+            })
+        } else {
+            json!({"rt_cd": "0", "output1": []})
+        };
+        Ok(MarketDataReply {
+            body: serde_json::to_vec(&body).map_err(|_| KisError::SchemaDrift {
+                endpoint: path.to_owned(),
+                detail: "acceptance fixture serialization failed".to_owned(),
+            })?,
+            continuation: None,
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 struct CalendarSeed {
@@ -600,6 +688,226 @@ async fn calendar_read_returns_current_trading_and_closed_without_quote_prerequi
         })
         .await;
     }
+}
+
+#[tokio::test]
+async fn actual_sink_reuses_morning_calendar_for_evening_eod_and_intraday_resolution() {
+    run_without_calendar(|db| async move {
+        let target_date = TradingDate::parse(&db.session_date.to_string())
+            .map_err(|_| "could not construct the current QA trading date".to_owned())?;
+        let raw_root = tempfile::tempdir().map_err(|_| "could not create Raw tempdir".to_owned())?;
+        let store = RawStore::new(raw_root.path().join("data"));
+        std::fs::create_dir_all(store.root().join("raw"))
+            .map_err(|_| "could not create Raw root".to_owned())?;
+        let reader = AcceptanceKisRead::default();
+        let provider = KisProvider::kr_etf_core(reader.clone());
+        let request = IngestRequest::new(
+            MARKET_KR.to_owned(),
+            target_date,
+            UtcTimestamp::now(),
+        );
+        let entitlement = Some("entitlement://wp1-actual");
+        let calendar_source = ensure_kis_calendar_source(
+            &store,
+            &provider,
+            &request,
+            entitlement,
+        )
+        .await
+        .map_err(|error| format!("shared calendar acquisition failed: {error}"))?
+        .ok_or_else(|| "shared calendar acquisition did not return a source".to_owned())?;
+
+        let normalized_calendar = normalize_kis_calendar_batch(&store, &calendar_source)
+            .map_err(|error| format!("morning calendar normalization failed: {error}"))?;
+        let morning = CalendarPublicationBundle::from_raw(&store, &normalized_calendar.entry)
+            .map_err(|error| format!("morning calendar evidence failed: {error}"))?;
+        let sink = PostgresPublicationSink::new(db.research_writer.clone());
+        if sink
+            .publish_calendar(&morning)
+            .await
+            .map_err(|error| format!("morning calendar publication failed: {error}"))?
+            != PublishOutcome::Published
+        {
+            return Err("morning calendar was not newly published".to_owned());
+        }
+        let morning_evidence = morning.calendar_evidence().clone();
+        let morning_fact = morning.calendar_facts()[0].clone();
+        let morning_counts: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM data_batches),
+                    (SELECT count(*) FROM trading_calendar_versions),
+                    (SELECT count(*) FROM trading_calendars)",
+        )
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not inspect morning publication counts".to_owned())?;
+
+        let evening = ingest_normalize_publish_kis_with_calendar_source(
+            &store,
+            &provider,
+            &request,
+            entitlement,
+            &sink,
+            Some(&calendar_source),
+        )
+        .await
+        .map_err(|error| format!("evening EOD acquisition failed: {error}"))?;
+        if evening.manifest.files.len() != 4 {
+            return Err(format!(
+                "evening normalized EOD had {} files instead of four",
+                evening.manifest.files.len()
+            ));
+        }
+        if evening.published != PublishOutcome::Published {
+            return Err("evening EOD was not newly published".to_owned());
+        }
+        if reader.calendar_calls.load(Ordering::SeqCst) != 1 {
+            return Err(format!(
+                "expected one calendar broker call, got {}",
+                reader.calendar_calls.load(Ordering::SeqCst)
+            ));
+        }
+        if reader.total_calls.load(Ordering::SeqCst)
+            != KR_ETF_CORE_SYMBOLS.len() * 2 + 7 + 1
+        {
+            return Err(format!(
+                "unexpected fake broker call count: {}",
+                reader.total_calls.load(Ordering::SeqCst)
+            ));
+        }
+
+        let evening_bundle = market_data::publication::PublicationBundle::from_raw(
+            &store,
+            &evening.manifest,
+        )
+        .map_err(|error| format!("evening publication evidence failed: {error}"))?;
+        if evening_bundle.calendar_evidence.as_ref() != Some(&morning_evidence) {
+            return Err("evening EOD changed the morning calendar evidence".to_owned());
+        }
+        let copied_calendar = evening
+            .manifest
+            .files
+            .iter()
+            .find(|file| file.file_name == "calendar.json")
+            .and_then(|file| file.copied_from.as_ref())
+            .ok_or_else(|| "evening EOD calendar file lost copied-source lineage".to_owned())?;
+        if copied_calendar.provider != PROVIDER_KIS_CALENDAR_NORMALIZED
+            || copied_calendar.batch_id != normalized_calendar.entry.batch_id
+            || copied_calendar.content_hash != normalized_calendar.entry.files[0].content_hash
+            || copied_calendar.retrieved_at != normalized_calendar.entry.retrieved_at
+        {
+            return Err("evening EOD copied-source identity differs from the morning source".to_owned());
+        }
+        let canonical_files = store
+            .read_batch_bytes(
+                PROVIDER_KIS_CALENDAR_NORMALIZED,
+                MARKET_KR,
+                &normalized_calendar.entry,
+            )
+            .map_err(|_| "could not read normalized morning calendar bytes".to_owned())?;
+        let evening_files = store
+            .read_batch_bytes(
+                &evening.manifest.provider,
+                &evening.manifest.market,
+                &evening.manifest,
+            )
+            .map_err(|_| "could not read normalized evening EOD bytes".to_owned())?;
+        let canonical_calendar = canonical_files
+            .iter()
+            .find(|file| file.file_name == "calendar.json")
+            .ok_or_else(|| "normalized morning calendar bytes are missing".to_owned())?;
+        let evening_calendar = evening_files
+            .iter()
+            .find(|file| file.file_name == "calendar.json")
+            .ok_or_else(|| "normalized evening calendar bytes are missing".to_owned())?;
+        if canonical_calendar.bytes != evening_calendar.bytes {
+            return Err("evening normalized calendar bytes changed".to_owned());
+        }
+
+        let evening_counts: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM data_batches),
+                    (SELECT count(*) FROM trading_calendar_versions),
+                    (SELECT count(*) FROM trading_calendars)",
+        )
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not inspect evening publication counts".to_owned())?;
+        if evening_counts != (morning_counts.0 + 4, morning_counts.1, morning_counts.2) {
+            return Err(format!(
+                "evening publication changed calendar history/projection unexpectedly: {evening_counts:?}"
+            ));
+        }
+
+        let replay = sink
+            .publish(&evening_bundle)
+            .await
+            .map_err(|error| format!("evening EOD replay failed: {error}"))?;
+        if replay != PublishOutcome::AlreadyPublished {
+            return Err(format!("evening EOD replay returned {replay:?}"));
+        }
+        let calendar_replay = sink
+            .publish_calendar(&morning)
+            .await
+            .map_err(|error| format!("morning calendar replay failed: {error}"))?;
+        if calendar_replay != PublishOutcome::AlreadyPublished {
+            return Err(format!("morning calendar replay returned {calendar_replay:?}"));
+        }
+        let replay_counts: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM data_batches),
+                    (SELECT count(*) FROM trading_calendar_versions),
+                    (SELECT count(*) FROM trading_calendars)",
+        )
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not inspect replay counts".to_owned())?;
+        if replay_counts != evening_counts {
+            return Err("idempotent replay changed publication counts".to_owned());
+        }
+
+        let persisted: (String, Uuid, String, DateTime<Utc>) = sqlx::query_as(
+            "SELECT source, source_batch_id, content_sha256, retrieved_at
+               FROM trading_calendar_versions
+              WHERE exchange = 'KRX' AND session_date = $1",
+        )
+        .bind(db.session_date)
+        .fetch_one(&db.superuser)
+        .await
+        .map_err(|_| "could not inspect persisted calendar evidence".to_owned())?;
+        if persisted.0 != morning_fact.source
+            || persisted.1 != morning_evidence.source_batch_id.as_uuid()
+            || persisted.2 != morning_evidence.content_sha256
+            || persisted.3 != morning_evidence.retrieved_at.as_datetime()
+        {
+            return Err("persisted calendar evidence does not match the morning source".to_owned());
+        }
+
+        let owner = db.seed_owner("actual-calendar-reuse").await?;
+        let repository = db.repository_as_app();
+        let state = repository
+            .read_current_calendar_disposition(owner)
+            .await
+            .map_err(|error| format!("job-queue calendar resolver failed: {error}"))?
+            .ok_or_else(|| "job-queue resolver could not read the published calendar".to_owned())?;
+        if state.session_date != db.session_date
+            || state.disposition != IntradayCalendarDisposition::Trading
+            || state.calendar_source_batch_id != morning_evidence.source_batch_id.as_uuid()
+            || state.calendar_content_sha256 != morning_evidence.content_sha256
+        {
+            return Err("job-queue resolver returned different calendar lineage".to_owned());
+        }
+        let proof = repository
+            .resolve_current_session_proof(owner, &db.window_contract_sha256)
+            .await
+            .map_err(|error| format!("job-queue session proof resolver failed: {error}"))?
+            .ok_or_else(|| "job-queue resolver could not read the session proof".to_owned())?;
+        if proof.session_date != db.session_date
+            || proof.calendar_source_batch_id != morning_evidence.source_batch_id.as_uuid()
+            || proof.calendar_content_sha256 != morning_evidence.content_sha256
+        {
+            return Err("job-queue session proof returned different calendar lineage".to_owned());
+        }
+        Ok(())
+    })
+    .await;
 }
 
 #[tokio::test]
