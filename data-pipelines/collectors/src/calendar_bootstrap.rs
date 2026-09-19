@@ -6,11 +6,13 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use kis_client::{ProductionReadCoordination, ReadCoordinationMode};
+use market_data::ProviderError;
 use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS, PROVIDER_KIS_CALENDAR, ResponseKind,
 };
-use market_data::ingest::{IngestRequest, ingest_kis_calendar_with_batch_id};
+use market_data::ingest::{IngestError, IngestRequest, ingest_kis_calendar_with_batch_id};
 use market_data::normalize::normalize_kis_calendar_batch;
+use market_data::providers::kis::{KisProvider, KisRead};
 use market_data::publication::CalendarPublicationBundle;
 use market_data::storage::{ManifestEntry, RawStore};
 use serde::Serialize;
@@ -81,7 +83,7 @@ impl CalendarSourceCapture for ProductionCalendarSourceCapture<'_> {
     ) -> Result<ManifestEntry, CalendarBootstrapError> {
         let provider = build_production_kis_provider(self.config)
             .map_err(|_| CalendarBootstrapError("CALENDAR_PROVIDER_CONFIG_INVALID"))?;
-        ingest_kis_calendar_with_batch_id(
+        capture_calendar_source(
             store,
             &provider,
             request,
@@ -89,8 +91,98 @@ impl CalendarSourceCapture for ProductionCalendarSourceCapture<'_> {
             source_batch_id,
         )
         .await
-        .map(|outcome| outcome.entry)
-        .map_err(|_| CalendarBootstrapError("CALENDAR_CAPTURE_FAILED"))
+    }
+}
+
+async fn capture_calendar_source<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    request: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    source_batch_id: BatchId,
+) -> Result<ManifestEntry, CalendarBootstrapError> {
+    ingest_kis_calendar_with_batch_id(
+        store,
+        provider,
+        request,
+        entitlement_reference,
+        source_batch_id,
+    )
+    .await
+    .map(|outcome| outcome.entry)
+    .map_err(calendar_capture_error)
+}
+
+fn calendar_capture_error(error: IngestError) -> CalendarBootstrapError {
+    let code = match error {
+        IngestError::Provider(source) => calendar_provider_error_code(source),
+        IngestError::MalformedResponse {
+            diagnostic: Some(diagnostic),
+            ..
+        } => calendar_malformed_response_code(diagnostic.code),
+        IngestError::MalformedResponse { .. } => "CALENDAR_RESPONSE_MALFORMED",
+        IngestError::ResponseShape { .. } => "CALENDAR_RESPONSE_SHAPE_INVALID",
+        IngestError::Store(_) => "CALENDAR_RAW_STORE_FAILURE",
+        IngestError::Readback { .. } => "CALENDAR_RAW_READBACK_FAILURE",
+    };
+    CalendarBootstrapError(code)
+}
+
+fn calendar_provider_error_code(error: ProviderError) -> &'static str {
+    match error {
+        ProviderError::Remote { code, .. } => calendar_remote_code(code),
+        ProviderError::InvalidConfiguration { .. } => "CALENDAR_PROVIDER_CONFIG_INVALID",
+        ProviderError::CredentialsUnavailable { .. } => "CALENDAR_PROVIDER_CREDENTIALS_UNAVAILABLE",
+        ProviderError::EndpointTimeout { .. } => "CALENDAR_PROVIDER_ENDPOINT_TIMEOUT",
+        ProviderError::UnsafeFileName { .. } => "CALENDAR_PROVIDER_FILENAME_INVALID",
+        ProviderError::UnsupportedKind(_) => "CALENDAR_PROVIDER_KIND_UNSUPPORTED",
+        ProviderError::Io { .. } => "CALENDAR_PROVIDER_IO_FAILURE",
+        ProviderError::RecordedBundleMissing { .. } => "CALENDAR_PROVIDER_RECORDED_BUNDLE_MISSING",
+        ProviderError::RecordedBundleIo { .. } => "CALENDAR_PROVIDER_RECORDED_BUNDLE_IO_FAILURE",
+        ProviderError::RecordedBundleParse { .. } => {
+            "CALENDAR_PROVIDER_RECORDED_BUNDLE_PARSE_FAILURE"
+        }
+        ProviderError::RecordedBundleInvalid { .. } => "CALENDAR_PROVIDER_RECORDED_BUNDLE_INVALID",
+    }
+}
+
+fn calendar_remote_code(code: &'static str) -> &'static str {
+    match code {
+        "BROKER_UNREACHABLE"
+        | "BROKER_RATE_LIMITED"
+        | "BROKER_REJECTED"
+        | "BROKER_SCHEMA_DRIFT"
+        | "BROKER_AUTH_FAILED"
+        | "BROKER_CLOCK_SKEW"
+        | "UNKNOWN_INSTRUMENT"
+        | "KIS_ENDPOINT_NOT_ALLOWED"
+        | "KIS_RESPONSE_MALFORMED_JSON"
+        | "KIS_RESPONSE_SCHEMA_INVALID"
+        | "KIS_CALENDAR_SNAPSHOT_LOCK"
+        | "KIS_CALENDAR_SNAPSHOT_EMPTY"
+        | "KIS_CALENDAR_SNAPSHOT_SCHEMA"
+        | "KIS_CALENDAR_SNAPSHOT_MISS"
+        | "BROKER_PAGINATION_UNSUPPORTED"
+        | "BROKER_PAGINATION_STALLED"
+        | "BROKER_PAGINATION_LIMIT" => code,
+        _ => "CALENDAR_PROVIDER_REMOTE_FAILURE",
+    }
+}
+
+fn calendar_malformed_response_code(code: &'static str) -> &'static str {
+    match code {
+        "KIS_RESPONSE_MALFORMED_JSON"
+        | "KIS_RESPONSE_SCHEMA_INVALID"
+        | "KIS_CALENDAR_FILE_NAME"
+        | "KIS_CALENDAR_RETRIEVED_AT"
+        | "KIS_CALENDAR_REQUEST_SHAPE"
+        | "KIS_CALENDAR_CONTINUATION"
+        | "KIS_CALENDAR_SCHEMA"
+        | "KIS_CALENDAR_DATE"
+        | "KIS_CALENDAR_SESSION_TYPE"
+        | "KIS_CALENDAR_DUPLICATE_DATE"
+        | "KIS_CALENDAR_TARGET_MISSING" => code,
+        _ => "CALENDAR_RESPONSE_MALFORMED",
     }
 }
 
@@ -419,8 +511,10 @@ mod tests {
     use async_trait::async_trait;
     use kis_client::{KisError, MarketDataReply};
     use market_data::ingest::IngestRequest;
+    use market_data::provider::RemoteDiagnostic;
     use market_data::providers::kis::{KisProvider, KisRead};
     use market_data::publication::CalendarEvidence;
+    use market_data::storage::StoreError;
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -475,7 +569,7 @@ mod tests {
             source_batch_id: BatchId,
         ) -> Result<ManifestEntry, CalendarBootstrapError> {
             let provider = KisProvider::kr_etf_core(CalendarFixtureReader::new(self.calls.clone()));
-            ingest_kis_calendar_with_batch_id(
+            capture_calendar_source(
                 store,
                 &provider,
                 request,
@@ -483,8 +577,6 @@ mod tests {
                 source_batch_id,
             )
             .await
-            .map(|outcome| outcome.entry)
-            .map_err(|_| CalendarBootstrapError("TEST_CALENDAR_CAPTURE_FAILED"))
         }
     }
 
@@ -510,7 +602,7 @@ mod tests {
             self.release.notified().await;
             let provider =
                 KisProvider::kr_etf_core(CalendarFixtureReader::new(self.broker_calls.clone()));
-            ingest_kis_calendar_with_batch_id(
+            capture_calendar_source(
                 store,
                 &provider,
                 request,
@@ -518,8 +610,79 @@ mod tests {
                 source_batch_id,
             )
             .await
-            .map(|outcome| outcome.entry)
-            .map_err(|_| CalendarBootstrapError("TEST_CALENDAR_CAPTURE_FAILED"))
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct CalendarErrorReader {
+        result: Result<Vec<u8>, KisError>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl CalendarErrorReader {
+        fn body(body: Vec<u8>, calls: Arc<AtomicUsize>) -> Self {
+            Self {
+                result: Ok(body),
+                calls,
+            }
+        }
+
+        fn error(error: KisError, calls: Arc<AtomicUsize>) -> Self {
+            Self {
+                result: Err(error),
+                calls,
+            }
+        }
+    }
+
+    impl KisRead for CalendarErrorReader {
+        async fn get(
+            &self,
+            _path: &str,
+            _tr_id: &str,
+            _query: &[(String, String)],
+            _continuation: Option<&str>,
+        ) -> Result<MarketDataReply, KisError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            match &self.result {
+                Ok(body) => Ok(MarketDataReply {
+                    body: body.clone(),
+                    continuation: None,
+                }),
+                Err(error) => Err(error.clone()),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct FailedCalendarCapture {
+        capture_calls: Arc<AtomicUsize>,
+        reader_calls: Arc<AtomicUsize>,
+        body: Vec<u8>,
+    }
+
+    #[async_trait]
+    impl CalendarSourceCapture for FailedCalendarCapture {
+        async fn capture(
+            &self,
+            store: &RawStore,
+            request: &IngestRequest,
+            entitlement_reference: &str,
+            source_batch_id: BatchId,
+        ) -> Result<ManifestEntry, CalendarBootstrapError> {
+            self.capture_calls.fetch_add(1, Ordering::SeqCst);
+            let provider = KisProvider::kr_etf_core(CalendarErrorReader::body(
+                self.body.clone(),
+                self.reader_calls.clone(),
+            ));
+            capture_calendar_source(
+                store,
+                &provider,
+                request,
+                Some(entitlement_reference),
+                source_batch_id,
+            )
+            .await
         }
     }
 
@@ -589,6 +752,386 @@ mod tests {
             .into_iter()
             .map(|file| file.bytes)
             .collect()
+    }
+
+    const ERROR_SENTINEL: &str =
+        "sentinel-app-key secret token raw-json header broker-prose path endpoint";
+
+    fn calendar_body_with_row(date: TradingDate) -> Vec<u8> {
+        format!(
+            r#"{{"rt_cd":"0","output":[{{"bass_dt":"{}","opnd_yn":"Y"}}]}}"#,
+            date.to_iso().replace('-', "")
+        )
+        .into_bytes()
+    }
+
+    fn assert_calendar_error(error: CalendarBootstrapError, expected: &str) {
+        let display = error.to_string();
+        assert_eq!(display, expected);
+        assert!(!display.contains(ERROR_SENTINEL));
+        assert!(!display.contains('\n'));
+    }
+
+    #[test]
+    fn calendar_capture_mapping_is_exhaustive_and_redacted() {
+        let entry = ManifestEntry {
+            batch_id: BatchId::generate(),
+            provider: PROVIDER_KIS_CALENDAR.to_owned(),
+            market: MARKET_KR.to_owned(),
+            date: current_date(),
+            retrieved_at: UtcTimestamp::now(),
+            mode: FetchMode::Credentialed,
+            entitlement_reference: None,
+            files: Vec::new(),
+        };
+        let malformed_source = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let cases = vec![
+            (
+                IngestError::Provider(ProviderError::Remote {
+                    provider: PROVIDER_KIS,
+                    kind: ResponseKind::Calendar,
+                    code: "BROKER_REJECTED",
+                    retryable: false,
+                    diagnostic: Some(RemoteDiagnostic {
+                        endpoint: ERROR_SENTINEL.to_owned(),
+                        http_status: Some(503),
+                    }),
+                    detail: ERROR_SENTINEL.to_owned(),
+                }),
+                "BROKER_REJECTED",
+            ),
+            (
+                IngestError::Provider(ProviderError::Remote {
+                    provider: PROVIDER_KIS,
+                    kind: ResponseKind::Calendar,
+                    code: "UNKNOWN_SENTINEL_CODE",
+                    retryable: false,
+                    diagnostic: None,
+                    detail: ERROR_SENTINEL.to_owned(),
+                }),
+                "CALENDAR_PROVIDER_REMOTE_FAILURE",
+            ),
+            (
+                IngestError::Provider(ProviderError::InvalidConfiguration {
+                    detail: ERROR_SENTINEL.to_owned(),
+                }),
+                "CALENDAR_PROVIDER_CONFIG_INVALID",
+            ),
+            (
+                IngestError::Provider(ProviderError::CredentialsUnavailable {
+                    credential_ref: ERROR_SENTINEL.to_owned(),
+                    detail: ERROR_SENTINEL.to_owned(),
+                }),
+                "CALENDAR_PROVIDER_CREDENTIALS_UNAVAILABLE",
+            ),
+            (
+                IngestError::Provider(ProviderError::EndpointTimeout {
+                    kind: ResponseKind::Calendar,
+                    timeout_secs: 30,
+                }),
+                "CALENDAR_PROVIDER_ENDPOINT_TIMEOUT",
+            ),
+            (
+                IngestError::Provider(ProviderError::UnsafeFileName {
+                    kind: ResponseKind::Calendar,
+                    file_name: ERROR_SENTINEL.to_owned(),
+                }),
+                "CALENDAR_PROVIDER_FILENAME_INVALID",
+            ),
+            (
+                IngestError::Provider(ProviderError::UnsupportedKind(ResponseKind::Bars)),
+                "CALENDAR_PROVIDER_KIND_UNSUPPORTED",
+            ),
+            (
+                IngestError::Provider(ProviderError::Io {
+                    context: ERROR_SENTINEL.to_owned(),
+                    source: std::io::Error::other(ERROR_SENTINEL),
+                }),
+                "CALENDAR_PROVIDER_IO_FAILURE",
+            ),
+            (
+                IngestError::Provider(ProviderError::RecordedBundleMissing {
+                    path: ERROR_SENTINEL.to_owned(),
+                }),
+                "CALENDAR_PROVIDER_RECORDED_BUNDLE_MISSING",
+            ),
+            (
+                IngestError::Provider(ProviderError::RecordedBundleIo {
+                    context: ERROR_SENTINEL.to_owned(),
+                    path: ERROR_SENTINEL.to_owned(),
+                    source: std::io::Error::other(ERROR_SENTINEL),
+                }),
+                "CALENDAR_PROVIDER_RECORDED_BUNDLE_IO_FAILURE",
+            ),
+            (
+                IngestError::Provider(ProviderError::RecordedBundleParse {
+                    path: ERROR_SENTINEL.to_owned(),
+                    source: malformed_source,
+                }),
+                "CALENDAR_PROVIDER_RECORDED_BUNDLE_PARSE_FAILURE",
+            ),
+            (
+                IngestError::Provider(ProviderError::RecordedBundleInvalid {
+                    detail: ERROR_SENTINEL.to_owned(),
+                }),
+                "CALENDAR_PROVIDER_RECORDED_BUNDLE_INVALID",
+            ),
+            (
+                IngestError::MalformedResponse {
+                    kind: ResponseKind::Calendar,
+                    reason: ERROR_SENTINEL.to_owned(),
+                    diagnostic: Some(market_data::ingest::ResponseValidationDiagnostic {
+                        code: "UNKNOWN_DIAGNOSTIC_CODE",
+                        endpoint: ERROR_SENTINEL.to_owned(),
+                        file_name: ERROR_SENTINEL.to_owned(),
+                    }),
+                },
+                "CALENDAR_RESPONSE_MALFORMED",
+            ),
+            (
+                IngestError::MalformedResponse {
+                    kind: ResponseKind::Calendar,
+                    reason: ERROR_SENTINEL.to_owned(),
+                    diagnostic: None,
+                },
+                "CALENDAR_RESPONSE_MALFORMED",
+            ),
+            (
+                IngestError::ResponseShape {
+                    detail: ERROR_SENTINEL.to_owned(),
+                },
+                "CALENDAR_RESPONSE_SHAPE_INVALID",
+            ),
+            (
+                IngestError::Store(StoreError::Io {
+                    context: ERROR_SENTINEL.to_owned(),
+                    source: std::io::Error::other(ERROR_SENTINEL),
+                }),
+                "CALENDAR_RAW_STORE_FAILURE",
+            ),
+            (
+                IngestError::Readback {
+                    entry: Box::new(entry),
+                    source: StoreError::Io {
+                        context: ERROR_SENTINEL.to_owned(),
+                        source: std::io::Error::other(ERROR_SENTINEL),
+                    },
+                },
+                "CALENDAR_RAW_READBACK_FAILURE",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_calendar_error(calendar_capture_error(error), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn calendar_capture_maps_actual_kis_remote_failures_without_raw_visibility() {
+        let cases = [
+            (
+                KisError::Auth {
+                    reason: ERROR_SENTINEL.to_owned(),
+                },
+                "BROKER_AUTH_FAILED",
+            ),
+            (
+                KisError::Connect {
+                    reason: ERROR_SENTINEL.to_owned(),
+                },
+                "BROKER_UNREACHABLE",
+            ),
+            (
+                KisError::Broker {
+                    status: 503,
+                    endpoint: ERROR_SENTINEL.to_owned(),
+                    body: ERROR_SENTINEL.to_owned(),
+                },
+                "BROKER_REJECTED",
+            ),
+        ];
+
+        for (source_error, expected) in cases {
+            let temp = tempfile::tempdir().expect("remote failure tempdir");
+            let data_root = temp.path().join("data");
+            std::fs::create_dir_all(data_root.join("raw")).expect("raw root");
+            let store = RawStore::new(&data_root);
+            let date = current_date();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let provider =
+                KisProvider::kr_etf_core(CalendarErrorReader::error(source_error, calls.clone()));
+            let error = capture_calendar_source(
+                &store,
+                &provider,
+                &current_request(date),
+                Some("entitlement://calendar-bootstrap-test"),
+                BatchId::generate(),
+            )
+            .await
+            .expect_err("remote fixture must fail");
+            assert_calendar_error(error, expected);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert!(
+                !store
+                    .manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)
+                    .exists()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn calendar_capture_maps_actual_schema_and_target_failures() {
+        let date = current_date();
+        let cases = [
+            (b"{".to_vec(), "KIS_RESPONSE_MALFORMED_JSON"),
+            (
+                br#"{"rt_cd":"0","wrong":[]}"#.to_vec(),
+                "KIS_RESPONSE_SCHEMA_INVALID",
+            ),
+            (
+                calendar_body_with_row(date.next_day()),
+                "KIS_CALENDAR_TARGET_MISSING",
+            ),
+        ];
+
+        for (body, expected) in cases {
+            let temp = tempfile::tempdir().expect("validation failure tempdir");
+            let data_root = temp.path().join("data");
+            std::fs::create_dir_all(data_root.join("raw")).expect("raw root");
+            let store = RawStore::new(&data_root);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let provider = KisProvider::kr_etf_core(CalendarErrorReader::body(body, calls.clone()));
+            let error = capture_calendar_source(
+                &store,
+                &provider,
+                &current_request(date),
+                Some("entitlement://calendar-bootstrap-test"),
+                BatchId::generate(),
+            )
+            .await
+            .expect_err("validation fixture must fail");
+            assert_calendar_error(error, expected);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert!(
+                !store
+                    .manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)
+                    .exists()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn calendar_capture_maps_actual_store_failure() {
+        let temp = tempfile::tempdir().expect("store failure tempdir");
+        let data_root = temp.path().join("data");
+        std::fs::create_dir_all(data_root.join("raw")).expect("raw root");
+        let store = RawStore::new(&data_root);
+        let date = current_date();
+        let source_batch_id = BatchId::generate();
+        std::fs::create_dir_all(store.batch_dir(
+            PROVIDER_KIS_CALENDAR,
+            MARKET_KR,
+            &date,
+            &source_batch_id,
+        ))
+        .expect("preexisting immutable batch fixture");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = KisProvider::kr_etf_core(CalendarErrorReader::body(
+            calendar_body_with_row(date),
+            calls.clone(),
+        ));
+
+        let error = capture_calendar_source(
+            &store,
+            &provider,
+            &current_request(date),
+            Some("entitlement://calendar-bootstrap-test"),
+            source_batch_id,
+        )
+        .await
+        .expect_err("preexisting batch must fail closed");
+        assert_calendar_error(error, "CALENDAR_RAW_STORE_FAILURE");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(
+            !store
+                .manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_calendar_capture_preserves_claim_and_blocks_provider_recapture() {
+        let temp = tempfile::tempdir().expect("failed capture tempdir");
+        let data_root = temp.path().join("data");
+        std::fs::create_dir_all(data_root.join("raw")).expect("raw root");
+        let store = RawStore::new(&data_root);
+        let date = current_date();
+        let entitlement = "entitlement://calendar-bootstrap-test";
+        let capture_calls = Arc::new(AtomicUsize::new(0));
+        let reader_calls = Arc::new(AtomicUsize::new(0));
+        let capture = FailedCalendarCapture {
+            capture_calls: capture_calls.clone(),
+            reader_calls: reader_calls.clone(),
+            body: calendar_body_with_row(date.next_day()),
+        };
+        let publisher = RecordingPublisher::default();
+        let config = core_config(&data_root, entitlement);
+        let source_batch_id = BatchId::generate();
+
+        let first = run_calendar_once_core(
+            &config,
+            date,
+            CalendarSourceMode::Explicit(source_batch_id),
+            &capture,
+            &publisher,
+        )
+        .await
+        .expect_err("target-missing capture must fail");
+        assert_calendar_error(first, "KIS_CALENDAR_TARGET_MISSING");
+        assert_eq!(capture_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(reader_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(publisher.calls.load(Ordering::SeqCst), 0);
+
+        let claim_path = data_root
+            .join("raw/.calendar-bootstrap")
+            .join(format!("{}.json", date.to_iso()));
+        assert!(claim_path.is_file());
+        let claim_guard = CalendarDayLock::acquire(&data_root.join("raw"), date)
+            .expect("consumed claim remains readable after failed capture");
+        assert_eq!(
+            claim_guard
+                .existing()
+                .expect("consumed claim validates after failed capture"),
+            Some(source_batch_id)
+        );
+        drop(claim_guard);
+        let manifest_path = store.manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR);
+        assert!(manifest_path.is_file());
+        assert!(
+            std::fs::read(&manifest_path)
+                .expect("empty calendar manifest")
+                .is_empty()
+        );
+        assert!(
+            !store
+                .batch_dir(PROVIDER_KIS_CALENDAR, MARKET_KR, &date, &source_batch_id,)
+                .parent()
+                .expect("date partition")
+                .exists()
+        );
+
+        let second = run_calendar_once_core(
+            &config,
+            date,
+            CalendarSourceMode::Explicit(source_batch_id),
+            &capture,
+            &publisher,
+        )
+        .await
+        .expect_err("claim without source must remain indeterminate");
+        assert_calendar_error(second, "CALENDAR_ATTEMPT_INDETERMINATE");
+        assert_eq!(capture_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(reader_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
