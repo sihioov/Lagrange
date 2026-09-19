@@ -114,6 +114,8 @@ export WP16_BOOT_ID=$boot_id
 export WP16_CGROUP=$control_cgroup
 export WP16_RESEARCH_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export WP16_RESEARCH_IMAGE=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+export WP16_OWNER_ID=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+export WP16_OWNER_IMAGE=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 export WP16_API_ID=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 export WP16_API_IMAGE=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 
@@ -230,7 +232,7 @@ cat >"$fake_bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-format=$'{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}'
+format=$'{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}{{printf "\t"}}{{.State.Status}}{{printf "\t"}}{{.State.Paused}}{{printf "\t"}}{{.State.Dead}}{{printf "\t"}}{{.State.StartedAt}}{{printf "\t"}}{{.State.FinishedAt}}'
 [ "$#" -gt 0 ] && [ "$1" = inspect ] || exit 91
 shift
 [ "$#" -ge 2 ] && [ "$1" = --type ] && [ "$2" = container ] || exit 92
@@ -268,8 +270,57 @@ else
   exit_code=0
   [ "$mode" = nonresearch-unhealthy ] && health=unhealthy
 fi
-printf '%s\t%s\t%s\t%s\t%s\t%s\tlagrange-station\t%s\t%s\n' \
-  "$ident" "$running" "$restarting" "$oom" "$health" "$restarts" "$image" "$exit_code"
+status=running
+paused=false
+dead=false
+project=lagrange-station
+started=2026-09-18T00:00:00.000000000Z
+finished=0001-01-01T00:00:00.000000000Z
+if [ "${WP16_DRAINED_READERS:-0}" = 1 ] &&
+   { [ "$name" = lagrange-station-research-worker-1 ] ||
+     [ "$name" = lagrange-station-owner-equity-v2-runner-1 ]; }; then
+  if [ "$name" = lagrange-station-research-worker-1 ]; then
+    ident=$WP16_RESEARCH_ID
+    image=$WP16_RESEARCH_IMAGE
+    health=unhealthy
+    restarts=7
+    exit_code=2
+  else
+    ident=$WP16_OWNER_ID
+    image=$WP16_OWNER_IMAGE
+    health=unhealthy
+    restarts=0
+    exit_code=0
+  fi
+  running=false
+  status=exited
+  finished=2026-09-18T12:00:00.000000000Z
+  case "${WP16_DRAINED_MODE:-valid}" in
+    id) [ "$name" = lagrange-station-research-worker-1 ] && ident=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
+    owner-id) [ "$name" = lagrange-station-owner-equity-v2-runner-1 ] && ident=1212121212121212121212121212121212121212121212121212121212121212 ;;
+    image) [ "$name" = lagrange-station-research-worker-1 ] && image=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ;;
+    owner-image) [ "$name" = lagrange-station-owner-equity-v2-runner-1 ] && image=sha256:1212121212121212121212121212121212121212121212121212121212121212 ;;
+    health) [ "$name" = lagrange-station-research-worker-1 ] && health=healthy ;;
+    owner-health) [ "$name" = lagrange-station-owner-equity-v2-runner-1 ] && health=healthy ;;
+    exit) [ "$name" = lagrange-station-research-worker-1 ] && exit_code=1 ;;
+    owner-exit) [ "$name" = lagrange-station-owner-equity-v2-runner-1 ] && exit_code=1 ;;
+    restart) [ "$name" = lagrange-station-research-worker-1 ] && restarts=8 ;;
+    owner-restart) [ "$name" = lagrange-station-owner-equity-v2-runner-1 ] && restarts=1 ;;
+    started) [ "$name" = lagrange-station-research-worker-1 ] && started=2026-09-18T00:01:00.000000000Z ;;
+    finished) [ "$name" = lagrange-station-research-worker-1 ] && finished=2026-09-18T12:01:00.000000000Z ;;
+    lifecycle-drift) [ "$name" = lagrange-station-research-worker-1 ] && started=2026-09-18T00:01:00.000000000Z && finished=2026-09-18T12:01:00.000000000Z ;;
+    running) [ "$name" = lagrange-station-research-worker-1 ] && running=true ;;
+    restarting) [ "$name" = lagrange-station-research-worker-1 ] && restarting=true ;;
+    paused) [ "$name" = lagrange-station-research-worker-1 ] && paused=true ;;
+    dead) [ "$name" = lagrange-station-research-worker-1 ] && dead=true ;;
+    oom) [ "$name" = lagrange-station-research-worker-1 ] && oom=true ;;
+    status) [ "$name" = lagrange-station-research-worker-1 ] && status=dead ;;
+    project) [ "$name" = lagrange-station-research-worker-1 ] && project=wrong-project ;;
+  esac
+fi
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$ident" "$running" "$restarting" "$oom" "$health" "$restarts" "$project" "$image" \
+  "$exit_code" "$status" "$paused" "$dead" "$started" "$finished"
 EOF
 
 chmod 0700 "$fake_bin/systemctl" "$fake_bin/ps" "$fake_bin/journalctl" "$fake_bin/docker"
@@ -310,12 +361,113 @@ value={
     "observed_at_utc":datetime.datetime.fromtimestamp(observed,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "scope":"image-build-only",
 }
+
 raw=(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode()
 fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
 with os.fdopen(fd,"wb") as handle:
     handle.write(raw)
     handle.flush()
     os.fsync(handle.fileno())
+assert stat.S_IMODE(os.stat(path).st_mode)==0o600
+PY
+}
+
+write_drained_attestation() {
+  local path=$1 kind=valid
+  [ "$#" -ge 2 ] && kind=$2
+  WP16_DRAINED_ATTESTATION_PATH=$path WP16_DRAINED_ATTESTATION_KIND=$kind \
+  WP16_DRAINED_SOURCE_COMMIT=$source_commit python3 - <<'PY'
+import datetime
+import json
+import os
+import stat
+import time
+
+path=os.environ["WP16_DRAINED_ATTESTATION_PATH"]
+kind=os.environ["WP16_DRAINED_ATTESTATION_KIND"]
+now=int(time.time())
+observed=now-5
+expires=now+7200
+if kind=="expired":
+    observed=now-7200
+    expires=now-3600
+value={
+    "containers":[
+        {
+            "container_id":os.environ["WP16_OWNER_ID"],
+            "container_name":"lagrange-station-owner-equity-v2-runner-1",
+            "dead":False,
+            "exit_code":0,
+            "finished_at_utc":"2026-09-18T12:00:00.000000000Z",
+            "health_status":"unhealthy",
+            "image_id":os.environ["WP16_OWNER_IMAGE"],
+            "oom_killed":False,
+            "paused":False,
+            "restarting":False,
+            "restart_count":0,
+            "running":False,
+            "started_at_utc":"2026-09-18T00:00:00.000000000Z",
+            "status":"exited",
+        },
+        {
+            "container_id":os.environ["WP16_RESEARCH_ID"],
+            "container_name":"lagrange-station-research-worker-1",
+            "dead":False,
+            "exit_code":2,
+            "finished_at_utc":"2026-09-18T12:00:00.000000000Z",
+            "health_status":"unhealthy",
+            "image_id":os.environ["WP16_RESEARCH_IMAGE"],
+            "oom_killed":False,
+            "paused":False,
+            "restarting":False,
+            "restart_count":7,
+            "running":False,
+            "started_at_utc":"2026-09-18T00:00:00.000000000Z",
+            "status":"exited",
+        },
+    ],
+    "expires_at_utc":datetime.datetime.fromtimestamp(expires,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "format":"lagrange-build-drained-readers-attestation-v1",
+    "observed_at_utc":datetime.datetime.fromtimestamp(observed,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "project":"lagrange-station",
+    "scope":"image-build-only",
+    "target_commit":os.environ["WP16_DRAINED_SOURCE_COMMIT"],
+}
+if kind=="wrong-commit":
+    value["target_commit"]="f"*40
+elif kind=="missing-research":
+    value["containers"]=value["containers"][:1]
+elif kind=="missing-owner":
+    value["containers"]=value["containers"][1:]
+elif kind=="extra":
+    extra=dict(value["containers"][0])
+    extra["container_name"]="lagrange-station-unrecognized-1"
+    value["containers"].append(extra)
+elif kind=="duplicate":
+    value["containers"][1]["container_name"]="lagrange-station-owner-equity-v2-runner-1"
+elif kind=="replace":
+    value["containers"][1]["restart_count"]=8
+elif kind=="future-observed":
+    value["observed_at_utc"]=datetime.datetime.fromtimestamp(now+60,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+elif kind=="long-expiry":
+    value["expires_at_utc"]=datetime.datetime.fromtimestamp(observed+13*3600,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+elif kind=="bad-time":
+    value["containers"][0]["started_at_utc"]="not-a-docker-timestamp"
+elif kind=="unknown-field":
+    value["containers"][0]["unexpected"]="reject-me"
+elif kind=="bad-json":
+    raw=b"{\"format\":\"broken\"}\n"
+else:
+    raw=(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode()
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,"wb") as handle:
+        handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+    assert stat.S_IMODE(os.stat(path).st_mode)==0o600
+    raise SystemExit(0)
+fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,"wb") as handle:
+    handle.write(raw if kind=="bad-json" else (json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode())
+    handle.flush(); os.fsync(handle.fileno())
 assert stat.S_IMODE(os.stat(path).st_mode)==0o600
 PY
 }
@@ -345,19 +497,43 @@ if not isinstance(evidence,dict):
 reason=os.environ["WP16_EXPECTED_REASON"]
 if reason in ("previous-step-failed","research-exception-invalid",
               "mem-available-below-floor","memory-pressure-high",
-              "resource-observation-invalid"):
+              "resource-observation-invalid","compiler-process-active",
+              "drained-readers-attestation-invalid","drained-readers-attestation-added",
+              "drained-readers-attestation-removed","drained-readers-attestation-binding-changed",
+              "drained-readers-container-inventory-invalid",
+              "drained-readers-attestation-mutually-exclusive"):
     raise SystemExit(0)
 if not isinstance(evidence.get("build_unit"),dict):
     raise SystemExit("missing-build-evidence")
 if not isinstance(evidence.get("units"),dict) or set(evidence["units"]) != {"api.service","web.service"}:
     raise SystemExit("missing-system-health-evidence")
 if reason in ("healthy","image-build-only-known-incident","container-health-invalid"):
-    if not isinstance(evidence.get("containers"),dict) or "api-container" not in evidence["containers"]:
+    if not isinstance(evidence.get("containers"),dict) or not evidence["containers"]:
         raise SystemExit("missing-container-evidence")
 if reason=="image-build-only-known-incident":
     binding=evidence.get("research_exception")
     if not isinstance(binding,dict) or binding.get("fields",{}).get("known_error_code")!="PRICE_CURATION_FAILED":
         raise SystemExit("missing-exception-binding")
+if reason=="image-build-only-drained-readers":
+    binding=evidence.get("drained_readers_attestation")
+    if not isinstance(binding,dict) or binding.get("fields",{}).get("scope")!="image-build-only":
+        raise SystemExit("missing-drained-attestation-binding")
+    expected={
+        "lagrange-station-postgres-1","lagrange-station-reverse-proxy-1",
+        "lagrange-station-api-server-1","lagrange-station-web-1",
+        "lagrange-station-research-worker-1","lagrange-station-recommendation-runner-1",
+        "lagrange-station-candidate-runner-1","lagrange-station-owner-beta-runner-1",
+        "lagrange-station-owner-equity-v2-runner-1","lagrange-station-nt-backtest-worker-1-1",
+        "lagrange-station-nt-backtest-worker-2-1"
+    }
+    if set(evidence["containers"]) != expected:
+        raise SystemExit("incomplete-drained-inventory-evidence")
+    for name in ("lagrange-station-research-worker-1","lagrange-station-owner-equity-v2-runner-1"):
+        selected=evidence["containers"][name]["selected"]
+        if (selected["status"]!="exited" or selected["running"]!="false" or
+                selected["restart_count"] < 0 or selected["paused"]!="false" or
+                selected["dead"]!="false" or selected["oom_killed"]!="false"):
+            raise SystemExit("drained-reader-evidence-not-stopped")
 PY
 }
 
@@ -418,6 +594,8 @@ run_gate_case() {
     unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
     unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
     unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    unset RELEASE_BUILD_DRAINED_READERS_ATTESTATION
+    unset RBL_GATE_DRAINED_STATUS RBL_GATE_DRAINED_BINDING
     export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service
     export RELEASE_BUILD_SYSTEMD_MANAGER=$manager
     export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service
@@ -439,6 +617,225 @@ run_gate_case() {
   fi
   assert_record "$state" "$expected_status" "$expected_reason" ||
     fail "$name did not produce the expected real-helper record (observed $actual_status)"
+}
+
+drained_inventory=lagrange-station-postgres-1,lagrange-station-reverse-proxy-1,lagrange-station-api-server-1,lagrange-station-web-1,lagrange-station-research-worker-1,lagrange-station-recommendation-runner-1,lagrange-station-candidate-runner-1,lagrange-station-owner-beta-runner-1,lagrange-station-owner-equity-v2-runner-1,lagrange-station-nt-backtest-worker-1-1,lagrange-station-nt-backtest-worker-2-1
+
+run_drained_gate_case() {
+  local name=$1 container_mode=$2 expected_status=$3 expected_reason=$4
+  local meminfo=${5:-$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'}
+  local pressure=${6:-$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'}
+  local ps_output=${7:-} journal_mode=${8:-clean} repeat=${9:-0} drained_mode=${10:-valid}
+  local case_dir=$test_dir/drained-cases/$name
+  local state=$case_dir/state attestation=$case_dir/attestation.json
+  mkdir -m 0700 -p -- "$case_dir"
+  write_drained_attestation "$attestation"
+  export WP16_MEMINFO_FIXTURE=$meminfo WP16_PRESSURE_FIXTURE=$pressure
+  export WP16_CONTAINER_MODE=$container_mode WP16_JOURNAL_MODE=$journal_mode
+  export WP16_DRAINED_READERS=1 WP16_DRAINED_MODE=$drained_mode
+  export WP16_SYSTEMCTL_LOG=$case_dir/systemctl.tsv
+  if [ -n "$ps_output" ]; then export WP16_PS_OUTPUT=$ps_output; else unset WP16_PS_OUTPUT; fi
+  : >"$WP16_SYSTEMCTL_LOG"
+  if (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    unset RELEASE_BUILD_RESEARCH_EXCEPTION
+    export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service
+    export RELEASE_BUILD_SYSTEMD_MANAGER=system
+    export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service
+    export RELEASE_BUILD_HEALTH_CONTAINERS=$drained_inventory
+    export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=$attestation
+    RBL_LOCK_PREFIX=$case_dir/whole-lock
+    export RBL_LOCK_PREFIX
+    source "$product_helper"
+    release_build_layout_init "$fixture" "$source_commit" "$state" "wp16-drained-$name" >"$case_dir/init.out" 2>"$case_dir/init.err"
+    release_build_layout_gate "wp16-drained-$name-1" 0 >"$case_dir/gate1.out" 2>"$case_dir/gate1.err"
+    if [ "$repeat" -eq 1 ]; then
+      release_build_layout_gate "wp16-drained-$name-2" 0 >"$case_dir/gate2.out" 2>"$case_dir/gate2.err"
+    fi
+  ); then
+    actual_status=PASS
+  else
+    actual_status=FAIL
+  fi
+  assert_record "$state" "$expected_status" "$expected_reason" ||
+    fail "$name did not produce the expected drained-reader record (observed $actual_status)"
+  if [ "$repeat" -eq 1 ]; then
+    WP16_RECORD=$state/gates/gates.jsonl WP16_STATE=$state/gates/gate-state.json \
+      WP16_RUN=$state/run.json python3 - <<'PY'
+import json
+import os
+
+records=[json.loads(line) for line in open(os.environ["WP16_RECORD"],encoding="utf-8") if line.strip()]
+if len(records)!=2 or any(item["status"]!="PASS" or item["reason"]!="image-build-only-drained-readers" for item in records):
+    raise SystemExit("drained-repeat-gate-not-passing")
+run=json.load(open(os.environ["WP16_RUN"],encoding="utf-8"))
+binding=run["gate_inputs"].get("drained_readers_attestation")
+if not isinstance(binding,dict) or not binding.get("path","").endswith("/attestation.json"):
+    raise SystemExit("drained-run-binding-missing")
+state=json.load(open(os.environ["WP16_STATE"],encoding="utf-8"))
+attestation=state.get("drained_readers_attestation")
+if not isinstance(attestation,dict) or set(attestation)!={"binding","first_observation","latest_observation"}:
+    raise SystemExit("drained-state-binding-missing")
+if set(attestation["first_observation"])!={
+        "lagrange-station-research-worker-1","lagrange-station-owner-equity-v2-runner-1"}:
+    raise SystemExit("drained-state-reader-origin-missing")
+PY
+  fi
+}
+
+run_drained_init_reject() {
+  local name=$1 kind=$2 path_kind=${3:-regular}
+  local case_dir=$test_dir/drained-init-reject/$name
+  local state=$case_dir/state attestation=$case_dir/attestation.json input
+  mkdir -m 0700 -p -- "$case_dir"
+  if [ "$kind" != missing ]; then
+    write_drained_attestation "$attestation" "$kind"
+  fi
+  case "$path_kind" in
+    regular) input=$attestation ;;
+    missing) input=$case_dir/missing.json ;;
+    noncanonical) input=$case_dir//attestation.json ;;
+    symlink)
+      mv -- "$attestation" "$case_dir/real-attestation.json"
+      ln -s -- "$case_dir/real-attestation.json" "$attestation"
+      input=$attestation
+      ;;
+    unsafe) chmod 0640 -- "$attestation"; input=$attestation ;;
+    *) fail "unknown drained init path kind: $path_kind" ;;
+  esac
+  if (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    unset RELEASE_BUILD_RESEARCH_EXCEPTION
+    export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
+    export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service
+    export RELEASE_BUILD_HEALTH_CONTAINERS=$drained_inventory
+    export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=$input
+    RBL_LOCK_PREFIX=$case_dir/whole-lock
+    export RBL_LOCK_PREFIX
+    source "$product_helper"
+    release_build_layout_init "$fixture" "$source_commit" "$state" "wp16-init-reject-$name" \
+      >"$case_dir/init.out" 2>"$case_dir/init.err"
+  ); then
+    fail "invalid drained attestation unexpectedly initialized: $name"
+  fi
+  [ ! -e "$state" ] && [ ! -L "$state" ] || fail "invalid attestation created state: $name"
+}
+
+run_drained_binding_case() {
+  local name=$1 transition=$2
+  local case_dir=$test_dir/drained-binding/$name
+  local state=$case_dir/state attestation=$case_dir/attestation.json
+  local expected_reason=drained-readers-attestation-removed
+  [ "$transition" = replace ] && expected_reason=drained-readers-attestation-binding-changed
+  [ "$transition" = expire ] && expected_reason=drained-readers-attestation-invalid
+  [ "$transition" = start-stop ] && expected_reason=drained-readers-state-invalid
+  mkdir -m 0700 -p -- "$case_dir"
+  write_drained_attestation "$attestation"
+  export WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
+  export WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+  export WP16_CONTAINER_MODE=healthy WP16_JOURNAL_MODE=clean WP16_DRAINED_READERS=1 WP16_DRAINED_MODE=valid
+  export WP16_SYSTEMCTL_LOG=$case_dir/systemctl.tsv
+  : >"$WP16_SYSTEMCTL_LOG"
+  if (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256 RELEASE_BUILD_RESEARCH_EXCEPTION
+    export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
+    export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service RELEASE_BUILD_HEALTH_CONTAINERS=$drained_inventory
+    export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=$attestation
+    RBL_LOCK_PREFIX=$case_dir/whole-lock; export RBL_LOCK_PREFIX
+    source "$product_helper"
+    release_build_layout_init "$fixture" "$source_commit" "$state" "wp16-binding-$name" >/dev/null 2>"$case_dir/init.err"
+    release_build_layout_gate binding-1 0 >/dev/null 2>"$case_dir/first.err"
+    case "$transition" in
+      remove) unset RELEASE_BUILD_DRAINED_READERS_ATTESTATION ;;
+      replace) rm -f -- "$attestation"; write_drained_attestation "$attestation" replace ;;
+      expire) rm -f -- "$attestation"; write_drained_attestation "$attestation" expired ;;
+      start-stop) export WP16_DRAINED_MODE=lifecycle-drift ;;
+      *) exit 71 ;;
+    esac
+    release_build_layout_gate binding-2 0 >/dev/null 2>"$case_dir/second.err"
+  ); then
+    fail "drained binding transition unexpectedly passed: $name"
+  fi
+  assert_record "$state" FAIL "$expected_reason"
+}
+
+run_drained_inventory_reject() {
+  local name=$1 inventory=$2 expected_reason=$3
+  local case_dir=$test_dir/drained-inventory/$name
+  local state=$case_dir/state attestation=$case_dir/attestation.json
+  mkdir -m 0700 -p -- "$case_dir"
+  write_drained_attestation "$attestation"
+  export WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
+  export WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+  export WP16_CONTAINER_MODE=healthy WP16_JOURNAL_MODE=clean WP16_DRAINED_READERS=1 WP16_DRAINED_MODE=valid
+  export WP16_SYSTEMCTL_LOG=$case_dir/systemctl.tsv
+  : >"$WP16_SYSTEMCTL_LOG"
+  if (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256 RELEASE_BUILD_RESEARCH_EXCEPTION
+    export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
+    export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service RELEASE_BUILD_HEALTH_CONTAINERS=$inventory
+    export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=$attestation
+    RBL_LOCK_PREFIX=$case_dir/whole-lock; export RBL_LOCK_PREFIX
+    source "$product_helper"
+    release_build_layout_init "$fixture" "$source_commit" "$state" "wp16-inventory-$name" >/dev/null 2>"$case_dir/init.err"
+    release_build_layout_gate inventory 0 >/dev/null 2>"$case_dir/gate.err"
+  ); then
+    fail "invalid drained inventory unexpectedly passed: $name"
+  fi
+  assert_record "$state" FAIL "$expected_reason"
+}
+
+run_drained_legacy_exclusion_case() {
+  local name=simultaneous-legacy
+  local case_dir=$test_dir/drained-legacy/$name
+  local state=$case_dir/state attestation=$case_dir/attestation.json exception=$case_dir/exception
+  mkdir -m 0700 -p -- "$case_dir"
+  write_drained_attestation "$attestation"
+  write_exception "$exception"
+  export WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
+  export WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+  export WP16_CONTAINER_MODE=research-exception WP16_JOURNAL_MODE=clean WP16_DRAINED_READERS=1 WP16_DRAINED_MODE=valid
+  export WP16_SYSTEMCTL_LOG=$case_dir/systemctl.tsv
+  : >"$WP16_SYSTEMCTL_LOG"
+  if (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
+    unset RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
+    export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service RELEASE_BUILD_HEALTH_CONTAINERS=$drained_inventory
+    export RELEASE_BUILD_RESEARCH_EXCEPTION=$exception
+    export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=$attestation
+    RBL_LOCK_PREFIX=$case_dir/whole-lock; export RBL_LOCK_PREFIX
+    source "$product_helper"
+    release_build_layout_init "$fixture" "$source_commit" "$state" wp16-simultaneous-legacy >/dev/null 2>"$case_dir/init.err"
+    release_build_layout_gate legacy 0 >/dev/null 2>"$case_dir/gate.err"
+  ); then
+    fail 'simultaneous legacy exception and drained attestation unexpectedly passed'
+  fi
+  assert_record "$state" FAIL drained-readers-attestation-mutually-exclusive
 }
 
 run_restart_growth_case() {
@@ -802,4 +1199,108 @@ run_frozen_c10_gate_case unhealthy-service \
   $'MemAvailable:       4194304 kB\nSwapFree:                  0 kB' \
   "$c10_low_pressure" nonresearch-unhealthy clean FAIL container-health-invalid
 
-printf 'BUILD_CACHE_BENCHMARK_GATE_SELF_TEST: PASS (real public init/gate with structured subprocess fixtures; no Docker, Rust, or systemd mutation)\n'
+# The drained-reader route reaches the actual checked-in helper with all eleven
+# current project containers. Nine retain the ordinary healthy predicate; only
+# the two named readers use the exact stopped-state attestation.
+run_drained_gate_case positive-repeat healthy PASS image-build-only-drained-readers '' '' '' clean 1
+run_drained_gate_case research-identity-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 id
+run_drained_gate_case owner-identity-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 owner-id
+run_drained_gate_case research-image-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 image
+run_drained_gate_case owner-image-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 owner-image
+run_drained_gate_case research-health-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 health
+run_drained_gate_case owner-health-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 owner-health
+run_drained_gate_case research-exit-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 exit
+run_drained_gate_case owner-exit-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 owner-exit
+run_drained_gate_case research-restart-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 restart
+run_drained_gate_case owner-restart-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 owner-restart
+run_drained_gate_case project-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 project
+run_drained_gate_case started-time-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 started
+run_drained_gate_case finished-time-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 finished
+run_drained_gate_case running-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 running
+run_drained_gate_case restarting-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 restarting
+run_drained_gate_case paused-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 paused
+run_drained_gate_case dead-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 dead
+run_drained_gate_case oom-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 oom
+run_drained_gate_case status-drift healthy FAIL drained-readers-state-invalid '' '' '' clean 0 status
+run_drained_gate_case ordinary-serving-unhealthy nonresearch-unhealthy FAIL container-health-invalid
+run_drained_gate_case drained-low-memory healthy FAIL mem-available-below-floor \
+  $'MemAvailable:       1048576 kB\nSwapFree:            8388608 kB'
+run_drained_gate_case drained-high-psi healthy FAIL memory-pressure-high \
+  $'MemAvailable:       4194304 kB\nSwapFree:                  0 kB' \
+  $'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=5.00 avg60=0.00 avg300=0.00 total=1'
+run_drained_gate_case drained-compiler healthy FAIL compiler-process-active '' '' cargo
+run_drained_gate_case drained-oom healthy FAIL kernel-oom-observed '' '' '' oom
+run_drained_init_reject missing-attestation missing regular
+run_drained_init_reject unsafe-attestation valid unsafe
+run_drained_init_reject noncanonical-attestation valid noncanonical
+run_drained_init_reject symlink-attestation valid symlink
+run_drained_init_reject expired-attestation expired regular
+run_drained_init_reject wrong-commit-attestation wrong-commit regular
+run_drained_init_reject missing-reader-attestation missing-research regular
+run_drained_init_reject extra-reader-attestation extra regular
+run_drained_init_reject duplicate-reader-attestation duplicate regular
+run_drained_init_reject invalid-time-attestation bad-time regular
+run_drained_init_reject unknown-field-attestation unknown-field regular
+run_drained_init_reject invalid-json-attestation bad-json regular
+run_drained_inventory_reject missing-owner-inventory \
+  lagrange-station-postgres-1,lagrange-station-reverse-proxy-1,lagrange-station-api-server-1,lagrange-station-web-1,lagrange-station-research-worker-1,lagrange-station-recommendation-runner-1,lagrange-station-candidate-runner-1,lagrange-station-owner-beta-runner-1,lagrange-station-nt-backtest-worker-1-1,lagrange-station-nt-backtest-worker-2-1 \
+  drained-readers-container-inventory-invalid
+run_drained_inventory_reject unknown-inventory "$drained_inventory,lagrange-station-unknown-1" \
+  drained-readers-container-inventory-invalid
+run_drained_legacy_exclusion_case
+run_drained_binding_case removed-binding remove
+run_drained_binding_case replaced-binding replace
+run_drained_binding_case expired-binding expire
+run_drained_binding_case lifecycle-start-then-stop start-stop
+
+# Adding a drained binding after a normal initialized gate is also rejected;
+# the build cannot silently acquire the exception after run initialization.
+{
+  add_case=$test_dir/drained-binding/added-binding
+  mkdir -m 0700 -p -- "$add_case"
+  add_state=$add_case/state
+  add_attestation=$add_case/attestation.json
+  write_drained_attestation "$add_attestation"
+  export WP16_MEMINFO_FIXTURE=$'MemAvailable:       4194304 kB\nSwapFree:                  0 kB'
+  export WP16_PRESSURE_FIXTURE=$'some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1'
+  export WP16_CONTAINER_MODE=healthy WP16_JOURNAL_MODE=clean WP16_DRAINED_READERS=0
+  export WP16_SYSTEMCTL_LOG=$add_case/systemctl.tsv
+  : >"$WP16_SYSTEMCTL_LOG"
+  if (
+    unset RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT
+    unset RELEASE_BUILD_LAYOUT_COMMIT RELEASE_BUILD_LAYOUT_STATE_ROOT
+    unset RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256
+    unset RELEASE_BUILD_LAYOUT_HELPER_SHA256 RELEASE_BUILD_LAYOUT_CONFIG_SHA256
+    unset RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256 RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+    unset RELEASE_BUILD_RESEARCH_EXCEPTION RELEASE_BUILD_DRAINED_READERS_ATTESTATION
+    export RELEASE_BUILD_SYSTEMD_UNIT=wp16-build.service RELEASE_BUILD_SYSTEMD_MANAGER=system
+    export RELEASE_BUILD_HEALTH_UNITS=api.service,web.service RELEASE_BUILD_HEALTH_CONTAINERS=$drained_inventory
+    RBL_LOCK_PREFIX=$add_case/whole-lock; export RBL_LOCK_PREFIX
+    source "$product_helper"
+    release_build_layout_init "$fixture" "$source_commit" "$add_state" wp16-binding-added >/dev/null 2>"$add_case/init.err"
+    release_build_layout_gate added-1 0 >/dev/null 2>"$add_case/first.err"
+    export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=$add_attestation WP16_DRAINED_READERS=1 WP16_DRAINED_MODE=valid
+    release_build_layout_gate added-2 0 >/dev/null 2>"$add_case/second.err"
+  ); then
+    fail 'drained attestation added after initialization unexpectedly passed'
+  fi
+  assert_record "$add_state" FAIL drained-readers-attestation-added
+}
+
+# The benchmark has no deliberate drained-reader contract. Reject both a
+# benchmark-specific input and accidental inheritance from the production
+# environment rather than passing the exception through to the shared helper.
+unset RELEASE_BUILD_DRAINED_READERS_ATTESTATION
+export BENCHMARK_DRAINED_READERS_ATTESTATION=/tmp/synthetic-drained.json
+if common_gate_environment; then
+  fail 'benchmark accepted unsupported drained-reader attestation input'
+fi
+[ "${BENCHMARK_GATE_REJECTION:-}" = production-drained-readers-attestation-unsupported ] ||
+  fail 'benchmark did not report explicit drained-reader input rejection'
+unset BENCHMARK_DRAINED_READERS_ATTESTATION BENCHMARK_GATE_REJECTION
+export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=/tmp/inherited-drained.json
+if common_gate_environment; then
+  fail 'benchmark inherited production drained-reader attestation input'
+fi
+
+printf 'BUILD_CACHE_BENCHMARK_GATE_SELF_TEST: PASS (real public init/gate with full drained-reader matrix; no Docker, Rust, or systemd mutation)\n'

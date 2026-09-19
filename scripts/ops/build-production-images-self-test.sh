@@ -1418,6 +1418,46 @@ git -C "$repo_dir" config user.name fixture
 git -C "$repo_dir" add -- .
 git -C "$repo_dir" commit -qm fixture
 commit=$(git -C "$repo_dir" rev-parse HEAD)
+
+# This is a private, synthetic operator record for the official fake apply.
+# It is target-bound to the disposable fixture commit and never describes a
+# production reader or authorizes a real build.
+drained_attestation=$out_dir/drained-readers-attestation.json
+IMAGE_BUILD_DRAINED_ATTESTATION=$drained_attestation IMAGE_BUILD_DRAINED_COMMIT=$commit python3 - <<'PY'
+import datetime
+import json
+import os
+import stat
+import time
+
+path=os.environ["IMAGE_BUILD_DRAINED_ATTESTATION"]
+now=int(time.time())
+value={
+    "containers":[
+        {"container_id":"3"*64,"container_name":"lagrange-station-owner-equity-v2-runner-1",
+         "dead":False,"exit_code":0,"finished_at_utc":"2026-09-18T12:00:00.000000000Z",
+         "health_status":"unhealthy","image_id":"sha256:"+"4"*64,"oom_killed":False,
+         "paused":False,"restarting":False,"restart_count":0,"running":False,
+         "started_at_utc":"2026-09-18T00:00:00.000000000Z","status":"exited"},
+        {"container_id":"1"*64,"container_name":"lagrange-station-research-worker-1",
+         "dead":False,"exit_code":2,"finished_at_utc":"2026-09-18T12:00:00.000000000Z",
+         "health_status":"unhealthy","image_id":"sha256:"+"2"*64,"oom_killed":False,
+         "paused":False,"restarting":False,"restart_count":7,"running":False,
+         "started_at_utc":"2026-09-18T00:00:00.000000000Z","status":"exited"},
+    ],
+    "expires_at_utc":datetime.datetime.fromtimestamp(now+7200,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "format":"lagrange-build-drained-readers-attestation-v1",
+    "observed_at_utc":datetime.datetime.fromtimestamp(now-5,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "project":"lagrange-station",
+    "scope":"image-build-only",
+    "target_commit":os.environ["IMAGE_BUILD_DRAINED_COMMIT"],
+}
+raw=(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n").encode()
+fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,"wb") as handle:
+    handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+assert stat.S_IMODE(os.stat(path).st_mode)==0o600
+PY
 # Model the original clean-checkout defect without ever copying or inspecting
 # the user's real virtualenv. These synthetic ignored entries must remain
 # absent from tracked payload bundles and image expectations.
@@ -1841,9 +1881,23 @@ if args[0:2] == ["image", "save"]:
 if args[0] == "inspect":
     # The gate accepts a tightly bounded container-health projection only.
     name = args[-1]
-    if name != "lagrange-station-research-worker-1":
-        raise SystemExit("fake-docker-container-unexpected")
-    print("1" * 64 + "\ttrue\tfalse\tfalse\thealthy\t0\tlagrange-station\tsha256:" + "2" * 64 + "\t0")
+    if name in ("lagrange-station-research-worker-1", "lagrange-station-owner-equity-v2-runner-1"):
+        if name == "lagrange-station-research-worker-1":
+            ident, image, exit_code, restarts = "1" * 64, "sha256:" + "2" * 64, "2", "7"
+        else:
+            ident, image, exit_code, restarts = "3" * 64, "sha256:" + "4" * 64, "0", "0"
+        running, restarting, oom, health = "false", "false", "false", "unhealthy"
+        status, paused, dead = "exited", "false", "false"
+        started, finished = "2026-09-18T00:00:00.000000000Z", "2026-09-18T12:00:00.000000000Z"
+        if os.environ.get("IMAGE_BUILD_FAKE_DRAINED_DRIFT") == "started" and name == "lagrange-station-research-worker-1":
+            started = "2026-09-18T00:01:00.000000000Z"
+    else:
+        ident, image, exit_code, restarts = "5" * 64, "sha256:" + "6" * 64, "0", "0"
+        running, restarting, oom, health = "true", "false", "false", "healthy"
+        status, paused, dead = "running", "false", "false"
+        started, finished = "2026-09-18T00:00:00.000000000Z", "0001-01-01T00:00:00.000000000Z"
+    print("\t".join((ident, running, restarting, oom, health, restarts, "lagrange-station",
+                      image, exit_code, status, paused, dead, started, finished)))
     log("container-inspect")
     raise SystemExit(0)
 raise SystemExit("fake-docker-command-unsupported:" + " ".join(args))
@@ -1909,7 +1963,8 @@ export RBL_LOCK_PREFIX=$out_dir/whole-release-lock
 export RELEASE_BUILD_SYSTEMD_UNIT=lagrange-build.service
 export RELEASE_BUILD_SYSTEMD_MANAGER=system
 export RELEASE_BUILD_HEALTH_UNITS=lagrange-health.service
-export RELEASE_BUILD_HEALTH_CONTAINERS=lagrange-station-research-worker-1
+export RELEASE_BUILD_HEALTH_CONTAINERS=lagrange-station-postgres-1,lagrange-station-reverse-proxy-1,lagrange-station-api-server-1,lagrange-station-web-1,lagrange-station-research-worker-1,lagrange-station-recommendation-runner-1,lagrange-station-candidate-runner-1,lagrange-station-owner-beta-runner-1,lagrange-station-owner-equity-v2-runner-1,lagrange-station-nt-backtest-worker-1-1,lagrange-station-nt-backtest-worker-2-1
+export RELEASE_BUILD_DRAINED_READERS_ATTESTATION=$drained_attestation
 export LAGRANGE_CODE_COMMIT=$commit
 
 bash "$helper" --plan --compose-file "$compose_file" --env-file "$env_file" >"$out_dir/plan.out"
@@ -1975,6 +2030,28 @@ if COMPOSE_PARALLEL_LIMIT=37 bash "$helper" --apply --compose-file "$compose_fil
 fi
 grep -Fq 'manifest-file must not traverse a symlink' "$out_dir/symlink-parent.out"
 [ ! -s "$docker_log" ]
+
+# A stopped-reader lifecycle drift is rejected by the initial real gate, so
+# the official apply emits no service/build marker and does not create a
+# release manifest.
+drained_run_start_dir=$out_dir/drained-run-start-drift
+mkdir -m 0700 -- "$drained_run_start_dir"
+: >"$docker_log"
+if IMAGE_BUILD_FAKE_DRAINED_DRIFT=started COMPOSE_PARALLEL_LIMIT=37 \
+  bash "$helper" --apply --compose-file "$compose_file" --env-file "$env_file" \
+  --manifest-file "$drained_run_start_dir/production-images.manifest" \
+  >"$drained_run_start_dir/apply.out" 2>&1; then
+  echo 'self-test: drained-reader run-start drift unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'initial strict build gate failed' "$drained_run_start_dir/apply.out"
+if grep -Fq 'PRODUCTION_IMAGE_BUILD_SERVICE service=' "$drained_run_start_dir/apply.out" ||
+   grep -Fq 'build --pull=false' "$docker_log"; then
+  echo 'self-test: drained-reader run-start drift reached a build marker' >&2
+  exit 1
+fi
+[ ! -e "$drained_run_start_dir/production-images.manifest" ] &&
+  [ ! -L "$drained_run_start_dir/production-images.manifest" ]
 
 before_env=$(sha256sum "$env_file")
 

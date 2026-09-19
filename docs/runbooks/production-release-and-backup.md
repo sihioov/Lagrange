@@ -75,15 +75,65 @@ export LAGRANGE_CODE_COMMIT="$(git rev-parse HEAD)"
 export RELEASE_BUILD_SYSTEMD_UNIT='<approved-background-build.service>'
 export RELEASE_BUILD_SYSTEMD_MANAGER=system
 export RELEASE_BUILD_HEALTH_UNITS='<approved-unit-1.service>,<approved-unit-2.service>'
-export RELEASE_BUILD_HEALTH_CONTAINERS='<approved-container-1>,<approved-container-2>'
+export RELEASE_BUILD_HEALTH_CONTAINERS='lagrange-station-postgres-1,lagrange-station-reverse-proxy-1,lagrange-station-api-server-1,lagrange-station-web-1,lagrange-station-research-worker-1,lagrange-station-recommendation-runner-1,lagrange-station-candidate-runner-1,lagrange-station-owner-beta-runner-1,lagrange-station-owner-equity-v2-runner-1,lagrange-station-nt-backtest-worker-1-1,lagrange-station-nt-backtest-worker-2-1'
 # Set RELEASE_BUILD_RESEARCH_EXCEPTION only to the exact separately approved,
 # currently valid exception file owned by the build's effective UID.
+# Set RELEASE_BUILD_DRAINED_READERS_ATTESTATION only when the exact,
+# separately authorized image-build-only record below exists at this path.
+# This task did not create or authorize such a production record.
+# export RELEASE_BUILD_DRAINED_READERS_ATTESTATION='/absolute/canonical/path/record.json'
 ```
 
-Replace the health placeholders with the complete inventory confirmed at
-preflight: both control units and all current serving containers. On the
+The health list is the complete monitored project inventory, not only the
+currently serving set. It must contain exactly these eleven names, including
+the mandatory research-worker membership: `postgres-1`, `reverse-proxy-1`,
+`api-server-1`, `web-1`, `research-worker-1`, `recommendation-runner-1`,
+`candidate-runner-1`, `owner-beta-runner-1`, `owner-equity-v2-runner-1`,
+`nt-backtest-worker-1-1`, and `nt-backtest-worker-2-1`, each with the
+`lagrange-station-` prefix shown in the export above. In the drained route,
+the nine containers other than research-worker and owner-equity-v2-runner must
+still satisfy the ordinary running, nonrestarting, non-OOM, healthy, exit-zero
+predicate. The two named readers are intentionally stopped and are not
+classified as healthy; they require the exact attestation contract below.
+Without that contract, stopped readers fail the ordinary predicate. On the
 current host the control units are `docker.service` and `containerd.service`;
 the Paseo process is monitored separately, without inventing a system unit.
+
+The optional `RELEASE_BUILD_DRAINED_READERS_ATTESTATION` is a short-lived,
+operator-approved observation for one image-build attempt. The canonical
+absolute path is a nonsymlink regular file owned by the build's effective UID
+(root for the official route), mode `0600`, and is read with the same bounded
+race checks as other private gate files. Its canonical compact JSON has exactly
+these top-level keys and values: `format`
+`lagrange-build-drained-readers-attestation-v1`, `scope` `image-build-only`,
+`project` `lagrange-station`, the exact target `target_commit`,
+`observed_at_utc`, `expires_at_utc`, and `containers`. Observation must be no
+later than the read, expiry must still be future, and the lifetime from
+observation to expiry is at most twelve hours; expiry is never implicitly
+renewed. `containers` contains exactly two records in canonical order:
+`lagrange-station-owner-equity-v2-runner-1` followed by
+`lagrange-station-research-worker-1`. Each record has only the pinned
+`container_id`, `container_name`, `image_id`, `health_status`, `exit_code`,
+`restart_count`, `status`, `running`, `restarting`, `paused`, `dead`,
+`oom_killed`, `started_at_utc`, and `finished_at_utc` fields. The inspected
+Compose project and every pinned identity, image, health value, exit code,
+restart count, status, and lifecycle timestamp must match exactly. Both
+readers must be `status=exited`, all five boolean state fields false, with
+research exit `2` and Owner V2 exit `0`; lifecycle timestamps must be ordered
+and finish no later than the observation. No credential, entitlement, provider,
+or log content belongs in the record.
+
+The path, SHA-256, and complete content binding are recorded in `run.json`
+before the first producer action and in persistent gate state. Adding,
+removing, replacing, renewing, expiring, or changing the record after
+initialization fails the gate. The drained record and the legacy running
+research exception are mutually exclusive; the legacy exception remains a
+running `PRICE_CURATION_FAILED` contract and must never be reused for a
+planned stopped-reader drain. A drained pass is recorded as
+`image-build-only-drained-readers`, never `healthy` or
+`image-build-only-known-incident`. This observation does not authorize
+starting, stopping, recreating, removing, or changing either reader, and it
+does not authorize deployment or rollout.
 
 The helper obtains the whole-run lock before preparation. It records the first
 gate time and reuses that immutable origin on resume.
@@ -194,6 +244,7 @@ sudo systemd-run --unit="$RELEASE_BUILD_SYSTEMD_UNIT" \
   RELEASE_BUILD_HEALTH_UNITS="$RELEASE_BUILD_HEALTH_UNITS" \
   RELEASE_BUILD_HEALTH_CONTAINERS="$RELEASE_BUILD_HEALTH_CONTAINERS" \
   RELEASE_BUILD_RESEARCH_EXCEPTION="${RELEASE_BUILD_RESEARCH_EXCEPTION:-}" \
+  RELEASE_BUILD_DRAINED_READERS_ATTESTATION="${RELEASE_BUILD_DRAINED_READERS_ATTESTATION:-}" \
   /bin/bash "$release_source_root/scripts/ops/build-production-images.sh" --apply \
   --env-file "$image_build_env" \
   --manifest-file "/etc/lagrange/release-manifests/$LAGRANGE_CODE_COMMIT.manifest"
@@ -202,7 +253,18 @@ sudo systemd-run --unit="$RELEASE_BUILD_SYSTEMD_UNIT" \
 The printed path/hash is part of the build attempt evidence. Keep that exact
 mode-0600 input at the recorded external path for same-unit retries; it is not
 the protected operational Compose environment and contains no credential or
-active provider value.
+active provider value. The gate samples the two readers' lifecycle state at
+each checkpoint, but sampled checks cannot prove that an unrelated one-off
+container or external timer did not run between samples. Keep the existing
+operator prelaunch and postcheck requirement for zero KIS timers/one-offs and
+make no concurrent Docker or runtime mutation during an authorized build.
+
+Using the drained route requires a new source commit after the failed `c8a32ee`
+attempt, a fresh commit-specific state root and manifest, and a separately
+approved transient unit with the exact environment above. Do not resume the
+failed state under changed helper bytes, create an attestation, or retry a
+build from this runbook entry; source implementation, attestation creation,
+build authorization, installation, and activation remain separate decisions.
 
 After that build succeeds, the separately authorized installation is:
 

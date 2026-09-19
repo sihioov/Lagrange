@@ -1671,6 +1671,11 @@ common_compose_build() {
 }
 
 common_gate_environment() {
+  if [ -n "${BENCHMARK_DRAINED_READERS_ATTESTATION:-}" ] ||
+     [ -n "${RELEASE_BUILD_DRAINED_READERS_ATTESTATION:-}" ]; then
+    BENCHMARK_GATE_REJECTION=production-drained-readers-attestation-unsupported
+    return 1
+  fi
   RELEASE_BUILD_SYSTEMD_UNIT=${BENCHMARK_SYSTEMD_SERVICE:-}
   RELEASE_BUILD_SYSTEMD_MANAGER=${BENCHMARK_SYSTEMD_MANAGER:-system}
   RELEASE_BUILD_HEALTH_UNITS=${BENCHMARK_PRODUCTION_HEALTH_UNITS:-}

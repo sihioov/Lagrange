@@ -116,6 +116,8 @@ for literal in \
   'df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6' \
   'inputs/image-only-compose.env' \
   'inactive-research-entitlement-sentinel-only' \
+  'BENCHMARK_DRAINED_READERS_ATTESTATION' \
+  'production-drained-readers-attestation-unsupported' \
   '${TMPDIR:-/tmp}/lagrange-build-cache-benchmark-self-test.XXXXXXXXXX' \
   'ls-files --error-unmatch deploy/compose/.env'
 do
@@ -212,6 +214,15 @@ for literal in \
 do
   require_literal "$self_test" "$literal" 'focused image verification regression is missing'
 done
+for literal in \
+  'RELEASE_BUILD_DRAINED_READERS_ATTESTATION' \
+  'lagrange-station-research-worker-1' \
+  'lagrange-station-owner-equity-v2-runner-1' \
+  'IMAGE_BUILD_FAKE_DRAINED_DRIFT' \
+  'drained-run-start-drift'
+do
+  require_literal "$self_test" "$literal" 'drained-reader official fake apply regression is missing'
+done
 require_literal "$build" 'source "$script_dir/lib/release-build-layout.sh"' \
   'official builder must source the G2 layout helper'
 require_literal "$build" 'for service in "${local_image_services[@]}"; do' \
@@ -278,7 +289,9 @@ done
 for literal in \
   'RELEASE_BUILD_SYSTEMD_UNIT' 'RELEASE_BUILD_SYSTEMD_MANAGER' \
   'RELEASE_BUILD_HEALTH_UNITS' 'RELEASE_BUILD_HEALTH_CONTAINERS' \
-  'RELEASE_BUILD_RESEARCH_EXCEPTION' \
+  'RELEASE_BUILD_RESEARCH_EXCEPTION' 'RELEASE_BUILD_DRAINED_READERS_ATTESTATION' \
+  'lagrange-build-drained-readers-attestation-v1' 'image-build-only-drained-readers' \
+  'drained_readers_attestation' 'State.StartedAt' 'State.FinishedAt' \
   'lagrange-image-files-v1' 'lagrange-image-files-result-v1' \
   'RUST_ARTIFACT_HELPER_SHA256' 'RUST_ARTIFACT_BUNDLE_SHA256' \
   'linux/amd64' 'whiteout'

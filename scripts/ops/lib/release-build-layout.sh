@@ -72,6 +72,134 @@ if os.path.normpath(path) != path or os.path.realpath(path) != path:
 PY
 }
 
+rbl_drained_readers_attestation_binding() {
+  [ "$#" -eq 2 ] || {
+    rbl_die 'drained-readers attestation arguments are invalid'
+    return 1
+  }
+  RBL_DRAINED_ATTESTATION_PATH=$1 RBL_DRAINED_ATTESTATION_COMMIT=$2 python3 - <<'PY'
+import calendar, datetime, hashlib, json, os, re, stat
+
+path = os.environ["RBL_DRAINED_ATTESTATION_PATH"]
+commit = os.environ["RBL_DRAINED_ATTESTATION_COMMIT"]
+if (not path.startswith("/") or path.startswith("//") or "\x00" in path or
+        os.path.normpath(path) != path or os.path.realpath(path) != path):
+    raise SystemExit("drained-readers-attestation-path-invalid")
+if not re.fullmatch(r"[0-9a-f]{40}", commit) or set(commit) == {"0"}:
+    raise SystemExit("drained-readers-attestation-commit-invalid")
+
+def pairs(items):
+    value = {}
+    for key, item in items:
+        if key in value:
+            raise ValueError("duplicate-json-key")
+        value[key] = item
+    return value
+
+def reject_constant(value):
+    raise ValueError("non-finite-json-number")
+
+def canonical(value):
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+def read_private_file():
+    before = os.lstat(path)
+    if (stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode) or
+            before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != 0o600):
+        raise ValueError("drained-readers-attestation-file-unsafe")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        opened = os.fstat(fd)
+        if ((opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino) or
+                not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.geteuid() or
+                stat.S_IMODE(opened.st_mode) != 0o600):
+            raise ValueError("drained-readers-attestation-file-raced")
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            raw = handle.read(65536 + 1)
+        after = os.fstat(fd)
+        if len(raw) > 65536:
+            raise ValueError("drained-readers-attestation-file-too-large")
+        if ((before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
+                (after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+            raise ValueError("drained-readers-attestation-file-changed")
+        return raw
+    finally:
+        os.close(fd)
+
+def parse_time(value, label):
+    if not isinstance(value, str):
+        raise ValueError(label + "-type")
+    match = re.fullmatch(
+        r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,9}))?Z",
+        value)
+    if not match:
+        raise ValueError(label + "-syntax")
+    try:
+        stamp = datetime.datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S")
+    except ValueError as error:
+        raise ValueError(label + "-syntax") from error
+    fraction = (match.group(2) or "").ljust(9, "0")
+    return calendar.timegm(stamp.timetuple()) * 1000000000 + int(fraction or "0")
+
+raw = read_private_file()
+try:
+    value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs,
+                       parse_constant=reject_constant)
+except (UnicodeError, json.JSONDecodeError, ValueError) as error:
+    raise SystemExit("drained-readers-attestation-json-invalid") from error
+if raw != canonical(value):
+    raise SystemExit("drained-readers-attestation-not-canonical")
+required = {"containers", "expires_at_utc", "format", "observed_at_utc",
+            "project", "scope", "target_commit"}
+if not isinstance(value, dict) or set(value) != required:
+    raise SystemExit("drained-readers-attestation-schema")
+if (value["format"] != "lagrange-build-drained-readers-attestation-v1" or
+        value["scope"] != "image-build-only" or value["project"] != "lagrange-station" or
+        value["target_commit"] != commit):
+    raise SystemExit("drained-readers-attestation-binding")
+
+now_ns = __import__("time").time_ns()
+observed_ns = parse_time(value["observed_at_utc"], "drained-readers-observed")
+expires_ns = parse_time(value["expires_at_utc"], "drained-readers-expiry")
+if (observed_ns > now_ns or expires_ns <= now_ns or expires_ns <= observed_ns or
+        expires_ns - observed_ns > 12 * 60 * 60 * 1000000000):
+    raise SystemExit("drained-readers-attestation-expired")
+
+expected_names = sorted(("lagrange-station-owner-equity-v2-runner-1",
+                         "lagrange-station-research-worker-1"))
+container_keys = {"container_id", "container_name", "dead", "exit_code",
+                  "finished_at_utc", "health_status", "image_id", "oom_killed",
+                  "paused", "restarting", "restart_count", "running",
+                  "started_at_utc", "status"}
+containers = value["containers"]
+if not isinstance(containers, list) or [
+        item.get("container_name") if isinstance(item, dict) else None
+        for item in containers] != expected_names:
+    raise SystemExit("drained-readers-attestation-container-names")
+for item in containers:
+    if not isinstance(item, dict) or set(item) != container_keys:
+        raise SystemExit("drained-readers-attestation-container-schema")
+    name = item["container_name"]
+    if (not re.fullmatch(r"[0-9a-f]{64}", item["container_id"]) or
+            not re.fullmatch(r"sha256:[0-9a-f]{64}", item["image_id"]) or
+            item["health_status"] not in ("healthy", "unhealthy", "starting", "absent") or
+            type(item["restart_count"]) is not int or item["restart_count"] < 0 or
+            type(item["exit_code"]) is not int or
+            item["exit_code"] != (2 if name == "lagrange-station-research-worker-1" else 0) or
+            item["status"] != "exited" or
+            any(type(item[field]) is not bool or item[field] for field in
+                ("dead", "oom_killed", "paused", "restarting", "running"))):
+        raise SystemExit("drained-readers-attestation-stopped-state")
+    started_ns = parse_time(item["started_at_utc"], "drained-readers-started")
+    finished_ns = parse_time(item["finished_at_utc"], "drained-readers-finished")
+    if started_ns > finished_ns or finished_ns > observed_ns:
+        raise SystemExit("drained-readers-attestation-lifecycle")
+
+binding = {"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "fields": value}
+print(json.dumps(binding, sort_keys=True, separators=(",", ":")))
+PY
+}
+
 rbl_root() {
   if [ -n "${RELEASE_BUILD_LAYOUT_SOURCE_ROOT:-}" ]; then
     printf '%s\n' "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT"
@@ -1266,6 +1394,14 @@ release_build_layout_init() {
   # rederive this inventory and must match this initialized binding.
   rbl_runtime_inventory=$(rbl_runtime_payload_inventory "$rbl_source_root" "$rbl_layout") || return 1
   rbl_runtime_inventory_hash=$(printf '%s\n' "$rbl_runtime_inventory" | sha256sum | awk '{print $1}') || return 1
+  rbl_drained_attestation_binding=
+  if [ -n "${RELEASE_BUILD_DRAINED_READERS_ATTESTATION:-}" ]; then
+    rbl_drained_attestation_binding=$(rbl_drained_readers_attestation_binding \
+      "$RELEASE_BUILD_DRAINED_READERS_ATTESTATION" "$rbl_commit") || {
+      rbl_die 'drained-readers attestation is invalid'
+      return 1
+    }
+  fi
   # The descriptor is held before any state directory is created or mutated.
   release_build_layout_lock || return 1
   # The official CLI derives state as <manifest-parent>/.lagrange-build-state/<commit>.
@@ -1294,9 +1430,12 @@ release_build_layout_init() {
   RBL_STATE_ROOT=$rbl_state_root RBL_NAMESPACE=$rbl_namespace RBL_SOURCE_HASH=$rbl_source_hash \
   RBL_HELPER_HASH=$rbl_helper_hash RBL_LAYOUT_HASH=$rbl_layout_hash \
   RBL_RESOURCE_POLICY_HASH=$rbl_resource_policy_hash \
-  RBL_RUNTIME_INVENTORY_HASH=$rbl_runtime_inventory_hash python3 - <<'PY' || return 1
+  RBL_RUNTIME_INVENTORY_HASH=$rbl_runtime_inventory_hash \
+  RBL_DRAINED_ATTESTATION_BINDING=$rbl_drained_attestation_binding python3 - <<'PY' || return 1
 import json, os, stat, time
 path = os.environ["RBL_RUN_PATH"]
+drained_binding = os.environ.get("RBL_DRAINED_ATTESTATION_BINDING", "")
+drained_value = json.loads(drained_binding) if drained_binding else None
 value = {
   "format":"lagrange-build-layout-run-v1",
   "source_root":os.environ["RBL_SOURCE_ROOT"],
@@ -1316,7 +1455,8 @@ value = {
     "systemd_manager":os.environ.get("RELEASE_BUILD_SYSTEMD_MANAGER","system"),
     "health_units":os.environ.get("RELEASE_BUILD_HEALTH_UNITS",""),
     "health_containers":os.environ.get("RELEASE_BUILD_HEALTH_CONTAINERS",""),
-    "research_exception":os.environ.get("RELEASE_BUILD_RESEARCH_EXCEPTION","")
+    "research_exception":os.environ.get("RELEASE_BUILD_RESEARCH_EXCEPTION",""),
+    "drained_readers_attestation":drained_value
   }
 }
 encoded = (json.dumps(value, sort_keys=True, separators=(",",":")) + "\n").encode()
@@ -2389,9 +2529,21 @@ release_build_layout_gate() {
   case "$rbl_gate_previous" in
     ''|*[!0-9]*) rbl_die 'gate previous exit is not numeric'; return 1 ;;
   esac
+  rbl_gate_drained_binding=
+  rbl_gate_drained_status=absent
+  if [ -n "${RELEASE_BUILD_DRAINED_READERS_ATTESTATION:-}" ]; then
+    if rbl_gate_drained_binding=$(rbl_drained_readers_attestation_binding \
+      "$RELEASE_BUILD_DRAINED_READERS_ATTESTATION" "$RELEASE_BUILD_LAYOUT_COMMIT" 2>/dev/null); then
+      rbl_gate_drained_status=valid
+    else
+      rbl_gate_drained_status=invalid
+    fi
+  fi
   RBL_GATE_LABEL=$rbl_gate_label RBL_GATE_PREVIOUS=$rbl_gate_previous \
+  RBL_GATE_DRAINED_STATUS=$rbl_gate_drained_status \
+  RBL_GATE_DRAINED_BINDING=$rbl_gate_drained_binding \
   RBL_GATE_STATE=$RELEASE_BUILD_LAYOUT_STATE_ROOT python3 - <<'PY'
-import datetime, hashlib, json, os, posixpath, re, runpy, selectors, stat, subprocess, tempfile, time
+import calendar, datetime, hashlib, json, os, posixpath, re, runpy, selectors, stat, subprocess, tempfile, time
 
 state_root=os.path.abspath(os.environ["RBL_GATE_STATE"])
 label=os.environ["RBL_GATE_LABEL"]
@@ -2399,6 +2551,16 @@ previous=int(os.environ["RBL_GATE_PREVIOUS"])
 gate_dir=os.path.join(state_root,"gates")
 records_path=os.path.join(gate_dir,"gates.jsonl")
 state_path=os.path.join(gate_dir,"gate-state.json")
+drained_names=sorted(("lagrange-station-owner-equity-v2-runner-1",
+                      "lagrange-station-research-worker-1"))
+full_container_inventory={
+    "lagrange-station-postgres-1","lagrange-station-reverse-proxy-1",
+    "lagrange-station-api-server-1","lagrange-station-web-1",
+    "lagrange-station-research-worker-1","lagrange-station-recommendation-runner-1",
+    "lagrange-station-candidate-runner-1","lagrange-station-owner-beta-runner-1",
+    "lagrange-station-owner-equity-v2-runner-1","lagrange-station-nt-backtest-worker-1-1",
+    "lagrange-station-nt-backtest-worker-2-1"
+}
 
 class GateFailure(Exception):
     pass
@@ -2477,6 +2639,37 @@ def owned_regular(path,limit):
     finally:
         os.close(fd)
 
+def current_drained_binding():
+    status=os.environ.get("RBL_GATE_DRAINED_STATUS","absent")
+    if status=="absent": return None
+    if status!="valid": raise ValueError("drained-readers-attestation-invalid")
+    raw=os.environ.get("RBL_GATE_DRAINED_BINDING","")
+    value=json.loads(raw,object_pairs_hook=pairs,parse_constant=reject_constant)
+    if not isinstance(value,dict) or set(value)!={"fields","path","sha256"}:
+        raise ValueError("drained-readers-attestation-binding")
+    if (not isinstance(value["path"],str) or not isinstance(value["sha256"],str) or
+            not re.fullmatch(r"[0-9a-f]{64}",value["sha256"]) or
+            not isinstance(value["fields"],dict)):
+        raise ValueError("drained-readers-attestation-binding")
+    return value
+
+def prepare_drained(binding):
+    if binding is None: return None
+    fields=binding["fields"]
+    return {
+        "binding":binding,"project":fields["project"],
+        "observed_ns":docker_timestamp(fields["observed_at_utc"]),
+        "by_name":{item["container_name"]:item for item in fields["containers"]}
+    }
+
+def load_run_attestation():
+    run_path=os.path.join(state_root,"run.json")
+    raw=owned_regular(run_path,1024*1024)
+    value=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs,parse_constant=reject_constant)
+    if raw!=canonical(value) or not isinstance(value,dict) or not isinstance(value.get("gate_inputs"),dict):
+        raise ValueError("run-record-invalid")
+    return value["gate_inputs"].get("drained_readers_attestation")
+
 def command_empty():
     return {
         "exit":None,"timeout":False,"limit":False,"stdout_eof":False,"stderr_eof":False,
@@ -2546,7 +2739,8 @@ def record_pass():
     value={
         "format":"lagrange-build-gate-record-v2","label":label,
         "previous_exit":previous,"status":"PASS",
-        "reason":("image-build-only-known-incident" if "research_exception" in evidence else "healthy"),
+        "reason":("image-build-only-drained-readers" if "drained_readers_attestation" in evidence else
+                   ("image-build-only-known-incident" if "research_exception" in evidence else "healthy")),
         "time_unix_ns":time.time_ns(),"evidence":evidence
     }
     append_record(value)
@@ -2582,6 +2776,18 @@ def timestamp(text):
     if not isinstance(text,str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",text):
         raise ValueError("timestamp-invalid")
     return int(datetime.datetime.strptime(text,"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp())
+
+def docker_timestamp(text):
+    if not isinstance(text,str): raise ValueError("docker-timestamp-invalid")
+    match=re.fullmatch(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,9}))?Z",text)
+    if not match: raise ValueError("docker-timestamp-invalid")
+    try:
+        value=datetime.datetime.strptime(match.group(1),"%Y-%m-%dT%H:%M:%S")
+    except ValueError as error:
+        raise ValueError("docker-timestamp-invalid") from error
+    fraction=(match.group(2) or "").ljust(9,"0")
+    seconds=calendar.timegm(value.timetuple())
+    return seconds*1000000000+int(fraction or "0")
 
 def utc_text(microseconds):
     # Query exactly the interval that parse_range validates, including the
@@ -2848,7 +3054,7 @@ def parse_range(raw,boot,since_us,until_us,capture_count):
         raise ValueError("range-capture-count-mismatch")
     return count,oom
 
-def parse_container(raw,name,exception,now_ns):
+def parse_container(raw,name,exception,drained,now_ns):
     try:
         text=raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -2856,9 +3062,9 @@ def parse_container(raw,name,exception,now_ns):
     if not text.endswith("\n") or text.count("\n")!=1:
         raise ValueError("container-line")
     fields=text[:-1].split("\t")
-    if len(fields)!=9:
+    if len(fields)!=14:
         raise ValueError("container-columns")
-    ident,running,restarting,oom,health,restarts,project,image_id,exit_code=fields
+    ident,running,restarting,oom,health,restarts,project,image_id,exit_code,status,paused,dead,started,finished=fields
     if (not re.fullmatch(r"[0-9a-f]{64}",ident) or running not in ("true","false") or
             restarting not in ("true","false") or oom not in ("true","false") or
             not re.fullmatch(r"[0-9]+",restarts) or project!="lagrange-station" or
@@ -2885,6 +3091,35 @@ def parse_container(raw,name,exception,now_ns):
             "monitored_at_utc":datetime.datetime.fromtimestamp(now_ns//1000000000,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "restart_limit":restart_limit
         }
+    drained_spec=drained["by_name"].get(name) if drained is not None else None
+    if drained_spec is not None:
+        if status!="exited" or paused!="false" or dead!="false":
+            raise ValueError("drained-readers-state-invalid")
+        started_ns=docker_timestamp(started)
+        finished_ns=docker_timestamp(finished)
+        if (running!="false" or restarting!="false" or
+                dead!="false" or oom!="false" or health not in ("healthy","unhealthy","starting","absent") or
+                started_ns>finished_ns or finished_ns>drained["observed_ns"]):
+            raise ValueError("drained-readers-state-invalid")
+        expected={
+            "id":drained_spec["container_id"],"running":"false","restarting":"false",
+            "oom_killed":"false","health_status":drained_spec["health_status"],
+            "restart_count":drained_spec["restart_count"],"project":drained["project"],
+            "image_id":drained_spec["image_id"],"exit_code":drained_spec["exit_code"],
+            "status":"exited","paused":"false","dead":"false",
+            "started_at_utc":drained_spec["started_at_utc"],
+            "finished_at_utc":drained_spec["finished_at_utc"]
+        }
+        observed={
+            "id":ident,"running":running,"restarting":restarting,"oom_killed":oom,
+            "health_status":health,"restart_count":restart_count,"project":project,
+            "image_id":image_id,"exit_code":int(exit_code),"status":status,
+            "paused":paused,"dead":dead,"started_at_utc":started,
+            "finished_at_utc":finished
+        }
+        if observed!=expected:
+            raise ValueError("drained-readers-state-invalid")
+        return observed
     if (running,restarting,oom,health,exit_code)!=("true","false","false","healthy","0"):
         raise ValueError("container-health-invalid")
     return {
@@ -2950,55 +3185,97 @@ def write_state(value):
         except OSError: pass
         raise
 
-def next_state(old,boot,since_us,since,unit_selected,container_selected,exception):
+def next_state(old,boot,since_us,since,unit_selected,container_selected,exception,drained):
     base={"format":"lagrange-build-gate-state-v2","boot_id":boot,"journal_since":since,
           "journal_since_us":since_us,"units":unit_selected,"containers":container_selected}
     research_name="lagrange-station-research-worker-1"
+    drained_state_names=set(drained["by_name"]) if drained is not None else set()
     if old is None:
         if exception is not None:
             base["research_exception"]={
                 "binding":exception["binding"],"first_observation":container_selected[research_name],
                 "latest_observation":container_selected[research_name]
             }
+        if drained is not None:
+            base["drained_readers_attestation"]={
+                "binding":drained["binding"],
+                "first_observation":{name:container_selected[name] for name in drained_state_names},
+                "latest_observation":{name:container_selected[name] for name in drained_state_names}
+            }
         return base
     has_exception=exception is not None
+    has_drained=drained is not None
     old_has_exception="research_exception" in old
+    old_has_drained="drained_readers_attestation" in old
     if old_has_exception and not has_exception:
         raise ValueError("research-exception-removed")
     if has_exception and not old_has_exception:
         raise ValueError("research-exception-added")
+    if old_has_drained and not has_drained:
+        raise ValueError("drained-readers-attestation-removed")
+    if has_drained and not old_has_drained:
+        raise ValueError("drained-readers-attestation-added")
     base_keys=set(base)
-    if set(old)!=(base_keys|({"research_exception"} if has_exception else set())):
+    optional=(
+        ({"research_exception"} if has_exception else set()) |
+        ({"drained_readers_attestation"} if has_drained else set())
+    )
+    if set(old)!=(base_keys|optional):
         raise ValueError("gate-state-schema")
     if (old.get("format")!="lagrange-build-gate-state-v2" or old["boot_id"]!=boot or
             old["journal_since_us"]!=since_us or old["journal_since"]!=since):
         raise ValueError("gate-origin-changed")
     if old["units"]!=unit_selected or set(old["containers"])!=set(container_selected):
         raise ValueError("gate-identity-changed")
-    if not has_exception:
+    if not has_exception and not has_drained:
         if old["containers"]!=container_selected:
             raise ValueError("container-identity-changed")
         return old
-    prior=old["research_exception"]
-    if not isinstance(prior,dict) or set(prior)!={"binding","first_observation","latest_observation"}:
-        raise ValueError("research-exception-state")
-    if prior["binding"]!=exception["binding"]:
-        raise ValueError("research-exception-binding-changed")
-    first=prior["first_observation"]
-    latest=prior["latest_observation"]
-    current=container_selected[research_name]
-    if old["containers"].get(research_name)!=first:
-        raise ValueError("research-exception-origin-changed")
-    for sample in (first,latest,current):
-        state_sample_valid(sample,exception)
-    for name,value in container_selected.items():
-        if name!=research_name and old["containers"].get(name)!=value:
-            raise ValueError("container-identity-changed")
-    if (current["monitored_at_unix_ns"]<latest["monitored_at_unix_ns"] or
-            current["restart_count"]<latest["restart_count"]):
-        raise ValueError("research-restart-or-time-decreased")
+    if has_exception:
+        prior=old["research_exception"]
+        if not isinstance(prior,dict) or set(prior)!={"binding","first_observation","latest_observation"}:
+            raise ValueError("research-exception-state")
+        if prior["binding"]!=exception["binding"]:
+            raise ValueError("research-exception-binding-changed")
+        first=prior["first_observation"]
+        latest=prior["latest_observation"]
+        current=container_selected[research_name]
+        if old["containers"].get(research_name)!=first:
+            raise ValueError("research-exception-origin-changed")
+        for sample in (first,latest,current):
+            state_sample_valid(sample,exception)
+        for name,value in container_selected.items():
+            if name!=research_name and old["containers"].get(name)!=value:
+                raise ValueError("container-identity-changed")
+        if (current["monitored_at_unix_ns"]<latest["monitored_at_unix_ns"] or
+                current["restart_count"]<latest["restart_count"]):
+            raise ValueError("research-restart-or-time-decreased")
+    if has_drained:
+        prior=old["drained_readers_attestation"]
+        if (not isinstance(prior,dict) or
+                set(prior)!={"binding","first_observation","latest_observation"}):
+            raise ValueError("drained-readers-state-schema")
+        if prior["binding"]!=drained["binding"]:
+            raise ValueError("drained-readers-attestation-binding-changed")
+        first=prior["first_observation"]
+        latest=prior["latest_observation"]
+        if (not isinstance(first,dict) or not isinstance(latest,dict) or
+                set(first)!=drained_state_names or set(latest)!=drained_state_names):
+            raise ValueError("drained-readers-state-schema")
+        for name in drained_state_names:
+            if (old["containers"].get(name)!=first[name] or
+                    first[name]!=latest[name] or container_selected.get(name)!=first[name]):
+                raise ValueError("drained-readers-state-changed")
+        for name,value in container_selected.items():
+            if name not in drained_state_names and old["containers"].get(name)!=value:
+                raise ValueError("container-identity-changed")
     next_value=json.loads(json.dumps(old,sort_keys=True,separators=(",",":")))
-    next_value["research_exception"]["latest_observation"]=current
+    if has_exception:
+        next_value["research_exception"]["latest_observation"]=container_selected[research_name]
+    if has_drained:
+        next_value["drained_readers_attestation"]["latest_observation"]={
+            name:container_selected[name] for name in drained_state_names
+        }
     return next_value
 
 try:
@@ -3011,6 +3288,27 @@ try:
         fail("systemd-binding-invalid")
     units=valid_list(os.environ.get("RELEASE_BUILD_HEALTH_UNITS",""),"unit")
     containers=valid_list(os.environ.get("RELEASE_BUILD_HEALTH_CONTAINERS",""),"container")
+    try:
+        drained_binding=current_drained_binding()
+        run_drained_binding=load_run_attestation()
+    except (OSError,ValueError,UnicodeError,json.JSONDecodeError):
+        fail("drained-readers-attestation-invalid")
+    if drained_binding is None and run_drained_binding is not None:
+        fail("drained-readers-attestation-removed")
+    if drained_binding is not None and run_drained_binding is None:
+        fail("drained-readers-attestation-added")
+    if drained_binding is not None and drained_binding!=run_drained_binding:
+        evidence["drained_readers_attestation"]=drained_binding
+        fail("drained-readers-attestation-binding-changed")
+    try:
+        drained=prepare_drained(drained_binding)
+    except (KeyError,TypeError,ValueError):
+        fail("drained-readers-attestation-invalid")
+    if drained is not None:
+        evidence["drained_readers_attestation"]=drained["binding"]
+        if (set(containers)!=full_container_inventory or len(containers)!=11 or
+                any(name not in containers for name in drained_names)):
+            fail("drained-readers-container-inventory-invalid")
     now_ns=time.time_ns()
     try:
         exception=secure_exception(os.environ.get("RELEASE_BUILD_RESEARCH_EXCEPTION",""),now_ns)
@@ -3018,6 +3316,8 @@ try:
         fail("research-exception-invalid")
     if exception is not None:
         evidence["research_exception"]=exception["binding"]
+    if exception is not None and drained is not None:
+        fail("drained-readers-attestation-mutually-exclusive")
     try:
         resource_policy,resource_policy_hash=load_resource_policy()
         evidence["resource_policy_sha256"]=resource_policy_hash
@@ -3117,7 +3417,7 @@ try:
         evidence["journal"]["status"]="FAIL"
         fail("kernel-oom-observed")
     evidence["journal"]["status"]="PASS"
-    docker_format='{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}'
+    docker_format='{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}{{printf "\t"}}{{.State.Status}}{{printf "\t"}}{{.State.Paused}}{{printf "\t"}}{{.State.Dead}}{{printf "\t"}}{{.State.StartedAt}}{{printf "\t"}}{{.State.FinishedAt}}'
     container_selected={}
     for name in containers:
         inspected=run_bounded(["docker","inspect","--type","container","--format",docker_format,name])
@@ -3125,19 +3425,25 @@ try:
         if not command_ok(inspected):
             fail("container-inspect-failed")
         try:
-            selected=parse_container(inspected["stdout"],name,exception,now_ns)
+            selected=parse_container(inspected["stdout"],name,exception,drained,now_ns)
         except (ValueError,UnicodeError):
-            fail("container-health-invalid")
+            fail("drained-readers-state-invalid" if drained is not None and name in drained_names else
+                 "container-health-invalid")
         evidence["containers"][name]["selected"]=selected
         container_selected[name]=selected
     try:
-        next_value=next_state(old,boot,since_us,since,unit_selected,container_selected,exception)
+        next_value=next_state(old,boot,since_us,since,unit_selected,container_selected,exception,drained)
     except ValueError as error:
         state_reason={
             "research-exception-removed":"research-exception-removed",
             "research-exception-added":"research-exception-added",
             "research-exception-binding-changed":"research-exception-binding-changed",
             "research-restart-or-time-decreased":"research-restart-or-time-decreased",
+            "drained-readers-attestation-removed":"drained-readers-attestation-removed",
+            "drained-readers-attestation-added":"drained-readers-attestation-added",
+            "drained-readers-attestation-binding-changed":"drained-readers-attestation-binding-changed",
+            "drained-readers-state-changed":"drained-readers-state-changed",
+            "drained-readers-state-schema":"drained-readers-state-schema",
         }.get(str(error),"gate-identity-changed")
         fail(state_reason)
     write_state(next_value)
