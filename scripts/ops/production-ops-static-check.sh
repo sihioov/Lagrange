@@ -248,6 +248,19 @@ grep -Fq 'mv -Tf -- "$temporary" "$current_link"' "$release" ||
 grep -Fq 'current has a foreign link target' "$release" ||
   die 'foreign current-link fence missing'
 grep -Fq 'deploy/compose/.env' "$release" || die 'protected Compose env install missing'
+grep -Fq 'source "$script_dir/lib/dotenv.sh"' "$release" ||
+  die 'release installer must use the non-evaluating dotenv parser'
+grep -Fq 'dotenv_load "$path"' "$release" ||
+  die 'release installer must parse the protected env before use'
+grep -Fq 'dotenv_get LAGRANGE_CODE_COMMIT' "$release" ||
+  die 'release installer must read the commit pin from the protected env'
+if grep -Fq 'dotenv_effective_get' "$release"; then
+  die 'release installer must not use a shell-overridable dotenv value'
+fi
+grep -Fq 'validate_release_env_commit "$env_source" env-source' "$release" ||
+  die 'apply must validate the external env commit before staging'
+grep -Fq 'validate_release_env_commit "$target/deploy/compose/.env" release-compose-env' "$release" ||
+  die 'installed release env commit validation missing'
 grep -Fq 'root:root mode 0600' "$manifest_lib" || die 'protected file metadata contract missing'
 grep -Fq -- '--release-manifest' "$release" || die 'release manifest option missing'
 grep -Fq 'LAGRANGE_RELEASE_MANIFEST' "$release" || die 'release manifest environment contract missing'
@@ -269,6 +282,8 @@ grep -Fq 'install -o 0 -g 0 -m 0600 -- "$release_manifest"' "$release" ||
   die 'manifest must be copied once into root-owned staging'
 grep -Fq 'validate_installed_manifest "$stage/.lagrange-release-manifest"' "$release" ||
   die 'staged manifest must be revalidated after its only copy'
+grep -Fq 'validate_release "$stage" "$release_commit"' "$release" ||
+  die 'staged release env must be revalidated before publication'
 grep -Fq 'validate_release "$release_dir" "$release_commit"' "$release" ||
   die 'installed manifest must be validated before atomic activation'
 if grep -Eiq 'docker[[:space:]]' "$release"; then

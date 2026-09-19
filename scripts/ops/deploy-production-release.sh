@@ -11,6 +11,7 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/release-image-manifest.sh"
+source "$script_dir/lib/dotenv.sh"
 
 mode=dry-run
 mode_seen=0
@@ -168,6 +169,18 @@ validate_external_manifest() {
   fi
 }
 
+validate_release_env_commit() {
+  local path=$1 label=$2 env_commit
+  dotenv_load "$path" || die "$label has invalid dotenv syntax"
+  dotenv_has LAGRANGE_CODE_COMMIT ||
+    die "$label LAGRANGE_CODE_COMMIT is missing"
+  env_commit=$(dotenv_get LAGRANGE_CODE_COMMIT)
+  release_image_manifest_is_commit "$env_commit" ||
+    die "$label LAGRANGE_CODE_COMMIT is invalid"
+  [ "$env_commit" = "$release_commit" ] ||
+    die "$label LAGRANGE_CODE_COMMIT does not match requested release commit"
+}
+
 validate_installed_manifest() {
   local path=$1 label=$2
   if ! release_image_manifest_trusted_file "$path" "$label"; then
@@ -200,6 +213,7 @@ validate_release() {
   [ -e "$manifest" ] || [ -L "$manifest" ] ||
     die 'legacy manifest-less release is blocked'
   validate_installed_manifest "$manifest" installed-release-manifest
+  validate_release_env_commit "$target/deploy/compose/.env" release-compose-env
 }
 
 validate_current() {
@@ -272,6 +286,7 @@ check_root_parent "$(dirname -- "$env_source")" env-source-parent
 if ! release_image_manifest_trusted_file "$env_source" env-source; then
   die "$RELEASE_IMAGE_MANIFEST_ERROR"
 fi
+validate_release_env_commit "$env_source" env-source
 validate_external_manifest "$release_manifest"
 
 # Apply provenance: sudo against a user-owned checkout must not trip Git's
@@ -319,6 +334,7 @@ validate_installed_manifest "$stage/.lagrange-release-manifest" staged-release-m
 printf '%s\n' "$release_commit" >"$stage/.lagrange-release"
 chown -R 0:0 -- "$stage"
 chmod 0600 -- "$stage/.lagrange-release"
+validate_release "$stage" "$release_commit"
 mv -T -- "$stage" "$release_dir" || die 'cannot publish release directory'
 stage=
 validate_release "$release_dir" "$release_commit"

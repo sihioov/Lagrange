@@ -180,6 +180,36 @@ run_release() {
     "$@"
 }
 
+run_bad_env_apply() {
+  local name=$1 env_file=$2 expected=$3 sentinel=$4 negative_install out
+  negative_install=$release_fixture/negative-install-$name
+  out=$tmp/env-$name.out
+  mkdir -p "$negative_install"
+  chmod 0755 "$negative_install"
+  if (
+    # The shell value deliberately matches the requested commit. It must not
+    # rescue any missing, malformed, duplicate, or wrong protected-file pin.
+    export LAGRANGE_CODE_COMMIT=$commit_one
+    run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+      --apply --commit "$commit_one" --env-source "$env_file" \
+      --install-root "$negative_install" --release-manifest "$manifest_one"
+  ) >"$out" 2>&1; then
+    echo "production-ops-self-test: invalid protected env unexpectedly passed: $name" >&2
+    exit 1
+  fi
+  grep -Fq "$expected" "$out"
+  if grep -Fq "$sentinel" "$out"; then
+    echo "production-ops-self-test: protected env sentinel leaked: $name" >&2
+    exit 1
+  fi
+  [ ! -e "$negative_install/current" ] && [ ! -L "$negative_install/current" ]
+  [ ! -e "$negative_install/releases/$commit_one" ] &&
+    [ ! -L "$negative_install/releases/$commit_one" ]
+  for name in deploy nt configs migrations scripts; do
+    [ ! -e "$negative_install/$name" ] && [ ! -L "$negative_install/$name" ]
+  done
+}
+
 manifest_one=$release_fixture/image-manifest-one
 write_image_manifest "$manifest_one" "$commit_one"
 if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
@@ -205,6 +235,52 @@ grep -Fxq "LAGRANGE_CODE_COMMIT=$commit_one" \
 run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --check --commit "$commit_one" --install-root "$release_fixture/install" >"$tmp/check.out"
 grep -Fq 'PRODUCTION_RELEASE_CHECK: PASS' "$tmp/check.out"
+
+if ! (
+  # A shell override must not change the protected installed env binding.
+  export LAGRANGE_CODE_COMMIT=2222222222222222222222222222222222222222
+  run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+    --check --commit "$commit_one" --install-root "$release_fixture/install"
+); then
+  echo 'production-ops-self-test: shell commit override changed valid installed binding' >&2
+  exit 1
+fi
+
+env_sentinel=PROTECTED_ENV_SENTINEL_DO_NOT_PRINT_8c8f5d3c
+wrong_pin_env=$release_fixture/production-wrong-pin.env
+printf 'LAGRANGE_DATA_DIR=/var/lib/lagrange/data\nLAGRANGE_CODE_COMMIT=2222222222222222222222222222222222222222\nENV_SENTINEL=%s\n' \
+  "$env_sentinel" >"$wrong_pin_env"
+chmod 0600 "$wrong_pin_env"
+run_bad_env_apply wrong-pin "$wrong_pin_env" \
+  'env-source LAGRANGE_CODE_COMMIT does not match requested release commit' "$env_sentinel"
+
+missing_pin_env=$release_fixture/production-missing-pin.env
+printf 'LAGRANGE_DATA_DIR=/var/lib/lagrange/data\nENV_SENTINEL=%s\n' \
+  "$env_sentinel" >"$missing_pin_env"
+chmod 0600 "$missing_pin_env"
+run_bad_env_apply missing-pin "$missing_pin_env" \
+  'env-source LAGRANGE_CODE_COMMIT is missing' "$env_sentinel"
+
+empty_pin_env=$release_fixture/production-empty-pin.env
+printf 'LAGRANGE_DATA_DIR=/var/lib/lagrange/data\nLAGRANGE_CODE_COMMIT=\nENV_SENTINEL=%s\n' \
+  "$env_sentinel" >"$empty_pin_env"
+chmod 0600 "$empty_pin_env"
+run_bad_env_apply empty-pin "$empty_pin_env" \
+  'env-source LAGRANGE_CODE_COMMIT is invalid' "$env_sentinel"
+
+duplicate_pin_env=$release_fixture/production-duplicate-pin.env
+printf 'LAGRANGE_DATA_DIR=/var/lib/lagrange/data\nLAGRANGE_CODE_COMMIT=%s\nLAGRANGE_CODE_COMMIT=2222222222222222222222222222222222222222\nENV_SENTINEL=%s\n' \
+  "$commit_one" "$env_sentinel" >"$duplicate_pin_env"
+chmod 0600 "$duplicate_pin_env"
+run_bad_env_apply duplicate-pin "$duplicate_pin_env" \
+  'env-source has invalid dotenv syntax' "$env_sentinel"
+
+invalid_pin_env=$release_fixture/production-invalid-pin.env
+printf 'LAGRANGE_DATA_DIR=/var/lib/lagrange/data\nLAGRANGE_CODE_COMMIT=not-a-commit\nENV_SENTINEL=%s\n' \
+  "$env_sentinel" >"$invalid_pin_env"
+chmod 0600 "$invalid_pin_env"
+run_bad_env_apply invalid-pin "$invalid_pin_env" \
+  'env-source LAGRANGE_CODE_COMMIT is invalid' "$env_sentinel"
 
 if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --check --commit "$commit_one" --install-root "$release_fixture/install" \
@@ -269,6 +345,43 @@ run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh
   --apply --commit "$commit_two" --env-source "$release_fixture/production-two.env" \
   --install-root "$release_fixture/install" --release-manifest "$manifest_two"
 [ "$(readlink "$release_fixture/install/current")" = "releases/$commit_two" ]
+
+installed_two_env=$release_fixture/install/releases/$commit_two/deploy/compose/.env
+installed_one_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
+cp "$installed_two_env" "$tmp/installed-two-env.valid"
+sed "s/^LAGRANGE_CODE_COMMIT=.*/LAGRANGE_CODE_COMMIT=$commit_one/" \
+  "$installed_two_env" >"$tmp/installed-two-env.wrong"
+chmod 0600 "$tmp/installed-two-env.wrong"
+mv -- "$tmp/installed-two-env.wrong" "$installed_two_env"
+if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+  --check --commit "$commit_two" --install-root "$release_fixture/install" \
+  >"$tmp/check-installed-env-mismatch.out" 2>&1; then
+  echo 'production-ops-self-test: check accepted inconsistent installed env' >&2
+  exit 1
+fi
+grep -Fq 'release-compose-env LAGRANGE_CODE_COMMIT does not match requested release commit' \
+  "$tmp/check-installed-env-mismatch.out"
+[ "$(readlink "$release_fixture/install/current")" = "releases/$commit_two" ]
+cp "$tmp/installed-two-env.valid" "$installed_two_env"
+chmod 0600 "$installed_two_env"
+
+cp "$installed_one_env" "$tmp/installed-one-env.valid"
+sed "s/^LAGRANGE_CODE_COMMIT=.*/LAGRANGE_CODE_COMMIT=$commit_two/" \
+  "$installed_one_env" >"$tmp/installed-one-env.wrong"
+chmod 0600 "$tmp/installed-one-env.wrong"
+mv -- "$tmp/installed-one-env.wrong" "$installed_one_env"
+if run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
+  --rollback --commit "$commit_one" --install-root "$release_fixture/install" \
+  >"$tmp/rollback-installed-env-mismatch.out" 2>&1; then
+  echo 'production-ops-self-test: rollback accepted inconsistent installed env' >&2
+  exit 1
+fi
+grep -Fq 'release-compose-env LAGRANGE_CODE_COMMIT does not match requested release commit' \
+  "$tmp/rollback-installed-env-mismatch.out"
+[ "$(readlink "$release_fixture/install/current")" = "releases/$commit_two" ]
+cp "$tmp/installed-one-env.valid" "$installed_one_env"
+chmod 0600 "$installed_one_env"
+
 run_release bash "$release_fixture/repo/scripts/ops/deploy-production-release.sh" \
   --rollback --commit "$commit_one" --install-root "$release_fixture/install"
 [ "$(readlink "$release_fixture/install/current")" = "releases/$commit_one" ]

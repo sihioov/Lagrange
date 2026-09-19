@@ -303,6 +303,16 @@ sudo scripts/ops/deploy-production-release.sh --rollback \
   --commit <previous-exact-40-hex>
 ```
 
+The installer binds the release to the protected Compose env as well. On
+`--apply`, it parses the root-owned mode-0600 env with the non-evaluating dotenv
+parser and requires its `LAGRANGE_CODE_COMMIT` to be one exact nonzero lowercase
+40-hex value equal to `--commit`; the shell variable cannot override the file.
+Missing, empty, duplicate, malformed, or mismatched input fails before staging,
+and the copied staged and installed env are revalidated before publication or a
+current-link switch. `--check` and `--rollback` apply the same installed-env
+check before switching. Prepare the correct protected input; the installer does
+not rewrite or repair it.
+
 The release installer never runs Compose, rebuilds/restarts services, migrates
 a DB, or contacts a provider. Rollout is a separate installed-release action:
 
