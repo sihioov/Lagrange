@@ -464,16 +464,41 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
+        calendar_bootstrap=/data/raw/.calendar-bootstrap
+        validate_calendar_bootstrap() {
+          if [ ! -e "$$calendar_bootstrap" ] && [ ! -L "$$calendar_bootstrap" ]; then
+            return 0
+          fi
+          if [ ! -d "$$calendar_bootstrap" ] || [ -L "$$calendar_bootstrap" ]; then
+            return 1
+          fi
+          [ "$$(stat -c '%u:%g:%a' "$$calendar_bootstrap")" = 10001:10001:700 ] || return 1
+          for entry in "$$calendar_bootstrap"/* "$$calendar_bootstrap"/.[!.]* "$$calendar_bootstrap"/..?*; do
+            if [ ! -e "$$entry" ] && [ ! -L "$$entry" ]; then
+              continue
+            fi
+            [ ! -L "$$entry" ] || return 1
+            name="$${entry##*/}"
+            case "$$name" in
+              calendar.lock|[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].json) ;;
+              *) return 1 ;;
+            esac
+            [ -f "$$entry" ] || return 1
+            [ "$$(stat -c '%u:%g:%a:%h' "$$entry")" = 10001:10001:600:1 ] || return 1
+          done
+        }
         mkdir -p /data/raw /data/curated
-        find /data/raw -xdev -type d -exec chown 10001:10001 {} +
-        find /data/raw -xdev -type d -exec chmod 0750 {} +
-        find /data/raw -xdev -type f -exec chown 10001:10001 {} +
-        find /data/raw -xdev -type f \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0640 {} +
-        find /data/raw -xdev -type f ! \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0440 {} +
+        validate_calendar_bootstrap
+        find /data/raw -xdev -path "$$calendar_bootstrap" -prune -o -type d -exec chown 10001:10001 {} +
+        find /data/raw -xdev -path "$$calendar_bootstrap" -prune -o -type d -exec chmod 0750 {} +
+        find /data/raw -xdev -path "$$calendar_bootstrap" -prune -o -type f -exec chown 10001:10001 {} +
+        find /data/raw -xdev -path "$$calendar_bootstrap" -prune -o -type f \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0640 {} +
+        find /data/raw -xdev -path "$$calendar_bootstrap" -prune -o -type f ! \( -name manifest.jsonl -o -name commit.lock \) -exec chmod 0440 {} +
         find /data/curated -xdev -type d -exec chown 10001:10001 {} +
         find /data/curated -xdev -type d -exec chmod 0750 {} +
         find /data/curated -xdev -type f -exec chown 10001:10001 {} +
         find /data/curated -xdev -type f -exec chmod 0440 {} +
+        validate_calendar_bootstrap
     volumes:
       - ${LAGRANGE_DATA_DIR:-../data}/raw:/data/raw
       - ${LAGRANGE_DATA_DIR:-../data}/curated:/data/curated

@@ -12,6 +12,7 @@ schema_sql="$root/deploy/compose/research-schema-check.sql"
 secret_example="$root/deploy/secrets/db_research_password.example"
 read_only_fsync_probe="$root/scripts/qa/read-only-fsync.rs"
 static_only="${LAGRANGE_RESEARCH_SMOKE_STATIC_ONLY:-0}"
+raw_init_only=0
 self_test=0
 # Compose production requires this immutable build input. Static/self-test
 # fixtures use a deterministic placeholder only when the caller did not
@@ -43,8 +44,9 @@ export BACKTEST_RECONCILE_INTERVAL_SECS="${BACKTEST_RECONCILE_INTERVAL_SECS:-60}
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --static-only) static_only=1; shift ;;
+    --raw-init-ownership-only) raw_init_only=1; shift ;;
     --self-test) self_test=1; shift ;;
-    *) echo "USAGE: $0 [--static-only] [--self-test]" >&2; exit 2 ;;
+    *) echo "USAGE: $0 [--static-only] [--raw-init-ownership-only] [--self-test]" >&2; exit 2 ;;
   esac
 done
 
@@ -98,7 +100,7 @@ validator_self_tests() (
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted the QA fsync probe in the worker build context'; fi
   cp "$dockerignore" "$test_root/.dockerignore"
 
-  sed 's#find /data/raw -xdev -type d#find -L /data/raw -type l#g' "$test_compose.baseline" >"$test_compose"
+  sed 's#find /data/raw -xdev -path "\$\$calendar_bootstrap" -prune -o -type d#find -L /data/raw -type l#g' "$test_compose.baseline" >"$test_compose"
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a symlink-following Raw init'; fi
   cp "$test_compose.baseline" "$test_compose"
 
@@ -244,12 +246,14 @@ require(raw_init.get("cap_drop") == ["ALL"] and sorted(raw_init.get("cap_add", [
 require("no-new-privileges:true" in raw_init.get("security_opt", []), "research-raw-init no-new-privileges contract is missing")
 require(len(init_raw) == 1 and not init_raw[0].get("read_only", False) and init_raw[0].get("source") == raw[0].get("source"), "research-raw-init Raw mount is incorrect")
 require(len(init_curated) == 1 and not init_curated[0].get("read_only", False) and init_curated[0].get("source") == curated[0].get("source"), "research-raw-init Curated mount is incorrect")
-init_command = " ".join(raw_init.get("command", []))
-require("find /data/raw -xdev -type d" in init_command and "find /data/raw -xdev -type f" in init_command, "research-raw-init must recurse without crossing filesystems")
+init_command = " ".join(raw_init.get("command", [])).replace("$$", "$")
+require('find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type d' in init_command and 'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type f' in init_command, "research-raw-init must recurse without crossing filesystems and prune the calendar subtree")
 require("find /data/curated -xdev -type d" in init_command and "find /data/curated -xdev -type f" in init_command, "research-raw-init must prepare Curated without crossing filesystems")
 require("manifest.jsonl" in init_command and "commit.lock" in init_command, "research-raw-init mutable-file contract is missing")
+require("calendar_bootstrap=/data/raw/.calendar-bootstrap" in init_command and init_command.count("validate_calendar_bootstrap") >= 3, "research-raw-init calendar preservation fence is missing")
+require("10001:10001:700" in init_command and "10001:10001:600:1" in init_command, "research-raw-init calendar ownership/mode contract is missing")
 require("chown 10001:10001" in init_command and all(mode in init_command for mode in ("chmod 0750", "chmod 0640", "chmod 0440")), "research-raw-init ownership/mode contract is missing")
-require(not re.search(r"(^|\s)-L(\s|$)", init_command) and "-type l" not in init_command, "research-raw-init must never follow or mutate symlinks")
+require(not re.search(r"(^|\s)find\s+-L(\s|$)", init_command) and "-type l" not in init_command, "research-raw-init must never follow or mutate symlinks")
 
 schema = services["research-schema-check"]
 postgres = "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a"
@@ -421,14 +425,20 @@ trap cleanup EXIT
 raw_init_ownership_probe() (
   alpine='alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
   rust_image='rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900'
+  cargo_registry="${LAGRANGE_CARGO_REGISTRY:-/home/l1nnx/.cargo/registry}"
+  [ -d "$cargo_registry" ] || fail 'Raw init calendar harness requires the local Cargo registry cache'
   probe_id="${project}-raw-init"
   raw_volume="${probe_id}-raw"
+  curated_volume="${probe_id}-curated"
   outside_volume="${probe_id}-outside"
   binary_volume="${probe_id}-binary"
-  trap 'dkr volume rm -f "$raw_volume" "$outside_volume" "$binary_volume" >/dev/null 2>&1 || true' EXIT
+  harness_volume="${probe_id}-calendar-harness"
+  trap 'dkr volume rm -f "$raw_volume" "$curated_volume" "$outside_volume" "$binary_volume" "$harness_volume" >/dev/null 2>&1 || true' EXIT
   dkr volume create "$raw_volume" >/dev/null || fail 'Raw init probe volume creation failed'
+  dkr volume create "$curated_volume" >/dev/null || fail 'Raw init Curated volume creation failed'
   dkr volume create "$outside_volume" >/dev/null || fail 'Raw init outside volume creation failed'
   dkr volume create "$binary_volume" >/dev/null || fail 'Raw init fsync-probe volume creation failed'
+  dkr volume create "$harness_volume" >/dev/null || fail 'Raw init calendar harness volume creation failed'
   dkr run --rm --network none --user 0:0 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
     mkdir -p /data/raw/manifests/provider=krx/market=kr /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture
     printf "{}\n" > /data/raw/manifests/provider=krx/market=kr/manifest.jsonl
@@ -443,8 +453,156 @@ raw_init_ownership_probe() (
     ln -s /outside /data/raw/outside-link
   ' >/dev/null || fail 'Raw init ownership fixture setup failed'
   init_command="$(rc config --format json | python3 -c 'import json,sys; value=json.load(sys.stdin)["services"]["research-raw-init"]["command"]; print("\n".join(value) if isinstance(value,list) else value)')" || fail 'Raw init command extraction failed'
-  dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec "$init_command" || fail 'recursive Raw init probe failed'
-  dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true -v "$(hostpath "$root"):/source:ro" -v "${binary_volume}:/probe" "$rust_image" rustc -O -o /probe/read-only-fsync /source/scripts/qa/read-only-fsync.rs || fail 'read-only fsync probe compilation failed'
+  # `docker compose config` keeps Compose's $$ escape in its JSON. The direct
+  # disposable invocation below must execute the resulting container shell
+  # command, so remove only that interpolation escape before passing it to sh.
+  init_command="${init_command//\$\$/\$}"
+  dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true -v "$(hostpath "$root"):/source:ro" -v "${harness_volume}:/harness" "$alpine" /bin/sh -ec '
+    mkdir -p /harness/src
+    printf "%s\\n" \
+      "[package]" \
+      "name = \"calendar-lock-probe\"" \
+      "version = \"0.1.0\"" \
+      "edition = \"2024\"" \
+      "" \
+      "[dependencies]" \
+      "domain = { path = \"/source/crates/domain\" }" \
+      "libc = \"0.2\"" \
+      "serde = { version = \"1\", features = [\"derive\"] }" \
+      "serde_json = \"1\"" \
+      "thiserror = \"2\"" > /harness/Cargo.toml
+    printf "%s\\n" \
+      "#[path = \"/source/data-pipelines/collectors/src/calendar_claim.rs\"]" \
+      "mod calendar_claim;" \
+      "" \
+      "use calendar_claim::CalendarDayLock;" \
+      "use domain::{BatchId, TradingDate};" \
+      "use std::path::Path;" \
+      "use std::str::FromStr;" \
+      "" \
+      "fn main() {" \
+      "    let mut args = std::env::args().skip(1);" \
+      "    let command = args.next().expect(\"command\");" \
+      "    let root = args.next().expect(\"absolute raw root\");" \
+      "    let date = TradingDate::parse(&args.next().expect(\"date\")).expect(\"valid date\");" \
+      "    assert!(args.next().is_none(), \"unexpected argument\");" \
+      "    match command.as_str() {" \
+      "        \"create\" => {" \
+      "            let guard = CalendarDayLock::acquire(Path::new(&root), date).expect(\"initial CalendarDayLock acquire\");" \
+      "            let batch = BatchId::from_str(\"11111111-1111-4111-8111-111111111111\").expect(\"fixture batch UUID\");" \
+      "            guard.consume(batch).expect(\"consume claim\");" \
+      "            assert_eq!(guard.existing().expect(\"read claim\"), Some(batch));" \
+      "            println!(\"CREATE_OK\");" \
+      "        }" \
+      "        \"acquire\" => match CalendarDayLock::acquire(Path::new(&root), date) {" \
+      "            Ok(guard) => {" \
+      "                assert_eq!(guard.existing().expect(\"read claim\"), Some(BatchId::from_str(\"11111111-1111-4111-8111-111111111111\").unwrap()));" \
+      "                println!(\"ACQUIRE_OK\");" \
+      "            }" \
+      "            Err(error) => {" \
+      "                eprintln!(\"ACQUIRE_ERR {error}\");" \
+      "                std::process::exit(2);" \
+      "            }" \
+      "        }," \
+      "        _ => panic!(\"unknown command\")," \
+      "    }" \
+      "}" > /harness/src/main.rs
+  ' >/dev/null || fail 'Raw init calendar harness fixture setup failed'
+  (
+    flock -x 9
+    dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true \
+      -v "$(hostpath "$root"):/source:ro" -v "$(hostpath "$cargo_registry"):/usr/local/cargo/registry:ro" -v "${harness_volume}:/harness" -v "${binary_volume}:/probe" \
+      "$rust_image" /bin/sh -ec 'cd /harness && CARGO_BUILD_JOBS=2 cargo generate-lockfile --offline && CARGO_BUILD_JOBS=2 cargo build --locked --offline && cp target/debug/calendar-lock-probe /probe/calendar-lock' \
+  ) 9>/tmp/lagrange-kis-live-cargo.lock || fail 'actual CalendarDayLock harness build failed'
+  dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add FOWNER --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${binary_volume}:/probe:ro" "$alpine" /probe/calendar-lock create /data/raw 2026-09-19 \
+    >/dev/null || fail 'actual CalendarDayLock fixture creation failed'
+  dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
+    chown 10001:10001 /data/raw/.calendar-bootstrap /data/raw/.calendar-bootstrap/calendar.lock /data/raw/.calendar-bootstrap/2026-09-19.json
+    cp /data/raw/.calendar-bootstrap/2026-09-19.json /outside/calendar-claim.json
+  ' >/dev/null || fail 'calendar fixture ownership setup failed'
+  calendar_snapshot() {
+    dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw:ro" -v "${outside_volume}:/outside:ro" "$alpine" /bin/sh -ec '
+      directory=/data/raw/.calendar-bootstrap
+      lock=$directory/calendar.lock
+      claim=$directory/2026-09-19.json
+      stat -c "%n|%u:%g:%a:%h:%i:%s" "$directory" "$lock" "$claim"
+      sha256sum "$lock" "$claim"
+    '
+  }
+  run_calendar_init() {
+    dkr run --rm --network none --user 0:0 --read-only --tmpfs /tmp --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true \
+      -v "${raw_volume}:/data/raw" -v "${curated_volume}:/data/curated" "$alpine" /bin/sh -ec "$init_command"
+  }
+  acquire_calendar() {
+    dkr run --rm --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true \
+      -v "${raw_volume}:/data/raw" -v "${binary_volume}:/probe:ro" "$alpine" /probe/calendar-lock acquire /data/raw 2026-09-19
+  }
+  calendar_before="$temp_root/raw-init-calendar-before"
+  calendar_after="$temp_root/raw-init-calendar-after"
+  calendar_snapshot >"$calendar_before" || fail 'calendar fixture baseline snapshot failed'
+  run_calendar_init >/dev/null || fail 'recursive Raw init probe failed'
+  calendar_snapshot >"$calendar_after" || fail 'calendar fixture post-init snapshot failed'
+  cmp -- "$calendar_before" "$calendar_after" || fail 'Raw init changed valid calendar metadata or bytes'
+  [ "$(acquire_calendar)" = 'ACQUIRE_OK' ] || fail 'actual CalendarDayLock did not acquire after Raw init'
+  run_calendar_init >/dev/null || fail 'idempotent Raw init probe failed'
+  calendar_snapshot >"$calendar_after" || fail 'calendar fixture idempotent snapshot failed'
+  cmp -- "$calendar_before" "$calendar_after" || fail 'idempotent Raw init changed valid calendar metadata or bytes'
+  [ "$(acquire_calendar)" = 'ACQUIRE_OK' ] || fail 'actual CalendarDayLock did not acquire after idempotent Raw init'
+
+  expect_calendar_rejection() {
+    reason="$1"
+    if run_calendar_init >/dev/null 2>&1; then
+      fail "Raw init accepted unsafe calendar fixture: $reason"
+    fi
+  }
+  assert_calendar_rejection_preserved() {
+    reason="$1"
+    before="$temp_root/raw-init-calendar-negative-before"
+    after="$temp_root/raw-init-calendar-negative-after"
+    calendar_snapshot >"$before" || fail "calendar negative snapshot failed before $reason"
+    expect_calendar_rejection "$reason"
+    calendar_snapshot >"$after" || fail "calendar negative snapshot failed after $reason"
+    cmp -- "$before" "$after" || fail "Raw init normalized unsafe calendar fixture: $reason"
+  }
+  mutate_calendar() {
+    dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec "$1"
+  }
+  mutate_calendar 'chmod 0750 /data/raw/.calendar-bootstrap'
+  assert_calendar_rejection_preserved 'wrong directory mode'
+  mutate_calendar 'chmod 0700 /data/raw/.calendar-bootstrap'
+  mutate_calendar 'chmod 0440 /data/raw/.calendar-bootstrap/2026-09-19.json'
+  assert_calendar_rejection_preserved 'wrong claim mode'
+  mutate_calendar 'chmod 0600 /data/raw/.calendar-bootstrap/2026-09-19.json'
+  mutate_calendar 'chown 12345:12345 /data/raw/.calendar-bootstrap'
+  assert_calendar_rejection_preserved 'wrong directory owner'
+  mutate_calendar 'chown 10001:10001 /data/raw/.calendar-bootstrap'
+  mutate_calendar 'chown 12345:12345 /data/raw/.calendar-bootstrap/2026-09-19.json'
+  assert_calendar_rejection_preserved 'wrong claim owner'
+  mutate_calendar 'chown 10001:10001 /data/raw/.calendar-bootstrap/2026-09-19.json'
+  mutate_calendar 'rm /data/raw/.calendar-bootstrap/2026-09-19.json && ln -s /outside/sentinel /data/raw/.calendar-bootstrap/2026-09-19.json'
+  assert_calendar_rejection_preserved 'claim symlink'
+  mutate_calendar 'test -L /data/raw/.calendar-bootstrap/2026-09-19.json'
+  mutate_calendar 'rm /data/raw/.calendar-bootstrap/2026-09-19.json && cp /outside/calendar-claim.json /data/raw/.calendar-bootstrap/2026-09-19.json && chown 10001:10001 /data/raw/.calendar-bootstrap/2026-09-19.json && chmod 0600 /data/raw/.calendar-bootstrap/2026-09-19.json'
+  mutate_calendar 'ln /data/raw/.calendar-bootstrap/2026-09-19.json /data/raw/.calendar-bootstrap/2026-09-20.json'
+  assert_calendar_rejection_preserved 'claim hardlink'
+  mutate_calendar 'test "$(stat -c "%h" /data/raw/.calendar-bootstrap/2026-09-19.json)" = 2 && test "$(stat -c "%h" /data/raw/.calendar-bootstrap/2026-09-20.json)" = 2'
+  mutate_calendar 'rm /data/raw/.calendar-bootstrap/2026-09-20.json'
+  mutate_calendar 'printf unknown > /data/raw/.calendar-bootstrap/unexpected'
+  assert_calendar_rejection_preserved 'unknown direct entry'
+  mutate_calendar 'test -f /data/raw/.calendar-bootstrap/unexpected'
+  mutate_calendar 'rm /data/raw/.calendar-bootstrap/unexpected && mkdir /data/raw/.calendar-bootstrap/nested'
+  assert_calendar_rejection_preserved 'nested direct entry'
+  mutate_calendar 'test -d /data/raw/.calendar-bootstrap/nested'
+  mutate_calendar 'rmdir /data/raw/.calendar-bootstrap/nested'
+  run_calendar_init >/dev/null || fail 'final valid Raw init probe failed'
+  [ "$(acquire_calendar)" = 'ACQUIRE_OK' ] || fail 'actual CalendarDayLock did not reacquire after negative fixtures'
+  mutate_calendar 'rm -rf /data/raw/.calendar-bootstrap'
+  run_calendar_init >/dev/null || fail 'missing calendar subtree Raw init probe failed'
+  mutate_calendar 'test ! -e /data/raw/.calendar-bootstrap && test ! -L /data/raw/.calendar-bootstrap'
+  (
+    flock -x 9
+    dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true -v "$(hostpath "$root"):/source:ro" -v "${binary_volume}:/probe" "$rust_image" rustc -O -o /probe/read-only-fsync /source/scripts/qa/read-only-fsync.rs
+  ) 9>/tmp/lagrange-kis-live-cargo.lock || fail 'read-only fsync probe compilation failed'
   dkr run --rm --network none --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" -v "${binary_volume}:/probe:ro" "$alpine" /bin/sh -ec '
     evidence=/data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture/eod.json
     manifest=/data/raw/manifests/provider=krx/market=kr/manifest.jsonl
@@ -490,8 +648,12 @@ export POSTGRES_USER=lagrange POSTGRES_DB=lagrange APP_ENV=qa RESEARCH_FETCH_MOD
 export RESEARCH_MAX_PUBLICATION_AGE_SECS=315576000
 export RESEARCH_RUN_AT_KST="$(TZ=Asia/Seoul date -d '+12 hours' +%H:%M 2>/dev/null || TZ=Asia/Seoul date +%H:%M)"
 
-created=1
 raw_init_ownership_probe
+if [ "$raw_init_only" -eq 1 ]; then
+  echo 'RESEARCH_WORKER_SMOKE: raw-init ownership PASS'
+  exit 0
+fi
+created=1
 audit_root="$temp_root/context-audit"
 audit_dockerfile="$temp_root/context-audit.Dockerfile"
 install -d "$audit_root/target" "$audit_root/credentials" "$audit_root/secrets" "$audit_root/data/raw" \

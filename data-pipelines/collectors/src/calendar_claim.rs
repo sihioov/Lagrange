@@ -190,4 +190,42 @@ mod tests {
         std::os::unix::fs::symlink(root.path().join("missing"), guard.claim_path()).unwrap();
         assert!(guard.existing().is_err());
     }
+
+    #[test]
+    fn mode_drift_rejects_reserved_state_until_exact_modes_are_restored() {
+        let root = tempfile::tempdir().unwrap();
+        let date = TradingDate::parse("2026-09-14").unwrap();
+        let batch = BatchId::generate();
+        let guard = CalendarDayLock::acquire(root.path(), date).unwrap();
+        guard.consume(batch).unwrap();
+        drop(guard);
+
+        let directory = root.path().join(".calendar-bootstrap");
+        let lock = directory.join("calendar.lock");
+        let claim = directory.join(format!("{}.json", date.to_iso()));
+
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(CalendarDayLock::acquire(root.path(), date).is_err());
+        assert_eq!(std::fs::symlink_metadata(&directory).unwrap().mode() & 0o7777, 0o750);
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o440)).unwrap();
+        assert!(CalendarDayLock::acquire(root.path(), date).is_err());
+        assert_eq!(std::fs::symlink_metadata(&lock).unwrap().mode() & 0o7777, 0o440);
+        std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let guard = CalendarDayLock::acquire(root.path(), date).unwrap();
+        assert_eq!(guard.existing().unwrap(), Some(batch));
+        drop(guard);
+
+        std::fs::set_permissions(&claim, std::fs::Permissions::from_mode(0o440)).unwrap();
+        let guard = CalendarDayLock::acquire(root.path(), date).unwrap();
+        assert!(guard.existing().is_err());
+        drop(guard);
+        assert_eq!(std::fs::symlink_metadata(&claim).unwrap().mode() & 0o7777, 0o440);
+        std::fs::set_permissions(&claim, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let restored = CalendarDayLock::acquire(root.path(), date).unwrap();
+        assert_eq!(restored.existing().unwrap(), Some(batch));
+    }
 }
