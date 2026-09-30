@@ -59,6 +59,34 @@ pub use intraday::*;
 #[path = "owner_equity_v2/intraday_producer.rs"]
 mod intraday_producer;
 pub use intraday_producer::*;
+#[path = "owner_equity_v2/market_stream.rs"]
+mod market_stream;
+pub use market_stream::{
+    CommitResult, DesiredSet, DesiredStreamItem, MarketStreamStorageError,
+    OwnerMarketStreamRepository, ReleaseOutcome, STREAM_CACHE_RETENTION_HOURS,
+    STREAM_LEASE_SECONDS, STREAM_MAX_ACTIVE_IDENTITIES, STREAM_MAX_ACTIVE_LEASES,
+    STREAM_MAX_IDENTITIES_PER_LEASE, STREAM_PRODUCER_LEASE_SECONDS,
+    STREAM_PRODUCER_RENEW_AFTER_SECONDS, STREAM_PUBLICATION_MAX_AGE, STREAM_RENEW_AFTER_MS,
+    STREAM_SCHEMA_VERSION, StreamAvailability, StreamCacheRow, StreamConnectionState,
+    StreamFreshness, StreamIdentity, StreamLease, StreamLeaseIdentity, StreamLeaseRequest,
+    StreamMarketState, StreamProducerLease, StreamSessionProof, StreamSnapshot, StreamStatus,
+    StreamStatusCode, SubscriptionOperation,
+};
+#[path = "owner_equity_v2/market_stream_producer.rs"]
+mod market_stream_producer;
+pub use market_stream_producer::{
+    MarketStreamApplyOutcome, MarketStreamControlOutcome, MarketStreamProducerError,
+    MarketStreamProducerOutcome, MarketStreamReconcileOutcome, MarketStreamTransportStatus,
+    OwnerMarketStreamProducer,
+};
+
+#[cfg(all(test, feature = "market-stream-db-tests"))]
+#[path = "owner_equity_v2/market_stream_c3a_tests.rs"]
+mod market_stream_c3a_tests;
+
+#[cfg(test)]
+#[path = "owner_equity_v2/market_stream_producer_tests.rs"]
+mod market_stream_producer_tests;
 
 /// Dedicated type claimed by the V2 worker.  V1 jobs use different values.
 pub const OWNER_EQUITY_V2_JOB_TYPE: &str = "owner_equity_v2";

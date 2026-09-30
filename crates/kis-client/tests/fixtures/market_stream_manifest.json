@@ -1,0 +1,79 @@
+{
+  "synthetic": true,
+  "source_ids": ["P1:714d1437-8f62-43db-a73c-cf509d3f6aa7", "P5:26dfe350-eb72-48e5-8175-34eb27970f3e"],
+  "source_dates": ["2026-09-11", "2026-09-14"],
+  "wire_version": "kis-h0stcnt0-20260914-v1",
+  "expected_field_count": 47,
+  "symbols": [
+    "005930", "000660", "373220", "207940", "005380", "000270", "105560", "055550",
+    "068270", "035420", "035720", "005490", "051910", "006400", "012330", "028260",
+    "012450", "329180", "034020", "015760", "017670", "030200", "066570", "009150",
+    "096770", "036570", "090430", "011200", "003490", "000810"
+  ],
+  "invented_regular_fixture": {
+    "symbol": "005930",
+    "provider_time": "100001",
+    "price": "70000",
+    "direction": "2",
+    "change_amount": "100",
+    "change_percent": "0.14",
+    "trade_volume": "10",
+    "cumulative_volume": "20",
+    "business_date": "20260921",
+    "opening_class": "20",
+    "halted": "N",
+    "hour_class": "0",
+    "transaction_class": "",
+    "market_class": "2"
+  },
+  "four_record_fixture": {
+    "provenance": "locally generated synthetic P1/P5 positional layout; numbers are invented",
+    "wire_payload": "0|H0STCNT0|004|005930^100001^70000^2^100^0.14^^^^^^^10^20^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^^2^005930^100001^70000^2^100^0.14^^^^^^^11^21^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^^2^005930^100002^70000^2^100^0.14^^^^^^^12^22^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^^2^005930^100002^70000^2^100^0.14^^^^^^^13^23^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^^2",
+    "record_count": 4,
+    "field_count": 188,
+    "expected": "four distinct regular observations; records one and two prove same-second distinct volume"
+  },
+  "malformed_fixtures": [
+    {
+      "name": "legacy_46",
+      "wire_payload": "0|H0STCNT0|001|005930^100001^70000^2^100^0.14^^^^^^^10^20^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^",
+      "expected": "WIRE_SCHEMA_MISMATCH"
+    },
+    {
+      "name": "overfull_48",
+      "wire_payload": "0|H0STCNT0|001|005930^100001^70000^2^100^0.14^^^^^^^10^20^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^^2^x",
+      "expected": "WIRE_SCHEMA_MISMATCH"
+    },
+    {
+      "name": "bad_count",
+      "wire_payload": "0|H0STCNT0|002|005930^100001^70000^2^100^0.14^^^^^^^10^20^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^^2",
+      "expected": "WIRE_SCHEMA_MISMATCH"
+    },
+    {
+      "name": "extra_pipe",
+      "wire_payload": "0|H0STCNT0|001|005930^100001^70000^2^100^0.14^^^^^^^10^20^^^^^^^^^^^^^^^^^^^^20260921^20^N^^^^^^^^0^^^2|extra",
+      "expected": "UNSUPPORTED_MESSAGE"
+    },
+    {
+      "name": "invalid_utf8",
+      "wire_hex": "ff",
+      "expected": "INVALID_UTF8"
+    },
+    {
+      "name": "embedded_newline",
+      "wire_prefix_hex": "0a",
+      "expected": "CONTROL_CHARACTER"
+    },
+    {
+      "name": "overlong_field",
+      "field_index": 7,
+      "field_length": 65,
+      "expected": "FIELD_TOO_LARGE"
+    }
+  ],
+  "expected_outcomes": [
+    "47-field regular record accepted only with typed session proof",
+    "46-field, 48-field, malformed framing, masked server frame, duplicate ACK, stale and contradictory records rejected",
+    "all approval and socket values are synthetic; no provider payload or credential is included"
+  ]
+}

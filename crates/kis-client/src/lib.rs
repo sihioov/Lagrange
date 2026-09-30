@@ -23,6 +23,10 @@ pub mod idempotency;
 pub mod live_transport;
 pub mod mapping;
 pub mod market_data;
+pub mod market_stream;
+pub mod market_stream_approval;
+pub mod market_stream_state;
+pub mod market_stream_wire;
 pub mod order_state;
 pub mod rate_limit;
 pub mod read_coordination;
@@ -45,6 +49,18 @@ pub use mapping::{InstrumentMapper, OrderAck, OrderRequest, OrderSide, OrderType
 pub use market_data::{
     CoordinatedReadAuth, IntradayAttemptError, IntradayAttemptMetadata, IntradayAttemptOutcome,
     IntradayAttemptReply, IntradayAttemptReservationMetadata, KisMarketDataClient, MarketDataReply,
+};
+pub use market_stream::{
+    MarketStreamClient, MarketStreamConfig, MarketStreamEndpoint, MarketStreamError,
+    MarketStreamEvent, MarketStreamSession, MarketSubscriptionAck, MarketSubscriptionOperation,
+    PreparedMarketSubscriptionCommand, ProductionMarketStreamEndpoint, StreamStatusCode,
+};
+pub use market_stream_approval::{ApprovalError, ApprovalStateSnapshot};
+pub use market_stream_state::{ConnectionEpoch, MarketStreamDomain};
+pub use market_stream_wire::{
+    BasePriceReason, DecimalText, Direction, MarketReceipt, MarketStreamSessionProof,
+    MarketTradeObservation, NonRegularMarketObservation, ParsedMarketMessage, ParsedMarketRecord,
+    SessionProofError, WIRE_VERSION, WireError,
 };
 pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
 pub use read_coordination::ReadCredentialSnapshot;

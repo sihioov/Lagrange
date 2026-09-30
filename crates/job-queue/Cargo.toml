@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+# Opt-in only: this compiles the disposable PostgreSQL/loopback boundary
+# harness and enables kis-client's loopback-only test constructors.  It is
+# never a production default or runtime override.
+market-stream-db-tests = ["kis-client/test-support"]
+
 [dependencies]
 # The factor values a baseline backtest decides from. Pulled in so the RUNNER
 # computes them with the same engine the paper and live paths use: a second
@@ -47,4 +53,6 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
+base64 = "0.22"
+sha1_smol = "1"
 tempfile = "3"

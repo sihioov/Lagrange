@@ -58,6 +58,7 @@ pub mod instrument_master;
 pub mod intraday_quotes;
 pub mod kind_correction_normalize;
 pub mod kind_normalize;
+pub mod market_stream;
 pub mod normalize;
 pub mod owner_equity_v2;
 pub mod provider;
@@ -185,6 +186,10 @@ pub use kind_normalize::{
     KindNormalizationOutcome, KindNormalizationSourceFile, KindNormalizeError, RequiredField,
     RowLocation, TimezoneAssumption, deterministic_kind_disclosure_normalized_batch_id,
     normalize_kind_disclosure_batch, parse_kind_disclosure_pages,
+};
+pub use market_stream::{
+    STREAM_CURRENCY, STREAM_SOURCE, STREAM_TIMEZONE, STREAM_VENUE, STREAM_WIRE_VERSION,
+    StreamBasePriceReason, StreamQuote, StreamQuoteDirection, StreamQuoteError,
 };
 pub use normalize::{
     KIS_CALENDAR_DOCUMENT_ID, KIS_CALENDAR_NORMALIZED_ENDPOINT_PREFIX, KIS_CALENDAR_NORMALIZER,
