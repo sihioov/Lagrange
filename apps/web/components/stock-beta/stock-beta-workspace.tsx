@@ -27,6 +27,7 @@ import {
   ownerEquityV2AddBodySchema,
   ownerEquityV2ChartRangeSchema,
 } from "@/lib/products/equity-signals-contracts";
+import { MARKET_STREAM_INSTRUMENTS } from "@/lib/products/intraday-stream-universe";
 import {
   StockBetaChartLoadCoordinator,
   type StockBetaChartLoadRequest,
@@ -41,6 +42,8 @@ import type {
   StockBetaSignalState,
 } from "./dashboard/types";
 import { StockBetaPolicyNotice } from "./dashboard/widgets/policy-boundary-widget";
+import { IntradayStreamBoard } from "./quote/intraday-stream-board";
+import { IntradayStreamProvider } from "./quote/intraday-stream-provider";
 import { formatStockBetaNumber, formatStockBetaPercent } from "./shared/formatters";
 import { StockBetaSignalRefreshCoordinator } from "./signal-refresh-coordinator";
 import { StockBetaTerminalPage } from "./terminal";
@@ -132,6 +135,8 @@ export type StockBetaWorkspaceProps = {
   readonly initialSignalError?: string | null;
   readonly initialSignalUnavailable?: boolean;
   readonly intradayEnabled?: boolean;
+  readonly marketStreamEnabled?: boolean;
+  readonly streamSessionKey?: string | null;
   readonly locale?: Locale;
 };
 
@@ -143,6 +148,8 @@ export function StockBetaWorkspace({
   initialSignalError = null,
   initialSignalUnavailable = false,
   intradayEnabled = false,
+  marketStreamEnabled = false,
+  streamSessionKey = null,
   locale,
 }: StockBetaWorkspaceProps) {
   const router = useRouter();
@@ -154,6 +161,16 @@ export function StockBetaWorkspace({
   const [signals, setSignals] = useState<OwnerEquityV2LatestSignalsModel | null>(initialSignals);
   const [selectedInstrumentId, setSelectedInstrumentId] = useState<string | null>(
     defaultSignal(initialSignals)?.instrument_id ?? null,
+  );
+  const [streamSelectedInstrumentId, setStreamSelectedInstrumentId] = useState<string | null>(
+    MARKET_STREAM_INSTRUMENTS.find((instrument) =>
+      initialMemberships.memberships.some(
+        (membership) =>
+          membership.instrument_id === instrument.id && membership.lifecycle === "READY",
+      ),
+    )?.id ??
+      MARKET_STREAM_INSTRUMENTS[0]?.id ??
+      null,
   );
   const [chartRange, setChartRange] = useState<OwnerEquityV2ChartRange>(DEFAULT_CHART_RANGE);
   const [chartData, setChartData] = useState<OwnerEquityV2ChartModel | null>(initialChart);
@@ -574,6 +591,7 @@ export function StockBetaWorkspace({
     disableId,
     inputError,
     intradayEnabled,
+    marketStreamEnabled,
     instrumentCode,
     locale: resolvedLocale,
     memberships,
@@ -598,30 +616,48 @@ export function StockBetaWorkspace({
     signalState,
     signals,
     selectedInstrumentId: effectiveSelectedInstrumentId,
+    streamSelectedInstrumentId,
   } as const;
 
   return (
-    <StockBetaSelectionProvider
-      onSelectionChange={setSelectedInstrumentId}
-      rows={rows}
-      selectedInstrumentId={selectedInstrumentId}
+    <IntradayStreamProvider
+      enabled={intradayEnabled && marketStreamEnabled}
+      sessionKey={streamSessionKey}
+      memberships={memberships}
     >
-      <StockBetaTerminalPage
-        asOf={
-          signals === null ? undefined : (
-            <span>
-              {t.asOfLabel} <strong>{signals.snapshot.as_of}</strong>
-            </span>
-          )
-        }
-        context={<span>{t.terminalContextLabel}</span>}
-        search={rows.length === 0 ? undefined : <StockBetaInstrumentSearch copy={t} rows={rows} />}
-        snapshot={signals === null ? undefined : <StockBetaSnapshotStrip copy={t} data={signals} />}
-        title={t.pageTitle}
+      <StockBetaSelectionProvider
+        onSelectionChange={setSelectedInstrumentId}
+        rows={rows}
+        selectedInstrumentId={selectedInstrumentId}
       >
-        <StockBetaDashboard selectionProvided viewModel={viewModel} />
-      </StockBetaTerminalPage>
-    </StockBetaSelectionProvider>
+        <StockBetaTerminalPage
+          asOf={
+            signals === null ? undefined : (
+              <span>
+                {t.asOfLabel} <strong>{signals.snapshot.as_of}</strong>
+              </span>
+            )
+          }
+          context={<span>{t.terminalContextLabel}</span>}
+          search={
+            rows.length === 0 ? undefined : <StockBetaInstrumentSearch copy={t} rows={rows} />
+          }
+          snapshot={
+            signals === null ? undefined : <StockBetaSnapshotStrip copy={t} data={signals} />
+          }
+          title={t.pageTitle}
+        >
+          {intradayEnabled && marketStreamEnabled ? (
+            <IntradayStreamBoard
+              locale={resolvedLocale}
+              selectedInstrumentId={streamSelectedInstrumentId}
+              onSelect={setStreamSelectedInstrumentId}
+            />
+          ) : null}
+          <StockBetaDashboard selectionProvided viewModel={viewModel} />
+        </StockBetaTerminalPage>
+      </StockBetaSelectionProvider>
+    </IntradayStreamProvider>
   );
 }
 

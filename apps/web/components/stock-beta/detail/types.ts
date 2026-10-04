@@ -10,6 +10,7 @@ export type StockBetaDetailViewModel = {
   readonly copy: StockBetaDictionary;
   readonly detail: OwnerEquityV2SignalDetailModel;
   readonly intradayEnabled?: boolean;
+  readonly marketStreamEnabled?: boolean;
   readonly intradayMembership?: OwnerEquityV2MembershipModel | null;
   readonly locale: Locale;
 };

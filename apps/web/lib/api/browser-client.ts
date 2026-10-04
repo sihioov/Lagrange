@@ -5,6 +5,7 @@ import type { BrowserResponseOptions } from "./browser-response";
 import { parseBrowserApiResponse } from "./browser-response";
 import type { ApiPath, ProductMutationPath } from "./contracts";
 import { AUTH_API_PATHS, csrfTokenSchema } from "./contracts";
+import { withCsrfMutationLock } from "./csrf-mutation-lock";
 
 export type MutationMethod = "DELETE" | "PATCH" | "POST" | "PUT";
 
@@ -27,7 +28,7 @@ function browserClient(fetcher: typeof fetch | undefined): typeof ky {
   return fetcher === undefined ? ky : ky.create({ fetch: fetcher });
 }
 
-async function csrfToken(options: BrowserClientOptions): Promise<string> {
+async function csrfToken(options: BrowserClientOptions, signal: AbortSignal): Promise<string> {
   const response = await browserClient(options.fetcher).get(
     requestUrl(AUTH_API_PATHS.csrf, options.origin),
     {
@@ -36,6 +37,7 @@ async function csrfToken(options: BrowserClientOptions): Promise<string> {
       retry: 0,
       throwHttpErrors: false,
       timeout: 10_000,
+      signal,
     },
   );
   const parserOptions = options.navigate === undefined ? {} : { navigate: options.navigate };
@@ -47,20 +49,30 @@ export async function mutateWithCsrf(
   path: ApiPath | ProductMutationPath,
   options: MutationOptions,
 ): Promise<Response> {
-  const token = await csrfToken(options);
-  return browserClient(options.fetcher)(requestUrl(path, options.origin), {
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {
-      "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
-      "X-CSRF-Token": token,
-    },
-    json: options.json,
-    method: options.method,
-    retry: 0,
-    throwHttpErrors: false,
-    timeout: 10_000,
-  });
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 20_000);
+  try {
+    return await withCsrfMutationLock(abort.signal, async () => {
+      const token = await csrfToken(options, abort.signal);
+      abort.signal.throwIfAborted();
+      return browserClient(options.fetcher)(requestUrl(path, options.origin), {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
+          "X-CSRF-Token": token,
+        },
+        json: options.json,
+        method: options.method,
+        retry: 0,
+        throwHttpErrors: false,
+        timeout: 10_000,
+        signal: abort.signal,
+      });
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function logout(options: BrowserClientOptions = {}): Promise<Response> {

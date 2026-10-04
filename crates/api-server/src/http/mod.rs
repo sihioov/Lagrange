@@ -18,6 +18,11 @@ pub mod notifications;
 pub mod owner_beta;
 pub mod owner_equity_v2;
 pub mod owner_intraday_quotes;
+mod owner_market_stream;
+pub mod owner_market_stream_config;
+mod owner_market_stream_contract;
+mod owner_market_stream_delivery;
+mod owner_market_stream_projection;
 pub mod pagination;
 pub mod paper;
 pub mod recommendations;
@@ -343,6 +348,18 @@ pub fn api_router(state: ApiState) -> Router {
         .route(
             "/research/owner-beta/equity-universe-v2/quote-demands",
             post(owner_intraday_quotes::create_or_renew),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/stream-leases",
+            post(owner_market_stream::create_or_renew),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/stream-leases/{lease_id}",
+            axum::routing::delete(owner_market_stream::release),
+        )
+        .route(
+            "/research/owner-beta/equity-universe-v2/market-stream",
+            get(owner_market_stream::get_stream),
         )
         .route(
             "/research/owner-beta/equity-universe-v2/quote-demands/{demand_id}",

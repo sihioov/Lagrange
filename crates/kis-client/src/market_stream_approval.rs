@@ -520,3 +520,93 @@ mod tests {
         assert!(serde_json::from_str::<ApprovalResponse>(r#"{"message":"no"}"#).is_err());
     }
 }
+
+impl ApprovalClient {
+    /// Compares only in-memory slot and generation metadata; this does not prove
+    /// credentials, rights, or durable state and does not authorize a connection.
+    pub fn matches_runtime_binding(
+        &self,
+        expected_slot: uuid::Uuid,
+        expected_generation: u64,
+    ) -> bool {
+        runtime_binding_matches(
+            self.domain.credential_slot_id(),
+            &self.credential_generation,
+            expected_slot,
+            expected_generation,
+        )
+    }
+}
+
+fn runtime_binding_matches(
+    actual_slot: uuid::Uuid,
+    actual_generation: &str,
+    expected_slot: uuid::Uuid,
+    expected_generation: u64,
+) -> bool {
+    !expected_slot.is_nil()
+        && expected_generation > 0
+        && actual_slot == expected_slot
+        && actual_generation == expected_generation.to_string()
+}
+
+#[cfg(test)]
+mod runtime_binding_tests {
+    use super::{ApprovalClient, runtime_binding_matches};
+
+    #[test]
+    fn runtime_binding_requires_exact_slot_and_canonical_generation() {
+        let slot = uuid::Uuid::from_u128(0x123456789abcdef0123456789abcdef0);
+        let other_slot = uuid::Uuid::from_u128(0x223456789abcdef0123456789abcdef0);
+        let nil = uuid::Uuid::nil();
+
+        assert!(runtime_binding_matches(slot, "7", slot, 7));
+        assert!(runtime_binding_matches(
+            slot,
+            &u64::MAX.to_string(),
+            slot,
+            u64::MAX,
+        ));
+
+        assert!(!runtime_binding_matches(other_slot, "7", slot, 7));
+        assert!(!runtime_binding_matches(slot, "7", other_slot, 7));
+        assert!(!runtime_binding_matches(nil, "7", slot, 7));
+        assert!(!runtime_binding_matches(slot, "7", nil, 7));
+        assert!(!runtime_binding_matches(slot, "7", slot, 0));
+        assert!(!runtime_binding_matches(slot, "7", slot, 8));
+
+        let _: fn(&ApprovalClient, uuid::Uuid, u64) -> bool =
+            ApprovalClient::matches_runtime_binding;
+    }
+
+    #[test]
+    fn runtime_binding_rejects_noncanonical_or_unrelated_generations() {
+        let slot = uuid::Uuid::from_u128(0x123456789abcdef0123456789abcdef0);
+
+        for generation in [
+            "",
+            "0",
+            "07",
+            "+7",
+            "-7",
+            "7 ",
+            " 7",
+            "7\n",
+            "7.0",
+            "v7",
+            "\u{ff17}",
+            "\u{0667}",
+            "18446744073709551616",
+        ] {
+            assert!(!runtime_binding_matches(slot, generation, slot, 7));
+        }
+
+        assert!(runtime_binding_matches(
+            slot,
+            &u64::MAX.to_string(),
+            slot,
+            u64::MAX,
+        ));
+        assert!(!runtime_binding_matches(slot, "7", slot, u64::MAX));
+    }
+}

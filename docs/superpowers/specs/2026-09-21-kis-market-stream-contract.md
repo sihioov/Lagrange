@@ -887,8 +887,11 @@ Prefix: `/api/v1/research/owner-beta/equity-universe-v2`.
 | `DELETE {prefix}/stream-leases/{lease_id}` | Same mutation auth; body `{schema_version:2,consumer_id,renewal_sequence}`; 200 `{schema_version:2,lease_id,released:true}` with durable idempotent replay. |
 | `GET {prefix}/market-stream?lease_id={uuid}` | Cookie-authenticated same-origin SSE. Lease ID is not secret authorization; owner **and session** must match. GET does not create/renew a demand, enqueue work or call KIS. Initial snapshot then latest-value deltas/status. |
 
-Numbers such as generations/renewal_sequence are safe positive JSON integers <=2^53−1;
-database counters (`quote_version`, `state_version`, receive ordinal) serialize as canonical
+Generations are safe positive JSON integers <=2^53−1. `renewal_sequence` is a safe
+nonnegative JSON integer: the initial mutation is 0, and each subsequent replacement or
+renewal increments it by one. This matches the existing durable lease contract; release
+carries the last accepted sequence, not a new renewal. (Coordinator clarification, 2026-10-03.)
+Database counters (`quote_version`, `state_version`, receive ordinal) serialize as canonical
 decimal strings <=i64::MAX. All UUIDs canonical; arrays sorted/deduplicated; max JSON body
 16 KiB; reject unknown fields, owner/provider/credential fields and malformed URL parameters.
 Auth is checked before semantic parsing: 401 no session, 403 non-Owner, 404 unknown/foreign/
@@ -896,6 +899,10 @@ generation-mismatched/other-session lease or identity, 409 sequence/identity cap
 503 infrastructure unavailable. Off mode returns typed `FEATURE_DISABLED`, creates no lease.
 Once streaming begins, failures use typed status + connection close, not an HTTP status rewrite.
 
+Every SSE event's JSON is exactly `{schema_version, stream_id, event_sequence, server_time, body}`;
+the event kind is the SSE `event:` field. `body` is the corresponding object below. Identity and
+row arrays use ascending canonical membership UUID order, with no duplicate memberships or
+instruments; display ranking is independent of wire ordering. (Coordinator clarification, 2026-10-03.)
 Every SSE event carries `schema_version:2`, `stream_id` (new UUID per HTTP connection),
 `event_sequence` (string), `server_time` and one body below. Event ID is
 `{stream_id}:{event_sequence}`. This is an API delivery cursor, never a broker sequence.
@@ -1017,7 +1024,7 @@ symbol has a typed row and blocks full30 acceptance. Resolve any newly verified 
 starts exactly the stream producer. `--once` starts no stream. Explicitly reject simultaneous
 legacy REST intraday + WS producers for an Owner. Ordinary EOD/reference reader remains.
 
-New nonsecret inputs: `KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID` UUID,
+New nonsecret inputs: API-only `OWNER_MARKET_STREAM_ORIGIN` (exact canonical HTTPS origin; no wildcard, path, credentials or query), `KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID` UUID,
 `KIS_MARKET_STREAM_GRANT_ID` UUID, `KIS_MARKET_STREAM_CONTRACT_SHA256` (approved contract pin).
 No configurable broker URL/TR, no secrets added to API/Web. Reuse
 `KIS_READ_CREDENTIAL_GENERATION` without incrementing it for WS activation. The writable
@@ -1176,3 +1183,489 @@ UUID, debt, generation, token/state. The next date is not automatic approval. In
 `75d28ef...` versus source `7757245`, old `74b39fa` nine healthy/two drained, are historical,
 not current observations. Old attestations are expired/nonreusable. Wrapper expiration stays
 `2026-09-22 08:54:48 KST`; no extension. WS-1 performed no operational action.
+
+## 13. WP-1 runtime completion amendment — coordinator adopted, 2026-10-01
+
+**Adopted for the approved source/local completion plan; no live or production authority.** Root
+recovered the idle WP-1 report, reviewed the source seams and preserved producer hashes, and
+adopted the C2 ownership/idle seam, private runtime/status boundary and section14 initializer.
+Root did not establish that0055 is unpublished: preserve both0055 files byte-for-byte and put
+the section13.3 schema/helper/grant delta in the new append-only pair
+`0056_owner_market_stream_runtime.{up,down}.sql`. Fresh fixtures apply all migrations; rollback
+tests remove0056 before0055. No current production query or migration is implied. WP-3 runs
+through bounded, sequential coordinator-dispatched units, starting with transport/config only.
+This amendment
+fills only the runtime/initializer seams identified in
+[the R111 review](../../reviews/2026-10-01-kis-market-stream-completion-gaps.md). The September 30
+handoff supersedes intermediate pending/failure narratives: original1–26 and four pacing cases
+are adopted focused evidence, not full WS3/SSE/browser/live acceptance. Sections 6.3–6.4B keep
+their accepted lock, role, capability, authentic-capture and terminal-cancellation invariants.
+Their historical exclusion of runtime work is extended only by the adopted WP-3 manifest.
+G1–G5, wire/endpoint/rights scope and all section 7 bounds remain unchanged.
+
+### 13.1 Entry, ownership and transport seam
+
+The runner selects exactly one daemon quote implementation: off starts neither; owner_only/rest
+starts the existing REST producer; owner_only/market_ws starts the new runtime. `--once` starts
+neither and must not open WS state or construct an approval client. EOD/reference work continues
+independently. Add a separate `IntradayQuoteTransport::from_optional_str(Option<&str>) ->
+Result<IntradayQuoteTransport, ReadCoordinationConfigError>` (`Rest|MarketWs`, default Rest);
+preserve the existing three-argument `ProductionReadCoordination::from_values` API.
+
+Proposed job-queue signatures (all new types have private fields and typed, redacted errors):
+
+```text
+// Public safe orchestration; no receipt, session, proof or SQL setter is returned.
+OwnerMarketStreamRuntimeConfig::from_values(
+    slot: Uuid, grant: Uuid, contract_sha256: &str, credential_generation: u64,
+    holder: Uuid,
+) -> Result<Self, MarketStreamRuntimeError>;
+OwnerMarketStreamRuntime::new(
+    repository: OwnerMarketStreamRepository,
+    calendar: OwnerIntradayQuoteRepository,
+    windows: IntradaySessionWindowSource,
+    approval: ApprovalClient,
+    config: OwnerMarketStreamRuntimeConfig,
+) -> Result<Self, MarketStreamRuntimeError>;
+async OwnerMarketStreamRuntime::run_daemon(self, shutdown: watch::Receiver<bool>)
+    -> Result<MarketStreamRuntimeExit, MarketStreamRuntimeError>;
+// Inside owner_equity_v2 only; no raw channels exported by the parent module.
+async OwnerMarketStreamProducer::start_resolved(
+    repository: RuntimeMarketStreamRepository, lease: StreamProducerLease,
+    day: ResolvedMarketStreamDay, session: MarketStreamSession,
+) -> Result<RuntimeOwnedProducer, MarketStreamProducerError>;
+async RuntimeOwnedProducer::run_owned(
+    self, demand: watch::Receiver<DesiredSet>,
+    lease: watch::Receiver<StreamProducerLease>, shutdown: watch::Receiver<bool>,
+) -> Result<RuntimeOwnedExit, MarketStreamProducerError>;
+```
+
+The D2-B implementation refines these private seams: a separate `RuntimeOwnedProducer`
+preserves the existing focused facade unchanged. `RuntimeOwnedExit` is private and finite;
+D3 maps its known-clean outcomes to the public runtime exit. D3 creates one bounded runtime
+repository per daemon lifetime and passes clones of that same adapter to lease supervision,
+the socket owner and the writer, so deadline/cancellation/unknown-commit terminal state is
+shared. The adapter exposes no raw pool or proof factory. Only the socket task owns the
+session. Watch senders are private supervisor inputs: they publish every successful fresh
+demand observation, including unchanged sets, at least once per second; sender loss or a
+two-second observation gap stops the owner. Lease identity and the five-second remaining
+margin are checked independently while commands are pending.
+
+The accepted C1 epoch proof includes `gap_generation`; a committed runtime gap transition
+can advance that generation. D2-B therefore suppresses publication as soon as any gap-opening
+transition is requested, discards the current buffer, and drains this incarnation. It never
+rewrites epoch-proof scalars from a status result. Only a definite clean socket close, joined
+children and known fenced retirement can return a fresh-epoch outcome; D3 must then obey the
+existing backoff/budget and obtain a new resolved epoch and authentic ACKs. Ambiguous close,
+forced task abort, DB deadline or unknown commit remains terminal. Likewise an outstanding
+batch invalidated by observed demand changes is never replayed or acknowledged as current;
+a known successful commit may be retained only as shutdown evidence while this incarnation
+is drained. These choices preserve the C1/D1 guards and do not prove runtime recovery until
+the later actual-role/loopback gate passes.
+
+The runtime constructor must also reject a mismatched supplied approval client before any
+operational client, anchor reservation, DB lease or provider action. Add only
+ApprovalClient::matches_runtime_binding(expected_slot: Uuid, expected_generation: u64) -> bool
+as a synchronous comparison of the client's immutable in-memory domain slot and generation.
+It returns true only for a nonnil expected slot, a positive expected generation, equal slots
+and an exact canonical decimal generation string; it does not parse or normalize aliases.
+It performs no protected-state, lock, credential, approval or network access and reveals no
+actual metadata. OwnerMarketStreamRuntime::new maps false to ConfigurationInvalid before
+constructing its operational client. Existing opaque client-generation contracts stay
+unchanged. This predicate proves only supplied metadata consistency, not credentials,
+rights, durable state or connection authorization. D3-B0 implements this prerequisite;
+constructor wiring and runtime behavior remain subject to the later D3-B/D4 gates.
+
+The runtime uses only start_resolved for production; its private day value supplies the
+publication window and lineage, without exposing a proof factory. Existing public focused
+facade signatures remain available with their existing semantics and no resume path.
+The runtime owns one socket-owner task, one serial publication task and bounded lifecycle
+supervision. These are local Tokio tasks, not additional producers. It joins every task before
+starting a replacement. The session is never cloned, split into independently driven readers/
+writers, placed behind competing read/command futures, or exposed by a recovery method.
+The supervisor renews the DB lease every 5s (TTL20s) even during ACK wait, reads fresh demand
+and rights/day eligibility at least every 1s, and sends only the latest desired set. It accepts
+a renewal only if holder/fence/slot/grant/revision are unchanged; private lease replacement is
+not a public setter. Child task handles use abort-on-drop ownership; the runner normally signals
+then joins them. An externally dropped runtime cannot detach a live socket task; a replacement
+still cannot pass the lifetime lock until that task actually drops its session.
+Failed/unknown renewal, stale fence or <=5s remaining life stops publication
+and closes the socket. Bound every DB operation to <=1s using both transaction-local limits
+and an owned client deadline; pool acquisition counts. Timeout/unknown commit is terminal,
+not a retry using an old lease. A stalled publication cannot prevent lease-loss shutdown.
+
+Two narrowly reopened kis-client interfaces are required; no Prepared/ACK changes:
+
+```text
+// Affine lifetime-lock owner: private fields; no Clone/serde/constructor/getter for the lock.
+MarketStreamClient::reserve_connection(&self)
+    -> Result<MarketStreamConnectionOwner, MarketStreamError>;
+async MarketStreamConnectionOwner::connect(self, proof: MarketStreamSessionProof)
+    -> Result<MarketStreamSession, MarketStreamError>;
+async MarketStreamSession::next_event_until(&mut self, deadline: std::time::Instant)
+    -> Result<Option<MarketStreamEvent>, MarketStreamError>;
+```
+
+`reserve_connection` validates the configured domain and takes the existing connection
+anchor, with **no approval/network/budget attempt**. Runtime then claims the DB lease and
+rechecks grant/demand and independently resolved day/window before consuming `connect` with
+that day's transport proof. `connect` checks current-day proof before any attempt/approval.
+The owner moves the very same lock into the
+session; failed connect drops socket before lock. Existing `connect()` delegates to this path
+using its configured proof for compatibility. No arbitrary domain/lock input is accepted. This realizes the section 5
+anchor → DB lease → approval/socket order, which current monolithic `connect()` cannot express.
+
+`next_event_until` returns `None` only at a safe idle read boundary, retaining partial frame/
+fragment bytes and the session. It bounds socket-read waiting internally using the existing
+read-buffer/`readable` mechanism, not `timeout(next_event())`. Check the deadline during
+continuous traffic as well as silence; use <=50ms slices in the owner loop. Finish a started
+control write under the existing bounded write timeout or fail terminally; never return Idle
+with a pending write. Preserve watchdog/control/poison-before-queued-receipt behavior. Existing
+`next_event()` retains its API. Dropping either future still cannot justify restoring a facade.
+
+Commands remain serialized barriers: eligibility → desired DB mutation → prepare → pending
+DB commit → the existing consuming `send_prepared` → authentic ACK DB commit → Ready.
+Keep `send_prepared`'s no-event-output and bounded poison scan; do not add public receipt
+callbacks or an ACK queue. While it is in flight, its pinned future is polled to completion;
+the supervisor and already-dispatched publication work continue, but no second socket read
+or command runs. Buffered unrelated receipts retain original timestamps; the target is usable
+only after known ACK DB commit. ACK delay/queue overflow is measured; >3s receipts are dropped
+as PIPELINE_LAG and transport overflow closes. This is a control-path interruption, not a
+waiver of normal-load latency or a claim of lossless ticks. Failure to meet section 7 in the
+required hot-symbol/command soak rejects the implementation; it does not authorize enlarging
+queues or weakening C2 to make the test pass.
+
+### 13.2 Demand, terminal states, reconnect and day evidence
+
+| Runtime state | Entry / allowed transition |
+|---|---|
+| DISABLED | No state/key/socket access; runner preserves EOD. |
+| WAITING | No demand or valid day/window absent/closed. Re-read local committed inputs <=1Hz; zero provider calls. Positive demand with missing proof may retain the anchor and a renewed DB control lease solely to persist unavailable status, with no epoch. |
+| CLAIMING / CONNECTING | Verified grant and positive demand permit anchor then DB lease; only verified open day permits consuming connect/approval/socket; epoch commit before first command. |
+| ACTIVE | Fresh ACKs, bounded read/commit, lease renewal and demand observation. Quiet trading is not disconnection. |
+| DRAINING | No demand, shutdown, close time or day change: suppress immediately, drop uncommitted receipts, finish a safe close within 5s. |
+| BACKOFF | Only definite clean transport closure, known DB outcomes and valid current proofs permit a **new** facade/epoch after durable eligibility. |
+| STOPPED | Ambiguous send/ACK/DB/connection, malformed state, grant revocation, budget exhaustion or unknown prior session; no automatic reset/reissue. |
+
+Observed zero demand suppresses publication immediately through both private buffers and DB
+checks. Ordinary individual-symbol removal may wait up to5s before unsubscribe; revocation has
+no grace. Positive count→positive count preserves the authentic proof/revision. `Deferred`
+preserves committed progress, holds no Prepared, and is revisited only at `not_before_ms` with
+fresh demand/lease/rights. Demand changes may be observed during a pending command, but no
+second desired mutation for that symbol overtakes its ACK. Zero→positive after an actual
+unsubscribe closes the current epoch and requires a fresh epoch/ACK; it never resurrects the
+terminal facade or restores old proof from DB scalars. If all demand is gone, close directly
+within5s rather than spending30 unsubscribe commands.
+
+Cancellation for a lifecycle stop is terminal for the owned facade. Signal cancellation,
+abort if its bounded shutdown expires, await the task's termination, then permit lock release/
+replacement; never cancel on every timer tick. A cancelled command retains durable ambiguity.
+Only the existing transport's definite clean-close path clears its own clean epoch. A TCP
+error, task panic, cancelled write, or prior `current_epoch`/pending attempt left on disk is
+STOPPED, not permission to call reconnect. Clean reconnect uses fresh `connect()` and the
+existing shared has_connected/backoff accounting (10/20/40/60s, >=10s, 6/10min,20/day);
+positive jitter stays within0–20%. API/tab activity cannot reset these histories.
+
+Production day resolution is private `resolve_day(owner, windows_source) ->
+Result<DayResolution, MarketStreamRuntimeError>` in the runtime; `DayResolution` is
+MissingCalendar | MissingWindow | Closed | Open(ResolvedMarketStreamDay). Reuse the existing
+current-day calendar resolver's exact batch/version/hash/36h checks and pinned operational
+window loader; do not acquire a calendar or infer a weekday. Load window input anew at date
+change. The private resolved value binds calendar lineage, half-open UTC open/close, KST date
+and transport proof. `session_proof_id` is a correlation UUID for that resolved lineage, not
+evidence; retain it for same-lineage reconnect. `session_proof_sha256` is SHA256 over UTF-8
+lines, ending in LF: `owner-market-stream-day-v1`, YYYY-MM-DD, canonical calendar batch UUID,
+lowercase calendar hash, prefixed window hash, UTC open and close in RFC3339 seconds with Z.
+Storage rechecks the calendar lineage under publication locks and the pinned half-open window
+before epoch/quote commit; syntactically valid caller fields alone are insufficient. A private
+window value accompanies runtime publication context; no new public proof factory is added.
+At close or date change, purge private receipts/proofs, stop old epoch publication, and resolve
+the next day independently. Missing inputs persist typed unavailable state, expose no prior-day
+quote and produce zero approval/WS/calendar calls. WP-6 supplies reviewed artifacts; WP-9 proves
+the actual next-day supply procedure. This amendment does not supply those proofs.
+
+#### D3-B supervisor lifetime and observation refinement (coordinator adopted, 2026-10-02)
+
+The daemon constructs one runtime repository adapter for its entire run and shares clones with
+all observations, renewals, epoch start, socket owner and writer. A terminal latch is never
+replaced to permit a reconnect. At most one local observation cycle and one lifecycle stage
+are in flight. Each cycle concurrently completes the exact current grant, demand and day
+reads and a due lease renewal using the existing one-second adapter; all started operations
+are awaited, including on a sibling error. A cycle is started at one-second spacing without
+catch-up bursts. Due renewals use their independent five-second cadence. An additional real
+renewal in the post-claim/pre-connect validation cycle obtains current gap metadata; status
+results must never be copied into lease/epoch proof scalars.
+
+Connect, resolved epoch start and the owned producer future remain pinned across observation
+ticks. The supervisor does not spawn an outer producer task or impose an outer timeout that
+could drop the producer while it is joining children. Once the owned producer exists, it is
+driven through its existing cooperative five-second drain, abort if needed, and ALL child
+joins. A completed stage also waits for any already-started observation before the next
+stage/replacement. Successful unchanged demand observations are forwarded as fresh events;
+cached observations are never re-stamped. The supervisor continues real demand observation
+during a known-safe drain. A terminal DB result instead latches stop, does not restart
+observations or DB work, and still awaits owned producer cleanup.
+
+Renewal authority is slot/grant/revision/owner/holder/fence plus monotone heartbeat/expiry and
+more than five seconds of remaining life. A lower gap generation is terminal. A higher gap
+generation with unchanged authority stops the old incarnation without forwarding the changed
+lease into its old epoch proof. Day lineage changes likewise request drain, never a proof
+rewrite. Any retained parent control lease is database-issued and is discarded before a new
+claim. Only a known clean producer result, all joins and known retirement permit a fresh
+incarnation; source/pure checks alone do not establish that runtime behavior.
+
+Initial zero demand does not reserve the connection anchor or claim a producer lease. Positive
+demand permits anchor then claim, followed by a fresh post-claim grant/demand/day/lease check
+before connect. Missing/closed day evidence allows an anchor/control lease only for typed
+unavailable status and renewal, with no epoch/provider call. The one safe waiting outcome from
+connect is the existing State(ReconnectNotReady), which occurs before durable attempt mutation
+or approval; it cannot reset accounting and may be checked at most once per observation tick.
+Other connection, epoch-start, deadline, unknown-commit and ownership failures are terminal.
+
+If a lifecycle stop is observed during connect, keep the one connect future until it finishes
+or the five-second stop deadline. Cancellation at that deadline is terminal ambiguity, never a
+reconnect allowance. A successful but no-longer-eligible session is consumed by its existing
+bounded clean close before any epoch start. If resolved epoch start succeeds after a stop was
+latched, immediately run/drain that owner with stop already set and await its complete cleanup;
+never discard an owned producer that needs retirement. Parent stop cause distinguishes actual
+daemon shutdown from an internal child shutdown request for a fresh incarnation. Only external
+shutdown/closed shutdown sender plus known cleanup returns the public Shutdown exit; other
+definite clean outcomes return to local waiting. Errors use finite redacted variants.
+
+### 13.3 Private coalescing and committed status/snapshot boundary
+
+Move authentic receipts, without reconstruction or restamping, into <=30 private latest slots
+keyed by current identity/epoch. Retain only greatest valid receive ordinal; count replaced,
+stale and rejected observations separately. A 250ms scheduler moves at most30 into one private
+publication batch, with at most two batches total including in-flight work. If the writer is
+busy, merge into the latest slots instead of enqueuing more work. One serial writer enforces
+>=250ms between quote transactions (also after delays, with no catch-up burst), <=4/s and
+<=120 row updates/s. A batch uses existing `publish_stream_latest` and committed subscription
+proofs; no per-symbol transactions. Pending commands, identities removed/replaced, old epoch,
+expiry, rights loss or day change invalidate affected buffers. C1 locks recheck everything at
+commit; the existing exact reread is the only recovery of an unknown publication commit.
+
+The transport's existing <=128 event queue and bounded message are separately counted in the
+<=8MiB workspace, never multiplied per consumer or used as a general queue. The new latest/
+batch buffers still obey30/2×30/64 status limits. No runtime public channel/facade/API emits
+uncommitted values. A slow writer never blocks receiving forever: bounded error closes the
+owner, while no memory value substitutes for a committed row. Routine status transitions
+coalesce at1Hz; urgent lifecycle/revocation control may bypass that cadence, within bounded
+control rates. Never silently discard a revocation to stay within64 statuses.
+
+Keep ACK-only `record_stream_status(context, status)` unchanged for quote-attached state.
+Add **private** repository methods (all `pub(super)`, no parent export):
+
+```text
+async load_runtime_grant(config: &OwnerMarketStreamRuntimeConfig)
+    -> Result<RuntimeGrant, MarketStreamStorageError>
+async record_runtime_status(lease: &StreamProducerLease, expected_epoch: Option<Uuid>,
+    transition: RuntimeTransition)
+    -> Result<RuntimeStatusCommit, MarketStreamStorageError>
+async retire_stream_producer(lease: &StreamProducerLease, expected_epoch: Option<Uuid>,
+    reason: StreamStatusCode)
+    -> Result<RuntimeStatusCommit, MarketStreamStorageError>
+```
+
+`RuntimeGrant` compares configured grant/slot/generation/contract pin with the actual immutable
+grant row, exact30 hash and wire contract; there is no synthetic production default. Transition
+constructors are private state-machine operations, not arbitrary availability/quote setters.
+Status uses producer→rights→owner-capacity→admission/session/demand→subscription→cache lock
+order as applicable. Fence and expected epoch are exact; stale workers cannot mark a new socket
+stopped. Nonlive control does not require an ACK or invent session proof. `retire` clears only
+the matching DB epoch after socket closure, marks subscriptions nonlive/ABSENT and notifies;
+it does not clear protected transport state or reset command history. If rights/DB prevent a
+write, close anyway; RLS/read checks and expiry force nonlive rather than bypassing rights.
+
+A narrow **append-only0056 migration** adds producer `status_code` (nullable existing
+closed reason enum), `status_at` (timestamptz), `gap_since` (nullable timestamptz), and
+`session_has_gap` (boolean, initially false), associated constraints and worker column grants.
+Keep all existing tables, role identities, C1 lock functions and FORCE RLS. Do not reset the
+monotone gap_generation counter. A transition opening a new gap advances it once, repeated
+same-gap status is a no-op; reconnect does not double-count that gap. Same-day recovery clears
+gap_open only after committed current-epoch data, retains session_has_gap; independently
+validated next-day start resets the flag. Per-row gap stays open until that row's fresh quote.
+Claim/retire preserve the prior proven session date and gap metadata for this comparison while
+clearing live epoch authority; a new holder must not erase same-day gap history by clearing
+lineage first. The first proven epoch is not by itself a gap. Stale proof metadata never grants
+publication; only the newly resolved day and committed epoch do.
+Persist producer changes and cache overlays in one transaction; status-only commits never
+increment quote_version or change quote capture. Add only credential_generation,
+network_contract_sha256 and identity_list_sha256 to worker's existing grant SELECT columns.
+
+App still receives **no direct producer/subscription/grant SELECT or write grant**. Add one
+bounded SECURITY DEFINER read helper `owner_market_stream_delivery_state(uuid,text,uuid)`
+(owner, canonical session hash, lease), returning <=30 authorized lease identities and only
+their subscription state/revision/updated_at plus producer connection/reason/status_at/heartbeat/expiry/current
+epoch/day/proof hashes/gap flags/gap_generation/state_version. It returns no slot, holder,
+fence, entitlement bytes or session hash. Owner/session GUC equality, canonical session, active
+lease, rights, READY latest generation and date are checked inside; invalid access returns no
+rows. Fix search_path, qualify relations, revoke PUBLIC EXECUTE, grant only app, and use the
+existing migration's controlled function owner. Missing producer/proof yields typed nonlive
+metadata, never invented proof/quote. Down migration drops the helper before dependencies.
+
+Extend safe `read_stream_snapshot` (same arguments) to read delivery state and cache in one
+consistent actor transaction. Return every authorized demanded identity, including never-quoted
+rows, with nullable committed cache and committed delivery metadata; WP-4 maps this to the
+unchanged schema2. An absent cache uses the committed lease identity namespace (`row_generation`
+= lease UUID, state_version="0", quote=null); first cache creation replaces it with the actual
+cache namespace/version. Snapshot DTO adds a safe StreamDeliveryRow (identity, optional cache,
+subscription state/revision/updated_at and the above producer metadata); these internal fields
+do not add HTTP fields. API delta detection compares committed producer/subscription metadata
+as well as cache versions. Clarification for WP-4/5: row state_version identifies cache state;
+apply connection/subscription/freshness overlays in ordered SSE event_sequence even if that
+cache version is unchanged, while quote replacement still obeys epoch/quote_version. Reject an
+older event sequence. API status heartbeats do not fabricate row version increments. Producer
+lease remaining <=5s, heartbeat age >10s, unhealthy/current-epoch mismatch, invalid day/window
+or no ACK overrides cached
+LIVE. Notification remains transaction-local `owner_market_stream_changed` payload `v1` only;
+WP-4 LISTEN-before-snapshot + <=1s reread, auth revalidation and reset semantics remain required.
+
+The source baseline ends with `0055_owner_market_stream.{up,down}.sql`; its production status
+is unknown. The coordinator selected `0056_owner_market_stream_runtime.{up,down}.sql` above
+instead of editing0055. Its down file removes only its own helper, column grants, constraints
+and columns, preserving0055 behavior and privilege boundaries. Current production application
+or rollback remains outside the source/local units. All0001–0055 sources remain immutable.
+
+## 14. WP-1 one-shot production initializer contract — coordinator adopted, 2026-10-01
+
+This replaces only section9's unspecified first-provisioning implementation. Runtime
+`MarketStreamDomain::open_production(slot)` remains validate-only; all existing reopen,
+uncertain-state, anchor-inode and no-repair rules remain mandatory.
+
+WP-3 owns `crates/kis-client/src/market_stream_provisioning.rs`, a separate opt-in
+`market-stream-provisioning` feature, and binary
+`crates/kis-client/src/bin/kis-market-stream-state.rs` (required-features set). WP-6 builds/packages
+that binary from the exact reviewed release and invokes it through the official provisioning
+helper. It must not implement JSON state writing in shell or enable test-support in the image.
+
+```text
+kis-market-stream-state initialize-new --credential-slot-id <uuid> --credential-generation <u64>
+kis-market-stream-state validate-existing --credential-slot-id <uuid> --credential-generation <u64>
+// Feature-gated library entry points; typed inputs, fixed production paths only.
+initialize_production_market_stream_domain(slot: Uuid, generation: u64)
+    -> Result<ProvisionOutcome, StateError>
+validate_production_market_stream_domain(slot: Uuid, generation: u64)
+    -> Result<(), StateError>
+```
+
+No URL, secret, approval key, owner override, path override, state JSON, reset/repair/force flag
+or runtime setter is accepted. UUID must be nonnil/canonical and generation canonical positive
+u64, equal to existing configured KIS_READ_CREDENTIAL_GENERATION. `initialize-new` requires
+real/effective UID0 in the official installer context; daemon runs UID:GID10001:10001 and
+cannot invoke initialization. `validate-existing` permits root or that runtime UID/GID and is
+read-only. Output is a closed success/error code, never state bytes or provider messages.
+
+To prove creation freshness without a reusable receipt/factory, **this one invocation creates
+both previously absent leaves and their final anchors itself**. WP-6 provisions only the trusted,
+persistent root parent, validates the immutable commit/image and explicit first-install mode,
+and gives the initializer fixed `/run/lagrange` paths in a bounded network-disabled one-shot
+root process. In a container this is a parent bind mount from the configured persistent runtime
+state directory; no other child is read/modified. Runtime containers later get only section9's
+two leaf mounts, anchors read-only. WP-6 must not pre-create either WS leaf. Reapply always calls
+validate-existing, even if a state file or entire leaf has disappeared. An existing domain in
+the install record cannot be relabeled first-install after loss.
+
+Initializer checks both leaf names absent using descriptor-relative no-follow operations;
+either existing/partial/symlink layout fails with no repair. It creates state UID:GID10001:10001
+0700, anchors directory root:10001 0750, two distinct single-link zero-length anchors root:10001
+0440, fsyncs objects/parents, revalidates their final device/inode identities, and acquires
+connection then state lock. Root ownership/chown is confined to these newly created objects.
+It builds the existing schema with actual slot/domain binding and configured generation,
+no key/epoch/pending command, empty histories and has_connected=false. It writes one0600 temp
+file in that leaf, sets UID:GID10001:10001 before fsync, verifies descriptor/link/mode/size,
+then atomically installs the complete file with **no replacement** (e.g. renameat2 NOREPLACE),
+fsyncs the directory and reopens through the production validator. Existing runtime atomic
+replacement writes remain unchanged. Success requires every fsync and final validation.
+
+Crash, fsync failure or partial layout is an uncertain failure, never successful initialization
+or an automatic reapply retry. Do not delete partial evidence, repair anchors or reinitialize
+missing/zero-length/corrupt state. Reapply verifies exact slot/generation/domain/inodes and
+metadata, preserving file bytes, budgets, ambiguity and anchor identities. The library keeps
+serialization, fresh-layout token and state write helpers private; default consumer builds expose
+neither provisioning functions nor synthetic factories. WP-3 proves filesystem/CLI invariants
+on disposable fixtures; WP-6 separately proves actual root/runtime ownership, mount, immutable
+packaging and reapply behavior. Neither test category proves production provisioning happened.
+
+
+## 15. Initializer release packaging — coordinator adopted, 2026-10-03
+
+The existing initializer source and section14 behavior remain unchanged. The job-queue
+package may expose a required-feature binary target named `kis-market-stream-state` pointing
+to the same reviewed CLI source. Its opt-in `market-stream-provisioning` feature forwards
+only to `kis-client/market-stream-provisioning`; default consumers still exclude provisioning.
+The D4 immutable build recipe alone selects that feature and packages the daemon plus this
+initializer in the existing runner image. Every request, artifact receipt, bundle, and consumer
+guard binds the same feature selection; all other recipes retain their empty-feature contract.
+No test-support feature, new service, automatic initialization, activation, or live permission
+is introduced. One package/bin producer at a time and the existing production resource policy
+remain mandatory. Runtime entrypoint, healthcheck, and UID10001 do not change.
+
+## 16. Provisioning command boundary — coordinator adopted, 2026-10-03
+
+`scripts/ops/provision-owner-market-stream.py` is the separate installed-release command for
+section14. The existing `provision-linux.sh` supplies only the protected parent; it does not
+pre-create either WS leaf. The new command defaults to plan mode without installed-input reads.
+`--initialize-new --expected-commit <40hex>` and `--check --expected-commit <40hex>` require the
+current root-owned release, its exact protected env and complete V2 image manifest, mode off,
+shared coordination, the canonical slot/generation, and no running runner container. The
+local image ID and revision must match; environment overrides cannot select another daemon,
+release, image, path, slot, or generation.
+
+Before first invocation a root-only exclusive, fsynced installation record is created outside
+the two leaves. An attempted/partial installation remains an incident and cannot be retried or
+relabeled first-install after state loss. Only the fixed Rust initializer writes domain state.
+Its one-shot container has no network, no healthcheck, read-only root filesystem and bounded
+resources; initialization runs as root with only CHOWN/FOWNER/DAC_OVERRIDE added, then validation
+runs as10001:10001 with no capabilities and a read-only parent bind. Container cleanup verifies
+its exact random operation label, name, image, and ID before removal. An uncertain cleanup is
+an error, never silently treated as absence.
+
+Successful initialization records the parent, directory, and anchor device/inode identities.
+Reapply always validates, preserves the record and state bytes, and rejects missing/empty/unsafe
+or replaced anchors/state. It cannot repair or reset. Synthetic orchestration/metadata tests
+are separate from the still-required actual root UID, mount, packaged-image and Rust initializer
+verification. This source contract authorizes no production provisioning or activation.
+
+## 17. Grant-install input and transaction — coordinator adopted, 2026-10-03
+
+The separate installed `install-owner-market-stream-grant.sh` command defaults to plan mode,
+which reads no approval/installed/protected files and invokes no Docker or DB command.
+`--apply --expected-commit <40hex> --approval-input <path> --approval-sha256 <64hex>` requires
+one coordinator-reviewed root:root0600 regular single-link file under trusted ancestors.
+The hash must match its exact canonical UTF-8 JSON bytes (sorted keys, compact separators,
+literal UTF-8 for non-ASCII characters, one trailing newline, no duplicate keys/nonfinite
+values/unknown keys). Unicode-escaped alternatives are not canonical. The artifact is an
+operator input; the helper never creates an approved input or infers approval from a flag.
+
+The exact keys are `schema_version` (1), `scope` (`owner-market-stream-grant`), `grant_id`,
+`grant_revision`, `credential_slot_id`, `credential_generation`, `owner_user_id`,
+`entitlement_id`, `entitlement_reference`, `entitlement_document_sha256`, `tr_id`,
+`wire_version`, `network_contract_sha256`, `identity_list_sha256`, `effective_from`,
+`effective_until`, and `activation_commit`. UUIDs are canonical and nonnil; generation is
+canonical positive u64 text; dates are real inclusive ISO dates. TR/wire and exact30 identity
+hash must equal the existing 0055 constants. The activation commit equals the executing
+installed release; the slot/generation/grant/contract match its protected nonsecret settings.
+The protected env file must contain that exact commit; shell fallback cannot supply it.
+No credential, account, provider response, or free-form approval field is accepted.
+
+The existing db-migrate service/secret/role path is used, with the installed V2 manifest's
+exact local image ID. A temporary private Compose override resets `build`, sets pull never,
+and disables its healthcheck. One explicitly named/labeled one-off container runs psql; no
+dependency/service is started, no image is built or pulled, and the migration entrypoint is
+not invoked. Every attempted operation reconciles container cleanup. Removal requires the
+exact full container ID, actual image ID, name and operation label; both ID and name must be
+absent afterwards. An uncertain DB outcome or failed cleanup is an error with no automatic
+retry. The secret stays inside the container as in db.sh.
+
+One bounded transaction requires migration_owner, serializes the slot, locks the selected
+grant then entitlement, and rechecks the exact ACTIVE entitlement/reference/hash/date window
+and Owner role. It inserts only the grant's immutable reviewed fields as ACTIVE. Exact ACTIVE
+replay compares every canonical artifact field and is a no-op; a revoked/mismatched replay or
+active slot/owner conflict fails. Constants plus the exact immutable field comparison determine
+the same canonical approval hash without adding a table column. `--apply --revoke --grant-id`
+only performs the existing one-way transition for that row; already REVOKED is a no-op.
+Revocation requires the verified current installed release/image and an explicit grant ID,
+including from an off release without WS settings, and consumes no new approval artifact.
+No existing entitlement, admission, cache, role, or schema is changed. Actual-role transaction
+tests and G1–G5 approval remain separate from source and synthetic command tests.

@@ -8,9 +8,11 @@
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::fmt;
+#[cfg(any(feature = "test-support", test))]
+use std::fs;
 use std::fs::File;
 #[cfg(any(feature = "test-support", test))]
-use std::fs::{self, OpenOptions, Permissions};
+use std::fs::{OpenOptions, Permissions};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
@@ -31,6 +33,10 @@ pub const CONNECTION_LOCK_FILE: &str = "connection.lock";
 pub const STATE_LOCK_FILE: &str = "state.lock";
 const PRODUCTION_STATE_DIRECTORY: &str = "/run/lagrange/kis-market-stream";
 const PRODUCTION_ANCHOR_DIRECTORY: &str = "/run/lagrange/kis-market-stream-locks";
+#[cfg(feature = "market-stream-provisioning")]
+const PRODUCTION_STATE_LEAF: &str = "kis-market-stream";
+#[cfg(feature = "market-stream-provisioning")]
+const PRODUCTION_ANCHOR_LEAF: &str = "kis-market-stream-locks";
 const MAX_STATE_FILE_BYTES: u64 = 256 * 1024;
 const MAX_PERSISTED_APPROVAL_KEY_BYTES: usize = 8 * 1024;
 const PRODUCTION_STATE_UID: u32 = 10_001;
@@ -53,6 +59,10 @@ const O_EXCL: i32 = 0o200;
 const O_CLOEXEC: i32 = 0o2000000;
 const O_DIRECTORY: i32 = 0o200000;
 const O_NOFOLLOW: i32 = 0o400000;
+#[cfg(feature = "market-stream-provisioning")]
+const O_PATH: i32 = 0o10000000;
+#[cfg(feature = "market-stream-provisioning")]
+const RENAME_NOREPLACE: u32 = 1;
 
 unsafe extern "C" {
     fn open(path: *const std::ffi::c_char, flags: i32, mode: u32) -> RawFd;
@@ -64,6 +74,20 @@ unsafe extern "C" {
         newpath: *const std::ffi::c_char,
     ) -> i32;
     fn unlinkat(dirfd: RawFd, path: *const std::ffi::c_char, flags: i32) -> i32;
+    #[cfg(feature = "market-stream-provisioning")]
+    fn mkdirat(dirfd: RawFd, path: *const std::ffi::c_char, mode: u32) -> i32;
+    #[cfg(feature = "market-stream-provisioning")]
+    fn fchown(fd: RawFd, owner: u32, group: u32) -> i32;
+    #[cfg(feature = "market-stream-provisioning")]
+    fn fchmod(fd: RawFd, mode: u32) -> i32;
+    #[cfg(feature = "market-stream-provisioning")]
+    fn renameat2(
+        olddirfd: RawFd,
+        oldpath: *const std::ffi::c_char,
+        newdirfd: RawFd,
+        newpath: *const std::ffi::c_char,
+        flags: u32,
+    ) -> i32;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -349,6 +373,12 @@ pub enum StateError {
     ReconnectNotReady,
     Serialization,
     Budget(BudgetError),
+    #[cfg(feature = "market-stream-provisioning")]
+    ProvisioningActorDenied,
+    #[cfg(feature = "market-stream-provisioning")]
+    ProvisioningInputInvalid,
+    #[cfg(feature = "market-stream-provisioning")]
+    ProvisioningUncertain,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -387,6 +417,12 @@ impl fmt::Display for StateError {
             Self::ReconnectNotReady => "market stream reconnect backoff is not ready",
             Self::Serialization => "market stream state serialization failed",
             Self::Budget(error) => return error.fmt(f),
+            #[cfg(feature = "market-stream-provisioning")]
+            Self::ProvisioningActorDenied => "market stream provisioning actor is not allowed",
+            #[cfg(feature = "market-stream-provisioning")]
+            Self::ProvisioningInputInvalid => "market stream provisioning input is invalid",
+            #[cfg(feature = "market-stream-provisioning")]
+            Self::ProvisioningUncertain => "market stream provisioning outcome is uncertain",
         })
     }
 }
@@ -1230,6 +1266,8 @@ fn provision_test_anchor_exclusive(path: &Path) -> Result<(), StateError> {
         .mode(ANCHOR_FILE_MODE)
         .open(path)
         .map_err(|_| StateError::UnsafePath)?;
+    file.set_permissions(Permissions::from_mode(ANCHOR_FILE_MODE))
+        .map_err(|_| StateError::Io)?;
     file.sync_all().map_err(|_| StateError::Io)
 }
 
@@ -1261,10 +1299,626 @@ fn unlink_at(directory: &File, name: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Owner IDs for the one-shot production layout.  The fixture constructor is
+/// only compiled into this crate's unit tests; no public API accepts owners.
+#[cfg(feature = "market-stream-provisioning")]
+#[derive(Clone, Copy)]
+pub(crate) struct ProvisioningOwners {
+    state_uid: u32,
+    state_gid: u32,
+    anchor_uid: u32,
+    anchor_gid: u32,
+    parent_uid: u32,
+    parent_gid: u32,
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+impl ProvisioningOwners {
+    pub(crate) const fn production() -> Self {
+        Self {
+            state_uid: PRODUCTION_STATE_UID,
+            state_gid: PRODUCTION_STATE_GID,
+            anchor_uid: PRODUCTION_ANCHOR_UID,
+            anchor_gid: PRODUCTION_ANCHOR_GID,
+            parent_uid: 0,
+            parent_gid: PRODUCTION_STATE_GID,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(uid: u32, gid: u32) -> Self {
+        Self {
+            state_uid: uid,
+            state_gid: gid,
+            anchor_uid: uid,
+            anchor_gid: gid,
+            parent_uid: uid,
+            parent_gid: gid,
+        }
+    }
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProvisioningSyncPoint {
+    StateDirectory,
+    ParentAfterStateDirectory,
+    AnchorDirectory,
+    ParentAfterAnchorDirectory,
+    ConnectionAnchor,
+    StateAnchor,
+    AnchorDirectoryAfterAnchors,
+    ParentAfterAnchors,
+    StateTemporaryFile,
+    StateDirectoryAfterInstall,
+}
+
+#[cfg(all(test, feature = "market-stream-provisioning"))]
+thread_local! {
+    static PROVISIONING_FAIL_FSYNC_AT: std::cell::Cell<Option<ProvisioningSyncPoint>> = const { std::cell::Cell::new(None) };
+    static PROVISIONING_RACE_INSTALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(all(test, feature = "market-stream-provisioning"))]
+pub(crate) fn fail_provisioning_fsync_at(point: Option<ProvisioningSyncPoint>) {
+    PROVISIONING_FAIL_FSYNC_AT.with(|configured| configured.set(point));
+}
+
+#[cfg(all(test, feature = "market-stream-provisioning"))]
+pub(crate) fn race_provisioning_install(enabled: bool) {
+    PROVISIONING_RACE_INSTALL.with(|configured| configured.set(enabled));
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn provisioning_sync(file: &File, _point: ProvisioningSyncPoint) -> Result<(), StateError> {
+    #[cfg(test)]
+    if PROVISIONING_FAIL_FSYNC_AT.with(|configured| configured.get() == Some(_point)) {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    file.sync_all()
+        .map_err(|_| StateError::ProvisioningUncertain)
+}
+
+/// Open the trusted `/run/lagrange` parent through no-follow directory
+/// descriptors.  No caller-supplied path reaches this production helper.
+#[cfg(feature = "market-stream-provisioning")]
+pub(crate) fn open_production_provisioning_parent() -> Result<File, StateError> {
+    let root = open_directory_component(Path::new("/"), None)?;
+    validate_trusted_parent(&root, 0, 0)?;
+    let run = open_directory_component(Path::new("run"), Some(&root))?;
+    validate_trusted_parent(&run, 0, 0)?;
+    let lagrange = open_directory_component(Path::new("lagrange"), Some(&run))?;
+    validate_trusted_parent(&lagrange, 0, PRODUCTION_STATE_GID)?;
+    Ok(lagrange)
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn open_directory_component(name: &Path, parent: Option<&File>) -> Result<File, StateError> {
+    let file = match parent {
+        Some(parent) => open_at(
+            parent,
+            name.to_str().ok_or(StateError::UnsafePath)?,
+            O_RDONLY | O_DIRECTORY,
+            0,
+        ),
+        None => {
+            let bytes =
+                CString::new(name.as_os_str().as_bytes()).map_err(|_| StateError::UnsafePath)?;
+            // SAFETY: `bytes` is a NUL-terminated absolute path.  The opened
+            // directory descriptor is transferred into the returned `File`.
+            let fd = unsafe {
+                open(
+                    bytes.as_ptr(),
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                    0,
+                )
+            };
+            if fd < 0 {
+                return Err(StateError::UnsafePath);
+            }
+            // SAFETY: `open` returned a new descriptor owned by this function.
+            Ok(unsafe { File::from_raw_fd(fd) })
+        }
+    }
+    .map_err(|_| StateError::UnsafePath)?;
+    if !file
+        .metadata()
+        .map_err(|_| StateError::UnsafePath)?
+        .file_type()
+        .is_dir()
+    {
+        return Err(StateError::UnsafePath);
+    }
+    Ok(file)
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn validate_trusted_parent(
+    parent: &File,
+    expected_uid: u32,
+    expected_gid: u32,
+) -> Result<(), StateError> {
+    let metadata = parent.metadata().map_err(|_| StateError::UnsafePath)?;
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != expected_uid
+        || metadata.gid() != expected_gid
+        || metadata.permissions().mode() & 0o022 != 0
+    {
+        return Err(StateError::UnsafePath);
+    }
+    Ok(())
+}
+
+#[cfg(all(test, feature = "market-stream-provisioning"))]
+pub(crate) fn open_fixture_provisioning_parent(
+    path: &Path,
+    uid: u32,
+    gid: u32,
+) -> Result<File, StateError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| StateError::UnsafePath)?;
+    let mode = metadata.permissions().mode() & 0o7777;
+    let file = open_directory(path, uid, gid, mode)?;
+    validate_trusted_parent(&file, uid, gid)?;
+    Ok(file)
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn provisioning_input(slot: Uuid, generation: u64) -> Result<(), StateError> {
+    if slot.is_nil() || generation == 0 {
+        return Err(StateError::ProvisioningInputInvalid);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn ensure_absent_at(parent: &File, name: &str) -> Result<(), StateError> {
+    match open_at(parent, name, O_PATH, 0) {
+        Ok(_existing) => Err(StateError::PriorSessionUncertain),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(StateError::UnsafePath),
+    }
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn mkdir_at(parent: &File, name: &str, mode: u32) -> io::Result<()> {
+    let name = CString::new(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    // SAFETY: `name` is one NUL-terminated child component of the live parent
+    // descriptor; `mkdirat` does not follow a leaf symlink.
+    if unsafe { mkdirat(parent.as_raw_fd(), name.as_ptr(), mode) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn set_new_object_owner_mode(file: &File, uid: u32, gid: u32, mode: u32) -> Result<(), StateError> {
+    // SAFETY: the descriptor is open and refers only to an object created by
+    // this fresh-layout invocation.
+    if unsafe { fchown(file.as_raw_fd(), uid, gid) } != 0 {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    // SAFETY: the descriptor is open and refers only to an object created by
+    // this fresh-layout invocation.
+    if unsafe { fchmod(file.as_raw_fd(), mode) } != 0 {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn create_provisioning_directory(
+    parent: &File,
+    name: &str,
+    uid: u32,
+    gid: u32,
+    mode: u32,
+    directory_sync: ProvisioningSyncPoint,
+    parent_sync: ProvisioningSyncPoint,
+) -> Result<File, StateError> {
+    mkdir_at(parent, name, mode).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            StateError::PriorSessionUncertain
+        } else {
+            StateError::Io
+        }
+    })?;
+    let directory = open_at(parent, name, O_RDONLY | O_DIRECTORY, 0)
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    set_new_object_owner_mode(&directory, uid, gid, mode)?;
+    validate_directory_descriptor(
+        &directory,
+        uid,
+        gid,
+        mode,
+        ObjectIdentity::from_metadata(
+            &directory
+                .metadata()
+                .map_err(|_| StateError::ProvisioningUncertain)?,
+        ),
+    )
+    .map_err(|_| StateError::ProvisioningUncertain)?;
+    provisioning_sync(&directory, directory_sync)?;
+    provisioning_sync(parent, parent_sync)?;
+    Ok(directory)
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn create_provisioning_anchor(
+    directory: &File,
+    name: &str,
+    uid: u32,
+    gid: u32,
+    sync_point: ProvisioningSyncPoint,
+) -> Result<File, StateError> {
+    let file = open_at(
+        directory,
+        name,
+        O_WRONLY | O_CREAT | O_EXCL,
+        ANCHOR_FILE_MODE,
+    )
+    .map_err(|_| StateError::ProvisioningUncertain)?;
+    set_new_object_owner_mode(&file, uid, gid, ANCHOR_FILE_MODE)?;
+    validate_regular_descriptor(&file, uid, gid, ANCHOR_FILE_MODE, false)
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    if metadata.len() != 0 || metadata.nlink() != 1 {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    provisioning_sync(&file, sync_point)?;
+    Ok(file)
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn rename_at_noreplace(directory: &File, from: &str, to: &str) -> io::Result<()> {
+    let from = CString::new(from).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let to = CString::new(to).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    #[cfg(test)]
+    if PROVISIONING_RACE_INSTALL.with(std::cell::Cell::get) {
+        let mut raced = open_at(
+            directory,
+            to.to_str().unwrap_or_default(),
+            O_WRONLY | O_CREAT | O_EXCL,
+            0o600,
+        )?;
+        raced
+            .write_all(b"race")
+            .map_err(|_| io::Error::other("install race fixture failed"))?;
+        raced.sync_all()?;
+    }
+    // SAFETY: both names are one NUL-terminated component relative to the
+    // same verified directory; RENAME_NOREPLACE refuses a raced destination.
+    if unsafe {
+        renameat2(
+            directory.as_raw_fd(),
+            from.as_ptr(),
+            directory.as_raw_fd(),
+            to.as_ptr(),
+            RENAME_NOREPLACE,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn verify_provisioning_directory_name(
+    parent: &File,
+    name: &str,
+    expected: ObjectIdentity,
+) -> Result<(), StateError> {
+    let object = open_at(parent, name, O_PATH, 0).map_err(|_| StateError::ProvisioningUncertain)?;
+    let metadata = object
+        .metadata()
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    if !metadata.file_type().is_dir() || ObjectIdentity::from_metadata(&metadata) != expected {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn provisioning_store_at(
+    parent: &File,
+    slot: Uuid,
+    owners: ProvisioningOwners,
+) -> Result<WsStateStore, StateError> {
+    validate_trusted_parent(parent, owners.parent_uid, owners.parent_gid)?;
+    let directory =
+        open_at(parent, PRODUCTION_STATE_LEAF, O_RDONLY | O_DIRECTORY, 0).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                StateError::PriorSessionUncertain
+            } else {
+                StateError::UnsafePath
+            }
+        })?;
+    let anchor_directory = open_at(parent, PRODUCTION_ANCHOR_LEAF, O_RDONLY | O_DIRECTORY, 0)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                StateError::PriorSessionUncertain
+            } else {
+                StateError::UnsafePath
+            }
+        })?;
+    validate_directory_descriptor(
+        &directory,
+        owners.state_uid,
+        owners.state_gid,
+        STATE_DIRECTORY_MODE,
+        ObjectIdentity::from_metadata(&directory.metadata().map_err(|_| StateError::UnsafePath)?),
+    )?;
+    validate_directory_descriptor(
+        &anchor_directory,
+        owners.anchor_uid,
+        owners.anchor_gid,
+        ANCHOR_DIRECTORY_MODE,
+        ObjectIdentity::from_metadata(
+            &anchor_directory
+                .metadata()
+                .map_err(|_| StateError::UnsafePath)?,
+        ),
+    )?;
+    let state_directory_identity =
+        ObjectIdentity::from_metadata(&directory.metadata().map_err(|_| StateError::UnsafePath)?);
+    let anchor_directory_identity = ObjectIdentity::from_metadata(
+        &anchor_directory
+            .metadata()
+            .map_err(|_| StateError::UnsafePath)?,
+    );
+    if state_directory_identity == anchor_directory_identity {
+        return Err(StateError::UnsafePath);
+    }
+    let connection = open_anchor(
+        &anchor_directory,
+        CONNECTION_LOCK_FILE,
+        owners.anchor_uid,
+        owners.anchor_gid,
+    )?;
+    let state_anchor = open_anchor(
+        &anchor_directory,
+        STATE_LOCK_FILE,
+        owners.anchor_uid,
+        owners.anchor_gid,
+    )?;
+    let connection_identity =
+        ObjectIdentity::from_metadata(&connection.metadata().map_err(|_| StateError::UnsafePath)?);
+    let state_anchor_identity = ObjectIdentity::from_metadata(
+        &state_anchor
+            .metadata()
+            .map_err(|_| StateError::UnsafePath)?,
+    );
+    if connection_identity == state_anchor_identity {
+        return Err(StateError::UnsafePath);
+    }
+    let binding = DomainBinding {
+        state_directory: state_directory_identity,
+        anchor_directory: anchor_directory_identity,
+        connection_anchor: connection_identity,
+        state_anchor: state_anchor_identity,
+    };
+    Ok(WsStateStore {
+        dir: PathBuf::from(PRODUCTION_STATE_DIRECTORY),
+        directory: Arc::new(directory),
+        anchor_directory: Arc::new(anchor_directory),
+        credential_slot_id: slot,
+        binding,
+        state_uid: owners.state_uid,
+        state_gid: owners.state_gid,
+        anchor_uid: owners.anchor_uid,
+        anchor_gid: owners.anchor_gid,
+    })
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+fn validate_provisioning_store(
+    store: &WsStateStore,
+    slot: Uuid,
+    generation: u64,
+) -> Result<(), StateError> {
+    store.validate_directories()?;
+    let state = store.load_unlocked()?;
+    store.validate_domain(&state)?;
+    if state.credential_slot_id != slot.to_string()
+        || state.credential_generation != generation.to_string()
+    {
+        return Err(StateError::InvalidState);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+pub(crate) fn validate_provisioning_at(
+    parent: &File,
+    slot: Uuid,
+    generation: u64,
+    owners: ProvisioningOwners,
+) -> Result<(), StateError> {
+    provisioning_input(slot, generation)?;
+    let store = provisioning_store_at(parent, slot, owners)?;
+    let _connection = store.lock()?;
+    let _state = store.state_guard()?;
+    validate_provisioning_store(&store, slot, generation)
+}
+
+#[cfg(feature = "market-stream-provisioning")]
+pub(crate) fn initialize_provisioning_at(
+    parent: &File,
+    slot: Uuid,
+    generation: u64,
+    owners: ProvisioningOwners,
+) -> Result<(), StateError> {
+    provisioning_input(slot, generation)?;
+    validate_trusted_parent(parent, owners.parent_uid, owners.parent_gid)?;
+    ensure_absent_at(parent, PRODUCTION_STATE_LEAF)?;
+    ensure_absent_at(parent, PRODUCTION_ANCHOR_LEAF)?;
+
+    let state_directory = create_provisioning_directory(
+        parent,
+        PRODUCTION_STATE_LEAF,
+        owners.state_uid,
+        owners.state_gid,
+        STATE_DIRECTORY_MODE,
+        ProvisioningSyncPoint::StateDirectory,
+        ProvisioningSyncPoint::ParentAfterStateDirectory,
+    )?;
+    let anchor_directory = create_provisioning_directory(
+        parent,
+        PRODUCTION_ANCHOR_LEAF,
+        owners.anchor_uid,
+        owners.anchor_gid,
+        ANCHOR_DIRECTORY_MODE,
+        ProvisioningSyncPoint::AnchorDirectory,
+        ProvisioningSyncPoint::ParentAfterAnchorDirectory,
+    )
+    .map_err(|_| StateError::ProvisioningUncertain)?;
+
+    let connection = create_provisioning_anchor(
+        &anchor_directory,
+        CONNECTION_LOCK_FILE,
+        owners.anchor_uid,
+        owners.anchor_gid,
+        ProvisioningSyncPoint::ConnectionAnchor,
+    )?;
+    let state_anchor = create_provisioning_anchor(
+        &anchor_directory,
+        STATE_LOCK_FILE,
+        owners.anchor_uid,
+        owners.anchor_gid,
+        ProvisioningSyncPoint::StateAnchor,
+    )?;
+    let connection_identity = ObjectIdentity::from_metadata(
+        &connection
+            .metadata()
+            .map_err(|_| StateError::ProvisioningUncertain)?,
+    );
+    let state_anchor_identity = ObjectIdentity::from_metadata(
+        &state_anchor
+            .metadata()
+            .map_err(|_| StateError::ProvisioningUncertain)?,
+    );
+    if connection_identity == state_anchor_identity {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    provisioning_sync(
+        &anchor_directory,
+        ProvisioningSyncPoint::AnchorDirectoryAfterAnchors,
+    )?;
+    provisioning_sync(parent, ProvisioningSyncPoint::ParentAfterAnchors)?;
+
+    let store = provisioning_store_at(parent, slot, owners)
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    let _connection_lock = store
+        .lock()
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    let _state_lock = store
+        .state_guard()
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    let state = DurableWsState {
+        schema: STATE_SCHEMA.to_owned(),
+        credential_slot_id: slot.to_string(),
+        domain_binding: store.binding.clone(),
+        credential_generation: generation.to_string(),
+        ..DurableWsState::default()
+    };
+    if !state.is_valid() {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    let bytes = serde_json::to_vec(&state).map_err(|_| StateError::ProvisioningUncertain)?;
+    if bytes.len() as u64 > MAX_STATE_FILE_BYTES {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    let temporary = format!(".approval-state-{}.provision.tmp", Uuid::new_v4());
+    let mut file = open_at(
+        &store.directory,
+        &temporary,
+        O_WRONLY | O_CREAT | O_EXCL,
+        STATE_FILE_MODE,
+    )
+    .map_err(|_| StateError::ProvisioningUncertain)?;
+    set_new_object_owner_mode(&file, owners.state_uid, owners.state_gid, STATE_FILE_MODE)?;
+    file.write_all(&bytes)
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    validate_regular_descriptor(
+        &file,
+        owners.state_uid,
+        owners.state_gid,
+        STATE_FILE_MODE,
+        true,
+    )
+    .map_err(|_| StateError::ProvisioningUncertain)?;
+    let temporary_metadata = file
+        .metadata()
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    if temporary_metadata.len() != bytes.len() as u64 || temporary_metadata.nlink() != 1 {
+        return Err(StateError::ProvisioningUncertain);
+    }
+    provisioning_sync(&file, ProvisioningSyncPoint::StateTemporaryFile)?;
+    drop(file);
+    ensure_absent_at(&store.directory, STATE_FILE)
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    rename_at_noreplace(&store.directory, &temporary, STATE_FILE)
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    provisioning_sync(
+        &store.directory,
+        ProvisioningSyncPoint::StateDirectoryAfterInstall,
+    )?;
+
+    verify_provisioning_directory_name(
+        parent,
+        PRODUCTION_STATE_LEAF,
+        ObjectIdentity::from_metadata(
+            &state_directory
+                .metadata()
+                .map_err(|_| StateError::ProvisioningUncertain)?,
+        ),
+    )?;
+    verify_provisioning_directory_name(
+        parent,
+        PRODUCTION_ANCHOR_LEAF,
+        ObjectIdentity::from_metadata(
+            &anchor_directory
+                .metadata()
+                .map_err(|_| StateError::ProvisioningUncertain)?,
+        ),
+    )?;
+    let reopened = provisioning_store_at(parent, slot, owners)
+        .map_err(|_| StateError::ProvisioningUncertain)?;
+    validate_provisioning_store(&reopened, slot, generation)
+        .map_err(|_| StateError::ProvisioningUncertain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::clock::{Clock, TestClock};
+
+    #[cfg(feature = "market-stream-provisioning")]
+    #[test]
+    fn runtime_validation_branch_never_creates_a_missing_layout() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), Permissions::from_mode(0o700)).unwrap();
+        let metadata = fs::metadata(root.path()).unwrap();
+        let state_dir = root.path().join("kis-market-stream");
+        let anchor_dir = root.path().join("kis-market-stream-locks");
+        assert!(
+            MarketStreamDomain::open_verified(
+                state_dir.clone(),
+                anchor_dir.clone(),
+                Uuid::new_v4(),
+                metadata.uid(),
+                metadata.gid(),
+                metadata.uid(),
+                metadata.gid(),
+                false,
+            )
+            .is_err()
+        );
+        assert!(!state_dir.exists());
+        assert!(!anchor_dir.exists());
+    }
 
     #[test]
     fn stale_absence_observer_cannot_claim_an_existing_synthetic_layout() {
@@ -1368,6 +2022,52 @@ mod tests {
         );
         let clock = TestClock::at(100);
         assert_eq!(clock.now_ms(), 100);
+    }
+
+    #[test]
+    fn synthetic_anchors_keep_exact_mode_under_restrictive_umask() {
+        const CHILD_MARKER: &str = "KIS_MARKET_STREAM_RESTRICTIVE_UMASK_CHILD";
+
+        if std::env::var_os(CHILD_MARKER).as_deref() != Some(std::ffi::OsStr::new("child")) {
+            let executable = std::env::current_exe().unwrap();
+            let status = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg("umask 077; exec \"$@\"")
+                .arg("sh")
+                .arg(executable)
+                .arg("--exact")
+                .arg("market_stream_state::tests::synthetic_anchors_keep_exact_mode_under_restrictive_umask")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD_MARKER, "child")
+                .status()
+                .unwrap();
+            assert!(status.success(), "restrictive-umask child failed: {status}");
+            return;
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let slot = Uuid::new_v4();
+        let domain = MarketStreamDomain::for_test(directory.path(), slot).unwrap();
+        let anchor_directory = directory.path().join("kis-market-stream-locks");
+
+        for anchor_name in [CONNECTION_LOCK_FILE, STATE_LOCK_FILE] {
+            let metadata = fs::symlink_metadata(anchor_directory.join(anchor_name)).unwrap();
+            assert!(metadata.file_type().is_file());
+            assert_eq!(metadata.nlink(), 1);
+            assert_eq!(metadata.permissions().mode() & 0o7777, ANCHOR_FILE_MODE);
+        }
+
+        let store = domain.state();
+        store
+            .with_locked_state(|state| {
+                state.command_attempts_ms.push(100);
+                Ok(())
+            })
+            .unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.credential_slot_id, slot.to_string());
+        assert_eq!(loaded.command_attempts_ms, vec![100]);
     }
 
     #[test]

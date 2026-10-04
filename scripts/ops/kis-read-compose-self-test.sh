@@ -3,7 +3,9 @@
 set -euo pipefail
 
 unset OWNER_INTRADAY_QUOTES_MODE KIS_READ_COORDINATION_MODE \
-  OWNER_INTRADAY_SESSION_WINDOWS_SOURCE
+  OWNER_INTRADAY_SESSION_WINDOWS_SOURCE OWNER_INTRADAY_QUOTE_TRANSPORT \
+  OWNER_MARKET_STREAM_ORIGIN KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID \
+  KIS_MARKET_STREAM_GRANT_ID KIS_MARKET_STREAM_CONTRACT_SHA256
 
 script_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 helper=$script_dir/lib/kis-read-compose.sh
@@ -36,7 +38,7 @@ for entrypoint in \
 done
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-kis-read-compose.XXXXXX")
-trap 'rm -rf -- "$tmp"' EXIT
+trap 'status=$?; if [ "$status" -eq 0 ]; then rm -rf -- "$tmp"; else printf "fixture retained: %s\n" "$tmp" >&2; fi' EXIT
 
 source "$dotenv"
 source "$helper"
@@ -185,17 +187,17 @@ write_env "$refresh_env" \
 chmod 0600 "$refresh_env"
 
 write_manifest() {
-  local path=$1 service index=0 image_id
+  local path=$1 manifest_commit=${2:-$commit} service index=${3:-0} image_id
   {
     printf '%s\n' LAGRANGE_RELEASE_MANIFEST_V2
-    printf 'commit|%s\n' "$commit"
+    printf 'commit|%s\n' "$manifest_commit"
     for service in db-role-bootstrap db-migrate api-server web research-worker \
       recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner \
       nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
       index=$((index + 1))
       image_id=$(printf 'sha256:%064d' "$index")
       printf 'image|%s|lagrange-station-%s:%s|%s|%s\n' \
-        "$service" "$service" "$commit" "$image_id" "$commit"
+        "$service" "$service" "$manifest_commit" "$image_id" "$manifest_commit"
     done
   } >"$path"
   chmod 0600 "$path"
@@ -249,7 +251,7 @@ image_id_for_service() {
     paper-scheduler) index=12 ;;
     *) return 1 ;;
   esac
-  printf 'sha256:%064d' "$index"
+  printf 'sha256:%064d' "$((index + ${FAKE_IMAGE_OFFSET:-0}))"
 }
 
 if [ "${1:-}" = compose ]; then
@@ -269,7 +271,18 @@ if [ "${1:-}" = compose ]; then
       fi
       exit 0
       ;;
-    up) exit 0 ;;
+    up)
+      if [ -n "${FAKE_PREVIOUS_COMMIT:-}" ]; then
+        override=
+        for argument in "$@"; do
+          [[ "$argument" == */.release-image-override.* ]] && override=$argument
+        done
+        [ -n "$override" ] || exit 96
+        grep -Fq -- "$(image_id_for_service "${!#}")" "$override" || exit 96
+        : >"${FAKE_TRANSITION_STATE:?}/${!#}"
+      fi
+      exit 0
+      ;;
     *) exit 0 ;;
   esac
 fi
@@ -287,10 +300,17 @@ if [ "${1:-}" = inspect ]; then
   fi
   target=${!#}
   service=${target#ctr-}
+  revision=${FAKE_COMMIT:?}
+  if [ -n "${FAKE_PREVIOUS_COMMIT:-}" ] &&
+      [ ! -e "${FAKE_TRANSITION_STATE:?}/$service" ] &&
+      [ "${FAKE_MIXED_SERVICE:-}" != "$service" ]; then
+    FAKE_IMAGE_OFFSET=100
+    revision=$FAKE_PREVIOUS_COMMIT
+  fi
   image_id=$(image_id_for_service "$service")
   [ "${FAKE_MISMATCH_SERVICE:-}" = "$service" ] &&
     image_id=sha256:9999999999999999999999999999999999999999999999999999999999999999
-  printf '%s|%s\n' "$image_id" "${FAKE_COMMIT:?}"
+  printf '%s|%s\n' "$image_id" "$revision"
   exit 0
 fi
 
@@ -465,4 +485,181 @@ esac
 ! grep -Eq '^compose .* (up|build|stop|down)( |$)' "$docker_log"
 ! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
 
-printf 'KIS_READ_COMPOSE_SELF_TEST: PASS (provider-free helper and refresh fixture)\n'
+# A WS rollout refresh includes Web and requires a separate acknowledgement.
+# Every command below still reaches only the task-owned fake Docker executable.
+printf '%s\n' 'services: {}' >"$release_root/deploy/compose/compose.market-stream.yml"
+cp "$tmp/refresh-env.saved" "$refresh_env"
+cat >>"$refresh_env" <<'ENV'
+OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws
+OWNER_MARKET_STREAM_ORIGIN=https://quotes.example
+KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID=00000000-0000-4000-8000-000000000001
+KIS_MARKET_STREAM_GRANT_ID=00000000-0000-4000-8000-000000000002
+KIS_MARKET_STREAM_CONTRACT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ENV
+: >"$docker_log"
+run_refresh "$tmp/ws-plan.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --plan
+grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM_ORDER:' "$tmp/ws-plan.out"
+! grep -Eq '^compose .* (up|run|build|stop|down)( |$)' "$docker_log"
+
+: >"$docker_log"
+if run_refresh "$tmp/ws-legacy-refresh.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-intraday --plan; then
+  fail 'legacy REST refresh accepted market WS transport'
+fi
+grep -Fq 'market_stream_requires_refresh_market_stream' "$tmp/ws-legacy-refresh.out"
+! grep -Eq '^compose .* (up|run|build|stop|down)( |$)' "$docker_log"
+
+: >"$docker_log"
+if run_refresh "$tmp/ws-missing-confirm.out" \
+  env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --apply; then
+  fail 'REST acknowledgement alone activated market WS'
+fi
+grep -Fq 'owner_market_stream_rollout_confirmation_required' "$tmp/ws-missing-confirm.out"
+! grep -Eq '^compose .* (up|run|build|stop|down)( |$)' "$docker_log"
+
+: >"$docker_log"
+run_refresh "$tmp/ws-apply.out" \
+  env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS \
+  bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --apply
+grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM: PASS' "$tmp/ws-apply.out"
+mapfile -t ws_ups < <(grep '^compose .* up ' "$docker_log")
+[ "${#ws_ups[@]}" -eq 3 ] || fail 'market WS refresh must recreate exactly API, Web and owner V2'
+targets=(api-server web owner-equity-v2-runner)
+for index in 0 1 2; do
+  case "${ws_ups[$index]}" in
+    *"-f $release_root/deploy/compose/compose.market-stream.yml -f $install_root/.release-image-override."*"--no-build --pull never --no-deps --force-recreate --wait ${targets[$index]}") ;;
+    *) fail 'market WS refresh violated fixed overlay or startup order' ;;
+  esac
+done
+! grep -Eq '^compose .* (build|run|down|stop)( |$)' "$docker_log"
+! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
+
+# Explicit cross-release refresh binds old running containers to a separate
+# trusted installed manifest, while every replacement still uses current.
+previous_commit=89abcdef0123456789abcdef0123456789abcdef
+previous_root=$install_root/releases/$previous_commit
+transition_state=$tmp/transition-state
+mkdir -p "$previous_root" "$transition_state"
+write_manifest "$previous_root/.lagrange-release-manifest" "$previous_commit" 100
+run_transition() {
+  local output=$1
+  shift
+  run_refresh "$output" env FAKE_PREVIOUS_COMMIT="$previous_commit" \
+    FAKE_TRANSITION_STATE="$transition_state" \
+    OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+    OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS \
+    "$@"
+}
+assert_no_transition_mutation() {
+  ! grep -Eq '^compose .* (up|run|build|stop|down)( |$)' "$docker_log" ||
+    fail 'rejected/read-only transition mutated a service'
+  ! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q . ||
+    fail 'rejected/read-only transition created an override'
+}
+
+for bad_commit in '' invalid ../escape 0000000000000000000000000000000000000000; do
+  : >"$docker_log"
+  if run_refresh "$tmp/transition-bad-commit.out" bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --refresh-from-commit "$bad_commit" --plan; then
+    fail 'transition accepted an invalid source commit'
+  fi
+  assert_no_transition_mutation
+done
+: >"$docker_log"
+if run_refresh "$tmp/transition-wrong-scope.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-intraday --refresh-from-commit "$previous_commit" --plan; then
+  fail 'transition option was accepted outside market-stream refresh'
+fi
+assert_no_transition_mutation
+
+: >"$docker_log"
+if run_transition "$tmp/transition-unselected.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --apply; then
+  fail 'old images were accepted without an explicit source commit'
+fi
+grep -Fq 'persistent service image_id mismatch:' "$tmp/transition-unselected.out"
+assert_no_transition_mutation
+
+mv "$previous_root/.lagrange-release-manifest" "$tmp/previous-manifest.saved"
+: >"$docker_log"
+if run_transition "$tmp/transition-missing-manifest.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" --apply; then
+  fail 'transition accepted a missing previous manifest'
+fi
+grep -Fq 'refresh-source-manifest must be a regular non-symlink file' "$tmp/transition-missing-manifest.out"
+assert_no_transition_mutation
+ln -s "$tmp/previous-manifest.saved" "$previous_root/.lagrange-release-manifest"
+: >"$docker_log"
+if run_transition "$tmp/transition-symlink-manifest.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" --plan; then
+  fail 'transition accepted a symlinked previous manifest'
+fi
+assert_no_transition_mutation
+rm -- "$previous_root/.lagrange-release-manifest"
+mv "$tmp/previous-manifest.saved" "$previous_root/.lagrange-release-manifest"
+
+for control in FAKE_MISMATCH_SERVICE=web FAKE_MIXED_SERVICE=web; do
+  : >"$docker_log"
+  if run_transition "$tmp/transition-mismatched.out" env "$control" \
+    bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" --apply; then
+    fail 'transition accepted a foreign or mixed running image'
+  fi
+  grep -Fq 'persistent service image_id mismatch: web' "$tmp/transition-mismatched.out"
+  assert_no_transition_mutation
+done
+
+for inspection in plan preflight; do
+  : >"$docker_log"
+  run_transition "$tmp/transition-$inspection.out" bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" "--$inspection"
+  assert_no_transition_mutation
+done
+: >"$docker_log"
+run_transition "$tmp/transition-apply.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" --apply
+grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM: PASS' "$tmp/transition-apply.out"
+mapfile -t transition_ups < <(grep '^compose .* up ' "$docker_log")
+[ "${#transition_ups[@]}" -eq 3 ] || fail 'cross-release refresh did not recreate exactly three services'
+for index in 0 1 2; do
+  [[ "${transition_ups[$index]}" == *"--no-build --pull never --no-deps --force-recreate --wait ${targets[$index]}" ]] ||
+    fail 'cross-release refresh changed startup order or build policy'
+done
+
+# Turning quotes off needs no WS pins or WS acknowledgement and still refreshes
+# Web, so the prior browser transport is not left in the serving container.
+write_env "$refresh_env" \
+  'LAGRANGE_DATA_DIR=/tmp/fixture-data' "LAGRANGE_CODE_COMMIT=$commit" \
+  'OWNER_INTRADAY_QUOTES_MODE=off' 'OWNER_INTRADAY_QUOTE_TRANSPORT=rest' \
+  'KIS_READ_COORDINATION_MODE=shared_required' \
+  'OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=operational_v1' \
+  'OWNER_EQUITY_V2_RUNTIME_MODE=owner_only'
+: >"$docker_log"
+run_refresh "$tmp/ws-off.out" \
+  env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --apply
+mapfile -t off_ups < <(grep '^compose .* up ' "$docker_log")
+[ "${#off_ups[@]}" -eq 3 ] || fail 'quotes-off rollback did not refresh the same three services'
+! grep -Fq 'compose.market-stream.yml' "$docker_log"
+! grep -Eq '^compose .* (build|run|down|stop)( |$)' "$docker_log"
+
+rm -- "$transition_state/api-server" "$transition_state/web" "$transition_state/owner-equity-v2-runner"
+: >"$docker_log"
+run_refresh "$tmp/transition-off.out" env FAKE_PREVIOUS_COMMIT="$previous_commit" \
+  FAKE_TRANSITION_STATE="$transition_state" \
+  OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" --apply
+grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM: PASS' "$tmp/transition-off.out"
+mapfile -t transition_off_ups < <(grep '^compose .* up ' "$docker_log")
+[ "${#transition_off_ups[@]}" -eq 3 ] || fail 'cross-release off rollback did not refresh all three services'
+! grep -Fq 'compose.market-stream.yml' "$docker_log"
+! grep -Eq '^compose .* (build|run|down|stop)( |$)' "$docker_log"
+
+printf 'KIS_READ_COMPOSE_SELF_TEST: PASS (provider-free helper, REST/WS refresh and off rollback fixtures)\n'

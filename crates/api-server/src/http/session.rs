@@ -96,6 +96,13 @@ struct SessionLookupRow {
 }
 
 impl SessionRejection {
+    pub(crate) fn is_session_denied(&self) -> bool {
+        matches!(
+            self.status,
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        )
+    }
+
     fn status(&self) -> StatusCode {
         self.status
     }

@@ -40,9 +40,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=lagrange-cargo-regist
     --mount=type=cache,target=/usr/local/cargo/git,id=lagrange-cargo-git-v1,sharing=locked \
     --mount=type=cache,target=/cargo-target,id=lagrange-cargo-target-v1-rust-1.97.1-alpine-3c38f3f82c2f-${TARGETPLATFORM}-release,sharing=locked \
     cargo clean --workspace --release --locked \
-    && cargo build --locked --release --package job-queue --bin owner-equity-v2-runner \
+    && cargo build --locked --release --package job-queue --features market-stream-provisioning --bin owner-equity-v2-runner \
+    && cargo build --locked --release --package job-queue --features market-stream-provisioning --bin kis-market-stream-state \
     && mkdir -p /build/target/release \
-    && cp /cargo-target/release/owner-equity-v2-runner /build/target/release/owner-equity-v2-runner
+    && cp /cargo-target/release/owner-equity-v2-runner /build/target/release/owner-equity-v2-runner \
+    && cp /cargo-target/release/kis-market-stream-state /build/target/release/kis-market-stream-state
 
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS verified-artifacts
 
@@ -76,6 +78,7 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ libpq libssl3 \
     && adduser -S -D -H -u 10001 -G lagrange lagrange
 
 COPY --from=builder /build/target/release/owner-equity-v2-runner /usr/local/bin/owner-equity-v2-runner
+COPY --from=builder /build/target/release/kis-market-stream-state /usr/local/bin/kis-market-stream-state
 
 USER 10001:10001
 STOPSIGNAL SIGTERM

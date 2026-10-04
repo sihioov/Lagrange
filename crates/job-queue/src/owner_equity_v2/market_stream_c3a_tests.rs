@@ -701,7 +701,8 @@ async fn owner_market_stream_real_role_boundary()
                 &fixture.owner_session_hash,
                 one_identity_lease.lease_id,
             )
-            .await?;
+            .await
+            .map_err(|error| format!("single-identity snapshot failed: {error:?}"))?;
         assert_eq!(one_identity_snapshot.lease_id, one_identity_lease.lease_id);
         assert!(one_identity_snapshot.lease_expires_at > chrono::Utc::now());
         assert_eq!(one_identity_renewal.identities.len(), 1);
@@ -1809,7 +1810,8 @@ async fn owner_market_stream_real_role_boundary()
                 &fixture.owner_session_hash,
                 first.lease_id,
             )
-            .await?;
+            .await
+            .map_err(|error| format!("rollback snapshot failed: {error:?}"))?;
         let first_after_rollback = snapshot_after_rollback
             .rows
             .iter()
@@ -2031,12 +2033,13 @@ async fn owner_market_stream_real_role_boundary()
                 &fixture.owner_session_hash,
                 first.lease_id,
             )
-            .await?;
-        assert!(
-            !snapshot_after_generation
-                .rows
-                .iter()
-                .any(|row| row.identity.membership_id == identities[0].membership_id)
+            .await;
+        // The delivery helper rejects the entire lease when any demanded
+        // identity is no longer current; a subset is not a valid snapshot.
+        assert_eq!(
+            snapshot_after_generation,
+            Err(MarketStreamStorageError::MembershipNotReady),
+            "generation change must deny the stale full-board snapshot"
         );
 
         let snapshot_after_membership = app
@@ -2045,12 +2048,11 @@ async fn owner_market_stream_real_role_boundary()
                 &fixture.owner_session_hash,
                 first.lease_id,
             )
-            .await?;
-        assert!(
-            !snapshot_after_membership
-                .rows
-                .iter()
-                .any(|row| row.identity.membership_id == identities[1].membership_id)
+            .await;
+        assert_eq!(
+            snapshot_after_membership,
+            Err(MarketStreamStorageError::MembershipNotReady),
+            "disabled membership must deny the stale full-board snapshot"
         );
 
         support::revoke_entitlement(database, fixture.grant_id).await?;
@@ -2108,12 +2110,20 @@ async fn owner_market_stream_real_role_boundary()
                 &fixture.owner_session_hash,
                 first.lease_id,
             )
-            .await?;
-        assert!(revoked_snapshot.rows.is_empty());
+            .await;
+        assert_eq!(
+            revoked_snapshot,
+            Err(MarketStreamStorageError::MembershipNotReady)
+        );
 
         // The generated database is disposable, so exercise the exact
-        // rollback artifact after all up-migration role and race evidence.
+        // rollback artifacts in reverse order after the role and race evidence.
         let mut down_tx = database.migration_owner.begin().await?;
+        sqlx::raw_sql(include_str!(
+            "../../../../migrations/0056_owner_market_stream_runtime.down.sql"
+        ))
+        .execute(&mut *down_tx)
+        .await?;
         sqlx::raw_sql(include_str!(
             "../../../../migrations/0055_owner_market_stream.down.sql"
         ))
@@ -2137,6 +2147,7 @@ async fn owner_market_stream_real_role_boundary()
         let remaining_functions: i64 = sqlx::query_scalar(
             "SELECT count(*)::bigint
                FROM pg_catalog.unnest(ARRAY[
+                   'public.owner_market_stream_delivery_state(uuid,text,uuid)',
                    'public.owner_market_stream_grants_guard()',
                    'public.owner_market_stream_rights_valid(uuid,uuid,date)',
                    'public.owner_market_stream_session_valid(text,uuid)',

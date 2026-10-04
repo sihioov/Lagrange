@@ -6,6 +6,7 @@
 //! health/readiness probes, and graceful shutdown.
 
 use crate::http::api_router;
+use crate::http::owner_market_stream_config::{MarketStreamReadConfig, MarketStreamReadPins};
 use crate::http::state::{
     ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaEquitySignalsMode, OwnerBetaPaperMode,
     OwnerBetaPriceInputMode, OwnerEquityV2RuntimePins, OwnerIntradayQuoteReadConfig,
@@ -78,6 +79,7 @@ pub struct RuntimeConfig {
     pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
     pub owner_equity_v2_api_artifact_root: Option<PathBuf>,
     pub owner_intraday_quotes: OwnerIntradayQuoteReadConfig,
+    pub owner_market_stream: MarketStreamReadConfig,
     pub owner_intraday_session_windows_source: IntradaySessionWindowSource,
     pub acquire_timeout: Duration,
 }
@@ -140,6 +142,7 @@ impl RuntimeConfig {
             owner_equity_v2_pins: self.owner_equity_v2_pins.clone(),
             owner_equity_v2_api_artifact_root: self.owner_equity_v2_api_artifact_root.clone(),
             owner_intraday_quotes: self.owner_intraday_quotes.clone(),
+            owner_market_stream: self.owner_market_stream.clone(),
             intraday_now: system_intraday_now,
         }
     }
@@ -184,18 +187,21 @@ where
     let owner_equity_v2_pins = owner_equity_v2_pins_from(&get)?;
     let owner_equity_v2_api_artifact_root = owner_equity_v2_api_artifact_root_from(&get)?;
     let owner_intraday_session_windows_source = owner_intraday_session_windows_source_from(&get)?;
-    let owner_intraday_quotes = owner_intraday_quote_read_config_from(
+    let mut owner_intraday_quotes = owner_intraday_quote_read_config_from(
         &get,
         &read_window,
         owner_intraday_session_windows_source,
     )?;
+    let owner_market_stream = market_stream_read_config_from(&get, &mut owner_intraday_quotes)?;
 
     let listen_addr = listen_addr_from(&get)?;
     let database = DatabaseConfig {
         app_url: role_database_url(&get, DatabaseRole::App, production)?,
         admin_url: role_database_url(&get, DatabaseRole::Admin, production)?,
         audit_url: role_database_url(&get, DatabaseRole::Audit, production)?,
-        app_max_connections: positive_u32(&get, "DB_APP_MAX_CONNECTIONS", DEFAULT_POOL_SIZE)?,
+        // Each SSE owns one LISTEN connection. Preserve room for its RLS
+        // reads and ordinary app requests even at the 20-consumer ceiling.
+        app_max_connections: market_stream_pool_size(&get, &owner_market_stream)?,
         admin_max_connections: positive_u32(
             &get,
             "DB_ADMIN_MAX_CONNECTIONS",
@@ -247,9 +253,81 @@ where
         owner_equity_v2_pins,
         owner_equity_v2_api_artifact_root,
         owner_intraday_quotes,
+        owner_market_stream,
         owner_intraday_session_windows_source,
         acquire_timeout: Duration::from_secs(acquire_timeout_secs),
     })
+}
+
+fn market_stream_pool_size<F>(get: &F, stream: &MarketStreamReadConfig) -> Result<u32, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let enabled = matches!(stream, MarketStreamReadConfig::OwnerOnly(_));
+    let size = positive_u32(
+        get,
+        "DB_APP_MAX_CONNECTIONS",
+        if enabled { 32 } else { DEFAULT_POOL_SIZE },
+    )?;
+    if enabled && size < 24 {
+        return Err(invalid("DB_APP_MAX_CONNECTIONS"));
+    }
+    Ok(size)
+}
+
+fn market_stream_read_config_from<F>(
+    get: &F,
+    legacy: &mut OwnerIntradayQuoteReadConfig,
+) -> Result<MarketStreamReadConfig, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    const TRANSPORT: &str = "OWNER_INTRADAY_QUOTE_TRANSPORT";
+    if get("OWNER_INTRADAY_QUOTE_TRANSPORT_FILE").is_some() {
+        return Err(invalid("OWNER_INTRADAY_QUOTE_TRANSPORT_FILE"));
+    }
+    let transport = match get(TRANSPORT) {
+        None => "rest".to_owned(),
+        Some(value) => value.into_string().map_err(|_| invalid(TRANSPORT))?,
+    };
+    if transport != "rest" && transport != "market_ws" {
+        return Err(invalid(TRANSPORT));
+    }
+    if transport == "rest" || matches!(legacy, OwnerIntradayQuoteReadConfig::Disabled) {
+        return Ok(MarketStreamReadConfig::Disabled);
+    }
+    let plain = |key: &str| -> Result<String, ConfigError> {
+        if get(&format!("{key}_FILE")).is_some() {
+            return Err(invalid(key));
+        }
+        get(key)
+            .ok_or_else(|| ConfigError::Missing {
+                key: key.to_owned(),
+            })?
+            .into_string()
+            .map_err(|_| invalid(key))
+    };
+    let uuid = |key: &str| -> Result<uuid::Uuid, ConfigError> {
+        let raw = plain(key)?;
+        let value = uuid::Uuid::parse_str(&raw).map_err(|_| invalid(key))?;
+        if value.is_nil() || value.to_string() != raw {
+            return Err(invalid(key));
+        }
+        Ok(value)
+    };
+    let OwnerIntradayQuoteReadConfig::OwnerOnly { window } = legacy else {
+        unreachable!()
+    };
+    let pins = MarketStreamReadPins::new(
+        plain("OWNER_MARKET_STREAM_ORIGIN")?,
+        uuid("KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID")?,
+        uuid("KIS_MARKET_STREAM_GRANT_ID")?,
+        plain("KIS_MARKET_STREAM_CONTRACT_SHA256")?,
+        window.clone(),
+    )
+    .map_err(|_| invalid("OWNER_MARKET_STREAM_ORIGIN/KIS_MARKET_STREAM_PINS"))?;
+    *legacy = OwnerIntradayQuoteReadConfig::Disabled;
+    Ok(MarketStreamReadConfig::OwnerOnly(pins))
 }
 
 fn owner_intraday_quote_read_config_from<F, R>(
@@ -1479,6 +1557,115 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
+
+    fn stream_pins_env() -> HashMap<String, OsString> {
+        [
+            ("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws".to_owned()),
+            (
+                "OWNER_MARKET_STREAM_ORIGIN",
+                "https://quotes.example".to_owned(),
+            ),
+            (
+                "KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID",
+                uuid::Uuid::from_u128(1).to_string(),
+            ),
+            (
+                "KIS_MARKET_STREAM_GRANT_ID",
+                uuid::Uuid::from_u128(2).to_string(),
+            ),
+            ("KIS_MARKET_STREAM_CONTRACT_SHA256", "a".repeat(64)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.into()))
+        .collect()
+    }
+
+    #[test]
+    fn market_stream_configuration_is_off_by_default_and_exclusive_with_rest() {
+        let mut legacy = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
+        assert_eq!(
+            market_stream_read_config_from(&|_| None, &mut legacy).unwrap(),
+            MarketStreamReadConfig::Disabled
+        );
+        assert!(matches!(
+            legacy,
+            OwnerIntradayQuoteReadConfig::OwnerOnly { .. }
+        ));
+        let env = stream_pins_env();
+        let stream = market_stream_read_config_from(&|k| env.get(k).cloned(), &mut legacy).unwrap();
+        assert!(matches!(stream, MarketStreamReadConfig::OwnerOnly(_)));
+        assert_eq!(legacy, OwnerIntradayQuoteReadConfig::Disabled);
+        let mut disabled = OwnerIntradayQuoteReadConfig::Disabled;
+        assert_eq!(
+            market_stream_read_config_from(
+                &|k| (k == "OWNER_INTRADAY_QUOTE_TRANSPORT").then(|| "market_ws".into()),
+                &mut disabled
+            )
+            .unwrap(),
+            MarketStreamReadConfig::Disabled
+        );
+    }
+
+    #[test]
+    fn market_stream_configuration_rejects_missing_noncanonical_and_file_pins() {
+        for key in [
+            "OWNER_MARKET_STREAM_ORIGIN",
+            "KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID",
+            "KIS_MARKET_STREAM_GRANT_ID",
+            "KIS_MARKET_STREAM_CONTRACT_SHA256",
+        ] {
+            let mut env = stream_pins_env();
+            env.remove(key);
+            let mut legacy = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
+            assert!(market_stream_read_config_from(&|k| env.get(k).cloned(), &mut legacy).is_err());
+            assert!(matches!(
+                legacy,
+                OwnerIntradayQuoteReadConfig::OwnerOnly { .. }
+            ));
+            let mut env = stream_pins_env();
+            env.insert(format!("{key}_FILE"), "/never/read".into());
+            assert!(market_stream_read_config_from(&|k| env.get(k).cloned(), &mut legacy).is_err());
+        }
+        for transport in ["WS", " rest", "market_ws ", ""] {
+            let mut env = stream_pins_env();
+            env.insert("OWNER_INTRADAY_QUOTE_TRANSPORT".into(), transport.into());
+            let mut legacy = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
+            assert!(market_stream_read_config_from(&|k| env.get(k).cloned(), &mut legacy).is_err());
+        }
+    }
+
+    #[test]
+    fn market_stream_pool_keeps_read_capacity_at_twenty_listeners() {
+        let env = stream_pins_env();
+        let mut legacy = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
+        let stream = market_stream_read_config_from(&|k| env.get(k).cloned(), &mut legacy).unwrap();
+        assert_eq!(market_stream_pool_size(&|_| None, &stream).unwrap(), 32);
+        for size in ["1", "20", "23"] {
+            assert!(
+                market_stream_pool_size(
+                    &|key| (key == "DB_APP_MAX_CONNECTIONS").then(|| size.into()),
+                    &stream
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(
+            market_stream_pool_size(
+                &|key| (key == "DB_APP_MAX_CONNECTIONS").then(|| "24".into()),
+                &stream
+            )
+            .unwrap(),
+            24
+        );
+        assert!(matches!(
+            market_stream_pool_size(&|_| Some("24".into()), &stream),
+            Err(ConfigError::Ambiguous { .. })
+        ));
+        assert_eq!(
+            market_stream_pool_size(&|_| None, &MarketStreamReadConfig::Disabled).unwrap(),
+            DEFAULT_POOL_SIZE
+        );
+    }
 
     fn base_env() -> HashMap<String, OsString> {
         let mut env = HashMap::new();

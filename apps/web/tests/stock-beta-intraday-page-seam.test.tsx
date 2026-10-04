@@ -10,6 +10,7 @@ import {
   ownerEquityV2SignalDetailSchema,
   ownerEquityV2SignalSchema,
 } from "@/lib/products/equity-signals-contracts";
+import { streamMembership } from "./fixtures/market-stream";
 
 const mocks = vi.hoisted(() => ({
   getLocale: vi.fn(async (): Promise<"en" | "ko"> => "en"),
@@ -114,6 +115,68 @@ afterEach(() => {
 });
 
 describe("Stock Beta intraday page seams", () => {
+  it("shows the WS board and its selected READY instrument even without EOD signals", async () => {
+    vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+    mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+    const api = apiFor();
+    api.getOwnerEquityV2Memberships.mockResolvedValue({
+      ...MEMBERSHIPS,
+      memberships: [streamMembership(0)],
+    });
+    api.getOwnerEquityV2LatestSignals.mockRejectedValue(
+      new ApiProblem(
+        503,
+        apiErrorEnvelopeSchema.parse({
+          error: {
+            code: "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE",
+            message: "fixture unavailable",
+            request_id: "stream-fixture",
+          },
+        }),
+      ),
+    );
+    mocks.getProductApi.mockResolvedValue(api);
+    const markup = renderToStaticMarkup(await StockBetaPage());
+    expect(markup.match(/data-stream-instrument=/g)).toHaveLength(30);
+    expect(markup).toContain('data-testid="stock-beta-stream-selected"');
+    expect(markup).toContain(`${streamMembership(0).instrument_id} ·`);
+    expect(markup).not.toContain("periodic refresh");
+    expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
+  });
+
+  it("uses the stream detail and never renders the REST widget in WS mode", async () => {
+    vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+    mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+    const api = apiFor();
+    mocks.getProductApi.mockResolvedValue(api);
+    const markup = renderToStaticMarkup(
+      await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
+    );
+    expect(markup).toContain('data-testid="stock-beta-stream-selected"');
+    expect(markup).not.toContain("periodic refresh");
+    expect(markup).toContain("Returns");
+  });
+
+  it("refuses a Member before constructing any product client in WS mode", async () => {
+    vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+    mocks.getServerSession.mockResolvedValue({ ...OWNER_SESSION, role: "member" });
+    mocks.getProductApi.mockImplementation(() => {
+      throw new Error("must remain lazy");
+    });
+    for (const page of [
+      () => StockBetaPage(),
+      () => StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
+    ]) {
+      const markup = renderToStaticMarkup(await page());
+      expect(markup).toContain("Owner access required");
+      expect(markup).not.toContain("stock-beta-stream");
+    }
+    expect(mocks.getProductApi).not.toHaveBeenCalled();
+  });
+
   it("is default-off and does not add the detail membership read", async () => {
     mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
     const api = apiFor();

@@ -890,6 +890,7 @@ pub(super) struct CommandPlan {
     symbol: String,
     operation: MarketSubscriptionOperation,
     events_after_ack: Vec<(String, u32)>,
+    events_before_ack: Vec<(String, u32)>,
     ack_gate: Option<ServerAckGate>,
 }
 
@@ -903,8 +904,23 @@ impl CommandPlan {
             symbol: symbol.to_owned(),
             operation,
             events_after_ack,
+            events_before_ack: Vec::new(),
             ack_gate: None,
         }
+    }
+
+    pub(super) fn paused_ack_with_pre_ack(
+        symbol: &str,
+        events_before_ack: Vec<(String, u32)>,
+        events_after_ack: Vec<(String, u32)>,
+    ) -> (Self, AckPause) {
+        let (mut plan, pause) = Self::paused_ack(
+            symbol,
+            MarketSubscriptionOperation::Subscribe,
+            events_after_ack,
+        );
+        plan.events_before_ack = events_before_ack;
+        (plan, pause)
     }
 
     pub(super) fn paused_ack(
@@ -1326,6 +1342,30 @@ async fn run_websocket_server(
             symbol: symbol.clone(),
             operation,
         });
+        if !plan.events_before_ack.is_empty() {
+            if plan.events_before_ack.len() != 1 || plan.ack_gate.is_none() {
+                return Err("pre-ACK fixture requires one record and a held ACK".to_owned());
+            }
+            advance_clock_from_database_sample(&clock, session_date, clock_origin, clock_anchor)?;
+            let payload =
+                synthetic_market_payload(session_date, clock.now_ms(), &plan.events_before_ack)?;
+            let mut frames = ws_server_frame(0x1, &payload)?;
+            const BARRIER: &[u8] = b"owned-pre-ack-barrier";
+            frames.extend_from_slice(&ws_server_frame(0x9, BARRIER)?);
+            tokio::time::timeout(Duration::from_secs(2), stream.write_all(&frames))
+                .await
+                .map_err(|_| "pre-ACK write deadline")?
+                .map_err(|_| "pre-ACK write failed")?;
+            let (opcode, pong) =
+                tokio::time::timeout(Duration::from_secs(2), read_ws_frame(&mut stream))
+                    .await
+                    .map_err(|_| "pre-ACK pong deadline")?
+                    .map_err(|_| "pre-ACK pong read failed")?;
+            if opcode != 0xA || pong.as_slice() != BARRIER {
+                return Err("pre-ACK causal pong barrier failed".to_owned());
+            }
+            market_record_batches.push(1);
+        }
         if let Some(gate) = plan.ack_gate {
             let _ = gate.reached.send(());
             let _ = tokio::time::timeout(Duration::from_secs(5), gate.release).await;
@@ -1866,6 +1906,7 @@ fn ws_server_frame(opcode: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
 pub(super) struct PgRelay {
     directory: TempDir,
     expected_database: String,
+    upstream_port: u16,
     shared: Arc<Mutex<Option<CommitIntercept>>>,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<OwnedTask<()>>,
@@ -1952,13 +1993,19 @@ impl PgRelay {
         {
             return Err("relay database name is outside the generated test scope".into());
         }
+        let (upstream_socket_directory, upstream_port) =
+            match boundary::relay_endpoint_from_environment()? {
+                Some(endpoint) => (endpoint.socket_directory().to_path_buf(), endpoint.port()),
+                None => (PathBuf::from(CLUSTER_SOCKET), CLUSTER_PORT),
+            };
         let directory = tempfile::tempdir()?;
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
-        let socket_path = directory.path().join(format!(".s.PGSQL.{CLUSTER_PORT}"));
+        let socket_path = directory.path().join(format!(".s.PGSQL.{upstream_port}"));
         let listener = UnixListener::bind(&socket_path)?;
         let shared = Arc::new(Mutex::new(None));
         let task_shared = shared.clone();
         let task_database = database_name.to_owned();
+        let task_upstream_socket_directory = upstream_socket_directory.clone();
         let (shutdown, mut shutdown_rx) = oneshot::channel();
         let descendants = DescendantTracker::new();
         let task_descendants = descendants.clone();
@@ -1973,10 +2020,18 @@ impl PgRelay {
                             Ok((client, _)) => {
                                 let shared = task_shared.clone();
                                 let expected_database = task_database.clone();
+                                let upstream_socket_directory = task_upstream_socket_directory.clone();
                                 let child_guard = task_descendants.child();
                                 clients.spawn(async move {
                                     let _child_guard = child_guard;
-                                    relay_connection(client, shared, expected_database).await;
+                                    relay_connection(
+                                        client,
+                                        shared,
+                                        expected_database,
+                                        upstream_socket_directory,
+                                        upstream_port,
+                                    )
+                                    .await;
                                 });
                             }
                             Err(_) => break,
@@ -1991,6 +2046,7 @@ impl PgRelay {
         Ok(Self {
             directory,
             expected_database: database_name.to_owned(),
+            upstream_port,
             shared,
             shutdown: Some(shutdown),
             task: Some(task),
@@ -2014,7 +2070,7 @@ impl PgRelay {
             .connect_with(
                 PgConnectOptions::new()
                     .socket(self.directory.path())
-                    .port(CLUSTER_PORT)
+                    .port(self.upstream_port)
                     .ssl_mode(PgSslMode::Disable)
                     .username("worker")
                     .password("lagrange")
@@ -2095,8 +2151,10 @@ async fn relay_connection(
     client: UnixStream,
     shared: Arc<Mutex<Option<CommitIntercept>>>,
     expected_database: String,
+    upstream_socket_directory: PathBuf,
+    upstream_port: u16,
 ) {
-    let upstream_path = PathBuf::from(CLUSTER_SOCKET).join(format!(".s.PGSQL.{CLUSTER_PORT}"));
+    let upstream_path = upstream_socket_directory.join(format!(".s.PGSQL.{upstream_port}"));
     let Ok(upstream) = UnixStream::connect(upstream_path).await else {
         return;
     };

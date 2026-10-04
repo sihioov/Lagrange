@@ -4,6 +4,10 @@ These workflows remain repository artifacts until an operator explicitly
 applies them as root. Do not apply them until the repository is committed and
 clean, `/opt/lagrange` capacity is confirmed, and backup sizing is approved.
 
+The separate [KIS market-stream procedure](kis-market-stream-operations.md) covers the
+opt-in initializer artifact, persistent domain, reviewed grant and WS/off refresh. Installing
+a release does not authorize or perform those operations.
+
 ## Install an exact release
 
 `build-production-images.sh` and `deploy-production-release.sh` refuse every

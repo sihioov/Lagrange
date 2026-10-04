@@ -14,13 +14,60 @@ use api_server::contract::CONTRACT_ROUTES;
 /// The committed edge configuration (T4 skeleton + Todo 27 hardening).
 const NGINX_CONF: &str = include_str!("../../../deploy/nginx/nginx.conf");
 
+#[test]
+fn nginx_market_stream_is_unbuffered_and_has_bounded_stall_timeouts() {
+    let location = "= /api/v1/research/owner-beta/equity-universe-v2/market-stream";
+    let block = location_block(NGINX_CONF, location);
+    for directive in [
+        "proxy_pass http://api-server:8080;",
+        "proxy_http_version 1.1;",
+        "proxy_set_header Host $http_host;",
+        "proxy_set_header Connection \"\";",
+        "proxy_buffering off;",
+        "proxy_cache off;",
+        "gzip off;",
+        "proxy_read_timeout 60s;",
+        "send_timeout 5s;",
+    ] {
+        assert!(
+            block.contains(directive),
+            "missing SSE directive: {directive}"
+        );
+    }
+    assert!(!block.contains("Access-Control-Allow-Origin"));
+    assert!(!block.contains("proxy_hide_header"));
+    assert!(location_block(NGINX_CONF, "/api/").contains("proxy_read_timeout 300s;"));
+}
+
 fn location_block<'a>(conf: &'a str, location: &str) -> &'a str {
     let start = conf
-        .find(&format!("location {location}"))
+        .find(&format!("location {location} {{"))
         .unwrap_or_else(|| panic!("location {location} must exist"));
     let body_start = conf[start..].find('{').expect("location block opens") + start;
     let body_end = conf[body_start..].find('}').expect("location block closes") + body_start;
     &conf[body_start + 1..body_end]
+}
+
+#[test]
+fn nginx_lease_mutations_preserve_the_same_authority_as_sse() {
+    let lease = location_block(
+        NGINX_CONF,
+        "/api/v1/research/owner-beta/equity-universe-v2/stream-leases",
+    );
+    let stream = location_block(
+        NGINX_CONF,
+        "= /api/v1/research/owner-beta/equity-universe-v2/market-stream",
+    );
+    for block in [lease, stream] {
+        assert!(block.contains("proxy_pass http://api-server:8080;"));
+        assert!(block.contains("proxy_set_header Host $http_host;"));
+        assert!(block.contains("proxy_set_header X-Forwarded-Host $http_host;"));
+        assert!(!block.contains("Access-Control-Allow-Origin"));
+    }
+    // The stream-specific fix must not replace the existing general API route.
+    let general = location_block(NGINX_CONF, "/api/");
+    assert!(general.contains("proxy_set_header Host $host;"));
+    assert!(general.contains("proxy_read_timeout 300s;"));
 }
 
 #[test]

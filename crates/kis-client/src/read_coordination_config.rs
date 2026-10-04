@@ -26,12 +26,30 @@ pub enum IntradayQuotesMode {
     OwnerOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntradayQuoteTransport {
+    Rest,
+    MarketWs,
+}
+
+impl IntradayQuoteTransport {
+    pub fn from_optional_str(value: Option<&str>) -> Result<Self, ReadCoordinationConfigError> {
+        match value {
+            None | Some("rest") => Ok(Self::Rest),
+            Some("market_ws") => Ok(Self::MarketWs),
+            Some(_) => Err(ReadCoordinationConfigError::InvalidIntradayTransport),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ReadCoordinationConfigError {
     #[error("KIS read coordination mode is invalid")]
     InvalidCoordinationMode,
     #[error("owner intraday quotes mode is invalid")]
     InvalidIntradayMode,
+    #[error("owner intraday quote transport is invalid")]
+    InvalidIntradayTransport,
     #[error("owner-only intraday quotes require shared KIS read coordination")]
     IntradayRequiresShared,
     #[error("KIS read credential generation must be a canonical positive decimal")]
@@ -161,6 +179,39 @@ mod tests {
         assert_eq!(shared.generation(), Some(17));
         let config = shared.production_config().unwrap();
         assert_eq!(config.state_root().to_str(), Some(PRODUCTION_STATE_ROOT));
+    }
+
+    #[test]
+    fn intraday_quote_transport_parser_accepts_only_exact_values() {
+        assert_eq!(
+            IntradayQuoteTransport::from_optional_str(None),
+            Ok(IntradayQuoteTransport::Rest)
+        );
+        assert_eq!(
+            IntradayQuoteTransport::from_optional_str(Some("rest")),
+            Ok(IntradayQuoteTransport::Rest)
+        );
+        assert_eq!(
+            IntradayQuoteTransport::from_optional_str(Some("market_ws")),
+            Ok(IntradayQuoteTransport::MarketWs)
+        );
+
+        for value in [
+            "",
+            " ",
+            "rest ",
+            " REST",
+            "REST",
+            "Market_ws",
+            "market_WS",
+            "unknown",
+        ] {
+            assert_eq!(
+                IntradayQuoteTransport::from_optional_str(Some(value)),
+                Err(ReadCoordinationConfigError::InvalidIntradayTransport),
+                "{value:?} must be rejected without normalization"
+            );
+        }
     }
 
     #[test]

@@ -79,6 +79,8 @@ pub enum MarketStreamError {
     CommandTimingOverflow,
     #[error("market stream command acknowledgement timed out")]
     AckTimeout,
+    #[error("market stream control write timed out")]
+    ControlWriteTimeout,
     #[error("market stream command acknowledgement did not match the pending operation")]
     AckMismatch,
     #[error("market stream command acknowledgement was duplicated or unexpected")]
@@ -296,9 +298,88 @@ impl MarketStreamClient {
         &self.config
     }
 
+    /// Reserve the existing connection anchor before a caller performs work
+    /// that must precede approval and socket creation.
+    ///
+    /// This validates the configured durable domain and holds the same
+    /// lifetime anchor that a connected session will own. It does not reserve
+    /// an attempt or contact the approval service.
+    pub fn reserve_connection(&self) -> Result<MarketStreamConnectionOwner, MarketStreamError> {
+        self.config.state.load()?;
+        let lifetime_lock = self.config.state.lock()?;
+        Ok(MarketStreamConnectionOwner {
+            config: self.config.clone(),
+            lifetime_lock: Some(lifetime_lock),
+        })
+    }
+
     pub async fn connect(&self) -> Result<MarketStreamSession, MarketStreamError> {
         let proof = current_session_proof(&self.config)?;
-        let lifetime_lock = self.config.state.lock()?;
+        self.reserve_connection()?.connect(proof).await
+    }
+}
+
+/// Affine ownership of the existing market-stream connection anchor.
+///
+/// The value can be dropped without an attempt. Its only consuming operation
+/// turns that same anchor into a connected session.
+///
+/// ```compile_fail
+/// use kis_client::MarketStreamConnectionOwner;
+/// let _ = MarketStreamConnectionOwner {};
+/// ```
+///
+/// ```compile_fail
+/// use kis_client::MarketStreamConnectionOwner;
+/// let _ = MarketStreamConnectionOwner::new();
+/// ```
+///
+/// ```compile_fail
+/// use kis_client::MarketStreamConnectionOwner;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<MarketStreamConnectionOwner>();
+/// ```
+///
+/// ```compile_fail
+/// use kis_client::MarketStreamConnectionOwner;
+/// fn require_deserialize<T: serde::de::DeserializeOwned>() {}
+/// require_deserialize::<MarketStreamConnectionOwner>();
+/// ```
+///
+/// ```compile_fail
+/// use kis_client::MarketStreamConnectionOwner;
+/// fn require_serialize<T: serde::Serialize>() {}
+/// require_serialize::<MarketStreamConnectionOwner>();
+/// ```
+///
+/// ```compile_fail
+/// use kis_client::MarketStreamConnectionOwner;
+/// fn expose_lock(owner: &MarketStreamConnectionOwner) {
+///     let _ = owner.lifetime_lock();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use kis_client::MarketStreamConnectionOwner;
+/// fn expose_proof(owner: &MarketStreamConnectionOwner) {
+///     let _ = owner.session_proof();
+/// }
+/// ```
+#[must_use]
+pub struct MarketStreamConnectionOwner {
+    config: MarketStreamConfig,
+    lifetime_lock: Option<MarketStreamLock>,
+}
+
+impl MarketStreamConnectionOwner {
+    /// Consume the reservation, validate the supplied proof, and transfer the
+    /// held lifetime anchor into the resulting session.
+    pub async fn connect(
+        mut self,
+        proof: MarketStreamSessionProof,
+    ) -> Result<MarketStreamSession, MarketStreamError> {
+        validate_session_proof(&self.config, proof)?;
+        self.config.session_proof = Some(proof);
         let permit = self.config.state.begin_connection_attempt(
             self.config.clock.now_ms(),
             false,
@@ -321,6 +402,7 @@ impl MarketStreamClient {
             return Err(error.into());
         }
         let socket_open_ms = self.config.clock.now_ms();
+        let lifetime_lock = self.lifetime_lock.take().ok_or(MarketStreamError::Closed)?;
         Ok(MarketStreamSession {
             socket: Some(socket),
             lifetime_lock: Some(lifetime_lock),
@@ -359,12 +441,20 @@ fn current_session_proof(
     let proof = config
         .session_proof
         .ok_or(MarketStreamError::SessionProofRequired)?;
+    validate_session_proof(config, proof)?;
+    Ok(proof)
+}
+
+fn validate_session_proof(
+    config: &MarketStreamConfig,
+    proof: MarketStreamSessionProof,
+) -> Result<(), MarketStreamError> {
     if matches!(config.endpoint, MarketStreamEndpoint::Production)
         && proof.validate_current_day(config.clock.now_ms()).is_err()
     {
         return Err(MarketStreamError::SessionProofInvalid);
     }
-    Ok(proof)
+    Ok(())
 }
 
 async fn approval_key_for_attempt(
@@ -1017,8 +1107,7 @@ impl MarketStreamSession {
             }
         };
         let epoch = self.epoch.uuid().to_string();
-        if state.current_epoch.as_deref() != Some(epoch.as_str())
-            || state.pending_command.is_some()
+        if state.current_epoch.as_deref() != Some(epoch.as_str()) || state.pending_command.is_some()
         {
             self.poison_command_uncertainty();
             return Err(StateError::InvalidState.into());
@@ -1316,6 +1405,25 @@ impl MarketStreamSession {
     }
 
     pub async fn next_event(&mut self) -> Result<MarketStreamEvent, MarketStreamError> {
+        self.next_event_inner(None)
+            .await?
+            .ok_or(MarketStreamError::Closed)
+    }
+
+    /// Return the next event, or `None` when the bounded read reaches its
+    /// deadline. Partial frame, fragment, and socket read buffers stay owned
+    /// by this session and are resumed by a later call.
+    pub async fn next_event_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<MarketStreamEvent>, MarketStreamError> {
+        self.next_event_inner(Some(deadline)).await
+    }
+
+    async fn next_event_inner(
+        &mut self,
+        deadline: Option<Instant>,
+    ) -> Result<Option<MarketStreamEvent>, MarketStreamError> {
         if self.command_phase != CommandPhase::Idle {
             self.poison_epoch();
             return Err(MarketStreamError::CommandPending);
@@ -1328,22 +1436,28 @@ impl MarketStreamSession {
             self.process_buffered_control_before_emit().await?;
         }
         if let Some(event) = self.queued_events.pop_front() {
-            return Ok(event);
+            return Ok(Some(event));
         }
         self.watchdog_check().await?;
         loop {
-            let message = self.read_next_message().await?;
+            let message = match deadline {
+                Some(deadline) => self.read_next_message_until(deadline).await?,
+                None => Some(self.read_next_message().await?),
+            };
+            let Some(message) = message else {
+                return Ok(None);
+            };
             match self.process_incoming(message).await? {
                 IncomingOutcome::Continue => {
                     if !self.queued_events.is_empty() {
                         self.process_buffered_control_before_emit().await?;
                     }
                     if let Some(event) = self.queued_events.pop_front() {
-                        return Ok(event);
+                        return Ok(Some(event));
                     }
                 }
                 IncomingOutcome::Event(event) | IncomingOutcome::Terminal(event) => {
-                    return Ok(event);
+                    return Ok(Some(event));
                 }
             }
             self.watchdog_check().await?;
@@ -1577,6 +1691,32 @@ impl MarketStreamSession {
         Ok(message)
     }
 
+    async fn read_next_message_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<Option<IncomingMessage>, MarketStreamError> {
+        let message = loop {
+            let result = match self.socket_mut()?.read_message_until(deadline).await {
+                Ok(result) => result,
+                Err(error) => {
+                    self.poison_epoch();
+                    return Err(error);
+                }
+            };
+            match result {
+                ReadMessage::Message(message) => break message,
+                ReadMessage::Idle => {
+                    self.watchdog_check().await?;
+                    if Instant::now() >= deadline {
+                        return Ok(None);
+                    }
+                }
+            }
+        };
+        self.note_incoming_message(&message)?;
+        Ok(Some(message))
+    }
+
     fn read_buffered_message(&mut self) -> Result<Option<IncomingMessage>, MarketStreamError> {
         let message = match self.socket_mut()?.read_available_message() {
             Ok(message) => message,
@@ -1648,8 +1788,15 @@ impl MarketStreamSession {
             self.closed = true;
             return Err(MarketStreamError::FrameInvalid);
         }
+        let write_timeout = self.config.ack_timeout;
         let result = match self.socket_mut() {
-            Ok(socket) => socket.send_frame(opcode, payload).await,
+            Ok(socket) => {
+                match tokio::time::timeout(write_timeout, socket.send_frame(opcode, payload)).await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(MarketStreamError::ControlWriteTimeout),
+                }
+            }
             Err(error) => Err(error),
         };
         if let Err(error) = result {
@@ -2097,6 +2244,24 @@ impl RawWebSocket {
         }
     }
 
+    async fn read_message_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<ReadMessage, MarketStreamError> {
+        loop {
+            if Instant::now() >= deadline {
+                return Ok(ReadMessage::Idle);
+            }
+            let ReadFrame::Frame(fin, opcode, payload) = self.read_frame_until(deadline).await?
+            else {
+                return Ok(ReadMessage::Idle);
+            };
+            if let Some(message) = self.assemble_frame(fin, opcode, payload)? {
+                return Ok(ReadMessage::Message(message));
+            }
+        }
+    }
+
     fn read_buffered_message(&mut self) -> Result<Option<IncomingMessage>, MarketStreamError> {
         loop {
             let Some(ReadFrame::Frame(fin, opcode, payload)) = self.take_buffered_frame()? else {
@@ -2216,6 +2381,23 @@ impl RawWebSocket {
         }
     }
 
+    async fn read_frame_until(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<ReadFrame, MarketStreamError> {
+        loop {
+            if Instant::now() >= deadline {
+                return Ok(ReadFrame::Idle);
+            }
+            if let Some(frame) = self.take_buffered_frame()? {
+                return Ok(frame);
+            }
+            if !self.read_more_until(deadline).await? {
+                return Ok(ReadFrame::Idle);
+            }
+        }
+    }
+
     fn frame_header(&self) -> Result<Option<FrameHeader>, MarketStreamError> {
         if self.read_buffer.len() < 2 {
             return Ok(None);
@@ -2279,6 +2461,45 @@ impl RawWebSocket {
             Ok(Ok(())) => {
                 let mut bytes = [0u8; 8192];
                 loop {
+                    match self.stream.try_read(&mut bytes) {
+                        Ok(0) => return Err(MarketStreamError::Closed),
+                        Ok(read) => {
+                            if self.read_buffer.len().saturating_add(read) > MAX_MESSAGE_BYTES + 14
+                            {
+                                return Err(MarketStreamError::FrameInvalid);
+                            }
+                            self.read_buffer.extend_from_slice(&bytes[..read]);
+                            return Ok(true);
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            return Ok(false);
+                        }
+                        Err(_) => return Err(MarketStreamError::Closed),
+                    }
+                }
+            }
+            Ok(Err(_)) => Err(MarketStreamError::Closed),
+            Err(_) => Ok(false),
+        }
+    }
+
+    async fn read_more_until(&mut self, deadline: Instant) -> Result<bool, MarketStreamError> {
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_secs(1));
+        if wait.is_zero() {
+            return Ok(false);
+        }
+        match tokio::time::timeout(wait, self.stream.readable()).await {
+            Ok(Ok(())) => {
+                if Instant::now() >= deadline {
+                    return Ok(false);
+                }
+                let mut bytes = [0u8; 8192];
+                loop {
+                    if Instant::now() >= deadline {
+                        return Ok(false);
+                    }
                     match self.stream.try_read(&mut bytes) {
                         Ok(0) => return Err(MarketStreamError::Closed),
                         Ok(read) => {
@@ -2567,7 +2788,13 @@ mod command_eligibility_unit_tests {
         now_ms: i64,
         attempts_ms: Vec<i64>,
         subscriptions: HashSet<String>,
-    ) -> (TempDir, WsStateStore, Arc<TestClock>, MarketStreamSession, PathBuf) {
+    ) -> (
+        TempDir,
+        WsStateStore,
+        Arc<TestClock>,
+        MarketStreamSession,
+        PathBuf,
+    ) {
         let directory = tempfile::tempdir().expect("task-local state directory");
         let credential_slot_id = Uuid::new_v4();
         let domain = MarketStreamDomain::for_test(directory.path(), credential_slot_id)
@@ -2592,17 +2819,11 @@ mod command_eligibility_unit_tests {
         )
         .expect("loopback approval config")
         .with_clock(clock.clone());
-        let config = MarketStreamConfig::loopback(
-            approval,
-            "ws://127.0.0.1:34568/tryitout",
-        )
-        .expect("loopback stream config")
-        .with_clock(clock.clone());
-        let session = MarketStreamSession::for_command_eligibility_test(
-            config,
-            epoch,
-            subscriptions,
-        );
+        let config = MarketStreamConfig::loopback(approval, "ws://127.0.0.1:34568/tryitout")
+            .expect("loopback stream config")
+            .with_clock(clock.clone());
+        let session =
+            MarketStreamSession::for_command_eligibility_test(config, epoch, subscriptions);
         (directory, store, clock, session, state_path)
     }
 
@@ -2616,13 +2837,22 @@ mod command_eligibility_unit_tests {
     fn spacing_hint_is_read_only_and_exact_at_the_boundary() {
         let attempts = vec![10_000];
         assert_eq!(command_spacing_not_before_ms(&[], 10_000), Ok(None));
-        assert_eq!(command_spacing_not_before_ms(&attempts, 10_999), Ok(Some(11_000)));
+        assert_eq!(
+            command_spacing_not_before_ms(&attempts, 10_999),
+            Ok(Some(11_000))
+        );
         assert_eq!(command_spacing_not_before_ms(&attempts, 11_000), Ok(None));
         assert_eq!(attempts, vec![10_000]);
         let mut authoritative = CommandBudget::from_attempts(attempts);
-        assert_eq!(authoritative.reserve(10_999), Err(BudgetError::MinimumSpacing));
+        assert_eq!(
+            authoritative.reserve(10_999),
+            Err(BudgetError::MinimumSpacing)
+        );
         assert_eq!(authoritative.reserve(11_000), Ok(()));
-        assert_eq!(authoritative.attempts().collect::<Vec<_>>(), vec![10_000, 11_000]);
+        assert_eq!(
+            authoritative.attempts().collect::<Vec<_>>(),
+            vec![10_000, 11_000]
+        );
     }
 
     #[test]
@@ -2631,37 +2861,49 @@ mod command_eligibility_unit_tests {
             .map(|i| i as i64 * CommandBudget::MIN_SPACING_MS)
             .collect::<Vec<_>>();
         let now = CommandBudget::ROLLING_LIMIT as i64 * CommandBudget::MIN_SPACING_MS;
-        assert_eq!(command_spacing_not_before_ms(&rolling, now),
-            Err(MarketStreamError::CommandBudget(BudgetError::RollingWindow)));
+        assert_eq!(
+            command_spacing_not_before_ms(&rolling, now),
+            Err(MarketStreamError::CommandBudget(BudgetError::RollingWindow))
+        );
         // All attempts remain within one day, but fewer than 120 in ten minutes.
         let daily = (0..CommandBudget::DAILY_LIMIT)
             .map(|i| i as i64 * 60_000)
             .collect::<Vec<_>>();
         let now = CommandBudget::DAILY_LIMIT as i64 * 60_000;
-        assert_eq!(command_spacing_not_before_ms(&daily, now),
-            Err(MarketStreamError::CommandBudget(BudgetError::DailyLimit)));
-        assert_eq!(command_spacing_not_before_ms(&rolling, 119_999), Ok(Some(120_000)));
+        assert_eq!(
+            command_spacing_not_before_ms(&daily, now),
+            Err(MarketStreamError::CommandBudget(BudgetError::DailyLimit))
+        );
+        assert_eq!(
+            command_spacing_not_before_ms(&rolling, 119_999),
+            Ok(Some(120_000))
+        );
         assert_eq!(rolling.len(), CommandBudget::ROLLING_LIMIT);
         assert_eq!(daily.len(), CommandBudget::DAILY_LIMIT);
     }
 
     #[test]
     fn eligibility_reports_clock_rollback_and_overflow_without_reserving() {
-        assert_eq!(command_spacing_not_before_ms(&[10_000], 9_000), Ok(Some(11_000)));
-        assert_eq!(command_spacing_not_before_ms(&[i64::MAX - 500], i64::MAX - 500),
-            Err(MarketStreamError::CommandTimingOverflow));
+        assert_eq!(
+            command_spacing_not_before_ms(&[10_000], 9_000),
+            Ok(Some(11_000))
+        );
+        assert_eq!(
+            command_spacing_not_before_ms(&[i64::MAX - 500], i64::MAX - 500),
+            Err(MarketStreamError::CommandTimingOverflow)
+        );
         let old = vec![0];
-        assert_eq!(command_spacing_not_before_ms(&old, CommandBudget::DAILY_WINDOW_MS), Ok(None));
+        assert_eq!(
+            command_spacing_not_before_ms(&old, CommandBudget::DAILY_WINDOW_MS),
+            Ok(None)
+        );
         assert_eq!(old, vec![0]);
     }
 
     #[test]
     fn state_backed_hint_preserves_every_field_and_boundary_prepare_reserves_once() {
-        let (_directory, store, clock, mut session, _state_path) = command_state_fixture(
-            10_999,
-            vec![10_000],
-            HashSet::new(),
-        );
+        let (_directory, store, clock, mut session, _state_path) =
+            command_state_fixture(10_999, vec![10_000], HashSet::new());
         let durable_before = durable_snapshot(&store);
         let subscriptions_before = subscription_snapshot(&session);
         assert_eq!(
@@ -2693,8 +2935,14 @@ mod command_eligibility_unit_tests {
         let durable_after = durable_snapshot(&store);
         assert_eq!(durable_after.attempts_ms, vec![10_000, 11_000]);
         assert_eq!(durable_after.next_ordinal, 1);
-        assert_eq!(durable_after.pending.as_ref().map(|pending| pending.3), Some(1));
-        assert_eq!(session.pending.as_ref().map(|pending| pending.ordinal), Some(1));
+        assert_eq!(
+            durable_after.pending.as_ref().map(|pending| pending.3),
+            Some(1)
+        );
+        assert_eq!(
+            session.pending.as_ref().map(|pending| pending.ordinal),
+            Some(1)
+        );
         assert_eq!(session.command_phase, CommandPhase::Prepared);
     }
 

@@ -5,6 +5,10 @@ The owner authorized deployment, owner-only polling, and the operational session
 contract in this work session. This runbook records the implementation, not a production health claim. The implementation is bounded by the [intraday quote contract](../superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md)
 and the checked-in source linked below.
 
+The separate [market-stream operations runbook](kis-market-stream-operations.md) describes
+the explicitly selected `market_ws` transport. It does not expand this REST seam's network
+approval, and the two quote producers cannot run together for an Owner.
+
 ## Boundary and source contract
 
 The V1 seam is a private, owner-only, periodically polled current quote for an admitted Stock

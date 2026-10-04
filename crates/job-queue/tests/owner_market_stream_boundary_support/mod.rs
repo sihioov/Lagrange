@@ -32,6 +32,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+pub(super) mod c2_fixture;
+pub(super) use c2_fixture::{C2Endpoint, SupervisorTarget, relay_endpoint_from_environment};
+
 pub const SUPERVISOR_ENV: &str = "LAGRANGE_WS3A_SUPERVISOR_URL";
 pub const STREAM_IDENTITY_HASH: &str =
     "0e6a9b3aef6b310685b9bd5594a39452c2902d11af623197699cf6dc46931e79";
@@ -79,11 +82,11 @@ fn database_ddl(name: &str, statement: &str) -> sqlx::AssertSqlSafe<String> {
 }
 
 async fn drop_generated_database(
-    supervisor_options: &PgConnectOptions,
+    supervisor_target: &SupervisorTarget,
     name: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     assert!(safe_database_name(name));
-    let supervisor = connect(supervisor_options.clone()).await?;
+    let supervisor = c2_fixture::connect_supervisor(supervisor_target).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)",
     )
@@ -108,6 +111,47 @@ async fn drop_generated_database(
     Ok(())
 }
 
+#[derive(Debug)]
+struct FixtureCleanupError {
+    primary: Box<dyn Error + Send + Sync>,
+    cleanup: Box<dyn Error + Send + Sync>,
+}
+
+impl std::fmt::Display for FixtureCleanupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "fixture operation failed: {}; cleanup failed: {}",
+            self.primary, self.cleanup
+        )
+    }
+}
+
+impl Error for FixtureCleanupError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.primary.as_ref())
+    }
+}
+
+pub(super) fn combine_primary_cleanup(
+    primary: Box<dyn Error + Send + Sync>,
+    cleanup: Box<dyn Error + Send + Sync>,
+) -> Box<dyn Error + Send + Sync> {
+    Box::new(FixtureCleanupError { primary, cleanup })
+}
+
+pub(super) async fn connect_supervisor(
+    target: &SupervisorTarget,
+) -> Result<PgPool, Box<dyn Error + Send + Sync>> {
+    Ok(c2_fixture::connect_supervisor(target).await?)
+}
+
+pub(super) async fn connect_supervisor_from_environment()
+-> Result<PgPool, Box<dyn Error + Send + Sync>> {
+    let target = SupervisorTarget::from_environment()?;
+    connect_supervisor(&target).await
+}
+
 async fn connect(options: PgConnectOptions) -> Result<PgPool, Box<dyn Error + Send + Sync>> {
     Ok(PgPoolOptions::new()
         .max_connections(16)
@@ -119,7 +163,7 @@ async fn connect(options: PgConnectOptions) -> Result<PgPool, Box<dyn Error + Se
 #[derive(Clone)]
 pub struct DisposableDatabase {
     name: String,
-    supervisor_options: PgConnectOptions,
+    supervisor_target: SupervisorTarget,
     pub migration_owner: PgPool,
     pub app: PgPool,
     pub worker: PgPool,
@@ -129,45 +173,42 @@ pub struct DisposableDatabase {
 
 impl DisposableDatabase {
     pub async fn create() -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let supervisor_url = std::env::var(SUPERVISOR_ENV).map_err(|_| {
-            format!(
-                "{SUPERVISOR_ENV} must name an isolated PostgreSQL supervisor connection; \
-                 the WS-3A DB test never falls back to DATABASE_URL"
+        let supervisor_target = SupervisorTarget::from_environment()?;
+        let supervisor_options = supervisor_target.options();
+        let supervisor = connect_supervisor(&supervisor_target).await?;
+        if !supervisor_target.is_c2() {
+            let system_identifier: String = sqlx::query_scalar(
+                "SELECT system_identifier::text FROM pg_catalog.pg_control_system()",
             )
-        })?;
-        let supervisor_options: PgConnectOptions = supervisor_url.parse()?;
-        let supervisor = connect(supervisor_options.clone()).await?;
-        let system_identifier: String = sqlx::query_scalar(
-            "SELECT system_identifier::text FROM pg_catalog.pg_control_system()",
-        )
-        .fetch_one(&supervisor)
-        .await?;
-        let data_directory: String =
-            sqlx::query_scalar("SELECT pg_catalog.current_setting('data_directory')")
-                .fetch_one(&supervisor)
-                .await?;
-        let listen_addresses: String =
-            sqlx::query_scalar("SELECT pg_catalog.current_setting('listen_addresses')")
-                .fetch_one(&supervisor)
-                .await?;
-        let port: String = sqlx::query_scalar("SELECT pg_catalog.current_setting('port')")
             .fetch_one(&supervisor)
             .await?;
-        let server_address: Option<String> =
-            sqlx::query_scalar("SELECT pg_catalog.inet_server_addr()::text")
+            let data_directory: String =
+                sqlx::query_scalar("SELECT pg_catalog.current_setting('data_directory')")
+                    .fetch_one(&supervisor)
+                    .await?;
+            let listen_addresses: String =
+                sqlx::query_scalar("SELECT pg_catalog.current_setting('listen_addresses')")
+                    .fetch_one(&supervisor)
+                    .await?;
+            let port: String = sqlx::query_scalar("SELECT pg_catalog.current_setting('port')")
                 .fetch_one(&supervisor)
                 .await?;
-        if system_identifier != EXPECTED_SYSTEM_IDENTIFIER
-            || data_directory != EXPECTED_DATA_DIRECTORY
-            || !listen_addresses.is_empty()
-            || port != EXPECTED_PORT
-            || server_address.is_some()
-        {
-            return Err(format!(
-                "WS-3A supervisor identity mismatch: identifier={system_identifier}, data_directory={data_directory}, listen_addresses={listen_addresses:?}, port={port}, unix_socket={}",
-                server_address.is_none()
-            )
-            .into());
+            let server_address: Option<String> =
+                sqlx::query_scalar("SELECT pg_catalog.inet_server_addr()::text")
+                    .fetch_one(&supervisor)
+                    .await?;
+            if system_identifier != EXPECTED_SYSTEM_IDENTIFIER
+                || data_directory != EXPECTED_DATA_DIRECTORY
+                || !listen_addresses.is_empty()
+                || port != EXPECTED_PORT
+                || server_address.is_some()
+            {
+                return Err(format!(
+                    "WS-3A supervisor identity mismatch: identifier={system_identifier}, data_directory={data_directory}, listen_addresses={listen_addresses:?}, port={port}, unix_socket={}",
+                    server_address.is_none()
+                )
+                .into());
+            }
         }
         let name = generated_database_name();
         let exists: bool = sqlx::query_scalar(
@@ -266,7 +307,7 @@ impl DisposableDatabase {
             .await?;
             Ok(Self {
                 name: name.clone(),
-                supervisor_options: supervisor_options.clone(),
+                supervisor_target: supervisor_target.clone(),
                 migration_owner,
                 app,
                 worker,
@@ -276,10 +317,13 @@ impl DisposableDatabase {
         }
         .await;
         drop(supervisor);
-        if build_result.is_err() {
-            drop_generated_database(&supervisor_options, &name).await?;
+        match build_result {
+            Ok(database) => Ok(database),
+            Err(primary) => match drop_generated_database(&supervisor_target, &name).await {
+                Ok(()) => Err(primary),
+                Err(cleanup) => Err(combine_primary_cleanup(primary, cleanup)),
+            },
         }
-        build_result
     }
 
     pub async fn cleanup(self) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -288,7 +332,7 @@ impl DisposableDatabase {
         self.worker.close().await;
         self.research_writer.close().await;
         self.admin.close().await;
-        drop_generated_database(&self.supervisor_options, &self.name).await
+        drop_generated_database(&self.supervisor_target, &self.name).await
     }
 }
 
@@ -619,8 +663,11 @@ pub async fn set_producer_expired(
     slot_id: Uuid,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE public.owner_market_stream_producers
-            SET lease_expires_at = pg_catalog.clock_timestamp() - INTERVAL '1 second'
+        "WITH expired AS (SELECT pg_catalog.clock_timestamp() AS observed_at)
+         UPDATE public.owner_market_stream_producers
+            SET heartbeat_at = expired.observed_at - INTERVAL '2 seconds',
+                lease_expires_at = expired.observed_at - INTERVAL '1 second'
+           FROM expired
           WHERE credential_slot_id = $1",
     )
     .bind(slot_id)
@@ -772,11 +819,202 @@ pub async fn now(database: &DisposableDatabase) -> Result<DateTime<Utc>, sqlx::E
         .await
 }
 
+const DEFAULT_LOOPBACK_CLOSE_LIFETIME: Duration = Duration::from_secs(2);
+const MAX_LOOPBACK_CLOSE_LIFETIME: Duration = Duration::from_secs(30);
+const LOOPBACK_CHILD_JOIN_BOUND: Duration = Duration::from_secs(32);
+
+type LoopbackTaskResult = Result<(), Box<dyn Error + Send + Sync>>;
+
+#[derive(Debug)]
+struct LoopbackChildFailure {
+    child: &'static str,
+    source: Box<dyn Error + Send + Sync>,
+}
+
+impl std::fmt::Display for LoopbackChildFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "synthetic {} child failed: {}",
+            self.child, self.source
+        )
+    }
+}
+
+impl Error for LoopbackChildFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+#[derive(Debug)]
+struct LoopbackCleanupFailure {
+    primary: Option<Box<dyn Error + Send + Sync>>,
+    cleanup: Vec<Box<dyn Error + Send + Sync>>,
+}
+
+impl std::fmt::Display for LoopbackCleanupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(primary) = &self.primary {
+            write!(formatter, "loopback setup failed: {primary}")?;
+        }
+        for (index, error) in self.cleanup.iter().enumerate() {
+            if index == 0 && self.primary.is_none() {
+                write!(formatter, "loopback child cleanup failed: {error}")?;
+            } else {
+                write!(formatter, "; child cleanup failure {}: {error}", index + 1)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Error for LoopbackCleanupFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.primary
+            .as_ref()
+            .map(|error| error.as_ref() as &(dyn Error + 'static))
+            .or_else(|| {
+                self.cleanup
+                    .first()
+                    .map(|error| error.as_ref() as &(dyn Error + 'static))
+            })
+    }
+}
+
+fn finish_loopback_errors(
+    primary: Option<Box<dyn Error + Send + Sync>>,
+    cleanup: Vec<Box<dyn Error + Send + Sync>>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if cleanup.is_empty() {
+        return primary.map_or(Ok(()), Err);
+    }
+    Err(Box::new(LoopbackCleanupFailure { primary, cleanup }))
+}
+
+async fn join_loopback_child(
+    child: &'static str,
+    task: JoinHandle<LoopbackTaskResult>,
+    timeout_after: Duration,
+    abort_first: bool,
+) -> Vec<Box<dyn Error + Send + Sync>> {
+    let mut failures = Vec::new();
+    let mut owned_task = AbortOnDropTask { task: Some(task) };
+    let result = if abort_first {
+        let result = {
+            let task = owned_task.task.as_mut().expect("owned loopback task");
+            task.abort();
+            task.await
+        };
+        owned_task.task.take();
+        result
+    } else {
+        match tokio::time::timeout(
+            timeout_after,
+            owned_task.task.as_mut().expect("owned loopback task"),
+        )
+        .await
+        {
+            Ok(result) => {
+                owned_task.task.take();
+                result
+            }
+            Err(_) => {
+                failures.push(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("synthetic {child} child exceeded its bounded join wait"),
+                )) as Box<dyn Error + Send + Sync>);
+                let result = {
+                    let task = owned_task.task.as_mut().expect("owned loopback task");
+                    task.abort();
+                    task.await
+                };
+                owned_task.task.take();
+                result
+            }
+        }
+    };
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(source)) => failures.push(Box::new(LoopbackChildFailure { child, source })),
+        Err(join_error) if abort_first && join_error.is_cancelled() => {}
+        Err(join_error) if failures.len() > 0 && join_error.is_cancelled() => {}
+        Err(join_error) => failures.push(Box::new(LoopbackChildFailure {
+            child,
+            source: Box::new(join_error),
+        })),
+    }
+    failures
+}
+
+struct AbortOnDropTask {
+    task: Option<JoinHandle<LoopbackTaskResult>>,
+}
+
+impl Drop for AbortOnDropTask {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+async fn join_loopback_children(
+    approval_task: Option<JoinHandle<LoopbackTaskResult>>,
+    ws_task: Option<JoinHandle<LoopbackTaskResult>>,
+    timeout_after: Duration,
+    abort_first: bool,
+) -> Vec<Box<dyn Error + Send + Sync>> {
+    let mut failures = Vec::new();
+    let mut owner = LoopbackChildOwner {
+        approval_task,
+        ws_task,
+    };
+    if let Some(task) = owner.approval_task.take() {
+        failures.extend(join_loopback_child("approval", task, timeout_after, abort_first).await);
+    }
+    if let Some(task) = owner.ws_task.take() {
+        failures.extend(join_loopback_child("websocket", task, timeout_after, abort_first).await);
+    }
+    failures
+}
+
+struct LoopbackChildOwner {
+    approval_task: Option<JoinHandle<LoopbackTaskResult>>,
+    ws_task: Option<JoinHandle<LoopbackTaskResult>>,
+}
+
+impl LoopbackChildOwner {
+    async fn finish(
+        mut self,
+        timeout_after: Duration,
+        abort_first: bool,
+    ) -> Vec<Box<dyn Error + Send + Sync>> {
+        join_loopback_children(
+            self.approval_task.take(),
+            self.ws_task.take(),
+            timeout_after,
+            abort_first,
+        )
+        .await
+    }
+}
+
+impl Drop for LoopbackChildOwner {
+    fn drop(&mut self) {
+        if let Some(task) = self.approval_task.take() {
+            task.abort();
+        }
+        if let Some(task) = self.ws_task.take() {
+            task.abort();
+        }
+    }
+}
+
 pub struct LoopbackMarketSession {
     pub session: MarketStreamSession,
     clock: Arc<TestClock>,
-    approval_task: JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>,
-    ws_task: JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>,
+    children: LoopbackChildOwner,
     _directory: TempDir,
 }
 
@@ -805,15 +1043,13 @@ impl LoopbackMarketSession {
         let Self {
             session,
             clock: _,
-            approval_task,
-            ws_task,
+            children,
             _directory,
         } = self;
         drop(session);
-        approval_task.await??;
-        ws_task.await??;
+        let failures = children.finish(LOOPBACK_CHILD_JOIN_BOUND, false).await;
         drop(_directory);
-        Ok(())
+        finish_loopback_errors(None, failures)
     }
 }
 
@@ -824,6 +1060,28 @@ pub async fn loopback_session_for_symbols(
     symbols: Vec<String>,
     ack_timeout: Duration,
 ) -> Result<LoopbackMarketSession, Box<dyn Error + Send + Sync>> {
+    loopback_session_for_symbols_with_close_lifetime(
+        session_date,
+        now_ms,
+        credential_slot_id,
+        symbols,
+        ack_timeout,
+        DEFAULT_LOOPBACK_CLOSE_LIFETIME,
+    )
+    .await
+}
+
+pub async fn loopback_session_for_symbols_with_close_lifetime(
+    session_date: NaiveDate,
+    now_ms: i64,
+    credential_slot_id: Uuid,
+    symbols: Vec<String>,
+    ack_timeout: Duration,
+    close_lifetime: Duration,
+) -> Result<LoopbackMarketSession, Box<dyn Error + Send + Sync>> {
+    if !valid_loopback_close_lifetime(close_lifetime) {
+        return Err("synthetic WebSocket close lifetime is outside its bound".into());
+    }
     if symbols.is_empty() || symbols.iter().any(|symbol| !valid_symbol(symbol)) {
         return Err("synthetic WebSocket symbols are invalid".into());
     }
@@ -831,7 +1089,6 @@ pub async fn loopback_session_for_symbols(
     let domain = MarketStreamDomain::for_test(directory.path(), credential_slot_id)?;
     let approval_listener = TcpListener::bind("127.0.0.1:0").await?;
     let approval_port = approval_listener.local_addr()?.port();
-    let approval_task = tokio::spawn(run_approval_server(approval_listener));
     let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
     let ws_port = ws_listener.local_addr()?.port();
     let clock = Arc::new(TestClock::at(now_ms));
@@ -853,20 +1110,134 @@ pub async fn loopback_session_for_symbols(
         .ok_or("KST midnight ambiguous")?
         .timestamp_millis();
     let proof = MarketStreamSessionProof::new(session_date_wire, 0, 240_000, midnight_ms)?;
-    let ws_task = tokio::spawn(run_ws_server(ws_listener, session_date, symbols));
     let config =
         MarketStreamConfig::loopback(approval, &format!("ws://127.0.0.1:{ws_port}/tryitout"))?
             .with_session_proof(proof)
             .with_ack_timeout(ack_timeout)
             .with_clock(clock.clone());
-    let session = MarketStreamClient::new(config).connect().await?;
-    Ok(LoopbackMarketSession {
-        session,
-        clock,
-        approval_task,
-        ws_task,
-        _directory: directory,
-    })
+    let children = LoopbackChildOwner {
+        approval_task: Some(tokio::spawn(run_approval_server(approval_listener))),
+        ws_task: Some(tokio::spawn(run_ws_server(
+            ws_listener,
+            session_date,
+            symbols,
+            close_lifetime,
+        ))),
+    };
+    match MarketStreamClient::new(config).connect().await {
+        Ok(session) => Ok(LoopbackMarketSession {
+            session,
+            clock,
+            children,
+            _directory: directory,
+        }),
+        Err(primary) => {
+            let cleanup = children.finish(LOOPBACK_CHILD_JOIN_BOUND, true).await;
+            drop(directory);
+            finish_loopback_errors(Some(Box::new(primary)), cleanup)?;
+            unreachable!("a failed loopback setup always returns its primary error")
+        }
+    }
+}
+
+fn valid_loopback_close_lifetime(close_lifetime: Duration) -> bool {
+    !close_lifetime.is_zero() && close_lifetime <= MAX_LOOPBACK_CLOSE_LIFETIME
+}
+
+#[cfg(test)]
+mod loopback_lifetime_tests {
+    use std::future::pending;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn loopback_close_lifetime_keeps_default_and_caps_explicit_bound() {
+        assert_eq!(DEFAULT_LOOPBACK_CLOSE_LIFETIME, Duration::from_secs(2));
+        assert!(valid_loopback_close_lifetime(Duration::from_secs(20)));
+        assert!(valid_loopback_close_lifetime(MAX_LOOPBACK_CLOSE_LIFETIME));
+        assert!(!valid_loopback_close_lifetime(Duration::ZERO));
+        assert!(!valid_loopback_close_lifetime(Duration::from_secs(31)));
+    }
+
+    #[tokio::test]
+    async fn first_loopback_child_error_still_joins_the_remaining_child() {
+        let remaining_finished = Arc::new(AtomicBool::new(false));
+        let approval = tokio::spawn(async {
+            Err(
+                Box::new(std::io::Error::other("synthetic approval failure"))
+                    as Box<dyn Error + Send + Sync>,
+            )
+        });
+        let finished = remaining_finished.clone();
+        let websocket = tokio::spawn(async move {
+            finished.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        let failures = join_loopback_children(
+            Some(approval),
+            Some(websocket),
+            Duration::from_secs(1),
+            false,
+        )
+        .await;
+        assert_eq!(failures.len(), 1);
+        assert!(remaining_finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn first_loopback_child_panic_still_joins_the_remaining_child() {
+        let remaining_finished = Arc::new(AtomicBool::new(false));
+        let approval = tokio::spawn(async { panic!("synthetic approval panic") });
+        let finished = remaining_finished.clone();
+        let websocket = tokio::spawn(async move {
+            finished.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        let failures = join_loopback_children(
+            Some(approval),
+            Some(websocket),
+            Duration::from_secs(1),
+            false,
+        )
+        .await;
+        assert_eq!(failures.len(), 1);
+        assert!(remaining_finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn timed_out_loopback_child_is_aborted_and_remaining_child_is_joined() {
+        struct DropMark(Arc<AtomicBool>);
+        impl Drop for DropMark {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let first_dropped = Arc::new(AtomicBool::new(false));
+        let drop_mark = first_dropped.clone();
+        let approval = tokio::spawn(async move {
+            let _drop_mark = DropMark(drop_mark);
+            pending::<()>().await;
+            Ok(())
+        });
+        let remaining_finished = Arc::new(AtomicBool::new(false));
+        let finished = remaining_finished.clone();
+        let websocket = tokio::spawn(async move {
+            finished.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        let failures = join_loopback_children(
+            Some(approval),
+            Some(websocket),
+            Duration::from_millis(10),
+            false,
+        )
+        .await;
+        assert_eq!(failures.len(), 1);
+        assert!(first_dropped.load(Ordering::SeqCst));
+        assert!(remaining_finished.load(Ordering::SeqCst));
+    }
 }
 
 fn valid_symbol(symbol: &str) -> bool {
@@ -895,6 +1266,7 @@ async fn run_ws_server(
     listener: TcpListener,
     session_date: NaiveDate,
     symbols: Vec<String>,
+    close_lifetime: Duration,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (mut stream, _) = listener.accept().await?;
     let request = read_http_headers(&mut stream).await?;
@@ -940,7 +1312,7 @@ async fn run_ws_server(
         }
     }
     let mut trailing_byte = [0_u8; 1];
-    match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut trailing_byte)).await {
+    match tokio::time::timeout(close_lifetime, stream.read(&mut trailing_byte)).await {
         Ok(Ok(0)) => {}
         Ok(Ok(_)) => {
             return Err("unexpected synthetic WebSocket bytes after expected commands".into());
@@ -1046,4 +1418,367 @@ async fn write_ws_frame(
 
 pub async fn listener(database: &DisposableDatabase) -> Result<PgListener, sqlx::Error> {
     PgListener::connect_with(&database.worker).await
+}
+fn bounded_fixture_error(message: &'static str) -> Box<dyn Error + Send + Sync> {
+    Box::new(std::io::Error::other(message))
+}
+
+async fn close_pools_until<'a>(
+    pools: impl IntoIterator<Item = &'a PgPool>,
+    deadline: tokio::time::Instant,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut close_failed = false;
+    for pool in pools {
+        if tokio::time::Instant::now() >= deadline
+            || tokio::time::timeout_at(deadline, pool.close())
+                .await
+                .is_err()
+        {
+            close_failed = true;
+        }
+    }
+    if close_failed {
+        Err(bounded_fixture_error(
+            "owned C2 fixture pool close exceeded its absolute deadline",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+async fn close_optional_pools_until(
+    pools: [&Option<PgPool>; 7],
+    deadline: tokio::time::Instant,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    close_pools_until(pools.into_iter().filter_map(Option::as_ref), deadline).await
+}
+
+async fn drop_generated_database_until(
+    target: &SupervisorTarget,
+    name: &str,
+    deadline: tokio::time::Instant,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if tokio::time::Instant::now() >= deadline {
+        return Err(bounded_fixture_error(
+            "generated C2 database cleanup deadline already expired",
+        ));
+    }
+    match tokio::time::timeout_at(deadline, drop_generated_database(target, name)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(bounded_fixture_error(
+            "generated C2 database cleanup failed",
+        )),
+        Err(_) => Err(bounded_fixture_error(
+            "generated C2 database cleanup exceeded its absolute deadline",
+        )),
+    }
+}
+
+fn combine_bounded_cleanup_errors(
+    first: Option<Box<dyn Error + Send + Sync>>,
+    second: Option<Box<dyn Error + Send + Sync>>,
+) -> Option<Box<dyn Error + Send + Sync>> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(combine_primary_cleanup(first, second)),
+        (Some(error), None) | (None, Some(error)) => Some(error),
+        (None, None) => None,
+    }
+}
+
+impl DisposableDatabase {
+    pub(super) async fn create_until(
+        setup_deadline: tokio::time::Instant,
+        cleanup_deadline: tokio::time::Instant,
+    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let now = tokio::time::Instant::now();
+        if setup_deadline <= now || cleanup_deadline <= setup_deadline {
+            return Err(bounded_fixture_error(
+                "C2 fixture deadlines are expired or out of order",
+            ));
+        }
+
+        let supervisor_target = SupervisorTarget::from_environment()
+            .map_err(|_| bounded_fixture_error("explicit C2 supervisor target was rejected"))?;
+        if !supervisor_target.is_c2() {
+            return Err(bounded_fixture_error(
+                "bounded fixture creation requires the explicit current C2 target",
+            ));
+        }
+        if tokio::time::Instant::now() >= setup_deadline {
+            return Err(bounded_fixture_error(
+                "C2 fixture setup deadline expired before connection",
+            ));
+        }
+
+        let supervisor_options = supervisor_target.options();
+        let name = generated_database_name();
+        if !safe_database_name(&name) {
+            return Err(bounded_fixture_error(
+                "generated C2 database name failed its safety check",
+            ));
+        }
+
+        // Keep every pool, target, and generated name outside the cancellable
+        // setup future so timeout cleanup retains exact ownership.
+        let mut supervisor: Option<PgPool> = None;
+        let mut database_supervisor: Option<PgPool> = None;
+        let mut migration_owner: Option<PgPool> = None;
+        let mut app: Option<PgPool> = None;
+        let mut worker: Option<PgPool> = None;
+        let mut research_writer: Option<PgPool> = None;
+        let mut admin: Option<PgPool> = None;
+        let mut create_started = false;
+
+        let setup = async {
+            supervisor = Some(connect_supervisor(&supervisor_target).await?);
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)",
+            )
+            .bind(&name)
+            .fetch_one(
+                supervisor
+                    .as_ref()
+                    .ok_or_else(|| bounded_fixture_error("C2 supervisor pool is unavailable"))?,
+            )
+            .await?;
+            if exists {
+                return Err(bounded_fixture_error(
+                    "generated C2 database name already exists",
+                ));
+            }
+
+            let mut role_tx = supervisor
+                .as_ref()
+                .ok_or_else(|| bounded_fixture_error("C2 supervisor pool is unavailable"))?
+                .begin()
+                .await?;
+            sqlx::query("SELECT pg_catalog.pg_advisory_xact_lock(hashtext($1))")
+                .bind("lagrange-ws3a-role-bootstrap")
+                .execute(&mut *role_tx)
+                .await?;
+            sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+                .execute(&mut *role_tx)
+                .await?;
+            role_tx.commit().await?;
+
+            let supervisor_pool = supervisor
+                .as_ref()
+                .ok_or_else(|| bounded_fixture_error("C2 supervisor pool is unavailable"))?;
+            create_started = true;
+            supervisor_pool
+                .execute(database_ddl(&name, "CREATE DATABASE {db}"))
+                .await?;
+            supervisor_pool
+                .execute(database_ddl(
+                    &name,
+                    "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, \
+                     audit_writer, research_writer, admin",
+                ))
+                .await?;
+
+            database_supervisor = Some(connect(supervisor_options.clone().database(&name)).await?);
+            sqlx::raw_sql(BOOTSTRAP_SQL)
+                .execute(
+                    database_supervisor
+                        .as_ref()
+                        .ok_or_else(|| bounded_fixture_error("C2 database pool is unavailable"))?,
+                )
+                .await?;
+            let database_supervisor_pool = database_supervisor
+                .as_ref()
+                .ok_or_else(|| bounded_fixture_error("C2 database pool is unavailable"))?;
+            tokio::time::timeout_at(setup_deadline, database_supervisor_pool.close())
+                .await
+                .map_err(|_| {
+                    bounded_fixture_error(
+                        "C2 database bootstrap pool close exceeded setup deadline",
+                    )
+                })?;
+            database_supervisor.take();
+
+            migration_owner = Some(
+                connect(
+                    supervisor_options
+                        .clone()
+                        .database(&name)
+                        .username("migration_owner")
+                        .password("lagrange"),
+                )
+                .await?,
+            );
+            let migration_pool = migration_owner
+                .as_ref()
+                .ok_or_else(|| bounded_fixture_error("migration-owner pool is unavailable"))?;
+            MIGRATOR.run(migration_pool).await?;
+            let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM public._sqlx_migrations")
+                .fetch_one(migration_pool)
+                .await?;
+            let expected_applied = MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.migration_type.is_up_migration())
+                .count();
+            if applied as usize != expected_applied {
+                return Err(bounded_fixture_error(
+                    "C2 fixture did not apply every repository up migration",
+                ));
+            }
+
+            app = Some(
+                connect(
+                    supervisor_options
+                        .clone()
+                        .database(&name)
+                        .username("app")
+                        .password("lagrange"),
+                )
+                .await?,
+            );
+            worker = Some(
+                connect(
+                    supervisor_options
+                        .clone()
+                        .database(&name)
+                        .username("worker")
+                        .password("lagrange"),
+                )
+                .await?,
+            );
+            research_writer = Some(
+                connect(
+                    supervisor_options
+                        .clone()
+                        .database(&name)
+                        .username("research_writer")
+                        .password("lagrange"),
+                )
+                .await?,
+            );
+            admin = Some(
+                connect(
+                    supervisor_options
+                        .clone()
+                        .database(&name)
+                        .username("admin")
+                        .password("lagrange"),
+                )
+                .await?,
+            );
+
+            let supervisor_pool = supervisor
+                .as_ref()
+                .ok_or_else(|| bounded_fixture_error("C2 supervisor pool is unavailable"))?;
+            tokio::time::timeout_at(setup_deadline, supervisor_pool.close())
+                .await
+                .map_err(|_| {
+                    bounded_fixture_error("C2 supervisor pool close exceeded setup deadline")
+                })?;
+            supervisor.take();
+            Ok::<(), Box<dyn Error + Send + Sync>>(())
+        };
+
+        let setup_result = tokio::time::timeout_at(setup_deadline, setup).await;
+        let primary = match setup_result {
+            Ok(Ok(())) if tokio::time::Instant::now() < setup_deadline => None,
+            Ok(Ok(())) | Err(_) => Some(bounded_fixture_error(
+                "bounded C2 fixture setup exceeded its absolute deadline",
+            )),
+            Ok(Err(_)) => Some(bounded_fixture_error("bounded C2 fixture setup failed")),
+        };
+        if let Some(primary) = primary {
+            let pool_cleanup = close_optional_pools_until(
+                [
+                    &supervisor,
+                    &database_supervisor,
+                    &migration_owner,
+                    &app,
+                    &worker,
+                    &research_writer,
+                    &admin,
+                ],
+                cleanup_deadline,
+            )
+            .await
+            .err();
+            let database_cleanup = if create_started {
+                drop_generated_database_until(&supervisor_target, &name, cleanup_deadline)
+                    .await
+                    .err()
+            } else {
+                None
+            };
+            return match combine_bounded_cleanup_errors(pool_cleanup, database_cleanup) {
+                Some(cleanup) => Err(combine_primary_cleanup(primary, cleanup)),
+                None => Err(primary),
+            };
+        }
+
+        if migration_owner.is_none()
+            || app.is_none()
+            || worker.is_none()
+            || research_writer.is_none()
+            || admin.is_none()
+        {
+            let primary = bounded_fixture_error("bounded C2 fixture pool set is incomplete");
+            let pool_cleanup = close_optional_pools_until(
+                [
+                    &supervisor,
+                    &database_supervisor,
+                    &migration_owner,
+                    &app,
+                    &worker,
+                    &research_writer,
+                    &admin,
+                ],
+                cleanup_deadline,
+            )
+            .await
+            .err();
+            let database_cleanup =
+                drop_generated_database_until(&supervisor_target, &name, cleanup_deadline)
+                    .await
+                    .err();
+            return match combine_bounded_cleanup_errors(pool_cleanup, database_cleanup) {
+                Some(cleanup) => Err(combine_primary_cleanup(primary, cleanup)),
+                None => Err(primary),
+            };
+        }
+
+        Ok(Self {
+            name,
+            supervisor_target,
+            migration_owner: migration_owner.expect("checked migration-owner pool"),
+            app: app.expect("checked app pool"),
+            worker: worker.expect("checked worker pool"),
+            research_writer: research_writer.expect("checked research-writer pool"),
+            admin: admin.expect("checked admin pool"),
+        })
+    }
+
+    pub(super) async fn cleanup_until(
+        self,
+        cleanup_deadline: tokio::time::Instant,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let Self {
+            name,
+            supervisor_target,
+            migration_owner,
+            app,
+            worker,
+            research_writer,
+            admin,
+        } = self;
+        let close_result = close_pools_until(
+            [&migration_owner, &app, &worker, &research_writer, &admin],
+            cleanup_deadline,
+        )
+        .await;
+        let drop_result =
+            drop_generated_database_until(&supervisor_target, &name, cleanup_deadline).await;
+        match (close_result, drop_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(cleanup), Ok(())) | (Ok(()), Err(cleanup)) => Err(cleanup),
+            (Err(close), Err(drop)) => Err(combine_primary_cleanup(close, drop)),
+        }
+    }
 }

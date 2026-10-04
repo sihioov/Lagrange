@@ -21,12 +21,15 @@ release_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
 mode=plan
 scope=release
 refresh_intraday=0
+refresh_market_stream=0
+refresh_from_commit=
 bootstrap_intraday_calendar=0
 calendar_source_batch_id=
 calendar_reuse_existing_source=0
 release_override=
 release_commit=
 owner_intraday_quotes_mode=off
+owner_intraday_quote_transport=rest
 kis_read_coordination_mode=legacy
 owner_intraday_session_windows_source=release_v1
 owner_beta_access_mode=disabled
@@ -64,7 +67,8 @@ usage() {
   cat <<'EOF'
 Usage: scripts/ops/compose-release.sh
        [--scope infrastructure|backfill|release]
-       [--plan|--preflight|--apply] [--refresh-intraday]
+       [--plan|--preflight|--apply] [--refresh-intraday|--refresh-market-stream]
+       [--refresh-from-commit COMMIT]
        [--bootstrap-intraday-calendar
         (--calendar-source-batch-id UUID|--reuse-existing-source)]
 
@@ -75,6 +79,16 @@ Usage: scripts/ops/compose-release.sh
                     Narrowly reload the already installed API and owner V2
                     quote readers; valid only for release scope and all three
                     modes, with owner-only/shared-required/operational-v1 mode.
+  --refresh-market-stream
+                    Reload API, Web, then owner V2 with the same immutable
+                    transport selection. Also supports quotes-off rollback;
+                    requires shared coordination and an existing owner V2 daemon.
+                    Active WS apply additionally requires the process-local
+                    OWNER_MARKET_STREAM_ROLLOUT_CONFIRM acknowledgement.
+  --refresh-from-commit COMMIT
+                    For market-stream refresh between immutable releases,
+                    verify running services against this installed commit's
+                    trusted manifest. Replacement images still use current.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
@@ -110,6 +124,14 @@ while [ "$#" -gt 0 ]; do
     --preflight) mode=preflight; shift ;;
     --apply) mode=apply; shift ;;
     --refresh-intraday) refresh_intraday=1; shift ;;
+    --refresh-market-stream) refresh_market_stream=1; shift ;;
+    --refresh-from-commit)
+      [ "$#" -ge 2 ] && [ -z "$refresh_from_commit" ] ||
+        die '--refresh-from-commit needs one exact installed commit'
+      refresh_from_commit=$2
+      [ -n "$refresh_from_commit" ] || die '--refresh-from-commit must not be empty'
+      shift 2
+      ;;
     --bootstrap-intraday-calendar) bootstrap_intraday_calendar=1; shift ;;
     --reuse-existing-source) calendar_reuse_existing_source=1; shift ;;
     --calendar-source-batch-id)
@@ -128,9 +150,18 @@ case "$scope" in
 esac
 [ "$refresh_intraday" -eq 0 ] || [ "$scope" = release ] ||
   die '--refresh-intraday is valid only with --scope release'
+[ "$refresh_market_stream" -eq 0 ] || [ "$scope" = release ] ||
+  die '--refresh-market-stream is valid only with --scope release'
+if [ -n "$refresh_from_commit" ]; then
+  [ "$scope" = release ] && [ "$refresh_market_stream" -eq 1 ] ||
+    die '--refresh-from-commit requires --scope release --refresh-market-stream'
+  [[ "$refresh_from_commit" =~ ^[0-9a-f]{40}$ ]] &&
+    [ "$refresh_from_commit" != 0000000000000000000000000000000000000000 ] ||
+    die '--refresh-from-commit must be an exact nonzero lowercase commit'
+fi
 [ "$bootstrap_intraday_calendar" -eq 0 ] || [ "$scope" = release ] ||
   die '--bootstrap-intraday-calendar is valid only with --scope release'
-[ "$((refresh_intraday + bootstrap_intraday_calendar))" -le 1 ] ||
+[ "$((refresh_intraday + refresh_market_stream + bootstrap_intraday_calendar))" -le 1 ] ||
   die 'select only one intraday operation'
 if [ "$bootstrap_intraday_calendar" -eq 1 ]; then
   if [ "$calendar_reuse_existing_source" -eq 1 ]; then
@@ -161,6 +192,7 @@ if ! kis_read_compose_configure "$root"; then
   die "$KIS_READ_COMPOSE_ERROR"
 fi
 owner_intraday_quotes_mode=$KIS_READ_COMPOSE_OWNER_INTRADAY_QUOTES_MODE
+owner_intraday_quote_transport=$KIS_READ_COMPOSE_QUOTE_TRANSPORT
 kis_read_coordination_mode=$KIS_READ_COMPOSE_COORDINATION_MODE
 owner_intraday_session_windows_source=$KIS_READ_COMPOSE_SESSION_WINDOWS_SOURCE
 owner_beta_access_mode=$(dotenv_effective_get OWNER_BETA_ACCESS_MODE)
@@ -169,6 +201,16 @@ owner_beta_paper_mode=$(dotenv_effective_get OWNER_BETA_PAPER_MODE)
 [ -n "$owner_beta_paper_mode" ] || owner_beta_paper_mode=disabled
 owner_equity_v2_runtime_mode=$(dotenv_effective_get OWNER_EQUITY_V2_RUNTIME_MODE)
 [ -n "$owner_equity_v2_runtime_mode" ] || owner_equity_v2_runtime_mode=disabled
+
+if [ "$refresh_intraday" -eq 1 ] && [ "$owner_intraday_quote_transport" != rest ]; then
+  die 'market_stream_requires_refresh_market_stream'
+fi
+if [ "$refresh_market_stream" -eq 1 ]; then
+  [ "$kis_read_coordination_mode" = shared_required ] ||
+    die 'refresh_market_stream_requires_shared'
+  [ "$owner_equity_v2_runtime_mode" = owner_only ] ||
+    die 'refresh_market_stream_requires_owner_equity_v2_owner_only'
+fi
 
 if [ "$refresh_intraday" -eq 1 ] || [ "$bootstrap_intraday_calendar" -eq 1 ]; then
   [ "$owner_intraday_quotes_mode" = owner_only ] ||
@@ -308,6 +350,18 @@ run_owner_equity_v2_release_gate() {
   printf 'OWNER_EQUITY_V2_RELEASE_GATE: PASS mode=owner_only confirmation=process_local\n'
 }
 
+run_owner_market_stream_release_gate() {
+  [ "$mode" = apply ] && [ "$owner_intraday_quotes_mode" = owner_only ] &&
+    [ "$owner_intraday_quote_transport" = market_ws ] || return 0
+  # The existing REST-only acknowledgement does not authorize a market WS
+  # connection. Grant, rights, state and current-day proof remain separate
+  # runtime gates; this process-local acknowledgement does not create them.
+  [ "${OWNER_MARKET_STREAM_ROLLOUT_CONFIRM:-}" = \
+    I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS ] ||
+    blocked 'owner_market_stream_rollout_confirmation_required'
+  printf 'OWNER_MARKET_STREAM_RELEASE_GATE: PASS confirmation=process_local\n'
+}
+
 verify_running_container() {
   local service=$1 current_running=${2:-0}
   local expected_id expected_revision container_id inspected actual_id actual_revision
@@ -371,13 +425,44 @@ compose() {
   fi
 }
 
+verify_refresh_source() (
+  # Keep the current target manifest arrays untouched. A transition may select
+  # only another trusted manifest in the same installed releases directory.
+  if [ -n "$refresh_from_commit" ]; then
+    previous_manifest=$release_root/releases/$refresh_from_commit/.lagrange-release-manifest
+    release_image_manifest_trusted_file "$previous_manifest" refresh-source-manifest ||
+      die "$RELEASE_IMAGE_MANIFEST_ERROR"
+    release_image_manifest_load "$previous_manifest" "$refresh_from_commit" ||
+      die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  fi
+  verify_running_container api-server 1
+  verify_running_container owner-equity-v2-runner 1
+  if [ "$refresh_market_stream" -eq 1 ]; then
+    verify_running_container web 1
+  fi
+)
+
 run_intraday_refresh() {
   # The trusted manifest remains the source of image IDs/revisions for every
-  # mode. Plan/preflight inspect only; apply must prove both currently running
+  # mode. Plan/preflight inspect only; apply must prove all targeted running
   # targets before the first mutating Compose up.
   verify_manifest_images
+  if [ -n "$refresh_from_commit" ] && [ "$mode" != apply ]; then
+    verify_refresh_source
+  fi
   if [ "$mode" = plan ]; then
-    cat <<'EOF'
+    if [ "$refresh_market_stream" -eq 1 ]; then
+      cat <<'EOF'
+COMPOSE_REFRESH_MARKET_STREAM_ORDER:
+  1. validate the installed current release and every trusted manifest image_id/revision
+  2. verify running api-server, web and owner V2 against current, or the explicit installed source commit
+  3. recreate api-server, then web, then owner-equity-v2-runner; verify each actual image_id/revision
+Quotes-off rollback uses the same order. Active WS requires the separate process-local acknowledgement.
+No build, migration, bootstrap, grant/proof/state creation, cache/quota deletion, or live profile is allowed.
+EOF
+      echo 'Active WS requires OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS'
+    else
+      cat <<'EOF'
 COMPOSE_REFRESH_INTRADAY_ORDER:
   1. validate the installed current release and every trusted manifest image_id/revision
   2. verify currently running api-server and owner-equity-v2-runner identities
@@ -385,19 +470,25 @@ COMPOSE_REFRESH_INTRADAY_ORDER:
   4. recreate owner-equity-v2-runner, then verify its actual image_id/revision
 No build, migration, bootstrap, other service startup, provider call, cache/quota deletion, or live profile is allowed.
 EOF
+    fi
     echo 'PLAN_ONLY: no service mutation or provider/network call made'
     return 0
   fi
   if [ "$mode" = preflight ]; then
-    echo 'COMPOSE_REFRESH_INTRADAY_PREFLIGHT: PASS (no service mutation or provider/network call made)'
+    if [ "$refresh_market_stream" -eq 1 ]; then
+      echo 'COMPOSE_REFRESH_MARKET_STREAM_PREFLIGHT: PASS (no service mutation or provider/network call made)'
+    else
+      echo 'COMPOSE_REFRESH_INTRADAY_PREFLIGHT: PASS (no service mutation or provider/network call made)'
+    fi
     return 0
   fi
 
-  verify_running_container api-server 1
-  verify_running_container owner-equity-v2-runner 1
+  verify_refresh_source
   run_owner_equity_v2_release_gate
 
-  # Do not create the immutable override until both currently running
+  run_owner_market_stream_release_gate
+
+  # Do not create the immutable override until all targeted running
   # services have passed their manifest identity gates. The second config
   # validation below binds the eventual Compose mutation to that override.
   if [ -z "$release_override" ]; then
@@ -407,10 +498,18 @@ EOF
 
   compose up --no-build --pull never --no-deps --force-recreate --wait api-server
   verify_running_container api-server 1
+  if [ "$refresh_market_stream" -eq 1 ]; then
+    compose up --no-build --pull never --no-deps --force-recreate --wait web
+    verify_running_container web 1
+  fi
   compose up --no-build --pull never --no-deps --force-recreate --wait owner-equity-v2-runner
   verify_running_container owner-equity-v2-runner 1
   compose ps
-  echo 'COMPOSE_REFRESH_INTRADAY: PASS (API and owner-equity-v2-runner recreated sequentially with immutable image IDs)'
+  if [ "$refresh_market_stream" -eq 1 ]; then
+    echo 'COMPOSE_REFRESH_MARKET_STREAM: PASS (API, Web and owner V2 recreated sequentially with immutable image IDs)'
+  else
+    echo 'COMPOSE_REFRESH_INTRADAY: PASS (API and owner-equity-v2-runner recreated sequentially with immutable image IDs)'
+  fi
 }
 
 run_intraday_calendar_bootstrap() {
@@ -450,7 +549,8 @@ run_intraday_calendar_bootstrap() {
   echo 'CALENDAR_BOOTSTRAP: PASS (exact-date calendar publication; no EOD curation or quote request)'
 }
 
-if [ "$refresh_intraday" -eq 1 ] || [ "$bootstrap_intraday_calendar" -eq 1 ]; then
+if [ "$refresh_intraday" -eq 1 ] || [ "$refresh_market_stream" -eq 1 ] ||
+   [ "$bootstrap_intraday_calendar" -eq 1 ]; then
   load_installed_release_manifest
 elif [ "$scope" = release ] && [ "$mode" = apply ]; then
   prepare_installed_release_manifest
@@ -463,7 +563,7 @@ if [ "$bootstrap_intraday_calendar" -eq 1 ]; then
   exit 0
 fi
 
-if [ "$refresh_intraday" -eq 1 ]; then
+if [ "$refresh_intraday" -eq 1 ] || [ "$refresh_market_stream" -eq 1 ]; then
   run_intraday_refresh
   exit 0
 fi
@@ -552,6 +652,7 @@ fi
 verify_manifest_images
 run_owner_beta_approval_gate
 run_owner_equity_v2_release_gate
+run_owner_market_stream_release_gate
 compose up --no-build --wait postgres
 verify_manifest_images
 compose run --rm --no-deps db-role-bootstrap

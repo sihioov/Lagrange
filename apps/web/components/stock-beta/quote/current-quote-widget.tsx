@@ -2,6 +2,7 @@ import type { StockBetaDashboardWidgetViewModel } from "../dashboard/types";
 import type { StockBetaDetailWidgetViewModel } from "../detail/types";
 import type { StockBetaWidgetProps } from "../shared/widget-types";
 import { CurrentQuoteClient } from "./current-quote-client";
+import { StreamSelectedQuote } from "./intraday-stream-board";
 import { dashboardIntradayQuoteMembership, intradayQuoteIdentityForMembership } from "./membership";
 
 type CurrentQuoteWidgetViewModel =
@@ -19,6 +20,24 @@ export function CurrentQuoteWidget({
   viewModel,
 }: StockBetaWidgetProps<CurrentQuoteWidgetViewModel>) {
   const dashboard = isDashboardViewModel(viewModel);
+  if (viewModel.marketStreamEnabled === true) {
+    const selectedId = dashboard
+      ? (viewModel.streamSelectedInstrumentId ?? viewModel.selectedInstrumentId ?? null)
+      : viewModel.detail.signal.instrument_id;
+    const selected = dashboard
+      ? (viewModel.memberships.find(
+          (membership) =>
+            membership.lifecycle === "READY" && membership.instrument_id === selectedId,
+        ) ?? null)
+      : (viewModel.intradayMembership ?? null);
+    return (
+      <StreamSelectedQuote
+        identity={intradayQuoteIdentityForMembership(selected)}
+        instrumentId={selectedId}
+        locale={viewModel.locale}
+      />
+    );
+  }
   const signal = dashboard
     ? (viewModel.signals?.rows.find(
         (row) => row.instrument_id === viewModel.selectedInstrumentId,

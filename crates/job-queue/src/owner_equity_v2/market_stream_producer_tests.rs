@@ -929,6 +929,7 @@ mod database_cases {
             O::CommandTimingInvalid => "command_timing_invalid",
             O::CommandTimingOverflow => "command_timing_overflow",
             O::AckTimeout => "ack_timeout",
+            O::ControlWriteTimeout => "control_write_timeout",
             O::AckMismatch => "ack_mismatch",
             O::DuplicateAck => "duplicate_ack",
             O::CommandRejected => "command_rejected",
@@ -1564,6 +1565,7 @@ mod database_cases {
                 (O::CommandTimingInvalid, "command_timing_invalid"),
                 (O::CommandTimingOverflow, "command_timing_overflow"),
                 (O::AckTimeout, "ack_timeout"),
+                (O::ControlWriteTimeout, "control_write_timeout"),
                 (O::AckMismatch, "ack_mismatch"),
                 (O::DuplicateAck, "duplicate_ack"),
                 (O::CommandRejected, "command_rejected"),
@@ -5709,6 +5711,182 @@ mod database_cases {
         })
         .await
         .expect("desired lost-response case and exact cleanup must succeed");
+        assert_case_ok(receipt);
+    }
+
+    async fn runtime_claim_commit_fault(lose_response_after_commit: bool) {
+        let receipt = run_database_case(move |database| {
+            Box::pin(async move {
+                use crate::owner_equity_v2::market_stream::{
+                    MarketStreamStorageError, RuntimeMarketStreamStorageError as RuntimeError,
+                };
+                let fixture = boundary::seed_fixture(&database).await?;
+                let relay = start_task_relay(&database).await?;
+                let storage = worker_repository_via_relay(&database, &relay).await?;
+                let repository = storage.runtime_repository();
+                let shared = repository.clone();
+                let holder = Uuid::new_v4();
+                let mut observation = if lose_response_after_commit {
+                    relay.drop_next_commit_response()
+                } else {
+                    relay.drop_next_commit_before_forward()
+                };
+                let started = tokio::time::Instant::now();
+                let (call, observed) = tokio::join!(
+                    async {
+                        let result = repository
+                            .claim_stream_producer(
+                                fixture.credential_slot_id,
+                                holder,
+                                fixture.grant_revision,
+                            )
+                            .await;
+                        (result, started.elapsed())
+                    },
+                    observation.observe_with_timeout(Duration::from_secs(2)),
+                );
+                let followup = tokio::time::timeout(
+                    Duration::from_millis(100),
+                    shared.claim_stream_producer(
+                        fixture.credential_slot_id,
+                        Uuid::new_v4(),
+                        fixture.grant_revision,
+                    ),
+                )
+                .await;
+                drop(shared);
+                drop(repository);
+                drop(storage);
+                // Join all owned relay children before inspecting the independent database state.
+                relay.close().await?;
+                let stored: Vec<Uuid> = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    sqlx::query_scalar(
+                        "SELECT holder_id FROM public.owner_market_stream_producers
+                        WHERE credential_slot_id = $1",
+                    )
+                    .bind(fixture.credential_slot_id)
+                    .fetch_all(&database.migration_owner),
+                )
+                .await??;
+                assert_eq!(observed, support::CommitObservationOutcome::Observed);
+                assert!(matches!(
+                    call.0,
+                    Err(RuntimeError::Storage(
+                        MarketStreamStorageError::CommitUnknown
+                    ))
+                ));
+                assert!(call.1 < Duration::from_millis(1250));
+                assert!(matches!(followup, Ok(Err(RuntimeError::Terminal))));
+                if lose_response_after_commit {
+                    assert_eq!(stored, vec![holder]);
+                } else {
+                    assert!(stored.is_empty());
+                }
+                Ok(())
+            })
+        })
+        .await
+        .expect("runtime claim ambiguity and owned relay cleanup must succeed");
+        assert_case_ok(receipt);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn runtime_claim_commit_before_forward_is_terminal_and_rolls_back() {
+        runtime_claim_commit_fault(false).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn runtime_claim_lost_commit_response_is_terminal_and_does_not_retry() {
+        runtime_claim_commit_fault(true).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn real_wire_pre_ack_frame_cannot_publish_or_consume_receipt_ordinal() {
+        let receipt = run_database_case(|database| {
+            Box::pin(async move {
+                let fixture = boundary::seed_fixture(&database).await?;
+                let repository = OwnerMarketStreamRepository::new(database.worker.clone());
+                let identity = fixture.identities.iter()
+                    .find(|identity| identity.symbol() == "005930")
+                    .cloned().ok_or("approved pre-ACK identity missing")?;
+                let (plan, mut pause) = support::CommandPlan::paused_ack_with_pre_ack(
+                    "005930", vec![("005930".to_owned(), 1)],
+                    vec![("005930".to_owned(), 2)],
+                );
+                let mut scenario = producer_scenario(
+                    &database, &fixture, repository, &["005930"], vec![plan], false,
+                ).await?;
+                let app = OwnerMarketStreamRepository::new(database.app.clone());
+                let checked: Result<_, CaseError> = async {
+                    let (before, pending, applied) = {
+                        let operation = scenario.producer.apply_desired(&scenario.desired);
+                        tokio::pin!(operation);
+                        tokio::select! {
+                            result = pause.wait_until_reached() => result?,
+                            _ = &mut operation => return Err("producer completed before causal pre-ACK barrier".into()),
+                        }
+                        // The mock saw the client's Pong after the real pre-ACK data frame.
+                        // The genuine ACK is still withheld, so no fabricated capture is needed.
+                        let before = tokio::time::timeout(Duration::from_secs(2), app.read_stream_snapshot(
+                            fixture.owner_user_id, &fixture.owner_session_hash, scenario.leases[0].lease_id,
+                        )).await??;
+                        let pending = tokio::time::timeout(Duration::from_secs(2), snapshot_subscription(
+                            &database, fixture.owner_user_id, fixture.credential_slot_id, "005930",
+                        )).await??;
+                        pause.release();
+                        (before, pending, operation.await?)
+                    };
+                    let control = tokio::time::timeout(Duration::from_secs(2),
+                        scenario.producer.read_and_publish(std::slice::from_ref(&identity)),
+                    ).await??;
+                    let after_control = tokio::time::timeout(Duration::from_secs(2), app.read_stream_snapshot(
+                        fixture.owner_user_id, &fixture.owner_session_hash, scenario.leases[0].lease_id,
+                    )).await??;
+                    let published = tokio::time::timeout(Duration::from_secs(2),
+                        scenario.producer.read_and_publish(std::slice::from_ref(&identity)),
+                    ).await??;
+                    let final_snapshot = tokio::time::timeout(Duration::from_secs(2), app.read_stream_snapshot(
+                        fixture.owner_user_id, &fixture.owner_session_hash, scenario.leases[0].lease_id,
+                    )).await??;
+                    Ok((before, pending, applied, control, after_control, published, final_snapshot))
+                }.await;
+                drop(scenario.producer);
+                let server = scenario.transport.finish().await?;
+                let (before, pending, applied, control, after_control, published, final_snapshot) = checked?;
+                assert!(before.rows.is_empty());
+                assert_eq!(before.delivery_rows.len(), 1);
+                assert!(before.delivery_rows[0].cache.is_none());
+                assert!(!before.delivery_rows[0].live);
+                assert_eq!(before.delivery_rows[0].state_version, 0);
+                assert_eq!(before.delivery_rows[0].identity, identity);
+                assert_eq!(pending.0, "PENDING_SUBSCRIBE");
+                assert!(pending.3.is_none());
+                assert_eq!(applied.transport_commands, 1);
+                assert!(matches!(control, MarketStreamProducerOutcome::Control(
+                    MarketStreamControlOutcome::TransportStatus(
+                        MarketStreamTransportStatus::DataBeforeAck,
+                    ),
+                )));
+                assert!(after_control.rows.is_empty());
+                assert_eq!(after_control.delivery_rows.len(), 1);
+                assert!(after_control.delivery_rows[0].cache.is_none());
+                assert!(!after_control.delivery_rows[0].live);
+                let MarketStreamProducerOutcome::Published(committed) = published else {
+                    return Err("authentic post-ACK record did not publish".into());
+                };
+                assert_eq!(committed.rows.len(), 1);
+                assert_eq!(committed.rows[0].quote_version, 1);
+                assert_eq!(committed.rows[0].receive_ordinal, Some(1));
+                assert_eq!(final_snapshot.rows[0].quote_version, 1);
+                assert_eq!(final_snapshot.rows[0].receive_ordinal, Some(1));
+                assert!(final_snapshot.rows[0].quote.is_some());
+                assert_eq!(server.market_record_batches, vec![1, 1]);
+                assert_eq!(server.commands.len(), 1);
+                assert!(server.client_closed);
+                Ok(())
+            })
+        }).await.expect("real pre-ACK wire case and owned cleanup must succeed");
         assert_case_ok(receipt);
     }
 

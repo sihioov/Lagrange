@@ -6,9 +6,20 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-# Synthetic loopback/process fixtures are deliberately opt-in.  No production
-# build enables the endpoint, clock, provisioning, or test-state helpers.
+# Synthetic loopback/process fixtures are deliberately opt-in.  Production
+# provisioning uses its own opt-in feature and does not enable test helpers.
 test-support = []
+market-stream-provisioning = []
+
+[[bin]]
+name = "kis-market-stream-state"
+path = "src/bin/kis-market-stream-state.rs"
+required-features = ["market-stream-provisioning"]
+
+[[test]]
+name = "market_stream_provisioning"
+path = "tests/market_stream_provisioning.rs"
+required-features = ["market-stream-provisioning"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

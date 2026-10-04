@@ -4,7 +4,7 @@ import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-rou
 import { StatePanel } from "@/components/states/state-panel";
 import type { StockBetaChartError } from "@/components/stock-beta/dashboard/types";
 import { StockBetaPolicyNotice } from "@/components/stock-beta/dashboard/widgets/policy-boundary-widget";
-import { isStockBetaIntradayQuotesEnabled } from "@/components/stock-beta/quote/intraday-quotes-mode";
+import { stockBetaIntradayTransport } from "@/components/stock-beta/quote/intraday-quotes-mode";
 import { StockBetaWorkspace } from "@/components/stock-beta/stock-beta-workspace";
 import { StockBetaTerminalPage } from "@/components/stock-beta/terminal";
 import { ApiContractError, ApiProblem, isLoginRequiredError } from "@/lib/api/response";
@@ -64,9 +64,14 @@ function chartFailure(error: unknown): StockBetaChartError {
   return { code: "UNCLASSIFIED_ERROR", kind: "error" };
 }
 
-async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
+async function renderStockBetaProduct(
+  t: StockBetaDictionary,
+  locale: Locale,
+  streamSessionKey: string,
+) {
   try {
-    const intradayEnabled = isStockBetaIntradayQuotesEnabled();
+    const transport = stockBetaIntradayTransport();
+    const intradayEnabled = transport !== "off";
     const api = await getProductApi();
     const memberships = await api.getOwnerEquityV2Memberships();
     let signals: OwnerEquityV2LatestSignalsModel | null = null;
@@ -115,6 +120,8 @@ async function renderStockBetaProduct(t: StockBetaDictionary, locale: Locale) {
         initialSignalUnavailable={initialSignalUnavailable}
         initialSignals={signals}
         intradayEnabled={intradayEnabled}
+        marketStreamEnabled={transport === "market_ws"}
+        streamSessionKey={streamSessionKey}
         locale={locale}
       />
     );
@@ -135,7 +142,12 @@ export default async function StockBetaPage() {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "stock-beta",
-    renderProduct: () => renderStockBetaProduct(stockBetaDictionary[locale], locale),
+    renderProduct: (session) =>
+      renderStockBetaProduct(
+        stockBetaDictionary[locale],
+        locale,
+        `${session.user_id}:${session.expires_at_secs}`,
+      ),
     title: stockBetaDictionary[locale].pageTitle,
   });
 }

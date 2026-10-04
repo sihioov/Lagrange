@@ -18,6 +18,10 @@ rust-version = "1.97.1"
 publish = false
 default-run = "api-server"
 
+[features]
+# Isolated PostgreSQL/HTTP fixture tests; never part of a default test run.
+market-stream-db-tests = ["job-queue/market-stream-db-tests"]
+
 [dependencies]
 api-server-auth = { path = "../../apps/api-server/auth" }
 auth = { path = "../auth" }
@@ -27,6 +31,7 @@ chrono = { version = "0.4", features = ["serde"] }
 collectors = { path = "../../data-pipelines/collectors" }
 domain = { path = "../domain" }
 factor-engine = { path = "../factor-engine" }
+futures-util = "0.3"
 risk-gateway = { path = "../risk-gateway" }
 kis-client = { path = "../kis-client" }
 async-trait = "0.1"
@@ -53,6 +58,8 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
+# Shared isolated market-stream fixture performs a synthetic WebSocket handshake.
+sha1_smol = "1"
 # The Paper execution seam uses a tiny temporary Phase0 v2 curated store for
 # fast deterministic tests while exercising the production schema.
 tempfile = "3"

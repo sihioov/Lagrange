@@ -9,6 +9,8 @@
 // fails on drift against the committed `openapi.json`, lints the required
 // per-operation metadata, and emits TypeScript types.
 
+import { STREAM_PREFIX, STREAM_ROUTES, STREAM_ERRORS, STREAM_SCHEMAS } from "./openapi-market-stream.mjs";
+
 const PHASE3 = "phase3";
 const INTRADAY_BIGINT_MAXIMUM = JSON.rawJSON("9223372036854775807");
 const OWNER_INTRADAY_QUOTE_CACHE_PATH =
@@ -16,6 +18,7 @@ const OWNER_INTRADAY_QUOTE_CACHE_PATH =
 
 /** Mirror of api-server CONTRACT_ROUTES. [method, path, flags] */
 const ROUTES = [
+  ...STREAM_ROUTES,
   // auth / session
   ["GET", "/api/v1/auth/session", {}],
   ["POST", "/api/v1/auth/logout", { mutating: true, natural: true, audit: true }],
@@ -203,6 +206,7 @@ const ROUTES = [
 
 /** Stable error codes (mirror of contract::ERROR_CODES). */
 const ERROR_CODES = [
+  ...STREAM_ERRORS,
   ["SESSION_UNKNOWN", 401], ["SESSION_EXPIRED", 401],
   ["FORBIDDEN", 403], ["DATA_ENTITLEMENT_REQUIRED", 403],
   ["OWNER_ONLY_DEVELOPMENT_PATH", 403], ["CSRF_DENIED", 403],
@@ -257,6 +261,10 @@ if (ERROR_CODES_SET.size !== ERROR_CODES.length) {
 const ENVELOPE = { $ref: "#/components/schemas/ErrorEnvelope" };
 
 function errorResponses(route) {
+  if (route?.[2]?.ownerMarketStream) {
+    const codes = route[0] === "GET" ? [400, 401, 403, 404, 409, 500, 503] : [400, 401, 403, 404, 409, 413, 500, 503];
+    return Object.fromEntries(codes.map((code) => [code, { $ref: `#/components/responses/Error${code}` }]));
+  }
   if (isOwnerIntradayQuoteCache(route)) {
     return {
       "400": { $ref: "#/components/responses/Error400" },
@@ -339,7 +347,9 @@ function operation(route) {
       auth: { required: true, session: "opaque __Host-lagrange_session cookie" },
       ownership: {
         owner_only: owner,
-        scope: flags.ownerBetaSupportedAsOf
+        scope: flags.ownerMarketStream
+          ? "Owner role and exact canonical session; current actor RLS, grant, date and membership generation"
+          : flags.ownerBetaSupportedAsOf
           ? "Owner role; approved sealed historical price-only artifact"
           : flags.ownerBetaEquitySignals
           ? "Owner role; sealed fixed-equity price/volume research"
@@ -369,6 +379,8 @@ function operation(route) {
       idempotency: mutating
         ? natural
           ? { required: false, natural: true, note: "idempotent by nature; no key required" }
+          : flags.ownerMarketStream
+          ? { required: true, header: "Idempotency-Key", replay: "Durable session/consumer lease result or released tombstone; replay rechecks authorization. Different body for a retained key is 409 IDEMPOTENCY_KEY_MISMATCH." }
           : flags.ownerIntradayQuotes && !cacheGet
           ? {
               required: idemRequired,
@@ -403,11 +415,13 @@ function operation(route) {
   };
 
   for (const [n, k] of Object.entries(pathParams(path))) {
-    const schema = n === "membership_id" || n === "demand_id"
-      ? { type: "string", format: "uuid" }
-      : n === "instrument_id" && (flags.ownerEquityV2 || cacheGet)
-        ? { type: "string", pattern: "^[0-9]{6}\\.KRX$" }
-        : { type: "string" };
+    const schema = flags.ownerMarketStream && n === "lease_id"
+      ? STREAM_SCHEMAS.OwnerMarketStreamLease.properties.lease_id
+      : n === "membership_id" || n === "demand_id" || n === "lease_id"
+        ? { type: "string", format: "uuid" }
+        : n === "instrument_id" && (flags.ownerEquityV2 || cacheGet)
+          ? { type: "string", pattern: "^[0-9]{6}\\.KRX$" }
+          : { type: "string" };
     op.parameters.push(param(n, "path", schema, true));
   }
   if (path === "/api/v1/recommendations/latest") {
@@ -427,6 +441,16 @@ function operation(route) {
   if (flags.ownerEquityV2Chart) {
     op.parameters.push(param("snapshot_id", "query", { type: "string", format: "uuid" }, true));
     op.parameters.push(param("range", "query", { $ref: "#/components/schemas/OwnerEquityV2ChartRange" }, true));
+  }
+  if (flags.ownerMarketStream) {
+    op.description = "Schema 2 only. Configured same origin, Owner cookie session and current database authorization are required. Authentication precedes semantic parsing. Legacy schema-1 quote routes are unchanged.";
+    if (mutating) {
+      op.parameters.push(param("Idempotency-Key", "header", { type: "string", minLength: 1, maxLength: method === "post" ? 128 : 200, description: method === "post" ? "Visible ASCII excluding colon and backslash." : "Visible ASCII; the released lease tombstone remains the durable replay authority." }, true));
+      op.parameters.push(param("X-CSRF-Token", "header", { type: "string", minLength: 1 }, true));
+    } else {
+      op.parameters.push(param("lease_id", "query", { type: "string", format: "uuid", description: "Exactly one canonical non-nil UUID; no other query parameter is accepted." }, true));
+      op.parameters.push(param("Last-Event-ID", "header", { type: "string", maxLength: 80, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[1-9][0-9]{0,18}$", description: "Bounded UUID:positive-i64 cursor. Every reconnect resets and reads the current snapshot; no history replay." }, false));
+    }
   }
   if (cacheGet) {
     op.parameters.push(param("membership_id", "query", { type: "string", format: "uuid" }, true));
@@ -464,6 +488,20 @@ function successResponsesFor(method, path) {
     description,
     content: { "application/json": { schema: { $ref: schema } } },
   });
+  if (path === `${STREAM_PREFIX}/stream-leases` && method === "post") {
+    return { "200": json("Current durable consumer lease and complete replaced identity set", "#/components/schemas/OwnerMarketStreamLease") };
+  }
+  if (path === `${STREAM_PREFIX}/stream-leases/{lease_id}` && method === "delete") {
+    return { "200": json("Consumer-bound durable release or authorized tombstone replay", "#/components/schemas/OwnerMarketStreamRelease") };
+  }
+  if (path === `${STREAM_PREFIX}/market-stream` && method === "get") {
+    return { "200": {
+      description: "Read-only SSE. Each connection starts with reset followed by the full current snapshot. Complete replacement deltas and revalidated status at least once per second; comment heartbeat every 15 seconds. No demand renewal or provider calls. Each emitted batch is authorized again. Access loss purges queued data and closes after a typed status; bytes already in flight cannot be recalled. At most 20 consumers per Owner; 5 seconds without delivery progress closes the consumer. No shared caching or buffered proxy delivery.",
+      headers: { "Cache-Control": { schema: { type: "string", const: "no-store" } }, "X-Accel-Buffering": { schema: { type: "string", const: "no" } } },
+      content: { "text/event-stream": { schema: { type: "string" } } },
+      "x-sse-events": Object.fromEntries(["Snapshot", "Delta", "Status", "Reset"].map((kind) => [kind.toLowerCase(), { $ref: `#/components/schemas/OwnerMarketStream${kind}Event` }])),
+    } };
+  }
   if (path === "/api/v1/recommendations/runs" && method === "post") {
     return { "201": json("Recommendation run accepted", "#/components/schemas/RecommendationRun") };
   }
@@ -579,6 +617,8 @@ function isOwnerIntradayQuoteCache(route) {
 }
 
 function bodySchemaRef(path) {
+  if (path === `${STREAM_PREFIX}/stream-leases`) return "#/components/schemas/OwnerMarketStreamLeaseBody";
+  if (path === `${STREAM_PREFIX}/stream-leases/{lease_id}`) return "#/components/schemas/OwnerMarketStreamReleaseBody";
   if (path.endsWith("/configs")) return "#/components/schemas/NewStrategyConfigBody";
   if (path === "/api/v1/research/owner-beta/equity-price-signals/screen") {
     return "#/components/schemas/OwnerBetaEquitySignalsScreenBody";
@@ -614,6 +654,9 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (flags.ownerMarketStream) {
+    return ["SESSION_UNKNOWN", "SESSION_EXPIRED", "FORBIDDEN", "INVALID_PARAMETER", "RESOURCE_NOT_FOUND", "FEATURE_DISABLED", "MARKET_STREAM_UNAVAILABLE", "INTERNAL", ...(route[0] === "GET" ? ["STREAM_CONSUMER_CAPACITY"] : ["CSRF_DENIED", "IDEMPOTENCY_KEY_MISMATCH", "STREAM_LEASE_SEQUENCE_CONFLICT", "STREAM_LEASE_CAPACITY", "PAYLOAD_TOO_LARGE"])];
+  }
   if (isOwnerIntradayQuoteCache(route)) {
     return [
       "SESSION_UNKNOWN",
@@ -1346,6 +1389,7 @@ const SCHEMAS = {
       instrument_code: { type: "string", pattern: "^[0-9]{6}$", example: "005930" },
     },
   },
+  ...STREAM_SCHEMAS,
   OwnerIntradayQuoteDemandBody: {
     type: "object",
     required: ["schema_version", "consumer_id", "membership_id", "generation", "renewal_sequence"],

@@ -57,6 +57,9 @@ export type StockBetaDashboardViewModel = {
   readonly signalState: StockBetaSignalState;
   readonly signals: OwnerEquityV2LatestSignalsModel | null;
   readonly intradayEnabled?: boolean;
+  readonly marketStreamEnabled?: boolean;
+  /** The 30-symbol stream can be selected before an EOD analysis snapshot exists. */
+  readonly streamSelectedInstrumentId?: string | null;
   /** Optional until the presentation widget consumes the WP-3 chart model. */
   readonly selectedInstrumentId?: string | null;
   readonly chartRange?: OwnerEquityV2ChartRange;

@@ -59,6 +59,15 @@ pub use intraday::*;
 #[path = "owner_equity_v2/intraday_producer.rs"]
 mod intraday_producer;
 pub use intraday_producer::*;
+#[cfg(any(test, feature = "market-stream-db-tests"))]
+#[path = "owner_equity_v2/market_stream_measurements.rs"]
+mod market_stream_measurements;
+#[cfg(feature = "market-stream-db-tests")]
+pub use market_stream_measurements::{
+    StreamBufferProbeSummary,
+    StreamPublicationProbe, StreamPublicationProbeError, StreamPublicationProbeSnapshot,
+    StreamPublicationProbeSummary, StreamPublicationProbeRecord, StreamPublicationProbeOutcome,
+};
 #[path = "owner_equity_v2/market_stream.rs"]
 mod market_stream;
 pub use market_stream::{
@@ -68,9 +77,16 @@ pub use market_stream::{
     STREAM_MAX_IDENTITIES_PER_LEASE, STREAM_PRODUCER_LEASE_SECONDS,
     STREAM_PRODUCER_RENEW_AFTER_SECONDS, STREAM_PUBLICATION_MAX_AGE, STREAM_RENEW_AFTER_MS,
     STREAM_SCHEMA_VERSION, StreamAvailability, StreamCacheRow, StreamConnectionState,
-    StreamFreshness, StreamIdentity, StreamLease, StreamLeaseIdentity, StreamLeaseRequest,
-    StreamMarketState, StreamProducerLease, StreamSessionProof, StreamSnapshot, StreamStatus,
-    StreamStatusCode, SubscriptionOperation,
+    StreamDeliveryEvidence, StreamDeliveryRow, StreamFreshness, StreamIdentity, StreamLease,
+    StreamLeaseIdentity, StreamLeaseRequest, StreamMarketState, StreamProducerDelivery,
+    StreamProducerLease, StreamSessionProof, StreamSnapshot, StreamStatus, StreamStatusCode,
+    StreamSubscriptionDelivery, StreamSubscriptionDeliveryState, SubscriptionOperation,
+};
+#[path = "owner_equity_v2/market_stream_runtime.rs"]
+mod market_stream_runtime;
+pub use market_stream_runtime::{
+    MarketStreamRuntimeError, MarketStreamRuntimeExit, OwnerMarketStreamRuntime,
+    OwnerMarketStreamRuntimeConfig,
 };
 #[path = "owner_equity_v2/market_stream_producer.rs"]
 mod market_stream_producer;
@@ -83,6 +99,10 @@ pub use market_stream_producer::{
 #[cfg(all(test, feature = "market-stream-db-tests"))]
 #[path = "owner_equity_v2/market_stream_c3a_tests.rs"]
 mod market_stream_c3a_tests;
+
+#[cfg(test)]
+#[path = "owner_equity_v2/market_stream_runtime_storage_tests.rs"]
+mod market_stream_runtime_storage_tests;
 
 #[cfg(test)]
 #[path = "owner_equity_v2/market_stream_producer_tests.rs"]

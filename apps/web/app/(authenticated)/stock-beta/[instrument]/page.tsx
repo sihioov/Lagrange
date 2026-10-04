@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { StatePanel } from "@/components/states/state-panel";
 import { StockBetaDetailPolicyNotice } from "@/components/stock-beta/detail/widgets/policy-boundary-widget";
-import { isStockBetaIntradayQuotesEnabled } from "@/components/stock-beta/quote/intraday-quotes-mode";
+import { stockBetaIntradayTransport } from "@/components/stock-beta/quote/intraday-quotes-mode";
 import { matchReadyIntradayQuoteMembership } from "@/components/stock-beta/quote/membership";
 import {
   StockBetaDetail,
@@ -15,6 +15,7 @@ import { getProductApi } from "@/lib/api/server-products";
 import { type StockBetaDictionary, stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import type { Locale } from "@/lib/i18n/locale";
 import { getLocale } from "@/lib/i18n/server";
+import type { OwnerEquityV2MembershipModel } from "@/lib/products/equity-signals-contracts";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -47,15 +48,19 @@ async function renderStockBetaDetailProduct(
   instrument: string,
   t: StockBetaDictionary,
   locale: Locale,
+  streamSessionKey: string,
 ) {
   try {
-    const intradayEnabled = isStockBetaIntradayQuotesEnabled();
+    const transport = stockBetaIntradayTransport();
+    const intradayEnabled = transport !== "off";
     const api = await getProductApi();
     const detail = await api.getOwnerEquityV2SignalDetail(instrument);
     let intradayMembership = null;
+    let streamMemberships: readonly OwnerEquityV2MembershipModel[] = [];
     if (intradayEnabled) {
       try {
         const memberships = await api.getOwnerEquityV2Memberships();
+        streamMemberships = memberships.memberships;
         intradayMembership = matchReadyIntradayQuoteMembership(memberships.memberships, {
           instrument_id: detail.signal.instrument_id,
           generation: detail.signal.generation,
@@ -68,6 +73,9 @@ async function renderStockBetaDetailProduct(
       <StockBetaDetail
         detail={detail}
         intradayEnabled={intradayEnabled}
+        marketStreamEnabled={transport === "market_ws"}
+        streamSessionKey={streamSessionKey}
+        streamMemberships={streamMemberships}
         intradayMembership={intradayMembership}
         locale={locale}
         t={t}
@@ -117,8 +125,13 @@ export default async function StockBetaDetailPage({ params }: StockBetaDetailPag
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "stock-beta",
-    renderProduct: () =>
-      renderStockBetaDetailProduct(instrument, stockBetaDictionary[locale], locale),
+    renderProduct: (session) =>
+      renderStockBetaDetailProduct(
+        instrument,
+        stockBetaDictionary[locale],
+        locale,
+        `${session.user_id}:${session.expires_at_secs}`,
+      ),
     title: stockBetaDictionary[locale].pageTitle,
   });
 }

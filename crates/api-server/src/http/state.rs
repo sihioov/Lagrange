@@ -6,6 +6,8 @@
 use crate::actor_tx::pool_for_actor;
 use crate::error::TenancyError;
 use crate::http::idempotency::{IdempotencyStore, InMemoryIdempotencyStore};
+use crate::http::owner_market_stream_config::MarketStreamReadConfig;
+use crate::http::owner_market_stream_delivery::ConsumerRegistry;
 use crate::repos::accounts::AccountRepo;
 use crate::repos::admin::AdminRepo;
 use crate::repos::artifacts::ArtifactRepo;
@@ -178,6 +180,9 @@ pub struct ApiConfig {
     /// Default-off, owner-only current-quote read evidence. This contains no
     /// provider or credential state and is immutable after startup.
     pub owner_intraday_quotes: OwnerIntradayQuoteReadConfig,
+    /// Separate schema-2 activation; the REST configuration stays disabled
+    /// when this immutable market-stream configuration is selected.
+    pub owner_market_stream: MarketStreamReadConfig,
     /// Wall clock used by the API's intraday freshness/session evaluation.
     /// Production supplies [`system_intraday_now`]; tests may inject a clock.
     pub intraday_now: fn() -> chrono::DateTime<chrono::Utc>,
@@ -217,6 +222,7 @@ pub struct ApiState {
     /// Bounds independent V2 candidate artifact verification. The chart
     /// handler never performs blocking filesystem I/O on an async worker.
     pub(crate) owner_equity_v2_artifact: Arc<Semaphore>,
+    pub(crate) market_stream_consumers: ConsumerRegistry,
     actor_pools: Arc<Mutex<HashMap<String, sqlx::PgPool>>>,
 }
 
@@ -301,6 +307,7 @@ impl ApiState {
                 owner_equity_v2_pins: None,
                 owner_equity_v2_api_artifact_root: None,
                 owner_intraday_quotes: OwnerIntradayQuoteReadConfig::Disabled,
+                owner_market_stream: MarketStreamReadConfig::Disabled,
                 intraday_now: system_intraday_now,
             }),
             app_pool: pool.clone(),
@@ -310,6 +317,7 @@ impl ApiState {
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
             owner_beta_approval: Arc::new(Semaphore::new(1)),
             owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
+            market_stream_consumers: ConsumerRegistry::default(),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -332,6 +340,7 @@ impl ApiState {
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
             owner_beta_approval: Arc::new(Semaphore::new(1)),
             owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
+            market_stream_consumers: ConsumerRegistry::default(),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         })
     }

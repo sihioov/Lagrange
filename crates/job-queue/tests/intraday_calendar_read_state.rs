@@ -1183,3 +1183,369 @@ async fn calendar_reads_are_independent_and_do_not_write_any_populated_state() {
     })
     .await;
 }
+// Explicit C2-only process restart regression; never selects a legacy fixture.
+#[cfg(feature = "market-stream-db-tests")]
+const SUPERVISOR_ENV: &str = "LAGRANGE_WS3A_SUPERVISOR_URL";
+#[cfg(feature = "market-stream-db-tests")]
+#[allow(dead_code)]
+#[path = "owner_market_stream_boundary_support/c2_fixture.rs"]
+mod eod_restart_binding;
+
+#[cfg(feature = "market-stream-db-tests")]
+mod eod_restart_tests {
+    use super::*;
+    use chrono::Timelike;
+    use market_data::contract::{PROVIDER_KIS, PROVIDER_KIS_NORMALIZED};
+    use serde::{Deserialize, Serialize};
+    use sha2::{Digest, Sha256};
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::path::{Path, PathBuf};
+    use std::process::Stdio;
+    use std::time::Duration as StdDuration;
+
+    const CHILD_TEST: &str = "eod_restart_tests::owned_recovery_child";
+    const CONFIG_ENV: &str = "LAGRANGE_EOD_RESTART_CONFIG";
+    const PHASE_ENV: &str = "LAGRANGE_EOD_RESTART_PHASE";
+    const COMMITTED_EXIT: i32 = 73;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ChildConfig {
+        parent_pid: u32,
+        database: String,
+        date: String,
+        source_batch: String,
+    }
+
+    fn private_file(path: &Path) -> Result<std::fs::File, String> {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|_| "could not create owned restart evidence".to_owned())
+    }
+
+    fn read_config(path: &Path) -> Result<ChildConfig, String> {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|_| "restart config metadata missing".to_owned())?;
+        if !metadata.is_file()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.nlink() != 1
+            || metadata.mode() & 0o7777 != 0o600
+            || metadata.len() > 4096
+        {
+            return Err("restart config metadata rejected".to_owned());
+        }
+        let config: ChildConfig = serde_json::from_slice(
+            &std::fs::read(path).map_err(|_| "restart config unreadable".to_owned())?,
+        )
+        .map_err(|_| "restart config shape rejected".to_owned())?;
+        let prefix = format!("lagrange_intraday_{}_", config.parent_pid);
+        let suffix = config.database.strip_prefix(&prefix).unwrap_or_default();
+        if config.parent_pid != unsafe { libc::getppid() } as u32
+            || suffix.is_empty()
+            || !suffix.bytes().all(|byte| byte.is_ascii_digit())
+            || !path.is_absolute()
+            || path.file_name().and_then(|name| name.to_str()) != Some("child.json")
+            || !path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("kis-eod-restart-"))
+        {
+            return Err("restart config ownership rejected".to_owned());
+        }
+        Ok(config)
+    }
+
+    async fn recovery_child() -> Result<(), String> {
+        let path = PathBuf::from(
+            std::env::var_os(CONFIG_ENV).ok_or_else(|| "missing child config".to_owned())?,
+        );
+        let config = read_config(&path)?;
+        let phase = std::env::var(PHASE_ENV).map_err(|_| "missing child phase".to_owned())?;
+        if phase != "publish" && phase != "replay" {
+            return Err("invalid child phase".to_owned());
+        }
+        let target = eod_restart_binding::SupervisorTarget::from_environment()
+            .map_err(|_| "restart binding rejected".to_owned())?;
+        if !target.is_c2() {
+            return Err("restart requires current C2 binding".to_owned());
+        }
+        let supervisor = eod_restart_binding::connect_supervisor(&target)
+            .await
+            .map_err(|_| "restart live identity rejected".to_owned())?;
+        supervisor.close().await;
+        let writer = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .acquire_timeout(StdDuration::from_secs(2))
+            .connect_with(
+                target
+                    .options()
+                    .database(&config.database)
+                    .username("research_writer")
+                    .password("lagrange"),
+            )
+            .await
+            .map_err(|_| "restart writer connection failed".to_owned())?;
+        let identity: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+            .fetch_one(&writer)
+            .await
+            .map_err(|_| "restart writer identity unavailable".to_owned())?;
+        if identity != ("research_writer".to_owned(), "research_writer".to_owned()) {
+            return Err("restart did not use an actual writer login".to_owned());
+        }
+        let root = path
+            .parent()
+            .ok_or_else(|| "missing owned root".to_owned())?;
+        let store = RawStore::new(root.join("data"));
+        let normalized = collectors::recover_kis_normalization(&store)
+            .map_err(|_| "restart normalization rejected".to_owned())?;
+        if normalized.outcomes.len() != 1
+            || normalized.outcomes[0].source_batch_id.to_string() != config.source_batch
+            || normalized.outcomes[0].entry.files.len() != 4
+        {
+            return Err("restart selected a different source".to_owned());
+        }
+        let batch = normalized.outcomes[0].entry.batch_id;
+        let checkpoint = root.join("committed.json");
+        if phase == "replay" {
+            let committed: String = serde_json::from_slice(
+                &std::fs::read(&checkpoint).map_err(|_| "missing durable checkpoint".to_owned())?,
+            )
+            .map_err(|_| "invalid durable checkpoint".to_owned())?;
+            if committed != batch.to_string() {
+                return Err("restart normalized identity changed".to_owned());
+            }
+        }
+        let report = collectors::recover_unpublished_normalized_for_date(
+            &store,
+            &PostgresPublicationSink::new(writer.clone()),
+            &normalized,
+            TradingDate::parse(&config.date).map_err(|_| "invalid restart date".to_owned())?,
+        )
+        .await
+        .map_err(|_| "restart publication rejected".to_owned())?;
+        if phase == "publish" {
+            if report.recovered != vec![batch] || !report.skipped.is_empty() {
+                return Err("first recovery did not publish exactly once".to_owned());
+            }
+            let mut file = private_file(&checkpoint)?;
+            file.write_all(
+                &serde_json::to_vec(&batch.to_string())
+                    .map_err(|_| "checkpoint serialization failed".to_owned())?,
+            )
+            .map_err(|_| "checkpoint write failed".to_owned())?;
+            file.sync_all()
+                .map_err(|_| "checkpoint sync failed".to_owned())?;
+            // Deliberate process exit after the real sink's commit. Pool Drop
+            // and the test harness do not run; the parent must reap this child.
+            std::process::exit(COMMITTED_EXIT);
+        }
+        if !report.recovered.is_empty() || report.skipped != vec![batch] {
+            return Err("restart replay published a duplicate".to_owned());
+        }
+        writer.close().await;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn owned_recovery_child() {
+        recovery_child().await.expect("owned EOD recovery child");
+    }
+
+    async fn run_child(config: &Path, phase: &str, evidence: &Path) -> Result<i32, String> {
+        let log_path = evidence.join(format!("{phase}.log"));
+        let log = private_file(&log_path)?;
+        let error_log = log
+            .try_clone()
+            .map_err(|_| "child log clone failed".to_owned())?;
+        let mut command = tokio::process::Command::new(
+            std::env::current_exe().map_err(|_| "test binary path unavailable".to_owned())?,
+        );
+        command
+            .args([CHILD_TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .env_clear()
+            .env(CONFIG_ENV, config)
+            .env(PHASE_ENV, phase)
+            .env("LANG", "C")
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(error_log))
+            .kill_on_drop(true);
+        for key in [
+            "LAGRANGE_KIS_C2_BINDING_FILE",
+            "LAGRANGE_KIS_C2_BINDING_SHA256",
+            SUPERVISOR_ENV,
+            "HOME",
+            "TMPDIR",
+        ] {
+            command.env(
+                key,
+                std::env::var_os(key).ok_or_else(|| "child input missing".to_owned())?,
+            );
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|_| "child spawn failed".to_owned())?;
+        let pid = child.id().ok_or_else(|| "child PID missing".to_owned())?;
+        let status = match tokio::time::timeout(StdDuration::from_secs(20), child.wait()).await {
+            Ok(status) => status.map_err(|_| "child wait failed".to_owned())?,
+            Err(_) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Err("owned recovery child timed out and was reaped".to_owned());
+            }
+        };
+        let code = status
+            .code()
+            .ok_or_else(|| "child exited by signal".to_owned())?;
+        let digest = format!(
+            "{:x}",
+            Sha256::digest(
+                std::fs::read(&log_path).map_err(|_| "child raw log unreadable".to_owned())?
+            )
+        );
+        eprintln!(
+            "EOD_RESTART_CHILD phase={phase} pid={pid} exit={code} reaped=true raw_sha256={digest}"
+        );
+        Ok(code)
+    }
+
+    async fn database_snapshot(pool: &PgPool) -> Result<Vec<(usize, String)>, String> {
+        let mut snapshot = Vec::new();
+        for sql in [
+            "SELECT row_to_json(t)::text FROM data_batches t ORDER BY row_to_json(t)::text",
+            "SELECT row_to_json(t)::text FROM trading_calendar_versions t ORDER BY row_to_json(t)::text",
+            "SELECT row_to_json(t)::text FROM trading_calendars t ORDER BY row_to_json(t)::text",
+        ] {
+            let rows: Vec<String> = sqlx::query_scalar(sql)
+                .fetch_all(pool)
+                .await
+                .map_err(|_| "restart snapshot failed".to_owned())?;
+            let bytes =
+                serde_json::to_vec(&rows).map_err(|_| "snapshot encoding failed".to_owned())?;
+            snapshot.push((rows.len(), format!("{:x}", Sha256::digest(bytes))));
+        }
+        Ok(snapshot)
+    }
+
+    async fn exercise_restart(db: &IntradayTestDb) -> Result<(), String> {
+        let evidence = PathBuf::from(
+            std::env::var_os("LAGRANGE_EOD_RESTART_EVIDENCE_DIR")
+                .ok_or_else(|| "missing owned child evidence directory".to_owned())?,
+        );
+        let metadata = std::fs::symlink_metadata(&evidence)
+            .map_err(|_| "child evidence directory unavailable".to_owned())?;
+        if !metadata.is_dir()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o7777 != 0o700
+        {
+            return Err("child evidence directory ownership rejected".to_owned());
+        }
+        let temp = tempfile::Builder::new()
+            .prefix("kis-eod-restart-")
+            .tempdir()
+            .map_err(|_| "restart tempdir unavailable".to_owned())?;
+        let store = RawStore::new(temp.path().join("data"));
+        let reader = AcceptanceKisRead::default();
+        let provider = KisProvider::kr_etf_core(reader.clone());
+        let retrieved = (Utc::now() - Duration::seconds(5))
+            .with_nanosecond(0)
+            .ok_or_else(|| "restart timestamp unavailable".to_owned())?;
+        let date = TradingDate::parse(&db.session_date.to_string())
+            .map_err(|_| "restart date unavailable".to_owned())?;
+        let source = market_data::ingest::ingest_kis_bundle(
+            &store,
+            &provider,
+            &IngestRequest::new(
+                MARKET_KR.to_owned(),
+                date,
+                UtcTimestamp::from_datetime(retrieved),
+            ),
+            Some("fixture://eod-restart"),
+        )
+        .await
+        .map_err(|_| "synthetic restart source creation failed".to_owned())?
+        .entry;
+        if reader.total_calls.load(Ordering::SeqCst) != 30
+            || reader.calendar_calls.load(Ordering::SeqCst) != 1
+        {
+            return Err("synthetic source call count changed".to_owned());
+        }
+        let original = store
+            .read_batch_bytes(PROVIDER_KIS, MARKET_KR, &source)
+            .map_err(|_| "original source unreadable".to_owned())?
+            .into_iter()
+            .map(|file| file.bytes)
+            .collect::<Vec<_>>();
+        std::fs::remove_file(store.manifest_path(PROVIDER_KIS, MARKET_KR))
+            .map_err(|_| "could not simulate owned manifest interruption".to_owned())?;
+        let config = temp.path().join("child.json");
+        private_file(&config)?
+            .write_all(
+                &serde_json::to_vec(&ChildConfig {
+                    parent_pid: std::process::id(),
+                    database: db.database_name.clone(),
+                    date: date.to_iso(),
+                    source_batch: source.batch_id.to_string(),
+                })
+                .map_err(|_| "child config serialization failed".to_owned())?,
+            )
+            .map_err(|_| "child config write failed".to_owned())?;
+        if run_child(&config, "publish", &evidence).await? != COMMITTED_EXIT {
+            return Err("first child did not stop at the committed boundary".to_owned());
+        }
+        let before = database_snapshot(&db.superuser).await?;
+        if before.iter().map(|row| row.0).collect::<Vec<_>>() != vec![4, 1, 1] {
+            return Err("first child publication shape changed".to_owned());
+        }
+        let raw_manifest = std::fs::read(store.manifest_path(PROVIDER_KIS, MARKET_KR))
+            .map_err(|_| "reconciled raw manifest unavailable".to_owned())?;
+        let normalized_manifest =
+            std::fs::read(store.manifest_path(PROVIDER_KIS_NORMALIZED, MARKET_KR))
+                .map_err(|_| "normalized manifest unavailable".to_owned())?;
+        if run_child(&config, "replay", &evidence).await? != 0 {
+            return Err("fresh process replay failed".to_owned());
+        }
+        if database_snapshot(&db.superuser).await? != before
+            || std::fs::read(store.manifest_path(PROVIDER_KIS, MARKET_KR))
+                .ok()
+                .as_ref()
+                != Some(&raw_manifest)
+            || std::fs::read(store.manifest_path(PROVIDER_KIS_NORMALIZED, MARKET_KR))
+                .ok()
+                .as_ref()
+                != Some(&normalized_manifest)
+            || store
+                .read_batch_bytes(PROVIDER_KIS, MARKET_KR, &source)
+                .map_err(|_| "replayed source unreadable".to_owned())?
+                .into_iter()
+                .map(|file| file.bytes)
+                .collect::<Vec<_>>()
+                != original
+        {
+            return Err("restart changed durable source or publication rows".to_owned());
+        }
+        eprintln!(
+            "EOD_RESTART_ACCEPTED source_count=1 normalized_count=1 data_batches=4 calendar_history=1 calendar_projection=1 duplicate_rows=0"
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn exact_source_eod_restarts_after_durable_commit_without_refetch() {
+        let db = IntradayTestDb::create_without_calendar()
+            .await
+            .expect("owned restart DB setup");
+        let result = exercise_restart(&db).await;
+        let cleanup = db.drop_database().await;
+        cleanup.expect("owned restart DB cleanup");
+        result.expect("exact-source EOD process restart");
+    }
+}

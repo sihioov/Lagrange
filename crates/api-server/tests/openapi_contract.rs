@@ -1247,3 +1247,172 @@ fn openapi_contract_handlers_emit_only_declared_codes() {
          unparseable by the web client): {undeclared:?}"
     );
 }
+
+#[test]
+fn openapi_market_stream_preserves_owner_session_and_sse_boundaries() {
+    let spec: Value = serde_json::from_str(SPEC).unwrap();
+    let prefix = "/api/v1/research/owner-beta/equity-universe-v2";
+    for (method, suffix, request_schema, response_schema) in [
+        (
+            "post",
+            "stream-leases",
+            "OwnerMarketStreamLeaseBody",
+            "OwnerMarketStreamLease",
+        ),
+        (
+            "delete",
+            "stream-leases/{lease_id}",
+            "OwnerMarketStreamReleaseBody",
+            "OwnerMarketStreamRelease",
+        ),
+    ] {
+        let op = &spec["paths"][format!("{prefix}/{suffix}")][method];
+        assert_eq!(op["x-lagrange"]["ownership"]["owner_only"], true);
+        assert_eq!(op["x-lagrange"]["idempotency"]["required"], true);
+        assert_eq!(op["x-lagrange"]["cache"]["policy"], "no-store");
+        assert_eq!(
+            op["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{request_schema}")
+        );
+        assert_eq!(
+            op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{response_schema}")
+        );
+        for name in ["Idempotency-Key", "X-CSRF-Token"] {
+            assert!(
+                op["parameters"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p["name"] == name && p["in"] == "header" && p["required"] == true)
+            );
+        }
+    }
+    let get = &spec["paths"][format!("{prefix}/market-stream")]["get"];
+    assert!(get.get("requestBody").is_none());
+    assert_eq!(get["x-lagrange"]["idempotency"]["required"], false);
+    assert_eq!(get["x-lagrange"]["ownership"]["owner_only"], true);
+    assert_eq!(
+        get["responses"]["200"]["content"]["text/event-stream"]["schema"]["type"],
+        "string"
+    );
+    assert_eq!(
+        get["responses"]["200"]["headers"]["X-Accel-Buffering"]["schema"]["const"],
+        "no"
+    );
+    let events = get["responses"]["200"]["x-sse-events"].as_object().unwrap();
+    assert_eq!(
+        events.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["reset", "snapshot", "delta", "status"])
+    );
+    assert!(
+        get["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "lease_id" && p["required"] == true)
+    );
+    let row = &spec["components"]["schemas"]["OwnerMarketStreamRow"];
+    assert_eq!(row["additionalProperties"], false);
+    assert_eq!(row["properties"]["source"]["const"], "KIS_MARKET_WS");
+    assert_eq!(
+        row["properties"]["market_state"]["enum"],
+        serde_json::json!(["OPEN", "CLOSED", "UNKNOWN"])
+    );
+    for secret in [
+        "producer_id",
+        "fence",
+        "credential_slot_id",
+        "session_hash",
+        "next_poll_after_ms",
+    ] {
+        assert!(row["properties"].get(secret).is_none());
+    }
+    let quote = &spec["components"]["schemas"]["OwnerMarketStreamQuote"];
+    assert_eq!(quote["properties"]["base_price"]["type"], "null");
+    assert_eq!(
+        quote["properties"]["base_price_reason"]["const"],
+        "NOT_PROVIDED_BY_CHANNEL"
+    );
+    assert_eq!(
+        spec["components"]["schemas"]["OwnerIntradayQuote"]["properties"]["schema_version"]["const"],
+        1
+    );
+}
+
+#[test]
+fn openapi_market_stream_counters_reject_overflow_and_noncanonical_wire_values() {
+    let spec: Value = serde_json::from_str(SPEC).unwrap();
+    for (name, zero) in [
+        ("OwnerMarketStreamCounter", true),
+        ("OwnerMarketStreamPositiveCounter", false),
+    ] {
+        let validator = jsonschema::validator_for(&spec["components"]["schemas"][name]).unwrap();
+        for allowed in [
+            "1",
+            "9",
+            "999999999999999999",
+            "1000000000000000000",
+            "9223372036854775807",
+        ] {
+            assert!(
+                validator.is_valid(&serde_json::json!(allowed)),
+                "{name}: {allowed}"
+            );
+        }
+        assert_eq!(validator.is_valid(&serde_json::json!("0")), zero);
+        for denied in [
+            "00",
+            "01",
+            "-1",
+            "+1",
+            "1.0",
+            "1e1",
+            "9223372036854775808",
+            "9999999999999999999",
+            "10000000000000000000",
+        ] {
+            assert!(
+                !validator.is_valid(&serde_json::json!(denied)),
+                "{name}: {denied}"
+            );
+        }
+        assert!(!validator.is_valid(&serde_json::json!(1)));
+    }
+}
+
+#[test]
+fn openapi_market_stream_request_schema_rejects_unknown_and_unsafe_fields() {
+    let spec: Value = serde_json::from_str(SPEC).unwrap();
+    let root = serde_json::json!({"$ref":"#/components/schemas/OwnerMarketStreamLeaseBody", "components":spec["components"].clone()});
+    let validator = jsonschema::validator_for(&root).unwrap();
+    let valid = serde_json::json!({"schema_version":2,"consumer_id":"00000000-0000-4000-8000-000000000001","renewal_sequence":0,"identities":[{"membership_id":"00000000-0000-4000-8000-000000000002","instrument_id":"005930.KRX","generation":1}]});
+    assert!(validator.is_valid(&valid));
+    let mut value = valid.clone();
+    value["provider_key"] = serde_json::json!("synthetic-forbidden-field");
+    assert!(!validator.is_valid(&value));
+    for id in [
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-4000-8000-00000000000A",
+        "00000000000040008000000000000001",
+    ] {
+        let mut value = valid.clone();
+        value["consumer_id"] = serde_json::json!(id);
+        assert!(!validator.is_valid(&value));
+    }
+    for field in ["renewal_sequence", "generation"] {
+        let mut value = valid.clone();
+        if field == "generation" {
+            value["identities"][0][field] = serde_json::json!(9007199254740992_u64);
+        } else {
+            value[field] = serde_json::json!(9007199254740992_u64);
+        }
+        assert!(!validator.is_valid(&value));
+    }
+    let mut value = valid.clone();
+    value["identities"] = serde_json::json!([]);
+    assert!(!validator.is_valid(&value));
+    let mut value = valid.clone();
+    value["identities"] = Value::Array(vec![valid["identities"][0].clone(); 31]);
+    assert!(!validator.is_valid(&value));
+}

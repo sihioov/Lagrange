@@ -274,7 +274,8 @@
     "D4": {
       "dockerfile": "crates/job-queue/Dockerfile.owner-equity-v2-runner",
       "package": "job-queue",
-      "bins": ["owner-equity-v2-runner"],
+      "bins": ["owner-equity-v2-runner", "kis-market-stream-state"],
+      "features": ["market-stream-provisioning"],
       "compile_commit": "present",
       "external_inputs": ["configs/universes/kr-etf-core-v1.yaml"],
       "clean_packages": [
@@ -282,7 +283,8 @@
         "kis-client", "market-data", "opendart-client", "portfolio-model", "selector"
       ],
       "runtime_binaries": [
-        {"bin": "owner-equity-v2-runner", "image": "/usr/local/bin/owner-equity-v2-runner"}
+        {"bin": "owner-equity-v2-runner", "image": "/usr/local/bin/owner-equity-v2-runner"},
+        {"bin": "kis-market-stream-state", "image": "/usr/local/bin/kis-market-stream-state"}
       ],
       "checkpoints": []
     },

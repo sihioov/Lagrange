@@ -31,6 +31,7 @@ export LC_ALL=C
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
+source "$script_dir/lib/kis-read-compose.sh"
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
 source_dir=$root/deploy/secrets
 runtime_dir=
@@ -183,6 +184,9 @@ reject_new_config_file_aliases() {
 
 guard_new_config_shell_overrides
 reject_new_config_file_aliases
+if ! kis_read_compose_validate_market_stream; then
+  invalid+=("$KIS_READ_COMPOSE_ERROR")
+fi
 
 intraday_quotes_mode=$(get OWNER_INTRADAY_QUOTES_MODE)
 dotenv_has OWNER_INTRADAY_QUOTES_MODE || intraday_quotes_mode=off

@@ -1,0 +1,43 @@
+{
+  "services": {
+    "web": {
+      "environment": {
+        "OWNER_INTRADAY_QUOTE_TRANSPORT": "market_ws"
+      }
+    },
+    "api-server": {
+      "environment": {
+        "OWNER_INTRADAY_QUOTE_TRANSPORT": "market_ws",
+        "OWNER_MARKET_STREAM_ORIGIN": "${OWNER_MARKET_STREAM_ORIGIN:?OWNER_MARKET_STREAM_ORIGIN must be explicitly set}",
+        "KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID": "${KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID:?KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID must be explicitly set}",
+        "KIS_MARKET_STREAM_GRANT_ID": "${KIS_MARKET_STREAM_GRANT_ID:?KIS_MARKET_STREAM_GRANT_ID must be explicitly set}",
+        "KIS_MARKET_STREAM_CONTRACT_SHA256": "${KIS_MARKET_STREAM_CONTRACT_SHA256:?KIS_MARKET_STREAM_CONTRACT_SHA256 must be explicitly set}",
+        "DB_APP_MAX_CONNECTIONS": "${DB_APP_MAX_CONNECTIONS:-32}"
+      }
+    },
+    "owner-equity-v2-runner": {
+      "environment": {
+        "OWNER_INTRADAY_QUOTE_TRANSPORT": "market_ws",
+        "KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID": "${KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID:?KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID must be explicitly set}",
+        "KIS_MARKET_STREAM_GRANT_ID": "${KIS_MARKET_STREAM_GRANT_ID:?KIS_MARKET_STREAM_GRANT_ID must be explicitly set}",
+        "KIS_MARKET_STREAM_CONTRACT_SHA256": "${KIS_MARKET_STREAM_CONTRACT_SHA256:?KIS_MARKET_STREAM_CONTRACT_SHA256 must be explicitly set}"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-market-stream",
+          "target": "/run/lagrange/kis-market-stream",
+          "read_only": false,
+          "bind": { "create_host_path": false }
+        },
+        {
+          "type": "bind",
+          "source": "${LAGRANGE_RUNTIME_STATE_DIR:?LAGRANGE_RUNTIME_STATE_DIR must be explicitly set}/kis-market-stream-locks",
+          "target": "/run/lagrange/kis-market-stream-locks",
+          "read_only": true,
+          "bind": { "create_host_path": false }
+        }
+      ]
+    }
+  }
+}

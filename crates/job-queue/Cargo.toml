@@ -5,7 +5,15 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "kis-market-stream-state"
+path = "../kis-client/src/bin/kis-market-stream-state.rs"
+required-features = ["market-stream-provisioning"]
+
 [features]
+# Opt-in packaging only: expose the existing kis-client initializer source
+# without adding it to default job-queue consumers.
+market-stream-provisioning = ["kis-client/market-stream-provisioning"]
 # Opt-in only: this compiles the disposable PostgreSQL/loopback boundary
 # harness and enables kis-client's loopback-only test constructors.  It is
 # never a production default or runtime override.

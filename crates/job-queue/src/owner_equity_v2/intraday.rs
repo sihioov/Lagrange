@@ -33,6 +33,27 @@ const KRX_SOURCE_VERSION: &str = "kis-chk-holiday-v1:schema-1";
 const INTRADAY_RESERVATION_NAMESPACE: Uuid =
     Uuid::from_u128(0x1d7c_6b4a_3f20_4d8e_9a6b_0c1e_2f3a_4b5c);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntradayCalendarReadPolicy {
+    Legacy,
+    MarketStreamRuntime,
+}
+
+impl IntradayCalendarReadPolicy {
+    const fn transaction_local_limits(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Legacy => (
+                "SET LOCAL lock_timeout = '5s'",
+                "SET LOCAL statement_timeout = '30s'",
+            ),
+            Self::MarketStreamRuntime => (
+                "SET LOCAL lock_timeout = '1s'",
+                "SET LOCAL statement_timeout = '1s'",
+            ),
+        }
+    }
+}
+
 /// Typed storage failures.  No variant carries SQL text, provider prose, a
 /// response body, or a caller credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -828,7 +849,17 @@ impl OwnerIntradayQuoteRepository {
     /// use the disposable database as their clock source; production never
     /// substitutes the application clock for publication fencing.
     pub async fn current_database_time(&self) -> Result<DateTime<Utc>, IntradayStorageError> {
-        let mut tx = self.begin_worker_transaction().await?;
+        self.current_database_time_with_calendar_policy(IntradayCalendarReadPolicy::Legacy)
+            .await
+    }
+
+    async fn current_database_time_with_calendar_policy(
+        &self,
+        policy: IntradayCalendarReadPolicy,
+    ) -> Result<DateTime<Utc>, IntradayStorageError> {
+        let mut tx = self
+            .begin_worker_transaction_with_calendar_policy(policy)
+            .await?;
         let now = fresh_database_time(&mut tx).await?;
         tx.commit()
             .await
@@ -1507,10 +1538,26 @@ impl OwnerIntradayQuoteRepository {
         owner_user_id: Uuid,
         window_contract_sha256: &str,
     ) -> Result<Option<IntradaySessionProof>, IntradayStorageError> {
+        self.resolve_current_session_proof_with_calendar_policy(
+            owner_user_id,
+            window_contract_sha256,
+            IntradayCalendarReadPolicy::Legacy,
+        )
+        .await
+    }
+
+    async fn resolve_current_session_proof_with_calendar_policy(
+        &self,
+        owner_user_id: Uuid,
+        window_contract_sha256: &str,
+        policy: IntradayCalendarReadPolicy,
+    ) -> Result<Option<IntradaySessionProof>, IntradayStorageError> {
         if owner_user_id.is_nil() || !canonical_prefixed_sha256(window_contract_sha256) {
             return Err(IntradayStorageError::SessionProofInvalid);
         }
-        let mut tx = self.begin_actor_transaction(owner_user_id).await?;
+        let mut tx = self
+            .begin_actor_transaction_with_calendar_policy(owner_user_id, policy)
+            .await?;
         let fresh_now = fresh_database_time(&mut tx).await?;
         let rows: Vec<SessionProofDbRow> = sqlx::query_as(
             "SELECT calendar.session_date, calendar.source_batch_id,
@@ -2322,17 +2369,30 @@ impl OwnerIntradayQuoteRepository {
         &self,
         owner_user_id: Uuid,
     ) -> Result<Transaction<'_, Postgres>, IntradayStorageError> {
+        self.begin_actor_transaction_with_calendar_policy(
+            owner_user_id,
+            IntradayCalendarReadPolicy::Legacy,
+        )
+        .await
+    }
+
+    async fn begin_actor_transaction_with_calendar_policy(
+        &self,
+        owner_user_id: Uuid,
+        policy: IntradayCalendarReadPolicy,
+    ) -> Result<Transaction<'_, Postgres>, IntradayStorageError> {
         let mut tx = self.pool.begin().await.map_err(map_database_error)?;
         sqlx::query("SELECT pg_catalog.set_config('app.actor_user_id', $1, true)")
             .bind(owner_user_id.to_string())
             .execute(&mut *tx)
             .await
             .map_err(map_database_error)?;
-        sqlx::query("SET LOCAL lock_timeout = '5s'")
+        let (lock_timeout, statement_timeout) = policy.transaction_local_limits();
+        sqlx::query(lock_timeout)
             .execute(&mut *tx)
             .await
             .map_err(map_database_error)?;
-        sqlx::query("SET LOCAL statement_timeout = '30s'")
+        sqlx::query(statement_timeout)
             .execute(&mut *tx)
             .await
             .map_err(map_database_error)?;
@@ -2342,16 +2402,61 @@ impl OwnerIntradayQuoteRepository {
     async fn begin_worker_transaction(
         &self,
     ) -> Result<Transaction<'_, Postgres>, IntradayStorageError> {
+        self.begin_worker_transaction_with_calendar_policy(IntradayCalendarReadPolicy::Legacy)
+            .await
+    }
+
+    async fn begin_worker_transaction_with_calendar_policy(
+        &self,
+        policy: IntradayCalendarReadPolicy,
+    ) -> Result<Transaction<'_, Postgres>, IntradayStorageError> {
         let mut tx = self.pool.begin().await.map_err(map_database_error)?;
-        sqlx::query("SET LOCAL lock_timeout = '5s'")
+        let (lock_timeout, statement_timeout) = policy.transaction_local_limits();
+        sqlx::query(lock_timeout)
             .execute(&mut *tx)
             .await
             .map_err(map_database_error)?;
-        sqlx::query("SET LOCAL statement_timeout = '30s'")
+        sqlx::query(statement_timeout)
             .execute(&mut *tx)
             .await
             .map_err(map_database_error)?;
         Ok(tx)
+    }
+}
+
+pub(super) struct MarketStreamCalendarReader<'a> {
+    repository: &'a OwnerIntradayQuoteRepository,
+}
+
+impl MarketStreamCalendarReader<'_> {
+    pub(super) async fn current_database_time(
+        &self,
+    ) -> Result<DateTime<Utc>, IntradayStorageError> {
+        self.repository
+            .current_database_time_with_calendar_policy(
+                IntradayCalendarReadPolicy::MarketStreamRuntime,
+            )
+            .await
+    }
+
+    pub(super) async fn resolve_current_session_proof(
+        &self,
+        owner_user_id: Uuid,
+        window_contract_sha256: &str,
+    ) -> Result<Option<IntradaySessionProof>, IntradayStorageError> {
+        self.repository
+            .resolve_current_session_proof_with_calendar_policy(
+                owner_user_id,
+                window_contract_sha256,
+                IntradayCalendarReadPolicy::MarketStreamRuntime,
+            )
+            .await
+    }
+}
+
+impl OwnerIntradayQuoteRepository {
+    pub(super) fn market_stream_calendar_reader(&self) -> MarketStreamCalendarReader<'_> {
+        MarketStreamCalendarReader { repository: self }
     }
 }
 
@@ -3003,7 +3108,7 @@ async fn lock_ready_admission_by_identity(
     Ok(row)
 }
 
-async fn validate_session_lineage(
+pub(super) async fn validate_session_lineage(
     tx: &mut Transaction<'_, Postgres>,
     session: &IntradaySessionProof,
     fresh_now: DateTime<Utc>,
@@ -3333,5 +3438,32 @@ mod tests {
             ..identity()
         };
         assert!(IntradayPublicationContext::new(lease, id, session, budget).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod market_stream_calendar_tests {
+    use super::IntradayCalendarReadPolicy;
+
+    #[test]
+    fn calendar_policies_keep_legacy_and_runtime_limits() {
+        let (legacy_lock, legacy_statement) =
+            IntradayCalendarReadPolicy::Legacy.transaction_local_limits();
+        let (runtime_lock, runtime_statement) =
+            IntradayCalendarReadPolicy::MarketStreamRuntime.transaction_local_limits();
+
+        assert_eq!(legacy_lock, "SET LOCAL lock_timeout = '5s'");
+        assert_eq!(legacy_statement, "SET LOCAL statement_timeout = '30s'");
+        assert_eq!(runtime_lock, "SET LOCAL lock_timeout = '1s'");
+        assert_eq!(runtime_statement, "SET LOCAL statement_timeout = '1s'");
+        for statement in [
+            legacy_lock,
+            legacy_statement,
+            runtime_lock,
+            runtime_statement,
+        ] {
+            assert!(statement.starts_with("SET LOCAL "));
+            assert!(!statement.starts_with("SET SESSION "));
+        }
     }
 }

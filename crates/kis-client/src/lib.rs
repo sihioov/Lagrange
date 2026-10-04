@@ -25,6 +25,8 @@ pub mod mapping;
 pub mod market_data;
 pub mod market_stream;
 pub mod market_stream_approval;
+#[cfg(feature = "market-stream-provisioning")]
+pub mod market_stream_provisioning;
 pub mod market_stream_state;
 pub mod market_stream_wire;
 pub mod order_state;
@@ -51,9 +53,10 @@ pub use market_data::{
     IntradayAttemptReply, IntradayAttemptReservationMetadata, KisMarketDataClient, MarketDataReply,
 };
 pub use market_stream::{
-    MarketStreamClient, MarketStreamConfig, MarketStreamEndpoint, MarketStreamError,
-    MarketStreamEvent, MarketStreamSession, MarketSubscriptionAck, MarketSubscriptionOperation,
-    PreparedMarketSubscriptionCommand, ProductionMarketStreamEndpoint, StreamStatusCode,
+    MarketStreamClient, MarketStreamConfig, MarketStreamConnectionOwner, MarketStreamEndpoint,
+    MarketStreamError, MarketStreamEvent, MarketStreamSession, MarketSubscriptionAck,
+    MarketSubscriptionOperation, PreparedMarketSubscriptionCommand, ProductionMarketStreamEndpoint,
+    StreamStatusCode,
 };
 pub use market_stream_approval::{ApprovalError, ApprovalStateSnapshot};
 pub use market_stream_state::{ConnectionEpoch, MarketStreamDomain};
@@ -65,8 +68,8 @@ pub use market_stream_wire::{
 pub use rate_limit::{BucketKey, Permit, Quota, RateLimiter};
 pub use read_coordination::ReadCredentialSnapshot;
 pub use read_coordination_config::{
-    IntradayQuotesMode, ProductionReadCoordination, ReadCoordinationConfigError,
-    ReadCoordinationMode,
+    IntradayQuoteTransport, IntradayQuotesMode, ProductionReadCoordination,
+    ReadCoordinationConfigError, ReadCoordinationMode,
 };
 pub use rest::{Profile, RestClient, SubmitError};
 pub use retry::{RetryPolicy, Sleeper, TokioSleeper};

@@ -26,6 +26,7 @@ use uuid::Uuid;
 const APPROVAL_SENTINEL: &str = "SYNTHETIC_APPROVAL_KEY";
 const APPKEY_SENTINEL: &str = "SYNTHETIC_APPKEY";
 const SECRET_SENTINEL: &str = "SYNTHETIC_SECRET";
+const FIXTURE_MIDNIGHT_MS: i64 = 1_789_916_400_000;
 
 #[test]
 fn synthetic_fixture_manifest_declares_source_and_wire_contract() {
@@ -2394,6 +2395,445 @@ async fn cancellation_in_post_ack_scan_retains_pending_after_valid_ack_capture()
         MarketStreamError::CommandPending
     );
     assert!(!read_stream_state(&state)["pending_command"].is_null());
+    drop(session);
+    approval_task.await.unwrap();
+    ws_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connection_reservation_is_budget_neutral_and_drop_releases_anchor() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
+    let approval_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let approval_port = approval_listener.local_addr().unwrap().port();
+    let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_port = ws_listener.local_addr().unwrap().port();
+    let approval = ApprovalClient::for_loopback(
+        &format!("http://127.0.0.1:{approval_port}"),
+        Secret::new(APPKEY_SENTINEL.to_owned()),
+        Secret::new(SECRET_SENTINEL.to_owned()),
+        state.clone(),
+        "reservation-drop",
+    )
+    .unwrap();
+    let client = kis_client::MarketStreamClient::new(
+        MarketStreamConfig::loopback(approval, &format!("ws://127.0.0.1:{ws_port}/tryitout"))
+            .unwrap(),
+    );
+    let state_path = state.state_directory().join("approval-state-v1.json");
+    let before = std::fs::read(&state_path).unwrap();
+
+    let reservation = client.reserve_connection().unwrap();
+    assert!(matches!(
+        client.reserve_connection(),
+        Err(MarketStreamError::State(StateError::LockBusy))
+    ));
+    drop(reservation);
+    let second_reservation = client.reserve_connection().unwrap();
+    drop(second_reservation);
+
+    assert_eq!(before, std::fs::read(&state_path).unwrap());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(80), approval_listener.accept())
+            .await
+            .is_err(),
+        "reservation must not call the approval endpoint"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(80), ws_listener.accept())
+            .await
+            .is_err(),
+        "reservation must not open a WebSocket"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connection_owner_transfers_the_same_anchor_into_the_session() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
+    let clock = Arc::new(TestClock::at(FIXTURE_MIDNIGHT_MS + 10 * 60 * 60 * 1_000));
+    let (client, approval_task, ws_task, no_bytes_rx) = start_idle_loopback(state, clock).await;
+    let proof =
+        MarketStreamSessionProof::new(20260921, 90_000, 153_000, FIXTURE_MIDNIGHT_MS).unwrap();
+
+    let owner = client.reserve_connection().unwrap();
+    assert!(matches!(
+        client.reserve_connection(),
+        Err(MarketStreamError::State(StateError::LockBusy))
+    ));
+    let session = owner.connect(proof).await.unwrap();
+    assert!(matches!(
+        client.reserve_connection(),
+        Err(MarketStreamError::State(StateError::LockBusy))
+    ));
+    drop(session);
+    let after_session = client.reserve_connection().unwrap();
+    drop(after_session);
+
+    assert!(no_bytes_rx.await.unwrap());
+    approval_task.await.unwrap();
+    ws_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn invalid_owner_proof_fails_before_attempt_or_approval() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
+    let approval_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let approval_port = approval_listener.local_addr().unwrap().port();
+    let approval = ApprovalClient::for_loopback(
+        &format!("http://127.0.0.1:{approval_port}"),
+        Secret::new(APPKEY_SENTINEL.to_owned()),
+        Secret::new(SECRET_SENTINEL.to_owned()),
+        state.clone(),
+        "invalid-owner-proof",
+    )
+    .unwrap();
+    let clock = Arc::new(TestClock::at(FIXTURE_MIDNIGHT_MS + 24 * 60 * 60 * 1_000));
+    let client = kis_client::MarketStreamClient::new(
+        MarketStreamConfig::new(approval).unwrap().with_clock(clock),
+    );
+    let proof =
+        MarketStreamSessionProof::new(20260921, 90_000, 153_000, FIXTURE_MIDNIGHT_MS).unwrap();
+    let state_path = state.state_directory().join("approval-state-v1.json");
+    let before = std::fs::read(&state_path).unwrap();
+
+    let owner = client.reserve_connection().unwrap();
+    assert_eq!(
+        owner.connect(proof).await.unwrap_err(),
+        MarketStreamError::SessionProofInvalid
+    );
+
+    assert_eq!(before, std::fs::read(&state_path).unwrap());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(80), approval_listener.accept())
+            .await
+            .is_err(),
+        "invalid proof must be rejected before approval traffic"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_owner_connect_closes_socket_before_releasing_anchor() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
+    let approval_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let approval_port = approval_listener.local_addr().unwrap().port();
+    let approval_task = tokio::spawn(run_approval_server(
+        approval_listener,
+        oneshot::channel().0,
+        APPROVAL_SENTINEL,
+    ));
+    let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_port = ws_listener.local_addr().unwrap().port();
+    let (request_tx, request_rx) = oneshot::channel();
+    let (closed_tx, closed_rx) = oneshot::channel();
+    let ws_task = tokio::spawn(async move {
+        let (mut stream, _) = ws_listener.accept().await.unwrap();
+        let _request = read_http_headers(&mut stream).await;
+        request_tx.send(()).unwrap();
+        let mut byte = [0u8; 1];
+        let read = stream.read(&mut byte).await.unwrap();
+        closed_tx.send(read == 0).unwrap();
+    });
+    let approval = ApprovalClient::for_loopback(
+        &format!("http://127.0.0.1:{approval_port}"),
+        Secret::new(APPKEY_SENTINEL.to_owned()),
+        Secret::new(SECRET_SENTINEL.to_owned()),
+        state.clone(),
+        "owner-connect-cancel",
+    )
+    .unwrap();
+    let client = kis_client::MarketStreamClient::new(
+        MarketStreamConfig::loopback(approval, &format!("ws://127.0.0.1:{ws_port}/tryitout"))
+            .unwrap(),
+    );
+    let proof =
+        MarketStreamSessionProof::new(20260921, 90_000, 153_000, FIXTURE_MIDNIGHT_MS).unwrap();
+    let owner = client.reserve_connection().unwrap();
+    let connect_task = tokio::spawn(async move { owner.connect(proof).await });
+
+    request_rx.await.unwrap();
+    assert!(matches!(
+        client.reserve_connection(),
+        Err(MarketStreamError::State(StateError::LockBusy))
+    ));
+    connect_task.abort();
+    assert!(connect_task.await.unwrap_err().is_cancelled());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), closed_rx)
+            .await
+            .unwrap()
+            .unwrap()
+    );
+    assert!(read_stream_state(&state)["connection_attempt_id"].is_string());
+    let after_cancel = client.reserve_connection().unwrap();
+    drop(after_cancel);
+
+    approval_task.await.unwrap();
+    ws_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bounded_idle_retains_partial_frame_and_fragment_then_returns_authentic_receipt() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
+    let proof_midnight = FIXTURE_MIDNIGHT_MS + 24 * 60 * 60 * 1_000;
+    let clock = Arc::new(TestClock::at(proof_midnight + 10 * 60 * 60 * 1_000));
+    let approval_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let approval_port = approval_listener.local_addr().unwrap().port();
+    let approval_task = tokio::spawn(run_approval_server(
+        approval_listener,
+        oneshot::channel().0,
+        APPROVAL_SENTINEL,
+    ));
+    let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_port = ws_listener.local_addr().unwrap().port();
+    let (send_data_tx, send_data_rx) = oneshot::channel();
+    let (partial_tx, partial_rx) = oneshot::channel();
+    let (finish_tx, finish_rx) = oneshot::channel();
+    let ws_task = tokio::spawn(async move {
+        let (mut stream, _) = ws_listener.accept().await.unwrap();
+        websocket_handshake(&mut stream).await;
+        let (opcode, _) = read_server_frame(&mut stream).await;
+        assert_eq!(opcode, 0x1);
+        write_server_frame(&mut stream, 0x1, &ack("005930", "SUBSCRIBE SUCCESS"), true).await;
+        send_data_rx.await.unwrap();
+
+        let mut fields = market_fields_for("005930", 10, 20);
+        fields[33] = "20260922".to_owned();
+        let data = format!("0|H0STCNT0|001|{}", fields.join("^")).into_bytes();
+        let split = data.len() / 2;
+        write_server_frame(&mut stream, 0x1, &data[..split], false).await;
+        let continuation = server_frame_bytes(0x0, &data[split..], true);
+        stream.write_all(&continuation[..4]).await.unwrap();
+        partial_tx.send(()).unwrap();
+        finish_rx.await.unwrap();
+        stream.write_all(&continuation[4..]).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    });
+    let approval = ApprovalClient::for_loopback(
+        &format!("http://127.0.0.1:{approval_port}"),
+        Secret::new(APPKEY_SENTINEL.to_owned()),
+        Secret::new(SECRET_SENTINEL.to_owned()),
+        state,
+        "bounded-idle-partial",
+    )
+    .unwrap()
+    .with_clock(clock.clone());
+    let config =
+        MarketStreamConfig::loopback(approval, &format!("ws://127.0.0.1:{ws_port}/tryitout"))
+            .unwrap()
+            .with_clock(clock.clone());
+    let client = kis_client::MarketStreamClient::new(config);
+    let proof = MarketStreamSessionProof::new(20260922, 90_000, 153_000, proof_midnight).unwrap();
+    let mut session = client
+        .reserve_connection()
+        .unwrap()
+        .connect(proof)
+        .await
+        .unwrap();
+
+    assert!(
+        session
+            .next_event_until(Instant::now() + Duration::from_millis(30))
+            .await
+            .unwrap()
+            .is_none(),
+        "quiet idle must retain a usable session"
+    );
+    assert!(!session.is_closed());
+    let prepared = session.prepare_subscribe("005930").unwrap().unwrap();
+    let ack = session.send_prepared(prepared).await.unwrap();
+    send_data_tx.send(()).unwrap();
+    partial_rx.await.unwrap();
+
+    let started = Instant::now();
+    assert!(
+        session
+            .next_event_until(started + Duration::from_millis(50))
+            .await
+            .unwrap()
+            .is_none(),
+        "an incomplete continuation frame must survive the idle deadline"
+    );
+    assert!(started.elapsed() >= Duration::from_millis(35));
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(!session.is_closed());
+
+    finish_tx.send(()).unwrap();
+    let event = session
+        .next_event_until(Instant::now() + Duration::from_secs(1))
+        .await
+        .unwrap()
+        .expect("completed fragmented trade should be delivered");
+    let MarketStreamEvent::Receipt(receipt) = event else {
+        panic!("expected one authentic receipt after the continuation")
+    };
+    assert_eq!(receipt.observation().symbol, "005930");
+    assert_eq!(receipt.receive_ordinal(), 1);
+    assert_eq!(receipt.session_date(), 20260922);
+    assert_eq!(receipt.observation().business_date, 20260922);
+    assert_eq!(receipt.epoch(), ack.epoch().uuid());
+    assert!(receipt.received_monotonic() >= ack.ack_received_monotonic());
+    assert_eq!(
+        receipt.received_at_ms(),
+        proof_midnight + 10 * 60 * 60 * 1_000
+    );
+
+    drop(session);
+    approval_task.await.unwrap();
+    ws_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bounded_idle_checks_deadline_during_continuous_nonregular_traffic() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
+    let clock = Arc::new(TestClock::at(FIXTURE_MIDNIGHT_MS + 10 * 60 * 60 * 1_000));
+    let approval_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let approval_port = approval_listener.local_addr().unwrap().port();
+    let approval_task = tokio::spawn(run_approval_server(
+        approval_listener,
+        oneshot::channel().0,
+        APPROVAL_SENTINEL,
+    ));
+    let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_port = ws_listener.local_addr().unwrap().port();
+    let (flood_tx, flood_rx) = oneshot::channel();
+    let ws_task = tokio::spawn(async move {
+        let (mut stream, _) = ws_listener.accept().await.unwrap();
+        websocket_handshake(&mut stream).await;
+        let (opcode, _) = read_server_frame(&mut stream).await;
+        assert_eq!(opcode, 0x1);
+        write_server_frame(&mut stream, 0x1, &ack("005930", "SUBSCRIBE SUCCESS"), true).await;
+        flood_rx.await.unwrap();
+
+        let mut fields = market_fields_for("005930", 10, 20);
+        fields[34] = "10".to_owned();
+        let nonregular = format!("0|H0STCNT0|001|{}", fields.join("^")).into_bytes();
+        for _ in 0..200 {
+            if stream
+                .write_all(&server_frame_bytes(0x1, &nonregular, true))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let _ = stream
+            .write_all(&server_frame_bytes(0x1, &market_message(), true))
+            .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    });
+    let client = synthetic_client(
+        state,
+        approval_port,
+        ws_port,
+        clock,
+        Duration::from_millis(500),
+    );
+    let mut session = client.connect().await.unwrap();
+    let prepared = session.prepare_subscribe("005930").unwrap().unwrap();
+    let _ack = session.send_prepared(prepared).await.unwrap();
+    flood_tx.send(()).unwrap();
+
+    let started = Instant::now();
+    assert!(
+        session
+            .next_event_until(started + Duration::from_millis(50))
+            .await
+            .unwrap()
+            .is_none(),
+        "continuous valid nonregular records must not defeat the deadline"
+    );
+    assert!(started.elapsed() >= Duration::from_millis(35));
+    assert!(started.elapsed() < Duration::from_millis(300));
+    assert!(!session.is_closed());
+
+    let event = session
+        .next_event_until(Instant::now() + Duration::from_secs(2))
+        .await
+        .unwrap()
+        .expect("later regular trade should follow preserved nonregular input");
+    let MarketStreamEvent::Receipt(receipt) = event else {
+        panic!("expected a receipt after nonregular traffic")
+    };
+    assert_eq!(receipt.receive_ordinal(), 1);
+    assert_eq!(receipt.observation().symbol, "005930");
+    drop(session);
+    approval_task.await.unwrap();
+    ws_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bounded_idle_never_returns_while_a_control_write_is_unfinished() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
+    let approval_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let approval_port = approval_listener.local_addr().unwrap().port();
+    let approval_task = tokio::spawn(run_approval_server(
+        approval_listener,
+        oneshot::channel().0,
+        APPROVAL_SENTINEL,
+    ));
+    let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_port = ws_listener.local_addr().unwrap().port();
+    let (ping_tx, ping_rx) = oneshot::channel();
+    let ws_task = tokio::spawn(async move {
+        let (mut stream, _) = ws_listener.accept().await.unwrap();
+        websocket_handshake(&mut stream).await;
+        write_server_frame(&mut stream, 0x9, b"control-write", true).await;
+        ping_tx.send(()).unwrap();
+        let (opcode, _) = read_server_frame(&mut stream).await;
+        assert_eq!(opcode, 0xA);
+    });
+    let approval = ApprovalClient::for_loopback(
+        &format!("http://127.0.0.1:{approval_port}"),
+        Secret::new(APPKEY_SENTINEL.to_owned()),
+        Secret::new(SECRET_SENTINEL.to_owned()),
+        state,
+        "bounded-control-write",
+    )
+    .unwrap();
+    let config =
+        MarketStreamConfig::loopback(approval, &format!("ws://127.0.0.1:{ws_port}/tryitout"))
+            .unwrap()
+            .with_ack_timeout(Duration::from_millis(100))
+            .with_test_write_barrier(Arc::new(Notify::new()));
+    let client = kis_client::MarketStreamClient::new(config);
+    let mut session = client.connect().await.unwrap();
+    ping_rx.await.unwrap();
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        session.next_event_until(Instant::now() + Duration::from_millis(20)),
+    )
+    .await
+    .expect("bounded control write must terminate")
+    .unwrap_err();
+    assert_eq!(result, MarketStreamError::ControlWriteTimeout);
+    assert!(session.is_closed());
+
+    drop(session);
+    approval_task.await.unwrap();
+    ws_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bounded_idle_poison_scan_precedes_queued_receipts() {
+    let (mut session, _directory, approval_task, ws_task) =
+        session_with_buffered_followup(ack("005930", "SUBSCRIBE SUCCESS"), false).await;
+    assert_eq!(
+        session
+            .next_event_until(Instant::now() + Duration::from_secs(1))
+            .await
+            .unwrap_err(),
+        MarketStreamError::DuplicateAck,
+        "poison already buffered after packed receipts must be checked before release"
+    );
+    assert!(session.is_closed());
     drop(session);
     approval_task.await.unwrap();
     ws_task.await.unwrap();

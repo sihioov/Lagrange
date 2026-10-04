@@ -15,6 +15,7 @@ use job_queue::owner_equity_v2::{
     IntradayProducer, IntradayProducerConfig, OwnerEquityRunOutcome, OwnerEquityRunnerConfig,
     OwnerEquityRuntimeLimits, OwnerEquityScheduleError, OwnerEquitySchedulePins,
     OwnerIntradayQuoteRepository, ProductionOwnerEquityAdapter, eligible_schedule_date,
+    MarketStreamRuntimeExit, OwnerMarketStreamRuntime, OwnerMarketStreamRuntimeConfig,
     recover_owner_equity_claims, run_owner_equity_runner_once, run_owner_equity_schedule_cycle,
 };
 use job_queue::{JobQueue, QueueConfig};
@@ -23,7 +24,8 @@ use kis_client::live_transport::LiveTransport;
 use kis_client::secret::SystemCredentialSource;
 use kis_client::token_issuer::KisTokenIssuer;
 use kis_client::{
-    BucketKey, CoordinatedReadAuth, CredentialRef, IntradayQuotesMode, KisMarketDataClient,
+    BucketKey, CoordinatedReadAuth, CredentialRef, IntradayQuoteTransport, IntradayQuotesMode,
+    KisMarketDataClient,
     ProductionReadCoordination, Quota, RateLimiter, ReadCoordinationMode, ReadCredentialSnapshot,
     SystemClock, TokenIssuer, TokenManager, TokioSleeper,
 };
@@ -79,6 +81,9 @@ impl Environment {
 struct Config {
     mode: Mode,
     intraday_mode: IntradayQuotesMode,
+    intraday_transport: IntradayQuoteTransport,
+    read_coordination: Option<ProductionReadCoordination>,
+    market_ws_pins: Option<MarketWsStartupPins>,
     session_window_source: IntradaySessionWindowSource,
     production: bool,
     raw_root: PathBuf,
@@ -313,6 +318,9 @@ fn load_config() -> Result<Config, ConfigError> {
         return Ok(Config {
             mode,
             intraday_mode: IntradayQuotesMode::Disabled,
+            intraday_transport: IntradayQuoteTransport::Rest,
+            read_coordination: None,
+            market_ws_pins: None,
             session_window_source,
             production,
             raw_root: PathBuf::new(),
@@ -337,6 +345,21 @@ fn load_config() -> Result<Config, ConfigError> {
     }
     let read_coordination =
         ProductionReadCoordination::from_env().map_err(|_| ConfigError::Invalid)?;
+    let intraday_transport = intraday_quote_transport_from_env()?;
+    let intraday_mode = read_coordination.intraday_mode();
+    let backend = quote_backend(mode, intraday_mode, intraday_transport);
+    let market_ws_pins = selected_market_ws_config(backend, || {
+        let slot = required_string("KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID")?;
+        let grant = required_string("KIS_MARKET_STREAM_GRANT_ID")?;
+        let contract_sha256 = required_string("KIS_MARKET_STREAM_CONTRACT_SHA256")?;
+        market_ws_pins_from_values(
+            &slot,
+            &grant,
+            &contract_sha256,
+            read_coordination.generation(),
+            uuid::Uuid::new_v4(),
+        )
+    })?;
     let max_active = optional_u64("OWNER_EQUITY_V2_MAX_ACTIVE")?.unwrap_or(100);
     let initial_gets = optional_u64("OWNER_EQUITY_V2_INITIAL_GET_CEILING")?.unwrap_or(7);
     let incremental_gets = optional_u64("OWNER_EQUITY_V2_INCREMENTAL_GET_CEILING")?.unwrap_or(2);
@@ -385,7 +408,10 @@ fn load_config() -> Result<Config, ConfigError> {
     .map_err(|_| ConfigError::Invalid)?;
     Ok(Config {
         mode,
-        intraday_mode: read_coordination.intraday_mode(),
+        intraday_mode,
+        intraday_transport,
+        read_coordination: Some(read_coordination),
+        market_ws_pins,
         session_window_source,
         production,
         raw_root,
@@ -489,10 +515,11 @@ fn database_options(production: bool) -> Result<PgConnectOptions, ConfigError> {
     }
 }
 
-fn build_live_reader(config: &Config) -> Result<LiveReader, ConfigError> {
-    let coordination = ProductionReadCoordination::from_env().map_err(|_| ConfigError::Invalid)?;
-    let app_key = CredentialRef::file(config.app_key_file.to_string_lossy().into_owned());
-    let app_secret = CredentialRef::file(config.app_secret_file.to_string_lossy().into_owned());
+fn build_live_reader(
+    config: &Config,
+) -> Result<(LiveReader, Option<ReadCredentialSnapshot>), ConfigError> {
+    let coordination = config.read_coordination.ok_or(ConfigError::Invalid)?;
+    let (app_key, app_secret) = live_credential_refs(config);
     let token_transport =
         LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(|_| ConfigError::Invalid)?;
     let read_transport = LiveTransport::live(KIS_HTTP_TIMEOUT).map_err(|_| ConfigError::Invalid)?;
@@ -539,12 +566,12 @@ fn build_live_reader(config: &Config) -> Result<LiveReader, ConfigError> {
         app_key,
         app_secret,
     );
-    if let Some(snapshot) = snapshot {
+    if let Some(snapshot) = snapshot.as_ref() {
         let auth = CoordinatedReadAuth::new(
             coordination
                 .production_config()
                 .expect("shared production config"),
-            snapshot,
+            snapshot.clone(),
             Arc::new(SystemClock),
             issuer,
         )
@@ -553,9 +580,8 @@ fn build_live_reader(config: &Config) -> Result<LiveReader, ConfigError> {
             LiveTransport::live(Duration::from_secs(3)).map_err(|_| ConfigError::Invalid)?;
         client = client.with_shared_read_coordination(auth, intraday_transport);
     }
-    Ok(client)
+    Ok((client, snapshot))
 }
-
 fn kis_system_now_ms() -> i64 {
     SystemClock.now_ms()
 }
@@ -725,7 +751,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let reader = match build_live_reader(&config) {
+    let (reader, credential_snapshot) = match build_live_reader(&config) {
         Ok(reader) => reader,
         Err(_) => {
             eprintln!(
@@ -774,9 +800,10 @@ async fn main() -> ExitCode {
     }
     let quote_shutdown_rx = shutdown_rx.clone();
     let session_window_source = config.session_window_source;
-    run_intraday_quote_startup(
+    run_selected_quote_startup(
         config.mode,
         config.intraday_mode,
+        config.intraday_transport,
         move || IntradaySessionWindowContract::from_source(session_window_source),
         |windows| {
             let producer_config = match IntradayProducerConfig::for_worker(&config.worker_id) {
@@ -800,8 +827,36 @@ async fn main() -> ExitCode {
                     producer_config,
                 );
                 let intraday_shutdown = quote_shutdown_rx.clone();
-                tokio::spawn(async move { producer.run_daemon(intraday_shutdown).await })
+                tokio::spawn(async move {
+                    producer
+                        .run_daemon(intraday_shutdown)
+                        .await
+                        .map_err(|_| QuoteTaskError::RestUnavailable)
+                })
             })
+        },
+        || {
+            match build_market_stream_runtime(&config, &pool, credential_snapshot.as_ref()) {
+                Ok(runtime) => {
+                    let market_ws_shutdown = quote_shutdown_rx.clone();
+                    Some(tokio::spawn(async move {
+                        runtime
+                            .run_daemon(market_ws_shutdown)
+                            .await
+                            .map(|exit| match exit {
+                                MarketStreamRuntimeExit::Shutdown => (),
+                            })
+                            .map_err(QuoteTaskError::MarketWs)
+                    }))
+                }
+                Err(_) => {
+                    eprintln!(
+                        "{}",
+                        json!({"event":"owner_equity_v2_market_ws","code":"RUNTIME_CONFIG_UNAVAILABLE"})
+                    );
+                    None
+                }
+            }
         },
         |mut intraday_task| async {
             let mut next_recovery = tokio::time::Instant::now();
@@ -1285,5 +1340,577 @@ mod tests {
         assert!(production.contains("REFERENCE_PATH, REFERENCE_TR_ID"));
         assert!(production.contains("DAILY_BARS_PATH, DAILY_BARS_TR_ID"));
         assert!(!production.contains("response.body"));
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuoteBackend {
+    Disabled,
+    Rest,
+    MarketWs,
+}
+
+fn quote_backend(
+    mode: Mode,
+    intraday_mode: IntradayQuotesMode,
+    transport: IntradayQuoteTransport,
+) -> QuoteBackend {
+    if mode != Mode::Daemon || intraday_mode == IntradayQuotesMode::Disabled {
+        return QuoteBackend::Disabled;
+    }
+    match transport {
+        IntradayQuoteTransport::Rest => QuoteBackend::Rest,
+        IntradayQuoteTransport::MarketWs => QuoteBackend::MarketWs,
+    }
+}
+
+fn intraday_quote_transport_from_env() -> Result<IntradayQuoteTransport, ConfigError> {
+    let value = std::env::var_os("OWNER_INTRADAY_QUOTE_TRANSPORT")
+        .map(|value| value.into_string().map_err(|_| ConfigError::Invalid))
+        .transpose()?;
+    IntradayQuoteTransport::from_optional_str(value.as_deref()).map_err(|_| ConfigError::Invalid)
+}
+
+#[derive(Debug, Clone)]
+struct MarketWsStartupPins {
+    slot: uuid::Uuid,
+    credential_generation: u64,
+    runtime: OwnerMarketStreamRuntimeConfig,
+}
+
+fn market_ws_pins_from_values(
+    slot: &str,
+    grant: &str,
+    contract_sha256: &str,
+    credential_generation: Option<u64>,
+    holder: uuid::Uuid,
+) -> Result<MarketWsStartupPins, ConfigError> {
+    let slot = uuid::Uuid::parse_str(slot).map_err(|_| ConfigError::Invalid)?;
+    let grant = uuid::Uuid::parse_str(grant).map_err(|_| ConfigError::Invalid)?;
+    let credential_generation = credential_generation
+        .filter(|generation| *generation > 0)
+        .ok_or(ConfigError::Invalid)?;
+    let runtime = OwnerMarketStreamRuntimeConfig::from_values(
+        slot,
+        grant,
+        contract_sha256,
+        credential_generation,
+        holder,
+    )
+    .map_err(|_| ConfigError::Invalid)?;
+    Ok(MarketWsStartupPins {
+        slot,
+        credential_generation,
+        runtime,
+    })
+}
+
+fn selected_market_ws_config<F>(
+    backend: QuoteBackend,
+    load: F,
+) -> Result<Option<MarketWsStartupPins>, ConfigError>
+where
+    F: FnOnce() -> Result<MarketWsStartupPins, ConfigError>,
+{
+    match backend {
+        QuoteBackend::MarketWs => load().map(Some),
+        QuoteBackend::Disabled | QuoteBackend::Rest => Ok(None),
+    }
+}
+
+fn live_credential_refs(config: &Config) -> (CredentialRef, CredentialRef) {
+    (
+        CredentialRef::file(config.app_key_file.to_string_lossy().into_owned()),
+        CredentialRef::file(config.app_secret_file.to_string_lossy().into_owned()),
+    )
+}
+
+fn market_ws_credentials(
+    snapshot: &ReadCredentialSnapshot,
+    key_ref: &CredentialRef,
+    secret_ref: &CredentialRef,
+) -> Result<(kis_client::Secret<String>, kis_client::Secret<String>), ConfigError> {
+    let key = kis_client::CredentialSource::resolve(snapshot, key_ref)
+        .map_err(|_| ConfigError::Invalid)?;
+    let secret = kis_client::CredentialSource::resolve(snapshot, secret_ref)
+        .map_err(|_| ConfigError::Invalid)?;
+    Ok((key, secret))
+}
+
+fn build_market_stream_runtime(
+    config: &Config,
+    pool: &sqlx::PgPool,
+    snapshot: Option<&ReadCredentialSnapshot>,
+) -> Result<OwnerMarketStreamRuntime, ConfigError> {
+    if quote_backend(config.mode, config.intraday_mode, config.intraday_transport)
+        != QuoteBackend::MarketWs
+    {
+        return Err(ConfigError::Invalid);
+    }
+    let pins = config.market_ws_pins.as_ref().ok_or(ConfigError::Invalid)?;
+    let snapshot = snapshot.ok_or(ConfigError::Invalid)?;
+    let (key_ref, secret_ref) = live_credential_refs(config);
+    let (key, secret) = market_ws_credentials(snapshot, &key_ref, &secret_ref)?;
+    let domain = kis_client::market_stream_state::MarketStreamDomain::open_production(pins.slot)
+        .map_err(|_| ConfigError::Invalid)?;
+    let approval = kis_client::market_stream_approval::ApprovalClient::production(
+        key,
+        secret,
+        domain,
+        pins.credential_generation.to_string(),
+    )
+    .map_err(|_| ConfigError::Invalid)?;
+    OwnerMarketStreamRuntime::new(
+        job_queue::owner_equity_v2::OwnerMarketStreamRepository::new(pool.clone()),
+        OwnerIntradayQuoteRepository::new(pool.clone()),
+        config.session_window_source,
+        approval,
+        pins.runtime.clone(),
+    )
+    .map_err(|_| ConfigError::Invalid)
+}
+
+#[derive(Debug)]
+enum QuoteTaskError {
+    RestUnavailable,
+    MarketWs(job_queue::owner_equity_v2::MarketStreamRuntimeError),
+}
+
+async fn run_selected_quote_startup<
+    LoadRestWindows,
+    StartRest,
+    StartMarketWs,
+    ContinueEod,
+    QuoteTask,
+    EodFuture,
+    EodResult,
+>(
+    mode: Mode,
+    intraday_mode: IntradayQuotesMode,
+    transport: IntradayQuoteTransport,
+    load_rest_windows: LoadRestWindows,
+    start_rest: StartRest,
+    start_market_ws: StartMarketWs,
+    continue_eod: ContinueEod,
+) -> EodResult
+where
+    LoadRestWindows: FnOnce() -> Result<
+        IntradaySessionWindowContract,
+        collectors::intraday_quotes::IntradaySessionWindowError,
+    >,
+    StartRest: FnOnce(Arc<IntradaySessionWindowContract>) -> Option<QuoteTask>,
+    StartMarketWs: FnOnce() -> Option<QuoteTask>,
+    ContinueEod: FnOnce(Option<QuoteTask>) -> EodFuture,
+    EodFuture: Future<Output = EodResult>,
+{
+    match quote_backend(mode, intraday_mode, transport) {
+        QuoteBackend::Disabled => continue_eod(None).await,
+        QuoteBackend::Rest => {
+            run_intraday_quote_startup(
+                mode,
+                intraday_mode,
+                load_rest_windows,
+                start_rest,
+                continue_eod,
+            )
+            .await
+        }
+        QuoteBackend::MarketWs => continue_eod(start_market_ws()).await,
+    }
+}
+
+#[cfg(test)]
+mod quote_transport_tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Event {
+        LoadRest,
+        StartRest,
+        StartMarketWs,
+        ContinueEod,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum FakeTask {
+        Rest,
+        MarketWs,
+    }
+
+    fn valid_window_contract() -> IntradaySessionWindowContract {
+        use sha2::{Digest, Sha256};
+
+        let bytes = br#"{
+            "schema_version":1,
+            "exchange":"KRX",
+            "timezone":"Asia/Seoul",
+            "entries":[]
+        }"#;
+        let hash = format!("sha256:{:x}", Sha256::digest(bytes));
+        IntradaySessionWindowContract::from_bytes(bytes, &hash)
+            .expect("valid in-memory window fixture")
+    }
+
+    fn valid_market_ws_pins() -> MarketWsStartupPins {
+        let slot = uuid::Uuid::from_u128(1);
+        let grant = uuid::Uuid::from_u128(2);
+        let holder = uuid::Uuid::from_u128(3);
+        market_ws_pins_from_values(
+            &slot.to_string(),
+            &grant.to_string(),
+            &"a".repeat(64),
+            Some(7),
+            holder,
+        )
+        .expect("valid fixed metadata")
+    }
+
+    #[test]
+    fn quote_transport_selection_is_exclusive_across_modes() {
+        for mode in [Mode::Daemon, Mode::Once, Mode::Healthcheck] {
+            for intraday_mode in [IntradayQuotesMode::Disabled, IntradayQuotesMode::OwnerOnly] {
+                for transport in [
+                    IntradayQuoteTransport::Rest,
+                    IntradayQuoteTransport::MarketWs,
+                ] {
+                    let expected =
+                        if mode != Mode::Daemon || intraday_mode == IntradayQuotesMode::Disabled {
+                            QuoteBackend::Disabled
+                        } else {
+                            match transport {
+                                IntradayQuoteTransport::Rest => QuoteBackend::Rest,
+                                IntradayQuoteTransport::MarketWs => QuoteBackend::MarketWs,
+                            }
+                        };
+                    assert_eq!(quote_backend(mode, intraday_mode, transport), expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn market_ws_startup_pins_are_required_only_for_selected_daemon() {
+        let mut calls = 0;
+        for backend in [QuoteBackend::Disabled, QuoteBackend::Rest] {
+            let result = selected_market_ws_config(backend, || {
+                panic!("non-MarketWs backend must not load WS pins")
+            });
+            assert!(result.expect("backend does not require pins").is_none());
+        }
+        let loaded = selected_market_ws_config(QuoteBackend::MarketWs, || {
+            calls += 1;
+            Ok(valid_market_ws_pins())
+        })
+        .expect("selected MarketWs pins");
+        assert!(loaded.is_some());
+        assert_eq!(calls, 1);
+
+        let failed = selected_market_ws_config(QuoteBackend::MarketWs, || {
+            calls += 1;
+            Err(ConfigError::Invalid)
+        });
+        assert!(matches!(failed, Err(ConfigError::Invalid)));
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn market_ws_startup_pins_reject_invalid_metadata() {
+        let slot = uuid::Uuid::from_u128(11);
+        let grant = uuid::Uuid::from_u128(12);
+        let holder = uuid::Uuid::from_u128(13);
+        let hash = "b".repeat(64);
+        assert!(
+            market_ws_pins_from_values(
+                &slot.to_string(),
+                &grant.to_string(),
+                &hash,
+                Some(1),
+                holder,
+            )
+            .is_ok()
+        );
+        let nil = uuid::Uuid::nil().to_string();
+        for invalid_slot in ["malformed", nil.as_str()] {
+            assert!(
+                market_ws_pins_from_values(
+                    invalid_slot,
+                    &grant.to_string(),
+                    &hash,
+                    Some(1),
+                    holder
+                )
+                .is_err()
+            );
+        }
+        for invalid_grant in ["malformed", nil.as_str()] {
+            assert!(
+                market_ws_pins_from_values(
+                    &slot.to_string(),
+                    invalid_grant,
+                    &hash,
+                    Some(1),
+                    holder
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            market_ws_pins_from_values(
+                &slot.to_string(),
+                &grant.to_string(),
+                &hash,
+                Some(1),
+                uuid::Uuid::nil(),
+            )
+            .is_err()
+        );
+        for invalid_hash in [
+            format!("sha256:{hash}"),
+            hash.to_ascii_uppercase(),
+            "abc".to_owned(),
+        ] {
+            assert!(
+                market_ws_pins_from_values(
+                    &slot.to_string(),
+                    &grant.to_string(),
+                    &invalid_hash,
+                    Some(1),
+                    holder,
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            market_ws_pins_from_values(&slot.to_string(), &grant.to_string(), &hash, None, holder)
+                .is_err()
+        );
+        assert!(
+            market_ws_pins_from_values(
+                &slot.to_string(),
+                &grant.to_string(),
+                &hash,
+                Some(0),
+                holder
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn off_once_and_healthcheck_skip_all_quote_factories() {
+        let cases = [
+            (
+                Mode::Once,
+                IntradayQuotesMode::OwnerOnly,
+                IntradayQuoteTransport::Rest,
+            ),
+            (
+                Mode::Once,
+                IntradayQuotesMode::OwnerOnly,
+                IntradayQuoteTransport::MarketWs,
+            ),
+            (
+                Mode::Healthcheck,
+                IntradayQuotesMode::OwnerOnly,
+                IntradayQuoteTransport::Rest,
+            ),
+            (
+                Mode::Healthcheck,
+                IntradayQuotesMode::OwnerOnly,
+                IntradayQuoteTransport::MarketWs,
+            ),
+            (
+                Mode::Daemon,
+                IntradayQuotesMode::Disabled,
+                IntradayQuoteTransport::Rest,
+            ),
+            (
+                Mode::Daemon,
+                IntradayQuotesMode::Disabled,
+                IntradayQuoteTransport::MarketWs,
+            ),
+        ];
+        for (mode, intraday, transport) in cases {
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let eod_events = Rc::clone(&events);
+            let output = run_selected_quote_startup(
+                mode,
+                intraday,
+                transport,
+                || panic!("disabled backend must not load REST windows"),
+                |_| -> Option<FakeTask> { panic!("disabled backend must not start REST") },
+                || -> Option<FakeTask> { panic!("disabled backend must not start MarketWs") },
+                move |task| async move {
+                    assert!(task.is_none());
+                    eod_events.borrow_mut().push(Event::ContinueEod);
+                    17_u8
+                },
+            )
+            .await;
+            assert_eq!(output, 17);
+            assert_eq!(*events.borrow(), vec![Event::ContinueEod]);
+        }
+    }
+
+    #[tokio::test]
+    async fn rest_startup_uses_existing_windows_and_no_ws_factory() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let load_events = Rc::clone(&events);
+        let start_events = Rc::clone(&events);
+        let eod_events = Rc::clone(&events);
+        let success = run_selected_quote_startup(
+            Mode::Daemon,
+            IntradayQuotesMode::OwnerOnly,
+            IntradayQuoteTransport::Rest,
+            move || {
+                load_events.borrow_mut().push(Event::LoadRest);
+                Ok(valid_window_contract())
+            },
+            move |_windows| {
+                start_events.borrow_mut().push(Event::StartRest);
+                Some(FakeTask::Rest)
+            },
+            || -> Option<FakeTask> { panic!("REST backend must not start MarketWs") },
+            move |task| async move {
+                eod_events.borrow_mut().push(Event::ContinueEod);
+                task
+            },
+        )
+        .await;
+        assert_eq!(success, Some(FakeTask::Rest));
+        assert_eq!(
+            *events.borrow(),
+            vec![Event::LoadRest, Event::StartRest, Event::ContinueEod]
+        );
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let load_events = Rc::clone(&events);
+        let eod_events = Rc::clone(&events);
+        let failed = run_selected_quote_startup(
+            Mode::Daemon,
+            IntradayQuotesMode::OwnerOnly,
+            IntradayQuoteTransport::Rest,
+            move || {
+                load_events.borrow_mut().push(Event::LoadRest);
+                Err(collectors::intraday_quotes::IntradaySessionWindowError::Missing)
+            },
+            |_| -> Option<FakeTask> { panic!("invalid REST windows must not start producer") },
+            || -> Option<FakeTask> { panic!("REST backend must not start MarketWs") },
+            move |task| async move {
+                eod_events.borrow_mut().push(Event::ContinueEod);
+                task
+            },
+        )
+        .await;
+        assert_eq!(failed, None);
+        assert_eq!(*events.borrow(), vec![Event::LoadRest, Event::ContinueEod]);
+    }
+
+    #[tokio::test]
+    async fn market_ws_startup_skips_rest_windows_and_factory() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let ws_events = Rc::clone(&events);
+        let eod_events = Rc::clone(&events);
+        let result = run_selected_quote_startup(
+            Mode::Daemon,
+            IntradayQuotesMode::OwnerOnly,
+            IntradayQuoteTransport::MarketWs,
+            || panic!("MarketWs must not load REST windows"),
+            |_| -> Option<FakeTask> { panic!("MarketWs must not start REST") },
+            move || {
+                ws_events.borrow_mut().push(Event::StartMarketWs);
+                Some(FakeTask::MarketWs)
+            },
+            move |task| async move {
+                eod_events.borrow_mut().push(Event::ContinueEod);
+                task
+            },
+        )
+        .await;
+        assert_eq!(result, Some(FakeTask::MarketWs));
+        assert_eq!(
+            *events.borrow(),
+            vec![Event::StartMarketWs, Event::ContinueEod]
+        );
+    }
+
+    #[tokio::test]
+    async fn market_ws_factory_failure_continues_eod_without_rest_fallback() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let ws_events = Rc::clone(&events);
+        let eod_events = Rc::clone(&events);
+        let result = run_selected_quote_startup(
+            Mode::Daemon,
+            IntradayQuotesMode::OwnerOnly,
+            IntradayQuoteTransport::MarketWs,
+            || panic!("failed MarketWs factory must not load REST windows"),
+            |_| -> Option<FakeTask> { panic!("failed MarketWs factory must not fallback to REST") },
+            move || {
+                ws_events.borrow_mut().push(Event::StartMarketWs);
+                None
+            },
+            move |task| async move {
+                eod_events.borrow_mut().push(Event::ContinueEod);
+                task
+            },
+        )
+        .await;
+        assert_eq!(result, None);
+        assert_eq!(
+            *events.borrow(),
+            vec![Event::StartMarketWs, Event::ContinueEod]
+        );
+    }
+
+    struct CountingCredentialSource {
+        calls: Cell<usize>,
+    }
+
+    impl kis_client::CredentialSource for CountingCredentialSource {
+        fn resolve(
+            &self,
+            reference: &CredentialRef,
+        ) -> Result<kis_client::Secret<String>, kis_client::CredentialError> {
+            self.calls.set(self.calls.get() + 1);
+            let value = match reference {
+                CredentialRef::File { path } if path == "synthetic/key" => "synthetic-key-sentinel",
+                CredentialRef::File { path } if path == "synthetic/secret" => {
+                    "synthetic-secret-sentinel"
+                }
+                _ => {
+                    return Err(kis_client::CredentialError::NotFound {
+                        location: "synthetic-test-reference".to_owned(),
+                    });
+                }
+            };
+            Ok(kis_client::Secret::new(value.to_owned()))
+        }
+    }
+
+    #[test]
+    fn market_ws_snapshot_reuses_resolved_credentials_without_reread() {
+        let source = CountingCredentialSource {
+            calls: Cell::new(0),
+        };
+        let key_ref = CredentialRef::file("synthetic/key");
+        let secret_ref = CredentialRef::file("synthetic/secret");
+        let snapshot =
+            ReadCredentialSnapshot::resolve(&source, key_ref.clone(), secret_ref.clone(), 7)
+                .expect("synthetic snapshot resolves");
+        assert_eq!(source.calls.get(), 2);
+
+        let (key, secret) = market_ws_credentials(&snapshot, &key_ref, &secret_ref)
+            .expect("retained synthetic snapshot resolves");
+        let key_matches = key.expose() == "synthetic-key-sentinel";
+        let secret_matches = secret.expose() == "synthetic-secret-sentinel";
+        drop((key, secret));
+        assert!(key_matches && secret_matches, "snapshot binding changed");
+        assert_eq!(source.calls.get(), 2);
+
+        let unsupported = CredentialRef::file("synthetic/unrelated");
+        assert!(market_ws_credentials(&snapshot, &unsupported, &secret_ref).is_err());
+        assert!(market_ws_credentials(&snapshot, &key_ref, &unsupported).is_err());
+        assert_eq!(source.calls.get(), 2);
     }
 }

@@ -1,4 +1,64 @@
 export interface paths {
+    "/api/v1/research/owner-beta/equity-universe-v2/stream-leases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * POST /api/v1/research/owner-beta/equity-universe-v2/stream-leases
+         * @description Schema 2 only. Configured same origin, Owner cookie session and current database authorization are required. Authentication precedes semantic parsing. Legacy schema-1 quote routes are unchanged.
+         */
+        post: operations["post__api_v1_research_owner_beta_equity_universe_v2_stream_leases"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/stream-leases/{lease_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * DELETE /api/v1/research/owner-beta/equity-universe-v2/stream-leases/{lease_id}
+         * @description Schema 2 only. Configured same origin, Owner cookie session and current database authorization are required. Authentication precedes semantic parsing. Legacy schema-1 quote routes are unchanged.
+         */
+        delete: operations["delete__api_v1_research_owner_beta_equity_universe_v2_stream_leases__lease_id_"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/research/owner-beta/equity-universe-v2/market-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * GET /api/v1/research/owner-beta/equity-universe-v2/market-stream
+         * @description Schema 2 only. Configured same origin, Owner cookie session and current database authorization are required. Authentication precedes semantic parsing. Legacy schema-1 quote routes are unchanged.
+         */
+        get: operations["get__api_v1_research_owner_beta_equity_universe_v2_market_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/session": {
         parameters: {
             query?: never;
@@ -1352,7 +1412,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "IDEMPOTENCY_MISMATCH" | "QUOTE_DEMAND_SEQUENCE_CONFLICT" | "QUOTE_DEMAND_CAPACITY" | "QUOTE_CACHE_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "FEATURE_DISABLED" | "MARKET_STREAM_UNAVAILABLE" | "STREAM_LEASE_SEQUENCE_CONFLICT" | "STREAM_LEASE_CAPACITY" | "STREAM_CONSUMER_CAPACITY" | "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "IDEMPOTENCY_MISMATCH" | "QUOTE_DEMAND_SEQUENCE_CONFLICT" | "QUOTE_DEMAND_CAPACITY" | "QUOTE_CACHE_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -1674,6 +1734,200 @@ export interface components {
         OwnerEquityV2AddBody: {
             /** @example 005930 */
             instrument_code: string;
+        };
+        /** @description Canonical decimal integer in 0..9223372036854775807. */
+        OwnerMarketStreamCounter: string;
+        /** @description Canonical decimal integer in 1..9223372036854775807. */
+        OwnerMarketStreamPositiveCounter: string;
+        OwnerMarketStreamIdentity: {
+            /** Format: uuid */
+            membership_id: string;
+            instrument_id: string;
+            generation: number;
+        };
+        /** @description Maximum JSON body 16384 bytes. Initial sequence is 0; each replacement or renewal increments the prior sequence by one. Entire set is replaced atomically. */
+        OwnerMarketStreamLeaseBody: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            consumer_id: string;
+            renewal_sequence: number;
+            /** @description Ascending canonical membership UUID order; no repeated membership or instrument. */
+            identities: components["schemas"]["OwnerMarketStreamIdentity"][];
+        };
+        /** @description Release carries the last accepted renewal sequence. A released consumer cannot be resurrected; use a fresh consumer UUID. */
+        OwnerMarketStreamReleaseBody: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            consumer_id: string;
+            renewal_sequence: number;
+        };
+        OwnerMarketStreamLease: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            lease_id: string;
+            /** Format: uuid */
+            consumer_id: string;
+            renewal_sequence: number;
+            /** Format: date-time */
+            lease_expires_at: string;
+            /** @constant */
+            renew_after_ms: 15000;
+            /** @description Ascending canonical membership UUID order; no repeated membership or instrument. */
+            identities: components["schemas"]["OwnerMarketStreamIdentity"][];
+        };
+        OwnerMarketStreamRelease: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            lease_id: string;
+            /** @constant */
+            released: true;
+        };
+        /** @enum {string} */
+        OwnerMarketStreamConnection: "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "BACKOFF" | "STOPPED";
+        /** @enum {string} */
+        OwnerMarketStreamReasonCode: "FEATURE_DISABLED" | "NO_ACTIVE_DEMAND" | "CALENDAR_UNAVAILABLE" | "SESSION_WINDOW_UNAVAILABLE" | "SESSION_CLOSED" | "AWAITING_FIRST_TRADE" | "QUOTE_STALE" | "CONNECTION_LOST" | "RECONNECT_GAP" | "SUBSCRIPTION_PENDING" | "SUBSCRIPTION_REJECTED" | "SUBSCRIPTION_AMBIGUOUS" | "APPROVAL_UNAVAILABLE" | "BUDGET_EXHAUSTED" | "PRODUCER_UNAVAILABLE" | "PIPELINE_LAG" | "WIRE_SCHEMA_MISMATCH" | "PROVIDER_RESPONSE_INVALID" | "QUOTE_VALUE_INVALID" | "MARKET_CLASS_UNSUPPORTED" | "LOCAL_INGRESS_LIMIT" | "RESYNC_REQUIRED" | "ACCESS_REVOKED";
+        OwnerMarketStreamSession: {
+            /** Format: date */
+            date: string;
+            /** @constant */
+            timezone: "Asia/Seoul";
+            /** @constant */
+            calendar_source: "kis";
+            /** @constant */
+            calendar_source_version: "kis-chk-holiday-v1:schema-1";
+            calendar_content_sha256: string;
+            window_contract_sha256: string;
+        };
+        /** @description A same-day authorized capture retains its original timestamps, epoch and versions when shown as LAST_KNOWN. */
+        OwnerMarketStreamQuote: {
+            price: string;
+            base_price: null;
+            /** @constant */
+            base_price_reason: "NOT_PROVIDED_BY_CHANNEL";
+            change_from_previous_day: string;
+            change_percent_from_previous_day: string;
+            /** @enum {string} */
+            direction: "UP" | "DOWN" | "FLAT" | "LIMIT_UP" | "LIMIT_DOWN";
+            trade_volume: string;
+            cumulative_volume: string;
+            /** @description Halt observation as of this quote; does not assert current tradability. */
+            halted: boolean;
+            /** Format: date */
+            business_date: string;
+            trade_time: string;
+            /** Format: date-time */
+            provider_trade_at: string;
+            /** Format: date-time */
+            received_at: string;
+            /** Format: date-time */
+            committed_at: string;
+            /** Format: uuid */
+            epoch: string;
+            quote_version: components["schemas"]["OwnerMarketStreamPositiveCounter"];
+            receive_ordinal: components["schemas"]["OwnerMarketStreamPositiveCounter"];
+        };
+        OwnerMarketStreamRow: {
+            /** Format: uuid */
+            membership_id: string;
+            instrument_id: string;
+            generation: number;
+            /** Format: uuid */
+            row_generation: string;
+            /** @constant */
+            venue: "KRX";
+            /** @constant */
+            currency: "KRW";
+            /** @constant */
+            source: "KIS_MARKET_WS";
+            /** @constant */
+            wire_version: "kis-h0stcnt0-20260914-v1";
+            session: components["schemas"]["OwnerMarketStreamSession"] | null;
+            /** @enum {string} */
+            subscription: "DESIRED" | "PENDING" | "ACKED" | "REJECTED" | "ABSENT";
+            connection: components["schemas"]["OwnerMarketStreamConnection"];
+            /** @enum {string} */
+            market_state: "OPEN" | "CLOSED" | "UNKNOWN";
+            /** @enum {string} */
+            freshness: "RECENT" | "STALE" | "UNAVAILABLE";
+            /** @enum {string} */
+            availability: "LIVE" | "LAST_KNOWN" | "AWAITING_FIRST_TRADE" | "UNAVAILABLE";
+            reason_code: components["schemas"]["OwnerMarketStreamReasonCode"] | null;
+            state_version: components["schemas"]["OwnerMarketStreamCounter"];
+            gap_open: boolean;
+            session_has_gap: boolean;
+            gap_generation: components["schemas"]["OwnerMarketStreamCounter"];
+            quote: components["schemas"]["OwnerMarketStreamQuote"] | null;
+        };
+        OwnerMarketStreamSnapshotBody: {
+            /** Format: uuid */
+            lease_id: string;
+            /** Format: date-time */
+            lease_expires_at: string;
+            /** @description Ascending canonical membership UUID order; memberships and instruments must each be unique. Delta rows completely replace their previous row. */
+            rows: components["schemas"]["OwnerMarketStreamRow"][];
+        };
+        OwnerMarketStreamDeltaBody: {
+            /** @description Ascending canonical membership UUID order; memberships and instruments must each be unique. Delta rows completely replace their previous row. */
+            rows: components["schemas"]["OwnerMarketStreamRow"][];
+        };
+        OwnerMarketStreamStatusBody: {
+            connection: components["schemas"]["OwnerMarketStreamConnection"];
+            reason_code: components["schemas"]["OwnerMarketStreamReasonCode"] | null;
+            gap_open: boolean;
+            session_has_gap: boolean;
+            gap_generation: components["schemas"]["OwnerMarketStreamCounter"];
+        };
+        OwnerMarketStreamResetBody: {
+            /** @constant */
+            reason_code: "RESYNC_REQUIRED";
+        };
+        /** @description The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization. */
+        OwnerMarketStreamSnapshotEvent: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            stream_id: string;
+            event_sequence: components["schemas"]["OwnerMarketStreamPositiveCounter"];
+            /** Format: date-time */
+            server_time: string;
+            body: components["schemas"]["OwnerMarketStreamSnapshotBody"];
+        };
+        /** @description The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization. */
+        OwnerMarketStreamDeltaEvent: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            stream_id: string;
+            event_sequence: components["schemas"]["OwnerMarketStreamPositiveCounter"];
+            /** Format: date-time */
+            server_time: string;
+            body: components["schemas"]["OwnerMarketStreamDeltaBody"];
+        };
+        /** @description The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization. */
+        OwnerMarketStreamStatusEvent: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            stream_id: string;
+            event_sequence: components["schemas"]["OwnerMarketStreamPositiveCounter"];
+            /** Format: date-time */
+            server_time: string;
+            body: components["schemas"]["OwnerMarketStreamStatusBody"];
+        };
+        /** @description The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization. */
+        OwnerMarketStreamResetEvent: {
+            /** @constant */
+            schema_version: 2;
+            /** Format: uuid */
+            stream_id: string;
+            event_sequence: components["schemas"]["OwnerMarketStreamPositiveCounter"];
+            /** Format: date-time */
+            server_time: string;
+            body: components["schemas"]["OwnerMarketStreamResetBody"];
         };
         OwnerIntradayQuoteDemandBody: {
             /** @constant */
@@ -2762,6 +3016,111 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    post__api_v1_research_owner_beta_equity_universe_v2_stream_leases: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerMarketStreamLeaseBody"];
+            };
+        };
+        responses: {
+            /** @description Current durable consumer lease and complete replaced identity set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMarketStreamLease"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    delete__api_v1_research_owner_beta_equity_universe_v2_stream_leases__lease_id_: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-CSRF-Token": string;
+            };
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerMarketStreamReleaseBody"];
+            };
+        };
+        responses: {
+            /** @description Consumer-bound durable release or authorized tombstone replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMarketStreamRelease"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_research_owner_beta_equity_universe_v2_market_stream: {
+        parameters: {
+            query: {
+                lease_id: string;
+            };
+            header?: {
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read-only SSE. Each connection starts with reset followed by the full current snapshot. Complete replacement deltas and revalidated status at least once per second; comment heartbeat every 15 seconds. No demand renewal or provider calls. Each emitted batch is authorized again. Access loss purges queued data and closes after a typed status; bytes already in flight cannot be recalled. At most 20 consumers per Owner; 5 seconds without delivery progress closes the consumer. No shared caching or buffered proxy delivery. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "no-store";
+                    "X-Accel-Buffering"?: "no";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
     get__api_v1_auth_session: {
         parameters: {
             query?: never;

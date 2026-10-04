@@ -50,6 +50,100 @@ rbl_namespace_ok() {
   esac
 }
 
+# Bind the one D4-only Cargo feature through every producer/consumer receipt.
+# This helper has no side effects beyond reading its explicit JSON inputs.
+rbl_validate_feature_contract() {
+  [ "$#" -ge 2 ] || {
+    rbl_die 'feature contract arguments are invalid'
+    return 1
+  }
+  rbl_feature_mode=$1
+  shift
+  python3 - "$rbl_feature_mode" "$@" <<'PY'
+import json, os, sys
+
+def pairs(items):
+    result={}
+    for key,value in items:
+        if key in result: raise ValueError("duplicate-json-key")
+        result[key]=value
+    return result
+
+def load(path):
+    return json.load(open(path,encoding="utf-8",newline=""),object_pairs_hook=pairs,
+                     parse_constant=lambda value: (_ for _ in ()).throw(ValueError("non-finite")))
+
+def selected_features(layout, recipe_id):
+    recipes=layout.get("recipes")
+    if not isinstance(recipes,dict): raise SystemExit("feature-recipes-invalid")
+    recipe=recipes.get(recipe_id)
+    if not isinstance(recipe,dict): raise SystemExit("feature-recipe-unknown")
+    features=recipe.get("features",[])
+    if (not isinstance(features,list) or any(not isinstance(item,str) for item in features) or
+            len(features)!=len(set(features))):
+        raise SystemExit("feature-list-invalid")
+    expected=["market-stream-provisioning"] if recipe_id=="D4" else []
+    if features!=expected: raise SystemExit("feature-recipe-invalid")
+    if recipe_id=="D4":
+        if recipe.get("package")!="job-queue" or recipe.get("bins")!=[
+                "owner-equity-v2-runner","kis-market-stream-state"]:
+            raise SystemExit("feature-d4-bins-invalid")
+        if recipe.get("runtime_binaries")!=[
+                {"bin":"owner-equity-v2-runner","image":"/usr/local/bin/owner-equity-v2-runner"},
+                {"bin":"kis-market-stream-state","image":"/usr/local/bin/kis-market-stream-state"}]:
+            raise SystemExit("feature-d4-runtime-binaries-invalid")
+    return recipe, expected
+
+def request_contract(layout, request):
+    recipe_id=request.get("recipe")
+    recipe,features=selected_features(layout,recipe_id)
+    for key in ("package","bins","compile_commit","clean_packages"):
+        if request.get(key)!=recipe.get(key): raise SystemExit("feature-request-recipe-mismatch")
+    if request.get("features")!=features: raise SystemExit("feature-request-selection-mismatch")
+    argv=["cargo","build","--locked","--release","--package",recipe["package"]]
+    if features: argv.extend(["--features",",".join(features)])
+    argv.append("--bin")
+    expected={"argv":argv,"default_features":True,"locked":True,
+              "message_format":"json-render-diagnostics","verbose":True}
+    if request.get("resolution_inputs")!=expected:
+        raise SystemExit("feature-resolution-input-mismatch")
+    return recipe,features
+
+mode=sys.argv[1]
+if mode=="layout":
+    if len(sys.argv)!=3: raise SystemExit("feature-layout-arguments-invalid")
+    layout=load(sys.argv[2])
+    if layout.get("builder",{}).get("features")!=[]:
+        raise SystemExit("feature-global-builder-invalid")
+    recipes=layout.get("recipes")
+    if not isinstance(recipes,dict): raise SystemExit("feature-recipes-invalid")
+    for recipe_id in recipes: selected_features(layout,recipe_id)
+elif mode=="request":
+    if len(sys.argv)!=4: raise SystemExit("feature-request-arguments-invalid")
+    layout,request=load(sys.argv[2]),load(sys.argv[3])
+    request_contract(layout,request)
+elif mode=="artifact":
+    if len(sys.argv)!=5: raise SystemExit("feature-artifact-arguments-invalid")
+    layout,request,artifact=load(sys.argv[2]),load(sys.argv[3]),load(sys.argv[4])
+    recipe,features=request_contract(layout,request)
+    if artifact.get("features")!=features or artifact.get("bin") not in recipe["bins"]:
+        raise SystemExit("feature-producer-artifact-mismatch")
+elif mode=="bundle":
+    if len(sys.argv)!=6: raise SystemExit("feature-bundle-arguments-invalid")
+    layout,request,bundle=load(sys.argv[2]),load(sys.argv[3]),load(sys.argv[4])
+    producer_root=sys.argv[5]
+    recipe,features=request_contract(layout,request)
+    if bundle.get("features")!=features or bundle.get("bins")!=recipe["bins"]:
+        raise SystemExit("feature-bundle-mismatch")
+    for bin_name in recipe["bins"]:
+        artifact=load(os.path.join(producer_root,bin_name,"artifact.json"))
+        if artifact.get("features")!=features or artifact.get("bin")!=bin_name:
+            raise SystemExit("feature-consumer-artifact-mismatch")
+else:
+    raise SystemExit("feature-contract-mode-invalid")
+PY
+}
+
 rbl_abs_path_ok() {
   rbl_path=$1
   case "$rbl_path" in
@@ -233,7 +327,7 @@ rbl_validate_layout() {
     rbl_die "layout config is missing or symlinked"
     return 1
   }
-  python3 - "$rbl_layout" <<'PY'
+  python3 - "$rbl_layout" <<'PY' || return 1
 import json, sys
 def pairs(items):
     value = {}
@@ -313,7 +407,7 @@ for recipe_id in sorted(recipes):
     recipe = recipes[recipe_id]
     required_recipe = {"dockerfile","package","bins","compile_commit","external_inputs",
                        "clean_packages","runtime_binaries","checkpoints"}
-    optional_recipe = {"runtime_payload","backtest_commit_literal"}
+    optional_recipe = {"runtime_payload","backtest_commit_literal","features"}
     if (set(recipe) - (required_recipe | optional_recipe) or
             not required_recipe.issubset(recipe)):
         raise SystemExit("recipe-keys-invalid")
@@ -328,7 +422,7 @@ for recipe_id in sorted(recipes):
     if recipe.get("runtime_payload") != expected_recipe_payloads.get(recipe_id):
         raise SystemExit("recipe-runtime-payload-contract-invalid")
     bin_count += len(recipe["bins"])
-if bin_count != 17: raise SystemExit("production-bin-count-invalid")
+if bin_count != 18: raise SystemExit("production-bin-count-invalid")
 services = value["services"]
 expected_services = {
     "db-role-bootstrap","db-migrate","api-server","web","research-worker",
@@ -350,6 +444,7 @@ if (value["archive"].get("request_format") != "lagrange-image-files-v1" or
         value["archive"].get("chunk_bytes") != 1048576):
     raise SystemExit("archive-format-invalid")
 PY
+  rbl_validate_feature_contract layout "$rbl_layout"
 }
 
 rbl_validate_cargo_metadata_graph() {
@@ -397,6 +492,45 @@ for name,record in expected.items():
             local.append(candidate)
     if sorted(set(local)) != record["local_dependencies"]:
         raise SystemExit("cargo-metadata-local-graph-invalid")
+
+PY
+}
+
+# D4 binds the opt-in initializer alias in addition to the generic package graph.
+# The production builder must pass both validators before changing its target.
+rbl_validate_d4_cargo_targets() {
+  [ "$#" -eq 3 ] || {
+    rbl_die 'D4 Cargo target validator arguments are invalid'
+    return 1
+  }
+  RBL_LAYOUT=$2 RBL_BUILD_ROOT=$3 python3 - "$1" <<'PY'
+import json,os,sys
+value=json.load(open(sys.argv[1],encoding="utf-8"))
+layout=json.load(open(os.environ["RBL_LAYOUT"],encoding="utf-8"))
+root=os.path.abspath(os.environ["RBL_BUILD_ROOT"])
+if not isinstance(value,dict) or not isinstance(value.get("packages"),list):
+    raise SystemExit("cargo-metadata-shape-invalid")
+records={}
+for package in value["packages"]:
+    if not isinstance(package,dict) or not isinstance(package.get("name"),str) or package["name"] in records:
+        raise SystemExit("cargo-metadata-package-invalid")
+    records[package["name"]]=package
+job_queue=records.get("job-queue")
+if not isinstance(job_queue,dict) or not isinstance(job_queue.get("targets"),list):
+    raise SystemExit("cargo-metadata-targets-invalid")
+targets=job_queue["targets"]
+for name in layout["recipes"]["D4"]["bins"]:
+    matches=[target for target in targets if isinstance(target,dict) and target.get("name")==name]
+    if len(matches)!=1 or matches[0].get("kind") != ["bin"]:
+        raise SystemExit("cargo-metadata-d4-target-invalid")
+    target=matches[0]
+    required_features=target.get("required-features",[])
+    if name=="kis-market-stream-state":
+        expected_source=os.path.realpath(os.path.join(root,"crates/kis-client/src/bin/kis-market-stream-state.rs"))
+        if required_features != ["market-stream-provisioning"] or os.path.realpath(target.get("src_path","")) != expected_source:
+            raise SystemExit("cargo-metadata-initializer-alias-invalid")
+    elif required_features:
+        raise SystemExit("cargo-metadata-runner-required-features-invalid")
 PY
 }
 
@@ -1588,8 +1722,13 @@ def closure(name, visiting=None, result=None):
     visiting.remove(name); result.add(name)
     return result
 transitive = [recipe["package"]] + sorted(closure(recipe["package"]) - {recipe["package"]})
+features = recipe.get("features", [])
+resolution_argv = ["cargo","build","--locked","--release","--package",recipe["package"]]
+if features:
+    resolution_argv.extend(["--features", ",".join(features)])
+resolution_argv.append("--bin")
 resolution_inputs = {
-  "argv":["cargo","build","--locked","--release","--package",recipe["package"],"--bin"],
+  "argv":resolution_argv,
   "default_features":True,
   "locked":True,
   "message_format":"json-render-diagnostics",
@@ -1605,7 +1744,7 @@ request = {
   "platform":"linux/amd64",
   "host_triple":"x86_64-unknown-linux-musl",
   "profile":"release",
-  "features":[],
+  "features":features,
   "compile_env":{
     "CARGO_BUILD_JOBS":"2",
     "CARGO_TARGET_DIR":"/cargo-target",
@@ -1646,6 +1785,7 @@ with open(os.path.join(release_dir, "request.json"), "w", encoding="utf-8", newl
     handle.write(json.dumps(request, sort_keys=True, separators=(",",":")) + "\n")
 os.chmod(os.path.join(release_dir, "request.json"), 0o600)
 PY
+  rbl_validate_feature_contract request "$rbl_layout" "$rbl_partial/.release-build/request.json" || return 1
   rbl_transport_hash=$(rbl_tree_hash "$rbl_partial") || return 1
   rbl_context=$rbl_context_base/context-$rbl_transport_hash
   if [ -e "$rbl_context" ] || [ -L "$rbl_context" ]; then
@@ -1683,6 +1823,9 @@ rbl_verify_producer() {
   rbl_bin=$3
   rbl_request=$4
   [ -d "$rbl_dir" ] && [ ! -L "$rbl_dir" ] || return 1
+  rbl_feature_layout=$RELEASE_BUILD_LAYOUT_SOURCE_ROOT/deploy/build/release-build-layout.json
+  rbl_validate_feature_contract artifact "$rbl_feature_layout" "$rbl_request" \
+    "$rbl_dir/artifact.json" || return 1
   RBL_PRODUCER=$rbl_dir RBL_RECIPE=$rbl_recipe RBL_BIN=$rbl_bin RBL_REQUEST=$rbl_request \
   python3 - <<'PY'
 import hashlib, json, os, re, stat
@@ -1725,7 +1868,7 @@ if set(record) != required: raise SystemExit("artifact-json-keys-invalid")
 expected={
   "format":"lagrange-rust-artifact-v1","source_commit":request["source_commit"],
   "package":request["package"],"bin":bin_name,"platform":"linux/amd64",
-  "host_triple":"x86_64-unknown-linux-musl","profile":"release","features":[],
+  "host_triple":"x86_64-unknown-linux-musl","profile":"release","features":request["features"],
   "compile_env":request["compile_env"],"cache_key":request["cache_key"],
   "input_sha256":request["input_sha256"],"recipe_sha256":request["recipe_sha256"],
   "h_sha256":request["h_sha256"],"cargo_success":True,"binary_mode":"0755"
@@ -2259,7 +2402,7 @@ bundle={
   "k_sha256":os.environ["RBL_K_HASH"],
   "cache_key":os.environ["RBL_CACHE_KEY"],"cache_namespace":os.environ["RBL_CACHE_NAMESPACE"],
   "guard_version":"common-1","platform":"linux/amd64","host_triple":"x86_64-unknown-linux-musl",
-  "profile":"release","features":[],"compile_env":request["compile_env"],"payloads":payloads
+  "profile":"release","features":request["features"],"compile_env":request["compile_env"],"payloads":payloads
 }
 path=os.path.join(partial,".release-build","bundle.json")
 with open(path,"w",encoding="utf-8",newline="\n") as handle:
@@ -2282,6 +2425,9 @@ rbl_bundle_verify() {
   rbl_current_package_hashes=$(rbl_package_hashes "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" "$rbl_layout" 1) || return 1
   rbl_current_recipe_hash=$(rbl_recipe_hash "$RELEASE_BUILD_LAYOUT_SOURCE_ROOT" "$rbl_recipe" "$rbl_layout") || return 1
   [ -d "$rbl_bundle" ] && [ ! -L "$rbl_bundle" ] || return 1
+  rbl_validate_feature_contract bundle "$rbl_layout" \
+    "$rbl_bundle/.release-build/request.json" "$rbl_bundle/.release-build/bundle.json" \
+    "$rbl_bundle/.release-build/producer" || return 1
   rbl_runtime_inventory_value=$(rbl_runtime_payload_inventory_current) || return 1
   rbl_runtime_payload_group=$(rbl_recipe_json "$rbl_recipe" "$rbl_layout" |
     python3 -c 'import json,sys; print(json.load(sys.stdin).get("runtime_payload",""))') || return 1
@@ -2332,10 +2478,10 @@ if record["k_sha256"]!=request.get("k_sha256") or record["cache_key"]!=request.g
     raise SystemExit("bundle-cache-binding-invalid")
 if record["h_sha256"]!=request.get("h_sha256"):
     raise SystemExit("bundle-h-binding-invalid")
-if record["bins"]!=recipe["bins"] or record["platform"]!="linux/amd64" or record["host_triple"]!="x86_64-unknown-linux-musl" or record["profile"]!="release" or record["features"]!=[] or record["compile_env"]!=request["compile_env"]:
+if record["bins"]!=recipe["bins"] or record["platform"]!="linux/amd64" or record["host_triple"]!="x86_64-unknown-linux-musl" or record["profile"]!="release" or record["features"]!=request.get("features") or record["compile_env"]!=request["compile_env"]:
     raise SystemExit("bundle-compiler-binding-invalid")
 request_keys={"bins","cache_key","cache_namespace","clean_packages","compile_commit","compile_env","features","format","guard_version","h_sha256","helper_sha256","host_triple","input_sha256","k_sha256","layout_sha256","package","package_hashes","payloads","platform","profile","recipe","recipe_sha256","resolution_inputs","source_commit","transitive_package_hashes"}
-if set(request) != request_keys or request.get("format")!="lagrange-rust-artifact-request-v1" or request.get("recipe")!=os.environ["RBL_RECIPE"] or request.get("source_commit")!=os.environ["RBL_SOURCE_COMMIT"] or request.get("input_sha256")!=os.environ["RBL_SOURCE_HASH"] or request.get("recipe_sha256")!=os.environ["RBL_RECIPE_HASH"]:
+if set(request) != request_keys or request.get("format")!="lagrange-rust-artifact-request-v1" or request.get("recipe")!=os.environ["RBL_RECIPE"] or request.get("package")!=recipe["package"] or request.get("bins")!=recipe["bins"] or request.get("features")!=recipe.get("features",[]) or request.get("source_commit")!=os.environ["RBL_SOURCE_COMMIT"] or request.get("input_sha256")!=os.environ["RBL_SOURCE_HASH"] or request.get("recipe_sha256")!=os.environ["RBL_RECIPE_HASH"]:
     raise SystemExit("bundle-request-invalid")
 expected_hashes=json.loads(os.environ["RBL_PACKAGE_HASHES"])
 if request.get("package_hashes") != expected_hashes or set(expected_hashes) != set(layout["packages"]):
@@ -2354,7 +2500,10 @@ if request["package"] != recipe["package"] or request["bins"] != recipe["bins"] 
 transitive=[request["package"]]+sorted(closure(request["package"])-{request["package"]})
 if request["transitive_package_hashes"] != [{"package":name,"p_sha256":expected_hashes[name]} for name in transitive]:
     raise SystemExit("bundle-transitive-p-invalid")
-resolution={"argv":["cargo","build","--locked","--release","--package",request["package"],"--bin"],"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
+resolution_argv=["cargo","build","--locked","--release","--package",request["package"]]
+if request["features"]: resolution_argv.extend(["--features",",".join(request["features"])])
+resolution_argv.append("--bin")
+resolution={"argv":resolution_argv,"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
 if request["resolution_inputs"] != resolution: raise SystemExit("bundle-resolution-input-invalid")
 expected_env={"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>","LAGRANGE_CODE_COMMIT":request["source_commit"] if request["compile_commit"]=="present" else "<unset>"}
 if request["compile_env"] != expected_env: raise SystemExit("bundle-compile-env-invalid")
@@ -4504,6 +4653,7 @@ rbl_builder_compile() {
       return 1
     }
   rbl_validate_layout "$rbl_layout" || return 1
+  rbl_validate_feature_contract request "$rbl_layout" "$rbl_request" || return 1
   rbl_build_root=$(dirname -- "$rbl_request_dir")
   rbl_actual_source_hash=$(rbl_hash_source "$rbl_build_root" "$rbl_layout" 0) || return 1
   rbl_actual_package_hashes=$(rbl_package_hashes "$rbl_build_root" "$rbl_layout" 0) || return 1
@@ -4533,7 +4683,7 @@ packages=layout.get("packages")
 if not isinstance(packages,dict) or set(value["package_hashes"])!=set(packages): raise SystemExit("builder-package-set-invalid")
 if any(not isinstance(item,str) or not re.fullmatch(r"[0-9a-f]{64}",item) for item in value["package_hashes"].values()): raise SystemExit("builder-package-hash-invalid")
 recipe=layout.get("recipes",{}).get(value["recipe"])
-if not isinstance(recipe,dict) or recipe.get("package")!=value["package"] or recipe.get("bins")!=value["bins"] or recipe.get("compile_commit")!=value["compile_commit"] or recipe.get("clean_packages")!=value["clean_packages"]: raise SystemExit("builder-recipe-binding-invalid")
+if not isinstance(recipe,dict) or recipe.get("package")!=value["package"] or recipe.get("bins")!=value["bins"] or recipe.get("compile_commit")!=value["compile_commit"] or recipe.get("clean_packages")!=value["clean_packages"] or recipe.get("features",[])!=value.get("features"): raise SystemExit("builder-recipe-binding-invalid")
 def closure(name,visiting=None,result=None):
     if visiting is None: visiting=set()
     if result is None: result=set()
@@ -4545,7 +4695,10 @@ def closure(name,visiting=None,result=None):
     return result
 transitive=[value["package"]]+sorted(closure(value["package"])-{value["package"]})
 if value.get("transitive_package_hashes") != [{"package":name,"p_sha256":value["package_hashes"][name]} for name in transitive]: raise SystemExit("builder-transitive-p-invalid")
-resolution={"argv":["cargo","build","--locked","--release","--package",value["package"],"--bin"],"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
+resolution_argv=["cargo","build","--locked","--release","--package",value["package"]]
+if value["features"]: resolution_argv.extend(["--features",",".join(value["features"])])
+resolution_argv.append("--bin")
+resolution={"argv":resolution_argv,"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
 if value.get("resolution_inputs")!=resolution: raise SystemExit("builder-resolution-input-invalid")
 policy=value.get("compile_env",{}).get("LAGRANGE_CODE_COMMIT")
 actual=os.environ.get("RBL_COMMIT","")
@@ -4564,6 +4717,7 @@ PY
       return 1
     }
   rbl_validate_cargo_metadata_graph "$rbl_metadata" "$rbl_layout" "$rbl_build_root" || return 1
+  rbl_validate_d4_cargo_targets "$rbl_metadata" "$rbl_layout" "$rbl_build_root" || return 1
   rm -f -- "$rbl_metadata"
   rbl_clean_mode=$(rbl_builder_guard "$rbl_request" "$rbl_layout") || return 1
   case "$rbl_clean_mode" in
@@ -4611,7 +4765,13 @@ PY
   unset RUSTFLAGS
   # -vv mixes build-script text into JSON stdout. Single -v keeps the
   # Fresh/Compiling evidence on stderr without that additional stdout.
-  cargo build --locked --release --package "$CARGO_PACKAGE" --bin "$CARGO_BIN" \
+  rbl_features_json=$(rbl_request_value "$rbl_request" features) || return 1
+  case "$rbl_features_json" in
+    '[]') set -- ;;
+    '["market-stream-provisioning"]') set -- --features market-stream-provisioning ;;
+    *) rbl_die 'validated feature selection changed before Cargo'; return 1 ;;
+  esac
+  cargo build --locked --release --package "$CARGO_PACKAGE" "$@" --bin "$CARGO_BIN" \
     --message-format=json-render-diagnostics -v >"$rbl_producer/cargo.jsonl" \
     2>"$rbl_producer/cargo.stderr" || rbl_cargo_status=$?
   rbl_end=$(python3 -c 'import time; print(time.time_ns())')
@@ -4658,6 +4818,8 @@ rbl_guard_build() {
       rbl_die 'verified artifact tools are missing'
       return 1
     }
+  rbl_validate_feature_contract bundle "$rbl_layout" "$rbl_request" \
+    "$rbl_bundle/.release-build/bundle.json" "$rbl_bundle/.release-build/producer" || return 1
   rbl_validate_native_identity "$rbl_bundle/.release-build/native-identity.json" || return 1
   RBL_REQUEST=$rbl_request RBL_BUNDLE=$rbl_bundle RBL_LAYOUT=$rbl_layout \
   RBL_HELPER=$rbl_helper RBL_OUTPUT=$rbl_output python3 - <<'PY'
@@ -4751,7 +4913,7 @@ bundle_record,_=raw_json(os.path.join(release,"bundle.json"))
 request_keys={"bins","cache_key","cache_namespace","clean_packages","compile_commit","compile_env","features","format","guard_version","h_sha256","helper_sha256","host_triple","input_sha256","k_sha256","layout_sha256","package","package_hashes","payloads","platform","profile","recipe","recipe_sha256","resolution_inputs","source_commit","transitive_package_hashes"}
 if set(request)!=request_keys or request.get("format")!="lagrange-rust-artifact-request-v1": raise SystemExit("guard-request-schema-invalid")
 if layout.get("format")!="lagrange-build-layout-v1" or layout.get("layout")!="common" or layout.get("guard_version")!="common-1": raise SystemExit("guard-layout-invalid")
-if request.get("guard_version")!="common-1" or request.get("platform")!="linux/amd64" or request.get("host_triple")!="x86_64-unknown-linux-musl" or request.get("profile")!="release" or request.get("features")!=[]:
+if request.get("guard_version")!="common-1" or request.get("platform")!="linux/amd64" or request.get("host_triple")!="x86_64-unknown-linux-musl" or request.get("profile")!="release":
     raise SystemExit("guard-compiler-binding-invalid")
 if not re.fullmatch(r"[0-9a-f]{40}",request.get("source_commit","")): raise SystemExit("guard-source-commit-invalid")
 for key in ("input_sha256","recipe_sha256","k_sha256","cache_key","helper_sha256","layout_sha256","h_sha256"):
@@ -4761,7 +4923,7 @@ if request["helper_sha256"] != os.environ.get("RUST_ARTIFACT_HELPER_SHA256"):
 if sha(helper_path)!=request["helper_sha256"] or sha(layout_path)!=request["layout_sha256"]:
     raise SystemExit("guard-tool-hash-invalid")
 recipe=layout.get("recipes",{}).get(request.get("recipe"))
-if not isinstance(recipe,dict) or recipe.get("package")!=request["package"] or recipe.get("bins")!=request["bins"] or recipe.get("compile_commit")!=request["compile_commit"] or recipe.get("clean_packages")!=request["clean_packages"]:
+if not isinstance(recipe,dict) or recipe.get("package")!=request["package"] or recipe.get("bins")!=request["bins"] or recipe.get("compile_commit")!=request["compile_commit"] or recipe.get("clean_packages")!=request["clean_packages"] or recipe.get("features",[])!=request.get("features"):
     raise SystemExit("guard-recipe-invalid")
 packages=layout.get("packages")
 if not isinstance(packages,dict) or set(request.get("package_hashes",{})) != set(packages):
@@ -4784,7 +4946,10 @@ def closure(name,visiting=None,result=None):
 transitive=[request["package"]]+sorted(closure(request["package"])-{request["package"]})
 if request.get("transitive_package_hashes") != [{"package":name,"p_sha256":request["package_hashes"][name]} for name in transitive]:
     raise SystemExit("guard-transitive-p-invalid")
-resolution={"argv":["cargo","build","--locked","--release","--package",request["package"],"--bin"],"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
+resolution_argv=["cargo","build","--locked","--release","--package",request["package"]]
+if request["features"]: resolution_argv.extend(["--features",",".join(request["features"])])
+resolution_argv.append("--bin")
+resolution={"argv":resolution_argv,"default_features":True,"locked":True,"message_format":"json-render-diagnostics","verbose":True}
 if request.get("resolution_inputs") != resolution: raise SystemExit("guard-resolution-input-invalid")
 expected_env={"CARGO_BUILD_JOBS":"2","CARGO_TARGET_DIR":"/cargo-target","RUSTFLAGS":"<unset>","LAGRANGE_CODE_COMMIT":request["source_commit"] if request["compile_commit"]=="present" else "<unset>"}
 if request.get("compile_env")!=expected_env: raise SystemExit("guard-compile-env-invalid")
@@ -4825,7 +4990,7 @@ for name in recipe["bins"]:
     artifact,artifact_raw=raw_json(os.path.join(producer,"artifact.json"))
     artifact_keys={"binary_mode","binary_sha256","bin","cache_key","cargo_success","compile_env","features","format","h_sha256","host_triple","input_sha256","package","platform","profile","recipe_sha256","source_commit"}
     if set(artifact)!=artifact_keys or artifact.get("format")!="lagrange-rust-artifact-v1" or artifact.get("bin")!=name or artifact.get("binary_mode")!="0755" or artifact.get("cargo_success") is not True: raise SystemExit("guard-artifact-schema-invalid")
-    for key,expected in (("cache_key",request["cache_key"]),("compile_env",request["compile_env"]),("features",[]),("h_sha256",request["h_sha256"]),("host_triple","x86_64-unknown-linux-musl"),("input_sha256",request["input_sha256"]),("package",request["package"]),("platform","linux/amd64"),("profile","release"),("recipe_sha256",request["recipe_sha256"]),("source_commit",request["source_commit"])):
+    for key,expected in (("cache_key",request["cache_key"]),("compile_env",request["compile_env"]),("features",request["features"]),("h_sha256",request["h_sha256"]),("host_triple","x86_64-unknown-linux-musl"),("input_sha256",request["input_sha256"]),("package",request["package"]),("platform","linux/amd64"),("profile","release"),("recipe_sha256",request["recipe_sha256"]),("source_commit",request["source_commit"])):
         if artifact.get(key)!=expected: raise SystemExit("guard-artifact-binding-invalid")
     if not re.fullmatch(r"[0-9a-f]{64}",artifact.get("binary_sha256","")) or open(os.path.join(producer,"COMPLETE"),"rb").read()!=(hashlib.sha256(artifact_raw).hexdigest()+"\n").encode("ascii"): raise SystemExit("guard-artifact-complete-invalid")
     bindir=os.path.join(producer,"bin"); target=os.path.join(bundle,"target","release",name)

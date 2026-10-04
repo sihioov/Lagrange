@@ -9,7 +9,7 @@ repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 run_dir=$(mktemp -d /tmp/lagrange-build-layout-cargo-self-test.XXXXXX)
 printf 'evidence: %s\n' "$run_dir"
 python3 - "$repo_root" "$run_dir" <<'PY'
-import hashlib,json,os,pathlib,re,shlex,subprocess,sys
+import hashlib,json,os,pathlib,re,subprocess,sys
 repo,out=map(pathlib.Path,sys.argv[1:]);fixture=out/'fixture';fixture.mkdir();(fixture/'src').mkdir()
 helper=repo/'scripts/ops/lib/release-build-layout.sh'
 source=helper.read_text();body=source.split('rbl_builder_compile() {',1)[1].split('\nrbl_guard_build() {',1)[0]
@@ -17,14 +17,32 @@ source=helper.read_text();body=source.split('rbl_builder_compile() {',1)[1].spli
 # future mixed-stdout regression fails with a genuine cold build.
 commands=re.findall(r'^  (cargo build .*?)(?= >"\$rbl_producer/cargo.jsonl")',body,re.M|re.S)
 assert len(commands)==1,'producer Cargo command must be unambiguous'
-args=shlex.split(commands[0].replace('\\\n',' '))
-assert args[:4]==['cargo','build','--locked','--release']
-args=[{'$CARGO_PACKAGE':'cargo-stream-probe','$CARGO_BIN':'cargo-stream-probe'}.get(a,a) for a in args]
-assert not any('$' in a for a in args),'unresolved producer Cargo argument'
-assert args.count('--package')==args.count('--bin')==1 and '--message-format=json-render-diagnostics' in args
-(fixture/'Cargo.toml').write_text('[package]\nname="cargo-stream-probe"\nversion="0.1.0"\nedition="2021"\nbuild="build.rs"\n[workspace]\n')
+dispatches=re.findall(r'^  case "\$rbl_features_json" in\n.*?^  esac\n',body,re.M|re.S)
+assert len(dispatches)==1,'producer feature dispatch must be unambiguous'
+# Capture argv through the real shell dispatch. The cargo function only prints
+# JSON, so an unexpanded "$@" cannot silently hide a feature argument.
+capture_script='''
+rbl_die() { printf '%s\\n' "$1" >&2; return 1; }
+cargo() { /usr/bin/python3 -c 'import json,sys; print(json.dumps(["cargo"]+sys.argv[1:]))' "$@"; }
+capture() {
+'''+dispatches[0]+commands[0]+'\n}\ncapture\n'
+commands_by_feature={}
+for features in ([],['market-stream-provisioning'],['market-stream-db-tests']):
+ capture_env={'PATH':'/usr/bin:/bin','LANG':'C','LC_ALL':'C','CARGO_PACKAGE':'cargo-stream-probe','CARGO_BIN':'cargo-stream-probe','rbl_features_json':json.dumps(features,separators=(',',':'))}
+ captured=subprocess.run(['/bin/sh','-c',capture_script],env=capture_env,capture_output=True,timeout=5)
+ if features==['market-stream-db-tests']:
+  assert captured.returncode!=0 and not captured.stdout,'test feature reached Cargo'
+  continue
+ assert captured.returncode==0 and not captured.stderr,'producer argv capture failed'
+ args=json.loads(captured.stdout)
+ expected=['cargo','build','--locked','--release','--package','cargo-stream-probe']
+ if features:expected+=['--features','market-stream-provisioning']
+ expected+=['--bin','cargo-stream-probe','--message-format=json-render-diagnostics','-v']
+ assert args==expected,'producer Cargo arguments changed'
+ commands_by_feature[bool(features)]=args
+(fixture/'Cargo.toml').write_text('[package]\nname="cargo-stream-probe"\nversion="0.1.0"\nedition="2021"\nbuild="build.rs"\n[features]\nmarket-stream-provisioning=[]\n[workspace]\n')
 (fixture/'build.rs').write_text('fn main() { println!("cargo:rerun-if-changed=build.rs"); println!("plain-build-script-stdout"); }\n')
-(fixture/'src/lib.rs').write_text('pub fn value() -> u32 { 42 }\n')
+(fixture/'src/lib.rs').write_text('#[cfg(not(feature="market-stream-provisioning"))]\npub fn value() -> u32 { 42 }\n#[cfg(feature="market-stream-provisioning")]\npub fn value() -> u32 { 43 }\n')
 (fixture/'src/main.rs').write_text('fn main() { println!("{}", cargo_stream_probe::value()); }\n')
 env=os.environ.copy();env['CARGO_TARGET_DIR']=str(out/'target');env['CARGO_INCREMENTAL']='0'
 def run(argv,name):
@@ -42,12 +60,14 @@ def pairs(items):
  return result
 def reject_constant(value):raise AssertionError('nonfinite JSON constant')
 records=[]
-for phase,fresh,marker in [('cold',False,'Compiling'),('warm',True,'Fresh')]:
- r=run(args,phase);lines=r.stdout.splitlines();assert lines,'Cargo stdout empty'
+for phase,opt_in,fresh,marker in [('default-cold',False,False,'Compiling'),('default-warm',False,True,'Fresh'),('opt-in-cold',True,False,'Compiling'),('opt-in-warm',True,True,'Fresh')]:
+ args=commands_by_feature[opt_in]
+ r=run(args+['--offline'],phase);lines=r.stdout.splitlines();assert lines,'Cargo stdout empty'
  events=[json.loads(line,object_pairs_hook=pairs,parse_constant=reject_constant) for line in lines if line.strip()]
  assert all(isinstance(e,dict) and isinstance(e.get('reason'),str) for e in events),'not JSON event objects'
  artifacts=[e for e in events if e['reason']=='compiler-artifact']
  assert len(artifacts)==3 and all(e.get('fresh') is fresh for e in artifacts),'unexpected compilation/reuse set'
+ assert all(e.get('features')==(['market-stream-provisioning'] if opt_in else []) for e in artifacts),'artifact feature selection mismatch'
  assert any(e['target']['kind']==['lib'] and e['executable'] is None for e in artifacts),'library null event missing'
  assert any(e['target']['kind']==['custom-build'] and e['executable'] is None for e in artifacts),'build-script null event missing'
  target=[e for e in artifacts if e['target']['name']=='cargo-stream-probe' and e['target']['kind']==['bin']]
@@ -57,12 +77,13 @@ for phase,fresh,marker in [('cold',False,'Compiling'),('warm',True,'Fresh')]:
  assert sum(e['reason']=='build-script-executed' for e in events)==1,'build-script event missing'
  assert re.search(r'(?:^|\s)'+marker+r'\s',r.stderr.decode()),'verbose stderr evidence missing'
  assert b'plain-build-script-stdout' not in r.stdout,'verbose build-script text polluted JSON stream'
- outputs=list((out/'target/release/build').glob('cargo-stream-probe-*/output'))
+ outputs=[pathlib.Path(e['out_dir']).parent/'output' for e in events if e['reason']=='build-script-executed']
  assert len(outputs)==1 and b'plain-build-script-stdout' in outputs[0].read_bytes(),'Cargo did not retain build-script output'
  binary=out/'target/release/cargo-stream-probe';assert binary.is_file() and os.access(binary,os.X_OK)
- records.append({'phase':phase,'artifact_count':len(artifacts),'fresh':fresh,'event_count':len(events),'stdout_sha256':hashlib.sha256(r.stdout).hexdigest(),'stderr_sha256':hashlib.sha256(r.stderr).hexdigest(),'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest()})
-assert records[0]['binary_sha256']==records[1]['binary_sha256'],'unchanged warm binary differs'
-result={'status':'PASS','cargo_version':version,'producer_argv':args,'helper_sha256':hashlib.sha256(helper.read_bytes()).hexdigest(),'records':records,'scope':'Two tiny offline host builds; fixture binary not executed; no Docker, product Cargo build, or provider call'}
+ records.append({'phase':phase,'opt_in':opt_in,'producer_argv':args,'artifact_count':len(artifacts),'fresh':fresh,'event_count':len(events),'stdout_sha256':hashlib.sha256(r.stdout).hexdigest(),'stderr_sha256':hashlib.sha256(r.stderr).hexdigest(),'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest()})
+assert records[0]['binary_sha256']==records[1]['binary_sha256'] and records[2]['binary_sha256']==records[3]['binary_sha256'],'unchanged warm binary differs'
+assert records[0]['binary_sha256']!=records[2]['binary_sha256'],'feature-dependent fixture did not change'
+result={'status':'PASS','cargo_version':version,'helper_sha256':hashlib.sha256(helper.read_bytes()).hexdigest(),'records':records,'scope':'Four tiny offline host builds, default/opt-in cold/warm; fixture binary not executed; no Docker, product Cargo build, or provider call'}
 (out/'result.json').write_text(json.dumps(result,indent=2)+'\n')
-print('BUILD_LAYOUT_CARGO_SELF_TEST: PASS (cold/warm genuine Cargo JSON and nullable artifact events)')
+print('BUILD_LAYOUT_CARGO_SELF_TEST: PASS (default/opt-in cold/warm genuine Cargo JSON and nullable artifact events)')
 PY

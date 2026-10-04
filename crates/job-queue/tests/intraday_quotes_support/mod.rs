@@ -23,6 +23,82 @@ use uuid::Uuid;
 pub const QA_DATABASE_URL: &str = "postgres://postgres:lagrange@127.0.0.1:55438/postgres";
 pub const KIS_CALENDAR_SOURCE_VERSION: &str = "kis-chk-holiday-v1:schema-1";
 
+#[cfg(feature = "market-stream-db-tests")]
+#[path = "../owner_market_stream_boundary_support/c2_fixture.rs"]
+mod c2_fixture;
+#[cfg(feature = "market-stream-db-tests")]
+const SUPERVISOR_ENV: &str = "LAGRANGE_WS3A_SUPERVISOR_URL";
+
+struct TestEndpoint {
+    #[cfg(feature = "market-stream-db-tests")]
+    current: Option<c2_fixture::SupervisorTarget>,
+}
+
+impl TestEndpoint {
+    fn from_environment() -> Result<Self, String> {
+        #[cfg(feature = "market-stream-db-tests")]
+        if std::env::var_os("LAGRANGE_KIS_C2_BINDING_FILE").is_some()
+            || std::env::var_os("LAGRANGE_KIS_C2_BINDING_SHA256").is_some()
+        {
+            let current = c2_fixture::SupervisorTarget::from_environment()
+                .map_err(|_| "current intraday fixture binding is invalid".to_owned())?;
+            if !current.is_c2() {
+                return Err("current intraday fixture requires an explicit C2 binding".to_owned());
+            }
+            return Ok(Self {
+                current: Some(current),
+            });
+        }
+        let configured = std::env::var("DATABASE_URL").map_err(|_| {
+            format!("DATABASE_URL must equal the fixed intraday QA URL {QA_DATABASE_URL}")
+        })?;
+        if configured != QA_DATABASE_URL {
+            return Err(format!(
+                "intraday DB tests refuse non-QA DATABASE_URL; expected fixed loopback URL {QA_DATABASE_URL}"
+            ));
+        }
+        Ok(Self {
+            #[cfg(feature = "market-stream-db-tests")]
+            current: None,
+        })
+    }
+
+    async fn supervisor(&self) -> Result<PgPool, String> {
+        #[cfg(feature = "market-stream-db-tests")]
+        if let Some(current) = &self.current {
+            // This verifies the exact live cluster identity before any DDL.
+            return c2_fixture::connect_supervisor(current)
+                .await
+                .map_err(|_| "current intraday fixture identity verification failed".to_owned());
+        }
+        connect(QA_DATABASE_URL).await
+    }
+
+    async fn role(&self, role: &str, database_name: &str) -> Result<PgPool, String> {
+        #[cfg(feature = "market-stream-db-tests")]
+        if let Some(current) = &self.current {
+            if !safe_database_name(database_name) {
+                return Err("invalid generated intraday database name".to_owned());
+            }
+            let mut options = current.options().database(database_name);
+            if role != "postgres" {
+                options = options.username(role).password("lagrange");
+            }
+            return tokio::time::timeout(
+                Duration::from_secs(10),
+                PgPoolOptions::new()
+                    .max_connections(8)
+                    .acquire_timeout(Duration::from_secs(10))
+                    .connect_with(options),
+            )
+            .await
+            .map_err(|_| "current intraday role connection timed out".to_owned())?
+            .map_err(|_| "current intraday role connection failed".to_owned());
+        }
+        connect(&database_url_for(role, database_name)).await
+    }
+}
+
 static DATABASE_COUNTER: AtomicU64 = AtomicU64::new(0);
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 
@@ -99,16 +175,8 @@ impl IntradayTestDb {
     }
 
     async fn create_with_calendar(install_initial_calendar: bool) -> Result<Self, String> {
-        let configured = std::env::var("DATABASE_URL").map_err(|_| {
-            format!("DATABASE_URL must equal the fixed intraday QA URL {QA_DATABASE_URL}")
-        })?;
-        if configured != QA_DATABASE_URL {
-            return Err(format!(
-                "intraday DB tests refuse non-QA DATABASE_URL; expected fixed loopback URL {QA_DATABASE_URL}"
-            ));
-        }
-
-        let root = connect(QA_DATABASE_URL).await?;
+        let endpoint = TestEndpoint::from_environment()?;
+        let root = endpoint.supervisor().await?;
         sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
             .execute(&root)
             .await
@@ -122,8 +190,7 @@ impl IntradayTestDb {
             .await
             .map_err(|_| "could not create generated intraday scratch database".to_owned())?;
 
-        let database_url = database_url_for("postgres", &database_name);
-        let superuser = connect(&database_url).await?;
+        let superuser = endpoint.role("postgres", &database_name).await?;
         sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
             .execute(&superuser)
             .await
@@ -136,17 +203,17 @@ impl IntradayTestDb {
         .await
         .map_err(|_| "could not grant scratch-database CONNECT to existing roles".to_owned())?;
 
-        let migration_owner = connect(&database_url_for("migration_owner", &database_name)).await?;
+        let migration_owner = endpoint.role("migration_owner", &database_name).await?;
         MIGRATOR
             .run(&migration_owner)
             .await
             .map_err(|_| "0054 migration set did not apply to scratch database".to_owned())?;
 
-        let app = connect(&database_url_for("app", &database_name)).await?;
-        let worker = connect(&database_url_for("worker", &database_name)).await?;
-        let admin = connect(&database_url_for("admin", &database_name)).await?;
-        let audit_writer = connect(&database_url_for("audit_writer", &database_name)).await?;
-        let research_writer = connect(&database_url_for("research_writer", &database_name)).await?;
+        let app = endpoint.role("app", &database_name).await?;
+        let worker = endpoint.role("worker", &database_name).await?;
+        let admin = endpoint.role("admin", &database_name).await?;
+        let audit_writer = endpoint.role("audit_writer", &database_name).await?;
+        let research_writer = endpoint.role("research_writer", &database_name).await?;
 
         let session_date: NaiveDate =
             sqlx::query_scalar("SELECT (pg_catalog.now() AT TIME ZONE 'Asia/Seoul')::date")

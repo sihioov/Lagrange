@@ -61,6 +61,390 @@
     }
   ],
   "paths": {
+    "/api/v1/research/owner-beta/equity-universe-v2/stream-leases": {
+      "post": {
+        "operationId": "post__api_v1_research_owner_beta_equity_universe_v2_stream_leases",
+        "summary": "POST /api/v1/research/owner-beta/equity-universe-v2/stream-leases",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "Visible ASCII excluding colon and backslash."
+            },
+            "required": true
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current durable consumer lease and complete replaced identity set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerMarketStreamLease"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role and exact canonical session; current actor RLS, grant, date and membership generation"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "Durable session/consumer lease result or released tombstone; replay rechecks authorization. Different body for a retained key is 409 IDEMPOTENCY_KEY_MISMATCH."
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "FEATURE_DISABLED",
+            "MARKET_STREAM_UNAVAILABLE",
+            "INTERNAL",
+            "CSRF_DENIED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "STREAM_LEASE_SEQUENCE_CONFLICT",
+            "STREAM_LEASE_CAPACITY",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "description": "Schema 2 only. Configured same origin, Owner cookie session and current database authorization are required. Authentication precedes semantic parsing. Legacy schema-1 quote routes are unchanged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerMarketStreamLeaseBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/research/owner-beta/equity-universe-v2/stream-leases/{lease_id}": {
+      "delete": {
+        "operationId": "delete__api_v1_research_owner_beta_equity_universe_v2_stream_leases__lease_id_",
+        "summary": "DELETE /api/v1/research/owner-beta/equity-universe-v2/stream-leases/{lease_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "lease_id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "not": {
+                "const": "00000000-0000-0000-0000-000000000000"
+              }
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Visible ASCII; the released lease tombstone remains the durable replay authority."
+            },
+            "required": true
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consumer-bound durable release or authorized tombstone replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerMarketStreamRelease"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role and exact canonical session; current actor RLS, grant, date and membership generation"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "Durable session/consumer lease result or released tombstone; replay rechecks authorization. Different body for a retained key is 409 IDEMPOTENCY_KEY_MISMATCH."
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "FEATURE_DISABLED",
+            "MARKET_STREAM_UNAVAILABLE",
+            "INTERNAL",
+            "CSRF_DENIED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "STREAM_LEASE_SEQUENCE_CONFLICT",
+            "STREAM_LEASE_CAPACITY",
+            "PAYLOAD_TOO_LARGE"
+          ],
+          "phase": "current"
+        },
+        "description": "Schema 2 only. Configured same origin, Owner cookie session and current database authorization are required. Authentication precedes semantic parsing. Legacy schema-1 quote routes are unchanged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerMarketStreamReleaseBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/research/owner-beta/equity-universe-v2/market-stream": {
+      "get": {
+        "operationId": "get__api_v1_research_owner_beta_equity_universe_v2_market_stream",
+        "summary": "GET /api/v1/research/owner-beta/equity-universe-v2/market-stream",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "lease_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Exactly one canonical non-nil UUID; no other query parameter is accepted."
+            },
+            "required": true
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[1-9][0-9]{0,18}$",
+              "description": "Bounded UUID:positive-i64 cursor. Every reconnect resets and reads the current snapshot; no history replay."
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read-only SSE. Each connection starts with reset followed by the full current snapshot. Complete replacement deltas and revalidated status at least once per second; comment heartbeat every 15 seconds. No demand renewal or provider calls. Each emitted batch is authorized again. Access loss purges queued data and closes after a typed status; bytes already in flight cannot be recalled. At most 20 consumers per Owner; 5 seconds without delivery progress closes the consumer. No shared caching or buffered proxy delivery.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Accel-Buffering": {
+                "schema": {
+                  "type": "string",
+                  "const": "no"
+                }
+              }
+            },
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "x-sse-events": {
+              "snapshot": {
+                "$ref": "#/components/schemas/OwnerMarketStreamSnapshotEvent"
+              },
+              "delta": {
+                "$ref": "#/components/schemas/OwnerMarketStreamDeltaEvent"
+              },
+              "status": {
+                "$ref": "#/components/schemas/OwnerMarketStreamStatusEvent"
+              },
+              "reset": {
+                "$ref": "#/components/schemas/OwnerMarketStreamResetEvent"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role and exact canonical session; current actor RLS, grant, date and membership generation"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "FORBIDDEN",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "FEATURE_DISABLED",
+            "MARKET_STREAM_UNAVAILABLE",
+            "INTERNAL",
+            "STREAM_CONSUMER_CAPACITY"
+          ],
+          "phase": "current"
+        },
+        "description": "Schema 2 only. Configured same origin, Owner cookie session and current database authorization are required. Authentication precedes semantic parsing. Legacy schema-1 quote routes are unchanged."
+      }
+    },
     "/api/v1/auth/session": {
       "get": {
         "operationId": "get__api_v1_auth_session",
@@ -8514,6 +8898,11 @@
       "ErrorCode": {
         "type": "string",
         "enum": [
+          "FEATURE_DISABLED",
+          "MARKET_STREAM_UNAVAILABLE",
+          "STREAM_LEASE_SEQUENCE_CONFLICT",
+          "STREAM_LEASE_CAPACITY",
+          "STREAM_CONSUMER_CAPACITY",
           "SESSION_UNKNOWN",
           "SESSION_EXPIRED",
           "FORBIDDEN",
@@ -9914,6 +10303,770 @@
             "example": "005930"
           }
         }
+      },
+      "OwnerMarketStreamCounter": {
+        "type": "string",
+        "maxLength": 19,
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)$",
+        "description": "Canonical decimal integer in 0..9223372036854775807."
+      },
+      "OwnerMarketStreamPositiveCounter": {
+        "type": "string",
+        "maxLength": 19,
+        "pattern": "^([1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6]|9223372036854775807)$",
+        "description": "Canonical decimal integer in 1..9223372036854775807."
+      },
+      "OwnerMarketStreamIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "membership_id",
+          "instrument_id",
+          "generation"
+        ],
+        "properties": {
+          "membership_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "instrument_id": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "OwnerMarketStreamLeaseBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "consumer_id",
+          "renewal_sequence",
+          "identities"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "consumer_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "renewal_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "identities": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/OwnerMarketStreamIdentity"
+            },
+            "description": "Ascending canonical membership UUID order; no repeated membership or instrument."
+          }
+        },
+        "description": "Maximum JSON body 16384 bytes. Initial sequence is 0; each replacement or renewal increments the prior sequence by one. Entire set is replaced atomically."
+      },
+      "OwnerMarketStreamReleaseBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "consumer_id",
+          "renewal_sequence"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "consumer_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "renewal_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "description": "Release carries the last accepted renewal sequence. A released consumer cannot be resurrected; use a fresh consumer UUID."
+      },
+      "OwnerMarketStreamLease": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "lease_id",
+          "consumer_id",
+          "renewal_sequence",
+          "lease_expires_at",
+          "renew_after_ms",
+          "identities"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "lease_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "consumer_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "renewal_sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lease_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "renew_after_ms": {
+            "type": "integer",
+            "const": 15000
+          },
+          "identities": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/OwnerMarketStreamIdentity"
+            },
+            "description": "Ascending canonical membership UUID order; no repeated membership or instrument."
+          }
+        }
+      },
+      "OwnerMarketStreamRelease": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "lease_id",
+          "released"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "lease_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "released": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "OwnerMarketStreamConnection": {
+        "type": "string",
+        "enum": [
+          "DISCONNECTED",
+          "CONNECTING",
+          "CONNECTED",
+          "BACKOFF",
+          "STOPPED"
+        ]
+      },
+      "OwnerMarketStreamReasonCode": {
+        "type": "string",
+        "enum": [
+          "FEATURE_DISABLED",
+          "NO_ACTIVE_DEMAND",
+          "CALENDAR_UNAVAILABLE",
+          "SESSION_WINDOW_UNAVAILABLE",
+          "SESSION_CLOSED",
+          "AWAITING_FIRST_TRADE",
+          "QUOTE_STALE",
+          "CONNECTION_LOST",
+          "RECONNECT_GAP",
+          "SUBSCRIPTION_PENDING",
+          "SUBSCRIPTION_REJECTED",
+          "SUBSCRIPTION_AMBIGUOUS",
+          "APPROVAL_UNAVAILABLE",
+          "BUDGET_EXHAUSTED",
+          "PRODUCER_UNAVAILABLE",
+          "PIPELINE_LAG",
+          "WIRE_SCHEMA_MISMATCH",
+          "PROVIDER_RESPONSE_INVALID",
+          "QUOTE_VALUE_INVALID",
+          "MARKET_CLASS_UNSUPPORTED",
+          "LOCAL_INGRESS_LIMIT",
+          "RESYNC_REQUIRED",
+          "ACCESS_REVOKED"
+        ]
+      },
+      "OwnerMarketStreamSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "date",
+          "timezone",
+          "calendar_source",
+          "calendar_source_version",
+          "calendar_content_sha256",
+          "window_contract_sha256"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "timezone": {
+            "const": "Asia/Seoul",
+            "type": "string"
+          },
+          "calendar_source": {
+            "const": "kis",
+            "type": "string"
+          },
+          "calendar_source_version": {
+            "const": "kis-chk-holiday-v1:schema-1",
+            "type": "string"
+          },
+          "calendar_content_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "window_contract_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "OwnerMarketStreamQuote": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "price",
+          "base_price",
+          "base_price_reason",
+          "change_from_previous_day",
+          "change_percent_from_previous_day",
+          "direction",
+          "trade_volume",
+          "cumulative_volume",
+          "halted",
+          "business_date",
+          "trade_time",
+          "provider_trade_at",
+          "received_at",
+          "committed_at",
+          "epoch",
+          "quote_version",
+          "receive_ordinal"
+        ],
+        "properties": {
+          "price": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$"
+          },
+          "base_price": {
+            "type": "null"
+          },
+          "base_price_reason": {
+            "type": "string",
+            "const": "NOT_PROVIDED_BY_CHANNEL"
+          },
+          "change_from_previous_day": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$"
+          },
+          "change_percent_from_previous_day": {
+            "type": "string",
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "UP",
+              "DOWN",
+              "FLAT",
+              "LIMIT_UP",
+              "LIMIT_DOWN"
+            ]
+          },
+          "trade_volume": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "cumulative_volume": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "halted": {
+            "type": "boolean",
+            "description": "Halt observation as of this quote; does not assert current tradability."
+          },
+          "business_date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "trade_time": {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
+          },
+          "provider_trade_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "committed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "epoch": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "quote_version": {
+            "$ref": "#/components/schemas/OwnerMarketStreamPositiveCounter"
+          },
+          "receive_ordinal": {
+            "$ref": "#/components/schemas/OwnerMarketStreamPositiveCounter"
+          }
+        },
+        "description": "A same-day authorized capture retains its original timestamps, epoch and versions when shown as LAST_KNOWN."
+      },
+      "OwnerMarketStreamRow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "membership_id",
+          "instrument_id",
+          "generation",
+          "row_generation",
+          "venue",
+          "currency",
+          "source",
+          "wire_version",
+          "session",
+          "subscription",
+          "connection",
+          "market_state",
+          "freshness",
+          "availability",
+          "reason_code",
+          "state_version",
+          "gap_open",
+          "session_has_gap",
+          "gap_generation",
+          "quote"
+        ],
+        "properties": {
+          "membership_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "instrument_id": {
+            "type": "string",
+            "pattern": "^[0-9]{6}\\.KRX$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "row_generation": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "venue": {
+            "type": "string",
+            "const": "KRX"
+          },
+          "currency": {
+            "type": "string",
+            "const": "KRW"
+          },
+          "source": {
+            "type": "string",
+            "const": "KIS_MARKET_WS"
+          },
+          "wire_version": {
+            "type": "string",
+            "const": "kis-h0stcnt0-20260914-v1"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerMarketStreamSession"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subscription": {
+            "type": "string",
+            "enum": [
+              "DESIRED",
+              "PENDING",
+              "ACKED",
+              "REJECTED",
+              "ABSENT"
+            ]
+          },
+          "connection": {
+            "$ref": "#/components/schemas/OwnerMarketStreamConnection"
+          },
+          "market_state": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "CLOSED",
+              "UNKNOWN"
+            ]
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "RECENT",
+              "STALE",
+              "UNAVAILABLE"
+            ]
+          },
+          "availability": {
+            "type": "string",
+            "enum": [
+              "LIVE",
+              "LAST_KNOWN",
+              "AWAITING_FIRST_TRADE",
+              "UNAVAILABLE"
+            ]
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerMarketStreamReasonCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state_version": {
+            "$ref": "#/components/schemas/OwnerMarketStreamCounter"
+          },
+          "gap_open": {
+            "type": "boolean"
+          },
+          "session_has_gap": {
+            "type": "boolean"
+          },
+          "gap_generation": {
+            "$ref": "#/components/schemas/OwnerMarketStreamCounter"
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerMarketStreamQuote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "OwnerMarketStreamSnapshotBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lease_id",
+          "lease_expires_at",
+          "rows"
+        ],
+        "properties": {
+          "lease_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "lease_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rows": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "items": {
+              "$ref": "#/components/schemas/OwnerMarketStreamRow"
+            },
+            "description": "Ascending canonical membership UUID order; memberships and instruments must each be unique. Delta rows completely replace their previous row."
+          }
+        }
+      },
+      "OwnerMarketStreamDeltaBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "items": {
+              "$ref": "#/components/schemas/OwnerMarketStreamRow"
+            },
+            "description": "Ascending canonical membership UUID order; memberships and instruments must each be unique. Delta rows completely replace their previous row."
+          }
+        }
+      },
+      "OwnerMarketStreamStatusBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "connection",
+          "reason_code",
+          "gap_open",
+          "session_has_gap",
+          "gap_generation"
+        ],
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/OwnerMarketStreamConnection"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerMarketStreamReasonCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gap_open": {
+            "type": "boolean"
+          },
+          "session_has_gap": {
+            "type": "boolean"
+          },
+          "gap_generation": {
+            "$ref": "#/components/schemas/OwnerMarketStreamCounter"
+          }
+        }
+      },
+      "OwnerMarketStreamResetBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason_code"
+        ],
+        "properties": {
+          "reason_code": {
+            "type": "string",
+            "const": "RESYNC_REQUIRED"
+          }
+        }
+      },
+      "OwnerMarketStreamSnapshotEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "stream_id",
+          "event_sequence",
+          "server_time",
+          "body"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "stream_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "event_sequence": {
+            "$ref": "#/components/schemas/OwnerMarketStreamPositiveCounter"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "body": {
+            "$ref": "#/components/schemas/OwnerMarketStreamSnapshotBody"
+          }
+        },
+        "description": "The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization."
+      },
+      "OwnerMarketStreamDeltaEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "stream_id",
+          "event_sequence",
+          "server_time",
+          "body"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "stream_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "event_sequence": {
+            "$ref": "#/components/schemas/OwnerMarketStreamPositiveCounter"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "body": {
+            "$ref": "#/components/schemas/OwnerMarketStreamDeltaBody"
+          }
+        },
+        "description": "The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization."
+      },
+      "OwnerMarketStreamStatusEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "stream_id",
+          "event_sequence",
+          "server_time",
+          "body"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "stream_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "event_sequence": {
+            "$ref": "#/components/schemas/OwnerMarketStreamPositiveCounter"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "body": {
+            "$ref": "#/components/schemas/OwnerMarketStreamStatusBody"
+          }
+        },
+        "description": "The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization."
+      },
+      "OwnerMarketStreamResetEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "stream_id",
+          "event_sequence",
+          "server_time",
+          "body"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 2
+          },
+          "stream_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            }
+          },
+          "event_sequence": {
+            "$ref": "#/components/schemas/OwnerMarketStreamPositiveCounter"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "body": {
+            "$ref": "#/components/schemas/OwnerMarketStreamResetBody"
+          }
+        },
+        "description": "The SSE event field supplies the event kind; the SSE id is stream_id:event_sequence. This cursor is not a broker sequence or replay authorization."
       },
       "OwnerIntradayQuoteDemandBody": {
         "type": "object",
