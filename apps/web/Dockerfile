@@ -25,6 +25,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/package.json /app/package-lock.json ./
 COPY apps/api-server/generated/openapi.ts apps/api-server/generated/openapi.ts
+COPY configs/universes/kr-stock-price-beta-v1.json configs/universes/kr-stock-price-beta-v1.json
 COPY apps/web/app apps/web/app
 COPY apps/web/components apps/web/components
 COPY apps/web/lib apps/web/lib
