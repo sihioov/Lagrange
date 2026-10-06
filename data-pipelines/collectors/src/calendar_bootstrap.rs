@@ -492,7 +492,6 @@ fn validate_calendar_source(
         || source.files.len() != 1
         || source.files[0].kind != ResponseKind::Calendar
         || source.files[0].request.mode != FetchMode::Credentialed
-        || source.files[0].response_continuation.is_some()
         || source.files[0].copied_from.is_some()
     {
         return Err(CalendarBootstrapError("CALENDAR_SOURCE_IDENTITY_INVALID"));
@@ -551,6 +550,133 @@ mod tests {
                 body: body.into_bytes(),
                 continuation: None,
             })
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct CalendarMarkerReader {
+        calls: Arc<AtomicUsize>,
+        expected_date: TradingDate,
+        marker: Option<String>,
+        body: Vec<u8>,
+    }
+
+    impl KisRead for CalendarMarkerReader {
+        async fn get(
+            &self,
+            path: &str,
+            tr_id: &str,
+            query: &[(String, String)],
+            continuation: Option<&str>,
+        ) -> Result<MarketDataReply, KisError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                (path, tr_id, continuation),
+                (
+                    "/uapi/domestic-stock/v1/quotations/chk-holiday",
+                    "CTCA0903R",
+                    None
+                )
+            );
+            assert_eq!(query.len(), 3);
+            assert_eq!(
+                query[0],
+                (
+                    "BASS_DT".to_owned(),
+                    self.expected_date.to_iso().replace('-', "")
+                )
+            );
+            assert_eq!(query[1], ("CTX_AREA_FK".to_owned(), String::new()));
+            assert_eq!(query[2], ("CTX_AREA_NK".to_owned(), String::new()));
+            Ok(MarketDataReply {
+                body: self.body.clone(),
+                continuation: self.marker.clone(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn calendar_first_page_preserves_any_response_marker_without_followup() {
+        let date = current_date();
+        let entitlement = "entitlement://calendar-bootstrap-test";
+        for marker in [None, Some(""), Some("F"), Some("M"), Some("unexpected")] {
+            let temp = tempfile::tempdir().expect("calendar marker tempdir");
+            let data_root = temp.path().join("data");
+            std::fs::create_dir_all(data_root.join("raw")).expect("raw root");
+            let store = RawStore::new(&data_root);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let provider = KisProvider::kr_etf_core(CalendarMarkerReader {
+                calls: calls.clone(),
+                expected_date: date,
+                marker: marker.map(str::to_owned),
+                body: calendar_body_with_row(date),
+            });
+            let source = capture_calendar_source(
+                &store,
+                &provider,
+                &current_request(date),
+                Some(entitlement),
+                BatchId::generate(),
+            )
+            .await
+            .expect("exact target first page must be admitted");
+            validate_calendar_source(&store, &source, date, entitlement)
+                .expect("admitted marker remains valid source metadata");
+            assert_eq!(source.files[0].response_continuation.as_deref(), marker);
+            let committed = store
+                .read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+                .expect("calendar wire manifest");
+            assert_eq!(committed.len(), 1);
+            assert_eq!(
+                committed[0].files[0].response_continuation.as_deref(),
+                marker
+            );
+            let normalized = normalize_kis_calendar_batch(&store, &source)
+                .expect("calendar source must normalize with its response marker preserved in Raw");
+            assert_eq!(normalized.entry.files[0].response_continuation, None);
+            CalendarPublicationBundle::from_raw(&store, &normalized.entry)
+                .expect("calendar bundle must accept the preserved response marker");
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn calendar_marker_does_not_admit_bad_target_or_malformed_body() {
+        let date = current_date();
+        for (body, expected) in [
+            (
+                calendar_body_with_row(date.next_day()),
+                "KIS_CALENDAR_TARGET_MISSING",
+            ),
+            (b"{".to_vec(), "KIS_RESPONSE_MALFORMED_JSON"),
+        ] {
+            let temp = tempfile::tempdir().expect("calendar invalid marker tempdir");
+            let data_root = temp.path().join("data");
+            std::fs::create_dir_all(data_root.join("raw")).expect("raw root");
+            let store = RawStore::new(&data_root);
+            let calls = Arc::new(AtomicUsize::new(0));
+            let provider = KisProvider::kr_etf_core(CalendarMarkerReader {
+                calls: calls.clone(),
+                expected_date: date,
+                marker: Some("M".to_owned()),
+                body,
+            });
+            let error = capture_calendar_source(
+                &store,
+                &provider,
+                &current_request(date),
+                Some("entitlement://calendar-bootstrap-test"),
+                BatchId::generate(),
+            )
+            .await
+            .expect_err("bad calendar body must remain uncommitted");
+            assert_calendar_error(error, expected);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert!(
+                !store
+                    .manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)
+                    .exists()
+            );
         }
     }
 

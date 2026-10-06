@@ -600,13 +600,8 @@ fn validate_kis_calendar_envelopes(
             "KIS calendar request metadata is not the exact single-page contract",
         ));
     }
-    if envelope.response_continuation.is_some() {
-        return Err(calendar_validation_error(
-            &envelope.file_name,
-            "KIS_CALENDAR_CONTINUATION",
-            "KIS calendar response carried continuation metadata",
-        ));
-    }
+    // A returned marker is retained as response metadata. chk-holiday is
+    // single-page: only the first response and exact target date are used.
     validate_kis_response(ResponseKind::Calendar, CALENDAR_PATH, &envelope.bytes).map_err(
         |error| IngestError::MalformedResponse {
             kind: error.kind,

@@ -455,7 +455,6 @@ pub(crate) fn validate_kis_calendar_source_manifest(
         || file.request.endpoint != CALENDAR_PATH
         || file.request.query != calendar_query(source.date)
         || file.request.headers != calendar_request_headers()
-        || file.response_continuation.is_some()
     {
         return Err(invalid_calendar_source(
             "calendar source request metadata is not the exact single-page contract",
