@@ -61,8 +61,6 @@ const O_DIRECTORY: i32 = 0o200000;
 const O_NOFOLLOW: i32 = 0o400000;
 #[cfg(feature = "market-stream-provisioning")]
 const O_PATH: i32 = 0o10000000;
-#[cfg(feature = "market-stream-provisioning")]
-const RENAME_NOREPLACE: u32 = 1;
 
 unsafe extern "C" {
     fn open(path: *const std::ffi::c_char, flags: i32, mode: u32) -> RawFd;
@@ -80,14 +78,6 @@ unsafe extern "C" {
     fn fchown(fd: RawFd, owner: u32, group: u32) -> i32;
     #[cfg(feature = "market-stream-provisioning")]
     fn fchmod(fd: RawFd, mode: u32) -> i32;
-    #[cfg(feature = "market-stream-provisioning")]
-    fn renameat2(
-        olddirfd: RawFd,
-        oldpath: *const std::ffi::c_char,
-        newdirfd: RawFd,
-        newpath: *const std::ffi::c_char,
-        flags: u32,
-    ) -> i32;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1588,14 +1578,16 @@ fn rename_at_noreplace(directory: &File, from: &str, to: &str) -> io::Result<()>
         raced.sync_all()?;
     }
     // SAFETY: both names are one NUL-terminated component relative to the
-    // same verified directory; RENAME_NOREPLACE refuses a raced destination.
+    // same verified directory. The pinned static musl toolchain lacks the
+    // renameat2 wrapper; the syscall preserves atomic RENAME_NOREPLACE semantics.
     if unsafe {
-        renameat2(
+        libc::syscall(
+            libc::SYS_renameat2,
             directory.as_raw_fd(),
             from.as_ptr(),
             directory.as_raw_fd(),
             to.as_ptr(),
-            RENAME_NOREPLACE,
+            libc::RENAME_NOREPLACE,
         )
     } != 0
     {
@@ -2165,5 +2157,62 @@ mod tests {
             StateError::ReconnectNotReady,
             "a new public client/process cannot turn a clean reconnect into an initial connect"
         );
+    }
+
+    #[cfg(feature = "market-stream-provisioning")]
+    #[test]
+    fn rename_noreplace_installs_only_an_absent_destination() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("source"), b"source bytes").unwrap();
+        let directory = File::open(root.path()).unwrap();
+
+        rename_at_noreplace(&directory, "source", "destination").unwrap();
+
+        assert_eq!(
+            fs::read(root.path().join("destination")).unwrap(),
+            b"source bytes"
+        );
+        assert!(!root.path().join("source").exists());
+    }
+
+    #[cfg(feature = "market-stream-provisioning")]
+    #[test]
+    fn rename_noreplace_preserves_existing_destination_and_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        fs::write(&source, b"source bytes").unwrap();
+        fs::write(&destination, b"destination bytes").unwrap();
+        let source_before = fs::metadata(&source).unwrap();
+        let destination_before = fs::metadata(&destination).unwrap();
+        let directory = File::open(root.path()).unwrap();
+
+        let error = rename_at_noreplace(&directory, "source", "destination").unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&source).unwrap(), b"source bytes");
+        assert_eq!(fs::read(&destination).unwrap(), b"destination bytes");
+        let source_after = fs::metadata(&source).unwrap();
+        let destination_after = fs::metadata(&destination).unwrap();
+        assert_eq!(
+            (source_before.dev(), source_before.ino()),
+            (source_after.dev(), source_after.ino())
+        );
+        assert_eq!(
+            (destination_before.dev(), destination_before.ino()),
+            (destination_after.dev(), destination_after.ino())
+        );
+    }
+
+    #[cfg(feature = "market-stream-provisioning")]
+    #[test]
+    fn rename_noreplace_missing_source_does_not_create_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = File::open(root.path()).unwrap();
+
+        let error = rename_at_noreplace(&directory, "missing", "destination").unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(!root.path().join("destination").exists());
     }
 }

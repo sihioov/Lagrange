@@ -9,7 +9,7 @@ rust-version.workspace = true
 # Synthetic loopback/process fixtures are deliberately opt-in.  Production
 # provisioning uses its own opt-in feature and does not enable test helpers.
 test-support = []
-market-stream-provisioning = []
+market-stream-provisioning = ["dep:libc"]
 
 [[bin]]
 name = "kis-market-stream-state"
@@ -34,6 +34,7 @@ async-trait = "0.1"
 # in Cargo.lock at 0.12.28, so this adds no new supply-chain surface.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "json"] }
 fs2 = "0.4"
+libc = { version = "0.2", optional = true }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
