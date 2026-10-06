@@ -28,6 +28,24 @@ use crate::transport::{HttpRequest, Transport};
 
 const INTRADAY_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const SHARED_EOD_LOCK_WAIT: Duration = Duration::from_secs(30);
+const SHARED_EOD_SPACING_WAIT_BUDGET_MS: u64 = 30_000;
+const SHARED_EOD_SPACING_WAIT_LIMIT: u32 = 32;
+
+enum CoordinatedAttemptError {
+    LocalSpacing {
+        error: KisError,
+        retry_after_ms: u64,
+    },
+    Other(KisError),
+}
+
+impl CoordinatedAttemptError {
+    fn into_kis_error(self) -> KisError {
+        match self {
+            Self::LocalSpacing { error, .. } | Self::Other(error) => error,
+        }
+    }
+}
 
 fn coordination_error(path: &str, error: ReadCoordinationError) -> KisError {
     let retry_after_ms = match error {
@@ -627,6 +645,8 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         };
         let mut attempts = 0_u32;
         let mut auth_refresh_available = true;
+        let mut spacing_waits = 0_u32;
+        let mut spacing_slept_ms = 0_u64;
         loop {
             if attempts > 0 {
                 let spacing = if intraday {
@@ -652,10 +672,29 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
                 )
                 .await;
             if !started.load(Ordering::SeqCst) {
-                return result;
+                match result {
+                    Err(CoordinatedAttemptError::LocalSpacing {
+                        error,
+                        retry_after_ms,
+                    }) if !intraday && spacing_waits < SHARED_EOD_SPACING_WAIT_LIMIT => {
+                        // The coordinator refused this GET before dispatch. Wait
+                        // only for its local spacing debt, then recheck its state.
+                        let wait_ms = retry_after_ms.max(1);
+                        let remaining = SHARED_EOD_SPACING_WAIT_BUDGET_MS - spacing_slept_ms;
+                        if wait_ms > remaining {
+                            return Err(error);
+                        }
+                        spacing_waits += 1;
+                        spacing_slept_ms += wait_ms;
+                        self.sleeper.sleep_ms(wait_ms).await;
+                        continue;
+                    }
+                    Err(error) => return Err(error.into_kis_error()),
+                    Ok(reply) => return Ok(reply),
+                }
             }
             attempts += 1;
-            match result {
+            match result.map_err(CoordinatedAttemptError::into_kis_error) {
                 Ok(reply) => return Ok(reply),
                 // Shared 429 state is already durable. Returning it prevents
                 // an early nested retry; a later job/cycle must honor it.
@@ -685,7 +724,7 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         continuation: Option<&str>,
         intraday: bool,
         started: Arc<AtomicBool>,
-    ) -> Result<MarketDataReply, KisError> {
+    ) -> Result<MarketDataReply, CoordinatedAttemptError> {
         let coordinated = self.coordinated.as_ref().expect("shared path checked");
         let transport = if intraday {
             self.intraday_transport
@@ -774,21 +813,43 @@ impl<T: Transport, S: Sleeper, C: CredentialSource> KisMarketDataClient<T, S, C>
         };
         match outcome {
             Ok(reply) => Ok(reply),
-            Err(ReadCoordinationError::CallbackTimedOut) => Err(KisError::Broker {
-                status: 504,
-                endpoint: path.to_owned(),
-                body: "local read deadline reached".to_owned(),
-            }),
+            Err(ReadCoordinationError::CallbackTimedOut) => {
+                Err(CoordinatedAttemptError::Other(KisError::Broker {
+                    status: 504,
+                    endpoint: path.to_owned(),
+                    body: "local read deadline reached".to_owned(),
+                }))
+            }
             Err(
                 ReadCoordinationError::Unauthorized
                 | ReadCoordinationError::CallbackRateLimited { .. }
                 | ReadCoordinationError::CallbackFailed { .. },
-            ) => Err(captured
-                .lock()
-                .expect("captured error mutex")
-                .take()
-                .unwrap_or_else(|| coordination_error(path, ReadCoordinationError::CorruptState))),
-            Err(error) => Err(coordination_error(path, error)),
+            ) => Err(CoordinatedAttemptError::Other(
+                captured
+                    .lock()
+                    .expect("captured error mutex")
+                    .take()
+                    .unwrap_or_else(|| {
+                        coordination_error(path, ReadCoordinationError::CorruptState)
+                    }),
+            )),
+            Err(
+                error @ (ReadCoordinationError::GlobalSpacing { .. }
+                | ReadCoordinationError::ChannelSpacing { .. }),
+            ) => {
+                let retry_after_ms = match error {
+                    ReadCoordinationError::GlobalSpacing { retry_after_ms }
+                    | ReadCoordinationError::ChannelSpacing { retry_after_ms } => retry_after_ms,
+                    _ => unreachable!(),
+                };
+                Err(CoordinatedAttemptError::LocalSpacing {
+                    error: coordination_error(path, error),
+                    retry_after_ms,
+                })
+            }
+            Err(error) => Err(CoordinatedAttemptError::Other(coordination_error(
+                path, error,
+            ))),
         }
     }
 
@@ -1025,6 +1086,16 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Default)]
+    struct CountingNoAdvance(Arc<Mutex<Vec<u64>>>);
+
+    impl Sleeper for CountingNoAdvance {
+        fn sleep_ms(&self, ms: u64) -> impl std::future::Future<Output = ()> + Send {
+            self.0.lock().unwrap().push(ms);
+            std::future::ready(())
+        }
+    }
+
     struct CountingCredentials {
         calls: AtomicUsize,
     }
@@ -1097,6 +1168,26 @@ mod tests {
         token_transport: CapturingTransport,
         snapshot: ReadCredentialSnapshot,
     ) -> KisMarketDataClient<CapturingTransport, ClockSleeper, FixedCredentials> {
+        shared_client_with_sleeper(
+            root,
+            clock.clone(),
+            read_transport,
+            intraday_transport,
+            token_transport,
+            snapshot,
+            ClockSleeper(clock),
+        )
+    }
+
+    fn shared_client_with_sleeper<S: Sleeper>(
+        root: &Path,
+        clock: TestClock,
+        read_transport: CapturingTransport,
+        intraday_transport: CapturingTransport,
+        token_transport: CapturingTransport,
+        snapshot: ReadCredentialSnapshot,
+        sleeper: S,
+    ) -> KisMarketDataClient<CapturingTransport, S, FixedCredentials> {
         let app_key_ref = CredentialRef::env("KIS_APP_KEY");
         let app_secret_ref = CredentialRef::file("/run/secrets/kis_app_secret");
         let issuer: Arc<dyn TokenIssuer> = Arc::new(KisTokenIssuer::new(
@@ -1115,7 +1206,7 @@ mod tests {
         .expect("coordinated test auth");
         KisMarketDataClient::new(
             read_transport,
-            ClockSleeper(clock.clone()),
+            sleeper,
             Arc::new(TokenManager::new(Arc::new(clock.clone()), issuer)),
             Arc::new(RateLimiter::new(Arc::new(clock), Quota::new(100, 100))),
             FixedCredentials,
@@ -1314,6 +1405,139 @@ mod tests {
             reads[0].secret_headers.get("appsecret").map(String::as_str),
             Some("snapshot-secret")
         );
+    }
+
+    #[tokio::test]
+    async fn shared_eod_waits_for_reference_then_repeated_daily_spacing() {
+        let root = PrivateRoot::new("eod-spacing");
+        let clock = TestClock::at(2_000_000);
+        let snapshot = ReadCredentialSnapshot::resolve(
+            &FixedCredentials,
+            CredentialRef::env("KIS_APP_KEY"),
+            CredentialRef::file("/run/secrets/kis_app_secret"),
+            1,
+        )
+        .unwrap();
+        let read_transport = CapturingTransport::with_responses(vec![HttpResponse::ok(
+            r#"{"rt_cd":"0","output":{}}"#,
+        )]);
+        let probe = read_transport.clone();
+        let client = shared_client(
+            root.path(),
+            clock.clone(),
+            read_transport,
+            CapturingTransport::default(),
+            CapturingTransport::with_responses(vec![HttpResponse::ok(
+                r#"{"access_token":"shared-token","expires_in":3600}"#,
+            )]),
+            snapshot,
+        );
+        let reference = ReadChannel::InquirePrice.pair();
+        let daily = ReadChannel::DailyItemChartPrice.pair();
+        client
+            .get(reference.0, reference.1, &[], None)
+            .await
+            .unwrap();
+        client.get(daily.0, daily.1, &[], None).await.unwrap();
+        client.get(daily.0, daily.1, &[], None).await.unwrap();
+        let requests = probe.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].path, reference.0);
+        assert_eq!(requests[1].path, daily.0);
+        assert_eq!(requests[2].path, daily.0);
+        assert!(clock.now_ms() >= 2_002_000);
+    }
+
+    #[tokio::test]
+    async fn shared_eod_spacing_stops_if_clock_does_not_advance() {
+        let root = PrivateRoot::new("eod-stuck-clock");
+        let clock = TestClock::at(2_500_000);
+        let snapshot = ReadCredentialSnapshot::resolve(
+            &FixedCredentials,
+            CredentialRef::env("KIS_APP_KEY"),
+            CredentialRef::file("/run/secrets/kis_app_secret"),
+            1,
+        )
+        .unwrap();
+        let read_transport = CapturingTransport::with_responses(vec![HttpResponse::ok(
+            r#"{"rt_cd":"0","output":{}}"#,
+        )]);
+        let probe = read_transport.clone();
+        let sleeper = CountingNoAdvance::default();
+        let waits = sleeper.0.clone();
+        let client = shared_client_with_sleeper(
+            root.path(),
+            clock,
+            read_transport,
+            CapturingTransport::default(),
+            CapturingTransport::with_responses(vec![HttpResponse::ok(
+                r#"{"access_token":"shared-token","expires_in":3600}"#,
+            )]),
+            snapshot,
+            sleeper,
+        );
+        let reference = ReadChannel::InquirePrice.pair();
+        let daily = ReadChannel::DailyItemChartPrice.pair();
+        client
+            .get(reference.0, reference.1, &[], None)
+            .await
+            .unwrap();
+        assert!(matches!(
+            client.get(daily.0, daily.1, &[], None).await,
+            Err(KisError::RateLimited { .. })
+        ));
+        assert_eq!(probe.requests.lock().unwrap().len(), 1);
+        let waits = waits.lock().unwrap();
+        assert!(!waits.is_empty());
+        assert!(waits.len() <= SHARED_EOD_SPACING_WAIT_LIMIT as usize);
+        assert!(waits.iter().all(|wait| *wait > 0));
+        assert!(waits.iter().sum::<u64>() <= SHARED_EOD_SPACING_WAIT_BUDGET_MS);
+    }
+
+    #[tokio::test]
+    async fn shared_eod_broker_429_returns_once_and_keeps_cooldown() {
+        let root = PrivateRoot::new("eod-broker-429");
+        let clock = TestClock::at(3_000_000);
+        let snapshot = ReadCredentialSnapshot::resolve(
+            &FixedCredentials,
+            CredentialRef::env("KIS_APP_KEY"),
+            CredentialRef::file("/run/secrets/kis_app_secret"),
+            1,
+        )
+        .unwrap();
+        let read_transport = CapturingTransport::with_responses(vec![
+            HttpResponse::status(429, "limited").with_header("retry-after", "9"),
+        ]);
+        let probe = read_transport.clone();
+        let client = shared_client(
+            root.path(),
+            clock.clone(),
+            read_transport,
+            CapturingTransport::default(),
+            CapturingTransport::with_responses(vec![HttpResponse::ok(
+                r#"{"access_token":"shared-token","expires_in":3600}"#,
+            )]),
+            snapshot,
+        );
+        let reference = ReadChannel::InquirePrice.pair();
+        assert!(matches!(
+            client.get(reference.0, reference.1, &[], None).await,
+            Err(KisError::RateLimited {
+                retry_after_ms: 9_000,
+                ..
+            })
+        ));
+        assert_eq!(probe.requests.lock().unwrap().len(), 1);
+        let state: Value = serde_json::from_slice(
+            &std::fs::read(root.path().join(crate::read_coordination::STATE_FILE_NAME)).unwrap(),
+        )
+        .unwrap();
+        assert!(state["broker_cooldown_until_ms"].as_i64().unwrap() > clock.now_ms());
+        assert!(matches!(
+            client.get(reference.0, reference.1, &[], None).await,
+            Err(KisError::RateLimited { .. })
+        ));
+        assert_eq!(probe.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
