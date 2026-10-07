@@ -234,7 +234,7 @@ describe("Stock Beta current quote widget", () => {
     expect(detail?.required).toBe(false);
     expect(stockBetaDashboardArchitecture.requiredWidgetIds).not.toContain("current-quote");
     expect(stockBetaDetailArchitecture.requiredWidgetIds).not.toContain("current-quote");
-    expect(dashboard?.placements.desktop).toMatchObject({ column: 1, columnSpan: 12, row: 6 });
+    expect(dashboard?.placements.desktop).toMatchObject({ column: 1, columnSpan: 12, row: 7 });
     expect(dashboard?.placements.tablet).toMatchObject({ column: 1, columnSpan: 12, row: 8 });
     expect(detail?.placements.desktop?.visible).toBe(true);
   });

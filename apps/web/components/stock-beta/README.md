@@ -45,6 +45,15 @@ Price data is the latest completed EOD close, not a real-time quote. It is expli
 unadjusted and must always retain the corporate-action caveat. Integrity and unavailable/error
 states fail closed: do not leave a previous chart or inferred price visible.
 
+`PriceChart` renders a fixed-size server/client HTML shell and mounts Lightweight Charts 5.2.1 in a
+browser effect. It consumes only the already-validated bars passed by the Price tab; chart creation,
+zoom, pan, and selection never fetch data. Candles and volume share one time scale, and each
+contiguous server-provided SMA segment gets its own line series. The focusable chart region supports
+ArrowLeft/ArrowRight/Home/End, while the live summary and HTML tooltip retain the original date and
+OHLCV values. A separate reset control fits the currently loaded bars without changing the API
+range. The page displays the pinned TradingView NOTICE and links to the locally served NOTICE and
+LICENSE files.
+
 ## Add an optional widget
 
 1. Add a widget component under `dashboard/widgets` or `detail/widgets`. Accept only

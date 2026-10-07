@@ -9,7 +9,9 @@
   --chart-text: var(--stock-beta-text, var(--text-primary, #dce3e9));
   --chart-border: var(--stock-beta-border, var(--border-subtle, #252c33));
   display: grid;
-  gap: 0.5rem;
+  grid-auto-rows: max-content;
+  gap: 0.375rem;
+  block-size: max-content;
   inline-size: 100%;
   max-inline-size: 100%;
   min-inline-size: 0;
@@ -17,8 +19,19 @@
   font-size: 0.6875rem;
 }
 
+.axisLabels {
+  display: flex;
+  justify-content: space-between;
+  min-inline-size: 0;
+  color: var(--chart-muted);
+  font: 0.5625rem var(--font-display, sans-serif);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .chartSurface {
   display: block;
+  min-block-size: min-content;
   inline-size: 100%;
   max-inline-size: 100%;
   min-inline-size: 0;
@@ -32,7 +45,7 @@
   cursor: crosshair;
   font: inherit;
   text-align: start;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 .chartSurface:focus-visible {
@@ -40,156 +53,49 @@
   outline-offset: 2px;
 }
 
-.chartSvg {
-  display: block;
+.chartCanvas {
   inline-size: 100%;
-  max-inline-size: 100%;
-  block-size: auto;
-  aspect-ratio: 960 / 440;
+  block-size: clamp(14rem, min(34vw, 40vh), 24rem);
+  min-block-size: 12rem;
   overflow: hidden;
-  color: var(--chart-text);
-  cursor: crosshair;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
 }
 
-.gridLine {
-  stroke: color-mix(in srgb, var(--chart-border) 74%, transparent);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
+/* The library supplies its own table and cell dimensions. */
+.chartCanvas :global(table) {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
 }
 
-.volumeDivider {
-  stroke: var(--chart-border);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
+.chartCanvas :global(td),
+.chartCanvas :global(th) {
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
 }
 
-.axisLabel,
-.axisTitle {
-  fill: var(--chart-secondary);
-  font-family: var(--font-data, ui-monospace, monospace);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+.chartCanvas :global(canvas) {
+  display: block;
+  touch-action: pan-y;
 }
 
-.axisTitle {
-  fill: var(--chart-muted);
-  font-family: var(--font-display, sans-serif);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.candleWick {
-  stroke: var(--chart-secondary);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.candleBody {
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.candleBody[data-direction="up"] {
-  fill: var(--chart-up);
-  stroke: var(--chart-up);
-}
-
-.candleBody[data-direction="down"] {
-  fill: var(--chart-panel);
-  stroke: var(--chart-down);
-  stroke-width: 1.5;
-}
-
-.candleBody[data-direction="flat"] {
-  fill: var(--chart-flat);
-  stroke: var(--chart-flat);
-  stroke-dasharray: 2 1;
-}
-
-.candleSelected .candleWick {
-  stroke: var(--chart-accent);
-  stroke-width: 1.5;
-}
-
-.candleSelected .candleBody {
-  stroke-width: 2;
-}
-
-.volumeBar {
-  opacity: 0.72;
-  vector-effect: non-scaling-stroke;
-}
-
-.volumeBar[data-direction="up"] {
-  fill: var(--chart-up);
-}
-
-.volumeBar[data-direction="down"] {
-  fill: var(--chart-down);
-  stroke: var(--chart-down);
-  stroke-dasharray: 2 1;
-}
-
-.volumeBar[data-direction="flat"] {
-  fill: var(--chart-flat);
-}
-
-.sma20,
-.sma60 {
-  stroke-width: 1.75;
-  vector-effect: non-scaling-stroke;
-}
-
-.sma20 {
-  stroke: var(--chart-accent);
-}
-
-.sma60 {
-  stroke: var(--chart-secondary);
-  stroke-dasharray: 5 3;
-}
-
-.crosshair {
-  pointer-events: none;
-}
-
-.crosshair line {
-  stroke: color-mix(in srgb, var(--chart-accent) 72%, transparent);
-  stroke-dasharray: 4 3;
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.crosshair circle {
-  fill: var(--chart-accent);
-  stroke: var(--chart-panel);
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-.tooltip {
-  pointer-events: none;
-}
-
-.tooltipSurface {
-  fill: color-mix(in srgb, var(--chart-panel) 94%, var(--chart-accent));
-  stroke: var(--chart-accent);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.tooltipText {
-  fill: var(--chart-text);
-  font-family: var(--font-data, ui-monospace, monospace);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+.rendererStatus {
+  min-block-size: 1em;
+  margin: 0;
+  color: var(--chart-muted);
+  font-size: 0.625rem;
+  line-height: 1.4;
 }
 
 .summary {
   min-inline-size: 0;
+  margin: 0;
   padding: 0.4rem 0.5rem;
   border-block-start: 1px solid var(--chart-border);
   color: var(--chart-text);
@@ -212,10 +118,53 @@
   border-inline-start: 3px dotted var(--chart-flat);
 }
 
+.tooltip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.25rem 0.75rem;
+  min-inline-size: 0;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--chart-border);
+  border-radius: var(--stock-beta-control-radius, var(--radius-control, 4px));
+  background: var(--chart-panel);
+  color: var(--chart-secondary);
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltipItem {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem;
+  min-inline-size: 0;
+}
+
+.tooltipItem > span {
+  color: var(--chart-muted);
+}
+
+.tooltipItem strong {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  color: var(--chart-text);
+  font-weight: 500;
+  text-align: end;
+}
+
+.chartFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  min-inline-size: 0;
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem 0.75rem;
+  gap: 0.2rem 0.7rem;
   min-inline-size: 0;
   margin: 0;
   padding: 0;
@@ -261,10 +210,43 @@
   border-block-start-color: var(--chart-secondary);
 }
 
-.emptyLabel {
-  fill: var(--chart-muted);
-  font-family: var(--font-display, sans-serif);
-  font-size: 14px;
+.resetButton {
+  min-block-size: 2rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--chart-border);
+  border-radius: var(--stock-beta-control-radius, var(--radius-control, 4px));
+  background: var(--chart-panel);
+  color: var(--chart-secondary);
+  font: 0.625rem var(--font-display, sans-serif);
+  cursor: pointer;
+}
+
+.resetButton:focus-visible {
+  outline: 2px solid var(--chart-accent);
+  outline-offset: 1px;
+}
+
+.resetButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.attribution {
+  margin: 0;
+  color: var(--chart-muted);
+  font-size: 0.5625rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.attribution a {
+  color: var(--chart-secondary);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.attributionLabel {
+  font-weight: 600;
 }
 
 .srOnly {
@@ -281,109 +263,40 @@
 }
 
 @media (max-width: 32rem) {
-  .axisLabel {
-    font-size: 10px;
-  }
-
-  .axisTitle {
-    font-size: 9px;
+  .tooltip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chartSvg,
-  .chartSvg * {
-    animation: none;
+  .chartSurface,
+  .chartSurface * {
+    scroll-behavior: auto;
     transition: none;
   }
 }
 
 @media (forced-colors: active) {
-  .chartSurface {
+  .chartSurface,
+  .tooltip,
+  .resetButton {
     border-color: CanvasText;
     background: Canvas;
     color: CanvasText;
   }
 
-  .gridLine,
-  .volumeDivider,
-  .candleWick,
-  .candleBody,
-  .volumeBar,
-  .sma20,
-  .sma60 {
-    stroke: CanvasText;
-  }
-
-  .gridLine,
-  .volumeDivider {
-    opacity: 0.55;
-  }
-
-  .axisLabel,
-  .axisTitle,
-  .emptyLabel,
-  .tooltipText {
-    fill: CanvasText;
-  }
-
-  .candleBody[data-direction="up"],
-  .candleBody[data-direction="down"],
-  .candleBody[data-direction="flat"] {
-    fill: Canvas;
-    stroke: CanvasText;
-  }
-
-  .candleBody[data-direction="up"] {
-    stroke-width: 2;
-  }
-
-  .candleBody[data-direction="down"] {
-    stroke-dasharray: 4 2;
-  }
-
-  .candleBody[data-direction="flat"] {
-    stroke-dasharray: 1 2;
-  }
-
-  .volumeBar[data-direction="up"] {
-    fill: CanvasText;
-  }
-
-  .volumeBar[data-direction="down"] {
-    fill: Canvas;
-  }
-
-  .volumeBar[data-direction="flat"] {
-    fill: CanvasText;
-    opacity: 0.55;
-  }
-
-  .sma20,
-  .sma60 {
-    stroke: CanvasText;
-  }
-
-  .sma60 {
-    stroke-dasharray: 5 3;
-  }
-
-  .crosshair line,
-  .crosshair circle,
-  .tooltipSurface {
-    stroke: CanvasText;
-  }
-
-  .crosshair circle {
-    fill: CanvasText;
-  }
-
-  .tooltipSurface {
-    fill: Canvas;
+  .chartSurface:focus-visible,
+  .resetButton:focus-visible {
+    outline-color: Highlight;
   }
 
   .summary,
-  .legend {
+  .legend,
+  .rendererStatus,
+  .attribution,
+  .attribution a,
+  .tooltipItem > span,
+  .tooltipItem strong {
     color: CanvasText;
   }
 

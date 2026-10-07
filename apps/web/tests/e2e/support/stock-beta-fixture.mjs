@@ -303,7 +303,13 @@ function chartDelayFor(scenario, instrumentId, range) {
 
 function chartPayload(signalRow, snapshotData, range, scenario) {
   const allBars = fullChartBars(signalRow.instrument_id);
-  const bars = chartBarsForRange(allBars, range);
+  const rangedBars = chartBarsForRange(allBars, range);
+  const bars =
+    scenario.stockBetaChartSmaNullGap === true
+      ? rangedBars.map((bar, index) =>
+          index >= 120 && index <= 124 ? { ...bar, sma_20: null } : bar,
+        )
+      : rangedBars;
   const latestBar = allBars[allBars.length - 1];
   const previousBar = allBars[allBars.length - 2];
   const freshness = ["CURRENT", "STALE", "UNVERIFIABLE"].includes(scenario.stockBetaChartFreshness)

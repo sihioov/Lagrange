@@ -202,38 +202,38 @@ describe("stock-beta V2 dashboard composition", () => {
   it("derives V2 IDs, required regions, and responsive placements from catalog order", () => {
     expect(validateStockBetaWidgetArchitecture(stockBetaDashboardArchitecture)).toEqual([]);
     expect(stockBetaDashboardCatalog.map((entry) => entry.id)).toEqual([
-      "universe-management",
-      "membership-status",
+      "signal-profile",
       "signal-state",
       "ranked-signals",
-      "signal-profile",
       "signal-decomposition",
       "condition-matrix",
       "snapshot-tape",
+      "universe-management",
+      "membership-status",
       "policy-boundary",
       "provenance",
       "current-quote",
     ]);
     expect(stockBetaDashboardArchitecture.requiredWidgetIds).toEqual([
-      "universe-management",
-      "membership-status",
-      "ranked-signals",
       "signal-profile",
+      "ranked-signals",
       "signal-decomposition",
       "condition-matrix",
       "snapshot-tape",
+      "universe-management",
+      "membership-status",
       "policy-boundary",
       "provenance",
     ]);
     expect(stockBetaDashboardArchitecture.layout.desktop.map((placement) => placement.id)).toEqual([
-      "universe-management",
-      "membership-status",
+      "signal-profile",
       "signal-state",
       "ranked-signals",
-      "signal-profile",
       "signal-decomposition",
       "condition-matrix",
       "snapshot-tape",
+      "universe-management",
+      "membership-status",
       "policy-boundary",
       "provenance",
       "current-quote",
@@ -249,21 +249,21 @@ describe("stock-beta V2 dashboard composition", () => {
         ].includes(placement.id),
       ),
     ).toMatchObject([
-      { id: "ranked-signals", column: 1, columnSpan: 3, row: 1 },
-      { id: "signal-profile", column: 4, columnSpan: 6, row: 1 },
-      { id: "signal-decomposition", column: 10, columnSpan: 3, row: 1 },
-      { id: "condition-matrix", column: 1, columnSpan: 3, row: 2 },
-      { id: "snapshot-tape", column: 4, columnSpan: 9, row: 2 },
+      { id: "signal-profile", column: 1, columnSpan: 12, row: 1 },
+      { id: "ranked-signals", column: 1, columnSpan: 6, row: 2 },
+      { id: "signal-decomposition", column: 7, columnSpan: 6, row: 2 },
+      { id: "condition-matrix", column: 1, columnSpan: 3, row: 3 },
+      { id: "snapshot-tape", column: 4, columnSpan: 9, row: 3 },
     ]);
     expect(
       stockBetaDashboardArchitecture.layout.desktop
         .filter((placement) => placement.empty.visible)
         .map((placement) => placement.id),
     ).toEqual([
+      "signal-profile",
+      "signal-state",
       "universe-management",
       "membership-status",
-      "signal-state",
-      "signal-profile",
       "policy-boundary",
       "current-quote",
     ]);
@@ -449,9 +449,14 @@ describe("stock-beta V2 dashboard composition", () => {
   });
 
   it("uses catalog reorder for DOM order and derives compatibility placement variables", () => {
-    const universe = stockBetaDashboardCatalog[0];
-    const membership = stockBetaDashboardCatalog[1];
-    const signalState = stockBetaDashboardCatalog[2];
+    const catalogEntry = (id: string) => {
+      const entry = stockBetaDashboardCatalog.find((candidate) => candidate.id === id);
+      if (entry === undefined) throw new Error(`catalog entry ${id} was not found`);
+      return entry;
+    };
+    const universe = catalogEntry("universe-management");
+    const membership = catalogEntry("membership-status");
+    const signalState = catalogEntry("signal-state");
     const reorderedCatalog = defineStockBetaDashboardCatalog([
       universe,
       {
@@ -464,7 +469,7 @@ describe("stock-beta V2 dashboard composition", () => {
               ...signalState.placements.desktop.empty,
               column: 8,
               columnSpan: 5,
-              row: 1,
+              row: 7,
             },
           },
         },
@@ -479,12 +484,17 @@ describe("stock-beta V2 dashboard composition", () => {
               ...membership.placements.desktop.empty,
               column: 1,
               columnSpan: 12,
-              row: 2,
+              row: 6,
             },
           },
         },
       },
-      ...stockBetaDashboardCatalog.slice(3),
+      ...stockBetaDashboardCatalog.filter(
+        (entry) =>
+          entry.id !== "universe-management" &&
+          entry.id !== "signal-state" &&
+          entry.id !== "membership-status",
+      ),
     ]);
     const reorderedArchitecture = defineStockBetaWidgetArchitecture(reorderedCatalog);
     const viewModel = dashboardViewModel(null);
@@ -502,9 +512,9 @@ describe("stock-beta V2 dashboard composition", () => {
     const reorderedSignalState = renderedWidgetTag(reorderedMarkup, "signal-state");
 
     expect(renderedWidgetIds(defaultMarkup).slice(0, 3)).toEqual([
-      "universe-management",
-      "membership-status",
+      "signal-profile",
       "signal-state",
+      "universe-management",
     ]);
     expect(renderedWidgetIds(reorderedMarkup).slice(0, 3)).toEqual([
       "universe-management",
@@ -514,10 +524,10 @@ describe("stock-beta V2 dashboard composition", () => {
     expect(defaultSignalState).toContain("--desktop-grid-column:1");
     expect(defaultSignalState).toContain("--desktop-grid-column-span:12");
     expect(defaultSignalState).toContain("--desktop-grid-row:2");
-    expect(defaultSignalState).toContain("--desktop-order:2");
+    expect(defaultSignalState).toContain("--desktop-order:1");
     expect(reorderedSignalState).toContain("--desktop-grid-column:8");
     expect(reorderedSignalState).toContain("--desktop-grid-column-span:5");
-    expect(reorderedSignalState).toContain("--desktop-grid-row:1");
+    expect(reorderedSignalState).toContain("--desktop-grid-row:7");
     expect(reorderedSignalState).toContain("--desktop-order:1");
     expect(reorderedSignalState).not.toBe(defaultSignalState);
   });

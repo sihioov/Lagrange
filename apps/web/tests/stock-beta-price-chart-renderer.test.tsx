@@ -8,6 +8,7 @@ import {
   movePriceChartSelection,
   PriceChart,
 } from "@/components/stock-beta/chart";
+import { resolvePriceChartKeyboardSelection } from "@/components/stock-beta/chart/price-chart";
 
 function sessionDate(index: number): string {
   return new Date(Date.UTC(2026, 0, 2 + index)).toISOString().slice(0, 10);
@@ -103,10 +104,26 @@ describe("stock-beta presentation-only price chart geometry", () => {
     expect(movePriceChartSelection(2, "ArrowLeft", indices)).toBe(2);
     expect(movePriceChartSelection(9, "ArrowRight", indices)).toBe(9);
   });
+
+  it("reveals the committed selection when keyboard navigation requests an unaccepted controlled value", () => {
+    const indices = [2, 5, 9] as const;
+    const selection = resolvePriceChartKeyboardSelection(5, 9, "ArrowLeft", indices, true);
+
+    expect(selection).toEqual({ requestedIndex: 2, revealIndex: 5 });
+  });
+
+  it("reveals a boundary selection again when keyboard navigation requests no new index", () => {
+    const indices = [2, 5, 9] as const;
+
+    expect(resolvePriceChartKeyboardSelection(9, 9, "End", indices, false)).toEqual({
+      requestedIndex: 9,
+      revealIndex: 9,
+    });
+  });
 });
 
-describe("PriceChart renderer", () => {
-  it("renders an accessible focus surface, summary, tooltip, direction labels, and format callbacks", () => {
+describe("PriceChart SSR shell and accessible HTML contract", () => {
+  it("renders a focusable HTML region, live summary, OHLCV tooltip, legend, and attribution", () => {
     const markup = renderToStaticMarkup(
       <PriceChart
         bars={[makeBar(0), makeBar(1, { close: 102, high: 104, open: 100 }), makeBar(2)]}
@@ -125,32 +142,62 @@ describe("PriceChart renderer", () => {
 
     expect(markup).toContain('data-testid="stock-beta-price-chart"');
     expect(markup).toContain('data-testid="stock-beta-price-chart-surface"');
-    expect(markup).toContain('type="button"');
-    expect(markup).toContain('role="img"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-canvas"');
+    expect(markup).toContain('data-renderer-status="loading"');
+    expect(markup).toMatch(
+      /<section[^>]*aria-label="EOD price chart"[^>]*data-testid="stock-beta-price-chart-surface"/,
+    );
     expect(markup).toContain('tabindex="0"');
+    expect(markup).not.toContain('role="button"');
+    expect(markup).not.toMatch(/<button[^>]*data-testid="stock-beta-price-chart-surface"/);
+    expect(markup).toContain('data-testid="stock-beta-price-chart-reset"');
+    expect(markup).not.toContain("<svg");
     expect(markup).toContain('aria-keyshortcuts="ArrowLeft ArrowRight Home End"');
-    expect(markup).toContain('viewBox="0 0 960 440"');
     expect(markup).toContain('aria-live="polite"');
     expect(markup).toContain('data-testid="stock-beta-price-chart-summary"');
     expect(markup).toContain('data-testid="stock-beta-price-chart-tooltip"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-legend"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-reset"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-attribution"');
     expect(markup).toContain("D:2026-01-04");
-    expect(markup).toContain("Open: P:");
-    expect(markup).toContain("Volume: V:");
+    expect(markup).toContain("Open");
+    expect(markup).toContain("P:");
+    expect(markup).toContain("Volume");
+    expect(markup).toContain("V:");
     expect(markup).toContain("Rising");
     expect(markup).toContain("Down");
+    expect(markup).toContain("SMA20");
+    expect(markup).toContain("SMA60");
+    expect(markup).toContain("TradingView Lightweight Charts™");
+    expect(markup).toContain("Copyright (с) 2025 TradingView, Inc.");
+    expect(markup).toContain('href="https://www.tradingview.com/"');
+    expect(markup).toContain('href="/licenses/lightweight-charts/NOTICE.txt"');
+    expect(markup).toContain('href="/licenses/lightweight-charts/LICENSE.txt"');
     expect(markup).not.toMatch(/NaN|Infinity/);
   });
 
-  it("renders all 261 bars, volume bars, warm-up gaps, and finite SVG attributes", () => {
+  it("keeps the fixed chart shell and latest selection for a full 261-observation dataset", () => {
     const bars = Array.from({ length: 261 }, (_, index) => makeBar(index));
     const markup = renderToStaticMarkup(<PriceChart bars={bars} />);
 
-    expect((markup.match(/data-candle-index=/g) ?? []).length).toBe(261);
-    expect((markup.match(/data-volume-index=/g) ?? []).length).toBe(261);
-    expect((markup.match(/data-sma="20"/g) ?? []).length).toBeGreaterThan(0);
-    expect((markup.match(/data-sma="60"/g) ?? []).length).toBeGreaterThan(0);
-    expect(markup).toContain('viewBox="0 0 960 440"');
-    expect(markup).not.toMatch(/NaN|Infinity/);
+    expect(markup).toContain('data-testid="stock-beta-price-chart-canvas"');
+    expect(markup).toContain('data-selected-index="260"');
+    expect(markup).toContain(`Date: ${sessionDate(260)}`);
+    expect(markup).toContain('data-sma="20"');
+    expect(markup).toContain('data-sma="60"');
+    expect(markup).not.toContain("data-candle-index");
+    expect(markup).not.toContain("data-volume-index");
+  });
+
+  it("preserves controlled and initial selection by original source index across skipped bars", () => {
+    const bars = [makeBar(0), makeBar(1, { high: Number.NaN }), makeBar(2)];
+    const initialMarkup = renderToStaticMarkup(<PriceChart bars={bars} initialSelectedIndex={0} />);
+    const controlledMarkup = renderToStaticMarkup(<PriceChart bars={bars} selectedIndex={2} />);
+
+    expect(initialMarkup).toContain('data-selected-index="0"');
+    expect(initialMarkup).toContain(`Date: ${sessionDate(0)}`);
+    expect(controlledMarkup).toContain('data-selected-index="2"');
+    expect(controlledMarkup).toContain(`Date: ${sessionDate(2)}`);
   });
 
   it("fails closed to a textual empty state when no finite bars are renderable", () => {
@@ -159,6 +206,7 @@ describe("PriceChart renderer", () => {
 
     expect(markup).toContain("No valid price observations are available.");
     expect(markup).toContain('data-selected-index="none"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-canvas"');
     expect(markup).not.toMatch(/NaN|Infinity/);
   });
 });

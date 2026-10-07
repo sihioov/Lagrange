@@ -206,7 +206,13 @@ describe("Stock Beta chart-capable signal profile", () => {
 
     expect(markup).toContain('data-testid="stock-beta-signal-preview"');
     expect(markup).toContain('data-testid="stock-beta-price-chart"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-canvas"');
     expect(markup).toContain('data-testid="stock-beta-price-chart-summary"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-tooltip"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-legend"');
+    expect(markup).toContain('data-testid="stock-beta-price-chart-reset"');
+    expect(markup).toContain('data-renderer-status="loading"');
+    expect(markup).not.toContain("<svg");
     expect(markup).toContain('data-selected-instrument="005930.KRX"');
     expect(markup).toContain('aria-selected="true"');
     expect(markup).toContain('data-raw-value="72100"');
@@ -225,6 +231,19 @@ describe("Stock Beta chart-capable signal profile", () => {
     expect(markup).toContain("Volume: 12,345,678");
     expect(markup).toContain('aria-keyshortcuts="ArrowLeft ArrowRight Home End"');
     expect(markup).toContain(stockBetaDictionary.en.chartKeyboardInstructions);
+    expect(markup).toContain("TradingView Lightweight Charts™");
+    expect(markup).toContain("Copyright (с) 2025 TradingView, Inc.");
+    expect(markup).toContain('href="/licenses/lightweight-charts/NOTICE.txt"');
+    expect(markup).toContain('href="/licenses/lightweight-charts/LICENSE.txt"');
+  });
+
+  it("localizes the PriceChart reset, renderer status, and attribution copy", () => {
+    const markup = renderPreview({ locale: "ko" });
+
+    expect(markup).toContain(stockBetaDictionary.ko.chartResetLabel);
+    expect(markup).toContain(stockBetaDictionary.ko.chartRendererLoadingLabel);
+    expect(markup).toContain(stockBetaDictionary.ko.chartAttributionLabel);
+    expect(markup).toContain("시가: 71,800");
   });
 
   it("exposes all four tabs with Price selected and localized labels", () => {

@@ -34,13 +34,14 @@ export const defineStockBetaDashboardCatalog =
 /** Array order is the canonical dashboard DOM and accessibility reading order. */
 export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
   {
-    id: "universe-management",
-    component: UniverseManagementWidget,
+    id: "signal-profile",
+    component: SignalPreviewWidget,
     required: true,
     placements: {
-      desktop: gridPlacement("large", 1, 7, 3, true, {
+      // Keep the chart first and full-width across visual and accessibility reading order.
+      desktop: gridPlacement("full", 1, 12, 1, true, {
         column: 1,
-        columnSpan: 7,
+        columnSpan: 12,
         row: 1,
         visible: true,
       }),
@@ -59,31 +60,6 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     },
   },
   {
-    id: "membership-status",
-    component: MembershipStatusWidget,
-    required: true,
-    placements: {
-      desktop: gridPlacement("medium", 8, 5, 3, true, {
-        column: 8,
-        columnSpan: 5,
-        row: 1,
-        visible: true,
-      }),
-      tablet: gridPlacement("full", 1, 12, 2, true, {
-        column: 1,
-        columnSpan: 12,
-        row: 2,
-        visible: true,
-      }),
-      mobile: gridPlacement("full", 1, 1, 2, true, {
-        column: 1,
-        columnSpan: 1,
-        row: 2,
-        visible: true,
-      }),
-    },
-  },
-  {
     id: "signal-state",
     component: SignalStateWidget,
     required: false,
@@ -94,16 +70,16 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
         row: 2,
         visible: true,
       }),
-      tablet: gridPlacement("full", 1, 12, 3, false, {
+      tablet: gridPlacement("full", 1, 12, 2, false, {
         column: 1,
         columnSpan: 12,
-        row: 3,
+        row: 2,
         visible: true,
       }),
-      mobile: gridPlacement("full", 1, 1, 3, false, {
+      mobile: gridPlacement("full", 1, 1, 2, false, {
         column: 1,
         columnSpan: 1,
-        row: 3,
+        row: 2,
         visible: true,
       }),
     },
@@ -113,16 +89,41 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     component: RankedSignalsWidget,
     required: true,
     placements: {
-      desktop: gridPlacement("small", 1, 3, 1, true, {
-        column: 1,
-        columnSpan: 3,
-        row: 1,
-        visible: false,
-      }),
-      tablet: gridPlacement("medium", 1, 6, 3, true, {
+      desktop: gridPlacement("large", 1, 6, 2, true, {
         column: 1,
         columnSpan: 6,
-        row: 3,
+        row: 2,
+        visible: false,
+      }),
+      tablet: gridPlacement("medium", 1, 6, 2, true, {
+        column: 1,
+        columnSpan: 6,
+        row: 2,
+        visible: false,
+      }),
+      mobile: gridPlacement("full", 1, 1, 2, true, {
+        column: 1,
+        columnSpan: 1,
+        row: 2,
+        visible: false,
+      }),
+    },
+  },
+  {
+    id: "signal-decomposition",
+    component: SignalDecompositionWidget,
+    required: true,
+    placements: {
+      desktop: gridPlacement("large", 7, 6, 2, true, {
+        column: 7,
+        columnSpan: 6,
+        row: 2,
+        visible: false,
+      }),
+      tablet: gridPlacement("medium", 7, 6, 2, true, {
+        column: 7,
+        columnSpan: 6,
+        row: 2,
         visible: false,
       }),
       mobile: gridPlacement("full", 1, 1, 3, true, {
@@ -134,46 +135,45 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     },
   },
   {
-    id: "signal-profile",
-    component: SignalPreviewWidget,
+    id: "condition-matrix",
+    component: ConditionMatrixWidget,
     required: true,
     placements: {
-      // The profile widget is a chart-capable primary analysis surface.
-      desktop: gridPlacement("large", 4, 6, 1, true, {
+      desktop: gridPlacement("small", 1, 3, 3, true, {
         column: 1,
-        columnSpan: 12,
-        row: 4,
-        visible: true,
+        columnSpan: 3,
+        row: 3,
+        visible: false,
       }),
-      tablet: gridPlacement("medium", 7, 6, 3, true, {
+      tablet: gridPlacement("medium", 1, 6, 3, true, {
         column: 1,
-        columnSpan: 12,
-        row: 5,
-        visible: true,
+        columnSpan: 6,
+        row: 3,
+        visible: false,
       }),
       mobile: gridPlacement("full", 1, 1, 4, true, {
         column: 1,
         columnSpan: 1,
-        row: 5,
-        visible: true,
+        row: 4,
+        visible: false,
       }),
     },
   },
   {
-    id: "signal-decomposition",
-    component: SignalDecompositionWidget,
+    id: "snapshot-tape",
+    component: SnapshotTapeWidget,
     required: true,
     placements: {
-      desktop: gridPlacement("small", 10, 3, 1, true, {
-        column: 10,
-        columnSpan: 3,
-        row: 1,
+      desktop: gridPlacement("large", 4, 9, 3, true, {
+        column: 4,
+        columnSpan: 9,
+        row: 3,
         visible: false,
       }),
-      tablet: gridPlacement("full", 1, 12, 4, true, {
-        column: 1,
-        columnSpan: 12,
-        row: 4,
+      tablet: gridPlacement("medium", 7, 6, 3, true, {
+        column: 7,
+        columnSpan: 6,
+        row: 3,
         visible: false,
       }),
       mobile: gridPlacement("full", 1, 1, 5, true, {
@@ -185,52 +185,52 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     },
   },
   {
-    id: "condition-matrix",
-    component: ConditionMatrixWidget,
+    id: "universe-management",
+    component: UniverseManagementWidget,
     required: true,
     placements: {
-      desktop: gridPlacement("small", 1, 3, 2, true, {
+      desktop: gridPlacement("large", 1, 7, 4, true, {
         column: 1,
-        columnSpan: 3,
-        row: 2,
-        visible: false,
+        columnSpan: 7,
+        row: 3,
+        visible: true,
       }),
-      tablet: gridPlacement("full", 1, 6, 5, true, {
+      tablet: gridPlacement("full", 1, 12, 4, true, {
         column: 1,
-        columnSpan: 6,
-        row: 5,
-        visible: false,
+        columnSpan: 12,
+        row: 3,
+        visible: true,
       }),
       mobile: gridPlacement("full", 1, 1, 6, true, {
         column: 1,
         columnSpan: 1,
-        row: 6,
-        visible: false,
+        row: 3,
+        visible: true,
       }),
     },
   },
   {
-    id: "snapshot-tape",
-    component: SnapshotTapeWidget,
+    id: "membership-status",
+    component: MembershipStatusWidget,
     required: true,
     placements: {
-      desktop: gridPlacement("large", 4, 9, 2, true, {
-        column: 4,
-        columnSpan: 9,
-        row: 2,
-        visible: false,
+      desktop: gridPlacement("medium", 8, 5, 4, true, {
+        column: 8,
+        columnSpan: 5,
+        row: 3,
+        visible: true,
       }),
-      tablet: gridPlacement("full", 7, 6, 5, true, {
-        column: 7,
-        columnSpan: 6,
-        row: 5,
-        visible: false,
+      tablet: gridPlacement("full", 1, 12, 5, true, {
+        column: 1,
+        columnSpan: 12,
+        row: 4,
+        visible: true,
       }),
       mobile: gridPlacement("full", 1, 1, 7, true, {
         column: 1,
         columnSpan: 1,
-        row: 7,
-        visible: false,
+        row: 4,
+        visible: true,
       }),
     },
   },
@@ -239,22 +239,22 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     component: PolicyBoundaryWidget,
     required: true,
     placements: {
-      desktop: gridPlacement("full", 1, 12, 4, true, {
+      desktop: gridPlacement("full", 1, 12, 5, true, {
         column: 1,
         columnSpan: 12,
-        row: 3,
+        row: 4,
         visible: true,
       }),
       tablet: gridPlacement("full", 1, 12, 6, true, {
         column: 1,
         columnSpan: 12,
-        row: 4,
+        row: 5,
         visible: true,
       }),
       mobile: gridPlacement("full", 1, 1, 8, true, {
         column: 1,
         columnSpan: 1,
-        row: 4,
+        row: 5,
         visible: true,
       }),
     },
@@ -264,22 +264,22 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     component: ProvenanceWidget,
     required: true,
     placements: {
-      desktop: gridPlacement("full", 1, 12, 5, true, {
+      desktop: gridPlacement("full", 1, 12, 6, true, {
         column: 1,
         columnSpan: 12,
-        row: 4,
+        row: 6,
         visible: false,
       }),
       tablet: gridPlacement("full", 1, 12, 7, true, {
         column: 1,
         columnSpan: 12,
-        row: 5,
+        row: 7,
         visible: false,
       }),
       mobile: gridPlacement("full", 1, 1, 9, true, {
         column: 1,
         columnSpan: 1,
-        row: 5,
+        row: 9,
         visible: false,
       }),
     },
@@ -289,22 +289,22 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     component: CurrentQuoteWidget,
     required: false,
     placements: {
-      desktop: gridPlacement("full", 1, 12, 6, true, {
+      desktop: gridPlacement("full", 1, 12, 7, true, {
         column: 1,
         columnSpan: 12,
-        row: 6,
+        row: 5,
         visible: true,
       }),
       tablet: gridPlacement("full", 1, 12, 8, true, {
         column: 1,
         columnSpan: 12,
-        row: 8,
+        row: 6,
         visible: true,
       }),
       mobile: gridPlacement("full", 1, 1, 10, true, {
         column: 1,
         columnSpan: 1,
-        row: 10,
+        row: 6,
         visible: true,
       }),
     },

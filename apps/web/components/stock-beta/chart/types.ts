@@ -49,6 +49,11 @@ export type PriceChartCopy = {
   readonly upLabel: string;
   readonly downLabel: string;
   readonly unchangedLabel: string;
+  /** Optional additions retain compatibility with existing copy objects. */
+  readonly resetChartLabel?: string;
+  readonly rendererLoadingLabel?: string;
+  readonly rendererFailureLabel?: string;
+  readonly attributionLabel?: string;
 };
 
 export type PriceChartFormatters = {

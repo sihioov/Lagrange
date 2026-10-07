@@ -34,6 +34,10 @@ export type StockBetaDictionary = {
   readonly chartRangeLabel: string;
   readonly chartRangeOption: (range: OwnerEquityV2ChartRange) => string;
   readonly chartUpdatingLabel: string;
+  readonly chartResetLabel: string;
+  readonly chartRendererLoadingLabel: string;
+  readonly chartRendererFailureLabel: string;
+  readonly chartAttributionLabel: string;
   readonly closeLabel: string;
   readonly conditionLabel: string;
   readonly conditionMatrixDescription: string;
@@ -255,6 +259,10 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     chartRangeLabel: "EOD chart range",
     chartRangeOption: (range) => range.toUpperCase(),
     chartUpdatingLabel: "Updating EOD chart…",
+    chartResetLabel: "Reset zoom",
+    chartRendererLoadingLabel: "Loading interactive chart…",
+    chartRendererFailureLabel: "Interactive chart unavailable. The price values are hidden.",
+    chartAttributionLabel: "Chart attribution",
     closeLabel: "Close",
     conditionLabel: "Condition",
     conditionMatrixDescription:
@@ -487,6 +495,10 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     chartRangeLabel: "EOD 차트 기간",
     chartRangeOption: (range) => range.toUpperCase(),
     chartUpdatingLabel: "EOD 차트 갱신 중…",
+    chartResetLabel: "확대/축소 초기화",
+    chartRendererLoadingLabel: "대화형 차트를 불러오는 중…",
+    chartRendererFailureLabel: "대화형 차트를 사용할 수 없습니다. 가격 값은 숨겨집니다.",
+    chartAttributionLabel: "차트 출처",
     closeLabel: "종가",
     conditionLabel: "조건",
     conditionMatrixDescription: "동일 면적 타일이 서버 순서와 반환 조건을 보존합니다.",

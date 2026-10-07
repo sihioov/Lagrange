@@ -316,6 +316,10 @@ async function waitForActiveSyntheticDemand(
 
 test.describe("provider-free Stock Beta intraday integration", () => {
   test.beforeAll(() => {
+    test.skip(
+      intradayQuotesMode === "off",
+      "This standalone intraday suite requires owner_only; default off-mode EOD chart coverage runs in stock-beta.spec.ts.",
+    );
     expect(
       intradayQuotesMode,
       "the intraday suite exercises the explicitly owner_only standalone build",
@@ -384,7 +388,31 @@ test.describe("provider-free Stock Beta intraday integration", () => {
 
     const chart = page.getByTestId("stock-beta-price-chart");
     await expect(chart).toBeVisible();
-    await expect(chart.locator("g[data-candle-index]")).toHaveCount(261);
+    await expect(chart).toHaveAttribute("data-renderer-status", "ready");
+    const chartSummary = chart.getByTestId("stock-beta-price-chart-summary");
+    await expect(chartSummary).toContainText("2026-08-28");
+    await expect(chartSummary).toContainText(
+      "Open: 12,045 · High: 12,140 · Low: 12,025 · Close: 12,120 · Volume: 106,000",
+    );
+    await expect
+      .poll(async () =>
+        chart.getByTestId("stock-beta-price-chart-canvas").evaluate((host) => {
+          const canvas = Array.from(host.querySelectorAll("canvas")).find(
+            (candidate) => candidate.style.zIndex === "1" && candidate.width > 100,
+          );
+          const context = canvas?.getContext("2d", { willReadFrequently: true });
+          if (canvas === undefined || context === null || context === undefined) return 0;
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          const colors = new Set<string>();
+          for (let offset = 0; offset < pixels.length; offset += 24) {
+            if ((pixels[offset + 3] ?? 0) > 0) {
+              colors.add(`${pixels[offset]},${pixels[offset + 1]},${pixels[offset + 2]}`);
+            }
+          }
+          return colors.size;
+        }),
+      )
+      .toBeGreaterThan(5);
     await expect(page.getByRole("tabpanel", { name: "Price" })).toContainText("12120");
     const browserChartRequestsBefore = requestsFor(page).filter((url) =>
       url.pathname.endsWith("/chart"),

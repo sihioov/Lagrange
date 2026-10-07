@@ -1,13 +1,23 @@
+// biome-ignore-all lint/a11y/noNoninteractiveTabindex: The named chart region is focusable for arrow-key inspection.
 "use client";
 
-import { type KeyboardEvent, type PointerEvent, type TouchEvent, useId, useState } from "react";
+import type {
+  BusinessDay,
+  CandlestickData,
+  HistogramData,
+  IChartApi,
+  ISeriesApi,
+  LineData,
+  Time,
+  WhitespaceData,
+} from "lightweight-charts";
+import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  buildPriceChartGeometry,
-  findNearestPriceChartIndexFromClientX,
+  directionForPriceChartBar,
   movePriceChartSelection,
-  type PriceChartGeometry,
   type PriceChartNavigationKey,
 } from "./geometry";
+import { buildLightweightChartData, type LightweightChartDataResult } from "./lightweight-data";
 import styles from "./price-chart.module.css";
 import type {
   PriceChartBar,
@@ -18,7 +28,7 @@ import type {
   PriceChartProps,
 } from "./types";
 
-export const DEFAULT_PRICE_CHART_COPY: PriceChartCopy = {
+export const DEFAULT_PRICE_CHART_COPY: Required<PriceChartCopy> = {
   chartLabel: "Price chart",
   instructions:
     "Focus the chart, then use ArrowLeft or ArrowRight to move one observation, or Home and End to jump.",
@@ -37,18 +47,88 @@ export const DEFAULT_PRICE_CHART_COPY: PriceChartCopy = {
   upLabel: "Up",
   downLabel: "Down",
   unchangedLabel: "Unchanged",
+  resetChartLabel: "Reset zoom",
+  rendererLoadingLabel: "Loading interactive chart…",
+  rendererFailureLabel: "Interactive chart unavailable. The price values are hidden.",
+  attributionLabel: "Chart attribution",
 };
 
-type InteractionSource = "keyboard" | "pointer" | "touch";
+type InteractionSource = "keyboard" | "pointer";
 type NumericField = "open" | "high" | "low" | "close" | "volume" | "sma_20" | "sma_60";
-
 type ResolvedFormatters = {
   readonly date: (sessionDate: string) => string;
   readonly price: (value: number) => string;
   readonly volume: (value: number) => string;
 };
+type RendererStatus = "loading" | "ready" | "error";
+type CandleItem = CandlestickData<Time> | WhitespaceData<Time>;
+type VolumeItem = HistogramData<Time> | WhitespaceData<Time>;
+type CandleSeries = ISeriesApi<"Candlestick", Time>;
+type VolumeSeries = ISeriesApi<"Histogram", Time>;
+type LineSeries = ISeriesApi<"Line", Time>;
+type SeriesByDirection<T> = Record<PriceChartDirection, T[]>;
+type RuntimeSeriesByDirection<T> = Record<PriceChartDirection, T>;
+type LightweightChartsModule = typeof import("lightweight-charts");
+type CrosshairMoveEvent = Parameters<Parameters<IChartApi["subscribeCrosshairMove"]>[0]>[0];
 
-function mergeCopy(copy: Partial<PriceChartCopy> | undefined): PriceChartCopy {
+type ChartTheme = {
+  readonly panel: string;
+  readonly text: string;
+  readonly secondary: string;
+  readonly muted: string;
+  readonly border: string;
+  readonly grid: string;
+  readonly up: string;
+  readonly down: string;
+  readonly flat: string;
+  readonly accent: string;
+};
+
+type ChartDatasetKeys = {
+  readonly dataset: string;
+  readonly visual: string;
+};
+
+type PriceChartKeyboardSelection = {
+  readonly requestedIndex: number | undefined;
+  readonly revealIndex: number | undefined;
+};
+
+export function resolvePriceChartKeyboardSelection(
+  activeIndex: number | undefined,
+  interactionIndex: number | undefined,
+  key: PriceChartNavigationKey,
+  sourceIndices: readonly number[],
+  controlled: boolean,
+): PriceChartKeyboardSelection {
+  const requestedIndex = movePriceChartSelection(
+    controlled ? activeIndex : interactionIndex,
+    key,
+    sourceIndices,
+  );
+  return {
+    requestedIndex,
+    revealIndex: controlled ? activeIndex : requestedIndex,
+  };
+}
+
+type PriceChartRuntime = {
+  readonly chart: IChartApi;
+  readonly library: LightweightChartsModule;
+  readonly candles: RuntimeSeriesByDirection<CandleSeries>;
+  readonly volumes: RuntimeSeriesByDirection<VolumeSeries>;
+  readonly sma20: LineSeries[];
+  readonly sma60: LineSeries[];
+  dispose: () => void;
+  theme: ChartTheme;
+  lastDatasetKey: string | undefined;
+  lastVisualKey: string | undefined;
+  lastWidth: number;
+  lastHeight: number;
+  disposed: boolean;
+};
+
+function mergeCopy(copy: Partial<PriceChartCopy> | undefined): Required<PriceChartCopy> {
   return { ...DEFAULT_PRICE_CHART_COPY, ...(copy ?? {}) };
 }
 
@@ -118,7 +198,7 @@ function formatDateValue(bar: PriceChartBar, formatters: ResolvedFormatters): st
 function directionLabel(
   bar: PriceChartBar,
   direction: PriceChartDirection,
-  copy: PriceChartCopy,
+  copy: Required<PriceChartCopy>,
 ): string {
   return (
     providedLabel(bar, "direction") ??
@@ -128,10 +208,6 @@ function directionLabel(
         ? copy.downLabel
         : copy.unchangedLabel)
   );
-}
-
-function sourceIndices(geometry: PriceChartGeometry): readonly number[] {
-  return geometry.validSourceIndices;
 }
 
 function resolveSelectedIndex(
@@ -163,68 +239,421 @@ function navigationKey(key: string): PriceChartNavigationKey | undefined {
     : undefined;
 }
 
-function linePoints(points: readonly { readonly x: number; readonly y: number }[]): string {
-  return points.map((point) => `${point.x},${point.y}`).join(" ");
-}
-
-function joinClasses(...classNames: readonly (string | undefined)[]): string {
-  return classNames.filter((className): className is string => className !== undefined).join(" ");
-}
-
-function tooltipPosition(
-  geometry: PriceChartGeometry,
-  selectedX: number,
-): {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-} {
-  const width = Math.min(188, Math.max(0, geometry.width - 8));
-  const height = 116;
-  const preferredX =
-    selectedX > geometry.plotLeft + geometry.plotWidth / 2
-      ? geometry.plotLeft + 8
-      : geometry.plotRight - width - 8;
-  const x = Math.max(0, Math.min(Math.max(0, geometry.width - width), preferredX));
-  const preferredY = geometry.priceTop + 8;
-  const y = Math.max(0, Math.min(Math.max(0, geometry.height - height), preferredY));
-  return { x, y, width, height };
-}
-
-function candleLabel(
-  bar: PriceChartBar,
-  direction: PriceChartDirection,
-  copy: PriceChartCopy,
-  formatters: ResolvedFormatters,
-): string {
-  return [
-    `${formatDateValue(bar, formatters)} · ${directionLabel(bar, direction, copy)}`,
-    `${copy.openLabel}: ${formatBarValue(bar, "open", formatters)}`,
-    `${copy.highLabel}: ${formatBarValue(bar, "high", formatters)}`,
-    `${copy.lowLabel}: ${formatBarValue(bar, "low", formatters)}`,
-    `${copy.closeLabel}: ${formatBarValue(bar, "close", formatters)}`,
-    `${copy.volumeLabel}: ${formatBarValue(bar, "volume", formatters)}`,
-  ].join("; ");
-}
-
 function selectedSummary(
   bar: PriceChartBar | undefined,
   direction: PriceChartDirection | undefined,
-  copy: PriceChartCopy,
+  copy: Required<PriceChartCopy>,
   formatters: ResolvedFormatters,
 ): string {
   if (bar === undefined || direction === undefined) return copy.noDataLabel;
   return [
     `${copy.selectedObservationLabel}: ${formatDateValue(bar, formatters)}`,
     `${copy.dateLabel}: ${bar.session_date}`,
-    `${directionLabel(bar, direction, copy)}`,
+    directionLabel(bar, direction, copy),
     `${copy.openLabel}: ${formatBarValue(bar, "open", formatters)}`,
     `${copy.highLabel}: ${formatBarValue(bar, "high", formatters)}`,
     `${copy.lowLabel}: ${formatBarValue(bar, "low", formatters)}`,
     `${copy.closeLabel}: ${formatBarValue(bar, "close", formatters)}`,
     `${copy.volumeLabel}: ${formatBarValue(bar, "volume", formatters)}`,
   ].join(" · ");
+}
+
+function detailsForBar(
+  bar: PriceChartBar,
+  direction: PriceChartDirection,
+  copy: Required<PriceChartCopy>,
+  formatters: ResolvedFormatters,
+): readonly { readonly label: string; readonly value: string }[] {
+  return [
+    {
+      label: copy.dateLabel,
+      value: `${formatDateValue(bar, formatters)} · ${directionLabel(bar, direction, copy)}`,
+    },
+    { label: copy.openLabel, value: formatBarValue(bar, "open", formatters) },
+    { label: copy.highLabel, value: formatBarValue(bar, "high", formatters) },
+    { label: copy.lowLabel, value: formatBarValue(bar, "low", formatters) },
+    { label: copy.closeLabel, value: formatBarValue(bar, "close", formatters) },
+    { label: copy.volumeLabel, value: formatBarValue(bar, "volume", formatters) },
+  ];
+}
+
+function datasetKeys(data: LightweightChartDataResult): ChartDatasetKeys {
+  const visual = JSON.stringify([
+    data.candles,
+    data.volumes,
+    data.sma20Segments,
+    data.sma60Segments,
+  ]);
+  const statusDetails =
+    data.status === "ready"
+      ? data.validSourceIndices
+      : data.status === "invalid"
+        ? [data.reason, data.sourceIndex, data.sessionDate, data.previousSessionDate]
+        : [data.reason];
+  return { dataset: JSON.stringify([data.status, visual, statusDetails]), visual };
+}
+
+function emptyBuckets<T>(): SeriesByDirection<T> {
+  return { up: [], down: [], flat: [] };
+}
+
+function splitChartData(
+  data: LightweightChartDataResult,
+  bars: readonly PriceChartBar[],
+): {
+  readonly candles: SeriesByDirection<CandleItem>;
+  readonly volumes: SeriesByDirection<VolumeItem>;
+} {
+  const candles = emptyBuckets<CandleItem>();
+  const volumes = emptyBuckets<VolumeItem>();
+  if (data.status !== "ready") return { candles, volumes };
+
+  data.candles.forEach((candle, index) => {
+    const sourceIndex = data.validSourceIndices[index];
+    const bar = sourceIndex === undefined ? undefined : bars[sourceIndex];
+    if (bar === undefined) return;
+    const direction = directionForPriceChartBar(bar);
+    const volume = data.volumes[index];
+    for (const candidate of ["up", "down", "flat"] as const) {
+      if (direction === candidate) {
+        candles[candidate].push(candle);
+        if (volume !== undefined) volumes[candidate].push(volume);
+      } else {
+        candles[candidate].push({ time: candle.time });
+        if (volume !== undefined) volumes[candidate].push({ time: volume.time });
+      }
+    }
+  });
+  return { candles, volumes };
+}
+
+function isoDateForTime(time: Time): string | undefined {
+  if (typeof time === "string") {
+    return /^\d{4}-\d{2}-\d{2}$/.test(time) ? time : undefined;
+  }
+  if (typeof time !== "object") return undefined;
+  const businessDay = time as BusinessDay;
+  if (
+    !Number.isInteger(businessDay.year) ||
+    !Number.isInteger(businessDay.month) ||
+    !Number.isInteger(businessDay.day)
+  ) {
+    return undefined;
+  }
+  return `${String(businessDay.year).padStart(4, "0")}-${String(businessDay.month).padStart(2, "0")}-${String(businessDay.day).padStart(2, "0")}`;
+}
+
+function originalIndexForTime(data: LightweightChartDataResult, time: Time): number | undefined {
+  const direct = data.dateToOriginalIndex.get(time);
+  if (direct !== undefined) return direct;
+  const sessionDate = isoDateForTime(time);
+  return sessionDate === undefined ? undefined : data.dateToOriginalIndex.get(sessionDate);
+}
+
+function computedColor(root: HTMLElement, name: string, fallback: string): string {
+  const value = getComputedStyle(root).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function resolveTheme(root: HTMLElement, forcedColors: boolean): ChartTheme {
+  if (forcedColors) {
+    return {
+      panel: "Canvas",
+      text: "CanvasText",
+      secondary: "CanvasText",
+      muted: "GrayText",
+      border: "CanvasText",
+      grid: "GrayText",
+      up: "Highlight",
+      down: "LinkText",
+      flat: "GrayText",
+      accent: "Highlight",
+    };
+  }
+  return {
+    panel: computedColor(root, "--chart-panel", "#11161b"),
+    text: computedColor(root, "--chart-text", "#dce3e9"),
+    secondary: computedColor(root, "--chart-secondary", "#9aa6b2"),
+    muted: computedColor(root, "--chart-muted", "#7c8792"),
+    border: computedColor(root, "--chart-border", "#252c33"),
+    grid: computedColor(root, "--chart-border", "#252c33"),
+    up: computedColor(root, "--chart-up", "#20b486"),
+    down: computedColor(root, "--chart-down", "#ec5f67"),
+    flat: computedColor(root, "--chart-flat", "#7c8792"),
+    accent: computedColor(root, "--chart-accent", "#35a8ff"),
+  };
+}
+
+function applySeriesTheme(runtime: PriceChartRuntime, theme: ChartTheme): void {
+  runtime.candles.up.applyOptions({
+    upColor: theme.up,
+    downColor: theme.up,
+    borderUpColor: theme.up,
+    borderDownColor: theme.up,
+    wickUpColor: theme.up,
+    wickDownColor: theme.up,
+  });
+  runtime.candles.down.applyOptions({
+    upColor: theme.panel,
+    downColor: theme.panel,
+    borderUpColor: theme.down,
+    borderDownColor: theme.down,
+    wickUpColor: theme.down,
+    wickDownColor: theme.down,
+  });
+  runtime.candles.flat.applyOptions({
+    upColor: theme.flat,
+    downColor: theme.flat,
+    borderUpColor: theme.flat,
+    borderDownColor: theme.flat,
+    wickUpColor: theme.flat,
+    wickDownColor: theme.flat,
+  });
+
+  runtime.volumes.up.applyOptions({ color: theme.up });
+  runtime.volumes.down.applyOptions({ color: theme.down });
+  runtime.volumes.flat.applyOptions({ color: theme.flat });
+  for (const series of runtime.sma20) series.applyOptions({ color: theme.accent });
+  for (const series of runtime.sma60) series.applyOptions({ color: theme.secondary });
+}
+
+function applyRuntimeTheme(
+  runtime: PriceChartRuntime,
+  theme: ChartTheme,
+  locale: string,
+  formatters: ResolvedFormatters,
+): void {
+  runtime.theme = theme;
+  runtime.chart.applyOptions({
+    layout: {
+      background: { type: runtime.library.ColorType.Solid, color: theme.panel },
+      textColor: theme.text,
+      panes: { separatorColor: theme.border, separatorHoverColor: theme.border },
+    },
+    grid: {
+      vertLines: { color: theme.grid },
+      horzLines: { color: theme.grid },
+    },
+    rightPriceScale: { borderColor: theme.border, textColor: theme.secondary },
+    timeScale: {
+      borderColor: theme.border,
+      tickMarkFormatter: (time: Time) => {
+        const sessionDate = isoDateForTime(time);
+        return sessionDate === undefined ? "" : formatters.date(sessionDate);
+      },
+    },
+    crosshair: {
+      mode: runtime.library.CrosshairMode.Magnet,
+      vertLine: {
+        color: theme.accent,
+        style: runtime.library.LineStyle.Dashed,
+        width: 1,
+        labelBackgroundColor: theme.accent,
+      },
+      horzLine: {
+        color: theme.accent,
+        style: runtime.library.LineStyle.Dashed,
+        width: 1,
+        labelBackgroundColor: theme.accent,
+      },
+    },
+    localization: {
+      locale,
+      priceFormatter: formatters.price,
+      timeFormatter: (time: Time) => {
+        const sessionDate = isoDateForTime(time);
+        return sessionDate === undefined ? "" : formatters.date(sessionDate);
+      },
+    },
+  });
+
+  const candleStyle = {
+    borderVisible: true,
+    wickVisible: true,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  } as const;
+  runtime.candles.up.applyOptions(candleStyle);
+  runtime.candles.down.applyOptions(candleStyle);
+  runtime.candles.flat.applyOptions(candleStyle);
+  runtime.volumes.up.applyOptions({
+    priceLineVisible: false,
+    lastValueVisible: false,
+    priceFormat: { type: "custom", formatter: formatters.volume, minMove: 1 },
+  });
+  runtime.volumes.down.applyOptions({
+    priceLineVisible: false,
+    lastValueVisible: false,
+    priceFormat: { type: "custom", formatter: formatters.volume, minMove: 1 },
+  });
+  runtime.volumes.flat.applyOptions({
+    priceLineVisible: false,
+    lastValueVisible: false,
+    priceFormat: { type: "custom", formatter: formatters.volume, minMove: 1 },
+  });
+  for (const series of runtime.sma20) {
+    series.applyOptions({
+      color: theme.accent,
+      lineWidth: 2,
+      lineStyle: runtime.library.LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+  }
+  for (const series of runtime.sma60) {
+    series.applyOptions({
+      color: theme.secondary,
+      lineWidth: 2,
+      lineStyle: runtime.library.LineStyle.LargeDashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+  }
+  applySeriesTheme(runtime, theme);
+}
+
+function addSmaSeries(
+  runtime: PriceChartRuntime,
+  target: LineSeries[],
+  segments: readonly (readonly LineData<Time>[])[],
+  color: string,
+  dashed: boolean,
+): void {
+  while (target.length > segments.length) {
+    const series = target.pop();
+    if (series !== undefined) runtime.chart.removeSeries(series);
+  }
+  while (target.length < segments.length) {
+    target.push(
+      runtime.chart.addSeries(
+        runtime.library.LineSeries,
+        {
+          color,
+          lineWidth: 2,
+          lineStyle: dashed
+            ? runtime.library.LineStyle.LargeDashed
+            : runtime.library.LineStyle.Solid,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        },
+        0,
+      ),
+    );
+  }
+  segments.forEach((segment, index) => {
+    const series = target[index];
+    if (series !== undefined) series.setData([...segment]);
+  });
+}
+
+function fitLoadedData(runtime: PriceChartRuntime, data: LightweightChartDataResult): void {
+  const timeScale = runtime.chart.timeScale();
+  timeScale.fitContent();
+  if (data.status !== "ready") return;
+  // Keep the first candle's rounded body and wick inside the Canvas at compact widths.
+  timeScale.setVisibleLogicalRange({
+    from: -1,
+    to: data.validSourceIndices.length - 1 + runtime.chart.options().timeScale.rightOffset,
+  });
+}
+
+function applyChartData(
+  runtime: PriceChartRuntime,
+  data: LightweightChartDataResult,
+  bars: readonly PriceChartBar[],
+  keys: ChartDatasetKeys,
+): void {
+  if (runtime.lastDatasetKey === keys.dataset) return;
+  if (runtime.lastVisualKey !== keys.visual) {
+    const split = splitChartData(data, bars);
+    runtime.candles.up.setData(split.candles.up);
+    runtime.candles.down.setData(split.candles.down);
+    runtime.candles.flat.setData(split.candles.flat);
+    runtime.volumes.up.setData(split.volumes.up);
+    runtime.volumes.down.setData(split.volumes.down);
+    runtime.volumes.flat.setData(split.volumes.flat);
+    addSmaSeries(runtime, runtime.sma20, data.sma20Segments, runtime.theme.accent, false);
+    addSmaSeries(runtime, runtime.sma60, data.sma60Segments, runtime.theme.secondary, true);
+    runtime.lastVisualKey = keys.visual;
+  }
+  runtime.lastDatasetKey = keys.dataset;
+  runtime.chart.clearCrosshairPosition();
+  fitLoadedData(runtime, data);
+}
+
+function ensureSelectedPointVisible(
+  runtime: PriceChartRuntime,
+  data: LightweightChartDataResult,
+  sourceIndex: number,
+): void {
+  if (data.status !== "ready") return;
+  const logicalIndex = data.validSourceIndices.indexOf(sourceIndex);
+  if (logicalIndex < 0) return;
+  const visible = runtime.chart.timeScale().getVisibleLogicalRange();
+  if (visible === null || (logicalIndex >= visible.from && logicalIndex <= visible.to)) return;
+
+  const width = Math.max(1, visible.to - visible.from);
+  if (logicalIndex < visible.from) {
+    const from = Math.max(0, logicalIndex - Math.min(2, width / 4));
+    runtime.chart.timeScale().setVisibleLogicalRange({ from, to: from + width });
+    return;
+  }
+  const to = logicalIndex + Math.min(2, width / 4);
+  runtime.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, to - width), to });
+}
+
+function revealSelectedPoint(
+  runtime: PriceChartRuntime,
+  data: LightweightChartDataResult,
+  bars: readonly PriceChartBar[],
+  sourceIndex: number,
+): void {
+  ensureSelectedPointVisible(runtime, data, sourceIndex);
+  const bar = bars[sourceIndex];
+  if (bar === undefined) return;
+  const direction = directionForPriceChartBar(bar);
+  runtime.chart.setCrosshairPosition(bar.close, bar.session_date, runtime.candles[direction]);
+}
+
+function restoreSelectedCrosshair(
+  runtime: PriceChartRuntime,
+  data: LightweightChartDataResult,
+  bars: readonly PriceChartBar[],
+  sourceIndex: number | undefined,
+): void {
+  const logicalIndex =
+    sourceIndex === undefined ? -1 : data.validSourceIndices.indexOf(sourceIndex);
+  const visible = runtime.chart.timeScale().getVisibleLogicalRange();
+  const bar = sourceIndex === undefined ? undefined : bars[sourceIndex];
+  if (
+    bar === undefined ||
+    logicalIndex < 0 ||
+    visible === null ||
+    logicalIndex < visible.from ||
+    logicalIndex > visible.to
+  ) {
+    // The library clamps synthetic positions to visible bars, so hide an offscreen selection.
+    runtime.chart.clearCrosshairPosition();
+    return;
+  }
+  const direction = directionForPriceChartBar(bar);
+  runtime.chart.setCrosshairPosition(bar.close, bar.session_date, runtime.candles[direction]);
+}
+
+function chartDimensions(element: HTMLElement): {
+  readonly width: number;
+  readonly height: number;
+} {
+  const rect = element.getBoundingClientRect();
+  return {
+    width: Math.max(1, Math.round(rect.width || element.clientWidth || 640)),
+    height: Math.max(1, Math.round(rect.height || element.clientHeight || 320)),
+  };
+}
+
+function joinClasses(...classNames: readonly (string | undefined)[]): string {
+  return classNames.filter((className): className is string => className !== undefined).join(" ");
 }
 
 export function PriceChart({
@@ -239,384 +668,584 @@ export function PriceChart({
   onSelectedIndexChange,
   selectedIndex,
 }: PriceChartProps) {
-  const copy = mergeCopy(copyInput);
-  const geometry = buildPriceChartGeometry(bars);
+  const copy = useMemo(() => mergeCopy(copyInput), [copyInput]);
   const localeValue = safeLocale(locale);
-  const formatters = defaultFormatters(localeValue, formattersInput ?? format);
-  const available = sourceIndices(geometry);
-  const [internalSelectedIndex, setInternalSelectedIndex] = useState<number | undefined>(() =>
-    resolveSelectedIndex(initialSelectedIndex, available),
+  const formatters = useMemo(
+    () => defaultFormatters(localeValue, formattersInput ?? format),
+    [format, formattersInput, localeValue],
   );
-  const [interactionSource, setInteractionSource] = useState<InteractionSource>("keyboard");
-  const instanceId = useId();
-  const titleId = `${instanceId}-title`;
-  const instructionsId = `${instanceId}-instructions`;
-  const summaryId = `${instanceId}-summary`;
+  const data = useMemo(() => buildLightweightChartData(bars), [bars]);
+  const keys = useMemo(() => datasetKeys(data), [data]);
+  const available = data.status === "ready" ? data.validSourceIndices : [];
+  const [uncontrolledSelection, setUncontrolledSelection] = useState(() => ({
+    dataset: keys.dataset,
+    index: resolveSelectedIndex(initialSelectedIndex, available),
+  }));
   const activeSelectedIndex = resolveSelectedIndex(
-    selectedIndex ?? internalSelectedIndex,
+    selectedIndex ??
+      (uncontrolledSelection.dataset === keys.dataset ? uncontrolledSelection.index : undefined),
     available,
   );
   const selectedBar = activeSelectedIndex === undefined ? undefined : bars[activeSelectedIndex];
-  const selectedCandle =
-    activeSelectedIndex === undefined
-      ? undefined
-      : geometry.candles.find((candle) => candle.sourceIndex === activeSelectedIndex);
-  const selectedDirection = selectedCandle?.direction;
+  const selectedDirection =
+    selectedBar === undefined ? undefined : directionForPriceChartBar(selectedBar);
   const summary = selectedSummary(selectedBar, selectedDirection, copy, formatters);
-  const rootClassName = joinClasses(styles["chartRoot"], className);
+  const instanceId = useId();
+  const instructionsId = `${instanceId}-instructions`;
+  const summaryId = `${instanceId}-summary`;
+  const detailId = `${instanceId}-detail`;
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const runtimeRef = useRef<PriceChartRuntime | null>(null);
+  const dataRef = useRef(data);
+  const barsRef = useRef(bars);
+  const formattersRef = useRef(formatters);
+  const localeRef = useRef(localeValue);
+  const handlersRef = useRef<{
+    readonly select: (index: number, source: InteractionSource) => void;
+    readonly controlled: boolean;
+    readonly activeIndex: number | undefined;
+  }>({ select: () => undefined, controlled: false, activeIndex: undefined });
+  const controlledSelectionRef = useRef(selectedIndex);
+  const datasetRef = useRef(keys.dataset);
+  const interactionIndexRef = useRef(activeSelectedIndex);
+  const controlledKeyboardRequestRef = useRef<number | undefined>(undefined);
+  const [rendererStatus, setRendererStatus] = useState<RendererStatus>("loading");
+
+  dataRef.current = data;
+  barsRef.current = bars;
+  formattersRef.current = formatters;
+  localeRef.current = localeValue;
+
+  if (controlledSelectionRef.current !== selectedIndex || datasetRef.current !== keys.dataset) {
+    controlledSelectionRef.current = selectedIndex;
+    datasetRef.current = keys.dataset;
+    interactionIndexRef.current = activeSelectedIndex;
+    controlledKeyboardRequestRef.current = undefined;
+  }
+
+  useEffect(() => {
+    if (selectedIndex === undefined && uncontrolledSelection.dataset !== keys.dataset) {
+      setUncontrolledSelection({
+        dataset: keys.dataset,
+        index: resolveSelectedIndex(undefined, available),
+      });
+    }
+  }, [available, keys.dataset, selectedIndex, uncontrolledSelection.dataset]);
 
   const selectIndex = (nextIndex: number | undefined, source: InteractionSource): void => {
     if (nextIndex === undefined) return;
-    const nextBar = bars[nextIndex];
-    if (nextBar === undefined) return;
     const resolvedIndex = resolveSelectedIndex(nextIndex, available);
     if (resolvedIndex === undefined) return;
-    setInteractionSource(source);
-    if (selectedIndex === undefined) setInternalSelectedIndex(resolvedIndex);
-    if (resolvedIndex === activeSelectedIndex) return;
+    const controlled = selectedIndex !== undefined;
+    if (source === "keyboard" && controlled) {
+      if (
+        resolvedIndex === activeSelectedIndex ||
+        resolvedIndex === controlledKeyboardRequestRef.current
+      ) {
+        return;
+      }
+    } else if (
+      resolvedIndex === interactionIndexRef.current ||
+      (source === "pointer" && controlled && resolvedIndex === activeSelectedIndex)
+    ) {
+      interactionIndexRef.current = resolvedIndex;
+      return;
+    }
+    const nextBar = bars[resolvedIndex];
+    if (nextBar === undefined) return;
+
+    if (source === "keyboard" && controlled) {
+      controlledKeyboardRequestRef.current = resolvedIndex;
+    } else {
+      interactionIndexRef.current = resolvedIndex;
+    }
+    if (!controlled) {
+      setUncontrolledSelection({ dataset: keys.dataset, index: resolvedIndex });
+    }
     onObservationChange?.(resolvedIndex, nextBar);
     onSelectedIndexChange?.(resolvedIndex, nextBar);
   };
-
-  const selectFromClientX = (target: Element, clientX: number, source: InteractionSource): void => {
-    const rect = target.getBoundingClientRect();
-    const nextIndex = findNearestPriceChartIndexFromClientX(
-      clientX,
-      rect.left,
-      rect.width,
-      geometry,
-    );
-    selectIndex(nextIndex, source);
+  handlersRef.current = {
+    select: selectIndex,
+    controlled: selectedIndex !== undefined,
+    activeIndex: activeSelectedIndex,
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     const key = navigationKey(event.key);
     if (key === undefined) return;
     event.preventDefault();
-    selectIndex(movePriceChartSelection(activeSelectedIndex, key, available), "keyboard");
+    const selection = resolvePriceChartKeyboardSelection(
+      activeSelectedIndex,
+      interactionIndexRef.current,
+      key,
+      available,
+      selectedIndex !== undefined,
+    );
+    selectIndex(selection.requestedIndex, "keyboard");
+    const runtime = runtimeRef.current;
+    if (runtime !== null && selection.revealIndex !== undefined) {
+      revealSelectedPoint(runtime, dataRef.current, barsRef.current, selection.revealIndex);
+    }
   };
 
-  const handlePointerMove = (event: PointerEvent<HTMLButtonElement>): void => {
-    selectFromClientX(event.currentTarget, event.clientX, "pointer");
-  };
+  useEffect(() => {
+    let cancelled = false;
+    let chart: IChartApi | undefined;
+    let runtime: PriceChartRuntime | null = null;
+    let resizeObserver: ResizeObserver | undefined;
+    let themeObserver: MutationObserver | undefined;
+    let forcedColorsQuery: MediaQueryList | undefined;
+    let pendingResizeFrame: number | undefined;
+    const host = hostRef.current;
+    const root = rootRef.current;
+    if (host === null || root === null) return;
 
-  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>): void => {
-    selectFromClientX(event.currentTarget, event.clientX, "pointer");
-  };
+    const destroyRuntime = (): void => {
+      if (runtime !== null) {
+        runtime.dispose();
+        return;
+      }
+      if (chart !== undefined) {
+        chart.remove();
+        chart = undefined;
+        host.replaceChildren();
+      }
+    };
 
-  const handleTouch = (event: TouchEvent<HTMLButtonElement>): void => {
-    const touch = event.touches.item(0) ?? event.changedTouches.item(0);
-    if (touch === null) return;
-    event.preventDefault();
-    selectFromClientX(event.currentTarget, touch.clientX, "touch");
-  };
+    const failRuntime = (): void => {
+      destroyRuntime();
+      if (!cancelled) setRendererStatus("error");
+    };
 
-  const tooltip =
-    selectedCandle === undefined || selectedBar === undefined || selectedDirection === undefined
-      ? null
-      : (() => {
-          const position = tooltipPosition(geometry, selectedCandle.x);
-          const date = formatDateValue(selectedBar, formatters);
-          const lines = [
+    const refreshTheme = (): void => {
+      if (runtime === null || runtime.disposed) return;
+      try {
+        const theme = resolveTheme(root, forcedColorsQuery?.matches ?? false);
+        applyRuntimeTheme(runtime, theme, localeRef.current, formattersRef.current);
+      } catch {
+        failRuntime();
+      }
+    };
+
+    const initialize = async (): Promise<void> => {
+      try {
+        const library = await import("lightweight-charts");
+        if (cancelled) return;
+
+        forcedColorsQuery = window.matchMedia?.("(forced-colors: active)");
+        const theme = resolveTheme(root, forcedColorsQuery?.matches ?? false);
+        const dimensions = chartDimensions(host);
+        chart = library.createChart(host, {
+          width: dimensions.width,
+          height: dimensions.height,
+          layout: {
+            background: { type: library.ColorType.Solid, color: theme.panel },
+            textColor: theme.text,
+            attributionLogo: false,
+            fontFamily: getComputedStyle(root).fontFamily || "sans-serif",
+            panes: { separatorColor: theme.border, separatorHoverColor: theme.border },
+          },
+          grid: {
+            vertLines: { color: theme.grid },
+            horzLines: { color: theme.grid },
+          },
+          rightPriceScale: { borderColor: theme.border, textColor: theme.secondary },
+          timeScale: { borderColor: theme.border, rightOffset: 3, timeVisible: false },
+          crosshair: { mode: library.CrosshairMode.Magnet },
+          handleScroll: {
+            mouseWheel: false,
+            pressedMouseMove: true,
+            horzTouchDrag: true,
+            vertTouchDrag: false,
+          },
+          handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
+          kineticScroll: { touch: true, mouse: true },
+          localization: {
+            locale: localeRef.current,
+            priceFormatter: (value: number) => formattersRef.current.price(value),
+          },
+        });
+        const currentChart = chart;
+        currentChart.addPane();
+        currentChart.panes()[0]?.setStretchFactor(3);
+        currentChart.panes()[1]?.setStretchFactor(1);
+
+        const handleCrosshairMove = (event: CrosshairMoveEvent): void => {
+          const handlers = handlersRef.current;
+          // Scale redraws can emit crosshair moves without a user event.
+          if (event.sourceEvent !== undefined && event.time !== undefined) {
+            const sourceIndex = originalIndexForTime(dataRef.current, event.time);
+            if (sourceIndex !== undefined) handlers.select(sourceIndex, "pointer");
+          }
+          if (
+            (handlers.controlled ||
+              (event.sourceEvent === undefined && event.point !== undefined)) &&
+            runtime !== null &&
+            !runtime.disposed
+          ) {
+            restoreSelectedCrosshair(
+              runtime,
+              dataRef.current,
+              barsRef.current,
+              handlers.activeIndex,
+            );
+          }
+        };
+
+        const candleOptions = {
+          borderVisible: true,
+          wickVisible: true,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        } as const;
+        const upCandle = chart.addSeries(
+          library.CandlestickSeries,
+          {
+            ...candleOptions,
+            upColor: theme.up,
+            downColor: theme.up,
+            borderUpColor: theme.up,
+            borderDownColor: theme.up,
+            wickUpColor: theme.up,
+            wickDownColor: theme.up,
+          },
+          0,
+        );
+        const downCandle = chart.addSeries(
+          library.CandlestickSeries,
+          {
+            ...candleOptions,
+            upColor: theme.panel,
+            downColor: theme.panel,
+            borderUpColor: theme.down,
+            borderDownColor: theme.down,
+            wickUpColor: theme.down,
+            wickDownColor: theme.down,
+          },
+          0,
+        );
+        const flatCandle = chart.addSeries(
+          library.CandlestickSeries,
+          {
+            ...candleOptions,
+            upColor: theme.flat,
+            downColor: theme.flat,
+            borderUpColor: theme.flat,
+            borderDownColor: theme.flat,
+            wickUpColor: theme.flat,
+            wickDownColor: theme.flat,
+          },
+          0,
+        );
+        const volumeSeries = (color: string): VolumeSeries =>
+          currentChart.addSeries(
+            library.HistogramSeries,
             {
-              key: "date",
-              text: `${date} · ${directionLabel(selectedBar, selectedDirection, copy)}`,
+              color,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              priceFormat: {
+                type: "custom",
+                formatter: (value: number) => formattersRef.current.volume(value),
+                minMove: 1,
+              },
             },
-            {
-              key: "open",
-              text: `${copy.openLabel}: ${formatBarValue(selectedBar, "open", formatters)}`,
-            },
-            {
-              key: "high",
-              text: `${copy.highLabel}: ${formatBarValue(selectedBar, "high", formatters)}`,
-            },
-            {
-              key: "low",
-              text: `${copy.lowLabel}: ${formatBarValue(selectedBar, "low", formatters)}`,
-            },
-            {
-              key: "close",
-              text: `${copy.closeLabel}: ${formatBarValue(selectedBar, "close", formatters)}`,
-            },
-            {
-              key: "volume",
-              text: `${copy.volumeLabel}: ${formatBarValue(selectedBar, "volume", formatters)}`,
-            },
-          ];
-          return (
-            <g className={styles["tooltip"]} data-testid="stock-beta-price-chart-tooltip">
-              <title>{candleLabel(selectedBar, selectedDirection, copy, formatters)}</title>
-              <rect
-                className={styles["tooltipSurface"]}
-                height={position.height}
-                rx={3}
-                width={position.width}
-                x={position.x}
-                y={position.y}
-              />
-              <text className={styles["tooltipText"]} x={position.x + 10} y={position.y + 18}>
-                {lines.map((line, index) => (
-                  <tspan dy={index === 0 ? 0 : 15} key={line.key} x={position.x + 10}>
-                    {line.text}
-                  </tspan>
-                ))}
-              </text>
-            </g>
+            1,
           );
-        })();
+        const upVolume = volumeSeries(theme.up);
+        const downVolume = volumeSeries(theme.down);
+        const flatVolume = volumeSeries(theme.flat);
+        upVolume.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
+        downVolume.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
+        flatVolume.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
+
+        const currentDimensions = dimensions;
+        const nextRuntime: PriceChartRuntime = {
+          chart: currentChart,
+          library,
+          candles: { up: upCandle, down: downCandle, flat: flatCandle },
+          volumes: { up: upVolume, down: downVolume, flat: flatVolume },
+          sma20: [],
+          sma60: [],
+          theme,
+          lastDatasetKey: undefined,
+          lastVisualKey: undefined,
+          lastWidth: currentDimensions.width,
+          lastHeight: currentDimensions.height,
+          disposed: false,
+          dispose: () => undefined,
+        };
+        runtime = nextRuntime;
+        runtimeRef.current = nextRuntime;
+        runtime.dispose = () => {
+          if (runtime === null || runtime.disposed) return;
+          runtime.disposed = true;
+          resizeObserver?.disconnect();
+          themeObserver?.disconnect();
+          forcedColorsQuery?.removeEventListener("change", refreshTheme);
+          if (pendingResizeFrame !== undefined) {
+            cancelAnimationFrame(pendingResizeFrame);
+            pendingResizeFrame = undefined;
+          }
+          try {
+            runtime.chart.unsubscribeCrosshairMove(handleCrosshairMove);
+          } catch {
+            // The chart removal below still owns the canvas and pending work.
+          }
+          try {
+            runtime.chart.remove();
+          } finally {
+            if (runtimeRef.current === runtime) runtimeRef.current = null;
+            host.replaceChildren();
+          }
+        };
+
+        currentChart.subscribeCrosshairMove(handleCrosshairMove);
+        applyRuntimeTheme(nextRuntime, theme, localeRef.current, formattersRef.current);
+        applyChartData(nextRuntime, dataRef.current, barsRef.current, datasetKeys(dataRef.current));
+        if (cancelled) {
+          destroyRuntime();
+          return;
+        }
+        setRendererStatus("ready");
+
+        if (typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver(() => {
+            if (pendingResizeFrame !== undefined) return;
+            pendingResizeFrame = requestAnimationFrame(() => {
+              pendingResizeFrame = undefined;
+              if (cancelled || runtime === null || runtime.disposed) return;
+              const nextDimensions = chartDimensions(host);
+              if (
+                nextDimensions.width === runtime.lastWidth &&
+                nextDimensions.height === runtime.lastHeight
+              ) {
+                return;
+              }
+              runtime.chart.resize(nextDimensions.width, nextDimensions.height);
+              runtime.lastWidth = nextDimensions.width;
+              runtime.lastHeight = nextDimensions.height;
+            });
+          });
+          resizeObserver.observe(host);
+        }
+
+        if (forcedColorsQuery !== undefined) {
+          forcedColorsQuery.addEventListener("change", refreshTheme);
+        }
+        if (typeof MutationObserver !== "undefined") {
+          themeObserver = new MutationObserver(refreshTheme);
+          const attributes: MutationObserverInit = {
+            attributes: true,
+            attributeFilter: ["class", "style", "data-theme"],
+          };
+          themeObserver.observe(document.documentElement, attributes);
+          if (document.body !== null) themeObserver.observe(document.body, attributes);
+          themeObserver.observe(root, attributes);
+        }
+      } catch {
+        failRuntime();
+      }
+    };
+
+    void initialize();
+
+    return () => {
+      cancelled = true;
+      resizeObserver?.disconnect();
+      themeObserver?.disconnect();
+      forcedColorsQuery?.removeEventListener("change", refreshTheme);
+      if (pendingResizeFrame !== undefined) cancelAnimationFrame(pendingResizeFrame);
+      destroyRuntime();
+    };
+  }, []);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    const root = rootRef.current;
+    if (runtime === null || root === null || runtime.disposed) return;
+    try {
+      const forcedColors = window.matchMedia?.("(forced-colors: active)").matches ?? false;
+      applyRuntimeTheme(runtime, resolveTheme(root, forcedColors), localeValue, formatters);
+    } catch {
+      runtime.dispose();
+      setRendererStatus("error");
+    }
+  }, [formatters, localeValue]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (runtime === null || runtime.disposed) return;
+    try {
+      applyChartData(runtime, data, bars, keys);
+    } catch {
+      runtime.dispose();
+      setRendererStatus("error");
+    }
+  }, [bars, data, keys]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (
+      runtime === null ||
+      runtime.disposed ||
+      rendererStatus !== "ready" ||
+      runtime.lastDatasetKey !== keys.dataset ||
+      activeSelectedIndex === undefined
+    ) {
+      return;
+    }
+    try {
+      revealSelectedPoint(runtime, dataRef.current, barsRef.current, activeSelectedIndex);
+    } catch {
+      runtime.dispose();
+      setRendererStatus("error");
+    }
+  }, [activeSelectedIndex, keys.dataset, rendererStatus]);
+
+  const resetZoom = (): void => {
+    const runtime = runtimeRef.current;
+    if (runtime !== null) fitLoadedData(runtime, dataRef.current);
+  };
+  const direction = selectedDirection;
+  const details =
+    selectedBar === undefined || direction === undefined
+      ? null
+      : detailsForBar(selectedBar, direction, copy, formatters);
+  const rootClassName = joinClasses(styles["chartRoot"], className);
 
   return (
-    <section
-      aria-label={copy.chartLabel}
+    <div
       className={rootClassName}
-      data-interaction-source={interactionSource}
+      data-renderer-status={rendererStatus}
       data-selected-index={activeSelectedIndex ?? "none"}
       data-testid="stock-beta-price-chart"
+      ref={rootRef}
     >
       <p className={styles["srOnly"]} id={instructionsId}>
         {copy.instructions}
       </p>
-      <button
-        aria-describedby={`${instructionsId} ${summaryId}`}
+      <div aria-hidden="true" className={styles["axisLabels"]}>
+        <span>{copy.priceAxisLabel}</span>
+        <span>{copy.volumeAxisLabel}</span>
+      </div>
+      <section
+        aria-describedby={`${instructionsId} ${summaryId} ${detailId}`}
         aria-keyshortcuts="ArrowLeft ArrowRight Home End"
         aria-label={copy.chartLabel}
-        aria-labelledby={titleId}
         className={styles["chartSurface"]}
         data-selected-index={activeSelectedIndex ?? "none"}
         data-testid="stock-beta-price-chart-surface"
         onKeyDown={handleKeyDown}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onTouchMove={handleTouch}
-        onTouchStart={handleTouch}
         tabIndex={0}
-        type="button"
       >
-        <svg
-          aria-labelledby={titleId}
-          className={styles["chartSvg"]}
-          data-selected-index={activeSelectedIndex ?? "none"}
-          focusable="true"
-          height={geometry.height}
-          role="img"
-          viewBox={`0 0 ${geometry.width} ${geometry.height}`}
-          width={geometry.width}
-        >
-          <title id={titleId}>{copy.chartLabel}</title>
-          <desc>{copy.instructions}</desc>
-          {geometry.candles.length === 0 ? (
-            <text
-              className={styles["emptyLabel"]}
-              dominantBaseline="middle"
-              textAnchor="middle"
-              x={geometry.width / 2}
-              y={geometry.height / 2}
-            >
-              {copy.noDataLabel}
-            </text>
-          ) : (
-            <>
-              <g className={styles["grid"]}>
-                {geometry.priceTicks.map((tick) => (
-                  <line
-                    className={styles["gridLine"]}
-                    key={`price-grid-${tick.y}`}
-                    x1={geometry.plotLeft}
-                    x2={geometry.plotRight}
-                    y1={tick.y}
-                    y2={tick.y}
-                  />
-                ))}
-                <line
-                  className={styles["volumeDivider"]}
-                  x1={geometry.plotLeft}
-                  x2={geometry.plotRight}
-                  y1={geometry.volumeTop - 1}
-                  y2={geometry.volumeTop - 1}
-                />
-              </g>
-              <g className={styles["axes"]}>
-                <text
-                  className={styles["axisTitle"]}
-                  x={geometry.plotLeft}
-                  y={geometry.priceTop - 5}
-                >
-                  {copy.priceAxisLabel}
-                </text>
-                {geometry.priceTicks.map((tick) => (
-                  <text
-                    className={styles["axisLabel"]}
-                    key={`price-label-${tick.y}`}
-                    textAnchor="end"
-                    x={geometry.plotLeft - 8}
-                    y={tick.y + 3}
-                  >
-                    {formatters.price(tick.value)}
-                  </text>
-                ))}
-                <text
-                  className={styles["axisTitle"]}
-                  textAnchor="end"
-                  x={geometry.plotRight}
-                  y={geometry.volumeBottom + 22}
-                >
-                  {copy.volumeAxisLabel}
-                </text>
-                {geometry.dateTicks.map((tick, index) => {
-                  const dateBar = bars[tick.sourceIndex];
-                  const anchor =
-                    index === 0
-                      ? "start"
-                      : index === geometry.dateTicks.length - 1
-                        ? "end"
-                        : "middle";
-                  return (
-                    <text
-                      className={styles["axisLabel"]}
-                      key={`date-label-${tick.sourceIndex}`}
-                      textAnchor={anchor}
-                      x={tick.x}
-                      y={geometry.height - 12}
-                    >
-                      {dateBar === undefined
-                        ? tick.sessionDate
-                        : formatDateValue(dateBar, formatters)}
-                    </text>
-                  );
-                })}
-              </g>
-              <g className={styles["smaLines"]}>
-                {geometry.sma20.map((segment) => (
-                  <polyline
-                    className={styles["sma20"]}
-                    data-sma="20"
-                    fill="none"
-                    key={`sma20-${segment.points[0]?.sourceIndex ?? "empty"}`}
-                    points={linePoints(segment.points)}
-                  />
-                ))}
-                {geometry.sma60.map((segment) => (
-                  <polyline
-                    className={styles["sma60"]}
-                    data-sma="60"
-                    fill="none"
-                    key={`sma60-${segment.points[0]?.sourceIndex ?? "empty"}`}
-                    points={linePoints(segment.points)}
-                  />
-                ))}
-              </g>
-              <g className={styles["volumeBars"]}>
-                {geometry.volumes.map((volume) => (
-                  <rect
-                    className={styles["volumeBar"]}
-                    data-direction={volume.direction}
-                    data-volume-index={volume.sourceIndex}
-                    height={volume.height}
-                    key={`volume-${volume.sourceIndex}`}
-                    width={volume.width}
-                    x={volume.x - volume.width / 2}
-                    y={volume.y}
-                  />
-                ))}
-              </g>
-              <g className={styles["candles"]}>
-                {geometry.candles.map((candle) => {
-                  const bar = bars[candle.sourceIndex];
-                  if (bar === undefined) return null;
-                  const selected = candle.sourceIndex === activeSelectedIndex;
-                  return (
-                    <g
-                      className={joinClasses(
-                        styles["candleGroup"],
-                        selected ? styles["candleSelected"] : undefined,
-                      )}
-                      data-candle-index={candle.sourceIndex}
-                      data-direction={candle.direction}
-                      id={`${instanceId}-candle-${candle.sourceIndex}`}
-                      key={`candle-${candle.sourceIndex}`}
-                    >
-                      <title>{candleLabel(bar, candle.direction, copy, formatters)}</title>
-                      <line
-                        className={styles["candleWick"]}
-                        x1={candle.x}
-                        x2={candle.x}
-                        y1={candle.highY}
-                        y2={candle.lowY}
-                      />
-                      <rect
-                        className={styles["candleBody"]}
-                        data-direction={candle.direction}
-                        height={candle.bodyHeight}
-                        width={candle.bodyWidth}
-                        x={candle.bodyX}
-                        y={candle.bodyY}
-                      />
-                    </g>
-                  );
-                })}
-              </g>
-              {selectedCandle === undefined ? null : (
-                <g className={styles["crosshair"]}>
-                  <line
-                    x1={selectedCandle.x}
-                    x2={selectedCandle.x}
-                    y1={geometry.priceTop}
-                    y2={geometry.volumeBottom}
-                  />
-                  <line
-                    x1={geometry.plotLeft}
-                    x2={geometry.plotRight}
-                    y1={selectedCandle.closeY}
-                    y2={selectedCandle.closeY}
-                  />
-                  <circle cx={selectedCandle.x} cy={selectedCandle.closeY} r={3} />
-                </g>
-              )}
-              {tooltip}
-            </>
-          )}
-        </svg>
-      </button>
-      <div
+        <div
+          aria-hidden="true"
+          className={styles["chartCanvas"]}
+          data-testid="stock-beta-price-chart-canvas"
+          ref={hostRef}
+        />
+      </section>
+      <p
         aria-live="polite"
+        aria-atomic="true"
+        className={styles["rendererStatus"]}
+        data-testid="stock-beta-price-chart-renderer-status"
+      >
+        {rendererStatus === "loading"
+          ? copy.rendererLoadingLabel
+          : rendererStatus === "error"
+            ? copy.rendererFailureLabel
+            : ""}
+      </p>
+      <p
+        aria-live="polite"
+        aria-atomic="true"
         className={styles["summary"]}
-        data-direction={selectedDirection ?? "none"}
-        data-selected-date={selectedBar?.session_date}
+        data-direction={direction ?? "none"}
         data-testid="stock-beta-price-chart-summary"
         id={summaryId}
         role="status"
       >
-        {summary}
+        {rendererStatus === "error" ? copy.rendererFailureLabel : summary}
+      </p>
+      {rendererStatus !== "error" && details !== null ? (
+        <div
+          aria-label={copy.selectedObservationLabel}
+          className={styles["tooltip"]}
+          data-testid="stock-beta-price-chart-tooltip"
+          id={detailId}
+          role="tooltip"
+        >
+          {details.map((detail) => (
+            <span className={styles["tooltipItem"]} key={detail.label}>
+              <span>{detail.label}</span>
+              <strong>{detail.value}</strong>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <span className={styles["srOnly"]} id={detailId}>
+          {rendererStatus === "error" ? copy.rendererFailureLabel : copy.noDataLabel}
+        </span>
+      )}
+      <div className={styles["chartFooter"]}>
+        <ul
+          aria-label={copy.chartLabel}
+          className={styles["legend"]}
+          data-testid="stock-beta-price-chart-legend"
+        >
+          <li className={styles["legendItem"]}>
+            <span aria-hidden="true" className={styles["directionMarker"]} data-direction="up">
+              ▲
+            </span>
+            {copy.upLabel}
+          </li>
+          <li className={styles["legendItem"]}>
+            <span aria-hidden="true" className={styles["directionMarker"]} data-direction="down">
+              ▼
+            </span>
+            {copy.downLabel}
+          </li>
+          <li className={styles["legendItem"]}>
+            <span aria-hidden="true" className={styles["directionMarker"]} data-direction="flat">
+              —
+            </span>
+            {copy.unchangedLabel}
+          </li>
+          <li className={styles["legendItem"]}>
+            <span aria-hidden="true" className={styles["smaMarker"]} data-sma="20" />
+            {copy.sma20Label}
+          </li>
+          <li className={styles["legendItem"]}>
+            <span aria-hidden="true" className={styles["smaMarker"]} data-sma="60" />
+            {copy.sma60Label}
+          </li>
+        </ul>
+        <button
+          className={styles["resetButton"]}
+          data-testid="stock-beta-price-chart-reset"
+          disabled={rendererStatus !== "ready" || data.status !== "ready"}
+          onClick={resetZoom}
+          type="button"
+        >
+          {copy.resetChartLabel}
+        </button>
       </div>
-      <ul aria-label={copy.chartLabel} className={styles["legend"]}>
-        <li className={styles["legendItem"]}>
-          <span aria-hidden="true" className={styles["directionMarker"]} data-direction="up">
-            ▲
-          </span>
-          {copy.upLabel}
-        </li>
-        <li className={styles["legendItem"]}>
-          <span aria-hidden="true" className={styles["directionMarker"]} data-direction="down">
-            ▼
-          </span>
-          {copy.downLabel}
-        </li>
-        <li className={styles["legendItem"]}>
-          <span aria-hidden="true" className={styles["directionMarker"]} data-direction="flat">
-            —
-          </span>
-          {copy.unchangedLabel}
-        </li>
-        <li className={styles["legendItem"]}>
-          <span aria-hidden="true" className={styles["smaMarker"]} data-sma="20" />
-          {copy.sma20Label}
-        </li>
-        <li className={styles["legendItem"]}>
-          <span aria-hidden="true" className={styles["smaMarker"]} data-sma="60" />
-          {copy.sma60Label}
-        </li>
-      </ul>
-    </section>
+      <p className={styles["attribution"]} data-testid="stock-beta-price-chart-attribution">
+        <span className={styles["attributionLabel"]}>{copy.attributionLabel}: </span>
+        <span>TradingView Lightweight Charts™</span>
+        <br />
+        <span>Copyright (с) 2025 TradingView, Inc. </span>
+        <a href="https://www.tradingview.com/">https://www.tradingview.com/</a>
+        <span> · </span>
+        <a href="/licenses/lightweight-charts/NOTICE.txt">NOTICE</a>
+        <span> · </span>
+        <a href="/licenses/lightweight-charts/LICENSE.txt">LICENSE</a>
+      </p>
+    </div>
   );
 }
 
