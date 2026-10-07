@@ -906,6 +906,16 @@ write_range_env() {
     printf 'RESEARCH_CANDIDATE_ENABLED=false\n'
     if [ "$include_new" = yes ]; then
       printf 'OWNER_INTRADAY_QUOTES_MODE=%s\n' "$intraday"
+      # Valid WS metadata lets each owner-only fixture reach its independent
+      # filesystem, shared-coordination, generation or window proof guard.
+      if [ "$intraday" = owner_only ]; then
+        printf '%s\n' \
+          'OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws' \
+          'OWNER_MARKET_STREAM_ORIGIN=https://quotes.example' \
+          'KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID=00000000-0000-4000-8000-000000000001' \
+          'KIS_MARKET_STREAM_GRANT_ID=00000000-0000-4000-8000-000000000002' \
+          'KIS_MARKET_STREAM_CONTRACT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      fi
       printf 'KIS_READ_COORDINATION_MODE=%s\n' "$coordination"
       printf 'KIS_READ_CREDENTIAL_GENERATION=%s\n' "$generation"
       printf 'LAGRANGE_RUNTIME_STATE_DIR=%s\n' "$state_root"

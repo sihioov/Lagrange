@@ -34,21 +34,20 @@ function membership(lifecycle: "READY" | "DISABLED", instrumentId = "069500.KRX"
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Stock Beta intraday server flag and membership seam", () => {
-  it("selects REST by default, opts into exact market_ws, and rejects unknown transport values", () => {
+  it("enables only exact market_ws for the exact owner_only mode", () => {
     vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
-    for (const value of [undefined, "rest"]) {
+    for (const value of [undefined, "", "rest", "ws", "MARKET_WS", "market_ws "]) {
       vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", value);
-      expect(stockBetaIntradayTransport()).toBe("rest");
+      expect(stockBetaIntradayTransport()).toBe("off");
+      expect(isStockBetaIntradayQuotesEnabled()).toBe(false);
     }
     vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
     expect(stockBetaIntradayTransport()).toBe("market_ws");
-    for (const value of ["", "ws", "MARKET_WS", "market_ws "]) {
-      vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", value);
-      expect(stockBetaIntradayTransport()).toBe("off");
-    }
+    expect(isStockBetaIntradayQuotesEnabled()).toBe(true);
     vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
     vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "off");
     expect(stockBetaIntradayTransport()).toBe("off");
+    expect(isStockBetaIntradayQuotesEnabled()).toBe(false);
   });
   it("quotes a READY membership without waiting for an analysis snapshot", () => {
     const first = membership("READY");
@@ -81,6 +80,7 @@ describe("Stock Beta intraday server flag and membership seam", () => {
       expect(isStockBetaIntradayQuotesEnabled()).toBe(false);
     }
     vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
     expect(isStockBetaIntradayQuotesEnabled()).toBe(true);
   });
 

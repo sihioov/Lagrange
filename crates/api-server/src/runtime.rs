@@ -275,10 +275,10 @@ where
     Ok(size)
 }
 
-fn market_stream_read_config_from<F>(
+fn validate_market_stream_transport_from<F>(
     get: &F,
-    legacy: &mut OwnerIntradayQuoteReadConfig,
-) -> Result<MarketStreamReadConfig, ConfigError>
+    intraday_quotes: &OwnerIntradayQuoteReadConfig,
+) -> Result<bool, ConfigError>
 where
     F: Fn(&str) -> Option<OsString>,
 {
@@ -286,14 +286,36 @@ where
     if get("OWNER_INTRADAY_QUOTE_TRANSPORT_FILE").is_some() {
         return Err(invalid("OWNER_INTRADAY_QUOTE_TRANSPORT_FILE"));
     }
-    let transport = match get(TRANSPORT) {
-        None => "rest".to_owned(),
-        Some(value) => value.into_string().map_err(|_| invalid(TRANSPORT))?,
-    };
-    if transport != "rest" && transport != "market_ws" {
-        return Err(invalid(TRANSPORT));
+    let transport = get(TRANSPORT)
+        .map(|value| value.into_string().map_err(|_| invalid(TRANSPORT)))
+        .transpose()?;
+    let intraday_enabled = matches!(
+        intraday_quotes,
+        OwnerIntradayQuoteReadConfig::OwnerOnly { .. }
+    );
+    if !intraday_enabled {
+        match transport.as_deref() {
+            None | Some("rest") | Some("market_ws") => {
+                return Ok(false);
+            }
+            Some(_) => return Err(invalid(TRANSPORT)),
+        }
     }
-    if transport == "rest" || matches!(legacy, OwnerIntradayQuoteReadConfig::Disabled) {
+    match transport.as_deref() {
+        Some("market_ws") => Ok(true),
+        None | Some("rest") => return Err(invalid(TRANSPORT)),
+        Some(_) => return Err(invalid(TRANSPORT)),
+    }
+}
+
+fn market_stream_read_config_from<F>(
+    get: &F,
+    legacy: &mut OwnerIntradayQuoteReadConfig,
+) -> Result<MarketStreamReadConfig, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    if !validate_market_stream_transport_from(get, legacy)? {
         return Ok(MarketStreamReadConfig::Disabled);
     }
     let plain = |key: &str| -> Result<String, ConfigError> {
@@ -356,6 +378,8 @@ where
             }
         }
     };
+
+    validate_market_stream_transport_from(get, &mode)?;
 
     let OwnerIntradayQuoteReadConfig::OwnerOnly { .. } = mode else {
         return Ok(mode);
@@ -1581,29 +1605,52 @@ mod tests {
     }
 
     #[test]
-    fn market_stream_configuration_is_off_by_default_and_exclusive_with_rest() {
+    fn market_stream_configuration_requires_explicit_ws_only_when_intraday_is_enabled() {
         let mut legacy = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
-        assert_eq!(
-            market_stream_read_config_from(&|_| None, &mut legacy).unwrap(),
-            MarketStreamReadConfig::Disabled
-        );
+        assert!(matches!(
+            market_stream_read_config_from(&|_| None, &mut legacy),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_INTRADAY_QUOTE_TRANSPORT"
+        ));
         assert!(matches!(
             legacy,
             OwnerIntradayQuoteReadConfig::OwnerOnly { .. }
         ));
+
+        let mut rest = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
+        assert!(matches!(
+            market_stream_read_config_from(
+                &|key| (key == "OWNER_INTRADAY_QUOTE_TRANSPORT").then(|| "rest".into()),
+                &mut rest
+            ),
+            Err(ConfigError::Invalid { ref key }) if key == "OWNER_INTRADAY_QUOTE_TRANSPORT"
+        ));
+        assert!(matches!(
+            rest,
+            OwnerIntradayQuoteReadConfig::OwnerOnly { .. }
+        ));
+
         let env = stream_pins_env();
+        let mut legacy = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
         let stream = market_stream_read_config_from(&|k| env.get(k).cloned(), &mut legacy).unwrap();
         assert!(matches!(stream, MarketStreamReadConfig::OwnerOnly(_)));
         assert_eq!(legacy, OwnerIntradayQuoteReadConfig::Disabled);
-        let mut disabled = OwnerIntradayQuoteReadConfig::Disabled;
-        assert_eq!(
-            market_stream_read_config_from(
-                &|k| (k == "OWNER_INTRADAY_QUOTE_TRANSPORT").then(|| "market_ws".into()),
-                &mut disabled
+
+        for transport in [None, Some("rest"), Some("market_ws")] {
+            let mut disabled = OwnerIntradayQuoteReadConfig::Disabled;
+            let configured = market_stream_read_config_from(
+                &|key| {
+                    if key == "OWNER_INTRADAY_QUOTE_TRANSPORT" {
+                        transport.map(OsString::from)
+                    } else {
+                        None
+                    }
+                },
+                &mut disabled,
             )
-            .unwrap(),
-            MarketStreamReadConfig::Disabled
-        );
+            .unwrap();
+            assert_eq!(configured, MarketStreamReadConfig::Disabled);
+            assert_eq!(disabled, OwnerIntradayQuoteReadConfig::Disabled);
+        }
     }
 
     #[test]
@@ -1631,6 +1678,18 @@ mod tests {
             env.insert("OWNER_INTRADAY_QUOTE_TRANSPORT".into(), transport.into());
             let mut legacy = OwnerIntradayQuoteReadConfig::OwnerOnly { window: None };
             assert!(market_stream_read_config_from(&|k| env.get(k).cloned(), &mut legacy).is_err());
+        }
+
+        for (key, value) in [
+            ("OWNER_INTRADAY_QUOTE_TRANSPORT", "unknown"),
+            ("OWNER_INTRADAY_QUOTE_TRANSPORT_FILE", "/not/read"),
+        ] {
+            let mut env = HashMap::new();
+            env.insert(key.to_owned(), value.into());
+            let mut disabled = OwnerIntradayQuoteReadConfig::Disabled;
+            assert!(
+                market_stream_read_config_from(&|k| env.get(k).cloned(), &mut disabled).is_err()
+            );
         }
     }
 
@@ -1867,6 +1926,39 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn enabled_intraday_transport_is_rejected_before_session_window_read() {
+        let valid_window_hash = content_hash(&regular_window_bytes("2026-08-12T15:30:00Z"));
+        for transport in [None, Some("rest"), Some("invalid")] {
+            let mut env = base_env();
+            env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
+            env.insert(
+                "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
+                valid_window_hash.clone().into(),
+            );
+            if let Some(transport) = transport {
+                env.insert(
+                    "OWNER_INTRADAY_QUOTE_TRANSPORT".to_owned(),
+                    transport.into(),
+                );
+            } else {
+                env.remove("OWNER_INTRADAY_QUOTE_TRANSPORT");
+            }
+
+            let reads = Cell::new(0);
+            let result = config_with_reader(&env, |_| {
+                reads.set(reads.get() + 1);
+                panic!("invalid intraday transport must fail before reading session windows");
+            });
+            assert!(matches!(
+                result,
+                Err(ConfigError::Invalid { ref key })
+                    if key == "OWNER_INTRADAY_QUOTE_TRANSPORT"
+            ));
+            assert_eq!(reads.get(), 0, "{transport:?} must not read the window");
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn owner_intraday_quotes_mode_rejects_non_unicode_without_reading() {
@@ -1891,6 +1983,7 @@ mod tests {
     #[test]
     fn owner_intraday_session_hash_non_unicode_is_unavailable_without_reading() {
         let mut env = base_env();
+        env.extend(stream_pins_env());
         env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
         env.insert(
             "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
@@ -1903,9 +1996,13 @@ mod tests {
         })
         .expect("non-unicode hash is an unavailable window, not config failure");
         assert!(matches!(
-            loaded.owner_intraday_quotes,
-            OwnerIntradayQuoteReadConfig::OwnerOnly { window: None }
+            &loaded.owner_market_stream,
+            MarketStreamReadConfig::OwnerOnly(pins) if pins.window.is_none()
         ));
+        assert_eq!(
+            loaded.owner_intraday_quotes,
+            OwnerIntradayQuoteReadConfig::Disabled
+        );
         assert_eq!(reads.get(), 0);
     }
 
@@ -1918,6 +2015,7 @@ mod tests {
             &format!("sha256:{}", "A".repeat(64)),
         ] {
             let mut env = base_env();
+            env.extend(stream_pins_env());
             env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
             env.insert(
                 "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
@@ -1930,9 +2028,13 @@ mod tests {
             })
             .expect("bad hash is an unavailable window, not config failure");
             assert!(matches!(
-                loaded.owner_intraday_quotes,
-                OwnerIntradayQuoteReadConfig::OwnerOnly { window: None }
+                &loaded.owner_market_stream,
+                MarketStreamReadConfig::OwnerOnly(pins) if pins.window.is_none()
             ));
+            assert_eq!(
+                loaded.owner_intraday_quotes,
+                OwnerIntradayQuoteReadConfig::Disabled
+            );
             assert_eq!(reads.get(), 0, "bad hash must not read the window");
         }
     }
@@ -1954,6 +2056,7 @@ mod tests {
             let returned_bytes = bytes.unwrap_or_else(|| valid_bytes.clone());
             let hash = expected_hash.unwrap_or_else(|| content_hash(&returned_bytes));
             let mut env = base_env();
+            env.extend(stream_pins_env());
             env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
             env.insert(
                 "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
@@ -1976,9 +2079,13 @@ mod tests {
             .expect("window read/parser failure is non-fatal");
 
             assert!(matches!(
-                loaded.owner_intraday_quotes,
-                OwnerIntradayQuoteReadConfig::OwnerOnly { window: None }
+                &loaded.owner_market_stream,
+                MarketStreamReadConfig::OwnerOnly(pins) if pins.window.is_none()
             ));
+            assert_eq!(
+                loaded.owner_intraday_quotes,
+                OwnerIntradayQuoteReadConfig::Disabled
+            );
             assert_eq!(reads.get(), 1, "{label} must read exactly once");
             assert_eq!(
                 paths.into_inner(),
@@ -1992,6 +2099,7 @@ mod tests {
         let bytes = regular_window_bytes("2026-08-12T15:30:00Z");
         let hash = content_hash(&bytes);
         let mut env = base_env();
+        env.extend(stream_pins_env());
         env.insert("OWNER_INTRADAY_QUOTES_MODE".to_owned(), "owner_only".into());
         env.insert(
             "OWNER_INTRADAY_SESSION_WINDOWS_SHA256".to_owned(),
@@ -2008,11 +2116,17 @@ mod tests {
 
         let api_config = loaded.api_config();
         assert!(matches!(
-            &api_config.owner_intraday_quotes,
-            OwnerIntradayQuoteReadConfig::OwnerOnly { window: Some(window) }
-                if window.window_contract_sha256() == hash
-                    && window.entry(chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap()).is_some()
+            &api_config.owner_market_stream,
+            MarketStreamReadConfig::OwnerOnly(pins)
+                if pins.window.as_ref().is_some_and(|window| {
+                    window.window_contract_sha256() == hash
+                        && window.entry(chrono::NaiveDate::from_ymd_opt(2026, 8, 13).unwrap()).is_some()
+                })
         ));
+        assert_eq!(
+            api_config.owner_intraday_quotes,
+            OwnerIntradayQuoteReadConfig::Disabled
+        );
         assert_eq!(reads.get(), 1);
         assert_eq!(
             paths.into_inner(),

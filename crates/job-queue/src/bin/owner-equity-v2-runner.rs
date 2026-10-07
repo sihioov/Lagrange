@@ -12,10 +12,10 @@ use collectors::intraday_quotes::{
     INTRADAY_SESSION_WINDOWS_SOURCE_ENV, IntradaySessionWindowContract, IntradaySessionWindowSource,
 };
 use job_queue::owner_equity_v2::{
-    IntradayProducer, IntradayProducerConfig, OwnerEquityRunOutcome, OwnerEquityRunnerConfig,
-    OwnerEquityRuntimeLimits, OwnerEquityScheduleError, OwnerEquitySchedulePins,
-    OwnerIntradayQuoteRepository, ProductionOwnerEquityAdapter, eligible_schedule_date,
-    MarketStreamRuntimeExit, OwnerMarketStreamRuntime, OwnerMarketStreamRuntimeConfig,
+    IntradayProducer, IntradayProducerConfig, MarketStreamRuntimeExit, OwnerEquityRunOutcome,
+    OwnerEquityRunnerConfig, OwnerEquityRuntimeLimits, OwnerEquityScheduleError,
+    OwnerEquitySchedulePins, OwnerIntradayQuoteRepository, OwnerMarketStreamRuntime,
+    OwnerMarketStreamRuntimeConfig, ProductionOwnerEquityAdapter, eligible_schedule_date,
     recover_owner_equity_claims, run_owner_equity_runner_once, run_owner_equity_schedule_cycle,
 };
 use job_queue::{JobQueue, QueueConfig};
@@ -25,9 +25,8 @@ use kis_client::secret::SystemCredentialSource;
 use kis_client::token_issuer::KisTokenIssuer;
 use kis_client::{
     BucketKey, CoordinatedReadAuth, CredentialRef, IntradayQuoteTransport, IntradayQuotesMode,
-    KisMarketDataClient,
-    ProductionReadCoordination, Quota, RateLimiter, ReadCoordinationMode, ReadCredentialSnapshot,
-    SystemClock, TokenIssuer, TokenManager, TokioSleeper,
+    KisMarketDataClient, ProductionReadCoordination, Quota, RateLimiter, ReadCoordinationMode,
+    ReadCredentialSnapshot, SystemClock, TokenIssuer, TokenManager, TokioSleeper,
 };
 use market_data::owner_equity_v2::{
     DAILY_BARS_PATH, DAILY_BARS_TR_ID, REFERENCE_PATH, REFERENCE_TR_ID,
@@ -120,6 +119,14 @@ fn parse_args_from(values: Vec<std::ffi::OsString>) -> Result<Mode, ConfigError>
 
 fn should_start_intraday(mode: Mode, intraday_mode: IntradayQuotesMode) -> bool {
     mode == Mode::Daemon && intraday_mode == IntradayQuotesMode::OwnerOnly
+}
+
+fn effective_intraday_mode(mode: Mode, configured: IntradayQuotesMode) -> IntradayQuotesMode {
+    if mode == Mode::Daemon {
+        configured
+    } else {
+        IntradayQuotesMode::Disabled
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -345,8 +352,8 @@ fn load_config() -> Result<Config, ConfigError> {
     }
     let read_coordination =
         ProductionReadCoordination::from_env().map_err(|_| ConfigError::Invalid)?;
-    let intraday_transport = intraday_quote_transport_from_env()?;
-    let intraday_mode = read_coordination.intraday_mode();
+    let intraday_mode = effective_intraday_mode(mode, read_coordination.intraday_mode());
+    let intraday_transport = intraday_quote_transport_from_env(intraday_mode)?;
     let backend = quote_backend(mode, intraday_mode, intraday_transport);
     let market_ws_pins = selected_market_ws_config(backend, || {
         let slot = required_string("KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID")?;
@@ -1354,20 +1361,22 @@ fn quote_backend(
     intraday_mode: IntradayQuotesMode,
     transport: IntradayQuoteTransport,
 ) -> QuoteBackend {
-    if mode != Mode::Daemon || intraday_mode == IntradayQuotesMode::Disabled {
+    if mode != Mode::Daemon
+        || intraday_mode == IntradayQuotesMode::Disabled
+        || transport == IntradayQuoteTransport::Rest
+    {
         return QuoteBackend::Disabled;
     }
-    match transport {
-        IntradayQuoteTransport::Rest => QuoteBackend::Rest,
-        IntradayQuoteTransport::MarketWs => QuoteBackend::MarketWs,
-    }
+    QuoteBackend::MarketWs
 }
 
-fn intraday_quote_transport_from_env() -> Result<IntradayQuoteTransport, ConfigError> {
+fn intraday_quote_transport_from_env(
+    mode: IntradayQuotesMode,
+) -> Result<IntradayQuoteTransport, ConfigError> {
     let value = std::env::var_os("OWNER_INTRADAY_QUOTE_TRANSPORT")
         .map(|value| value.into_string().map_err(|_| ConfigError::Invalid))
         .transpose()?;
-    IntradayQuoteTransport::from_optional_str(value.as_deref()).map_err(|_| ConfigError::Invalid)
+    IntradayQuoteTransport::for_mode(mode, value.as_deref()).map_err(|_| ConfigError::Invalid)
 }
 
 #[derive(Debug, Clone)]
@@ -1538,20 +1547,6 @@ mod quote_transport_tests {
         MarketWs,
     }
 
-    fn valid_window_contract() -> IntradaySessionWindowContract {
-        use sha2::{Digest, Sha256};
-
-        let bytes = br#"{
-            "schema_version":1,
-            "exchange":"KRX",
-            "timezone":"Asia/Seoul",
-            "entries":[]
-        }"#;
-        let hash = format!("sha256:{:x}", Sha256::digest(bytes));
-        IntradaySessionWindowContract::from_bytes(bytes, &hash)
-            .expect("valid in-memory window fixture")
-    }
-
     fn valid_market_ws_pins() -> MarketWsStartupPins {
         let slot = uuid::Uuid::from_u128(1);
         let grant = uuid::Uuid::from_u128(2);
@@ -1574,18 +1569,37 @@ mod quote_transport_tests {
                     IntradayQuoteTransport::Rest,
                     IntradayQuoteTransport::MarketWs,
                 ] {
-                    let expected =
-                        if mode != Mode::Daemon || intraday_mode == IntradayQuotesMode::Disabled {
-                            QuoteBackend::Disabled
-                        } else {
-                            match transport {
-                                IntradayQuoteTransport::Rest => QuoteBackend::Rest,
-                                IntradayQuoteTransport::MarketWs => QuoteBackend::MarketWs,
-                            }
-                        };
+                    let expected = if mode != Mode::Daemon
+                        || intraday_mode == IntradayQuotesMode::Disabled
+                        || transport == IntradayQuoteTransport::Rest
+                    {
+                        QuoteBackend::Disabled
+                    } else {
+                        QuoteBackend::MarketWs
+                    };
                     assert_eq!(quote_backend(mode, intraday_mode, transport), expected);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn only_daemon_uses_configured_intraday_mode() {
+        assert_eq!(
+            effective_intraday_mode(Mode::Daemon, IntradayQuotesMode::OwnerOnly),
+            IntradayQuotesMode::OwnerOnly
+        );
+        for mode in [Mode::Once, Mode::Healthcheck] {
+            let effective = effective_intraday_mode(mode, IntradayQuotesMode::OwnerOnly);
+            assert_eq!(effective, IntradayQuotesMode::Disabled);
+            assert_eq!(
+                IntradayQuoteTransport::for_mode(effective, None),
+                Ok(IntradayQuoteTransport::Rest)
+            );
+            assert_eq!(
+                quote_backend(mode, effective, IntradayQuoteTransport::Rest),
+                QuoteBackend::Disabled
+            );
         }
     }
 
@@ -1754,57 +1768,25 @@ mod quote_transport_tests {
     }
 
     #[tokio::test]
-    async fn rest_startup_uses_existing_windows_and_no_ws_factory() {
+    async fn rest_transport_is_disabled_and_continues_eod_without_quote_startup() {
         let events = Rc::new(RefCell::new(Vec::new()));
-        let load_events = Rc::clone(&events);
-        let start_events = Rc::clone(&events);
         let eod_events = Rc::clone(&events);
-        let success = run_selected_quote_startup(
+        let result = run_selected_quote_startup(
             Mode::Daemon,
             IntradayQuotesMode::OwnerOnly,
             IntradayQuoteTransport::Rest,
-            move || {
-                load_events.borrow_mut().push(Event::LoadRest);
-                Ok(valid_window_contract())
-            },
-            move |_windows| {
-                start_events.borrow_mut().push(Event::StartRest);
-                Some(FakeTask::Rest)
-            },
-            || -> Option<FakeTask> { panic!("REST backend must not start MarketWs") },
+            || panic!("REST intraday transport must not load windows"),
+            |_| -> Option<FakeTask> { panic!("REST intraday transport must not start") },
+            || -> Option<FakeTask> { panic!("REST intraday transport must not start MarketWs") },
             move |task| async move {
                 eod_events.borrow_mut().push(Event::ContinueEod);
+                assert_eq!(task, None);
                 task
             },
         )
         .await;
-        assert_eq!(success, Some(FakeTask::Rest));
-        assert_eq!(
-            *events.borrow(),
-            vec![Event::LoadRest, Event::StartRest, Event::ContinueEod]
-        );
-
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let load_events = Rc::clone(&events);
-        let eod_events = Rc::clone(&events);
-        let failed = run_selected_quote_startup(
-            Mode::Daemon,
-            IntradayQuotesMode::OwnerOnly,
-            IntradayQuoteTransport::Rest,
-            move || {
-                load_events.borrow_mut().push(Event::LoadRest);
-                Err(collectors::intraday_quotes::IntradaySessionWindowError::Missing)
-            },
-            |_| -> Option<FakeTask> { panic!("invalid REST windows must not start producer") },
-            || -> Option<FakeTask> { panic!("REST backend must not start MarketWs") },
-            move |task| async move {
-                eod_events.borrow_mut().push(Event::ContinueEod);
-                task
-            },
-        )
-        .await;
-        assert_eq!(failed, None);
-        assert_eq!(*events.borrow(), vec![Event::LoadRest, Event::ContinueEod]);
+        assert_eq!(result, None);
+        assert_eq!(*events.borrow(), vec![Event::ContinueEod]);
     }
 
     #[tokio::test]

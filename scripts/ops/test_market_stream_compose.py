@@ -73,6 +73,16 @@ fi
             self.assertTrue(lines[-1].endswith("/compose.market-stream.yml"))
             self.assertEqual(lines[1::2], ["-f"] * expected)
 
+    def test_active_mode_requires_explicit_ws_in_protected_dotenv(self):
+        missing = {key: value for key, value in VALID.items()
+                   if key != "OWNER_INTRADAY_QUOTE_TRANSPORT"}
+        for values, shell in ((missing, None), (missing, {"OWNER_INTRADAY_QUOTE_TRANSPORT": "rest"}),
+                              ({**VALID, "OWNER_INTRADAY_QUOTE_TRANSPORT": "rest"}, None)):
+            with self.subTest(values=values, shell=shell):
+                code, lines, _ = self.configure(values, shell, overlays=False)
+                self.assertEqual(code, 1)
+                self.assertEqual(lines, ["ERROR:owner_intraday_quotes_requires_explicit_market_ws"])
+
     def test_missing_or_noncanonical_metadata_fails(self):
         bad = {
             "OWNER_INTRADAY_QUOTE_TRANSPORT": ["", "ws", "REST"],

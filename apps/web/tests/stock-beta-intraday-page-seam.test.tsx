@@ -194,6 +194,7 @@ describe("Stock Beta intraday page seams", () => {
 
   it("passes only an exact READY membership when enabled and tolerates a quote-only membership failure", async () => {
     vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
     mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
@@ -202,7 +203,8 @@ describe("Stock Beta intraday page seams", () => {
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
     );
     expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
-    expect(detailMarkup).toContain("Intraday price · periodic refresh");
+    expect(detailMarkup).toContain('data-testid="stock-beta-stream-selected"');
+    expect(detailMarkup).not.toContain("periodic refresh");
     expect(detailMarkup).toContain("Returns");
 
     const unavailableApi = apiFor(
@@ -222,7 +224,8 @@ describe("Stock Beta intraday page seams", () => {
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
     );
     expect(failureMarkup).toContain("Returns");
-    expect(failureMarkup).toContain("Intraday price · periodic refresh");
+    expect(failureMarkup).toContain('data-testid="stock-beta-stream-selected"');
+    expect(failureMarkup).not.toContain("periodic refresh");
 
     const authFailureApi = apiFor(
       new ApiProblem(
@@ -244,13 +247,41 @@ describe("Stock Beta intraday page seams", () => {
 
   it("keeps the dashboard READY membership lookup on the existing server read", async () => {
     vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
     mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
 
     const markup = renderToStaticMarkup(await StockBetaPage());
     expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
-    expect(markup).toContain("Intraday price · periodic refresh");
+    expect(markup).toContain('data-testid="stock-beta-stream-board"');
+    expect(markup).not.toContain("periodic refresh");
     expect(markup).toContain(SIGNAL.instrument_id);
   });
+
+  it.each([undefined, "rest"])(
+    "never enables quote polling with transport %s",
+    async (transport) => {
+      vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+      vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", transport);
+      mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+      const api = apiFor();
+      mocks.getProductApi.mockResolvedValue(api);
+
+      const detail = renderToStaticMarkup(
+        await StockBetaDetailPage({
+          params: Promise.resolve({ instrument: SIGNAL.instrument_id }),
+        }),
+      );
+      expect(api.getOwnerEquityV2Memberships).not.toHaveBeenCalled();
+      expect(detail).not.toContain("periodic refresh");
+      expect(detail).not.toContain("stock-beta-stream-selected");
+      expect(detail).toContain("Returns");
+
+      const dashboard = renderToStaticMarkup(await StockBetaPage());
+      expect(dashboard).not.toContain("periodic refresh");
+      expect(dashboard).not.toContain("stock-beta-stream-board");
+      expect(dashboard).toContain(SIGNAL.instrument_id);
+    },
+  );
 });

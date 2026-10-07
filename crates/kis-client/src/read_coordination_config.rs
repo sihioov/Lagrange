@@ -40,6 +40,17 @@ impl IntradayQuoteTransport {
             Some(_) => Err(ReadCoordinationConfigError::InvalidIntradayTransport),
         }
     }
+
+    pub fn for_mode(
+        mode: IntradayQuotesMode,
+        value: Option<&str>,
+    ) -> Result<Self, ReadCoordinationConfigError> {
+        let transport = Self::from_optional_str(value)?;
+        if mode == IntradayQuotesMode::OwnerOnly && transport != Self::MarketWs {
+            return Err(ReadCoordinationConfigError::InvalidIntradayTransport);
+        }
+        Ok(transport)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -210,6 +221,37 @@ mod tests {
                 IntradayQuoteTransport::from_optional_str(Some(value)),
                 Err(ReadCoordinationConfigError::InvalidIntradayTransport),
                 "{value:?} must be rejected without normalization"
+            );
+        }
+    }
+
+    #[test]
+    fn intraday_quote_transport_is_required_only_when_intraday_is_enabled() {
+        for value in [None, Some("rest"), Some("market_ws")] {
+            assert!(IntradayQuoteTransport::for_mode(IntradayQuotesMode::Disabled, value).is_ok());
+        }
+        assert_eq!(
+            IntradayQuoteTransport::for_mode(IntradayQuotesMode::Disabled, None),
+            Ok(IntradayQuoteTransport::Rest)
+        );
+        assert_eq!(
+            IntradayQuoteTransport::for_mode(IntradayQuotesMode::OwnerOnly, Some("market_ws")),
+            Ok(IntradayQuoteTransport::MarketWs)
+        );
+        for value in [None, Some("rest")] {
+            assert_eq!(
+                IntradayQuoteTransport::for_mode(IntradayQuotesMode::OwnerOnly, value),
+                Err(ReadCoordinationConfigError::InvalidIntradayTransport)
+            );
+        }
+        for value in [Some(""), Some(" market_ws"), Some("REST"), Some("unknown")] {
+            assert_eq!(
+                IntradayQuoteTransport::for_mode(IntradayQuotesMode::Disabled, value),
+                Err(ReadCoordinationConfigError::InvalidIntradayTransport)
+            );
+            assert_eq!(
+                IntradayQuoteTransport::for_mode(IntradayQuotesMode::OwnerOnly, value),
+                Err(ReadCoordinationConfigError::InvalidIntradayTransport)
             );
         }
     }

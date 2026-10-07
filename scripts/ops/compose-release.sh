@@ -177,9 +177,6 @@ fi
 
 [ -f "$compose_file" ] && [ ! -L "$compose_file" ] || die "Compose file missing or symlinked: $compose_file"
 [ -f "$env_file" ] && [ ! -L "$env_file" ] || blocked "production env file missing or symlinked: $env_file"
-command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
-docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
-
 bash "$script_dir/validate-production-config.sh" --scope "$scope" --env-file "$env_file"
 
 # Reuse the validator's non-evaluating dotenv contract. In particular, never
@@ -191,6 +188,8 @@ data_dir=$(dotenv_effective_get LAGRANGE_DATA_DIR)
 if ! kis_read_compose_configure "$root"; then
   die "$KIS_READ_COMPOSE_ERROR"
 fi
+command -v docker >/dev/null 2>&1 || blocked 'docker is not installed'
+docker compose version >/dev/null 2>&1 || blocked 'Docker Compose v2 is unavailable'
 owner_intraday_quotes_mode=$KIS_READ_COMPOSE_OWNER_INTRADAY_QUOTES_MODE
 owner_intraday_quote_transport=$KIS_READ_COMPOSE_QUOTE_TRANSPORT
 kis_read_coordination_mode=$KIS_READ_COMPOSE_COORDINATION_MODE

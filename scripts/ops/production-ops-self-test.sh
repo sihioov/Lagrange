@@ -140,6 +140,8 @@ cp "$root/deploy/compose/compose.yml" \
   "$release_fixture/repo/deploy/compose/compose.yml"
 cp "$root/deploy/compose/compose.intraday.yml" \
   "$release_fixture/repo/deploy/compose/compose.intraday.yml"
+cp "$root/deploy/compose/compose.market-stream.yml" \
+  "$release_fixture/repo/deploy/compose/compose.market-stream.yml"
 printf '%s\n' fixture >"$release_fixture/repo/nt/fixture"
 printf '%s\n' fixture >"$release_fixture/repo/configs/fixture"
 printf '%s\n' fixture >"$release_fixture/repo/migrations/fixture"
@@ -511,7 +513,15 @@ chmod 0755 "$compose_bin/docker"
 installed_env=$release_fixture/install/releases/$commit_one/deploy/compose/.env
 installed_base=$release_fixture/install/releases/$commit_one/deploy/compose/compose.yml
 installed_overlay=$release_fixture/install/releases/$commit_one/deploy/compose/compose.intraday.yml
+installed_stream_overlay=$release_fixture/install/releases/$commit_one/deploy/compose/compose.market-stream.yml
 disabled_env_backup=$release_fixture/disabled.env.backup
+stream_fixture_metadata=(
+  'OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws'
+  'OWNER_MARKET_STREAM_ORIGIN=https://quotes.example'
+  'KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID=00000000-0000-4000-8000-000000000001'
+  'KIS_MARKET_STREAM_GRANT_ID=00000000-0000-4000-8000-000000000002'
+  'KIS_MARKET_STREAM_CONTRACT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+)
 
 fixture_die() {
   echo "production-ops-self-test: $*" >&2
@@ -519,7 +529,7 @@ fixture_die() {
 }
 
 assert_compose_file_order() {
-  local expected_overlay=$1 line compose_calls=0 expected_files actual_files
+  local expected_overlay=$1 expected_stream_overlay=${2:-} line compose_calls=0 expected_files actual_files overlay_args
   while IFS= read -r line; do
     case "$line" in
       'compose version'|'approval-check'|'image inspect '*|'inspect '*)
@@ -530,8 +540,13 @@ assert_compose_file_order() {
         expected_files=2
         if [ -n "$expected_overlay" ]; then
           expected_files=3
+          overlay_args="-f $expected_overlay"
+          if [ -n "$expected_stream_overlay" ]; then
+            expected_files=4
+            overlay_args+=" -f $expected_stream_overlay"
+          fi
           case "$line" in
-            "compose --env-file $installed_env -f $installed_base -f $expected_overlay -f $release_fixture/install/.release-image-override.$commit_one."*)
+            "compose --env-file $installed_env -f $installed_base $overlay_args -f $release_fixture/install/.release-image-override.$commit_one."*)
               ;;
             *) fixture_die "unexpected Compose file order: $line" ;;
           esac
@@ -582,17 +597,23 @@ assert_web_runtime_contract() {
 }
 
 run_intraday_case() {
-  local name=$1 quotes_mode=$2 coordination_mode=$3 output expected_overlay
+  local name=$1 quotes_mode=$2 coordination_mode=$3 output expected_overlay expected_stream_overlay
+  local stream_ack=()
   cp "$disabled_env_backup" "$installed_env"
   printf '%s\n' \
     "OWNER_INTRADAY_QUOTES_MODE=$quotes_mode" \
     "KIS_READ_COORDINATION_MODE=$coordination_mode" >>"$installed_env"
+  if [ "$quotes_mode" = owner_only ]; then
+    printf '%s\n' "${stream_fixture_metadata[@]}" >>"$installed_env"
+    stream_ack=(OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS)
+  fi
   : >"$compose_log"
   output=$tmp/compose-intraday-$name.out
   if ! env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
     REAL_INSTALL_BIN="$real_install" \
     COMPOSE_FAKE_LOG="$compose_log" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
     PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+    "${stream_ack[@]}" \
     bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
     >"$output" 2>&1; then
     sed -n '1,120p' "$output" >&2
@@ -601,8 +622,10 @@ run_intraday_case() {
   grep -Fq 'COMPOSE_RELEASE: PASS' "$output" ||
     fixture_die "intraday case did not pass: $name"
   expected_overlay=
+  expected_stream_overlay=
   [ "$coordination_mode" = shared_required ] && expected_overlay=$installed_overlay
-  assert_compose_file_order "$expected_overlay"
+  [ "$quotes_mode" = owner_only ] && expected_stream_overlay=$installed_stream_overlay
+  assert_compose_file_order "$expected_overlay" "$expected_stream_overlay"
 }
 
 env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
@@ -731,8 +754,8 @@ mv "$manifest_saved" "$installed_manifest"
 
 # D2 overlay selection uses only the parsed protected env values. The first
 # release above proves missing keys retain legacy/off defaults; these explicit
-# cases prove that shared coordination selects the one fixed overlay regardless
-# of whether owner intraday mode is off or owner-only.
+# cases prove that shared coordination selects its fixed overlay; active quotes
+# additionally select the fixed WS overlay with reviewed fixture metadata.
 run_intraday_case explicit-legacy-off off legacy
 run_intraday_case shared-off off shared_required
 run_intraday_case shared-owner-only owner_only shared_required
@@ -740,7 +763,7 @@ run_intraday_case shared-owner-only owner_only shared_required
 cp "$disabled_env_backup" "$installed_env"
 printf '%s\n' \
   'OWNER_INTRADAY_QUOTES_MODE=owner_only' \
-  'KIS_READ_COORDINATION_MODE=legacy' >>"$installed_env"
+  'KIS_READ_COORDINATION_MODE=legacy' "${stream_fixture_metadata[@]}" >>"$installed_env"
 : >"$compose_log"
 if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
   REAL_INSTALL_BIN="$real_install" \

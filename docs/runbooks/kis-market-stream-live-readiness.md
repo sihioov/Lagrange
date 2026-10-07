@@ -46,3 +46,48 @@
 6. 정상 Web `/login` → 기존 `/api/v1/auth/session`의 Owner role 확인 경로를 사용한다([Web route](../../apps/web/app/login/route.ts), [session client](../../apps/web/lib/api/server-session.ts#L31-L52), [API path](../../apps/web/lib/api/contracts.ts#L46-L50)). 유효 세션을 얻을 수 없으면 Owner가 직접 로그인하는 한 단계만 요청한다. 쿠키 추출·DB 세션 삽입·auth 우회는 금지한다. 이 확인도 현재 수행하지 않았다.
 
 **다음 단계:** G1·G3의 좁은 Owner 결정과 G2 최신 한도/slot 증명, G4 당일·다음날 공급 절차를 코디네이터가 확정한 뒤, 별도 권한을 가진 WP-9의 한 종목 G5 pilot으로 진행한다. 본 문서는 `LIVE_ACCEPTED` 또는 `FINAL_ACCEPTED` 증거가 아니다.
+
+## 2026-10-07 WebSocket 전용 전환 준비
+
+Owner는 실시간 시세를 WebSocket 전용으로 운영하기로 결정했다. 새 릴리스는
+`owner_only`에서 보호된 설정의 명시적 `market_ws`를 요구한다. 누락·`rest`는 활성화
+오류이며, 스트림 장애 시 오래된 값/이용 불가를 표시하고 REST 시세로 전환하지 않는다.
+EOD 일봉·참조가격 REST 수집은 별도 경로다. 브라우저 전달은 기존 인증 SSE를 사용한다.
+
+공개 문서만 대상으로 한 당일 재조회에서 시장 채널 속성 JSON은 HTTP 200이었다.
+`res_b` 47개 필드와 마지막 `MARKET_CLS_CODE`를 확인했고, 최신 `lastModifiedDate`는
+`2026-09-11T16:31:27+09:00`으로 기존 wire 계약과 일치한다. 조회 URL은
+<https://apiportal.koreainvestment.com/api/apis/guide/property/714d1437-8f62-43db-a73c-cf509d3f6aa7>이며,
+응답 SHA-256은 `ea945675204c6394b614124012995daaad5080eec7a62339f72c9aa613d6df68`이다.
+Approval 속성 JSON도 HTTP 200으로 5개 속성을 반환했고, 최신 개정은
+`2024-12-13T15:21:56+09:00`이었다. 이는 문서 조회이며 접속키 발급이나 시장 소켓
+접속을 수행한 결과가 아니다.
+
+9월 16일 유량 공지는 공개 HTML이 본문을 포함하지 않았고, 그 HTML의 조회 경로로
+확인한 공개 JSON은 HTTP 400이었다. 최신 한도와 해당 credential slot의 다른
+클라이언트 사용 여부는 여전히 확인하지 못했다. WebSocket 전용 제품 결정 자체로
+G1의 정확한 평문 연결 수락, G2의 현재 용량 증명, G3의 검토된 권리/grant 입력,
+G4의 당일·다음날 증명, G5의 실제 수신 인수를 충족했다고 취급하지 않는다.
+
+### Owner의 평문 연결 수락 — 2026-10-07
+
+Owner는 접속키가 암호화 없이 전송된다는 설명을 받은 뒤 KIS 평문 WebSocket 연결을
+명시적으로 허용했다. 이 결정은 기존 시장 시세 계약의 HTTPS
+`POST https://openapi.koreainvestment.com:9443/oauth2/Approval`과
+`ws://ops.koreainvestment.com:21000/tryitout`, 시장 채널 `H0STCNT0`의 읽기 전용
+접속 준비에 적용한다. 같은 평문 연결 수락을 다시 요청할 필요는 없다.
+접속 승인 결정과 검토된 grant 입력·설치·실제 수신 증거는 서로 별개다.
+
+Owner는 같은 키를 다른 WebSocket 프로그램이 사용 중인지는 모른다고 답했다.
+당일 호스트 TCP 소켓과 실행 중인 11개 컨테이너의 IPv4/IPv6 TCP 테이블을 확인한
+시점에는 KIS의 운영/모의 WS 포트 `21000`/`31000`으로 연결된 소켓을 찾지 못했다.
+이는 해당 서버의 관측이며, 다른 기기의 연결이나 동일 App Key의 전역 독점 사용을
+증명하지 않는다. 다른 클라이언트의 부재와 최신 공식 용량 근거가 확인되지 않은
+상태에서 임의 접속으로 기존 세션을 교체하거나 연결 충돌을 시험하지 않는다.
+
+같은 날 공식 포털을 새 격리 브라우저에서 일반 화면으로 확인했다. 공개 공지 목록에는
+9월 16일 유량제한 공지가 잠금 표시와 함께 있었고, 제목 링크로 열면 비밀글 안내,
+직접 공지 주소로 열면 권한 없음 안내가 표시됐다. 로그인·인증 우회를 시도하지 않았고
+브라우저는 모두 종료했다. 따라서 앞선 HTTP 400을 현행 한도 근거로 삼지 않으며,
+Owner가 정상 접근으로 확인한 공식 본문 또는 KIS의 공식 답변이 필요하다.
+이 조회에서도 현재 숫자 한도나 중복 세션 처리 방식은 확인하지 못했다.

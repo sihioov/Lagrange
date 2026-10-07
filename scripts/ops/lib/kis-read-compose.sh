@@ -54,6 +54,10 @@ kis_read_compose_validate_market_stream() {
     rest|market_ws) ;;
     *) kis_read_compose_fail 'owner_intraday_quote_transport_invalid' || return 1 ;;
   esac
+  if [ "$quotes_mode" = owner_only ] &&
+     { ! dotenv_has OWNER_INTRADAY_QUOTE_TRANSPORT || [ "$transport" != market_ws ]; }; then
+    kis_read_compose_fail 'owner_intraday_quotes_requires_explicit_market_ws' || return 1
+  fi
   KIS_READ_COMPOSE_QUOTE_TRANSPORT=$transport
   [ "$quotes_mode" = owner_only ] && [ "$transport" = market_ws ] || return 0
 

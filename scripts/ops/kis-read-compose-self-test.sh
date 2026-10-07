@@ -5,7 +5,8 @@ set -euo pipefail
 unset OWNER_INTRADAY_QUOTES_MODE KIS_READ_COORDINATION_MODE \
   OWNER_INTRADAY_SESSION_WINDOWS_SOURCE OWNER_INTRADAY_QUOTE_TRANSPORT \
   OWNER_MARKET_STREAM_ORIGIN KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID \
-  KIS_MARKET_STREAM_GRANT_ID KIS_MARKET_STREAM_CONTRACT_SHA256
+  KIS_MARKET_STREAM_GRANT_ID KIS_MARKET_STREAM_CONTRACT_SHA256 \
+  DB_APP_MAX_CONNECTIONS DB_APP_MAX_CONNECTIONS_FILE
 
 script_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 helper=$script_dir/lib/kis-read-compose.sh
@@ -49,6 +50,14 @@ mkdir -p "$compose_dir"
 printf '%s\n' 'services: {}' >"$compose_dir/compose.yml"
 intraday_overlay=$compose_dir/compose.intraday.yml
 operational_overlay=$compose_dir/compose.intraday-operational.yml
+market_stream_overlay=$compose_dir/compose.market-stream.yml
+stream_settings=(
+  'OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws'
+  'OWNER_MARKET_STREAM_ORIGIN=https://quotes.example'
+  'KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID=00000000-0000-4000-8000-000000000001'
+  'KIS_MARKET_STREAM_GRANT_ID=00000000-0000-4000-8000-000000000002'
+  'KIS_MARKET_STREAM_CONTRACT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+)
 
 write_env() {
   local path=$1
@@ -93,27 +102,50 @@ configure_case "$tmp/shared-off.env"
 [ "${KIS_READ_COMPOSE_FILE_ARGS[1]}" = "$intraday_overlay" ] ||
   fail 'intraday overlay path was not derived from the source root'
 
+# Active quotes require the protected dotenv to select WS explicitly. Neither
+# the historical REST default nor a matching shell value supplies that choice.
+for transport in missing rest invalid; do
+  write_env "$tmp/owner-$transport.env" \
+    'OWNER_INTRADAY_QUOTES_MODE=owner_only' \
+    'KIS_READ_COORDINATION_MODE=shared_required'
+  if [ "$transport" != missing ]; then
+    printf 'OWNER_INTRADAY_QUOTE_TRANSPORT=%s\n' "$transport" >>"$tmp/owner-$transport.env"
+  fi
+  expected=owner_intraday_quotes_requires_explicit_market_ws
+  [ "$transport" != invalid ] || expected=owner_intraday_quote_transport_invalid
+  expect_error "$tmp/owner-$transport.env" "$expected"
+done
+OWNER_INTRADAY_QUOTE_TRANSPORT=rest
+expect_error "$tmp/owner-missing.env" owner_intraday_quotes_requires_explicit_market_ws
+unset OWNER_INTRADAY_QUOTE_TRANSPORT
+write_env "$tmp/off-rest.env" 'OWNER_INTRADAY_QUOTES_MODE=off' 'OWNER_INTRADAY_QUOTE_TRANSPORT=rest'
+configure_case "$tmp/off-rest.env"
+[ "${#KIS_READ_COMPOSE_FILE_ARGS[@]}" -eq 0 ] || fail 'off/rest selected an overlay'
+printf '%s\n' 'services: {}' >"$market_stream_overlay"
+
 write_env "$tmp/shared-release-owner.env" \
   'OWNER_INTRADAY_QUOTES_MODE=owner_only' \
   'KIS_READ_COORDINATION_MODE=shared_required' \
-  'OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=release_v1'
+  'OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=release_v1' "${stream_settings[@]}"
 configure_case "$tmp/shared-release-owner.env"
-[ "${#KIS_READ_COMPOSE_FILE_ARGS[@]}" -eq 2 ] ||
+[ "${#KIS_READ_COMPOSE_FILE_ARGS[@]}" -eq 4 ] ||
   fail 'release_v1 owner-only mode selected an unexpected artifact'
+[ "${KIS_READ_COMPOSE_FILE_ARGS[3]}" = "$market_stream_overlay" ] || fail 'WS overlay was not last'
 
 printf '%s\n' 'services: {}' >"$operational_overlay"
 write_env "$tmp/shared-operational-owner.env" \
   'OWNER_INTRADAY_QUOTES_MODE=owner_only' \
   'KIS_READ_COORDINATION_MODE=shared_required' \
-  'OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=operational_v1'
+  'OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=operational_v1' "${stream_settings[@]}"
 configure_case "$tmp/shared-operational-owner.env"
-[ "${#KIS_READ_COMPOSE_FILE_ARGS[@]}" -eq 4 ] ||
-  fail 'operational owner-only mode did not select two overlays'
+[ "${#KIS_READ_COMPOSE_FILE_ARGS[@]}" -eq 6 ] ||
+  fail 'operational owner-only mode did not select three overlays'
 [ "${KIS_READ_COMPOSE_FILE_ARGS[1]}" = "$intraday_overlay" ] ||
   fail 'intraday overlay was not first'
 [ "${KIS_READ_COMPOSE_FILE_ARGS[2]}" = -f ] || fail 'operational argument flag is not -f'
 [ "${KIS_READ_COMPOSE_FILE_ARGS[3]}" = "$operational_overlay" ] ||
   fail 'operational overlay was not second'
+[ "${KIS_READ_COMPOSE_FILE_ARGS[5]}" = "$market_stream_overlay" ] || fail 'WS overlay was not last'
 
 write_env "$tmp/shared-operational-off.env" \
   'OWNER_INTRADAY_QUOTES_MODE=off' \
@@ -125,7 +157,7 @@ configure_case "$tmp/shared-operational-off.env"
 
 write_env "$tmp/owner-without-shared.env" \
   'OWNER_INTRADAY_QUOTES_MODE=owner_only' \
-  'KIS_READ_COORDINATION_MODE=legacy'
+  'KIS_READ_COORDINATION_MODE=legacy' "${stream_settings[@]}"
 expect_error "$tmp/owner-without-shared.env" owner_intraday_quotes_requires_shared
 
 write_env "$tmp/operational-with-legacy.env" \
@@ -176,6 +208,7 @@ chmod 0755 "$release_root/scripts/ops/compose-release.sh" \
 printf '%s\n' 'services: {}' >"$release_root/deploy/compose/compose.yml"
 printf '%s\n' 'services: {}' >"$release_root/deploy/compose/compose.intraday.yml"
 printf '%s\n' 'services: {}' >"$release_root/deploy/compose/compose.intraday-operational.yml"
+printf '%s\n' 'services: {}' >"$release_root/deploy/compose/compose.market-stream.yml"
 refresh_env=$release_root/deploy/compose/.env
 write_env "$refresh_env" \
   'LAGRANGE_DATA_DIR=/tmp/fixture-data' \
@@ -183,7 +216,7 @@ write_env "$refresh_env" \
   'OWNER_INTRADAY_QUOTES_MODE=owner_only' \
   'KIS_READ_COORDINATION_MODE=shared_required' \
   'OWNER_INTRADAY_SESSION_WINDOWS_SOURCE=operational_v1' \
-  'OWNER_EQUITY_V2_RUNTIME_MODE=owner_only'
+  'OWNER_EQUITY_V2_RUNTIME_MODE=owner_only' "${stream_settings[@]}"
 chmod 0600 "$refresh_env"
 
 write_manifest() {
@@ -262,7 +295,8 @@ if [ "${1:-}" = compose ]; then
     esac
   done
   case "$command_name" in
-    version|config) exit 0 ;;
+    version) [ "${FAKE_COMPOSE_UNAVAILABLE:-0}" != 1 ]; exit $? ;;
+    config) exit 0 ;;
     ps)
       if [[ " $* " == *' -q '* || " $* " == *' -aq '* ]]; then
         service=${!#}
@@ -352,10 +386,30 @@ grep -Fq 'owner_intraday_quotes_mode_invalid' "$tmp/invalid-mode.out"
 cp "$tmp/refresh-env.saved" "$refresh_env"
 chmod 0600 "$refresh_env"
 
+# Missing, REST, and invalid active transports reject before even the fake
+# Docker CLI or an immutable image override can be reached.
+for transport in missing rest invalid; do
+  sed '/^OWNER_INTRADAY_QUOTE_TRANSPORT=/d' "$tmp/refresh-env.saved" >"$refresh_env"
+  if [ "$transport" != missing ]; then
+    printf 'OWNER_INTRADAY_QUOTE_TRANSPORT=%s\n' "$transport" >>"$refresh_env"
+  fi
+  : >"$docker_log"
+  if run_refresh "$tmp/rejected-transport.out" bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --apply; then
+    fail 'active refresh accepted missing, REST or invalid transport'
+  fi
+  expected=owner_intraday_quotes_requires_explicit_market_ws
+  [ "$transport" != invalid ] || expected=owner_intraday_quote_transport_invalid
+  grep -Fq "$expected" "$tmp/rejected-transport.out"
+  [ ! -s "$docker_log" ] || fail 'invalid active transport reached Docker'
+  ! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
+done
+cp "$tmp/refresh-env.saved" "$refresh_env"
+
 mv "$manifest" "$tmp/manifest.saved"
 : >"$docker_log"
 if run_refresh "$tmp/missing-manifest.out" bash "$release_root/scripts/ops/compose-release.sh" \
-  --scope release --refresh-intraday --preflight; then
+  --scope release --refresh-market-stream --preflight; then
   fail 'refresh accepted a missing immutable manifest'
 fi
 grep -Fq 'installed-release-manifest must be a regular non-symlink file' \
@@ -365,22 +419,23 @@ mv "$tmp/manifest.saved" "$manifest"
 
 : >"$docker_log"
 run_refresh "$tmp/refresh-plan.out" bash "$release_root/scripts/ops/compose-release.sh" \
-  --scope release --refresh-intraday --plan
-grep -Fq 'COMPOSE_REFRESH_INTRADAY_ORDER:' "$tmp/refresh-plan.out"
+  --scope release --refresh-market-stream --plan
+grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM_ORDER:' "$tmp/refresh-plan.out"
 ! grep -Eq '^compose .* up ' "$docker_log"
 ! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
 
 : >"$docker_log"
 run_refresh "$tmp/refresh-preflight.out" bash "$release_root/scripts/ops/compose-release.sh" \
-  --scope release --refresh-intraday --preflight
-grep -Fq 'COMPOSE_REFRESH_INTRADAY_PREFLIGHT: PASS' "$tmp/refresh-preflight.out"
+  --scope release --refresh-market-stream --preflight
+grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM_PREFLIGHT: PASS' "$tmp/refresh-preflight.out"
 ! grep -Eq '^compose .* up ' "$docker_log"
 
 : >"$docker_log"
 if run_refresh "$tmp/missing-running.out" env FAKE_MISSING_SERVICE=owner-equity-v2-runner \
   OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS \
   bash "$release_root/scripts/ops/compose-release.sh" \
-    --scope release --refresh-intraday --apply; then
+    --scope release --refresh-market-stream --apply; then
   fail 'refresh accepted a missing currently running service'
 fi
 grep -Fq 'persistent service did not resolve to exactly one container: owner-equity-v2-runner' \
@@ -391,8 +446,9 @@ grep -Fq 'persistent service did not resolve to exactly one container: owner-equ
 : >"$docker_log"
 if run_refresh "$tmp/mismatched-running.out" env FAKE_MISMATCH_SERVICE=owner-equity-v2-runner \
   OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS \
   bash "$release_root/scripts/ops/compose-release.sh" \
-    --scope release --refresh-intraday --apply; then
+    --scope release --refresh-market-stream --apply; then
   fail 'refresh accepted a mismatched currently running service'
 fi
 grep -Fq 'persistent service image_id mismatch: owner-equity-v2-runner' \
@@ -403,23 +459,28 @@ grep -Fq 'persistent service image_id mismatch: owner-equity-v2-runner' \
 : >"$docker_log"
 run_refresh "$tmp/refresh-apply.out" \
   env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS \
   bash "$release_root/scripts/ops/compose-release.sh" \
-  --scope release --refresh-intraday --apply
-grep -Fq 'COMPOSE_REFRESH_INTRADAY: PASS' "$tmp/refresh-apply.out"
+  --scope release --refresh-market-stream --apply
+grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM: PASS' "$tmp/refresh-apply.out"
 mapfile -t refresh_ups < <(grep '^compose .* up ' "$docker_log")
-[ "${#refresh_ups[@]}" -eq 2 ] || fail 'refresh did not issue exactly two Compose up calls'
-expected_order="-f $release_root/deploy/compose/compose.yml -f $release_root/deploy/compose/compose.intraday.yml -f $release_root/deploy/compose/compose.intraday-operational.yml -f $install_root/.release-image-override."
+[ "${#refresh_ups[@]}" -eq 3 ] || fail 'refresh did not issue exactly three Compose up calls'
+expected_order="-f $release_root/deploy/compose/compose.yml -f $release_root/deploy/compose/compose.intraday.yml -f $release_root/deploy/compose/compose.intraday-operational.yml -f $release_root/deploy/compose/compose.market-stream.yml -f $install_root/.release-image-override."
 case "${refresh_ups[0]}" in
   *"$expected_order"*) ;;
-  *) fail "refresh Compose file order was not base/intraday/operational/override: ${refresh_ups[0]}" ;;
+  *) fail "refresh Compose file order was not base/intraday/operational/WS/override: ${refresh_ups[0]}" ;;
 esac
 case "${refresh_ups[0]}" in
   *'--no-build --pull never --no-deps --force-recreate --wait api-server') ;;
   *) fail "API refresh command was not narrow or ordered: ${refresh_ups[0]}" ;;
 esac
 case "${refresh_ups[1]}" in
+  *'--no-build --pull never --no-deps --force-recreate --wait web') ;;
+  *) fail "Web refresh command was not narrow or ordered: ${refresh_ups[1]}" ;;
+esac
+case "${refresh_ups[2]}" in
   *'--no-build --pull never --no-deps --force-recreate --wait owner-equity-v2-runner') ;;
-  *) fail "owner V2 refresh command was not narrow or ordered: ${refresh_ups[1]}" ;;
+  *) fail "owner V2 refresh command was not narrow or ordered: ${refresh_ups[2]}" ;;
 esac
 ! grep -Eq '^compose .* (build|run|down|stop)( |$)' "$docker_log"
 if find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .; then
@@ -487,15 +548,7 @@ esac
 
 # A WS rollout refresh includes Web and requires a separate acknowledgement.
 # Every command below still reaches only the task-owned fake Docker executable.
-printf '%s\n' 'services: {}' >"$release_root/deploy/compose/compose.market-stream.yml"
 cp "$tmp/refresh-env.saved" "$refresh_env"
-cat >>"$refresh_env" <<'ENV'
-OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws
-OWNER_MARKET_STREAM_ORIGIN=https://quotes.example
-KIS_MARKET_STREAM_CREDENTIAL_SLOT_ID=00000000-0000-4000-8000-000000000001
-KIS_MARKET_STREAM_GRANT_ID=00000000-0000-4000-8000-000000000002
-KIS_MARKET_STREAM_CONTRACT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-ENV
 : >"$docker_log"
 run_refresh "$tmp/ws-plan.out" bash "$release_root/scripts/ops/compose-release.sh" \
   --scope release --refresh-market-stream --plan
@@ -662,4 +715,32 @@ mapfile -t transition_off_ups < <(grep '^compose .* up ' "$docker_log")
 ! grep -Fq 'compose.market-stream.yml' "$docker_log"
 ! grep -Eq '^compose .* (build|run|down|stop)( |$)' "$docker_log"
 
-printf 'KIS_READ_COMPOSE_SELF_TEST: PASS (provider-free helper, REST/WS refresh and off rollback fixtures)\n'
+# Feature-off still checks the normal Compose prerequisite after safe metadata
+# selection, while help exits without probing Docker or parsing activation data.
+: >"$docker_log"
+if run_refresh "$tmp/off-compose-unavailable.out" env FAKE_COMPOSE_UNAVAILABLE=1 \
+  bash "$release_root/scripts/ops/compose-release.sh" --scope release --refresh-market-stream --plan; then
+  fail 'off mode skipped the Compose prerequisite'
+fi
+grep -Fq 'Docker Compose v2 is unavailable' "$tmp/off-compose-unavailable.out"
+[ "$(cat "$docker_log")" = 'compose version' ] || fail 'unavailable Compose reached another command'
+cat >"$tmp/docker-missing.bash" <<'SH'
+command() {
+  if [ "$#" -eq 2 ] && [ "$1" = -v ] && [ "$2" = docker ]; then
+    return 1
+  fi
+  builtin command "$@"
+}
+SH
+: >"$docker_log"
+if run_refresh "$tmp/off-docker-missing.out" env BASH_ENV="$tmp/docker-missing.bash" \
+  bash "$release_root/scripts/ops/compose-release.sh" --scope release --refresh-market-stream --plan; then
+  fail 'off mode accepted a missing Docker prerequisite'
+fi
+grep -Fq 'docker is not installed' "$tmp/off-docker-missing.out"
+[ ! -s "$docker_log" ] || fail 'missing Docker reached an engine command'
+: >"$docker_log"
+run_refresh "$tmp/help.out" bash "$release_root/scripts/ops/compose-release.sh" --help
+[ ! -s "$docker_log" ] || fail 'help probed Docker'
+
+printf 'KIS_READ_COMPOSE_SELF_TEST: PASS (provider-free helper, WS-only refresh and off rollback fixtures)\n'

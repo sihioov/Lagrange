@@ -25,10 +25,20 @@ contents in the command record.
 | `FINAL_ACCEPTED` | Live acceptance plus same-source EOD and the completion-plan acceptance matrix |
 
 `OWNER_INTRADAY_QUOTES_MODE=off` prevents quote production. When it is `owner_only`,
-`OWNER_INTRADAY_QUOTE_TRANSPORT` selects exactly one of `rest` and `market_ws`.
-The REST default is retained for existing releases; WS never enables a parallel REST quote
-producer or an automatic REST fallback. EOD remains a separate, previously authorized path.
+the protected dotenv must explicitly contain `OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws`.
+Missing, empty, `rest`, or other transport values reject activation. Ambient shell values
+cannot supply or override that protected choice, and `_FILE` aliases remain forbidden.
+The REST default applies only to historical releases; new releases cannot activate a REST
+quote producer. Off mode tolerates missing or `rest` transport without starting quotes.
+Stream failure yields stale, unavailable, or off state, never REST quote fallback.
+EOD REST collection remains a separate, previously authorized path.
 The `live` profile and all account/order paths remain forbidden.
+
+Source and fixture validation do not accept the remaining live gates. The Owner accepted the
+exact market channel and plaintext transport on 2026-10-07, as recorded in the
+[live-readiness update](kis-market-stream-live-readiness.md#owner의-평문-연결-수락--2026-10-07).
+Current slot capacity, reviewed rights/grant inputs, and a real current-day calendar/window
+proof still require their own evidence before activation.
 
 An installed env and manifest belong to one immutable commit. Do not patch the installed
 `.env`, overwrite an existing release directory, or use shell mode overrides. Off preparation
@@ -189,7 +199,8 @@ prevalidated compatible off release, then use its `--refresh-market-stream` plan
 procedure with `--refresh-from-commit "$stream_activation_commit"`. A stopped or mixed set
 fails the running-container guard; recover that incident through a separately reviewed exact
 service operation before refresh. Never bypass the guard or rewrite the manifest.
-No REST fallback or migration down is implied.
+Do not hand-edit the installed `.env` to turn quotes off. Use the compatible immutable off
+release and its verified refresh procedure. No REST fallback or migration down is implied.
 
 ## Acceptance evidence
 

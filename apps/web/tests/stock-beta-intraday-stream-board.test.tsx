@@ -57,7 +57,7 @@ describe("shared stream presentation", () => {
     expect(detail).toContain("Not provided by this channel");
     expect(detail).toContain("100 / 1,234,567");
   });
-  it("separates connected transport from stale, closed, halted and gap observations", () => {
+  it("shows halt observations beside stale, closed and gap state", () => {
     const row = streamRow();
     view.rows = [{ ...row, freshness: "STALE", availability: "LAST_KNOWN", session_has_gap: true }];
     expect(board()).toContain("Stale");
@@ -66,8 +66,37 @@ describe("shared stream presentation", () => {
     expect(selected()).toContain("Market closed");
     expect(board()).not.toContain(">Live<");
     if (!row.quote) throw new Error("Missing quote fixture");
-    view.rows = [{ ...row, quote: { ...row.quote, halted: true } }];
+    view.rows = [
+      {
+        ...row,
+        market_state: "CLOSED",
+        availability: "LAST_KNOWN",
+        quote: { ...row.quote, halted: true },
+      },
+    ];
+    expect(board()).toContain("Market closed");
+    expect(board()).toContain("Halt observed");
+    expect(selected()).toContain("Market closed");
     expect(selected()).toContain("Halt observed");
+    view.rows = [
+      {
+        ...row,
+        freshness: "STALE",
+        availability: "LAST_KNOWN",
+        quote: { ...row.quote, halted: true },
+      },
+    ];
+    expect(board()).toContain("Stale");
+    expect(board()).toContain("Halt observed");
+    expect(selected()).toContain("Stale");
+    expect(selected()).toContain("Halt observed");
+    view.rows = [{ ...row, quote: { ...row.quote, halted: false } }];
+    expect(board()).not.toContain("Halt observed");
+    view.rows = [{ ...row, quote: { ...row.quote, halted: true } }];
+    const liveWithHalt = board();
+    expect(liveWithHalt).toContain(">Live<");
+    expect(liveWithHalt.match(/Halt observed/g)).toHaveLength(1);
+    expect(selected().match(/Halt observed/g)).toHaveLength(1);
   });
   it("never reuses another membership generation's price for the selected instrument", () => {
     const markup = renderToStaticMarkup(

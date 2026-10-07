@@ -15,7 +15,6 @@ function rowState(row: IntradayStreamRow | undefined, locale: Locale): string {
   const t = intradayStreamCopy(locale);
   if (!row) return t.awaitingTrade;
   if (row.market_state === "CLOSED") return t.closed;
-  if (row.quote?.halted) return t.halted;
   if (row.freshness === "STALE") return t.stale;
   if (row.availability === "LIVE") return t.live;
   if (row.availability === "LAST_KNOWN") return t.lastKnown;
@@ -122,6 +121,7 @@ export function IntradayStreamBoard({
                   </td>
                   <td>
                     {ready.has(instrument.id) ? rowState(row, locale) : t.awaitingAdmission}
+                    {quote?.halted === true ? <small>{t.halted}</small> : null}
                     {row?.session_has_gap ? <small>{t.gap}</small> : null}
                   </td>
                 </tr>
@@ -164,6 +164,7 @@ export function StreamSelectedQuote({
       <h3>{t.detail}</h3>
       <p>
         {identity?.instrument_id ?? instrumentId ?? t.noSelection} · {rowState(row, locale)}
+        {quote?.halted === true ? <small>{t.halted}</small> : null}
       </p>
       <strong data-quote-value={quote?.price}>
         {quote ? formatIntradayQuoteDecimal(quote.price, locale) : "—"} KRW

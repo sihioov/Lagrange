@@ -5,9 +5,16 @@ The owner authorized deployment, owner-only polling, and the operational session
 contract in this work session. This runbook records the implementation, not a production health claim. The implementation is bounded by the [intraday quote contract](../superpowers/specs/2026-09-08-stock-beta-intraday-quotes-contract.md)
 and the checked-in source linked below.
 
-The separate [market-stream operations runbook](kis-market-stream-operations.md) describes
-the explicitly selected `market_ws` transport. It does not expand this REST seam's network
-approval, and the two quote producers cannot run together for an Owner.
+This runbook's periodically polled REST quote producer records historical releases only.
+For new releases, `OWNER_INTRADAY_QUOTES_MODE=owner_only` requires the protected dotenv to
+explicitly select `OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws`; missing, `rest`, and invalid
+transport values reject activation. The separate
+[market-stream operations runbook](kis-market-stream-operations.md) is the current activation
+and recovery procedure. Stream failure yields stale, unavailable, or off state without REST
+quote fallback. Previously authorized EOD REST bars, references, actions, and calendar
+collection remain independent and allowed. Actual live network/plaintext approval, current
+provider limits, rights, and same-day proof gates remain unaccepted until separately verified.
+Off recovery uses a compatible immutable release, never an installed `.env` hand-edit.
 
 ## Boundary and source contract
 
@@ -122,7 +129,9 @@ The default configuration is explicit and conservative:
 
 | Setting | Accepted/runtime rule |
 | --- | --- |
-| `OWNER_INTRADAY_QUOTES_MODE` | `off` or `owner_only`; default `off`; only `owner_only` starts the daemon producer |
+| `OWNER_INTRADAY_QUOTES_MODE` | `off` or `owner_only`; default `off`; new `owner_only` activation starts only the WS producer |
+| `OWNER_INTRADAY_QUOTE_TRANSPORT` | New `owner_only` requires explicit protected `market_ws`; missing/`rest` are tolerated only while off and start no quotes |
+| `DB_APP_MAX_CONNECTIONS` | WS API default/example `32`; explicit WS pool must be at least `24` |
 | `KIS_READ_COORDINATION_MODE` | `legacy` or `shared_required`; `owner_only` requires `shared_required` |
 | `KIS_READ_CREDENTIAL_GENERATION` | In `shared_required`, positive canonical decimal, at most uint64 max `18446744073709551615` |
 | `LAGRANGE_RUNTIME_STATE_DIR` | In shared mode, an explicit canonical absolute host root; no fallback path |
@@ -152,6 +161,8 @@ coordination bind or KIS secret. Web receives the server-side feature mode only.
 daily/backfill, range, action, and stock-price wrappers. Order is base, shared intraday overlay,
 optional operational overlay, then the immutable image-ID/build-reset override. Legacy/off
 omits the overlays; shared mode must not coexist with a legacy reader using divergent state.
+New active releases also select the fixed market-stream overlay after the operational overlay
+and before the immutable image override; API/Web/runner receive WS configuration together.
 
 ## Operational day evidence and manual activation
 
@@ -200,13 +211,15 @@ same day proof. This is independent of historical price curation:
   --bootstrap-intraday-calendar --calendar-source-batch-id <retained-lowercase-UUID> --preflight
 /opt/lagrange/current/scripts/ops/compose-release.sh --scope release \
   --bootstrap-intraday-calendar --calendar-source-batch-id <same-retained-lowercase-UUID> --apply
-/opt/lagrange/current/scripts/ops/compose-release.sh --scope release --refresh-intraday --apply
+/opt/lagrange/current/scripts/ops/compose-release.sh --scope release --refresh-market-stream --plan
 ```
 
 Replace placeholders with real values; they are not runnable defaults. Existing Owner V2
 rollout gates remain in force. No direct source-checkout activation or manual Compose-up is an
-alternate release path. Refresh verifies current API/runner image IDs and revisions before
-recreating only those two services sequentially, without building or starting other services.
+alternate release path. For new releases, follow the market-stream runbook's immutable
+plan/preflight/apply and cross-release verification procedure. Refresh verifies API/Web/runner
+image IDs and revisions before recreating those three services sequentially, without building
+or starting other services.
 
 The [calendar bootstrap](../../data-pipelines/collectors/src/calendar_bootstrap.rs) consumes a
 durable date attempt before the sole `chk-holiday` GET. It validates and commits one dedicated
@@ -242,7 +255,8 @@ stand in for the owner. Acceptance requires actual demand, allowed KIS reads, va
 updates, and browser price/receipt-time updates; fixture success or healthy containers alone
 do not establish that acceptance.
 
-The runtime bounds are part of the contract and must remain unchanged: one in-flight read under
+The following REST quote runtime bounds describe historical releases, not a new activation
+path or fallback. They remain part of that historical contract: one in-flight read under
 the shared OS lock; at least `1s` global/channel spacing and `5s` intraday spacing; a `3s`
 per-attempt quote deadline; at most three total attempts with bounded `Retry-After` handling;
 `5,000` quote GET attempts per credential/live-host/path/TR/KST date (the regular `09:00` to
