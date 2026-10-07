@@ -53,6 +53,7 @@ WORKDIR /app
 
 COPY --from=builder --chown=nextjs:nextjs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/apps/web/.next/static ./apps/web/.next/static
+COPY --chown=nextjs:nextjs apps/web/public ./apps/web/public
 
 USER 10001:10001
 EXPOSE 3000
