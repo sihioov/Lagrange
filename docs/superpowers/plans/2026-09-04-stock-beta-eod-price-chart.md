@@ -121,8 +121,10 @@ GET /api/v1/research/owner-beta/equity-universe-v2/signals/instruments/{instrume
 - `sma_20`/`sma_60`은 필요한 선행 관측치가 없을 때만 `null`이다.
 - `freshness`는 `CURRENT | STALE | UNVERIFIABLE`의 닫힌 enum이다. 기존 DB-confirmed KRX close를
   네트워크 없이 참고하며, reference가 없으면 `UNVERIFIABLE`이지 `CURRENT`로 추정하지 않는다.
-- `expected_as_of`는 reference가 없을 때 `null`이다. snapshot이 reference보다 미래이면 integrity
-  failure다.
+- `expected_as_of`는 reference가 없거나 독립적으로 승인된 Owner snapshot보다 오래됐을 때 `null`이며,
+  freshness는 `UNVERIFIABLE`이다. 공유 EOD 수집의 지연을 Owner 봉의 무결성 오류로 취급하지 않는다.
+  snapshot 또는 reference가 기존 서울 EOD 일자 상한(16:30 전에는 전일, 이후에는 당일)을 넘으면
+  integrity failure다. 봉·snapshot 날짜 및 hash/lineage 검증은 그대로 유지한다.
 - artifact의 owner UUID, membership UUID, generation, instrument ID, manifest/content/source pin이 DB
   descriptor와 모두 일치해야 한다. 하나라도 다르면 봉 일부도 반환하지 않는다.
 - `404 RESOURCE_NOT_FOUND`: 해당 Owner/snapshot/instrument 조합이 없음.

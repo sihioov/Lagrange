@@ -49,6 +49,10 @@ fn session_closed() -> bool {
     true
 }
 
+fn session_open() -> bool {
+    false
+}
+
 fn business_dates_through(as_of: NaiveDate, count: usize) -> Vec<NaiveDate> {
     let mut dates = Vec::with_capacity(count);
     let mut date = as_of;
@@ -642,6 +646,134 @@ async fn chart_returns_only_verified_snapshot_pinned_eod_projection() {
         Harness::error_code(&Harness::body_json(response).await),
         "RESOURCE_NOT_FOUND"
     );
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn chart_keeps_newer_owner_admission_when_shared_confirmed_close_lags() {
+    let mut harness = required_harness().await;
+    let admitted_candidate = candidate(aug_14());
+    let membership_id = Uuid::new_v4();
+    let generation_id = Uuid::new_v4();
+    let artifact = write_candidate_artifact(
+        &harness.artifact_root,
+        harness.owner.user_id,
+        membership_id,
+        1,
+        &admitted_candidate,
+    );
+    let snapshot_id = seed_chart_lineage_with_identity(
+        &harness,
+        &harness.owner,
+        &admitted_candidate,
+        &artifact.manifest_sha256,
+        membership_id,
+        generation_id,
+    )
+    .await;
+    seed_confirmed_close(&harness, aug_13()).await;
+    harness
+        .restart_api_with_owner_equity_v2_artifact_root(Some(harness.artifact_root.clone()))
+        .await;
+    harness
+        .restart_api_with_candidate_clock(aug_14, session_closed)
+        .await;
+
+    let response = harness
+        .get(&chart_path(snapshot_id, "1m"), Some(&harness.owner))
+        .await;
+    assert_eq!(status(&response), axum::http::StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body = Harness::body_json(response).await;
+    assert_eq!(body["as_of"], "2026-08-14");
+    assert_eq!(body["freshness"], "UNVERIFIABLE");
+    assert!(body["expected_as_of"].is_null());
+    assert_eq!(body["latest"]["session_date"], "2026-08-14");
+    assert!(!body["bars"].as_array().expect("bars array").is_empty());
+
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn chart_rejects_as_of_beyond_requested_cutoff_with_or_without_close_reference() {
+    let mut harness = required_harness().await;
+    let admitted_candidate = candidate(aug_14());
+    let membership_id = Uuid::new_v4();
+    let generation_id = Uuid::new_v4();
+    let artifact = write_candidate_artifact(
+        &harness.artifact_root,
+        harness.owner.user_id,
+        membership_id,
+        1,
+        &admitted_candidate,
+    );
+    let snapshot_id = seed_chart_lineage_with_identity(
+        &harness,
+        &harness.owner,
+        &admitted_candidate,
+        &artifact.manifest_sha256,
+        membership_id,
+        generation_id,
+    )
+    .await;
+    harness
+        .restart_api_with_owner_equity_v2_artifact_root(Some(harness.artifact_root.clone()))
+        .await;
+
+    // No shared close is present, but the admitted as-of date is beyond the
+    // requested-through cutoff and must still fail closed.
+    harness
+        .restart_api_with_candidate_clock(aug_13, session_closed)
+        .await;
+    let response = harness
+        .get(&chart_path(snapshot_id, "1m"), Some(&harness.owner))
+        .await;
+    assert_eq!(
+        status(&response),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(response).await),
+        "OWNER_EQUITY_INTEGRITY_FAILED"
+    );
+
+    // An older shared close does not make a not-yet-closed current session's
+    // cutoff advance to the admitted as-of date.
+    seed_confirmed_close(&harness, aug_13()).await;
+    harness
+        .restart_api_with_candidate_clock(aug_14, session_open)
+        .await;
+    let response = harness
+        .get(&chart_path(snapshot_id, "1m"), Some(&harness.owner))
+        .await;
+    assert_eq!(
+        status(&response),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(
+        Harness::error_code(&Harness::body_json(response).await),
+        "OWNER_EQUITY_INTEGRITY_FAILED"
+    );
+
+    // Once Aug 14 is a closed session, the older reference leaves freshness
+    // unverifiable while preserving the valid Owner chart.
+    harness
+        .restart_api_with_candidate_clock(aug_14, session_closed)
+        .await;
+    let response = harness
+        .get(&chart_path(snapshot_id, "1m"), Some(&harness.owner))
+        .await;
+    assert_eq!(status(&response), axum::http::StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body = Harness::body_json(response).await;
+    assert_eq!(body["as_of"], "2026-08-14");
+    assert_eq!(body["freshness"], "UNVERIFIABLE");
+    assert!(body["expected_as_of"].is_null());
+    assert_eq!(body["latest"]["session_date"], "2026-08-14");
+    assert!(!body["bars"].as_array().expect("bars array").is_empty());
+
     harness.teardown().await;
 }
 

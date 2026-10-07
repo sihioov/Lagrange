@@ -698,10 +698,24 @@ pub(crate) async fn chart(
             &rid,
         ));
     }
-    let expected_as_of = match state.candidates().latest_confirmed_krx_close().await {
+    let confirmed_close = match state.candidates().latest_confirmed_krx_close().await {
         Ok(value) => value,
         Err(_) => {
             return chart_no_store(chart_internal_error(&rid));
+        }
+    };
+    let expected_as_of = match chart_expected_as_of(
+        descriptor.as_of_session,
+        confirmed_close,
+        (state.cfg.seoul_today)(),
+        (state.cfg.candidate_eod_ready)(),
+    ) {
+        Ok(value) => value,
+        Err(()) => {
+            return chart_no_store(chart_artifact_error(
+                OwnerEquityChartArtifactError::Integrity,
+                &rid,
+            ));
         }
     };
     let dto = match chart_dto(&artifact, &descriptor, query.range, expected_as_of) {
@@ -779,6 +793,22 @@ fn artifact_matches_descriptor(
         && artifact.candidate.owner_only
         && artifact.candidate.vendor_snapshot
         && !artifact.candidate.strict_pit
+}
+
+fn chart_expected_as_of(
+    as_of: NaiveDate,
+    confirmed_close: Option<NaiveDate>,
+    today: NaiveDate,
+    current_session_closed: bool,
+) -> Result<Option<NaiveDate>, ()> {
+    let cutoff = requested_through_date(today, current_session_closed).ok_or(())?;
+    if as_of > cutoff || confirmed_close.is_some_and(|reference| reference > cutoff) {
+        return Err(());
+    }
+    // The shared EOD reference can lag independently admitted Owner data.
+    // An older reference cannot establish its freshness; keep the verified
+    // chart available as UNVERIFIABLE without inventing a newer close proof.
+    Ok(confirmed_close.filter(|reference| *reference >= as_of))
 }
 
 fn chart_dto(
@@ -1551,6 +1581,37 @@ mod tests {
             descriptor.snapshot_id,
             &descriptor.instrument_id,
         ));
+    }
+
+    #[test]
+    fn chart_freshness_reference_keeps_newer_owner_data_and_rejects_future_sessions() {
+        let as_of = NaiveDate::from_ymd_opt(2026, 10, 6).expect("fixture date");
+        let today = NaiveDate::from_ymd_opt(2026, 10, 7).expect("fixture date");
+        let old_reference = NaiveDate::from_ymd_opt(2026, 8, 31).expect("fixture date");
+        assert_eq!(
+            chart_expected_as_of(as_of, Some(old_reference), today, false),
+            Ok(None)
+        );
+        assert_eq!(chart_expected_as_of(as_of, None, today, false), Ok(None));
+        assert_eq!(
+            chart_expected_as_of(as_of, Some(as_of), today, false),
+            Ok(Some(as_of))
+        );
+        assert_eq!(
+            chart_expected_as_of(as_of, Some(today), today, true),
+            Ok(Some(today))
+        );
+        for reference in [None, Some(old_reference), Some(today)] {
+            assert!(chart_expected_as_of(today, reference, today, false).is_err());
+        }
+        assert_eq!(
+            chart_expected_as_of(today, Some(old_reference), today, true),
+            Ok(None)
+        );
+        let tomorrow = today.succ_opt().expect("fixture successor");
+        assert!(chart_expected_as_of(tomorrow, None, today, true).is_err());
+        assert!(chart_expected_as_of(as_of, Some(tomorrow), today, true).is_err());
+        assert!(chart_expected_as_of(NaiveDate::MIN, None, NaiveDate::MIN, false).is_err());
     }
 
     #[test]
