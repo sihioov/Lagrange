@@ -35,6 +35,24 @@ function exactPercent(value: number, locale: StockBetaDashboardWidgetViewModel["
   );
 }
 
+function emptyProfileState(viewModel: StockBetaDashboardWidgetViewModel) {
+  const { copy: t, signalState, signals } = viewModel;
+  if (signals !== null) {
+    return {
+      kind: "empty" as const,
+      message: signals.rows.length === 0 ? t.noResultsMessage : t.previewEmptyMessage,
+    };
+  }
+  if (signalState.kind === "unavailable")
+    return { kind: "blocked" as const, message: t.signalUnavailableMessage };
+  if (signalState.kind === "error")
+    return { kind: "error" as const, message: t.requestFailure(signalState.code) };
+  return {
+    kind: "empty" as const,
+    message: signalState.kind === "not-ready" ? t.notReadyMessage : t.previewEmptyMessage,
+  };
+}
+
 export function SignalPreviewWidget({
   viewModel,
 }: {
@@ -46,12 +64,10 @@ export function SignalPreviewWidget({
   const [tab, setTab] = useState<StockBetaProfileTabId | undefined>(profileTabs[0]?.id);
 
   if (selectedRow === undefined) {
+    const state = emptyProfileState(viewModel);
     return (
-      <WidgetFrame
-        state={{ kind: "empty", message: t.previewEmptyMessage }}
-        title={t.signalProfileHeading}
-      >
-        <p>{t.previewEmptyMessage}</p>
+      <WidgetFrame state={state} title={t.signalProfileHeading}>
+        <p>{state.message}</p>
       </WidgetFrame>
     );
   }

@@ -263,6 +263,7 @@ describe("stock-beta V2 dashboard composition", () => {
       "universe-management",
       "membership-status",
       "signal-state",
+      "signal-profile",
       "policy-boundary",
       "current-quote",
     ]);
@@ -401,7 +402,7 @@ describe("stock-beta V2 dashboard composition", () => {
     expect(markup).toContain("000001.KRX</strong>");
   });
 
-  it("suppresses every signal widget when the current snapshot becomes unavailable", () => {
+  it("keeps the chart profile visible with an explicit unavailable state and no stale data", () => {
     const stale = signal(30);
     const markup = renderToStaticMarkup(
       <StockBetaDashboard
@@ -413,10 +414,13 @@ describe("stock-beta V2 dashboard composition", () => {
 
     expect(markup).toContain('data-has-snapshot="false"');
     expect(markup).toContain(stockBetaDictionary.en.signalUnavailableMessage);
+    expect(markup).toContain('data-testid="stock-beta-widget-signal-profile"');
+    expect(markup).toContain(stockBetaDictionary.en.signalProfileHeading);
+    expect(markup).toContain('data-state="blocked"');
+    expect(markup).not.toContain('data-testid="stock-beta-price-chart"');
     expect(markup).not.toContain(stale.instrument_id);
     for (const widgetId of [
       "ranked-signals",
-      "signal-profile",
       "signal-decomposition",
       "condition-matrix",
       "snapshot-tape",
@@ -424,6 +428,24 @@ describe("stock-beta V2 dashboard composition", () => {
     ]) {
       expect(markup).not.toContain(`data-testid="stock-beta-widget-${widgetId}"`);
     }
+  });
+
+  it("shows the typed signal failure in the visible chart profile shell", () => {
+    const code = "OWNER_EQUITY_SIGNAL_REQUEST_FAILED";
+    const markup = renderToStaticMarkup(
+      <StockBetaDashboard
+        viewModel={dashboardViewModel(null, membershipsFor([]), {
+          signalState: { kind: "error", code },
+        })}
+      />,
+    );
+
+    expect(markup).toContain('data-testid="stock-beta-widget-signal-profile"');
+    expect(markup).toContain(stockBetaDictionary.en.signalProfileHeading);
+    expect(markup).toContain('data-state="error"');
+    expect(markup).toContain(stockBetaDictionary.en.requestFailure(code));
+    expect(markup).toContain('role="alert"');
+    expect(markup).not.toContain('data-testid="stock-beta-price-chart"');
   });
 
   it("uses catalog reorder for DOM order and derives compatibility placement variables", () => {
@@ -467,10 +489,14 @@ describe("stock-beta V2 dashboard composition", () => {
     const reorderedArchitecture = defineStockBetaWidgetArchitecture(reorderedCatalog);
     const viewModel = dashboardViewModel(null);
     const defaultMarkup = renderToStaticMarkup(
-      renderStockBetaDashboardGrid(stockBetaDashboardArchitecture, viewModel),
+      <StockBetaSelectionProvider rows={[]}>
+        {renderStockBetaDashboardGrid(stockBetaDashboardArchitecture, viewModel)}
+      </StockBetaSelectionProvider>,
     );
     const reorderedMarkup = renderToStaticMarkup(
-      renderStockBetaDashboardGrid(reorderedArchitecture, viewModel),
+      <StockBetaSelectionProvider rows={[]}>
+        {renderStockBetaDashboardGrid(reorderedArchitecture, viewModel)}
+      </StockBetaSelectionProvider>,
     );
     const defaultSignalState = renderedWidgetTag(defaultMarkup, "signal-state");
     const reorderedSignalState = renderedWidgetTag(reorderedMarkup, "signal-state");
@@ -505,7 +531,9 @@ describe("stock-beta V2 dashboard composition", () => {
     const architectureWithoutSignalState =
       defineStockBetaWidgetArchitecture(catalogWithoutSignalState);
     const removedMarkup = renderToStaticMarkup(
-      renderStockBetaDashboardGrid(architectureWithoutSignalState, viewModel),
+      <StockBetaSelectionProvider rows={[]}>
+        {renderStockBetaDashboardGrid(architectureWithoutSignalState, viewModel)}
+      </StockBetaSelectionProvider>,
     );
 
     expect(architectureWithoutSignalState.requiredWidgetIds).toEqual(
@@ -513,7 +541,8 @@ describe("stock-beta V2 dashboard composition", () => {
     );
     expect(baselineMarkup).toContain('data-testid="stock-beta-widget-signal-state"');
     expect(removedMarkup).not.toContain('data-testid="stock-beta-widget-signal-state"');
-    expect(removedMarkup).not.toContain(stockBetaDictionary.en.notReadyMessage);
+    expect(removedMarkup).toContain('data-testid="stock-beta-widget-signal-profile"');
+    expect(removedMarkup).toContain(stockBetaDictionary.en.notReadyMessage);
   });
 
   it("adds an optional widget to the real StockBetaDashboard with metadata-driven placement", () => {

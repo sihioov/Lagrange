@@ -51,7 +51,7 @@ REST 설정 fixture 4개는 새 정책에 맞게 수정한 뒤 최종 33개 모�
 
 ## 운영 활성화에 남은 단계
 
-현재 운영 릴리스는 기존 REST 방식이다. 조회 당시 WS grant·producer·cache는
+변경 전 초기 운영 릴리스는 기존 REST 방식이었다. 초기 조회 당시 WS grant·producer·cache는
 없었고 API 연결 풀은 16으로, 스트림에 필요한 최소 24보다 작았다. 새 설정의
 권장 풀 크기는 32다. 호스트와 실행 중인 11개 컨테이너에서 KIS WS 포트의 연결을
 찾지 못했지만 다른 기기의 동일 키 사용은 확인하지 못했다.
@@ -66,8 +66,39 @@ REST 설정 fixture 4개는 새 정책에 맞게 수정한 뒤 최종 33개 모�
 5. 한 종목의 실제 ACK·47필드·수신·해제를 검증한 뒤 나머지 구독과 인증 화면을 인수한다.
 
 공식 image builder의 `--apply`, 설치, provisioning, grant 설치와 Compose 갱신은
-root 전용이다. 현재 세션은 UID 1000이고 `sudo -n true`가
-`interactive authentication is required`로 실패했다. root 경계를 Docker 등으로
-우회하지 않는다. 정확한 명령·보호 입력 계약은
+root 전용이다. 일반 `sudo -n true`의 실패만으로 허용된 운영 helper까지 사용할 수
+없다고 판단하면 안 된다. 이후 실제 허용 목록과 유효한 유지보수 helper를 확인해
+아래 배포를 수행했다. root 경계를 Docker 등으로 우회하지 않았다. 보호 입력 계약은
 [운영 절차](../runbooks/kis-market-stream-operations.md)와
 [릴리스 절차](../runbooks/production-release-and-backup.md)를 따른다.
+
+## 실제 배포와 활성화 요청 후 점검
+
+2026-10-07 12:46 KST, `a65f2082f59ba5d66cb7cdf482b1f6cc7e08fc20`의 공식
+12-image 빌드와 strict V2 manifest 검증을 완료하고 immutable quotes-off 릴리스를
+설치했다. API·Web·Owner V2를 공식 helper로 순차 교체했다. 세 실제 image ID와
+OCI revision은 manifest에 일치했고 모두 healthy, 재시작 0, OOM 없음이었다.
+API·Web·프록시 HTTP health도 통과했다. API 연결 풀은 32다. 기존 research-worker의
+2주 전 exit 2는 이 배포에서 발생한 장애가 아니다.
+
+Owner는 같은 날 WebSocket 활성화를 명시적으로 지시했다. 기존 평문·시장 채널
+승인과 이 지시는 좁은 WS/cache/Owner SSE 운영 입력의 준비·검토·설치를 허용한다.
+동일한 활성화 승인을 다시 요청할 필요는 없다. 최신 한도나 키 독점 사용이라는
+운영 사실까지 확인됐다는 뜻은 아니다.
+
+13:18 KST 점검에서 당일 운영 window의 정식 설치 검사와 실제 runtime 쿼리와 같은
+calendar/version/batch 전체 lineage 조건이 각각 통과했다. 기존 entitlement도
+정확한 reference/hash/ACTIVE/유효일 바인딩에 일치한다. persistent WS domain은
+기존 상태를 보존한 채 패키지 helper의 검증을 통과했다. WS grant·producer·cache·
+subscription·lease는 아직 0이다. 현재 보호 env에는 grant/network pin/origin이 없다.
+최신 공식 용량과 다른 기기의 동일 키 사용은 미확인이다.
+
+기존 V2에는 `005930.KRX` READY 1종목과 2026-10-06의 공개 신호 1행이 있다.
+quotes-off는 실시간 영역만 숨긴다. 별도로 신호 snapshot이 없거나 조회에 실패하면
+profile/chart 영역 전체가 숨겨지던 UI를 수정해 상태·오류 안내를 유지한다.
+운영자의 인증된 실제 화면과 실제 broker 수신은 아직 검증하지 않았다.
+
+설치된 a65 릴리스의 env는 변경하지 않는다. 후속 UI 배포 및 활성화에는 새 clean
+commit/image/manifest가 필요하며, 활성화는 검토된 grant와 남은 용량 증명을 연결한
+별도 보호 입력으로 수행한다. 같은 키의 다른 세션 부재나 최신 숫자를 추정해
+ACTIVE grant를 만들지 않는다.

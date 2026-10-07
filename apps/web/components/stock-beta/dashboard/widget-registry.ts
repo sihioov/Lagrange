@@ -140,22 +140,22 @@ export const stockBetaDashboardCatalog = defineStockBetaDashboardCatalog([
     placements: {
       // The profile widget is a chart-capable primary analysis surface.
       desktop: gridPlacement("large", 4, 6, 1, true, {
-        column: 4,
-        columnSpan: 6,
-        row: 1,
-        visible: false,
+        column: 1,
+        columnSpan: 12,
+        row: 4,
+        visible: true,
       }),
       tablet: gridPlacement("medium", 7, 6, 3, true, {
-        column: 7,
-        columnSpan: 6,
-        row: 3,
-        visible: false,
+        column: 1,
+        columnSpan: 12,
+        row: 5,
+        visible: true,
       }),
       mobile: gridPlacement("full", 1, 1, 4, true, {
         column: 1,
         columnSpan: 1,
-        row: 4,
-        visible: false,
+        row: 5,
+        visible: true,
       }),
     },
   },

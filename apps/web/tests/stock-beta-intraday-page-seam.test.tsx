@@ -4,6 +4,7 @@ import StockBetaDetailPage from "@/app/(authenticated)/stock-beta/[instrument]/p
 import StockBetaPage from "@/app/(authenticated)/stock-beta/page";
 import { type ApiSession, apiErrorEnvelopeSchema } from "@/lib/api/contracts";
 import { ApiProblem } from "@/lib/api/response";
+import { stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import {
   ownerEquityV2LatestSignalsSchema,
   ownerEquityV2MembershipListSchema,
@@ -282,6 +283,8 @@ describe("Stock Beta intraday page seams", () => {
       expect(dashboard).not.toContain("periodic refresh");
       expect(dashboard).not.toContain("stock-beta-stream-board");
       expect(dashboard).toContain(SIGNAL.instrument_id);
+      expect(dashboard).toContain('data-testid="stock-beta-widget-signal-profile"');
+      expect(dashboard).toContain(stockBetaDictionary.en.chartPreparingMessage);
     },
   );
 });
