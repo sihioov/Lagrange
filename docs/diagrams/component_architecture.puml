@@ -11,6 +11,8 @@
 ' source/local verification is not installed/live acceptance.
 ' 2026-10-04: current CSRF serialization evidence; local soak/fault checks
 ' do not establish installed or provider activation.
+' 2026-10-07: realtime activation is WS-only; legacy REST helpers/routes
+' remain in source, while read-only EOD REST remains independent.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -56,19 +58,19 @@ skinparam ArrowColor #555555
 skinparam noteBackgroundColor #FFFFF0
 
 package "Frontend (TypeScript / Node 24)" #E8F1FB {
-  component "apps/web\n(Next.js 16 shell;\nREST or schema2 stream client)" as web
+  component "apps/web\n(Next.js 16 shell;\nHTTP + schema2 SSE client)" as web
   component "apps/api-server\n(OpenAPI contract pkg:\nopenapi.json + generated/openapi.ts)" as api_contract
 }
 
 package "Rust workspace (edition 2024)" {
 
   package "HTTP layer" #FDEEDC {
-    component "crates/api-server\n(Axum REST authority,\nActor+RLS repos;\nowner-intraday REST + lease/SSE HTTP;\nalso hosts paper-runner bin)" as api_server
+    component "crates/api-server\n(Axum REST authority,\nActor+RLS repos;\nWS-backed realtime + lease/SSE HTTP;\nalso hosts paper-runner bin)" as api_server
     component "apps/api-server/auth\n(api-server-auth:\nOIDC/session HTTP router)" as api_server_auth
   }
 
   package "Orchestration" #FBE4EC {
-    component "crates/job-queue\n(PG job queue + runner bins:\nbacktest / recommendation /\ncandidate / owner-beta /\nowner-equity-v2;\nexclusive REST/market-WS producer;\nopt-in WS state initializer)" as job_queue
+    component "crates/job-queue\n(PG job queue + runner bins:\nbacktest / recommendation /\ncandidate / owner-beta /\nowner-equity-v2;\nWS-only realtime producer;\nopt-in WS state initializer)" as job_queue
   }
 
   package "Research & results" #F1E6F7 {
@@ -125,8 +127,8 @@ package "Operator tools (Node)" #F2F2F2 {
 
 ' ---------------- Frontend edges ----------------
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); crates/api-server/src/http/mod.rs:352,357,361 (lease/SSE routes); apps/web/lib/api/server-client.ts:23 (session client)
-web --> api_server : same-origin lease POST/DELETE + SSE;\nREST quote mode remains exclusive;\nsession-cookie HTTP /api/v1/*, /auth/*
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:352,357,361 (lease/SSE routes); crates/api-server/src/runtime.rs:278-352 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
+web --> api_server : same-origin lease POST/DELETE + SSE;\nWS-backed realtime cache;\nsession-cookie HTTP /api/v1/*, /auth/*
 
 ' evidence: apps/web/lib/api/contracts.ts:1 (generated route types); apps/api-server/generated/openapi.ts:2,22,42 (schema2 lease/SSE paths); apps/web/lib/products/intraday-quotes-client.ts:3 (existing REST contracts)
 web ..> api_contract : generated API contract types\n(stream parser validates schema2 separately)
@@ -136,10 +138,10 @@ api_contract ..> api_server : generated from\nCONTRACT_ROUTES
 
 ' ---------------- api-server edges ----------------
 
-' evidence: crates/api-server/src/runtime.rs:15,1317 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
+' evidence: crates/api-server/src/runtime.rs:15,1341 (use api_server_auth::RouterState; .merge(api_server_auth::router(...)))
 api_server --> api_server_auth : mounts /auth
 
-' evidence: crates/api-server/Cargo.toml:31 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,691-735 (imports and invokes read_owner_equity_artifact); crates/api-server/src/runtime.rs:20-24,255-342; data-pipelines/collectors/src/intraday_quotes.rs:246-296 (provider-free window validation)
+' evidence: crates/api-server/Cargo.toml:31 (production path dependency); crates/api-server/src/http/owner_equity_v2.rs:16-18,733-749 (imports and invokes read_owner_equity_artifact); crates/api-server/src/runtime.rs:20-24,410-435; data-pipelines/collectors/src/intraday_quotes.rs:246-296 (provider-free window validation)
 api_server --> collectors : reads/verifies V2 artifacts;\nprovider-free intraday window validation
 
 ' evidence: crates/api-server/src/repos/owner_equity_v2.rs:10 (use factor_engine::owner_equity_v2::OwnerEquitySignalRow)
@@ -171,8 +173,8 @@ job_queue --> portfolio_model
 job_queue --> market_data : EOD types + intraday error seam
 ' evidence: crates/job-queue/src/owner_equity_v2/runtime.rs:11 (use collectors::owner_equity_v2::materialize_owner_equity_from_raw_allow_insufficient); crates/job-queue/Cargo.toml:36; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:14-17,402-437
 job_queue --> collectors : guarded intraday quote adapter\n(+ existing EOD materialization)
-' evidence: crates/job-queue/Cargo.toml:9,10,11,16,37 (opt-in alias and path dependency); crates/kis-client/src/bin/kis-market-stream-state.rs:4 (provisioning API); crates/job-queue/src/bin/owner-equity-v2-runner.rs:1453,1455 (production domain/approval), 839 (exclusive WS factory); crates/job-queue/src/owner_equity_v2/market_stream_runtime.rs:1836 (owned anchor connect); crates/job-queue/src/owner_equity_v2/intraday_producer.rs:18 (legacy REST client)
-job_queue --> kis_client : exclusive REST or market-only WS runtime;\nowned socket, separate WS state + opt-in initializer;\nEOD remains independent
+' evidence: crates/job-queue/Cargo.toml:9,10,11,16,37 (opt-in alias and path dependency); crates/kis-client/src/bin/kis-market-stream-state.rs:4 (provisioning API); crates/job-queue/src/bin/owner-equity-v2-runner.rs:567,771 (EOD REST), 845-856 (WS factory), 1359-1370 (WS-only backend), 1462,1464 (production domain/approval); crates/job-queue/src/owner_equity_v2/market_stream_runtime.rs:1836 (owned anchor connect)
+job_queue --> kis_client : market-only WS realtime runtime;\nowned socket, separate WS state + opt-in initializer;\nread-only EOD REST remains independent
 
 ' ---------------- research / results edges ----------------
 
@@ -243,7 +245,7 @@ legend right
   api-server-auth, market-data, selector -> auth.
   Stream delta: lease mutations and authenticated latest-value SSE use
   the existing API, job-queue and kis-client packages. The runner selects
-  REST or WS exclusively; WS has separate protected state/anchors.
+  WS only for realtime; WS has separate protected state/anchors.
   API/Web have no market-provider or WS-state mount edge. EOD Raw/Curated
   paths remain separate. Diagram describes code, not live activation.
   Evidence for folded edges is in this file's header comment.

@@ -13,6 +13,8 @@
 ' 2026-10-03: conditional market-stream source topology and HTTP6 validation;
 ' 2026-10-04: bounded local end-to-end soak and fault evidence recovered;
 ' live provider and installed activation remain unverified.
+' 2026-10-07: production realtime selection is WS-only; independent EOD
+' REST remains. Source topology is separate from bounded activation receipts.
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").
@@ -41,11 +43,11 @@ cloud "KIS Open API\n(read-only market data,\ndeny-by-default allowlist)" as kis
 ' nginx reaches api-server and web reaches api-server internally.
 package "edge tier" #E8F1FB {
   node "reverse-proxy\n(nginx, ONLY published port 443->8443)" as nginx
-  node "web\n(Next.js 16 standalone;\nREST or schema2 stream client)" as web
+  node "web\n(Next.js 16 standalone;\nHTTP + schema2 SSE client)" as web
 }
 
 package "backend tier" #FDEEDC {
-  node "api-server\n(Axum REST authority :8080;\nREST cache + schema2 SSE;\nPOST/DELETE leases)" as api
+  node "api-server\n(Axum REST authority :8080;\nschema2 latest cache + SSE;\nPOST/DELETE leases)" as api
   node "research-worker\n(daily KIS EOD ingest,\ncurate, catalog publish)" as research
   node "recommendation-runner\n(fixed 11-ETF targets)" as reco
   node "candidate-runner\n(KOSPI200/KOSDAQ150\nscreener & analysis)" as cand
@@ -60,7 +62,7 @@ package "backtest-iso network (internal: true, no egress)" #E5F3E7 {
 
 package "profile-gated (inactive by default)" #F2F2F2 {
   node "owner-beta-runner\n<<profile:owner-beta>>\n(sealed price-beta recommendations)" as obr
-  node "owner-equity-v2-runner\n<<profile:owner-equity-v2>>\n(owner-managed equity universe V2;\nexclusive REST or market-WS loop;\ndefault off; independent EOD continues)" as oev2
+  node "owner-equity-v2-runner\n<<profile:owner-equity-v2>>\n(owner-managed equity universe V2;\noptional market-WS realtime loop;\ndefault off; independent EOD continues)" as oev2
   node "research-range-raw /\nresearch-action-range-raw /\nresearch-stock-price-beta-raw\n<<profiles, one-shot KIS capture>>\n(3 grouped credentialed readers)" as rangejobs
   node "research-stock-price-beta-materialize\n<<profile, network_mode: none>>" as materialize
   node "research-v3-input-check\n<<profile, network_mode: none>>" as v3check
@@ -87,7 +89,7 @@ package "MARKET STREAM OVERLAY — SOURCE ONLY\ncompose.market-stream.yml\nDEFAU
   folder "Stable root-owned WS anchors\n/run/lagrange/kis-market-stream-locks\nread-only bind; no auto-creation" as ws_anchors
 }
 
-package "MANUAL WS PREPARATION — SOURCE ONLY\ninstalled/live operation remains unverified" #FCE8D5 {
+package "MANUAL WS PREPARATION — OPERATOR GATED\nsource contracts; LIVE_ACCEPTED is separate" #FCE8D5 {
   node "Installed operator helpers\nexact current release + image pins\ndefault plan; explicit apply" as ws_ops
   node "Opt-in state initializer\nrunner image; network none\nroot create / UID10001 validate" as ws_init
   node "db-migrate image\none-off psql, migration_owner\nreviewed grant / explicit revoke" as ws_grant
@@ -104,7 +106,7 @@ ws_ops --> ws_grant : exact image + named one-off;\nno build/pull/dependency sta
 ' evidence: scripts/ops/lib/market-stream-grant.sql:1,128,170,179,201
 ws_grant --> pg : bounded parameterized transaction;\nimmutable insert/replay, one-way revoke
 
-' evidence: deploy/compose/compose.market-stream.yml:18,28,35; scripts/ops/lib/kis-read-compose.sh:195
+' evidence: deploy/compose/compose.market-stream.yml:18,28,35; scripts/ops/lib/kis-read-compose.sh:197-201
 note right of ws_state
   Only the owner V2 runner receives these two fixed binds.
   API/Web receive mode and non-secret binding pins only.
@@ -113,7 +115,7 @@ note right of ws_state
   live market rights, provider acceptance, or actual host mounts.
 end note
 
-' evidence: deploy/compose/compose.intraday.yml:3-121; scripts/ops/lib/kis-read-compose.sh:97-121
+' evidence: deploy/compose/compose.intraday.yml:3-121; scripts/ops/lib/kis-read-compose.sh:117,184-187
 note right of kis_coordination
   Five credentialed readers share one coordination bind.
   API, Web, and materializer have no coordination bind.
@@ -145,10 +147,10 @@ nginx --> api : /api/*, /auth/*;\nstream/lease authority preserved; SSE unbuffer
 ' evidence: deploy/nginx/nginx.conf:197,198,200 (internal artifact alias); deploy/compose/compose.yml:61 (ro artifact mount)
 artifacts --> nginx : X-Accel-Redirect\ndelivery (ro mount)
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); crates/api-server/src/http/mod.rs:352,357,361; apps/web/lib/api/server-client.ts:23 (server session client)
-web --> api : browser same-origin CSRF lease mutations\nand one SSE per active tab (through nginx);\nREST transport remains exclusive
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:352,357,361; crates/api-server/src/runtime.rs:278-352 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
+web --> api : browser same-origin CSRF lease mutations\nand one SSE per active tab (through nginx);\nWS-backed realtime cache
 
-' evidence: docs/runbooks/stock-beta-intraday-quotes.md:37-47; crates/api-server/src/http/owner_intraday_quotes.rs:153-179,238-260
+' evidence: docs/runbooks/stock-beta-intraday-quotes.md:48-54; crates/api-server/src/http/owner_intraday_quotes.rs:153-179,238-260
 note right of api
   Intraday GET never writes demand, token/provider state,
   EOD, Raw, Curated, or snapshot data. POST/DELETE are
@@ -166,7 +168,7 @@ api --> auth0 : OIDC code exchange\n(confidential client)
 artifacts --> api : ro (hash-verified\nbefore X-Accel)
 ' evidence: compose.yml:210-211,262 (OWNER_BETA_EQUITY_SIGNALS_MODE + ro mount)
 spba --> api : ro
-' evidence: compose.yml:216-218,263 (fixed chart API root + ro mount); crates/api-server/src/http/owner_equity_v2.rs:612-614,676-700,719-735 (snapshot-pinned read and verification)
+' evidence: compose.yml:216-218,263 (fixed chart API root + ro mount); crates/api-server/src/http/owner_equity_v2.rs:612-614,733-749 (snapshot-pinned read and verification)
 oeva --> api : ro (snapshot-pinned\nverified chart artifact)
 ' evidence: compose.yml:1431-1450 (metrics service, config mount, backend network); deploy/compose/prometheus.yml:10-14 (api-server scrape target)
 prom --> api : scrape /metrics
@@ -191,7 +193,7 @@ research --> curated : curated Parquet bars
 ' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:105-120,219-239; data-pipelines/collectors/src/sink.rs:213-251; data-pipelines/collectors/src/worker.rs:2689-3100 (partitioned recovery, exact-generation replay, and publication); data-pipelines/collectors/src/candidate_sink.rs:308-355,431-479,537-579,865-1000 (rights, ledger/generation inspection, amendment revalidation, and price publication); compose.yml:600-604 (DB_USER research_writer)
 research --> pg : catalog + calendar-only publication\n(research_writer,\nSECURITY DEFINER procs)
 
-' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:257-301; scripts/ops/lib/release-image-manifest.sh:323-347
+' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:255-274,277-308; scripts/ops/lib/release-image-manifest.sh:323-347
 note right of oneshots
   Entitlement amendment is an operator-only db-migrate path. The installed
   release guard binds files/env/manifest/project/commit; the pre-amendment
@@ -242,10 +244,10 @@ obr --> pg : claim + publish\n(worker, owner-beta-db net)
 ' evidence: compose.yml:1081 (historical-price-beta-root ro mount)
 artifacts --> obr : ro (approved\nartifact leaf only)
 
-' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:839,1455,1462 (selected WS runtime); crates/kis-client/src/market_stream.rs:32 (fixed WS endpoint), crates/kis-client/src/market_stream_approval.rs:19,215 (approval path/acquisition); crates/job-queue/src/owner_equity_v2/intraday_producer.rs:168 (legacy REST); deploy/compose/compose.yml:1155 (existing credentials/egress)
-oev2 --> kis : read-only EOD; exclusive optional REST quotes\nor market-WS H0STCNT0 + Approval\n(source capability; live permission pending)
-' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:1463 (worker stream repository); migrations/0055_owner_market_stream.up.sql:525,532,547,558 (worker grant/producer/subscription/cache columns); migrations/0056_owner_market_stream_runtime.up.sql:7,32 (runtime lineage metadata/worker update); deploy/compose/compose.yml:1130 (worker role)
-oev2 --> pg : universe V2 state + fenced stream lease,\nsubscription and latest cache writes (worker);\nlegacy REST cache remains mode-exclusive
+' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:567,771 (read-only EOD REST), 845-856 (WS factory), 1359-1370 (WS-only backend), 1462,1464 (domain/approval); crates/kis-client/src/market_stream.rs:32 (fixed WS endpoint), crates/kis-client/src/market_stream_approval.rs:19,215 (approval path/acquisition); deploy/compose/compose.yml:1155 (existing credentials/egress)
+oev2 --> kis : read-only EOD REST; optional realtime\nmarket-WS H0STCNT0 + Approval\n(source capability; bounded activation gated)
+' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:1472 (worker stream repository); migrations/0055_owner_market_stream.up.sql:525,532,547,558 (worker grant/producer/subscription/cache columns); migrations/0056_owner_market_stream_runtime.up.sql:7,32 (runtime lineage metadata/worker update); deploy/compose/compose.yml:1130 (worker role)
+oev2 --> pg : universe V2 state + fenced stream lease,\nsubscription and latest cache writes (worker)
 ' evidence: compose.yml:1176 (raw rw mount); data-pipelines/collectors/src/owner_equity_v2.rs:45,144 (capture + materialize from raw)
 oev2 --> raw : rw (EOD V2 capture only;\nno intraday quote data)
 ' evidence: compose.yml:1177 (owner-equity-v2-artifacts rw mount)
@@ -301,7 +303,7 @@ legend right
   declarations, not evidence of deployed communication.
   <<profile:X>> = inactive unless compose --profile X.
   Stream GET is read-only; POST/DELETE mutate actor/session-bound leases.
-  REST and market-WS quote loops are exclusive; EOD Raw/artifacts remain
+  Realtime quote activation is WS-only; EOD REST/Raw/artifacts remain
   independent. API/Web have no provider or protected WS state access.
   DB role -> table-group access: migrations/0009_grants.up.sql:5-14,
   0010_rls.up.sql:5-24 (app = tenant CRUD w/ RLS; worker = engine tables;

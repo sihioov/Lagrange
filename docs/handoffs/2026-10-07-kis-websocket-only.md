@@ -28,7 +28,7 @@ Owner는 실시간 시세를 WebSocket 전용으로 전환하도록 지시했고
 | Web 관련 회귀 | 21개 파일 192개 테스트 통과, TypeScript 및 변경 파일 Biome 통과 |
 | 운영 helper | KIS Compose·production ops·intraday self-test 및 Python Compose 8개 테스트 통과 |
 | 실제 React/Chromium, 합성 HTTP/2 서버 | 10개 시나리오 통과, 창 숨김 1개 `NOT_RUN` |
-| 소스 변경 | `git diff --check` 통과, 구조 변경이 없어 아키텍처 도표 변경 없음 |
+| 소스 변경 | `git diff --check` 통과, main 머지 전 WS 전용 실시간 경로 설명과 아키텍처 도표의 코드 근거를 동기화하고 PNG를 로컬 재생성 |
 
 Chromium 검증은 실제 브라우저와 합성 서버를 사용했다. 정상 스트림, 구독 해제,
 연결 단절, offline/online, 로그아웃, unmount, 10개 페이지, 수신 노후화와 전달
