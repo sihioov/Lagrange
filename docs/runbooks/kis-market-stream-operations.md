@@ -39,6 +39,11 @@ exact market channel and plaintext transport on 2026-10-07, as recorded in the
 [live-readiness update](kis-market-stream-live-readiness.md#owner의-평문-연결-수락--2026-10-07).
 Current slot capacity, reviewed rights/grant inputs, and a real current-day calendar/window
 proof still require their own evidence before activation.
+For the Owner's subsequent 2026-10-07 deployment instruction, apply the narrow
+[ADR-0009 activation exception](../decisions/0009-kis-owner-directed-websocket-activation.md)
+to the G2 pre-activation hold. Keep G2 unverified and retain every runtime limit and failure
+boundary. This exception does not grant full live acceptance or waive protected grant,
+current-day proof, state identity or immutable-release checks.
 
 An installed env and manifest belong to one immutable commit. Do not patch the installed
 `.env`, overwrite an existing release directory, or use shell mode overrides. Off preparation
@@ -119,6 +124,8 @@ closed result codes, and the exact owned process/container identity.
 ## Install or revoke a reviewed grant
 
 G1–G4 and a reviewed approval artifact are prerequisites for an actual grant operation.
+The 2026-10-07 ADR-0009 exception permits the reviewed operation with G2 explicitly unverified;
+it supplies no invented capacity or global key-ownership evidence.
 Source fixtures never supply production approval. Section 17 of the contract fixes the
 canonical JSON fields, exact hash, slot/generation/Owner/entitlement binding, wire/identity
 constants, inclusive dates, and activation commit. Keep the input root:root mode 0600 under
@@ -163,6 +170,8 @@ label, then verifies both ID and name are absent. Failed cleanup never counts as
 Complete G1–G4 first, including current capacity for 30, exclusive slot ownership, rights for
 the WS/cache/Owner SSE path, and a real same-day calendar/window proof with a next-day supply
 procedure. Follow [daily evidence installation](stock-beta-intraday-quotes.md#operational-day-evidence-and-manual-activation).
+Apply ADR-0009 only to its expressly bounded Owner-directed deployment; other operations
+retain these prerequisites, and missing later day proof remains a closed collection state.
 Reuse the same committed KIS calendar source for EOD; never recapture an uncertain daily claim.
 
 Install the separately pinned activation release through the same immutable installer. Its
