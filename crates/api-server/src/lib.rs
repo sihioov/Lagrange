@@ -34,6 +34,13 @@ pub mod paper_session;
 pub mod repos;
 pub mod risk_snapshot;
 pub mod runtime;
+pub mod service_status;
+
+#[cfg(test)]
+extern crate self as api_server;
+#[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod service_status_test_common;
 
 pub use error::{TenancyError, TenancyResult};
 pub use repos::accounts::{AccountRepo, AccountRow, NewAccount};

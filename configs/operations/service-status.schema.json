@@ -1,0 +1,2333 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:lagrange:service-status:v1",
+  "title": "Owner service status v1 wire documents",
+  "description": "Closed host/API/policy/catalog wire documents plus synthetic evaluation input. Local refs only. Normative semantic and security checks: docs/contracts/service-status-v1.md.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/hostSnapshot"
+    },
+    {
+      "$ref": "#/$defs/apiResponse"
+    },
+    {
+      "$ref": "#/$defs/policy"
+    },
+    {
+      "$ref": "#/$defs/catalog"
+    },
+    {
+      "$ref": "#/$defs/evaluationInput"
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d(?:\\.\\d{1,6})?Z$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "healthy",
+        "waiting",
+        "degraded",
+        "failed",
+        "unknown",
+        "disabled"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "PROCESS_RUNNING",
+        "PROCESS_STARTING",
+        "PROCESS_UNHEALTHY",
+        "PROCESS_FAILED",
+        "PROCESS_MISSING",
+        "PROCESS_INACTIVE",
+        "HOST_MISSING",
+        "HOST_STALE",
+        "HOST_INVALID",
+        "HOST_FUTURE",
+        "HOST_TIMEOUT",
+        "HOST_COMMAND_UNAVAILABLE",
+        "HOST_PERMISSION_DENIED",
+        "HOST_DEADLINE",
+        "HOST_REBOOTED",
+        "POLICY_MISSING",
+        "POLICY_MISMATCH",
+        "UNEXPECTED_ACTIVE",
+        "TIMER_MISSING",
+        "TIMER_DISABLED",
+        "TIMER_INACTIVE",
+        "NEXT_RUN_MISSING",
+        "RUN_ACTIVE",
+        "RUN_FAILED",
+        "RUN_RESULT_UNKNOWN",
+        "RUN_HISTORY_EMPTY",
+        "RUN_OVERDUE",
+        "DAEMON_MODE_CONFLICT",
+        "OLD_UNIT_IGNORED",
+        "DB_TIMEOUT",
+        "DB_UNAVAILABLE",
+        "SCHEMA_DRIFT",
+        "SOURCE_FUTURE",
+        "QUERY_LIMIT",
+        "QUEUE_IDLE",
+        "QUEUE_ACTIVE",
+        "QUEUE_PENDING",
+        "QUEUE_DELAYED",
+        "CLAIM_EXPIRED",
+        "RECENT_JOB_FAILURE",
+        "RECOVERED",
+        "NO_HISTORY",
+        "CALENDAR_UNAVAILABLE",
+        "CALENDAR_STALE",
+        "CALENDAR_LINEAGE_INVALID",
+        "CALENDAR_COVERAGE_GAP",
+        "SESSION_WINDOW_UNAVAILABLE",
+        "SESSION_WINDOW_INVALID",
+        "SESSION_CLOSED",
+        "SESSION_PREOPEN",
+        "NO_ACTIVE_DEMAND",
+        "PRODUCER_UNAVAILABLE",
+        "PRODUCER_STALE",
+        "STREAM_DISCONNECTED",
+        "STREAM_CONNECTING",
+        "STREAM_BACKOFF",
+        "STREAM_GAP",
+        "QUOTE_PENDING",
+        "QUOTE_STALE",
+        "QUOTE_LINEAGE_INVALID",
+        "INSTRUMENT_HALTED",
+        "DATA_CURRENT",
+        "EOD_PENDING",
+        "EOD_STALE",
+        "RAW_ONLY",
+        "DATA_BLOCKED",
+        "V2_COVERAGE_INCOMPLETE",
+        "SNAPSHOT_STALE",
+        "SCHEDULER_DISABLED",
+        "SCHEDULER_UNAVAILABLE",
+        "FEATURE_DISABLED",
+        "NOT_APPLICABLE",
+        "OBSERVATION_EXPIRED",
+        "API_UNAVAILABLE",
+        "EXECUTION_INTERRUPTED",
+        "AWAITING_FIRST_TRADE",
+        "CONNECTION_LOST",
+        "RECONNECT_GAP",
+        "SUBSCRIPTION_PENDING",
+        "SUBSCRIPTION_REJECTED",
+        "SUBSCRIPTION_AMBIGUOUS",
+        "APPROVAL_UNAVAILABLE",
+        "BUDGET_EXHAUSTED",
+        "PIPELINE_LAG",
+        "WIRE_SCHEMA_MISMATCH",
+        "PROVIDER_RESPONSE_INVALID",
+        "QUOTE_VALUE_INVALID",
+        "MARKET_CLASS_UNSUPPORTED",
+        "LOCAL_INGRESS_LIMIT",
+        "RESYNC_REQUIRED",
+        "ACCESS_REVOKED",
+        "STREAM_BINDING_UNAVAILABLE"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "missing",
+            "timeout",
+            "unavailable",
+            "denied",
+            "invalid",
+            "future",
+            "stale",
+            "limit",
+            "partial"
+          ]
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "result",
+        "observed_at",
+        "valid_until"
+      ],
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "last_attempt_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_success_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_failure_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_received_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data_due_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data_as_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_session": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "raw_as_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "v2_data_as_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "v2_snapshot_as_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queued": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "running": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recent_failed": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expired_claims": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_demand": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "live_identities": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "halted_identities": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required_identities": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "covered_identities": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queue_scope": {
+          "type": "string",
+          "enum": [
+            "actor_shared",
+            "actor",
+            "not_applicable"
+          ]
+        },
+        "calendar_status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "closed",
+            "missing",
+            "stale",
+            "invalid",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "window_status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "closed",
+            "missing",
+            "invalid",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "last_state_change_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "oldest_provider_event_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "last_attempt_at",
+        "last_success_at",
+        "last_failure_at",
+        "last_received_at",
+        "oldest_provider_event_at",
+        "next_run_at",
+        "data_due_at",
+        "data_as_of",
+        "expected_session",
+        "raw_as_of",
+        "v2_data_as_of",
+        "v2_snapshot_as_of",
+        "queued",
+        "running",
+        "recent_failed",
+        "expired_claims",
+        "active_demand",
+        "live_identities",
+        "halted_identities",
+        "required_identities",
+        "covered_identities",
+        "queue_scope",
+        "calendar_status",
+        "window_status",
+        "last_state_change_at"
+      ],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "service-status.policy.v1"
+        },
+        "profile": {
+          "type": "string",
+          "enum": [
+            "owner_daily",
+            "owner_daemon"
+          ]
+        },
+        "release_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "compose_project": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+        },
+        "owner_access": {
+          "const": "owner_only"
+        },
+        "quote_transport": {
+          "const": "market_ws"
+        },
+        "window_source": {
+          "const": "operational_v1"
+        },
+        "research_mode": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "daemon"
+          ]
+        },
+        "policy_installed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "job_lease_seconds": {
+          "type": "object",
+          "properties": {
+            "owner_equity_v2": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "owner_beta_price_recommendation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "candidate_compute": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "recommendation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            },
+            "backtest": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600
+            }
+          },
+          "required": [
+            "owner_equity_v2",
+            "owner_beta_price_recommendation",
+            "candidate_compute",
+            "recommendation",
+            "backtest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "profile",
+        "release_commit",
+        "compose_project",
+        "owner_access",
+        "quote_transport",
+        "window_source",
+        "research_mode",
+        "policy_installed_at",
+        "job_lease_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "processObservation": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "created",
+            "restarting",
+            "paused",
+            "exited",
+            "dead",
+            "removing",
+            "active",
+            "activating",
+            "inactive",
+            "failed",
+            "deactivating",
+            "missing",
+            "unknown"
+          ]
+        },
+        "health": {
+          "type": "string",
+          "enum": [
+            "healthy",
+            "unhealthy",
+            "starting",
+            "none",
+            "unknown"
+          ]
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "health",
+        "started_at",
+        "finished_at",
+        "exit_code"
+      ],
+      "additionalProperties": false
+    },
+    "timerObservation": {
+      "type": "object",
+      "properties": {
+        "load": {
+          "type": "string",
+          "enum": [
+            "loaded",
+            "not-found",
+            "masked",
+            "error"
+          ]
+        },
+        "active": {
+          "type": "string",
+          "enum": [
+            "active",
+            "inactive",
+            "activating",
+            "failed",
+            "unknown"
+          ]
+        },
+        "enabled": {
+          "type": "string",
+          "enum": [
+            "enabled",
+            "disabled",
+            "masked",
+            "static",
+            "unknown"
+          ]
+        },
+        "last_trigger_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_run_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit_binding": {
+          "type": "string",
+          "enum": [
+            "matched",
+            "mismatch",
+            "unknown"
+          ]
+        },
+        "last_result": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failure",
+            "none",
+            "unknown"
+          ]
+        },
+        "exit_status": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_success_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "load",
+        "active",
+        "enabled",
+        "last_trigger_at",
+        "next_run_at",
+        "unit_binding",
+        "last_result",
+        "exit_status",
+        "last_started_at",
+        "last_finished_at",
+        "last_success_at"
+      ],
+      "additionalProperties": false
+    },
+    "hostObservation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "postgres",
+            "reverse-proxy",
+            "web",
+            "api-server",
+            "owner-equity-v2-runner",
+            "owner-beta-runner",
+            "candidate-runner",
+            "recommendation-runner",
+            "nt-backtest-worker-1",
+            "nt-backtest-worker-2",
+            "research-worker",
+            "kis-eod",
+            "production-backup",
+            "production-backup-verify",
+            "tls-renewal",
+            "docker",
+            "tailscaled",
+            "paper-scheduler",
+            "metrics",
+            "live-node-owner"
+          ]
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "missing",
+            "timeout",
+            "command_unavailable",
+            "denied",
+            "invalid",
+            "deadline"
+          ]
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "process": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/processObservation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timerObservation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "result",
+        "observed_at",
+        "process",
+        "timer"
+      ],
+      "additionalProperties": false
+    },
+    "hostSnapshot": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "service-status.host.v1"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "collection_started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "booted_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "observations": {
+          "type": "array",
+          "minItems": 20,
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/hostObservation"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "generated_at",
+        "collection_started_at",
+        "booted_at",
+        "policy",
+        "observations"
+      ],
+      "additionalProperties": false
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "postgres",
+            "reverse-proxy",
+            "web",
+            "api-server",
+            "owner-equity-v2-runner",
+            "owner-beta-runner",
+            "candidate-runner",
+            "recommendation-runner",
+            "nt-backtest-worker-1",
+            "nt-backtest-worker-2",
+            "research-worker",
+            "kis-eod",
+            "market-stream",
+            "intraday-calendar",
+            "production-backup",
+            "production-backup-verify",
+            "tls-renewal",
+            "docker",
+            "tailscaled",
+            "paper-scheduler",
+            "metrics",
+            "live-node-owner"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "capability",
+            "daemon",
+            "execution",
+            "host",
+            "optional",
+            "scheduled"
+          ]
+        },
+        "expected_mode": {
+          "type": "string",
+          "enum": [
+            "always",
+            "daily",
+            "daemon",
+            "capability",
+            "disabled",
+            "unknown"
+          ]
+        },
+        "process_status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "starting",
+            "inactive",
+            "failed",
+            "missing",
+            "unknown",
+            "not_applicable",
+            "disabled"
+          ]
+        },
+        "work_status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "idle",
+            "scheduled",
+            "closed",
+            "no_demand",
+            "current",
+            "pending",
+            "stale",
+            "degraded",
+            "failed",
+            "unknown",
+            "disabled",
+            "not_applicable"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reason"
+          },
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sources": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/source"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "database": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/source"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "window": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/source"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "host",
+            "database",
+            "window"
+          ],
+          "additionalProperties": false
+        },
+        "metrics": {
+          "$ref": "#/$defs/metrics"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "expected_mode",
+        "process_status",
+        "work_status",
+        "status",
+        "reason_codes",
+        "observed_at",
+        "valid_until",
+        "sources",
+        "metrics"
+      ],
+      "additionalProperties": false
+    },
+    "apiResponse": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "service-status.api.v1"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "overall_status": {
+          "$ref": "#/$defs/status"
+        },
+        "policy_state": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "unavailable",
+            "mismatch"
+          ]
+        },
+        "services": {
+          "type": "array",
+          "minItems": 22,
+          "maxItems": 22,
+          "items": {
+            "$ref": "#/$defs/service"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "generated_at",
+        "overall_status",
+        "policy_state",
+        "services"
+      ],
+      "additionalProperties": false
+    },
+    "catalogEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "postgres",
+            "reverse-proxy",
+            "web",
+            "api-server",
+            "owner-equity-v2-runner",
+            "owner-beta-runner",
+            "candidate-runner",
+            "recommendation-runner",
+            "nt-backtest-worker-1",
+            "nt-backtest-worker-2",
+            "research-worker",
+            "kis-eod",
+            "market-stream",
+            "intraday-calendar",
+            "production-backup",
+            "production-backup-verify",
+            "tls-renewal",
+            "docker",
+            "tailscaled",
+            "paper-scheduler",
+            "metrics",
+            "live-node-owner"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "capability",
+            "daemon",
+            "execution",
+            "host",
+            "optional",
+            "scheduled"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_./-]+:[1-9][0-9]*$"
+        },
+        "reader": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "semantics": {
+          "type": "string",
+          "maxLength": 350
+        },
+        "job_type": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contributes_to_overall": {
+          "type": "boolean"
+        },
+        "host_source": {
+          "type": "string",
+          "enum": [
+            "docker",
+            "systemd",
+            "daily_or_daemon",
+            "parent",
+            "none"
+          ]
+        },
+        "owner_daily_mode": {
+          "type": "string",
+          "enum": [
+            "always",
+            "daily",
+            "capability",
+            "disabled"
+          ]
+        },
+        "owner_daemon_mode": {
+          "type": "string",
+          "enum": [
+            "always",
+            "daemon",
+            "capability",
+            "disabled"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "role",
+        "source",
+        "reader",
+        "semantics",
+        "job_type",
+        "contributes_to_overall",
+        "host_source",
+        "owner_daily_mode",
+        "owner_daemon_mode"
+      ],
+      "additionalProperties": false
+    },
+    "catalog": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "service-status.catalog.v1"
+        },
+        "baseline": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "host_period_seconds": {
+          "const": 30
+        },
+        "host_ttl_seconds": {
+          "const": 90
+        },
+        "poll_seconds": {
+          "const": 30
+        },
+        "eod_grace_seconds": {
+          "const": 7200
+        },
+        "recent_failure_seconds": {
+          "const": 86400
+        },
+        "services": {
+          "type": "array",
+          "minItems": 22,
+          "maxItems": 22,
+          "items": {
+            "$ref": "#/$defs/catalogEntry"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "baseline",
+        "host_period_seconds",
+        "host_ttl_seconds",
+        "poll_seconds",
+        "eod_grace_seconds",
+        "recent_failure_seconds",
+        "services"
+      ],
+      "additionalProperties": false
+    },
+    "dbReadResults": {
+      "type": "object",
+      "properties": {
+        "queue": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "timeout",
+                "unavailable",
+                "denied",
+                "invalid",
+                "future",
+                "stale",
+                "limit"
+              ]
+            },
+            "observed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lease_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "rows": {
+              "type": "array",
+              "maxItems": 10001,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "job_type": {
+                    "type": "string",
+                    "enum": [
+                      "owner_equity_v2",
+                      "owner_beta_price_recommendation",
+                      "candidate_compute",
+                      "recommendation",
+                      "backtest"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "QUEUED",
+                      "RUNNING",
+                      "SUCCEEDED",
+                      "FAILED",
+                      "CANCELED"
+                    ]
+                  },
+                  "available_at": {
+                    "$ref": "#/$defs/timestamp"
+                  },
+                  "locked_at": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "finished_at": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "job_type",
+                  "status",
+                  "available_at",
+                  "locked_at",
+                  "finished_at"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "result",
+            "observed_at",
+            "lease_seconds",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "etf": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "timeout",
+                "unavailable",
+                "denied",
+                "invalid",
+                "future",
+                "stale",
+                "limit"
+              ]
+            },
+            "observed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "raw_as_of": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "publication_session": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "published_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dataset_state": {
+              "type": "string",
+              "enum": [
+                "READY",
+                "WARNING",
+                "BLOCKED"
+              ]
+            },
+            "binding_state": {
+              "type": "string",
+              "enum": [
+                "PUBLISHED",
+                "CATALOGED",
+                "BLOCKED"
+              ]
+            },
+            "fetch_mode": {
+              "type": "string",
+              "enum": [
+                "credentialed",
+                "synthetic"
+              ]
+            },
+            "required_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "covered_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            }
+          },
+          "required": [
+            "result",
+            "observed_at",
+            "raw_as_of",
+            "publication_session",
+            "published_at",
+            "dataset_state",
+            "binding_state",
+            "fetch_mode",
+            "required_count",
+            "covered_count"
+          ],
+          "additionalProperties": false
+        },
+        "v2": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "timeout",
+                "unavailable",
+                "denied",
+                "invalid",
+                "future",
+                "stale",
+                "limit"
+              ]
+            },
+            "observed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "covered_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "generation_last_session": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "snapshot_as_of": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "snapshot_published_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "current_admissions_match": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "result",
+            "observed_at",
+            "required_count",
+            "covered_count",
+            "generation_last_session",
+            "snapshot_as_of",
+            "snapshot_published_at",
+            "current_admissions_match"
+          ],
+          "additionalProperties": false
+        },
+        "candidate": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "timeout",
+                "unavailable",
+                "denied",
+                "invalid",
+                "future",
+                "stale",
+                "limit"
+              ]
+            },
+            "observed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "required_universes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "published_universes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "as_of": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "published_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "result",
+            "observed_at",
+            "enabled",
+            "required_universes",
+            "published_universes",
+            "as_of",
+            "published_at"
+          ],
+          "additionalProperties": false
+        },
+        "research": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "timeout",
+                "unavailable",
+                "denied",
+                "invalid",
+                "future",
+                "stale",
+                "limit"
+              ]
+            },
+            "observed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "row": {
+              "type": "object",
+              "properties": {
+                "attempt_started_at": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "heartbeat_at": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempt_finished_at": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "attempt_state": {
+                  "type": "string",
+                  "enum": [
+                    "RUNNING",
+                    "SUCCEEDED",
+                    "FAILED",
+                    "NO_WORK"
+                  ]
+                },
+                "last_success_at": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_failure_at": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "failure_code": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "PIPELINE_FAILED",
+                        "PUBLICATION_FAILED",
+                        "RIGHTS_UNAVAILABLE",
+                        "EXECUTION_INTERRUPTED"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "target_session": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "published_session": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "attempt_started_at",
+                "heartbeat_at",
+                "attempt_finished_at",
+                "attempt_state",
+                "last_success_at",
+                "last_failure_at",
+                "failure_code",
+                "target_session",
+                "published_session"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "result",
+            "observed_at",
+            "row"
+          ],
+          "additionalProperties": false
+        },
+        "calendar": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "timeout",
+                "unavailable",
+                "denied",
+                "invalid",
+                "future",
+                "stale",
+                "limit"
+              ]
+            },
+            "observed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rows": {
+              "type": "array",
+              "maxItems": 370,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "session_date": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "session_type": {
+                    "type": "string",
+                    "enum": [
+                      "TRADING",
+                      "CLOSED"
+                    ]
+                  },
+                  "exchange": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "timezone": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "source": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "source_version": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "calendar_batch": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "version_batch": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "raw_batch": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "calendar_hash": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "version_hash": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "raw_hash": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "calendar_retrieved_at": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "version_retrieved_at": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "raw_retrieved_at": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "raw_kind": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "raw_file": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "raw_fetch_mode": {
+                    "type": "string",
+                    "enum": [
+                      "credentialed",
+                      "synthetic"
+                    ]
+                  }
+                },
+                "required": [
+                  "session_date",
+                  "session_type",
+                  "exchange",
+                  "timezone",
+                  "source",
+                  "source_version",
+                  "calendar_batch",
+                  "version_batch",
+                  "raw_batch",
+                  "calendar_hash",
+                  "version_hash",
+                  "raw_hash",
+                  "calendar_retrieved_at",
+                  "version_retrieved_at",
+                  "raw_retrieved_at",
+                  "raw_kind",
+                  "raw_file",
+                  "raw_fetch_mode"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "result",
+            "observed_at",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "stream": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "timeout",
+                "unavailable",
+                "denied",
+                "invalid",
+                "future",
+                "stale",
+                "limit"
+              ]
+            },
+            "observed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "owner_binding_valid": {
+              "type": "boolean"
+            },
+            "demand_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "live_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "halted_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10001
+            },
+            "producer_present": {
+              "type": "boolean"
+            },
+            "connection_state": {
+              "type": "string",
+              "enum": [
+                "CONNECTED",
+                "CONNECTING",
+                "DISCONNECTED",
+                "BACKOFF",
+                "STOPPED"
+              ]
+            },
+            "status_code": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "FEATURE_DISABLED",
+                    "NO_ACTIVE_DEMAND",
+                    "CALENDAR_UNAVAILABLE",
+                    "SESSION_WINDOW_UNAVAILABLE",
+                    "SESSION_CLOSED",
+                    "AWAITING_FIRST_TRADE",
+                    "QUOTE_STALE",
+                    "CONNECTION_LOST",
+                    "RECONNECT_GAP",
+                    "SUBSCRIPTION_PENDING",
+                    "SUBSCRIPTION_REJECTED",
+                    "SUBSCRIPTION_AMBIGUOUS",
+                    "APPROVAL_UNAVAILABLE",
+                    "BUDGET_EXHAUSTED",
+                    "PRODUCER_UNAVAILABLE",
+                    "PIPELINE_LAG",
+                    "WIRE_SCHEMA_MISMATCH",
+                    "PROVIDER_RESPONSE_INVALID",
+                    "QUOTE_VALUE_INVALID",
+                    "MARKET_CLASS_UNSUPPORTED",
+                    "LOCAL_INGRESS_LIMIT",
+                    "RESYNC_REQUIRED",
+                    "ACCESS_REVOKED"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "producer_heartbeat_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "producer_lease_expires_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "oldest_received_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "oldest_provider_trade_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "last_received_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lineage_valid": {
+              "type": "boolean"
+            },
+            "gap_present": {
+              "type": "boolean"
+            },
+            "valid_until": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "producer_status_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "result",
+            "observed_at",
+            "owner_binding_valid",
+            "demand_count",
+            "live_count",
+            "halted_count",
+            "producer_present",
+            "connection_state",
+            "status_code",
+            "producer_heartbeat_at",
+            "producer_lease_expires_at",
+            "oldest_received_at",
+            "oldest_provider_trade_at",
+            "last_received_at",
+            "lineage_valid",
+            "gap_present",
+            "valid_until",
+            "producer_status_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "queue",
+        "etf",
+        "v2",
+        "candidate",
+        "research",
+        "calendar",
+        "stream"
+      ],
+      "additionalProperties": false
+    },
+    "windowRead": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "missing",
+            "invalid",
+            "timeout",
+            "unavailable"
+          ]
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "const": "operational_v1"
+        },
+        "activation_hash_matches": {
+          "type": "boolean"
+        },
+        "metadata_safe": {
+          "type": "boolean"
+        },
+        "entry": {
+          "type": "object",
+          "properties": {
+            "date": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "trading",
+                "closed"
+              ]
+            },
+            "open_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "close_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "evidence_retrieved_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "date",
+            "disposition",
+            "open_at",
+            "close_at",
+            "evidence_retrieved_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "result",
+        "observed_at",
+        "source",
+        "activation_hash_matches",
+        "metadata_safe",
+        "entry"
+      ],
+      "additionalProperties": false
+    },
+    "evaluationInput": {
+      "type": "object",
+      "properties": {
+        "fixture_version": {
+          "const": 1
+        },
+        "synthetic": {
+          "const": true
+        },
+        "clock": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "host_read": {
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "missing",
+                "unavailable",
+                "invalid"
+              ]
+            },
+            "snapshot": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/hostSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "result",
+            "snapshot"
+          ],
+          "additionalProperties": false
+        },
+        "db_read_results": {
+          "$ref": "#/$defs/dbReadResults"
+        },
+        "window_read": {
+          "$ref": "#/$defs/windowRead"
+        }
+      },
+      "required": [
+        "fixture_version",
+        "synthetic",
+        "clock",
+        "host_read",
+        "db_read_results",
+        "window_read"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

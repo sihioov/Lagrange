@@ -34,6 +34,42 @@ done
   die 'ops image-build documentation is missing or a symlink'
 self_test=$ops/production-ops-self-test.sh
 bash -n "$self_test" || die 'production ops self-test has shell syntax errors'
+service_status_collector=$ops/collect-service-status.py
+service_status_installer=$ops/install-service-status.py
+service_status_policy=$ops/lib/service-status-policy.py
+service_status_unit=$systemd/lagrange-service-status.service
+service_status_timer=$systemd/lagrange-service-status.timer
+service_status_overlay=$root/deploy/compose/compose.service-status.yml
+for file in "$service_status_collector" "$service_status_installer" "$service_status_policy" \
+  "$service_status_unit" "$service_status_timer" "$service_status_overlay"; do
+  [ -f "$file" ] && [ ! -L "$file" ] || die "service-status file missing or symlinked: $file"
+done
+grep -Fq 'TOTAL_DEADLINE_SECONDS = 20.0' "$service_status_collector" ||
+  die 'service-status collector deadline changed'
+grep -Fq 'MAX_COMMAND_BYTES = 16 * 1024' "$service_status_collector" ||
+  die 'service-status command output bound changed'
+grep -Fq 'MAX_SNAPSHOT_BYTES = 256 * 1024' "$service_status_collector" ||
+  die 'service-status snapshot bound changed'
+grep -Fq 'OnUnitActiveSec=30s' "$service_status_timer" ||
+  die 'service-status timer interval changed'
+grep -Fq 'Type=oneshot' "$service_status_unit" ||
+  die 'service-status collector must remain one-shot'
+grep -Fq 'TimeoutStartSec=25s' "$service_status_unit" ||
+  die 'service-status systemd timeout changed'
+grep -Fq 'ReadWritePaths=/var/lib/lagrange/service-status /run/lagrange-service-status' "$service_status_unit" ||
+  die 'service-status write sandbox changed'
+grep -Fq 'user: "10001:10001"' "$service_status_overlay" ||
+  die 'service-status overlay API identity changed'
+grep -Fq 'read_only: true' "$service_status_overlay" ||
+  die 'service-status overlay must mount the snapshot read-only'
+grep -Fq 'create_host_path: false' "$service_status_overlay" ||
+  die 'service-status overlay must not create host paths'
+grep -Fq 'service-status-policy.py" startup' "$compose_release" ||
+  die 'release startup must validate the installed service-status policy'
+grep -Fq 'service-status-policy.py" daemon-gate' "$compose_release" ||
+  die 'full daemon release startup must validate the daily-timer conflict gate'
+grep -Fq 'service_status_mode" = daily' "$compose_release" ||
+  die 'daily service-status policy must exclude the research daemon'
 grep -Fq 'TEST_ENVIRONMENT_ERROR: production-ops root fixture requires user namespaces or fakeroot' \
   "$self_test" || die 'root fixture must fail rather than skip when unavailable'
 if grep -Fq 'PASS (root fixture skipped' "$self_test" || grep -Fq 'fakeroot "$@"' "$self_test"; then

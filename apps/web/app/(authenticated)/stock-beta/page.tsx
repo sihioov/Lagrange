@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
+import { ServiceStatusPanel } from "@/components/service-status/service-status-panel";
 import { StatePanel } from "@/components/states/state-panel";
 import type { StockBetaChartError } from "@/components/stock-beta/dashboard/types";
 import { StockBetaPolicyNotice } from "@/components/stock-beta/dashboard/widgets/policy-boundary-widget";
@@ -9,6 +11,7 @@ import { StockBetaWorkspace } from "@/components/stock-beta/stock-beta-workspace
 import { StockBetaTerminalPage } from "@/components/stock-beta/terminal";
 import { ApiContractError, ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
+import { shellDictionary } from "@/lib/i18n/dictionaries/shell";
 import { type StockBetaDictionary, stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
 import type { Locale } from "@/lib/i18n/locale";
 import { getLocale } from "@/lib/i18n/server";
@@ -64,11 +67,15 @@ function chartFailure(error: unknown): StockBetaChartError {
   return { code: "UNCLASSIFIED_ERROR", kind: "error" };
 }
 
-async function renderStockBetaProduct(
-  t: StockBetaDictionary,
-  locale: Locale,
-  streamSessionKey: string,
-) {
+async function StockBetaProductContent({
+  t,
+  locale,
+  streamSessionKey,
+}: {
+  readonly t: StockBetaDictionary;
+  readonly locale: Locale;
+  readonly streamSessionKey: string;
+}) {
   try {
     const transport = stockBetaIntradayTransport();
     const intradayEnabled = transport !== "off";
@@ -142,12 +149,29 @@ export default async function StockBetaPage() {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "stock-beta",
-    renderProduct: (session) =>
-      renderStockBetaProduct(
-        stockBetaDictionary[locale],
-        locale,
-        `${session.user_id}:${session.expires_at_secs}`,
-      ),
+    renderProduct: (session) => {
+      const streamSessionKey = `${session.user_id}:${session.expires_at_secs}`;
+      return (
+        <>
+          <ServiceStatusPanel key={streamSessionKey} locale={locale} />
+          <Suspense
+            fallback={
+              <StatePanel
+                kind="loading"
+                message={shellDictionary[locale].loadingMessage}
+                title={shellDictionary[locale].loadingTitle}
+              />
+            }
+          >
+            <StockBetaProductContent
+              locale={locale}
+              streamSessionKey={streamSessionKey}
+              t={stockBetaDictionary[locale]}
+            />
+          </Suspense>
+        </>
+      );
+    },
     title: stockBetaDictionary[locale].pageTitle,
   });
 }

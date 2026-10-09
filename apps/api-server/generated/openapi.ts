@@ -59,6 +59,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/service-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GET /api/v1/admin/service-status */
+        get: operations["get__api_v1_admin_service_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/session": {
         parameters: {
             query?: never;
@@ -1399,6 +1416,79 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Format: date-time */
+        ServiceStatusTimestamp: string;
+        /** @enum {string} */
+        ServiceStatusStatus: "healthy" | "waiting" | "degraded" | "failed" | "unknown" | "disabled";
+        /** @enum {string} */
+        ServiceStatusReason: "PROCESS_RUNNING" | "PROCESS_STARTING" | "PROCESS_UNHEALTHY" | "PROCESS_FAILED" | "PROCESS_MISSING" | "PROCESS_INACTIVE" | "HOST_MISSING" | "HOST_STALE" | "HOST_INVALID" | "HOST_FUTURE" | "HOST_TIMEOUT" | "HOST_COMMAND_UNAVAILABLE" | "HOST_PERMISSION_DENIED" | "HOST_DEADLINE" | "HOST_REBOOTED" | "POLICY_MISSING" | "POLICY_MISMATCH" | "UNEXPECTED_ACTIVE" | "TIMER_MISSING" | "TIMER_DISABLED" | "TIMER_INACTIVE" | "NEXT_RUN_MISSING" | "RUN_ACTIVE" | "RUN_FAILED" | "RUN_RESULT_UNKNOWN" | "RUN_HISTORY_EMPTY" | "RUN_OVERDUE" | "DAEMON_MODE_CONFLICT" | "OLD_UNIT_IGNORED" | "DB_TIMEOUT" | "DB_UNAVAILABLE" | "SCHEMA_DRIFT" | "SOURCE_FUTURE" | "QUERY_LIMIT" | "QUEUE_IDLE" | "QUEUE_ACTIVE" | "QUEUE_PENDING" | "QUEUE_DELAYED" | "CLAIM_EXPIRED" | "RECENT_JOB_FAILURE" | "RECOVERED" | "NO_HISTORY" | "CALENDAR_UNAVAILABLE" | "CALENDAR_STALE" | "CALENDAR_LINEAGE_INVALID" | "CALENDAR_COVERAGE_GAP" | "SESSION_WINDOW_UNAVAILABLE" | "SESSION_WINDOW_INVALID" | "SESSION_CLOSED" | "SESSION_PREOPEN" | "NO_ACTIVE_DEMAND" | "PRODUCER_UNAVAILABLE" | "PRODUCER_STALE" | "STREAM_DISCONNECTED" | "STREAM_CONNECTING" | "STREAM_BACKOFF" | "STREAM_GAP" | "QUOTE_PENDING" | "QUOTE_STALE" | "QUOTE_LINEAGE_INVALID" | "INSTRUMENT_HALTED" | "DATA_CURRENT" | "EOD_PENDING" | "EOD_STALE" | "RAW_ONLY" | "DATA_BLOCKED" | "V2_COVERAGE_INCOMPLETE" | "SNAPSHOT_STALE" | "SCHEDULER_DISABLED" | "SCHEDULER_UNAVAILABLE" | "FEATURE_DISABLED" | "NOT_APPLICABLE" | "OBSERVATION_EXPIRED" | "API_UNAVAILABLE" | "EXECUTION_INTERRUPTED" | "AWAITING_FIRST_TRADE" | "CONNECTION_LOST" | "RECONNECT_GAP" | "SUBSCRIPTION_PENDING" | "SUBSCRIPTION_REJECTED" | "SUBSCRIPTION_AMBIGUOUS" | "APPROVAL_UNAVAILABLE" | "BUDGET_EXHAUSTED" | "PIPELINE_LAG" | "WIRE_SCHEMA_MISMATCH" | "PROVIDER_RESPONSE_INVALID" | "QUOTE_VALUE_INVALID" | "MARKET_CLASS_UNSUPPORTED" | "LOCAL_INGRESS_LIMIT" | "RESYNC_REQUIRED" | "ACCESS_REVOKED" | "STREAM_BINDING_UNAVAILABLE";
+        ServiceStatusSource: {
+            /** @enum {string} */
+            result: "ok" | "missing" | "timeout" | "unavailable" | "denied" | "invalid" | "future" | "stale" | "limit" | "partial";
+            observed_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            valid_until: components["schemas"]["ServiceStatusTimestamp"] | null;
+        };
+        ServiceStatusMetrics: {
+            last_attempt_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            last_success_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            last_failure_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            last_received_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            next_run_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            data_due_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            data_as_of: string | null;
+            expected_session: string | null;
+            raw_as_of: string | null;
+            v2_data_as_of: string | null;
+            v2_snapshot_as_of: string | null;
+            queued: number | null;
+            running: number | null;
+            recent_failed: number | null;
+            expired_claims: number | null;
+            active_demand: number | null;
+            live_identities: number | null;
+            halted_identities: number | null;
+            required_identities: number | null;
+            covered_identities: number | null;
+            /** @enum {string} */
+            queue_scope: "actor_shared" | "actor" | "not_applicable";
+            /** @enum {string} */
+            calendar_status: "ready" | "closed" | "missing" | "stale" | "invalid" | "unknown" | "not_applicable";
+            /** @enum {string} */
+            window_status: "ready" | "closed" | "missing" | "invalid" | "unknown" | "not_applicable";
+            last_state_change_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            oldest_provider_event_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+        };
+        ServiceStatusService: {
+            /** @enum {string} */
+            id: "postgres" | "reverse-proxy" | "web" | "api-server" | "owner-equity-v2-runner" | "owner-beta-runner" | "candidate-runner" | "recommendation-runner" | "nt-backtest-worker-1" | "nt-backtest-worker-2" | "research-worker" | "kis-eod" | "market-stream" | "intraday-calendar" | "production-backup" | "production-backup-verify" | "tls-renewal" | "docker" | "tailscaled" | "paper-scheduler" | "metrics" | "live-node-owner";
+            /** @enum {string} */
+            kind: "capability" | "daemon" | "execution" | "host" | "optional" | "scheduled";
+            /** @enum {string} */
+            expected_mode: "always" | "daily" | "daemon" | "capability" | "disabled" | "unknown";
+            /** @enum {string} */
+            process_status: "running" | "starting" | "inactive" | "failed" | "missing" | "unknown" | "not_applicable" | "disabled";
+            /** @enum {string} */
+            work_status: "active" | "idle" | "scheduled" | "closed" | "no_demand" | "current" | "pending" | "stale" | "degraded" | "failed" | "unknown" | "disabled" | "not_applicable";
+            status: components["schemas"]["ServiceStatusStatus"];
+            reason_codes: components["schemas"]["ServiceStatusReason"][];
+            observed_at: components["schemas"]["ServiceStatusTimestamp"] | null;
+            valid_until: components["schemas"]["ServiceStatusTimestamp"] | null;
+            sources: {
+                host: components["schemas"]["ServiceStatusSource"] | null;
+                database: components["schemas"]["ServiceStatusSource"] | null;
+                window: components["schemas"]["ServiceStatusSource"] | null;
+            };
+            metrics: components["schemas"]["ServiceStatusMetrics"];
+        };
+        ServiceStatusApiResponse: {
+            /** @constant */
+            schema_version: "service-status.api.v1";
+            generated_at: components["schemas"]["ServiceStatusTimestamp"];
+            overall_status: components["schemas"]["ServiceStatusStatus"];
+            /** @enum {string} */
+            policy_state: "verified" | "unavailable" | "mismatch";
+            services: components["schemas"]["ServiceStatusService"][];
+        };
         Error: {
             code: components["schemas"]["ErrorCode"];
             message: string;
@@ -1412,7 +1502,7 @@ export interface components {
             error: components["schemas"]["Error"];
         };
         /** @enum {string} */
-        ErrorCode: "FEATURE_DISABLED" | "MARKET_STREAM_UNAVAILABLE" | "STREAM_LEASE_SEQUENCE_CONFLICT" | "STREAM_LEASE_CAPACITY" | "STREAM_CONSUMER_CAPACITY" | "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "IDEMPOTENCY_MISMATCH" | "QUOTE_DEMAND_SEQUENCE_CONFLICT" | "QUOTE_DEMAND_CAPACITY" | "QUOTE_CACHE_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
+        ErrorCode: "FEATURE_DISABLED" | "MARKET_STREAM_UNAVAILABLE" | "STREAM_LEASE_SEQUENCE_CONFLICT" | "STREAM_LEASE_CAPACITY" | "STREAM_CONSUMER_CAPACITY" | "SERVICE_STATUS_RATE_LIMITED" | "SERVICE_STATUS_UNAVAILABLE" | "SESSION_UNKNOWN" | "SESSION_EXPIRED" | "FORBIDDEN" | "DATA_ENTITLEMENT_REQUIRED" | "OWNER_ONLY_DEVELOPMENT_PATH" | "CSRF_DENIED" | "STEP_UP_NOT_OWNER" | "STEP_UP_MFA_REQUIRED" | "STEP_UP_AUTH_TIME_ABSENT" | "STEP_UP_AUTH_TIME_STALE" | "RESOURCE_NOT_FOUND" | "INVALID_PARAMETER" | "INVALID_DATE" | "INVALID_DECIMAL" | "INVALID_CURSOR" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_MISMATCH" | "DUPLICATE_RESOURCE" | "PAYLOAD_TOO_LARGE" | "DATASET_BLOCKED" | "DATA_STALE" | "INVALID_STRATEGY_PARAMETER" | "UNSUPPORTED_MARKET_CURRENCY" | "BACKTEST_CAPACITY_EXCEEDED" | "ROBUSTNESS_CAPACITY_EXCEEDED" | "RECOMMENDATION_CAPACITY_EXCEEDED" | "OWNER_BETA_PRICE_INPUT_UNAVAILABLE" | "OWNER_BETA_STRATEGY_UNSUPPORTED" | "OWNER_BETA_EQUITY_SIGNALS_UNAVAILABLE" | "OWNER_BETA_EQUITY_SIGNALS_INTEGRITY_FAILED" | "OWNER_EQUITY_POLICY_UNAVAILABLE" | "OWNER_EQUITY_CAPACITY_EXCEEDED" | "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND" | "OWNER_EQUITY_INVALID_STATE" | "OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE" | "OWNER_EQUITY_INTEGRITY_FAILED" | "OWNER_EQUITY_CHART_UNAVAILABLE" | "OWNER_EQUITY_SNAPSHOT_UNAVAILABLE" | "IDEMPOTENCY_MISMATCH" | "QUOTE_DEMAND_SEQUENCE_CONFLICT" | "QUOTE_DEMAND_CAPACITY" | "QUOTE_CACHE_UNAVAILABLE" | "REBALANCE_PREVIEW_CAPACITY_EXCEEDED" | "REBALANCE_PREVIEW_BINDING_REQUIRED" | "REBALANCE_PREVIEW_NOT_READY" | "REBALANCE_PREVIEW_DATA_BLOCKED" | "REBALANCE_PREVIEW_ENTITLEMENT_REQUIRED" | "REBALANCE_PREVIEW_STALE" | "REBALANCE_PREVIEW_FAILED" | "REBALANCE_PREVIEW_CONFLICT" | "RESULT_INTEGRITY_FAILED" | "LIVE_RECONCILIATION_REQUIRED" | "LIVE_KILL_SWITCH_ENGAGED" | "LIVE_CONNECTION_NOT_CONFIGURED" | "RISK_LIMIT_EXCEEDED" | "ORDER_STATE_UNKNOWN" | "NOT_IMPLEMENTED" | "INTERNAL";
         Page: {
             items: Record<string, never>[];
             /** @description opaque signed cursor; null when the last page */
@@ -3118,6 +3208,33 @@ export interface operations {
             404: components["responses"]["Error404"];
             409: components["responses"]["Error409"];
             500: components["responses"]["Error500"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_admin_service_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current Owner service and source status, re-evaluated at response time */
+            200: {
+                headers: {
+                    "Cache-Control"?: "private, no-store";
+                    Vary?: "Cookie";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStatusApiResponse"];
+                };
+            };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            429: components["responses"]["Error429"];
             503: components["responses"]["Error503"];
         };
     };

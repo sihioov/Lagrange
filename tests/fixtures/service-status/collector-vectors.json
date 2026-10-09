@@ -1,0 +1,435 @@
+{
+  "fixture_version": 1,
+  "cases": [
+    {
+      "id": "docker_postgres",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "postgres",
+      "safe_fields": {
+        "State.Status": "running",
+        "State.Health.Status": "healthy",
+        "State.StartedAt": "2032-02-12T00:00:00Z",
+        "State.FinishedAt": null,
+        "State.ExitCode": null
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "postgres",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "running",
+          "health": "healthy",
+          "started_at": "2032-02-12T00:00:00Z",
+          "finished_at": null,
+          "exit_code": null
+        },
+        "timer": null
+      }
+    },
+    {
+      "id": "docker_web",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "web",
+      "safe_fields": {
+        "State.Status": "running",
+        "State.Health.Status": "healthy",
+        "State.StartedAt": "2032-02-12T00:00:00Z",
+        "State.FinishedAt": null,
+        "State.ExitCode": null
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "web",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "running",
+          "health": "healthy",
+          "started_at": "2032-02-12T00:00:00Z",
+          "finished_at": null,
+          "exit_code": null
+        },
+        "timer": null
+      }
+    },
+    {
+      "id": "docker_api-server",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "api-server",
+      "safe_fields": {
+        "State.Status": "running",
+        "State.Health.Status": "healthy",
+        "State.StartedAt": "2032-02-12T00:00:00Z",
+        "State.FinishedAt": null,
+        "State.ExitCode": null
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "api-server",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "running",
+          "health": "healthy",
+          "started_at": "2032-02-12T00:00:00Z",
+          "finished_at": null,
+          "exit_code": null
+        },
+        "timer": null
+      }
+    },
+    {
+      "id": "docker_research-worker",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "research-worker",
+      "safe_fields": {
+        "State.Status": "exited",
+        "State.Health.Status": "none",
+        "State.StartedAt": null,
+        "State.FinishedAt": null,
+        "State.ExitCode": 0
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "research-worker",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "exited",
+          "health": "none",
+          "started_at": null,
+          "finished_at": null,
+          "exit_code": 0
+        },
+        "timer": null
+      }
+    },
+    {
+      "id": "docker_nt-backtest-worker-1",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "nt-backtest-worker-1",
+      "safe_fields": {
+        "State.Status": "running",
+        "State.Health.Status": "healthy",
+        "State.StartedAt": "2032-02-12T00:00:00Z",
+        "State.FinishedAt": null,
+        "State.ExitCode": null
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "nt-backtest-worker-1",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "running",
+          "health": "healthy",
+          "started_at": "2032-02-12T00:00:00Z",
+          "finished_at": null,
+          "exit_code": null
+        },
+        "timer": null
+      }
+    },
+    {
+      "id": "docker_paper-scheduler",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "paper-scheduler",
+      "safe_fields": {
+        "matching_containers": []
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "paper-scheduler",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "missing",
+          "health": "none",
+          "started_at": null,
+          "finished_at": null,
+          "exit_code": null
+        },
+        "timer": null
+      }
+    },
+    {
+      "id": "systemd_production-backup",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "systemd",
+      "service": "production-backup",
+      "safe_fields": {
+        "timer": {
+          "LoadState": "loaded",
+          "ActiveState": "active",
+          "UnitFileState": "enabled",
+          "LastTriggerUSec": "2032-02-11T17:15:00Z",
+          "NextElapseUSecRealtime": "2032-02-12T17:15:00Z",
+          "Unit": "lagrange-production-backup.service"
+        },
+        "service": {
+          "LoadState": "loaded",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "ExecMainCode": 1,
+          "ExecMainStatus": 0,
+          "ExecMainStartTimestamp": "2032-02-11T17:15:00Z",
+          "ExecMainExitTimestamp": "2032-02-11T17:16:00Z",
+          "Result": "success"
+        },
+        "verified_unit_binding": "matched"
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "production-backup",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "inactive",
+          "health": "none",
+          "started_at": "2032-02-11T17:15:00Z",
+          "finished_at": "2032-02-11T17:16:00Z",
+          "exit_code": 0
+        },
+        "timer": {
+          "load": "loaded",
+          "active": "active",
+          "enabled": "enabled",
+          "last_trigger_at": "2032-02-11T17:15:00Z",
+          "next_run_at": "2032-02-12T17:15:00Z",
+          "unit_binding": "matched",
+          "last_result": "success",
+          "exit_status": 0,
+          "last_started_at": "2032-02-11T17:15:00Z",
+          "last_finished_at": "2032-02-11T17:16:00Z",
+          "last_success_at": "2032-02-11T17:16:00Z"
+        }
+      }
+    },
+    {
+      "id": "systemd_production-backup-verify",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "systemd",
+      "service": "production-backup-verify",
+      "safe_fields": {
+        "timer": {
+          "LoadState": "loaded",
+          "ActiveState": "active",
+          "UnitFileState": "enabled",
+          "LastTriggerUSec": "2032-02-07T19:15:00Z",
+          "NextElapseUSecRealtime": "2032-02-14T19:15:00Z",
+          "Unit": "lagrange-production-backup-verify.service"
+        },
+        "service": {
+          "LoadState": "loaded",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "ExecMainCode": 1,
+          "ExecMainStatus": 0,
+          "ExecMainStartTimestamp": "2032-02-07T19:15:00Z",
+          "ExecMainExitTimestamp": "2032-02-07T19:16:00Z",
+          "Result": "success"
+        },
+        "verified_unit_binding": "matched"
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "production-backup-verify",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "inactive",
+          "health": "none",
+          "started_at": "2032-02-07T19:15:00Z",
+          "finished_at": "2032-02-07T19:16:00Z",
+          "exit_code": 0
+        },
+        "timer": {
+          "load": "loaded",
+          "active": "active",
+          "enabled": "enabled",
+          "last_trigger_at": "2032-02-07T19:15:00Z",
+          "next_run_at": "2032-02-14T19:15:00Z",
+          "unit_binding": "matched",
+          "last_result": "success",
+          "exit_status": 0,
+          "last_started_at": "2032-02-07T19:15:00Z",
+          "last_finished_at": "2032-02-07T19:16:00Z",
+          "last_success_at": "2032-02-07T19:16:00Z"
+        }
+      }
+    },
+    {
+      "id": "systemd_tls-renewal",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "systemd",
+      "service": "tls-renewal",
+      "safe_fields": {
+        "timer": {
+          "LoadState": "loaded",
+          "ActiveState": "active",
+          "UnitFileState": "enabled",
+          "LastTriggerUSec": "2032-02-11T18:15:00Z",
+          "NextElapseUSecRealtime": "2032-02-12T18:15:00Z",
+          "Unit": "lagrange-tailscale-tls-renewal.service"
+        },
+        "service": {
+          "LoadState": "loaded",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "ExecMainCode": 1,
+          "ExecMainStatus": 0,
+          "ExecMainStartTimestamp": "2032-02-11T18:15:00Z",
+          "ExecMainExitTimestamp": "2032-02-11T18:16:00Z",
+          "Result": "success"
+        },
+        "verified_unit_binding": "matched"
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "tls-renewal",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "inactive",
+          "health": "none",
+          "started_at": "2032-02-11T18:15:00Z",
+          "finished_at": "2032-02-11T18:16:00Z",
+          "exit_code": 0
+        },
+        "timer": {
+          "load": "loaded",
+          "active": "active",
+          "enabled": "enabled",
+          "last_trigger_at": "2032-02-11T18:15:00Z",
+          "next_run_at": "2032-02-12T18:15:00Z",
+          "unit_binding": "matched",
+          "last_result": "success",
+          "exit_status": 0,
+          "last_started_at": "2032-02-11T18:15:00Z",
+          "last_finished_at": "2032-02-11T18:16:00Z",
+          "last_success_at": "2032-02-11T18:16:00Z"
+        }
+      }
+    },
+    {
+      "id": "systemd_kis-eod",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "systemd",
+      "service": "kis-eod",
+      "safe_fields": {
+        "timer": {
+          "LoadState": "loaded",
+          "ActiveState": "active",
+          "UnitFileState": "enabled",
+          "LastTriggerUSec": "2032-02-11T07:30:00Z",
+          "NextElapseUSecRealtime": "2032-02-12T07:30:00Z",
+          "Unit": "lagrange-kis-daily-aaaaaaa.service"
+        },
+        "service": {
+          "LoadState": "loaded",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "ExecMainCode": 1,
+          "ExecMainStatus": 0,
+          "ExecMainStartTimestamp": "2032-02-11T07:30:01Z",
+          "ExecMainExitTimestamp": "2032-02-11T07:35:00Z",
+          "Result": "success"
+        },
+        "verified_unit_binding": "matched"
+      },
+      "result": "ok",
+      "expected_observation": {
+        "id": "kis-eod",
+        "result": "ok",
+        "observed_at": "2032-02-12T01:00:00Z",
+        "process": {
+          "state": "inactive",
+          "health": "none",
+          "started_at": "2032-02-11T07:30:01Z",
+          "finished_at": "2032-02-11T07:35:00Z",
+          "exit_code": 0
+        },
+        "timer": {
+          "load": "loaded",
+          "active": "active",
+          "enabled": "enabled",
+          "last_trigger_at": "2032-02-11T07:30:00Z",
+          "next_run_at": "2032-02-12T07:30:00Z",
+          "unit_binding": "matched",
+          "last_result": "success",
+          "exit_status": 0,
+          "last_started_at": "2032-02-11T07:30:01Z",
+          "last_finished_at": "2032-02-11T07:35:00Z",
+          "last_success_at": "2032-02-11T07:35:00Z"
+        }
+      }
+    },
+    {
+      "id": "collector_timeout",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "web",
+      "safe_fields": null,
+      "result": "timeout",
+      "expected_observation": {
+        "id": "web",
+        "result": "timeout",
+        "observed_at": null,
+        "process": null,
+        "timer": null
+      }
+    },
+    {
+      "id": "collector_command_unavailable",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "web",
+      "safe_fields": null,
+      "result": "command_unavailable",
+      "expected_observation": {
+        "id": "web",
+        "result": "command_unavailable",
+        "observed_at": null,
+        "process": null,
+        "timer": null
+      }
+    },
+    {
+      "id": "collector_denied",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "web",
+      "safe_fields": null,
+      "result": "denied",
+      "expected_observation": {
+        "id": "web",
+        "result": "denied",
+        "observed_at": null,
+        "process": null,
+        "timer": null
+      }
+    },
+    {
+      "id": "collector_deadline",
+      "checked_at": "2032-02-12T01:00:00Z",
+      "source": "docker",
+      "service": "web",
+      "safe_fields": null,
+      "result": "deadline",
+      "expected_observation": {
+        "id": "web",
+        "result": "deadline",
+        "observed_at": null,
+        "process": null,
+        "timer": null
+      }
+    }
+  ]
+}

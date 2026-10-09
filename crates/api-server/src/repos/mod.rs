@@ -25,6 +25,7 @@ pub mod recommendations;
 pub mod reconciliation;
 pub mod risk;
 pub mod robustness;
+pub mod service_status;
 pub mod shared;
 pub mod strategies;
 pub mod strategy_configs;

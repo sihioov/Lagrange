@@ -1,0 +1,1126 @@
+{
+  "schema_version": "service-status.api.v1",
+  "generated_at": "2032-02-12T01:00:00Z",
+  "overall_status": "waiting",
+  "policy_state": "verified",
+  "services": [
+    {
+      "id": "postgres",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "not_applicable",
+      "status": "healthy",
+      "reason_codes": [
+        "PROCESS_RUNNING"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "reverse-proxy",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "not_applicable",
+      "status": "healthy",
+      "reason_codes": [
+        "PROCESS_RUNNING"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "web",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "not_applicable",
+      "status": "healthy",
+      "reason_codes": [
+        "PROCESS_RUNNING"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "api-server",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "not_applicable",
+      "status": "healthy",
+      "reason_codes": [
+        "PROCESS_RUNNING"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "owner-equity-v2-runner",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "current",
+      "status": "healthy",
+      "reason_codes": [
+        "DATA_CURRENT"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": "2032-02-11T07:40:00Z",
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": "2032-02-11T09:30:00Z",
+        "data_as_of": null,
+        "expected_session": "2032-02-11",
+        "raw_as_of": null,
+        "v2_data_as_of": "2032-02-11",
+        "v2_snapshot_as_of": "2032-02-11",
+        "queued": 0,
+        "running": 0,
+        "recent_failed": 0,
+        "expired_claims": 0,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": 2,
+        "covered_identities": 2,
+        "queue_scope": "actor",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "owner-beta-runner",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "idle",
+      "status": "waiting",
+      "reason_codes": [
+        "QUEUE_IDLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": 0,
+        "running": 0,
+        "recent_failed": 0,
+        "expired_claims": 0,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "actor",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "candidate-runner",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "idle",
+      "status": "waiting",
+      "reason_codes": [
+        "QUEUE_IDLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": "2032-02-11T07:45:00Z",
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": "2032-02-11",
+        "expected_session": "2032-02-11",
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": 0,
+        "running": 0,
+        "recent_failed": 0,
+        "expired_claims": 0,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "actor",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "recommendation-runner",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "idle",
+      "status": "waiting",
+      "reason_codes": [
+        "QUEUE_IDLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": 0,
+        "running": 0,
+        "recent_failed": 0,
+        "expired_claims": 0,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "actor",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "nt-backtest-worker-1",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "idle",
+      "status": "waiting",
+      "reason_codes": [
+        "QUEUE_IDLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": 0,
+        "running": 0,
+        "recent_failed": 0,
+        "expired_claims": 0,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "actor_shared",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "nt-backtest-worker-2",
+      "kind": "daemon",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "idle",
+      "status": "waiting",
+      "reason_codes": [
+        "QUEUE_IDLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": 0,
+        "running": 0,
+        "recent_failed": 0,
+        "expired_claims": 0,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "actor_shared",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "research-worker",
+      "kind": "execution",
+      "expected_mode": "daily",
+      "process_status": "inactive",
+      "work_status": "not_applicable",
+      "status": "waiting",
+      "reason_codes": [
+        "NOT_APPLICABLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "kis-eod",
+      "kind": "scheduled",
+      "expected_mode": "daily",
+      "process_status": "inactive",
+      "work_status": "current",
+      "status": "waiting",
+      "reason_codes": [
+        "DATA_CURRENT"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": "2032-02-11T07:30:01Z",
+        "last_success_at": "2032-02-11T07:35:00Z",
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": "2032-02-12T07:30:00Z",
+        "data_due_at": "2032-02-11T09:30:00Z",
+        "data_as_of": "2032-02-11",
+        "expected_session": "2032-02-11",
+        "raw_as_of": "2032-02-11",
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": 11,
+        "covered_identities": 11,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "market-stream",
+      "kind": "capability",
+      "expected_mode": "capability",
+      "process_status": "running",
+      "work_status": "current",
+      "status": "healthy",
+      "reason_codes": [
+        "DATA_CURRENT"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:09Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:09Z"
+        },
+        "window": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        }
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": "2032-02-12T00:59:59Z",
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": 2,
+        "live_identities": 2,
+        "halted_identities": 0,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "ready",
+        "window_status": "ready",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": "2032-02-12T00:59:57Z"
+      }
+    },
+    {
+      "id": "intraday-calendar",
+      "kind": "capability",
+      "expected_mode": "capability",
+      "process_status": "not_applicable",
+      "work_status": "current",
+      "status": "healthy",
+      "reason_codes": [
+        "DATA_CURRENT"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:00:30Z",
+      "sources": {
+        "host": null,
+        "database": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        },
+        "window": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:00:30Z"
+        }
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "ready",
+        "window_status": "ready",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "production-backup",
+      "kind": "scheduled",
+      "expected_mode": "always",
+      "process_status": "inactive",
+      "work_status": "scheduled",
+      "status": "waiting",
+      "reason_codes": [
+        "NOT_APPLICABLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": "2032-02-11T17:15:00Z",
+        "last_success_at": "2032-02-11T17:16:00Z",
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": "2032-02-12T17:15:00Z",
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "production-backup-verify",
+      "kind": "scheduled",
+      "expected_mode": "always",
+      "process_status": "inactive",
+      "work_status": "scheduled",
+      "status": "waiting",
+      "reason_codes": [
+        "NOT_APPLICABLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": "2032-02-07T19:15:00Z",
+        "last_success_at": "2032-02-07T19:16:00Z",
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": "2032-02-14T19:15:00Z",
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "tls-renewal",
+      "kind": "scheduled",
+      "expected_mode": "always",
+      "process_status": "inactive",
+      "work_status": "scheduled",
+      "status": "waiting",
+      "reason_codes": [
+        "NOT_APPLICABLE"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": "2032-02-11T18:15:00Z",
+        "last_success_at": "2032-02-11T18:16:00Z",
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": "2032-02-12T18:15:00Z",
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "docker",
+      "kind": "host",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "not_applicable",
+      "status": "healthy",
+      "reason_codes": [
+        "PROCESS_RUNNING"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "tailscaled",
+      "kind": "host",
+      "expected_mode": "always",
+      "process_status": "running",
+      "work_status": "not_applicable",
+      "status": "healthy",
+      "reason_codes": [
+        "PROCESS_RUNNING"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "paper-scheduler",
+      "kind": "optional",
+      "expected_mode": "disabled",
+      "process_status": "disabled",
+      "work_status": "disabled",
+      "status": "disabled",
+      "reason_codes": [
+        "FEATURE_DISABLED"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "metrics",
+      "kind": "optional",
+      "expected_mode": "disabled",
+      "process_status": "disabled",
+      "work_status": "disabled",
+      "status": "disabled",
+      "reason_codes": [
+        "FEATURE_DISABLED"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    },
+    {
+      "id": "live-node-owner",
+      "kind": "optional",
+      "expected_mode": "disabled",
+      "process_status": "disabled",
+      "work_status": "disabled",
+      "status": "disabled",
+      "reason_codes": [
+        "FEATURE_DISABLED"
+      ],
+      "observed_at": "2032-02-12T01:00:00Z",
+      "valid_until": "2032-02-12T01:01:30Z",
+      "sources": {
+        "host": {
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "valid_until": "2032-02-12T01:01:30Z"
+        },
+        "database": null,
+        "window": null
+      },
+      "metrics": {
+        "last_attempt_at": null,
+        "last_success_at": null,
+        "last_failure_at": null,
+        "last_received_at": null,
+        "next_run_at": null,
+        "data_due_at": null,
+        "data_as_of": null,
+        "expected_session": null,
+        "raw_as_of": null,
+        "v2_data_as_of": null,
+        "v2_snapshot_as_of": null,
+        "queued": null,
+        "running": null,
+        "recent_failed": null,
+        "expired_claims": null,
+        "active_demand": null,
+        "live_identities": null,
+        "halted_identities": null,
+        "required_identities": null,
+        "covered_identities": null,
+        "queue_scope": "not_applicable",
+        "calendar_status": "not_applicable",
+        "window_status": "not_applicable",
+        "last_state_change_at": null,
+        "oldest_provider_event_at": null
+      }
+    }
+  ]
+}

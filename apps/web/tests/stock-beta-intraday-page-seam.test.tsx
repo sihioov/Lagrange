@@ -1,4 +1,3 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import StockBetaDetailPage from "@/app/(authenticated)/stock-beta/[instrument]/page";
 import StockBetaPage from "@/app/(authenticated)/stock-beta/page";
@@ -12,6 +11,7 @@ import {
   ownerEquityV2SignalSchema,
 } from "@/lib/products/equity-signals-contracts";
 import { streamMembership } from "./fixtures/market-stream";
+import { renderAsyncPage } from "./support/render-async-page";
 
 const mocks = vi.hoisted(() => ({
   getLocale: vi.fn(async (): Promise<"en" | "ko"> => "en"),
@@ -138,10 +138,10 @@ describe("Stock Beta intraday page seams", () => {
       ),
     );
     mocks.getProductApi.mockResolvedValue(api);
-    const markup = renderToStaticMarkup(await StockBetaPage());
+    const markup = await renderAsyncPage(await StockBetaPage());
     expect(markup.match(/data-stream-instrument=/g)).toHaveLength(30);
     expect(markup).toContain('data-testid="stock-beta-stream-selected"');
-    expect(markup).toContain(`${streamMembership(0).instrument_id} ·`);
+    expect(markup.replaceAll("<!-- -->", "")).toContain(`${streamMembership(0).instrument_id} ·`);
     expect(markup).not.toContain("periodic refresh");
     expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
   });
@@ -152,7 +152,7 @@ describe("Stock Beta intraday page seams", () => {
     mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
-    const markup = renderToStaticMarkup(
+    const markup = await renderAsyncPage(
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
     );
     expect(markup).toContain('data-testid="stock-beta-stream-selected"');
@@ -171,7 +171,7 @@ describe("Stock Beta intraday page seams", () => {
       () => StockBetaPage(),
       () => StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
     ]) {
-      const markup = renderToStaticMarkup(await page());
+      const markup = await renderAsyncPage(await page());
       expect(markup).toContain("Owner access required");
       expect(markup).not.toContain("stock-beta-stream");
     }
@@ -183,7 +183,7 @@ describe("Stock Beta intraday page seams", () => {
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(
+    const markup = await renderAsyncPage(
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
     );
 
@@ -200,7 +200,7 @@ describe("Stock Beta intraday page seams", () => {
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
 
-    const detailMarkup = renderToStaticMarkup(
+    const detailMarkup = await renderAsyncPage(
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
     );
     expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
@@ -221,7 +221,7 @@ describe("Stock Beta intraday page seams", () => {
       ),
     );
     mocks.getProductApi.mockResolvedValue(unavailableApi);
-    const failureMarkup = renderToStaticMarkup(
+    const failureMarkup = await renderAsyncPage(
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
     );
     expect(failureMarkup).toContain("Returns");
@@ -253,7 +253,7 @@ describe("Stock Beta intraday page seams", () => {
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(await StockBetaPage());
+    const markup = await renderAsyncPage(await StockBetaPage());
     expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
     expect(markup).toContain('data-testid="stock-beta-stream-board"');
     expect(markup).not.toContain("periodic refresh");
@@ -269,7 +269,7 @@ describe("Stock Beta intraday page seams", () => {
       const api = apiFor();
       mocks.getProductApi.mockResolvedValue(api);
 
-      const detail = renderToStaticMarkup(
+      const detail = await renderAsyncPage(
         await StockBetaDetailPage({
           params: Promise.resolve({ instrument: SIGNAL.instrument_id }),
         }),
@@ -279,7 +279,7 @@ describe("Stock Beta intraday page seams", () => {
       expect(detail).not.toContain("stock-beta-stream-selected");
       expect(detail).toContain("Returns");
 
-      const dashboard = renderToStaticMarkup(await StockBetaPage());
+      const dashboard = await renderAsyncPage(await StockBetaPage());
       expect(dashboard).not.toContain("periodic refresh");
       expect(dashboard).not.toContain("stock-beta-stream-board");
       expect(dashboard).toContain(SIGNAL.instrument_id);

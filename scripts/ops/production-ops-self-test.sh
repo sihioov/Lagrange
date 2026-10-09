@@ -119,6 +119,12 @@ cp "$ops/compose-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/lib/release-image-manifest.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
+cat >"$release_fixture/repo/scripts/ops/lib/service-status-policy.py" <<'PY'
+import sys
+if sys.argv[1] != "startup":
+    raise SystemExit(2)
+print("absent")
+PY
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   >"$release_fixture/repo/scripts/ops/validate-production-config.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
@@ -142,6 +148,8 @@ cp "$root/deploy/compose/compose.intraday.yml" \
   "$release_fixture/repo/deploy/compose/compose.intraday.yml"
 cp "$root/deploy/compose/compose.market-stream.yml" \
   "$release_fixture/repo/deploy/compose/compose.market-stream.yml"
+cp "$root/deploy/compose/compose.service-status.yml" \
+  "$release_fixture/repo/deploy/compose/compose.service-status.yml"
 printf '%s\n' fixture >"$release_fixture/repo/nt/fixture"
 printf '%s\n' fixture >"$release_fixture/repo/configs/fixture"
 printf '%s\n' fixture >"$release_fixture/repo/migrations/fixture"
@@ -650,6 +658,85 @@ for service in db-role-bootstrap db-migrate api-server web research-worker \
   grep -Fq -- "image inspect --format {{.Id}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}} sha256:" \
     "$compose_log"
 done
+
+# The explicit helper stub simulates the validated daily receipt result. This
+# case proves that result reaches only the intended Compose overlay, project,
+# and worker selection; no real installer, Docker daemon, or systemd command
+# is involved.
+status_policy_helper=$release_fixture/install/current/scripts/ops/lib/service-status-policy.py
+cat >"$status_policy_helper" <<'PY'
+import sys
+if sys.argv[1] != "startup":
+    raise SystemExit(2)
+print("daily|status-fixture")
+PY
+cp "$disabled_env_backup" "$installed_env"
+: >"$compose_log"
+env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-daily-status.out" || {
+    sed -n '1,40p' "$tmp/compose-daily-status.out" >&2
+    fixture_die 'daily service-status release fixture failed'
+  }
+grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/compose-daily-status.out" ||
+  fixture_die 'daily service-status release fixture did not finish'
+status_start=$(grep '^compose .* up .*--no-build .*--no-deps -d ' "$compose_log" || true)
+[ -n "$status_start" ] || fixture_die 'daily status release did not issue the worker startup command'
+[[ "$status_start" == *"-f $release_fixture/install/releases/$commit_one/deploy/compose/compose.service-status.yml"* ]] ||
+  fixture_die 'daily status receipt did not select the optional read-only overlay'
+[[ "$status_start" == *'-p status-fixture'* ]] ||
+  fixture_die 'daily status receipt did not bind the fixed Compose project'
+[[ "$status_start" != *'research-worker'* ]] ||
+  fixture_die 'daily status receipt did not exclude research-worker from future release startup'
+
+# Supported market-stream receipt/mount refresh and the rejected legacy REST-only
+# intraday flag are covered by kis-read-compose-self-test.sh with the real parser.
+
+# Full daemon-mode release startup reaches its separate daily-timer safety
+# gate; the fixture returns the typed conflict before Compose starts anything.
+cat >"$status_policy_helper" <<'PY'
+import sys
+if sys.argv[1] == "startup":
+    print("daemon|status-fixture")
+elif sys.argv[1] == "daemon-gate":
+    raise SystemExit(1)
+else:
+    raise SystemExit(2)
+PY
+cp "$disabled_env_backup" "$installed_env"
+: >"$compose_log"
+if env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-daemon-gate-conflict.out" 2>&1; then
+  fixture_die 'daemon release startup ignored the conflicting daily-timer gate'
+fi
+grep -Fq 'service-status daemon conflicts with the active daily timer' \
+  "$tmp/compose-daemon-gate-conflict.out" || fixture_die 'daemon release did not report the daily-timer conflict'
+if grep -Eq '^compose .* up ' "$compose_log"; then
+  fixture_die 'daemon release started Compose workloads before the daily-timer gate'
+fi
+
+cat >"$status_policy_helper" <<'PY'
+import sys
+if sys.argv[1] != "startup":
+    raise SystemExit(2)
+print("absent")
+PY
+cp "$disabled_env_backup" "$installed_env"
+: >"$compose_log"
+env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+  REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" \
+  COMPOSE_OVERRIDE_CAPTURE="$override_capture" PRODUCTION_FAKE_COMMIT="$commit_one" \
+  LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+  bash "$release_fixture/install/current/scripts/ops/compose-release.sh" --scope release --apply \
+  >"$tmp/compose-legacy-after-status.out"
+grep -Fq 'COMPOSE_RELEASE: PASS' "$tmp/compose-legacy-after-status.out"
 for service in api-server web research-worker recommendation-runner candidate-runner \
   nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
   grep -Fq "inspect --format {{.Image}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}} ctr-$service" \

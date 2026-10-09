@@ -10,6 +10,11 @@
 // per-operation metadata, and emits TypeScript types.
 
 import { STREAM_PREFIX, STREAM_ROUTES, STREAM_ERRORS, STREAM_SCHEMAS } from "./openapi-market-stream.mjs";
+import {
+  SERVICE_STATUS_ROUTE,
+  SERVICE_STATUS_SCHEMAS,
+  SERVICE_STATUS_SUCCESS,
+} from "./openapi-service-status.mjs";
 
 const PHASE3 = "phase3";
 const INTRADAY_BIGINT_MAXIMUM = JSON.rawJSON("9223372036854775807");
@@ -19,6 +24,7 @@ const OWNER_INTRADAY_QUOTE_CACHE_PATH =
 /** Mirror of api-server CONTRACT_ROUTES. [method, path, flags] */
 const ROUTES = [
   ...STREAM_ROUTES,
+  SERVICE_STATUS_ROUTE,
   // auth / session
   ["GET", "/api/v1/auth/session", {}],
   ["POST", "/api/v1/auth/logout", { mutating: true, natural: true, audit: true }],
@@ -207,6 +213,7 @@ const ROUTES = [
 /** Stable error codes (mirror of contract::ERROR_CODES). */
 const ERROR_CODES = [
   ...STREAM_ERRORS,
+  ["SERVICE_STATUS_RATE_LIMITED", 429], ["SERVICE_STATUS_UNAVAILABLE", 503],
   ["SESSION_UNKNOWN", 401], ["SESSION_EXPIRED", 401],
   ["FORBIDDEN", 403], ["DATA_ENTITLEMENT_REQUIRED", 403],
   ["OWNER_ONLY_DEVELOPMENT_PATH", 403], ["CSRF_DENIED", 403],
@@ -261,6 +268,15 @@ if (ERROR_CODES_SET.size !== ERROR_CODES.length) {
 const ENVELOPE = { $ref: "#/components/schemas/ErrorEnvelope" };
 
 function errorResponses(route) {
+  if (route?.[2]?.serviceStatus) {
+    return {
+      "400": { $ref: "#/components/responses/Error400" },
+      "401": { $ref: "#/components/responses/Error401" },
+      "403": { $ref: "#/components/responses/Error403" },
+      "429": { $ref: "#/components/responses/Error429" },
+      "503": { $ref: "#/components/responses/Error503" },
+    };
+  }
   if (route?.[2]?.ownerMarketStream) {
     const codes = route[0] === "GET" ? [400, 401, 403, 404, 409, 500, 503] : [400, 401, 403, 404, 409, 413, 500, 503];
     return Object.fromEntries(codes.map((code) => [code, { $ref: `#/components/responses/Error${code}` }]));
@@ -488,6 +504,9 @@ function successResponsesFor(method, path) {
     description,
     content: { "application/json": { schema: { $ref: schema } } },
   });
+  if (path === "/api/v1/admin/service-status" && method === "get") {
+    return { "200": SERVICE_STATUS_SUCCESS };
+  }
   if (path === `${STREAM_PREFIX}/stream-leases` && method === "post") {
     return { "200": json("Current durable consumer lease and complete replaced identity set", "#/components/schemas/OwnerMarketStreamLease") };
   }
@@ -654,6 +673,16 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (flags.serviceStatus) {
+    return [
+      "SESSION_UNKNOWN",
+      "SESSION_EXPIRED",
+      "FORBIDDEN",
+      "INVALID_PARAMETER",
+      "SERVICE_STATUS_RATE_LIMITED",
+      "SERVICE_STATUS_UNAVAILABLE",
+    ];
+  }
   if (flags.ownerMarketStream) {
     return ["SESSION_UNKNOWN", "SESSION_EXPIRED", "FORBIDDEN", "INVALID_PARAMETER", "RESOURCE_NOT_FOUND", "FEATURE_DISABLED", "MARKET_STREAM_UNAVAILABLE", "INTERNAL", ...(route[0] === "GET" ? ["STREAM_CONSUMER_CAPACITY"] : ["CSRF_DENIED", "IDEMPOTENCY_KEY_MISMATCH", "STREAM_LEASE_SEQUENCE_CONFLICT", "STREAM_LEASE_CAPACITY", "PAYLOAD_TOO_LARGE"])];
   }
@@ -805,6 +834,7 @@ const ts = { type: "string", format: "date-time" };
 const uuid = { type: "string", format: "uuid" };
 
 const SCHEMAS = {
+  ...SERVICE_STATUS_SCHEMAS,
   Error: {
     type: "object",
     required: ["code", "message", "request_id"],

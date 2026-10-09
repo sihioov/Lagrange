@@ -13,6 +13,7 @@
 ' do not establish installed or provider activation.
 ' 2026-10-07: realtime activation is WS-only; legacy REST helpers/routes
 ' remain in source, while read-only EOD REST remains independent.
+' 2026-10-08: Owner service-status source wiring; local QA is not deployment.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -125,9 +126,24 @@ package "Operator tools (Node)" #F2F2F2 {
   component "data-pipelines/kind-capture\n(Playwright KIND browser capture)" as kind_capture
 }
 
+package "Owner service status (optional source wiring; not installed)" #FFF4D6 {
+  component "Owner status panel\n(stock-beta page)" as status_panel
+  component "Root host observer\n(host inspection uses fixed fields)" as status_observer
+  component "Fixed host observations\n(Docker labels/state;\nallowlisted systemd fields;\n/proc/stat btime)" as status_host_fields
+  folder "Public host snapshot\n(atomic file replacement)" as status_snapshot
+  component "owner_service_status_stream\n(0058; app-only execute)" as status_stream
+  database "research_execution_status\n(0059; admin read,\nresearch_writer writes)" as research_status
+}
+
 ' ---------------- Frontend edges ----------------
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:352,357,361 (lease/SSE routes); crates/api-server/src/runtime.rs:278-352 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
+' evidence: apps/web/app/(authenticated)/stock-beta/page.tsx:150-171; apps/web/components/pages/owner-beta-product-route.tsx:24-40 (OwnerBetaProductRoute checks the Owner product-access gate; status does not require market-data entitlement)
+web --> status_panel : Owner-only stock-beta surface
+
+' evidence: apps/web/components/service-status/service-status-panel.tsx:16,340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; crates/api-server/src/http/mod.rs:455; crates/api-server/src/http/service_status.rs:51-85,257-263 (Owner check and audited read)
+status_panel --> api_server : GET /api/v1/admin/service-status;\nread-only status response
+
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:353,358,362 (lease/SSE routes; shifted by the status module declaration); crates/api-server/src/runtime.rs:278-352 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
 web --> api_server : same-origin lease POST/DELETE + SSE;\nWS-backed realtime cache;\nsession-cookie HTTP /api/v1/*, /auth/*
 
 ' evidence: apps/web/lib/api/contracts.ts:1 (generated route types); apps/api-server/generated/openapi.ts:2,22,42 (schema2 lease/SSE paths); apps/web/lib/products/intraday-quotes-client.ts:3 (existing REST contracts)
@@ -161,6 +177,24 @@ api_server --> result_model
 ' evidence: crates/api-server/src/http/strategies.rs:17 (selector::baseline::baseline_packages)
 api_server --> selector
 
+' evidence: crates/api-server/src/repos/service_status.rs:308-314,999-1009; migrations/0058_service_status_reads.up.sql:16,605-607
+api_server --> status_stream : bounded status projection;\nrestricted app execution
+
+' evidence: crates/api-server/src/repos/service_status.rs:248-256,559-570,975-978; migrations/0059_research_execution_status.up.sql:56-73
+api_server --> research_status : admin read of last persisted EOD attempt
+
+' evidence: data-pipelines/collectors/src/worker.rs:1037; data-pipelines/collectors/src/service_status.rs:80-105,122-137; migrations/0059_research_execution_status.up.sql:56-73
+collectors --> research_status : research_writer records fenced attempts
+
+' evidence: scripts/ops/collect-service-status.py:52-60,159-176,348-402,837-850,1270 (fixed Docker labels/state, systemd property union, and /proc/stat btime)
+status_host_fields --> status_observer : fixed safe host reads
+
+' evidence: deploy/systemd/lagrange-service-status.service:8-13; scripts/ops/collect-service-status.py:1224-1234; scripts/ops/lib/service-status-policy.py:357-423
+status_observer --> status_snapshot : root-owned atomic snapshot write
+
+' evidence: deploy/compose/compose.service-status.yml:7-12; crates/api-server/src/service_status.rs:27-28,280-282,434-450,531-543 (unchanged production path, owner/mode checks, strict JSON and policy validation)
+status_snapshot ..> api_server : optional read-only DIRECTORY mount;\nfixed production reader and ownership validation
+
 ' ---------------- job-queue edges ----------------
 
 ' evidence: crates/job-queue/src/owner_equity_v2.rs:24 (use factor_engine::owner_equity_v2::{..})
@@ -189,7 +223,7 @@ selector --> factor_engine
 ' evidence: crates/portfolio-model/src/sizing.rs:35 (use selector::TargetPortfolio)
 portfolio_model --> selector
 
-' evidence: crates/result-model/Cargo.toml [dev-dependencies]; crates/result-model/tests/robustness_harness.rs:29
+' evidence: crates/result-model/Cargo.toml:22-25 (dev-dependency); crates/result-model/tests/robustness_harness.rs:29
 result_model ..> job_queue : <<dev-only>>
 
 ' ---------------- data-layer edges ----------------
@@ -201,7 +235,7 @@ market_data --> opendart_client
 ' evidence: crates/market-data/src/providers/fsc_krx_listed.rs:17,36 (use data_go_client::{..})
 market_data --> data_go_client
 
-' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:1-15,97-120,219-239; data-pipelines/collectors/src/worker.rs:24-40,2587-2607,986-988,2689-2697; data-pipelines/collectors/Cargo.toml:9; data-pipelines/collectors/src/intraday_quotes.rs:17,496-516
+' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:1-15,97-120,219-239; data-pipelines/collectors/src/worker.rs:24-40,2627-2647,1006-1008,2729-2737; data-pipelines/collectors/Cargo.toml:9; data-pipelines/collectors/src/intraday_quotes.rs:17,496-516 (worker citations refreshed for the service-status producer additions)
 collectors --> market_data : EOD stores + calendar-only publication\n+ intraday typed parser
 ' evidence: data-pipelines/collectors/src/stock_price_beta_materialize.rs:9 (use factor_engine::{..})
 collectors --> factor_engine
@@ -248,6 +282,12 @@ legend right
   WS only for realtime; WS has separate protected state/anchors.
   API/Web have no market-provider or WS-state mount edge. EOD Raw/Curated
   paths remain separate. Diagram describes code, not live activation.
+  The optional service-status source wiring is not installed or activated:
+  only the root observer reads fixed host properties and publishes the safe
+  snapshot; API uses the unchanged fixed-path reader. The Owner panel makes
+  an audited GET and does not create leases or provider work. G1 remains an
+  app-only restricted aggregate; G2 attempt state is admin-readable and
+  research_writer-writable.
   Evidence for folded edges is in this file's header comment.
   All drawn edges carry a "' evidence:" comment in this file's source.
 endlegend

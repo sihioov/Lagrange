@@ -5,6 +5,7 @@ mod candidate_sink;
 pub mod intraday_quotes;
 pub mod owner_equity_v2;
 mod pipeline;
+pub mod service_status;
 mod sink;
 pub mod stock_price_beta_materialize;
 pub mod stock_price_beta_raw;

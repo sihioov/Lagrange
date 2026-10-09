@@ -1,0 +1,476 @@
+{
+  "fixture_version": 1,
+  "synthetic": true,
+  "clock": "2032-02-12T01:00:00Z",
+  "host_read": {
+    "result": "ok",
+    "snapshot": {
+      "schema_version": "service-status.host.v1",
+      "generated_at": "2032-02-12T01:00:00Z",
+      "collection_started_at": "2032-02-12T00:59:58Z",
+      "booted_at": "2032-02-01T00:00:00Z",
+      "policy": {
+        "schema_version": "service-status.policy.v1",
+        "profile": "owner_daily",
+        "release_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "compose_project": "synthetic-service-status",
+        "owner_access": "owner_only",
+        "quote_transport": "market_ws",
+        "window_source": "operational_v1",
+        "research_mode": "daily",
+        "policy_installed_at": "2032-02-10T00:00:00Z",
+        "job_lease_seconds": {
+          "owner_equity_v2": 60,
+          "owner_beta_price_recommendation": 60,
+          "candidate_compute": 60,
+          "recommendation": 60,
+          "backtest": 60
+        }
+      },
+      "observations": [
+        {
+          "id": "postgres",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "reverse-proxy",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "web",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "api-server",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "owner-equity-v2-runner",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "owner-beta-runner",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "candidate-runner",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "recommendation-runner",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "nt-backtest-worker-1",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "nt-backtest-worker-2",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "running",
+            "health": "healthy",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "research-worker",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "exited",
+            "health": "none",
+            "started_at": null,
+            "finished_at": null,
+            "exit_code": 0
+          },
+          "timer": null
+        },
+        {
+          "id": "kis-eod",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "inactive",
+            "health": "none",
+            "started_at": "2032-02-11T07:30:01Z",
+            "finished_at": "2032-02-11T07:35:00Z",
+            "exit_code": 0
+          },
+          "timer": {
+            "load": "loaded",
+            "active": "active",
+            "enabled": "enabled",
+            "last_trigger_at": "2032-02-11T07:30:00Z",
+            "next_run_at": "2032-02-12T07:30:00Z",
+            "unit_binding": "matched",
+            "last_result": "success",
+            "exit_status": 0,
+            "last_started_at": "2032-02-11T07:30:01Z",
+            "last_finished_at": "2032-02-11T07:35:00Z",
+            "last_success_at": "2032-02-11T07:35:00Z"
+          }
+        },
+        {
+          "id": "production-backup",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "inactive",
+            "health": "none",
+            "started_at": "2032-02-11T17:15:00Z",
+            "finished_at": "2032-02-11T17:16:00Z",
+            "exit_code": 0
+          },
+          "timer": {
+            "load": "loaded",
+            "active": "active",
+            "enabled": "enabled",
+            "last_trigger_at": "2032-02-11T17:15:00Z",
+            "next_run_at": "2032-02-12T17:15:00Z",
+            "unit_binding": "matched",
+            "last_result": "success",
+            "exit_status": 0,
+            "last_started_at": "2032-02-11T17:15:00Z",
+            "last_finished_at": "2032-02-11T17:16:00Z",
+            "last_success_at": "2032-02-11T17:16:00Z"
+          }
+        },
+        {
+          "id": "production-backup-verify",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "inactive",
+            "health": "none",
+            "started_at": "2032-02-07T19:15:00Z",
+            "finished_at": "2032-02-07T19:16:00Z",
+            "exit_code": 0
+          },
+          "timer": {
+            "load": "loaded",
+            "active": "active",
+            "enabled": "enabled",
+            "last_trigger_at": "2032-02-07T19:15:00Z",
+            "next_run_at": "2032-02-14T19:15:00Z",
+            "unit_binding": "matched",
+            "last_result": "success",
+            "exit_status": 0,
+            "last_started_at": "2032-02-07T19:15:00Z",
+            "last_finished_at": "2032-02-07T19:16:00Z",
+            "last_success_at": "2032-02-07T19:16:00Z"
+          }
+        },
+        {
+          "id": "tls-renewal",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "inactive",
+            "health": "none",
+            "started_at": "2032-02-11T18:15:00Z",
+            "finished_at": "2032-02-11T18:16:00Z",
+            "exit_code": 0
+          },
+          "timer": {
+            "load": "loaded",
+            "active": "active",
+            "enabled": "enabled",
+            "last_trigger_at": "2032-02-11T18:15:00Z",
+            "next_run_at": "2032-02-12T18:15:00Z",
+            "unit_binding": "matched",
+            "last_result": "success",
+            "exit_status": 0,
+            "last_started_at": "2032-02-11T18:15:00Z",
+            "last_finished_at": "2032-02-11T18:16:00Z",
+            "last_success_at": "2032-02-11T18:16:00Z"
+          }
+        },
+        {
+          "id": "docker",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "active",
+            "health": "none",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "tailscaled",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "active",
+            "health": "none",
+            "started_at": "2032-02-12T00:00:00Z",
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "paper-scheduler",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "missing",
+            "health": "none",
+            "started_at": null,
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "metrics",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "missing",
+            "health": "none",
+            "started_at": null,
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        },
+        {
+          "id": "live-node-owner",
+          "result": "ok",
+          "observed_at": "2032-02-12T01:00:00Z",
+          "process": {
+            "state": "missing",
+            "health": "none",
+            "started_at": null,
+            "finished_at": null,
+            "exit_code": null
+          },
+          "timer": null
+        }
+      ]
+    }
+  },
+  "db_read_results": {
+    "queue": {
+      "result": "ok",
+      "observed_at": "2032-02-12T01:00:00Z",
+      "lease_seconds": 60,
+      "rows": []
+    },
+    "etf": {
+      "result": "ok",
+      "observed_at": "2032-02-12T01:00:00Z",
+      "raw_as_of": "2032-02-11",
+      "publication_session": "2032-02-11",
+      "published_at": "2032-02-11T07:35:00Z",
+      "dataset_state": "READY",
+      "binding_state": "PUBLISHED",
+      "fetch_mode": "credentialed",
+      "required_count": 11,
+      "covered_count": 11
+    },
+    "v2": {
+      "result": "ok",
+      "observed_at": "2032-02-12T01:00:00Z",
+      "required_count": 2,
+      "covered_count": 2,
+      "generation_last_session": "2032-02-11",
+      "snapshot_as_of": "2032-02-11",
+      "snapshot_published_at": "2032-02-11T07:40:00Z",
+      "current_admissions_match": true
+    },
+    "candidate": {
+      "result": "ok",
+      "observed_at": "2032-02-12T01:00:00Z",
+      "enabled": true,
+      "required_universes": 2,
+      "published_universes": 2,
+      "as_of": "2032-02-11",
+      "published_at": "2032-02-11T07:45:00Z"
+    },
+    "research": {
+      "result": "ok",
+      "observed_at": "2032-02-12T01:00:00Z",
+      "row": {
+        "attempt_started_at": "2032-02-11T07:30:01Z",
+        "heartbeat_at": "2032-02-11T07:34:59Z",
+        "attempt_finished_at": "2032-02-11T07:35:00Z",
+        "attempt_state": "SUCCEEDED",
+        "last_success_at": "2032-02-11T07:35:00Z",
+        "last_failure_at": null,
+        "failure_code": null,
+        "target_session": "2032-02-11",
+        "published_session": "2032-02-11"
+      }
+    },
+    "calendar": {
+      "result": "ok",
+      "observed_at": "2032-02-12T01:00:00Z",
+      "rows": [
+        {
+          "session_date": "2032-02-11",
+          "session_type": "TRADING",
+          "exchange": "KRX",
+          "timezone": "Asia/Seoul",
+          "source": "kis",
+          "source_version": "kis-chk-holiday-v1:schema-1",
+          "calendar_batch": "synthetic-calendar-2032-02-11",
+          "version_batch": "synthetic-calendar-2032-02-11",
+          "raw_batch": "synthetic-calendar-2032-02-11",
+          "calendar_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "version_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "raw_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "calendar_retrieved_at": "2032-02-11T00:00:00Z",
+          "version_retrieved_at": "2032-02-11T00:00:00Z",
+          "raw_retrieved_at": "2032-02-11T00:00:00Z",
+          "raw_kind": "CALENDAR",
+          "raw_file": "calendar.json",
+          "raw_fetch_mode": "credentialed"
+        },
+        {
+          "session_date": "2032-02-12",
+          "session_type": "TRADING",
+          "exchange": "KRX",
+          "timezone": "Asia/Seoul",
+          "source": "kis",
+          "source_version": "kis-chk-holiday-v1:schema-1",
+          "calendar_batch": "synthetic-calendar-2032-02-12",
+          "version_batch": "synthetic-calendar-2032-02-12",
+          "raw_batch": "synthetic-calendar-2032-02-12",
+          "calendar_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "version_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "raw_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "calendar_retrieved_at": "2032-02-12T00:00:00Z",
+          "version_retrieved_at": "2032-02-12T00:00:00Z",
+          "raw_retrieved_at": "2032-02-12T00:00:00Z",
+          "raw_kind": "CALENDAR",
+          "raw_file": "calendar.json",
+          "raw_fetch_mode": "credentialed"
+        }
+      ]
+    },
+    "stream": {
+      "result": "ok",
+      "observed_at": "2032-02-12T01:00:00Z",
+      "owner_binding_valid": true,
+      "demand_count": 2,
+      "live_count": 2,
+      "halted_count": 0,
+      "producer_present": true,
+      "connection_state": "CONNECTED",
+      "status_code": null,
+      "producer_heartbeat_at": "2032-02-12T00:59:59Z",
+      "producer_lease_expires_at": "2032-02-12T01:00:19Z",
+      "oldest_received_at": "2032-02-12T00:59:58Z",
+      "oldest_provider_trade_at": "2032-02-12T00:59:57Z",
+      "last_received_at": "2032-02-12T00:59:59Z",
+      "lineage_valid": true,
+      "gap_present": false,
+      "valid_until": "2032-02-12T01:00:09Z",
+      "producer_status_at": null
+    }
+  },
+  "window_read": {
+    "result": "ok",
+    "observed_at": "2032-02-12T01:00:00Z",
+    "source": "operational_v1",
+    "activation_hash_matches": true,
+    "metadata_safe": true,
+    "entry": {
+      "date": "2032-02-12",
+      "disposition": "trading",
+      "open_at": "2032-02-12T00:00:00Z",
+      "close_at": "2032-02-12T06:30:00Z",
+      "evidence_retrieved_at": "2032-02-12T00:00:00Z"
+    }
+  }
+}

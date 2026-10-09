@@ -1,0 +1,543 @@
+.panel {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  margin-block: 0.25rem 0.5rem;
+  color: var(--text-primary);
+}
+
+.disclosure {
+  min-inline-size: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel, 0.5rem);
+  background: var(--surface-panel);
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.65rem;
+  min-block-size: 2.5rem;
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary:focus-visible {
+  outline: 2px solid var(--status-info);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+.summaryTitle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.overall {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-inline-size: 100%;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: var(--surface-panel);
+  font-size: 0.675rem;
+  font-weight: 640;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.statusIcon {
+  flex: none;
+}
+
+.status-healthy {
+  color: var(--status-success);
+}
+
+.status-waiting {
+  color: var(--status-info);
+}
+
+.status-degraded {
+  color: var(--status-warning);
+}
+
+.status-failed {
+  color: var(--status-error);
+}
+
+.status-unknown,
+.status-disabled {
+  color: var(--text-secondary);
+}
+
+.status-unknown {
+  border-style: dashed;
+}
+
+.summaryCounts {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.65rem;
+  min-inline-size: 0;
+  color: var(--text-secondary);
+  font-size: 0.675rem;
+  line-height: 1.4;
+}
+
+.summaryCount {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  white-space: nowrap;
+}
+
+.countDot {
+  inline-size: 0.45rem;
+  block-size: 0.45rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.summaryMessage {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+  color: var(--text-secondary);
+  font-size: 0.675rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.recordedAt {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.35rem;
+  min-inline-size: 0;
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.recordedAt time {
+  color: var(--text-primary);
+}
+
+.relativeAge {
+  display: inline-block;
+  margin-inline-start: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  font-weight: 400;
+  white-space: normal;
+}
+
+.disclosureIcon {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  color: var(--text-secondary);
+  transition: transform 120ms ease;
+}
+
+.disclosure[open] .disclosureIcon {
+  transform: rotate(180deg);
+}
+
+.content {
+  min-inline-size: 0;
+  padding: 0.4rem 0.55rem 0.55rem;
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.transportMessage,
+.emptyMessage,
+.policyState {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  margin: 0 0 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.transportMessage {
+  color: var(--status-warning);
+}
+
+.policyState strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tableWrap {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.table {
+  inline-size: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  color: var(--text-primary);
+  font-size: 0.675rem;
+}
+
+.table caption {
+  margin-block-end: 0.3rem;
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  text-align: start;
+}
+
+.table th,
+.table td {
+  min-inline-size: 0;
+  padding: 0.35rem 0.3rem;
+  border-block-start: 1px solid var(--border-subtle);
+  text-align: start;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.table thead th {
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  font-weight: 620;
+}
+
+.table thead th:nth-child(1) {
+  inline-size: 19%;
+}
+
+.table thead th:nth-child(2),
+.table thead th:nth-child(3),
+.table thead th:nth-child(4) {
+  inline-size: 12%;
+}
+
+.table thead th:nth-child(5) {
+  inline-size: 45%;
+}
+
+.serviceCell {
+  font-weight: 400;
+}
+
+.serviceName,
+.serviceDescription,
+.serviceMode {
+  display: block;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.serviceName {
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.serviceDescription {
+  margin-block-start: 0.1rem;
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  line-height: 1.4;
+}
+
+.serviceMode {
+  margin-block-start: 0.15rem;
+  color: var(--text-secondary);
+  font-size: 0.6rem;
+  line-height: 1.35;
+}
+
+.stateText {
+  display: inline-block;
+  max-inline-size: 100%;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.process-running,
+.work-current {
+  color: var(--status-success);
+}
+
+.process-failed,
+.process-missing,
+.work-failed {
+  color: var(--status-error);
+}
+
+.process-starting,
+.work-pending,
+.work-stale,
+.work-degraded {
+  color: var(--status-warning);
+}
+
+.staleEvidence,
+.supportingRow {
+  display: block;
+  margin-block-start: 0.15rem;
+  color: var(--text-secondary);
+  font-size: 0.6rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.observed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.35rem;
+  margin: 0 0 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  line-height: 1.4;
+}
+
+.observed time {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.reasonList {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0.2rem 0 0.3rem;
+  padding-inline-start: 1rem;
+  color: var(--status-warning);
+  font-size: 0.625rem;
+  line-height: 1.4;
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.18rem 0.6rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.metric,
+.metricNote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.25rem;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.metric dt,
+.metricNote dt {
+  color: var(--text-secondary);
+}
+
+.metric dd,
+.metricNote dd {
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.metricNote {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+}
+
+.noMetrics {
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  line-height: 1.4;
+}
+
+.mobileLabel {
+  display: none;
+}
+
+@media (max-width: 51.25rem) {
+  .summary {
+    gap: 0.3rem 0.5rem;
+  }
+
+  .recordedAt {
+    margin-inline-start: 0;
+  }
+
+  .table thead th:nth-child(1) {
+    inline-size: 22%;
+  }
+
+  .table thead th:nth-child(2),
+  .table thead th:nth-child(3),
+  .table thead th:nth-child(4) {
+    inline-size: 13%;
+  }
+
+  .table thead th:nth-child(5) {
+    inline-size: 39%;
+  }
+}
+
+@media (max-width: 35rem) {
+  .summary {
+    align-items: flex-start;
+  }
+
+  .summaryTitle,
+  .overall {
+    min-block-size: 1.6rem;
+  }
+
+  .summaryCounts,
+  .summaryMessage {
+    flex-basis: 100%;
+  }
+
+  .recordedAt {
+    flex-basis: calc(100% - 1.5rem);
+  }
+
+  .disclosureIcon {
+    margin-block-start: 0.2rem;
+    margin-inline-start: auto;
+  }
+
+  .table,
+  .table caption,
+  .table tbody {
+    display: block;
+    inline-size: 100%;
+  }
+
+  .table thead {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    clip-path: inset(50%);
+  }
+
+  .table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-inline-size: 0;
+    margin-block: 0.35rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.35rem;
+  }
+
+  .table th,
+  .table td {
+    display: block;
+    min-inline-size: 0;
+    padding: 0.3rem;
+    border-block-start: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .table td:nth-child(2),
+  .table td:nth-child(3),
+  .table td:nth-child(4) {
+    border-block-start: 1px solid var(--border-subtle);
+  }
+
+  .serviceCell,
+  .detailsCell {
+    grid-column: 1 / -1;
+  }
+
+  .serviceCell {
+    border-block-end: 1px solid var(--border-subtle);
+  }
+
+  .table td.detailsCell {
+    border-block-start: 1px solid var(--border-subtle);
+  }
+
+  .mobileLabel {
+    display: block;
+    margin-block-end: 0.15rem;
+    color: var(--text-secondary);
+    font-size: 0.6rem;
+    font-weight: 620;
+  }
+}
+
+@media (max-width: 23.5rem) {
+  .summaryCounts {
+    gap: 0.2rem 0.45rem;
+  }
+
+  .recordedAt {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (forced-colors: active) {
+  .disclosure,
+  .content,
+  .table th,
+  .table td,
+  .table tr {
+    border-color: CanvasText;
+  }
+
+  .statusBadge {
+    border-color: CanvasText;
+    color: CanvasText;
+    background: Canvas;
+  }
+
+  .countDot {
+    border-color: CanvasText;
+    background: CanvasText;
+  }
+
+  .summary:focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .disclosureIcon {
+    transition: none;
+  }
+}

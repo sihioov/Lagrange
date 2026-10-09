@@ -28,6 +28,8 @@ calendar_source_batch_id=
 calendar_reuse_existing_source=0
 release_override=
 release_commit=
+service_status_mode=absent
+service_status_project=
 owner_intraday_quotes_mode=off
 owner_intraday_quote_transport=rest
 kis_read_coordination_mode=legacy
@@ -274,6 +276,39 @@ load_installed_release_manifest() {
   fi
 }
 
+load_service_status_policy() {
+  local binding
+  [ "$scope" = release ] && [ "$mode" = apply ] ||
+    die 'internal service-status policy guard misuse'
+  binding=$(/usr/bin/python3 "$root/scripts/ops/lib/service-status-policy.py" startup \
+    --install-root "$release_root" --release-root "$root" --commit "$release_commit") ||
+    die 'service-status policy receipt does not match the installed release'
+  case "$binding" in
+    absent)
+      service_status_mode=absent
+      service_status_project=
+      ;;
+    daily\|[a-z0-9]*|daemon\|[a-z0-9]*)
+      service_status_mode=${binding%%|*}
+      service_status_project=${binding#*|}
+      [[ "$service_status_project" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] ||
+        die 'service-status policy returned an invalid Compose project'
+      ;;
+    *) die 'service-status policy returned an invalid binding' ;;
+  esac
+}
+
+validate_service_status_daemon_gate() {
+  local result
+  [ "$scope" = release ] && [ "$mode" = apply ] && [ "$service_status_mode" = daemon ] ||
+    die 'internal service-status daemon gate misuse'
+  result=$(/usr/bin/python3 "$root/scripts/ops/lib/service-status-policy.py" daemon-gate \
+    --commit "$release_commit") ||
+    die 'service-status daemon conflicts with the active daily timer'
+  [ "$result" = 'DAEMON_MODE_GATE: PASS' ] ||
+    die 'service-status daemon gate returned an invalid result'
+}
+
 prepare_installed_release_manifest() {
   [ "$scope" = release ] && [ "$mode" = apply ] ||
     die 'internal installed-release manifest guard misuse'
@@ -399,8 +434,13 @@ verify_running_container() {
 
 compose() {
   local -a files=(--env-file "$env_file" -f "$compose_file")
+  local -a project_args=()
   files+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
   [ -z "$release_override" ] || files+=(-f "$release_override")
+  if [ "$service_status_mode" != absent ]; then
+    files+=(-f "$root/deploy/compose/compose.service-status.yml")
+    project_args=(-p "$service_status_project")
+  fi
   # The range profile is never selected here. The live profile is explicitly
   # disabled rather than inheriting a shell/ambient COMPOSE_PROFILES value.
   # These process-local, fail-closed sentinels exist only for inactive Compose
@@ -413,14 +453,14 @@ compose() {
     BACKTEST_MAX_QUEUED_BACKTESTS=0 \
     BACKTEST_RECONCILE_GRACE_SECS=0 \
     BACKTEST_RECONCILE_INTERVAL_SECS=0 \
-    RANGE_RAW_BATCH_ID=compose-config-disabled \
-    COMPOSE_PROFILES= \
-      docker compose "${files[@]}" "$@"
+      RANGE_RAW_BATCH_ID=compose-config-disabled \
+      COMPOSE_PROFILES= \
+      docker compose "${files[@]}" "${project_args[@]}" "$@"
   else
     COMPOSE_PARALLEL_LIMIT=1 \
-    RANGE_RAW_BATCH_ID=compose-config-disabled \
-    COMPOSE_PROFILES= \
-      docker compose "${files[@]}" "$@"
+      RANGE_RAW_BATCH_ID=compose-config-disabled \
+      COMPOSE_PROFILES= \
+      docker compose "${files[@]}" "${project_args[@]}" "$@"
   fi
 }
 
@@ -555,6 +595,10 @@ elif [ "$scope" = release ] && [ "$mode" = apply ]; then
   prepare_installed_release_manifest
 fi
 
+if [ "$scope" = release ] && [ "$mode" = apply ] && [ "$bootstrap_intraday_calendar" -eq 0 ]; then
+  load_service_status_policy
+fi
+
 compose config --quiet || die 'Compose interpolation/config validation failed'
 
 if [ "$bootstrap_intraday_calendar" -eq 1 ]; then
@@ -565,6 +609,10 @@ fi
 if [ "$refresh_intraday" -eq 1 ] || [ "$refresh_market_stream" -eq 1 ]; then
   run_intraday_refresh
   exit 0
+fi
+
+if [ "$service_status_mode" = daemon ]; then
+  validate_service_status_daemon_gate
 fi
 
 if [ "$scope" = infrastructure ]; then
@@ -674,15 +722,27 @@ release_worker_services=(
   research-worker recommendation-runner candidate-runner
   nt-backtest-worker-1 nt-backtest-worker-2
 )
+if [ "$service_status_mode" = daily ]; then
+  release_worker_services=(
+    recommendation-runner candidate-runner nt-backtest-worker-1 nt-backtest-worker-2
+  )
+fi
 if [ "$owner_beta_access_mode" = disabled ]; then
   release_worker_services+=(paper-scheduler)
 elif [ "$owner_beta_access_mode" = owner_only ]; then
   # Explicitly target this profile service only after the immutable approval
   # gate above passed; ambient COMPOSE_PROFILES remains cleared in compose().
-  release_worker_services=(
-    research-worker recommendation-runner candidate-runner owner-beta-runner
-    nt-backtest-worker-1 nt-backtest-worker-2
-  )
+  if [ "$service_status_mode" = daily ]; then
+    release_worker_services=(
+      recommendation-runner candidate-runner owner-beta-runner
+      nt-backtest-worker-1 nt-backtest-worker-2
+    )
+  else
+    release_worker_services=(
+      research-worker recommendation-runner candidate-runner owner-beta-runner
+      nt-backtest-worker-1 nt-backtest-worker-2
+    )
+  fi
 fi
 if [ "$owner_equity_v2_runtime_mode" = owner_only ]; then
   # Explicitly target the V2 profile service only after its separate rollout

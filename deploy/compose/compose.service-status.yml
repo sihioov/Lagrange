@@ -1,0 +1,12 @@
+# Optional Owner status snapshot. Included only after the immutable-release
+# installer has written and validated the matching root-owned policy receipt.
+services:
+  api-server:
+    user: "10001:10001"
+    volumes:
+      - type: bind
+        source: /var/lib/lagrange/service-status/public
+        target: /run/lagrange/service-status
+        read_only: true
+        bind:
+          create_host_path: false

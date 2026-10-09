@@ -1,0 +1,766 @@
+{
+  "fixture_version": 1,
+  "cases": [
+    {
+      "id": "missing_file",
+      "layer": "host_reader",
+      "input": {
+        "fault": "missing"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_MISSING",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "not_installed",
+      "layer": "host_reader",
+      "input": {
+        "fault": "unconfigured"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "POLICY_MISSING",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "oversize",
+      "layer": "host_reader",
+      "input": {
+        "fault": "262145_bytes"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "partial_json",
+      "layer": "host_reader",
+      "input": {
+        "fault": "{\"schema_version\":"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "duplicate_key",
+      "layer": "host_reader",
+      "input": {
+        "fault": "{\"schema_version\":1,\"schema_version\":2}"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "unknown_field",
+      "layer": "host_reader",
+      "input": {
+        "fault": "secret_sentinel_field"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "wrong_version",
+      "layer": "host_reader",
+      "input": {
+        "fault": "service-status.host.v2"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "duplicate_id",
+      "layer": "host_reader",
+      "input": {
+        "fault": "two_postgres"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "missing_inventory_id",
+      "layer": "host_reader",
+      "input": {
+        "fault": "without_postgres"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "symlink",
+      "layer": "host_reader",
+      "input": {
+        "fault": "snapshot_symlink"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "hardlink",
+      "layer": "host_reader",
+      "input": {
+        "fault": "nlink_2"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "wrong_owner",
+      "layer": "host_reader",
+      "input": {
+        "fault": "uid_10001"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "writable_by_api",
+      "layer": "host_reader",
+      "input": {
+        "fault": "mode_0660"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "HOST_INVALID",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "wrong_release",
+      "layer": "host_reader",
+      "input": {
+        "fault": "receipt_commit_differs_from_api"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "POLICY_MISMATCH",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "old_daily_unit",
+      "layer": "host_reader",
+      "input": {
+        "fault": "only_other_commit_timer"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "TIMER_MISSING",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "short_commit_collision",
+      "layer": "host_reader",
+      "input": {
+        "fault": "same_prefix_different_full_commit"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "POLICY_MISMATCH",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "systemd_condition_skip",
+      "layer": "host_reader",
+      "input": {
+        "fault": "exit_0_without_start_finish"
+      },
+      "expected": {
+        "accept": false,
+        "reason_code": "RUN_RESULT_UNKNOWN",
+        "raw_output_emitted": false
+      }
+    },
+    {
+      "id": "rename_refresh",
+      "layer": "filesystem",
+      "input": {
+        "first_snapshot": "old_inode",
+        "atomic_replace": "new_inode",
+        "reader_reopens_directory_child": true
+      },
+      "expected": {
+        "read": "new_inode"
+      }
+    },
+    {
+      "id": "reboot_discards_process_cache",
+      "layer": "filesystem",
+      "input": {
+        "boot_before": "2032-02-11T00:00:00Z",
+        "boot_after": "2032-02-12T00:00:00Z",
+        "prior_process_state": "running",
+        "fresh_query": "timeout",
+        "last_success_at": "2032-02-11T07:35:00Z"
+      },
+      "expected": {
+        "process_status": "unknown",
+        "retain_last_success_at": "2032-02-11T07:35:00Z"
+      }
+    },
+    {
+      "id": "daily_exit_74",
+      "layer": "host_reader",
+      "input": {
+        "systemd_result": "success",
+        "exit_status": 74,
+        "db_publication": "missing"
+      },
+      "expected": {
+        "work_status": "unknown",
+        "reason_code": "RUN_RESULT_UNKNOWN"
+      }
+    },
+    {
+      "id": "daily_exit_75",
+      "layer": "host_reader",
+      "input": {
+        "systemd_result": "success",
+        "exit_status": 75,
+        "db_publication": "missing"
+      },
+      "expected": {
+        "work_status": "unknown",
+        "reason_code": "RUN_RESULT_UNKNOWN"
+      }
+    },
+    {
+      "id": "http_anonymous",
+      "layer": "http",
+      "input": {
+        "actor": "anonymous"
+      },
+      "expected": {
+        "status": 401,
+        "operational_body": false,
+        "status_audit_required": false
+      }
+    },
+    {
+      "id": "http_member",
+      "layer": "http",
+      "input": {
+        "actor": "member"
+      },
+      "expected": {
+        "status": 403,
+        "operational_body": false,
+        "status_audit_required": true
+      }
+    },
+    {
+      "id": "http_owner",
+      "layer": "http",
+      "input": {
+        "actor": "owner"
+      },
+      "expected": {
+        "status": 200,
+        "operational_body": true,
+        "status_audit_required": true
+      }
+    },
+    {
+      "id": "http_owner_audit_unavailable",
+      "layer": "http",
+      "input": {
+        "actor": "owner_audit_unavailable"
+      },
+      "expected": {
+        "status": 503,
+        "operational_body": false,
+        "status_audit_required": true
+      }
+    },
+    {
+      "id": "http_owner_rate_limited",
+      "layer": "http",
+      "input": {
+        "actor": "owner_rate_limited"
+      },
+      "expected": {
+        "status": 429,
+        "operational_body": false,
+        "status_audit_required": false
+      }
+    },
+    {
+      "id": "cross_actor_read",
+      "layer": "http",
+      "input": {
+        "actor": "synthetic-owner-a",
+        "requested_evidence_owner": "synthetic-owner-b"
+      },
+      "expected": {
+        "status": 403,
+        "operational_body": false
+      }
+    },
+    {
+      "id": "hidden_pause",
+      "layer": "domain_or_ui",
+      "input": {
+        "visible": false,
+        "elapsed_seconds": 60
+      },
+      "expected": {
+        "polls": 0
+      }
+    },
+    {
+      "id": "resume_once",
+      "layer": "domain_or_ui",
+      "input": {
+        "visible": true,
+        "transition_from_hidden": true
+      },
+      "expected": {
+        "polls": 1
+      }
+    },
+    {
+      "id": "collapsed_equals_expanded",
+      "layer": "domain_or_ui",
+      "input": {
+        "elapsed_seconds": 90,
+        "initial_visible": true,
+        "earlier_validity_deadline": false
+      },
+      "expected": {
+        "collapsed_polls": 4,
+        "expanded_polls": 4
+      }
+    },
+    {
+      "id": "no_new_market_demand",
+      "layer": "domain_or_ui",
+      "input": {
+        "status_polls": 5
+      },
+      "expected": {
+        "new_leases": 0,
+        "renewals": 0,
+        "sse_connections": 0,
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "late_response",
+      "layer": "domain_or_ui",
+      "input": {
+        "request_generation": 1,
+        "current_generation": 2
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "auth_denial_erases",
+      "layer": "domain_or_ui",
+      "input": {
+        "previous_status": "healthy",
+        "http_status": 403
+      },
+      "expected": {
+        "cached_rows": 0
+      }
+    },
+    {
+      "id": "api_disconnect",
+      "layer": "domain_or_ui",
+      "input": {
+        "previous_status": "healthy",
+        "transport": "timeout"
+      },
+      "expected": {
+        "display_status": "unknown",
+        "retain_original_timestamp": true
+      }
+    },
+    {
+      "id": "expiry_equal",
+      "layer": "domain_or_ui",
+      "input": {
+        "valid_until": "2032-02-12T01:00:00Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "display_status": "unknown"
+      }
+    },
+    {
+      "id": "kst_midnight",
+      "layer": "domain_or_ui",
+      "input": {
+        "calendar_date": "2032-02-12",
+        "window_date": "2032-02-12",
+        "clock": "2032-02-12T15:00:00Z"
+      },
+      "expected": {
+        "calendar_status": "missing",
+        "window_status": "missing",
+        "status": "failed"
+      }
+    },
+    {
+      "id": "holiday_preserves_session",
+      "layer": "domain_or_ui",
+      "input": {
+        "eligible_date": "2032-02-13",
+        "verified_days": {
+          "2032-02-11": "TRADING",
+          "2032-02-12": "CLOSED",
+          "2032-02-13": "CLOSED"
+        },
+        "data_as_of": "2032-02-11"
+      },
+      "expected": {
+        "expected_session": "2032-02-11",
+        "work_status": "current"
+      }
+    },
+    {
+      "id": "calendar_gap_not_holiday",
+      "layer": "domain_or_ui",
+      "input": {
+        "eligible_date": "2032-02-13",
+        "verified_days": {
+          "2032-02-11": "TRADING",
+          "2032-02-13": "CLOSED"
+        }
+      },
+      "expected": {
+        "status": "failed",
+        "reason_code": "CALENDAR_COVERAGE_GAP"
+      }
+    },
+    {
+      "id": "stream_demand_expiry_equal",
+      "layer": "domain_or_ui",
+      "input": {
+        "lease_expires_at": "2032-02-12T01:00:00Z",
+        "clock": "2032-02-12T01:00:00Z",
+        "calendar_ready": true,
+        "window_open": true
+      },
+      "expected": {
+        "active_demand": 0,
+        "work_status": "no_demand"
+      }
+    },
+    {
+      "id": "same_day_window_evidence",
+      "layer": "domain_or_ui",
+      "input": {
+        "window_date": "2032-02-12",
+        "evidence_retrieved_at": "2032-02-11T23:00:00Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "accepted": true
+      }
+    },
+    {
+      "id": "previous_kst_day_window_evidence",
+      "layer": "domain_or_ui",
+      "input": {
+        "window_date": "2032-02-12",
+        "evidence_retrieved_at": "2032-02-11T14:59:59Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "accepted": false
+      }
+    },
+    {
+      "id": "overall_all_healthy",
+      "layer": "domain_or_ui",
+      "input": {
+        "statuses": [
+          "healthy",
+          "healthy"
+        ]
+      },
+      "expected": {
+        "overall_status": "healthy"
+      }
+    },
+    {
+      "id": "overall_all_disabled",
+      "layer": "domain_or_ui",
+      "input": {
+        "statuses": [
+          "disabled",
+          "disabled"
+        ]
+      },
+      "expected": {
+        "overall_status": "disabled"
+      }
+    },
+    {
+      "id": "overall_failed_beats_unknown",
+      "layer": "domain_or_ui",
+      "input": {
+        "statuses": [
+          "failed",
+          "unknown",
+          "healthy"
+        ]
+      },
+      "expected": {
+        "overall_status": "failed"
+      }
+    },
+    {
+      "id": "overall_unknown_prevents_healthy",
+      "layer": "domain_or_ui",
+      "input": {
+        "statuses": [
+          "unknown",
+          "healthy",
+          "disabled"
+        ]
+      },
+      "expected": {
+        "overall_status": "unknown"
+      }
+    },
+    {
+      "id": "db_ttl_equal",
+      "layer": "domain_or_ui",
+      "input": {
+        "observed_at": "2032-02-12T00:59:30Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "evidence_valid": true,
+        "browser_may_show_healthy": false
+      }
+    },
+    {
+      "id": "db_ttl_after",
+      "layer": "domain_or_ui",
+      "input": {
+        "observed_at": "2032-02-12T00:59:29.999999Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "evidence_valid": false
+      }
+    },
+    {
+      "id": "cache_age_equal",
+      "layer": "domain_or_ui",
+      "input": {
+        "cached_at": "2032-02-12T00:59:55Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "refresh": true
+      }
+    },
+    {
+      "id": "rate_limit_equal",
+      "layer": "domain_or_ui",
+      "input": {
+        "last_admitted_at": "2032-02-12T00:59:55Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "admit": true
+      }
+    },
+    {
+      "id": "rate_limit_before",
+      "layer": "domain_or_ui",
+      "input": {
+        "last_admitted_at": "2032-02-12T00:59:55.000001Z",
+        "clock": "2032-02-12T01:00:00Z"
+      },
+      "expected": {
+        "admit": false
+      }
+    },
+    {
+      "id": "run_timeout_equal",
+      "layer": "domain_or_ui",
+      "input": {
+        "started_at": "2032-02-11T13:00:00Z",
+        "clock": "2032-02-12T01:00:00Z",
+        "timeout_seconds": 43200,
+        "running": true
+      },
+      "expected": {
+        "work_status": "active"
+      }
+    },
+    {
+      "id": "run_timeout_after",
+      "layer": "domain_or_ui",
+      "input": {
+        "started_at": "2032-02-11T12:59:59.999999Z",
+        "clock": "2032-02-12T01:00:00Z",
+        "timeout_seconds": 43200,
+        "running": true
+      },
+      "expected": {
+        "work_status": "failed",
+        "reason_code": "RUN_OVERDUE"
+      }
+    },
+    {
+      "id": "research_heartbeat_equal",
+      "layer": "domain_or_ui",
+      "input": {
+        "heartbeat_at": "2032-02-12T00:58:30Z",
+        "clock": "2032-02-12T01:00:00Z",
+        "state": "RUNNING"
+      },
+      "expected": {
+        "work_status": "active"
+      }
+    },
+    {
+      "id": "research_heartbeat_after",
+      "layer": "domain_or_ui",
+      "input": {
+        "heartbeat_at": "2032-02-12T00:58:29.999999Z",
+        "clock": "2032-02-12T01:00:00Z",
+        "state": "RUNNING"
+      },
+      "expected": {
+        "work_status": "degraded",
+        "reason_code": "EXECUTION_INTERRUPTED"
+      }
+    },
+    {
+      "id": "owner_queue_isolation",
+      "layer": "domain_or_ui",
+      "input": {
+        "actor": "synthetic-owner-a",
+        "rows": [
+          {
+            "owner": "synthetic-owner-b",
+            "status": "FAILED"
+          }
+        ]
+      },
+      "expected": {
+        "recent_failed": 0
+      }
+    },
+    {
+      "id": "stream_session_revoked",
+      "layer": "domain_or_ui",
+      "input": {
+        "actor": "synthetic-owner-a",
+        "lease_owner": "synthetic-owner-a",
+        "session_revoked": true
+      },
+      "expected": {
+        "active_demand": 0
+      }
+    },
+    {
+      "id": "no_page_lease_required",
+      "layer": "domain_or_ui",
+      "input": {
+        "actor": "synthetic-owner-a",
+        "page_lease": null,
+        "producer": "DISCONNECTED",
+        "calendar_ready": true,
+        "window_open": true,
+        "valid_owner_demand": 2
+      },
+      "expected": {
+        "status": "failed",
+        "reason_code": "STREAM_DISCONNECTED",
+        "new_leases": 0
+      }
+    },
+    {
+      "id": "v2_read_bound_101",
+      "layer": "database_query",
+      "input": {
+        "surface": "v2",
+        "matching_identities": 101,
+        "scan_limit": 101
+      },
+      "expected": {
+        "result": "limit",
+        "reason_code": "QUERY_LIMIT",
+        "complete": false
+      },
+      "note": "Return QUERY_LIMIT when the 101st identity is observed; do not truncate to 100 and claim full coverage."
+    },
+    {
+      "id": "short_validity_refresh",
+      "layer": "domain_or_ui",
+      "input": {
+        "visible": true,
+        "request_duration_ms": 200,
+        "valid_for_ms_at_generated_at": 9000,
+        "base_poll_ms": 30000,
+        "minimum_after_settle_ms": 5000,
+        "refresh_lead_ms": 1000
+      },
+      "expected": {
+        "next_request_after_response_ms": 7800,
+        "expire_after_response_ms": 8800
+      }
+    },
+    {
+      "id": "short_validity_respects_minimum_interval",
+      "layer": "domain_or_ui",
+      "input": {
+        "visible": true,
+        "request_duration_ms": 200,
+        "valid_for_ms_at_generated_at": 4000,
+        "base_poll_ms": 30000,
+        "minimum_after_settle_ms": 5000,
+        "refresh_lead_ms": 1000
+      },
+      "expected": {
+        "next_request_after_response_ms": 5000,
+        "expire_after_response_ms": 3800,
+        "expires_before_next_request": true
+      }
+    }
+  ]
+}

@@ -223,6 +223,7 @@ pub struct ApiState {
     /// handler never performs blocking filesystem I/O on an async worker.
     pub(crate) owner_equity_v2_artifact: Arc<Semaphore>,
     pub(crate) market_stream_consumers: ConsumerRegistry,
+    pub(crate) service_status_runtime: Arc<crate::service_status::ServiceStatusRuntime>,
     actor_pools: Arc<Mutex<HashMap<String, sqlx::PgPool>>>,
 }
 
@@ -236,6 +237,15 @@ impl SessionBackend for ApiState {
 }
 
 impl ApiState {
+    /// Exercise refresh-capacity denial on this state without changing its
+    /// production limits, authentication, policy or trusted snapshot path.
+    #[doc(hidden)]
+    pub fn hold_service_status_refresh_for_test(
+        &self,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.service_status_runtime.try_refresh()
+    }
+
     /// Construct a state whose pools do not open connections.  Router unit
     /// tests use this to prove an admission boundary returns before any SQL
     /// path; production and integration-test construction remain unchanged.
@@ -318,6 +328,7 @@ impl ApiState {
             owner_beta_approval: Arc::new(Semaphore::new(1)),
             owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
             market_stream_consumers: ConsumerRegistry::default(),
+            service_status_runtime: Arc::new(crate::service_status::ServiceStatusRuntime::default()),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -341,6 +352,7 @@ impl ApiState {
             owner_beta_approval: Arc::new(Semaphore::new(1)),
             owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
             market_stream_consumers: ConsumerRegistry::default(),
+            service_status_runtime: Arc::new(crate::service_status::ServiceStatusRuntime::default()),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
         })
     }

@@ -27,6 +27,7 @@ pub mod pagination;
 pub mod paper;
 pub mod recommendations;
 pub mod screener;
+pub mod service_status;
 pub mod session;
 pub mod state;
 pub mod strategies;
@@ -451,6 +452,7 @@ pub fn api_router(state: ApiState) -> Router {
         .route("/paper/accounts/{account_id}/lineage", get(paper::lineage))
         .route("/paper/accounts/{account_id}/parity", get(paper::parity))
         // admin
+        .route("/admin/service-status", get(service_status::get))
         .route("/admin/datasets", get(admin::list_datasets))
         .route(
             "/admin/datasets/{dataset_id}/approve",
@@ -523,6 +525,9 @@ pub fn api_router(state: ApiState) -> Router {
         // Correlation is installed after the policy layer so it runs first
         // and every admission rejection carries the ordinary request id.
         .layer(axum::middleware::from_fn(middleware::correlation))
+        // Correlation sets the general no-store policy; this narrowly scoped
+        // wrapper adds the service-status private cache directive afterward.
+        .layer(axum::middleware::from_fn(service_status::private_headers))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }

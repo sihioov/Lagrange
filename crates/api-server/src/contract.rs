@@ -396,6 +396,16 @@ pub const ERROR_CODES: &[ErrorCodeDef] = &[
         "the operation is not available in this phase",
     ),
     ErrorCodeDef::new(
+        "SERVICE_STATUS_RATE_LIMITED",
+        StatusCode::TOO_MANY_REQUESTS,
+        "service status request capacity is exhausted",
+    ),
+    ErrorCodeDef::new(
+        "SERVICE_STATUS_UNAVAILABLE",
+        StatusCode::SERVICE_UNAVAILABLE,
+        "service status endpoint or audit infrastructure is unavailable",
+    ),
+    ErrorCodeDef::new(
         "INTERNAL",
         StatusCode::INTERNAL_SERVER_ERROR,
         "internal error",
@@ -1037,6 +1047,17 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         false,
     ),
     // --- admin (Owner-only, audited) -------------------------------------------
+    route(
+        "GET",
+        "/api/v1/admin/service-status",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        None,
+        true,
+    ),
     route(
         "GET",
         "/api/v1/admin/datasets",

@@ -4,8 +4,14 @@ import {
   expect,
   type Locator,
   type Page,
+  type Request,
+  type Response,
   test,
 } from "@playwright/test";
+import {
+  isCurrentServerSeed,
+  readCommittedStockBetaChart,
+} from "./support/stock-beta-refresh-evidence";
 
 type IntradayQuotesMode = "off" | "owner_only";
 
@@ -735,7 +741,12 @@ function signalPreview(page: Page) {
 }
 
 function priceChart(page: Page) {
-  return page.getByTestId("stock-beta-signal-profile").getByTestId("stock-beta-price-chart");
+  // Next can retain a hidden streamed copy while hydrating the visible profile.
+  // Keep the accessible panel unique without depending on its translated label.
+  return page
+    .getByRole("tabpanel")
+    .and(page.getByTestId("stock-beta-signal-profile"))
+    .getByTestId("stock-beta-price-chart");
 }
 
 function priceChartPart(page: Page, testId: string) {
@@ -1491,10 +1502,11 @@ test.describe("provider-free Stock Beta V2", () => {
 
     await page.goto("/stock-beta");
     const profile = signalProfilePanel(page);
-    const chart = priceChart(page);
+    const chart = profile.getByTestId("stock-beta-price-chart");
     const oneMonthRangeButton = profile.getByRole("button", { name: "1M", exact: true });
     const threeMonthRangeButton = profile.getByRole("button", { name: "3M", exact: true });
     const oneYearRangeButton = profile.getByRole("button", { name: "1Y", exact: true });
+    await expect(chart).toHaveCount(1);
     await expect(chart).toBeVisible();
     const previousCanvas = await expectCanvasReady(chart);
     await expect(oneYearRangeButton).toHaveAttribute("aria-pressed", "true");
@@ -1532,39 +1544,337 @@ test.describe("provider-free Stock Beta V2", () => {
     expect(chartRequests(observed, "000001.KRX", "3m").length).toBeGreaterThan(0);
   });
 
-  test("pins each chart request to the newly displayed snapshot after refresh", async ({
+  test("pins the server-seeded chart and range request to the newly displayed snapshot after refresh", async ({
     page,
     request,
-  }) => {
-    await resetScenario(request, {
-      authSession: "valid",
-      role: "owner",
-      stockBetaRows: 1,
-      stockBetaSeed: "ready",
-    });
-    await page.goto("/stock-beta");
-    const oldSnapshotId = snapshotIdFromText(await snapshotStrip(page).textContent());
+  }, testInfo) => {
+    type RefreshRecord = {
+      requestId: number;
+      status: number | null;
+      body: "not-read" | "reading" | "complete" | "response-missing" | "read-failed";
+      initialChart:
+        | "unobserved"
+        | "missing"
+        | "null"
+        | "seed"
+        | "invalid-seed-id"
+        | "present-unmatched";
+      initialChartError: "unobserved" | "missing" | "null" | "present";
+      seededSnapshotId: string | null;
+      failure: "none" | "aborted" | "other";
+    };
+    const clockOrigin = { unixMs: Date.now(), monotonicMs: performance.now() };
+    const elapsedMs = () =>
+      Math.round((performance.now() - clockOrigin.monotonicMs) * 1_000) / 1_000;
+    const refreshes = new Map<Request, RefreshRecord>();
+    const events: Array<{
+      sequence: number;
+      atMs: number;
+      requestId: number | null;
+      kind: string;
+    }> = [];
+    let requestSequence = 0;
+    let eventSequence = 0;
+    let droppedRequests = 0;
+    let droppedEvents = 0;
+    let observationClosed = false;
+    let listenersInstalled = false;
+    let acceptanceCompleted = false;
+    let initialSnapshotId: string | null = null;
+    let capturedSnapshotId: string | null = null;
+    const accepted = {
+      snapshotId: "",
+      seed: null as ReturnType<typeof readCommittedStockBetaChart>,
+    };
+    let lastObservedSeed: ReturnType<typeof readCommittedStockBetaChart> = null;
+    let intentionalRangeRequests = 0;
+    const recordEvent = (kind: string, record?: RefreshRecord) => {
+      if (observationClosed) return;
+      const sequence = ++eventSequence;
+      if (events.length < 128) {
+        events.push({ sequence, atMs: elapsedMs(), requestId: record?.requestId ?? null, kind });
+      } else {
+        droppedEvents += 1;
+      }
+    };
+    const isRefresh = (candidate: Request) => {
+      const url = new URL(candidate.url());
+      return (
+        url.pathname === "/stock-beta" &&
+        url.searchParams.has("_rsc") &&
+        candidate.method() === "GET" &&
+        candidate.headers()["next-router-prefetch"] === undefined
+      );
+    };
+    const onRequest = (candidate: Request) => {
+      const url = new URL(candidate.url());
+      if (
+        candidate.method() === "GET" &&
+        url.pathname === `${chartPathFragment}000001.KRX/chart` &&
+        url.searchParams.get("range") === "1m"
+      ) {
+        intentionalRangeRequests += 1;
+        recordEvent("intentional-range-request");
+      }
+      if (!isRefresh(candidate)) return;
+      const requestId = ++requestSequence;
+      if (refreshes.size >= 16) {
+        droppedRequests += 1;
+        return;
+      }
+      const record: RefreshRecord = {
+        requestId,
+        status: null,
+        body: "not-read",
+        initialChart: "unobserved",
+        initialChartError: "unobserved",
+        seededSnapshotId: null,
+        failure: "none",
+      };
+      refreshes.set(candidate, record);
+      recordEvent("request", record);
+    };
+    const onResponse = (response: Response) => {
+      const record = refreshes.get(response.request());
+      if (record === undefined) return;
+      record.status = response.status();
+      recordEvent("response", record);
+    };
+    const onFinished = (candidate: Request) => {
+      if (!isRefresh(candidate)) return;
+      const record = refreshes.get(candidate);
+      recordEvent("finished", record);
+      const completion = (async () => {
+        try {
+          const response = await candidate.response();
+          if (response === null) {
+            if (record !== undefined) record.body = "response-missing";
+            throw new Error("The completed refresh has no response");
+          }
+          if (record !== undefined) {
+            record.status = response.status();
+            record.body = "reading";
+          }
+          recordEvent("body-read-started", record);
+          const flight = await response.text();
+          // Optional completed-body diagnostic, anchored to the actual initialChart field.
+          const seededSnapshotId = flight.match(/"initialChart":\{"snapshot_id":"([^"]+)"/)?.[1];
+          if (record !== undefined) {
+            record.body = "complete";
+            // Only a complete UUID may enter the attachment; never free-form Flight text.
+            const safeId = seededSnapshotId?.match(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[4-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+            )?.[0];
+            record.seededSnapshotId = safeId ?? null;
+            record.initialChart = !/"initialChart"\s*:/.test(flight)
+              ? "missing"
+              : /"initialChart"\s*:\s*null\b/.test(flight)
+                ? "null"
+                : seededSnapshotId === undefined
+                  ? "present-unmatched"
+                  : safeId === undefined
+                    ? "invalid-seed-id"
+                    : "seed";
+            record.initialChartError = !/"initialChartError"\s*:/.test(flight)
+              ? "missing"
+              : /"initialChartError"\s*:\s*null\b/.test(flight)
+                ? "null"
+                : "present";
+          }
+          recordEvent("body-read-complete", record);
+          return { status: response.status(), seededSnapshotId };
+        } catch (error) {
+          if (record !== undefined && record.body !== "response-missing")
+            record.body = "read-failed";
+          recordEvent("body-read-failed", record);
+          throw error; // Preserve this diagnostic read failure in the lifecycle record.
+        }
+      })();
+      // The committed-seed assertion is independent of this optional body read.
+      void completion.catch(() => undefined);
+    };
+    const onFailed = (candidate: Request) => {
+      const record = refreshes.get(candidate);
+      if (record === undefined) return;
+      record.failure = candidate.failure()?.errorText === "net::ERR_ABORTED" ? "aborted" : "other";
+      recordEvent("failed", record);
+    };
 
-    await resetScenario(request, {
-      authSession: "valid",
-      role: "owner",
-      stockBetaRows: 2,
-      stockBetaSeed: "ready",
-    });
-    await page.getByLabel("KRX code").fill("005930");
-    await page.getByRole("button", { name: "Add instrument" }).click();
-    await expect(membershipCard(page, "005930.KRX")).toHaveAttribute("data-lifecycle", "READY", {
-      timeout: 20_000,
-    });
-    const newSnapshotId = snapshotIdFromText(await snapshotStrip(page).textContent());
-    expect(newSnapshotId).not.toBe(oldSnapshotId);
-    await expect
-      .poll(() =>
-        chartRequests(requestsFor(page), "000001.KRX", "1y").some(
-          (url) => url.searchParams.get("snapshot_id") === newSnapshotId,
-        ),
-      )
-      .toBeTruthy();
+    try {
+      await resetScenario(request, {
+        authSession: "valid",
+        role: "owner",
+        stockBetaRows: 1,
+        stockBetaSeed: "ready",
+      });
+      await page.goto("/stock-beta");
+      // Select the accessible Price surface, excluding Next's hidden streaming template.
+      const chart = signalProfilePanel(page).getByTestId("stock-beta-price-chart");
+      await expect(chart).toHaveCount(1);
+      await expectCanvasReady(chart);
+      const oldSnapshotId = snapshotIdFromText(await snapshotStrip(page).textContent());
+      initialSnapshotId = oldSnapshotId;
+
+      await resetScenario(request, {
+        authSession: "valid",
+        role: "owner",
+        stockBetaRows: 2,
+        stockBetaSeed: "ready",
+      });
+      await page.getByLabel("KRX code").fill("005930");
+      // READY does not establish RSC completion. Observe request identity without
+      // changing requests or the application's response consumption.
+      page.on("request", onRequest);
+      page.on("response", onResponse);
+      page.on("requestfinished", onFinished);
+      page.on("requestfailed", onFailed);
+      listenersInstalled = true;
+      recordEvent("listeners-installed");
+      await page.getByRole("button", { name: "Add instrument" }).click();
+      await expect(membershipCard(page, "005930.KRX")).toHaveAttribute("data-lifecycle", "READY", {
+        timeout: 20_000,
+      });
+      recordEvent("membership-ready-observed");
+      // Chromium can report RSC requestfailed after the app reader reached EOF.
+      // Observe the decoded AND applied server prop instead of requiring the
+      // observer's requestfinished event. An equal client fallback is insufficient.
+      await expect
+        .poll(async () => {
+          if ((await chart.count()) !== 1) return false;
+          const displayedId = snapshotIdFromText(await snapshotStrip(page).textContent());
+          if (displayedId === oldSnapshotId) return false;
+          const seed = await chart.evaluate(readCommittedStockBetaChart);
+          lastObservedSeed = seed;
+          if (
+            !isCurrentServerSeed(seed, {
+              snapshotId: displayedId,
+              instrumentId: "000001.KRX",
+              generation: 1,
+              range: "1y",
+              asOf: chartAsOf,
+            })
+          )
+            return false;
+          // All observed non-prefetch refresh responses must be HTTP 200. Next's
+          // fetchServerResponse also rejects non-OK responses before applying props.
+          if (
+            refreshes.size === 0 ||
+            [...refreshes.values()].some((response) => response.status !== 200)
+          )
+            return false;
+          accepted.snapshotId = displayedId;
+          accepted.seed = seed;
+          return true;
+        })
+        .toBe(true);
+      const newSnapshotId = accepted.snapshotId;
+      capturedSnapshotId = newSnapshotId;
+      recordEvent("current-server-seed-applied");
+      expect(newSnapshotId).not.toBe(oldSnapshotId);
+      const refreshedResponse = {
+        status: [...refreshes.values()].every((response) => response.status === 200) ? 200 : null,
+        seededSnapshotId: accepted.seed?.seed?.snapshotId,
+      };
+      expect(refreshedResponse?.status).toBe(200);
+      expect(refreshedResponse?.seededSnapshotId).toBe(newSnapshotId);
+      await expect(chart).toHaveCount(1);
+      await expectCanvasReady(chart);
+      await expect(
+        signalProfilePanel(page).getByRole("button", { name: "1Y", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
+      expect(snapshotIdFromText(await snapshotStrip(page).textContent())).toBe(newSnapshotId);
+
+      // The default chart comes from the server seed. An intentional range change
+      // still proves that the browser uses the newly displayed snapshot binding.
+      const rangeRequest = page.waitForRequest((request) => {
+        const url = new URL(request.url());
+        return (
+          request.method() === "GET" &&
+          url.pathname.includes(`${chartPathFragment}000001.KRX/chart`) &&
+          url.searchParams.get("range") === "1m"
+        );
+      });
+      const oneMonthButton = signalProfilePanel(page).getByRole("button", {
+        name: "1M",
+        exact: true,
+      });
+      await oneMonthButton.click();
+      const requestedRange = await rangeRequest;
+      expect(new URL(requestedRange.url()).searchParams.get("snapshot_id")).toBe(newSnapshotId);
+      const rangeResponse = await requestedRange.response();
+      expect(rangeResponse).not.toBeNull();
+      if (rangeResponse === null) throw new Error("The intentional 1M request has no response");
+      expect(rangeResponse.request()).toBe(requestedRange);
+      expect(rangeResponse.status()).toBe(200);
+      const payload = await rangeResponse.json();
+      expect(payload.snapshot_id).toBe(newSnapshotId);
+      expect(payload.range).toBe("1m");
+      expect(payload.generation).toBe(1);
+      expect(payload.as_of).toBe(chartAsOf);
+      expect(payload.instrument_id).toBe("000001.KRX");
+      expect(payload.bars).toHaveLength(24);
+      await expect(oneMonthButton).toHaveAttribute("aria-pressed", "true");
+      await expectCanvasReady(chart);
+      await expect
+        .poll(() => chart.evaluate(readCommittedStockBetaChart))
+        .toMatchObject({
+          chart: {
+            snapshotId: newSnapshotId,
+            instrumentId: "000001.KRX",
+            generation: 1,
+            range: "1m",
+            asOf: chartAsOf,
+          },
+          chartState: "ready",
+          chartErrorNull: true,
+          selectedRange: "1m",
+        });
+      expect(intentionalRangeRequests).toBe(1);
+      expect(snapshotIdFromText(await snapshotStrip(page).textContent())).toBe(newSnapshotId);
+      acceptanceCompleted = true;
+    } finally {
+      recordEvent("test-body-ended");
+      page.off("request", onRequest);
+      page.off("response", onResponse);
+      page.off("requestfinished", onFinished);
+      page.off("requestfailed", onFailed);
+      observationClosed = true;
+      // Freeze before any await. Every recorded failure precedes fixture teardown;
+      // cancellation after this boundary remains unobserved, not successful.
+      const summary = {
+        clockOrigin,
+        observationClosedAtMs: elapsedMs(),
+        boundary: "test-body-finally-before-fixture-teardown",
+        listenersInstalled,
+        acceptanceCompleted,
+        initialSnapshotId,
+        capturedSnapshotId,
+        acceptedSeed: accepted.seed,
+        lastObservedSeed,
+        intentionalRangeRequests,
+        droppedRequests,
+        droppedEvents,
+        requests: Array.from(refreshes.values(), (record) => ({ ...record })),
+        events: events.slice(),
+      };
+      const displayedAtClose = await snapshotStrip(page)
+        .evaluateAll((elements) => ({
+          count: elements.length,
+          snapshotIds: elements
+            .slice(0, 2)
+            .map(
+              (element) =>
+                element.textContent?.match(
+                  /[0-9a-f]{8}-[0-9a-f]{4}-[4-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+                )?.[0] ?? null,
+            ),
+        }))
+        .catch(() => null);
+      await testInfo.attach("stock-beta-chart-refresh-lifecycle", {
+        body: Buffer.from(JSON.stringify({ ...summary, displayedAtClose }, null, 2)),
+        contentType: "application/json",
+      });
+    }
   });
 
   test("updates the tooltip and live summary for pointer and keyboard selection", async ({
@@ -1729,6 +2039,7 @@ test.describe("provider-free Stock Beta V2", () => {
     await page.goto("/stock-beta");
     const chart = priceChart(page);
     const host = priceChartPart(page, "stock-beta-price-chart-canvas");
+    await expect(chart).toHaveCount(1);
     const initial = await expectCanvasReady(chart);
     const reset = priceChartPart(page, "stock-beta-price-chart-reset");
     await expect(reset).toBeVisible();
@@ -2067,31 +2378,33 @@ test.describe("provider-free Stock Beta V2", () => {
     expectBoxInside(await box(activeNavigationLink), await box(navigation));
   });
 
-  test("reflows at mobile, tablet, desktop, and 200% zoom-equivalent viewports", async ({
-    page,
-    request,
-  }, testInfo) => {
-    test.setTimeout(90_000);
-    await resetScenario(request, {
-      authSession: "valid",
-      role: "owner",
-      stockBetaRows: 31,
-      stockBetaSeed: "ready",
-    });
-
-    for (const viewport of [
-      { name: "375x800", width: 375, height: 800 },
-      { name: "640x360-200-percent-equivalent", width: 640, height: 360 },
-      { name: "768x1024", width: 768, height: 1024 },
-      { name: "1024x900", width: 1024, height: 900 },
-      { name: "1280x720", width: 1280, height: 720 },
-      { name: "1440x900", width: 1440, height: 900 },
-    ]) {
+  // Each viewport gets the default test context and its own trace/video lifetime.
+  for (const viewport of [
+    { name: "375x800", width: 375, height: 800 },
+    { name: "640x360-200-percent-equivalent", width: 640, height: 360 },
+    { name: "768x1024", width: 768, height: 1024 },
+    { name: "1024x900", width: 1024, height: 900 },
+    { name: "1280x720", width: 1280, height: 720 },
+    { name: "1440x900", width: 1440, height: 900 },
+  ]) {
+    test(`reflows at ${viewport.name} with the complete chart interaction coverage`, async ({
+      page,
+      request,
+    }, testInfo) => {
+      test.setTimeout(90_000);
+      await resetScenario(request, {
+        authSession: "valid",
+        role: "owner",
+        stockBetaRows: 31,
+        stockBetaSeed: "ready",
+      });
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto("/stock-beta");
       await expect(rankedSignalsTable(page)).toBeVisible();
       await expect(signalPreview(page)).toBeVisible();
       const chart = priceChart(page);
+      await expect(chart).toBeVisible();
+      await chart.scrollIntoViewIfNeeded();
       await expectCanvasReady(chart);
       await expect(priceChartPart(page, "stock-beta-price-chart-summary")).toBeVisible();
       await expect(priceChartPart(page, "stock-beta-price-chart-tooltip")).toBeVisible();
@@ -2153,8 +2466,8 @@ test.describe("provider-free Stock Beta V2", () => {
         contentType: "application/json",
       });
       await expectNoHorizontalOverflow(page);
-    }
-  });
+    });
+  }
 
   test("reveals the active destination again when its locale label changes on the same pathname", async ({
     page,

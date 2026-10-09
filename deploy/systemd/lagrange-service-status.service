@@ -1,0 +1,29 @@
+[Unit]
+Description=Lagrange fixed-field Owner service-status snapshot
+After=local-fs.target docker.service
+ConditionPathIsExecutable=/usr/bin/python3
+ConditionPathExists=/opt/lagrange/current/scripts/ops/collect-service-status.py
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+RuntimeDirectory=lagrange-service-status
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/python3 /opt/lagrange/current/scripts/ops/collect-service-status.py
+UMask=0077
+TimeoutStartSec=25s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/opt/lagrange /proc/stat
+ReadWritePaths=/var/lib/lagrange/service-status /run/lagrange-service-status
+
+[Install]
+WantedBy=multi-user.target

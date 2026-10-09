@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import StockBetaDetailPage from "@/app/(authenticated)/stock-beta/[instrument]/page";
 import StockBetaPage from "@/app/(authenticated)/stock-beta/page";
@@ -15,6 +14,7 @@ import {
   ownerEquityV2SignalDetailSchema,
   ownerEquityV2SignalSchema,
 } from "@/lib/products/equity-signals-contracts";
+import { renderAsyncPage } from "./support/render-async-page";
 
 const mocks = vi.hoisted(() => ({
   getLocale: vi.fn(async (): Promise<"en" | "ko"> => "en"),
@@ -264,7 +264,7 @@ describe("Owner stock signal beta V2 surface", () => {
     const api = apiFor({ latest });
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(await StockBetaPage());
+    const markup = await renderAsyncPage(await StockBetaPage());
     const tableBody = markup.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1] ?? "";
 
     expect(markup).toContain("Ranked signals");
@@ -290,7 +290,7 @@ describe("Owner stock signal beta V2 surface", () => {
     const api = apiFor({ latest, memberships: membershipsFor([]) });
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(await StockBetaPage());
+    const markup = await renderAsyncPage(await StockBetaPage());
 
     expect(markup).toContain(latest.snapshot.snapshot_id);
     expect(markup).toContain('data-testid="stock-beta-snapshot-strip"');
@@ -318,7 +318,7 @@ describe("Owner stock signal beta V2 surface", () => {
     });
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(await StockBetaPage());
+    const markup = await renderAsyncPage(await StockBetaPage());
     const capacityStart = markup.indexOf('data-testid="stock-beta-policy-capacity"');
     const capacity = markup.slice(capacityStart);
 
@@ -349,7 +349,7 @@ describe("Owner stock signal beta V2 surface", () => {
       const api = apiFor({ latestError });
       mocks.getProductApi.mockResolvedValue(api);
 
-      const markup = renderToStaticMarkup(await StockBetaPage());
+      const markup = await renderAsyncPage(await StockBetaPage());
 
       expect(markup).toContain('data-testid="stock-beta-dashboard"');
       expect(markup).toContain('data-testid="stock-beta-policy-capacity"');
@@ -377,7 +377,7 @@ describe("Owner stock signal beta V2 surface", () => {
       const api = apiFor({ chartError, latest });
       mocks.getProductApi.mockResolvedValue(api);
 
-      const markup = renderToStaticMarkup(await StockBetaPage());
+      const markup = await renderAsyncPage(await StockBetaPage());
 
       expect(markup).toContain('data-testid="stock-beta-dashboard"');
       expect(markup).toContain('data-testid="stock-beta-policy-capacity"');
@@ -399,7 +399,7 @@ describe("Owner stock signal beta V2 surface", () => {
     const api = apiFor({ detail });
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(
+    const markup = await renderAsyncPage(
       await StockBetaDetailPage({
         params: Promise.resolve({ instrument: detail.signal.instrument_id }),
       }),
@@ -446,8 +446,8 @@ describe("Owner stock signal beta V2 surface", () => {
     const api = apiFor();
     mocks.getProductApi.mockResolvedValue(api);
 
-    const dashboardMarkup = renderToStaticMarkup(await StockBetaPage());
-    const detailMarkup = renderToStaticMarkup(
+    const dashboardMarkup = await renderAsyncPage(await StockBetaPage());
+    const detailMarkup = await renderAsyncPage(
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: instrumentId(0) }) }),
     );
 
@@ -467,10 +467,10 @@ describe("Owner stock signal beta V2 surface", () => {
     const api = apiFor({ latestError: problem("SESSION_EXPIRED") });
     mocks.getProductApi.mockResolvedValue(api);
 
-    const result = await StockBetaPage();
+    const markup = await renderAsyncPage(StockBetaPage());
     expect(mocks.redirect).toHaveBeenCalledWith("/login");
     expect(api.getOwnerEquityV2LatestSignals).toHaveBeenCalledOnce();
-    expect(renderToStaticMarkup(result)).not.toContain('data-testid="stock-beta-dashboard"');
+    expect(markup).not.toContain('data-testid="stock-beta-dashboard"');
   });
 
   it.each([
@@ -481,7 +481,7 @@ describe("Owner stock signal beta V2 surface", () => {
     const api = apiFor({ membershipsError: problem(code) });
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(await StockBetaPage());
+    const markup = await renderAsyncPage(await StockBetaPage());
 
     expect(markup).toContain(title);
     expect(markup).not.toContain('data-testid="stock-beta-dashboard"');
@@ -499,7 +499,7 @@ describe("Owner stock signal beta V2 surface", () => {
     const api = apiFor({ detailError: problem(code) });
     mocks.getProductApi.mockResolvedValue(api);
 
-    const markup = renderToStaticMarkup(
+    const markup = await renderAsyncPage(
       await StockBetaDetailPage({ params: Promise.resolve({ instrument: instrumentId(0) }) }),
     );
 

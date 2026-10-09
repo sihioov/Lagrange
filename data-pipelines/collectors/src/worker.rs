@@ -44,6 +44,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::pipeline::ingest_normalize_publish_kis_historical_range;
+use crate::service_status::{
+    ResearchAttemptCompletion, ResearchExecutionAttempt, ResearchExecutionStatusRepository,
+    ResearchFailureCode,
+};
 use crate::{
     CandidateInstrumentCatalog, CandidatePipelineError, CandidatePricePublication, FailureClass,
     KisNormalizationRecoveryReport, PipelineError, PostgresCandidateSourceSink,
@@ -733,6 +737,21 @@ pub enum WorkerEventKind {
     Skipped,
 }
 
+fn research_failure_code(error: &WorkerError) -> ResearchFailureCode {
+    match error {
+        WorkerError::Cycle { source, .. } => research_failure_code(source),
+        WorkerError::CandidatePipeline(CandidatePipelineError::Publish(source))
+            if price_rights_resolution_denied(source) =>
+        {
+            ResearchFailureCode::RightsUnavailable
+        }
+        WorkerError::Database { source, .. } if price_rights_resolution_denied(source) => {
+            ResearchFailureCode::RightsUnavailable
+        }
+        _ => ResearchFailureCode::PipelineFailed,
+    }
+}
+
 impl WorkerEventKind {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -832,6 +851,7 @@ pub struct ResearchWorker {
     config: ResearchWorkerConfig,
     backend: Arc<dyn ResearchBackend>,
     observer: Arc<dyn WorkerObserver>,
+    service_status: Option<ResearchExecutionStatusRepository>,
 }
 
 pub trait WorkerComponentFactory: Send + Sync {
@@ -1006,6 +1026,7 @@ where
     let provider = factory.build_provider(&config)?;
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
+    let service_status = ResearchExecutionStatusRepository::new(pool.clone());
     let backend = Arc::new(PipelineResearchBackend {
         store,
         provider,
@@ -1013,7 +1034,7 @@ where
         entitlement_reference: config.entitlement_reference.clone(),
         expected_fetch_mode: config.fetch_mode,
     });
-    Ok(ResearchWorker::new(config, backend))
+    Ok(ResearchWorker::new(config, backend).with_service_status_repository(service_status))
 }
 
 pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWorker, WorkerError> {
@@ -1023,6 +1044,7 @@ pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWork
     })?;
     let system_root = validated_system_root()?;
     let pool = build_postgres_pool(&config.database);
+    let service_status = ResearchExecutionStatusRepository::new(pool.clone());
     let backend = Arc::new(ProcessResearchBackend {
         executable,
         env: helper_environment(values, system_root.as_deref())?,
@@ -1033,7 +1055,7 @@ pub fn bootstrap_worker(values: &HashMap<String, String>) -> Result<ResearchWork
         attempt_timeout: config.attempt_timeout,
         recovery_position: Mutex::new(RecoveryPosition::default()),
     });
-    Ok(ResearchWorker::new(config, backend))
+    Ok(ResearchWorker::new(config, backend).with_service_status_repository(service_status))
 }
 
 struct PipelineResearchBackend {
@@ -1432,65 +1454,83 @@ pub async fn run_credentialed_backfill_session_dates_stream<W: io::Write>(
     let factory = ProductionWorkerComponentFactory;
     let store = factory.build_store(&config)?;
     let pool = factory.build_pool(&config)?;
+    let status_repository = ResearchExecutionStatusRepository::new(pool.clone());
     let sink = PostgresPublicationSink::new(pool.clone());
     let price_sink = PostgresCandidateSourceSink::new(pool);
-    // Lazy issuance is preserved: construction reads no secret and makes no
-    // network call. The first actually missing date obtains the one token.
-    let provider = build_production_kis_provider(&config)?.with_calendar_snapshot_cache();
-    // Full-scope crash recovery is deliberately once per process. New targets
-    // publish only their canonical EOD row here; one cumulative Curated
-    // generation is reconciled after the range, avoiding a
-    // date_count * manifest_count rescan during a multi-year backfill.
-    let normalized = recover_kis_normalization(&store).map_err(WorkerError::Pipeline)?;
-    recover_price_publications(&config, &store, &price_sink).await?;
-    let context = CredentialedIngestContext {
-        config: &config,
-        store: &store,
-        sink: &sink,
-        price_sink: &price_sink,
-        provider: &provider,
-        normalized: &normalized,
-        calendar_acquisition: CredentialedCalendarAcquisition::HistoricalRangeSnapshot,
-    };
-    let mut processed = 0usize;
-    for &date in dates {
-        let batch_id = tokio::time::timeout(
-            config.attempt_timeout,
-            run_credentialed_backfill_date(&context, date, UtcTimestamp::now()),
-        )
-        .await
-        .map_err(|_| WorkerError::Timeout {
-            phase: WorkerPhase::Ingest,
-        })??;
-        // One cumulative Curated generation is materialized only after the
-        // range is complete. Holding the final canonical event until that
-        // succeeds ensures an idempotent rerun still enters this process if
-        // the final cumulative recovery fails.
-        if date == end {
-            recover_price_publications(&config, &store, &price_sink).await?;
+    let attempt = ResearchExecutionAttempt::start(status_repository, end.as_naive_date()).await;
+    let result = async {
+        // Lazy issuance is preserved: construction reads no secret and makes
+        // no network call. The first actually missing date obtains the token.
+        let provider = build_production_kis_provider(&config)?.with_calendar_snapshot_cache();
+        // Full-scope crash recovery is deliberately once per process. New
+        // targets publish only their canonical EOD row here; one cumulative
+        // Curated generation is reconciled after the range.
+        let normalized = recover_kis_normalization(&store).map_err(WorkerError::Pipeline)?;
+        recover_price_publications(&config, &store, &price_sink).await?;
+        let context = CredentialedIngestContext {
+            config: &config,
+            store: &store,
+            sink: &sink,
+            price_sink: &price_sink,
+            provider: &provider,
+            normalized: &normalized,
+            calendar_acquisition: CredentialedCalendarAcquisition::HistoricalRangeSnapshot,
+        };
+        let mut processed = 0usize;
+        for &date in dates {
+            let batch_id = tokio::time::timeout(
+                config.attempt_timeout,
+                run_credentialed_backfill_date(&context, date, UtcTimestamp::now()),
+            )
+            .await
+            .map_err(|_| WorkerError::Timeout {
+                phase: WorkerPhase::Ingest,
+            })??;
+            // One cumulative Curated generation is materialized only after the
+            // range is complete. Holding the final canonical event until that
+            // succeeds ensures an idempotent rerun still enters this process
+            // if the final cumulative recovery fails.
+            if date == end {
+                recover_price_publications(&config, &store, &price_sink).await?;
+            }
+            serde_json::to_writer(
+                &mut *writer,
+                &BackfillItemWire {
+                    status: "event",
+                    event: "published",
+                    phase: "canonical_publication",
+                    batch_id,
+                    target_date: date.to_iso(),
+                },
+            )
+            .map_err(|_| WorkerError::Io {
+                phase: WorkerPhase::Publication,
+            })?;
+            writer.write_all(b"\n").map_err(|_| WorkerError::Io {
+                phase: WorkerPhase::Publication,
+            })?;
+            writer.flush().map_err(|_| WorkerError::Io {
+                phase: WorkerPhase::Publication,
+            })?;
+            processed = processed.saturating_add(1);
         }
-        serde_json::to_writer(
-            &mut *writer,
-            &BackfillItemWire {
-                status: "event",
-                event: "published",
-                phase: "canonical_publication",
-                batch_id,
-                target_date: date.to_iso(),
-            },
-        )
-        .map_err(|_| WorkerError::Io {
-            phase: WorkerPhase::Publication,
-        })?;
-        writer.write_all(b"\n").map_err(|_| WorkerError::Io {
-            phase: WorkerPhase::Publication,
-        })?;
-        writer.flush().map_err(|_| WorkerError::Io {
-            phase: WorkerPhase::Publication,
-        })?;
-        processed = processed.saturating_add(1);
+        Ok(processed)
     }
-    Ok(processed)
+    .await;
+
+    if let Some(attempt) = attempt {
+        let completion = match &result {
+            Ok(_) => ResearchAttemptCompletion::Published {
+                target_session: end.as_naive_date(),
+            },
+            Err(WorkerError::Shutdown) => {
+                ResearchAttemptCompletion::Failed(ResearchFailureCode::ExecutionInterrupted)
+            }
+            Err(error) => ResearchAttemptCompletion::Failed(research_failure_code(error)),
+        };
+        attempt.finish(completion).await;
+    }
+    result
 }
 
 /// Captures and normalizes one bounded historical daily-bars range without
@@ -4299,7 +4339,16 @@ impl ResearchWorker {
             config,
             backend,
             observer: Arc::new(NoopObserver),
+            service_status: None,
         }
+    }
+
+    pub fn with_service_status_repository(
+        mut self,
+        repository: ResearchExecutionStatusRepository,
+    ) -> Self {
+        self.service_status = Some(repository);
+        self
     }
 
     pub fn with_observer(mut self, observer: Arc<dyn WorkerObserver>) -> Self {
@@ -4316,10 +4365,41 @@ impl ResearchWorker {
         date: TradingDate,
         control: &dyn WorkerControl,
     ) -> Result<WorkerRunOutcome, WorkerError> {
-        if !self.recover_with_retry(control, Some(date)).await? {
-            return Ok(WorkerRunOutcome::Shutdown);
+        self.run_scheduled_cycle(date, control).await
+    }
+
+    async fn run_scheduled_cycle(
+        &self,
+        date: TradingDate,
+        control: &dyn WorkerControl,
+    ) -> Result<WorkerRunOutcome, WorkerError> {
+        let attempt = match &self.service_status {
+            Some(repository) => {
+                ResearchExecutionAttempt::start(repository.clone(), date.as_naive_date()).await
+            }
+            None => None,
+        };
+        let result = async {
+            if !self.recover_with_retry(control, Some(date)).await? {
+                return Ok(WorkerRunOutcome::Shutdown);
+            }
+            self.run_target_with_retry(date, control).await
         }
-        self.run_target_with_retry(date, control).await
+        .await;
+        if let Some(attempt) = attempt {
+            let completion = match &result {
+                Ok(WorkerRunOutcome::AlreadyPublished) => ResearchAttemptCompletion::NoWork,
+                Ok(WorkerRunOutcome::Published(_)) => ResearchAttemptCompletion::Published {
+                    target_session: date.as_naive_date(),
+                },
+                Ok(WorkerRunOutcome::Shutdown) | Err(WorkerError::Shutdown) => {
+                    ResearchAttemptCompletion::Failed(ResearchFailureCode::ExecutionInterrupted)
+                }
+                Err(error) => ResearchAttemptCompletion::Failed(research_failure_code(error)),
+            };
+            attempt.finish(completion).await;
+        }
+        result
     }
 
     pub async fn run_daemon(
@@ -4332,10 +4412,7 @@ impl ResearchWorker {
         let startup_now = control.now_utc();
         if at_or_after_run_time(startup_now, self.config.run_at_kst) {
             let date = current_kst_date(startup_now);
-            if !self.recover_with_retry(control, Some(date)).await? {
-                return Ok(WorkerRunOutcome::Shutdown);
-            }
-            match self.run_target_with_retry(date, control).await {
+            match self.run_scheduled_cycle(date, control).await {
                 Ok(WorkerRunOutcome::Shutdown) => return Ok(WorkerRunOutcome::Shutdown),
                 Ok(_) => {}
                 Err(source) => {
@@ -4352,10 +4429,7 @@ impl ResearchWorker {
                 return Ok(WorkerRunOutcome::Shutdown);
             }
             let date = current_kst_date(control.now_utc());
-            if !self.recover_with_retry(control, Some(date)).await? {
-                return Ok(WorkerRunOutcome::Shutdown);
-            }
-            match self.run_target_with_retry(date, control).await {
+            match self.run_scheduled_cycle(date, control).await {
                 Ok(WorkerRunOutcome::Shutdown) => return Ok(WorkerRunOutcome::Shutdown),
                 Ok(_) => {}
                 Err(source) => {

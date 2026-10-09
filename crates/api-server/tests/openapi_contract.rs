@@ -82,6 +82,55 @@ fn openapi_contract_routes_match_router_inventory() {
 }
 
 #[test]
+fn service_status_openapi_is_owner_only_private_audited_and_exactly_typed() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let operation = &spec["paths"]["/api/v1/admin/service-status"]["get"];
+    assert_eq!(operation["parameters"], serde_json::json!([]));
+    assert_eq!(
+        operation["responses"]
+            .as_object()
+            .expect("responses")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["200", "400", "401", "403", "429", "503"])
+    );
+    let metadata = &operation["x-lagrange"];
+    assert_eq!(metadata["ownership"]["owner_only"], true);
+    assert_eq!(metadata["entitlement"]["use"], Value::Null);
+    assert_eq!(metadata["idempotency"]["note"], "read-only");
+    assert_eq!(metadata["audit"]["writer"], "audit_writer (append-only)");
+    assert_eq!(metadata["cache"]["policy"], "no-store");
+
+    let success = &operation["responses"]["200"];
+    assert_eq!(
+        success["headers"]["Cache-Control"]["schema"]["const"],
+        "private, no-store"
+    );
+    assert_eq!(success["headers"]["Vary"]["schema"]["const"], "Cookie");
+    assert_eq!(
+        success["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ServiceStatusApiResponse"
+    );
+    for code in ["SERVICE_STATUS_RATE_LIMITED", "SERVICE_STATUS_UNAVAILABLE"] {
+        assert!(
+            spec["components"]["schemas"]["ErrorCode"]["enum"]
+                .as_array()
+                .expect("error code enum")
+                .iter()
+                .any(|value| value == code),
+            "stable error code {code} is declared"
+        );
+    }
+    let service = &spec["components"]["schemas"]["ServiceStatusService"];
+    assert_eq!(service["additionalProperties"], false);
+    assert_eq!(
+        service["properties"]["metrics"]["$ref"],
+        "#/components/schemas/ServiceStatusMetrics"
+    );
+}
+
+#[test]
 fn openapi_owner_equity_v2_routes_and_dtos_are_exact() {
     let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
     let prefix = "/api/v1/research/owner-beta/equity-universe-v2";

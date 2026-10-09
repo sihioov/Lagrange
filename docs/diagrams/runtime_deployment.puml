@@ -15,6 +15,8 @@
 ' live provider and installed activation remain unverified.
 ' 2026-10-07: production realtime selection is WS-only; independent EOD
 ' REST remains. Source topology is separate from bounded activation receipts.
+' 2026-10-08: optional Owner service-status observer/API/DB source wiring;
+' local router QA is separate from production-main or installed activation.
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").
@@ -39,7 +41,7 @@ cloud "KIS Open API\n(read-only market data,\ndeny-by-default allowlist)" as kis
 
 ' Packages below are presentation tiers, not exact network membership:
 ' web and api-server are attached to BOTH the edge and backend networks
-' (compose.yml:124-126 web, compose.yml:264-266 api-server), which is how
+' (deploy/compose/compose.yml:124-126 web, deploy/compose/compose.yml:264-266 api-server), which is how
 ' nginx reaches api-server and web reaches api-server internally.
 package "edge tier" #E8F1FB {
   node "reverse-proxy\n(nginx, ONLY published port 443->8443)" as nginx
@@ -70,7 +72,7 @@ package "profile-gated (inactive by default)" #F2F2F2 {
   node "live-node-owner <<profile:live>>\n(credential-free dry-run simulator,\nnetwork_mode: none, no order path)" as livenode
 }
 
-database "postgres (PG 18)\nroles: app / worker / research_writer /\naudit_writer / admin / migration_owner\ntable groups: identity, strategy,\nmarket_data, research, jobs, backtest,\nportfolio_trading, operations, candidate,\nowner-beta, equity-universe-v2,\nowner-intraday (0054), market-stream (0055–0057)\napp actor RLS + worker fenced writes" as pg
+database "postgres (PG 18)\nroles: app / worker / research_writer /\naudit_writer / admin / migration_owner\ntable groups: identity, strategy,\nmarket_data, research, jobs, backtest,\nportfolio_trading, operations, candidate,\nowner-beta, equity-universe-v2,\nowner-intraday (0054), market-stream (0055–0057),\nresearch_execution_status (0059 admin/research_writer)\nfunction: owner_service_status_stream (0058 app EXECUTE)\napp actor RLS + worker fenced writes" as pg
 
 folder "Raw zone\n/data/raw (immutable batches\n+ JSONL manifests)" as raw
 folder "Curated zone\n/data/curated (per-instrument\nParquet bars)" as curated
@@ -87,6 +89,13 @@ package "INTRADAY OVERLAY — SHARED READ + OPERATIONAL DAY PROOF\ncompose.intra
 package "MARKET STREAM OVERLAY — SOURCE ONLY\ncompose.market-stream.yml\nDEFAULT OFF • LIVE APPROVAL GATED" #FCE8D5 {
   folder "Separate durable WS state\n/run/lagrange/kis-market-stream\nUID10001; runtime read/write" as ws_state
   folder "Stable root-owned WS anchors\n/run/lagrange/kis-market-stream-locks\nread-only bind; no auto-creation" as ws_anchors
+}
+
+package "OWNER SERVICE STATUS — OPTIONAL SOURCE ONLY\nNOT INSTALLED OR ACTIVATED" #FFF4D6 {
+  node "lagrange-service-status.timer\n(source unit)" as status_timer
+  node "lagrange-service-status.service\n(root one-shot observer)" as status_service
+  node "Fixed host observations\n(Docker labels/state, allowlisted\nsystemd fields, /proc/stat btime)" as status_host_fields
+  folder "Public snapshot directory\n/var/lib/lagrange/service-status/public\nroot:10001" as status_snapshot
 }
 
 package "MANUAL WS PREPARATION — OPERATOR GATED\nsource contracts; LIVE_ACCEPTED is separate" #FCE8D5 {
@@ -147,8 +156,11 @@ nginx --> api : /api/*, /auth/*;\nstream/lease authority preserved; SSE unbuffer
 ' evidence: deploy/nginx/nginx.conf:197,198,200 (internal artifact alias); deploy/compose/compose.yml:61 (ro artifact mount)
 artifacts --> nginx : X-Accel-Redirect\ndelivery (ro mount)
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:352,357,361; crates/api-server/src/runtime.rs:278-352 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:353,358,362 (lease/SSE routes; shifted by the status module declaration); crates/api-server/src/runtime.rs:278-352 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
 web --> api : browser same-origin CSRF lease mutations\nand one SSE per active tab (through nginx);\nWS-backed realtime cache
+
+' evidence: apps/web/app/(authenticated)/stock-beta/page.tsx:150-171; apps/web/components/pages/owner-beta-product-route.tsx:24-40; apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:455; crates/api-server/src/http/service_status.rs:51-85,257-263
+web --> api : Owner-only GET /api/v1/admin/service-status;\naudited read, no lease or provider work
 
 ' evidence: docs/runbooks/stock-beta-intraday-quotes.md:48-54; crates/api-server/src/http/owner_intraday_quotes.rs:153-179,238-260
 note right of api
@@ -162,36 +174,46 @@ end note
 
 ' evidence: crates/api-server/src/repos/owner_market_stream.rs:37,54,78,93,105 (app actor/binding/lease/snapshot); crates/api-server/src/http/owner_market_stream.rs:685,687 (app LISTEN); migrations/0055_owner_market_stream.up.sql:507,521; migrations/0057_owner_market_stream_api_binding.up.sql:53 (app-only helper); deploy/compose/compose.yml:165 (existing role pools)
 api --> pg : app RLS leases + read-only snapshots/LISTEN;\napp-only boolean grant binding;\nadmin session reads + audit_writer
-' evidence: compose.yml:187-192 (AUTH0_* + callback), docs/decisions/0002-auth0-oidc-and-sessions.md; apps/api-server/auth/src/lib.rs:160 (router)
+' evidence: crates/api-server/src/repos/service_status.rs:308-314,559-570,975-978,999-1009; migrations/0058_service_status_reads.up.sql:16,605-607; migrations/0059_research_execution_status.up.sql:56-73
+api --> pg : bounded Owner evidence reads;\n0058 app-only aggregate + 0059 admin SELECT
+' evidence: deploy/systemd/lagrange-service-status.timer:4-10; deploy/systemd/lagrange-service-status.service:8-13
+status_timer --> status_service : optional 30s one-shot observer
+' evidence: scripts/ops/collect-service-status.py:52-60,159-176,348-402,837-850,1270
+status_host_fields --> status_service : fixed safe-field reads only
+' evidence: deploy/systemd/lagrange-service-status.service:13; scripts/ops/collect-service-status.py:1224-1234; scripts/ops/lib/service-status-policy.py:357-423
+status_service --> status_snapshot : root-owned atomic publish
+' evidence: deploy/compose/compose.service-status.yml:7-12; crates/api-server/src/service_status.rs:27-28,280-282,434-450,531-543
+status_snapshot ..> api : optional read-only DIRECTORY mount;\nfixed path and ownership validation
+' evidence: deploy/compose/compose.yml:187-192 (AUTH0_* + callback), docs/decisions/0002-auth0-oidc-and-sessions.md; apps/api-server/auth/src/lib.rs:160 (router)
 api --> auth0 : OIDC code exchange\n(confidential client)
-' evidence: compose.yml:261 (ro mount); crates/api-server/src/http/artifacts.rs:137-148 (hash verification + X-Accel-Redirect issuance)
+' evidence: deploy/compose/compose.yml:261 (ro mount); crates/api-server/src/http/artifacts.rs:137-148 (hash verification + X-Accel-Redirect issuance)
 artifacts --> api : ro (hash-verified\nbefore X-Accel)
-' evidence: compose.yml:210-211,262 (OWNER_BETA_EQUITY_SIGNALS_MODE + ro mount)
+' evidence: deploy/compose/compose.yml:210-211,262 (OWNER_BETA_EQUITY_SIGNALS_MODE + ro mount)
 spba --> api : ro
-' evidence: compose.yml:216-218,263 (fixed chart API root + ro mount); crates/api-server/src/http/owner_equity_v2.rs:612-614,733-749 (snapshot-pinned read and verification)
+' evidence: deploy/compose/compose.yml:216-218,263 (fixed chart API root + ro mount); crates/api-server/src/http/owner_equity_v2.rs:612-614,733-749 (snapshot-pinned read and verification)
 oeva --> api : ro (snapshot-pinned\nverified chart artifact)
-' evidence: compose.yml:1431-1450 (metrics service, config mount, backend network); deploy/compose/prometheus.yml:10-14 (api-server scrape target)
+' evidence: deploy/compose/compose.yml:1431-1450 (metrics service, config mount, backend network); deploy/compose/prometheus.yml:10-14 (api-server scrape target)
 prom --> api : scrape /metrics
 
 ' ---------------- one-shot gates ----------------
 
-' evidence: compose.yml:287-355 (role bootstrap), 364-399 (sqlx migrate as migration_owner, MIGRATIONS_DIR=/opt/lagrange/migrations)
+' evidence: deploy/compose/compose.yml:287-355 (role bootstrap), 364-399 (sqlx migrate as migration_owner, MIGRATIONS_DIR=/opt/lagrange/migrations)
 oneshots --> pg : bootstrap roles,\nrun migrations/
-' evidence: compose.yml:448-504 (research-raw-init ownership fence; reserved calendar state validated and preserved)
+' evidence: deploy/compose/compose.yml:448-504 (research-raw-init ownership fence; reserved calendar state validated and preserved)
 oneshots --> raw : ownership fence
-' evidence: compose.yml:448-504 (research-raw-init ownership fence; reserved calendar state validated and preserved)
+' evidence: deploy/compose/compose.yml:448-504 (research-raw-init ownership fence; reserved calendar state validated and preserved)
 oneshots --> curated : ownership fence
 
 ' ---------------- research ingestion ----------------
 
-' evidence: compose.yml:605-606 (KIS_APP_KEY_FILE/SECRET_FILE secrets); crates/market-data/src/providers/kis.rs:59-63 (DAILY_BARS_PATH, CALENDAR_PATH request paths); data-pipelines/collectors/src/pipeline.rs:689-820 (shared daily calendar source); crates/market-data/src/ingest.rs:218-356 (same-day EOD calendar reuse); AGENTS.md KIS read-only allowlist
+' evidence: deploy/compose/compose.yml:605-606 (KIS_APP_KEY_FILE/SECRET_FILE secrets); crates/market-data/src/providers/kis.rs:59-63 (DAILY_BARS_PATH, CALENDAR_PATH request paths); data-pipelines/collectors/src/pipeline.rs:689-820 (shared daily calendar source); crates/market-data/src/ingest.rs:218-356 (same-day EOD calendar reuse); AGENTS.md KIS read-only allowlist
 research --> kis : GET daily bars, quotes,\nchk-holiday, KSD actions
-' evidence: compose.yml:624 (raw rw mount); data-pipelines/collectors/src/worker.rs:986-988 (RawStore::new)
+' evidence: deploy/compose/compose.yml:624 (raw rw mount); data-pipelines/collectors/src/worker.rs:1006-1008 (RawStore::new; shifted by the service-status producer additions)
 research --> raw : immutable Raw batches\n(hash-committed)
-' evidence: compose.yml:625 (curated mount); data-pipelines/collectors/src/worker.rs:2689-2697 (CurateStore::new in recovery)
+' evidence: deploy/compose/compose.yml:625 (curated mount); data-pipelines/collectors/src/worker.rs:2729-2737 (CurateStore::new in recovery; shifted by the service-status producer additions)
 research --> curated : curated Parquet bars
-' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:105-120,219-239; data-pipelines/collectors/src/sink.rs:213-251; data-pipelines/collectors/src/worker.rs:2689-3100 (partitioned recovery, exact-generation replay, and publication); data-pipelines/collectors/src/candidate_sink.rs:308-355,431-479,537-579,865-1000 (rights, ledger/generation inspection, amendment revalidation, and price publication); compose.yml:600-604 (DB_USER research_writer)
-research --> pg : catalog + calendar-only publication\n(research_writer,\nSECURITY DEFINER procs)
+' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:105-120,219-239; data-pipelines/collectors/src/sink.rs:213-251; data-pipelines/collectors/src/worker.rs:2729-3140 (partitioned recovery, exact-generation replay, and publication; shifted by the service-status producer additions); data-pipelines/collectors/src/candidate_sink.rs:308-355,431-479,537-579,865-1000 (rights, ledger/generation inspection, amendment revalidation, and price publication); data-pipelines/collectors/src/worker.rs:1037,1058; data-pipelines/collectors/src/service_status.rs:80-105,122-137; migrations/0059_research_execution_status.up.sql:56-73; deploy/compose/compose.yml:600-604 (DB_USER research_writer)
+research --> pg : catalog + calendar-only publication\nand fenced 0059 EOD attempt writes\n(research_writer,\nSECURITY DEFINER procs)
 
 ' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:255-274,277-308; scripts/ops/lib/release-image-manifest.sh:323-347
 note right of oneshots
@@ -203,54 +225,54 @@ end note
 
 ' ---------------- recommendation pipeline ----------------
 
-' evidence: compose.yml:911-915 (DB_USER worker); crates/job-queue/src/recommendation/runner.rs:217 (claim_next_for "recommendation"), 914,939 (recommendation_runs)
+' evidence: deploy/compose/compose.yml:911-915 (DB_USER worker); crates/job-queue/src/recommendation/runner.rs:217 (claim_next_for "recommendation"), 914,939 (recommendation_runs)
 reco --> pg : claim jobs, publish\nrecommendation_runs (worker)
-' evidence: compose.yml:953-954 (curated ro + universe manifest ro mounts)
+' evidence: deploy/compose/compose.yml:953-954 (curated ro + universe manifest ro mounts)
 curated --> reco : ro
-' evidence: compose.yml:930-931 (--uv-bin); crates/job-queue/src/recommendation/child.rs:509-574 (spawn python -m strategies.recommendation_cli); nt/strategies/recommendation_cli.py:394-419
+' evidence: deploy/compose/compose.yml:930-931 (--uv-bin); crates/job-queue/src/recommendation/child.rs:509-574 (spawn python -m strategies.recommendation_cli); nt/strategies/recommendation_cli.py:394-419
 reco --> reco : spawns uv -> python -m\nstrategies.recommendation_cli\n(JSON request/result files)
 
 ' ---------------- candidate pipeline ----------------
 
-' evidence: compose.yml:992-998 (DB_USER worker); crates/job-queue/src/candidate/runner.rs:119 (claim "candidate_compute"), 507 (SELECT public.publish_candidate_analysis)
+' evidence: deploy/compose/compose.yml:992-998 (DB_USER worker); crates/job-queue/src/candidate/runner.rs:119 (claim "candidate_compute"), 507 (SELECT public.publish_candidate_analysis)
 cand --> pg : claim jobs, publish via\nSECURITY DEFINER (worker)
-' evidence: compose.yml:1015 (curated ro mount); crates/job-queue/src/candidate/runner.rs:7-14 (in-process factor_engine over CurateStore)
+' evidence: deploy/compose/compose.yml:1015 (curated ro mount); crates/job-queue/src/candidate/runner.rs:7-14 (in-process factor_engine over CurateStore)
 curated --> cand : ro
 
 ' ---------------- backtest pipeline ----------------
 
-' evidence: compose.yml:1225-1229,1256-1257 (worker role, backtest-iso; postgres also on backtest-iso per compose.yml:428-430); crates/job-queue/src/runner.rs:733 (claim "backtest")
+' evidence: deploy/compose/compose.yml:1225-1229,1256-1257 (worker role, backtest-iso; postgres also on backtest-iso per deploy/compose/compose.yml:428-430); crates/job-queue/src/runner.rs:733 (claim "backtest")
 btw --> pg : claim backtest jobs,\npublish results (worker)
-' evidence: compose.yml:1253-1254 (curated:ro, nautilus_catalog:ro mounts; DATA_CATALOG_DIR compose.yml:1234)
+' evidence: deploy/compose/compose.yml:1253-1254 (curated:ro, nautilus_catalog:ro mounts; DATA_CATALOG_DIR deploy/compose/compose.yml:1234)
 curated --> btw : ro
-' evidence: compose.yml:1255 (artifacts/backtest/runs rw); nt/backtest-worker/backtest_worker/worker.py:223-238 (Parquet artifacts + result.json + manifest.json), publish.py:1-9 (Rust publisher consumes manifest)
+' evidence: deploy/compose/compose.yml:1255 (artifacts/backtest/runs rw); nt/backtest-worker/backtest_worker/worker.py:223-238 (Parquet artifacts + result.json + manifest.json); nt/backtest-worker/backtest_worker/publish.py:1-9 (Rust publisher consumes manifest)
 btw --> artifacts : backtest/runs\n(Parquet + manifest.json)
-' evidence: compose.yml:1233 (LAGRANGE_UV_BIN); crates/job-queue/src/runner.rs:3465-3527 (spawn python -m backtest_worker run); NT catalog rebuilt per run from curated: nt/backtest-worker/backtest_worker/simulate.py:150-152
+' evidence: deploy/compose/compose.yml:1233 (LAGRANGE_UV_BIN); crates/job-queue/src/runner.rs:3465-3527 (spawn python -m backtest_worker run); NT catalog rebuilt per run from curated: nt/backtest-worker/backtest_worker/simulate.py:150-152
 btw --> btw : spawns uv -> python -m\nbacktest_worker run\n(isolated NT child, no egress)
 
 ' ---------------- paper ----------------
 
-' evidence: compose.yml:1364-1371 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:26 (cargo build -p api-server --bin paper-runner)
+' evidence: deploy/compose/compose.yml:1364-1371 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:26 (cargo build -p api-server --bin paper-runner)
 paper --> pg : SQL (4 role-scoped pools)
-' evidence: compose.yml:1402 (/data ro mount)
+' evidence: deploy/compose/compose.yml:1402 (/data ro mount)
 curated --> paper : ro (dataset root)
-' evidence: compose.yml:1403 (artifacts/paper rw mount)
+' evidence: deploy/compose/compose.yml:1403 (artifacts/paper rw mount)
 paper --> artifacts : paper/
 
 ' ---------------- profile-gated ----------------
 
-' evidence: compose.yml:1082-1083 (owner-beta-db network), 1061-1065 (worker role); crates/job-queue/src/owner_beta/runner.rs:171 (claim "owner_beta_price_recommendation")
+' evidence: deploy/compose/compose.yml:1082-1083 (owner-beta-db network), 1061-1065 (worker role); crates/job-queue/src/owner_beta/runner.rs:171 (claim "owner_beta_price_recommendation")
 obr --> pg : claim + publish\n(worker, owner-beta-db net)
-' evidence: compose.yml:1081 (historical-price-beta-root ro mount)
+' evidence: deploy/compose/compose.yml:1081 (historical-price-beta-root ro mount)
 artifacts --> obr : ro (approved\nartifact leaf only)
 
 ' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:567,771 (read-only EOD REST), 845-856 (WS factory), 1359-1370 (WS-only backend), 1462,1464 (domain/approval); crates/kis-client/src/market_stream.rs:32 (fixed WS endpoint), crates/kis-client/src/market_stream_approval.rs:19,215 (approval path/acquisition); deploy/compose/compose.yml:1155 (existing credentials/egress)
 oev2 --> kis : read-only EOD REST; optional realtime\nmarket-WS H0STCNT0 + Approval\n(source capability; bounded activation gated)
 ' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:1472 (worker stream repository); migrations/0055_owner_market_stream.up.sql:525,532,547,558 (worker grant/producer/subscription/cache columns); migrations/0056_owner_market_stream_runtime.up.sql:7,32 (runtime lineage metadata/worker update); deploy/compose/compose.yml:1130 (worker role)
 oev2 --> pg : universe V2 state + fenced stream lease,\nsubscription and latest cache writes (worker)
-' evidence: compose.yml:1176 (raw rw mount); data-pipelines/collectors/src/owner_equity_v2.rs:45,144 (capture + materialize from raw)
+' evidence: deploy/compose/compose.yml:1176 (raw rw mount); data-pipelines/collectors/src/owner_equity_v2.rs:45,144 (capture + materialize from raw)
 oev2 --> raw : rw (EOD V2 capture only;\nno intraday quote data)
-' evidence: compose.yml:1177 (owner-equity-v2-artifacts rw mount)
+' evidence: deploy/compose/compose.yml:1177 (owner-equity-v2-artifacts rw mount)
 oev2 --> oeva : rw (EOD V2 artifacts only)
 
 ' ---------------- market-stream overlay: conditional source wiring ----------------
@@ -281,21 +303,21 @@ operational_windows ..> api : ro (operational_v1)
 ' evidence: deploy/compose/compose.intraday-operational.yml:30-35
 operational_windows ..> oev2 : ro (operational_v1)
 
-' evidence: compose.yml:678-679,725-726,775-776 (KIS secrets), 693-694,740-741,791-792 (range-raw-egress net)
+' evidence: deploy/compose/compose.yml:678-679,725-726,775-776 (KIS secrets), 693-694,740-741,791-792 (range-raw-egress net)
 rangejobs --> kis : one-shot historical\n/ corporate-action capture
-' evidence: compose.yml:692,739,789 (raw rw mounts)
+' evidence: deploy/compose/compose.yml:692,739,789 (raw rw mounts)
 rangejobs --> raw : rw
-' evidence: compose.yml:811 (raw:ro mount), 805 (network_mode: none)
+' evidence: deploy/compose/compose.yml:811 (raw:ro mount), 805 (network_mode: none)
 raw --> materialize : ro
-' evidence: compose.yml:812 (stock-price-beta-artifacts rw mount)
+' evidence: deploy/compose/compose.yml:812 (stock-price-beta-artifacts rw mount)
 materialize --> spba : rw
-' evidence: compose.yml:848-849 (raw:ro mount), 839 (network_mode: none)
+' evidence: deploy/compose/compose.yml:848-849 (raw:ro mount), 839 (network_mode: none)
 raw --> v3check : ro
-' evidence: compose.yml:884-885 (raw mounted rw), 875 (network_mode: none); worker --existing-source-batch-id path reads committed Raw evidence (compose.yml:851-857 comment)
+' evidence: deploy/compose/compose.yml:884-885 (raw mounted rw), 875 (network_mode: none); worker --existing-source-batch-id path reads committed Raw evidence (deploy/compose/compose.yml:851-857 comment)
 recovery --> raw : rw
 
 ' live-node-owner: NO edges by design — network_mode: none, no secrets, no DB.
-' evidence: compose.yml:1471-1498; nt/live-node/live_node/runtime.py:185-190 (execution_enabled always rejected)
+' evidence: deploy/compose/compose.yml:1471-1498; nt/live-node/live_node/runtime.py:185-190 (execution_enabled always rejected)
 
 legend right
   Arrows = real communication (HTTP / SQL / file / spawn), not depends_on.
@@ -312,6 +334,10 @@ legend right
   demand/cache/producer tables with app actor RLS and worker fenced writes.
   0055/0056 add stream lease/cache/subscription/producer fences; 0057 gives
   app only a boolean configured-binding helper, not private grant SELECT.
+  Migration 0058 adds the restricted service-status aggregate (app EXECUTE
+  only); 0059 grants admin SELECT and research_writer fenced
+  SELECT/INSERT/UPDATE on the singleton EOD attempt row. The observer overlay
+  is source wiring only and is not installed or activated.
   All edges carry a "' evidence:" comment in this file's source.
 endlegend
 

@@ -9,6 +9,7 @@ unset OWNER_INTRADAY_QUOTES_MODE KIS_READ_COORDINATION_MODE \
   DB_APP_MAX_CONNECTIONS DB_APP_MAX_CONNECTIONS_FILE
 
 script_dir=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+source_root=$(cd -P "$script_dir/../.." && pwd -P)
 helper=$script_dir/lib/kis-read-compose.sh
 dotenv=$script_dir/lib/dotenv.sh
 compose_release=$script_dir/compose-release.sh
@@ -198,6 +199,28 @@ cp "$dotenv" "$release_root/scripts/ops/lib/dotenv.sh"
 cp "$helper" "$release_root/scripts/ops/lib/kis-read-compose.sh"
 cp "$script_dir/lib/release-image-manifest.sh" \
   "$release_root/scripts/ops/lib/release-image-manifest.sh"
+cp "$source_root/deploy/compose/compose.service-status.yml" \
+  "$release_root/deploy/compose/compose.service-status.yml"
+status_policy_helper=$release_root/scripts/ops/lib/service-status-policy.py
+cat >"$status_policy_helper" <<'PY'
+import os
+import sys
+
+expected = [
+    "startup", "--install-root", os.environ["FAKE_POLICY_INSTALL_ROOT"],
+    "--release-root", os.environ["FAKE_POLICY_RELEASE_ROOT"],
+    "--commit", os.environ["FAKE_POLICY_COMMIT"],
+]
+if sys.argv[1:] != expected:
+    raise SystemExit(2)
+receipt = os.environ.get("FAKE_STATUS_RECEIPT", "absent")
+if receipt == "absent":
+    print("absent")
+elif receipt == "daily":
+    print("daily|status-fixture")
+else:
+    raise SystemExit(1)
+PY
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   >"$release_root/scripts/ops/validate-production-config.sh"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
@@ -357,6 +380,8 @@ run_refresh() {
   shift
   env PATH="$fake_bin:$PATH" \
     FAKE_DOCKER_LOG="$docker_log" FAKE_COMMIT="$commit" \
+    FAKE_POLICY_INSTALL_ROOT="$install_root" FAKE_POLICY_RELEASE_ROOT="$release_root" \
+    FAKE_POLICY_COMMIT="$commit" FAKE_STATUS_RECEIPT="${FAKE_STATUS_RECEIPT:-absent}" \
     LAGRANGE_RELEASE_ROOT="$install_root" \
     "$@" >"$output" 2>&1
 }
@@ -382,7 +407,7 @@ if run_refresh "$tmp/invalid-mode.out" bash "$release_root/scripts/ops/compose-r
   fail 'refresh accepted an invalid mode'
 fi
 grep -Fq 'owner_intraday_quotes_mode_invalid' "$tmp/invalid-mode.out"
-! grep -Fq 'compose config' "$docker_log"
+! grep -Eq '^compose .* config( |$)' "$docker_log"
 cp "$tmp/refresh-env.saved" "$refresh_env"
 chmod 0600 "$refresh_env"
 
@@ -458,11 +483,17 @@ grep -Fq 'persistent service image_id mismatch: owner-equity-v2-runner' \
 
 : >"$docker_log"
 run_refresh "$tmp/refresh-apply.out" \
-  env OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  env FAKE_STATUS_RECEIPT=daily \
+  OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
   OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS \
   bash "$release_root/scripts/ops/compose-release.sh" \
   --scope release --refresh-market-stream --apply
 grep -Fq 'COMPOSE_REFRESH_MARKET_STREAM: PASS' "$tmp/refresh-apply.out"
+status_overlay=$release_root/deploy/compose/compose.service-status.yml
+while IFS= read -r line; do
+  [[ "$line" == *"-f $status_overlay"* && "$line" == *'-p status-fixture'* ]] ||
+    fail "matching service-status receipt was not preserved across refresh command: $line"
+done < <(grep -E '^compose .* (config|up|ps)( |$)' "$docker_log")
 mapfile -t refresh_ups < <(grep '^compose .* up ' "$docker_log")
 [ "${#refresh_ups[@]}" -eq 3 ] || fail 'refresh did not issue exactly three Compose up calls'
 expected_order="-f $release_root/deploy/compose/compose.yml -f $release_root/deploy/compose/compose.intraday.yml -f $release_root/deploy/compose/compose.intraday-operational.yml -f $release_root/deploy/compose/compose.market-stream.yml -f $install_root/.release-image-override."
@@ -483,9 +514,26 @@ case "${refresh_ups[2]}" in
   *) fail "owner V2 refresh command was not narrow or ordered: ${refresh_ups[2]}" ;;
 esac
 ! grep -Eq '^compose .* (build|run|down|stop)( |$)' "$docker_log"
+if grep -Eiq 'research-worker|candidate-runner|recommendation-runner|nt-backtest-worker|paper-scheduler|live-node-owner|db-role-bootstrap|db-migrate|kis-daily' <<<"${refresh_ups[*]}"; then
+  fail 'matching service-status refresh started an unrelated research or KIS workload'
+fi
 if find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .; then
   fail 'refresh image override was not cleaned up'
 fi
+
+# A receipt mismatch blocks an otherwise valid market-stream refresh before
+# Compose config or workload commands. The fixture helper checks exact argv.
+: >"$docker_log"
+if run_refresh "$tmp/mismatched-status-receipt.out" \
+  env FAKE_STATUS_RECEIPT=mismatch \
+  OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS \
+  OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS \
+  bash "$release_root/scripts/ops/compose-release.sh" --scope release --refresh-market-stream --apply; then
+  fail 'refresh accepted a mismatched service-status receipt'
+fi
+grep -Fq 'service-status policy receipt does not match the installed release' "$tmp/mismatched-status-receipt.out"
+! grep -Fq 'compose config' "$docker_log"
+! grep -Eq '^compose .* up ' "$docker_log"
 
 calendar_batch=00000000-0000-4000-8000-000000000001
 : >"$docker_log"
