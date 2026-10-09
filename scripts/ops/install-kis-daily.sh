@@ -5,7 +5,8 @@
 # sources helpers relative to that tree and delegates to the release's
 # backfill-production.sh. This installer only renders commit-suffixed units;
 # --apply writes them, reloads systemd, and enables the timer, but never starts
-# either unit. No mode calls KIS, Docker, a database, or a credential helper.
+# either unit. --install-disabled writes only new units and verifies them
+# inactive and disabled. No mode calls KIS, Docker, a database, or a credential helper.
 set -euo pipefail
 umask 077
 
@@ -29,7 +30,7 @@ die() {
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ops/install-kis-daily.sh [--dry-run|--preflight|--check|--apply]
+Usage: scripts/ops/install-kis-daily.sh [--dry-run|--preflight|--check|--apply|--install-disabled]
        --release-root /opt/lagrange/releases/<40-lowercase-hex-commit>
        --code-commit <40-lowercase-hex>
        [--env-file /opt/lagrange/deploy/compose/.env]
@@ -47,12 +48,15 @@ entries; the production dotenv is read by the wrapper, not embedded here.
 unit files. It may reload systemd and enable the timer, but never starts the
 service or timer. Persistent=true makes --apply unsafe at or after 16:30
 Asia/Seoul, so installation must happen before that boundary.
+--install-disabled requires root and installs only new units. It reloads
+systemd and verifies both units are loaded, inactive, and disabled; it never
+changes unit activation state and can install after 16:30 Asia/Seoul.
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --dry-run|--preflight|--check|--apply)
+    --dry-run|--preflight|--check|--apply|--install-disabled)
       [ "$mode_seen" -eq 0 ] || die 'choose exactly one mode'
       mode=${1#--}
       mode_seen=1
@@ -108,6 +112,10 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$mode" = install-disabled ] && [ "$replace_existing" -eq 1 ]; then
+  die '--replace-existing is not allowed with --install-disabled'
+fi
 
 safe_path() {
   local path=$1 label=$2 probe
@@ -217,6 +225,172 @@ timer_now_hms() {
 apply_window_is_open() {
   local now_hms=$1
   (( 10#$now_hms < 163000 ))
+}
+
+systemd_properties_load_state=
+systemd_properties_active_state=
+systemd_properties_unit_file_state=
+
+read_systemd_properties() {
+  local unit=$1 output line value line_count=0 query_rc
+  local load_seen=0 active_seen=0 unit_file_seen=0
+
+  output=$(
+    if systemctl show --no-pager \
+      --property=LoadState,ActiveState,UnitFileState "$unit" 2>/dev/null; then
+      printf '\n__KIS_DAILY_SHOW_END__'
+    else
+      query_rc=$?
+      printf '\n__KIS_DAILY_SHOW_END__'
+      exit "$query_rc"
+    fi
+  ) || return 1
+  [[ "$output" == *$'\n__KIS_DAILY_SHOW_END__' ]] || return 2
+  output=${output%$'\n__KIS_DAILY_SHOW_END__'}
+  [[ "$output" == *$'\n' ]] || return 2
+  output=${output%$'\n'}
+  [ "${#output}" -le 256 ] || return 2
+
+  while IFS= read -r line; do
+    line_count=$((line_count + 1))
+    [ "$line_count" -le 3 ] || return 2
+    case "$line" in
+      LoadState=*)
+        [ "$load_seen" -eq 0 ] || return 2
+        value=${line#LoadState=}
+        [[ "$value" =~ ^[a-z0-9-]{1,32}$ ]] || return 2
+        systemd_properties_load_state=$value
+        load_seen=1
+        ;;
+      ActiveState=*)
+        [ "$active_seen" -eq 0 ] || return 2
+        value=${line#ActiveState=}
+        [[ "$value" =~ ^[a-z0-9-]{1,32}$ ]] || return 2
+        systemd_properties_active_state=$value
+        active_seen=1
+        ;;
+      UnitFileState=*)
+        [ "$unit_file_seen" -eq 0 ] || return 2
+        value=${line#UnitFileState=}
+        [[ -z "$value" || "$value" =~ ^[a-z0-9-]{1,32}$ ]] || return 2
+        systemd_properties_unit_file_state=$value
+        unit_file_seen=1
+        ;;
+      *)
+        return 2
+        ;;
+    esac
+  done <<<"$output"
+
+  [ "$line_count" -eq 3 ] &&
+    [ "$load_seen" -eq 1 ] &&
+    [ "$active_seen" -eq 1 ] &&
+    [ "$unit_file_seen" -eq 1 ] || return 2
+}
+
+assert_disabled_targets_absent() {
+  local target unit dependency_link
+  for target in "$service_target" "$timer_target"; do
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      die 'KIS_DAILY_INSTALL_DISABLED_TARGET_COLLISION'
+    fi
+  done
+  for unit in "$service_name" "$timer_name"; do
+    for dependency_link in "$systemd_dir"/*.wants/"$unit" \
+      "$systemd_dir"/*.requires/"$unit" "$systemd_dir"/*.upholds/"$unit"; do
+      if [ -e "$dependency_link" ] || [ -L "$dependency_link" ]; then
+        die 'KIS_DAILY_INSTALL_DISABLED_UNIT_COLLISION'
+      fi
+    done
+  done
+}
+
+assert_disabled_units_absent() {
+  local unit rc
+  for unit in "$service_name" "$timer_name"; do
+    if read_systemd_properties "$unit"; then
+      :
+    else
+      rc=$?
+      if [ "$rc" -eq 1 ]; then
+        die 'KIS_DAILY_INSTALL_DISABLED_SYSTEMD_QUERY_FAILED'
+      fi
+      die 'KIS_DAILY_INSTALL_DISABLED_SYSTEMD_PROPERTIES_INVALID'
+    fi
+    if [ "$systemd_properties_load_state" != not-found ] ||
+      [ "$systemd_properties_active_state" != inactive ] ||
+      [ -n "$systemd_properties_unit_file_state" ]; then
+      die 'KIS_DAILY_INSTALL_DISABLED_UNIT_COLLISION'
+    fi
+  done
+}
+
+assert_disabled_units_installed() {
+  local unit
+  for unit in "$service_name" "$timer_name"; do
+    if ! read_systemd_properties "$unit"; then
+      die 'KIS_DAILY_INSTALL_DISABLED_POSTCHECK_FAILED'
+    fi
+    if [ "$systemd_properties_load_state" != loaded ] ||
+      [ "$systemd_properties_active_state" != inactive ] ||
+      [ "$systemd_properties_unit_file_state" != disabled ]; then
+      die 'KIS_DAILY_INSTALL_DISABLED_POSTCHECK_FAILED'
+    fi
+  done
+}
+
+install_disabled() {
+  [ "$(id -u)" -eq 0 ] || die '--install-disabled must run as root'
+  [ -d "$systemd_dir" ] && [ ! -L "$systemd_dir" ] ||
+    die 'systemd directory is missing or unsafe'
+  command -v systemctl >/dev/null 2>&1 || die 'systemctl is required for --install-disabled'
+
+  # Prove both filesystem names and systemd names are unused before staging.
+  assert_disabled_targets_absent
+  assert_disabled_units_absent
+
+  stage_disabled_unit() {
+    local body=$1 slot=$2 temp
+    temp=$(mktemp "$systemd_dir/.lagrange-kis-daily.XXXXXX") ||
+      die 'cannot stage systemd unit'
+    if ! printf '%s\n' "$body" >"$temp"; then
+      rm -f -- "$temp"
+      die 'cannot write staged systemd unit'
+    fi
+    chmod 0644 -- "$temp"
+    chown 0:0 -- "$temp"
+    [ "$(stat -c '%u:%g:%a' -- "$temp")" = 0:0:644 ] ||
+      die 'staged unit metadata mismatch'
+    if [ "$slot" = service ]; then
+      service_temp=$temp
+    else
+      timer_temp=$temp
+    fi
+  }
+
+  move_disabled_unit() {
+    local staged=$1 target=$2
+    mv -nT -- "$staged" "$target"
+    [ ! -e "$staged" ] || die 'KIS_DAILY_INSTALL_DISABLED_TARGET_COLLISION'
+  }
+
+  stage_disabled_unit "$service_body" service
+  stage_disabled_unit "$timer_body" timer
+
+  # Recheck immediately before the first exact-name unit file is installed.
+  assert_disabled_targets_absent
+  assert_disabled_units_absent
+
+  move_disabled_unit "$service_temp" "$service_target"
+  service_temp=
+  move_disabled_unit "$timer_temp" "$timer_target"
+  timer_temp=
+
+  systemctl daemon-reload 2>/dev/null ||
+    die 'KIS_DAILY_INSTALL_DISABLED_RELOAD_FAILED'
+  assert_disabled_units_installed
+  printf 'KIS_DAILY_INSTALL_DISABLED: PASS service=%s timer=%s loaded-inactive-disabled release=%s\n' \
+    "$service_name" "$timer_name" "$release_root"
 }
 
 short_commit=${code_commit:0:7}
@@ -341,6 +515,11 @@ if [ "$mode" = check ]; then
     die 'timer unit differs from requested contract'
   printf 'KIS_DAILY_INSTALL_CHECK: PASS service=%s timer=%s release=%s\n' \
     "$service_name" "$timer_name" "$release_root"
+  exit 0
+fi
+
+if [ "$mode" = install-disabled ]; then
+  install_disabled
   exit 0
 fi
 

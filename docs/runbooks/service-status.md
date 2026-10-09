@@ -174,9 +174,26 @@ were not executed during WP-5 QA. In particular, the sudo examples
 below describe supported installer flags; they are not authorization to install,
 activate, or inspect production state.
 
+Both research modes require the exact release's KIS daily service and timer
+files for binding validation, even when collection remains disabled. If those
+commit-suffixed units do not yet exist, install them without enabling either
+unit before running observer preflight. The explicit `--install-disabled` mode
+accepts only new, unloaded unit names; it refuses replacement and checks that
+both units remain disabled and inactive after systemd reload. It makes no KIS,
+Docker, or database call and may run after 16:30 KST because it never enables or
+starts a schedule. The existing enabling `--apply` mode retains its before-16:30
+guard. Existing matching units should be checked, not replaced through this
+new-install path.
+
 ```sh
 STATUS_RELEASE='/opt/lagrange/releases/<FULL_COMMIT>'
 STATUS_PROJECT='<VERIFIED_COMPOSE_PROJECT>'
+
+# Only when these exact commit-suffixed KIS unit names are absent.
+sudo bash "$STATUS_RELEASE/scripts/ops/install-kis-daily.sh" \
+  --install-disabled --release-root "$STATUS_RELEASE" \
+  --code-commit "${STATUS_RELEASE##*/}" \
+  --production-env-file "$STATUS_RELEASE/deploy/compose/.env"
 
 python3 "$STATUS_RELEASE/scripts/ops/install-service-status.py" \
   --plan --install-root /opt/lagrange --release-root "$STATUS_RELEASE" \
