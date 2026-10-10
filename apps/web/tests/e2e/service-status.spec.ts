@@ -16,7 +16,11 @@ const syntheticOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1
 const statusPath = "/api/v1/admin/service-status";
 const forbiddenApiPath =
   /(?:^|\/)(?:account|accounts|balance|buying-power|sellable-quantity|execution-history|order|orders|live)(?:\/|$)/i;
-const forbiddenRequests = new WeakMap<Page, string[]>();
+const productApiPath =
+  /^\/api\/v1\/(?:research(?:\/|$)|strategies(?:\/|$)|recommendations(?:\/|$)|backtests(?:\/|$)|paper(?:\/|$)|screener(?:\/|$))/;
+const forbiddenRequests = new Map<Page, string[]>();
+const productRequests = new Map<Page, string[]>();
+const guardedPages: Page[] = [];
 
 type ActualSession = {
   readonly cookie_name: string;
@@ -65,10 +69,14 @@ function isLoopback(url: URL): boolean {
 async function guardProviderNetwork(page: Page) {
   const blocked: string[] = [];
   forbiddenRequests.set(page, blocked);
+  const products: string[] = [];
+  productRequests.set(page, products);
+  guardedPages.push(page);
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/api/") && forbiddenApiPath.test(url.pathname))
       blocked.push(url.pathname);
+    if (productApiPath.test(url.pathname)) products.push(url.pathname);
   });
   await page.routeWebSocket("**/*", async (socket) => {
     const url = new URL(socket.url());
@@ -97,8 +105,21 @@ async function ownerScenario(request: APIRequestContext) {
 async function openOwnerPage(page: Page, request: APIRequestContext, locale = "en") {
   await ownerScenario(request);
   await page.context().addCookies([{ name: "locale", value: locale, url: appOrigin }]);
-  await page.goto("/stock-beta");
+  await page.goto("/");
   await expect(page.getByTestId("service-status-panel")).toBeVisible();
+}
+
+async function openIndependentStockBetaPage(page: Page) {
+  const stockBetaPage = await page.context().newPage();
+  await guardProviderNetwork(stockBetaPage);
+  const statusFixture = await installServiceStatusFixture(stockBetaPage);
+  await stockBetaPage.goto("/stock-beta");
+  return { page: stockBetaPage, statusFixture };
+}
+
+async function expectNoStockBetaServiceStatus(page: Page, fixture: { calls(): number }) {
+  await expect(page.getByTestId("service-status-panel")).toHaveCount(0);
+  expect(fixture.calls()).toBe(0);
 }
 
 async function waitForStatusCall(fixture: { calls(): number }, expected: number) {
@@ -261,7 +282,7 @@ async function actualApiRead(page: Page, testInfo: TestInfo) {
     const url = new URL(response.url());
     return url.pathname === statusPath && response.request().method() === "GET";
   });
-  await page.goto("/stock-beta");
+  await page.goto("/");
   const response = await responsePromise;
   await expect(page.getByTestId("service-status-panel")).toBeVisible();
   expect(response.status()).toBe(200);
@@ -318,11 +339,18 @@ async function actualApiRead(page: Page, testInfo: TestInfo) {
 
 test.describe("Owner service-status browser acceptance", () => {
   test.beforeEach(async ({ page }) => {
+    guardedPages.length = 0;
     await guardProviderNetwork(page);
   });
 
   test.afterEach(async ({ page }) => {
-    expect(forbiddenRequests.get(page) ?? []).toEqual([]);
+    for (const guardedPage of guardedPages) {
+      expect(forbiddenRequests.get(guardedPage) ?? []).toEqual([]);
+    }
+    expect(productRequests.get(page) ?? []).toEqual([]);
+    guardedPages.length = 0;
+    forbiddenRequests.clear();
+    productRequests.clear();
   });
 
   test("keeps a compact collapsed summary and reveals all 22 stable rows with separate process/work state", async ({
@@ -361,19 +389,22 @@ test.describe("Owner service-status browser acceptance", () => {
     await expect(summary).toBeFocused();
   });
 
-  test("loads and fails independently of the chart while service status is delayed", async ({
+  test("keeps main Dashboard status independent while the Stock Beta chart loads", async ({
     page,
     request,
   }) => {
     const fixture = await installServiceStatusFixture(page);
     fixture.setFault({ kind: "delayed", status: 200, body: fixture.currentBody() });
-    await ownerScenario(request);
-    await page.goto("/stock-beta");
+    await openOwnerPage(page, request);
     const panel = page.getByTestId("service-status-panel");
     await expect(panel).toBeVisible();
     await expect(panel.locator("summary")).toContainText("Loading service status");
-    await expect(page.getByTestId("stock-beta-price-chart")).toBeVisible();
-    await expect(page.getByTestId("stock-beta-current-quote")).toHaveCount(0);
+
+    const stockBeta = await openIndependentStockBetaPage(page);
+    await expect(stockBeta.page.getByTestId("stock-beta-price-chart")).toBeVisible();
+    await expect(stockBeta.page.getByTestId("stock-beta-current-quote")).toHaveCount(0);
+    await expectNoStockBetaServiceStatus(stockBeta.page, stockBeta.statusFixture);
+
     await fixture.releaseDelayed();
     await waitForStatusCall(fixture, 1);
     await expect(panel.locator("tbody tr")).toHaveCount(22);
@@ -391,12 +422,17 @@ test.describe("Owner service-status browser acceptance", () => {
       stockBetaRows: 1,
       stockBetaSeed: "ready",
     });
-    await page.goto("/stock-beta");
+    await page.goto("/");
     await expect(page.getByTestId("service-status-panel")).toHaveCount(0);
     expect(fixture.calls()).toBe(0);
+    const workspaceOverview = page.locator(".workspace-overview");
+    for (const href of ["/strategies", "/recommendations", "/backtests", "/paper"]) {
+      await expect(workspaceOverview.locator(`a[href="${href}"]`)).toBeVisible();
+    }
+    await expect(workspaceOverview.locator('a[href="/stock-beta"]')).toHaveCount(0);
 
     await resetScenario(request, { authSession: "unknown", role: "member" });
-    await page.goto("/stock-beta");
+    await page.goto("/");
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
     await expect(page.getByTestId("service-status-panel")).toHaveCount(0);
     expect(fixture.calls()).toBe(0);
@@ -471,8 +507,7 @@ test.describe("Owner service-status browser acceptance", () => {
     const fixture = await installServiceStatusFixture(page);
     await page.clock.install({ time: new Date("2026-10-08T00:00:00Z") });
     fixture.setFault({ kind: "delayed", status: 200, body: fixture.currentBody() });
-    await ownerScenario(request);
-    await page.goto("/stock-beta");
+    await openOwnerPage(page, request);
     await expect(page.getByTestId("service-status-panel")).toBeVisible();
     await expect.poll(() => fixture.isPending()).toBe(true);
     await page.clock.fastForward(60_000);
@@ -730,7 +765,7 @@ test.describe("Owner service-status browser acceptance", () => {
   // Independent locale/viewport captures retain screenshots, traces and videos per test.
   for (const locale of ["ko", "en"]) {
     for (const size of layoutSizes) {
-      test(`captures the ${locale} ${size.label} compact and expanded chart-first layouts`, async ({
+      test(`captures the ${locale} ${size.label} Dashboard layout and separate Stock Beta chart`, async ({
         page,
         request,
       }, testInfo) => {
@@ -740,20 +775,33 @@ test.describe("Owner service-status browser acceptance", () => {
         fixture.setCase("baseline_idle_and_fresh");
         await openOwnerPage(page, request, locale);
         await waitForStatusCall(fixture, 1);
-        await expect(page.getByTestId("stock-beta-price-chart")).toBeVisible();
+
+        const stockBeta = await openIndependentStockBetaPage(page);
+        await stockBeta.page.setViewportSize({ width: size.width, height: size.height });
+        const chart = stockBeta.page.getByTestId("stock-beta-price-chart");
+        await expect(chart).toBeVisible();
+        await expectNoStockBetaServiceStatus(stockBeta.page, stockBeta.statusFixture);
+
         const panel = page.getByTestId("service-status-panel");
+        const workspace = page.locator(".workspace-overview");
         await expect(panel.locator("details")).not.toHaveAttribute("open", "");
         const panelBox = await panel.boundingBox();
-        const dashboardBox = await page.getByTestId("stock-beta-dashboard").boundingBox();
-        const profileBox = await page.getByTestId("stock-beta-signal-profile").boundingBox();
-        const chartBox = await page.getByTestId("stock-beta-price-chart").boundingBox();
+        const workspaceBox = await workspace.boundingBox();
+        const dashboardBox = await stockBeta.page.getByTestId("stock-beta-dashboard").boundingBox();
+        const profileBox = await stockBeta.page
+          .getByTestId("stock-beta-signal-profile")
+          .boundingBox();
+        const chartBox = await chart.boundingBox();
         expect(panelBox).not.toBeNull();
+        expect(workspaceBox).not.toBeNull();
         expect(dashboardBox).not.toBeNull();
         expect(profileBox).not.toBeNull();
         expect(chartBox).not.toBeNull();
         expect(panelBox?.width).toBeGreaterThan(0);
+        expect((panelBox?.y ?? 0) + (panelBox?.height ?? 0)).toBeLessThanOrEqual(
+          workspaceBox?.y ?? 0,
+        );
         expect(chartBox?.width).toBeGreaterThan(300);
-        expect(chartBox?.y).toBeGreaterThan(panelBox?.y ?? 0);
         expect(profileBox?.width).toBeGreaterThanOrEqual((dashboardBox?.width ?? 0) - 32);
         expect(chartBox?.x).toBeGreaterThanOrEqual(profileBox?.x ?? 0);
         expect((chartBox?.x ?? 0) + (chartBox?.width ?? 0)).toBeLessThanOrEqual(
@@ -761,6 +809,7 @@ test.describe("Owner service-status browser acceptance", () => {
         );
         expect(panelBox?.height).toBeLessThan(190);
         await expectNoHorizontalOverflow(page);
+        await expectNoHorizontalOverflow(stockBeta.page);
         const dimensions = await page.evaluate(() => ({
           clientHeight: document.documentElement.clientHeight,
           clientWidth: document.documentElement.clientWidth,
@@ -778,6 +827,7 @@ test.describe("Owner service-status browser acceptance", () => {
           locale,
           viewport: size.label,
           panel: panelBox,
+          workspace: workspaceBox,
           chart: chartBox,
           verticalScrollY,
           ...dimensions,
@@ -878,8 +928,12 @@ test.describe("Owner service-status browser acceptance", () => {
     await page.setViewportSize({ width: 640, height: 360 });
     await openOwnerPage(page, request, "en");
     await waitForStatusCall(fixture, 1);
-    await expect(page.getByTestId("stock-beta-price-chart")).toBeVisible();
+    const stockBeta = await openIndependentStockBetaPage(page);
+    await stockBeta.page.setViewportSize({ width: 640, height: 360 });
+    await expect(stockBeta.page.getByTestId("stock-beta-price-chart")).toBeVisible();
+    await expectNoStockBetaServiceStatus(stockBeta.page, stockBeta.statusFixture);
     await expectNoHorizontalOverflow(page);
+    await expectNoHorizontalOverflow(stockBeta.page);
     layoutMeasurements.push({
       locale: "en",
       viewport: "640x360 (200% viewport equivalent)",
@@ -953,7 +1007,7 @@ test.describe("Owner service-status browser acceptance", () => {
     });
   });
 
-  test("keeps the Owner status panel visible when the product chart read fails", async ({
+  test("keeps Dashboard status available when the Stock Beta chart read fails", async ({
     page,
     request,
   }) => {
@@ -966,16 +1020,19 @@ test.describe("Owner service-status browser acceptance", () => {
       stockBetaRows: 1,
       stockBetaSeed: "ready",
     });
-    await page.goto("/stock-beta");
-    await expect(page.getByTestId("stock-beta-price-chart")).toHaveCount(0);
-    await expect(
-      page
-        .getByRole("tabpanel", { name: "Price", exact: true })
-        .getByText("The EOD chart is being prepared or is unavailable.", { exact: true }),
-    ).toBeVisible();
+    await page.goto("/");
     await expect(page.getByTestId("service-status-panel")).toBeVisible();
     await waitForStatusCall(fixture, 1);
     await expect(page.getByTestId("service-status-panel").locator("tbody tr")).toHaveCount(22);
+
+    const stockBeta = await openIndependentStockBetaPage(page);
+    await expect(stockBeta.page.getByTestId("stock-beta-price-chart")).toHaveCount(0);
+    await expect(
+      stockBeta.page
+        .getByRole("tabpanel", { name: "Price", exact: true })
+        .getByText("The EOD chart is being prepared or is unavailable.", { exact: true }),
+    ).toBeVisible();
+    await expectNoStockBetaServiceStatus(stockBeta.page, stockBeta.statusFixture);
   });
 
   test("actual DB-backed API router rereads the mounted snapshot and updates policy after atomic replacement @actual", async ({

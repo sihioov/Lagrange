@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import DashboardPage from "@/app/(authenticated)/page";
 import StockBetaPage from "@/app/(authenticated)/stock-beta/page";
 import { type ApiSession, apiErrorEnvelopeSchema } from "@/lib/api/contracts";
 import { ApiProblem } from "@/lib/api/response";
@@ -41,6 +42,49 @@ const MEMBER_SESSION = {
   role: "member",
   user_id: "00000000-0000-4000-8000-000000000002",
 } as const satisfies ApiSession;
+
+const OWNER_ACCESS_CASES = [
+  {
+    label: "disabled beta access",
+    owner_beta_access_mode: "disabled",
+    owner_beta_paper_mode: "disabled",
+    cards: ["/strategies", "/recommendations", "/backtests", "/paper", "/stock-beta"],
+  },
+  {
+    label: "owner-only beta access",
+    owner_beta_access_mode: "owner_only",
+    owner_beta_paper_mode: "disabled",
+    cards: ["/strategies", "/recommendations", "/backtests", "/stock-beta"],
+  },
+  {
+    label: "owner-only beta access with Paper enabled",
+    owner_beta_access_mode: "owner_only",
+    owner_beta_paper_mode: "enabled",
+    cards: ["/strategies", "/recommendations", "/backtests", "/paper", "/stock-beta"],
+  },
+] as const satisfies readonly {
+  readonly label: string;
+  readonly owner_beta_access_mode: ApiSession["owner_beta_access_mode"];
+  readonly owner_beta_paper_mode: ApiSession["owner_beta_paper_mode"];
+  readonly cards: readonly string[];
+}[];
+
+const MEMBER_ACCESS_CASES = [
+  {
+    label: "disabled beta access",
+    owner_beta_access_mode: "disabled",
+    cards: ["/strategies", "/recommendations", "/backtests", "/paper"],
+  },
+  {
+    label: "owner-only beta access",
+    owner_beta_access_mode: "owner_only",
+    cards: ["/strategies"],
+  },
+] as const satisfies readonly {
+  readonly label: string;
+  readonly owner_beta_access_mode: ApiSession["owner_beta_access_mode"];
+  readonly cards: readonly string[];
+}[];
 
 const SIGNAL = ownerEquityV2SignalSchema.parse({
   average_trading_value_20: 1_000_000,
@@ -104,6 +148,16 @@ function ownerApi() {
   };
 }
 
+function visibleCards(markup: string): string[] {
+  const workspaceStart = markup.indexOf('class="surface-panel workspace-overview"');
+  const workspaceEnd = workspaceStart < 0 ? -1 : markup.indexOf("</section>", workspaceStart);
+  const workspaceMarkup =
+    workspaceStart < 0 || workspaceEnd < 0 ? "" : markup.slice(workspaceStart, workspaceEnd);
+  return ["/strategies", "/recommendations", "/backtests", "/paper", "/stock-beta"].filter((href) =>
+    workspaceMarkup.includes(`href="${href}"`),
+  );
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
@@ -111,7 +165,76 @@ afterEach(() => {
 });
 
 describe("Owner service status page placement", () => {
-  it("keeps the Owner route lazy: a Member triggers neither status nor product work", async () => {
+  it("renders above permitted workspace cards for Owners in both locales and beta settings", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.getProductApi.mockImplementation(() => {
+      throw new Error("Dashboard must not request product data");
+    });
+
+    for (const locale of ["en", "ko"] as const) {
+      for (const accessCase of OWNER_ACCESS_CASES) {
+        mocks.getLocale.mockResolvedValue(locale);
+        mocks.getServerSession.mockResolvedValue({
+          ...OWNER_SESSION,
+          owner_beta_access_mode: accessCase.owner_beta_access_mode,
+          owner_beta_paper_mode: accessCase.owner_beta_paper_mode,
+        });
+
+        const markup = await renderAsyncPage(DashboardPage());
+        const statusOffset = markup.indexOf('data-testid="service-status-panel"');
+        const workspaceOffset = markup.indexOf("workspace-overview");
+
+        expect(
+          statusOffset,
+          `${locale}, ${accessCase.label}: Owner status panel`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(
+          workspaceOffset,
+          `${locale}, ${accessCase.label}: workspace follows status`,
+        ).toBeGreaterThan(statusOffset);
+        expect(
+          visibleCards(markup),
+          `${locale}, ${accessCase.label}: permitted workspace cards`,
+        ).toEqual(accessCase.cards);
+      }
+    }
+
+    expect(mocks.getProductApi).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps permitted workspace cards for Members without mounting or fetching status", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.getProductApi.mockImplementation(() => {
+      throw new Error("Dashboard must not request product data");
+    });
+
+    for (const accessCase of MEMBER_ACCESS_CASES) {
+      mocks.getServerSession.mockResolvedValue({
+        ...MEMBER_SESSION,
+        owner_beta_access_mode: accessCase.owner_beta_access_mode,
+      });
+      mocks.getProductApi.mockImplementation(() => {
+        throw new Error("Dashboard must not request product data");
+      });
+
+      const markup = await renderAsyncPage(DashboardPage());
+
+      expect(markup, `${accessCase.label}: no status panel`).not.toContain(
+        'data-testid="service-status-panel"',
+      );
+      expect(visibleCards(markup), `${accessCase.label}: permitted workspace cards`).toEqual(
+        accessCase.cards,
+      );
+    }
+
+    expect(mocks.getProductApi).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps Stock Beta lazy for a Member and does not mount service status", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     mocks.getServerSession.mockResolvedValue(MEMBER_SESSION);
@@ -128,46 +251,46 @@ describe("Owner service status page placement", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["product entitlement", () => problem("OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE")],
-    [
-      "membership",
-      () => {
-        const api = ownerApi();
-        api.getOwnerEquityV2Memberships.mockRejectedValue(problem("OWNER_EQUITY_INTEGRITY_FAILED"));
-        return api;
+  it("never mounts service status on Stock Beta after product or chart failures", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const failures = [
+      {
+        label: "product entitlement",
+        result: () => problem("OWNER_EQUITY_ENTITLEMENT_UNAVAILABLE"),
       },
-    ],
-  ])(
-    "keeps the authorized status panel visible after a %s failure",
-    async (_kind, productResult) => {
-      const fetchMock = vi.fn();
-      vi.stubGlobal("fetch", fetchMock);
+      {
+        label: "membership",
+        result: () => {
+          const api = ownerApi();
+          api.getOwnerEquityV2Memberships.mockRejectedValue(
+            problem("OWNER_EQUITY_INTEGRITY_FAILED"),
+          );
+          return api;
+        },
+      },
+      { label: "chart", result: ownerApi },
+    ];
+
+    for (const failure of failures) {
       mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
-      const result = productResult();
+      const result = failure.result();
       if (result instanceof ApiProblem) mocks.getProductApi.mockRejectedValue(result);
       else mocks.getProductApi.mockResolvedValue(result);
 
       const markup = await renderAsyncPage(StockBetaPage());
 
-      expect(markup).toContain('data-testid="service-status-panel"');
-      expect(markup).not.toContain("private provider prose");
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
+      expect(markup, `${failure.label}: no status panel`).not.toContain(
+        'data-testid="service-status-panel"',
+      );
+      expect(markup, `${failure.label}: no private error prose`).not.toContain(
+        failure.label === "chart" ? "private chart error" : "private provider prose",
+      );
+      if (failure.label === "chart") {
+        expect(markup).toContain('data-testid="stock-beta-dashboard"');
+      }
+    }
 
-  it("keeps the authorized status panel visible when chart loading fails", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
-    const api = ownerApi();
-    mocks.getProductApi.mockResolvedValue(api);
-
-    const markup = await renderAsyncPage(StockBetaPage());
-
-    expect(markup).toContain('data-testid="service-status-panel"');
-    expect(markup).toContain('data-testid="stock-beta-dashboard"');
-    expect(markup).not.toContain("private chart error");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

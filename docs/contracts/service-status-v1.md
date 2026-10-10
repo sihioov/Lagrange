@@ -1,6 +1,10 @@
 # Owner service status v1 — WP-1 acceptance contract
 
 Status: **accepted by coordinator for implementation and isolated verification, 2026-10-08 KST**.
+Placement correction, 2026-10-10: the user meant the main Dashboard (`/`).
+The original `/stock-beta` placement was a coordinator interpretation error.
+Section 6 below supersedes the original WP-4 page-composition file map; API,
+authorization, polling, producer and deployment contracts are unchanged.
 Baseline: `c3295be6bb618483c6b2594de5232faea66bd8f3`. Static source inspection only.
 The user authorized WP-1 execution, superseding the plan's old “planning only” gate.
 No production truth is asserted. Every fixture is synthetic. No provider, production,
@@ -439,22 +443,21 @@ its local `dist/docs/01-app/01-getting-started/05-server-and-client-components.m
 sections. WP-4 must re-resolve and read the installed guides before code. Do not fetch documentation or install dependencies
 as part of WP-1.
 
-`apps/web/app/(authenticated)/stock-beta/page.tsx:141` calls the lazy Owner product
-gate. `apps/web/components/pages/owner-beta-product-route.tsx:24` authenticates
-before invoking renderProduct. Keep that gate. Inside its authorized callback,
-render one ServiceStatusPanel sibling **before** the async product subtree in
-Suspense. Its locale/session-reset props come from this same authenticated session.
-The panel is outside the try/catch at page.tsx:72 and outside entitlement/membership/
-signal/chart failures. Do not await the status GET for SSR or the chart. This needs
-no new product entitlement bypass and no change to OwnerBetaProductRoute.
+`apps/web/app/(authenticated)/page.tsx` is the main Dashboard (`/`). After its
+existing server session and locale reads, render one ServiceStatusPanel **before**
+the workspace overview only when `session.role === "owner"`. Key it by the
+authenticated user ID and session expiry so changing sessions resets the client
+controller. Members retain their permitted workspace cards and never mount or
+fetch the status panel. This role check matches the Owner-only API boundary;
+status does not depend on Owner-beta product activation or market-data entitlement.
 
-`stock-beta-workspace.tsx`, terminal shell and dashboard are read-only references
-for this version: wrapping the lazy product subtree avoids invasive prop plumbing.
-The chart remains catalog's first full-width widget
-(`apps/web/components/stock-beta/dashboard/widget-registry.ts:34`). Use a compact
-panel-local CSS summary above the product subtree; details collapse by default.
-Do not insert the status panel as a dashboard widget or change chart renderer,
-data adapter, market-stream controller, lease, subscription or SSE behavior.
+The main Dashboard does not create a product client or request memberships,
+signals, charts, leases or streams. Status polling starts in the client; do not
+await the status GET during SSR. Keep the panel-local compact summary and
+collapsed details. `/stock-beta` contains no service-status panel. Its existing
+lazy Owner product gate, Suspense subtree, chart-first layout, data adapter and
+market-stream behavior remain intact. No change to OwnerBetaProductRoute or the
+shared service-status component/controller is needed for this placement.
 
 One client controller per mounted Owner page uses a 30s base interval, serial
 requests only; expanded/collapsed share it. For an earlier future row validity

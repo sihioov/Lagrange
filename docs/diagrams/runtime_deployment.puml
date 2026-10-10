@@ -159,7 +159,7 @@ artifacts --> nginx : X-Accel-Redirect\ndelivery (ro mount)
 ' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:353,358,362 (lease/SSE routes; shifted by the status module declaration); crates/api-server/src/runtime.rs:278-352 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
 web --> api : browser same-origin CSRF lease mutations\nand one SSE per active tab (through nginx);\nWS-backed realtime cache
 
-' evidence: apps/web/app/(authenticated)/stock-beta/page.tsx:150-171; apps/web/components/pages/owner-beta-product-route.tsx:24-40; apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:455; crates/api-server/src/http/service_status.rs:51-85,257-263
+' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (main Dashboard Owner role gate); apps/web/components/service-status/service-status-panel.tsx:340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; deploy/nginx/nginx.conf:117,118; crates/api-server/src/http/mod.rs:455; crates/api-server/src/http/service_status.rs:51-85,257-263
 web --> api : Owner-only GET /api/v1/admin/service-status;\naudited read, no lease or provider work
 
 ' evidence: docs/runbooks/stock-beta-intraday-quotes.md:48-54; crates/api-server/src/http/owner_intraday_quotes.rs:153-179,238-260

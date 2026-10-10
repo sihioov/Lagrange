@@ -449,7 +449,7 @@ import json, re, sys, time, urllib.error, urllib.request
 from pathlib import Path
 base, session_path, proof_path = sys.argv[1:]
 session = json.loads(Path(session_path).read_text())
-request = urllib.request.Request(base+'/stock-beta', headers={
+request = urllib.request.Request(base+'/', headers={
     'Cookie': session['cookie_name']+'='+session['cookie_value'],
 })
 last_status = None
@@ -457,7 +457,7 @@ for attempt in range(120):
     try:
         with urllib.request.urlopen(request, timeout=3) as response:
             last_status = response.status
-            if response.url == base+'/stock-beta' and last_status == 200:
+            if response.url == base+'/' and last_status == 200:
                 html = response.read().decode(); break
     except urllib.error.HTTPError as error:
         last_status = error.code
@@ -472,7 +472,7 @@ if asset is None:
 with urllib.request.urlopen(base+asset.group(), timeout=15) as response:
     if response.status != 200: raise SystemExit('Owned Next static asset unavailable')
 Path(proof_path).write_text(json.dumps({
-    'html_path':'/stock-beta','html_status':last_status,
+    'html_path':'/','html_status':last_status,
     'asset_path':asset.group(),'asset_status':200,'credential_logged':False,
 },indent=2)+'\n')
 PYCODE

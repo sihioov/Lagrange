@@ -126,8 +126,8 @@ package "Operator tools (Node)" #F2F2F2 {
   component "data-pipelines/kind-capture\n(Playwright KIND browser capture)" as kind_capture
 }
 
-package "Owner service status (optional source wiring; not installed)" #FFF4D6 {
-  component "Owner status panel\n(stock-beta page)" as status_panel
+package "Owner service status (optional deployment)" #FFF4D6 {
+  component "Owner status panel\n(main Dashboard /)" as status_panel
   component "Root host observer\n(host inspection uses fixed fields)" as status_observer
   component "Fixed host observations\n(Docker labels/state;\nallowlisted systemd fields;\n/proc/stat btime)" as status_host_fields
   folder "Public host snapshot\n(atomic file replacement)" as status_snapshot
@@ -137,8 +137,8 @@ package "Owner service status (optional source wiring; not installed)" #FFF4D6 {
 
 ' ---------------- Frontend edges ----------------
 
-' evidence: apps/web/app/(authenticated)/stock-beta/page.tsx:150-171; apps/web/components/pages/owner-beta-product-route.tsx:24-40 (OwnerBetaProductRoute checks the Owner product-access gate; status does not require market-data entitlement)
-web --> status_panel : Owner-only stock-beta surface
+' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (server session and explicit Owner role gate; status does not depend on product access or market-data entitlement)
+web --> status_panel : Owner-only main Dashboard surface
 
 ' evidence: apps/web/components/service-status/service-status-panel.tsx:16,340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; crates/api-server/src/http/mod.rs:455; crates/api-server/src/http/service_status.rs:51-85,257-263 (Owner check and audited read)
 status_panel --> api_server : GET /api/v1/admin/service-status;\nread-only status response

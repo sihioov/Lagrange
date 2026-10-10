@@ -13,6 +13,8 @@ const configuredMode = process.env["OWNER_INTRADAY_QUOTES_MODE"];
 const configuredTransport = process.env["OWNER_INTRADAY_QUOTE_TRANSPORT"];
 const forbiddenApiPath =
   /(?:^|\/)(?:account|accounts|balance|buying-power|sellable-quantity|execution-history|order|orders|live)(?:\/|$)/i;
+const productApiPath =
+  /^\/api\/v1\/(?:research(?:\/|$)|strategies(?:\/|$)|recommendations(?:\/|$)|backtests(?:\/|$)|paper(?:\/|$)|screener(?:\/|$))/;
 if (configuredMode !== "owner_only" || configuredTransport !== "market_ws") {
   throw new Error(
     "This suite requires OWNER_INTRADAY_QUOTES_MODE=owner_only and OWNER_INTRADAY_QUOTE_TRANSPORT=market_ws",
@@ -69,6 +71,7 @@ function permittedLoopback(url: URL): boolean {
 async function installProviderFreeGuard(page: Page) {
   const externalRequests: string[] = [];
   const forbiddenApiRequests: string[] = [];
+  const productApiRequests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (!permittedLoopback(url))
@@ -76,6 +79,7 @@ async function installProviderFreeGuard(page: Page) {
     if (url.pathname.startsWith("/api/") && forbiddenApiPath.test(url.pathname)) {
       forbiddenApiRequests.push(url.pathname);
     }
+    if (productApiPath.test(url.pathname)) productApiRequests.push(url.pathname);
   });
   await page.routeWebSocket("**/*", async (socket) => {
     const url = new URL(socket.url());
@@ -98,7 +102,7 @@ async function installProviderFreeGuard(page: Page) {
       await route.abort("blockedbyclient");
     }
   });
-  return { externalRequests, forbiddenApiRequests };
+  return { externalRequests, forbiddenApiRequests, productApiRequests };
 }
 
 async function waitForStatusCalls(fixture: { calls(): number }, count: number) {
@@ -110,8 +114,11 @@ test("Owner status polling adds no market lease or SSE subscription in owner_onl
   request,
 }, testInfo) => {
   test.setTimeout(120_000);
-  const { externalRequests, forbiddenApiRequests } = await installProviderFreeGuard(page);
-  const status = await installServiceStatusFixture(page);
+  const stockBetaGuard = await installProviderFreeGuard(page);
+  const dashboardPage = await page.context().newPage();
+  const dashboardGuard = await installProviderFreeGuard(dashboardPage);
+  const status = await installServiceStatusFixture(dashboardPage);
+  const stockBetaStatus = await installServiceStatusFixture(page);
   status.setFault({ kind: "delayed", status: 200, body: status.currentBody() });
   const stream = await startServiceStatusMarketStreamFixture(appOrigin);
   try {
@@ -119,15 +126,20 @@ test("Owner status polling adds no market lease or SSE subscription in owner_onl
     const identities = await resetScenario(request);
     await page.goto("/stock-beta");
 
-    await expect(page.getByTestId("service-status-panel")).toBeVisible();
-    await expect.poll(() => status.isPending(), { timeout: 10_000 }).toBe(true);
     const chart = page.getByTestId("stock-beta-price-chart");
+    const currentQuote = page.getByTestId("stock-beta-stream-selected");
     await expect(chart).toBeVisible();
     await expect(chart).toHaveAttribute("data-renderer-status", "ready");
-    const currentQuote = page.getByTestId("stock-beta-stream-selected");
     await expect(currentQuote).toBeVisible();
     await expect(currentQuote).toHaveAttribute("data-availability", "LIVE");
     await expect(currentQuote.locator('[data-quote-value="101200.00"]')).toBeVisible();
+    await expect(page.getByTestId("service-status-panel")).toHaveCount(0);
+    expect(stockBetaStatus.calls()).toBe(0);
+
+    await dashboardPage.goto("/");
+    await expect(dashboardPage.getByTestId("service-status-panel")).toBeVisible();
+    await expect.poll(() => status.isPending(), { timeout: 10_000 }).toBe(true);
+    expect(dashboardGuard.productApiRequests).toEqual([]);
 
     await expect.poll(() => stream.metrics().leaseCreates, { timeout: 10_000 }).toBe(1);
     await expect.poll(() => stream.metrics().activeSseConnections, { timeout: 10_000 }).toBe(1);
@@ -163,8 +175,10 @@ test("Owner status polling adds no market lease or SSE subscription in owner_onl
     expect(afterInitialStatusResponse.providerRequests).toBe(0);
     expect(afterInitialStatusResponse.quoteDemandRequests).toBe(0);
     const beforeDisclosure = stream.metrics();
-    await page.getByTestId("service-status-panel").locator("summary").click();
-    await expect(page.getByTestId("service-status-panel").locator("tbody tr")).toHaveCount(22);
+    await dashboardPage.getByTestId("service-status-panel").locator("summary").click();
+    await expect(dashboardPage.getByTestId("service-status-panel").locator("tbody tr")).toHaveCount(
+      22,
+    );
     const afterDisclosure = stream.metrics();
     expect(afterDisclosure.leaseCreates).toBe(beforeDisclosure.leaseCreates);
     expect(afterDisclosure.leaseRenewals).toBe(beforeDisclosure.leaseRenewals);
@@ -181,6 +195,7 @@ test("Owner status polling adds no market lease or SSE subscription in owner_onl
     expect(afterStatusPolls.activeSseConnections).toBe(1);
     expect(afterStatusPolls.providerRequests).toBe(0);
     expect(afterStatusPolls.quoteDemandRequests).toBe(0);
+    expect(dashboardGuard.productApiRequests).toEqual([]);
     await expect(currentQuote).toBeVisible();
     await expect(currentQuote).toHaveAttribute("data-availability", "LIVE");
     await expect(currentQuote.locator('[data-quote-value="101200.00"]')).toBeVisible();
@@ -192,6 +207,8 @@ test("Owner status polling adds no market lease or SSE subscription in owner_onl
       .getByRole("link", { name: "Dashboard", exact: true })
       .click();
     await expect(page).toHaveURL(`${appOrigin}/`);
+    await expect(page.getByTestId("service-status-panel")).toBeVisible();
+    await expect.poll(() => stockBetaStatus.calls(), { timeout: 10_000 }).toBe(1);
     await expect.poll(() => stream.metrics().leaseReleases, { timeout: 10_000 }).toBe(1);
     await expect.poll(() => stream.metrics().activeSseConnections, { timeout: 10_000 }).toBe(0);
     const afterUnmount = stream.metrics();
@@ -202,8 +219,11 @@ test("Owner status polling adds no market lease or SSE subscription in owner_onl
     expect(afterUnmount.sseClosed).toBe(1);
     expect(afterUnmount.providerRequests).toBe(0);
     expect(afterUnmount.quoteDemandRequests).toBe(0);
-    expect(externalRequests).toEqual([]);
-    expect(forbiddenApiRequests).toEqual([]);
+    expect(stockBetaGuard.externalRequests).toEqual([]);
+    expect(stockBetaGuard.forbiddenApiRequests).toEqual([]);
+    expect(dashboardGuard.externalRequests).toEqual([]);
+    expect(dashboardGuard.forbiddenApiRequests).toEqual([]);
+    expect(dashboardGuard.productApiRequests).toEqual([]);
     await testInfo.attach("synthetic-market-stream-measurements", {
       body: JSON.stringify(
         {
@@ -218,8 +238,11 @@ test("Owner status polling adds no market lease or SSE subscription in owner_onl
           after_disclosure: afterDisclosure,
           after_status_polls: afterStatusPolls,
           after_unmount: afterUnmount,
-          blocked_external_requests: externalRequests,
-          forbidden_api_requests: forbiddenApiRequests,
+          dashboard_product_api_requests: dashboardGuard.productApiRequests,
+          blocked_external_requests: stockBetaGuard.externalRequests,
+          dashboard_blocked_external_requests: dashboardGuard.externalRequests,
+          forbidden_api_requests: stockBetaGuard.forbiddenApiRequests,
+          dashboard_forbidden_api_requests: dashboardGuard.forbiddenApiRequests,
         },
         null,
         2,

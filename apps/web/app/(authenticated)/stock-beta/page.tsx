@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
-import { ServiceStatusPanel } from "@/components/service-status/service-status-panel";
 import { StatePanel } from "@/components/states/state-panel";
 import type { StockBetaChartError } from "@/components/stock-beta/dashboard/types";
 import { StockBetaPolicyNotice } from "@/components/stock-beta/dashboard/widgets/policy-boundary-widget";
@@ -152,24 +151,21 @@ export default async function StockBetaPage() {
     renderProduct: (session) => {
       const streamSessionKey = `${session.user_id}:${session.expires_at_secs}`;
       return (
-        <>
-          <ServiceStatusPanel key={streamSessionKey} locale={locale} />
-          <Suspense
-            fallback={
-              <StatePanel
-                kind="loading"
-                message={shellDictionary[locale].loadingMessage}
-                title={shellDictionary[locale].loadingTitle}
-              />
-            }
-          >
-            <StockBetaProductContent
-              locale={locale}
-              streamSessionKey={streamSessionKey}
-              t={stockBetaDictionary[locale]}
+        <Suspense
+          fallback={
+            <StatePanel
+              kind="loading"
+              message={shellDictionary[locale].loadingMessage}
+              title={shellDictionary[locale].loadingTitle}
             />
-          </Suspense>
-        </>
+          }
+        >
+          <StockBetaProductContent
+            locale={locale}
+            streamSessionKey={streamSessionKey}
+            t={stockBetaDictionary[locale]}
+          />
+        </Suspense>
       );
     },
     title: stockBetaDictionary[locale].pageTitle,

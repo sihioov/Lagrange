@@ -378,6 +378,8 @@ service_status_prepare_next() {
     fi
     rm -rf -- "$output_root"
   fi
+  # Next 16.3 derives its page-worker default from CIRCLE_NODE_TOTAL minus one.
+  # Use one page worker within the fixed 1536 MiB QA build cap.
   systemd-run --user --quiet --wait --unit="$unit" \
     --property=Type=exec \
     --property="ExecStartPre=/usr/bin/bash $repo_root/scripts/qa/service-status-unit-receipt.sh start $logs/next-build-receipt.tsv $cap_bytes $unit" \
@@ -390,7 +392,7 @@ service_status_prepare_next() {
     --property="StandardError=append:$log" \
     -- env PATH="$PATH" API_INTERNAL_URL="$api_url" \
       OWNER_INTRADAY_QUOTES_MODE="$quotes_mode" OWNER_INTRADAY_QUOTE_TRANSPORT="$quote_transport" \
-      NODE_OPTIONS=--max-old-space-size=1024 NEXT_TELEMETRY_DISABLED=1 \
+      NODE_OPTIONS=--max-old-space-size=1024 NEXT_TELEMETRY_DISABLED=1 CIRCLE_NODE_TOTAL=2 \
       bash "$repo_root/scripts/qa/service-status-unit-runner.sh" \
       "$pid_file" "$cgroup_metrics" "$cap_bytes" npm run build --workspace=@lagrange/web &
   runner_pid=$!

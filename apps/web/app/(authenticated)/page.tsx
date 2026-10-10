@@ -2,6 +2,7 @@ import { ArrowUpRightIcon } from "@phosphor-icons/react/ssr";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { RoutePage } from "@/components/pages/route-page";
+import { ServiceStatusPanel } from "@/components/service-status/service-status-panel";
 import {
   type ApiSession,
   type OwnerBetaProduct,
@@ -46,6 +47,9 @@ export default async function DashboardPage() {
   const t = shellDictionary[locale];
   return (
     <RoutePage description={t.dashboardDescription} title={t.dashboardTitle}>
+      {session.role === "owner" ? (
+        <ServiceStatusPanel key={`${session.user_id}:${session.expires_at_secs}`} locale={locale} />
+      ) : null}
       <section aria-labelledby="workspace-heading" className="surface-panel workspace-overview">
         <div className="workspace-introduction">
           <p className="status-pill">

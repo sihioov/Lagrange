@@ -1,6 +1,6 @@
 # Owner service-status runbook
 
-**Status:** implementation and required isolated QA completed. The final independent verdict is recorded in [the feature review](../reviews/2026-10-08-service-status-review.md). Not installed or activated.
+**Status:** implementation and required isolated QA completed. The final independent verdict is recorded in [the feature review](../reviews/2026-10-08-service-status-review.md). The observer was installed and activated on 2026-10-10 with release `aa84739ba0a6c58c8dadace0f273e58ae5c776f5`; KIS collection remained disabled. This dated deployment record is not a live health check.
 The code and disposable QA fixtures do not establish production service health,
 policy, or entitlement. Current results and outstanding gates are recorded in
 [the QA review](../reviews/2026-10-08-service-status-qa.md). A status GET does not
@@ -14,7 +14,9 @@ and policy are `scripts/ops/collect-service-status.py` and
 
 ## What the panel reports
 
-The Owner panel has one collapsed summary and 22 fixed rows. Expanding it does not
+The Owner panel belongs on the main Dashboard (`/`), above the workspace cards.
+Stock signal beta (`/stock-beta`) does not contain this panel. The panel has one
+collapsed summary and 22 fixed rows. Expanding it does not
 create work or a live-quote subscription. `process_status` and `work_status` are
 separate observations: a process can be running while its queue is idle, and a
 daily executor can be inactive between scheduled runs while the daily data task
@@ -322,6 +324,9 @@ builds production Next with its exact API rewrite and quote mode, then stages
 and modes are distinct; a successful off build supplies the Web production
 build gate, so no fourth generic build is needed. Node build/check/API heaps
 are1024/512/80 MiB, below their respective unit caps.
+Lane builds set `CIRCLE_NODE_TOTAL=2`, which the pinned Next16.3 version uses
+to select one page worker. This keeps page-data collection within the1536 MiB
+cap; its host-derived13-worker default exhausted that cap during placement QA.
 
 ### Web checks and complete off selection
 
@@ -428,7 +433,7 @@ It verifies root:10001/0640/nlink1, changed inode, same commit and exact origina
 timestamps. The owning QA user copies session/audit into private mode0600 files;
 the session is removed during cleanup. No production reader check is bypassed.
 
-Readiness uses authenticated `/stock-beta` HTML and a real local static asset;
+Readiness uses authenticated main Dashboard (`/`) HTML and a real local static asset;
 anonymous `/` redirects with the actual router. Playwright derives a cookie's
 Secure flag from its setting URL, so the actual test uses an HTTPS setting URL
 without sending a request to it, and asserts Secure/HttpOnly/path `/`. Both
