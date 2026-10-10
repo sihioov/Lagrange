@@ -252,7 +252,7 @@ btw --> btw : spawns uv -> python -m\nbacktest_worker run\n(isolated NT child, n
 
 ' ---------------- paper ----------------
 
-' evidence: deploy/compose/compose.yml:1364-1371 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:26 (cargo build -p api-server --bin paper-runner)
+' evidence: deploy/compose/compose.yml:1364-1371 (app/worker/admin/audit_writer role pools); deploy/runtime/Dockerfile.paper-runner:27 (cargo build -p api-server --bin paper-runner)
 paper --> pg : SQL (4 role-scoped pools)
 ' evidence: deploy/compose/compose.yml:1402 (/data ro mount)
 curated --> paper : ro (dataset root)

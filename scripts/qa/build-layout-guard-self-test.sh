@@ -379,6 +379,117 @@ if not isinstance(value.get("packages"),dict) or len(value["packages"])!=16:
 PY
 }
 
+api_catalog_compile_context_case() (
+  set -euo pipefail
+  local state_root=$cases_dir/api-catalog-context
+  local source_hash helper_hash selected_layout_hash source_commit context
+  mkdir -m 0700 -- "$state_root"
+  mkdir -m 0700 -- "$state_root/contexts"
+  source_hash=$(rbl_hash_source "$repo_root" "$layout" 1)
+  helper_hash=$(sha256sum -- "$helper" | awk '{print $1}')
+  selected_layout_hash=$(sha256sum -- "$layout" | awk '{print $1}')
+  source_commit=$(git -C "$repo_root" rev-parse HEAD)
+  export RELEASE_BUILD_LAYOUT_SOURCE_ROOT=$repo_root
+  export RELEASE_BUILD_LAYOUT_STATE_ROOT=$state_root
+  export RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256=$source_hash
+  export RELEASE_BUILD_LAYOUT_HELPER_SHA256=$helper_hash
+  export RELEASE_BUILD_LAYOUT_CONFIG_SHA256=$selected_layout_hash
+  export RELEASE_BUILD_LAYOUT_COMMIT=$source_commit
+  export RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE=api-catalog-self-test
+  context=$(rbl_make_context D1 "$state_root")
+  local context_layout=$context/.release-build/release-build-layout.json
+  local catalog=configs/operations/service-status-catalog.json
+  cmp -- "$repo_root/$catalog" "$context/$catalog"
+  local package_before source_before tree_before package_after source_after tree_after
+  package_before=$(rbl_package_hashes "$context" "$context_layout" 0)
+  source_before=$(rbl_hash_source "$context" "$context_layout" 0)
+  tree_before=$(rbl_tree_hash "$context")
+  python3 - "$context/$catalog" <<'PY'
+import pathlib,sys
+path=pathlib.Path(sys.argv[1])
+raw=path.read_bytes()
+if not raw.endswith(b"\n"):
+    raise SystemExit("catalog-fixture-newline-invalid")
+path.write_bytes(raw[:-1]+b" "+raw[-1:])
+PY
+  package_after=$(rbl_package_hashes "$context" "$context_layout" 0)
+  source_after=$(rbl_hash_source "$context" "$context_layout" 0)
+  tree_after=$(rbl_tree_hash "$context")
+  python3 - "$layout" "$context" "$package_before" "$package_after" \
+    "$source_before" "$source_after" "$tree_before" "$tree_after" <<'PY'
+import hashlib,json,pathlib,sys
+layout_path,context=map(pathlib.Path,sys.argv[1:3])
+layout=json.loads(layout_path.read_text(encoding="utf-8"))
+catalog="configs/operations/service-status-catalog.json"
+inventory=layout["source_inventory"]["external_compile_inputs"]
+packages=layout["packages"]
+if inventory.count(catalog)!=1:
+    raise SystemExit("catalog-source-inventory-count")
+if packages["api-server"]["external_compile_inputs"].count(catalog)!=1:
+    raise SystemExit("catalog-api-package-input-count")
+if any(catalog in record["external_compile_inputs"] for name,record in packages.items() if name!="api-server"):
+    raise SystemExit("catalog-input-overdeclared")
+for recipe_id in ("D1","D7"):
+    inputs=layout["recipes"][recipe_id]["external_inputs"]
+    if inputs!=packages["api-server"]["external_compile_inputs"] or inputs.count(catalog)!=1:
+        raise SystemExit("catalog-api-recipe-input-mismatch")
+copy_line="COPY configs/operations/service-status-catalog.json ./configs/operations/service-status-catalog.json"
+for dockerfile in ("crates/api-server/Dockerfile","deploy/runtime/Dockerfile.paper-runner"):
+    staged=context/dockerfile
+    if staged.is_file():
+        lines=staged.read_text(encoding="utf-8").splitlines()
+    else:
+        lines=(layout_path.parents[2]/dockerfile).read_text(encoding="utf-8").splitlines()
+    copy_positions=[i for i,line in enumerate(lines) if line==copy_line]
+    build_positions=[i for i,line in enumerate(lines) if "cargo build --locked --release --package api-server" in line]
+    if len(copy_positions)!=1 or len(build_positions)!=1 or copy_positions[0]>=build_positions[0]:
+        raise SystemExit("catalog-dockerfile-copy-order")
+    if any(line.startswith("COPY configs/operations") and line!=copy_line for line in lines):
+        raise SystemExit("catalog-dockerfile-copy-too-broad")
+    if any(line in ("COPY configs ./configs","COPY configs/ ./configs/") for line in lines):
+        raise SystemExit("catalog-dockerfile-whole-config-copy")
+request=json.loads((context/".release-build/request.json").read_text(encoding="utf-8"))
+before=json.loads(sys.argv[3])
+after=json.loads(sys.argv[4])
+if request["package_hashes"]!=before:
+    raise SystemExit("context-package-hash-mismatch")
+changed={name for name in before if before[name]!=after[name]}
+if changed!={"api-server"}:
+    raise SystemExit("catalog-package-hash-scope-invalid")
+if before["api-server"]==after["api-server"]:
+    raise SystemExit("catalog-api-package-hash-stable")
+transitive=request["transitive_package_hashes"]
+if not any(item["package"]=="api-server" and item["p_sha256"]==before["api-server"] for item in transitive):
+    raise SystemExit("catalog-api-package-not-bound-to-h")
+material={
+  "format":"lagrange-build-layout-h-v1",
+  "k_sha256":request["k_sha256"],
+  "package":request["package"],
+  "bins":request["bins"],
+  "recipe":request["recipe"],
+  "recipe_sha256":request["recipe_sha256"],
+  "transitive_package_hashes":transitive,
+  "resolution_inputs":request["resolution_inputs"],
+  "compile_env":request["compile_env"],
+  "features":request["features"],
+  "profile":request["profile"],
+  "platform":request["platform"],
+  "host_triple":request["host_triple"]
+}
+before_h=hashlib.sha256(json.dumps(material,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+updated_transitive=[{"package":item["package"],"p_sha256":after[item["package"]]} for item in transitive]
+material["transitive_package_hashes"]=updated_transitive
+after_h=hashlib.sha256(json.dumps(material,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+if before_h!=request["h_sha256"] or after_h==before_h:
+    raise SystemExit("catalog-api-h-fingerprint-invalid")
+source_before,source_after,tree_before,tree_after=sys.argv[5:9]
+if source_before==source_after or tree_before==tree_after:
+    raise SystemExit("catalog-source-or-context-fingerprint-stable")
+if not (context/catalog).is_file():
+    raise SystemExit("catalog-not-in-curated-context")
+PY
+)
+
 raw_layout_hash_case() {
   local case_dir=$cases_dir/raw-layout-hash
   local request=$case_dir/request.json
@@ -546,3 +657,16 @@ ln -s -- "$symlink_target" "$symlink_guard"
 run_symlink_failure 'symlink-ledger-rejected' "$request" "$layout" "$symlink_guard" "$symlink_target"
 
 raw_layout_hash_case
+
+if api_catalog_compile_context_case; then
+  record_result 'api-catalog-curated-context-and-fingerprint' \
+    'exact catalog in context; api-server P/H and source/context hashes change' \
+    'catalog copied and hash sensitivity scoped to api-server' PASS \
+    'real rbl_make_context and package/source/tree hash functions; temporary byte mutation only'
+else
+  record_result 'api-catalog-curated-context-and-fingerprint' \
+    'exact catalog in context; api-server P/H and source/context hashes change' \
+    'curated context or package fingerprint contract failed' FAIL \
+    'temporary fixture only'
+  fail_test 'api catalog external compile input was not preserved in context fingerprints'
+fi

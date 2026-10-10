@@ -52,6 +52,7 @@
       "configs/evidence/kis-historical-price-only-v3-approved-artifacts.json",
       "configs/evidence/kis-range-canonical-approved-manifests.json",
       "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+      "configs/operations/service-status-catalog.json",
       "configs/universes/kr-etf-core-v1.yaml",
       "data/calendars/xkrx/calendar.json",
       "data/calendars/xkrx/manifest.json",
@@ -64,6 +65,7 @@
             "path": "crates/api-server",
             "external_compile_inputs": [
                 "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+                "configs/operations/service-status-catalog.json",
                 "migrations"
             ],
             "local_dependencies": [
@@ -227,6 +229,7 @@
       "compile_commit": "unset",
       "external_inputs": [
         "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+        "configs/operations/service-status-catalog.json",
         "migrations"
       ],
       "clean_packages": [
@@ -348,6 +351,7 @@
       "compile_commit": "unset",
       "external_inputs": [
         "configs/evidence/kr-stock-price-beta-v1-approved-artifacts.json",
+        "configs/operations/service-status-catalog.json",
         "migrations"
       ],
       "clean_packages": [
