@@ -31,6 +31,7 @@ _spec.loader.exec_module(policy_lib)
 
 MAX_COMMAND_BYTES = 16 * 1024
 MAX_SNAPSHOT_BYTES = 256 * 1024
+MAX_PROC_STAT_BYTES = 1024 * 1024
 COMMAND_TIMEOUT_SECONDS = 2.0
 TOTAL_DEADLINE_SECONDS = 20.0
 PUBLIC_FILE = "snapshot.json"
@@ -157,23 +158,24 @@ def parse_timestamp(value: Any) -> datetime | None:
 
 
 def parse_btime(proc_stat_path: str = "/proc/stat") -> str:
-    """Read only the single btime line, rejecting duplicate/malformed records."""
+    """Read a bounded proc-stat file and validate its single btime record."""
     try:
-        with open(proc_stat_path, "rb", buffering=0) as handle:
-            found = None
-            while True:
-                line = handle.readline(4096)
-                if not line:
-                    break
-                if len(line) == 4096 and not line.endswith(b"\n"):
-                    raise CollectError("invalid")
-                if line.startswith(b"btime "):
-                    if found is not None or not re.fullmatch(rb"btime [1-9][0-9]{0,11}\n?", line):
-                        raise CollectError("invalid")
-                    found = int(line.split()[1])
-            if found is None:
+        with open(proc_stat_path, "rb") as handle:
+            contents = handle.read(MAX_PROC_STAT_BYTES + 1)
+        if len(contents) > MAX_PROC_STAT_BYTES:
+            raise CollectError("invalid")
+        found = None
+        for line in contents.splitlines(keepends=True):
+            fields = line.split(None, 1)
+            if not fields or fields[0] != b"btime":
+                continue
+            match = re.fullmatch(rb"btime ([1-9][0-9]{0,11})\n?", line)
+            if found is not None or match is None:
                 raise CollectError("invalid")
-            return canonical_time(datetime.fromtimestamp(found, timezone.utc))
+            found = int(match.group(1))
+        if found is None:
+            raise CollectError("invalid")
+        return canonical_time(datetime.fromtimestamp(found, timezone.utc))
     except CollectError:
         raise
     except OSError:

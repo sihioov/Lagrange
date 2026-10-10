@@ -186,10 +186,10 @@ api_server --> research_status : admin read of last persisted EOD attempt
 ' evidence: data-pipelines/collectors/src/worker.rs:1037; data-pipelines/collectors/src/service_status.rs:80-105,122-137; migrations/0059_research_execution_status.up.sql:56-73
 collectors --> research_status : research_writer records fenced attempts
 
-' evidence: scripts/ops/collect-service-status.py:52-60,159-176,348-402,837-850,1270 (fixed Docker labels/state, systemd property union, and /proc/stat btime)
+' evidence: scripts/ops/collect-service-status.py:45-64,160-182,350-404,839-852,1272 (fixed Docker labels/state, systemd property union, and /proc/stat btime)
 status_host_fields --> status_observer : fixed safe host reads
 
-' evidence: deploy/systemd/lagrange-service-status.service:8-13; scripts/ops/collect-service-status.py:1224-1234; scripts/ops/lib/service-status-policy.py:357-423
+' evidence: deploy/systemd/lagrange-service-status.service:8-13; scripts/ops/collect-service-status.py:1226-1236; scripts/ops/lib/service-status-policy.py:357-423
 status_observer --> status_snapshot : root-owned atomic snapshot write
 
 ' evidence: deploy/compose/compose.service-status.yml:7-12; crates/api-server/src/service_status.rs:27-28,280-282,434-450,531-543 (unchanged production path, owner/mode checks, strict JSON and policy validation)

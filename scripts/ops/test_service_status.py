@@ -70,6 +70,67 @@ def write_private_file(path: Path, data: bytes, mode: int = 0o600) -> None:
     path.chmod(mode)
 
 
+class ParseBtimeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="service-status-btime.")
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "proc-stat"
+
+    def parse_bytes(self, contents: bytes) -> str:
+        self.path.write_bytes(contents)
+        return collector.parse_btime(str(self.path))
+
+    def test_ordinary_valid_btime_keeps_canonical_utc_timestamp(self) -> None:
+        self.assertEqual(self.parse_bytes(b"cpu 1 2 3\nbtime 1960000000\n"), "2032-02-10T04:26:40Z")
+
+    def test_long_unrelated_intr_line_before_valid_btime_is_accepted(self) -> None:
+        contents = b"intr " + b"9" * 5000 + b"\nbtime 1960000000\n"
+        self.assertGreater(len(contents.splitlines()[0]), 4096)
+        self.assertEqual(self.parse_bytes(contents), "2032-02-10T04:26:40Z")
+
+    def test_duplicate_btime_after_long_unrelated_line_is_rejected(self) -> None:
+        contents = b"intr " + b"9" * 5000 + b"\nbtime 1960000000\nbtime 1960000001\n"
+        with self.assertRaises(collector.CollectError) as caught:
+            self.parse_bytes(contents)
+        self.assertEqual(caught.exception.code, "invalid")
+
+    def test_malformed_btime_records_are_rejected(self) -> None:
+        for contents in (
+            b"btime\t1960000000\n",
+            b"btime 0\n",
+            b"btime +1960000000\n",
+            b"btime 1960000000x\n",
+            b"btime 1960000000\nbtime\t1960000001\n",
+        ):
+            with self.subTest(contents=contents):
+                with self.assertRaises(collector.CollectError) as caught:
+                    self.parse_bytes(contents)
+                self.assertEqual(caught.exception.code, "invalid")
+
+    def test_missing_btime_is_rejected(self) -> None:
+        with self.assertRaises(collector.CollectError) as caught:
+            self.parse_bytes(b"cpu 1 2 3\nintr 4 5 6\n")
+        self.assertEqual(caught.exception.code, "invalid")
+
+    def test_oversized_proc_stat_is_rejected(self) -> None:
+        contents = b"btime 1960000000\n" + b"x" * collector.MAX_PROC_STAT_BYTES
+        self.assertGreater(len(contents), collector.MAX_PROC_STAT_BYTES)
+        with self.assertRaises(collector.CollectError) as caught:
+            self.parse_bytes(contents)
+        self.assertEqual(caught.exception.code, "invalid")
+
+    def test_exact_byte_limit_is_accepted(self) -> None:
+        prefix = b"btime 1960000000\nintr "
+        contents = prefix + b"9" * (collector.MAX_PROC_STAT_BYTES - len(prefix) - 1) + b"\n"
+        self.assertEqual(len(contents), collector.MAX_PROC_STAT_BYTES)
+        self.assertEqual(self.parse_bytes(contents), "2032-02-10T04:26:40Z")
+
+    def test_proc_stat_oserror_fails_closed(self) -> None:
+        with self.assertRaises(collector.CollectError) as caught:
+            collector.parse_btime(str(self.path / "missing"))
+        self.assertEqual(caught.exception.code, "invalid")
+
+
 class CollectorVectorTests(unittest.TestCase):
     def test_all_collector_vectors_reduce_to_expected_observations(self) -> None:
         vectors = json.loads((FIXTURES / "collector-vectors.json").read_text())

@@ -178,9 +178,9 @@ api --> pg : app RLS leases + read-only snapshots/LISTEN;\napp-only boolean gran
 api --> pg : bounded Owner evidence reads;\n0058 app-only aggregate + 0059 admin SELECT
 ' evidence: deploy/systemd/lagrange-service-status.timer:4-10; deploy/systemd/lagrange-service-status.service:8-13
 status_timer --> status_service : optional 30s one-shot observer
-' evidence: scripts/ops/collect-service-status.py:52-60,159-176,348-402,837-850,1270
+' evidence: scripts/ops/collect-service-status.py:45-64,160-182,350-404,839-852,1272
 status_host_fields --> status_service : fixed safe-field reads only
-' evidence: deploy/systemd/lagrange-service-status.service:13; scripts/ops/collect-service-status.py:1224-1234; scripts/ops/lib/service-status-policy.py:357-423
+' evidence: deploy/systemd/lagrange-service-status.service:13; scripts/ops/collect-service-status.py:1226-1236; scripts/ops/lib/service-status-policy.py:357-423
 status_service --> status_snapshot : root-owned atomic publish
 ' evidence: deploy/compose/compose.service-status.yml:7-12; crates/api-server/src/service_status.rs:27-28,280-282,434-450,531-543
 status_snapshot ..> api : optional read-only DIRECTORY mount;\nfixed path and ownership validation
