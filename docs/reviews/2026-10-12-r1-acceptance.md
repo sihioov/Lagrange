@@ -1,6 +1,6 @@
 # R1 same-commit hosted acceptance
 
-Status: **HOSTED ACCEPTANCE PENDING — first candidate failed; reviewed follow-up passed local validation.**
+Status: **HOSTED ACCEPTANCE PENDING — C2 passed Rust, DB, policy and functional smoke; the reviewed two-file Python/Web follow-up now passes local validation.**
 Local validation and hosted validation are recorded separately. No production
 rollout or R1 completion is claimed.
 
@@ -148,3 +148,163 @@ and an immutable production manifest are still outside this acceptance.
 
 The retained workspace job log has SHA-256
 `f3dbb7c6c15512c49703a9818ffd8503c9735802ec0faa3a059041ce50d65266`.
+
+## Candidate C2 — f5dff910c53be55c11ae5a69a640052f653c352d
+
+Recovered 2026-10-13 KST. [CI 38266715994](https://github.com/sihioov/Lagrange/actions/runs/38266715994)
+completed with failure. [Research smoke 38266740196](https://github.com/sihioov/Lagrange/actions/runs/38266740196)
+completed successfully on the same C2 commit. Every checkout job matched C2.
+No run was retried or cancelled during recovery.
+
+| Gate | C2 result | Evidence and limits |
+| --- | --- | --- |
+| format / Clippy | Success | Both hosted jobs completed on C2. |
+| policy | Success | All 26 steps succeeded, including the ten-test CI contract suite. |
+| workspace-tests | Success | Chart acceptance: 6 passes, separate from the workspace command. Workspace: 235 result summaries totaling 2,886 passes, zero failures, six ignored and 180 filtered. The log separates 2,834 binary-summary passes and 52 rustdoc passes; this is not a deduplicated test-identity count. |
+| PostgreSQL | Success, APPROVED | All ten selections and the runtime no-SKIP gate succeeded. Full 59-migration ledger/checksum comparison and no-op rerun passed. Hosted output does not expose per-selection test counts, so the local 126 is not attributed to this run. |
+| Python | Failure; pytest cancelled | Dependency and Phase0 setup succeeded. Pytest reached the 73% progress line before a runner shutdown message; no final pytest count exists. The backup-policy step was not reached. |
+| Web | Failure before browser execution | OpenAPI, lint, typecheck, 61 Vitest files / 487 tests and build passed. Two subcases of one cleanup regression failed among 31 unittest methods. Browser inventory and the required 135 executions were not reached. |
+| research-smoke | Success; functional PASS | The job ran approximately 52 minutes and emitted static and functional PASS without a functional skip. Its normal-exit trap suppresses teardown errors; no independent hosted resource-removal receipt exists. |
+| required | Failure | Python and Web prevent C2 acceptance. |
+
+Detailed bounded receipts are retained in
+`target/r1-runtime-fxi6ltmv/hosted-f5dff91/`. Exact job-log SHA-256 values:
+
+- Workspace: `bc08f2e580d32cc6cfa054acbf1d9a5af279db8f46eede20f6076197b0132ad6`.
+- PostgreSQL: `f341387d732b1dcf20d56763daa92d0e01380a14b08c7da816726a283bed2738`.
+- Python: `faa7c6c6e582960053eddca2ddd28ff1a468d65e1e08c8c9d8da5d449c5b20a5`.
+- Web: `a2131930e6d1020f0e62a656bedfba55e2751ae2cf463fd34036ebe2b5b54387`.
+- Smoke: `9001483ec3db6e6d4d70ddd2638649d0cb2c25ed88a7fb41dbfe7be345d29d85`.
+
+### Python ownership counterexample and bounded repair
+
+Source analysis found that an unrelated direct child could be mistaken for an
+adopted descendant. Its caller session then authorized registering and signaling
+the pytest process itself. A multiprocessing resource tracker supplies this
+precondition. The original hosted sender, recipient and session topology were
+not observed; the earlier shutdown entries describe symptoms, not an established
+infrastructure-only cause.
+
+One independently reviewed, signal-denying diagnostic ran against an exact C2
+archive with CPython 3.12.13. Ownership masks progressed 0 → 2 → 3: first the
+resource tracker, then the supervisor itself. One self-directed TERM reached the
+denying hook. Actual signal deliveries were empty. Controller, leaf and tracker
+exited 0, the tracker was reaped, and both child identities were absent afterward.
+All 1,828 source entries were unchanged. This establishes the local defect, not
+retrospective hosted attribution or equivalence to hosted CPython 3.12.15.
+
+The exclusive one-shot marker and original receipts remain in
+`hosted-f5dff91-root/python-ownership-proof/` within the evidence root.
+Result SHA-256: `ed489e76abf336ee53e62dfca6ec533b87c895c62a1a1b642a303d927b3ceb80`.
+Both source manifest SHA-256 values:
+`a73a90bb9a208c3d0e97f7f5c1da24217f47c455d1ede26cd6aa146ab28f9668`.
+No diagnostic repetition is needed.
+
+The two-file repair excludes the caller PID/session and pre-existing direct-child
+generations from ownership authority, registration and final PID/group signaling.
+The regression class restores the prior subreaper flag and requires its exact
+baseline child generations after each test. A mocked graph test covers rejected
+caller/pre-existing identities, contaminated authority and valid detached/root
+signaling. All prior 31 methods remain, plus this one new method.
+
+Separately, the cleanup regression expected a cooperative Python TERM handler's
+file write within 50 ms. Its reviewed test-only repair uses the unchanged
+production 5-second TERM/reap limits and checks writer/root reap plus the exact
+write marker at raw-file deletion. Production deadlines and cleanup requirements
+are unchanged.
+
+The new mocked graph test passed once (1 test, exit 0). Independent source review
+accepted every changed hunk with no findings; all 31 old method names and the 30
+unchanged old bodies were verified. The standalone suite passed all 32 methods
+with no skips on the native continuation (exit 0, 23.456 seconds including launch).
+Its first sandbox attempt could not allocate a loopback port and ran zero tests.
+The shared-interpreter pytest command then stopped before collection because the
+sandbox made uv's existing cache read-only. Its exact native continuation passed
+all 34 selected tests (two multiprocessing cases followed by the 32 runner methods
+in one interpreter). Full repository pytest then passed 482 tests, with ten skips
+and seven warnings, and backup policy passed 6/6. All three commands exited 0.
+The only full-suite selection addition was `PYTEST_ADDOPTS=--ignore=target`, which
+excludes ignored local archives/caches absent from a clean CI checkout. No source
+tests were excluded. No install, sync, dependency or source change occurred.
+
+The quiet full-run progress contains 492 outcomes. Its ten skip positions map to
+the unchanged static inventory: two Windows-only cases and eight root-only
+metadata fixtures. All 30 source files preceding the last skip match that
+inventory; the new runner test is later. Reasons are inferred from those
+unchanged clauses and the earlier `-ra` receipt, not emitted anew by this quiet
+run. Mapping receipt SHA-256:
+`ac7335d3564ae23ef10905cedb1fd10c5b2a00976c8c33dcc2ebc31f63c68f66`.
+The Windows Job Object/secure-handle and root metadata behavior remains untested
+in this non-root Linux run. The earlier 450-pass result remains historical.
+
+The current browser wrapper subsequently passed, as recorded below. No NT,
+workflow, dependency or provider change is part of this repair. R1-08 remains open.
+
+Standalone log SHA-256:
+`2be0de9dc1e4f20a1fdcd5a9e67787b61a675efa0ee7cdc88c72ec86e4f2fe2b`.
+Both source pins and the 25 Phase0 files were unchanged during this first stage;
+that stage did not retain a full repository Python manifest. The continuation
+captured all 124 tracked Python files, both NT dependency manifests and the 25
+Phase0 files; its before/after receipts were identical. Manifest SHA-256:
+`5cb0d36b2abc337e43fc4a48e0da9a361d55a44ca393fe1ae59aaa1a54f3ef2e`.
+The coordinator verified each command exit and log digest. All command children
+were reaped. Shared-interpreter log SHA-256:
+`b094d585f7a506cb847b3db07b80f598faaf6f7cba5c00bd9ea2f51f8f960963`;
+full pytest: `8b5bcf7a20de2a7b0acc9a4f6e3c6535772f51603ff6cb294e1f7a560c94186a`;
+backup: `f03d76e3c1728f6dda85bed4b03b99a1b99e8cd329e0f86fff239db4958cc4a2`.
+Private reports are
+`hosted-f5dff91-root/ownership-repair-review.md` and
+`hosted-f5dff91-root/ownership-python-validation.md` within the evidence root.
+
+### Candidate C3 local acceptance
+
+C3 is the commit adding this record and the reviewed two-file repair. The official
+wrapper ran once with `--web-port 33020 --api-port 38182`, exited 0 in 300.205 seconds,
+and passed its mandatory 32 regressions before completing browser inventory and
+all 135 executions: off 121, market-stream 13, separate owner-empty 1. There are
+134 unique synthetic identities; owner-empty is the sole cross-phase duplicate.
+The dedicated `@actual` test was excluded as required. No failure, skip, retry or
+flaky attempt occurred.
+
+The coordinator verified all 12 artifact-manifest entries and the three result
+file counts, exit receipts, coverage, source equality and cleanup evidence. All
+30 captured source/config/lock/runtime inputs matched before and after. Before
+and after manifest files have different enclosing metadata, but identical input
+maps. Both reviewed Python pins and the intraday spec pin remained unchanged.
+All 345 recorded process generations were absent afterward; the wrapper child
+was reaped and the three assigned ports had no TCP rows.
+
+Evidence: `target/r1-web-e2e-1791822453272083578-3495d2b1a987/` and
+`target/r1-runtime-fxi6ltmv/hosted-f5dff91-root/ownership-web-validation/`.
+Run receipt SHA-256: `2f97cd5c2cce972d41c6844fed9ae2d72f15afdcaea54f4d465e8a0d4ec1da5f`;
+artifact manifest: `624a059a72c55dbe935251470bbf507096efb81127e1c7143a6f68a73f34ba3b`;
+wrapper log: `756e12591f1562db9e06f8d3de2011b90be77a06f054c480fccf534ab656455a`.
+
+Independent source review and the focused/shared/full Python, backup and Web
+results accept this bounded follow-up locally. No unresolved local defect remains.
+The coordinator confirmed the review and validation workers were actually idle
+with no pending permissions before candidate preparation. Both hosted workflows
+must still pass on C3; C2's successes do not establish C3 acceptance. The separate
+actual API lane was not repeated because its source was unchanged. Production,
+Windows parity and the root-only metadata fixtures remain outside these results.
+
+### Deployment preparation limits
+
+C2's official image builder plan and preflight both exited 0; an independent
+source audit found no new release-source defect and matched all 59 up-migration
+checksums. No actual release images or immutable manifest were created.
+
+The exact noninteractive root access probe required interactive authentication.
+The observed production research-worker was exited 2/unhealthy while Owner V2
+was running; the ordinary build-health predicate was not satisfied. No service
+change, drain, exception or activation is authorized by these preparation records.
+The current-link observation alone does not establish database compatibility,
+backup integrity or restore readiness.
+
+R1-09 stays BLOCKED until the final candidate passes CI and a root-capable
+operator/session can satisfy the documented build-health prerequisites. The
+coordinator will refresh the concrete official build plan for that candidate
+before requesting external help. C2's retained proposal is
+`target/r1-runtime-fxi6ltmv/release-readonly-f5dff91/candidate-build-handoff.md`;
+it must not be reused as proof for a later commit. Production activation remains
+outside this R1 task.

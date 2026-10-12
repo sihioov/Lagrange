@@ -7,7 +7,7 @@ Native subagents: prohibited for worker packages
 - 계획 기준 커밋: `1b8dca3214ee98c4c23844b888dc4e1fde0ba4a2`
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
 - 상위 작업: [개발 로드맵 R1-01~R1-09](../../ROADMAP.md#5-r1--개발배포-기준-복구)
-- 상태: **첫 후보 `79da119`의 hosted 실패에 대한 후속 7개 소스 파일의 로컬 검증·독립 리뷰 수용; 후보 C2 hosted 검증 대기.** DB 전체 validator는 auth library 4개를 포함해126 pass/0 fail/0 ignored/noSKIP, artifact library196·runner31·CI 계약10과 해당 strict Clippy가 통과했다. 기존 로컬 결과와 첫 hosted 실패·Python runner shutdown·smoke40분 중단은 [후보별 인수 기록](../../reviews/2026-10-12-r1-acceptance.md)과 [실행 기록](../../reviews/2026-10-12-r1-execution.md)에 보존한다. 새 후보의 두 hosted workflow를 같은 커밋으로 검증한다.
+- 상태: **C2의 Python·Web 실패에 대한 두 파일 후속 수정·독립 리뷰·로컬 검증 수용, 후보 C3 hosted 검증 대기.** runner32·공유 multiprocessing34·전체 Python482/skip10·backup6·새 Web135회가 통과했다. 이전 결과와 관측 한계는 [후보별 인수 기록](../../reviews/2026-10-12-r1-acceptance.md)과 [실행 기록](../../reviews/2026-10-12-r1-execution.md)에 보존한다. C3의 두 hosted workflow를 같은 커밋으로 검증하며, WP-7 실제 빌드는 root 인증·운영 health 전제에 차단돼 있다.
 
 ## Goal and boundaries
 
@@ -422,10 +422,18 @@ R1의 최종 상태는 상위 ROADMAP에서 관리하며 두 문서가 어긋나
 - [x] WP-1 — R1-01 실패 기준선·수정 명세 수용. 2026-10-12; 대상 `ac0a083`; [기준선·검증](../../reviews/2026-10-12-r1-baseline.md). 실제 SQL/기능 smoke 검증은 후속 WP에 남음.
 - [x] WP-2 — R1-02·R1-03 Rust 수정·개별 검증 수용. 2026-10-12; [수정 후보 workspace2886 pass/0 fail 및 strict6·golden/legacy](../../reviews/2026-10-12-r1-workspace-validation.md). source572·manifest24 동일성과 QA 정리를 확인했다. 최종 커밋의 hosted 통합 수용은 WP-6에 남는다.
 - [x] WP-3 — R1-04 DB 수정·개별 검증 수용. 2026-10-12; dirty 후보의 정확한 source hash와 [전체122개 통과](../../reviews/2026-10-12-r1-postgres.md), [독립 증거 리뷰](../../reviews/2026-10-12-r1-review.md). [후속 후보 validator126 및 strict Clippy도 수용](../../reviews/2026-10-12-r1-acceptance.md). R1-04의 최종 후보 커밋 hosted 재검증은 WP-6에 남음.
-- [x] WP-4 — 첫 후보 및 hosted 준비 단계 후속 수정의 로컬 검증 수용. 기존 근거: 2026-10-12; [Web 135/135 및 회귀 31](../../reviews/2026-10-12-r1-web-validation.md), [Python·정적 검사](../../reviews/2026-10-12-r1-runner.md), [전체 기능 smoke](../../reviews/2026-10-12-r1-smoke-validation.md). Hosted 결과는 WP-6에 남는다.
-- [x] WP-5 — 첫 후보 및 hosted 후속 7개 소스 파일의 독립 리뷰 수용; blocking 없음. 기존 근거: 2026-10-12; [90개 소스 감사](../../reviews/2026-10-12-r1-final-source-review.md), [controlled fixture 리뷰](../../reviews/2026-10-12-r1-web-controlled-review.md), [최종 delta·CONTROL1 해소](../../reviews/2026-10-12-r1-web-final-repair-review.md). 코디네이터가 최신 typecheck·focused 3/3·전체 135/135 결과를 별도로 대조했다.
+- [x] WP-4 — 2026-10-13 후속 로컬 수용: runner32·공유 multiprocessing34·전체 Python482/skip10·backup6·새 Web135회 통과. [후속 인수 근거](../../reviews/2026-10-12-r1-acceptance.md). 이전 수용·실패 근거는 보존한다: [Web](../../reviews/2026-10-12-r1-web-validation.md), [Python·정적 검사](../../reviews/2026-10-12-r1-runner.md), [전체 기능 smoke](../../reviews/2026-10-12-r1-smoke-validation.md). C3 hosted 결과는 WP-6에 남는다.
+- [x] WP-5 — 2026-10-13 후속 독립 리뷰 수용: 소유권 경계·테스트 격리·cleanup 두 파일의 모든 hunk·hash·기존 테스트 보존 확인, findings 없음. 코디네이터가 새 Python·Web 결과와 소스 동일성을 대조했다. [후속 인수 근거](../../reviews/2026-10-12-r1-acceptance.md). 이전 [90개 소스 감사](../../reviews/2026-10-12-r1-final-source-review.md) 및 [최종 delta 리뷰](../../reviews/2026-10-12-r1-web-final-repair-review.md)는 보존한다.
 - [ ] WP-6 — R1-08 동일 커밋 CI·기능 smoke 인수
 - [ ] WP-7 — R1-09 실제 배포 후보 준비 인수
+
+2026-10-13 후속 범위는 `scripts/qa/candidate-web-e2e-runner.py`와
+`scripts/qa/test_candidate_web_e2e_runner.py`다. 호출 세션·기존 자식의 소유권 제외,
+subreaper 복원, 기존 자식 보존과 새 잔존 자식 거부, production deadline을 그대로 사용하는
+cleanup 회귀를 검증한다. 새 테스트 하나를 추가하며 기존 테스트·선택·기능 assertion을 축소하지 않는다.
+한 로컬 heavy slot에서 standalone → multiprocessing과 runner의 같은 pytest process →
+전체 repository pytest → backup 정책 → 전체 Web wrapper를 순서대로 실행한다.
+독립 소스 리뷰는 병행한다. 실제 신호를 차단한 C2 재현은 한 번 완료됐으며 반복하지 않는다.
 
 | 날짜 (KST) | 변경 | 근거 |
 | --- | --- | --- |
@@ -437,3 +445,5 @@ R1의 최종 상태는 상위 ROADMAP에서 관리하며 두 문서가 어긋나
 | 2026-10-12 | 전체 Rust lint의 겹치지 않는 A/B 구현 범위 및 C-SHARED/REST/WIRE 개별 예외 수용; DB0050 예상 실패 뒤 pool 재생성 보정 | [전체 lint 계약](../../reviews/2026-10-12-r1-rust-lint-contract.md)의112 canonical group·23파일. [실행 기록](../../reviews/2026-10-12-r1-execution.md)의 동일 소스 hash 대조·관측한 disposable DB advisory wait·제한된 쿼리 취소 근거. 동적·최종 수용은 별도 |
 | 2026-10-12 | Rust strict6개/fmt 및 root cfg·SQL공백 독립 리뷰 통과; DB 개별 패키지 수용; C2 새 fixture와 Web 본문6개 finding의 닫힌 후속 범위 실행 | [실행 기록](../../reviews/2026-10-12-r1-execution.md), [C2 갱신 계약](../../reviews/2026-10-12-r1-execution.md#c2-disposable-fixture-갱신-계약), [독립 리뷰](../../reviews/2026-10-12-r1-review.md). 기존 cluster·binding·guard 보존, 운영/provider 승인 확대 없음. 최종C 수용은 미완료 |
 | 2026-10-12 | 최종 Web 135/135·회귀 31 및 전체 기능 smoke를 수용하고 WP-4·WP-5 완료. 같은 후보 커밋의 hosted 검증 준비 | [Web](../../reviews/2026-10-12-r1-web-validation.md), [최종 리뷰](../../reviews/2026-10-12-r1-web-final-repair-review.md), [smoke](../../reviews/2026-10-12-r1-smoke-validation.md). 전체 R1·배포 후보 완료를 뜻하지 않음 |
+| 2026-10-13 | C2 CI·smoke terminal 회수 후 WP-4·WP-5 재개, WP-7 외부 전제 차단 기록 | Rust·DB·policy·smoke 성공, Python·Web 실패. 단일 signal-denying proof에서 실행기 소유권 결함 확인. 두 Python 파일에 한정한 수정·독립 리뷰·직렬 검증; [후보별 기록](../../reviews/2026-10-12-r1-acceptance.md) |
+| 2026-10-13 | WP-4·WP-5 후속 수용, C3 hosted 검증 준비 | 새 소스의 runner32·공유34·전체 Python482/skip10·backup6·Web135회와 독립 리뷰 통과; [근거·한계](../../reviews/2026-10-12-r1-acceptance.md) |

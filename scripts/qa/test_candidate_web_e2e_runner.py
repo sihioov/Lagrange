@@ -388,6 +388,23 @@ def snapshot_root(supervisor: runner.Supervisor, info: runner.ProcessInfo) -> ru
 class CandidateE2ERunnerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        previous = ctypes.c_int()
+        if libc.prctl(37, ctypes.byref(previous), 0, 0, 0) != 0:  # PR_GET_CHILD_SUBREAPER
+            raise OSError(ctypes.get_errno(), "prctl")
+
+        def restore_subreaper() -> None:
+            if libc.prctl(36, previous.value, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+                raise OSError(ctypes.get_errno(), "prctl")
+
+        cls.addClassCleanup(restore_subreaper)
+        cls.baseline_children = frozenset(
+            (info.pid, info.start_ticks, info.uid)
+            for info in runner.proc_snapshot().values()
+            if info.ppid == os.getpid()
+        )
         runner.enable_child_subreaper()
         stream_port = free_port(REGRESSION_WEB_PORT_RANGE)
         stream_patch = mock.patch.object(runner, "STREAM_WEB_PORT", stream_port)
@@ -395,10 +412,17 @@ class CandidateE2ERunnerTests(unittest.TestCase):
         cls.addClassCleanup(stream_patch.stop)
 
     def tearDown(self) -> None:
-        # This fresh regression process launches only task-owned children.
-        # Fail the suite if any root or adopted descendant escaped a finalizer.
-        children = [info.pid for info in runner.proc_snapshot().values() if info.ppid == os.getpid()]
-        self.assertEqual(children, [], "task-owned child remains after focused regression")
+        # Full pytest can already own unrelated multiprocessing helpers. Keep
+        # their generations intact and still reject every new surviving child.
+        children = frozenset(
+            (info.pid, info.start_ticks, info.uid)
+            for info in runner.proc_snapshot().values()
+            if info.ppid == os.getpid()
+        )
+        self.assertEqual(
+            children, self.baseline_children,
+            "baseline child changed or task-owned child remains after regression",
+        )
 
     def test_canonical_port_overrides_and_ranges(self) -> None:
         candidate_ports = set(range(runner.API_PORT_RANGE[0], runner.API_PORT_RANGE[1] + 1))
@@ -929,14 +953,31 @@ while True: time.sleep(0.05)
                     result_path.unlink(missing_ok=True)
                     self.assertEqual(supervisor.safe_signal(writer, signal.SIGUSR1), "signaled")
                     deadline = time.monotonic() + 2
-                    while not script.with_suffix(".writes").exists() and time.monotonic() < deadline:
+                    marker = script.with_suffix(".writes")
+                    while time.monotonic() < deadline:
+                        if marker.exists() and marker.read_text() == "late\n":
+                            break
                         supervisor.refresh_owned()
                         time.sleep(0.01)
+                    self.assertEqual(marker.read_text(), "late\n")
                     self.assertTrue(RAW_SENTINEL in result_path.read_text())
+                    original_unlink = Path.unlink
+
+                    def remove_after_reap(path: Path, *args: object, **kwargs: object) -> None:
+                        if path == result_path:
+                            self.assertIsNone(runner.proc_info(writer_pid))
+                            self.assertTrue(all(root.popen.poll() is not None for root in supervisor.roots))
+                            self.assertEqual(marker.read_text(), "late\nterm\n")
+                            self.assertTrue(RAW_SENTINEL in path.read_text())
+                        original_unlink(path, *args, **kwargs)
+
                     started = time.monotonic()
-                    with mock.patch.object(runner, "TERM_GRACE_SECONDS", 0.05), mock.patch.object(runner, "REAP_GRACE_SECONDS", 0.5):
+                    with mock.patch.object(Path, "unlink", autospec=True, side_effect=remove_after_reap):
                         self.assertTrue(supervisor.cleanup_all())
-                    self.assertLess(time.monotonic() - started, 1.0)
+                    self.assertLess(
+                        time.monotonic() - started,
+                        runner.TERM_GRACE_SECONDS + runner.REAP_GRACE_SECONDS + 5.0,
+                    )
                     self.assertEqual(script.with_suffix(".writes").read_text(), "late\nterm\n")
                     self.assertEqual(supervisor.roots[0].popen.returncode, 0)
                     self.assertIsNone(runner.proc_info(writer_pid))
@@ -1226,6 +1267,77 @@ while True: time.sleep(0.05)
         finally:
             supervisor.cleanup_all()
             temp.cleanup()
+
+    def test_caller_session_and_preexisting_children_never_authorize_cleanup(self) -> None:
+        uid = os.geteuid()
+        caller = runner.proc_info(os.getpid())
+        self.assertIsNotNone(caller)
+        assert caller is not None
+        ancestor = runner.ProcessInfo(caller.ppid, 1, caller.pgid, caller.sid, 100, uid, "S")
+        preexisting = runner.ProcessInfo(940001, caller.pid, 940001, 940001, 200, uid, "S")
+        tracker = runner.ProcessInfo(940002, caller.pid, caller.pgid, caller.sid, 201, uid, "S")
+        peer = runner.ProcessInfo(940003, 1, caller.pgid, caller.sid, 202, uid, "S")
+        unrelated_child = runner.ProcessInfo(940004, preexisting.pid, preexisting.pgid, preexisting.sid, 203, uid, "S")
+        original = runner.ProcessInfo(940010, caller.pid, 940010, 940010, 210, uid, "S")
+        detached = runner.ProcessInfo(940011, original.pid, 940011, 940011, 211, uid, "S")
+        snapshot = {info.pid: info for info in (caller, ancestor, preexisting)}
+        with mock.patch.object(runner, "proc_snapshot", side_effect=lambda: snapshot):
+            temp, _evidence, supervisor = make_supervisor(self)
+            root = snapshot_root(supervisor, original)
+            try:
+                snapshot.update({info.pid: info for info in (tracker, original, detached)})
+                with (
+                    mock.patch.object(supervisor, "_identity", side_effect=lambda pid: snapshot.get(pid)),
+                    mock.patch.object(runner.os, "kill") as kill,
+                    mock.patch.object(runner.os, "killpg") as killpg,
+                    mock.patch.object(runner.signal, "pidfd_send_signal") as pidfd_signal,
+                ):
+                    supervisor.refresh_owned()
+                    supervisor.refresh_owned()
+                    forbidden = (caller, ancestor, preexisting, tracker)
+                    for info in forbidden:
+                        self.assertNotIn(info.pid, supervisor.owned)
+                    self.assertIn(original.pid, supervisor.owned)
+                    self.assertEqual(supervisor.owned[detached.pid].origin_root, root.root_key)
+
+                    # Even a contaminated registry cannot turn these identities
+                    # into session/parent authority or permit final delivery.
+                    for info in forbidden:
+                        supervisor.owned[info.pid] = runner.ProcessRef(
+                            info.pid, info.start_ticks, info.uid, root.root_key, info.pgid, info.sid,
+                        )
+                    snapshot.update({info.pid: info for info in (peer, unrelated_child)})
+                    supervisor.refresh_owned()
+                    self.assertNotIn(peer.pid, supervisor.owned)
+                    self.assertNotIn(unrelated_child.pid, supervisor.owned)
+                    for info in forbidden:
+                        self.assertEqual(
+                            supervisor.safe_signal(supervisor.owned[info.pid], signal.SIGTERM),
+                            "ownership_unverified",
+                        )
+
+                    # Test the group gate with otherwise matching ownership so
+                    # generation/origin mismatches cannot mask an unsafe send.
+                    for info in (caller, preexisting):
+                        foreign_root = runner.ManagedProcess(
+                            "foreign-root", (), "off", mock.Mock(pid=info.pid), info, mock.Mock(),
+                        )
+                        supervisor.owned[info.pid] = runner.ProcessRef(
+                            info.pid, info.start_ticks, info.uid, foreign_root.root_key, info.pgid, info.sid,
+                        )
+                        with mock.patch.object(supervisor, "refresh_owned", return_value={info.pid: info}):
+                            self.assertEqual(supervisor._signal_session(foreign_root, signal.SIGTERM), set())
+                    kill.assert_not_called()
+                    killpg.assert_not_called()
+                    pidfd_signal.assert_not_called()
+
+                    self.assertEqual(supervisor.safe_signal(supervisor.owned[detached.pid], signal.SIGTERM), "signaled")
+                    kill.assert_called_once_with(detached.pid, signal.SIGTERM)
+                    self.assertEqual(supervisor._signal_session(root, signal.SIGTERM), {original.pid})
+                    killpg.assert_called_once_with(original.pgid, signal.SIGTERM)
+                    pidfd_signal.assert_not_called()
+            finally:
+                temp.cleanup()
 
     def test_reused_root_session_and_descendant_generation_never_authorize_foreign_listener_or_signal(self) -> None:
         temp, evidence, supervisor = make_supervisor(self)

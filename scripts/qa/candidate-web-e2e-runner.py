@@ -516,9 +516,25 @@ class Supervisor:
         self.cleanup_errors: list[str] = []
         self.raw_reports: set[Path] = set()
         self.uid = os.geteuid()
+        self.caller_pid = os.getpid()
+        self.caller_sid = os.getsid(0)
+        self.preexisting_children = frozenset(
+            (info.pid, info.start_ticks, info.uid)
+            for info in proc_snapshot().values()
+            if info.ppid == self.caller_pid
+        )
 
     def _identity(self, pid: int) -> ProcessInfo | None:
         return proc_info(pid)
+
+    def _excluded_identity(self, info: ProcessInfo) -> bool:
+        # spawn() creates a new session. The caller's session and child
+        # generations that existed before this supervisor carry no authority.
+        return (
+            info.pid == self.caller_pid
+            or info.sid == self.caller_sid
+            or (info.pid, info.start_ticks, info.uid) in self.preexisting_children
+        )
 
     def spawn(
         self,
@@ -615,7 +631,7 @@ class Supervisor:
         anchors: dict[tuple[int, int], tuple[int, int] | None] = {}
         for pid, ref in tuple(self.owned.items()):
             info = snapshot.get(pid)
-            if info is None or not self._same_generation(ref, info):
+            if info is None or not self._same_generation(ref, info) or self._excluded_identity(info):
                 continue
             self.owned[pid] = dataclasses.replace(ref, pgid=info.pgid, sid=info.sid)
             anchors[(info.sid, info.uid)] = ref.origin_root
@@ -635,13 +651,18 @@ class Supervisor:
                     continue
                 parent = self.owned.get(info.ppid)
                 parent_info = snapshot.get(info.ppid)
-                if parent is None or parent_info is None or not self._same_generation(parent, parent_info):
+                if (
+                    parent is None or parent_info is None
+                    or not self._same_generation(parent, parent_info)
+                    or self._excluded_identity(parent_info)
+                ):
                     continue
                 if info.pid not in root_pids and self._register_descendant(info, parent.origin_root):
                     changed = True
 
-        # This private subreaper launches children only through spawn(). An
-        # unregistered direct child is therefore a kernel-adopted descendant.
+        # A newly adopted child may have detached from its root's session.
+        # Exclude caller-session helpers and pre-existing child generations:
+        # an embedding pytest process can already own a resource tracker.
         # Unknown launch PIDs and old PID generations are never recovered here.
         for info in snapshot.values():
             if info.ppid == os.getpid() and info.pid not in root_pids:
@@ -649,7 +670,7 @@ class Supervisor:
         return snapshot
 
     def _register_descendant(self, info: ProcessInfo, root_key: tuple[int, int] | None) -> bool:
-        if info.uid != self.uid or info.pid in self.owned:
+        if info.uid != self.uid or info.pid in self.owned or self._excluded_identity(info):
             return False
         self.owned[info.pid] = ProcessRef(
             info.pid, info.start_ticks, info.uid, root_key, info.pgid, info.sid
@@ -672,6 +693,8 @@ class Supervisor:
             return "generation_mismatch"
         if current.uid != ref.uid or ref.uid != self.uid:
             return "uid_mismatch"
+        if self._excluded_identity(current):
+            return "ownership_unverified"
         registered = self.owned.get(ref.pid)
         if registered is None or (
             registered.start_ticks, registered.uid, registered.origin_root
@@ -697,7 +720,7 @@ class Supervisor:
 
     def _signal_session(self, root: ManagedProcess, signum: int) -> set[int]:
         info = root.root_info
-        if info is None:
+        if info is None or self._excluded_identity(info):
             return set()
         snapshot = self.refresh_owned()
         members = [item for item in snapshot.values() if item.pgid == info.pgid and item.sid == info.sid]
@@ -705,12 +728,18 @@ class Supervisor:
             return set()
         for member in members:
             ref = self.owned.get(member.pid)
-            if ref is None or not self._same_generation(ref, member) or ref.origin_root != root.root_key:
+            if (
+                ref is None or not self._same_generation(ref, member)
+                or ref.origin_root != root.root_key or self._excluded_identity(member)
+            ):
                 return set()
         # Verify once more immediately before signaling the registered group.
         for member in members:
             current = self._identity(member.pid)
-            if current is None or not self._same_generation(self.owned[member.pid], current):
+            if (
+                current is None or not self._same_generation(self.owned[member.pid], current)
+                or self._excluded_identity(current)
+            ):
                 return set()
             if current.pgid != info.pgid or current.sid != info.sid:
                 return set()
