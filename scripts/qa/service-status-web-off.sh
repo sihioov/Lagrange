@@ -181,7 +181,6 @@ run_browser_unit() {
       --grep-invert '@actual' \
       tests/e2e/service-status.spec.ts \
       tests/e2e/stock-beta.spec.ts \
-      tests/e2e/stock-beta-intraday.spec.ts \
     >"$log_file" 2>&1 &
   playwright_runner_pid=$!
   if service_status_wait_unit "$phase" "$playwright_unit" "$metrics_file" "$playwright_runner_pid"; then result=0; else result=$?; fi

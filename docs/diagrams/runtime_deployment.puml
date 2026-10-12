@@ -106,9 +106,9 @@ package "MANUAL WS PREPARATION — OPERATOR GATED\nsource contracts; LIVE_ACCEPT
 
 ' evidence: scripts/ops/provision-owner-market-stream.py:29,197,200,205,233,360
 ws_ops --> ws_init : one bounded owned container;\npersistent parent bind
-' evidence: crates/kis-client/src/market_stream_provisioning.rs:81,90,97,106; crates/kis-client/src/market_stream_state.rs:1747
+' evidence: crates/kis-client/src/market_stream_provisioning.rs:81,90,97,106; crates/kis-client/src/market_stream_state.rs:1738
 ws_init --> ws_state : exclusive first creation;\nreapply validates only
-' evidence: crates/kis-client/src/market_stream_state.rs:1546,1778,1785
+' evidence: crates/kis-client/src/market_stream_state.rs:1524,1758,1765
 ws_init --> ws_anchors : exclusive stable anchors;\nno repair or replacement
 ' evidence: scripts/ops/lib/market-stream-grant.py:35,690,730,984,1049
 ws_ops --> ws_grant : exact image + named one-off;\nno build/pull/dependency startup
@@ -172,9 +172,9 @@ end note
 
 ' ---------------- api-server ----------------
 
-' evidence: crates/api-server/src/repos/owner_market_stream.rs:37,54,78,93,105 (app actor/binding/lease/snapshot); crates/api-server/src/http/owner_market_stream.rs:685,687 (app LISTEN); migrations/0055_owner_market_stream.up.sql:507,521; migrations/0057_owner_market_stream_api_binding.up.sql:53 (app-only helper); deploy/compose/compose.yml:165 (existing role pools)
+' evidence: crates/api-server/src/repos/owner_market_stream.rs:37,54,78,93,105 (app actor/binding/lease/snapshot); crates/api-server/src/http/owner_market_stream.rs:693,695 (app LISTEN); migrations/0055_owner_market_stream.up.sql:507,521; migrations/0057_owner_market_stream_api_binding.up.sql:53 (app-only helper); deploy/compose/compose.yml:165 (existing role pools)
 api --> pg : app RLS leases + read-only snapshots/LISTEN;\napp-only boolean grant binding;\nadmin session reads + audit_writer
-' evidence: crates/api-server/src/repos/service_status.rs:308-314,559-570,975-978,999-1009; migrations/0058_service_status_reads.up.sql:16,605-607; migrations/0059_research_execution_status.up.sql:56-73
+' evidence: crates/api-server/src/repos/service_status.rs:308-314,559-570,970-974,995-1007; migrations/0058_service_status_reads.up.sql:16,605-607; migrations/0059_research_execution_status.up.sql:56-73
 api --> pg : bounded Owner evidence reads;\n0058 app-only aggregate + 0059 admin SELECT
 ' evidence: deploy/systemd/lagrange-service-status.timer:4-10; deploy/systemd/lagrange-service-status.service:8-13
 status_timer --> status_service : optional 30s one-shot observer
@@ -266,9 +266,9 @@ obr --> pg : claim + publish\n(worker, owner-beta-db net)
 ' evidence: deploy/compose/compose.yml:1081 (historical-price-beta-root ro mount)
 artifacts --> obr : ro (approved\nartifact leaf only)
 
-' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:567,771 (read-only EOD REST), 845-856 (WS factory), 1359-1370 (WS-only backend), 1462,1464 (domain/approval); crates/kis-client/src/market_stream.rs:32 (fixed WS endpoint), crates/kis-client/src/market_stream_approval.rs:19,215 (approval path/acquisition); deploy/compose/compose.yml:1155 (existing credentials/egress)
+' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:567,771 (read-only EOD REST), 845-856 (WS factory), 1366-1377 (WS-only backend), 1469,1471 (domain/approval); crates/kis-client/src/market_stream.rs:32 (fixed WS endpoint), crates/kis-client/src/market_stream_approval.rs:19,215 (approval path/acquisition); deploy/compose/compose.yml:1155 (existing credentials/egress)
 oev2 --> kis : read-only EOD REST; optional realtime\nmarket-WS H0STCNT0 + Approval\n(source capability; bounded activation gated)
-' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:1472 (worker stream repository); migrations/0055_owner_market_stream.up.sql:525,532,547,558 (worker grant/producer/subscription/cache columns); migrations/0056_owner_market_stream_runtime.up.sql:7,32 (runtime lineage metadata/worker update); deploy/compose/compose.yml:1130 (worker role)
+' evidence: crates/job-queue/src/bin/owner-equity-v2-runner.rs:1479 (worker stream repository); migrations/0055_owner_market_stream.up.sql:525,532,547,558 (worker grant/producer/subscription/cache columns); migrations/0056_owner_market_stream_runtime.up.sql:7,32 (runtime lineage metadata/worker update); deploy/compose/compose.yml:1130 (worker role)
 oev2 --> pg : universe V2 state + fenced stream lease,\nsubscription and latest cache writes (worker)
 ' evidence: deploy/compose/compose.yml:1176 (raw rw mount); data-pipelines/collectors/src/owner_equity_v2.rs:45,144 (capture + materialize from raw)
 oev2 --> raw : rw (EOD V2 capture only;\nno intraday quote data)

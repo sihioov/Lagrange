@@ -275,13 +275,16 @@ fn replacing_valid_anchor_inode_breaks_persisted_domain_binding() {
     let domain = MarketStreamDomain::for_test(root.path(), slot).unwrap();
     let before = fs::read(domain.state_directory().join(STATE_FILE)).unwrap();
     let (_, anchors) = paths(root.path());
-    fs::remove_file(anchors.join(CONNECTION_LOCK_FILE)).unwrap();
-    fs::File::create(anchors.join(CONNECTION_LOCK_FILE)).unwrap();
-    fs::set_permissions(
-        anchors.join(CONNECTION_LOCK_FILE),
-        Permissions::from_mode(0o440),
-    )
-    .unwrap();
+    let anchor_path = anchors.join(CONNECTION_LOCK_FILE);
+    let original_anchor = fs::File::open(&anchor_path).unwrap();
+    let original_metadata = original_anchor.metadata().unwrap();
+    let original_identity = (original_metadata.dev(), original_metadata.ino());
+    fs::remove_file(&anchor_path).unwrap();
+    fs::File::create(&anchor_path).unwrap();
+    fs::set_permissions(&anchor_path, Permissions::from_mode(0o440)).unwrap();
+    let replacement_metadata = fs::metadata(&anchor_path).unwrap();
+    let replacement_identity = (replacement_metadata.dev(), replacement_metadata.ino());
+    assert_ne!(original_identity, replacement_identity);
     assert_eq!(
         MarketStreamDomain::for_test(root.path(), slot).unwrap_err(),
         StateError::InvalidState
@@ -290,4 +293,5 @@ fn replacing_valid_anchor_inode_breaks_persisted_domain_binding() {
         before,
         fs::read(domain.state_directory().join(STATE_FILE)).unwrap()
     );
+    drop(original_anchor);
 }

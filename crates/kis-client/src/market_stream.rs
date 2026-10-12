@@ -477,6 +477,10 @@ async fn approval_key_for_attempt(
     result.map_err(MarketStreamError::from)
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Receipt remains inline for the public API; the event queue is bounded to 128"
+)]
 #[derive(Debug, Clone)]
 pub enum MarketStreamEvent {
     Receipt(MarketReceipt),
@@ -558,20 +562,58 @@ impl MarketSubscriptionOperation {
 /// require_deserialize::<PreparedMarketSubscriptionCommand>();
 /// ```
 ///
-/// ```compile_fail
-/// use kis_client::market_stream::MarketStreamEndpoint;
-/// let _ = MarketStreamEndpoint::loopback("ws://127.0.0.1:3000/tryitout");
-/// ```
+#[cfg_attr(
+    not(feature = "test-support"),
+    doc = r#"```compile_fail
+use kis_client::market_stream::MarketStreamEndpoint;
+let _ = MarketStreamEndpoint::loopback("ws://127.0.0.1:3000/tryitout");
+```"#
+)]
+#[cfg_attr(
+    feature = "test-support",
+    doc = r#"```no_run
+use kis_client::market_stream::MarketStreamEndpoint;
+let _ = MarketStreamEndpoint::loopback("ws://127.0.0.1:3000/tryitout");
+```"#
+)]
 ///
-/// ```compile_fail
-/// use kis_client::market_stream::MarketStreamConfig;
-/// let _ = MarketStreamConfig::loopback;
-/// ```
+#[cfg_attr(
+    not(feature = "test-support"),
+    doc = r#"```compile_fail
+use kis_client::market_stream::MarketStreamConfig;
+use kis_client::market_stream_approval::ApprovalClient;
+fn construct(approval: ApprovalClient) {
+    let _ = MarketStreamConfig::loopback(approval, "ws://127.0.0.1:3000/tryitout");
+}
+```"#
+)]
+#[cfg_attr(
+    feature = "test-support",
+    doc = r#"```no_run
+use kis_client::market_stream::MarketStreamConfig;
+use kis_client::market_stream_approval::ApprovalClient;
+fn construct(approval: ApprovalClient) {
+    let _ = MarketStreamConfig::loopback(approval, "ws://127.0.0.1:3000/tryitout");
+}
+```"#
+)]
 ///
-/// ```compile_fail
-/// use kis_client::market_stream_state::MarketStreamDomain;
-/// let _ = MarketStreamDomain::for_test;
-/// ```
+#[cfg_attr(
+    not(feature = "test-support"),
+    doc = r#"```compile_fail
+use kis_client::market_stream_state::MarketStreamDomain;
+let root: &std::path::Path = std::path::Path::new("/tmp/arbitrary");
+let _ = MarketStreamDomain::for_test(root, uuid::Uuid::nil());
+```"#
+)]
+#[cfg_attr(
+    feature = "test-support",
+    doc = r#"```no_run
+use kis_client::market_stream_state::MarketStreamDomain;
+let root: &std::path::Path = std::path::Path::new("/tmp/arbitrary");
+let _ = MarketStreamDomain::for_test(root, uuid::Uuid::nil());
+```"#
+)]
 #[must_use]
 pub struct PreparedMarketSubscriptionCommand {
     credential_slot_id: Uuid,
@@ -1515,8 +1557,7 @@ impl MarketStreamSession {
             let receipt = MarketReceipt::from_transport(
                 self.epoch.uuid(),
                 self.receive_ordinal,
-                received_at_ms,
-                received_monotonic,
+                (received_at_ms, received_monotonic),
                 self.socket_open_ms,
                 self.proof,
                 true,
@@ -1948,11 +1989,11 @@ impl MarketStreamSession {
             self.poison_epoch();
             return Err(MarketStreamError::CommandPending);
         }
-        if let Some(mut socket) = self.socket.take() {
-            if let Err(error) = socket.send_frame(0x8, &[]).await {
-                self.poison_epoch();
-                return Err(error);
-            }
+        if let Some(mut socket) = self.socket.take()
+            && let Err(error) = socket.send_frame(0x8, &[]).await
+        {
+            self.poison_epoch();
+            return Err(error);
         }
         self.config.state.clear_clean_connection(self.epoch)?;
         self.closed = true;
@@ -2094,8 +2135,7 @@ fn valid_close_payload(payload: &[u8]) -> bool {
     let code = u16::from_be_bytes([payload[0], payload[1]]);
     // RFC 6455 permits 1000..=1014 except reserved 1004/1005/1006, and
     // application/library codes 3000..=4999.  The reason is UTF-8 only.
-    (matches!(code, 1000..=1014 if !matches!(code, 1004 | 1005 | 1006))
-        || matches!(code, 3000..=4999))
+    (matches!(code, 1000..=1014 if !matches!(code, 1004..=1006)) || matches!(code, 3000..=4999))
         && std::str::from_utf8(&payload[2..]).is_ok()
 }
 
@@ -2460,22 +2500,17 @@ impl RawWebSocket {
         match tokio::time::timeout(Duration::from_secs(1), self.stream.readable()).await {
             Ok(Ok(())) => {
                 let mut bytes = [0u8; 8192];
-                loop {
-                    match self.stream.try_read(&mut bytes) {
-                        Ok(0) => return Err(MarketStreamError::Closed),
-                        Ok(read) => {
-                            if self.read_buffer.len().saturating_add(read) > MAX_MESSAGE_BYTES + 14
-                            {
-                                return Err(MarketStreamError::FrameInvalid);
-                            }
-                            self.read_buffer.extend_from_slice(&bytes[..read]);
-                            return Ok(true);
+                match self.stream.try_read(&mut bytes) {
+                    Ok(0) => Err(MarketStreamError::Closed),
+                    Ok(read) => {
+                        if self.read_buffer.len().saturating_add(read) > MAX_MESSAGE_BYTES + 14 {
+                            return Err(MarketStreamError::FrameInvalid);
                         }
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(false);
-                        }
-                        Err(_) => return Err(MarketStreamError::Closed),
+                        self.read_buffer.extend_from_slice(&bytes[..read]);
+                        Ok(true)
                     }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(false),
+                    Err(_) => Err(MarketStreamError::Closed),
                 }
             }
             Ok(Err(_)) => Err(MarketStreamError::Closed),
@@ -2496,25 +2531,20 @@ impl RawWebSocket {
                     return Ok(false);
                 }
                 let mut bytes = [0u8; 8192];
-                loop {
-                    if Instant::now() >= deadline {
-                        return Ok(false);
-                    }
-                    match self.stream.try_read(&mut bytes) {
-                        Ok(0) => return Err(MarketStreamError::Closed),
-                        Ok(read) => {
-                            if self.read_buffer.len().saturating_add(read) > MAX_MESSAGE_BYTES + 14
-                            {
-                                return Err(MarketStreamError::FrameInvalid);
-                            }
-                            self.read_buffer.extend_from_slice(&bytes[..read]);
-                            return Ok(true);
+                if Instant::now() >= deadline {
+                    return Ok(false);
+                }
+                match self.stream.try_read(&mut bytes) {
+                    Ok(0) => Err(MarketStreamError::Closed),
+                    Ok(read) => {
+                        if self.read_buffer.len().saturating_add(read) > MAX_MESSAGE_BYTES + 14 {
+                            return Err(MarketStreamError::FrameInvalid);
                         }
-                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(false);
-                        }
-                        Err(_) => return Err(MarketStreamError::Closed),
+                        self.read_buffer.extend_from_slice(&bytes[..read]);
+                        Ok(true)
                     }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(false),
+                    Err(_) => Err(MarketStreamError::Closed),
                 }
             }
             Ok(Err(_)) => Err(MarketStreamError::Closed),
@@ -2560,13 +2590,13 @@ impl RawWebSocket {
         // the marker therefore makes every later operation fail closed.
         self.write_in_progress = true;
         let result = self.stream.write_all(&frame).await;
-        if result.is_ok() {
-            if let Some(barrier) = self.write_barrier.as_ref() {
-                barrier.notified().await;
-            }
+        if result.is_ok()
+            && let Some(barrier) = self.write_barrier.as_ref()
+        {
+            barrier.notified().await;
         }
         self.write_in_progress = false;
-        if let Err(_) = result {
+        if result.is_err() {
             self.poisoned = true;
             return Err(MarketStreamError::Io);
         }

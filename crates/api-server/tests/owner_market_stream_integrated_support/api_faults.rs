@@ -152,8 +152,10 @@ impl OwnedFixture {
         if current.is_some() && self.generation_quote_version != current {
             return Err(FixtureFailure::ObservationFailed);
         }
-        Ok(json!({"old_generation_row_absent_or_version_unchanged": true,
-            "old_generation_row_absent": current.is_none(), "sql_mutations": 0}))
+        Ok(
+            json!({"old_generation_row_absent_or_version_unchanged": true,
+            "old_generation_row_absent": current.is_none(), "sql_mutations": 0}),
+        )
     }
 
     async fn revoke_owned_rights(&mut self) -> FixtureResult<Value> {

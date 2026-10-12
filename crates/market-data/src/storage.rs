@@ -706,14 +706,17 @@ impl RawStore {
     /// identity drifted between acquisition and persistence.
     fn validate_copied_sources(
         &self,
-        provider: &str,
-        market: &str,
-        date: &TradingDate,
-        batch_id: BatchId,
-        entitlement_reference: Option<&str>,
-        mode: FetchMode,
+        spec: &BatchSpec<'_>,
         envelopes: &[RawEnvelope],
     ) -> Result<(), StoreError> {
+        let BatchSpec {
+            provider,
+            market,
+            date,
+            batch_id,
+            entitlement_reference,
+            mode,
+        } = *spec;
         for envelope in envelopes {
             let Some(reference) = envelope.copied_from.as_ref() else {
                 continue;
@@ -811,15 +814,7 @@ impl RawStore {
         for env in envelopes {
             validate_file_entry_name(&env.file_name)?;
         }
-        self.validate_copied_sources(
-            provider,
-            market,
-            date,
-            batch_id,
-            entitlement_reference,
-            mode,
-            envelopes,
-        )?;
+        self.validate_copied_sources(spec, envelopes)?;
 
         let dir = self.batch_dir(provider, market, date, &batch_id);
         if dir.exists() {

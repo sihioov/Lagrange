@@ -303,8 +303,8 @@ where
     }
     match transport.as_deref() {
         Some("market_ws") => Ok(true),
-        None | Some("rest") => return Err(invalid(TRANSPORT)),
-        Some(_) => return Err(invalid(TRANSPORT)),
+        None | Some("rest") => Err(invalid(TRANSPORT)),
+        Some(_) => Err(invalid(TRANSPORT)),
     }
 }
 

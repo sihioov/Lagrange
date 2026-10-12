@@ -882,16 +882,6 @@ async fn verify_or_insert_calendar_history(
     Ok(())
 }
 
-async fn lock_and_verify_source_versions(
-    tx: &mut Transaction<'_, Postgres>,
-    bundle: &PublicationBundle,
-) -> Result<(), SinkError> {
-    let evidence = required_calendar_evidence(bundle)?;
-    let retrieved_at = postgres_retrieved_at(evidence.retrieved_at);
-    lock_and_verify_calendar_source_versions(tx, &bundle.calendar_facts, evidence, retrieved_at)
-        .await
-}
-
 async fn lock_and_verify_calendar_source_versions(
     tx: &mut Transaction<'_, Postgres>,
     facts: &[CalendarFact],
@@ -1099,16 +1089,6 @@ async fn verify_or_advance_calendar_projections(
         }
     }
     Ok(())
-}
-
-async fn update_projection(
-    tx: &mut Transaction<'_, Postgres>,
-    bundle: &PublicationBundle,
-    fact: &CalendarFact,
-    retrieved_at: DateTime<Utc>,
-) -> Result<(), SinkError> {
-    let evidence = required_calendar_evidence(bundle)?;
-    update_projection_for_source(tx, evidence, fact, retrieved_at).await
 }
 
 async fn update_projection_for_source(

@@ -19,6 +19,9 @@ self_test=0
 # provide one; this does not relax the production Compose contract.
 static_commit="${LAGRANGE_CODE_COMMIT:-0123456789abcdef0123456789abcdef01234567}"
 export LAGRANGE_CODE_COMMIT="$static_commit"
+# Keep disposable smoke builds within the host's one-service-at-a-time budget.
+export COMPOSE_PARALLEL_LIMIT=1
+export CARGO_BUILD_JOBS=2
 export RESEARCH_APP_ENV=qa
 export CANDIDATE_APP_ENV=qa
 export RESEARCH_FETCH_MODE=synthetic
@@ -95,6 +98,10 @@ validator_self_tests() (
   sed 's/File::open(&path)/OpenOptions::new().write(true).open(&path)/' "$read_only_fsync_probe" >"$test_root/scripts/qa/read-only-fsync.rs"
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted a write-opening Raw fsync probe'; fi
   cp "$read_only_fsync_probe" "$test_root/scripts/qa/read-only-fsync.rs"
+
+  sed 's# -path "\$\$calendar_bootstrap" -prune -o##g' "$test_compose.baseline" >"$test_compose"
+  if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted an unpruned Raw init'; fi
+  cp "$test_compose.baseline" "$test_compose"
 
   printf '%s\n' '!scripts/**' >>"$test_root/.dockerignore"
   if bash "$test_script" --static-only >/dev/null 2>&1; then fail 'validator accepted the QA fsync probe in the worker build context'; fi
@@ -425,20 +432,20 @@ trap cleanup EXIT
 raw_init_ownership_probe() (
   alpine='alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
   rust_image='rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900'
-  cargo_registry="${LAGRANGE_CARGO_REGISTRY:-/home/l1nnx/.cargo/registry}"
-  [ -d "$cargo_registry" ] || fail 'Raw init calendar harness requires the local Cargo registry cache'
   probe_id="${project}-raw-init"
   raw_volume="${probe_id}-raw"
   curated_volume="${probe_id}-curated"
   outside_volume="${probe_id}-outside"
   binary_volume="${probe_id}-binary"
-  harness_volume="${probe_id}-calendar-harness"
-  trap 'dkr volume rm -f "$raw_volume" "$curated_volume" "$outside_volume" "$binary_volume" "$harness_volume" >/dev/null 2>&1 || true' EXIT
+  cargo_home_volume="${probe_id}-cargo-home"
+  cargo_target_volume="${probe_id}-cargo-target"
+  trap 'dkr volume rm -f "$raw_volume" "$curated_volume" "$outside_volume" "$binary_volume" "$cargo_home_volume" "$cargo_target_volume" >/dev/null 2>&1 || true' EXIT
   dkr volume create "$raw_volume" >/dev/null || fail 'Raw init probe volume creation failed'
   dkr volume create "$curated_volume" >/dev/null || fail 'Raw init Curated volume creation failed'
   dkr volume create "$outside_volume" >/dev/null || fail 'Raw init outside volume creation failed'
   dkr volume create "$binary_volume" >/dev/null || fail 'Raw init fsync-probe volume creation failed'
-  dkr volume create "$harness_volume" >/dev/null || fail 'Raw init calendar harness volume creation failed'
+  dkr volume create "$cargo_home_volume" >/dev/null || fail 'Raw init Cargo cache volume creation failed'
+  dkr volume create "$cargo_target_volume" >/dev/null || fail 'Raw init Cargo target volume creation failed'
   dkr run --rm --network none --user 0:0 -v "${raw_volume}:/data/raw" -v "${outside_volume}:/outside" "$alpine" /bin/sh -ec '
     mkdir -p /data/raw/manifests/provider=krx/market=kr /data/raw/provider=krx/market=kr/date=2020-01-31/batch=fixture
     printf "{}\n" > /data/raw/manifests/provider=krx/market=kr/manifest.jsonl
@@ -457,62 +464,25 @@ raw_init_ownership_probe() (
   # disposable invocation below must execute the resulting container shell
   # command, so remove only that interpolation escape before passing it to sh.
   init_command="${init_command//\$\$/\$}"
-  dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true -v "$(hostpath "$root"):/source:ro" -v "${harness_volume}:/harness" "$alpine" /bin/sh -ec '
-    mkdir -p /harness/src
-    printf "%s\\n" \
-      "[package]" \
-      "name = \"calendar-lock-probe\"" \
-      "version = \"0.1.0\"" \
-      "edition = \"2024\"" \
-      "" \
-      "[dependencies]" \
-      "domain = { path = \"/source/crates/domain\" }" \
-      "libc = \"0.2\"" \
-      "serde = { version = \"1\", features = [\"derive\"] }" \
-      "serde_json = \"1\"" \
-      "thiserror = \"2\"" > /harness/Cargo.toml
-    printf "%s\\n" \
-      "#[path = \"/source/data-pipelines/collectors/src/calendar_claim.rs\"]" \
-      "mod calendar_claim;" \
-      "" \
-      "use calendar_claim::CalendarDayLock;" \
-      "use domain::{BatchId, TradingDate};" \
-      "use std::path::Path;" \
-      "use std::str::FromStr;" \
-      "" \
-      "fn main() {" \
-      "    let mut args = std::env::args().skip(1);" \
-      "    let command = args.next().expect(\"command\");" \
-      "    let root = args.next().expect(\"absolute raw root\");" \
-      "    let date = TradingDate::parse(&args.next().expect(\"date\")).expect(\"valid date\");" \
-      "    assert!(args.next().is_none(), \"unexpected argument\");" \
-      "    match command.as_str() {" \
-      "        \"create\" => {" \
-      "            let guard = CalendarDayLock::acquire(Path::new(&root), date).expect(\"initial CalendarDayLock acquire\");" \
-      "            let batch = BatchId::from_str(\"11111111-1111-4111-8111-111111111111\").expect(\"fixture batch UUID\");" \
-      "            guard.consume(batch).expect(\"consume claim\");" \
-      "            assert_eq!(guard.existing().expect(\"read claim\"), Some(batch));" \
-      "            println!(\"CREATE_OK\");" \
-      "        }" \
-      "        \"acquire\" => match CalendarDayLock::acquire(Path::new(&root), date) {" \
-      "            Ok(guard) => {" \
-      "                assert_eq!(guard.existing().expect(\"read claim\"), Some(BatchId::from_str(\"11111111-1111-4111-8111-111111111111\").unwrap()));" \
-      "                println!(\"ACQUIRE_OK\");" \
-      "            }" \
-      "            Err(error) => {" \
-      "                eprintln!(\"ACQUIRE_ERR {error}\");" \
-      "                std::process::exit(2);" \
-      "            }" \
-      "        }," \
-      "        _ => panic!(\"unknown command\")," \
-      "    }" \
-      "}" > /harness/src/main.rs
-  ' >/dev/null || fail 'Raw init calendar harness fixture setup failed'
+  # This preparation container may reach the Rust registry. It receives only
+  # the read-only checkout and its private cache volume: no credentials, Raw,
+  # or Curated mounts. The later compiler runs without network access.
+  dkr run --rm --network bridge --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true \
+    -v "$(hostpath "$root"):/source:ro" -v "${cargo_home_volume}:/usr/local/cargo" \
+    "$rust_image" /bin/sh -ec '
+      cd /source/scripts/qa/calendar-lock-probe
+      CARGO_BUILD_JOBS=2 cargo fetch --locked --manifest-path Cargo.toml
+    ' >/dev/null || fail 'calendar probe locked dependency preparation failed'
   (
     flock -x 9
     dkr run --rm --network none --user 0:0 --cap-drop ALL --security-opt no-new-privileges:true \
-      -v "$(hostpath "$root"):/source:ro" -v "$(hostpath "$cargo_registry"):/usr/local/cargo/registry:ro" -v "${harness_volume}:/harness" -v "${binary_volume}:/probe" \
-      "$rust_image" /bin/sh -ec 'cd /harness && CARGO_BUILD_JOBS=2 cargo generate-lockfile --offline && CARGO_BUILD_JOBS=2 cargo build --locked --offline && cp target/debug/calendar-lock-probe /probe/calendar-lock' \
+      -v "$(hostpath "$root"):/source:ro" -v "${cargo_home_volume}:/usr/local/cargo" \
+      -v "${cargo_target_volume}:/target" -v "${binary_volume}:/probe" \
+      -e CARGO_TARGET_DIR=/target "$rust_image" /bin/sh -ec '
+        CARGO_BUILD_JOBS=2 cargo build --locked --offline \
+          --manifest-path /source/scripts/qa/calendar-lock-probe/Cargo.toml
+        cp /target/debug/calendar-lock-probe /probe/calendar-lock
+      ' \
   ) 9>/tmp/lagrange-kis-live-cargo.lock || fail 'actual CalendarDayLock harness build failed'
   dkr run --rm --network none --user 0:0 --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add FOWNER --security-opt no-new-privileges:true -v "${raw_volume}:/data/raw" -v "${binary_volume}:/probe:ro" "$alpine" /probe/calendar-lock create /data/raw 2026-09-19 \
     >/dev/null || fail 'actual CalendarDayLock fixture creation failed'
@@ -1158,8 +1128,10 @@ for fixture_root in (target, eod_target):
     fixture_root.chmod(0o755)
 PY
 
-rc build research-worker candidate-runner \
-  || fail 'research-worker and candidate-runner image build failed'
+rc build research-worker \
+  || fail 'research-worker image build failed'
+rc build candidate-runner \
+  || fail 'candidate-runner image build failed'
 command -v cargo >/dev/null 2>&1 || fail 'cargo is required to prove the manual --root Raw contract'
 manual_output="$(cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx \
   --root "$raw_root" --date 2020-01-31 --mode synthetic \

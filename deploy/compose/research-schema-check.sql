@@ -5,6 +5,9 @@ DO $schema$
 DECLARE
   research_role oid;
   actual_definition text;
+  status_migration_successful boolean;
+  status_migration_failed boolean;
+  status_relation_exists boolean;
 BEGIN
   IF to_regclass('public._sqlx_migrations') IS NULL
      OR (SELECT count(*) FROM _sqlx_migrations
@@ -347,30 +350,203 @@ BEGIN
     RAISE EXCEPTION 'research_writer has unexpected role memberships';
   END IF;
 
-  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles)) <> 24
-     OR (SELECT count(*)
-         FROM pg_policy p
-         JOIN pg_class c ON c.oid = p.polrelid
-         JOIN (VALUES
-           ('data_batches', 'data_batches_select_research_writer', 'r', true, false),
-           ('data_batches', 'data_batches_insert_research_writer', 'a', false, true),
-           ('trading_calendars', 'trading_calendars_select_research_writer', 'r', true, false),
-           ('trading_calendars', 'trading_calendars_insert_research_writer', 'a', false, true),
-           ('trading_calendars', 'trading_calendars_update_research_writer', 'w', true, true),
-           ('trading_calendar_versions', 'trading_calendar_versions_select_research_writer', 'r', true, false),
-           ('trading_calendar_versions', 'trading_calendar_versions_insert_research_writer', 'a', false, true),
-           ('candidate_price_revalidation_events', 'candidate_price_revalidation_events_select', 'r', true, false)
-         ) expected(table_name, policy_name, command, needs_qual, needs_check)
-           ON expected.table_name = c.relname
-          AND expected.policy_name = p.polname
-          AND expected.command = p.polcmd::text
-         WHERE p.polpermissive
-           AND p.polroles = ARRAY[research_role]::oid[]
-           AND (NOT expected.needs_qual OR pg_get_expr(p.polqual, p.polrelid) = 'true')
-           AND (expected.needs_qual OR p.polqual IS NULL)
-           AND (NOT expected.needs_check OR pg_get_expr(p.polwithcheck, p.polrelid) = 'true')
-           AND (expected.needs_check OR p.polwithcheck IS NULL)) <> 8 THEN
-    RAISE EXCEPTION 'required research_writer RLS policies are missing or drifted';
+  SELECT EXISTS (
+           SELECT 1 FROM _sqlx_migrations
+            WHERE version = 59 AND success
+         ),
+         EXISTS (
+           SELECT 1 FROM _sqlx_migrations
+            WHERE version = 59 AND NOT success
+         ),
+         to_regclass('public.research_execution_status') IS NOT NULL
+    INTO status_migration_successful, status_migration_failed, status_relation_exists;
+
+  IF status_migration_failed
+     OR status_migration_successful IS DISTINCT FROM status_relation_exists THEN
+    RAISE EXCEPTION 'research execution status relation and migration ledger disagree';
+  END IF;
+
+  IF (SELECT count(*) FROM pg_policy WHERE research_role = ANY(polroles))
+       <> (CASE WHEN status_migration_successful THEN 27 ELSE 24 END)
+     OR EXISTS (
+       WITH actual(schema_name, table_name, policy_name, command, permissive,
+                   role_names, using_expression, check_expression) AS (
+         SELECT table_schema.nspname::text,
+                table_row.relname::text,
+                policy.polname::text,
+                policy.polcmd::text,
+                policy.polpermissive,
+                ARRAY(
+                  SELECT CASE WHEN policy_role.role_oid = 0
+                              THEN 'PUBLIC'
+                              ELSE role_row.rolname::text
+                         END
+                    FROM unnest(policy.polroles) AS policy_role(role_oid)
+                    LEFT JOIN pg_roles role_row ON role_row.oid = policy_role.role_oid
+                   ORDER BY 1
+                ) AS role_names,
+                CASE WHEN policy.polqual IS NULL THEN NULL::text
+                     ELSE pg_get_expr(policy.polqual, policy.polrelid) END,
+                CASE WHEN policy.polwithcheck IS NULL THEN NULL::text
+                     ELSE pg_get_expr(policy.polwithcheck, policy.polrelid) END
+           FROM pg_policy policy
+           JOIN pg_class table_row ON table_row.oid = policy.polrelid
+           JOIN pg_namespace table_schema ON table_schema.oid = table_row.relnamespace
+          WHERE research_role = ANY(policy.polroles)
+       ), expected_base(schema_name, table_name, policy_name, command,
+                        permissive, role_names, using_expression, check_expression) AS (VALUES
+         ('public', 'data_batches', 'data_batches_select_research_writer', 'r', true, ARRAY['research_writer']::text[], 'true', NULL::text),
+         ('public', 'data_batches', 'data_batches_insert_research_writer', 'a', true, ARRAY['research_writer']::text[], NULL::text, 'true'),
+         ('public', 'trading_calendars', 'trading_calendars_select_research_writer', 'r', true, ARRAY['research_writer']::text[], 'true', NULL::text),
+         ('public', 'trading_calendars', 'trading_calendars_insert_research_writer', 'a', true, ARRAY['research_writer']::text[], NULL::text, 'true'),
+         ('public', 'trading_calendars', 'trading_calendars_update_research_writer', 'w', true, ARRAY['research_writer']::text[], 'true', 'true'),
+         ('public', 'trading_calendar_versions', 'trading_calendar_versions_select_research_writer', 'r', true, ARRAY['research_writer']::text[], 'true', NULL::text),
+         ('public', 'trading_calendar_versions', 'trading_calendar_versions_insert_research_writer', 'a', true, ARRAY['research_writer']::text[], NULL::text, 'true'),
+         ('public', 'dataset_versions', 'candidate_dataset_versions_select_research_writer', 'r', true, ARRAY['research_writer']::text[], 'true', NULL::text),
+         ('public', 'candidate_instrument_registrations', 'candidate_instrument_registrations_select', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_raw_batch_publications', 'candidate_source_select_candidate_raw_batch_publications', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_raw_batch_datasets', 'candidate_source_select_candidate_raw_batch_datasets', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_universe_snapshots', 'candidate_source_select_candidate_universe_snapshots', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_universe_members', 'candidate_source_select_candidate_universe_members', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_investor_flows', 'candidate_source_select_candidate_investor_flows', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_investor_flow_snapshot_rows', 'candidate_source_select_candidate_investor_flow_snapshot_rows', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_market_status_observations', 'candidate_source_select_candidate_market_status_observations', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_fundamental_observations', 'candidate_source_select_candidate_fundamental_observations', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_sector_versions', 'candidate_source_select_candidate_sector_versions', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_sector_entries', 'candidate_source_select_candidate_sector_entries', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_price_publications', 'candidate_source_select_candidate_price_publications', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_price_instrument_coverage', 'candidate_source_select_candidate_price_instrument_coverage', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_price_instrument_sessions', 'candidate_source_select_candidate_price_instrument_sessions', 'r', true, ARRAY['admin', 'research_writer', 'worker']::text[], 'true', NULL::text),
+         ('public', 'candidate_universe_registry', 'candidate_universe_registry_select_research_writer', 'r', true, ARRAY['research_writer']::text[], 'true', NULL::text),
+         ('public', 'candidate_price_revalidation_events', 'candidate_price_revalidation_events_select', 'r', true, ARRAY['research_writer']::text[], 'true', NULL::text)
+       ), expected_status(schema_name, table_name, policy_name, command,
+                          permissive, role_names, using_expression, check_expression) AS (VALUES
+         ('public', 'research_execution_status', 'research_execution_status_research_writer_select', 'r', true, ARRAY['research_writer']::text[], '(id = ''kis-eod''::text)', NULL::text),
+         ('public', 'research_execution_status', 'research_execution_status_research_writer_insert', 'a', true, ARRAY['research_writer']::text[], NULL::text, '(id = ''kis-eod''::text)'),
+         ('public', 'research_execution_status', 'research_execution_status_research_writer_update', 'w', true, ARRAY['research_writer']::text[], '(id = ''kis-eod''::text)', '(id = ''kis-eod''::text)')
+       ), expected AS (
+         SELECT * FROM expected_base
+         UNION ALL
+         SELECT * FROM expected_status WHERE status_migration_successful
+       ), drift AS (
+         (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+         UNION ALL
+         (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+       )
+       SELECT 1 FROM drift
+     ) THEN
+    RAISE EXCEPTION 'research_writer policy inventory is not exact';
+  END IF;
+
+  IF status_migration_successful THEN
+    IF (
+       NOT EXISTS (
+         SELECT 1
+           FROM pg_class table_row
+           JOIN pg_roles owner_role ON owner_role.oid = table_row.relowner
+          WHERE table_row.oid = 'public.research_execution_status'::regclass
+            AND owner_role.rolname = 'migration_owner'
+            AND table_row.relrowsecurity
+            AND table_row.relforcerowsecurity
+       )
+       OR NOT EXISTS (
+         SELECT 1
+           FROM pg_constraint constraint_row
+          WHERE constraint_row.conrelid = 'public.research_execution_status'::regclass
+            AND constraint_row.conname = 'research_execution_status_singleton_check'
+            AND constraint_row.contype = 'c'
+            AND constraint_row.convalidated
+            AND pg_get_constraintdef(constraint_row.oid, true)
+                = 'CHECK (id = ''kis-eod''::text)'
+       )
+       OR EXISTS (
+         WITH actual(policy_name, command, permissive, role_names,
+                     using_expression, check_expression) AS (
+           SELECT policy.polname::text,
+                  policy.polcmd::text,
+                  policy.polpermissive,
+                  ARRAY(
+                    SELECT CASE WHEN policy_role.role_oid = 0
+                                THEN 'PUBLIC'
+                                ELSE role_row.rolname::text
+                           END
+                      FROM unnest(policy.polroles) AS policy_role(role_oid)
+                      LEFT JOIN pg_roles role_row ON role_row.oid = policy_role.role_oid
+                     ORDER BY 1
+                  ),
+                  CASE WHEN policy.polqual IS NULL THEN NULL::text
+                       ELSE pg_get_expr(policy.polqual, policy.polrelid) END,
+                  CASE WHEN policy.polwithcheck IS NULL THEN NULL::text
+                       ELSE pg_get_expr(policy.polwithcheck, policy.polrelid) END
+             FROM pg_policy policy
+            WHERE policy.polrelid = 'public.research_execution_status'::regclass
+         ), expected(policy_name, command, permissive, role_names,
+                     using_expression, check_expression) AS (VALUES
+           ('research_execution_status_admin_select', 'r', true, ARRAY['admin']::text[], '(id = ''kis-eod''::text)', NULL::text),
+           ('research_execution_status_research_writer_select', 'r', true, ARRAY['research_writer']::text[], '(id = ''kis-eod''::text)', NULL::text),
+           ('research_execution_status_research_writer_insert', 'a', true, ARRAY['research_writer']::text[], NULL::text, '(id = ''kis-eod''::text)'),
+           ('research_execution_status_research_writer_update', 'w', true, ARRAY['research_writer']::text[], '(id = ''kis-eod''::text)', '(id = ''kis-eod''::text)'),
+           ('research_execution_status_migration_owner_all', '*', true, ARRAY['migration_owner']::text[], '(id = ''kis-eod''::text)', '(id = ''kis-eod''::text)')
+         ), drift AS (
+           (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+           UNION ALL
+           (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+         )
+         SELECT 1 FROM drift
+       )
+       ) THEN
+      RAISE EXCEPTION 'research execution status relation security or policy contract is not exact';
+    END IF;
+  END IF;
+
+  IF status_migration_successful THEN
+    IF EXISTS (
+       WITH actual(grantee, privilege_type, grantable) AS (
+         SELECT CASE WHEN acl.grantee = 0 THEN 'PUBLIC'::text
+                     ELSE role_row.rolname::text END,
+                acl.privilege_type::text,
+                acl.is_grantable
+           FROM pg_class table_row
+           CROSS JOIN LATERAL aclexplode(
+             COALESCE(table_row.relacl, acldefault('r', table_row.relowner))
+           ) acl
+           LEFT JOIN pg_roles role_row ON role_row.oid = acl.grantee
+          WHERE table_row.oid = 'public.research_execution_status'::regclass
+            AND acl.grantee <> table_row.relowner
+       ), expected(grantee, privilege_type, grantable) AS (VALUES
+         ('admin', 'SELECT', false),
+         ('research_writer', 'SELECT', false),
+         ('research_writer', 'INSERT', false),
+         ('research_writer', 'UPDATE', false)
+       ), drift AS (
+         (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+         UNION ALL
+         (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+       )
+       SELECT 1 FROM drift
+       ) THEN
+      RAISE EXCEPTION 'research execution status direct grants are not exact';
+    END IF;
+  END IF;
+
+  IF status_migration_successful THEN
+    IF (
+       has_table_privilege('research_writer', 'public.research_execution_status', 'SELECT') IS DISTINCT FROM true
+       OR has_table_privilege('research_writer', 'public.research_execution_status', 'INSERT') IS DISTINCT FROM true
+       OR has_table_privilege('research_writer', 'public.research_execution_status', 'UPDATE') IS DISTINCT FROM true
+       OR has_table_privilege('research_writer', 'public.research_execution_status', 'DELETE')
+       OR has_table_privilege('research_writer', 'public.research_execution_status', 'TRUNCATE')
+       OR has_table_privilege('research_writer', 'public.research_execution_status', 'REFERENCES')
+       OR has_table_privilege('research_writer', 'public.research_execution_status', 'TRIGGER')
+       OR has_table_privilege('research_writer', 'public.research_execution_status', 'MAINTAIN')
+       OR NOT has_table_privilege('admin', 'public.research_execution_status', 'SELECT')
+       OR has_table_privilege('admin', 'public.research_execution_status', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+       OR has_table_privilege('app', 'public.research_execution_status', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+       OR has_table_privilege('worker', 'public.research_execution_status', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+       OR has_table_privilege('audit_writer', 'public.research_execution_status', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+       ) THEN
+      RAISE EXCEPTION 'research execution status effective ACLs are not exact';
+    END IF;
   END IF;
 
   IF NOT EXISTS (
@@ -511,7 +687,7 @@ BEGIN
       SELECT table_name, privilege_type
       FROM information_schema.role_table_grants
       WHERE grantee = 'research_writer' AND table_schema = 'public'
-    ), expected(table_name, privilege_type) AS (VALUES
+    ), expected_base(table_name, privilege_type) AS (VALUES
       ('data_batches', 'SELECT'),
       ('data_batches', 'INSERT'),
       ('trading_calendar_versions', 'SELECT'),
@@ -536,6 +712,14 @@ BEGIN
       ,('candidate_raw_batch_publications', 'SELECT')
       ,('candidate_raw_batch_datasets', 'SELECT')
       ,('candidate_price_revalidation_events', 'SELECT')
+    ), expected AS (
+      SELECT * FROM expected_base
+      UNION ALL
+      SELECT 'research_execution_status', 'SELECT' WHERE status_migration_successful
+      UNION ALL
+      SELECT 'research_execution_status', 'INSERT' WHERE status_migration_successful
+      UNION ALL
+      SELECT 'research_execution_status', 'UPDATE' WHERE status_migration_successful
     )
     (SELECT * FROM actual EXCEPT SELECT * FROM expected)
     UNION ALL
@@ -565,6 +749,7 @@ BEGIN
            'candidate_raw_batch_publications','candidate_raw_batch_datasets',
            'candidate_price_revalidation_events'
          )
+         AND (c.relname <> 'research_execution_status' OR NOT status_migration_successful)
          AND has_table_privilege(
            'research_writer', c.oid,
            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN'

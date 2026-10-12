@@ -3,6 +3,8 @@
 mod candidate_rolling_provider;
 #[allow(dead_code)]
 mod common;
+#[path = "common/lock_timeout.rs"]
+mod lock_timeout;
 
 use std::collections::BTreeMap;
 

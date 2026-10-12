@@ -2006,7 +2006,7 @@ async fn worker_cli_once_runs_collection_in_the_bounded_hidden_helper() {
     let qa_url = std::env::var("DATABASE_URL")
         .expect("required QA DATABASE_URL must be provided for worker process verification");
     assert_eq!(
-        qa_url, "postgres://postgres:lagrange@127.0.0.1:55432/postgres",
+        qa_url, "postgres://postgres:lagrange@127.0.0.1:55438/postgres",
         "worker process verification must use the reviewed local PostgreSQL endpoint"
     );
     let db = ScratchDb::create()
@@ -2037,7 +2037,7 @@ async fn worker_cli_once_runs_collection_in_the_bounded_hidden_helper() {
         )
         .env("RESEARCH_SYNTHETIC_BUNDLE", fixture)
         .env("DB_HOST", "127.0.0.1")
-        .env("DB_PORT", "55432")
+        .env("DB_PORT", "55438")
         .env("DB_NAME", db.database_name())
         .env("DB_USER", "research_writer")
         .env("DB_PASSWORD_FILE", &password_file)
@@ -2100,7 +2100,7 @@ async fn worker_cli_permanent_ingest_failure_streams_failed_then_contextual_erro
         .expect("required QA DATABASE_URL must be provided for worker error verification");
     assert_eq!(
         qa_url,
-        "postgres://postgres:lagrange@127.0.0.1:55432/postgres"
+        "postgres://postgres:lagrange@127.0.0.1:55438/postgres"
     );
     let db = ScratchDb::create()
         .await
@@ -2128,7 +2128,7 @@ async fn worker_cli_permanent_ingest_failure_streams_failed_then_contextual_erro
         )
         .env("RESEARCH_SYNTHETIC_BUNDLE", malformed_fixture)
         .env("DB_HOST", "127.0.0.1")
-        .env("DB_PORT", "55432")
+        .env("DB_PORT", "55438")
         .env("DB_NAME", db.database_name())
         .env("DB_USER", "research_writer")
         .env("DB_PASSWORD_FILE", &password_file)
@@ -2165,7 +2165,7 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
     let qa_url = std::env::var("DATABASE_URL")
         .expect("required QA DATABASE_URL must be provided for recovery stream verification");
     assert_eq!(
-        qa_url, "postgres://postgres:lagrange@127.0.0.1:55432/postgres",
+        qa_url, "postgres://postgres:lagrange@127.0.0.1:55438/postgres",
         "recovery stream verification must use the reviewed local PostgreSQL endpoint"
     );
     let db = ScratchDb::create()
@@ -2227,7 +2227,7 @@ async fn worker_cli_streams_each_validated_recovery_batch_before_cycle_output() 
             )
             .env("RESEARCH_SYNTHETIC_BUNDLE", &fixture)
             .env("DB_HOST", "127.0.0.1")
-            .env("DB_PORT", "55432")
+            .env("DB_PORT", "55438")
             .env("DB_NAME", db.database_name())
             .env("DB_USER", "research_writer")
             .env("DB_PASSWORD_FILE", &password_file)
@@ -2282,7 +2282,7 @@ async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped(
         .expect("required QA DATABASE_URL must be provided for recovery writer verification");
     assert_eq!(
         qa_url,
-        "postgres://postgres:lagrange@127.0.0.1:55432/postgres"
+        "postgres://postgres:lagrange@127.0.0.1:55438/postgres"
     );
     let db = ScratchDb::create()
         .await
@@ -2311,7 +2311,7 @@ async fn worker_recovery_write_failure_is_retryable_and_exact_replay_is_skipped(
         raw_root.to_string_lossy().into_owned(),
     );
     values.insert("DB_HOST".to_owned(), "127.0.0.1".to_owned());
-    values.insert("DB_PORT".to_owned(), "55432".to_owned());
+    values.insert("DB_PORT".to_owned(), "55438".to_owned());
     values.insert("DB_NAME".to_owned(), db.database_name().to_owned());
     values.insert("DB_USER".to_owned(), "research_writer".to_owned());
     values.insert(
@@ -2343,7 +2343,7 @@ async fn worker_price_recovery_rejects_future_sessions_before_catalog_publicatio
         .expect("required QA DATABASE_URL must be provided for no-lookahead verification");
     assert_eq!(
         qa_url,
-        "postgres://postgres:lagrange@127.0.0.1:55432/postgres"
+        "postgres://postgres:lagrange@127.0.0.1:55438/postgres"
     );
     let db = ScratchDb::create()
         .await
@@ -2366,7 +2366,7 @@ async fn worker_price_recovery_rejects_future_sessions_before_catalog_publicatio
     )
     .unwrap()
     .entry;
-    let mut values = worker_config(&[("APP_ENV", "development")]);
+    let mut values = worker_config(&[("APP_ENV", "development"), ("DB_PORT", "55438")]);
     values.insert(
         "RESEARCH_RAW_ROOT".to_owned(),
         raw_root.to_string_lossy().into_owned(),
@@ -4142,7 +4142,7 @@ async fn worker_production_pool_uses_discrete_fields_role_limits_and_timeouts() 
     let qa_url = std::env::var("DATABASE_URL")
         .expect("required QA DATABASE_URL must be provided for production-pool verification");
     assert_eq!(
-        qa_url, "postgres://postgres:lagrange@127.0.0.1:55432/postgres",
+        qa_url, "postgres://postgres:lagrange@127.0.0.1:55438/postgres",
         "final QA must use the reviewed local PostgreSQL endpoint"
     );
     let db = ScratchDb::create()
@@ -4152,7 +4152,7 @@ async fn worker_production_pool_uses_discrete_fields_role_limits_and_timeouts() 
         ("APP_ENV".to_owned(), "qa".to_owned()),
         ("RESEARCH_FETCH_MODE".to_owned(), "synthetic".to_owned()),
         ("DB_HOST".to_owned(), "127.0.0.1".to_owned()),
-        ("DB_PORT".to_owned(), "55432".to_owned()),
+        ("DB_PORT".to_owned(), "55438".to_owned()),
         ("DB_NAME".to_owned(), db.database_name().to_owned()),
         ("DB_USER".to_owned(), "research_writer".to_owned()),
         ("DB_PASSWORD_FILE".to_owned(), "qa-password".to_owned()),

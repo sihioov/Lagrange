@@ -18,10 +18,10 @@ import { SoakAudit } from "./soak-audit.mjs";
 import { PassiveStreamDiagnostics, domMetadata } from "./passive-stream-diagnostics.mjs";
 
 const REPOSITORY = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const PRIVATE = "/tmp/lagrange-kis-stream-completion-20261001-653ff5d84407";
+const PRIVATE = "/tmp/lagrange-kis-stream-r1-f22f4c7b006550e78059";
 const BINDING = `${PRIVATE}/wp3c2-runtime-binding.json`;
-const BINDING_SHA = "f173e4eed80a6543535f574fa003d6d77d521bfb41d6c532f6c44442a2f4f268";
-const CLUSTER = "/tmp/lagrange-kis-c2-4b4fed7166084d97a6b67ae3ba294be0";
+const BINDING_SHA = "1aa2b11083464780a625256c5163ea180cad29a9462dfe0c95534319884136ec";
+const CLUSTER = "/tmp/lagrange-kis-c2-62f45acd50b9486cb21b5d24c5c99115";
 const NGINX_IMAGE = "sha256:7377697a821c131a924a7105fafbe7414db4e9fcc77a6f08f776f33f141ec3f8";
 const UID = 1000;
 const CASE = "integrated_runtime_api_fixture";

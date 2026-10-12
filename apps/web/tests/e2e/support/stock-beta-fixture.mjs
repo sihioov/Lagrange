@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 const MEMBERSHIPS_PATH = "/api/v1/research/owner-beta/equity-universe-v2/memberships";
+const MEMBERSHIP_ADVANCE_PATH = "/__test/stock-beta/membership-advance";
 const LATEST_PATH = "/api/v1/research/owner-beta/equity-universe-v2/signals/latest";
 const SCREEN_PATH = "/api/v1/research/owner-beta/equity-universe-v2/signals/screen";
 const DETAIL_PATH = "/api/v1/research/owner-beta/equity-universe-v2/signals/instruments";
@@ -11,9 +12,26 @@ const CHART_RANGES = ["1m", "3m", "6m", "1y"];
 const CHART_CHANGES = [80, -50, 0, 120, -90, 45, -35, 0, 60, -70, 25];
 const JOB_ID = "00000000-0000-4000-8000-000000000701";
 const REQUEST_ID = "request-synthetic-stock-beta-v2";
+const MEMBERSHIP_LIFECYCLES = new Set([
+  "REQUESTED",
+  "VALIDATING",
+  "BACKFILLING",
+  "MATERIALIZING",
+  "READY",
+  "INSUFFICIENT_HISTORY",
+  "FAILED",
+  "DISABLED",
+]);
+const NEXT_MEMBERSHIP_LIFECYCLE = {
+  REQUESTED: "VALIDATING",
+  VALIDATING: "BACKFILLING",
+  BACKFILLING: "MATERIALIZING",
+  MATERIALIZING: "READY",
+};
 
-function createRuntime() {
+function createRuntime(controlledLifecycle = false) {
   return {
+    controlledLifecycle,
     disabledInstrumentIds: new Set(),
     memberships: [],
     nextMembershipNumber: 1,
@@ -94,6 +112,7 @@ function pending(lifecycle) {
 }
 
 function advancePendingMemberships() {
+  if (runtime.controlledLifecycle) return;
   if (!runtime.memberships.some((item) => pending(item.lifecycle))) return;
 
   runtime.pollCount += 1;
@@ -132,14 +151,15 @@ export function resetStockBetaFixture(scenario = {}) {
   const seed = scenario.stockBetaSeed ?? "ready";
   const seedCode = normalizeCode(scenario.stockBetaSeedCode ?? "000001");
   const count = rowCountFor(scenario);
+  const controlledLifecycle = scenario.stockBetaLifecycle === "controlled";
 
   if (seed === "empty" || count === 0) {
-    runtime = createRuntime();
+    runtime = createRuntime(controlledLifecycle);
     return;
   }
 
   if (seed === "failed") {
-    runtime = createRuntime();
+    runtime = createRuntime(controlledLifecycle);
     runtime.memberships = [
       membership(seedCode, "FAILED", {
         code: "OWNER_EQUITY_BACKFILL_RETRYABLE",
@@ -149,7 +169,7 @@ export function resetStockBetaFixture(scenario = {}) {
     return;
   }
 
-  runtime = createRuntime();
+  runtime = createRuntime(controlledLifecycle);
   runtime.memberships = seededCodes(count, seedCode).map((code) => membership(code, "READY"));
 }
 
@@ -174,6 +194,56 @@ function responseError(status, code) {
     body: { error: { code, message: code, request_id: REQUEST_ID } },
     status,
   };
+}
+
+function exactMembershipAdvanceBody(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return false;
+  const keys = Reflect.ownKeys(body);
+  return (
+    keys.length === 3 &&
+    keys.every((key) => typeof key === "string") &&
+    keys.includes("membership_id") &&
+    keys.includes("expected_generation") &&
+    keys.includes("expected_lifecycle")
+  );
+}
+
+function advanceControlledMembership(body) {
+  if (
+    !exactMembershipAdvanceBody(body) ||
+    typeof body.membership_id !== "string" ||
+    !Number.isSafeInteger(body.expected_generation) ||
+    body.expected_generation < 0 ||
+    typeof body.expected_lifecycle !== "string" ||
+    !MEMBERSHIP_LIFECYCLES.has(body.expected_lifecycle)
+  ) {
+    return responseError(422, "INVALID_PARAMETER");
+  }
+
+  const existing = runtime.memberships.find((item) => item.id === body.membership_id);
+  if (existing === undefined) return responseError(404, "OWNER_EQUITY_MEMBERSHIP_NOT_FOUND");
+  if (
+    !pending(existing.lifecycle) ||
+    existing.lifecycle !== body.expected_lifecycle ||
+    existing.generation !== body.expected_generation
+  ) {
+    return responseError(409, "OWNER_EQUITY_INVALID_STATE");
+  }
+
+  const nextLifecycle = NEXT_MEMBERSHIP_LIFECYCLE[existing.lifecycle];
+  if (nextLifecycle === undefined) return responseError(409, "OWNER_EQUITY_INVALID_STATE");
+  const resource = {
+    ...existing,
+    coverage: lifecycleCoverage(nextLifecycle),
+    failure: undefined,
+    generation: nextLifecycle === "READY" ? 1 : existing.generation,
+    lifecycle: nextLifecycle,
+    updated_at: BASE_TIME,
+  };
+  runtime.memberships = runtime.memberships.map((item) =>
+    item.id === existing.id ? resource : item,
+  );
+  return { body: { membership: resource, policy: policy() }, status: 200 };
 }
 
 function mutationAuthorized(headers = {}) {
@@ -400,6 +470,12 @@ function snapshotUnavailableIfNeeded(scenario) {
 
 export function stockBetaResponse(request) {
   const { body, headers, method, pathname, scenario } = request;
+  if (pathname === MEMBERSHIP_ADVANCE_PATH) {
+    if (method !== "POST" || !runtime.controlledLifecycle) return null;
+    if (scenario.role !== "owner") return responseError(403, "FORBIDDEN");
+    return advanceControlledMembership(body);
+  }
+
   const isMembershipPath =
     pathname === MEMBERSHIPS_PATH || pathname.startsWith(`${MEMBERSHIPS_PATH}/`);
   if (!isMembershipPath && !isSignalPath(pathname)) return null;

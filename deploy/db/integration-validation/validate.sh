@@ -12,7 +12,7 @@ usage() {
   cat <<'USAGE'
 Usage: deploy/db/integration-validation/validate.sh [options]
 
-Run a disposable PostgreSQL 18 migration upgrade and DB-gated Rust suites.
+Run disposable PostgreSQL 18 staged-upgrade, full-release, and DB-gated Rust lanes.
 Upgrade credentials are generated under a private temporary directory; the
 test lane uses the repository's synthetic compatibility fixture. Both
 clusters are torn down on every exit by default.
@@ -23,6 +23,8 @@ Options:
   --main-port PORT     Loopback port for the upgrade cluster (default: 55432).
   --test-port PORT     Loopback port for the DB-gated test cluster
                        (default: 55433).
+  --full-port PORT     Loopback port for the empty full-release cluster
+                       (default: 55434).
   --self-test          Exercise stage construction, secret safety, SQL
                        markers, and command wiring without Docker/PostgreSQL.
   --help               Show this help.
@@ -47,6 +49,7 @@ die_usage() {
 evidence_dir=''
 main_port=55432
 test_port=55433
+full_port=55434
 self_test=0
 
 while [ "$#" -gt 0 ]; do
@@ -64,6 +67,11 @@ while [ "$#" -gt 0 ]; do
     --test-port)
       [ "$#" -ge 2 ] || die_usage '--test-port requires a number'
       test_port=$2
+      shift 2
+      ;;
+    --full-port)
+      [ "$#" -ge 2 ] || die_usage '--full-port requires a number'
+      full_port=$2
       shift 2
       ;;
     --self-test)
@@ -90,7 +98,10 @@ validate_port() {
 
 validate_port --main-port "$main_port"
 validate_port --test-port "$test_port"
+validate_port --full-port "$full_port"
 [ "$main_port" != "$test_port" ] || die_usage '--main-port and --test-port must differ'
+[ "$main_port" != "$full_port" ] || die_usage '--main-port and --full-port must differ'
+[ "$test_port" != "$full_port" ] || die_usage '--test-port and --full-port must differ'
 
 min_free_bytes=${LAGRANGE_VALIDATION_MIN_FREE_BYTES:-134217728}
 case "$min_free_bytes" in
@@ -114,6 +125,12 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: bash is required' >&2
     exit 1
   }
+  for command_name in cat find grep install sha256sum sort tail wc; do
+    command -v "$command_name" >/dev/null 2>&1 || {
+      echo "PG_VALIDATION_SELF_TEST: $command_name is required" >&2
+      exit 1
+    }
+  done
   bash -n "$BASH_SOURCE"
 
   secret="$self_workdir/secret"
@@ -127,6 +144,10 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: generated secret has CR' >&2
     exit 1
   fi
+  [[ "$(cat -- "$secret")" =~ ^[0-9a-f]{64}$ ]] || {
+    echo 'PG_VALIDATION_SELF_TEST: generated secret is not exactly 64 lowercase hex characters' >&2
+    exit 1
+  }
 
   self_migrations="$self_workdir/migrations"
   mkdir -p "$self_migrations"
@@ -157,9 +178,22 @@ if [ "$self_test" -eq 1 ]; then
     [ -f "$self_migrations/41/$required" ] \
       || { echo "PG_VALIDATION_SELF_TEST: missing $required" >&2; exit 1; }
   done
+  latest_migration_file=$(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' -print | sort | tail -n 1)
+  [[ "${latest_migration_file##*/}" =~ ^([0-9]{4})_ ]] || {
+    echo 'PG_VALIDATION_SELF_TEST: latest migration filename is invalid' >&2
+    exit 1
+  }
+  self_latest_migration=$((10#${BASH_REMATCH[1]}))
+  self_full_expected=$((self_latest_migration * 2))
+  self_full_actual=$(find "$root/migrations" -maxdepth 1 -type f -name '*.sql' | wc -l)
+  [ "$self_full_actual" -eq "$self_full_expected" ] || {
+    echo "PG_VALIDATION_SELF_TEST: full source has $self_full_actual files, expected $self_full_expected for latest migration $self_latest_migration" >&2
+    exit 1
+  }
   for required_file in \
     "$script_dir/preflight-baseline.sql" \
     "$script_dir/preflight-0039.sql" \
+    "$script_dir/preflight-catalog.sql" \
     "$script_dir/preflight-0040.sql" \
     "$script_dir/preflight-0041.sql" \
     "$script_dir/hazards.sql" \
@@ -188,11 +222,43 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: db-tool revision build argument is missing' >&2
     exit 1
   }
+  grep -Fq 'run_schema_only_stage38' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: schema-only stage38 path is missing' >&2
+    exit 1
+  }
+  grep -Fq -- '--entrypoint /bin/bash' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: stage38 entrypoint override is missing' >&2
+    exit 1
+  }
+  grep -Fq '[[ "$password" =~ ^[0-9a-f]{64}$ ]]' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: stage38 exact generated-password check is missing' >&2
+    exit 1
+  }
+  grep -Fq 'run_full_release_lane' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: separate full-release lane is missing' >&2
+    exit 1
+  }
+  grep -Fq 'run_catalog_negative_probe' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: catalog lane-boundary negative probes are missing' >&2
+    exit 1
+  }
+  grep -Fq 'run_terminal_paper_check' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: terminal Paper RLS-aware preflight is missing' >&2
+    exit 1
+  }
+  grep -Fq 'full_cleanup=PASS_NO_OWNED_CONTAINERS' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: full-release teardown verification is missing' >&2
+    exit 1
+  }
+  grep -Fq 'run_migration_rerun_0039' "$BASH_SOURCE" || {
+    echo 'PG_VALIDATION_SELF_TEST: staged catalog rerun check is missing' >&2
+    exit 1
+  }
   echo 'PG_VALIDATION_SELF_TEST: PASS'
   exit 0
 fi
 
-for command_name in docker openssl mktemp awk sed grep find install date bash cat chmod cp rm tr wc cargo git; do
+for command_name in docker openssl mktemp awk sed grep find install date bash cat chmod cp rm tr wc cargo git sha256sum sort tail; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "postgres-integration-validation: required command is missing: $command_name" >&2
     exit 2
@@ -232,13 +298,39 @@ started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 finished_at=''
 main_started=0
 test_started=0
+full_started=0
 cleaned=0
 docker_ready=0
 stages_run=''
 tests_run=''
 service_logins=''
+full_service_logins=''
 rollback_guard='NOT_RUN'
+catalog_install='NOT_RUN'
+catalog_conflict='NOT_RUN'
+catalog_negative_probes=''
+catalog_rerun='NOT_RUN'
+full_release_rerun='NOT_RUN'
+full_cleanup='NOT_RUN'
+full_migration_count_first=''
+full_latest_migration_first=''
+full_migration_checksums_first=''
+full_migration_count_second=''
+full_latest_migration_second=''
+full_migration_checksums_second=''
 skip_guard='ENFORCED'
+catalog_sha256_line=$(sha256sum -- "$root/configs/strategies/baseline-v1.json")
+catalog_sha256=${catalog_sha256_line%% *}
+[[ "$catalog_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo 'postgres-integration-validation: baseline catalog hash is invalid' >&2
+  exit 2
+}
+latest_migration_file=$(find "$root/migrations" -maxdepth 1 -type f -name '*.up.sql' -print | sort | tail -n 1)
+[[ "${latest_migration_file##*/}" =~ ^([0-9]{4})_ ]] || {
+  echo 'postgres-integration-validation: latest migration filename is invalid' >&2
+  exit 2
+}
+latest_migration_version=$((10#${BASH_REMATCH[1]}))
 
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\r//g; s/\n/\\n/g'
@@ -273,10 +365,11 @@ record_log() {
 
 write_evidence() {
   finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  local escaped_detail escaped_started escaped_finished
+  local escaped_detail escaped_started escaped_finished catalog_probe_evidence
   escaped_detail=$(json_escape "$detail")
   escaped_started=$(json_escape "$started_at")
   escaped_finished=$(json_escape "$finished_at")
+  catalog_probe_evidence=${catalog_negative_probes:-NOT_RUN}
   {
     printf '{\n'
     printf '  "workflow": "postgres-integration-validation",\n'
@@ -286,8 +379,15 @@ write_evidence() {
     printf '  "finished_at": "%s",\n' "$escaped_finished"
     printf '  "code_commit": "%s",\n' "$validation_code_commit"
     printf '  "postgres_image": "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a",\n'
-    printf '  "upgrade": {"baseline": "0038", "sequential": ["0039", "0040", "0041"]},\n'
-    printf '  "ports": {"upgrade": %s, "tests": %s},\n' "$main_port" "$test_port"
+    printf '  "upgrade": {"baseline": "0038_schema_only", "sequential": ["0039", "0040", "0041"], "catalog_sha256": "%s"},\n' "$catalog_sha256"
+    printf '  "full_release": {"first_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "second_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "rerun": "%s"},\n' \
+      "$(json_escape "$full_migration_count_first")" "$(json_escape "$full_latest_migration_first")" \
+      "$(json_escape "$full_migration_checksums_first")" "$(json_escape "$full_migration_count_second")" \
+      "$(json_escape "$full_latest_migration_second")" "$(json_escape "$full_migration_checksums_second")" "$full_release_rerun"
+    printf '  "catalog_checks": {"initial_install": "%s", "conflict_probe": "%s", "negative_probes": "%s", "staged_rerun_preserved_identity": "%s"},\n' \
+      "$catalog_install" "$catalog_conflict" "$catalog_probe_evidence" "$catalog_rerun"
+    printf '  "full_release_cleanup": "%s",\n' "$full_cleanup"
+    printf '  "ports": {"upgrade": %s, "tests": %s, "full_release": %s},\n' "$main_port" "$test_port" "$full_port"
     printf '  "credentials": "upgrade values generated in a private temporary directory; test lane uses the existing synthetic fixture; values omitted",\n'
     printf '  "stages_run": ['
     first=1
@@ -299,8 +399,8 @@ write_evidence() {
       first=0
     done
     printf '],\n'
-    printf '  "checks": {"direct_service_role_logins": "%s", "0039_down_undelivered_guard": "%s", "skip_markers": "%s"},\n' \
-      "$(json_escape "$service_logins")" "$rollback_guard" "$skip_guard"
+    printf '  "checks": {"direct_service_role_logins": "%s", "full_release_service_role_logins": "%s", "0039_down_undelivered_guard": "%s", "skip_markers": "%s"},\n' \
+      "$(json_escape "$service_logins")" "$(json_escape "$full_service_logins")" "$rollback_guard" "$skip_guard"
     printf '  "tests_run": ['
     first=1
     IFS=',' read -r -a test_items <<<"$tests_run"
@@ -324,10 +424,25 @@ write_evidence() {
     printf 'stages_run\t%s\n' "$stages_run"
     printf 'tests_run\t%s\n' "$tests_run"
     printf 'direct_service_role_logins\t%s\n' "$service_logins"
+    printf 'full_release_service_role_logins\t%s\n' "$full_service_logins"
     printf '0039_down_undelivered_guard\t%s\n' "$rollback_guard"
+    printf 'catalog_sha256\t%s\n' "$catalog_sha256"
+    printf 'catalog_install\t%s\n' "$catalog_install"
+    printf 'catalog_conflict_probe\t%s\n' "$catalog_conflict"
+    printf 'catalog_negative_probes\t%s\n' "$catalog_probe_evidence"
+    printf 'catalog_rerun\t%s\n' "$catalog_rerun"
+    printf 'full_release_cleanup\t%s\n' "$full_cleanup"
+    printf 'full_release_rerun\t%s\n' "$full_release_rerun"
+    printf 'full_release_first_migration_count\t%s\n' "$full_migration_count_first"
+    printf 'full_release_first_latest_migration\t%s\n' "$full_latest_migration_first"
+    printf 'full_release_first_migration_checksums\t%s\n' "$full_migration_checksums_first"
+    printf 'full_release_second_migration_count\t%s\n' "$full_migration_count_second"
+    printf 'full_release_second_latest_migration\t%s\n' "$full_latest_migration_second"
+    printf 'full_release_second_migration_checksums\t%s\n' "$full_migration_checksums_second"
     printf 'skip_markers\t%s\n' "$skip_guard"
     printf 'upgrade_port\t%s\n' "$main_port"
     printf 'test_port\t%s\n' "$test_port"
+    printf 'full_release_port\t%s\n' "$full_port"
   } >"$evidence_dir/evidence.tsv"
   chmod 0600 -- "$evidence_dir/evidence.tsv"
 }
@@ -341,6 +456,10 @@ cleanup() {
     if [ "$main_started" -eq 1 ]; then
       main_compose down -v --remove-orphans >"$workdir/cleanup-main.log" 2>&1
       record_log "$workdir/cleanup-main.log" cleanup-main.log
+    fi
+    if [ "$full_started" -eq 1 ]; then
+      full_compose down -v --remove-orphans >"$workdir/cleanup-full.log" 2>&1
+      record_log "$workdir/cleanup-full.log" cleanup-full.log
     fi
     if [ "$test_started" -eq 1 ]; then
       test_compose down -v --remove-orphans >"$workdir/cleanup-test.log" 2>&1
@@ -382,6 +501,10 @@ main_compose() {
   LAGRANGE_QA_DB_PORT="$main_port" docker compose -p "$main_project" -f "$qa_compose" -f "$main_override" "$@"
 }
 
+full_compose() {
+  LAGRANGE_QA_DB_PORT="$full_port" docker compose -p "$full_project" -f "$qa_compose" -f "$full_override" "$@"
+}
+
 test_compose() {
   LAGRANGE_QA_DB_PORT="$test_port" docker compose -p "$test_project" -f "$qa_compose" -f "$test_override" "$@"
 }
@@ -395,6 +518,8 @@ generate_secret() {
   if LC_ALL=C grep -Fq $'\r' "$destination"; then
     fail "generated credential contains CR: ${destination##*/}"
   fi
+  credential=$(cat -- "$destination")
+  [[ "$credential" =~ ^[0-9a-f]{64}$ ]] || fail "generated credential has an invalid format: ${destination##*/}"
 }
 
 make_stages() {
@@ -421,6 +546,7 @@ make_stages() {
 
 make_override() {
   local destination=$1 password_dir=$2 port=$3 include_tool=$4
+  local migration_mount=${5:-1} tool_migrations_dir=${6:-/validation/migrations/41}
   local tool_block=''
   if [ "$include_tool" -eq 1 ]; then
     if [ -n "${LAGRANGE_DB_VALIDATION_IMAGE:-}" ]; then
@@ -435,9 +561,7 @@ make_override() {
       DB_NAME: postgres
       DB_USER: migration_owner
       DB_PASSWORD_FILE: /run/secrets/db_migration_owner_password
-      MIGRATIONS_DIR: /validation/migrations/41
-    volumes:
-      - ${migration_root}:/validation/migrations:ro
+      MIGRATIONS_DIR: ${tool_migrations_dir}
     secrets:
       - db_migration_owner_password
     networks:
@@ -447,6 +571,7 @@ EOF
     else
       tool_block=$(cat <<EOF
   db-tool:
+    image: lagrange-db-validation:${validation_code_commit}
     build:
       context: ${root}
       dockerfile: deploy/db/Dockerfile
@@ -460,15 +585,17 @@ EOF
       DB_NAME: postgres
       DB_USER: migration_owner
       DB_PASSWORD_FILE: /run/secrets/db_migration_owner_password
-      MIGRATIONS_DIR: /validation/migrations/41
-    volumes:
-      - ${migration_root}:/validation/migrations:ro
+      MIGRATIONS_DIR: ${tool_migrations_dir}
     secrets:
       - db_migration_owner_password
     networks:
       - default
 EOF
 )
+    fi
+    if [ "$migration_mount" -eq 1 ]; then
+      tool_block+=$'\n    volumes:\n'
+      tool_block+="      - ${migration_root}:/validation/migrations:ro"
     fi
   fi
   {
@@ -484,7 +611,9 @@ EOF
     printf '    volumes:\n'
     printf '      - %s:/validation/secrets:ro\n' "$password_dir"
     printf '      - %s:/validation/bootstrap-roles.sh:ro\n' "$role_script"
-    if [ "$include_tool" -eq 1 ]; then
+    printf '      - %s:/validation/baseline-v1.json:ro\n' "$root/configs/strategies/baseline-v1.json"
+    printf '      - %s:/validation/sync-baseline-strategy-catalog.sql:ro\n' "$root/deploy/db/sync-baseline-strategy-catalog.sql"
+    if [ "$include_tool" -eq 1 ] && [ "$migration_mount" -eq 1 ]; then
       printf '      - %s:/validation/migrations:ro\n' "$migration_root"
     fi
     if [ "$include_tool" -eq 1 ]; then
@@ -520,14 +649,16 @@ bootstrap_roles() {
 
 run_psql() {
   local compose_function=$1 sql_file=$2
+  local -a psql_args=("${@:3}")
   "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
-    'export PGPASSWORD="$(cat /validation/secrets/postgres_password)"; exec psql -X -v ON_ERROR_STOP=1 -P pager=off -At -h 127.0.0.1 -p 5432 -U postgres -d postgres' \
-    <"$sql_file"
+    'export PGPASSWORD="$(cat /validation/secrets/postgres_password)"; exec psql -X -v ON_ERROR_STOP=1 -P pager=off -At -h 127.0.0.1 -p 5432 -U postgres -d postgres "$@"' \
+    psql-wrapper "${psql_args[@]}" <"$sql_file"
 }
 
 run_role_psql() {
   local compose_function=$1 role=$2 sql_file=$3
   local secret_name
+  local -a psql_args=("${@:4}")
   case "$role" in
     migration_owner) secret_name=db_migration_owner_password ;;
     app) secret_name=db_app_password ;;
@@ -538,8 +669,130 @@ run_role_psql() {
     *) return 1 ;;
   esac
   "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
-    "export PGPASSWORD=\"\$(cat /validation/secrets/${secret_name})\"; exec psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -P pager=off -At -h 127.0.0.1 -p 5432 -U ${role} -d postgres" \
-    <"$sql_file"
+    "export PGPASSWORD=\"\$(cat /validation/secrets/${secret_name})\"; exec psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -P pager=off -At -h 127.0.0.1 -p 5432 -U ${role} -d postgres \"\$@\"" \
+    psql-wrapper "${psql_args[@]}" <"$sql_file"
+}
+
+run_terminal_paper_check() {
+  local compose_function=$1 label=$2 raw="$workdir/terminal-paper-$2.log"
+  if ! run_psql "$compose_function" "$script_dir/preflight-0039.sql" \
+      --set terminal_only=1 --set "catalog_sha256=$catalog_sha256" >"$raw" 2>&1; then
+    record_log "$raw" "terminal-paper-$label.log"
+    return 1
+  fi
+  record_log "$raw" "terminal-paper-$label.log"
+  grep -Fqx 'terminal_paper_targets=1' "$raw"
+}
+
+run_catalog_preflight() {
+  local compose_function=$1 conflict_probe=$2 raw=$3 expected_lane=$4 negative_probe=$5
+  local probe_unexpected_strategy=0 probe_missing_baseline=0
+  local probe_mutated_baseline=0 probe_full_paper=0
+  case "$expected_lane" in
+    staged|full) ;;
+    *) fail 'catalog preflight received an invalid lane expectation' ;;
+  esac
+  case "$negative_probe" in
+    none) ;;
+    unexpected_strategy) probe_unexpected_strategy=1 ;;
+    missing_baseline) probe_missing_baseline=1 ;;
+    mutated_baseline) probe_mutated_baseline=1 ;;
+    full_paper) probe_full_paper=1 ;;
+    *) fail 'catalog preflight received an invalid negative-probe expectation' ;;
+  esac
+  case "$negative_probe:$expected_lane" in
+    none:staged|none:full|unexpected_strategy:staged|missing_baseline:staged|mutated_baseline:staged|full_paper:full) ;;
+    *) fail 'catalog negative probe does not match its disposable lane' ;;
+  esac
+  "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
+    '
+      set -euo pipefail
+      export PGPASSWORD="$(cat /validation/secrets/db_migration_owner_password)"
+      catalog_json="$(cat /validation/baseline-v1.json)"
+      catalog_sha256=$(sha256sum /validation/baseline-v1.json)
+      catalog_sha256=${catalog_sha256%% *}
+      [[ "$catalog_sha256" =~ ^[0-9a-f]{64}$ ]]
+      exec psql -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -P pager=off -At \
+        -v "catalog_json=$catalog_json" -v "catalog_sha256=$catalog_sha256" \
+        -v "expected_lane=$2" -v "conflict_probe=$1" \
+        -v "probe_unexpected_strategy=$3" -v "probe_missing_baseline=$4" \
+        -v "probe_mutated_baseline=$5" -v "probe_full_paper=$6" \
+        -h 127.0.0.1 -p 5432 -U migration_owner -d postgres
+    ' validation "$conflict_probe" "$expected_lane" \
+      "$probe_unexpected_strategy" "$probe_missing_baseline" \
+      "$probe_mutated_baseline" "$probe_full_paper" \
+    <"$script_dir/preflight-catalog.sql" >"$raw" 2>&1
+}
+
+run_catalog_negative_probe() {
+  local compose_function=$1 lane=$2 probe=$3 expected_reason=$4 baseline_snapshot=$5
+  local raw="$workdir/catalog-negative-$probe.log"
+  local after_raw="$workdir/catalog-after-negative-$probe.log"
+  local error_count after_snapshot
+  if ! run_catalog_preflight "$compose_function" 0 "$raw" "$lane" "$probe"; then
+    record_log "$raw" "catalog-negative-$probe.log"
+    fail "catalog negative probe could not complete its disposable transaction: $probe"
+  fi
+  record_log "$raw" "catalog-negative-$probe.log"
+  error_count=$(awk '/^ERROR:/ { count++ } END { print count + 0 }' "$raw")
+  [ "$error_count" = 1 ] \
+    || fail "catalog negative probe emitted $error_count SQL errors; expected exactly one: $probe"
+  if ! grep -Eq "ERROR:[[:space:]]+23514:[[:space:]]+catalog_preflight: $expected_reason([[:space:]]|$)" "$raw"; then
+    fail "catalog negative probe did not raise the expected SQLSTATE 23514 reason: $probe"
+  fi
+  grep -Fqx "CATALOG_NEGATIVE_PROBE_ROLLED_BACK:$probe" "$raw" \
+    || fail "catalog negative probe did not explicitly roll back: $probe"
+  if ! run_catalog_preflight "$compose_function" 0 "$after_raw" "$lane" none; then
+    record_log "$after_raw" "catalog-after-negative-$probe.log"
+    fail "catalog negative probe did not restore a valid post-rollback snapshot: $probe"
+  fi
+  record_log "$after_raw" "catalog-after-negative-$probe.log"
+  after_snapshot=$(catalog_snapshot "$after_raw")
+  [ "$after_snapshot" = "$baseline_snapshot" ] \
+    || fail "catalog negative probe changed rows or audit identity/count: $probe"
+  catalog_negative_probes=$(append_csv "$catalog_negative_probes" "$probe:SQLSTATE_23514_ROLLED_BACK")
+}
+
+run_full_ledger_report() {
+  local compose_function=$1 label=$2
+  local query_file="$workdir/full-ledger-$label.sql"
+  local raw="$workdir/full-ledger-$label.log"
+  local checksum_entry checksum_version checksum_value expected_version
+  local -a checksum_items=()
+  cat >"$query_file" <<'SQL'
+SELECT 'migration_count=' || count(*) FROM public._sqlx_migrations;
+SELECT 'latest_migration=' || coalesce(max(version)::text, 'none') FROM public._sqlx_migrations;
+SELECT 'migration_checksums=' || coalesce(
+    string_agg(version::text || ':' || encode(checksum, 'hex'), ',' ORDER BY version),
+    ''
+) FROM public._sqlx_migrations;
+SQL
+  if ! run_psql "$compose_function" "$query_file" >"$raw" 2>&1; then
+    record_log "$raw" "full-ledger-$label.log"
+    fail "could not inspect full-release migration ledger after $label run"
+  fi
+  record_log "$raw" "full-ledger-$label.log"
+  full_count=$(sed -n 's/^migration_count=//p' "$raw")
+  full_latest=$(sed -n 's/^latest_migration=//p' "$raw")
+  full_checksums=$(sed -n 's/^migration_checksums=//p' "$raw")
+  [[ "$full_count" =~ ^[0-9]+$ ]] || fail "full-release $label migration count is invalid"
+  [[ "$full_latest" =~ ^[0-9]+$ ]] || fail "full-release $label latest migration is invalid"
+  [[ -n "$full_checksums" ]] || fail "full-release $label migration checksums are missing"
+  IFS=',' read -r -a checksum_items <<<"$full_checksums"
+  [ "${#checksum_items[@]}" -eq "$full_count" ] \
+    || fail "full-release $label checksum count does not match its migration count"
+  expected_version=1
+  for checksum_entry in "${checksum_items[@]}"; do
+    [[ "$checksum_entry" =~ ^([0-9]+):([0-9a-f]+)$ ]] \
+      || fail "full-release $label contains a malformed migration checksum"
+    checksum_version=${BASH_REMATCH[1]}
+    checksum_value=${BASH_REMATCH[2]}
+    [ "$checksum_version" = "$expected_version" ] \
+      || fail "full-release $label migration checksums are not a contiguous ordered ledger"
+    (( ${#checksum_value} % 2 == 0 )) \
+      || fail "full-release $label contains an odd-length migration checksum"
+    expected_version=$((expected_version + 1))
+  done
 }
 
 run_service_login() {
@@ -580,6 +833,41 @@ run_disk_check() {
   (( free_bytes >= min_free_bytes ))
 }
 
+verify_migration_count() {
+  local compose_function=$1 expected=$2 label=$3
+  local count_sql="$workdir/check-version-$label.sql"
+  local count_raw="$workdir/version-$label.log"
+  printf 'SELECT count(*) FROM public._sqlx_migrations;\n' >"$count_sql"
+  if ! run_psql "$compose_function" "$count_sql" >"$count_raw" 2>&1; then
+    record_log "$count_raw" "version-$label.log"
+    fail "could not verify migration stage $label"
+  fi
+  record_log "$count_raw" "version-$label.log"
+  observed=$(tr -d '\r' <"$count_raw" | tail -n 1)
+  [ "$observed" = "$expected" ] || fail "migration stage $label recorded $observed applied migrations; expected $expected"
+}
+
+run_schema_only_stage38() {
+  local raw="$workdir/migrate-38-schema-only.log"
+  if ! main_compose run --rm --no-deps --entrypoint /bin/bash db-tool -ec '
+    set -euo pipefail
+    password_file=/run/secrets/db_migration_owner_password
+    test -f "$password_file"
+    password=$(cat -- "$password_file")
+    [[ "$password" =~ ^[0-9a-f]{64}$ ]]
+    export DATABASE_URL="postgres://migration_owner:${password}@qa-db:5432/postgres"
+    export PGOPTIONS="-c lock_timeout=5s -c statement_timeout=60s"
+    unset password
+    exec sqlx migrate run --source /validation/migrations/38
+  ' >"$raw" 2>&1; then
+    record_log "$raw" migrate-38-schema-only.log
+    fail 'schema-only migration stage 38 failed'
+  fi
+  record_log "$raw" migrate-38-schema-only.log
+  verify_migration_count main_compose 38 38
+  stages_run=$(append_csv "$stages_run" '0038-schema-only')
+}
+
 run_migration_stage() {
   local version=$1 raw="$workdir/migrate-$1.log"
   if ! main_compose run --rm --no-deps -e "MIGRATIONS_DIR=/validation/migrations/$version" db-tool >"$raw" 2>&1; then
@@ -587,17 +875,19 @@ run_migration_stage() {
     fail "migration stage $version failed"
   fi
   record_log "$raw" "migrate-$version.log"
-  stage_count_sql="$workdir/check-version-$version.sql"
-  printf 'SELECT count(*) FROM _sqlx_migrations;\n' >"$stage_count_sql"
-  count_raw="$workdir/version-$version.log"
-  if ! run_psql main_compose "$stage_count_sql" >"$count_raw" 2>&1; then
-    record_log "$count_raw" "version-$version.log"
-    fail "could not verify migration stage $version"
-  fi
-  record_log "$count_raw" "version-$version.log"
-  observed=$(tr -d '\r' <"$count_raw" | tail -n 1)
-  [ "$observed" = "$version" ] || fail "migration stage $version recorded $observed applied migrations; expected $version"
+  verify_migration_count main_compose "$version" "$version"
   stages_run=$(append_csv "$stages_run" "$version")
+}
+
+run_migration_rerun_0039() {
+  local raw="$workdir/migrate-0039-rerun.log"
+  if ! main_compose run --rm --no-deps -e 'MIGRATIONS_DIR=/validation/migrations/39' db-tool >"$raw" 2>&1; then
+    record_log "$raw" migrate-0039-rerun.log
+    fail '0039 catalog sync rerun was not a no-op'
+  fi
+  record_log "$raw" migrate-0039-rerun.log
+  verify_migration_count main_compose 39 0039-rerun
+  stages_run=$(append_csv "$stages_run" '0039-rerun')
 }
 
 run_migration_rerun_0041() {
@@ -607,16 +897,113 @@ run_migration_rerun_0041() {
     fail '0041 rerun was not a no-op'
   fi
   record_log "$raw" migrate-0041-rerun.log
-  count_sql="$workdir/check-version-0041-rerun.sql"
-  printf 'SELECT count(*) FROM _sqlx_migrations;\n' >"$count_sql"
-  if ! run_psql main_compose "$count_sql" >"$workdir/version-0041-rerun.log" 2>&1; then
-    record_log "$workdir/version-0041-rerun.log" version-0041-rerun.log
-    fail 'could not verify 0041 no-op rerun'
-  fi
-  record_log "$workdir/version-0041-rerun.log" version-0041-rerun.log
-  observed=$(tr -d '\r' <"$workdir/version-0041-rerun.log" | tail -n 1)
-  [ "$observed" = 41 ] || fail "0041 rerun changed applied migration count to $observed"
+  verify_migration_count main_compose 41 0041-rerun
   stages_run=$(append_csv "$stages_run" '0041-rerun')
+}
+
+catalog_snapshot() {
+  local raw=$1 snapshot
+  snapshot=$(grep -E '^(catalog_fingerprint|catalog_audit_id|catalog_audit_count)=' "$raw") \
+    || fail 'catalog preflight omitted its stable snapshot markers'
+  [ "$(printf '%s\n' "$snapshot" | wc -l)" -eq 3 ] \
+    || fail 'catalog preflight emitted an incomplete stable snapshot'
+  printf '%s' "$snapshot"
+}
+
+run_full_release_lane() {
+  local full_up_raw="$workdir/full-up.log"
+  local full_bootstrap_raw="$workdir/full-bootstrap.log"
+  local full_disk_raw="$workdir/full-disk-before.log"
+  local full_migrate_raw="$workdir/full-migrate-first.log"
+  local full_rerun_raw="$workdir/full-migrate-second.log"
+  local catalog_first_raw="$workdir/full-catalog-first.log"
+  local catalog_second_raw="$workdir/full-catalog-second.log"
+  local catalog_first_snapshot catalog_second_snapshot
+
+  full_started=1
+  if ! full_compose up -d --wait qa-db >"$full_up_raw" 2>&1; then
+    record_log "$full_up_raw" full-up.log
+    blocked 'empty full-release PostgreSQL container did not become healthy'
+  fi
+  record_log "$full_up_raw" full-up.log
+
+  if ! bootstrap_roles full_compose >"$full_bootstrap_raw" 2>&1; then
+    record_log "$full_bootstrap_raw" full-bootstrap.log
+    fail 'full-release role bootstrap failed'
+  fi
+  record_log "$full_bootstrap_raw" full-bootstrap.log
+
+  for service_role in migration_owner app worker audit_writer research_writer admin; do
+    service_login_raw="$workdir/full-service-login-$service_role.log"
+    if ! run_service_login full_compose "$service_role" "$service_login_raw"; then
+      record_log "$service_login_raw" "full-service-login-$service_role.log"
+      fail "full-release direct service-role login failed: $service_role"
+    fi
+    record_log "$service_login_raw" "full-service-login-$service_role.log"
+    full_service_logins=$(append_csv "$full_service_logins" "$service_role")
+  done
+
+  if ! run_disk_check full_compose "$full_disk_raw"; then
+    record_log "$full_disk_raw" full-disk-before.log
+    fail "full-release cluster has less than ${min_free_bytes} free bytes or disk inspection failed"
+  fi
+  record_log "$full_disk_raw" full-disk-before.log
+
+  if ! full_compose run --rm --no-deps -e 'MIGRATIONS_DIR=/opt/lagrange/migrations' db-tool >"$full_migrate_raw" 2>&1; then
+    record_log "$full_migrate_raw" full-migrate-first.log
+    fail 'empty full-release migration run failed'
+  fi
+  record_log "$full_migrate_raw" full-migrate-first.log
+  run_full_ledger_report full_compose first
+  full_migration_count_first=$full_count
+  full_latest_migration_first=$full_latest
+  full_migration_checksums_first=$full_checksums
+  [ "$full_migration_count_first" = "$latest_migration_version" ] \
+    || fail "full-release first run applied $full_migration_count_first migrations; expected $latest_migration_version"
+  [ "$full_latest_migration_first" = "$latest_migration_version" ] \
+    || fail "full-release first run latest version is $full_latest_migration_first; expected $latest_migration_version"
+
+  if ! run_catalog_preflight full_compose 0 "$catalog_first_raw" full none; then
+    record_log "$catalog_first_raw" full-catalog-first.log
+    fail 'full-release catalog preflight failed after the first migration run'
+  fi
+  record_log "$catalog_first_raw" full-catalog-first.log
+  catalog_first_snapshot=$(catalog_snapshot "$catalog_first_raw")
+  run_catalog_negative_probe full_compose full full_paper full_lane_paper_fixture_present \
+    "$catalog_first_snapshot"
+
+  if ! full_compose run --rm --no-deps -e 'MIGRATIONS_DIR=/opt/lagrange/migrations' db-tool >"$full_rerun_raw" 2>&1; then
+    record_log "$full_rerun_raw" full-migrate-second.log
+    fail 'empty full-release migration rerun failed'
+  fi
+  record_log "$full_rerun_raw" full-migrate-second.log
+  run_full_ledger_report full_compose second
+  full_migration_count_second=$full_count
+  full_latest_migration_second=$full_latest
+  full_migration_checksums_second=$full_checksums
+  [ "$full_migration_count_second" = "$full_migration_count_first" ] \
+    || fail 'full-release rerun changed the migration count'
+  [ "$full_latest_migration_second" = "$full_latest_migration_first" ] \
+    || fail 'full-release rerun changed the latest migration version'
+  [ "$full_migration_checksums_second" = "$full_migration_checksums_first" ] \
+    || fail 'full-release rerun changed migration ledger checksums'
+
+  if ! run_catalog_preflight full_compose 0 "$catalog_second_raw" full none; then
+    record_log "$catalog_second_raw" full-catalog-second.log
+    fail 'full-release catalog preflight failed after the no-op rerun'
+  fi
+  record_log "$catalog_second_raw" full-catalog-second.log
+  catalog_second_snapshot=$(catalog_snapshot "$catalog_second_raw")
+  [ "$catalog_second_snapshot" = "$catalog_first_snapshot" ] \
+    || fail 'full-release rerun changed catalog rows or catalog audit identity/count'
+  full_release_rerun='NO_OP'
+
+  full_disk_raw="$workdir/full-disk-after.log"
+  if ! run_disk_check full_compose "$full_disk_raw"; then
+    record_log "$full_disk_raw" full-disk-after.log
+    fail "full-release cluster has less than ${min_free_bytes} free bytes after migrations"
+  fi
+  record_log "$full_disk_raw" full-disk-after.log
 }
 
 run_db_test() {
@@ -636,10 +1023,12 @@ run_db_test() {
 # Build private source files and role credentials before any container starts.
 main_password_dir="$workdir/main-secrets"
 test_password_dir="$workdir/test-secrets"
-mkdir -p "$main_password_dir" "$test_password_dir"
-chmod 0700 -- "$main_password_dir" "$test_password_dir"
+full_password_dir="$workdir/full-secrets"
+mkdir -p "$main_password_dir" "$test_password_dir" "$full_password_dir"
+chmod 0700 -- "$main_password_dir" "$test_password_dir" "$full_password_dir"
 for role in postgres_password db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password; do
   generate_secret "$main_password_dir/$role"
+  generate_secret "$full_password_dir/$role"
 done
 # The selected job-queue integration helper still constructs role URLs with
 # the repository's existing disposable `lagrange` fixture instead of deriving
@@ -655,10 +1044,13 @@ done
 make_stages
 main_project="lagrange_pg_validation_${$}"
 test_project="lagrange_pg_validation_test_${$}"
+full_project="lagrange_pg_validation_full_${$}"
 main_override="$workdir/main.compose.yml"
 test_override="$workdir/test.compose.yml"
-make_override "$main_override" "$main_password_dir" "$main_port" 1
-make_override "$test_override" "$test_password_dir" "$test_port" 0
+full_override="$workdir/full.compose.yml"
+make_override "$main_override" "$main_password_dir" "$main_port" 1 1 /validation/migrations/41
+make_override "$full_override" "$full_password_dir" "$full_port" 1 0 /opt/lagrange/migrations
+make_override "$test_override" "$test_password_dir" "$test_port" 0 0
 
 docker_info_raw="$workdir/docker-info.log"
 if ! docker info >"$docker_info_raw" 2>&1; then
@@ -682,6 +1074,10 @@ fi
 if ! test_compose config --quiet >>"$compose_config_raw" 2>&1; then
   record_log "$compose_config_raw" compose-config.log
   fail 'generated test Compose configuration is invalid'
+fi
+if ! full_compose config --quiet >>"$compose_config_raw" 2>&1; then
+  record_log "$compose_config_raw" compose-config.log
+  fail 'generated full-release Compose configuration is invalid'
 fi
 record_log "$compose_config_raw" compose-config.log
 
@@ -731,7 +1127,7 @@ if ! run_psql main_compose "$script_dir/hazards.sql" >"$workdir/hazards-baseline
 fi
 record_log "$workdir/hazards-baseline-sql.log" hazards-baseline-sql.log
 
-run_migration_stage 38
+run_schema_only_stage38
 seed_sql="$workdir/seed-pre-0039.sql"
 cp -- "$script_dir/seed-pre-0039.sql" "$seed_sql"
 if ! run_psql main_compose "$seed_sql" >"$workdir/seed-after-baseline.log" 2>&1; then
@@ -747,11 +1143,71 @@ fi
 record_log "$workdir/preflight-baseline.log" preflight-baseline.log
 
 run_migration_stage 39
-if ! run_psql main_compose "$script_dir/preflight-0039.sql" >"$workdir/preflight-0039.log" 2>&1; then
+if ! run_role_psql main_compose migration_owner "$script_dir/preflight-0039.sql" \
+    --set terminal_only=0 --set "catalog_sha256=$catalog_sha256" >"$workdir/preflight-0039.log" 2>&1; then
   record_log "$workdir/preflight-0039.log" preflight-0039.log
   fail '0039 auth-audit outbox preflight failed'
 fi
 record_log "$workdir/preflight-0039.log" preflight-0039.log
+if ! run_terminal_paper_check main_compose first; then
+  fail '0039 supervisor terminal-Paper fixture preflight failed'
+fi
+
+catalog_stage_first_raw="$workdir/catalog-preflight-first.log"
+if ! run_catalog_preflight main_compose 0 "$catalog_stage_first_raw" staged none; then
+  record_log "$catalog_stage_first_raw" catalog-preflight-first.log
+  fail 'staged catalog preflight failed after the initial 0039 install'
+fi
+record_log "$catalog_stage_first_raw" catalog-preflight-first.log
+catalog_stage_first_snapshot=$(catalog_snapshot "$catalog_stage_first_raw")
+catalog_install=PASS
+run_catalog_negative_probe main_compose staged unexpected_strategy unexpected_strategy_id \
+  "$catalog_stage_first_snapshot"
+run_catalog_negative_probe main_compose staged missing_baseline missing_baseline_strategy \
+  "$catalog_stage_first_snapshot"
+run_catalog_negative_probe main_compose staged mutated_baseline baseline_strategy_content_mismatch \
+  "$catalog_stage_first_snapshot"
+
+catalog_conflict_raw="$workdir/catalog-conflict-probe.log"
+if run_catalog_preflight main_compose 1 "$catalog_conflict_raw" staged none; then
+  record_log "$catalog_conflict_raw" catalog-conflict-probe.log
+  fail 'catalog conflict probe accepted a synthetic conflicting row'
+fi
+record_log "$catalog_conflict_raw" catalog-conflict-probe.log
+if ! grep -Eq 'ERROR:[[:space:]]+23505:' "$catalog_conflict_raw"; then
+  fail 'catalog conflict probe failed without the expected SQLSTATE 23505'
+fi
+catalog_conflict='PASS_SQLSTATE_23505'
+catalog_after_conflict_raw="$workdir/catalog-after-conflict.log"
+if ! run_catalog_preflight main_compose 0 "$catalog_after_conflict_raw" staged none; then
+  record_log "$catalog_after_conflict_raw" catalog-after-conflict.log
+  fail 'catalog conflict probe did not roll back its synthetic change'
+fi
+record_log "$catalog_after_conflict_raw" catalog-after-conflict.log
+catalog_after_conflict_snapshot=$(catalog_snapshot "$catalog_after_conflict_raw")
+[ "$catalog_after_conflict_snapshot" = "$catalog_stage_first_snapshot" ] \
+  || fail 'catalog conflict probe changed catalog rows or audit identity/count'
+
+run_migration_rerun_0039
+if ! run_role_psql main_compose migration_owner "$script_dir/preflight-0039.sql" \
+    --set terminal_only=0 --set "catalog_sha256=$catalog_sha256" >"$workdir/preflight-0039-rerun.log" 2>&1; then
+  record_log "$workdir/preflight-0039-rerun.log" preflight-0039-rerun.log
+  fail '0039 audit preflight failed after the catalog sync rerun'
+fi
+record_log "$workdir/preflight-0039-rerun.log" preflight-0039-rerun.log
+if ! run_terminal_paper_check main_compose rerun; then
+  fail '0039 supervisor terminal-Paper fixture changed after the catalog-sync rerun'
+fi
+catalog_stage_rerun_raw="$workdir/catalog-preflight-rerun.log"
+if ! run_catalog_preflight main_compose 0 "$catalog_stage_rerun_raw" staged none; then
+  record_log "$catalog_stage_rerun_raw" catalog-preflight-rerun.log
+  fail 'staged catalog preflight failed after the 0039 no-op rerun'
+fi
+record_log "$catalog_stage_rerun_raw" catalog-preflight-rerun.log
+catalog_stage_rerun_snapshot=$(catalog_snapshot "$catalog_stage_rerun_raw")
+[ "$catalog_stage_rerun_snapshot" = "$catalog_stage_first_snapshot" ] \
+  || fail '0039 catalog rerun changed catalog rows or audit identity/count'
+catalog_rerun=PASS
 
 # Exercise the tracked 0039 down migration against a real undelivered row.
 # The command is expected to fail with SQLSTATE 55000; any success or other
@@ -773,6 +1229,15 @@ if ! run_psql main_compose "$script_dir/rollback-0039-postflight.sql" \
 fi
 record_log "$workdir/rollback-0039-postflight.log" rollback-0039-postflight.log
 rollback_guard='PASS'
+if ! run_role_psql main_compose migration_owner "$script_dir/preflight-0039.sql" \
+    --set terminal_only=0 --set "catalog_sha256=$catalog_sha256" >"$workdir/preflight-0039-after-guard.log" 2>&1; then
+  record_log "$workdir/preflight-0039-after-guard.log" preflight-0039-after-guard.log
+  fail '0039 catalog audit event did not survive cleanup of the down-guard fixture'
+fi
+record_log "$workdir/preflight-0039-after-guard.log" preflight-0039-after-guard.log
+if ! run_terminal_paper_check main_compose after-down-guard; then
+  fail '0039 supervisor terminal-Paper fixture changed after down-guard cleanup'
+fi
 
 run_migration_stage 40
 if ! run_psql main_compose "$script_dir/preflight-0040.sql" >"$workdir/preflight-0040.log" 2>&1; then
@@ -807,6 +1272,29 @@ if ! run_disk_check main_compose "$hazard_final_raw"; then
 fi
 record_log "$hazard_final_raw" hazards-final-disk.log
 
+main_compose down -v --remove-orphans >"$workdir/cleanup-main-before-full.log" 2>&1
+record_log "$workdir/cleanup-main-before-full.log" cleanup-main-before-full.log
+main_started=0
+
+run_full_release_lane
+
+full_cleanup_raw="$workdir/cleanup-full-before-test.log"
+if ! full_compose down -v --remove-orphans >"$full_cleanup_raw" 2>&1; then
+  record_log "$full_cleanup_raw" cleanup-full-before-test.log
+  fail 'full-release cluster teardown failed before the DB-gated test lane'
+fi
+record_log "$full_cleanup_raw" cleanup-full-before-test.log
+full_ps_raw="$workdir/full-project-ps-after-cleanup.log"
+if ! full_compose ps -q qa-db >"$full_ps_raw" 2>&1; then
+  record_log "$full_ps_raw" full-project-ps-after-cleanup.log
+  fail 'could not verify full-release containers were removed before the DB-gated test lane'
+fi
+record_log "$full_ps_raw" full-project-ps-after-cleanup.log
+[ -z "$(tr -d '\r\n' <"$full_ps_raw")" ] \
+  || fail 'full-release cluster still has an owned container before the DB-gated test lane'
+full_started=0
+full_cleanup=PASS_NO_OWNED_CONTAINERS
+
 test_up_raw="$workdir/test-up.log"
 test_started=1
 if ! test_compose up -d --wait qa-db >"$test_up_raw" 2>&1; then
@@ -836,5 +1324,5 @@ run_db_test jobqueue-contract '-p job-queue --test queue_contract'
 run_db_test jobqueue-paper-preview '-p job-queue --test paper_preview'
 
 outcome=APPROVED
-detail='0038 baseline, sequential 0039/0040/0041, preflights, and DB-gated tests passed without SKIP'
+detail='schema-only 0038 upgrade, staged 0039/0040/0041 checks, empty full-release endpoint and no-op rerun, catalog audits, and DB-gated tests passed without SKIP'
 exit 0

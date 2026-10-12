@@ -255,9 +255,6 @@ impl RuntimeHarness {
         if self.daemon.is_some() {
             match self.shutdown_and_join(self.deadlines.cleanup).await {
                 Ok(MarketStreamRuntimeExit::Shutdown) => {}
-                Ok(_) => {
-                    first_error.get_or_insert(TestFailure("runtime returned an unexpected exit"));
-                }
                 Err(error) => {
                     first_error.get_or_insert(error);
                 }
@@ -275,10 +272,10 @@ impl RuntimeHarness {
         {
             first_error.get_or_insert(error);
         }
-        if let Some(database) = self.database.take() {
-            if let Err(error) = database.cleanup_until(self.deadlines.cleanup).await {
-                first_error.get_or_insert(support::cleanup_test_failure(error.as_ref()));
-            }
+        if let Some(database) = self.database.take()
+            && let Err(error) = database.cleanup_until(self.deadlines.cleanup).await
+        {
+            first_error.get_or_insert(support::cleanup_test_failure(error.as_ref()));
         }
         if tokio::time::Instant::now() > self.deadlines.cleanup {
             first_error.get_or_insert(TestFailure(

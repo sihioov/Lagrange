@@ -1027,10 +1027,10 @@ fn validate_host_snapshot(
         if observation.result == "ok" && expected_at.is_none() {
             return Err(HostReadError::Invalid);
         }
-        if let Some(observed) = expected_at {
-            if observed > now || observed < started || observed > generated || observed < booted {
-                return Err(HostReadError::Future);
-            }
+        if let Some(observed) = expected_at
+            && (observed > now || observed < started || observed > generated || observed < booted)
+        {
+            return Err(HostReadError::Future);
         }
         if let Some(process) = &observation.process {
             if !matches!(
@@ -1569,22 +1569,22 @@ fn project_service(
             let candidate_fact = candidate_fact(candidate, calendar, now, &mut metrics);
             work_status = queue.work_status;
             work_facts.extend(queue.facts);
-            if let Some(fact) = candidate_fact {
-                if fact.reason != "DATA_CURRENT" {
-                    if queue.work_status == "idle" && !queue.has_failure {
-                        work_status = if fact.reason == "EOD_PENDING" {
-                            "pending"
-                        } else if fact.reason == "EOD_STALE" {
-                            "stale"
-                        } else if fact.status == Status::Degraded {
-                            "degraded"
-                        } else {
-                            "unknown"
-                        };
-                        work_facts.retain(|fact| fact.reason != "QUEUE_IDLE");
-                    }
-                    work_facts.push(fact);
+            if let Some(fact) = candidate_fact
+                && fact.reason != "DATA_CURRENT"
+            {
+                if queue.work_status == "idle" && !queue.has_failure {
+                    work_status = if fact.reason == "EOD_PENDING" {
+                        "pending"
+                    } else if fact.reason == "EOD_STALE" {
+                        "stale"
+                    } else if fact.status == Status::Degraded {
+                        "degraded"
+                    } else {
+                        "unknown"
+                    };
+                    work_facts.retain(|fact| fact.reason != "QUEUE_IDLE");
                 }
+                work_facts.push(fact);
             }
             semantic_until = min_time(semantic_until, queue.valid_until);
             semantic_until = min_time(semantic_until, candidate_semantic_until(candidate, now));
@@ -1616,10 +1616,12 @@ fn project_service(
                 etf,
                 research,
                 calendar,
-                worker.filter(|_| worker_source["result"] == "ok"),
-                service_observation,
-                timer_source["result"] == "ok",
-                policy_mode,
+                EodRuntimeInputs {
+                    research_worker: worker.filter(|_| worker_source["result"] == "ok"),
+                    service_observation,
+                    timer_source_valid: timer_source["result"] == "ok",
+                    policy_mode,
+                },
                 now,
                 &mut metrics,
             );
@@ -1767,14 +1769,7 @@ fn project_service(
             .chain(work_facts.iter())
             .any(|fact| fact.status == Status::Failed);
         if !known_failure {
-            work_facts.push(Fact::new(
-                Status::Unknown,
-                if policy_state == "mismatch" {
-                    "POLICY_MISMATCH"
-                } else {
-                    "POLICY_MISMATCH"
-                },
-            ));
+            work_facts.push(Fact::new(Status::Unknown, "POLICY_MISMATCH"));
             if expected_mode == "unknown" {
                 process_status = if host_required && process_status != "unknown" {
                     process_status
@@ -2172,14 +2167,14 @@ fn source_for_database(id: &str, db: &Value, now: DateTime<Utc>) -> Value {
             .unwrap_or("unavailable");
         let group_observed = group.get("observed_at").and_then(optional_instant);
         let mut computed = db_source_result(explicit, group_observed, now);
-        if *name == "stream" && explicit == "ok" {
-            if let (Some(observed), Some(domain_until)) = (
+        if *name == "stream"
+            && explicit == "ok"
+            && let (Some(observed), Some(domain_until)) = (
                 group_observed,
                 group.get("valid_until").and_then(optional_instant),
-            ) {
-                computed.2 =
-                    Some(domain_until.min(observed + ChronoDuration::seconds(DB_TTL_SECONDS)));
-            }
+            )
+        {
+            computed.2 = Some(domain_until.min(observed + ChronoDuration::seconds(DB_TTL_SECONDS)));
         }
         if *name == "calendar"
             && explicit == "ok"
@@ -2199,7 +2194,7 @@ fn source_for_database(id: &str, db: &Value, now: DateTime<Utc>) -> Value {
         }
     }
     let all_ok = !results.is_empty() && results.iter().all(|result| *result == "ok");
-    let any_source = results.iter().any(|result| *result == "ok");
+    let any_source = results.contains(&"ok");
     let result = if all_ok {
         "ok"
     } else if any_source {
@@ -3882,17 +3877,27 @@ fn etf_negative_fact(
     None
 }
 
+struct EodRuntimeInputs<'a> {
+    research_worker: Option<&'a Value>,
+    service_observation: Option<&'a Value>,
+    timer_source_valid: bool,
+    policy_mode: Option<&'a str>,
+}
+
 fn eod_fact(
     etf: &Value,
     research: &Value,
     calendar: &Value,
-    research_worker: Option<&Value>,
-    service_observation: Option<&Value>,
-    timer_source_valid: bool,
-    policy_mode: Option<&str>,
+    runtime: EodRuntimeInputs<'_>,
     now: DateTime<Utc>,
     metrics: &mut Value,
 ) -> (Option<Fact>, &'static str, Option<DateTime<Utc>>) {
+    let EodRuntimeInputs {
+        research_worker,
+        service_observation,
+        timer_source_valid,
+        policy_mode,
+    } = runtime;
     if policy_mode == Some("daily") {
         metrics["next_run_at"] = service_observation
             .and_then(|entry| entry.pointer("/timer/next_run_at"))
@@ -4211,60 +4216,60 @@ fn eod_fact(
         }
     }
     if !publication_complete {
-        if let Some(expected) = expected {
-            if let Some(due) = view.due_at {
-                metrics["expected_session"] = json!(fmt_date(expected));
-                metrics["data_due_at"] = json!(fmt_instant(due));
-                let lag = eod_lag_fact(metrics, calendar, publication, now, "EOD_STALE");
-                let deadline = metrics
-                    .get("data_due_at")
-                    .and_then(optional_instant)
-                    .unwrap_or(due);
-                until = min_time(until, Some(deadline).filter(|at| *at > now));
-                if data_state == "BLOCKED"
-                    || binding_state == "BLOCKED"
-                    || (!binding_state.is_empty() && fetch_mode != "credentialed")
-                {
-                    return (
-                        Some(Fact::new(Status::Degraded, "DATA_BLOCKED")),
-                        "stale",
-                        until,
-                    );
-                }
-                if etf
-                    .get("rights_binding")
-                    .is_some_and(|value| !value.is_null())
-                    && etf.get("rights_valid").and_then(Value::as_bool) == Some(false)
-                {
-                    return (
-                        Some(Fact::new(Status::Degraded, "DATA_BLOCKED")),
-                        "stale",
-                        until,
-                    );
-                }
-                let raw_only = publication.is_none() || covered.unwrap_or(0) == 0;
-                if raw_only {
-                    let before_due = now < deadline;
-                    let status = if before_due {
-                        Status::Waiting
-                    } else {
-                        Status::Degraded
-                    };
-                    let reason = if before_due {
-                        "EOD_PENDING"
-                    } else {
-                        "RAW_ONLY"
-                    };
-                    let work = if before_due { "pending" } else { "stale" };
-                    return (Some(Fact::new(status, reason)), work, until);
-                }
-                let work = if lag.status == Status::Waiting {
-                    "pending"
-                } else {
-                    "stale"
-                };
-                return (Some(lag), work, until);
+        if let Some(expected) = expected
+            && let Some(due) = view.due_at
+        {
+            metrics["expected_session"] = json!(fmt_date(expected));
+            metrics["data_due_at"] = json!(fmt_instant(due));
+            let lag = eod_lag_fact(metrics, calendar, publication, now, "EOD_STALE");
+            let deadline = metrics
+                .get("data_due_at")
+                .and_then(optional_instant)
+                .unwrap_or(due);
+            until = min_time(until, Some(deadline).filter(|at| *at > now));
+            if data_state == "BLOCKED"
+                || binding_state == "BLOCKED"
+                || (!binding_state.is_empty() && fetch_mode != "credentialed")
+            {
+                return (
+                    Some(Fact::new(Status::Degraded, "DATA_BLOCKED")),
+                    "stale",
+                    until,
+                );
             }
+            if etf
+                .get("rights_binding")
+                .is_some_and(|value| !value.is_null())
+                && etf.get("rights_valid").and_then(Value::as_bool) == Some(false)
+            {
+                return (
+                    Some(Fact::new(Status::Degraded, "DATA_BLOCKED")),
+                    "stale",
+                    until,
+                );
+            }
+            let raw_only = publication.is_none() || covered.unwrap_or(0) == 0;
+            if raw_only {
+                let before_due = now < deadline;
+                let status = if before_due {
+                    Status::Waiting
+                } else {
+                    Status::Degraded
+                };
+                let reason = if before_due {
+                    "EOD_PENDING"
+                } else {
+                    "RAW_ONLY"
+                };
+                let work = if before_due { "pending" } else { "stale" };
+                return (Some(Fact::new(status, reason)), work, until);
+            }
+            let work = if lag.status == Status::Waiting {
+                "pending"
+            } else {
+                "stale"
+            };
+            return (Some(lag), work, until);
         }
         if let Some(reason) = view.reason {
             return (Some(reason), "unknown", until);
@@ -4343,13 +4348,7 @@ fn eod_fact(
     )
 }
 
-fn scheduled_fact(
-    id: &str,
-    timer: Option<&Value>,
-    process_state: &str,
-    process_started: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-) -> (
+type ScheduledFact = (
     Option<Fact>,
     &'static str,
     Option<DateTime<Utc>>,
@@ -4357,7 +4356,15 @@ fn scheduled_fact(
     Option<DateTime<Utc>>,
     Option<DateTime<Utc>>,
     Option<DateTime<Utc>>,
-) {
+);
+
+fn scheduled_fact(
+    id: &str,
+    timer: Option<&Value>,
+    process_state: &str,
+    process_started: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> ScheduledFact {
     let Some(timer) = timer else {
         return (
             Some(Fact::new(Status::Failed, "TIMER_MISSING")),
@@ -4536,13 +4543,12 @@ fn stream_facts(
             .filter(|fact| fact.status != Status::Waiting)
             .cloned();
     let mut independent = calendar_failure.clone().into_iter().collect::<Vec<_>>();
-    if let Some(window_failure) = window_negative_fact(window, now) {
-        if !independent
+    if let Some(window_failure) = window_negative_fact(window, now)
+        && !independent
             .iter()
             .any(|fact| fact.reason == window_failure.reason)
-        {
-            independent.push(window_failure);
-        }
+    {
+        independent.push(window_failure);
     }
     let result = stream
         .get("result")

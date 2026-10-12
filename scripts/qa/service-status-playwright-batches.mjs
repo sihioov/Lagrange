@@ -5,8 +5,7 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const selectedFiles = ["service-status.spec.ts", "stock-beta.spec.ts", "stock-beta-intraday.spec.ts"];
-const legacyFile = "stock-beta-intraday.spec.ts";
+const selectedFiles = ["service-status.spec.ts", "stock-beta.spec.ts"];
 const digest = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const read = (path) => JSON.parse(readFileSync(path, "utf8"));
 const save = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
@@ -47,21 +46,15 @@ function batches(inventory, size = 8) {
 function verify(expected, actual) {
   assert.equal(new Set(actual.map(key)).size, actual.length, "Duplicate executed result");
   assert.deepEqual(actual.map(key).sort(), expected.map(key).sort(), "Missing or extra executed result");
-  let passed = 0, skipped = 0;
+  let passed = 0;
   for (const row of actual) {
-    assert.equal(row.test.status, row.file === legacyFile ? "skipped" : "expected", "Failed/flaky/interrupted result");
+    assert.equal(row.test.status, "expected", "Failed/flaky/interrupted/skipped result");
     assert.equal(row.test.results.length, 1, "Retries or missing execution");
-    const status = row.test.results[0].status;
-    if (row.file === legacyFile) {
-      assert.equal(status, "skipped", "Legacy REST-off gate must stay skipped");
-      skipped++;
-    } else {
-      assert.equal(row.test.expectedStatus, "passed");
-      assert.equal(status, "passed", "Required case failed or unexpectedly skipped");
-      passed++;
-    }
+    assert.equal(row.test.expectedStatus, "passed");
+    assert.equal(row.test.results[0].status, "passed", "Required case failed or unexpectedly skipped");
+    passed++;
   }
-  return { collected: expected.length, passed, skipped, failed: 0, flaky: 0 };
+  return { collected: expected.length, passed, skipped: 0, failed: 0, flaky: 0 };
 }
 
 function checkSources(plan) {
@@ -73,8 +66,8 @@ function selfCheck() {
     project: "chromium", file, titles: ["tiny", title],
     test: { status: status === "skipped" ? "skipped" : "expected", expectedStatus: status === "skipped" ? "skipped" : "passed", results: [{ status }] },
   });
-  const expected = [row("a"), row("b"), row("legacy", legacyFile, "skipped")];
-  assert.deepEqual(verify(expected, expected), { collected: 3, passed: 2, skipped: 1, failed: 0, flaky: 0 });
+  const expected = [row("a"), row("b"), row("c", "stock-beta.spec.ts")];
+  assert.deepEqual(verify(expected, expected), { collected: 3, passed: 3, skipped: 0, failed: 0, flaky: 0 });
   assert.equal(batches(expected, 2).length, 2);
   const negatives = [
     () => verify(expected, expected.slice(1)),
@@ -82,10 +75,11 @@ function selfCheck() {
     () => verify(expected, [row("extra"), ...expected.slice(1)]),
     () => verify(expected, [row("a", "service-status.spec.ts", "skipped"), ...expected.slice(1)]),
     () => verify(expected, [{ ...expected[0], test: { ...expected[0].test, status: "flaky" } }, ...expected.slice(1)]),
+    () => verify(expected, [{ ...expected[0], test: { ...expected[0].test, results: [{ status: "passed" }, { status: "passed" }] } }, ...expected.slice(1)]),
     () => batches([...expected, expected[0]]),
   ];
   for (const negative of negatives) assert.throws(negative);
-  console.log(JSON.stringify({ positive_bookkeeping: 2, rejected_missing_duplicate_extra_skip_flaky_duplicate_inventory: 6 }));
+  console.log(JSON.stringify({ positive_bookkeeping: 2, rejected_missing_duplicate_extra_skip_flaky_retry_duplicate_inventory: 7 }));
 }
 
 const [command, planPath, value] = process.argv.slice(2);
@@ -96,7 +90,7 @@ else if (command === "plan") {
   const artifact = process.argv[5];
   const inventory = rows(read(inventoryPath));
   const counts = Object.fromEntries(selectedFiles.map((file) => [file, inventory.filter((row) => row.file === file).length]));
-  assert.deepEqual(counts, { "service-status.spec.ts": 37, "stock-beta.spec.ts": 39, "stock-beta-intraday.spec.ts": 12 }, "Unexplained inventory drift");
+  assert.deepEqual(counts, { "service-status.spec.ts": 37, "stock-beta.spec.ts": 39 }, "Unexplained inventory drift");
   const sourceFiles = [...selectedFiles.map((file) => resolve(repo, "apps/web/tests/e2e", file)),
     resolve(repo, "apps/web/tests/e2e/support/service-status-fixture.mjs"),
     resolve(repo, "apps/web/playwright.config.ts")];
@@ -134,7 +128,9 @@ else if (command === "merge") {
   const expected = plan.batches.flatMap((batch) => batch.expected);
   const actual = plan.batches.flatMap((batch) => rows(read(batch.result_file)));
   const receipt = verify(expected, actual);
-  assert.equal(receipt.skipped, 12);
+  assert.equal(receipt.collected, 76);
+  assert.equal(receipt.passed, 76);
+  assert.equal(receipt.skipped, 0);
   const result = { ...receipt, complete_union: true, disjoint_batches: plan.batches.length, unchanged_sources: true, inventory_sha256: plan.inventory_sha256 };
   save(resolve(dirname(planPath), "aggregate.json"), result);
   console.log(JSON.stringify(result));

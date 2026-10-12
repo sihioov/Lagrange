@@ -120,7 +120,7 @@ pub enum MarketStreamStorageError {
     CommitUnknown,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "market-stream-db-tests"))]
 pub(super) fn register_resolved_commit_test_gate(
     key: Uuid,
     entered: tokio::sync::oneshot::Sender<()>,
@@ -137,7 +137,7 @@ pub(super) fn register_resolved_commit_test_gate(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "market-stream-db-tests"))]
 pub(super) fn clear_resolved_commit_test_gate(key: Uuid) {
     if let Some(gates) = RESOLVED_COMMIT_TEST_GATES.get()
         && let Ok(mut gates) = gates.lock()
@@ -625,6 +625,7 @@ impl StreamPublicationContext {
         Ok(context)
     }
 
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) fn single(
         producer: StreamProducerLease,
         epoch: StreamEpochProof,
@@ -1078,23 +1079,15 @@ impl RuntimeGrant {
     pub(super) const fn grant_revision(&self) -> Uuid {
         self.grant_revision
     }
-
-    pub(super) const fn credential_generation(&self) -> u64 {
-        self.credential_generation
-    }
-
-    pub(super) fn network_contract_sha256(&self) -> &str {
-        &self.network_contract_sha256
-    }
-
-    pub(super) fn identity_list_sha256(&self) -> &str {
-        &self.identity_list_sha256
-    }
 }
 
 /// A finite set of lifecycle transitions. There is intentionally no
 /// arbitrary `StreamStatus` or LIVE constructor on this pre-ACK path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    dead_code,
+    reason = "reserved finite lifecycle transitions retained across runtime and test contracts"
+)]
 pub(super) enum RuntimeTransition {
     Connecting,
     AwaitingFirstTrade,
@@ -1319,6 +1312,7 @@ pub(super) struct RuntimeStatusCommit {
 }
 
 impl RuntimeStatusCommit {
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) const fn changed(self) -> bool {
         self.changed
     }
@@ -1329,10 +1323,6 @@ impl RuntimeStatusCommit {
 
     pub(super) const fn gap_generation(self) -> u64 {
         self.gap_generation
-    }
-
-    pub(super) const fn state_version(self) -> u64 {
-        self.state_version
     }
 }
 
@@ -3347,6 +3337,7 @@ impl OwnerMarketStreamRepository {
 
     /// Persist typed connection/status state without replacing a last-known
     /// quote.  Equal status writes are no-ops and do not advance state_version.
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) async fn record_stream_status(
         &self,
         context: &StreamPublicationContext,
@@ -3438,7 +3429,7 @@ impl OwnerMarketStreamRepository {
         .await
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) async fn read_stream_snapshot_with_window_fixture(
         &self,
         owner_user_id: Uuid,
@@ -3607,7 +3598,6 @@ impl OwnerMarketStreamRepository {
                 rows.push(cache.clone());
             }
             let live = delivery_is_live(
-                committed_cache.as_ref(),
                 subscription.as_ref(),
                 producer.as_ref(),
                 fresh_now,
@@ -3904,7 +3894,6 @@ async fn validate_snapshot_lineage(
 }
 
 fn delivery_is_live(
-    _cache: Option<&StreamCacheRow>,
     subscription: Option<&StreamSubscriptionDelivery>,
     producer: Option<&StreamProducerDelivery>,
     fresh_now: DateTime<Utc>,
@@ -4144,8 +4133,10 @@ struct LeaseDbRow {
     renewal_sequence: i64,
     state: String,
     lease_expires_at: DateTime<Utc>,
-    released_at: Option<DateTime<Utc>>,
-    idempotency_key_sha256: String,
+    #[sqlx(rename = "released_at")]
+    _released_at: Option<DateTime<Utc>>,
+    #[sqlx(rename = "idempotency_key_sha256")]
+    _idempotency_key_sha256: String,
     request_sha256: String,
 }
 
@@ -4197,21 +4188,29 @@ struct RuntimeProducerDbRow {
     fencing_token: i64,
     current_epoch: Option<Uuid>,
     session_date: Option<NaiveDate>,
-    session_proof_id: Option<Uuid>,
-    session_proof_sha256: Option<String>,
-    calendar_source_batch_id: Option<Uuid>,
-    calendar_content_sha256: Option<String>,
-    window_contract_sha256: Option<String>,
+    #[sqlx(rename = "session_proof_id")]
+    _session_proof_id: Option<Uuid>,
+    #[sqlx(rename = "session_proof_sha256")]
+    _session_proof_sha256: Option<String>,
+    #[sqlx(rename = "calendar_source_batch_id")]
+    _calendar_source_batch_id: Option<Uuid>,
+    #[sqlx(rename = "calendar_content_sha256")]
+    _calendar_content_sha256: Option<String>,
+    #[sqlx(rename = "window_contract_sha256")]
+    _window_contract_sha256: Option<String>,
     lease_expires_at: DateTime<Utc>,
-    heartbeat_at: DateTime<Utc>,
+    #[sqlx(rename = "heartbeat_at")]
+    _heartbeat_at: DateTime<Utc>,
     connection_state: String,
     status_code: Option<String>,
     status_at: Option<DateTime<Utc>>,
     gap_since: Option<DateTime<Utc>>,
-    session_has_gap: bool,
+    #[sqlx(rename = "session_has_gap")]
+    _session_has_gap: bool,
     gap_generation: i64,
     state_version: i64,
-    updated_at: DateTime<Utc>,
+    #[sqlx(rename = "updated_at")]
+    _updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, FromRow)]
@@ -4386,17 +4385,21 @@ struct ProducerDbRow {
     session_date: Option<NaiveDate>,
     session_proof_id: Option<Uuid>,
     session_proof_sha256: Option<String>,
-    calendar_source: Option<String>,
-    calendar_source_version: Option<String>,
+    #[sqlx(rename = "calendar_source")]
+    _calendar_source: Option<String>,
+    #[sqlx(rename = "calendar_source_version")]
+    _calendar_source_version: Option<String>,
     calendar_source_batch_id: Option<Uuid>,
     calendar_content_sha256: Option<String>,
     window_contract_sha256: Option<String>,
     lease_expires_at: DateTime<Utc>,
     heartbeat_at: DateTime<Utc>,
-    connection_state: String,
+    #[sqlx(rename = "connection_state")]
+    _connection_state: String,
     gap_generation: i64,
     state_version: i64,
-    updated_at: DateTime<Utc>,
+    #[sqlx(rename = "updated_at")]
+    _updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, FromRow)]
@@ -4417,12 +4420,14 @@ struct SubscriptionDbRow {
     acked_at: Option<DateTime<Utc>>,
     desired_reference_count: i32,
     subscription_revision: Uuid,
-    updated_at: DateTime<Utc>,
+    #[sqlx(rename = "updated_at")]
+    _updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, FromRow)]
 struct LeaseItemLockDbRow {
-    lease_id: Uuid,
+    #[sqlx(rename = "lease_id")]
+    _lease_id: Uuid,
     owner_user_id: Uuid,
     session_hash: String,
     lease_expires_at: DateTime<Utc>,
@@ -4474,7 +4479,8 @@ struct CacheDbRow {
     quote_version: i64,
     state_version: i64,
     status_code: Option<String>,
-    status_at: Option<DateTime<Utc>>,
+    #[sqlx(rename = "status_at")]
+    _status_at: Option<DateTime<Utc>>,
     connection_state: String,
     market_state: String,
     freshness: String,
@@ -4483,8 +4489,10 @@ struct CacheDbRow {
     gap_generation: i64,
     received_at: Option<DateTime<Utc>>,
     committed_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    #[sqlx(rename = "created_at")]
+    _created_at: DateTime<Utc>,
+    #[sqlx(rename = "updated_at")]
+    _updated_at: DateTime<Utc>,
 }
 
 impl AdmissionDbRow {
@@ -4662,7 +4670,7 @@ impl CacheDbRow {
             .status_code
             .as_deref()
             .map(|code| {
-                Ok(StreamStatus::new(
+                StreamStatus::new(
                     StreamStatusCode::parse(code)
                         .ok_or(MarketStreamStorageError::DatabaseIntegrity)?,
                     StreamConnectionState::parse(&self.connection_state)
@@ -4676,7 +4684,7 @@ impl CacheDbRow {
                     self.gap_since.is_some(),
                     u64::try_from(self.gap_generation)
                         .map_err(|_| MarketStreamStorageError::DatabaseIntegrity)?,
-                )?)
+                )
             })
             .transpose()?;
         Ok(StreamCacheRow {
@@ -5960,6 +5968,7 @@ async fn upsert_stream_quote(
     Ok(row)
 }
 
+#[cfg(all(test, feature = "market-stream-db-tests"))]
 async fn upsert_stream_status(
     tx: &mut Transaction<'_, Postgres>,
     item: &StreamPublicationItem,
@@ -6444,18 +6453,6 @@ impl RuntimeMarketStreamRepository {
         .await
     }
 
-    pub(super) async fn record_stream_status(
-        &self,
-        context: &StreamPublicationContext,
-        status: StreamStatus,
-    ) -> Result<CommitResult, RuntimeMarketStreamStorageError> {
-        with_runtime_deadline(
-            self.terminal.clone(),
-            self.inner.record_stream_status(context, status),
-        )
-        .await
-    }
-
     pub(super) async fn record_runtime_status(
         &self,
         lease: &StreamProducerLease,
@@ -6783,7 +6780,7 @@ mod snapshot_delivery_age_tests {
             quote_version: 1,
             state_version: 1,
             status_code: None,
-            status_at: None,
+            _status_at: None,
             connection_state: StreamConnectionState::Connected.as_str().to_owned(),
             market_state: StreamMarketState::Open.as_str().to_owned(),
             freshness: StreamFreshness::Recent.as_str().to_owned(),
@@ -6792,8 +6789,8 @@ mod snapshot_delivery_age_tests {
             gap_generation: 0,
             received_at: Some(now),
             committed_at: Some(now),
-            created_at: now,
-            updated_at: now,
+            _created_at: now,
+            _updated_at: now,
         };
         let producer = StreamProducerDelivery {
             connection: StreamConnectionState::Connected,

@@ -446,15 +446,17 @@ fn parse_args(argv: &[String]) -> Result<ParseOutcome, Failure> {
 }
 
 enum Output {
-    Plan(PlanRecord),
-    Artifact(ArtifactRecord),
+    Plan(Box<PlanRecord>),
+    Artifact(Box<ArtifactRecord>),
 }
 
 fn execute(args: Args) -> Result<Output, Failure> {
     match args.mode {
-        Mode::Plan => Ok(Output::Plan(plan_record())),
-        Mode::Materialize => execute_materialize(args).map(Output::Artifact),
-        Mode::Check => execute_check(args).map(Output::Artifact),
+        Mode::Plan => Ok(Output::Plan(Box::new(plan_record()))),
+        Mode::Materialize => {
+            execute_materialize(args).map(|record| Output::Artifact(Box::new(record)))
+        }
+        Mode::Check => execute_check(args).map(|record| Output::Artifact(Box::new(record))),
     }
 }
 

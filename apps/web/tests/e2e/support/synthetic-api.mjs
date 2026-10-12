@@ -16,6 +16,15 @@ import {
 } from "./stock-beta-intraday-fixture.mjs";
 
 const port = Number.parseInt(process.env.SYNTHETIC_API_PORT ?? "38180", 10);
+const readinessToken = process.env.CANDIDATE_E2E_READINESS_TOKEN;
+const readinessLane = process.env.CANDIDATE_E2E_READINESS_LANE;
+if (
+  (readinessToken === undefined) !== (readinessLane === undefined) ||
+  (readinessToken !== undefined && !/^[a-f0-9]{32}$/.test(readinessToken)) ||
+  (readinessLane !== undefined && !["off", "market-stream"].includes(readinessLane))
+) {
+  throw new Error("Invalid candidate E2E readiness configuration");
+}
 const defaultScenario = Object.freeze({
   backtest: "running",
   candidateState: "ready",
@@ -118,6 +127,25 @@ async function requestBody(request) {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
+  if (
+    request.method === "GET" &&
+    url.pathname === "/api/v1/__test/candidate-e2e-ready" &&
+    url.search === ""
+  ) {
+    if (readinessToken === undefined || readinessLane === undefined) {
+      response.writeHead(404, { "Cache-Control": "no-store" });
+      response.end();
+      return;
+    }
+    json(response, 200, {
+      schema_version: 1,
+      fixture: "candidate-synthetic-api",
+      run_id: readinessToken,
+      lane: readinessLane,
+      pid: process.pid,
+    });
+    return;
+  }
   const body = request.method === "POST" ? await requestBody(request) : {};
   if (request.method === "POST" && url.pathname === "/__test/scenario") {
     // Reset to defaults, THEN apply. Merging into the previous scenario let

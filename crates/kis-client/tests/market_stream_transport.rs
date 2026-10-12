@@ -337,7 +337,7 @@ async fn separate_process_lock_contention_and_restart_preserve_attempt_state() {
         .arg("separate_process_lock_contention_and_restart_preserve_attempt_state")
         .arg("--nocapture")
         .env("KIS_MARKET_STREAM_LOCK_CHILD", "1")
-        .env("KIS_MARKET_STREAM_LOCK_PATH", &path)
+        .env("KIS_MARKET_STREAM_LOCK_PATH", path)
         .env("KIS_MARKET_STREAM_LOCK_SLOT", slot.to_string())
         .stdout(Stdio::piped())
         .spawn()
@@ -1475,7 +1475,7 @@ async fn connected_child_kill_leaves_uncertain_epoch_and_blocks_direct_restart()
         .arg("connected_child_kill_leaves_uncertain_epoch_and_blocks_direct_restart")
         .arg("--nocapture")
         .env("KIS_MARKET_STREAM_CONNECTED_CHILD", "1")
-        .env("KIS_MARKET_STREAM_CHILD_STATE", &path)
+        .env("KIS_MARKET_STREAM_CHILD_STATE", path)
         .env("KIS_MARKET_STREAM_CHILD_SLOT", slot.to_string())
         .env(
             "KIS_MARKET_STREAM_CHILD_APPROVAL",

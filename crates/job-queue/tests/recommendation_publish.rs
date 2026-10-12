@@ -225,11 +225,29 @@ fn selected_weight_must_remain_positive_at_database_scale() {
 fn canonical_hash_matches_python_sorted_json_semantics() {
     let output = all_cash_output();
     assert_eq!(
+        output.universe_snapshot_id,
+        "sha256:6823800ec6e0b271937c0b083d67836b3f0e1b97e25e0d04e47720e98acc3941"
+    );
+    assert_eq!(
         canonical_portfolio_snapshot_id(&output).unwrap(),
-        "sha256:7f52444f0d5770c849f9e06038e7f2996229a0e98a4a0df82f1b625e3859d3e4"
+        "sha256:e66b576b95f9f7682557009297be7bc50ad8050ef714dcb877263b8a1c4bed58"
+    );
+    assert_eq!(
+        output.portfolio_snapshot_id,
+        "sha256:e66b576b95f9f7682557009297be7bc50ad8050ef714dcb877263b8a1c4bed58"
     );
     assert!(output.portfolio_snapshot_id.starts_with("sha256:"));
     assert_eq!(output.portfolio_snapshot_id.len(), 71);
+
+    let mut historic = output.clone();
+    historic.universe_snapshot_id =
+        "sha256:2746391f3d770bbbe7993367b6e07d3e562de66ce15603b6c2cdfedcac518bc7".to_owned();
+    historic.portfolio_snapshot_id =
+        "sha256:7f52444f0d5770c849f9e06038e7f2996229a0e98a4a0df82f1b625e3859d3e4".to_owned();
+    assert_eq!(
+        canonical_portfolio_snapshot_id(&historic).unwrap(),
+        "sha256:7f52444f0d5770c849f9e06038e7f2996229a0e98a4a0df82f1b625e3859d3e4"
+    );
 }
 
 #[test]

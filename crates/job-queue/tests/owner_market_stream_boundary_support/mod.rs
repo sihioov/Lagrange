@@ -33,7 +33,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 pub(super) mod c2_fixture;
-pub(super) use c2_fixture::{C2Endpoint, SupervisorTarget, relay_endpoint_from_environment};
+pub(super) use c2_fixture::SupervisorTarget;
 
 pub const SUPERVISOR_ENV: &str = "LAGRANGE_WS3A_SUPERVISOR_URL";
 pub const STREAM_IDENTITY_HASH: &str =
@@ -46,8 +46,29 @@ pub const WINDOW_HASH: &str =
     "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 pub const CALENDAR_HASH: &str = "5555555555555555555555555555555555555555555555555555555555555555";
 pub const CODE_COMMIT: &str = "7757245553ab8cbed5d6f706e46a87849e0cedc6";
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 const EXPECTED_SYSTEM_IDENTIFIER: &str = "7687959257259950090";
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 const EXPECTED_DATA_DIRECTORY: &str = "/tmp/lagrange-kis-stream-20260921/pg-local/data";
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 const EXPECTED_PORT: &str = "55449";
 
 pub const MARKET_SYMBOLS: [&str; 30] = [
@@ -143,9 +164,16 @@ pub(super) fn combine_primary_cleanup(
 pub(super) async fn connect_supervisor(
     target: &SupervisorTarget,
 ) -> Result<PgPool, Box<dyn Error + Send + Sync>> {
-    Ok(c2_fixture::connect_supervisor(target).await?)
+    c2_fixture::connect_supervisor(target).await
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub(super) async fn connect_supervisor_from_environment()
 -> Result<PgPool, Box<dyn Error + Send + Sync>> {
     let target = SupervisorTarget::from_environment()?;
@@ -172,6 +200,13 @@ pub struct DisposableDatabase {
 }
 
 impl DisposableDatabase {
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub async fn create() -> Result<Self, Box<dyn Error + Send + Sync>> {
         let supervisor_target = SupervisorTarget::from_environment()?;
         let supervisor_options = supervisor_target.options();
@@ -326,6 +361,13 @@ impl DisposableDatabase {
         }
     }
 
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub async fn cleanup(self) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.migration_owner.close().await;
         self.app.close().await;
@@ -344,13 +386,41 @@ pub struct Fixture {
     pub other_session_hash: String,
     pub credential_slot_id: Uuid,
     pub grant_id: Uuid,
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub grant_revision: Uuid,
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub session_date: NaiveDate,
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub session: StreamSessionProof,
     pub identities: Vec<StreamIdentity>,
 }
 
 impl Fixture {
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub fn lease_identities(&self) -> Vec<StreamLeaseIdentity> {
         self.identities
             .iter()
@@ -643,6 +713,13 @@ async fn transition_fixture_membership(
     Ok(())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn set_stream_lease_expired(
     database: &DisposableDatabase,
     lease_id: Uuid,
@@ -658,6 +735,13 @@ pub async fn set_stream_lease_expired(
     Ok(())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn set_producer_expired(
     database: &DisposableDatabase,
     slot_id: Uuid,
@@ -695,6 +779,13 @@ pub async fn revoke_session(
     Ok(())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn restore_session(
     database: &DisposableDatabase,
     owner_user_id: Uuid,
@@ -729,6 +820,13 @@ pub async fn revoke_entitlement(
     Ok(())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn restore_entitlement(
     database: &DisposableDatabase,
     grant_id: Uuid,
@@ -798,6 +896,13 @@ async fn identity_generation_date(database: &DisposableDatabase) -> Result<Naive
         .await
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn force_cache_state_version_max(
     database: &DisposableDatabase,
     membership_id: Uuid,
@@ -813,6 +918,13 @@ pub async fn force_cache_state_version_max(
     Ok(())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn now(database: &DisposableDatabase) -> Result<DateTime<Utc>, sqlx::Error> {
     sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
         .fetch_one(&database.worker)
@@ -821,6 +933,13 @@ pub async fn now(database: &DisposableDatabase) -> Result<DateTime<Utc>, sqlx::E
 
 const DEFAULT_LOOPBACK_CLOSE_LIFETIME: Duration = Duration::from_secs(2);
 const MAX_LOOPBACK_CLOSE_LIFETIME: Duration = Duration::from_secs(30);
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 const LOOPBACK_CHILD_JOIN_BOUND: Duration = Duration::from_secs(32);
 
 type LoopbackTaskResult = Result<(), Box<dyn Error + Send + Sync>>;
@@ -848,6 +967,13 @@ impl Error for LoopbackChildFailure {
 }
 
 #[derive(Debug)]
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 struct LoopbackCleanupFailure {
     primary: Option<Box<dyn Error + Send + Sync>>,
     cleanup: Vec<Box<dyn Error + Send + Sync>>,
@@ -882,6 +1008,13 @@ impl Error for LoopbackCleanupFailure {
     }
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 fn finish_loopback_errors(
     primary: Option<Box<dyn Error + Send + Sync>>,
     cleanup: Vec<Box<dyn Error + Send + Sync>>,
@@ -938,7 +1071,7 @@ async fn join_loopback_child(
         Ok(Ok(())) => {}
         Ok(Err(source)) => failures.push(Box::new(LoopbackChildFailure { child, source })),
         Err(join_error) if abort_first && join_error.is_cancelled() => {}
-        Err(join_error) if failures.len() > 0 && join_error.is_cancelled() => {}
+        Err(join_error) if !failures.is_empty() && join_error.is_cancelled() => {}
         Err(join_error) => failures.push(Box::new(LoopbackChildFailure {
             child,
             source: Box::new(join_error),
@@ -985,6 +1118,13 @@ struct LoopbackChildOwner {
 }
 
 impl LoopbackChildOwner {
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     async fn finish(
         mut self,
         timeout_after: Duration,
@@ -1011,6 +1151,13 @@ impl Drop for LoopbackChildOwner {
     }
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub struct LoopbackMarketSession {
     pub session: MarketStreamSession,
     clock: Arc<TestClock>,
@@ -1019,6 +1166,13 @@ pub struct LoopbackMarketSession {
 }
 
 impl LoopbackMarketSession {
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub fn advance_clock_to(&self, target_ms: i64) {
         let delta = target_ms.saturating_sub(self.clock.now_ms());
         if delta > 0 {
@@ -1026,6 +1180,13 @@ impl LoopbackMarketSession {
         }
     }
 
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub async fn next_receipt(
         &mut self,
     ) -> Result<kis_client::MarketReceipt, Box<dyn Error + Send + Sync>> {
@@ -1039,6 +1200,13 @@ impl LoopbackMarketSession {
         }
     }
 
+    #[cfg_attr(
+        all(test, feature = "market-stream-db-tests"),
+        allow(
+            dead_code,
+            reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+        )
+    )]
     pub async fn close(self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let Self {
             session,
@@ -1053,6 +1221,13 @@ impl LoopbackMarketSession {
     }
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn loopback_session_for_symbols(
     session_date: NaiveDate,
     now_ms: i64,
@@ -1071,6 +1246,13 @@ pub async fn loopback_session_for_symbols(
     .await
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn loopback_session_for_symbols_with_close_lifetime(
     session_date: NaiveDate,
     now_ms: i64,
@@ -1144,106 +1326,24 @@ fn valid_loopback_close_lifetime(close_lifetime: Duration) -> bool {
     !close_lifetime.is_zero() && close_lifetime <= MAX_LOOPBACK_CLOSE_LIFETIME
 }
 
-#[cfg(test)]
-mod loopback_lifetime_tests {
-    use std::future::pending;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use super::*;
-
-    #[test]
-    fn loopback_close_lifetime_keeps_default_and_caps_explicit_bound() {
-        assert_eq!(DEFAULT_LOOPBACK_CLOSE_LIFETIME, Duration::from_secs(2));
-        assert!(valid_loopback_close_lifetime(Duration::from_secs(20)));
-        assert!(valid_loopback_close_lifetime(MAX_LOOPBACK_CLOSE_LIFETIME));
-        assert!(!valid_loopback_close_lifetime(Duration::ZERO));
-        assert!(!valid_loopback_close_lifetime(Duration::from_secs(31)));
-    }
-
-    #[tokio::test]
-    async fn first_loopback_child_error_still_joins_the_remaining_child() {
-        let remaining_finished = Arc::new(AtomicBool::new(false));
-        let approval = tokio::spawn(async {
-            Err(
-                Box::new(std::io::Error::other("synthetic approval failure"))
-                    as Box<dyn Error + Send + Sync>,
-            )
-        });
-        let finished = remaining_finished.clone();
-        let websocket = tokio::spawn(async move {
-            finished.store(true, Ordering::SeqCst);
-            Ok(())
-        });
-        let failures = join_loopback_children(
-            Some(approval),
-            Some(websocket),
-            Duration::from_secs(1),
-            false,
-        )
-        .await;
-        assert_eq!(failures.len(), 1);
-        assert!(remaining_finished.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    async fn first_loopback_child_panic_still_joins_the_remaining_child() {
-        let remaining_finished = Arc::new(AtomicBool::new(false));
-        let approval = tokio::spawn(async { panic!("synthetic approval panic") });
-        let finished = remaining_finished.clone();
-        let websocket = tokio::spawn(async move {
-            finished.store(true, Ordering::SeqCst);
-            Ok(())
-        });
-        let failures = join_loopback_children(
-            Some(approval),
-            Some(websocket),
-            Duration::from_secs(1),
-            false,
-        )
-        .await;
-        assert_eq!(failures.len(), 1);
-        assert!(remaining_finished.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    async fn timed_out_loopback_child_is_aborted_and_remaining_child_is_joined() {
-        struct DropMark(Arc<AtomicBool>);
-        impl Drop for DropMark {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
-
-        let first_dropped = Arc::new(AtomicBool::new(false));
-        let drop_mark = first_dropped.clone();
-        let approval = tokio::spawn(async move {
-            let _drop_mark = DropMark(drop_mark);
-            pending::<()>().await;
-            Ok(())
-        });
-        let remaining_finished = Arc::new(AtomicBool::new(false));
-        let finished = remaining_finished.clone();
-        let websocket = tokio::spawn(async move {
-            finished.store(true, Ordering::SeqCst);
-            Ok(())
-        });
-        let failures = join_loopback_children(
-            Some(approval),
-            Some(websocket),
-            Duration::from_millis(10),
-            false,
-        )
-        .await;
-        assert_eq!(failures.len(), 1);
-        assert!(first_dropped.load(Ordering::SeqCst));
-        assert!(remaining_finished.load(Ordering::SeqCst));
-    }
-}
-
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 fn valid_symbol(symbol: &str) -> bool {
     symbol.len() == 6 && symbol.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 async fn run_approval_server(listener: TcpListener) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (mut stream, _) = listener.accept().await?;
     let request = read_http_headers(&mut stream).await?;
@@ -1262,6 +1362,13 @@ async fn run_approval_server(listener: TcpListener) -> Result<(), Box<dyn Error 
     Ok(())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 async fn run_ws_server(
     listener: TcpListener,
     session_date: NaiveDate,
@@ -1325,6 +1432,13 @@ async fn run_ws_server(
     Ok(())
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 fn synthetic_market_fields(session_date: NaiveDate, trade_time: &str, symbol: &str) -> Vec<String> {
     let mut fields = vec![String::new(); 47];
     fields[0] = symbol.to_owned();
@@ -1343,6 +1457,13 @@ fn synthetic_market_fields(session_date: NaiveDate, trade_time: &str, symbol: &s
     fields
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 async fn read_http_headers(stream: &mut TcpStream) -> Result<Vec<u8>, std::io::Error> {
     let mut bytes = Vec::new();
     let mut one = [0_u8; 1];
@@ -1359,6 +1480,13 @@ async fn read_http_headers(stream: &mut TcpStream) -> Result<Vec<u8>, std::io::E
     ))
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 fn header_value(request: &[u8], wanted: &str) -> Option<String> {
     let text = String::from_utf8_lossy(request);
     text.lines().find_map(|line| {
@@ -1368,6 +1496,13 @@ fn header_value(request: &[u8], wanted: &str) -> Option<String> {
     })
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 async fn read_ws_frame(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), std::io::Error> {
     let mut header = [0_u8; 2];
     stream.read_exact(&mut header).await?;
@@ -1393,6 +1528,13 @@ async fn read_ws_frame(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), std::io:
     Ok((opcode, payload))
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 async fn write_ws_frame(
     stream: &mut TcpStream,
     opcode: u8,
@@ -1416,6 +1558,13 @@ async fn write_ws_frame(
     stream.write_all(&frame).await
 }
 
+#[cfg_attr(
+    all(test, feature = "market-stream-db-tests"),
+    allow(
+        dead_code,
+        reason = "shared fixture item is used by job-queue tests; API fixture targets compile independently"
+    )
+)]
 pub async fn listener(database: &DisposableDatabase) -> Result<PgListener, sqlx::Error> {
     PgListener::connect_with(&database.worker).await
 }
@@ -1780,5 +1929,101 @@ impl DisposableDatabase {
             (Err(cleanup), Ok(())) | (Ok(()), Err(cleanup)) => Err(cleanup),
             (Err(close), Err(drop)) => Err(combine_primary_cleanup(close, drop)),
         }
+    }
+}
+
+#[cfg(test)]
+mod loopback_lifetime_tests {
+    use std::future::pending;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn loopback_close_lifetime_keeps_default_and_caps_explicit_bound() {
+        assert_eq!(DEFAULT_LOOPBACK_CLOSE_LIFETIME, Duration::from_secs(2));
+        assert!(valid_loopback_close_lifetime(Duration::from_secs(20)));
+        assert!(valid_loopback_close_lifetime(MAX_LOOPBACK_CLOSE_LIFETIME));
+        assert!(!valid_loopback_close_lifetime(Duration::ZERO));
+        assert!(!valid_loopback_close_lifetime(Duration::from_secs(31)));
+    }
+
+    #[tokio::test]
+    async fn first_loopback_child_error_still_joins_the_remaining_child() {
+        let remaining_finished = Arc::new(AtomicBool::new(false));
+        let approval = tokio::spawn(async {
+            Err(
+                Box::new(std::io::Error::other("synthetic approval failure"))
+                    as Box<dyn Error + Send + Sync>,
+            )
+        });
+        let finished = remaining_finished.clone();
+        let websocket = tokio::spawn(async move {
+            finished.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        let failures = join_loopback_children(
+            Some(approval),
+            Some(websocket),
+            Duration::from_secs(1),
+            false,
+        )
+        .await;
+        assert_eq!(failures.len(), 1);
+        assert!(remaining_finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn first_loopback_child_panic_still_joins_the_remaining_child() {
+        let remaining_finished = Arc::new(AtomicBool::new(false));
+        let approval = tokio::spawn(async { panic!("synthetic approval panic") });
+        let finished = remaining_finished.clone();
+        let websocket = tokio::spawn(async move {
+            finished.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        let failures = join_loopback_children(
+            Some(approval),
+            Some(websocket),
+            Duration::from_secs(1),
+            false,
+        )
+        .await;
+        assert_eq!(failures.len(), 1);
+        assert!(remaining_finished.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn timed_out_loopback_child_is_aborted_and_remaining_child_is_joined() {
+        struct DropMark(Arc<AtomicBool>);
+        impl Drop for DropMark {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let first_dropped = Arc::new(AtomicBool::new(false));
+        let drop_mark = first_dropped.clone();
+        let approval = tokio::spawn(async move {
+            let _drop_mark = DropMark(drop_mark);
+            pending::<()>().await;
+            Ok(())
+        });
+        let remaining_finished = Arc::new(AtomicBool::new(false));
+        let finished = remaining_finished.clone();
+        let websocket = tokio::spawn(async move {
+            finished.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        let failures = join_loopback_children(
+            Some(approval),
+            Some(websocket),
+            Duration::from_millis(10),
+            false,
+        )
+        .await;
+        assert_eq!(failures.len(), 1);
+        assert!(first_dropped.load(Ordering::SeqCst));
+        assert!(remaining_finished.load(Ordering::SeqCst));
     }
 }

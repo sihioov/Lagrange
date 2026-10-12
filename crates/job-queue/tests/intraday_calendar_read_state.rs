@@ -1187,9 +1187,7 @@ async fn calendar_reads_are_independent_and_do_not_write_any_populated_state() {
 #[cfg(feature = "market-stream-db-tests")]
 const SUPERVISOR_ENV: &str = "LAGRANGE_WS3A_SUPERVISOR_URL";
 #[cfg(feature = "market-stream-db-tests")]
-#[allow(dead_code)]
-#[path = "owner_market_stream_boundary_support/c2_fixture.rs"]
-mod eod_restart_binding;
+use intraday_quotes_support::c2_fixture as eod_restart_binding;
 
 #[cfg(feature = "market-stream-db-tests")]
 mod eod_restart_tests {

@@ -505,7 +505,7 @@ mod tests {
         )
         .unwrap()
         .with_clock(Arc::new(TestClock::at(0)));
-        assert_eq!(format!("{client:?}").contains("secret"), false);
+        assert!(!format!("{client:?}").contains("secret"));
         assert!(!fs::metadata(dir.path()).unwrap().permissions().readonly());
     }
 

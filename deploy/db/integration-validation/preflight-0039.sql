@@ -1,5 +1,8 @@
 -- Assertions immediately after 0039 and before 0040.
 \set ON_ERROR_STOP on
+SELECT pg_catalog.set_config(
+    'lagrange.validation.catalog_sha256', :'catalog_sha256', false
+);
 
 DO $$
 DECLARE
@@ -94,15 +97,55 @@ BEGIN
 END
 $$;
 
--- Confirm the legacy target is still terminal but has no Paper obligation yet;
--- 0041, not 0039, owns the backfill.
+-- migration_owner is subject to forced RLS on pending_targets, so the terminal
+-- fixture check runs in the validator's separate supervisor-only pass below.
+\if :terminal_only
 DO $$
+DECLARE
+    v_terminal bigint;
 BEGIN
-    IF (SELECT count(*) FROM public.pending_targets WHERE status <> 'PENDING') <> 1 THEN
+    SELECT count(*) INTO v_terminal
+      FROM public.pending_targets
+     WHERE status <> 'PENDING';
+    IF v_terminal <> 1 THEN
         RAISE EXCEPTION 'terminal Paper target changed during 0039';
     END IF;
-    IF (SELECT count(*) FROM public.auth_audit_outbox) <> 0 THEN
-        RAISE EXCEPTION 'auth audit outbox unexpectedly contains fixture rows';
+END
+$$;
+SELECT 'preflight=0039-terminal-paper';
+SELECT 'terminal_paper_targets=' || count(*)
+  FROM public.pending_targets
+ WHERE status <> 'PENDING';
+\quit
+\endif
+
+-- The audit assertions below deliberately run as migration_owner. This proves
+-- its post-0039 audit RLS policy and read access directly.
+DO $$
+DECLARE
+    v_sha256 text := pg_catalog.current_setting(
+        'lagrange.validation.catalog_sha256'
+    );
+    v_event public.auth_audit_outbox%ROWTYPE;
+    v_event_count bigint;
+BEGIN
+    SELECT count(*) INTO v_event_count FROM public.auth_audit_outbox;
+    IF v_event_count <> 1 THEN
+        RAISE EXCEPTION 'auth audit outbox contains %, expected the single catalog install event', v_event_count;
+    END IF;
+    SELECT * INTO v_event
+      FROM public.auth_audit_outbox
+     WHERE event_key = 'strategy-catalog:' || v_sha256 || ':installed';
+    IF NOT FOUND
+       OR v_event.action IS DISTINCT FROM 'strategy_catalog.installed'
+       OR v_event.actor_role IS DISTINCT FROM 'system'
+       OR v_event.actor_user_id IS NOT NULL
+       OR v_event.target_type IS DISTINCT FROM 'strategy_catalog'
+       OR v_event.target_id IS DISTINCT FROM v_sha256
+       OR v_event.reason IS DISTINCT FROM 'IMMUTABLE_RELEASE_BASELINE'
+       OR v_event.created_at IS DISTINCT FROM pg_catalog.to_timestamp(1787670000::double precision)
+       OR v_event.delivered_at IS NOT NULL THEN
+        RAISE EXCEPTION 'catalog install audit payload does not match the immutable baseline';
     END IF;
 END
 $$;
@@ -110,3 +153,6 @@ $$;
 SELECT 'preflight=0039';
 SELECT 'sqlx_migrations=' || count(*) FROM public._sqlx_migrations;
 SELECT 'auth_audit_outbox=' || count(*) FROM public.auth_audit_outbox;
+SELECT 'catalog_audit_event=' || id
+  FROM public.auth_audit_outbox
+ WHERE event_key = 'strategy-catalog:' || current_setting('lagrange.validation.catalog_sha256') || ':installed';

@@ -23,9 +23,69 @@ use uuid::Uuid;
 pub const QA_DATABASE_URL: &str = "postgres://postgres:lagrange@127.0.0.1:55438/postgres";
 pub const KIS_CALENDAR_SOURCE_VERSION: &str = "kis-chk-holiday-v1:schema-1";
 
+#[derive(Debug, Clone, Copy)]
+enum IntradaySetupStage {
+    EndpointSelection,
+    SupervisorConnection,
+    RootBootstrapTransaction,
+    RootBootstrapLock,
+    RootRoleBootstrap,
+    RootBootstrapCommit,
+    ScratchDatabaseCreate,
+    ScratchSuperuserConnection,
+    ScratchRoleBootstrap,
+    ScratchDatabaseGrant,
+    Migration,
+    RoleConnections,
+    SessionDate,
+    InitialCalendar,
+}
+
+#[derive(Debug)]
+pub(super) struct IntradaySetupError {
+    stage: IntradaySetupStage,
+    sqlstate: Option<String>,
+}
+
+impl IntradaySetupError {
+    fn at(stage: IntradaySetupStage) -> Self {
+        Self {
+            stage,
+            sqlstate: None,
+        }
+    }
+
+    fn from_sqlx(stage: IntradaySetupStage, error: sqlx::Error) -> Self {
+        let sqlstate = error
+            .as_database_error()
+            .and_then(|database_error| database_error.code())
+            .map(|code| code.into_owned())
+            .filter(|code| {
+                code.len() == 5 && code.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            });
+        Self { stage, sqlstate }
+    }
+}
+
+impl std::fmt::Display for IntradaySetupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "intraday database setup failed at {:?}",
+            self.stage
+        )?;
+        if let Some(sqlstate) = &self.sqlstate {
+            write!(formatter, " (SQLSTATE {sqlstate})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for IntradaySetupError {}
+
 #[cfg(feature = "market-stream-db-tests")]
 #[path = "../owner_market_stream_boundary_support/c2_fixture.rs"]
-mod c2_fixture;
+pub(super) mod c2_fixture;
 #[cfg(feature = "market-stream-db-tests")]
 const SUPERVISOR_ENV: &str = "LAGRANGE_WS3A_SUPERVISOR_URL";
 
@@ -165,22 +225,42 @@ pub struct IntradayTestDb {
 }
 
 impl IntradayTestDb {
-    pub async fn create() -> Result<Self, String> {
+    pub async fn create() -> Result<Self, IntradaySetupError> {
         Self::create_with_calendar(true).await
     }
 
     #[allow(dead_code)]
-    pub async fn create_without_calendar() -> Result<Self, String> {
+    pub async fn create_without_calendar() -> Result<Self, IntradaySetupError> {
         Self::create_with_calendar(false).await
     }
 
-    async fn create_with_calendar(install_initial_calendar: bool) -> Result<Self, String> {
-        let endpoint = TestEndpoint::from_environment()?;
-        let root = endpoint.supervisor().await?;
-        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
-            .execute(&root)
+    async fn create_with_calendar(
+        install_initial_calendar: bool,
+    ) -> Result<Self, IntradaySetupError> {
+        let endpoint = TestEndpoint::from_environment()
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::EndpointSelection))?;
+        let root = endpoint
+            .supervisor()
             .await
-            .map_err(|_| "could not bootstrap existing disposable test roles".to_owned())?;
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::SupervisorConnection))?;
+        let mut root_bootstrap = root.begin().await.map_err(|error| {
+            IntradaySetupError::from_sqlx(IntradaySetupStage::RootBootstrapTransaction, error)
+        })?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('lagrange-test-role-bootstrap'))")
+            .execute(&mut *root_bootstrap)
+            .await
+            .map_err(|error| {
+                IntradaySetupError::from_sqlx(IntradaySetupStage::RootBootstrapLock, error)
+            })?;
+        sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
+            .execute(&mut *root_bootstrap)
+            .await
+            .map_err(|error| {
+                IntradaySetupError::from_sqlx(IntradaySetupStage::RootRoleBootstrap, error)
+            })?;
+        root_bootstrap.commit().await.map_err(|error| {
+            IntradaySetupError::from_sqlx(IntradaySetupStage::RootBootstrapCommit, error)
+        })?;
 
         let n = DATABASE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let database_name = format!("lagrange_intraday_{}_{}", std::process::id(), n);
@@ -188,38 +268,67 @@ impl IntradayTestDb {
         sqlx::query(ddl_for(&database_name, "CREATE DATABASE {db}"))
             .execute(&root)
             .await
-            .map_err(|_| "could not create generated intraday scratch database".to_owned())?;
+            .map_err(|error| {
+                IntradaySetupError::from_sqlx(IntradaySetupStage::ScratchDatabaseCreate, error)
+            })?;
 
-        let superuser = endpoint.role("postgres", &database_name).await?;
+        let superuser = endpoint
+            .role("postgres", &database_name)
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::ScratchSuperuserConnection))?;
         sqlx::raw_sql(ROLE_BOOTSTRAP_SQL)
             .execute(&superuser)
             .await
-            .map_err(|_| "could not prepare roles in intraday scratch database".to_owned())?;
+            .map_err(|error| {
+                IntradaySetupError::from_sqlx(IntradaySetupStage::ScratchRoleBootstrap, error)
+            })?;
         sqlx::raw_sql(ddl_for(
             &database_name,
             "GRANT CONNECT ON DATABASE {db} TO migration_owner, app, worker, admin, audit_writer, research_writer",
         ))
         .execute(&root)
         .await
-        .map_err(|_| "could not grant scratch-database CONNECT to existing roles".to_owned())?;
+        .map_err(|error| {
+            IntradaySetupError::from_sqlx(IntradaySetupStage::ScratchDatabaseGrant, error)
+        })?;
 
-        let migration_owner = endpoint.role("migration_owner", &database_name).await?;
+        let migration_owner = endpoint
+            .role("migration_owner", &database_name)
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::RoleConnections))?;
         MIGRATOR
             .run(&migration_owner)
             .await
-            .map_err(|_| "0054 migration set did not apply to scratch database".to_owned())?;
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::Migration))?;
 
-        let app = endpoint.role("app", &database_name).await?;
-        let worker = endpoint.role("worker", &database_name).await?;
-        let admin = endpoint.role("admin", &database_name).await?;
-        let audit_writer = endpoint.role("audit_writer", &database_name).await?;
-        let research_writer = endpoint.role("research_writer", &database_name).await?;
+        let app = endpoint
+            .role("app", &database_name)
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::RoleConnections))?;
+        let worker = endpoint
+            .role("worker", &database_name)
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::RoleConnections))?;
+        let admin = endpoint
+            .role("admin", &database_name)
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::RoleConnections))?;
+        let audit_writer = endpoint
+            .role("audit_writer", &database_name)
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::RoleConnections))?;
+        let research_writer = endpoint
+            .role("research_writer", &database_name)
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::RoleConnections))?;
 
         let session_date: NaiveDate =
             sqlx::query_scalar("SELECT (pg_catalog.now() AT TIME ZONE 'Asia/Seoul')::date")
                 .fetch_one(&superuser)
                 .await
-                .map_err(|_| "could not determine the QA database KST date".to_owned())?;
+                .map_err(|error| {
+                    IntradaySetupError::from_sqlx(IntradaySetupStage::SessionDate, error)
+                })?;
         let calendar_source_batch_id = Uuid::new_v4();
         let calendar_content_sha256 = "a".repeat(64);
         let window_contract_sha256 = format!("sha256:{}", "b".repeat(64));
@@ -230,7 +339,8 @@ impl IntradayTestDb {
                 calendar_source_batch_id,
                 &calendar_content_sha256,
             )
-            .await?;
+            .await
+            .map_err(|_| IntradaySetupError::at(IntradaySetupStage::InitialCalendar))?;
         }
 
         Ok(Self {

@@ -3,10 +3,6 @@
 //! The actual-role database case lives in the private library test module;
 //! this external target checks only the safe public DTO boundary.
 
-use job_queue::owner_equity_v2::{
-    MarketStreamStorageError, StreamConnectionState, StreamFreshness, StreamMarketState,
-    StreamStatus, StreamStatusCode,
-};
 use market_data::market_stream::{
     STREAM_CURRENCY, STREAM_SOURCE, STREAM_VENUE, STREAM_WIRE_VERSION, StreamBasePriceReason,
     StreamQuote, StreamQuoteDirection,

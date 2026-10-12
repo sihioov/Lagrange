@@ -14,6 +14,8 @@
 ' 2026-10-07: realtime activation is WS-only; legacy REST helpers/routes
 ' remain in source, while read-only EOD REST remains independent.
 ' 2026-10-08: Owner service-status source wiring; local QA is not deployment.
+' 2026-10-12: standalone locked calendar probe for disposable smoke QA;
+' its domain path dependency and collector source inclusion are QA-only.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -24,6 +26,11 @@
 ' data-pipelines/nt-catalog-builder) are intentionally NOT components.
 ' The workspace member tests/integration/migration-contract is a test-only
 ' gate crate (sqlx::migrate! over migrations/) and is likewise omitted.
+' The standalone scripts/qa/calendar-lock-probe is also omitted from this
+' production-oriented drawing. It opts out of the workspace at Cargo.toml:14.
+' Its QA-only edges are folded here with their concrete code evidence:
+'   calendar-lock-probe -> domain ' evidence: scripts/qa/calendar-lock-probe/Cargo.toml:8; scripts/qa/calendar-lock-probe/src/main.rs:5
+'   calendar-lock-probe -> collectors calendar_claim.rs source inclusion ' evidence: scripts/qa/calendar-lock-probe/src/main.rs:1-4,18-19
 '
 ' READABILITY: ubiquitous foundation dependencies are FOLDED (not drawn).
 ' Nine crates directly depend on crates/domain and four components consume
@@ -177,10 +184,10 @@ api_server --> result_model
 ' evidence: crates/api-server/src/http/strategies.rs:17 (selector::baseline::baseline_packages)
 api_server --> selector
 
-' evidence: crates/api-server/src/repos/service_status.rs:308-314,999-1009; migrations/0058_service_status_reads.up.sql:16,605-607
+' evidence: crates/api-server/src/repos/service_status.rs:308-314,995-1007; migrations/0058_service_status_reads.up.sql:16,605-607
 api_server --> status_stream : bounded status projection;\nrestricted app execution
 
-' evidence: crates/api-server/src/repos/service_status.rs:248-256,559-570,975-978; migrations/0059_research_execution_status.up.sql:56-73
+' evidence: crates/api-server/src/repos/service_status.rs:248-256,559-570,970-974; migrations/0059_research_execution_status.up.sql:56-73
 api_server --> research_status : admin read of last persisted EOD attempt
 
 ' evidence: data-pipelines/collectors/src/worker.rs:1037; data-pipelines/collectors/src/service_status.rs:80-105,122-137; migrations/0059_research_execution_status.up.sql:56-73
@@ -207,7 +214,7 @@ job_queue --> portfolio_model
 job_queue --> market_data : EOD types + intraday error seam
 ' evidence: crates/job-queue/src/owner_equity_v2/runtime.rs:11 (use collectors::owner_equity_v2::materialize_owner_equity_from_raw_allow_insufficient); crates/job-queue/Cargo.toml:36; crates/job-queue/src/owner_equity_v2/intraday_producer.rs:14-17,402-437
 job_queue --> collectors : guarded intraday quote adapter\n(+ existing EOD materialization)
-' evidence: crates/job-queue/Cargo.toml:9,10,11,16,37 (opt-in alias and path dependency); crates/kis-client/src/bin/kis-market-stream-state.rs:4 (provisioning API); crates/job-queue/src/bin/owner-equity-v2-runner.rs:567,771 (EOD REST), 845-856 (WS factory), 1359-1370 (WS-only backend), 1462,1464 (production domain/approval); crates/job-queue/src/owner_equity_v2/market_stream_runtime.rs:1836 (owned anchor connect)
+' evidence: crates/job-queue/Cargo.toml:9,10,11,16,37 (opt-in alias and path dependency); crates/kis-client/src/bin/kis-market-stream-state.rs:4 (provisioning API); crates/job-queue/src/bin/owner-equity-v2-runner.rs:567,771 (EOD REST), 845-856 (WS factory), 1366-1377 (WS-only backend), 1469,1471 (production domain/approval); crates/job-queue/src/owner_equity_v2/market_stream_runtime.rs:1840 (owned anchor connect)
 job_queue --> kis_client : market-only WS realtime runtime;\nowned socket, separate WS state + opt-in initializer;\nread-only EOD REST remains independent
 
 ' ---------------- research / results edges ----------------
@@ -288,6 +295,8 @@ legend right
   an audited GET and does not create leases or provider work. G1 remains an
   app-only restricted aggregate; G2 attempt state is admin-readable and
   research_writer-writable.
+  The omitted standalone calendar probe exercises collector lock/claim code
+  in disposable smoke fixtures; its QA-only dependencies are cited above.
   Evidence for folded edges is in this file's header comment.
   All drawn edges carry a "' evidence:" comment in this file's source.
 endlegend

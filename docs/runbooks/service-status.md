@@ -344,10 +344,12 @@ changes still require full typecheck/lint. Those commands are
 `npm run lint --workspace=@lagrange/web`.
 
 The off lane uses synthetic API/Next ports38192/33042, mode `off+market_ws`.
-It collects the exact three files under Chromium with `--grep-invert @actual`:
-`service-status.spec.ts`, `stock-beta.spec.ts`, `stock-beta-intraday.spec.ts`.
-Current inventory is88:37 required status cases,39 required chart cases and
-12 intentional legacy REST/off skips. Inventory is not a passing aggregate.
+It collects the exact two files under Chromium with `--grep-invert @actual`:
+`service-status.spec.ts` and `stock-beta.spec.ts`.
+Current inventory is76:37 required status cases and39 required chart cases,
+all required to pass with zero skips. The12 intraday cases require
+`owner_only+market_ws` and run in the separate candidate Web stream lane.
+Inventory is not a passing aggregate.
 The dedicated helper validates unique keys, disjoint exact-title `--test-list`
 files and the complete result union, rejecting missing/extra/duplicate/flaky or
 unexpectedly skipped results. Each serial batch has at most8tests in a new

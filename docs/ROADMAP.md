@@ -10,9 +10,9 @@
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
 | 현재 실행 우선순위 | R1 CI 복구 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
-| 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — 계획 완료, 실행 미착수 |
-| 다음 착수 항목 | R1-01 실패 재현·분류, R2-01 현재 일일 수집 경로 진단 |
-| 진행 중인 구현 항목 | 없음 — 로드맵·R1 실행 계획 정리 완료, 아래 기능 복구는 미착수 |
+| 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-5 로컬 검증·독립 리뷰 수용 |
+| 다음 착수 항목 | 후보 커밋 고정 → R1-08 동일 커밋의 CI·research smoke → R1-09 배포 후보 준비 |
+| 진행 중인 구현 항목 | R1-02~R1-07 로컬 검증 통과; 최종 커밋의 hosted 수용 전까지 DOING. R1-08 진행 중 |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
 
 ## 1. 목표와 문서의 역할
@@ -134,7 +134,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 
 | 단계 | 사용자에게 생기는 결과 | 초기 상태 | 선행 조건 |
 | --- | --- | --- | --- |
-| R1 | 검증 가능한 개발·배포 기준선 | TODO | 없음 |
+| R1 | 검증 가능한 개발·배포 기준선 | DOING — 기준선 수용, 수정·검증 | 없음 |
 | R2 | 매 거래일 사용할 수 있는 일봉·신호·추천 베타 | TODO | 진단은 즉시 가능. 수정 릴리스의 운영 인수에는 R1 통과 필요 |
 | R3 | 실제 시장 시세가 전달되는 실시간 화면 | TODO | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
 | R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | BLOCKED — 구현 계약 미확정 | 결정안 작성은 즉시 가능. 구현은 R4-01의 구체적 승인, 출시에는 R1·R2 필요 |
@@ -152,23 +152,47 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 **목표:** 깨끗한 환경에서 같은 소스의 필수 검증을 재현하고, 검증된 릴리스를 준비한다.
 
 [상세 실행 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 `$paseo-delegate`로 실행할
-7개 작업 패키지의 소유 파일·의존성·검증 기준을 정의한다. 현재는 계획만 작성했으며 R1 작업은 미착수다.
+7개 작업 패키지의 소유 파일·의존성·검증 기준을 정의한다. Owner의 실행 요청으로 WP-1부터 진행한다.
+[실행 기록](reviews/2026-10-12-r1-execution.md)에 담당 에이전트와 수용 상태를 남긴다.
 
-- [ ] **R1-01 — 실패 기준선 재현·분류.** §3.3의 각 실패를 현재 작업 커밋에서 확인하고 제품 결함,
+- [x] **R1-01 — 실패 기준선 재현·분류.** §3.3의 각 실패를 현재 작업 커밋에서 확인하고 제품 결함,
   테스트 계약 불일치, CI 환경 문제를 구분한다. 담당 범위와 실행할 최소 검증을 기록한다.
-- [ ] **R1-02 — Rust format·Clippy 복구.** 진단별 필요한 수정을 수행하고 해당 검사 통과를 기록한다.
-- [ ] **R1-03 — Rust workspace 테스트 복구.** market-stream 통합 테스트의 컴파일 실패를 해결하고,
-  이후 실제 실행 결과까지 확인한다. 컴파일 통과를 테스트 전체 통과로 기록하지 않는다.
-- [ ] **R1-04 — PostgreSQL 초기화·업그레이드 검증.** migration/catalog/audit 함수 계약을 대조하고
-  빈 DB 및 지원하는 기존 DB 업그레이드, serving 역할의 접근 검증을 통과시킨다.
-- [ ] **R1-05 — Web 검증 환경 복구.** 실제 브라우저를 사용하는 테스트 전에 필요한 실행 파일을
-  준비한다. lint·typecheck·unit·production build·필수 E2E의 실행 결과를 각각 기록한다.
-- [ ] **R1-06 — Python 계약·research smoke 복구.** 현재 Raw init의 보존·권한 계약에 맞게 코드와
-  테스트를 대조하고, 새 runner에서도 smoke가 준비·실행되도록 cache 의존을 해결한다.
-- [ ] **R1-07 — 정책 검사 입력 복구.** 비밀이 없는 격리 검사 입력으로 candidate Compose 검사를
-  실행한다. 운영 credential 주입이나 fail-closed 규칙 완화로 검사를 통과시키지 않는다.
-- [ ] **R1-08 — 통합 검증 확정.** 같은 최종 커밋의 필수 CI와 research smoke를 통과시키고 실행 URL,
-  실패·skip·미실행 유무를 기록한다. 검사 단계가 도달하지 못한 경우를 통과로 세지 않는다.
+  완료 2026-10-12; 대상 `ac0a083`; [기준선·수정 계약](reviews/2026-10-12-r1-baseline.md).
+  포맷·Clippy·기능 누락·Python·Compose 입력을 재현하고 feature-enabled transport 50개 통과.
+  DB 원인은 source/동일 product baseline의 CI로 대조; 실제 SQL·기능 smoke는 Docker 접근 문제로 미검증이며 후속 검증에 남는다.
+- [ ] **R1-02 — Rust format·Clippy 복구.** DOING — 로컬 수정·검증 수용, 최종 커밋의 hosted 검사 대기.
+  workspace 포맷과 feature 조합을 포함한 strict Clippy 6개 선택이 모두 통과했다.
+  [최종 Rust 검증](reviews/2026-10-12-r1-workspace-validation.md), [lint 수정·검증](reviews/2026-10-12-r1-rust-lint-validation.md).
+- [ ] **R1-03 — Rust workspace 테스트 복구.** DOING — 로컬 전체 실행 통과, 동일 커밋의 hosted 검사 대기.
+  CI는 `--features kis-client/test-support`를 명시한다. 최종 로컬 집계는 outer binary 2,833 pass,
+  nested child 1 pass, doc-test 52 pass, 실패 0·기존 ignored 6·filtered 180이다.
+  [집계·skip 사유·소스 동일성](reviews/2026-10-12-r1-workspace-validation.md),
+  [C2 pure 70·relay 13·restart](reviews/2026-10-12-r1-c2-fixture.md),
+  [실제 역할 runtime 18](reviews/2026-10-12-r1-runtime-validation.md).
+  float_roundtrip의 명시적 의존성과 legacy 합성 snapshot의 바이트·hash·tamper 회귀도 통과했다.
+- [ ] **R1-04 — PostgreSQL 초기화·업그레이드 검증.** DOING — 로컬 전체 validator `APPROVED`, hosted 검사 대기.
+  staged 0038→0041, 빈 DB의 전체 59개 migration 및 checksum이 같은 no-op 재실행을 통과했다.
+  DB-gated 10개 선택은 122 pass·실패/ignored/SKIP 0이다.
+  [최종 PostgreSQL 검증](reviews/2026-10-12-r1-postgres.md), [DB 계약 수정](reviews/2026-10-12-r1-db-contract-repair.md).
+- [ ] **R1-05 — Web 검증 환경 복구.** DOING — 설치 순서·소유 서버 실행기·현행 WS 테스트 계약의 로컬 검증 수용, hosted 검사 대기.
+  lint·typecheck·unit·production build를 통과했고, 마지막 fixture/catalog 12개 검사도 통과했다.
+  최종 공식 wrapper는 회귀 31개와 **브라우저 135/135회**를 통과했다(일반 121 + stream 13 + 별도 owner-empty 1).
+  필수 synthetic identity는 134개이며 owner-empty만 두 모드에서 실행했다. 실패·skip·retry·flaky는 0이다.
+  [전체 Web 검증](reviews/2026-10-12-r1-web-validation.md),
+  [최종 소스 리뷰](reviews/2026-10-12-r1-web-final-repair-review.md),
+  [별도 실제 API의 두 Chromium phase](reviews/2026-10-12-r1-actual-api-validation.md).
+  이전 실패와 환경 오류는 해당 보고서에 보존했다.
+- [ ] **R1-06 — Python 계약·research smoke 복구.** DOING — 로컬 Python 450 pass·기존 skip 10,
+  backup 정책 6개와 전체 기능 smoke 통과; hosted 검사 대기.
+  [전체 smoke](reviews/2026-10-12-r1-smoke-validation.md)는 script·supervisor exit 0, functional PASS,
+  SKIP 0이며 새 캐시에서 Raw probe를 수행했다. 입력 933개의 동일성과 소유 자원 정리를 확인했다.
+  [Python 결과·기존 skip 사유](reviews/2026-10-12-r1-runner.md). Windows parity는 미검증이다.
+- [ ] **R1-07 — 정책 검사 입력 복구.** DOING — 격리 Compose 입력과 누락 거부 회귀를 로컬에서 통과했다.
+  운영 credential 없이 검사하고 production의 필수 입력 규칙을 유지한다.
+  [runner·정적 계약 검증](reviews/2026-10-12-r1-runner.md); 동일 후보 커밋의 전체 policy job 대기.
+- [ ] **R1-08 — 통합 검증 확정.** DOING — 로컬 검증·독립 리뷰를 통과한 후보를 커밋한 뒤,
+  **같은 최종 커밋**의 필수 CI와 research smoke 실행 URL·checkout SHA·단계별 결과를 확인한다.
+  실패·기존 skip·미실행은 구분하고, 로컬 통과를 hosted 통과로 대신하지 않는다.
 - [ ] **R1-09 — 배포 후보 준비.** 정확한 커밋·이미지·manifest, migration 순서와 기존 릴리스 복구
   절차를 확인한다. 실제 운영 적용·결과는 R2의 릴리스 증거에 연결한다.
 
@@ -322,6 +346,11 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | --- | --- | --- | --- | --- |
 | 2026-10-12 | DOC-01 | TODO → DONE; R1~R5와 D-01~D-05 최초 등록 | Owner가 제안된 개발 순서와 변경·완료 추적을 채택. 상세 P0 값·추가 API·실거래 승인으로 확대하지 않음 | 이 기록을 추가한 문서 커밋; §3 기준선; AGENTS.md·STATUS.md 연결; 도입 커밋 설명의 문서 검증 |
 | 2026-10-12 | R1-01~R1-09 | TODO 유지; 상세 실행 계획 추가 | Owner의 `$paseo-delegate-plan` 요청에 따라 7개 패키지·5개 wave와 소유 범위·검증 기준 작성. 구현·worker 실행은 미착수 | [R1 실행 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md); 이 기록을 추가한 문서 커밋의 형식·링크·작업 ID 검증 |
+| 2026-10-12 | R1-01 | TODO → DOING | Owner가 `$paseo-delegate` 실행 요청; WP-1 실패 재현·수정 명세 확정 시작 | 입력 `ac0a083`; [실행 기록](reviews/2026-10-12-r1-execution.md); 완료 근거는 아직 없음 |
+| 2026-10-12 | R1-01; R1-02~R1-07 | R1-01 DONE; 수정 항목 DOING | WP-1 수용, 원인별 명세 확정. R1-03은 테스트 지원 feature를 CI에서 명시하며 실제 전체 테스트를 유지 | `ac0a083`; [기준선](reviews/2026-10-12-r1-baseline.md); [확정 실행 계약](superpowers/plans/2026-10-12-r1-ci-recovery.md); Docker/SQL/smoke와 최종 workspace 실행은 아직 미확인 |
+| 2026-10-12 | R1-02~R1-07 | DOING 유지; 후속 Rust·DB·Web 범위 확정 | 개별 검증에서 추가 진단과 기존 테스트 계약 불일치 발견. DB 리뷰 결함 수정, 고정 QA 포트 일치, Web 서버 소유 증명과 WS 전용 회귀 보완. 전체 검사를 축소하지 않음 | `ac0a083` 기반 작업 트리; [실행·검증 기록](reviews/2026-10-12-r1-execution.md), [Rust](reviews/2026-10-12-r1-rust.md), [DB](reviews/2026-10-12-r1-postgres.md), [runner](reviews/2026-10-12-r1-runner.md); 동일 최종 커밋·필수 CI·smoke는 아직 미확정 |
+
+| 2026-10-12 | R1-02~R1-08 | 수정·로컬 검증과 독립 소스 리뷰 수용; 동일 후보 커밋의 hosted 검증으로 이동 | Rust·DB·Python·Web 135회·기능 smoke 통과. 기존 실패·skip 이력은 보고서에 보존하고 R1 완료 체크는 hosted 결과 이후 판단 | 이 기록을 추가한 후보 커밋; [실행 기록](reviews/2026-10-12-r1-execution.md), [Web](reviews/2026-10-12-r1-web-validation.md), [workspace](reviews/2026-10-12-r1-workspace-validation.md), [smoke](reviews/2026-10-12-r1-smoke-validation.md) |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

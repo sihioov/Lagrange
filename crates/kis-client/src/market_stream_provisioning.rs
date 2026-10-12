@@ -402,7 +402,7 @@ mod tests {
     fn partial_and_symlink_layouts_fail_without_repair_or_cleanup() {
         let fixture = Fixture::new();
         fs::create_dir(fixture.state_dir()).unwrap();
-        fs::set_permissions(&fixture.state_dir(), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(fixture.state_dir(), fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(fixture.initialize(), Err(StateError::PriorSessionUncertain));
         assert!(!fixture.anchors_dir().exists());
         assert!(!fixture.state_dir().join(STATE_FILE).exists());
@@ -553,7 +553,7 @@ mod tests {
         let result = fixture.initialize();
         fail_provisioning_fsync_at(None);
         assert_eq!(result, Err(StateError::ProvisioningUncertain));
-        assert!(fixture.state_dir().join(STATE_FILE).exists() == false);
+        assert!(!fixture.state_dir().join(STATE_FILE).exists());
         let temporary = fs::read_dir(fixture.state_dir())
             .unwrap()
             .next()

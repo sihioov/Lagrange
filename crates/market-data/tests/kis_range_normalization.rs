@@ -11,7 +11,7 @@ use market_data::range_normalize::{
     ExpectedRangeSessions, RangeNormalizeError,
     deterministic_range_normalized_batch_id_with_identity, normalize_kis_daily_range_batch,
 };
-use market_data::storage::{BatchSpec, ManifestEntry, RawStore};
+use market_data::storage::{BatchSpec, ManifestEntry, RawStore, StoreError};
 use market_data::{PublicationBundle, curation_inputs_from_raw};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -52,6 +52,15 @@ fn body(symbol: &str, dates: &[TradingDate]) -> Vec<u8> {
 }
 
 fn query(symbol: &str, start: TradingDate, end: TradingDate) -> RequestMetadata {
+    query_with_adjustment(symbol, start, end, "1")
+}
+
+fn query_with_adjustment(
+    symbol: &str,
+    start: TradingDate,
+    end: TradingDate,
+    adjustment: &str,
+) -> RequestMetadata {
     RequestMetadata {
         endpoint: ENDPOINT.to_owned(),
         query: vec![
@@ -60,7 +69,7 @@ fn query(symbol: &str, start: TradingDate, end: TradingDate) -> RequestMetadata 
             ("FID_INPUT_DATE_1".to_owned(), digits(start)),
             ("FID_INPUT_DATE_2".to_owned(), digits(end)),
             ("FID_PERIOD_DIV_CODE".to_owned(), "D".to_owned()),
-            ("FID_ORG_ADJ_PRC".to_owned(), "1".to_owned()),
+            ("FID_ORG_ADJ_PRC".to_owned(), adjustment.to_owned()),
         ],
         headers: vec![("tr_cont".to_owned(), String::new())],
         mode: FetchMode::Credentialed,
@@ -72,6 +81,16 @@ fn fixture_source(
     start: TradingDate,
     end: TradingDate,
     rows_by_symbol: &BTreeMap<&str, Vec<TradingDate>>,
+) -> (RawStore, ManifestEntry) {
+    fixture_source_with_adjustment(root, start, end, rows_by_symbol, "1")
+}
+
+fn fixture_source_with_adjustment(
+    root: &std::path::Path,
+    start: TradingDate,
+    end: TradingDate,
+    rows_by_symbol: &BTreeMap<&str, Vec<TradingDate>>,
+    adjustment: &str,
 ) -> (RawStore, ManifestEntry) {
     let store = RawStore::new(root);
     let batch_id = BatchId::generate();
@@ -86,7 +105,7 @@ fn fixture_source(
                 format!("daily-bars-range-window-1-{symbol}-page-01.json"),
                 bytes,
                 now,
-                query(symbol, start, end),
+                query_with_adjustment(symbol, start, end, adjustment),
             )
         })
         .collect::<Vec<_>>();
@@ -315,6 +334,23 @@ fn weekend_row_is_rejected_by_validated_session_list() {
 fn adjusted_price_query_is_rejected_before_normalization() {
     let start = date("2020-01-31");
     let temp = tempfile::tempdir().expect("tempdir");
+    let (store, source) =
+        fixture_source_with_adjustment(temp.path(), start, start, &rows_for(start, start), "0");
+    let error = normalize_kis_daily_range_batch(&store, &source, &expected(start, start))
+        .expect_err("adjusted request must fail closed");
+    assert!(matches!(error, RangeNormalizeError::InvalidQuery { .. }));
+    assert!(
+        store
+            .read_manifest("kis-daily-range-normalized", MARKET_KR)
+            .expect("normalized manifest read")
+            .is_empty()
+    );
+}
+
+#[test]
+fn caller_metadata_tampering_is_rejected_before_normalization() {
+    let start = date("2020-01-31");
+    let temp = tempfile::tempdir().expect("tempdir");
     let (store, mut source) = fixture_source(temp.path(), start, start, &rows_for(start, start));
     source.files[0]
         .request
@@ -323,9 +359,19 @@ fn adjusted_price_query_is_rejected_before_normalization() {
         .find(|(key, _)| key == "FID_ORG_ADJ_PRC")
         .expect("adjust query")
         .1 = "0".to_owned();
+
     let error = normalize_kis_daily_range_batch(&store, &source, &expected(start, start))
-        .expect_err("adjusted request must fail closed");
-    assert!(matches!(error, RangeNormalizeError::InvalidQuery { .. }));
+        .expect_err("caller-only metadata tampering must fail before query semantics");
+    assert!(matches!(
+        error,
+        RangeNormalizeError::Store(StoreError::InvalidBatchMetadata { .. })
+    ));
+    assert!(
+        store
+            .read_manifest("kis-daily-range-normalized", MARKET_KR)
+            .expect("normalized manifest read")
+            .is_empty()
+    );
 }
 
 #[test]

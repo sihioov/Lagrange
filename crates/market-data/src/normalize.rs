@@ -1216,8 +1216,10 @@ fn normalize_calendar_with_contract(
         source,
         lineage,
         batch_id,
-        normalizer,
-        endpoint_prefix,
+        CanonicalEnvelopeContract {
+            normalizer,
+            endpoint_prefix,
+        },
     )
 }
 
@@ -1726,9 +1728,16 @@ fn canonical_envelope(
         source,
         lineage,
         batch_id,
-        NORMALIZER,
-        "kis.normalized",
+        CanonicalEnvelopeContract {
+            normalizer: NORMALIZER,
+            endpoint_prefix: "kis.normalized",
+        },
     )
+}
+
+struct CanonicalEnvelopeContract<'a> {
+    normalizer: &'a str,
+    endpoint_prefix: &'a str,
 }
 
 fn canonical_envelope_with_contract(
@@ -1738,9 +1747,12 @@ fn canonical_envelope_with_contract(
     source: &ManifestEntry,
     lineage: &NormalizationLineage,
     batch_id: BatchId,
-    normalizer: &str,
-    endpoint_prefix: &str,
+    contract: CanonicalEnvelopeContract<'_>,
 ) -> Result<RawEnvelope, NormalizeError> {
+    let CanonicalEnvelopeContract {
+        normalizer,
+        endpoint_prefix,
+    } = contract;
     let bytes = serde_json::to_vec(&Value::Object(document)).map_err(|error| {
         NormalizeError::Serialization {
             kind,

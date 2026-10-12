@@ -370,7 +370,7 @@ async fn begin_read(
         .execute(&mut *tx)
         .await?;
     if let Some(actor) = actor {
-        set_actor_guc(&mut *tx, actor)
+        set_actor_guc(&mut tx, actor)
             .await
             .map_err(|error| match error {
                 crate::error::TenancyError::Database(error) => error,
@@ -770,17 +770,16 @@ fn adapt_stream_aggregate(aggregate: Option<Value>, query_at: DateTime<Utc>) -> 
     output
 }
 
-fn stream_pins(
-    state: &ApiState,
-    now: DateTime<Utc>,
-) -> (
+type StreamPinsRow = (
     Option<uuid::Uuid>,
     Option<uuid::Uuid>,
     Option<String>,
     Option<String>,
     Option<DateTime<Utc>>,
     Option<DateTime<Utc>>,
-) {
+);
+
+fn stream_pins(state: &ApiState, now: DateTime<Utc>) -> StreamPinsRow {
     let MarketStreamReadConfig::OwnerOnly(pins) = &state.cfg.owner_market_stream else {
         return (None, None, None, None, None, None);
     };
@@ -897,13 +896,9 @@ pub(crate) async fn refresh_with_host(
     host: &crate::service_status::HostEvidence,
 ) -> Value {
     let start = Instant::now();
-    let owner = match actor_uuid(actor) {
-        Ok(owner) => Some(owner),
-        Err(_) => None,
-    };
+    let owner = actor_uuid(actor).ok();
     let host_read = host.read.clone();
     let host_error = host.error.map(|error| error.reason());
-    let owner = owner;
     let mut db = serde_json::Map::new();
     let queue = if let Some(owner) = owner {
         read_queue(
@@ -997,11 +992,11 @@ pub(crate) async fn refresh_with_host(
         "calendar".into(),
         calendar.unwrap_or_else(|error| error_group(error, "calendar")),
     );
-    let stream = if owner.is_some() {
+    let stream = if let Some(owner) = owner {
         read_stream(
             &state.app_pool,
             actor,
-            owner.expect("checked"),
+            owner,
             session_hash,
             state,
             now,

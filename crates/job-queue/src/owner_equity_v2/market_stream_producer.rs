@@ -9,12 +9,12 @@ use std::fmt;
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 
+#[cfg(all(test, feature = "market-stream-db-tests"))]
+use kis_client::market_stream::MarketStreamCommandStateSnapshot;
 pub use kis_client::market_stream::StreamStatusCode as MarketStreamTransportStatus;
 use kis_client::market_stream::{
     MarketStreamError, MarketStreamEvent, MarketStreamSession, MarketSubscriptionOperation,
 };
-#[cfg(all(test, feature = "market-stream-db-tests"))]
-use kis_client::market_stream::MarketStreamCommandStateSnapshot;
 #[cfg(test)]
 use kis_client::market_stream_approval::ApprovalError;
 #[cfg(test)]
@@ -131,7 +131,7 @@ pub(super) struct ProducerTestGate {
     resume: Arc<Notify>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "market-stream-db-tests"))]
 impl ProducerTestGate {
     pub(super) fn new(point: ProducerAwaitPoint) -> Self {
         Self {
@@ -470,7 +470,8 @@ impl OwnerMarketStreamProducer {
             }
             let mut session = local_session.take().expect("owned session");
             match session.subscription_command_not_before_ms(
-                MarketSubscriptionOperation::Unsubscribe, &symbol,
+                MarketSubscriptionOperation::Unsubscribe,
+                &symbol,
             ) {
                 Ok(Some(not_before_ms)) => {
                     return self.defer_reconciliation(session, commands, not_before_ms);
@@ -498,12 +499,8 @@ impl OwnerMarketStreamProducer {
                 return self
                     .fail_with_session(session, MarketStreamProducerError::SubscriptionOutOfSync);
             }
-            if let Err(error) = self
-                .run_command(session, &symbol, MarketSubscriptionOperation::Unsubscribe)
-                .await
-            {
-                return Err(error);
-            }
+            self.run_command(session, &symbol, MarketSubscriptionOperation::Unsubscribe)
+                .await?;
             commands = commands.saturating_add(1);
         }
 
@@ -514,7 +511,8 @@ impl OwnerMarketStreamProducer {
             let mut session = local_session.take().expect("owned session");
             if !self.subscriptions.contains_key(symbol) {
                 match session.subscription_command_not_before_ms(
-                    MarketSubscriptionOperation::Subscribe, symbol,
+                    MarketSubscriptionOperation::Subscribe,
+                    symbol,
                 ) {
                     Ok(Some(not_before_ms)) => {
                         return self.defer_reconciliation(session, commands, not_before_ms);
@@ -556,23 +554,21 @@ impl OwnerMarketStreamProducer {
                 return self
                     .fail_with_session(session, MarketStreamProducerError::SubscriptionOutOfSync);
             }
-            if let Err(error) = self
-                .run_command(session, symbol, MarketSubscriptionOperation::Subscribe)
-                .await
-            {
-                return Err(error);
-            }
+            self.run_command(session, symbol, MarketSubscriptionOperation::Subscribe)
+                .await?;
             commands = commands.saturating_add(1);
         }
 
         if let Some(session) = local_session {
             self.restore_ready(session)?;
         }
-        Ok(MarketStreamReconcileOutcome::Complete(MarketStreamApplyOutcome {
-            active_symbols: u8::try_from(desired_by_symbol.len())
-                .map_err(|_| MarketStreamProducerError::InvalidInput)?,
-            transport_commands: commands,
-        }))
+        Ok(MarketStreamReconcileOutcome::Complete(
+            MarketStreamApplyOutcome {
+                active_symbols: u8::try_from(desired_by_symbol.len())
+                    .map_err(|_| MarketStreamProducerError::InvalidInput)?,
+                transport_commands: commands,
+            },
+        ))
     }
 
     /// Read one C2 event and publish a receipt only for the supplied current
@@ -877,7 +873,7 @@ impl OwnerMarketStreamProducer {
         Err(error)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) async fn record_awaiting_first_trade_for_test(
         &mut self,
         identity: &StreamIdentity,
@@ -914,17 +910,17 @@ impl OwnerMarketStreamProducer {
             .map_err(MarketStreamProducerError::from)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) fn panic_after_next_session_take(&mut self) {
         self.panic_after_take = true;
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) fn install_test_gate(&mut self, gate: ProducerTestGate) {
         self.test_gate = Some(gate);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) fn transport_error_probe(&self) -> ProducerTransportErrorProbe {
         self.test_transport_error.clone()
     }
@@ -940,7 +936,7 @@ impl OwnerMarketStreamProducer {
             .map_err(|error| self.collapse_transport_error(error))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "market-stream-db-tests"))]
     pub(super) fn make_lease_stale_for_test(&mut self) -> Result<(), MarketStreamProducerError> {
         self.lease.fencing_token = self
             .lease
@@ -1133,7 +1129,7 @@ mod runtime_buffer {
     use super::super::market_stream::{
         STREAM_MAX_IDENTITIES_PER_LEASE, STREAM_PUBLICATION_MAX_AGE, StreamEpochProof,
         StreamIdentity, StreamProducerLease, StreamPublicationContext, StreamPublicationItem,
-        StreamPublicationObservation, SubscriptionProof,
+        StreamPublicationObservation,
     };
 
     const MAX_RECEIPT_SLOTS: usize = STREAM_MAX_IDENTITIES_PER_LEASE;
@@ -1163,28 +1159,6 @@ mod runtime_buffer {
         CounterExhausted,
     }
 
-    impl BufferError {
-        pub(super) const fn code(self) -> &'static str {
-            match self {
-                Self::InvalidContext => "MARKET_STREAM_BUFFER_CONTEXT_INVALID",
-                Self::BindingRejected => "MARKET_STREAM_BUFFER_BINDING_REJECTED",
-                Self::DuplicateSymbol => "MARKET_STREAM_BUFFER_SYMBOL_CONFLICT",
-                Self::TooManyIdentities => "MARKET_STREAM_BUFFER_CAPACITY_EXCEEDED",
-                Self::ReceiptRejected => "MARKET_STREAM_BUFFER_RECEIPT_REJECTED",
-                Self::InvalidCapture => "MARKET_STREAM_BUFFER_CAPTURE_INVALID",
-                Self::ClockInvalid => "MARKET_STREAM_BUFFER_CLOCK_INVALID",
-                Self::PipelineLag => "MARKET_STREAM_BUFFER_PIPELINE_LAG",
-                Self::Terminal => "MARKET_STREAM_BUFFER_TERMINAL",
-                Self::WriterBusy => "MARKET_STREAM_BUFFER_WRITER_BUSY",
-                Self::BatchNotReady => "MARKET_STREAM_BUFFER_BATCH_NOT_READY",
-                Self::StaleBatch => "MARKET_STREAM_BUFFER_BATCH_STALE",
-                Self::BatchNotStarted => "MARKET_STREAM_BUFFER_BATCH_NOT_STARTED",
-                Self::BatchAlreadyStarted => "MARKET_STREAM_BUFFER_BATCH_ALREADY_STARTED",
-                Self::CounterExhausted => "MARKET_STREAM_BUFFER_COUNTER_EXHAUSTED",
-            }
-        }
-    }
-
     /// Metadata-only outcomes; a lag drop never carries a quote or receipt.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(super) enum OfferDisposition {
@@ -1194,6 +1168,7 @@ mod runtime_buffer {
         PipelineLag,
     }
 
+    #[cfg(any(test, feature = "market-stream-db-tests"))]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(super) struct BufferDiagnostics {
         pub(super) pending_slots: u8,
@@ -1207,16 +1182,24 @@ mod runtime_buffer {
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(super) enum InvalidationCause {
+        #[expect(
+            dead_code,
+            reason = "rights loss remains in the buffer invalidation contract"
+        )]
         RightsLost,
         LeaseLost,
         EpochEnded,
+        #[expect(
+            dead_code,
+            reason = "session changes remain in the buffer invalidation contract"
+        )]
         SessionChanged,
         TerminalTransport,
         ContextChanged,
     }
 
     pub(super) enum BatchAvailability {
-        Ready(PublicationBatch),
+        Ready(Box<PublicationBatch>),
         Empty,
         Waiting,
         PipelineLag,
@@ -1577,12 +1560,12 @@ mod runtime_buffer {
                 .into_iter()
                 .map(|stored| stored.observation)
                 .collect();
-            Ok(BatchAvailability::Ready(PublicationBatch {
+            Ok(BatchAvailability::Ready(Box::new(PublicationBatch {
                 guard,
                 context,
                 observations,
                 scope,
-            }))
+            })))
         }
 
         pub(super) fn batch_is_current(&self, batch: &PublicationBatch) -> bool {
@@ -1614,10 +1597,6 @@ mod runtime_buffer {
                 return Err(BufferError::StaleBatch);
             }
             self.kernel.complete_success(batch.guard)
-        }
-
-        pub(super) fn diagnostics(&self) -> BufferDiagnostics {
-            self.kernel.diagnostics()
         }
 
         /// Refresh only the existing validated runtime binding context.
@@ -1677,11 +1656,11 @@ mod runtime_buffer {
                 },
                 epoch: validated.epoch.clone(),
             };
-            if let Some(current) = &self.scope {
-                if current != &next_scope {
-                    self.invalidate(InvalidationCause::ContextChanged);
-                    return Err(BufferError::BindingRejected);
-                }
+            if let Some(current) = &self.scope
+                && current != &next_scope
+            {
+                self.invalidate(InvalidationCause::ContextChanged);
+                return Err(BufferError::BindingRejected);
             }
 
             let mut next = BTreeMap::new();
@@ -1706,10 +1685,10 @@ mod runtime_buffer {
                     self.invalidate(InvalidationCause::ContextChanged);
                     return Err(BufferError::DuplicateSymbol);
                 }
-                if let Some(old) = self.bindings.get(&key) {
-                    if old.item.subscription.acked_at != item.subscription.acked_at {
-                        self.kernel.rotate_binding(&key)?;
-                    }
+                if let Some(old) = self.bindings.get(&key)
+                    && old.item.subscription.acked_at != item.subscription.acked_at
+                {
+                    self.kernel.rotate_binding(&key)?;
                 }
                 if next
                     .insert(
@@ -1762,10 +1741,6 @@ mod runtime_buffer {
 
         pub(super) fn observations(&self) -> &[StreamPublicationObservation] {
             &self.observations
-        }
-
-        pub(super) fn len(&self) -> usize {
-            self.observations.len()
         }
     }
 
@@ -2152,6 +2127,7 @@ mod runtime_buffer {
             self.counters.rejected = self.counters.rejected.saturating_add(1);
         }
 
+        #[cfg(any(test, feature = "market-stream-db-tests"))]
         fn diagnostics(&self) -> BufferDiagnostics {
             BufferDiagnostics {
                 pending_slots: self.pending.len().min(u8::MAX as usize) as u8,
@@ -2228,6 +2204,7 @@ mod runtime_buffer {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::owner_equity_v2::market_stream::SubscriptionProof;
         use std::cell::Cell;
         use std::rc::Rc;
 
@@ -2377,7 +2354,7 @@ mod runtime_buffer {
                 desired_reference_count: 1,
             };
             let valid = checked_binding_key(
-                &&StreamPublicationItem {
+                &StreamPublicationItem {
                     admission: identity.clone(),
                     subscription: subscription.clone(),
                 },
@@ -2955,7 +2932,7 @@ mod runtime_buffer {
                 kernel.handoff(&reading(base, wall0 + 500, 500)).err(),
                 Some(BufferError::WriterBusy)
             );
-            assert_eq!(kernel.outstanding.as_ref().unwrap().started, true);
+            assert!(kernel.outstanding.as_ref().unwrap().started);
         }
     }
 }
@@ -2969,7 +2946,6 @@ mod runtime_owner {
     use kis_client::market_stream::{
         MarketStreamEvent, MarketStreamSession, MarketSubscriptionOperation,
     };
-    use kis_client::market_stream_wire::MarketReceipt;
     use tokio::task::JoinSet;
     use uuid::Uuid;
 
@@ -3070,6 +3046,7 @@ mod runtime_owner {
     #[derive(Clone)]
     struct PendingBinding {
         identity: StreamIdentity,
+        #[cfg(test)]
         kind: CommandKind,
     }
 
@@ -3139,6 +3116,7 @@ mod runtime_owner {
                 command.symbol.clone(),
                 PendingBinding {
                     identity: command.identity.clone(),
+                    #[cfg(test)]
                     kind: command.kind,
                 },
             );
@@ -3285,14 +3263,21 @@ mod runtime_owner {
                 .is_some_and(|acked| acked.identity == desired.identity)
         }
 
+        #[cfg(test)]
         fn record_pending_for_tests(
             &mut self,
             symbol: &str,
             identity: StreamIdentity,
             kind: CommandKind,
         ) {
-            self.pending
-                .insert(symbol.to_owned(), PendingBinding { identity, kind });
+            self.pending.insert(
+                symbol.to_owned(),
+                PendingBinding {
+                    identity,
+                    #[cfg(test)]
+                    kind,
+                },
+            );
         }
     }
 
@@ -3424,6 +3409,7 @@ mod runtime_owner {
             }
         }
 
+        #[cfg(test)]
         fn clean_exit(&self) -> Option<RuntimeOwnedExit> {
             if self.failure.is_some() || !self.stopping || !self.socket_closed {
                 return None;
@@ -3556,18 +3542,6 @@ mod runtime_owner {
                 &mut self.mailbox,
                 transition,
             );
-        }
-
-        fn queue_transition(&mut self, transition: RuntimeTransition, urgent: bool) {
-            if transition.values().opens_gap {
-                self.request_gap(transition);
-                return;
-            }
-            if urgent {
-                self.mailbox.urgent(transition);
-            } else {
-                self.mailbox.routine(transition);
-            }
         }
 
         fn stop(&mut self, reason: StopReason) {
@@ -3866,6 +3840,7 @@ mod runtime_owner {
             }
         }
 
+        #[cfg(test)]
         async fn join_all_until(
             &mut self,
             deadline: tokio::time::Instant,
@@ -4331,7 +4306,8 @@ mod runtime_owner {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<DesiredSet, RuntimeMarketStreamStorageError>>,
     {
-        let denial = MarketStreamProducerError::Storage(MarketStreamStorageError::MembershipNotReady);
+        let denial =
+            MarketStreamProducerError::Storage(MarketStreamStorageError::MembershipNotReady);
         if denied_identities.is_empty()
             || denied_identities
                 .iter()
@@ -4470,7 +4446,7 @@ mod runtime_owner {
                                 }
                             };
                             if state.buffer.batch_is_current(&batch) {
-                                if state.buffer.complete_success(batch).is_err() {
+                                if state.buffer.complete_success(*batch).is_err() {
                                     state.fail(MarketStreamProducerError::Terminal);
                                     shared.wake();
                                     return;
@@ -4484,15 +4460,13 @@ mod runtime_owner {
                         }
                         Err(error) => {
                             let read_demand = || {
-                                repository.read_stream_demand(
-                                    batch.context().producer.credential_slot_id,
-                                )
+                                repository
+                                    .read_stream_demand(batch.context().producer.credential_slot_id)
                             };
                             let reason = if error
                                 == RuntimeMarketStreamStorageError::Storage(
                                     MarketStreamStorageError::MembershipNotReady,
-                                )
-                            {
+                                ) {
                                 let identities = batch
                                     .context()
                                     .items
@@ -4534,7 +4508,7 @@ mod runtime_owner {
             expected_gap: u64,
         },
         Publish {
-            batch: PublicationBatch,
+            batch: Box<PublicationBatch>,
         },
     }
 
@@ -5713,13 +5687,13 @@ mod runtime_owner {
             assert_eq!(db_failure.clean_exit(), None);
         }
 
-        fn admission_metadata_snapshot(
-            book: &BindingBook,
-        ) -> (
+        type AdmissionMetadataSnapshot = (
             BTreeMap<String, (StreamIdentity, CommandKind)>,
             BTreeMap<String, u32>,
             BTreeMap<String, (StreamIdentity, Uuid)>,
-        ) {
+        );
+
+        fn admission_metadata_snapshot(book: &BindingBook) -> AdmissionMetadataSnapshot {
             (
                 book.pending
                     .iter()

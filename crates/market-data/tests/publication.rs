@@ -85,6 +85,117 @@ fn reopen_manifest(store: &RawStore) -> ManifestEntry {
         .expect("stored manifest entry")
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RawFixtureSnapshot {
+    batch_json: Vec<u8>,
+    manifest_jsonl: Vec<u8>,
+    payloads: Vec<(String, Vec<u8>)>,
+}
+
+fn raw_fixture_snapshot(store: &RawStore, entry: &ManifestEntry) -> RawFixtureSnapshot {
+    let batch_dir = store.batch_dir(&entry.provider, &entry.market, &entry.date, &entry.batch_id);
+    RawFixtureSnapshot {
+        batch_json: fs::read(batch_dir.join(entry.batch_json_file_name()))
+            .expect("read batch metadata snapshot"),
+        manifest_jsonl: fs::read(store.manifest_path(&entry.provider, &entry.market))
+            .expect("read manifest snapshot"),
+        payloads: entry
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.file_name.clone(),
+                    fs::read(batch_dir.join(&file.file_name)).expect("read payload snapshot"),
+                )
+            })
+            .collect(),
+    }
+}
+
+fn assert_caller_only_mutation_rejected(
+    store: &RawStore,
+    mutated_entry: &ManifestEntry,
+    before: &RawFixtureSnapshot,
+) {
+    let error = PublicationBundle::from_raw(store, mutated_entry)
+        .expect_err("caller-only mutation must fail the committed metadata identity check");
+    match error {
+        PublicationError::Store(StoreError::InvalidBatchMetadata { path, reason }) => {
+            let expected_path = store
+                .batch_dir(
+                    &mutated_entry.provider,
+                    &mutated_entry.market,
+                    &mutated_entry.date,
+                    &mutated_entry.batch_id,
+                )
+                .join(mutated_entry.batch_json_file_name())
+                .display()
+                .to_string();
+            assert_eq!(path, expected_path);
+            assert_eq!(
+                reason,
+                "batch.json does not match the committed manifest entry"
+            );
+        }
+        other => panic!("expected exact invalid batch metadata error, got {other:?}"),
+    }
+    assert_eq!(raw_fixture_snapshot(store, mutated_entry), *before);
+}
+
+fn write_corrupt_size_metadata_fixture(
+    store: &RawStore,
+    expected_entry: &ManifestEntry,
+    file_name: &str,
+    corrupt_size: u64,
+) {
+    let committed = store
+        .read_committed_manifest(&expected_entry.provider, &expected_entry.market)
+        .expect("read original committed fixture row");
+    assert_eq!(
+        committed.len(),
+        1,
+        "private fixture must have one manifest row"
+    );
+    assert_eq!(&committed[0], expected_entry);
+
+    let mut corrupted = committed[0].clone();
+    let index = corrupted
+        .files
+        .iter()
+        .position(|file| file.file_name == file_name)
+        .expect("target size metadata");
+    let original_size = corrupted.files[index].size_bytes;
+    corrupted.files[index].size_bytes = corrupt_size;
+
+    let mut restored = corrupted.clone();
+    restored.files[index].size_bytes = original_size;
+    assert_eq!(
+        &restored, expected_entry,
+        "only the requested size may change"
+    );
+
+    let batch_dir = store.batch_dir(
+        &expected_entry.provider,
+        &expected_entry.market,
+        &expected_entry.date,
+        &expected_entry.batch_id,
+    );
+    let batch_json = serde_json::to_vec_pretty(&corrupted).expect("serialize corrupt batch row");
+    fs::write(
+        batch_dir.join(expected_entry.batch_json_file_name()),
+        batch_json,
+    )
+    .expect("write synthetic batch metadata corruption");
+
+    let mut manifest_row = serde_json::to_vec(&corrupted).expect("serialize corrupt manifest row");
+    manifest_row.push(b'\n');
+    fs::write(
+        store.manifest_path(&expected_entry.provider, &expected_entry.market),
+        manifest_row,
+    )
+    .expect("write synthetic one-row manifest corruption");
+}
+
 fn calendar_payload(
     timezone: &str,
     source: &str,
@@ -173,18 +284,33 @@ fn store_normalized_files(
     lineage: &NormalizationLineage,
     mode: FetchMode,
 ) -> ManifestEntry {
+    store_normalized_files_with_request_map(store, files, lineage, mode, |_, _| {})
+}
+
+fn store_normalized_files_with_request_map<F>(
+    store: &RawStore,
+    files: &[(ResponseKind, &str, Vec<u8>)],
+    lineage: &NormalizationLineage,
+    mode: FetchMode,
+    mut request_map: F,
+) -> ManifestEntry
+where
+    F: FnMut(ResponseKind, &mut RequestMetadata),
+{
     let batch_id = deterministic_kis_normalized_batch_id(lineage.upstream_batch_id);
     let date = TradingDate::parse("2020-01-31").expect("date");
     let envelopes: Vec<_> = files
         .iter()
         .map(|(kind, name, bytes)| {
+            let mut request = normalized_request(*kind, lineage, mode);
+            request_map(*kind, &mut request);
             RawEnvelope::new(
                 batch_id,
                 *kind,
                 (*name).to_owned(),
                 bytes.clone(),
                 UtcTimestamp::parse_rfc3339("2026-08-05T07:00:00Z").expect("time"),
-                normalized_request(*kind, lineage, mode),
+                request,
             )
         })
         .collect();
@@ -413,42 +539,127 @@ fn from_raw_publishes_explicit_calendar_holidays_as_closed_without_inferring_mis
 #[test]
 fn from_raw_rejects_manifest_size_above_postgres_bigint() {
     let store = RawStore::new(temp_root("oversize"));
-    let mut entry = store_files(
+    let original = store_files(
         &store,
         &[(ResponseKind::Reference, "reference.json", b"{}".to_vec())],
     );
-    entry.files[0].size_bytes = i64::MAX as u64 + 1;
+    let original_snapshot = raw_fixture_snapshot(&store, &original);
+    let oversized = i64::MAX as u64 + 1;
+    let mut caller_entry = original.clone();
+    caller_entry.files[0].size_bytes = oversized;
+    assert_caller_only_mutation_rejected(&store, &caller_entry, &original_snapshot);
 
-    let error = PublicationBundle::from_raw(&store, &entry).expect_err("oversize must fail");
+    write_corrupt_size_metadata_fixture(&store, &original, "reference.json", oversized);
+    let committed = store
+        .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("reopen corrupt committed row");
+    assert_eq!(committed.len(), 1);
+    let corrupted = committed.into_iter().next().expect("corrupt committed row");
+    assert_eq!(corrupted.files[0].size_bytes, oversized);
+    let readback = store
+        .read_batch_bytes(&corrupted.provider, &corrupted.market, &corrupted)
+        .expect("hash-verified small payload readback");
+    assert_eq!(readback.len(), 1);
+    assert_eq!(readback[0].file_name, "reference.json");
+    assert_eq!(readback[0].bytes, b"{}");
+    let corrupted_snapshot = raw_fixture_snapshot(&store, &corrupted);
+
+    let error = PublicationBundle::from_raw(&store, &corrupted)
+        .expect_err("persisted bigint overflow must fail");
 
     assert!(matches!(
         error,
-        PublicationError::SizeExceedsPostgresBigint { .. }
+        PublicationError::SizeExceedsPostgresBigint { file_name, size }
+            if file_name == "reference.json" && size == oversized
     ));
+    assert_eq!(raw_fixture_snapshot(&store, &corrupted), corrupted_snapshot);
 }
 
 #[test]
 fn from_raw_validates_all_evidence_before_parsing_an_earlier_malformed_payload() {
     let store = RawStore::new(temp_root("evidence-before-parse"));
-    let mut entry = store_files(
+    let original = store_files(
         &store,
         &[
             (ResponseKind::Bars, "malformed-bars.json", b"{".to_vec()),
             (ResponseKind::Reference, "oversized.json", b"{}".to_vec()),
         ],
     );
-    entry.files[1].size_bytes = i64::MAX as u64 + 1;
+    let original_snapshot = raw_fixture_snapshot(&store, &original);
+    let oversized = i64::MAX as u64 + 1;
+    let mut caller_entry = original.clone();
+    caller_entry.files[1].size_bytes = oversized;
+    assert_caller_only_mutation_rejected(&store, &caller_entry, &original_snapshot);
 
-    let error = PublicationBundle::from_raw(&store, &entry)
+    write_corrupt_size_metadata_fixture(&store, &original, "oversized.json", oversized);
+    let committed = store
+        .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("reopen corrupt committed row");
+    assert_eq!(committed.len(), 1);
+    let corrupted = committed.into_iter().next().expect("corrupt committed row");
+    let readback = store
+        .read_batch_bytes(&corrupted.provider, &corrupted.market, &corrupted)
+        .expect("hash-verified payload readback before size validation");
+    assert_eq!(readback.len(), 2);
+    assert_eq!(readback[0].file_name, "malformed-bars.json");
+    assert_eq!(readback[0].bytes, b"{");
+    assert_eq!(readback[1].file_name, "oversized.json");
+    assert_eq!(readback[1].bytes, b"{}");
+    assert_eq!(corrupted.files[0].size_bytes, 1);
+    assert_eq!(corrupted.files[1].size_bytes, oversized);
+    let corrupted_snapshot = raw_fixture_snapshot(&store, &corrupted);
+
+    let error = PublicationBundle::from_raw(&store, &corrupted)
         .expect_err("later evidence validation must win over malformed payload parsing");
 
     assert!(matches!(
         error,
         PublicationError::SizeExceedsPostgresBigint {
-            ref file_name,
-            ..
-        } if file_name == "oversized.json"
+            file_name,
+            size
+        } if file_name == "oversized.json" && size == oversized
     ));
+    assert_eq!(raw_fixture_snapshot(&store, &corrupted), corrupted_snapshot);
+
+    let control_store = RawStore::new(temp_root("evidence-before-parse-control"));
+    let control_entry = store_files(
+        &control_store,
+        &[
+            (ResponseKind::Bars, "malformed-bars.json", b"{".to_vec()),
+            (ResponseKind::Reference, "oversized.json", b"{}".to_vec()),
+        ],
+    );
+    let control_committed = control_store
+        .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("reopen correct-metadata control row");
+    assert_eq!(control_committed, vec![control_entry.clone()]);
+    let control_entry = control_committed
+        .into_iter()
+        .next()
+        .expect("correct-metadata control row");
+    let control_readback = control_store
+        .read_batch_bytes(
+            &control_entry.provider,
+            &control_entry.market,
+            &control_entry,
+        )
+        .expect("hash-verified control payload readback");
+    assert_eq!(control_readback[0].bytes, b"{");
+    assert_eq!(control_entry.files[0].size_bytes, 1);
+    assert_eq!(control_entry.files[1].size_bytes, 2);
+    let control_snapshot = raw_fixture_snapshot(&control_store, &control_entry);
+
+    let control_error = PublicationBundle::from_raw(&control_store, &control_entry)
+        .expect_err("correct size metadata must reach malformed Bars parsing");
+    assert!(matches!(
+        control_error,
+        PublicationError::MalformedBars { file_name, .. }
+            if file_name == "malformed-bars.json"
+    ));
+    assert_eq!(
+        raw_fixture_snapshot(&control_store, &control_entry),
+        control_snapshot
+    );
 }
 
 #[test]
@@ -494,15 +705,41 @@ fn from_raw_rejects_tampered_later_file_before_returning_a_bundle() {
 #[test]
 fn from_raw_rejects_manifest_size_mismatch() {
     let store = RawStore::new(temp_root("size-mismatch"));
-    let mut entry = store_files(
+    let original = store_files(
         &store,
         &[(ResponseKind::Reference, "reference.json", b"{}".to_vec())],
     );
-    entry.files[0].size_bytes += 1;
+    let original_snapshot = raw_fixture_snapshot(&store, &original);
+    let mut caller_entry = original.clone();
+    caller_entry.files[0].size_bytes += 1;
+    assert_caller_only_mutation_rejected(&store, &caller_entry, &original_snapshot);
 
-    let error = PublicationBundle::from_raw(&store, &entry).expect_err("mismatch must fail");
+    write_corrupt_size_metadata_fixture(&store, &original, "reference.json", 3);
+    let committed = store
+        .read_committed_manifest(PROVIDER_KRX, MARKET_KR)
+        .expect("reopen corrupt committed row");
+    assert_eq!(committed.len(), 1);
+    let corrupted = committed.into_iter().next().expect("corrupt committed row");
+    let readback = store
+        .read_batch_bytes(&corrupted.provider, &corrupted.market, &corrupted)
+        .expect("hash-verified size-mismatch payload readback");
+    assert_eq!(readback.len(), 1);
+    assert_eq!(readback[0].bytes, b"{}");
+    assert_eq!(corrupted.files[0].size_bytes, 3);
+    let corrupted_snapshot = raw_fixture_snapshot(&store, &corrupted);
 
-    assert!(matches!(error, PublicationError::SizeMismatch { .. }));
+    let error = PublicationBundle::from_raw(&store, &corrupted)
+        .expect_err("persisted size mismatch must fail");
+
+    assert!(matches!(
+        error,
+        PublicationError::SizeMismatch {
+            file_name,
+            manifest_size: 3,
+            read_size: 2,
+        } if file_name == "reference.json"
+    ));
+    assert_eq!(raw_fixture_snapshot(&store, &corrupted), corrupted_snapshot);
 }
 
 #[test]
@@ -898,8 +1135,10 @@ fn from_raw_rejects_missing_normalized_lineage_as_typed_permanent_error() {
 #[test]
 fn from_raw_rejects_normalized_request_lineage_mismatch() {
     let store = RawStore::new(temp_root("publication-kis-normalized-request-lineage"));
-    let mut entry = normalized_fixture(&store, FetchMode::Credentialed);
-    let bars = entry
+    let original = normalized_fixture(&store, FetchMode::Credentialed);
+    let original_snapshot = raw_fixture_snapshot(&store, &original);
+    let mut caller_entry = original.clone();
+    let bars = caller_entry
         .files
         .iter_mut()
         .find(|file| file.kind == ResponseKind::Bars)
@@ -912,14 +1151,92 @@ fn from_raw_rejects_normalized_request_lineage_mismatch() {
         .expect("lineage query");
     lineage_query.1.push_str("-mismatch");
 
-    let error = PublicationBundle::from_raw(&store, &entry)
-        .expect_err("request lineage mismatch must fail closed");
+    assert_caller_only_mutation_rejected(&store, &caller_entry, &original_snapshot);
 
+    let store = RawStore::new(temp_root("publication-kis-committed-request-lineage"));
+    let lineage = normalized_lineage(BatchId::generate());
+    let files = normalized_files(&lineage);
+    let entry = store_normalized_files_with_request_map(
+        &store,
+        &files,
+        &lineage,
+        FetchMode::Credentialed,
+        |kind, request| {
+            if kind == ResponseKind::Bars {
+                let lineage_query = request
+                    .query
+                    .iter_mut()
+                    .find(|(key, _)| key == "upstream_lineage")
+                    .expect("Bars upstream lineage query");
+                lineage_query.1.push_str("-mismatch");
+            }
+        },
+    );
+    let committed = store
+        .read_committed_manifest(PROVIDER_KIS_NORMALIZED, MARKET_KR)
+        .expect("reopen committed normalized lineage row");
+    assert_eq!(committed, vec![entry.clone()]);
+    let committed_entry = committed
+        .into_iter()
+        .next()
+        .expect("committed normalized row");
+    let readback = store
+        .read_batch_bytes(
+            &committed_entry.provider,
+            &committed_entry.market,
+            &committed_entry,
+        )
+        .expect("hash-verified committed normalized readback");
+    let bars_file = readback
+        .iter()
+        .find(|file| file.file_name == "bars.json")
+        .expect("committed Bars payload");
+    let bars_metadata = committed_entry
+        .files
+        .iter()
+        .find(|file| file.kind == ResponseKind::Bars)
+        .expect("committed Bars metadata");
+    let expected_query = format!(
+        "{}-mismatch",
+        serde_json::to_string(&lineage).expect("lineage JSON")
+    );
+    assert_eq!(
+        bars_metadata
+            .request
+            .query
+            .iter()
+            .find(|(key, _)| key == "upstream_lineage")
+            .map(|(_, value)| value.as_str()),
+        Some(expected_query.as_str())
+    );
+    assert_eq!(
+        bars_metadata.content_hash,
+        ContentHash::from_bytes(&bars_file.bytes)
+    );
+    assert_eq!(bars_file.bytes, files[0].2);
+    assert_eq!(
+        bars_metadata.content_hash,
+        ContentHash::from_bytes(&files[0].2)
+    );
+    let bars_document: Value = serde_json::from_slice(&bars_file.bytes).expect("Bars JSON");
+    assert_eq!(
+        bars_document["_lineage"],
+        serde_json::to_value(&lineage).expect("document lineage")
+    );
+    let committed_snapshot = raw_fixture_snapshot(&store, &committed_entry);
+
+    let error = PublicationBundle::from_raw(&store, &committed_entry)
+        .expect_err("malformed committed provenance must fail closed");
     assert!(matches!(
         error,
-        PublicationError::InvalidCanonicalProvenance { file_name, .. }
+        PublicationError::InvalidCanonicalProvenance { file_name, reason }
             if file_name == "bars.json"
+                && reason == "upstream_lineage query does not match document lineage"
     ));
+    assert_eq!(
+        raw_fixture_snapshot(&store, &committed_entry),
+        committed_snapshot
+    );
 }
 
 #[test]

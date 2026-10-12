@@ -14,7 +14,7 @@ mod common;
 
 use api_server::repos::reconciliation::ReconciliationRepo;
 use api_server::risk_snapshot::{GateOrder, for_submission, limits_for, parse_side, side_str};
-use collectors::{PostgresPublicationSink, PublicationSink, PublishOutcome};
+use collectors::{PostgresPublicationSink, PublicationSink, PublishOutcome, SinkError};
 use common::{Harness, actor_pool};
 use domain::{Price, Quantity, TradingDate, UtcTimestamp};
 use market_data::contract::MARKET_KR;
@@ -66,6 +66,17 @@ fn raw_publication(target_date: &str, retrieved_at: &str) -> RawPublicationFixtu
         bundle,
         _raw_root: raw_root,
     }
+}
+
+async fn publication_counts(pool: &sqlx::PgPool) -> (i64, i64, i64) {
+    sqlx::query_as(
+        "SELECT (SELECT count(*) FROM data_batches), \
+                (SELECT count(*) FROM trading_calendar_versions), \
+                (SELECT count(*) FROM trading_calendars)",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("publication and calendar counts")
 }
 
 async fn research_writer_pool(h: &Harness) -> sqlx::PgPool {
@@ -464,14 +475,51 @@ async fn eod_unavailable_publication_never_counts_as_fresh_eod() {
     let account = seeded_account(&h).await;
     let writer = research_writer_pool(&h).await;
     let sink = PostgresPublicationSink::new(writer.clone());
+    let real_eod = raw_publication("2020-01-31", "2020-01-31T00:29:00Z");
     let unavailable = raw_publication("2020-02-03", "2020-02-03T00:29:00Z");
     assert_eq!(
         unavailable.bundle.files[0].kind,
         DataBatchKind::EodUnavailable
     );
-    sink.publish(&unavailable.bundle)
-        .await
-        .expect("publish unavailable evidence");
+    let calendar = real_eod
+        .bundle
+        .files
+        .iter()
+        .find(|file| file.kind == DataBatchKind::Calendar)
+        .expect("calendar foundation");
+    let unavailable_calendar = unavailable
+        .bundle
+        .files
+        .iter()
+        .find(|file| file.kind == DataBatchKind::Calendar)
+        .expect("unavailable calendar");
+    assert_eq!(calendar.content_sha256, unavailable_calendar.content_sha256);
+    assert_eq!(calendar.bytes_size, unavailable_calendar.bytes_size);
+    assert_eq!(
+        std::fs::read(&calendar.storage_path).expect("verified foundation bytes"),
+        std::fs::read(&unavailable_calendar.storage_path).expect("verified unavailable bytes")
+    );
+    assert_eq!(
+        real_eod.bundle.calendar_facts,
+        unavailable.bundle.calendar_facts
+    );
+
+    // This sink fixture reuses the earlier verified calendar file and its
+    // immutable evidence. Both original Raw roots remain alive for the test.
+    let mut unavailable_publication = unavailable.bundle.clone();
+    *unavailable_publication
+        .files
+        .iter_mut()
+        .find(|file| file.kind == DataBatchKind::Calendar)
+        .expect("calendar slot") = calendar.clone();
+    unavailable_publication.calendar_facts = real_eod.bundle.calendar_facts.clone();
+    unavailable_publication.calendar_evidence = real_eod.bundle.calendar_evidence.clone();
+    assert_eq!(
+        sink.publish(&unavailable_publication)
+            .await
+            .expect("publish unavailable evidence with the calendar foundation"),
+        PublishOutcome::Published
+    );
 
     let recon = ReconciliationRepo::new(h.app_pool.clone(), h.owner.actor(), h.owner.user_id);
     let gate_order = order(account, Side::Buy, "10", "7250");
@@ -489,7 +537,26 @@ async fn eod_unavailable_publication_never_counts_as_fresh_eod() {
     .expect("snapshot builds without EOD");
     assert_eq!(without_eod.data_freshness, DataFreshness::Unknown);
 
-    let real_eod = raw_publication("2020-01-31", "2020-01-31T00:29:00Z");
+    // A separate committed batch reaches calendar identity validation with
+    // different provenance for the same calendar bytes and source version.
+    let conflicting = raw_publication("2020-02-03", "2020-02-03T00:29:00Z");
+    assert_ne!(
+        conflicting.bundle.source_batch_id,
+        unavailable_publication.source_batch_id
+    );
+    assert_ne!(
+        conflicting.bundle.calendar_evidence,
+        unavailable_publication.calendar_evidence
+    );
+    let before_conflict = publication_counts(&writer).await;
+    assert_eq!(before_conflict.0, 4);
+    assert!(before_conflict.1 > 0 && before_conflict.2 > 0);
+    assert!(matches!(
+        sink.publish(&conflicting.bundle).await,
+        Err(SinkError::Conflict(_))
+    ));
+    assert_eq!(publication_counts(&writer).await, before_conflict);
+
     assert_eq!(real_eod.bundle.files[0].kind, DataBatchKind::Eod);
     sink.publish(&real_eod.bundle)
         .await
@@ -507,6 +574,27 @@ async fn eod_unavailable_publication_never_counts_as_fresh_eod() {
     .await
     .expect("snapshot builds with prior EOD");
     assert_eq!(with_prior_eod.data_freshness, DataFreshness::Age(259_260));
+
+    let before_replay = publication_counts(&writer).await;
+    assert_eq!(
+        sink.publish(&unavailable_publication)
+            .await
+            .expect("replay unavailable evidence"),
+        PublishOutcome::AlreadyPublished
+    );
+    assert_eq!(publication_counts(&writer).await, before_replay);
+    let after_replay = for_submission(
+        &h.app_pool,
+        &h.owner.actor(),
+        &recon,
+        None,
+        Some(false),
+        &gate_order,
+        now,
+    )
+    .await
+    .expect("unavailable replay preserves prior EOD freshness");
+    assert_eq!(after_replay.data_freshness, DataFreshness::Age(259_260));
 
     writer.close().await;
     h.teardown().await;

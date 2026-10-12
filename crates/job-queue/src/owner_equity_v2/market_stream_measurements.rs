@@ -835,9 +835,11 @@ mod tests {
         assert!(!actual_summary.invalid_record);
         assert!(!actual_summary.diagnostic_error);
         assert!(!actual_summary.overflowed);
-        assert!(dropped.records.iter().all(|record| record
-            .finished_elapsed_ns
-            .is_some_and(|finished| finished >= record.started_elapsed_ns)));
+        assert!(dropped.records.iter().all(|record| {
+            record
+                .finished_elapsed_ns
+                .is_some_and(|finished| finished >= record.started_elapsed_ns)
+        }));
     }
 
     #[test]
@@ -851,9 +853,11 @@ mod tests {
                 assert!(state.begin_record(1, index as u64).is_some());
             }
             assert_eq!(state.records.len(), MAX_PUBLICATION_RECORDS);
-            assert!(state
-                .begin_record(1, MAX_PUBLICATION_RECORDS as u64)
-                .is_none());
+            assert!(
+                state
+                    .begin_record(1, MAX_PUBLICATION_RECORDS as u64)
+                    .is_none()
+            );
             assert_eq!(state.records.len(), MAX_PUBLICATION_RECORDS);
             let summary = state.summary();
             assert_eq!(summary.record_count, MAX_PUBLICATION_RECORDS as u64);

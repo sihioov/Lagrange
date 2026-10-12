@@ -608,12 +608,13 @@ mod tests {
         let mut synthetic = entry.clone();
         synthetic.mode = FetchMode::Synthetic;
         assert!(!entry_contract_ok(&synthetic));
-        let mut cases: Vec<fn(&mut market_data::FileEntry)> = Vec::new();
-        cases.push(|f| f.file_name = "bad.json".into());
-        cases.push(|f| f.request.endpoint = "bad".into());
-        cases.push(|f| f.request.query.clear());
-        cases.push(|f| f.request.headers.clear());
-        cases.push(|f| f.response_continuation = Some("M".into()));
+        let cases: Vec<fn(&mut market_data::FileEntry)> = vec![
+            |f| f.file_name = "bad.json".into(),
+            |f| f.request.endpoint = "bad".into(),
+            |f| f.request.query.clear(),
+            |f| f.request.headers.clear(),
+            |f| f.response_continuation = Some("M".into()),
+        ];
         for mutate in cases {
             let mut e = entry.clone();
             mutate(&mut e.files[0]);

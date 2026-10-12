@@ -271,22 +271,20 @@ pub fn actor_session_hash(actor: &Actor, session_cookie: &str) -> String {
     auth::sessions::cookie::hash(session_cookie)
 }
 
-pub fn audit_rows_for_actor(
+pub async fn audit_rows_for_actor(
     harness: &crate::common::Harness,
     actor_id: Uuid,
-) -> impl std::future::Future<Output = Vec<sqlx::postgres::PgRow>> + '_ {
-    async move {
-        sqlx::query(
-            "SELECT action, target_type, target_id, reason, correlation_id
+) -> Vec<sqlx::postgres::PgRow> {
+    sqlx::query(
+        "SELECT action, target_type, target_id, reason, correlation_id
                FROM public.audit_logs
               WHERE actor_user_id=$1 AND action='admin.service_status.read'
               ORDER BY created_at, id",
-        )
-        .bind(actor_id)
-        .fetch_all(&harness.admin_pool)
-        .await
-        .expect("service-status audit rows are readable")
-    }
+    )
+    .bind(actor_id)
+    .fetch_all(&harness.admin_pool)
+    .await
+    .expect("service-status audit rows are readable")
 }
 
 fn apply_patches(document: &mut Value, patches: &[Value]) {

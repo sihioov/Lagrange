@@ -428,7 +428,7 @@ pub fn operational_window_filename(
 fn from_operational_path() -> Result<IntradaySessionWindowContract, IntradaySessionWindowError> {
     #[cfg(unix)]
     {
-        return unix::load_operational();
+        unix::load_operational()
     }
     #[cfg(not(unix))]
     {

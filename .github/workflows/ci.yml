@@ -89,20 +89,22 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
       - run: npm run openapi:check --workspace @lagrange/api-server
       - run: npm run lint --workspace @lagrange/web
       - run: npm run typecheck --workspace @lagrange/web
       - run: npm test --workspace @lagrange/web
       - run: npm run build --workspace @lagrange/web
-      - run: npx playwright install --with-deps chromium
-        working-directory: apps/web
       - run: bash scripts/qa/candidate-web-e2e.sh
 
   workspace-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55432/postgres
+      # Intraday tests require this exact disposable QA endpoint.
+      DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55438/postgres
+      LAGRANGE_QA_DB_PORT: '55438'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,7 +118,7 @@ jobs:
       - run: docker compose -f deploy/qa/qa-db.compose.yml up -d --wait
       - name: Run Owner Equity V2 chart HTTP acceptance tests
         run: cargo test -p api-server --test http_owner_equity_v2_chart --locked
-      - run: cargo test --workspace --locked --no-fail-fast
+      - run: cargo test --workspace --locked --no-fail-fast --features kis-client/test-support
       - if: always()
         run: docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans
 

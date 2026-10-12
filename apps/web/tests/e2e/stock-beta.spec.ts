@@ -913,11 +913,33 @@ test.describe("provider-free Stock Beta V2", () => {
     } else {
       await expect(disabledNotice).toHaveCount(0);
       await expect(quoteWidget).toHaveCount(1);
-      await expect(quoteWidget.getByTestId("stock-beta-current-quote")).toHaveCount(0);
-      await expect(quoteWidget.locator("[data-status-phase]")).toHaveAttribute(
-        "data-status-phase",
-        "idle",
+      const selected = quoteWidget.getByTestId("stock-beta-stream-selected");
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAttribute("data-availability", "UNAVAILABLE");
+      await expect(selected).toContainText("—");
+      await expect(selected.locator("time[datetime]")).toHaveCount(0);
+      await expect(selected.locator("[data-quote-value]")).toHaveCount(0);
+      const board = page.getByTestId("stock-beta-stream-board");
+      await expect(board).toHaveCount(1);
+      await expect(board.getByRole("status")).toHaveText("Paused");
+      const boardRows = board.locator("tbody tr[data-stream-instrument]");
+      await expect(boardRows).toHaveCount(30);
+      await expect(boardRows.filter({ hasText: "Awaiting admission" })).toHaveCount(30);
+      await expect(
+        board.locator(
+          "tbody tr[data-quote-version], tbody tr[data-epoch], tbody tr[data-received-at], tbody tr[data-receive-ordinal]",
+        ),
+      ).toHaveCount(0);
+      const requestPaths = requestsFor(page).map((url) => url.pathname);
+      const streamAndRetiredQuotePaths = requestPaths.filter(
+        (pathname) =>
+          pathname === "/api/v1/research/owner-beta/equity-universe-v2/stream-leases" ||
+          pathname.startsWith("/api/v1/research/owner-beta/equity-universe-v2/stream-leases/") ||
+          pathname === "/api/v1/research/owner-beta/equity-universe-v2/market-stream" ||
+          pathname.endsWith("/quote-demands") ||
+          /\/instruments\/[^/]+\/quote(?:\/|$)/.test(pathname),
       );
+      expect(streamAndRetiredQuotePaths).toEqual([]);
     }
     const intradayState = await syntheticIntradayState(request);
     expect(intradayState.active_consumer_count).toBe(0);

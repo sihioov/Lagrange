@@ -14,7 +14,9 @@ market-data = { path = "../market-data" }
 # needs lazy + rolling windows + std/var + cum-aggregations + rank + Date32.
 polars = { version = "0.54.*", default-features = false, features = ["lazy", "rolling_window", "moment", "cum_agg", "rank", "dtype-date", "fmt", "temporal", "strings", "log"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# Canonical snapshots must retain float bits across JSON decoding in every
+# binary, independently of features enabled by other workspace consumers.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 thiserror = "2.0"
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

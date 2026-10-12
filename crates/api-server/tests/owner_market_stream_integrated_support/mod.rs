@@ -25,9 +25,9 @@ use futures_util::FutureExt;
 use job_queue::owner_equity_v2::{
     IntradaySessionProof, MarketStreamRuntimeError, MarketStreamRuntimeExit,
     OwnerIntradayQuoteRepository, OwnerMarketStreamRepository, OwnerMarketStreamRuntime,
-    OwnerMarketStreamRuntimeConfig,
-    StreamBufferProbeSummary, StreamPublicationProbe, StreamPublicationProbeOutcome,
-    StreamPublicationProbeRecord, StreamPublicationProbeSnapshot, StreamPublicationProbeSummary,
+    OwnerMarketStreamRuntimeConfig, StreamBufferProbeSummary, StreamPublicationProbe,
+    StreamPublicationProbeOutcome, StreamPublicationProbeRecord, StreamPublicationProbeSnapshot,
+    StreamPublicationProbeSummary,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -256,7 +256,7 @@ fn require_absent(path: &Path) -> FixtureResult {
 }
 
 fn read_private_file(path: &Path, maximum: usize) -> FixtureResult<Vec<u8>> {
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
@@ -997,10 +997,6 @@ impl OwnedFixture {
         if let Some(task) = self.daemon_task.take() {
             match join_daemon(task, self.cleanup_deadline, &mut self.forced_abort).await {
                 Ok(MarketStreamRuntimeExit::Shutdown) => self.daemon_exit = "SHUTDOWN",
-                Ok(_) => {
-                    self.daemon_exit = "UNEXPECTED_EXIT";
-                    first_failure.get_or_insert(FixtureFailure::DaemonFailed);
-                }
                 Err(error) => {
                     self.daemon_exit = "ERROR";
                     first_failure.get_or_insert(error);
@@ -1011,45 +1007,42 @@ impl OwnedFixture {
         if let Some(stop) = self.api_shutdown.as_ref() {
             stop.send_replace(true);
         }
-        if let Some(task) = self.api_task.take() {
-            if let Err(error) = join_fixture_task(
+        if let Some(task) = self.api_task.take()
+            && let Err(error) = join_fixture_task(
                 task,
                 self.cleanup_deadline,
                 FixtureFailure::ServerFailed,
                 &mut self.forced_abort,
             )
             .await
-            {
-                first_failure.get_or_insert(error);
-            }
+        {
+            first_failure.get_or_insert(error);
         }
 
         if let Some(stop) = self.fixture_shutdown.as_ref() {
             stop.send_replace(true);
         }
-        if let Some(task) = self.approval_task.take() {
-            if let Err(error) = join_fixture_task(
+        if let Some(task) = self.approval_task.take()
+            && let Err(error) = join_fixture_task(
                 task,
                 self.cleanup_deadline,
                 FixtureFailure::ApprovalFailed,
                 &mut self.forced_abort,
             )
             .await
-            {
-                first_failure.get_or_insert(error);
-            }
+        {
+            first_failure.get_or_insert(error);
         }
-        if let Some(task) = self.websocket_task.take() {
-            if let Err(error) = join_fixture_task(
+        if let Some(task) = self.websocket_task.take()
+            && let Err(error) = join_fixture_task(
                 task,
                 self.cleanup_deadline,
                 FixtureFailure::WebsocketFailed,
                 &mut self.forced_abort,
             )
             .await
-            {
-                first_failure.get_or_insert(error);
-            }
+        {
+            first_failure.get_or_insert(error);
         }
 
         if let Some(socket) = self.api_socket.take() {
@@ -1074,18 +1067,17 @@ impl OwnedFixture {
         self.state_directory.take();
         self.fixture.take();
 
-        if let Some(pool) = self.audit_pool.take() {
-            if timeout_at(self.cleanup_deadline, pool.close())
+        if let Some(pool) = self.audit_pool.take()
+            && timeout_at(self.cleanup_deadline, pool.close())
                 .await
                 .is_err()
-            {
-                first_failure.get_or_insert(FixtureFailure::CleanupFailed);
-            }
+        {
+            first_failure.get_or_insert(FixtureFailure::CleanupFailed);
         }
-        if let Some(database) = self.database.take() {
-            if database.cleanup_until(self.cleanup_deadline).await.is_err() {
-                first_failure.get_or_insert(FixtureFailure::CleanupFailed);
-            }
+        if let Some(database) = self.database.take()
+            && database.cleanup_until(self.cleanup_deadline).await.is_err()
+        {
+            first_failure.get_or_insert(FixtureFailure::CleanupFailed);
         }
         if self.active_tasks.load(Ordering::Acquire) != 0 {
             first_failure.get_or_insert(FixtureFailure::TaskJoinFailed);
@@ -1144,13 +1136,11 @@ impl OwnedFixture {
         };
         let mut publication_summary = None;
         let mut publication_evidence_written = false;
-        let mut publication_failure = None;
+        let mut publication_failure;
         match self.publication_probe.as_ref() {
             None => publication_failure = Some(FixtureFailure::PublicationProbeMissing),
             Some(probe) => match probe.snapshot() {
-                Err(_) => {
-                    publication_failure = Some(FixtureFailure::PublicationMeasurementFailed)
-                }
+                Err(_) => publication_failure = Some(FixtureFailure::PublicationMeasurementFailed),
                 Ok(snapshot) => {
                     publication_summary = Some(snapshot.summary.clone());
                     publication_failure = final_publication_failure(
@@ -1160,15 +1150,14 @@ impl OwnedFixture {
                         active_fixture_tasks,
                     );
                     match encode_publication_snapshot(snapshot) {
-                        Ok(bytes) => match atomic_publication_bytes_once(
-                            &self.settings.directory,
-                            &bytes,
-                        ) {
-                            Ok(()) => publication_evidence_written = true,
-                            Err(error) => {
-                                publication_failure.get_or_insert(error);
+                        Ok(bytes) => {
+                            match atomic_publication_bytes_once(&self.settings.directory, &bytes) {
+                                Ok(()) => publication_evidence_written = true,
+                                Err(error) => {
+                                    publication_failure.get_or_insert(error);
+                                }
                             }
-                        },
+                        }
                         Err(error) => {
                             publication_failure.get_or_insert(error);
                         }
@@ -1213,10 +1202,11 @@ impl OwnedFixture {
         };
         atomic_json_once(&self.settings.directory.join("result.json"), &result)
             .map_err(|_| FixtureFailure::ResultWriteFailed)?;
-        if primary_failure.is_none() && cleanup_failure.is_none() {
-            if let Some(error) = publication_failure.or(resource_failure) {
-                return Err(error);
-            }
+        if primary_failure.is_none()
+            && cleanup_failure.is_none()
+            && let Some(error) = publication_failure.or(resource_failure)
+        {
+            return Err(error);
         }
         Ok(())
     }
@@ -2052,7 +2042,6 @@ fn atomic_json_once(path: &Path, value: &impl Serialize) -> FixtureResult {
         .map_err(|_| FixtureFailure::ControlInvalid)?;
     Ok(())
 }
-
 
 // Reuse the checked-in parser source only inside this integration test target.
 // No production API or transport receipt constructor is widened for this check.

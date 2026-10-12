@@ -1,87 +1,103 @@
 # PostgreSQL integration-validation runbook
 
-Use this runbook before approving the 0039–0041 database upgrade. The lane is
-disposable and uses only synthetic credentials/data. It must not be pointed at
-a production or operator-owned PostgreSQL cluster.
+Use this runbook before accepting the staged 0038-to-0041 upgrade and the
+empty-database full-release migration lane. Both use disposable PostgreSQL
+clusters and synthetic data only. Never point this harness at a production or
+operator-owned database.
 
-## Preconditions
+## Preconditions and static checks
 
-The operator needs the repository checkout, Bash, OpenSSL, Cargo, and the
-Docker CLI with a reachable Docker Engine. The workflow uses the pinned image
-digest already checked into `deploy/qa/qa-db.compose.yml`; it does not install
-host packages or accept real credentials.
+The operator needs the repository checkout, Bash, OpenSSL, Cargo, the Docker
+CLI, and an accessible Docker Engine. The workflow uses the pinned database
+image in `deploy/qa/qa-db.compose.yml`; credentials are generated locally and
+are not supplied through command-line arguments.
 
-Check the local harness first:
+Run the no-daemon checks first:
 
 ```sh
 bash deploy/db/integration-validation/validate.sh --self-test
 bash deploy/db/integration-validation/static-check.sh
+bash deploy/db/integration-validation/migration-safety-audit.sh
 ```
 
-The second command includes the migration safety audit. A failure is a No-Go
-and should be attached to the evidence; do not edit migration SQL solely to
-make the harness green without first reproducing and reviewing the defect.
+A migration safety-audit finding is a No-Go. Do not edit migration history or
+weaken an assertion merely to make the validator pass.
 
-## Full disposable run
+## Disposable validation run
 
 ```sh
 evidence_dir="$(mktemp -d /tmp/lagrange-pg-validation-evidence.XXXXXX)"
 chmod 700 "$evidence_dir"
 bash deploy/db/integration-validation/validate.sh \
-  --evidence-dir "$evidence_dir"
+  --evidence-dir "$evidence_dir" \
+  --main-port 55432 --test-port 55433 --full-port 55434
 ```
 
-The workflow performs the following sequence:
+The three clusters run sequentially under distinct Compose project names and
+generated credentials:
 
-1. Generate private one-line 256-bit credentials outside Git and render two
-   temporary Compose overrides.
-2. Start the upgrade PostgreSQL 18.4 cluster and provision
-   `migration_owner`, `app`, `worker`, `audit_writer`, `research_writer`, and
-   `admin` with the existing fail-closed bootstrap script.
-3. Build/use the existing `deploy/db` migration image and apply a staged 0038
-   source, giving a representative pre-0039 baseline.
-4. Run disk/connection hazard checks, normalized pending-invite duplicate
-   checks, role/schema/version/ownership checks, and terminal Paper counts.
-5. Apply 0039, preflight its auth-audit objects, apply 0040, preflight its
-   normalized invite index and identity functions, then apply 0041 and verify
-   backfill/obligation coverage. Rerun 0041 and repeat the final preflight to
-   prove a no-op rerun.
-6. Execute the tracked 0039 down migration against a synthetic undelivered
-   auth-audit row; require SQLSTATE 55000 and verify the ledger/table survive.
-7. Start a separate test cluster and run the migration-contract, API RLS and
-   Paper execution/notification/scheduler/runner, and job-queue contract and
-   Paper-preview suites with `DATABASE_URL` set. Any `SKIP:` marker fails the
-   lane.
-8. Collect sanitized evidence and tear down both clusters, including a
-   partially started service.
+1. **Staged upgrade cluster:** apply stage 0038 with the migration image's
+   SQLx CLI through a `/bin/bash` entrypoint override. The container reads the
+   generated migration-owner password file, requires exactly 64 lowercase hex
+   characters, constructs its fixed database URL internally, and sets finite
+   `PGOPTIONS` timeouts. This schema-only operation preserves the SQLx ledger
+   without installing the current catalog before 0039.
+2. **Staged upgrade continuation:** seed only the synthetic legacy fixture,
+   then apply 0039, 0040, 0041, and rerun 0041 through the normal migration
+   entrypoint. The first catalog install follows 0039 and must enqueue exactly
+   one event with the baseline file hash, action, target, reason, and released
+   time. Require exactly six strategies: five manifest-derived Draft baseline
+   rows and the unchanged `postgres_validation_paper` Paper fixture; versions
+   and parameter schemas remain exactly five baseline rows. Disposable
+   negative probes inject an unexpected strategy, remove and mutate a baseline,
+   and add the Paper fixture to the full lane. Each must fail with its exact
+   SQLSTATE/reason, explicitly roll back, and preserve the catalog/audit
+   snapshot. Run a normal 0039 catalog-sync rerun and compare catalog rows and
+   audit identity/count. A synthetic conflict probe runs the actual catalog
+   SQL inside a transaction as `migration_owner`; it must fail with SQLSTATE
+   23505, roll back, and leave the original snapshot intact. The down-guard
+   probe remains separate: the tracked 0039 down migration must refuse the
+   synthetic undelivered fixture with SQLSTATE 55000, and cleanup removes only
+   that fixture while retaining the catalog event. Check the terminal-Paper
+   count in the supervisor pass because forced RLS hides `pending_targets`
+   from `migration_owner`; keep catalog audit visibility checks under the
+   actual `migration_owner` login.
+3. **Empty full-release cluster:** start a separately owned, unseeded cluster
+   with the same pinned database image, generated credentials, role bootstrap,
+   and migration image. Run the normal image entrypoint through all current up
+   migrations (0059 at baseline `ac0a083`), then run it again. Record the count,
+   latest version, and every SQLx checksum for both runs. The second ledger and
+   catalog/audit snapshot must exactly match the first. Require exactly five
+   baseline strategies and no Paper fixture. Tear down this owned cluster and
+   verify its project has no remaining containers before starting the DB-gated
+   test cluster.
+4. **DB-gated test cluster:** use the existing synthetic compatibility
+   fixture, bootstrap its roles, and run the listed Rust suites with
+   `DATABASE_URL`. Any `SKIP:` marker is a hard failure.
 
-## Go/No-Go
+The workflow checks direct role logins, table ownership, catalog function
+identity, its safe `search_path`, EXECUTE ACL, forced RLS, migration counts,
+and available disk space. It does not alter grants. Each started cluster is
+torn down with `docker compose down -v --remove-orphans`, including partial
+startup failures.
 
-Go only when `evidence.json` says `APPROVED`, all sequential versions and
-preflights and the 0039 down-guard probe are present, direct service-role logins report
-`current_user=session_user`, all public tables are migration-owner owned,
-normalized pending-invite duplicates are zero, every terminal Paper target has
-an active/archive settlement obligation, disk and connection headroom pass,
-all selected tests pass with no `SKIP:`, the migration safety audit passes,
-and teardown evidence shows no retained validation containers.
+## Evidence and Go/No-Go
 
-No-Go on any test failure, skipped DB gate, migration safety-audit finding,
-version/count mismatch, duplicate, ownership/privilege drift, outbox gap,
-hazard failure, missing/unsanitized evidence, or Docker/PostgreSQL blocker.
-Use `deploy/db/integration-validation/EVIDENCE_TEMPLATE.md` to record the
-decision and attach the sanitized log directory.
+The evidence directory contains sanitized logs, `evidence.json`, and
+`evidence.tsv`. The staged 0038-to-0041 results, catalog negative probes, and
+full-release first/second results are recorded separately; full-release
+checksum lists are included in both records. Do not copy generated passwords, `DATABASE_URL`, Docker inspect
+environment, or unsanitized command output into a review report.
 
-## External blocker handling
+Go only when the evidence verdict is `APPROVED`, the staged counts are 38, 39,
+40, and 41 with the 0041 rerun unchanged, the down guard observed SQLSTATE
+55000, and the catalog audit/conflict/rerun checks pass. The empty full-release
+lane must reach the current endpoint with matching first/second ledger
+checksums and a no-op rerun. Every required DB-gated test must pass without
+`SKIP:`, direct role logins and ownership checks must pass, and teardown must
+leave no validator clusters behind.
 
-If Docker CLI is present but `docker info` cannot reach the daemon, the full
-lane exits `2` as `BLOCKED_EXTERNAL` and writes a sanitized `docker-info.log`.
-If the operator is already listed in the `docker` group but the current shell
-has stale supplementary groups, refresh the login or use a temporary
-`sg docker -c '...'` wrapper; do not enable a trust-auth database or point at
-an operator-owned cluster.
-This is not an approval and does not justify setting `DATABASE_URL` to a real
-database. Resolve the daemon/host prerequisite, then rerun the exact command.
-The `--self-test` and shell syntax/diff checks remain valid evidence that the
-harness itself is syntactically and structurally ready; `static-check.sh` may
-also report independent migration/application safety findings that remain
-No-Go until fixed.
+An unavailable Docker Engine is `BLOCKED_EXTERNAL`, not database acceptance.
+If the socket is group-readable but the shell has stale supplementary groups,
+refresh the login or use a temporary `sg docker -c '...'` wrapper. A blocker
+does not authorize a real database URL or trust-authentication workaround.

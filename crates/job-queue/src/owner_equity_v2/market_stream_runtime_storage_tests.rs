@@ -233,8 +233,7 @@ mod unit {
 }
 
 #[cfg(feature = "market-stream-db-tests")]
-#[path = "../../tests/owner_market_stream_boundary_support/mod.rs"]
-mod database_support;
+use super::owner_market_stream_boundary_support as database_support;
 
 #[cfg(feature = "market-stream-db-tests")]
 mod database_cases {
@@ -1069,7 +1068,8 @@ mod database_cases {
         owner_id: Uuid,
         membership_id: Uuid,
     ) -> Result<Option<QuoteCapture>, TestError> {
-        let row: Option<(i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        type CacheCaptureDbRow = (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+        let row: Option<CacheCaptureDbRow> = sqlx::query_as(
             "SELECT quote_version, received_at, committed_at
                FROM public.owner_market_stream_cache
               WHERE owner_user_id = $1 AND membership_id = $2",
@@ -1345,14 +1345,15 @@ mod database_cases {
             let (epoch_after, _) =
                 publish_one_quote(&database, &fixture, &producer, &identity).await?;
             assert_ne!(epoch_after, epoch);
-            let producer_state: (
+            type RuntimeProducerStateRow = (
                 Option<Uuid>,
                 Option<chrono::NaiveDate>,
                 Option<Uuid>,
                 Option<DateTime<Utc>>,
                 bool,
                 i64,
-            ) = sqlx::query_as(
+            );
+            let producer_state: RuntimeProducerStateRow = sqlx::query_as(
                 "SELECT current_epoch, session_date, session_proof_id, gap_since,
                             session_has_gap, gap_generation
                        FROM public.owner_market_stream_producers WHERE credential_slot_id = $1",
@@ -1598,7 +1599,7 @@ mod database_cases {
                 )
                 .await?;
             assert_eq!(retired.current_epoch(), None);
-            let stored: (
+            type RetiredLineageRow = (
                 Option<Uuid>,
                 Option<Uuid>,
                 Option<String>,
@@ -1606,7 +1607,8 @@ mod database_cases {
                 Option<String>,
                 Option<String>,
                 i64,
-            ) = sqlx::query_as(
+            );
+            let stored: RetiredLineageRow = sqlx::query_as(
                 "SELECT current_epoch, session_proof_id, session_proof_sha256,
                         calendar_source_batch_id, calendar_content_sha256,
                         window_contract_sha256, gap_generation

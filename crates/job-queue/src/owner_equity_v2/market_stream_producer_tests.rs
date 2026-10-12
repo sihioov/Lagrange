@@ -126,10 +126,22 @@ fn invalid_and_unsupported_symbols_never_enter_normalized_demand() {
 #[test]
 fn incomplete_reconciliation_cannot_satisfy_strict_apply_success() {
     use super::market_stream_producer::{MarketStreamApplyOutcome, MarketStreamReconcileOutcome};
-    let committed = MarketStreamApplyOutcome { active_symbols: 1, transport_commands: 1 };
-    let partial = MarketStreamReconcileOutcome::Deferred { committed, not_before_ms: 11_000 };
-    assert_eq!(partial.into_complete(), Err(MarketStreamProducerError::NotReady));
-    assert_eq!(MarketStreamReconcileOutcome::Complete(committed).into_complete(), Ok(committed));
+    let committed = MarketStreamApplyOutcome {
+        active_symbols: 1,
+        transport_commands: 1,
+    };
+    let partial = MarketStreamReconcileOutcome::Deferred {
+        committed,
+        not_before_ms: 11_000,
+    };
+    assert_eq!(
+        partial.into_complete(),
+        Err(MarketStreamProducerError::NotReady)
+    );
+    assert_eq!(
+        MarketStreamReconcileOutcome::Complete(committed).into_complete(),
+        Ok(committed)
+    );
     // The compatibility adapter uses this same conversion; no error enum or
     // legacy diagnostic fixture is changed to represent incomplete success.
 }
@@ -142,8 +154,7 @@ mod support;
 mod database_cases {
     use super::super::market_stream_producer::{
         MarketStreamApplyOutcome, MarketStreamProducerOutcome, MarketStreamReconcileOutcome,
-        OwnerMarketStreamProducer,
-        ProducerAwaitPoint, ProducerTestGate,
+        OwnerMarketStreamProducer, ProducerAwaitPoint, ProducerTestGate,
     };
     use super::*;
     use crate::owner_equity_v2::market_stream::{
@@ -170,17 +181,51 @@ mod database_cases {
     // Original20-only observer. No values, errors, identifiers or runtime work.
     #[derive(Clone, Copy)]
     enum Original20Site {
-        NotStarted, CreateDatabase, DatabaseName, SeedFixture, Scenario,
-        InitialApply, InitialFirstCommand, InitialSecondCommand, RemovedLease,
-        ReleaseStreamLease, DemandAfterRelease, UnsubscribeApply, UnsubscribeCommand,
-        RemovedSnapshot, Admission, PublicationTime, ReadPublish, PublishedRow,
-        RequireQuote, RequireOrdinal, RequireTimestamp, PublishedChecks,
-        PersistedAppSnapshot, PersistedQuote, RemovedIdentity, FirstTransportFinish,
-        FirstTransportChecks, RestoredLease, RenewProducer, RestoredTime,
-        RestoredLoopback, RequireOldEpoch, RestoredStart, ReadNewEpoch,
-        RequireNewEpoch, RestoredDemand, RestoredApply, ReackFirstCommand,
-        ReackSecondCommand, ReackSnapshot, RestoredAppSnapshot, FinalTransportFinish,
-        FinalTransportChecks, Complete, DiagnosticUnavailable,
+        NotStarted,
+        CreateDatabase,
+        DatabaseName,
+        SeedFixture,
+        Scenario,
+        InitialApply,
+        InitialFirstCommand,
+        InitialSecondCommand,
+        RemovedLease,
+        ReleaseStreamLease,
+        DemandAfterRelease,
+        UnsubscribeApply,
+        UnsubscribeCommand,
+        RemovedSnapshot,
+        Admission,
+        PublicationTime,
+        ReadPublish,
+        PublishedRow,
+        RequireQuote,
+        RequireOrdinal,
+        RequireTimestamp,
+        PublishedChecks,
+        PersistedAppSnapshot,
+        PersistedQuote,
+        RemovedIdentity,
+        FirstTransportFinish,
+        FirstTransportChecks,
+        RestoredLease,
+        RenewProducer,
+        RestoredTime,
+        RestoredLoopback,
+        RequireOldEpoch,
+        RestoredStart,
+        ReadNewEpoch,
+        RequireNewEpoch,
+        RestoredDemand,
+        RestoredApply,
+        ReackFirstCommand,
+        ReackSecondCommand,
+        ReackSnapshot,
+        RestoredAppSnapshot,
+        FinalTransportFinish,
+        FinalTransportChecks,
+        Complete,
+        DiagnosticUnavailable,
     }
 
     impl Original20Site {
@@ -247,25 +292,35 @@ mod database_cases {
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
-    enum Original20WriteOutcome { Written, WriteFailed, DiagnosticUnavailable }
+    enum Original20WriteOutcome {
+        Written,
+        WriteFailed,
+        DiagnosticUnavailable,
+    }
 
     impl Original20Diagnostic {
         fn new() -> Self {
-            Self { state: Arc::new(Mutex::new(Original20Record {
-                site: Original20Site::NotStarted,
-                terminal: None,
-            })) }
+            Self {
+                state: Arc::new(Mutex::new(Original20Record {
+                    site: Original20Site::NotStarted,
+                    terminal: None,
+                })),
+            }
         }
 
         fn enter(&self, site: Original20Site) {
-            if let Ok(mut state) = self.state.lock() {
-                if state.terminal.is_none() { state.site = site; }
+            if let Ok(mut state) = self.state.lock()
+                && state.terminal.is_none()
+            {
+                state.site = site;
             }
         }
 
         fn freeze(&self, terminal: Original19Terminal) {
-            if let Ok(mut state) = self.state.lock() {
-                if state.terminal.is_none() { state.terminal = Some(terminal); }
+            if let Ok(mut state) = self.state.lock()
+                && state.terminal.is_none()
+            {
+                state.terminal = Some(terminal);
             }
         }
 
@@ -274,11 +329,17 @@ mod database_cases {
             let (site, terminal, available) = match self.state.lock() {
                 Ok(state) => match state.terminal {
                     Some(terminal) => (state.site, terminal, true),
-                    None => (Original20Site::DiagnosticUnavailable,
-                        Original19Terminal::DiagnosticUnavailable, false),
+                    None => (
+                        Original20Site::DiagnosticUnavailable,
+                        Original19Terminal::DiagnosticUnavailable,
+                        false,
+                    ),
                 },
-                Err(_) => (Original20Site::DiagnosticUnavailable,
-                    Original19Terminal::DiagnosticUnavailable, false),
+                Err(_) => (
+                    Original20Site::DiagnosticUnavailable,
+                    Original19Terminal::DiagnosticUnavailable,
+                    false,
+                ),
             };
             const MAX_PHYSICAL_RECORD_BYTES: usize = 4096;
             // The first LF terminates any preceding libtest prefix. The marker
@@ -289,8 +350,13 @@ mod database_cases {
                 writeln!(
                     cursor,
                     "\nC3B_ORIGINAL20_STAGE_V1 site={} terminal={} diagnostic={}",
-                    site.literal(), terminal.literal(),
-                    if available { "available" } else { "diagnostic_unavailable" },
+                    site.literal(),
+                    terminal.literal(),
+                    if available {
+                        "available"
+                    } else {
+                        "diagnostic_unavailable"
+                    },
                 )?;
                 cursor.position() as usize
             };
@@ -806,11 +872,10 @@ mod database_cases {
         (diagnostic_write, cleanup_output)
     }
 
-
     // Original19-only companion. No diagnostic operation owns or retries work.
     use super::super::market_stream_producer::{
-        MarketStreamControlOutcome, MarketStreamTransportStatus,
-        ProducerTransportErrorObservation, ProducerTransportErrorProbe,
+        MarketStreamControlOutcome, MarketStreamTransportStatus, ProducerTransportErrorObservation,
+        ProducerTransportErrorProbe,
     };
     use crate::owner_equity_v2::market_stream::MarketStreamStorageError;
     use kis_client::market_stream_approval::ApprovalError;
@@ -898,8 +963,11 @@ mod database_cases {
 
     impl Original19ErrorClass {
         const NONE: Self = Self {
-            kind: "none", producer: "none", storage: "none",
-            transport: "none", sqlx: "none",
+            kind: "none",
+            producer: "none",
+            storage: "none",
+            transport: "none",
+            sqlx: "none",
         };
     }
 
@@ -913,7 +981,9 @@ mod database_cases {
                 ApprovalError::OutcomeAmbiguous => "approval_outcome_ambiguous",
                 ApprovalError::AttemptTooSoon => "approval_attempt_too_soon",
                 ApprovalError::AttemptBudgetExhausted => "approval_attempt_budget_exhausted",
-                ApprovalError::CredentialGenerationMismatch => "approval_credential_generation_mismatch",
+                ApprovalError::CredentialGenerationMismatch => {
+                    "approval_credential_generation_mismatch"
+                }
                 ApprovalError::Expired => "approval_expired",
                 ApprovalError::TransportAmbiguous => "approval_transport_ambiguous",
                 ApprovalError::State => "approval_state",
@@ -985,6 +1055,17 @@ mod database_cases {
                     BudgetError::RollingWindow => "state_budget_rolling_window",
                     BudgetError::DailyLimit => "state_budget_daily_limit",
                 },
+                #[cfg(feature = "market-stream-provisioning")]
+                StateError::ProvisioningActorDenied => "state_provisioning_actor_denied",
+                #[cfg(feature = "market-stream-provisioning")]
+                StateError::ProvisioningInputInvalid => "state_provisioning_input_invalid",
+                #[cfg(feature = "market-stream-provisioning")]
+                StateError::ProvisioningUncertain => "state_provisioning_uncertain",
+                #[allow(
+                    unreachable_patterns,
+                    reason = "dependency feature unification can expose locally unnamed state variants"
+                )]
+                _ => "diagnostic_unavailable",
             },
             O::Cancelled => "cancelled",
             O::SessionProofRequired => "session_proof_required",
@@ -1021,7 +1102,11 @@ mod database_cases {
             "none"
         };
         Original19ErrorClass {
-            kind: "producer", producer, storage, transport, sqlx: "none",
+            kind: "producer",
+            producer,
+            storage,
+            transport,
+            sqlx: "none",
         }
     }
 
@@ -1057,15 +1142,20 @@ mod database_cases {
             original19_producer_error(error, || None)
         } else if let Some(error) = error.downcast_ref::<MarketStreamStorageError>() {
             Original19ErrorClass {
-                kind: "storage", storage: error.code(), ..Original19ErrorClass::NONE
+                kind: "storage",
+                storage: error.code(),
+                ..Original19ErrorClass::NONE
             }
         } else if let Some(error) = error.downcast_ref::<sqlx::Error>() {
             Original19ErrorClass {
-                kind: "sqlx", sqlx: original19_sqlx(error), ..Original19ErrorClass::NONE
+                kind: "sqlx",
+                sqlx: original19_sqlx(error),
+                ..Original19ErrorClass::NONE
             }
         } else {
             Original19ErrorClass {
-                kind: "fixture_returned_error", ..Original19ErrorClass::NONE
+                kind: "fixture_returned_error",
+                ..Original19ErrorClass::NONE
             }
         }
     }
@@ -1088,13 +1178,21 @@ mod database_cases {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Original19Joined {
-        BodyOk, BodyError, Panic, Cancelled, Other,
+        BodyOk,
+        BodyError,
+        Panic,
+        Cancelled,
+        Other,
     }
 
     fn original19_join_error(panic: bool, cancelled: bool) -> Original19Joined {
-        if panic { Original19Joined::Panic }
-        else if cancelled { Original19Joined::Cancelled }
-        else { Original19Joined::Other }
+        if panic {
+            Original19Joined::Panic
+        } else if cancelled {
+            Original19Joined::Cancelled
+        } else {
+            Original19Joined::Other
+        }
     }
 
     fn original19_joined<E>(
@@ -1141,30 +1239,35 @@ mod database_cases {
 
     impl Original19Diagnostic {
         fn new() -> Self {
-            Self { state: Arc::new(Mutex::new(Original19Record {
-                site: Original19Site::NotStarted,
-                iteration: Original19Iteration::None,
-                step: Original19Step::NotStarted,
-                terminal: None,
-                error: Original19ErrorClass::NONE,
-                control: "none",
-            })) }
+            Self {
+                state: Arc::new(Mutex::new(Original19Record {
+                    site: Original19Site::NotStarted,
+                    iteration: Original19Iteration::None,
+                    step: Original19Step::NotStarted,
+                    terminal: None,
+                    error: Original19ErrorClass::NONE,
+                    control: "none",
+                })),
+            }
         }
 
         fn update(&self, update: impl FnOnce(&mut Original19Record)) {
             // A poisoned lock is never unwrapped or repaired by the observer.
             // Snapshot reports unavailable; subsequent updates are ignored.
-            if let Ok(mut state) = self.state.lock() {
-                if state.terminal.is_none() {
-                    update(&mut state);
-                }
+            if let Ok(mut state) = self.state.lock()
+                && state.terminal.is_none()
+            {
+                update(&mut state);
             }
         }
 
         fn snapshot(&self) -> (Original19Record, Original19Availability) {
             match self.state.lock() {
                 Ok(state) => (*state, Original19Availability::Available),
-                Err(poison) => (*poison.into_inner(), Original19Availability::DiagnosticUnavailable),
+                Err(poison) => (
+                    *poison.into_inner(),
+                    Original19Availability::DiagnosticUnavailable,
+                ),
             }
         }
 
@@ -1246,7 +1349,10 @@ mod database_cases {
                 record.site.literal(),
                 record.iteration.literal(),
                 record.step.literal(),
-                record.terminal.unwrap_or(Original19Terminal::DiagnosticUnavailable).literal(),
+                record
+                    .terminal
+                    .unwrap_or(Original19Terminal::DiagnosticUnavailable)
+                    .literal(),
                 record.error.kind,
                 record.error.producer,
                 record.error.storage,
@@ -1264,7 +1370,11 @@ mod database_cases {
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Original19WriteOutcome { Written, WriteFailed, DiagnosticUnavailable }
+    enum Original19WriteOutcome {
+        Written,
+        WriteFailed,
+        DiagnosticUnavailable,
+    }
 
     // Synchronous no-unwind boundary, before invoking the existing cleanup
     // closure. It catches Rust unwinds only, not abort/OOM/process termination.
@@ -1317,9 +1427,9 @@ mod database_cases {
             None,
             Some(diagnostic),
             None,
-        ).await
+        )
+        .await
     }
-
 
     #[cfg(test)]
     mod original19_closed_diagnostic_unit_tests {
@@ -1332,9 +1442,11 @@ mod database_cases {
             let result: Result<(), MarketStreamProducerError> =
                 Err(MarketStreamProducerError::TransportFailure);
             let unchanged = diagnostic.observe(result, |error| {
-                original19_producer_error(error, || Some(
-                    ProducerTransportErrorObservation::CommandBudget(BudgetError::MinimumSpacing)
-                ))
+                original19_producer_error(error, || {
+                    Some(ProducerTransportErrorObservation::CommandBudget(
+                        BudgetError::MinimumSpacing,
+                    ))
+                })
             });
             assert_eq!(unchanged, result);
             diagnostic.freeze(Original19Terminal::ReturnedError);
@@ -1343,13 +1455,17 @@ mod database_cases {
 
         fn render(diagnostic: &Original19Diagnostic) -> String {
             let mut bytes = Vec::new();
-            diagnostic.emit_to(&mut bytes).expect("private in-memory writer");
+            diagnostic
+                .emit_to(&mut bytes)
+                .expect("private in-memory writer");
             String::from_utf8(bytes).expect("closed ASCII grammar")
         }
 
         fn original19_grammar_value_is_valid(field: &str, value: &str) -> bool {
             !value.is_empty()
-                && (value.bytes().all(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                && (value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphabetic() || byte == b'_')
                     || (field == "transport" && value == "wire_invalid_utf8"))
         }
 
@@ -1360,8 +1476,17 @@ mod database_cases {
             assert_eq!(fields.len(), 12);
             assert_eq!(fields[0], "C3B_ORIGINAL19_DIAGNOSTIC_V1");
             for (field, key) in fields[1..].iter().zip([
-                "site", "iteration", "step", "terminal", "error", "producer",
-                "storage", "transport", "sqlx", "control", "diagnostic",
+                "site",
+                "iteration",
+                "step",
+                "terminal",
+                "error",
+                "producer",
+                "storage",
+                "transport",
+                "sqlx",
+                "control",
+                "diagnostic",
             ]) {
                 let (actual_key, value) = field.split_once('=').expect("fixed field");
                 assert_eq!(actual_key, key);
@@ -1374,9 +1499,14 @@ mod database_cases {
             struct ErrorWriter;
             impl Write for ErrorWriter {
                 fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-                    Err(io::Error::new(io::ErrorKind::BrokenPipe, "R71_SYNTHETIC_WRITER"))
+                    Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "R71_SYNTHETIC_WRITER",
+                    ))
                 }
-                fn flush(&mut self) -> io::Result<()> { Ok(()) }
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
             }
             for mode in 0..4 {
                 let diagnostic = failed_record();
@@ -1412,12 +1542,15 @@ mod database_cases {
                 assert_eq!(cleanup_calls.get(), 1);
                 assert_eq!(cleanup_runs.get(), 1);
                 assert_eq!(diagnostic.snapshot(), frozen);
-                assert_eq!(write, match mode {
-                    0 => Some(Original19WriteOutcome::DiagnosticUnavailable),
-                    1 => Some(Original19WriteOutcome::WriteFailed),
-                    2 => Some(Original19WriteOutcome::Written),
-                    _ => None,
-                });
+                assert_eq!(
+                    write,
+                    match mode {
+                        0 => Some(Original19WriteOutcome::DiagnosticUnavailable),
+                        1 => Some(Original19WriteOutcome::WriteFailed),
+                        2 => Some(Original19WriteOutcome::Written),
+                        _ => None,
+                    }
+                );
             }
         }
 
@@ -1442,9 +1575,26 @@ mod database_cases {
                 });
                 assert_eq!(result, Err(error));
                 assert_eq!(calls.get(), 1);
-                assert_eq!(diagnostic.snapshot().0.error.transport, if mode == 0 {
-                    "command_budget_minimum_spacing"
-                } else { "diagnostic_unavailable" });
+                assert_eq!(
+                    diagnostic.snapshot().0.error.transport,
+                    if mode == 0 {
+                        "command_budget_minimum_spacing"
+                    } else {
+                        "diagnostic_unavailable"
+                    }
+                );
+                diagnostic.freeze(Original19Terminal::ReturnedError);
+                let line = render(&diagnostic);
+                assert_grammar(&line);
+                if mode == 0 {
+                    assert!(line.contains("transport=command_budget_minimum_spacing sqlx=none"));
+                } else {
+                    assert!(
+                        line.contains("error=producer producer=transport_failure storage=none ")
+                    );
+                    assert!(line.contains("transport=diagnostic_unavailable sqlx=none"));
+                    assert!(!line.contains("R71_SYNTHETIC_PROBE_UNWIND"));
+                }
             }
             // Real per-instance probes: observing one empty slot never reads
             // or changes the other. Private poison is exercised by injection
@@ -1452,10 +1602,11 @@ mod database_cases {
             let first = ProducerTransportErrorProbe::default();
             let second = ProducerTransportErrorProbe::default();
             let calls = Cell::new(0);
-            let first_class = original19_producer_error(
-                &MarketStreamProducerError::TransportFailure,
-                || { calls.set(calls.get() + 1); first.take() },
-            );
+            let first_class =
+                original19_producer_error(&MarketStreamProducerError::TransportFailure, || {
+                    calls.set(calls.get() + 1);
+                    first.take()
+                });
             assert_eq!(first_class.transport, "diagnostic_unavailable");
             assert_eq!(calls.get(), 1);
             assert_eq!(second.take(), None);
@@ -1465,7 +1616,10 @@ mod database_cases {
         fn every_producer_variant_preserves_error_without_unneeded_probe_read() {
             use MarketStreamProducerError as E;
             for (error, expected) in [
-                (E::Storage(MarketStreamStorageError::CommitUnknown), "storage"),
+                (
+                    E::Storage(MarketStreamStorageError::CommitUnknown),
+                    "storage",
+                ),
                 (E::InvalidInput, "invalid_input"),
                 (E::NotReady, "not_ready"),
                 (E::Terminal, "terminal"),
@@ -1491,7 +1645,10 @@ mod database_cases {
                 (S::LeaseNotFound, "MARKET_STREAM_LEASE_NOT_FOUND"),
                 (S::LeaseReleased, "MARKET_STREAM_LEASE_RELEASED"),
                 (S::LeaseExpired, "MARKET_STREAM_LEASE_EXPIRED"),
-                (S::LeaseSessionMismatch, "MARKET_STREAM_LEASE_SESSION_MISMATCH"),
+                (
+                    S::LeaseSessionMismatch,
+                    "MARKET_STREAM_LEASE_SESSION_MISMATCH",
+                ),
                 (S::IdempotencyMismatch, "MARKET_STREAM_IDEMPOTENCY_MISMATCH"),
                 (S::SequenceConflict, "MARKET_STREAM_SEQUENCE_CONFLICT"),
                 (S::LeaseCapacity, "MARKET_STREAM_LEASE_CAPACITY"),
@@ -1504,7 +1661,10 @@ mod database_cases {
                 (S::FenceExhausted, "MARKET_STREAM_FENCE_EXHAUSTED"),
                 (S::EpochInvalid, "MARKET_STREAM_EPOCH_INVALID"),
                 (S::SubscriptionInvalid, "MARKET_STREAM_SUBSCRIPTION_INVALID"),
-                (S::SubscriptionNotAcked, "MARKET_STREAM_SUBSCRIPTION_NOT_ACKED"),
+                (
+                    S::SubscriptionNotAcked,
+                    "MARKET_STREAM_SUBSCRIPTION_NOT_ACKED",
+                ),
                 (S::ReceiptInvalid, "MARKET_STREAM_RECEIPT_INVALID"),
                 (S::ReceiptStale, "MARKET_STREAM_RECEIPT_STALE"),
                 (S::PipelineLag, "MARKET_STREAM_PIPELINE_LAG"),
@@ -1520,17 +1680,19 @@ mod database_cases {
                 let pointer = boxed.as_ref() as *const (dyn Error + Send + Sync);
                 let diagnostic = Original19Diagnostic::new();
                 diagnostic.enter(Original19Site::PrimaryLease);
-                let result: Result<(), CaseError> = diagnostic.observe(Err(boxed), |error| {
-                    original19_fixture_error(error.as_ref())
-                });
-                let same = result.err().expect("unchanged boxed error");
-                assert!(std::ptr::eq(pointer, same.as_ref() as *const (dyn Error + Send + Sync)));
+                let result: Result<(), CaseError> = diagnostic
+                    .observe(Err(boxed), |error| original19_fixture_error(error.as_ref()));
+                let same = result.expect_err("unchanged boxed error");
+                assert!(std::ptr::eq(
+                    pointer,
+                    same.as_ref() as *const (dyn Error + Send + Sync)
+                ));
                 assert_eq!(diagnostic.snapshot().0.error.storage, expected);
                 assert_eq!(diagnostic.snapshot().0.error.kind, "storage");
-                let producer = original19_producer_error(
-                    &MarketStreamProducerError::Storage(error),
-                    || panic!("storage must not read probe"),
-                );
+                let producer =
+                    original19_producer_error(&MarketStreamProducerError::Storage(error), || {
+                        panic!("storage must not read probe")
+                    });
                 assert_eq!(producer.storage, expected);
                 assert_eq!(producer.producer, "storage");
                 diagnostic.freeze(Original19Terminal::ReturnedError);
@@ -1544,15 +1706,39 @@ mod database_cases {
             // Exact finite rows are independently reviewable against P/C2;
             // every row runs through the observer, probe and output boundary.
             let cases = vec![
-                (O::Approval(ApprovalError::EndpointNotAllowed), "approval_endpoint_not_allowed"),
-                (O::Approval(ApprovalError::HttpRejected { status: 59999 }), "approval_http_rejected"),
-                (O::Approval(ApprovalError::ResponseInvalid), "approval_response_invalid"),
-                (O::Approval(ApprovalError::OutcomeAmbiguous), "approval_outcome_ambiguous"),
-                (O::Approval(ApprovalError::AttemptTooSoon), "approval_attempt_too_soon"),
-                (O::Approval(ApprovalError::AttemptBudgetExhausted), "approval_attempt_budget_exhausted"),
-                (O::Approval(ApprovalError::CredentialGenerationMismatch), "approval_credential_generation_mismatch"),
+                (
+                    O::Approval(ApprovalError::EndpointNotAllowed),
+                    "approval_endpoint_not_allowed",
+                ),
+                (
+                    O::Approval(ApprovalError::HttpRejected { status: 59999 }),
+                    "approval_http_rejected",
+                ),
+                (
+                    O::Approval(ApprovalError::ResponseInvalid),
+                    "approval_response_invalid",
+                ),
+                (
+                    O::Approval(ApprovalError::OutcomeAmbiguous),
+                    "approval_outcome_ambiguous",
+                ),
+                (
+                    O::Approval(ApprovalError::AttemptTooSoon),
+                    "approval_attempt_too_soon",
+                ),
+                (
+                    O::Approval(ApprovalError::AttemptBudgetExhausted),
+                    "approval_attempt_budget_exhausted",
+                ),
+                (
+                    O::Approval(ApprovalError::CredentialGenerationMismatch),
+                    "approval_credential_generation_mismatch",
+                ),
                 (O::Approval(ApprovalError::Expired), "approval_expired"),
-                (O::Approval(ApprovalError::TransportAmbiguous), "approval_transport_ambiguous"),
+                (
+                    O::Approval(ApprovalError::TransportAmbiguous),
+                    "approval_transport_ambiguous",
+                ),
                 (O::Approval(ApprovalError::State), "approval_state"),
                 (O::EndpointNotAllowed, "endpoint_not_allowed"),
                 (O::Io, "io"),
@@ -1571,52 +1757,145 @@ mod database_cases {
                 (O::CommandRejected, "command_rejected"),
                 (O::DataBeforeAck, "data_before_ack"),
                 (O::SymbolNotAllowed, "symbol_not_allowed"),
-                (O::ResubscribeRequiresNewEpoch, "resubscribe_requires_new_epoch"),
+                (
+                    O::ResubscribeRequiresNewEpoch,
+                    "resubscribe_requires_new_epoch",
+                ),
                 (O::SubscriptionLimit, "subscription_limit"),
-                (O::CommandBudget(BudgetError::MinimumSpacing), "command_budget_minimum_spacing"),
-                (O::CommandBudget(BudgetError::RollingWindow), "command_budget_rolling_window"),
-                (O::CommandBudget(BudgetError::DailyLimit), "command_budget_daily_limit"),
-                (O::ReconnectBudget(BudgetError::MinimumSpacing), "reconnect_budget_minimum_spacing"),
-                (O::ReconnectBudget(BudgetError::RollingWindow), "reconnect_budget_rolling_window"),
-                (O::ReconnectBudget(BudgetError::DailyLimit), "reconnect_budget_daily_limit"),
+                (
+                    O::CommandBudget(BudgetError::MinimumSpacing),
+                    "command_budget_minimum_spacing",
+                ),
+                (
+                    O::CommandBudget(BudgetError::RollingWindow),
+                    "command_budget_rolling_window",
+                ),
+                (
+                    O::CommandBudget(BudgetError::DailyLimit),
+                    "command_budget_daily_limit",
+                ),
+                (
+                    O::ReconnectBudget(BudgetError::MinimumSpacing),
+                    "reconnect_budget_minimum_spacing",
+                ),
+                (
+                    O::ReconnectBudget(BudgetError::RollingWindow),
+                    "reconnect_budget_rolling_window",
+                ),
+                (
+                    O::ReconnectBudget(BudgetError::DailyLimit),
+                    "reconnect_budget_daily_limit",
+                ),
                 (O::ReconnectExhausted, "reconnect_exhausted"),
-                (O::Wire(WireError::MessageTooLarge), "wire_message_too_large"),
+                (
+                    O::Wire(WireError::MessageTooLarge),
+                    "wire_message_too_large",
+                ),
                 (O::Wire(WireError::InvalidUtf8), "wire_invalid_utf8"),
-                (O::Wire(WireError::ControlCharacter), "wire_control_character"),
+                (
+                    O::Wire(WireError::ControlCharacter),
+                    "wire_control_character",
+                ),
                 (O::Wire(WireError::FramingInvalid), "wire_framing_invalid"),
-                (O::Wire(WireError::RecordCountInvalid), "wire_record_count_invalid"),
-                (O::Wire(WireError::RecordCountExceeded), "wire_record_count_exceeded"),
-                (O::Wire(WireError::FieldCountMismatch), "wire_field_count_mismatch"),
+                (
+                    O::Wire(WireError::RecordCountInvalid),
+                    "wire_record_count_invalid",
+                ),
+                (
+                    O::Wire(WireError::RecordCountExceeded),
+                    "wire_record_count_exceeded",
+                ),
+                (
+                    O::Wire(WireError::FieldCountMismatch),
+                    "wire_field_count_mismatch",
+                ),
                 (O::Wire(WireError::FieldTooLarge), "wire_field_too_large"),
                 (O::Wire(WireError::SchemaMismatch), "wire_schema_mismatch"),
                 (O::Wire(WireError::SymbolInvalid), "wire_symbol_invalid"),
                 (O::Wire(WireError::DateInvalid), "wire_date_invalid"),
                 (O::Wire(WireError::TimeInvalid), "wire_time_invalid"),
                 (O::Wire(WireError::NumericInvalid), "wire_numeric_invalid"),
-                (O::Wire(WireError::DirectionInvalid), "wire_direction_invalid"),
-                (O::Wire(WireError::DirectionContradiction), "wire_direction_contradiction"),
+                (
+                    O::Wire(WireError::DirectionInvalid),
+                    "wire_direction_invalid",
+                ),
+                (
+                    O::Wire(WireError::DirectionContradiction),
+                    "wire_direction_contradiction",
+                ),
                 (O::Wire(WireError::VolumeInvalid), "wire_volume_invalid"),
-                (O::Wire(WireError::HaltFlagInvalid), "wire_halt_flag_invalid"),
-                (O::Wire(WireError::MarketClassUnsupported), "wire_market_class_unsupported"),
-                (O::Wire(WireError::FutureObservation), "wire_future_observation"),
-                (O::Wire(WireError::OutsideSessionWindow), "wire_outside_session_window"),
-                (O::Wire(WireError::StaleEpochObservation), "wire_stale_epoch_observation"),
-                (O::Wire(WireError::UnsupportedMessage), "wire_unsupported_message"),
+                (
+                    O::Wire(WireError::HaltFlagInvalid),
+                    "wire_halt_flag_invalid",
+                ),
+                (
+                    O::Wire(WireError::MarketClassUnsupported),
+                    "wire_market_class_unsupported",
+                ),
+                (
+                    O::Wire(WireError::FutureObservation),
+                    "wire_future_observation",
+                ),
+                (
+                    O::Wire(WireError::OutsideSessionWindow),
+                    "wire_outside_session_window",
+                ),
+                (
+                    O::Wire(WireError::StaleEpochObservation),
+                    "wire_stale_epoch_observation",
+                ),
+                (
+                    O::Wire(WireError::UnsupportedMessage),
+                    "wire_unsupported_message",
+                ),
                 (O::State(StateError::Io), "state_io"),
                 (O::State(StateError::UnsafePath), "state_unsafe_path"),
                 (O::State(StateError::InvalidState), "state_invalid_state"),
                 (O::State(StateError::LockBusy), "state_lock_busy"),
-                (O::State(StateError::PriorSessionUncertain), "state_prior_session_uncertain"),
-                (O::State(StateError::ReconnectNotReady), "state_reconnect_not_ready"),
+                (
+                    O::State(StateError::PriorSessionUncertain),
+                    "state_prior_session_uncertain",
+                ),
+                (
+                    O::State(StateError::ReconnectNotReady),
+                    "state_reconnect_not_ready",
+                ),
                 (O::State(StateError::Serialization), "state_serialization"),
-                (O::State(StateError::Budget(BudgetError::MinimumSpacing)), "state_budget_minimum_spacing"),
-                (O::State(StateError::Budget(BudgetError::RollingWindow)), "state_budget_rolling_window"),
-                (O::State(StateError::Budget(BudgetError::DailyLimit)), "state_budget_daily_limit"),
+                (
+                    O::State(StateError::Budget(BudgetError::MinimumSpacing)),
+                    "state_budget_minimum_spacing",
+                ),
+                (
+                    O::State(StateError::Budget(BudgetError::RollingWindow)),
+                    "state_budget_rolling_window",
+                ),
+                (
+                    O::State(StateError::Budget(BudgetError::DailyLimit)),
+                    "state_budget_daily_limit",
+                ),
+                #[cfg(feature = "market-stream-provisioning")]
+                (
+                    O::State(StateError::ProvisioningActorDenied),
+                    "state_provisioning_actor_denied",
+                ),
+                #[cfg(feature = "market-stream-provisioning")]
+                (
+                    O::State(StateError::ProvisioningInputInvalid),
+                    "state_provisioning_input_invalid",
+                ),
+                #[cfg(feature = "market-stream-provisioning")]
+                (
+                    O::State(StateError::ProvisioningUncertain),
+                    "state_provisioning_uncertain",
+                ),
                 (O::Cancelled, "cancelled"),
                 (O::SessionProofRequired, "session_proof_required"),
                 (O::SessionProofInvalid, "session_proof_invalid"),
             ];
-            assert!(original19_grammar_value_is_valid("transport", "wire_invalid_utf8"));
+            assert!(original19_grammar_value_is_valid(
+                "transport",
+                "wire_invalid_utf8"
+            ));
             for value in [
                 "wire_invalid_utf7",
                 "wire_invalid_utf80",
@@ -1629,23 +1908,34 @@ mod database_cases {
                 assert!(!original19_grammar_value_is_valid("transport", value));
             }
             for field in [
-                "site", "iteration", "step", "terminal", "error", "producer",
-                "storage", "sqlx", "control", "diagnostic",
+                "site",
+                "iteration",
+                "step",
+                "terminal",
+                "error",
+                "producer",
+                "storage",
+                "sqlx",
+                "control",
+                "diagnostic",
             ] {
-                assert!(!original19_grammar_value_is_valid(field, "wire_invalid_utf8"));
+                assert!(!original19_grammar_value_is_valid(
+                    field,
+                    "wire_invalid_utf8"
+                ));
                 assert!(!original19_grammar_value_is_valid(field, "value2"));
             }
             for (observation, expected) in cases {
                 let diagnostic = Original19Diagnostic::new();
                 diagnostic.enter(Original19Site::InitialApply);
                 let calls = Cell::new(0);
-                let result: Result<(), _> = diagnostic.observe(
-                    Err(MarketStreamProducerError::TransportFailure),
-                    |error| original19_producer_error(error, || {
-                        calls.set(calls.get() + 1);
-                        Some(observation)
-                    }),
-                );
+                let result: Result<(), _> =
+                    diagnostic.observe(Err(MarketStreamProducerError::TransportFailure), |error| {
+                        original19_producer_error(error, || {
+                            calls.set(calls.get() + 1);
+                            Some(observation)
+                        })
+                    });
                 assert_eq!(result, Err(MarketStreamProducerError::TransportFailure));
                 assert_eq!(calls.get(), 1);
                 diagnostic.freeze(Original19Terminal::ReturnedError);
@@ -1663,25 +1953,51 @@ mod database_cases {
         fn fixture_sqlx_and_unknown_payloads_are_structural_and_site_bound() {
             const SENTINEL: &str = "R71_SYNTHETIC_SECRET";
             let cases: Vec<(CaseError, &str, &str)> = vec![
-                (Box::new(sqlx::Error::Protocol(SENTINEL.into())), "sqlx", "protocol"),
-                (Box::new(sqlx::Error::InvalidArgument(SENTINEL.into())), "sqlx", "invalid_argument"),
-                (Box::new(sqlx::Error::ColumnNotFound(SENTINEL.into())), "sqlx", "column_not_found"),
+                (
+                    Box::new(sqlx::Error::Protocol(SENTINEL.into())),
+                    "sqlx",
+                    "protocol",
+                ),
+                (
+                    Box::new(sqlx::Error::InvalidArgument(SENTINEL.into())),
+                    "sqlx",
+                    "invalid_argument",
+                ),
+                (
+                    Box::new(sqlx::Error::ColumnNotFound(SENTINEL.into())),
+                    "sqlx",
+                    "column_not_found",
+                ),
                 (Box::new(sqlx::Error::RowNotFound), "sqlx", "row_not_found"),
-                (Box::new(sqlx::Error::PoolTimedOut), "sqlx", "pool_timed_out"),
+                (
+                    Box::new(sqlx::Error::PoolTimedOut),
+                    "sqlx",
+                    "pool_timed_out",
+                ),
                 (Box::new(sqlx::Error::PoolClosed), "sqlx", "pool_closed"),
-                (Box::new(sqlx::Error::Io(io::Error::other(SENTINEL))), "sqlx", "io"),
-                (Box::new(sqlx::Error::Decode(Box::new(io::Error::other(SENTINEL)))), "sqlx", "decode"),
+                (
+                    Box::new(sqlx::Error::Io(io::Error::other(SENTINEL))),
+                    "sqlx",
+                    "io",
+                ),
+                (
+                    Box::new(sqlx::Error::Decode(Box::new(io::Error::other(SENTINEL)))),
+                    "sqlx",
+                    "decode",
+                ),
                 (SENTINEL.into(), "fixture_returned_error", "none"),
             ];
             for (error, expected_kind, expected_sqlx) in cases {
                 let diagnostic = Original19Diagnostic::new();
                 diagnostic.enter(Original19Site::LoopbackSetup);
                 let pointer = error.as_ref() as *const (dyn Error + Send + Sync);
-                let result: Result<(), CaseError> = diagnostic.observe(Err(error), |error| {
-                    original19_fixture_error(error.as_ref())
-                });
-                let returned = result.err().expect("fixture error unchanged");
-                assert!(std::ptr::eq(pointer, returned.as_ref() as *const (dyn Error + Send + Sync)));
+                let result: Result<(), CaseError> = diagnostic
+                    .observe(Err(error), |error| original19_fixture_error(error.as_ref()));
+                let returned = result.expect_err("fixture error unchanged");
+                assert!(std::ptr::eq(
+                    pointer,
+                    returned.as_ref() as *const (dyn Error + Send + Sync)
+                ));
                 diagnostic.freeze(Original19Terminal::ReturnedError);
                 let record = diagnostic.snapshot().0;
                 assert_eq!(record.site, Original19Site::LoopbackSetup);
@@ -1711,7 +2027,8 @@ mod database_cases {
             let error = tokio::spawn(async { Err::<(), ()>(()) }).await;
             let panic: Result<Result<(), ()>, _> = tokio::spawn(async {
                 panic!("R71_SYNTHETIC_BODY_UNWIND");
-            }).await;
+            })
+            .await;
             let pending = tokio::spawn(std::future::pending::<Result<(), ()>>());
             pending.abort();
             let cancelled = pending.await;
@@ -1723,8 +2040,14 @@ mod database_cases {
             // the closed fallback uses these exact flags in the real adapter.
             assert_eq!(original19_join_error(false, false), J::Other);
             assert_eq!(original19_join_error(true, true), J::Panic);
-            assert_eq!(original19_terminal(true, original19_joined(&ok)), T::TimeoutJoinedOk);
-            assert_eq!(original19_terminal(true, original19_joined(&error)), T::TimeoutJoinedBodyError);
+            assert_eq!(
+                original19_terminal(true, original19_joined(&ok)),
+                T::TimeoutJoinedOk
+            );
+            assert_eq!(
+                original19_terminal(true, original19_joined(&error)),
+                T::TimeoutJoinedBodyError
+            );
         }
 
         #[test]
@@ -1738,10 +2061,13 @@ mod database_cases {
             diagnostic.freeze(Original19Terminal::ReturnedOk);
             assert_eq!(diagnostic.snapshot(), frozen);
             let state = diagnostic.state.clone();
-            assert!(catch_unwind(move || {
-                let _guard = state.lock().expect("fresh synthetic diagnostic state");
-                panic!("R71_SYNTHETIC_STATE_POISON");
-            }).is_err());
+            assert!(
+                catch_unwind(move || {
+                    let _guard = state.lock().expect("fresh synthetic diagnostic state");
+                    panic!("R71_SYNTHETIC_STATE_POISON");
+                })
+                .is_err()
+            );
             diagnostic.enter(Original19Site::Seed);
             diagnostic.freeze(Original19Terminal::JoinPanic);
             let (record, availability) = diagnostic.snapshot();
@@ -1773,9 +2099,18 @@ mod database_cases {
                 (C::TransportStatus(S::Connected), "status_connected"),
                 (C::TransportStatus(S::Closed), "status_closed"),
                 (C::TransportStatus(S::Gap), "status_gap"),
-                (C::TransportStatus(S::DataBeforeAck), "status_data_before_ack"),
-                (C::TransportStatus(S::DuplicateObservation), "status_duplicate_observation"),
-                (C::TransportStatus(S::StaleObservation), "status_stale_observation"),
+                (
+                    C::TransportStatus(S::DataBeforeAck),
+                    "status_data_before_ack",
+                ),
+                (
+                    C::TransportStatus(S::DuplicateObservation),
+                    "status_duplicate_observation",
+                ),
+                (
+                    C::TransportStatus(S::StaleObservation),
+                    "status_stale_observation",
+                ),
             ] {
                 let diagnostic = Original19Diagnostic::new();
                 diagnostic.iteration(Original19Iteration::Two);
@@ -1788,10 +2123,15 @@ mod database_cases {
                 assert_eq!(record.iteration, Original19Iteration::Two);
                 assert_grammar(&render(&diagnostic));
             }
-            for iteration in [Original19Iteration::One, Original19Iteration::Two, Original19Iteration::Three] {
+            for iteration in [
+                Original19Iteration::One,
+                Original19Iteration::Two,
+                Original19Iteration::Three,
+            ] {
                 let diagnostic = Original19Diagnostic::new();
                 diagnostic.iteration(iteration);
-                let missing: Result<(), &str> = original19_quote!(diagnostic, Err("R71_SYNTHETIC_SECRET"));
+                let missing: Result<(), &str> =
+                    original19_quote!(diagnostic, Err("R71_SYNTHETIC_SECRET"));
                 assert_eq!(missing, Err("R71_SYNTHETIC_SECRET"));
                 diagnostic.freeze(Original19Terminal::ReturnedError);
                 let record = diagnostic.snapshot().0;
@@ -1806,7 +2146,8 @@ mod database_cases {
         fn macro_records_entered_before_operation_and_success_only_after_ok() {
             let diagnostic = Original19Diagnostic::new();
             let value: Result<u8, ()> = original19_observe!(
-                diagnostic, InitialDemand,
+                diagnostic,
+                InitialDemand,
                 {
                     let record = diagnostic.snapshot().0;
                     assert_eq!(record.site, Original19Site::InitialDemand);
@@ -1822,15 +2163,19 @@ mod database_cases {
             assert_eq!(diagnostic.snapshot().0.step, Original19Step::ReturnedOk);
         }
 
-
         #[test]
         fn only_original19_source_body_opts_in() {
             let source = include_str!("market_stream_producer_tests.rs");
             let call = concat!("let receipt = ", "run_original19_database_case(");
             assert_eq!(source.matches(call).count(), 1);
-            let name = concat!("async fn producer_real_role_", "publishes_and_keeps_positive_count_ack()");
+            let name = concat!(
+                "async fn producer_real_role_",
+                "publishes_and_keeps_positive_count_ack()"
+            );
             let start = source.find(name).expect("original19 source definition");
-            let next = source[start..].find("\n    #[tokio::test").expect("next existing case");
+            let next = source[start..]
+                .find("\n    #[tokio::test")
+                .expect("next existing case");
             assert!(source[start..start + next].contains(call));
         }
 
@@ -1842,7 +2187,10 @@ mod database_cases {
             );
             let legacy = ClosedCaseDiagnostic::new();
             let mut bytes = Vec::new();
-            assert_eq!(legacy.emit_to(&mut bytes), ClosedDiagnosticWriteOutcome::Written);
+            assert_eq!(
+                legacy.emit_to(&mut bytes),
+                ClosedDiagnosticWriteOutcome::Written
+            );
             assert_eq!(
                 bytes,
                 b"C3B_CLOSED_DIAGNOSTIC stage=not_started gate=not_reached result=unknown termination=running observation=pending producer=pending\n"
@@ -1850,7 +2198,10 @@ mod database_cases {
             let calls = Cell::new(0);
             let (write, ()) = original19_emit_then_cleanup(
                 None,
-                |_| { calls.set(calls.get() + 1); Ok(()) },
+                |_| {
+                    calls.set(calls.get() + 1);
+                    Ok(())
+                },
                 || (),
             );
             assert_eq!(write, None);
@@ -1903,7 +2254,8 @@ mod database_cases {
             None,
             None,
             Some(diagnostic),
-        ).await
+        )
+        .await
     }
 
     async fn run_database_case_inner<F>(
@@ -1915,34 +2267,48 @@ mod database_cases {
     where
         F: FnOnce(boundary::DisposableDatabase) -> CaseFuture + Send + 'static,
     {
-        if let Some(companion) = &original20 { companion.enter(Original20Site::CreateDatabase); }
-        if let Some(companion) = &original19 { companion.enter(Original19Site::CreateDatabase); }
+        if let Some(companion) = &original20 {
+            companion.enter(Original20Site::CreateDatabase);
+        }
+        if let Some(companion) = &original19 {
+            companion.enter(Original19Site::CreateDatabase);
+        }
         let database = match boundary::DisposableDatabase::create().await {
             Ok(database) => {
                 if let Some(companion) = &original19 {
                     let _: Result<(), ()> = companion.observe(Ok(()), |_| unreachable!());
                 }
                 database
-            },
+            }
             Err(error) => {
                 if let Some(diagnostic) = &diagnostic {
                     diagnostic.record_setup_failure();
                     let _ = diagnostic.emit();
                 }
                 if let Some(companion) = &original19 {
-                    let _: Result<(), &CaseError> = companion.observe(Err(&error), |error| original19_fixture_error(error.as_ref()));
+                    let _: Result<(), &CaseError> = companion.observe(Err(&error), |error| {
+                        original19_fixture_error(error.as_ref())
+                    });
                     companion.freeze(Original19Terminal::ReturnedError);
-                    let _ = original19_emit_then_cleanup(Some(companion), Original19Diagnostic::emit, || ());
+                    let _ = original19_emit_then_cleanup(
+                        Some(companion),
+                        Original19Diagnostic::emit,
+                        || (),
+                    );
                 }
                 if let Some(companion) = &original20 {
                     companion.freeze(Original19Terminal::ReturnedError);
                     let _ = companion.emit();
                 }
-                return Err(error.into());
+                return Err(error);
             }
         };
-        if let Some(companion) = &original20 { companion.enter(Original20Site::DatabaseName); }
-        if let Some(companion) = &original19 { companion.enter(Original19Site::DatabaseName); }
+        if let Some(companion) = &original20 {
+            companion.enter(Original20Site::DatabaseName);
+        }
+        if let Some(companion) = &original19 {
+            companion.enter(Original19Site::DatabaseName);
+        }
         let database_name: String = match sqlx::query_scalar("SELECT current_database()")
             .fetch_one(&database.migration_owner)
             .await
@@ -1952,16 +2318,21 @@ mod database_cases {
                     let _: Result<(), ()> = companion.observe(Ok(()), |_| unreachable!());
                 }
                 database_name
-            },
+            }
             Err(error) => {
                 if let Some(diagnostic) = &diagnostic {
                     diagnostic.record_setup_failure();
                     let _ = diagnostic.emit();
                 }
                 if let Some(companion) = &original19 {
-                    let _: Result<(), &sqlx::Error> = companion.observe(Err(&error), |error| original19_fixture_error(*error));
+                    let _: Result<(), &sqlx::Error> =
+                        companion.observe(Err(&error), |error| original19_fixture_error(*error));
                     companion.freeze(Original19Terminal::ReturnedError);
-                    let _ = original19_emit_then_cleanup(Some(companion), Original19Diagnostic::emit, || ());
+                    let _ = original19_emit_then_cleanup(
+                        Some(companion),
+                        Original19Diagnostic::emit,
+                        || (),
+                    );
                 }
                 if let Some(companion) = &original20 {
                     companion.freeze(Original19Terminal::ReturnedError);
@@ -2004,10 +2375,16 @@ mod database_cases {
                 }
                 Ok(Err(error)) => {
                     if let Some(companion) = &original20 {
-                        companion.freeze(original19_terminal(false, original19_join_error(error.is_panic(), error.is_cancelled())));
+                        companion.freeze(original19_terminal(
+                            false,
+                            original19_join_error(error.is_panic(), error.is_cancelled()),
+                        ));
                     }
                     if let Some(companion) = &original19 {
-                        companion.freeze(original19_terminal(false, original19_join_error(error.is_panic(), error.is_cancelled())));
+                        companion.freeze(original19_terminal(
+                            false,
+                            original19_join_error(error.is_panic(), error.is_cancelled()),
+                        ));
                     }
                     if let Some(diagnostic) = &diagnostic {
                         diagnostic.record_join_error(error.is_panic(), error.is_cancelled());
@@ -2029,21 +2406,22 @@ mod database_cases {
                     (false, joined.is_err_and(|error| error.is_panic()))
                 }
             };
-        if let Some(companion) = &original20 { let _ = companion.emit(); }
-        let (_companion_write, cleanup_future) = original19_emit_then_cleanup(
-            original19.as_ref(),
-            Original19Diagnostic::emit,
-            || emit_diagnostic_then_cleanup(
-                diagnostic.as_ref(),
-                ClosedCaseDiagnostic::emit,
-                || async {
-                    let fixture_cleanup = fixture_owner.cleanup().await;
-                    let cleanup_result = database.cleanup().await;
-                    let catalog_result = catalog_state(&database_name).await;
-                    (fixture_cleanup, cleanup_result, catalog_result)
-                },
-            ),
-        );
+        if let Some(companion) = &original20 {
+            let _ = companion.emit();
+        }
+        let (_companion_write, cleanup_future) =
+            original19_emit_then_cleanup(original19.as_ref(), Original19Diagnostic::emit, || {
+                emit_diagnostic_then_cleanup(
+                    diagnostic.as_ref(),
+                    ClosedCaseDiagnostic::emit,
+                    || async {
+                        let fixture_cleanup = fixture_owner.cleanup().await;
+                        let cleanup_result = database.cleanup().await;
+                        let catalog_result = catalog_state(&database_name).await;
+                        (fixture_cleanup, cleanup_result, catalog_result)
+                    },
+                )
+            });
         let (_diagnostic_write, (fixture_cleanup, cleanup_result, catalog_result)) =
             cleanup_future.await;
         let (absent, connections) = catalog_result?;
@@ -2911,9 +3289,8 @@ mod database_cases {
                     .await?;
                 assert_eq!(current.items.len(), 1);
                 let state_before = scenario.producer.command_state_snapshot()?;
-                let (committed, unsubscribe_not_before) = deferred_reconciliation(
-                    scenario.producer.reconcile_desired(&current).await?,
-                )?;
+                let (committed, unsubscribe_not_before) =
+                    deferred_reconciliation(scenario.producer.reconcile_desired(&current).await?)?;
                 assert_eq!(committed.active_symbols, 2);
                 assert_eq!(committed.transport_commands, 0);
                 assert_eq!(scenario.producer.command_state_snapshot()?, state_before);
@@ -3189,7 +3566,7 @@ mod database_cases {
         let database_name: String = sqlx::query_scalar("SELECT current_database()")
             .fetch_one(&database.migration_owner)
             .await?;
-        Ok(support::PgRelay::start(&database_name).await?)
+        support::PgRelay::start(&database_name).await
     }
 
     async fn worker_repository_via_relay(
@@ -3328,83 +3705,172 @@ mod database_cases {
     async fn producer_real_role_publishes_and_keeps_positive_count_ack() {
         let receipt = run_original19_database_case(|database, diagnostic| {
             Box::pin(async move {
-                let fixture = original19_observe!(diagnostic, Seed, boundary::seed_fixture(&database).await, |error| original19_fixture_error(error.as_ref()))?;
+                let fixture = original19_observe!(
+                    diagnostic,
+                    Seed,
+                    boundary::seed_fixture(&database).await,
+                    |error| original19_fixture_error(error.as_ref())
+                )?;
                 let identities = fixture.identities[..2].to_vec();
-                let lease = original19_observe!(diagnostic, PrimaryLease, make_lease(
-                    &database,
-                    &fixture,
-                    &identities,
-                    Uuid::new_v4(),
-                    0,
-                    "c3b-primary-lease",
-                )
-                .await, |error| original19_fixture_error(error.as_ref()))?;
-                let worker = OwnerMarketStreamRepository::new(database.worker.clone());
-                let producer_lease = original19_observe!(diagnostic, Claim, worker
-                    .claim_stream_producer(
-                        fixture.credential_slot_id,
+                let lease = original19_observe!(
+                    diagnostic,
+                    PrimaryLease,
+                    make_lease(
+                        &database,
+                        &fixture,
+                        &identities,
                         Uuid::new_v4(),
-                        fixture.grant_revision,
+                        0,
+                        "c3b-primary-lease",
                     )
-                    .await, |error| original19_fixture_error(error))?;
-                let now_ms = original19_observe!(diagnostic, InitialDbTime, boundary::now(&database).await, |error| original19_fixture_error(error))?.timestamp_millis();
-                let mut transport = original19_observe!(diagnostic, LoopbackSetup, support::loopback_session(
-                    fixture.session_date,
-                    fixture.credential_slot_id,
-                    now_ms,
-                    vec![
-                        support::CommandPlan::new(
-                            "000660",
-                            MarketSubscriptionOperation::Subscribe,
-                            vec![("000660".to_owned(), 1)],
-                        ),
-                        support::CommandPlan::new(
-                            "005930",
-                            MarketSubscriptionOperation::Subscribe,
-                            vec![("005930".to_owned(), 2), ("000660".to_owned(), 3)],
-                        ),
-                    ],
-                    false,
-                )
-                .await, |error| original19_fixture_error(error.as_ref()))?;
-                let mut producer = original19_observe!(diagnostic, Start, OwnerMarketStreamProducer::start(
-                    worker.clone(),
-                    producer_lease,
-                    fixture.session.clone(),
-                    transport.take_session(),
-                )
-                .await, |error| original19_producer_error(error, || None))?;
+                    .await,
+                    |error| original19_fixture_error(error.as_ref())
+                )?;
+                let worker = OwnerMarketStreamRepository::new(database.worker.clone());
+                let producer_lease = original19_observe!(
+                    diagnostic,
+                    Claim,
+                    worker
+                        .claim_stream_producer(
+                            fixture.credential_slot_id,
+                            Uuid::new_v4(),
+                            fixture.grant_revision,
+                        )
+                        .await,
+                    |error| original19_fixture_error(error)
+                )?;
+                let now_ms = original19_observe!(
+                    diagnostic,
+                    InitialDbTime,
+                    boundary::now(&database).await,
+                    |error| original19_fixture_error(error)
+                )?
+                .timestamp_millis();
+                let mut transport = original19_observe!(
+                    diagnostic,
+                    LoopbackSetup,
+                    support::loopback_session(
+                        fixture.session_date,
+                        fixture.credential_slot_id,
+                        now_ms,
+                        vec![
+                            support::CommandPlan::new(
+                                "000660",
+                                MarketSubscriptionOperation::Subscribe,
+                                vec![("000660".to_owned(), 1)],
+                            ),
+                            support::CommandPlan::new(
+                                "005930",
+                                MarketSubscriptionOperation::Subscribe,
+                                vec![("005930".to_owned(), 2), ("000660".to_owned(), 3)],
+                            ),
+                        ],
+                        false,
+                    )
+                    .await,
+                    |error| original19_fixture_error(error.as_ref())
+                )?;
+                let mut producer = original19_observe!(
+                    diagnostic,
+                    Start,
+                    OwnerMarketStreamProducer::start(
+                        worker.clone(),
+                        producer_lease,
+                        fixture.session.clone(),
+                        transport.take_session(),
+                    )
+                    .await,
+                    |error| original19_producer_error(error, || None)
+                )?;
                 let transport_probe: ProducerTransportErrorProbe = producer.transport_error_probe();
-                let demand = original19_observe!(diagnostic, InitialDemand, worker
-                    .read_stream_demand(fixture.credential_slot_id)
-                    .await, |error| original19_fixture_error(error))?;
+                let demand = original19_observe!(
+                    diagnostic,
+                    InitialDemand,
+                    worker.read_stream_demand(fixture.credential_slot_id).await,
+                    |error| original19_fixture_error(error)
+                )?;
                 // Preserve the existing received_at >= exact DB sample assertion.
                 // Only advance via real elapsed time from the conservative socket floor.
-                original19_observe!(diagnostic, InitialApply, transport.wait_for_command_eligibility(now_ms).await, |error| original19_fixture_error(error.as_ref()))?;
-                let progress = original19_observe!(diagnostic, InitialApply, producer.reconcile_desired(&demand).await, |error| original19_producer_error(error, || transport_probe.take()))?;
+                original19_observe!(
+                    diagnostic,
+                    InitialApply,
+                    transport.wait_for_command_eligibility(now_ms).await,
+                    |error| original19_fixture_error(error.as_ref())
+                )?;
+                let progress = original19_observe!(
+                    diagnostic,
+                    InitialApply,
+                    producer.reconcile_desired(&demand).await,
+                    |error| original19_producer_error(error, || transport_probe.take())
+                )?;
                 let applied = match progress {
                     MarketStreamReconcileOutcome::Complete(applied) => applied,
-                    MarketStreamReconcileOutcome::Deferred { committed, not_before_ms } => {
+                    MarketStreamReconcileOutcome::Deferred {
+                        committed,
+                        not_before_ms,
+                    } => {
                         assert_eq!(committed.active_symbols, 1);
                         assert_eq!(committed.transport_commands, 1);
-                        let ack_before = original19_observe!(diagnostic, SnapshotBefore, snapshot_subscription(
-                            &database, fixture.owner_user_id, fixture.credential_slot_id, "000660",
-                        ).await, |error| original19_fixture_error(error))?;
+                        let ack_before = original19_observe!(
+                            diagnostic,
+                            SnapshotBefore,
+                            snapshot_subscription(
+                                &database,
+                                fixture.owner_user_id,
+                                fixture.credential_slot_id,
+                                "000660",
+                            )
+                            .await,
+                            |error| original19_fixture_error(error)
+                        )?;
                         assert_eq!(ack_before.0, "ACKED");
                         assert!(ack_before.3.is_some());
-                        original19_observe!(diagnostic, InitialApply, transport.wait_for_command_eligibility(not_before_ms).await, |error| original19_fixture_error(error.as_ref()))?;
-                        let fresh = original19_observe!(diagnostic, InitialDemand, worker.read_stream_demand(fixture.credential_slot_id).await, |error| original19_fixture_error(error))?;
+                        original19_observe!(
+                            diagnostic,
+                            InitialApply,
+                            transport.wait_for_command_eligibility(not_before_ms).await,
+                            |error| original19_fixture_error(error.as_ref())
+                        )?;
+                        let fresh = original19_observe!(
+                            diagnostic,
+                            InitialDemand,
+                            worker.read_stream_demand(fixture.credential_slot_id).await,
+                            |error| original19_fixture_error(error)
+                        )?;
                         // Exactly one explicit continuation, no retry loop.
-                        let resumed = original19_observe!(diagnostic, InitialApply, producer.reconcile_desired(&fresh).await, |error| original19_producer_error(error, || transport_probe.take()))?;
-                        let resumed = original19_observe!(diagnostic, InitialApply, resumed.into_complete(), |error| original19_producer_error(error, || transport_probe.take()))?;
+                        let resumed = original19_observe!(
+                            diagnostic,
+                            InitialApply,
+                            producer.reconcile_desired(&fresh).await,
+                            |error| original19_producer_error(error, || transport_probe.take())
+                        )?;
+                        let resumed = original19_observe!(
+                            diagnostic,
+                            InitialApply,
+                            resumed.into_complete(),
+                            |error| original19_producer_error(error, || transport_probe.take())
+                        )?;
                         assert_eq!(resumed.transport_commands, 1);
-                        let ack_after = original19_observe!(diagnostic, SnapshotBefore, snapshot_subscription(
-                            &database, fixture.owner_user_id, fixture.credential_slot_id, "000660",
-                        ).await, |error| original19_fixture_error(error))?;
-                        assert_eq!(ack_after, ack_before, "continuation must preserve the first ACK");
+                        let ack_after = original19_observe!(
+                            diagnostic,
+                            SnapshotBefore,
+                            snapshot_subscription(
+                                &database,
+                                fixture.owner_user_id,
+                                fixture.credential_slot_id,
+                                "000660",
+                            )
+                            .await,
+                            |error| original19_fixture_error(error)
+                        )?;
+                        assert_eq!(
+                            ack_after, ack_before,
+                            "continuation must preserve the first ACK"
+                        );
                         MarketStreamApplyOutcome {
                             active_symbols: resumed.active_symbols,
-                            transport_commands: committed.transport_commands
+                            transport_commands: committed
+                                .transport_commands
                                 .checked_add(resumed.transport_commands)
                                 .expect("two bounded command counts"),
                         }
@@ -3412,36 +3878,67 @@ mod database_cases {
                 };
                 assert_eq!(applied.active_symbols, 2);
                 assert_eq!(applied.transport_commands, 2);
-                assert_eq!(original19_observe!(diagnostic, FirstCommandReceipt, transport.next_command().await, |error| original19_fixture_error(error.as_ref()))?.0, "000660");
-                assert_eq!(original19_observe!(diagnostic, SecondCommandReceipt, transport.next_command().await, |error| original19_fixture_error(error.as_ref()))?.0, "005930");
+                assert_eq!(
+                    original19_observe!(
+                        diagnostic,
+                        FirstCommandReceipt,
+                        transport.next_command().await,
+                        |error| original19_fixture_error(error.as_ref())
+                    )?
+                    .0,
+                    "000660"
+                );
+                assert_eq!(
+                    original19_observe!(
+                        diagnostic,
+                        SecondCommandReceipt,
+                        transport.next_command().await,
+                        |error| original19_fixture_error(error.as_ref())
+                    )?
+                    .0,
+                    "005930"
+                );
 
-                let before = original19_observe!(diagnostic, SnapshotBefore, snapshot_subscription(
-                    &database,
-                    fixture.owner_user_id,
-                    fixture.credential_slot_id,
-                    "000660",
-                )
-                .await, |error| original19_fixture_error(error))?;
+                let before = original19_observe!(
+                    diagnostic,
+                    SnapshotBefore,
+                    snapshot_subscription(
+                        &database,
+                        fixture.owner_user_id,
+                        fixture.credential_slot_id,
+                        "000660",
+                    )
+                    .await,
+                    |error| original19_fixture_error(error)
+                )?;
                 assert_eq!(before.0, "ACKED");
                 assert_eq!(before.1, 1);
                 assert!(before.3.is_some());
 
-                let extra_lease = original19_observe!(diagnostic, ExtraLease, make_lease(
-                    &database,
-                    &fixture,
-                    &[identities
-                        .iter()
-                        .find(|identity| identity.symbol() == "000660")
-                        .unwrap()
-                        .clone()],
-                    Uuid::new_v4(),
-                    0,
-                    "c3b-extra-lease",
-                )
-                .await, |error| original19_fixture_error(error.as_ref()))?;
-                let twice = original19_observe!(diagnostic, DemandTwice, worker
-                    .read_stream_demand(fixture.credential_slot_id)
-                    .await, |error| original19_fixture_error(error))?;
+                let extra_lease = original19_observe!(
+                    diagnostic,
+                    ExtraLease,
+                    make_lease(
+                        &database,
+                        &fixture,
+                        &[identities
+                            .iter()
+                            .find(|identity| identity.symbol() == "000660")
+                            .unwrap()
+                            .clone()],
+                        Uuid::new_v4(),
+                        0,
+                        "c3b-extra-lease",
+                    )
+                    .await,
+                    |error| original19_fixture_error(error.as_ref())
+                )?;
+                let twice = original19_observe!(
+                    diagnostic,
+                    DemandTwice,
+                    worker.read_stream_demand(fixture.credential_slot_id).await,
+                    |error| original19_fixture_error(error)
+                )?;
                 assert_eq!(
                     twice
                         .items
@@ -3451,55 +3948,99 @@ mod database_cases {
                         .reference_count,
                     2
                 );
-                assert_eq!(original19_observe!(diagnostic, ApplyTwice, producer.apply_desired(&twice).await, |error| original19_producer_error(error, || transport_probe.take()))?.transport_commands, 0);
-                let after_two = original19_observe!(diagnostic, SnapshotTwice, snapshot_subscription(
-                    &database,
-                    fixture.owner_user_id,
-                    fixture.credential_slot_id,
-                    "000660",
-                )
-                .await, |error| original19_fixture_error(error))?;
+                assert_eq!(
+                    original19_observe!(
+                        diagnostic,
+                        ApplyTwice,
+                        producer.apply_desired(&twice).await,
+                        |error| original19_producer_error(error, || transport_probe.take())
+                    )?
+                    .transport_commands,
+                    0
+                );
+                let after_two = original19_observe!(
+                    diagnostic,
+                    SnapshotTwice,
+                    snapshot_subscription(
+                        &database,
+                        fixture.owner_user_id,
+                        fixture.credential_slot_id,
+                        "000660",
+                    )
+                    .await,
+                    |error| original19_fixture_error(error)
+                )?;
                 assert_eq!(after_two.0, before.0);
                 assert_eq!(after_two.1, 2);
                 assert_eq!(after_two.2, before.2);
                 assert_eq!(after_two.3, before.3);
                 assert_eq!(after_two.4, before.4);
                 assert_eq!(
-                    original19_observe!(diagnostic, ApplyIdentical, producer.apply_desired(&twice).await, |error| original19_producer_error(error, || transport_probe.take()))?.transport_commands,
+                    original19_observe!(
+                        diagnostic,
+                        ApplyIdentical,
+                        producer.apply_desired(&twice).await,
+                        |error| original19_producer_error(error, || transport_probe.take())
+                    )?
+                    .transport_commands,
                     0,
                     "reapplying the identical positive count must reserve no command"
                 );
-                let after_identical = original19_observe!(diagnostic, SnapshotIdentical, snapshot_subscription(
-                    &database,
-                    fixture.owner_user_id,
-                    fixture.credential_slot_id,
-                    "000660",
-                )
-                .await, |error| original19_fixture_error(error))?;
+                let after_identical = original19_observe!(
+                    diagnostic,
+                    SnapshotIdentical,
+                    snapshot_subscription(
+                        &database,
+                        fixture.owner_user_id,
+                        fixture.credential_slot_id,
+                        "000660",
+                    )
+                    .await,
+                    |error| original19_fixture_error(error)
+                )?;
                 assert_eq!(after_identical, after_two);
 
                 let app = OwnerMarketStreamRepository::new(database.app.clone());
-                original19_observe!(diagnostic, ReleaseExtra, app.release_stream_lease(
-                    fixture.owner_user_id,
-                    &fixture.owner_session_hash,
-                    extra_lease.lease_id,
-                    extra_lease.renewal_sequence,
-                )
-                .await, |error| original19_fixture_error(error))?;
-                let once_more = original19_observe!(diagnostic, DemandOnce, worker
-                    .read_stream_demand(fixture.credential_slot_id)
-                    .await, |error| original19_fixture_error(error))?;
+                original19_observe!(
+                    diagnostic,
+                    ReleaseExtra,
+                    app.release_stream_lease(
+                        fixture.owner_user_id,
+                        &fixture.owner_session_hash,
+                        extra_lease.lease_id,
+                        extra_lease.renewal_sequence,
+                    )
+                    .await,
+                    |error| original19_fixture_error(error)
+                )?;
+                let once_more = original19_observe!(
+                    diagnostic,
+                    DemandOnce,
+                    worker.read_stream_demand(fixture.credential_slot_id).await,
+                    |error| original19_fixture_error(error)
+                )?;
                 assert_eq!(
-                    original19_observe!(diagnostic, ApplyOnce, producer.apply_desired(&once_more).await, |error| original19_producer_error(error, || transport_probe.take()))?.transport_commands,
+                    original19_observe!(
+                        diagnostic,
+                        ApplyOnce,
+                        producer.apply_desired(&once_more).await,
+                        |error| original19_producer_error(error, || transport_probe.take())
+                    )?
+                    .transport_commands,
                     0
                 );
-                let after_one = original19_observe!(diagnostic, SnapshotOnce, snapshot_subscription(
-                    &database,
-                    fixture.owner_user_id,
-                    fixture.credential_slot_id,
-                    "000660",
-                )
-                .await, |error| original19_fixture_error(error))?;
+                let after_one = original19_observe!(
+                    diagnostic,
+                    SnapshotOnce,
+                    snapshot_subscription(
+                        &database,
+                        fixture.owner_user_id,
+                        fixture.credential_slot_id,
+                        "000660",
+                    )
+                    .await,
+                    |error| original19_fixture_error(error)
+                )?;
                 assert_eq!(after_one.1, 1);
                 assert_eq!(after_one.2, before.2);
                 assert_eq!(after_one.3, before.3);
@@ -3511,12 +4052,27 @@ mod database_cases {
                     .iter()
                     .map(|item| item.identity.clone())
                     .collect::<Vec<_>>();
-                let publish_now_ms = original19_observe!(diagnostic, PublicationDbTime, boundary::now(&database).await, |error| original19_fixture_error(error))?.timestamp_millis();
+                let publish_now_ms = original19_observe!(
+                    diagnostic,
+                    PublicationDbTime,
+                    boundary::now(&database).await,
+                    |error| original19_fixture_error(error)
+                )?
+                .timestamp_millis();
                 let mut committed_symbols = Vec::new();
                 let mut published_rows = Vec::new();
-                for iteration in [Original19Iteration::One, Original19Iteration::Two, Original19Iteration::Three] {
+                for iteration in [
+                    Original19Iteration::One,
+                    Original19Iteration::Two,
+                    Original19Iteration::Three,
+                ] {
                     diagnostic.iteration(iteration);
-                    let outcome = original19_observe!(diagnostic, ReadQuote, producer.read_and_publish(&admissions).await, |error| original19_producer_error(error, || transport_probe.take()))?;
+                    let outcome = original19_observe!(
+                        diagnostic,
+                        ReadQuote,
+                        producer.read_and_publish(&admissions).await,
+                        |error| original19_producer_error(error, || transport_probe.take())
+                    )?;
                     diagnostic.require_published(&outcome);
                     let MarketStreamProducerOutcome::Published(result) = outcome else {
                         return Err("expected committed quote publication".into());
@@ -3524,9 +4080,12 @@ mod database_cases {
                     assert!(result.changed);
                     assert_eq!(result.rows.len(), 1);
                     let row = &result.rows[0];
-                    let quote = original19_quote!(diagnostic, row.quote.as_ref().ok_or("committed row has no quote"))?;
+                    let quote = original19_quote!(
+                        diagnostic,
+                        row.quote.as_ref().ok_or("committed row has no quote")
+                    )?;
                     assert_eq!(quote.base_price, None);
-                    assert_eq!(quote.halted, false);
+                    assert!(!quote.halted);
                     assert_eq!(row.epoch, after_one.4);
                     assert!(row.epoch.is_some_and(|epoch| !epoch.is_nil()));
                     assert!(row.receive_ordinal.is_some_and(|ordinal| ordinal > 0));
@@ -3548,13 +4107,17 @@ mod database_cases {
                     published_rows[1].received_at, published_rows[2].received_at,
                     "packed records retain their single immutable frame timestamp"
                 );
-                let snapshot = original19_observe!(diagnostic, AppSnapshot, app
-                    .read_stream_snapshot(
+                let snapshot = original19_observe!(
+                    diagnostic,
+                    AppSnapshot,
+                    app.read_stream_snapshot(
                         fixture.owner_user_id,
                         &fixture.owner_session_hash,
                         lease.lease_id,
                     )
-                    .await, |error| original19_fixture_error(error))?;
+                    .await,
+                    |error| original19_fixture_error(error)
+                )?;
                 assert_eq!(snapshot.rows.len(), 2);
                 assert!(snapshot.rows.iter().all(|row| row.quote.is_some()));
                 assert_eq!(
@@ -3572,7 +4135,12 @@ mod database_cases {
                     "70003.00000000"
                 );
                 drop(producer);
-                let server = original19_observe!(diagnostic, TransportFinish, transport.finish().await, |error| original19_fixture_error(error.as_ref()))?;
+                let server = original19_observe!(
+                    diagnostic,
+                    TransportFinish,
+                    transport.finish().await,
+                    |error| original19_fixture_error(error.as_ref())
+                )?;
                 diagnostic.enter(Original19Site::FinalAssertions);
                 assert_eq!(server.commands.len(), 2);
                 assert_eq!(server.market_record_batches, vec![1, 2]);
@@ -4785,11 +5353,17 @@ mod database_cases {
                             assert_eq!(quote.base_price, None);
                             published.push((
                                 quote.price.clone(),
-                                original20_at!(diagnostic, RequireOrdinal,
-                                    row.receive_ordinal.ok_or("receipt ordinal missing"))?,
-                                original20_at!(diagnostic, RequireTimestamp,
-                                    row.received_at.ok_or("receipt timestamp missing"))?
-                                    .timestamp_millis(),
+                                original20_at!(
+                                    diagnostic,
+                                    RequireOrdinal,
+                                    row.receive_ordinal.ok_or("receipt ordinal missing")
+                                )?,
+                                original20_at!(
+                                    diagnostic,
+                                    RequireTimestamp,
+                                    row.received_at.ok_or("receipt timestamp missing")
+                                )?
+                                .timestamp_millis(),
                             ));
                             if published.len() == 2 {
                                 break;
@@ -4821,7 +5395,10 @@ mod database_cases {
                 assert_eq!(snapshot.rows.len(), 1);
                 assert_eq!(snapshot.rows[0].identity.symbol(), "000660");
                 diagnostic.enter(Original20Site::PersistedQuote);
-                assert_eq!(snapshot.rows[0].quote.as_ref().unwrap().price, "70004.00000000");
+                assert_eq!(
+                    snapshot.rows[0].quote.as_ref().unwrap().price,
+                    "70004.00000000"
+                );
                 diagnostic.enter(Original20Site::RemovedIdentity);
                 let removed_identity = scenario.leases[1].identities[0].clone();
                 drop(scenario.producer);
@@ -4893,10 +5470,7 @@ mod database_cases {
                     .await?;
                 assert_eq!(restored_demand.items.len(), 2);
                 diagnostic.enter(Original20Site::RestoredApply);
-                let applied = match next_producer
-                    .reconcile_desired(&restored_demand)
-                    .await?
-                {
+                let applied = match next_producer.reconcile_desired(&restored_demand).await? {
                     MarketStreamReconcileOutcome::Complete(applied) => applied,
                     MarketStreamReconcileOutcome::Deferred {
                         committed,
@@ -4944,8 +5518,7 @@ mod database_cases {
                     }
                 };
                 assert_eq!(
-                    applied.active_symbols,
-                    2,
+                    applied.active_symbols, 2,
                     "positive demand after unsubscribe requires fresh subscribe ACKs"
                 );
                 assert_eq!(applied.transport_commands, 2);
@@ -6518,8 +7091,22 @@ mod database_cases {
                 (T::TimeoutJoinedOther, "timeout_joined_other"),
                 (T::DiagnosticUnavailable, "diagnostic_unavailable"),
             ];
-            assert_eq!(SITES.iter().map(|(_, token)| *token).collect::<std::collections::BTreeSet<_>>().len(), 45);
-            assert_eq!(TERMINALS.iter().map(|(_, token)| *token).collect::<std::collections::BTreeSet<_>>().len(), 11);
+            assert_eq!(
+                SITES
+                    .iter()
+                    .map(|(_, token)| *token)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                45
+            );
+            assert_eq!(
+                TERMINALS
+                    .iter()
+                    .map(|(_, token)| *token)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                11
+            );
 
             let mut max_frame = 0;
             let mut max_record = 0;
@@ -6602,15 +7189,28 @@ mod database_cases {
                 panic!("R110D7_SYNTHETIC_JOIN_PANIC");
                 #[allow(unreachable_code)]
                 Ok::<(), ()>(())
-            }).await;
+            })
+            .await;
             let pending = tokio::spawn(std::future::pending::<Result<(), ()>>());
             pending.abort();
             let cancelled = pending.await;
 
             assert_mapping(original19_joined(&ok), T::ReturnedOk, T::TimeoutJoinedOk);
-            assert_mapping(original19_joined(&error), T::ReturnedError, T::TimeoutJoinedBodyError);
-            assert_mapping(original19_joined(&panic), T::JoinPanic, T::TimeoutJoinedPanic);
-            assert_mapping(original19_joined(&cancelled), T::JoinCancelled, T::TimeoutJoinedCancelled);
+            assert_mapping(
+                original19_joined(&error),
+                T::ReturnedError,
+                T::TimeoutJoinedBodyError,
+            );
+            assert_mapping(
+                original19_joined(&panic),
+                T::JoinPanic,
+                T::TimeoutJoinedPanic,
+            );
+            assert_mapping(
+                original19_joined(&cancelled),
+                T::JoinCancelled,
+                T::TimeoutJoinedCancelled,
+            );
             // Tokio has no public constructor for an arbitrary non-panic,
             // non-cancelled JoinError; this tests the existing pure flag fallback.
             assert_eq!(original19_join_error(false, false), J::Other);
@@ -6647,10 +7247,13 @@ mod database_cases {
             let poisoned = Original20Diagnostic::new();
             poisoned.enter(Original20Site::InitialApply);
             let state = poisoned.state.clone();
-            assert!(catch_unwind(AssertUnwindSafe(move || {
-                let _guard = state.lock().expect("fresh synthetic diagnostic state");
-                panic!("R110D7_SYNTHETIC_STATE_POISON");
-            })).is_err());
+            assert!(
+                catch_unwind(AssertUnwindSafe(move || {
+                    let _guard = state.lock().expect("fresh synthetic diagnostic state");
+                    panic!("R110D7_SYNTHETIC_STATE_POISON");
+                }))
+                .is_err()
+            );
             poisoned.enter(Original20Site::Complete);
             poisoned.freeze(Original19Terminal::ReturnedOk);
             let (available, frame) = render(&poisoned);
@@ -6661,15 +7264,25 @@ mod database_cases {
 
         #[test]
         fn write_error_preserves_frozen_diagnostic_state() {
-            struct ImmediateError { calls: usize }
+            struct ImmediateError {
+                calls: usize,
+            }
             impl Write for ImmediateError {
                 fn write(&mut self, _: &[u8]) -> io::Result<usize> {
                     self.calls += 1;
-                    Err(io::Error::new(io::ErrorKind::BrokenPipe, "R110D7_SYNTHETIC_IMMEDIATE_WRITE"))
+                    Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "R110D7_SYNTHETIC_IMMEDIATE_WRITE",
+                    ))
                 }
-                fn flush(&mut self) -> io::Result<()> { Ok(()) }
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
             }
-            struct ShortThenError { calls: usize, accepted: usize }
+            struct ShortThenError {
+                calls: usize,
+                accepted: usize,
+            }
             impl Write for ShortThenError {
                 fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
                     self.calls += 1;
@@ -6678,10 +7291,15 @@ mod database_cases {
                         self.accepted += accepted;
                         Ok(accepted)
                     } else {
-                        Err(io::Error::new(io::ErrorKind::BrokenPipe, "R110D7_SYNTHETIC_SHORT_WRITE"))
+                        Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "R110D7_SYNTHETIC_SHORT_WRITE",
+                        ))
                     }
                 }
-                fn flush(&mut self) -> io::Result<()> { Ok(()) }
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
             }
 
             let diagnostic = Original20Diagnostic::new();
@@ -6690,12 +7308,19 @@ mod database_cases {
             let expected = b"\nC3B_ORIGINAL20_STAGE_V1 site=persisted_app_snapshot terminal=returned_error diagnostic=available\n";
 
             let mut immediate = ImmediateError { calls: 0 };
-            let error = diagnostic.emit_to(&mut immediate).expect_err("immediate error propagates");
+            let error = diagnostic
+                .emit_to(&mut immediate)
+                .expect_err("immediate error propagates");
             assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
             assert_eq!(immediate.calls, 1);
 
-            let mut partial = ShortThenError { calls: 0, accepted: 0 };
-            let error = diagnostic.emit_to(&mut partial).expect_err("short write follow-up error propagates");
+            let mut partial = ShortThenError {
+                calls: 0,
+                accepted: 0,
+            };
+            let error = diagnostic
+                .emit_to(&mut partial)
+                .expect_err("short write follow-up error propagates");
             assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
             assert_eq!(partial.calls, 2);
             assert_eq!(partial.accepted, 7);
@@ -6710,7 +7335,12 @@ mod database_cases {
         fn optional_field_observer_preserves_result_and_evaluation_order() {
             struct MoveOnly(&'static str);
             fn site(diagnostic: &Original20Diagnostic) -> &'static str {
-                diagnostic.state.lock().expect("available synthetic state").site.literal()
+                diagnostic
+                    .state
+                    .lock()
+                    .expect("available synthetic state")
+                    .site
+                    .literal()
             }
             fn propagate(
                 diagnostic: &Original20Diagnostic,
@@ -6743,11 +7373,12 @@ mod database_cases {
 
             let value = Box::new(MoveOnly("ok"));
             let value_pointer = &*value as *const MoveOnly;
-            let ok: Result<Box<MoveOnly>, Box<MoveOnly>> = original20_at!(diagnostic, PublishedChecks, {
-                assert_eq!(site(&diagnostic), "published_checks");
-                evaluations.set(evaluations.get() + 1);
-                Ok(value)
-            });
+            let ok: Result<Box<MoveOnly>, Box<MoveOnly>> =
+                original20_at!(diagnostic, PublishedChecks, {
+                    assert_eq!(site(&diagnostic), "published_checks");
+                    evaluations.set(evaluations.get() + 1);
+                    Ok(value)
+                });
             let returned = match ok {
                 Ok(value) => value,
                 Err(_) => panic!("original Ok is preserved"),
@@ -6757,17 +7388,21 @@ mod database_cases {
 
             let error = Box::new(MoveOnly("error"));
             let error_pointer = &*error as *const MoveOnly;
-            let failed: Result<(), Box<MoveOnly>> = original20_at!(diagnostic, FirstTransportChecks, {
-                assert_eq!(site(&diagnostic), "first_transport_checks");
-                evaluations.set(evaluations.get() + 1);
-                Err(error)
-            });
+            let failed: Result<(), Box<MoveOnly>> =
+                original20_at!(diagnostic, FirstTransportChecks, {
+                    assert_eq!(site(&diagnostic), "first_transport_checks");
+                    evaluations.set(evaluations.get() + 1);
+                    Err(error)
+                });
             let returned = failed.expect_err("original Err is preserved");
             assert_eq!(error_pointer, &*returned as *const MoveOnly);
             assert_eq!(returned.0, "error");
 
             let continuation = Cell::new(0);
-            assert_eq!(propagate(&diagnostic, &evaluations, &continuation), Err("R110D7_SYNTHETIC_EARLY"));
+            assert_eq!(
+                propagate(&diagnostic, &evaluations, &continuation),
+                Err("R110D7_SYNTHETIC_EARLY")
+            );
             assert_eq!(continuation.get(), 0);
             assert_eq!(evaluations.get(), 5);
             assert_eq!(site(&diagnostic), "persisted_quote");

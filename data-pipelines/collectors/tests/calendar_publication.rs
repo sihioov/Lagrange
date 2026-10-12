@@ -3,6 +3,7 @@ mod common;
 use collectors::{
     CalendarPublicationSink, PostgresPublicationSink, PublicationState, PublishOutcome, SinkError,
 };
+use common::ScratchDb;
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::{
     FetchMode, MARKET_KR, PROVIDER_KIS_CALENDAR, RawEnvelope, RequestMetadata, ResponseKind,
@@ -10,9 +11,6 @@ use market_data::contract::{
 use market_data::normalize::{KIS_CALENDAR_SOURCE_VERSION, normalize_kis_calendar_batch};
 use market_data::publication::CalendarPublicationBundle;
 use market_data::storage::{BatchSpec, ManifestEntry, RawStore};
-use sqlx::Row;
-
-use common::ScratchDb;
 
 const CALENDAR_PATH: &str = "/uapi/domestic-stock/v1/quotations/chk-holiday";
 const CALENDAR_TR_ID: &str = "CTCA0903R";

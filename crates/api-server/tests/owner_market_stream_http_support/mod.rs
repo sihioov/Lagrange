@@ -11,7 +11,6 @@ use api_server::http::state::{
     ApiConfig, ApiState, OwnerBetaAccessMode, OwnerBetaEquitySignalsMode, OwnerBetaPaperMode,
     OwnerBetaPriceInputMode, OwnerIntradayQuoteReadConfig,
 };
-use auth::entitlement::Role;
 use auth::sessions::cookie;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderName, HeaderValue, Method, Request, StatusCode, header};
@@ -517,17 +516,30 @@ fn request(
         .map_err(|_| "HTTP request construction failed")
 }
 
+struct FixtureRequest<'a> {
+    method: Method,
+    path: &'a str,
+    session: Option<&'a TestSession>,
+    csrf: bool,
+    idempotency_key: Option<&'a str>,
+    origin: Option<&'a str>,
+    body: Vec<u8>,
+}
+
 async fn send(
     context: &CaseContext,
     router: &axum::Router,
-    method: Method,
-    path: &str,
-    session: Option<&TestSession>,
-    csrf: bool,
-    idempotency_key: Option<&str>,
-    origin: Option<&str>,
-    body: Vec<u8>,
+    fixture_request: FixtureRequest<'_>,
 ) -> CaseResult<Response> {
+    let FixtureRequest {
+        method,
+        path,
+        session,
+        csrf,
+        idempotency_key,
+        origin,
+        body,
+    } = fixture_request;
     let request = request(method, path, session, csrf, idempotency_key, origin, body)?;
     timeout_at(context.operation_deadline, router.clone().oneshot(request))
         .await
@@ -606,13 +618,15 @@ async fn post_lease(
     send(
         context,
         router,
-        Method::POST,
-        &format!("{STREAM_PREFIX}/stream-leases"),
-        Some(session),
-        true,
-        Some(idempotency_key),
-        Some("https://quotes.example"),
-        bytes,
+        FixtureRequest {
+            method: Method::POST,
+            path: &format!("{STREAM_PREFIX}/stream-leases"),
+            session: Some(session),
+            csrf: true,
+            idempotency_key: Some(idempotency_key),
+            origin: Some("https://quotes.example"),
+            body: bytes,
+        },
     )
     .await
 }
@@ -706,13 +720,15 @@ async fn release_lease(
     send(
         context,
         router,
-        Method::DELETE,
-        &format!("{STREAM_PREFIX}/stream-leases/{}", lease.lease_id),
-        Some(session),
-        true,
-        Some(idempotency_key),
-        Some("https://quotes.example"),
-        body,
+        FixtureRequest {
+            method: Method::DELETE,
+            path: &format!("{STREAM_PREFIX}/stream-leases/{}", lease.lease_id),
+            session: Some(session),
+            csrf: true,
+            idempotency_key: Some(idempotency_key),
+            origin: Some("https://quotes.example"),
+            body,
+        },
     )
     .await
 }
@@ -753,12 +769,12 @@ impl SseReader {
                             data.push(value);
                         }
                     }
-                    if let Some(name) = event_name {
-                        if !data.is_empty() {
-                            let value = serde_json::from_str(&data.join("\n"))
-                                .map_err(|_| "SSE event JSON was invalid")?;
-                            return Ok(Some(SseEvent { name, value }));
-                        }
+                    if let Some(name) = event_name
+                        && !data.is_empty()
+                    {
+                        let value = serde_json::from_str(&data.join("\n"))
+                            .map_err(|_| "SSE event JSON was invalid")?;
+                        return Ok(Some(SseEvent { name, value }));
                     }
                     continue;
                 }
@@ -828,16 +844,24 @@ fn ensure(condition: bool, message: &'static str) -> CaseResult {
     if condition { Ok(()) } else { Err(message) }
 }
 
+struct ActorSessionContext<'a> {
+    actor: Uuid,
+    session_hash: &'a str,
+}
+
 async fn binding_value(
     context: &CaseContext,
-    actor_guc: Uuid,
-    session_guc: &str,
+    actor_session_context: ActorSessionContext<'_>,
     owner: Uuid,
     session_hash: &str,
     slot: Uuid,
     grant: Uuid,
     source_hash: &str,
 ) -> CaseResult<bool> {
+    let ActorSessionContext {
+        actor: actor_guc,
+        session_hash: session_guc,
+    } = actor_session_context;
     let mut tx = context
         .db()
         .app
@@ -981,8 +1005,10 @@ async fn binding_helper_case(context: &mut CaseContext) -> CaseResult {
     ensure(
         binding_value(
             context,
-            fixture.owner_user_id,
-            &owner.session_hash,
+            ActorSessionContext {
+                actor: fixture.owner_user_id,
+                session_hash: &owner.session_hash,
+            },
             fixture.owner_user_id,
             &owner.session_hash,
             fixture.credential_slot_id,
@@ -1008,8 +1034,10 @@ async fn binding_helper_case(context: &mut CaseContext) -> CaseResult {
         ensure(
             !binding_value(
                 context,
-                fixture.owner_user_id,
-                &owner.session_hash,
+                ActorSessionContext {
+                    actor: fixture.owner_user_id,
+                    session_hash: &owner.session_hash,
+                },
                 fixture.owner_user_id,
                 &owner.session_hash,
                 slot,
@@ -1023,8 +1051,10 @@ async fn binding_helper_case(context: &mut CaseContext) -> CaseResult {
     ensure(
         !binding_value(
             context,
-            fixture.owner_user_id,
-            &owner.session_hash,
+            ActorSessionContext {
+                actor: fixture.owner_user_id,
+                session_hash: &owner.session_hash,
+            },
             fixture.other_owner_user_id,
             &owner.session_hash,
             fixture.credential_slot_id,
@@ -1038,8 +1068,10 @@ async fn binding_helper_case(context: &mut CaseContext) -> CaseResult {
     ensure(
         !binding_value(
             context,
-            fixture.owner_user_id,
-            &owner.session_hash,
+            ActorSessionContext {
+                actor: fixture.owner_user_id,
+                session_hash: &owner.session_hash,
+            },
             fixture.owner_user_id,
             &absent_hash,
             fixture.credential_slot_id,
@@ -1052,8 +1084,10 @@ async fn binding_helper_case(context: &mut CaseContext) -> CaseResult {
     ensure(
         !binding_value(
             context,
-            fixture.other_owner_user_id,
-            &owner.session_hash,
+            ActorSessionContext {
+                actor: fixture.other_owner_user_id,
+                session_hash: &owner.session_hash,
+            },
             fixture.owner_user_id,
             &owner.session_hash,
             fixture.credential_slot_id,
@@ -1066,8 +1100,10 @@ async fn binding_helper_case(context: &mut CaseContext) -> CaseResult {
     ensure(
         !binding_value(
             context,
-            fixture.owner_user_id,
-            &context.users.other_owner.session_hash,
+            ActorSessionContext {
+                actor: fixture.owner_user_id,
+                session_hash: &context.users.other_owner.session_hash,
+            },
             fixture.owner_user_id,
             &owner.session_hash,
             fixture.credential_slot_id,
@@ -1217,13 +1253,15 @@ async fn invalid_lease_status(
     let response = send(
         context,
         router,
-        Method::POST,
-        &format!("{STREAM_PREFIX}/stream-leases"),
-        Some(session),
-        true,
-        Some(key),
-        Some("https://quotes.example"),
-        bytes,
+        FixtureRequest {
+            method: Method::POST,
+            path: &format!("{STREAM_PREFIX}/stream-leases"),
+            session: Some(session),
+            csrf: true,
+            idempotency_key: Some(key),
+            origin: Some("https://quotes.example"),
+            body: bytes,
+        },
     )
     .await?;
     let _ = consumer_id;
@@ -1242,13 +1280,15 @@ async fn lease_authentication_case(context: &mut CaseContext) -> CaseResult {
     let response = send(
         context,
         &router,
-        Method::POST,
-        &path,
-        None,
-        false,
-        Some("wp4h-auth-no-session"),
-        Some("https://quotes.example"),
-        b"not-json".to_vec(),
+        FixtureRequest {
+            method: Method::POST,
+            path: &path,
+            session: None,
+            csrf: false,
+            idempotency_key: Some("wp4h-auth-no-session"),
+            origin: Some("https://quotes.example"),
+            body: b"not-json".to_vec(),
+        },
     )
     .await?;
     ensure(
@@ -1259,13 +1299,15 @@ async fn lease_authentication_case(context: &mut CaseContext) -> CaseResult {
     let response = send(
         context,
         &router,
-        Method::POST,
-        &path,
-        Some(&context.users.member),
-        true,
-        Some("wp4h-auth-member"),
-        Some("https://quotes.example"),
-        valid_bytes.clone(),
+        FixtureRequest {
+            method: Method::POST,
+            path: &path,
+            session: Some(&context.users.member),
+            csrf: true,
+            idempotency_key: Some("wp4h-auth-member"),
+            origin: Some("https://quotes.example"),
+            body: valid_bytes.clone(),
+        },
     )
     .await?;
     ensure(
@@ -1276,13 +1318,15 @@ async fn lease_authentication_case(context: &mut CaseContext) -> CaseResult {
     let response = send(
         context,
         &router,
-        Method::POST,
-        &path,
-        Some(&owner),
-        false,
-        Some("wp4h-auth-no-csrf"),
-        Some("https://quotes.example"),
-        valid_bytes.clone(),
+        FixtureRequest {
+            method: Method::POST,
+            path: &path,
+            session: Some(&owner),
+            csrf: false,
+            idempotency_key: Some("wp4h-auth-no-csrf"),
+            origin: Some("https://quotes.example"),
+            body: valid_bytes.clone(),
+        },
     )
     .await?;
     ensure(
@@ -1293,13 +1337,15 @@ async fn lease_authentication_case(context: &mut CaseContext) -> CaseResult {
     let response = send(
         context,
         &router,
-        Method::POST,
-        &path,
-        Some(&owner),
-        true,
-        Some("wp4h-auth-wrong-origin"),
-        Some("https://attacker.example"),
-        valid_bytes.clone(),
+        FixtureRequest {
+            method: Method::POST,
+            path: &path,
+            session: Some(&owner),
+            csrf: true,
+            idempotency_key: Some("wp4h-auth-wrong-origin"),
+            origin: Some("https://attacker.example"),
+            body: valid_bytes.clone(),
+        },
     )
     .await?;
     ensure(
@@ -1310,13 +1356,15 @@ async fn lease_authentication_case(context: &mut CaseContext) -> CaseResult {
     let response = send(
         context,
         &router,
-        Method::POST,
-        &path,
-        Some(&owner),
-        true,
-        None,
-        Some("https://quotes.example"),
-        valid_bytes.clone(),
+        FixtureRequest {
+            method: Method::POST,
+            path: &path,
+            session: Some(&owner),
+            csrf: true,
+            idempotency_key: None,
+            origin: Some("https://quotes.example"),
+            body: valid_bytes.clone(),
+        },
     )
     .await?;
     ensure(
@@ -1345,13 +1393,15 @@ async fn lease_authentication_case(context: &mut CaseContext) -> CaseResult {
     let response = send(
         context,
         &router,
-        Method::POST,
-        &format!("{path}?unexpected=1"),
-        Some(&owner),
-        true,
-        Some("wp4h-query-rejected"),
-        Some("https://quotes.example"),
-        valid_bytes.clone(),
+        FixtureRequest {
+            method: Method::POST,
+            path: &format!("{path}?unexpected=1"),
+            session: Some(&owner),
+            csrf: true,
+            idempotency_key: Some("wp4h-query-rejected"),
+            origin: Some("https://quotes.example"),
+            body: valid_bytes.clone(),
+        },
     )
     .await?;
     ensure(
@@ -1470,13 +1520,15 @@ async fn lease_authentication_case(context: &mut CaseContext) -> CaseResult {
     let response = send(
         context,
         &router,
-        Method::POST,
-        &path,
-        Some(&owner),
-        true,
-        Some("wp4h-oversize"),
-        Some("https://quotes.example"),
-        oversized,
+        FixtureRequest {
+            method: Method::POST,
+            path: &path,
+            session: Some(&owner),
+            csrf: true,
+            idempotency_key: Some("wp4h-oversize"),
+            origin: Some("https://quotes.example"),
+            body: oversized,
+        },
     )
     .await?;
     ensure(
@@ -1771,13 +1823,15 @@ async fn initial_snapshot_case(context: &mut CaseContext) -> CaseResult {
     let bad_query = send(
         context,
         &router,
-        Method::GET,
-        &format!("{STREAM_PREFIX}/market-stream?other={}", lease.lease_id),
-        Some(&context.users.owner),
-        false,
-        None,
-        Some("https://quotes.example"),
-        Vec::new(),
+        FixtureRequest {
+            method: Method::GET,
+            path: &format!("{STREAM_PREFIX}/market-stream?other={}", lease.lease_id),
+            session: Some(&context.users.owner),
+            csrf: false,
+            idempotency_key: None,
+            origin: Some("https://quotes.example"),
+            body: Vec::new(),
+        },
     )
     .await?;
     ensure(
@@ -1853,7 +1907,7 @@ async fn initial_snapshot_case(context: &mut CaseContext) -> CaseResult {
 }
 
 async fn access_revoked_then_eof(reader: &mut SseReader) -> CaseResult {
-    let access = timeout(Duration::from_secs(2), async {
+    timeout(Duration::from_secs(2), async {
         loop {
             let event = reader
                 .next()
@@ -1866,7 +1920,6 @@ async fn access_revoked_then_eof(reader: &mut SseReader) -> CaseResult {
     })
     .await
     .map_err(|_| "revocation status did not arrive within two seconds")??;
-    let _ = access;
     ensure(
         reader.next().await?.is_none(),
         "SSE did not close after access revocation",

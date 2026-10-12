@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import tomllib
 import unittest
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -96,7 +98,11 @@ class WorkflowContractTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         self.assertIn("scripts/ci/prepare_phase0.py --root data/phase0", text)
         self.assertIn("deploy/qa/qa-db.compose.yml up -d --wait", text)
-        self.assertIn("cargo test --workspace --locked --no-fail-fast", text)
+        workspace_test_command = (
+            "cargo test --workspace --locked --no-fail-fast "
+            "--features kis-client/test-support"
+        )
+        self.assertIn(workspace_test_command, text)
         self.assertIn(
             "bash deploy/db/integration-validation/static-check.sh", text
         )
@@ -123,14 +129,22 @@ class WorkflowContractTests(unittest.TestCase):
                 "",
                 "",
                 "npm ci",
+                "npx playwright install --with-deps chromium",
                 "npm run openapi:check --workspace @lagrange/api-server",
                 "npm run lint --workspace @lagrange/web",
                 "npm run typecheck --workspace @lagrange/web",
                 "npm test --workspace @lagrange/web",
                 "npm run build --workspace @lagrange/web",
-                "npx playwright install --with-deps chromium",
                 "bash scripts/qa/candidate-web-e2e.sh",
             ],
+        )
+        self.assertLess(
+            web_commands.index("npx playwright install --with-deps chromium"),
+            web_commands.index("npm test --workspace @lagrange/web"),
+        )
+        self.assertLess(
+            web_commands.index("npx playwright install --with-deps chromium"),
+            web_commands.index("bash scripts/qa/candidate-web-e2e.sh"),
         )
         playwright_step = next(
             step
@@ -156,7 +170,24 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("uv sync --project nt --locked", workspace_commands)
         self.assertLess(
             workspace_commands.index("uv sync --project nt --locked"),
-            workspace_commands.index("cargo test --workspace --locked --no-fail-fast"),
+            workspace_commands.index(workspace_test_command),
+        )
+        self.assertEqual(
+            workspace_commands.count(workspace_test_command),
+            1,
+            "the full workspace test gate must explicitly enable test-support",
+        )
+        intraday_harness = (
+            ROOT / "crates/job-queue/tests/intraday_quotes_support/mod.rs"
+        ).read_text(encoding="utf-8")
+        qa_urls = re.findall(
+            r'pub const QA_DATABASE_URL: &str = "([^"]+)";', intraday_harness
+        )
+        self.assertEqual(len(qa_urls), 1)
+        workspace_env = ci["jobs"]["workspace-tests"]["env"]
+        self.assertEqual(workspace_env["DATABASE_URL"], qa_urls[0])
+        self.assertEqual(
+            workspace_env["LAGRANGE_QA_DB_PORT"], str(urlsplit(qa_urls[0]).port)
         )
         postgres_job = ci["jobs"]["postgres-integration-validation"]
         self.assertEqual(postgres_job["timeout-minutes"], "60")
@@ -192,6 +223,9 @@ class WorkflowContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertRegex(qa_compose, r"image:\s+postgres@sha256:[0-9a-f]{64}")
+        self.assertIn(
+            "127.0.0.1:${LAGRANGE_QA_DB_PORT:-55432}:5432", qa_compose
+        )
 
     def test_verify_all_gates_have_ci_counterparts(self) -> None:
         # Every hard gate declared by scripts/verify-all.sh ("Every gate is a
@@ -225,7 +259,10 @@ class WorkflowContractTests(unittest.TestCase):
                 "cargo clippy --workspace --all-targets --all-features -- -D warnings",
                 "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
             ),
-            ("cargo test --workspace", "cargo test --workspace --locked --no-fail-fast"),
+            (
+                "cargo test --workspace",
+                "cargo test --workspace --locked --no-fail-fast --features kis-client/test-support",
+            ),
             (
                 "npm run lint --workspaces --if-present",
                 "npm run lint --workspace @lagrange/web",
@@ -293,7 +330,12 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("provision-runtime-secrets.sh|runtime-static-check.sh", script)
         self.assertNotIn("README.md|.gitignore|*.example|*.sh", script)
-        self.assertIn("rc build research-worker candidate-runner", script)
+        self.assertEqual(
+            re.findall(r"^rc build ([^\n\\]+)", script, re.MULTILINE),
+            ["research-worker ", "candidate-runner "],
+        )
+        self.assertIn("export COMPOSE_PARALLEL_LIMIT=1", script)
+        self.assertIn("export CARGO_BUILD_JOBS=2", script)
         self.assertIn("candidate-runner --once", script)
         self.assertIn("candidate_feed_evidence", script)
         self.assertIn(
@@ -355,13 +397,130 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn("c.source_batch_id IS NOT NULL", smoke_text)
             self.assertIn("batch.source_batch_id = c.source_batch_id", smoke_text)
             self.assertIn("history.content_sha256 = c.content_sha256", smoke_text)
-            self.assertIn("find /data/raw -xdev -type d", smoke_text)
-            self.assertIn("find /data/raw -xdev -type f", smoke_text)
             if smoke_name.endswith(".sh"):
+                self.assertIn(
+                    'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type d',
+                    smoke_text,
+                )
+                self.assertIn(
+                    'find /data/raw -xdev -path "$calendar_bootstrap" -prune -o -type f',
+                    smoke_text,
+                )
                 self.assertIn("find /data/curated -xdev -type d", smoke_text)
                 self.assertIn("find /data/curated -xdev -type f", smoke_text)
-            self.assertIn("find -L /data/raw -type l", smoke_text)
-            self.assertIn("validator accepted a symlink-following Raw init", smoke_text)
+                self.assertIn(
+                    "calendar_bootstrap=/data/raw/.calendar-bootstrap", smoke_text
+                )
+                self.assertIn(
+                    'init_command.count("validate_calendar_bootstrap") >= 3',
+                    smoke_text,
+                )
+                self.assertIn("10001:10001:700", smoke_text)
+                self.assertIn("10001:10001:600:1", smoke_text)
+                for contract in (
+                    "chown 10001:10001",
+                    "chmod 0750",
+                    "chmod 0640",
+                    "chmod 0440",
+                    "validator accepted an unpruned Raw init",
+                    "validator accepted a symlink-following Raw init",
+                    'sed \'s# -path "\\$\\$calendar_bootstrap" -prune -o##g\'',
+                    'cmp -- "$calendar_before" "$calendar_after"',
+                    "Raw init changed valid calendar metadata or bytes",
+                    "idempotent Raw init changed valid calendar metadata or bytes",
+                    "wrong directory mode",
+                    "wrong claim mode",
+                    "wrong directory owner",
+                    "wrong claim owner",
+                    "claim symlink",
+                    "claim hardlink",
+                    "unknown direct entry",
+                    "nested direct entry",
+                ):
+                    self.assertIn(contract, smoke_text)
+            else:
+                # This is the legacy PowerShell implementation. Keep its
+                # current literals checked without asserting calendar parity.
+                self.assertIn("find /data/raw -xdev -type d", smoke_text)
+                self.assertIn("find /data/raw -xdev -type f", smoke_text)
+                self.assertIn("find -L /data/raw -type l", smoke_text)
+                self.assertIn(
+                    "validator accepted a symlink-following Raw init", smoke_text
+                )
+
+    def test_candidate_static_check_uses_scoped_entitlement_fixture(self) -> None:
+        script = (
+            ROOT / "deploy" / "compose" / "candidate-static-check.sh"
+        ).read_text(encoding="utf-8")
+        compose = (ROOT / "deploy" / "compose" / "compose.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('env_file="$root/deploy/compose/.env.example"', script)
+        self.assertIn('docker compose --env-file "$env_file" -f "$compose" config --quiet', script)
+        self.assertIn(
+            "RESEARCH_ENTITLEMENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \\",
+            script,
+        )
+        self.assertIn(
+            "${RESEARCH_ENTITLEMENT_SHA256:?RESEARCH_ENTITLEMENT_SHA256 must identify the exact active data-use contract hash}",
+            compose,
+        )
+
+    def test_calendar_lock_probe_is_a_standalone_locked_qa_fixture(self) -> None:
+        fixture = ROOT / "scripts" / "qa" / "calendar-lock-probe"
+        manifest = (fixture / "Cargo.toml").read_text(encoding="utf-8")
+        lockfile = (fixture / "Cargo.lock").read_text(encoding="utf-8")
+        source = (fixture / "src" / "main.rs").read_text(encoding="utf-8")
+        script = (ROOT / "scripts" / "qa" / "research-worker-smoke.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[workspace]", manifest)
+        self.assertIn('name = "calendar-lock-probe"', manifest)
+        self.assertIn('name = "calendar-lock-probe"', lockfile)
+        self.assertIn('domain = { path = "../../../crates/domain" }', manifest)
+        self.assertIn(
+            '#[path = "../../../../data-pipelines/collectors/src/calendar_claim.rs"]',
+            source,
+        )
+        self.assertIn("CalendarDayLock::acquire", source)
+        self.assertIn("cargo fetch --locked --manifest-path", script)
+        self.assertIn("cargo build --locked --offline", script)
+        self.assertIn(
+            "--manifest-path /source/scripts/qa/calendar-lock-probe/Cargo.toml",
+            script,
+        )
+        self.assertNotIn("cargo generate-lockfile", script)
+        self.assertNotIn("/home/l1nnx/.cargo/registry", script)
+        self.assertIn('cargo_home_volume="${probe_id}-cargo-home"', script)
+        self.assertIn('cargo_target_volume="${probe_id}-cargo-target"', script)
+        prep = script.split("# This preparation container", 1)[1].split(
+            "calendar probe locked dependency preparation failed", 1
+        )[0]
+        self.assertIn("--network bridge", prep)
+        self.assertIn(':/source:ro', prep)
+        self.assertNotIn("/data/raw", prep)
+        self.assertNotIn("/data/curated", prep)
+        self.assertIn("CARGO_BUILD_JOBS=2 cargo fetch --locked --manifest-path Cargo.toml", prep)
+
+        root_lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
+        fixture_lock = tomllib.loads(lockfile)
+        root_registry_packages = {
+            (package["name"], package["version"], package.get("source"))
+            for package in root_lock["package"]
+            if package.get("source", "").startswith("registry+")
+        }
+        fixture_registry_packages = {
+            (package["name"], package["version"], package.get("source"))
+            for package in fixture_lock["package"]
+            if package.get("source", "").startswith("registry+")
+        }
+        self.assertFalse(fixture_registry_packages - root_registry_packages)
+
+    def test_candidate_entitlement_hash_remains_required_in_production_compose(self) -> None:
+        compose = (ROOT / "deploy" / "compose" / "compose.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?", compose)
 
 
 if __name__ == "__main__":

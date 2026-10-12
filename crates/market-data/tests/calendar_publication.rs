@@ -329,6 +329,7 @@ async fn calendar_ingest_is_one_exact_blank_continuation_request() {
 async fn invalid_calendar_response_never_makes_raw_visible() {
     let bodies = [
         calendar_body(r#"{"bass_dt":"20260913","opnd_yn":"Y"}"#),
+        calendar_body(""),
         calendar_body(
             r#"{"bass_dt":"20260914","opnd_yn":"Y"},{"bass_dt":"20260914","opnd_yn":"N"}"#,
         ),
@@ -338,55 +339,101 @@ async fn invalid_calendar_response_never_makes_raw_visible() {
     ];
 
     for body in bodies {
-        let temp = tempfile::tempdir().expect("raw root");
-        let store = RawStore::new(temp.path().join("data"));
-        let reader = FixtureReader::new(body);
-        let provider = KisProvider::kr_etf_core(reader.clone());
-        let result = ingest_kis_calendar_with_batch_id(
-            &store,
-            &provider,
-            &request(),
-            Some("entitlement://kis-calendar-v1"),
-            BatchId::generate(),
-        )
-        .await;
-        assert!(result.is_err());
-        assert_one_exact_call(&reader);
-        assert!(
-            !store
-                .provider_dir(PROVIDER_KIS_CALENDAR, MARKET_KR)
-                .exists()
-        );
-        assert!(
-            !store
-                .manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)
-                .exists()
-        );
+        for marker in [None, Some("M")] {
+            let temp = tempfile::tempdir().expect("raw root");
+            let store = RawStore::new(temp.path().join("data"));
+            let reader = match marker {
+                Some(marker) => FixtureReader::with_response_continuation(body.clone(), marker),
+                None => FixtureReader::new(body.clone()),
+            };
+            let provider = KisProvider::kr_etf_core(reader.clone());
+            let result = ingest_kis_calendar_with_batch_id(
+                &store,
+                &provider,
+                &request(),
+                Some("entitlement://kis-calendar-v1"),
+                BatchId::generate(),
+            )
+            .await;
+            assert!(result.is_err());
+            assert_one_exact_call(&reader);
+            assert!(
+                !store
+                    .provider_dir(PROVIDER_KIS_CALENDAR, MARKET_KR)
+                    .exists()
+            );
+            assert!(
+                !store
+                    .manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)
+                    .exists()
+            );
+        }
     }
 }
 
 #[tokio::test]
-async fn calendar_continuation_marker_is_rejected_without_raw_visibility() {
+async fn calendar_response_marker_is_preserved_without_followup() {
     let temp = tempfile::tempdir().expect("raw root");
     let store = RawStore::new(temp.path().join("data"));
-    let reader = FixtureReader::with_response_continuation(valid_body(), "M");
+    let response_body = valid_body();
+    let reader = FixtureReader::with_response_continuation(response_body.clone(), "M");
     let provider = KisProvider::kr_etf_core(reader.clone());
+    let batch_id = BatchId::generate();
 
-    let result = ingest_kis_calendar_with_batch_id(
+    let outcome = ingest_kis_calendar_with_batch_id(
         &store,
         &provider,
         &request(),
         Some("entitlement://kis-calendar-v1"),
-        BatchId::generate(),
+        batch_id,
     )
-    .await;
-    assert!(result.is_err());
-    assert_one_exact_call(&reader);
-    assert!(
-        !store
-            .manifest_path(PROVIDER_KIS_CALENDAR, MARKET_KR)
-            .exists()
+    .await
+    .expect("valid first calendar response is accepted regardless of its marker");
+
+    assert_eq!(outcome.batch_id, batch_id);
+    assert_eq!(outcome.entry.files.len(), 1);
+    assert_eq!(
+        outcome.entry.files[0].response_continuation.as_deref(),
+        Some("M")
     );
+    let committed = store
+        .read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+        .expect("committed calendar manifest");
+    assert_eq!(committed, vec![outcome.entry.clone()]);
+    assert_eq!(committed[0].files.len(), 1);
+    assert_eq!(
+        committed[0].files[0].response_continuation.as_deref(),
+        Some("M")
+    );
+
+    let raw = store
+        .read_batch_bytes(
+            &outcome.entry.provider,
+            &outcome.entry.market,
+            &outcome.entry,
+        )
+        .expect("hash-verified first response readback");
+    assert_eq!(raw.len(), 1);
+    assert_eq!(raw[0].file_name, outcome.entry.files[0].file_name);
+    assert_eq!(raw[0].bytes, response_body);
+    assert_eq!(
+        outcome.entry.files[0].content_hash,
+        ContentHash::from_bytes(&raw[0].bytes)
+    );
+
+    let normalized =
+        normalize_kis_calendar_batch(&store, &outcome.entry).expect("calendar normalization");
+    assert_eq!(normalized.entry.files.len(), 1);
+    assert_eq!(normalized.entry.files[0].response_continuation, None);
+    let publication = CalendarPublicationBundle::from_raw(&store, &normalized.entry)
+        .expect("normalized calendar publication");
+    assert_eq!(publication.target_date(), target());
+    assert_eq!(publication.calendar_facts().len(), 1);
+    assert_eq!(
+        publication.calendar_facts()[0].session_date.to_iso(),
+        TARGET_DATE
+    );
+    assert_one_exact_call(&reader);
 }
 
 #[test]

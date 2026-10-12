@@ -23,13 +23,13 @@ pub(crate) type FixtureError = Box<dyn Error + Send + Sync>;
 
 const BINDING_ENV: &str = "LAGRANGE_KIS_C2_BINDING_FILE";
 const BINDING_SHA_ENV: &str = "LAGRANGE_KIS_C2_BINDING_SHA256";
-const EXPECTED_RUN_ID: &str = "4b4fed71-6608-4d97-a6b6-7ae3ba294be0";
+const EXPECTED_RUN_ID: &str = "62f45acd-50b9-486c-b21b-5d24c5c99115";
 const EXPECTED_BINDING_PATH: &str =
-    "/tmp/lagrange-kis-stream-completion-20261001-653ff5d84407/wp3c2-runtime-binding.json";
+    "/tmp/lagrange-kis-stream-r1-f22f4c7b006550e78059/wp3c2-runtime-binding.json";
 const EXPECTED_BINDING_SHA256: &str =
-    "f173e4eed80a6543535f574fa003d6d77d521bfb41d6c532f6c44442a2f4f268";
-const EXPECTED_RUNTIME_ROOT: &str = "/tmp/lagrange-kis-c2-4b4fed7166084d97a6b67ae3ba294be0";
-const EXPECTED_SYSTEM_IDENTIFIER: &str = "7691641528624668685";
+    "1aa2b11083464780a625256c5163ea180cad29a9462dfe0c95534319884136ec";
+const EXPECTED_RUNTIME_ROOT: &str = "/tmp/lagrange-kis-c2-62f45acd50b9486cb21b5d24c5c99115";
+const EXPECTED_SYSTEM_IDENTIFIER: &str = "7695695737867239441";
 const LEGACY_SYSTEM_IDENTIFIER: &str = "7687959257259950090";
 const EXPECTED_PORT: u16 = 55_471;
 const EXPECTED_SERVER_VERSION_NUM: i32 = 180_006;
@@ -62,10 +62,18 @@ pub(crate) struct C2Endpoint {
 }
 
 impl C2Endpoint {
+    #[allow(
+        dead_code,
+        reason = "relay adapter is used by lib tests but shared fixture targets compile independently"
+    )]
     pub(crate) fn socket_directory(&self) -> &Path {
         &self.socket_directory
     }
 
+    #[allow(
+        dead_code,
+        reason = "relay adapter is used by lib tests but shared fixture targets compile independently"
+    )]
     pub(crate) fn port(&self) -> u16 {
         self.port
     }
@@ -92,7 +100,7 @@ pub(crate) struct SupervisorTarget {
 }
 
 impl SupervisorTarget {
-    pub(super) fn from_environment() -> Result<Self, FixtureError> {
+    pub(crate) fn from_environment() -> Result<Self, FixtureError> {
         Self::from_environment_with_inputs(
             std::env::var_os(BINDING_ENV),
             std::env::var_os(BINDING_SHA_ENV),
@@ -139,17 +147,21 @@ impl SupervisorTarget {
         }
     }
 
-    pub(super) fn options(&self) -> PgConnectOptions {
+    pub(crate) fn options(&self) -> PgConnectOptions {
         self.options.clone()
     }
 
+    #[allow(
+        dead_code,
+        reason = "relay adapter is used by lib tests but shared fixture targets compile independently"
+    )]
     pub(super) fn c2_endpoint(&self) -> Option<C2Endpoint> {
         self.binding
             .as_ref()
             .map(|binding| binding.endpoint.clone())
     }
 
-    pub(super) fn is_c2(&self) -> bool {
+    pub(crate) fn is_c2(&self) -> bool {
         self.binding.is_some()
     }
 
@@ -222,7 +234,7 @@ impl SupervisorTarget {
     }
 }
 
-pub(super) async fn connect_supervisor(target: &SupervisorTarget) -> Result<PgPool, FixtureError> {
+pub(crate) async fn connect_supervisor(target: &SupervisorTarget) -> Result<PgPool, FixtureError> {
     let pool = tokio::time::timeout(
         Duration::from_secs(10),
         PgPoolOptions::new()
@@ -495,6 +507,10 @@ fn closed_error(message: &'static str) -> FixtureError {
     Box::new(std::io::Error::other(message))
 }
 
+#[allow(
+    dead_code,
+    reason = "relay adapter is used by lib tests but shared fixture targets compile independently"
+)]
 pub(crate) fn relay_endpoint_from_environment() -> Result<Option<C2Endpoint>, FixtureError> {
     let binding_path = std::env::var_os(BINDING_ENV);
     let binding_sha = std::env::var_os(BINDING_SHA_ENV);
@@ -571,6 +587,17 @@ mod tests {
         assert!(binding_from_inputs(None, Some("a".repeat(64).into())).is_err());
         assert!(
             binding_from_inputs(
+                Some(
+                    "/tmp/lagrange-kis-stream-completion-20261001-653ff5d84407/\
+                 wp3c2-runtime-binding.json"
+                        .into()
+                ),
+                Some("f173e4eed80a6543535f574fa003d6d77d521bfb41d6c532f6c44442a2f4f268".into())
+            )
+            .is_err()
+        );
+        assert!(
+            binding_from_inputs(
                 Some(EXPECTED_BINDING_PATH.into()),
                 Some("A".repeat(64).into())
             )
@@ -592,6 +619,14 @@ mod tests {
         let mut legacy = synthetic_binding(&root);
         legacy.system_identifier = LEGACY_SYSTEM_IDENTIFIER.to_owned();
         assert!(validate_binding_at(legacy, root.clone(), false).is_err());
+
+        let mut old_c2_run = synthetic_binding(&root);
+        old_c2_run.run_id = "4b4fed71-6608-4d97-a6b6-7ae3ba294be0".to_owned();
+        assert!(validate_binding_at(old_c2_run, root.clone(), false).is_err());
+
+        let mut old_c2_system = synthetic_binding(&root);
+        old_c2_system.system_identifier = "7691641528624668685".to_owned();
+        assert!(validate_binding_at(old_c2_system, root.clone(), false).is_err());
 
         let mut mismatched_path = synthetic_binding(&root);
         mismatched_path.socket_directory = "/tmp/other/socket".to_owned();

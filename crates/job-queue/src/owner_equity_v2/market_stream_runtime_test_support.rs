@@ -29,12 +29,11 @@ use crate::owner_equity_v2::market_stream::{
     OwnerMarketStreamRepository, StreamLease, StreamLeaseRequest,
 };
 use crate::owner_equity_v2::market_stream_runtime::{
-    MarketStreamRuntimeError, OwnerMarketStreamRuntime, OwnerMarketStreamRuntimeConfig,
-    SnapshotWindowEvidence, snapshot_window_fixture,
+    OwnerMarketStreamRuntime, OwnerMarketStreamRuntimeConfig, SnapshotWindowEvidence,
+    snapshot_window_fixture,
 };
 
-#[path = "../../tests/owner_market_stream_boundary_support/mod.rs"]
-pub(super) mod boundary;
+pub(super) use crate::owner_equity_v2::owner_market_stream_boundary_support as boundary;
 
 const FIXTURE_JOIN_BOUND: Duration = Duration::from_secs(8);
 const SYNTHETIC_APP_KEY: &str = "D4S_SYNTHETIC_APP_KEY";
@@ -132,7 +131,7 @@ pub(super) enum CommandKind {
 pub(super) struct CommandEvent {
     pub(super) symbol: String,
     pub(super) kind: CommandKind,
-    pub(super) arrived_at: Instant,
+    pub(super) _arrived_at: Instant,
 }
 
 #[derive(Clone, Debug)]
@@ -144,9 +143,9 @@ pub(super) struct MetricsSnapshot {
     pub(super) subscribe_commands: usize,
     pub(super) unsubscribe_commands: usize,
     pub(super) command_events: Vec<CommandEvent>,
-    pub(super) acknowledgement_frames: usize,
-    pub(super) quote_frames: usize,
-    pub(super) quote_records: usize,
+    pub(super) _acknowledgement_frames: usize,
+    pub(super) _quote_frames: usize,
+    pub(super) _quote_records: usize,
     pub(super) client_close_seen: bool,
     pub(super) unexpected_requests_or_commands: usize,
     pub(super) server_errors: usize,
@@ -195,9 +194,9 @@ impl MetricsHandle {
             subscribe_commands: metrics.subscribe_commands,
             unsubscribe_commands: metrics.unsubscribe_commands,
             command_events: metrics.command_events.clone(),
-            acknowledgement_frames: metrics.acknowledgement_frames,
-            quote_frames: metrics.quote_frames,
-            quote_records: metrics.quote_records,
+            _acknowledgement_frames: metrics.acknowledgement_frames,
+            _quote_frames: metrics.quote_frames,
+            _quote_records: metrics.quote_records,
             client_close_seen: metrics.client_close_seen,
             unexpected_requests_or_commands: metrics.unexpected_requests_or_commands,
             server_errors: metrics.server_errors,
@@ -226,7 +225,7 @@ pub(super) struct TestDatabase {
     pub(super) database: boundary::DisposableDatabase,
     pub(super) fixture: boundary::Fixture,
     pub(super) window_contract: collectors::intraday_quotes::IntradaySessionWindowContract,
-    pub(super) window_sha256: String,
+    pub(super) _window_sha256: String,
     pub(super) snapshot_window: SnapshotWindowEvidence,
     holder_id: Uuid,
 }
@@ -283,7 +282,7 @@ impl TestDatabase {
                     database,
                     fixture,
                     window_contract,
-                    window_sha256,
+                    _window_sha256: window_sha256,
                     snapshot_window,
                     holder_id,
                 })
@@ -914,10 +913,8 @@ fn header_value<'a>(headers: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
             let separator = line.iter().position(|byte| *byte == b':')?;
             let (key, suffix) = line.split_at(separator);
             let value = &suffix[1..];
-            key.eq_ignore_ascii_case(name).then(|| {
-                let value = value.strip_prefix(b" ").unwrap_or(value);
-                value
-            })
+            key.eq_ignore_ascii_case(name)
+                .then(|| value.strip_prefix(b" ").unwrap_or(value))
         })
 }
 
@@ -1219,7 +1216,7 @@ where
             value.command_events.push(CommandEvent {
                 symbol: symbol.clone(),
                 kind,
-                arrived_at,
+                _arrived_at: arrived_at,
             });
         }
     })?;

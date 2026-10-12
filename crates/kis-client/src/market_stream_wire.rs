@@ -208,6 +208,13 @@ pub struct MarketStreamSessionProof {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    test,
+    allow(
+        clippy::enum_variant_names,
+        reason = "preserve the public session-proof error variants in the source-included fixture"
+    )
+)]
 pub enum SessionProofError {
     DateInvalid,
     WindowInvalid,
@@ -283,7 +290,8 @@ impl MarketStreamSessionProof {
         Ok(())
     }
 
-    #[cfg(any(feature = "test-support", test))]
+    // Test source inclusions do not share this crate's feature namespace.
+    #[cfg_attr(not(test), cfg(feature = "test-support"))]
     pub(crate) fn synthetic_default() -> Self {
         // The adopted local fixture date is deliberately explicit and is
         // recorded in the fixture manifest.  Synthetic tests do not claim a
@@ -427,13 +435,13 @@ impl MarketReceipt {
     pub(crate) fn from_transport(
         epoch: Uuid,
         receive_ordinal: u64,
-        received_at_ms: i64,
-        received_monotonic: Instant,
+        received_at: (i64, Instant),
         socket_open_ms: i64,
         proof: MarketStreamSessionProof,
         acknowledged_subscription: bool,
         observation: MarketTradeObservation,
     ) -> Result<Self, WireError> {
+        let (received_at_ms, received_monotonic) = received_at;
         if !acknowledged_subscription
             || observation.business_date != proof.session_date
             || !observation.is_regular()
@@ -743,12 +751,11 @@ fn validate_context(date: u32, time: u32, context: ParseContext) -> Result<(), W
         if event_ms > received.saturating_add(2_000) {
             return Err(WireError::FutureObservation);
         }
-        if context.require_fresh_epoch_trade {
-            if let Some(opened) = context.socket_open_ms
-                && (event_ms < opened || received.saturating_sub(event_ms) > 30_000)
-            {
-                return Err(WireError::StaleEpochObservation);
-            }
+        if context.require_fresh_epoch_trade
+            && let Some(opened) = context.socket_open_ms
+            && (event_ms < opened || received.saturating_sub(event_ms) > 30_000)
+        {
+            return Err(WireError::StaleEpochObservation);
         }
     }
     Ok(())
@@ -967,8 +974,10 @@ mod tests {
 
     #[test]
     fn context_rejects_missing_fresh_epoch_clock_proof() {
-        let mut context = ParseContext::default();
-        context.require_fresh_epoch_trade = true;
+        let context = ParseContext {
+            require_fresh_epoch_trade: true,
+            ..Default::default()
+        };
         assert_eq!(
             parse_market_message(&message(&fields()).into_bytes(), context),
             Err(WireError::StaleEpochObservation)

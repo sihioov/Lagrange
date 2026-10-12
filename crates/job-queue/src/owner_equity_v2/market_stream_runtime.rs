@@ -107,7 +107,7 @@ pub(super) enum DayResolution {
     MissingCalendar,
     MissingWindow,
     Closed,
-    Open(ResolvedMarketStreamDay),
+    Open(Box<ResolvedMarketStreamDay>),
 }
 
 /// A validated current day. Its only constructor is the resolver below (plus
@@ -211,6 +211,7 @@ impl SnapshotWindowEvidence {
     }
 }
 
+#[cfg(not(test))]
 pub(super) fn load_snapshot_window_contract() -> Option<IntradaySessionWindowContract> {
     IntradaySessionWindowContract::from_configured_source().ok()
 }
@@ -233,6 +234,10 @@ pub(super) fn snapshot_window_for(
     })
 }
 
+#[expect(
+    dead_code,
+    reason = "retained for adopted legacy resolver semantics and API"
+)]
 pub(super) async fn resolve_day(
     owner_user_id: Uuid,
     calendar: &OwnerIntradayQuoteRepository,
@@ -373,13 +378,13 @@ async fn resolve_day_with_calendar(
     .map_err(|_| DayResolutionFailure::RuntimeValidation(MarketStreamRuntimeError::DayInvalid))?;
     let transport = make_transport_proof(initial_date, entry.open_local, entry.close_local)
         .map_err(DayResolutionFailure::RuntimeValidation)?;
-    Ok(DayResolution::Open(ResolvedMarketStreamDay {
+    Ok(DayResolution::Open(Box::new(ResolvedMarketStreamDay {
         resolution_id: Uuid::new_v4(),
         calendar: calendar_proof,
         session,
         window,
         transport,
-    }))
+    })))
 }
 
 fn map_legacy_day_resolution_error(error: DayResolutionFailure) -> MarketStreamRuntimeError {
@@ -806,8 +811,8 @@ mod runtime_supervisor {
             RuntimeTransition,
             Result<RuntimeStatusCommit, RuntimeMarketStreamStorageError>,
         ),
-        Connected(Result<MarketStreamSession, MarketStreamError>),
-        Started(Result<RuntimeOwnedProducer, MarketStreamProducerError>),
+        Connected(Box<Result<MarketStreamSession, MarketStreamError>>),
+        Started(Box<Result<RuntimeOwnedProducer, MarketStreamProducerError>>),
         Owned(Result<RuntimeOwnedExit, MarketStreamProducerError>),
         Closed(Result<(), MarketStreamError>),
         ConnectTimedOut,
@@ -1457,16 +1462,15 @@ mod runtime_supervisor {
                 if self.lease.is_some() && !self.post_claim_renewal_ready {
                     self.post_claim_renewal_ready = true;
                 }
-            } else if let Some(current_lease) = self.lease.as_ref() {
-                if lease_refresh_disposition(
+            } else if let Some(current_lease) = self.lease.as_ref()
+                && lease_refresh_disposition(
                     Some(current_lease),
                     current_lease,
                     &self.authority,
                     now_wall,
                 ) != LeaseRefreshDisposition::Forward
-                {
-                    return Err(MarketStreamRuntimeError::LeaseUnavailable);
-                }
+            {
+                return Err(MarketStreamRuntimeError::LeaseUnavailable);
             }
 
             let day = match resolved_day {
@@ -1489,7 +1493,7 @@ mod runtime_supervisor {
                 DayResolution::MissingWindow => DayResolution::MissingWindow,
             };
             let next_open_day = match &day {
-                DayResolution::Open(day) => Some(day.clone()),
+                DayResolution::Open(day) => Some((**day).clone()),
                 DayResolution::MissingCalendar
                 | DayResolution::MissingWindow
                 | DayResolution::Closed => None,
@@ -1833,7 +1837,7 @@ mod runtime_supervisor {
             self.incarnation_day = Some(day.clone());
             self.phase = Phase::Connecting;
             Ok(Box::pin(async move {
-                StageResult::Connected(anchor.connect(day.transport_proof()).await)
+                StageResult::Connected(Box::new(anchor.connect(day.transport_proof()).await))
             }))
         }
 
@@ -1858,10 +1862,10 @@ mod runtime_supervisor {
             self.phase = Phase::StartingEpoch;
             let repository = self.repository.clone();
             Ok(Box::pin(async move {
-                StageResult::Started(
+                StageResult::Started(Box::new(
                     OwnerMarketStreamProducer::start_resolved(repository, lease, day, session)
                         .await,
-                )
+                ))
             }))
         }
 
@@ -2026,14 +2030,14 @@ mod runtime_supervisor {
                         self.post_claim_renewal_ready = false;
                     }
                 },
-                StageResult::Connected(result) => match result {
+                StageResult::Connected(result) => match *result {
                     Err(error) if reconnect_is_premutation_wait(&error) => {
                         self.clear_incarnation();
                     }
                     Err(error) => self.latch_terminal(map_connect_error(error)),
                     Ok(session) => self.pending_session = Some(session),
                 },
-                StageResult::Started(result) => match result {
+                StageResult::Started(result) => match *result {
                     Err(error) => self.latch_terminal(map_producer_error(error)),
                     Ok(owner) => self.pending_owner = Some(owner),
                 },

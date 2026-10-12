@@ -264,18 +264,38 @@ fn candidate_for(payload: &OwnerEquityJobPayload) -> OwnerEquityGenerationCandid
 }
 
 async fn provision_policy(harness: &Harness, owner: &UserCtx, maximum: i32) {
+    let repo = OwnerEquityV2Repo::new(harness.app_pool.clone());
+    let (policy, memberships) = repo
+        .list(&owner.actor())
+        .await
+        .expect("migration-provisioned owner policy exists");
+    assert_eq!(policy.max_active_instruments, 100);
+    assert_eq!(policy.target_observed_sessions, 261);
+    assert_eq!(policy.minimum_observed_sessions, MINIMUM_SESSIONS);
+    assert!(memberships.is_empty());
+
     harness
         .seed_migration_owner(
             owner,
             &format!(
-                "INSERT INTO owner_equity_universe_policies \
-                 (owner_user_id, max_active_instruments, target_observed_sessions, \
-                  minimum_observed_sessions) \
-                 VALUES ('{}', {maximum}, {TARGET_SESSIONS}, {MINIMUM_SESSIONS})",
+                "UPDATE owner_equity_universe_policies \
+                 SET max_active_instruments = {maximum}, \
+                     target_observed_sessions = {TARGET_SESSIONS}, \
+                     minimum_observed_sessions = {MINIMUM_SESSIONS} \
+                 WHERE owner_user_id = '{}'",
                 owner.user_id
             ),
         )
         .await;
+
+    let (policy, memberships) = repo
+        .list(&owner.actor())
+        .await
+        .expect("updated owner policy remains visible to its actor");
+    assert_eq!(policy.max_active_instruments, maximum);
+    assert_eq!(policy.target_observed_sessions, TARGET_SESSIONS);
+    assert_eq!(policy.minimum_observed_sessions, MINIMUM_SESSIONS);
+    assert!(memberships.is_empty());
 }
 
 async fn seed_owner(harness: &Harness, suffix: &str, maximum: i32) -> UserCtx {

@@ -64,9 +64,9 @@ pub use intraday_producer::*;
 mod market_stream_measurements;
 #[cfg(feature = "market-stream-db-tests")]
 pub use market_stream_measurements::{
-    StreamBufferProbeSummary,
-    StreamPublicationProbe, StreamPublicationProbeError, StreamPublicationProbeSnapshot,
-    StreamPublicationProbeSummary, StreamPublicationProbeRecord, StreamPublicationProbeOutcome,
+    StreamBufferProbeSummary, StreamPublicationProbe, StreamPublicationProbeError,
+    StreamPublicationProbeOutcome, StreamPublicationProbeRecord, StreamPublicationProbeSnapshot,
+    StreamPublicationProbeSummary,
 };
 #[path = "owner_equity_v2/market_stream.rs"]
 mod market_stream;
@@ -95,6 +95,10 @@ pub use market_stream_producer::{
     MarketStreamProducerOutcome, MarketStreamReconcileOutcome, MarketStreamTransportStatus,
     OwnerMarketStreamProducer,
 };
+
+#[cfg(all(test, feature = "market-stream-db-tests"))]
+#[path = "../tests/owner_market_stream_boundary_support/mod.rs"]
+pub(super) mod owner_market_stream_boundary_support;
 
 #[cfg(all(test, feature = "market-stream-db-tests"))]
 #[path = "owner_equity_v2/market_stream_c3a_tests.rs"]

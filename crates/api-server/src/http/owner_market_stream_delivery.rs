@@ -49,12 +49,12 @@ impl ConsumerRegistry {
 
 impl Drop for ConsumerPermit {
     fn drop(&mut self) {
-        if let Ok(mut counts) = self.registry.0.lock() {
-            if let Some(count) = counts.get_mut(&self.owner) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    counts.remove(&self.owner);
-                }
+        if let Ok(mut counts) = self.registry.0.lock()
+            && let Some(count) = counts.get_mut(&self.owner)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                counts.remove(&self.owner);
             }
         }
     }
@@ -94,6 +94,7 @@ impl LatestMailbox {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn pending(&self) -> bool {
         self.signals.delivered.load(Ordering::Acquire) < self.last_sequence
     }
@@ -150,6 +151,11 @@ pub(crate) struct DeliveryEncoder {
     initialized: bool,
 }
 
+pub(crate) struct DeliveryFlags {
+    pub(crate) replace_pending: bool,
+    pub(crate) heartbeat: bool,
+}
+
 impl DeliveryEncoder {
     pub(crate) fn last_sequence(&self) -> u64 {
         self.sequence
@@ -195,9 +201,12 @@ impl DeliveryEncoder {
         rows: Vec<RowDto>,
         status: StatusBody,
         now: DateTime<Utc>,
-        replace_pending: bool,
-        heartbeat: bool,
+        flags: DeliveryFlags,
     ) -> Result<Batch, InvalidContract> {
+        let DeliveryFlags {
+            replace_pending,
+            heartbeat,
+        } = flags;
         if rows.is_empty() || rows.len() > MAX_IDENTITIES {
             return Err(InvalidContract);
         }
@@ -301,7 +310,17 @@ mod tests {
         let now = Utc::now();
         let lease = Uuid::from_u128(901);
         let first = encoder
-            .encode(lease, now, rows(30), status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                rows(30),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         let first = std::str::from_utf8(&first.bytes).unwrap();
         assert!(first.starts_with("event: reset\n"));
@@ -313,7 +332,17 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(snapshot).unwrap();
         assert_eq!(json["body"]["rows"].as_array().unwrap().len(), 30);
         let replaced = encoder
-            .encode(lease, now, rows(30), status(), now, true, false)
+            .encode(
+                lease,
+                now,
+                rows(30),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: true,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         assert!(
             std::str::from_utf8(&replaced.bytes)
@@ -330,10 +359,30 @@ mod tests {
         let now = Utc::now();
         let lease = Uuid::from_u128(901);
         encoder
-            .encode(lease, now, rows(2), status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                rows(2),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         let quiet = encoder
-            .encode(lease, now, rows(2), status(), now, false, true)
+            .encode(
+                lease,
+                now,
+                rows(2),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: true,
+                },
+            )
             .unwrap();
         let quiet = std::str::from_utf8(&quiet.bytes).unwrap();
         assert!(quiet.starts_with("event: status\n"));
@@ -341,7 +390,17 @@ mod tests {
         let mut next = rows(2);
         next[0].connection = "CONNECTING";
         let changed = encoder
-            .encode(lease, now, next, status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                next,
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         let changed = std::str::from_utf8(&changed.bytes).unwrap();
         assert!(changed.starts_with("event: delta\n"));
@@ -366,10 +425,30 @@ mod tests {
         let now = Utc::now();
         let lease = Uuid::from_u128(901);
         encoder
-            .encode(lease, now, rows(2), status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                rows(2),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         let removed = encoder
-            .encode(lease, now, rows(1), status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                rows(1),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         assert!(
             std::str::from_utf8(&removed.bytes)
@@ -379,7 +458,17 @@ mod tests {
         encoder.sequence = i64::MAX as u64;
         assert!(
             encoder
-                .encode(lease, now, rows(1), status(), now, false, false)
+                .encode(
+                    lease,
+                    now,
+                    rows(1),
+                    status(),
+                    now,
+                    DeliveryFlags {
+                        replace_pending: false,
+                        heartbeat: false,
+                    },
+                )
                 .is_err()
         );
     }
@@ -487,7 +576,17 @@ mod tests {
         prior[0].state_version = "50".into();
         let old_namespace = prior[0].row_generation;
         let first = encoder
-            .encode(lease, now, prior.clone(), status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                prior.clone(),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         let mut recreated = prior.clone();
         recreated[0].row_generation = Uuid::from_u128(5_000);
@@ -495,7 +594,17 @@ mod tests {
         assert_eq!(recreated[0].membership_id, prior[0].membership_id);
         assert_eq!(recreated[0].generation, prior[0].generation);
         let next = encoder
-            .encode(lease, now, recreated.clone(), status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                recreated.clone(),
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         let wire = std::str::from_utf8(&next.bytes).unwrap();
         assert!(wire.starts_with("event: reset\n"));
@@ -517,12 +626,21 @@ mod tests {
         );
         assert_eq!(fresh[0]["state_version"], "0");
         let quiet = encoder
-            .encode(lease, now, recreated, status(), now, false, false)
+            .encode(
+                lease,
+                now,
+                recreated,
+                status(),
+                now,
+                DeliveryFlags {
+                    replace_pending: false,
+                    heartbeat: false,
+                },
+            )
             .unwrap();
         let quiet_wire = std::str::from_utf8(&quiet.bytes).unwrap();
         assert!(quiet_wire.starts_with("event: status\n"));
         assert!(!quiet_wire.contains("event: reset\n"));
         assert_eq!(quiet.last_sequence, next.last_sequence + 1);
     }
-
 }

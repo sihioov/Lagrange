@@ -853,7 +853,7 @@ async fn main() -> ExitCode {
                             .map(|exit| match exit {
                                 MarketStreamRuntimeExit::Shutdown => (),
                             })
-                            .map_err(QuoteTaskError::MarketWs)
+                            .map_err(|error| QuoteTaskError::MarketWs { _error: error })
                     }))
                 }
                 Err(_) => {
@@ -1352,6 +1352,13 @@ mod tests {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuoteBackend {
     Disabled,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "reserved REST branch retained while release selector is WS-only"
+        )
+    )]
     Rest,
     MarketWs,
 }
@@ -1481,7 +1488,9 @@ fn build_market_stream_runtime(
 #[derive(Debug)]
 enum QuoteTaskError {
     RestUnavailable,
-    MarketWs(job_queue::owner_equity_v2::MarketStreamRuntimeError),
+    MarketWs {
+        _error: job_queue::owner_equity_v2::MarketStreamRuntimeError,
+    },
 }
 
 async fn run_selected_quote_startup<
@@ -1535,15 +1544,12 @@ mod quote_transport_tests {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Event {
-        LoadRest,
-        StartRest,
         StartMarketWs,
         ContinueEod,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum FakeTask {
-        Rest,
         MarketWs,
     }
 

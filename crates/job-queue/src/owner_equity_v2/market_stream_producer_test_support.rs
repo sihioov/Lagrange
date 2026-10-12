@@ -2,8 +2,7 @@
 //! the owning-producer integration tests. All provider-shaped traffic is local
 //! and uses non-secret sentinels.
 
-#[path = "../../tests/owner_market_stream_boundary_support/mod.rs"]
-pub(super) mod boundary;
+pub(super) use crate::owner_equity_v2::owner_market_stream_boundary_support as boundary;
 
 use std::error::Error;
 use std::future::Future;
@@ -1073,8 +1072,11 @@ impl LoopbackHarness {
     ) -> Result<(), TestError> {
         let elapsed_ms = i64::try_from(self.clock_anchor.elapsed().as_millis())?;
         let remaining = eligibility_remaining(
-            self.clock_origin, self.session_date, self.clock.now_ms(),
-            elapsed_ms, not_before_ms,
+            self.clock_origin,
+            self.session_date,
+            self.clock.now_ms(),
+            elapsed_ms,
+            not_before_ms,
         )?;
         if remaining > Duration::from_secs(5) {
             return Err("fixture eligibility exceeds existing five-second bound".into());
@@ -1083,7 +1085,10 @@ impl LoopbackHarness {
             tokio::time::sleep(remaining).await;
         }
         advance_clock_from_database_sample(
-            &self.clock, self.session_date, self.clock_origin, self.clock_anchor,
+            &self.clock,
+            self.session_date,
+            self.clock_origin,
+            self.clock_anchor,
         )?;
         if self.clock.now_ms() < not_before_ms {
             return Err("fixture eligibility was not reached".into());
@@ -1187,8 +1192,7 @@ pub(super) async fn loopback_session(
             websocket_listener,
             session_date,
             server_clock,
-            clock_origin,
-            clock_anchor,
+            (clock_origin, clock_anchor),
             plans,
             command_tx,
             allow_early_close,
@@ -1279,12 +1283,12 @@ async fn run_websocket_server(
     listener: TcpListener,
     session_date: NaiveDate,
     clock: Arc<TestClock>,
-    clock_origin: FixtureClockOrigin,
-    clock_anchor: Instant,
+    clock_basis: (FixtureClockOrigin, Instant),
     plans: Vec<CommandPlan>,
     command_tx: mpsc::UnboundedSender<CommandMetadataOwned>,
     allow_early_close: bool,
 ) -> Result<LoopbackSummary, String> {
+    let (clock_origin, clock_anchor) = clock_basis;
     let (mut stream, _) = listener
         .accept()
         .await
@@ -1582,10 +1586,14 @@ mod fixture_clock_unit_tests {
         let reserved_at = clock.now_ms();
         // Synthetic input represents the C2 hint; no fixture clock jump occurs.
         let not_before = reserved_at.checked_add(1_000).unwrap();
-        let remaining = eligibility_remaining(origin, date, clock.now_ms(), 800, not_before).unwrap();
+        let remaining =
+            eligibility_remaining(origin, date, clock.now_ms(), 800, not_before).unwrap();
         assert_eq!(remaining, Duration::from_millis(950));
         let before = clock.now_ms();
-        assert_eq!(before, sample, "computing eligibility must not advance time");
+        assert_eq!(
+            before, sample,
+            "computing eligibility must not advance time"
+        );
         advance_clock_from_elapsed(&clock, date, origin, 1_749).unwrap();
         assert!(clock.now_ms() < not_before);
         advance_clock_from_elapsed(&clock, date, origin, 1_750).unwrap();
@@ -1599,7 +1607,10 @@ mod fixture_clock_unit_tests {
         let sample = kst_ms(date, 23, 59, 59, 500);
         let origin = FixtureClockOrigin::from_database_sample(date, sample).unwrap();
         assert!(eligibility_remaining(origin, date, sample + 1, 0, sample).is_err());
-        assert!(eligibility_remaining(origin, date, origin.synthetic_socket_anchor_ms, -1, sample).is_err());
+        assert!(
+            eligibility_remaining(origin, date, origin.synthetic_socket_anchor_ms, -1, sample)
+                .is_err()
+        );
         assert!(eligibility_remaining(origin, date, sample, 500, sample + 500).is_err());
         assert!(eligibility_remaining(origin, date, sample, 500, i64::MIN).is_err());
     }
@@ -1803,7 +1814,7 @@ mod fixture_clock_unit_tests {
             synthetic_post_ack_target_ms(session_date, exact_second + 1, 0, current_ms).unwrap();
         assert_eq!(target_ms, current_ms);
         let event_ms = payload_event_ms(session_date, target_ms);
-        assert!(event_ms >= exact_second + 1);
+        assert!(event_ms > exact_second);
         assert!(event_ms <= target_ms);
 
         let last_exact_second = kst_ms(session_date, 23, 59, 59, 0);
@@ -1994,7 +2005,7 @@ impl PgRelay {
             return Err("relay database name is outside the generated test scope".into());
         }
         let (upstream_socket_directory, upstream_port) =
-            match boundary::relay_endpoint_from_environment()? {
+            match boundary::c2_fixture::relay_endpoint_from_environment()? {
                 Some(endpoint) => (endpoint.socket_directory().to_path_buf(), endpoint.port()),
                 None => (PathBuf::from(CLUSTER_SOCKET), CLUSTER_PORT),
             };

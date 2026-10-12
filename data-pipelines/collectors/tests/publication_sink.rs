@@ -1,4 +1,8 @@
 mod common;
+#[path = "common/lock_timeout.rs"]
+mod lock_timeout;
+#[path = "common/publication_fixture.rs"]
+mod publication_fixture;
 
 use std::collections::BTreeMap;
 use std::error::Error as _;
@@ -6,12 +10,13 @@ use std::error::Error as _;
 use collectors::{
     PostgresPublicationSink, PublicationSink, PublicationState, PublishOutcome, SinkError,
 };
+use common::ScratchDb;
 use domain::{BatchId, TradingDate, UtcTimestamp};
 use market_data::contract::FetchMode;
 use market_data::publication::{CalendarSessionType, DataBatchKind};
 use sqlx::Row;
 
-use common::{ScratchDb, credentialed_normalized_bundle, synthetic_bundle};
+use publication_fixture::{credentialed_normalized_bundle, synthetic_bundle};
 
 fn assert_conflict(error: SinkError) {
     assert!(matches!(error, SinkError::Conflict(_)), "{error:?}");
@@ -32,10 +37,9 @@ fn set_calendar_hash(bundle: &mut market_data::publication::PublicationBundle, h
         .files
         .iter_mut()
         .find(|file| file.kind == DataBatchKind::Calendar)
+        && let Some(evidence) = &mut file.calendar_evidence
     {
-        if let Some(evidence) = &mut file.calendar_evidence {
-            evidence.content_sha256 = hash.clone();
-        }
+        evidence.content_sha256 = hash.clone();
     }
     if let Some(evidence) = &mut bundle.calendar_evidence {
         evidence.content_sha256 = hash;

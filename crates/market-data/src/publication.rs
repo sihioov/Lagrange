@@ -153,7 +153,7 @@ impl CalendarPublicationBundle {
             .read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?
             .into_iter()
             .find(|entry| entry.batch_id == lineage.upstream_batch_id)
-            .ok_or_else(|| PublicationError::CalendarSourceMissing {
+            .ok_or(PublicationError::CalendarSourceMissing {
                 batch_id: lineage.upstream_batch_id,
             })?;
         if source_manifest.date != manifest.date {
@@ -1033,7 +1033,7 @@ fn calendar_evidence_for_file(
     let source = committed
         .into_iter()
         .find(|entry| entry.batch_id == reference.batch_id)
-        .ok_or_else(|| PublicationError::CalendarSourceMissing {
+        .ok_or(PublicationError::CalendarSourceMissing {
             batch_id: reference.batch_id,
         })?;
     if source.date != manifest.date
@@ -1067,7 +1067,7 @@ fn calendar_evidence_for_file(
         .read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)?
         .into_iter()
         .find(|entry| entry.batch_id == source_lineage.upstream_batch_id)
-        .ok_or_else(|| PublicationError::CalendarSourceMissing {
+        .ok_or(PublicationError::CalendarSourceMissing {
             batch_id: source_lineage.upstream_batch_id,
         })?;
     if wire_source.date != source.date

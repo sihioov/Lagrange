@@ -1,7 +1,6 @@
 //! Private actual-role regression suite for the WS-3A storage boundary.
 
-#[path = "../../tests/owner_market_stream_boundary_support/mod.rs"]
-mod owner_market_stream_boundary_support;
+use super::owner_market_stream_boundary_support;
 
 use crate::owner_equity_v2::{
     MarketStreamStorageError, StreamAvailability, StreamConnectionState, StreamFreshness,
@@ -199,9 +198,9 @@ async fn owner_market_stream_real_role_boundary()
     use std::time::Duration;
 
     use crate::owner_equity_v2::market_stream::{
-        OwnerMarketStreamRepository, StreamEpochProof, StreamIdentity, StreamLeaseRequest,
-        StreamProducerLease, StreamPublicationContext, StreamPublicationItem,
-        StreamPublicationObservation, StreamSessionProof,
+        OwnerMarketStreamRepository, StreamIdentity, StreamLeaseRequest, StreamProducerLease,
+        StreamPublicationContext, StreamPublicationItem, StreamPublicationObservation,
+        StreamSessionProof,
     };
     use tokio::time::timeout;
     use uuid::Uuid;
@@ -1574,7 +1573,6 @@ async fn owner_market_stream_real_role_boundary()
 
         let context = owner_role_race_context;
         let observation = owner_role_race_observation;
-        let epoch = context.epoch.epoch;
         let epoch_proof = context.epoch.clone();
         let first_commit = worker
             .publish_stream_latest(&context, std::slice::from_ref(&observation))
@@ -2511,14 +2509,15 @@ async fn owner_market_stream_pending_identity_rejection_and_unsubscribe()
             .bind(fixture.owner_user_id.to_string())
             .execute(&mut *after_unsubscribe)
             .await?;
-        let absent: (
+        type SubscriptionAckState = (
             String,
             Option<String>,
             Option<i64>,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<chrono::DateTime<chrono::Utc>>,
             Option<chrono::DateTime<chrono::Utc>>,
-        ) = sqlx::query_as(
+        );
+        let absent: SubscriptionAckState = sqlx::query_as(
             "SELECT state, pending_operation, pending_ordinal, pending_reserved_at,
                     pending_deadline, acked_at
                FROM public.owner_market_stream_subscriptions
@@ -2804,14 +2803,11 @@ async fn owner_market_stream_ack_cannot_cross_credential_slots() -> C3aTestResul
                 .await?
                 .ok_or("slot B producer row was not found")?;
 
-        let reserved_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(i64::try_from(
-            ack.reserved_at_ms(),
-        )?)
-        .ok_or("authentic ACK reservation timestamp was out of range")?;
-        let deadline = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(i64::try_from(
-            ack.deadline_at_ms(),
-        )?)
-        .ok_or("authentic ACK deadline timestamp was out of range")?;
+        let reserved_at =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ack.reserved_at_ms())
+                .ok_or("authentic ACK reservation timestamp was out of range")?;
+        let deadline = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ack.deadline_at_ms())
+            .ok_or("authentic ACK deadline timestamp was out of range")?;
         let ack_ordinal = i64::try_from(ack.ordinal())?;
         assert_eq!(slot_b_subscription_before.credential_slot_id, second_slot);
         assert_eq!(

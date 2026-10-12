@@ -1120,19 +1120,77 @@ mod tests {
         .unwrap();
         assert_eq!(
             snapshot.content_sha256,
-            "sha256:2e3f4bb3a0a369a682e045a6c0375396d2c0292532df3a0479f04c28205b91bf"
+            "sha256:b4b55daefb3fad4830b2dff9b75081a52ecd469de69a0dd2643a0f8b6b3846e5"
         );
     }
 
     #[test]
     fn serde_round_trip_preserves_canonical_snapshot() {
-        let snapshot =
-            OwnerEquitySignalSnapshotCandidate::compute(&[input("000080", 121, 1)], as_of())
-                .unwrap();
-        let bytes = snapshot.canonical_bytes().unwrap();
-        let parsed: OwnerEquitySignalSnapshotCandidate = serde_json::from_slice(&bytes).unwrap();
-        assert!(parsed.exclusions.is_empty());
-        assert_eq!(parsed.canonical_bytes().unwrap(), bytes);
-        parsed.verify().unwrap();
+        for inputs in [
+            vec![input("000080", 121, 1)],
+            vec![input("000070", 121, 1), input("000071", 121, 2)],
+        ] {
+            let snapshot = OwnerEquitySignalSnapshotCandidate::compute(&inputs, as_of()).unwrap();
+            let bytes = snapshot.canonical_bytes().unwrap();
+            let parsed: OwnerEquitySignalSnapshotCandidate =
+                serde_json::from_slice(&bytes).unwrap();
+            assert!(parsed.exclusions.is_empty());
+            assert_eq!(parsed.canonical_bytes().unwrap(), bytes);
+            parsed.verify().unwrap();
+            assert_snapshot_tampering_is_rejected(&parsed);
+        }
+    }
+
+    #[test]
+    fn legacy_default_parser_snapshot_remains_readable() {
+        // Synthetic two-row golden captured from ac0a083 with serde_json's
+        // default parser. Keep the original bytes and self-hash immutable.
+        let bytes = include_bytes!("../tests/fixtures/owner_equity_v2_legacy_default.json");
+        assert_eq!(
+            ContentHash::from_bytes(bytes).as_str(),
+            "sha256:bcd6c1a7c35df5465a7892c7c3f9d65fe27efc82f6cf2e17518e5df467d44c33"
+        );
+        let direct: OwnerEquitySignalSnapshotCandidate = serde_json::from_slice(bytes).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        let through_value: OwnerEquitySignalSnapshotCandidate =
+            serde_json::from_value(value).unwrap();
+        for parsed in [direct, through_value] {
+            assert_eq!(
+                parsed.content_sha256,
+                "sha256:2e3f4bb3a0a369a682e045a6c0375396d2c0292532df3a0479f04c28205b91bf"
+            );
+            assert_eq!(parsed.canonical_bytes().unwrap().as_slice(), bytes);
+            parsed.verify().unwrap();
+            assert_snapshot_tampering_is_rejected(&parsed);
+        }
+    }
+
+    fn assert_snapshot_tampering_is_rejected(snapshot: &OwnerEquitySignalSnapshotCandidate) {
+        let mut changed_hash = snapshot.clone();
+        changed_hash.content_sha256 = format!("sha256:{}", "0".repeat(64));
+        assert_eq!(
+            changed_hash.verify(),
+            Err(OwnerEquitySnapshotError::SnapshotHashMismatch)
+        );
+
+        let mut changed_number = snapshot.clone();
+        let volume = &mut changed_number.rows[0].average_volume_20;
+        *volume = f64::from_bits(volume.to_bits() + 1);
+        assert_eq!(
+            changed_number.verify(),
+            Err(OwnerEquitySnapshotError::SnapshotHashMismatch)
+        );
+
+        let mut changed_structure = snapshot.clone();
+        changed_structure.owner_only = false;
+        changed_structure.content_sha256 = changed_structure
+            .compute_hash()
+            .unwrap()
+            .as_str()
+            .to_owned();
+        assert_eq!(
+            changed_structure.verify(),
+            Err(OwnerEquitySnapshotError::SnapshotInvalid)
+        );
     }
 }

@@ -1322,6 +1322,12 @@ async fn owner_beta_migration_runtime_body(
         .execute(&owner_a_actor)
         .await?;
 
+    // The expected 0050 failure retains SQLx's session advisory lock on its
+    // pooled connection. Reconnect as the same role before retrying so another
+    // pool connection cannot wait on that failed attempt's lock.
+    owner.close().await;
+    let snapshot_owner = effective_role_pool(super_url, db, "migration_owner", None, 3).await?;
+    let owner = &snapshot_owner;
     MIGRATOR.run_to(50, owner).await?;
     assert_eq!(applied_count(owner).await?, 50);
 
@@ -4064,8 +4070,59 @@ async fn auth_audit_rollback_guard_is_fail_closed_and_allows_delivered_rows() {
         )
         .fetch_one(&owner)
         .await?;
-        let blocked = MIGRATOR.undo(&owner, 38).await.unwrap_err();
-        assert_eq!(migrate_pg_code(&blocked).as_deref(), Some("55000"));
+        let ledger_before_refusal = migration_ledger_snapshot(&owner).await?;
+        let event_before_refusal: serde_json::Value = sqlx::query_scalar(
+            "SELECT to_jsonb(outbox_row) FROM public.auth_audit_outbox AS outbox_row WHERE id = $1",
+        )
+        .bind(event_id)
+        .fetch_one(&owner)
+        .await?;
+        let mut guarded = owner.acquire().await?;
+        let blocked = MIGRATOR.undo(&mut *guarded, 38).await.unwrap_err();
+        sqlx::query("SELECT pg_advisory_unlock_all()")
+            .execute(&mut *guarded)
+            .await?;
+        drop(guarded);
+        match &blocked {
+            sqlx::migrate::MigrateError::ExecuteMigration(error, version) => {
+                assert_eq!(*version, 39, "the refusal must come from migration 39");
+                assert_eq!(pg_code(error).as_deref(), Some("55000"));
+            }
+            _ => panic!("undo to 38 must fail as migration 39 execution"),
+        }
+        let event_after_refusal: serde_json::Value = sqlx::query_scalar(
+            "SELECT to_jsonb(outbox_row) FROM public.auth_audit_outbox AS outbox_row WHERE id = $1",
+        )
+        .bind(event_id)
+        .fetch_one(&owner)
+        .await?;
+        let pending_event: Option<(Uuid, bool)> = sqlx::query_as(
+            "SELECT id, delivered_at IS NULL FROM public.auth_audit_outbox WHERE id = $1",
+        )
+        .bind(event_id)
+        .fetch_optional(&owner)
+        .await?;
+        let outbox_exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('public.auth_audit_outbox') IS NOT NULL")
+                .fetch_one(&owner)
+                .await?;
+        let ledger_after_refusal = migration_ledger_snapshot(&owner).await?;
+        assert!(
+            event_before_refusal == event_after_refusal,
+            "0039 refusal must preserve the exact pending event row"
+        );
+        assert_eq!(pending_event, Some((event_id, true)));
+        assert!(
+            outbox_exists,
+            "0039 refusal must preserve the outbox relation"
+        );
+        assert!(
+            ledger_before_refusal == ledger_after_refusal
+                && ledger_after_refusal
+                    .iter()
+                    .any(|(version, success, _)| *version == 39 && *success),
+            "0039 refusal must preserve the exact successful migration 39 ledger row"
+        );
         sqlx::query("UPDATE auth_audit_outbox SET delivered_at = now() WHERE id = $1")
             .bind(event_id)
             .execute(&owner)
@@ -5627,12 +5684,367 @@ async fn research_schema_gate_accepts_current_and_future_migration_ledgers() {
         sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
             .execute(&owner)
             .await?;
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = $1")
+            .bind(future_version)
+            .execute(&owner)
+            .await?;
+        MIGRATOR.undo(&owner, 47).await?;
+        let status_after_undo: Option<String> =
+            sqlx::query_scalar("SELECT to_regclass('public.research_execution_status')::text")
+                .fetch_one(&owner)
+                .await?;
+        assert!(status_after_undo.is_none());
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+        MIGRATOR.run(&owner).await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
         Ok::<(), Box<dyn Error>>(())
     }
     .await;
     let _ = drop_contract_db(&super_url, &db).await;
     if let Err(error) = result {
-        panic!("research schema gate ledger contract FAILED: {error}");
+        let diagnostic = error.downcast_ref::<sqlx::Error>().map(|database_error| {
+            (
+                pg_code(database_error),
+                research_gate_error_category(database_error),
+                pg_error_position(database_error),
+            )
+        });
+        panic!("research schema gate ledger contract FAILED: {diagnostic:?}");
+    }
+}
+
+async fn assert_research_gate_rejects_then_restores(
+    owner: &PgPool,
+    mutation: &'static str,
+    expected_category: &str,
+) -> Result<(), Box<dyn Error>> {
+    assert_research_gate_rejects_then_restores_with_count(owner, mutation, expected_category, None)
+        .await
+}
+
+async fn assert_research_gate_rejects_then_restores_with_count(
+    owner: &PgPool,
+    mutation: &'static str,
+    expected_category: &str,
+    expected_writer_policy_count: Option<i64>,
+) -> Result<(), Box<dyn Error>> {
+    let mut transaction = owner.begin().await?;
+    sqlx::raw_sql(mutation).execute(&mut *transaction).await?;
+    if let Some(expected_count) = expected_writer_policy_count {
+        let actual_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_policy \
+             WHERE 'research_writer'::regrole::oid = ANY(polroles)",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        assert_eq!(actual_count, expected_count);
+    }
+    let rejection = match sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+        .execute(&mut *transaction)
+        .await
+    {
+        Ok(_) => {
+            transaction.rollback().await?;
+            return Err("research schema gate accepted a rejected contract mutation".into());
+        }
+        Err(error) => error,
+    };
+    assert_eq!(pg_code(&rejection).as_deref(), Some("P0001"));
+    let safe_message = rejection
+        .as_database_error()
+        .map(|database_error| database_error.message())
+        .unwrap_or_default();
+    assert!(
+        safe_message.contains(expected_category),
+        "rejected mutation must reach its intended gate category"
+    );
+    transaction.rollback().await?;
+    sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+        .execute(owner)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn research_schema_gate_rejects_status_policy_and_acl_drift() {
+    let super_url = match require_db_url() {
+        Ok(url) => url,
+        Err(_) => return,
+    };
+    let (db, owner) = match create_contract_db(&super_url).await {
+        Ok(value) => value,
+        Err(error) => panic!("setup failed: {error}"),
+    };
+    let result = async {
+        MIGRATOR.run(&owner).await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+        MIGRATOR.undo(&owner, 47).await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+        MIGRATOR.run(&owner).await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+
+        for (mutation, category) in [
+            (
+                "DROP TABLE public.research_execution_status",
+                "research execution status relation and migration ledger disagree",
+            ),
+            (
+                "UPDATE _sqlx_migrations SET success = false WHERE version = 59",
+                "research execution status relation and migration ledger disagree",
+            ),
+            (
+                "DELETE FROM _sqlx_migrations WHERE version = 59",
+                "research execution status relation and migration ledger disagree",
+            ),
+            (
+                "DROP POLICY research_execution_status_research_writer_select ON public.research_execution_status",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "DROP POLICY research_execution_status_research_writer_insert ON public.research_execution_status",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "DROP POLICY research_execution_status_research_writer_update ON public.research_execution_status",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER POLICY research_execution_status_research_writer_select ON public.research_execution_status USING (true)",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER POLICY research_execution_status_research_writer_insert ON public.research_execution_status WITH CHECK (true)",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER POLICY research_execution_status_research_writer_update ON public.research_execution_status USING (true)",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER POLICY research_execution_status_research_writer_update ON public.research_execution_status WITH CHECK (true)",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER POLICY research_execution_status_research_writer_select ON public.research_execution_status RENAME TO research_execution_status_research_writer_renamed",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "DROP POLICY research_execution_status_research_writer_select ON public.research_execution_status; CREATE POLICY research_execution_status_research_writer_select ON public.research_execution_status FOR INSERT TO research_writer WITH CHECK (id = 'kis-eod')",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "DROP POLICY research_execution_status_research_writer_select ON public.research_execution_status; CREATE POLICY research_execution_status_research_writer_select ON public.research_execution_status AS RESTRICTIVE FOR SELECT TO research_writer USING (id = 'kis-eod')",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER POLICY research_execution_status_research_writer_select ON public.research_execution_status TO research_writer, admin",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER POLICY research_execution_status_research_writer_select ON public.research_execution_status USING (id = 'other')",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER TABLE public.research_execution_status DROP CONSTRAINT research_execution_status_singleton_check; ALTER TABLE public.research_execution_status ADD CONSTRAINT research_execution_status_singleton_check CHECK (true)",
+                "research execution status relation security or policy contract is not exact",
+            ),
+            (
+                "ALTER TABLE public.research_execution_status DROP CONSTRAINT research_execution_status_singleton_check; ALTER TABLE public.research_execution_status ADD CONSTRAINT research_execution_status_singleton_check CHECK (id = 'other')",
+                "research execution status relation security or policy contract is not exact",
+            ),
+            (
+                "CREATE POLICY research_execution_status_research_writer_extra ON public.research_execution_status FOR SELECT TO research_writer USING (id = 'kis-eod')",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "CREATE POLICY research_execution_status_public_select ON public.research_execution_status FOR SELECT TO PUBLIC USING (true)",
+                "research execution status relation security or policy contract is not exact",
+            ),
+            (
+                "CREATE TEMP TABLE writer_policy_probe (id text); ALTER TABLE pg_temp.writer_policy_probe ENABLE ROW LEVEL SECURITY; CREATE POLICY writer_policy_probe_select ON pg_temp.writer_policy_probe FOR SELECT TO research_writer USING (true)",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "REVOKE SELECT ON TABLE public.research_execution_status FROM research_writer",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "REVOKE INSERT ON TABLE public.research_execution_status FROM research_writer",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "REVOKE UPDATE ON TABLE public.research_execution_status FROM research_writer",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "GRANT DELETE ON TABLE public.research_execution_status TO research_writer",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "GRANT TRUNCATE ON TABLE public.research_execution_status TO research_writer",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "GRANT SELECT ON TABLE public.research_execution_status TO research_writer WITH GRANT OPTION",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "GRANT UPDATE ON TABLE public.research_execution_status TO admin",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "GRANT SELECT ON TABLE public.research_execution_status TO PUBLIC",
+                "research execution status direct grants are not exact",
+            ),
+            (
+                "ALTER TABLE public.research_execution_status DISABLE ROW LEVEL SECURITY",
+                "research execution status relation security or policy contract is not exact",
+            ),
+            (
+                "ALTER TABLE public.research_execution_status NO FORCE ROW LEVEL SECURITY",
+                "research execution status relation security or policy contract is not exact",
+            ),
+            (
+                "RESET ROLE; ALTER TABLE public.research_execution_status OWNER TO admin",
+                "research execution status relation security or policy contract is not exact",
+            ),
+            (
+                "DROP POLICY data_batches_select_research_writer ON public.data_batches",
+                "research_writer policy inventory is not exact",
+            ),
+            (
+                "ALTER TABLE public.data_batches DROP CONSTRAINT data_batches_bytes_positive_check; ALTER TABLE public.data_batches ADD CONSTRAINT data_batches_bytes_positive_check CHECK (true)",
+                "research publication constraints are missing, unvalidated, or drifted",
+            ),
+            (
+                "GRANT SELECT ON TABLE public.orders TO PUBLIC",
+                "research_writer has forbidden tenant/order/audit/job or metadata privileges",
+            ),
+        ] {
+            assert_research_gate_rejects_then_restores(&owner, mutation, category).await?;
+        }
+
+        for mutation in [
+            "DROP POLICY candidate_price_revalidation_events_select ON public.candidate_price_revalidation_events; CREATE TABLE public.research_schema_gate_wrong_table_probe (id text); ALTER TABLE public.research_schema_gate_wrong_table_probe ENABLE ROW LEVEL SECURITY; CREATE POLICY candidate_price_revalidation_events_select ON public.research_schema_gate_wrong_table_probe FOR SELECT TO research_writer USING (true)",
+            "DROP POLICY candidate_price_revalidation_events_select ON public.candidate_price_revalidation_events; CREATE TEMP TABLE writer_policy_probe (id text); ALTER TABLE pg_temp.writer_policy_probe ENABLE ROW LEVEL SECURITY; CREATE POLICY candidate_price_revalidation_events_select ON pg_temp.writer_policy_probe FOR SELECT TO research_writer USING (true)",
+        ] {
+            assert_research_gate_rejects_then_restores_with_count(
+                &owner,
+                mutation,
+                "research_writer policy inventory is not exact",
+                Some(27),
+            )
+            .await?;
+        }
+
+        let mut transaction = owner.begin().await?;
+        // PostgreSQL 18.4 stores PUBLIC as the sole policy role when ALTER POLICY
+        // names it alongside research_writer. The total policy row count is stable,
+        // but the research_writer-bearing count drops; the exact tuple comparison
+        // below still verifies that the raw OID-0 projection rejects this widening.
+        let total_policy_count_before: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pg_policy")
+                .fetch_one(&mut *transaction)
+                .await?;
+        let writer_policy_count_before: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_policy \
+             WHERE 'research_writer'::regrole::oid = ANY(polroles)",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        assert_eq!(writer_policy_count_before, 27);
+        sqlx::raw_sql(
+            "ALTER POLICY research_execution_status_research_writer_select \
+             ON public.research_execution_status TO research_writer, PUBLIC",
+        )
+        .execute(&mut *transaction)
+        .await?;
+        type StatusSelectPolicyShape = (
+            String,
+            String,
+            bool,
+            Vec<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let status_select_shape: StatusSelectPolicyShape = sqlx::query_as(
+            "SELECT policy.polname::text, \
+                    CASE policy.polcmd WHEN 'r' THEN 'SELECT' ELSE policy.polcmd::text END, \
+                    policy.polpermissive, \
+                    ARRAY(SELECT CASE WHEN policy_role.role_oid = 0 THEN 'PUBLIC' \
+                                      ELSE role_row.rolname::text END \
+                            FROM unnest(policy.polroles) AS policy_role(role_oid) \
+                            LEFT JOIN pg_roles role_row ON role_row.oid = policy_role.role_oid \
+                           ORDER BY 1), \
+                    pg_get_expr(policy.polqual, policy.polrelid), \
+                    pg_get_expr(policy.polwithcheck, policy.polrelid) \
+               FROM pg_policy policy \
+              WHERE policy.polrelid = 'public.research_execution_status'::regclass \
+                AND policy.polname = 'research_execution_status_research_writer_select'",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        let expected_status_select_shape = (
+            "research_execution_status_research_writer_select".to_owned(),
+            "SELECT".to_owned(),
+            true,
+            vec!["research_writer".to_owned()],
+            Some("(id = 'kis-eod'::text)".to_owned()),
+            None,
+        );
+        assert_ne!(status_select_shape, expected_status_select_shape);
+        assert_eq!(status_select_shape.3, ["PUBLIC"]);
+        let total_policy_count_after: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pg_policy")
+                .fetch_one(&mut *transaction)
+                .await?;
+        assert_eq!(total_policy_count_after, total_policy_count_before);
+        let writer_policy_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_policy \
+             WHERE 'research_writer'::regrole::oid = ANY(polroles)",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        eprintln!(
+            "status PUBLIC widening catalog roles={:?}; total policies {}->{}; writer policies {}->{}",
+            status_select_shape.3,
+            total_policy_count_before,
+            total_policy_count_after,
+            writer_policy_count_before,
+            writer_policy_count
+        );
+        assert_eq!(writer_policy_count, 26);
+        let rejection = sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&mut *transaction)
+            .await
+            .unwrap_err();
+        assert_eq!(pg_code(&rejection).as_deref(), Some("P0001"));
+        let safe_message = rejection
+            .as_database_error()
+            .map(|database_error| database_error.message())
+            .unwrap_or_default();
+        assert!(safe_message.contains("research_writer policy inventory is not exact"));
+        transaction.rollback().await?;
+        sqlx::raw_sql(RESEARCH_SCHEMA_GATE_SQL)
+            .execute(&owner)
+            .await?;
+
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+    let _ = drop_contract_db(&super_url, &db).await;
+    if let Err(error) = result {
+        panic!("research schema gate status drift contract FAILED: {error}");
     }
 }
 
@@ -5685,6 +6097,63 @@ fn pg_code(err: &sqlx::Error) -> Option<String> {
         // materialize an owned String so the error code outlives `err`.
         sqlx::Error::Database(e) => e.code().map(|c| c.into_owned()),
         _ => None,
+    }
+}
+
+fn pg_constraint_name(err: &sqlx::Error) -> Option<String> {
+    match err {
+        sqlx::Error::Database(database_error) => database_error.constraint().map(str::to_owned),
+        _ => None,
+    }
+}
+
+fn research_gate_error_category(err: &sqlx::Error) -> Option<&'static str> {
+    let message = err.as_database_error()?.message();
+    [
+        "successful SQLx migrations 22-25, 33-35, 42, and 45-47 are required",
+        "candidate Raw rights coverage columns or default trigger are missing",
+        "research publication tables are missing",
+        "research source tables must be owned by migration_owner",
+        "candidate catalog publisher privilege contract is missing or unsafe",
+        "recommendation publication fencing and terminal-sync security contract is missing or unsafe",
+        "research publication constraints are missing, unvalidated, or drifted",
+        "research publication column contract is missing or drifted",
+        "data_batches_source_file_uq is missing, invalid, or drifted",
+        "trading_calendar_versions_source_lookup_idx is missing, invalid, or drifted",
+        "research publication RLS is not enabled",
+        "research_writer role attributes are unsafe",
+        "research_writer has unexpected role memberships",
+        "research execution status relation and migration ledger disagree",
+        "research_writer policy inventory is not exact",
+        "research execution status relation security or policy contract is not exact",
+        "research execution status direct grants are not exact",
+        "research execution status effective ACLs are not exact",
+        "candidate instrument registration SELECT policy is missing or drifted",
+        "candidate dataset catalog SELECT policy is missing or drifted",
+        "candidate universe registry SELECT policy is missing or drifted",
+        "candidate source research_writer RLS policies are missing or drifted",
+        "candidate price evidence SELECT policies are missing or drifted",
+        "candidate price revalidation audit is not append-only or RLS protected",
+        "append-only trigger/function is missing, disabled, or drifted",
+        "append-only trigger function definition is missing or drifted",
+        "research_writer direct table grants are not exact",
+        "research_writer has forbidden tenant/order/audit/job or metadata privileges",
+        "research_writer must not have identity-sequence usage",
+    ]
+    .into_iter()
+    .find(|category| message.contains(category))
+}
+
+fn pg_error_position(err: &sqlx::Error) -> Option<usize> {
+    use sqlx::postgres::PgErrorPosition;
+
+    let database_error = err
+        .as_database_error()?
+        .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()?;
+    match database_error.position()? {
+        PgErrorPosition::Original(position) | PgErrorPosition::Internal { position, .. } => {
+            Some(position)
+        }
     }
 }
 
@@ -5753,6 +6222,180 @@ async fn applied_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar::<_, i64>("SELECT count(*) FROM _sqlx_migrations")
         .fetch_one(pool)
         .await
+}
+
+async fn migration_ledger_snapshot(
+    pool: &PgPool,
+) -> Result<Vec<(i64, bool, Vec<u8>)>, sqlx::Error> {
+    sqlx::query_as("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
+        .fetch_all(pool)
+        .await
+}
+
+const OWNER_EQUITY_V2_SNAPSHOT_TABLES: [&str; 7] = [
+    "owner_equity_universe_policies",
+    "owner_equity_memberships",
+    "owner_equity_membership_events",
+    "owner_equity_instrument_generations",
+    "owner_equity_generation_admissions",
+    "owner_equity_signal_snapshots",
+    "owner_equity_signal_snapshot_rows",
+];
+
+async fn owner_equity_v2_actor_snapshot(
+    actor: &PgPool,
+) -> Result<Vec<(String, serde_json::Value)>, sqlx::Error> {
+    let mut snapshot = Vec::with_capacity(OWNER_EQUITY_V2_SNAPSHOT_TABLES.len());
+    for table in OWNER_EQUITY_V2_SNAPSHOT_TABLES {
+        let query = format!(
+            "SELECT COALESCE(jsonb_agg(row_data ORDER BY row_data::text), '[]'::jsonb) \
+             FROM (SELECT to_jsonb(row_value) AS row_data FROM public.{table} AS row_value) snapshot_rows"
+        );
+        let rows = sqlx::query_scalar::<_, serde_json::Value>(sqlx::AssertSqlSafe(query))
+            .fetch_one(actor)
+            .await?;
+        snapshot.push((table.to_owned(), rows));
+    }
+    Ok(snapshot)
+}
+
+async fn owner_equity_job_snapshot(
+    worker: &PgPool,
+    job_id: Uuid,
+) -> Result<serde_json::Value, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(jsonb_agg(to_jsonb(job_row) ORDER BY job_row.id), '[]'::jsonb) \
+         FROM public.jobs AS job_row WHERE job_row.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(worker)
+    .await
+}
+
+async fn auth_audit_outbox_snapshot(
+    migration_owner: &PgPool,
+) -> Result<serde_json::Value, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(jsonb_agg(to_jsonb(outbox_row) ORDER BY outbox_row.id), '[]'::jsonb) \
+         FROM public.auth_audit_outbox AS outbox_row",
+    )
+    .fetch_one(migration_owner)
+    .await
+}
+
+async fn assert_disposable_054_059_families_empty(
+    migration_owner: &PgPool,
+    worker: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    for table in [
+        "owner_intraday_quote_demands",
+        "owner_intraday_quote_cache",
+        "owner_intraday_quote_producers",
+    ] {
+        let query = format!("SELECT count(*) FROM public.{table}");
+        let rows: i64 = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(query))
+            .fetch_one(worker)
+            .await?;
+        assert!(
+            rows == 0,
+            "disposable 0054 intraday tables must be empty before V2 undo"
+        );
+    }
+    let mut migration_owner_connection = migration_owner.acquire().await?;
+    assert_market_stream_0055_family_physically_empty(&mut migration_owner_connection).await?;
+    let status_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM public.research_execution_status")
+            .fetch_one(migration_owner)
+            .await?;
+    assert!(
+        status_rows == 0,
+        "the 0059 status singleton must be empty before V2 undo"
+    );
+    Ok(())
+}
+
+async fn assert_market_stream_0055_family_physically_empty(
+    migration_owner: &mut sqlx::postgres::PgConnection,
+) -> Result<(), Box<dyn Error>> {
+    for table in [
+        "owner_market_stream_grants",
+        "owner_market_stream_leases",
+        "owner_market_stream_lease_items",
+        "owner_market_stream_producers",
+        "owner_market_stream_subscriptions",
+        "owner_market_stream_cache",
+    ] {
+        let query = format!("SELECT count(*) FROM public.{table}");
+        let rows: i64 = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(query))
+            .fetch_one(&mut *migration_owner)
+            .await?;
+        if rows != 0 {
+            return Err("0055 market-stream family is not physically empty".into());
+        }
+    }
+    Ok(())
+}
+
+async fn assert_disposable_054_059_objects_gone(
+    migration_owner: &PgPool,
+) -> Result<(), Box<dyn Error>> {
+    for relation in [
+        "public.owner_intraday_quote_demands",
+        "public.owner_intraday_quote_cache",
+        "public.owner_intraday_quote_producers",
+        "public.owner_market_stream_grants",
+        "public.owner_market_stream_leases",
+        "public.owner_market_stream_lease_items",
+        "public.owner_market_stream_producers",
+        "public.owner_market_stream_subscriptions",
+        "public.owner_market_stream_cache",
+        "public.research_execution_status",
+        "public.owner_beta_service_status_owner_finished_idx",
+        "public.jobs_service_status_owner_type_finished_idx",
+        "public.jobs_service_status_owner_type_status_available_idx",
+    ] {
+        let present: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+            .bind(relation)
+            .fetch_one(migration_owner)
+            .await?;
+        assert!(
+            present.is_none(),
+            "disposable 0054-0059 relation must be gone"
+        );
+    }
+    for function in [
+        "public.owner_market_stream_grants_guard()",
+        "public.lock_owner_market_stream_worker_demand(uuid,uuid,uuid,uuid,uuid[])",
+        "public.lock_owner_market_stream_app_lease_items(uuid,text,uuid)",
+        "public.lock_owner_market_stream_worker_admission(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint)",
+        "public.lock_owner_market_stream_app_admission(uuid,text,uuid,text,bigint)",
+        "public.lock_owner_market_stream_session(uuid,uuid,uuid,uuid,text)",
+        "public.lock_owner_market_stream_rights(uuid,uuid,uuid,uuid,date)",
+        "public.owner_market_stream_session_valid(text,uuid)",
+        "public.owner_market_stream_rights_valid(uuid,uuid,date)",
+        "public.owner_market_stream_delivery_state(uuid,text,uuid)",
+        "public.owner_market_stream_api_binding_valid(uuid,text,uuid,uuid,text)",
+        "public.owner_service_status_stream(uuid,text,uuid,uuid,text,text,timestamptz,timestamptz)",
+    ] {
+        let present: Option<String> = sqlx::query_scalar("SELECT to_regprocedure($1)::text")
+            .bind(function)
+            .fetch_one(migration_owner)
+            .await?;
+        assert!(
+            present.is_none(),
+            "disposable 0054-0059 function must be gone"
+        );
+    }
+    let policy_present: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_policy WHERE polname = 'owner_market_stream_session_lookup')",
+    )
+    .fetch_one(migration_owner)
+    .await?;
+    assert!(
+        !policy_present,
+        "disposable market-stream web-session policy must be gone"
+    );
+    Ok(())
 }
 
 #[test]
@@ -6786,6 +7429,10 @@ async fn full_contract_body(
             "trading_calendars",
             (true, true, true, false, false, false, false, false),
         ),
+        (
+            "research_execution_status",
+            (true, true, true, false, false, false, false, false),
+        ),
     ] {
         let actual: (bool, bool, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
             "SELECT has_table_privilege('research_writer', $1, 'SELECT'), \
@@ -6805,10 +7452,35 @@ async fn full_contract_body(
             "research_writer ACL must be exact for {table}"
         );
     }
-    let writer_policies: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT tablename, policyname, cmd FROM pg_policies \
-         WHERE schemaname = 'public' AND 'research_writer' = ANY(roles) \
-         ORDER BY tablename, policyname",
+    type WriterPolicyShape = (
+        String,
+        String,
+        String,
+        bool,
+        Vec<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let writer_policies: Vec<WriterPolicyShape> = sqlx::query_as(
+        "SELECT table_row.relname::text, policy.polname::text, \
+                CASE policy.polcmd WHEN 'r' THEN 'SELECT' WHEN 'a' THEN 'INSERT' \
+                     WHEN 'w' THEN 'UPDATE' WHEN 'd' THEN 'DELETE' ELSE 'ALL' END, \
+                policy.polpermissive, \
+                ARRAY(SELECT CASE WHEN policy_role.role_oid = 0 THEN 'PUBLIC' \
+                                  ELSE role_row.rolname::text END \
+                        FROM unnest(policy.polroles) AS policy_role(role_oid) \
+                        LEFT JOIN pg_roles role_row ON role_row.oid = policy_role.role_oid \
+                       ORDER BY 1), \
+                CASE WHEN policy.polqual IS NULL THEN NULL::text \
+                     ELSE pg_get_expr(policy.polqual, policy.polrelid) END, \
+                CASE WHEN policy.polwithcheck IS NULL THEN NULL::text \
+                     ELSE pg_get_expr(policy.polwithcheck, policy.polrelid) END \
+           FROM pg_policy policy \
+           JOIN pg_class table_row ON table_row.oid = policy.polrelid \
+           JOIN pg_namespace table_schema ON table_schema.oid = table_row.relnamespace \
+          WHERE table_schema.nspname = 'public' \
+            AND 'research_writer'::regrole::oid = ANY(policy.polroles) \
+          ORDER BY table_row.relname, policy.polname",
     )
     .fetch_all(owner)
     .await?;
@@ -6817,129 +7489,399 @@ async fn full_contract_body(
             "candidate_fundamental_observations",
             "candidate_source_select_candidate_fundamental_observations",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_instrument_registrations",
             "candidate_instrument_registrations_select",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_investor_flow_snapshot_rows",
             "candidate_source_select_candidate_investor_flow_snapshot_rows",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_investor_flows",
             "candidate_source_select_candidate_investor_flows",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_market_status_observations",
             "candidate_source_select_candidate_market_status_observations",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_price_instrument_coverage",
             "candidate_source_select_candidate_price_instrument_coverage",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_price_instrument_sessions",
             "candidate_source_select_candidate_price_instrument_sessions",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_price_publications",
             "candidate_source_select_candidate_price_publications",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_price_revalidation_events",
             "candidate_price_revalidation_events_select",
             "SELECT",
+            true,
+            &["research_writer"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_raw_batch_datasets",
             "candidate_source_select_candidate_raw_batch_datasets",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_raw_batch_publications",
             "candidate_source_select_candidate_raw_batch_publications",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_sector_entries",
             "candidate_source_select_candidate_sector_entries",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_sector_versions",
             "candidate_source_select_candidate_sector_versions",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_universe_members",
             "candidate_source_select_candidate_universe_members",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_universe_registry",
             "candidate_universe_registry_select_research_writer",
             "SELECT",
+            true,
+            &["research_writer"][..],
+            Some("true"),
+            None,
         ),
         (
             "candidate_universe_snapshots",
             "candidate_source_select_candidate_universe_snapshots",
             "SELECT",
+            true,
+            &["admin", "research_writer", "worker"][..],
+            Some("true"),
+            None,
         ),
         (
             "data_batches",
             "data_batches_insert_research_writer",
             "INSERT",
+            true,
+            &["research_writer"][..],
+            None,
+            Some("true"),
         ),
         (
             "data_batches",
             "data_batches_select_research_writer",
             "SELECT",
+            true,
+            &["research_writer"][..],
+            Some("true"),
+            None,
         ),
         (
             "dataset_versions",
             "candidate_dataset_versions_select_research_writer",
             "SELECT",
+            true,
+            &["research_writer"][..],
+            Some("true"),
+            None,
+        ),
+        (
+            "research_execution_status",
+            "research_execution_status_research_writer_insert",
+            "INSERT",
+            true,
+            &["research_writer"][..],
+            None,
+            Some("(id = 'kis-eod'::text)"),
+        ),
+        (
+            "research_execution_status",
+            "research_execution_status_research_writer_select",
+            "SELECT",
+            true,
+            &["research_writer"][..],
+            Some("(id = 'kis-eod'::text)"),
+            None,
+        ),
+        (
+            "research_execution_status",
+            "research_execution_status_research_writer_update",
+            "UPDATE",
+            true,
+            &["research_writer"][..],
+            Some("(id = 'kis-eod'::text)"),
+            Some("(id = 'kis-eod'::text)"),
         ),
         (
             "trading_calendar_versions",
             "trading_calendar_versions_insert_research_writer",
             "INSERT",
+            true,
+            &["research_writer"][..],
+            None,
+            Some("true"),
         ),
         (
             "trading_calendar_versions",
             "trading_calendar_versions_select_research_writer",
             "SELECT",
+            true,
+            &["research_writer"][..],
+            Some("true"),
+            None,
         ),
         (
             "trading_calendars",
             "trading_calendars_insert_research_writer",
             "INSERT",
+            true,
+            &["research_writer"][..],
+            None,
+            Some("true"),
         ),
         (
             "trading_calendars",
             "trading_calendars_select_research_writer",
             "SELECT",
+            true,
+            &["research_writer"][..],
+            Some("true"),
+            None,
         ),
         (
             "trading_calendars",
             "trading_calendars_update_research_writer",
             "UPDATE",
+            true,
+            &["research_writer"][..],
+            Some("true"),
+            Some("true"),
         ),
     ]
     .into_iter()
-    .map(|(table, policy, command)| (table.into(), policy.into(), command.into()))
-    .collect::<Vec<(String, String, String)>>();
+    .map(
+        |(table, policy, command, permissive, roles, qual, with_check)| {
+            (
+                table.into(),
+                policy.into(),
+                command.into(),
+                permissive,
+                roles.iter().map(|role| (*role).to_owned()).collect(),
+                qual.map(str::to_owned),
+                with_check.map(str::to_owned),
+            )
+        },
+    )
+    .collect::<Vec<WriterPolicyShape>>();
     assert_eq!(
         writer_policies, expected_writer_policies,
         "research_writer must have only the requested publication RLS policies"
+    );
+    let initial_status_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM public.research_execution_status")
+            .fetch_one(owner)
+            .await?;
+    assert_eq!(
+        initial_status_rows, 0,
+        "migration must not fabricate a research execution status row"
+    );
+    let status_fence: String = sqlx::query_scalar(
+        "WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS at) \
+         INSERT INTO public.research_execution_status \
+         (id, attempt_started_at, heartbeat_at, attempt_state, target_session, updated_at) \
+         SELECT 'kis-eod', at, at, 'RUNNING', CURRENT_DATE, at FROM db_clock \
+         RETURNING attempt_started_at::text",
+    )
+    .fetch_one(&rw)
+    .await?;
+    let writer_status: String = sqlx::query_scalar(
+        "SELECT attempt_state FROM public.research_execution_status WHERE id = 'kis-eod'",
+    )
+    .fetch_one(&rw)
+    .await?;
+    assert_eq!(writer_status, "RUNNING");
+    let fenced_status_id: Option<String> = sqlx::query_scalar(
+        "UPDATE public.research_execution_status \
+            SET heartbeat_at = GREATEST(heartbeat_at, clock_timestamp()), \
+                updated_at = clock_timestamp() \
+          WHERE id = 'kis-eod' AND attempt_state = 'RUNNING' \
+            AND attempt_started_at = $1::timestamptz \
+          RETURNING id",
+    )
+    .bind(&status_fence)
+    .fetch_optional(&rw)
+    .await?;
+    assert_eq!(fenced_status_id.as_deref(), Some("kis-eod"));
+    let status_before_rejections: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(status_row) FROM public.research_execution_status AS status_row \
+         WHERE id = 'kis-eod'",
+    )
+    .fetch_one(&rw)
+    .await?;
+
+    let admin = role_pool(super_url, db, "admin").await?;
+    let admin_status: String = sqlx::query_scalar(
+        "SELECT attempt_state FROM public.research_execution_status WHERE id = 'kis-eod'",
+    )
+    .fetch_one(&admin)
+    .await?;
+    assert_eq!(
+        admin_status, "RUNNING",
+        "admin may read the singleton status"
+    );
+    let admin_update = sqlx::query(
+        "UPDATE public.research_execution_status SET updated_at = clock_timestamp() WHERE id = 'kis-eod'",
+    )
+    .execute(&admin)
+    .await
+    .unwrap_err();
+    assert_eq!(pg_code(&admin_update).as_deref(), Some("42501"));
+
+    for role in ["app", "worker", "audit_writer"] {
+        let denied_role = role_pool(super_url, db, role).await?;
+        let denied_select = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM public.research_execution_status WHERE id = 'kis-eod'",
+        )
+        .fetch_one(&denied_role)
+        .await
+        .unwrap_err();
+        assert_eq!(pg_code(&denied_select).as_deref(), Some("42501"));
+        let denied_update = sqlx::query(
+            "UPDATE public.research_execution_status SET updated_at = clock_timestamp() WHERE id = 'kis-eod'",
+        )
+        .execute(&denied_role)
+        .await
+        .unwrap_err();
+        assert_eq!(pg_code(&denied_update).as_deref(), Some("42501"));
+    }
+
+    let writer_delete =
+        sqlx::query("DELETE FROM public.research_execution_status WHERE id = 'kis-eod'")
+            .execute(&rw)
+            .await
+            .unwrap_err();
+    assert_eq!(pg_code(&writer_delete).as_deref(), Some("42501"));
+    let writer_truncate = sqlx::query("TRUNCATE TABLE public.research_execution_status")
+        .execute(&rw)
+        .await
+        .unwrap_err();
+    assert_eq!(pg_code(&writer_truncate).as_deref(), Some("42501"));
+
+    let non_singleton_insert = sqlx::query(
+        "WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS at) \
+         INSERT INTO public.research_execution_status \
+         (id, attempt_started_at, heartbeat_at, attempt_state, updated_at) \
+         SELECT 'not-kis-eod', at, at, 'RUNNING', at FROM db_clock",
+    )
+    .execute(&rw)
+    .await
+    .unwrap_err();
+    assert!(
+        pg_code(&non_singleton_insert).is_some(),
+        "writer must not insert a non-singleton status row"
+    );
+    eprintln!(
+        "status non-singleton insert rejection: sqlstate={:?} constraint={:?}",
+        pg_code(&non_singleton_insert),
+        pg_constraint_name(&non_singleton_insert)
+    );
+    let singleton_id_change = sqlx::query(
+        "UPDATE public.research_execution_status \
+            SET id = 'not-kis-eod', updated_at = clock_timestamp() \
+          WHERE id = 'kis-eod'",
+    )
+    .execute(&rw)
+    .await
+    .unwrap_err();
+    assert!(
+        pg_code(&singleton_id_change).is_some(),
+        "writer must not change the singleton status id"
+    );
+    eprintln!(
+        "status singleton id-change rejection: sqlstate={:?} constraint={:?}",
+        pg_code(&singleton_id_change),
+        pg_constraint_name(&singleton_id_change)
+    );
+    let status_after_rejections: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(status_row) FROM public.research_execution_status AS status_row \
+         WHERE id = 'kis-eod'",
+    )
+    .fetch_one(&rw)
+    .await?;
+    assert!(
+        status_before_rejections == status_after_rejections,
+        "rejected status writes must leave the singleton row unchanged"
     );
     let sequence_privileges: (bool, bool, bool) = sqlx::query_as(
         "SELECT has_sequence_privilege('research_writer', 'public.trading_calendar_versions_id_seq', 'USAGE'), \
@@ -10284,7 +11226,10 @@ async fn owner_equity_universe_v2_rls_lifecycle_and_lineage_contract() {
     let result = owner_equity_universe_v2_contract_body(&super_url, &db, &owner).await;
     let _ = drop_contract_db(&super_url, &db).await;
     if let Err(error) = result {
-        panic!("owner equity universe V2 contract FAILED: {error}");
+        let database_diagnostic = error
+            .downcast_ref::<sqlx::Error>()
+            .map(|database_error| (pg_code(database_error), pg_constraint_name(database_error)));
+        panic!("owner equity universe V2 contract FAILED: {database_diagnostic:?}");
     }
 }
 
@@ -10636,9 +11581,190 @@ async fn owner_equity_universe_v2_contract_body(
         .unwrap_err();
     assert_eq!(pg_code(&hard_delete).as_deref(), Some("42501"));
 
-    let rollback = MIGRATOR.undo(owner, 1).await.unwrap_err();
-    assert_eq!(migrate_pg_code(&rollback).as_deref(), Some("55000"));
-    assert_eq!(applied_count(owner).await?, up_migration_count() as i64);
+    let original_ledger = migration_ledger_snapshot(owner).await?;
+    assert_eq!(original_ledger.len(), up_migration_count());
+    assert!(
+        original_ledger.iter().all(|(_, success, _)| *success),
+        "the fixture must begin with only successful migration ledger rows"
+    );
+    let expected_retained_ledger: Vec<(i64, bool, Vec<u8>)> = original_ledger
+        .iter()
+        .filter(|(version, _, _)| *version <= 53)
+        .cloned()
+        .collect();
+    assert!(
+        expected_retained_ledger
+            .iter()
+            .any(|(version, _, _)| *version == 53),
+        "the exact retained migration prefix must include migration 53"
+    );
+    let owner_a_v2_before = owner_equity_v2_actor_snapshot(&owner_a_actor).await?;
+    let owner_b_v2_before = owner_equity_v2_actor_snapshot(&owner_b_actor).await?;
+    let scheduled_job_before = owner_equity_job_snapshot(&worker, scheduled.0).await?;
+    let auth_outbox_before = auth_audit_outbox_snapshot(owner).await?;
+
+    let mut hidden_grant_transaction = owner.begin().await?;
+    let hidden_revoked_grant: Uuid = sqlx::query_scalar(
+        "INSERT INTO public.owner_market_stream_grants \
+         (credential_slot_id, credential_generation, owner_user_id, entitlement_id, \
+          entitlement_reference, entitlement_document_sha256, tr_id, wire_version, \
+          network_contract_sha256, identity_list_sha256, effective_from, effective_until, \
+          activation_commit, state, revoked_at) \
+         VALUES ($1, '1', $2, $3, 'synthetic-revoked-fixture', repeat('a', 64), \
+                 'H0STCNT0', 'kis-h0stcnt0-20260914-v1', repeat('b', 64), \
+                 repeat('c', 64), CURRENT_DATE, CURRENT_DATE, $4, 'REVOKED', \
+                 clock_timestamp()) RETURNING id",
+    )
+    .bind(Uuid::new_v4())
+    .bind(owner_a)
+    .bind(entitlement_id)
+    .bind(CODE_COMMIT)
+    .fetch_one(&mut *hidden_grant_transaction)
+    .await?;
+    sqlx::query("SET LOCAL ROLE worker")
+        .execute(&mut *hidden_grant_transaction)
+        .await?;
+    let worker_visible_revoked_grant: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM public.owner_market_stream_grants WHERE id = $1")
+            .bind(hidden_revoked_grant)
+            .fetch_optional(&mut *hidden_grant_transaction)
+            .await?;
+    assert!(
+        worker_visible_revoked_grant.is_none(),
+        "worker RLS must hide the synthetic revoked stream grant"
+    );
+    sqlx::query("SET LOCAL ROLE migration_owner")
+        .execute(&mut *hidden_grant_transaction)
+        .await?;
+    let hidden_row_empty_check =
+        assert_market_stream_0055_family_physically_empty(&mut hidden_grant_transaction).await;
+    assert_eq!(
+        hidden_row_empty_check
+            .err()
+            .map(|error| error.to_string())
+            .as_deref(),
+        Some("0055 market-stream family is not physically empty"),
+        "owner-visible physical emptiness must reject the worker-hidden revoked grant"
+    );
+    hidden_grant_transaction.rollback().await?;
+    assert_disposable_054_059_families_empty(owner, &worker).await?;
+
+    MIGRATOR.undo(owner, 53).await?;
+    let ledger_after_054_059 = migration_ledger_snapshot(owner).await?;
+    assert!(
+        ledger_after_054_059 == expected_retained_ledger,
+        "undo through 53 must retain the exact ordered version/success/checksum prefix"
+    );
+    assert_disposable_054_059_objects_gone(owner).await?;
+    let owner_a_v2_after_054_059 = owner_equity_v2_actor_snapshot(&owner_a_actor).await?;
+    let owner_b_v2_after_054_059 = owner_equity_v2_actor_snapshot(&owner_b_actor).await?;
+    let scheduled_job_after_054_059 = owner_equity_job_snapshot(&worker, scheduled.0).await?;
+    let auth_outbox_after_054_059 = auth_audit_outbox_snapshot(owner).await?;
+    assert!(
+        owner_a_v2_before == owner_a_v2_after_054_059
+            && owner_b_v2_before == owner_b_v2_after_054_059
+            && scheduled_job_before == scheduled_job_after_054_059
+            && auth_outbox_before == auth_outbox_after_054_059,
+        "undo through 53 must preserve both owners' V2 rows, the scheduled job, and auth outbox"
+    );
+
+    let mut guarded = owner.acquire().await?;
+    let rollback = MIGRATOR.undo(&mut *guarded, 52).await.unwrap_err();
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut *guarded)
+        .await?;
+    drop(guarded);
+    match &rollback {
+        sqlx::migrate::MigrateError::ExecuteMigration(error, version) => {
+            assert_eq!(*version, 53, "the refusal must come from migration 53");
+            assert_eq!(pg_code(error).as_deref(), Some("55000"));
+        }
+        _ => panic!("undo to 52 must fail as migration 53 execution"),
+    }
+    let ledger_after_refusal = migration_ledger_snapshot(owner).await?;
+    let owner_a_v2_after_refusal = owner_equity_v2_actor_snapshot(&owner_a_actor).await?;
+    let owner_b_v2_after_refusal = owner_equity_v2_actor_snapshot(&owner_b_actor).await?;
+    let scheduled_job_after_refusal = owner_equity_job_snapshot(&worker, scheduled.0).await?;
+    let auth_outbox_after_refusal = auth_audit_outbox_snapshot(owner).await?;
+    assert!(
+        ledger_after_refusal == expected_retained_ledger,
+        "migration 53 refusal must preserve the complete retained ledger"
+    );
+    assert!(
+        owner_a_v2_before == owner_a_v2_after_refusal
+            && owner_b_v2_before == owner_b_v2_after_refusal
+            && scheduled_job_before == scheduled_job_after_refusal
+            && auth_outbox_before == auth_outbox_after_refusal,
+        "migration 53 refusal must preserve both owners' V2 rows, the scheduled job, and auth outbox"
+    );
+
+    let v2_relation_states: Vec<(String, String, bool, bool)> = sqlx::query_as(
+        "SELECT relation.relname, owner_role.rolname, relation.relrowsecurity, relation.relforcerowsecurity \
+           FROM pg_class relation \
+           JOIN pg_namespace relation_schema ON relation_schema.oid = relation.relnamespace \
+           JOIN pg_roles owner_role ON owner_role.oid = relation.relowner \
+          WHERE relation_schema.nspname = 'public' \
+            AND relation.relname = ANY(ARRAY[ \
+              'owner_equity_universe_policies', 'owner_equity_memberships', \
+              'owner_equity_membership_events', 'owner_equity_instrument_generations', \
+              'owner_equity_generation_admissions', 'owner_equity_signal_snapshots', \
+              'owner_equity_signal_snapshot_rows' \
+            ]) \
+          ORDER BY relation.relname",
+    )
+    .fetch_all(owner)
+    .await?;
+    let v2_relation_names: Vec<String> = v2_relation_states
+        .iter()
+        .map(|(name, _, _, _)| name.clone())
+        .collect();
+    let expected_v2_relation_names: Vec<String> = OWNER_EQUITY_V2_SNAPSHOT_TABLES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        v2_relation_names, expected_v2_relation_names,
+        "all seven owner V2 relations must remain present"
+    );
+    assert!(
+        v2_relation_states
+            .iter()
+            .all(|(_, relation_owner, rls, force)| {
+                relation_owner == "migration_owner" && *rls && *force
+            }),
+        "all seven owner V2 relations must retain migration_owner ownership and ENABLE/FORCE RLS"
+    );
+    let unscoped_v2_counts: Vec<i64> = {
+        let mut counts = Vec::with_capacity(OWNER_EQUITY_V2_SNAPSHOT_TABLES.len());
+        for table in OWNER_EQUITY_V2_SNAPSHOT_TABLES {
+            let query = format!("SELECT count(*) FROM public.{table}");
+            counts.push(
+                sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(query))
+                    .fetch_one(owner)
+                    .await?,
+            );
+        }
+        counts
+    };
+    assert!(
+        unscoped_v2_counts.iter().all(|count| *count == 0),
+        "an unscoped migration owner must still read no owner V2 tenant rows"
+    );
+    let actor_a_memberships: (i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE owner_user_id = $1), \
+                count(*) FILTER (WHERE owner_user_id = $2) \
+           FROM public.owner_equity_memberships",
+    )
+    .bind(owner_a)
+    .bind(owner_b)
+    .fetch_one(&app_a)
+    .await?;
+    assert!(
+        actor_a_memberships.0 > 0 && actor_a_memberships.1 == 0,
+        "actor A must retain its rows and remain unable to read actor B rows"
+    );
     let _ = (entitlement_id, calendar_batch_id);
     Ok(())
 }

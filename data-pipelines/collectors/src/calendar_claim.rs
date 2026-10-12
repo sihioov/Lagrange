@@ -206,12 +206,18 @@ mod tests {
 
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o750)).unwrap();
         assert!(CalendarDayLock::acquire(root.path(), date).is_err());
-        assert_eq!(std::fs::symlink_metadata(&directory).unwrap().mode() & 0o7777, 0o750);
+        assert_eq!(
+            std::fs::symlink_metadata(&directory).unwrap().mode() & 0o7777,
+            0o750
+        );
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
 
         std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o440)).unwrap();
         assert!(CalendarDayLock::acquire(root.path(), date).is_err());
-        assert_eq!(std::fs::symlink_metadata(&lock).unwrap().mode() & 0o7777, 0o440);
+        assert_eq!(
+            std::fs::symlink_metadata(&lock).unwrap().mode() & 0o7777,
+            0o440
+        );
         std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         let guard = CalendarDayLock::acquire(root.path(), date).unwrap();
@@ -222,7 +228,10 @@ mod tests {
         let guard = CalendarDayLock::acquire(root.path(), date).unwrap();
         assert!(guard.existing().is_err());
         drop(guard);
-        assert_eq!(std::fs::symlink_metadata(&claim).unwrap().mode() & 0o7777, 0o440);
+        assert_eq!(
+            std::fs::symlink_metadata(&claim).unwrap().mode() & 0o7777,
+            0o440
+        );
         std::fs::set_permissions(&claim, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         let restored = CalendarDayLock::acquire(root.path(), date).unwrap();

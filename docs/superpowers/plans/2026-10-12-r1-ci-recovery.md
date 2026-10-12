@@ -7,7 +7,7 @@ Native subagents: prohibited for worker packages
 - 계획 기준 커밋: `1b8dca3214ee98c4c23844b888dc4e1fde0ba4a2`
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
 - 상위 작업: [개발 로드맵 R1-01~R1-09](../../ROADMAP.md#5-r1--개발배포-기준-복구)
-- 상태: **계획 작성 완료, 실행 미착수.** 이 문서 작성으로 R1 작업을 완료 처리하지 않는다.
+- 상태: **WP-1~WP-5 로컬 검증·독립 리뷰 수용; 동일 후보 커밋의 hosted CI·smoke 준비.** Rust workspace는 outer binary 2,833 + nested child 1 + doc-test 52 pass, 실패 0·기존 ignored 6이며 strict Clippy 6개 선택이 통과했다. DB 122개, C2·runtime, Python, 별도 actual API 및 최종 Web 135회가 통과했다. 전체 기능 smoke는 script·supervisor exit 0/PASS/noSKIP다. 최초 90개 소스의 리뷰와 후속 Web 3파일 delta 리뷰를 대조했고 조치가 남은 finding은 없다. 이전 실패·skip 및 증거 한계는 보고서에 보존한다. [실행 기록](../../reviews/2026-10-12-r1-execution.md)에서 후보 커밋·수용 상태를 추적한다.
 
 ## Goal and boundaries
 
@@ -98,6 +98,84 @@ Wave 1의 소스 편집은 서로 겹치지 않는다. 다만 같은 호스트�
 GitHub의 서로 다른 hosted runner는 이 로컬 자원 예약과 별개다.
 
 ## Worker briefs
+
+### WP-1 수용 후 확정한 실행 계약 — 2026-10-12
+
+[기준선 보고서](../../reviews/2026-10-12-r1-baseline.md)의 절대경로 allowlist와 파일별 수정 명세를
+WP-2~WP-4의 구체적인 구현 계약으로 채택한다. 아래 조정은 원래 목표·검증 범위를 유지한다.
+
+- R1-03의 원인은 기존 opt-in 테스트 지원 기능 누락이다. transport 테스트 50개가
+  `--features test-support`로 실제 통과했다. WP-2는 Rust 검증을, workflow를 소유한 WP-4는
+  전체 workspace 명령에 `--features kis-client/test-support`와 그 계약 검사를 추가한다.
+  WP-6의 실제 명령도 `cargo test --workspace --locked --no-fail-fast --features kis-client/test-support`다.
+  기존 plain 명령은 계속 실패할 수 있으며 통과로 기록하지 않는다. 테스트 누락이나 production 기본 기능 확대는 없다.
+- WP-2의 `MarketStreamEvent`에 한정한 `#[expect(clippy::large_enum_variant, reason = ...)]`를 허용한다.
+  public Receipt 형태와 최대 128-event queue를 유지하기 위한 명시적 예외다. 다른 lint 억제는 허용하지 않는다.
+- WP-3은 production migration을 바꾸지 않고 disposable stage38에서만 schema를 구성한다.
+  정상 catalog 설치는 audit 함수가 있는 stage39부터 실행하고, 전체 최신 migration 0059의
+  별도 빈 DB·재실행·catalog/audit 검증을 추가한다. 역할·감사·rollback guard는 그대로 검증한다.
+- WP-4는 `scripts/qa/calendar-lock-probe/`에 standalone locked QA fixture를 추가한다.
+  root workspace·production 의존성은 바꾸지 않는다. 새 QA path dependency와 source include는
+  코디네이터가 component 다이어그램의 생략 근거 또는 실제 edge에 증거를 기록하고 로컬 PNG를 재생성한다.
+- PowerShell smoke의 기존 calendar parity 공백은 기준선 보고서에 후속 사항으로 남긴다.
+  이번 Linux CI 복구를 Windows 기능 인수라고 기록하지 않는다.
+- WP-2 첫 전체 Clippy가 드러낸 `market-data`의 추가 진단5개는
+  [보충 명세](../../reviews/2026-10-12-r1-baseline.md#wp-2-follow-up-specification--2026-10-12-kst)로 확정했다.
+  WP-2 allowlist에 `crates/market-data/src/{normalize,publication,storage}.rs`를 추가한다.
+  private 인자 묶음·기존 BatchSpec 재사용·값 생성만 하는 ok_or 전환이며 public 계약·검사 범위를 바꾸지 않는다.
+- 뒤이어 드러난 collectors 진단3개는 [보충 명세](../../reviews/2026-10-12-r1-baseline.md#wp-2-collectors-follow-up-specification--2026-10-12-kst)를 수용한다.
+  `data-pipelines/collectors/src/{sink,intraday_quotes}.rs`에서 호출 없는 private wrapper 두 개 제거와
+  cfg-local tail expression만 허용한다. active source-version 잠금·projection 경로와 SQL은 그대로 보존한다.
+- 기준 커밋에서도 재현된 market-data assertion5개는 [테스트 보충 명세](../../reviews/2026-10-12-r1-baseline.md#wp-2-integration-assertion-repair-specification--2026-10-12-kst)를 수용한다.
+  `crates/market-data/tests/{calendar_publication,publication}.rs`만 추가 허용한다.
+  승인된 단일 응답 정책에 맞추고, caller metadata 불일치 차단과 실제 저장된 손상 evidence의
+  size·lineage·검증 순서 검사를 각각 보존한다. production Raw/API 계약은 변경하지 않는다.
+  이 두 테스트 파일은 **WP-2b**로 분리해 Luna/max worker가 source/static 편집을 맡고,
+  전용 `docs/reviews/2026-10-12-r1-market-data-tests.md`에 기록한다. WP-2는 해당 테스트 파일을
+  동시에 수정하지 않는다. 무거운 검증은 WP-3 이후 별도로 예약하며 WP-2 수용에 이 결과를 포함한다.
+  현재 무거운 검증 실행권과 후속 예약은 실행 기록의 최신 배정을 따른다.
+- 추가 전체 진단의 [A~G 보충 명세](../../reviews/2026-10-12-r1-baseline.md#wp-2-masked-workspace-diagnostics--source-backed-specification-2026-10-12)를 수용한다.
+  호출 없는 wrapper 제거, 테스트 helper 격리, SQLx 컬럼 decoding을 보존한 private 필드명 수정,
+  private enum payload boxing과 테스트 모듈 공유로 범위를 한정한다. 실제 배정은 파일이 겹치지 않게 나눈다.
+  RuntimeTransition enum과 InvalidationCause의 두 예약 variant는 유한 상태 계약을 유지하는 좁은
+  `expect(dead_code)`를 허용한다. legacy resolver도 유지하며 최소 항목의 expectation 충족을 검증한다.
+  feature 조합 때문에 테스트에서 직접 이름을 참조할 수 없는 오류의 처리 명세는 별도 보충한다.
+  전체 모듈/패키지 lint 허용, production feature/API/SQL 또는 테스트 대상 축소는 허용하지 않는다.
+  A/B/C와 G/D3 테스트는 기존 WP-2가, D/E/F production 세 파일은 **WP-2c** Luna/max가 맡는다.
+  후자는 전용 `docs/reviews/2026-10-12-r1-jobqueue-rust.md`에 보고하며 수정 파일은 서로 겹치지 않는다.
+- WP-3 실제 DB 실행으로 드러난 세 실패는 [DB 계약 보충 명세](../../reviews/2026-10-12-r1-db-test-baseline.md)를 수용한다.
+  **WP-3c**는 `tests/integration/migration-contract/tests/migration_contract.rs`와
+  `deploy/compose/research-schema-check.sql`만 수정한다. 전용 보고서는
+  `docs/reviews/2026-10-12-r1-db-contract-repair.md`다. 0053 rollback의 단계별 ledger·데이터 보존을
+  검증하고, 기존0059 상태 테이블의 정확한 policy/ACL을 production gate에 반영한다.
+  기존 base schema 호환성과 누락·추가·predicate/role 변경 차단을 유지한다.
+  migration history·실제 role/grant·Compose 구조는 변경하지 않으며, 전체 DB suite와 기능 smoke를 재실행한다.
+- DB 독립 리뷰의 [DB1~DB7](../../reviews/2026-10-12-r1-review.md) 보정을 같은 WP-3c 두 파일에 배정한다.
+  SQLx 안전 타입, 성공0059 조건식, base47 없는 relation 처리, 실제 PostgreSQL18 deparse,
+  PUBLIC을 포함한 정확한 role 투영, 같은 수의 정책 대체 검증, migration_owner의 물리적 emptiness 관측을 보완한다.
+  실제 focused 검증 후 전체 validator를 다시 실행한다. 기존 일부 lane 통과가 전체 수용을 대신하지 않는다.
+  DB5의 mixed-role 가정은 실제 PostgreSQL18.4 관측으로 정정한다. `TO research_writer, PUBLIC`은
+  PUBLIC 단독으로 저장되므로 전체 정책 수 유지·writer 수27→26·정확한 role tuple·gate 거부와 복구를
+  검증한다. PUBLIC 투영은 유지하고, writer 수27을 유지하는 wrong-table/pg_temp 대체 negative도 유지한다.
+  이 가정을 맞추기 위한 직접 catalog 수정은 하지 않는다.
+- [Rust feature 보충 명세](../../reviews/2026-10-12-r1-rust-feature-followup.md)의 C1과6파일 범위를 수용한다.
+  공유 test fixture의 relay 함수4개에 한정한 item allowance, calendar 단일 module alias,
+  private typed error 유지와 미사용 test variant 제거다. 기본·DB-test·all-feature·독립 provisioning 조합,
+  API target 및 기존 C2 pure/real-role 테스트를 검증한다. 고정 binding·역할·cleanup 검사는 유지한다.
+- CI workspace-tests의 DATABASE_URL·Compose QA port는 기존 intraday test guard의55438로 맞춘다.
+  코디네이터가 `.github/workflows/ci.yml`과 `scripts/ci/test_ci_contract.py` 두 파일에서 처리한다.
+  endpoint guard·test target·workflow step을 줄이지 않는다.
+- [Web harness 명세](../../reviews/2026-10-12-r1-web-e2e-baseline.md)의4파일 구현을 WP-4b로 수용한다.
+  새 stdlib supervisor·작은 프로세스 회귀 테스트, 기존 wrapper·optional synthetic readiness route만 변경한다.
+  포트 예약·소유 PID/socket·fixture handshake·모든 owned child 정리와 정확한 inventory를 검증한다.
+  별도 @actual은 일반 synthetic CI에서 실행하지 않고 전용 isolated-router 증거를 구분한다.
+  기존134 synthetic 중12개가 기대하는 REST 동작은 이미 폐기되었다.
+- [Web 테스트 명세](../../reviews/2026-10-12-r1-web-test-contract.md)의12개 요구 매핑과3파일 범위를
+  WP-4c로 수용한다. intraday spec의12개 사례, stock-beta spec의 owner empty 분기, 새 controlled
+  SSE/lease fixture만 수정한다. off121 + WS14 =135회 실행/134개 고유 synthetic 사례이며,
+  empty-owner 사례만 mode별 중복 실행을 허용한다. 12개 skip이나122개만의 통과는 전체 수용이 아니다.
+  기존 off 전용 `service-status-web-off.sh`, `service-status-playwright-batches.mjs`와 해당 runbook은
+  WS spec을 제외한76개/0 skip 계약으로 함께 정정한다. 과거 날짜의 실행 증거는 보존한다.
 
 ### 모든 worker에게 포함할 공통 계약
 
@@ -251,7 +329,7 @@ GitHub의 서로 다른 hosted runner는 이 로컬 자원 예약과 별개다.
   결과를 섞지 않는다. 실행 URL, head SHA 및 실제 checkout 대상, 각 단계 결과를 회수한다.
 - **검증:** `policy`, `format`, `clippy`, `web`, `workspace-tests`, `python-tests`,
   `postgres-integration-validation`, `required`, 별도 `research-smoke` 모두를 대조한다.
-  `cargo test --workspace --locked --no-fail-fast`가 컴파일 이후 실제 실행됐는지,
+  `cargo test --workspace --locked --no-fail-fast --features kis-client/test-support`가 컴파일 이후 실제 실행됐는지,
   DB를 요구하는 검증이 DB 부재로 건너뛰지 않았는지, Web E2E와 smoke 기능 단계가 도달했는지 확인한다.
   clean dependency 설치, 빈 개발자 cache 조건, 기존 skip의 이름·이유를 기록한다.
 - **금지·보고:** 자동 main merge, 코드를 고친 뒤 이전 결과 재사용, 미실행을 pass로 기록하는 행위 금지.
@@ -290,8 +368,8 @@ GitHub의 서로 다른 hosted runner는 이 로컬 자원 예약과 별개다.
 
 ### 1. Pre-launch
 
-1. 현재 요청은 계획 작성이다. 구현 worker를 시작하지 않고 모든 WP와 R1 체크를 미완료로 둔다.
-   실행 요청이 오면 기존 사용자 승인 범위를 유지하되 계획을 새 권한으로 해석하지 않는다.
+1. 최초 계획 작성에서는 worker를 시작하지 않았다. 2026-10-12 Owner가 `$paseo-delegate`로
+   실행을 요청했다. 기존 사용자 승인 범위를 유지하되 계획을 새 권한으로 해석하지 않는다.
 2. 실행 시 현재 HEAD·변경 파일·지침을 다시 확인하고 WP-1의 실제 입력 커밋을 고정한다.
    사용자 변경을 보존한다. R1-01을 담당자와 함께 DOING으로 갱신한다.
 3. `$paseo-delegate`와 Paseo MCP·현재 profile을 확인한다. 실행 skill 또는 MCP가 없으면
@@ -314,6 +392,9 @@ GitHub의 서로 다른 hosted runner는 이 로컬 자원 예약과 별개다.
 3. **Wave 2:** 독립 리뷰의 차단 사항을 원래 worker에게 반환한다. 미해결/미검증이 없는지 명시적으로
    확인한다. 구조 변경이면 영향을 받는 `.puml`과 evidence를 같은 변경에서 갱신하고 PNG를 로컬 재생성한다.
    구조 변화가 없으면 다이어그램은 그대로 둔다.
+   2026-10-12 실행 조정: source/static 결과 회수 후 무거운 검증을 기다리는 동안 WP-5의
+   읽기 전용 예비 리뷰를 시작할 수 있다. 실제 개별 검증과 모든 후속 diff를 재검토하기 전에는
+   WP-5 수용이나 후보 고정 gate를 통과시키지 않는다.
 4. **Wave 3:** 통합 변경과 필요한 로드맵 상태를 커밋한 뒤 검증 후보 `C`를 고정한다.
    WP-6 실행 중 소스나 workflow를 바꾸지 않는다. 실패를 수정하면 새 후보 `C2`로 해당 검사와
    최종 필수 CI·smoke를 다시 통과시킨다. green을 만들기 위해 미리 main에 merge하지 않는다.
@@ -338,14 +419,21 @@ GitHub의 서로 다른 hosted runner는 이 로컬 자원 예약과 별개다.
 체크는 계획 작성 여부가 아니라 해당 worker 결과가 수용됐는지 표시한다.
 R1의 최종 상태는 상위 ROADMAP에서 관리하며 두 문서가 어긋나면 근거를 확인해 함께 고친다.
 
-- [ ] WP-1 — R1-01 실패 기준선·수정 명세 수용
-- [ ] WP-2 — R1-02·R1-03 Rust 수정·개별 검증 수용
-- [ ] WP-3 — R1-04 DB 수정·개별 검증 수용
-- [ ] WP-4 — R1-05·R1-06·R1-07 runner 수정·개별 검증 수용
-- [ ] WP-5 — 독립 리뷰 수용
+- [x] WP-1 — R1-01 실패 기준선·수정 명세 수용. 2026-10-12; 대상 `ac0a083`; [기준선·검증](../../reviews/2026-10-12-r1-baseline.md). 실제 SQL/기능 smoke 검증은 후속 WP에 남음.
+- [x] WP-2 — R1-02·R1-03 Rust 수정·개별 검증 수용. 2026-10-12; [수정 후보 workspace2886 pass/0 fail 및 strict6·golden/legacy](../../reviews/2026-10-12-r1-workspace-validation.md). source572·manifest24 동일성과 QA 정리를 확인했다. 최종 커밋의 hosted 통합 수용은 WP-6에 남는다.
+- [x] WP-3 — R1-04 DB 수정·개별 검증 수용. 2026-10-12; dirty 후보의 정확한 source hash와 [전체122개 통과](../../reviews/2026-10-12-r1-postgres.md), [독립 증거 리뷰](../../reviews/2026-10-12-r1-review.md). R1-04의 최종 후보 커밋 hosted 재검증은 WP-6에 남음.
+- [x] WP-4 — R1-05·R1-06·R1-07 runner 수정·개별 검증 수용. 2026-10-12; [Web 135/135 및 회귀 31](../../reviews/2026-10-12-r1-web-validation.md), [Python·정적 검사](../../reviews/2026-10-12-r1-runner.md), [전체 기능 smoke](../../reviews/2026-10-12-r1-smoke-validation.md). Hosted 결과는 WP-6에 남는다.
+- [x] WP-5 — 독립 소스 리뷰 수용. 2026-10-12; [90개 소스 감사](../../reviews/2026-10-12-r1-final-source-review.md), [controlled fixture 리뷰](../../reviews/2026-10-12-r1-web-controlled-review.md), [최종 delta·CONTROL1 해소](../../reviews/2026-10-12-r1-web-final-repair-review.md). 코디네이터가 최신 typecheck·focused 3/3·전체 135/135 결과를 별도로 대조했다.
 - [ ] WP-6 — R1-08 동일 커밋 CI·기능 smoke 인수
 - [ ] WP-7 — R1-09 실제 배포 후보 준비 인수
 
 | 날짜 (KST) | 변경 | 근거 |
 | --- | --- | --- |
 | 2026-10-12 | R1을 7개 패키지·5개 wave로 계획. 구현·worker 실행은 미착수 | Owner의 `$paseo-delegate-plan` 요청; 상위 ROADMAP R1; 계획 기준 커밋과 출발 CI |
+| 2026-10-12 | WP-1 실행 시작, 나머지는 선행 결과 대기 | Owner의 `$paseo-delegate` 실행 요청; 입력 `ac0a083`; [실행 기록](../../reviews/2026-10-12-r1-execution.md) |
+| 2026-10-12 | WP-1 수용; R1-03 feature-enabled CI 명령을 WP-4에 배정, 구체적인 lint 예외·DB lane·QA fixture 범위 확정 | [기준선](../../reviews/2026-10-12-r1-baseline.md); 코디네이터가 feature gates·enum bound·migration/catalog 순서를 직접 대조 |
+| 2026-10-12 | WP-2 market-data 세 파일로 수정 범위 확장, resource slot 유지 | kis-client 개별 검증 후 전체 Clippy에서 진단5개 추가 발견; [정확한 보충 명세](../../reviews/2026-10-12-r1-baseline.md#wp-2-follow-up-specification--2026-10-12-kst)와 focused 검증 확정 |
+| 2026-10-12 | Rust feature·DB 독립 리뷰 보정·Web harness의 닫힌 후속 범위 수용; WP-4c 테스트 명세 진행 | [실행 기록](../../reviews/2026-10-12-r1-execution.md); 후속 명세·리뷰 링크와 분리된 자원 예약. 기존 검사·권한 경계·동일 C 수용 기준은 유지 |
+| 2026-10-12 | 전체 Rust lint의 겹치지 않는 A/B 구현 범위 및 C-SHARED/REST/WIRE 개별 예외 수용; DB0050 예상 실패 뒤 pool 재생성 보정 | [전체 lint 계약](../../reviews/2026-10-12-r1-rust-lint-contract.md)의112 canonical group·23파일. [실행 기록](../../reviews/2026-10-12-r1-execution.md)의 동일 소스 hash 대조·관측한 disposable DB advisory wait·제한된 쿼리 취소 근거. 동적·최종 수용은 별도 |
+| 2026-10-12 | Rust strict6개/fmt 및 root cfg·SQL공백 독립 리뷰 통과; DB 개별 패키지 수용; C2 새 fixture와 Web 본문6개 finding의 닫힌 후속 범위 실행 | [실행 기록](../../reviews/2026-10-12-r1-execution.md), [C2 갱신 계약](../../reviews/2026-10-12-r1-execution.md#c2-disposable-fixture-갱신-계약), [독립 리뷰](../../reviews/2026-10-12-r1-review.md). 기존 cluster·binding·guard 보존, 운영/provider 승인 확대 없음. 최종C 수용은 미완료 |
+| 2026-10-12 | 최종 Web 135/135·회귀 31 및 전체 기능 smoke를 수용하고 WP-4·WP-5 완료. 같은 후보 커밋의 hosted 검증 준비 | [Web](../../reviews/2026-10-12-r1-web-validation.md), [최종 리뷰](../../reviews/2026-10-12-r1-web-final-repair-review.md), [smoke](../../reviews/2026-10-12-r1-smoke-validation.md). 전체 R1·배포 후보 완료를 뜻하지 않음 |

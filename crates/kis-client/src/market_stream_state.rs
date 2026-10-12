@@ -141,19 +141,10 @@ impl std::error::Error for BudgetError {}
 
 /// Outbound subscribe/unsubscribe budget.  It is a project bound, not a KIS
 /// quota claim, and is persisted before a command is sent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CommandBudget {
     attempts_ms: VecDeque<i64>,
     last_attempt_ms: Option<i64>,
-}
-
-impl Default for CommandBudget {
-    fn default() -> Self {
-        Self {
-            attempts_ms: VecDeque::new(),
-            last_attempt_ms: None,
-        }
-    }
 }
 
 impl CommandBudget {
@@ -264,21 +255,11 @@ impl ReconnectPolicy {
 
 /// Durable reconnect budget.  The caller supplies deterministic jitter in
 /// tests; production may use a bounded random percentage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ReconnectBudget {
     attempts_10m_ms: VecDeque<i64>,
     attempts_day_ms: VecDeque<i64>,
     last_attempt_ms: Option<i64>,
-}
-
-impl Default for ReconnectBudget {
-    fn default() -> Self {
-        Self {
-            attempts_10m_ms: VecDeque::new(),
-            attempts_day_ms: VecDeque::new(),
-            last_attempt_ms: None,
-        }
-    }
 }
 
 impl ReconnectBudget {
@@ -493,7 +474,7 @@ impl DurableWsState {
                     && pending.ordinal > 0
                     && pending.deadline_ms >= pending.sent_at_ms
             })
-            && self.next_command_ordinal <= u64::MAX - 1
+            && self.next_command_ordinal < u64::MAX
             && Uuid::parse_str(&self.credential_slot_id).is_ok()
     }
 }
@@ -508,11 +489,22 @@ impl DurableWsState {
 /// use kis_client::market_stream_state::WsStateStore;
 /// ```
 ///
-/// ```compile_fail
-/// use kis_client::MarketStreamDomain;
-/// use uuid::Uuid;
-/// let _ = MarketStreamDomain::for_test("/tmp/arbitrary", Uuid::nil());
-/// ```
+#[cfg_attr(
+    not(feature = "test-support"),
+    doc = r#"```compile_fail
+use kis_client::MarketStreamDomain;
+use uuid::Uuid;
+let _ = MarketStreamDomain::for_test("/tmp/arbitrary", Uuid::nil());
+```"#
+)]
+#[cfg_attr(
+    feature = "test-support",
+    doc = r#"```no_run
+use kis_client::MarketStreamDomain;
+use uuid::Uuid;
+let _ = MarketStreamDomain::for_test("/tmp/arbitrary", Uuid::nil());
+```"#
+)]
 #[derive(Clone)]
 pub struct MarketStreamDomain {
     state: WsStateStore,
@@ -532,10 +524,8 @@ impl MarketStreamDomain {
             PathBuf::from(PRODUCTION_STATE_DIRECTORY),
             PathBuf::from(PRODUCTION_ANCHOR_DIRECTORY),
             credential_slot_id,
-            PRODUCTION_STATE_UID,
-            PRODUCTION_STATE_GID,
-            PRODUCTION_ANCHOR_UID,
-            PRODUCTION_ANCHOR_GID,
+            (PRODUCTION_STATE_UID, PRODUCTION_STATE_GID),
+            (PRODUCTION_ANCHOR_UID, PRODUCTION_ANCHOR_GID),
             false,
         )
     }
@@ -560,10 +550,8 @@ impl MarketStreamDomain {
             state_dir,
             anchor_dir,
             credential_slot_id,
-            uid,
-            gid,
-            uid,
-            gid,
+            (uid, gid),
+            (uid, gid),
             created_layout,
         )
     }
@@ -572,12 +560,12 @@ impl MarketStreamDomain {
         state_dir: PathBuf,
         anchor_dir: PathBuf,
         credential_slot_id: Uuid,
-        state_uid: u32,
-        state_gid: u32,
-        anchor_uid: u32,
-        anchor_gid: u32,
+        state_owner: (u32, u32),
+        anchor_owner: (u32, u32),
         initialize_new: bool,
     ) -> Result<Self, StateError> {
+        let (state_uid, state_gid) = state_owner;
+        let (anchor_uid, anchor_gid) = anchor_owner;
         let state_directory =
             open_directory(&state_dir, state_uid, state_gid, STATE_DIRECTORY_MODE)?;
         let anchor_directory =
@@ -1900,10 +1888,8 @@ mod tests {
                 state_dir.clone(),
                 anchor_dir.clone(),
                 Uuid::new_v4(),
-                metadata.uid(),
-                metadata.gid(),
-                metadata.uid(),
-                metadata.gid(),
+                (metadata.uid(), metadata.gid()),
+                (metadata.uid(), metadata.gid()),
                 false,
             )
             .is_err()

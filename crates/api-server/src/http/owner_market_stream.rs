@@ -25,7 +25,8 @@ use super::owner_market_stream_contract::{
     self as contract, InvalidContract, LeaseDto, MAX_REQUEST_BYTES, StatusBody,
 };
 use super::owner_market_stream_delivery::{
-    Batch, ConsumerPermit, DeliveryEncoder, DeliverySignals, LatestMailbox, READ_DEADLINE,
+    Batch, ConsumerPermit, DeliveryEncoder, DeliveryFlags, DeliverySignals, LatestMailbox,
+    READ_DEADLINE,
 };
 use super::owner_market_stream_projection as projection;
 use super::session::{Session, require_csrf, resolve_session};
@@ -88,22 +89,22 @@ fn configuration<'a>(
     session: &Session,
     headers: &HeaderMap,
     uri: &Uri,
-) -> Result<&'a MarketStreamReadPins, Response> {
+) -> Result<&'a MarketStreamReadPins, Box<Response>> {
     let rid = request_id(headers);
     if !session.actor().is_owner() {
-        return Err(code_error("FORBIDDEN", "forbidden", &rid));
+        return Err(Box::new(code_error("FORBIDDEN", "forbidden", &rid)));
     }
     let MarketStreamReadConfig::OwnerOnly(pins) = &state.cfg.owner_market_stream else {
-        return Err(api_error(
+        return Err(Box::new(api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "FEATURE_DISABLED",
             "market stream disabled",
             &rid,
             None,
-        ));
+        )));
     };
     if !pins.allows_request(headers, uri) {
-        return Err(code_error("FORBIDDEN", "origin denied", &rid));
+        return Err(Box::new(code_error("FORBIDDEN", "origin denied", &rid)));
     }
     Ok(pins)
 }
@@ -154,7 +155,7 @@ fn storage_error(error: StorageError, headers: &HeaderMap) -> Response {
     }
 }
 
-fn key(headers: &HeaderMap) -> Result<String, Response> {
+fn key(headers: &HeaderMap) -> Result<String, Box<Response>> {
     let values = headers.get_all(idempotency::HEADER);
     let mut iter = values.iter();
     let raw = iter.next().and_then(|v| v.to_str().ok()).filter(|v| {
@@ -163,11 +164,11 @@ fn key(headers: &HeaderMap) -> Result<String, Response> {
             && v.bytes().all(|b| b.is_ascii_graphic())
     });
     if iter.next().is_some() || raw.is_none() {
-        return Err(code_error(
+        return Err(Box::new(code_error(
             "INVALID_PARAMETER",
             "idempotency key required",
             &request_id(headers),
-        ));
+        )));
     }
     Ok(raw.unwrap().to_owned())
 }
@@ -225,7 +226,7 @@ pub async fn create_or_renew(
     let headers = req.headers().clone();
     let pins = match configuration(&state, &session, &headers, &uri) {
         Ok(v) => v.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = require_csrf(&headers, &session.0) {
         return r;
@@ -239,7 +240,7 @@ pub async fn create_or_renew(
     }
     let key = match key(&headers) {
         Ok(v) => v,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let identity = match SessionIdentity::new(&session, &headers) {
         Ok(v) => v,
@@ -284,14 +285,14 @@ pub async fn release(
     let headers = req.headers().clone();
     let pins = match configuration(&state, &session, &headers, &uri) {
         Ok(v) => v.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if let Err(r) = require_csrf(&headers, &session.0) {
         return r;
     }
     let key = match key(&headers) {
         Ok(v) => v,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let Some(raw) = uri.path().strip_prefix(&format!("{PREFIX}/stream-leases/")) else {
         return code_error(
@@ -574,8 +575,10 @@ impl ResponseStream {
                 rows,
                 status,
                 (self.state.cfg.intraday_now)(),
-                pulse > self.last_pulse.saturating_add(1),
-                heartbeat,
+                DeliveryFlags {
+                    replace_pending: pulse > self.last_pulse.saturating_add(1),
+                    heartbeat,
+                },
             );
             let batch = match batch {
                 Ok(value) => value,
@@ -591,9 +594,13 @@ impl ResponseStream {
     }
 }
 
-async fn drive(
+struct StreamDriveIdentity {
     state: ApiState,
     identity: Arc<SessionIdentity>,
+}
+
+async fn drive(
+    context: StreamDriveIdentity,
     repo: OwnerMarketStreamRepo,
     mut listener: PgListener,
     lease: Uuid,
@@ -601,6 +608,7 @@ async fn drive(
     mut mailbox: LatestMailbox,
     end: Arc<AtomicU8>,
 ) {
+    let StreamDriveIdentity { state, identity } = context;
     let result = async {
         let mut pulse = 0_u64;
         let mut listening = true;
@@ -650,7 +658,7 @@ pub async fn get_stream(
     let headers = req.headers().clone();
     let pins = match configuration(&state, &session, &headers, &uri) {
         Ok(v) => v.clone(),
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let lease = match lease_query(&uri, &headers) {
         Ok(v) => v,
@@ -713,8 +721,10 @@ pub async fn get_stream(
     let end_reason = Arc::new(AtomicU8::new(0));
     let read_gate = Arc::new(Mutex::new(()));
     let task = tokio::spawn(drive(
-        state.clone(),
-        identity.clone(),
+        StreamDriveIdentity {
+            state: state.clone(),
+            identity: identity.clone(),
+        },
         repo.clone(),
         listener,
         lease,

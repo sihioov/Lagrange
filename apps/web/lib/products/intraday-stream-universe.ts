@@ -1,4 +1,6 @@
-import universe from "../../../../configs/universes/kr-stock-price-beta-v1.json";
+import universe from "../../../../configs/universes/kr-stock-price-beta-v1.json" with {
+  type: "json",
+};
 import type { OwnerEquityV2MembershipModel } from "./equity-signals-contracts";
 import {
   IntradayStreamContractError,
