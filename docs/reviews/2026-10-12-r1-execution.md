@@ -1,5 +1,7 @@
 # R1 실행·수용 기록
 
+현재 상태: **C3 CI·기능 smoke 수용, R1-01~08 완료. R1-09 실제 이미지·manifest는 root 인증·빌드 health 전제로 BLOCKED.** [최종 인수](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [외부 차단 인계](2026-10-12-r1-release-readiness.md). 아래 과거 실행 기록의 상태는 그 관측 시점의 상태다.
+
 - 실행 요청: 2026-10-12 KST, Owner의 `$paseo-delegate 작업 진행해`.
 - 입력 커밋: `ac0a08364788e6c2f234cf85025a8d975f362d31`.
 - 작업 경로: `/data/worktrees/3puw275b/orange-dugong`.
@@ -17,21 +19,22 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | WP-1 / WP-4b·4c / WP-5R | `132d3b45-e0d1-454c-aeda-c14ed765a546` | `codex/gpt-6-astra` / high (Sol 용량 제한 복구) | 기준선·수정 계약 및 Python 소유권 진단 | C2 한정 진단 준비 수용; 코디네이터의 단일 실행으로 결함 확인, 실제 idle | 없음 | [기준선](2026-10-12-r1-baseline.md); [후보별 인수](2026-10-12-r1-acceptance.md) |
 | WP-2 | `3340e7a9-b101-45a9-935f-0f0d4c417775` | `codex/gpt-6-luna` / max | Rust 구현·개별 검증·보충 수정 | 후속 artifact 두 umask·library196·strict Clippy 통과 수용; 실제 idle | 없음 | [Rust 검증](2026-10-12-r1-rust.md); [후속 명세](2026-10-12-r1-workspace-followup.md) |
-| WP-2b / WP-4c / WP-2g | `4807300d-7ce8-4bf8-8719-b90b18471804` | `codex/gpt-6-luna` / medium (검증 실행) | Rust/Web 검증 및 Python 후속 검증 | standalone32·공유34·전체482/skip10·backup6 및 새 공식 wrapper135 수용; 실제 idle | 없음 | [Rust lint 검증](2026-10-12-r1-rust-lint-validation.md); [후보별 인수](2026-10-12-r1-acceptance.md) |
+| WP-2b / WP-4c / WP-2g | `4807300d-7ce8-4bf8-8719-b90b18471804` | `codex/gpt-6-luna` / medium (검증 실행) | Rust/Web 검증 및 Python 후속 검증 | standalone32·공유34·전체482/skip10·backup6·wrapper135 및 C3 두 hosted run 최종 증거 회수; 실제 idle | 없음 | [Rust lint 검증](2026-10-12-r1-rust-lint-validation.md); [후보별 인수](2026-10-12-r1-acceptance.md) |
 | WP-2c / WP-2e | `0fe58b0a-20bc-4e47-b34a-5dc1410ee660` | `codex/gpt-6-luna` / max (명세 확정 구현) | D/E/F 구현·진단 후속; lint Scope A 15파일 | A1~A14 구현·정적 검사·15개 최종 hash·idle 회수; behavior 리뷰 및 strict6개·C2 실제 검증 수용 | 없음 | [job-queue Rust 검증](2026-10-12-r1-jobqueue-rust.md); [lint 목록](2026-10-12-r1-rust-lint-inventory.md); [lint Scope A](2026-10-12-r1-rust-lint-a.md) |
 | WP-2d | `98ee0c64-8a17-4508-ac0e-90432e29e0cc` | `codex/gpt-6-astra` / high (Sol 용량 제한 복구) | Rust 전체 경고의 수정 명세 | 전체118 group/112 canonical·23파일 명세와 idle 회수; C-SHARED/REST/WIRE 수용 | 없음 | [Rust feature 보충 명세](2026-10-12-r1-rust-feature-followup.md); [전체 lint 명세](2026-10-12-r1-rust-lint-contract.md) |
 | WP-2f | `791e53f8-52a4-432e-887a-ef0069223481` | `codex/gpt-6-luna` / max | lint Scope B API 8파일 | B1~B8 구현·정적 검사·idle 회수; behavior 리뷰 및 strict6개 통과, DB/runtime 수용 별도 | 없음 | [lint Scope B](2026-10-12-r1-rust-lint-b.md) |
-| WP-3 | `7896c049-76df-4f75-af9c-243c82b267f9` | `codex/gpt-6.1-sol` / medium (관측된 복구 오류 후 상향) | DB harness·disposable DB·isolated actual API 검증 | 후속 DB126·전체 validator APPROVED·fmt/strict Clippy 수용; 입력1037 불변·정리·실제 idle | 없음 | [PostgreSQL 검증](2026-10-12-r1-postgres.md); [smoke 검증](2026-10-12-r1-smoke-validation.md) |
+| WP-3 | `7896c049-76df-4f75-af9c-243c82b267f9` | `codex/gpt-6.1-sol` / medium (관측된 복구 오류 후 상향) | DB harness·disposable DB·isolated actual API 검증 | 후속 DB126·validator·fmt/strict 수용; C3 detached checkout의 plan/preflight·외부 차단 빌드 인계 회수; 실제 idle | 없음 | [PostgreSQL 검증](2026-10-12-r1-postgres.md); [smoke 검증](2026-10-12-r1-smoke-validation.md) |
 | WP-3b | `90072c0e-2332-44be-a277-4e14fdc1c7c0` | `codex/gpt-6.1-sol` / high | DB-gated 세 실패의 schema·test 수정 명세 | 명세 수용, 실제 idle·pending 없음 확인 | 없음 | [DB 계약 명세](2026-10-12-r1-db-test-baseline.md) |
 | WP-3c | `84d1bbfe-8a4f-4234-89a7-c707ea0789e1` | `codex/gpt-6-luna` / max | schema gate SQL·migration-contract 테스트 두 파일 | focused9·package Clippy·독립 재리뷰·전체 validator122 통과; idle·정리·hash 회수 | 없음 | [DB 계약 수정](2026-10-12-r1-db-contract-repair.md) |
 | WP-4 / WP-4b | `bbbdf74e-df41-45ad-8ff4-e2c17a3ca202` | `codex/gpt-6-astra` / high (같은 두 실패 반복 후 model만 상향) | workflow·계약·smoke 및 Web QA supervisor | 최신 ledger 순번·공개 clock bounded readiness 한 파일 명세 수용; 실제 idle | 없음 | [Web 진단](2026-10-12-r1-web-browser-followup.md); [환경 수정](2026-10-12-r1-web-env-repair.md) |
-| WP-5 | `cc9c1dd1-a57e-4515-9286-1ee64b3cfb6f` | `codex/gpt-6.1-sol` / high (현재 지원 모델로 복귀) | 통합 변경 및 증거 독립 리뷰 | 소유권/cleanup 두 파일 전체 hunk·hash·테스트 보존 확인, findings 없음; source 수용·실제 idle | 없음 | [최종 source 감사](2026-10-12-r1-final-source-review.md); [후보별 인수](2026-10-12-r1-acceptance.md) |
+| WP-5 | `cc9c1dd1-a57e-4515-9286-1ee64b3cfb6f` | `codex/gpt-6.1-sol` / high (현재 지원 모델로 복귀) | 통합 변경 및 증거 독립 리뷰 | 소유권/cleanup source 수용 후 C3 최종 문서 5개·증거·인계 리뷰 수용, findings 없음; 실제 idle | 없음 | [최종 source 감사](2026-10-12-r1-final-source-review.md); [후보별 인수](2026-10-12-r1-acceptance.md) |
 | WP-2h | `4461376b-63e1-4b4b-b1bf-2e46a0f52b82` | `codex/gpt-6-luna` / medium (검증 실행) | C2·runtime 역할 회귀 및 전체 workspace 검증 | workspace·strict6·golden/legacy 및 정리 수용;235 summary 집계 정정 수용·실제 idle | 없음 | [C2 fixture 검증](2026-10-12-r1-c2-fixture.md); [workspace 검증](2026-10-12-r1-workspace-validation.md) |
 
 알림은 각 create/follow-up에 `notifyOnFinish: true`로 등록한다. 콜백 누락 복구를 위한
 2분 간격·최대 2시간 heartbeat를 등록하고, 만료 전 남은 owned worker를 확인한다.
-현재 fallback은 `b2a5c77b`(2026-10-12 16:30:49~18:30:49 UTC, 최대60회)이며
-새 WP-2h까지 포함한 열두 명의 owned worker를 명시한다. 이전 fallback은 삭제했고 새 활성 상태를 확인했다.
+최종 fallback `b2a5c77b`(2026-10-12 16:30:49~18:30:49 UTC 예정, 최대60회)는
+열두 owned worker의 실제 idle·pending0·결과 회수와 C3 수용·외부 차단 인계를 확인한 뒤 삭제했다.
+이전 fallback도 삭제했으며 이 R1 복구의 반복 모니터링은 종료했다.
 알림이나 heartbeat 자체가 새 작업·권한의 승인 근거는 아니다.
 WP-5의 실제 Sol/high·같은 workspace·parent label과 pending 없음도 시작 후 확인했다.
 WP-5에는 완료 알림을 등록했고 코디네이터의 현재 활성 대기·주기적 회수 대상에도 포함한다.
@@ -40,7 +43,7 @@ WP-2b도 같은 workspace·parent·Luna/max 시작을 확인하고 알림과 활
 
 ## 자원 예약
 
-- 현재 로컬 검증 실행권: 없음. 새 wrapper32+browser135와 소유 자원 정리를 수용했다. 두 Python 파일의 독립 리뷰·로컬 검증은 완료됐으며 새 후보 C3의 hosted 검증을 준비한다.
+- 현재 로컬 검증 실행권: 없음. 새 wrapper32+browser135와 소유 자원 정리를 수용했다. 두 Python 파일의 독립 리뷰·로컬 검증은 완료됐으며 C3 두 hosted workflow의 terminal success와 실제 checkout을 회수했다. 실제 이미지 빌드는 외부 전제에 차단돼 있다.
 - 실행권은 이 기록의 최신 배정이 기준이며 heartbeat 등록 당시 상태를 현재 상태로 재사용하지 않는다.
 - WP-2 첫 종료와 잔존 compiler 없음을 확인한 뒤 task 전용 Cargo target/cache를 RAM-backed `/tmp`에서
   Git 제외된 `target/r1-runtime-fxi6ltmv/{cargo-target,cargo-home}`로 이동했다. 기존 두 경로는 symlink로 유지한다.
@@ -771,3 +774,57 @@ coverage/cleanup receipt를 대조했다. 실패·skip·retry·flaky는0, 소유
 hash를 유지하며, 원래 WP-6 계약에 따라 기존 exact-C3 run 유무를 먼저 확인한 후 CI·smoke를
 각각 한 번 실행한다. source freeze와 bounded heartbeat를 유지하고 결과는 후속 문서에서 C3를
 명시한다. 기존 성공·실패를 삭제하거나 자체 commit hash를 맞추는 amend는 하지 않는다.
+
+
+## 2026-10-13 KST — C3 hosted 수용과 R1-09 외부 차단 인계
+
+검증 후보 C3는 `862fa954c16d28a617271fe6f613d34226e2d558`이다.
+커밋·push 뒤 로컬과 원격 ref를 대조하고 기존 exact-C3 run이 없음을 확인한 뒤,
+2026-10-12 16:39:39 UTC에 CI `38278947953`, 16:39:48 UTC에 smoke
+`38278966315`를 각각 한 번 dispatch했다. CI는 16:53:41 UTC에 8개 job 모두
+success, smoke는 17:16:49 UTC에 functional PASS와 success로 종료했다.
+재실행·취소는 하지 않았다. 소스와 workflow는 두 run 내내 C3로 고정했다.
+
+WP-6 worker480의 최종 결과와 후속 집계 정정을 실제 idle·pending0에서 회수했다.
+코디네이터는 두 terminal snapshot, 8개 실제 checkout command/output,
+235개 workspace 결과 행의 합계(2,886 pass·0 fail·6 ignored·180 filtered),
+별도 chart6, DB10 선택·no-SKIP·59 ledger/checksum/no-op을 직접 대조했다.
+Python482/skip10, Web61파일/487 unit·회귀32·coverage complete, smoke functional
+PASS를 수용했다. hosted browser 개별 행·retry/skip 수, DB 개별 test 수,
+quiet skip 사유 및 smoke 개별 자원 정리 한계는 [최종 인수](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 명시했다.
+
+WP-7 worker789의 새 읽기 전용 인계도 실제 idle·pending0에서 회수했다.
+C3 detached checkout을 보존하고 공식 plan/preflight exit0, 130개 release/migration
+입력의 내용 동일성, 825개 source/mode record의 실행 전후 동일성, inert env
+무결성을 확인했다. 코디네이터는 인계의 14개 evidence hash를 검증했다.
+원래 checkout과 detached checkout의 source-input hash 차이는 내용 변경 없이
+파일 모드 0664/0775 대 0644/0755에서 생기며 공식 hash가 모드를 포함한다.
+후속 빌드는 detached hash에 연결한다.
+
+17:23:06 UTC의 root probe는 interactive authentication required로 실패했다.
+고정 11개 container 중 research-worker는 exited2/unhealthy, 나머지 10개는 healthy;
+Owner V2는 실행 중이었다. 이 관측은 ordinary health admission 또는 두 reader
+정지 대체 조건을 증명하지 않는다. daily worker의 의도된 lifecycle·exit2 원인은
+아직 판정하지 않았다. 거의 소진된 swap을 포함한 자원 관측은 시점 정보이며
+실제 빌드의 root/state/health/resource/OOM/compiler/timer gate를 대체하지 않는다.
+
+[장기 보관 C3 빌드 인계](2026-10-12-r1-release-readiness.md)에 기존 허용된
+image-only 범위, exact checkout·명령·manifest 출력, 서비스별 순차 batch,
+root/health 해소 조건 및 migration/backup/rollback의 미검증 범위를 기록했다.
+R1-01~08을 DONE, R1-09와 전체 R1을 BLOCKED로 갱신한다. 이 후속 문서 커밋은
+검증 대상 C3와 구분하며 main merge·실제 image build·배포·provider 작업은 하지 않는다.
+
+
+최종 독립 리뷰는 다섯 추적 문서의 20개 변경 hunk와 14개 고정 입력,
+14개 인계 manifest entry를 모두 대조했고 findings 없이 수용했다.
+Private 보고서 `target/r1-runtime-fxi6ltmv/hosted-862fa95/final-closeout/review.md`
+(1–112행)의 SHA-256: `f6db609200d0f6b11900e9a1025307eb95f5c7ced0edd25f528e413e43475e12`.
+코디네이터는 리뷰 후 동일 diff·입력 hash를 재확인했으며, 이후 이 문서에 리뷰 완료와
+모니터링 종료의 행정 기록만 추가했다. 열두 owned worker는 모두 실제 idle, active turn 없음,
+pending0이고 결과를 회수했다. 등록했던 `b2a5c77b` 삭제 성공을 확인했다.
+
+이 기록을 추가하는 문서 전용 커밋은 `orange-dugong`에 저장·push하며 테스트 대상 C3를
+변경하지 않는다. 문서 링크·체크박스·공백·고정 소스 hash를 확인했고 제품 코드·workflow·
+다이어그램은 바꾸지 않았다. 새 테스트·CI dispatch·이미지 빌드·main merge는 수행하지 않았다.
+범위 안의 CI 복구와 검토 가능한 인계는 종료하며, R1-09의 외부 전제와 실제 이미지·manifest
+검증이 다음 작업이다.

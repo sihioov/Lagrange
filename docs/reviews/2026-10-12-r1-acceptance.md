@@ -1,6 +1,6 @@
 # R1 same-commit hosted acceptance
 
-Status: **HOSTED ACCEPTANCE PENDING — C2 passed Rust, DB, policy and functional smoke; the reviewed two-file Python/Web follow-up now passes local validation.**
+Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke passed on `862fa954c16d28a617271fe6f613d34226e2d558`. R1-09 remains BLOCKED on root authentication and build-health prerequisites.**
 Local validation and hosted validation are recorded separately. No production
 rollout or R1 completion is claimed.
 
@@ -238,7 +238,7 @@ The Windows Job Object/secure-handle and root metadata behavior remains untested
 in this non-root Linux run. The earlier 450-pass result remains historical.
 
 The current browser wrapper subsequently passed, as recorded below. No NT,
-workflow, dependency or provider change is part of this repair. R1-08 remains open.
+workflow, dependency or provider change is part of this repair. R1-08 was still open at this local checkpoint; its C3 closure is recorded below.
 
 Standalone log SHA-256:
 `2be0de9dc1e4f20a1fdcd5a9e67787b61a675efa0ee7cdc88c72ec86e4f2fe2b`.
@@ -283,28 +283,109 @@ wrapper log: `756e12591f1562db9e06f8d3de2011b90be77a06f054c480fccf534ab656455a`.
 Independent source review and the focused/shared/full Python, backup and Web
 results accept this bounded follow-up locally. No unresolved local defect remains.
 The coordinator confirmed the review and validation workers were actually idle
-with no pending permissions before candidate preparation. Both hosted workflows
-must still pass on C3; C2's successes do not establish C3 acceptance. The separate
+with no pending permissions before candidate preparation. At that checkpoint both
+hosted workflows were pending; their final C3 results follow below. The separate
 actual API lane was not repeated because its source was unchanged. Production,
 Windows parity and the root-only metadata fixtures remain outside these results.
 
-### Deployment preparation limits
+## Candidate C3 hosted acceptance
 
-C2's official image builder plan and preflight both exited 0; an independent
-source audit found no new release-source defect and matched all 59 up-migration
-checksums. No actual release images or immutable manifest were created.
+Accepted 2026-10-13 KST. Tested commit:
+`862fa954c16d28a617271fe6f613d34226e2d558` (`orange-dugong`).
+The coordinator checked for existing exact-candidate runs before dispatching each
+workflow once. No rerun or cancellation was used. Both terminal run records name
+C3; all eight checkout-bearing jobs also emitted C3 immediately after their actual
+`git log -1 --format=%H` command. The `required` aggregate has no checkout.
 
-The exact noninteractive root access probe required interactive authentication.
-The observed production research-worker was exited 2/unhealthy while Owner V2
-was running; the ordinary build-health predicate was not satisfied. No service
-change, drain, exception or activation is authorized by these preparation records.
-The current-link observation alone does not establish database compatibility,
-backup integrity or restore readiness.
+- [CI 38278947953](https://github.com/sihioov/Lagrange/actions/runs/38278947953):
+  created 2026-10-12 16:39:39 UTC, completed success at 16:53:41 UTC; all eight jobs passed.
+- [Research smoke 38278966315](https://github.com/sihioov/Lagrange/actions/runs/38278966315):
+  created 16:39:48 UTC, job 16:39:53–17:16:49 UTC, completed success;
+  36m56s job duration, 37m01s from run creation to completion.
 
-R1-09 stays BLOCKED until the final candidate passes CI and a root-capable
-operator/session can satisfy the documented build-health prerequisites. The
-coordinator will refresh the concrete official build plan for that candidate
-before requesting external help. C2's retained proposal is
-`target/r1-runtime-fxi6ltmv/release-readonly-f5dff91/candidate-build-handoff.md`;
-it must not be reused as proof for a later commit. Production activation remains
-outside this R1 task.
+| Gate | Final C3 hosted evidence | Observation limits |
+| --- | --- | --- |
+| format | Workspace formatter passed | No source modification during validation |
+| clippy | Workspace all-target/all-feature Clippy with `-D warnings` passed | Local six-selection feature matrix is separately recorded |
+| policy | Every step passed; CI contract suite 10 tests, OK | No production credentials or policy relaxation |
+| workspace-tests | Separate chart HTTP gate: 6 passes. Workspace: 235 result-summary rows, 2,886 passes, zero failures, 6 ignored, 180 filtered | Summary totals include nested/doc-test output and are not unique test identities; successful-test self-skip output is captured by libtest and was not independently audited |
+| postgres-integration-validation | `APPROVED`; all ten DB-gated selections; runtime no-SKIP guard `ENFORCED`; staged 0038→0041, catalog probes, role logins and 0039 down guard passed | Hosted output does not emit successful per-selection test counts. The earlier local 126-pass result is separate |
+| python-tests | 482 passed, 10 skipped, 7 warnings; backup-policy step succeeded | Quiet output does not emit skip reasons or a separate backup subtest count; local backup 6/6 is separate |
+| web | Clean install, Chromium, OpenAPI, lint, typecheck, 61 Vitest files / 487 tests, build, 32 runner regressions and official wrapper passed; `state=passed exit=0 coverage=complete` | Hosted artifacts do not expose individual browser identities or skip/retry/flaky counters. Exact-source local 135 executions / 134 identities with zero such outcomes are recorded above |
+| required | Success after all seven prerequisite CI jobs | This is CI acceptance, not production readiness |
+| research-smoke (separate workflow) | `RESEARCH_WORKER_SMOKE: functional PASS` | Normal EXIT cleanup suppresses Compose stop/down/volume errors and output; individual hosted resource removal is not independently proved |
+
+PostgreSQL's first and second full-release runs both report latest migration 59,
+59 ledger rows, 59 checksum entries, identical checksum lists and `NO_OP` rerun.
+Checksum-list SHA-256:
+`de2c1e6d2cdc7064e980afdaf6fac7f66d406ff1217f0642eb0d452fbbff5077`.
+The ten completed selections are `migration-contract`, `auth-audit-readiness`,
+`auth-router`, `api-tenancy-rls`, `api-paper-execution`, `api-paper-notifications`,
+`api-paper-scheduler`, `api-paper-runner`, `jobqueue-contract` and
+`jobqueue-paper-preview`. The full-release lane reports `PASS_NO_OWNED_CONTAINERS`.
+These are disposable DB results; no production migration was executed.
+
+The six ignored workspace names were emitted. Their source-correlated purpose is
+retained here; the hosted job did not emit reason text:
+
+| Ignored test | Existing source purpose |
+| --- | --- |
+| `vendor_authorize_endpoint_engages_oidc` | Real Auth0 tenant/provider check |
+| `vendor_confidential_client_credential_is_accepted` | Real Auth0 tenant/provider check |
+| `vendor_tenant_jwks_issuer_audience_endpoints` | Real Auth0 tenant/provider check |
+| `worker::process_tests::blocking_child` | Child fixture invoked through its supervisor tests |
+| `worker::process_tests::oversized_child` | Child fixture invoked through its supervisor tests |
+| `intraday_endurance_real_30_minute_provider_free_soak` | Explicit 30-minute endurance lane |
+
+No ignored case is counted as a pass. Python's ten skips correspond to the
+unchanged Windows-only (2) and root-only metadata (8) fixtures described above;
+those reasons are source-correlated, not newly emitted by hosted pytest.
+
+### Retained C3 provenance
+
+Private bounded receipts are under `target/r1-runtime-fxi6ltmv/hosted-862fa95/`.
+The coordinator independently checked terminal head/status/job outcomes, summed
+all 235 numeric rows separately from chart, checked six ignored names and all
+eight command/SHA-output pairs. Raw remote log bodies were hashed in memory;
+only sanitized structured data and hashes were retained.
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `queries/ci-final.json` | `dd4e7e6a0590fb87daf23e9a1ab1e0e2c9af2ecced21c570863aa989f07e8127` |
+| `queries/smoke-final.json` | `5f28aac71dd7d2ce7d4c9e1cfb8691ecb373a539eb25e25cf7a7a66e8d672a4f` |
+| `detailed-evidence.json` | `2e2ccecb76a56bf1e33d1a2d6d765180bea67c5daf534c6661897b8fcf8af429` |
+| `job-log-summaries.json` | `0ba83edce647137da2ab99253703746fd21c10b5d699a652e4c9aeb26767212a` |
+| Corrected private `acceptance.md` | `0224f2628a99f13af05e40423d0b3e34eadce73750b9995ed26e973942b79a8f` |
+
+| Completed job | Log-response SHA-256 | Checkout command / output line |
+| --- | --- | --- |
+| Web | `03df791514fb9b7f3ecce53e78dc483a091ab5028b8665baa72976b7286a6957` | 121 / 122 |
+| Format | `2d9281eb7f5678bdcb39303fd5c0f313a70fa4ed1bea9bba5754a3625624d7d5` | 120 / 121 |
+| Clippy | `1db8bb7b4506c1e7fd82e89ec418d700a6e6b5c761b4283f64fa8b042c9a3881` | 120 / 121 |
+| Workspace | `fd65f03a041cb487507aa1a46ad6b8ce479bfe97f74384488f6aa69433ab0094` | 123 / 124 |
+| PostgreSQL | `517bfa2321f5fa88d4a02aa992484aceee68edd77e3a62326f38f24b3dcfe21b` | 120 / 121 |
+| Python | `ca60209b6e090cc3588ed0d94fc3bb6a79d3d40f37e422c856ee9090e02e6f0f` | 126 / 127 |
+| Policy | `2fd369a8f18331eaf257894f1f34d40588cbad18161ddb43c53ee68c0a85e171` | 122 / 123 |
+| Required | `6fdb521b75281951d54c79cb10c1f20d7155de0c388069f98e2ce707fda599ef` | No checkout |
+| Research smoke | `fcd368a8ff8e08ef2c280226332a11d98e847a2fd73bc07d43b1d7581bc6c719` | 117 / 118 |
+
+The earlier report is preserved unchanged as `acceptance.worker-original.md`
+(SHA-256 `c8a75a13b74b84ac8a4afa627409ccb0e6361b598995cb917e0c373efeafc0ce`).
+Its approximate smoke duration was corrected from actual timestamps; filenames
+containing poll counters are not elapsed-time evidence.
+
+### Coordinator disposition and remaining release boundary
+
+WP-6 / R1-08 is accepted. Together with the reviewed repairs and local focused
+results, this closes R1-02 through R1-07 on C3. Historical C/C2 failures remain
+above, and non-emitted evidence is not presented as observed. The docs-only
+commit adding this final record is distinct from tested C3 and does not replace
+its SHA in the build handoff. Product code and workflows remain frozen at C3.
+
+R1-09 and overall R1 remain open. The refreshed
+[C3 release handoff](2026-10-12-r1-release-readiness.md) retains a clean detached
+C3 checkout, official plan/preflight results, exact image-only command and
+manifest destination. Actual build is blocked on root authentication and the
+unchanged build-health admission contract. No C3 release images or manifest have
+been produced by this task. Production activation, data migration, rollback,
+provider activity and main merge are outside this closeout.

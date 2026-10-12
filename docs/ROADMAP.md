@@ -10,9 +10,9 @@
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
 | 현재 실행 우선순위 | R1 CI 복구 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
-| 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — C2 결과 회수, WP-4·WP-5 후속 로컬 수용 |
-| 다음 착수 항목 | 후속 후보 C3의 동일 커밋 CI·smoke → R1-09 외부 전제 해소 |
-| 진행 중인 구현 항목 | 두 파일 수정·독립 리뷰 수용. runner 32개·공유 프로세스 34개·전체 Python 482 pass/skip 10·backup 6개·Web 135회 통과. 후보 C3 hosted 검증 대기; R1-08 DOING |
+| 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-6 수용, WP-7 외부 전제 대기 |
+| 다음 착수 항목 | R1-09 — 검증된 C3의 실제 이미지·manifest 준비를 위한 root 인증·빌드 health 조건 해소 |
+| 진행 상태 | C3 `862fa95`의 CI 8개 job과 별도 기능 smoke 모두 통과. R1-01~08 DONE; R1-09 BLOCKED, 전체 R1 미완료 |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
 
 ## 1. 목표와 문서의 역할
@@ -132,9 +132,9 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 
 ## 4. 단계와 의존 관계
 
-| 단계 | 사용자에게 생기는 결과 | 초기 상태 | 선행 조건 |
+| 단계 | 사용자에게 생기는 결과 | 현재 상태 | 선행 조건 |
 | --- | --- | --- | --- |
-| R1 | 검증 가능한 개발·배포 기준선 | DOING — 기준선 수용, 수정·검증 | 없음 |
+| R1 | 검증 가능한 개발·배포 기준선 | BLOCKED — CI·smoke 수용, 실제 이미지·manifest 전제 대기 | R1-09 root 인증·빌드 health 조건 |
 | R2 | 매 거래일 사용할 수 있는 일봉·신호·추천 베타 | TODO | 진단은 즉시 가능. 수정 릴리스의 운영 인수에는 R1 통과 필요 |
 | R3 | 실제 시장 시세가 전달되는 실시간 화면 | TODO | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
 | R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | BLOCKED — 구현 계약 미확정 | 결정안 작성은 즉시 가능. 구현은 R4-01의 구체적 승인, 출시에는 R1·R2 필요 |
@@ -160,66 +160,58 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   완료 2026-10-12; 대상 `ac0a083`; [기준선·수정 계약](reviews/2026-10-12-r1-baseline.md).
   포맷·Clippy·기능 누락·Python·Compose 입력을 재현하고 feature-enabled transport 50개 통과.
   DB 원인은 source/동일 product baseline의 CI로 대조; 실제 SQL·기능 smoke는 Docker 접근 문제로 미검증이며 후속 검증에 남는다.
-- [ ] **R1-02 — Rust format·Clippy 복구.** DOING — 로컬 수정·검증 수용, 최종 커밋의 hosted 검사 대기.
-  workspace 포맷과 feature 조합을 포함한 strict Clippy 6개 선택이 모두 통과했다.
-  C2 `f5dff91`의 hosted format·Clippy도 통과했다. Python 후속 수정 이후 최종 후보를 다시 대조한다.
-  [최종 Rust 검증](reviews/2026-10-12-r1-workspace-validation.md), [lint 수정·검증](reviews/2026-10-12-r1-rust-lint-validation.md).
-- [ ] **R1-03 — Rust workspace 테스트 복구.** DOING — 로컬 전체 실행 통과, 동일 커밋의 hosted 검사 대기.
-  CI는 `--features kis-client/test-support`를 명시한다. 최종 로컬 집계는 outer binary 2,833 pass,
-  nested child 1 pass, doc-test 52 pass, 실패 0·기존 ignored 6·filtered 180이다.
-  [집계·skip 사유·소스 동일성](reviews/2026-10-12-r1-workspace-validation.md),
+- [x] **R1-02 — Rust format·Clippy 복구.** 완료 2026-10-13; 대상 C3 `862fa95`.
+  hosted workspace format과 all-target/all-feature strict Clippy가 통과했다.
+  로컬 feature 조합 6개 검사와 보충 검증도 수용했다.
+  [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
+  [Rust 검증](reviews/2026-10-12-r1-workspace-validation.md), [lint 수정·검증](reviews/2026-10-12-r1-rust-lint-validation.md).
+- [x] **R1-03 — Rust workspace 테스트 복구.** 완료 2026-10-13; 대상 C3 `862fa95`.
+  hosted `cargo test --workspace --locked --no-fail-fast --features kis-client/test-support` 통과.
+  235개 결과 요약 합계는 2,886 pass·실패 0·기존 ignored 6·filtered 180이며, 고유 테스트 수가 아니다.
+  chart HTTP 6개 통과는 별도 실행이다. 기존 ignored의 이름·사유와 추가 역할 검증은
+  [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
+  [workspace 집계](reviews/2026-10-12-r1-workspace-validation.md),
   [C2 pure 70·relay 13·restart](reviews/2026-10-12-r1-c2-fixture.md),
-  [실제 역할 runtime 18](reviews/2026-10-12-r1-runtime-validation.md).
-  float_roundtrip의 명시적 의존성과 legacy 합성 snapshot의 바이트·hash·tamper 회귀도 통과했다.
-  C2 hosted workspace도 실패 0이며 결과 요약 합계는 2,886 pass·ignored 6·filtered 180이다.
-  이는 테스트 identity 중복을 제거한 집계가 아니다. chart 6개는 별도 실행이다.
-- [ ] **R1-04 — PostgreSQL 초기화·업그레이드 검증.** DOING — 로컬 전체 validator `APPROVED`, hosted 검사 대기.
-  staged 0038→0041, 빈 DB의 전체 59개 migration 및 checksum이 같은 no-op 재실행을 통과했다.
-  후속 DB-gated 10개 선택은 auth library 4개를 포함해 126 pass·실패/ignored/SKIP 0이다.
-  C2 hosted validator도 10개 선택·no-SKIP·전체 59개/no-op·checksum 대조를 통과했다.
-  Hosted 출력에는 개별 테스트 수가 없어 로컬 126개를 hosted 수치로 사용하지 않는다.
-  [후속 인수 기록](reviews/2026-10-12-r1-acceptance.md), [기존 PostgreSQL 검증](reviews/2026-10-12-r1-postgres.md), [DB 계약 수정](reviews/2026-10-12-r1-db-contract-repair.md).
-- [ ] **R1-05 — Web 검증 환경 복구.** DOING — C2 hosted의 cleanup 회귀 실패로 후속 검증 재개.
-  lint·typecheck·unit·production build를 통과했고, 마지막 fixture/catalog 12개 검사도 통과했다.
-  최종 공식 wrapper는 회귀 31개와 **브라우저 135/135회**를 통과했다(일반 121 + stream 13 + 별도 owner-empty 1).
-  필수 synthetic identity는 134개이며 owner-empty만 두 모드에서 실행했다. 실패·skip·retry·flaky는 0이다.
-  [전체 Web 검증](reviews/2026-10-12-r1-web-validation.md),
-  [최종 소스 리뷰](reviews/2026-10-12-r1-web-final-repair-review.md),
-  [별도 실제 API의 두 Chromium phase](reviews/2026-10-12-r1-actual-api-validation.md).
-  이전 실패와 환경 오류는 해당 보고서에 보존했다.
-  C2는 lint·typecheck·unit 487개·build까지 통과했으나 같은 cleanup 테스트의 두 subcase가
-  실패해 브라우저 실행 전 중단됐다. 기존 135회 통과를 새 실행기의 검증으로 재사용하지 않는다.
-  수정된 실행기의 새 공식 wrapper는 회귀 32개·브라우저 135/135회를 다시 통과했다.
-  실패/skip/retry/flaky 0, 입력 30개 불변과 소유 프로세스 345개·포트 정리를 대조했다.
-- [ ] **R1-06 — Python 계약·research smoke 복구.** DOING — C2 hosted 기능 smoke 통과,
-  Python 중단 후 실행기 소유권 수정 검증 진행. 이전 로컬 Python 450 pass·기존 skip 10과
-  backup 정책 6개 통과는 새 runner 회귀가 추가되기 전의 증거다.
-  [전체 smoke](reviews/2026-10-12-r1-smoke-validation.md)는 script·supervisor exit 0, functional PASS,
-  SKIP 0이며 새 캐시에서 Raw probe를 수행했다. 입력 933개의 동일성과 소유 자원 정리를 확인했다.
-  [Python 결과·기존 skip 사유](reviews/2026-10-12-r1-runner.md). Windows parity는 미검증이다.
-  C2 smoke는 약 52분 후 functional PASS를 기록했다. Hosted 자원 삭제의 별도 영수증은 없다.
-  격리 재현에서 실행기가 무관한 자식과 자기 자신을 소유 대상으로 등록하는 결함을 확인했다.
-  실제 신호는 차단했으며 과거 hosted 중단의 정확한 송신자·수신자는 미확인이다.
-  수정 후 runner 32개와 공유 multiprocessing 34개, 전체 Python 482 pass·skip 10,
-  backup 6개를 통과했다. skip 위치는 기존 Windows 2개·root metadata 8개에 대응하며,
-  quiet 출력에 사유가 재출력되지 않은 한계와 소스 대조 근거를 [인수 기록](reviews/2026-10-12-r1-acceptance.md)에 남겼다.
-- [ ] **R1-07 — 정책 검사 입력 복구.** DOING — 격리 Compose 입력과 누락 거부 회귀를 로컬에서 통과했다.
-  운영 credential 없이 검사하고 production의 필수 입력 규칙을 유지한다.
-  [runner·정적 계약 검증](reviews/2026-10-12-r1-runner.md); C2 hosted policy 26단계 통과,
-  Python 후속 수정 이후 최종 후보의 전체 policy job 대기.
-- [ ] **R1-08 — 통합 검증 확정.** DOING — 로컬 검증·독립 리뷰를 통과한 후보를 커밋한 뒤,
-  **같은 최종 커밋**의 필수 CI와 research smoke 실행 URL·checkout SHA·단계별 결과를 확인한다.
-  첫 후보 `79da119`의 policy·Web 준비·artifact·DB rollback 후속 수정과 smoke 시간 보정은 로컬 검증·리뷰를 통과했다.
-  [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md)에 Python runner 중단과 미실행 단계도 구분한다.
-  C2의 required gate는 Python·Web 때문에 실패했다. 두 파일의 수정·로컬 검증·리뷰 이후
-  새 후보를 고정하고 두 workflow를 같은 커밋으로 검증한다.
-  실패·기존 skip·미실행은 구분하고, 로컬 통과를 hosted 통과로 대신하지 않는다.
-- [ ] **R1-09 — 배포 후보 준비.** BLOCKED — 실제 빌드에 필요한 root 인증과 운영 health 조건 미충족.
-  C2 공식 builder의 plan·preflight와 migration/복구 소스 검토는 완료했으나 이미지·manifest는 없다.
-  해소 조건: 최종 후보의 CI 통과 후 root 실행 가능한 운영자/세션과 build health 조건 확인.
-  담당: 코디네이터가 새 후보에 맞는 명령·근거를 준비하고 운영자에게 외부 전제를 인계한다.
-  정확한 커밋·이미지·manifest, migration 순서와 기존 릴리스 복구
-  절차를 확인한다. 실제 운영 적용·결과는 R2의 릴리스 증거에 연결한다.
+  [runtime 18](reviews/2026-10-12-r1-runtime-validation.md)에 구분했다.
+- [x] **R1-04 — PostgreSQL 초기화·업그레이드 검증.** 완료 2026-10-13; 대상 C3 `862fa95`.
+  hosted validator `APPROVED`, DB-gated 10개 선택과 no-SKIP guard 통과.
+  staged 0038→0041, 전체 59개 migration·동일 checksum·no-op 재실행과 역할 경계를 검증했다.
+  로컬 후속 126 pass·실패/ignored/SKIP 0은 별도 근거이며 hosted 개별 테스트 수는 공개되지 않았다.
+  [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
+  [PostgreSQL 검증](reviews/2026-10-12-r1-postgres.md), [DB 계약 수정](reviews/2026-10-12-r1-db-contract-repair.md).
+- [x] **R1-05 — Web 검증 환경 복구.** 완료 2026-10-13; 대상 C3 `862fa95`.
+  hosted clean install·Chromium·OpenAPI·lint·typecheck·61파일/487개 unit·build와 공식 E2E wrapper 통과.
+  회귀 32개 및 `state=passed exit=0 coverage=complete`를 확인했다.
+  같은 소스의 로컬 wrapper는 135회(121+13+별도 owner-empty 1), 134개 고유 synthetic identity,
+  실패/skip/retry/flaky 0을 검증했다. hosted 개별 실행 행·재시도 수는 업로드되지 않아 별도 관측으로 주장하지 않는다.
+  [최종 인수·이전 실패](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
+  [Web 상세](reviews/2026-10-12-r1-web-validation.md),
+  [별도 격리 실제 API 검증](reviews/2026-10-12-r1-actual-api-validation.md).
+- [x] **R1-06 — Python 계약·research smoke 복구.** 완료 2026-10-13; 대상 C3 `862fa95`.
+  hosted pytest 482 pass·기존 skip 10·warning 7, backup 정책 단계 및 별도 research smoke functional PASS.
+  실행기 소유권 수정은 standalone 32개·공유 multiprocessing 34개와 독립 리뷰로 검증했다.
+  skip 사유는 불변 source의 Windows 2개·root metadata 8개와 대응하며 quiet run에서 새로 출력된 사유는 아니다.
+  로컬 cold-cache smoke·자원 정리는 별도 검증했다. hosted smoke의 개별 자원 삭제는 독립적으로 관측되지 않았다.
+  [최종 인수·한계](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
+  [로컬 기능 smoke](reviews/2026-10-12-r1-smoke-validation.md), [Python 기록](reviews/2026-10-12-r1-runner.md).
+- [x] **R1-07 — 정책 검사 입력 복구.** 완료 2026-10-13; 대상 C3 `862fa95`.
+  hosted policy의 모든 단계와 CI 계약 10개 통과. 격리 Compose 입력과 누락 거부 회귀를 유지하고
+  운영 credential·production 필수 입력 규칙을 바꾸지 않았다.
+  [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [정적 계약](reviews/2026-10-12-r1-runner.md).
+- [x] **R1-08 — 통합 검증 확정.** 완료 2026-10-13;
+  대상 `862fa954c16d28a617271fe6f613d34226e2d558`.
+  [CI 38278947953](https://github.com/sihioov/Lagrange/actions/runs/38278947953)의 8개 job과
+  [research smoke 38278966315](https://github.com/sihioov/Lagrange/actions/runs/38278966315) 모두 success.
+  같은 SHA의 checkout·실제 테스트 실행·기능 PASS를 확인했다. C/C2 실패·취소·기존 skip과
+  세부 출력 한계는 [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md)에 보존했다.
+  이 결과를 추가하는 후속 문서 커밋은 검증 대상 C3와 구분한다.
+- [ ] **R1-09 — 배포 후보 준비.** BLOCKED — 실제 빌드에 필요한 root 인증과 빌드 health 조건 미충족.
+  C3 공식 builder의 plan·preflight와 migration/복구 소스 검토는 완료했으나 실제 이미지·manifest는 없다.
+  검증 커밋을 보존한 별도 checkout과 정확한 명령·출력 경로·해소 조건을
+  [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)에 정리했다.
+  담당: root 실행 가능한 운영자/세션과 코디네이터. ordinary build health 또는 별도로 승인된
+  유효한 대체 조건을 충족한 뒤 서비스별 순차 빌드와 공식 manifest 검증을 수행한다.
+  기존 예외 재사용·서비스 전환·운영 migration은 수행하지 않았다. 실제 운영 적용·결과는 R2에 남는다.
 
 **종료 조건:** R1-01~R1-09 완료, 필수 CI·smoke 통과, 동일 커밋의 검증·배포 후보 근거 확보.
 규칙 변경이 필요하면 원래 검사의 목적을 충족하는 검증과 변경 이유를 함께 남긴다.
@@ -382,6 +374,8 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R1-02~R1-08 | C2 결과 회수; Python·Web 후속 수정으로 DOING 유지 | Rust·DB·policy 및 기능 smoke 통과. Python은 중단, Web은 cleanup 회귀 실패. 신호를 차단한 격리 재현으로 실행기 소유권 결함 확인 후 두 Python 파일 수정·리뷰·검증 진행 | `f5dff91`; [C2 결과와 후속 근거](reviews/2026-10-12-r1-acceptance.md), [실행 기록](reviews/2026-10-12-r1-execution.md) |
 | 2026-10-13 | R1-09 | BLOCKED; 실제 이미지·manifest 생성 전 외부 전제 기록 | 공식 plan·preflight는 통과했으나 root 인증과 운영 health 조건 미충족. 새 후보의 CI를 먼저 완료하고 구체적인 실행안을 인계 | C2의 읽기 전용 준비 결과; [배포 전제](reviews/2026-10-12-r1-acceptance.md); 운영 변경·예외 승인 없음 |
 | 2026-10-13 | R1-05·R1-06·R1-08 | 두 파일 후속 수정의 로컬 검증·독립 리뷰 수용; C3 hosted 검증으로 이동 | runner32·공유34·전체 Python482/skip10·backup6과 새 Web135회 통과. 기존 실패와 skip/환경 한계 보존 | 이 기록을 추가한 후보 C3; [로컬 인수·hash 근거](reviews/2026-10-12-r1-acceptance.md) |
+
+| 2026-10-13 | R1-02~R1-08; R1-09 | R1-02~08 DONE, R1-09 BLOCKED; 전체 R1 미완료 | 같은 C3의 CI 8개 job·기능 smoke 성공. 기존 skip·로그 한계를 구분하고, 실제 이미지·manifest는 root 인증·빌드 health 해소 전 미생성 | `862fa95`; [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md); 이 결과는 후속 문서 커밋에 기록 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

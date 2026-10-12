@@ -7,7 +7,7 @@ Native subagents: prohibited for worker packages
 - 계획 기준 커밋: `1b8dca3214ee98c4c23844b888dc4e1fde0ba4a2`
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
 - 상위 작업: [개발 로드맵 R1-01~R1-09](../../ROADMAP.md#5-r1--개발배포-기준-복구)
-- 상태: **C2의 Python·Web 실패에 대한 두 파일 후속 수정·독립 리뷰·로컬 검증 수용, 후보 C3 hosted 검증 대기.** runner32·공유 multiprocessing34·전체 Python482/skip10·backup6·새 Web135회가 통과했다. 이전 결과와 관측 한계는 [후보별 인수 기록](../../reviews/2026-10-12-r1-acceptance.md)과 [실행 기록](../../reviews/2026-10-12-r1-execution.md)에 보존한다. C3의 두 hosted workflow를 같은 커밋으로 검증하며, WP-7 실제 빌드는 root 인증·운영 health 전제에 차단돼 있다.
+- 상태: **C3 `862fa954c16d28a617271fe6f613d34226e2d558`의 CI 8개 job·별도 functional smoke 수용, WP-1~WP-6 완료.** [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 후보별 실패·최종 결과·기존 skip·관측 한계를 보존했다. WP-7/R1-09는 root 인증·빌드 health 전제에 차단돼 있으며 [C3 이미지 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md)에 정확한 소스·명령·해소 조건을 준비했다. 실제 이미지·manifest와 전체 R1 완료는 아직 없다.
 
 ## Goal and boundaries
 
@@ -420,12 +420,12 @@ WP-2~WP-4의 구체적인 구현 계약으로 채택한다. 아래 조정은 원
 R1의 최종 상태는 상위 ROADMAP에서 관리하며 두 문서가 어긋나면 근거를 확인해 함께 고친다.
 
 - [x] WP-1 — R1-01 실패 기준선·수정 명세 수용. 2026-10-12; 대상 `ac0a083`; [기준선·검증](../../reviews/2026-10-12-r1-baseline.md). 실제 SQL/기능 smoke 검증은 후속 WP에 남음.
-- [x] WP-2 — R1-02·R1-03 Rust 수정·개별 검증 수용. 2026-10-12; [수정 후보 workspace2886 pass/0 fail 및 strict6·golden/legacy](../../reviews/2026-10-12-r1-workspace-validation.md). source572·manifest24 동일성과 QA 정리를 확인했다. 최종 커밋의 hosted 통합 수용은 WP-6에 남는다.
-- [x] WP-3 — R1-04 DB 수정·개별 검증 수용. 2026-10-12; dirty 후보의 정확한 source hash와 [전체122개 통과](../../reviews/2026-10-12-r1-postgres.md), [독립 증거 리뷰](../../reviews/2026-10-12-r1-review.md). [후속 후보 validator126 및 strict Clippy도 수용](../../reviews/2026-10-12-r1-acceptance.md). R1-04의 최종 후보 커밋 hosted 재검증은 WP-6에 남음.
-- [x] WP-4 — 2026-10-13 후속 로컬 수용: runner32·공유 multiprocessing34·전체 Python482/skip10·backup6·새 Web135회 통과. [후속 인수 근거](../../reviews/2026-10-12-r1-acceptance.md). 이전 수용·실패 근거는 보존한다: [Web](../../reviews/2026-10-12-r1-web-validation.md), [Python·정적 검사](../../reviews/2026-10-12-r1-runner.md), [전체 기능 smoke](../../reviews/2026-10-12-r1-smoke-validation.md). C3 hosted 결과는 WP-6에 남는다.
+- [x] WP-2 — R1-02·R1-03 Rust 수정·개별 검증 수용. 2026-10-12; [수정 후보 workspace2886 pass/0 fail 및 strict6·golden/legacy](../../reviews/2026-10-12-r1-workspace-validation.md). source572·manifest24 동일성과 QA 정리를 확인했다. 최종 C3 hosted workspace·Clippy 수용은 WP-6에 연결했다.
+- [x] WP-3 — R1-04 DB 수정·개별 검증 수용. 2026-10-12; dirty 후보의 정확한 source hash와 [전체122개 통과](../../reviews/2026-10-12-r1-postgres.md), [독립 증거 리뷰](../../reviews/2026-10-12-r1-review.md). [후속 후보 validator126 및 strict Clippy도 수용](../../reviews/2026-10-12-r1-acceptance.md). 최종 C3 hosted validator APPROVED·no-SKIP 근거는 WP-6에 연결했다.
+- [x] WP-4 — 2026-10-13 후속 로컬 수용: runner32·공유 multiprocessing34·전체 Python482/skip10·backup6·새 Web135회 통과. [후속 인수 근거](../../reviews/2026-10-12-r1-acceptance.md). 이전 수용·실패 근거는 보존한다: [Web](../../reviews/2026-10-12-r1-web-validation.md), [Python·정적 검사](../../reviews/2026-10-12-r1-runner.md), [전체 기능 smoke](../../reviews/2026-10-12-r1-smoke-validation.md). 최종 C3 hosted Python·Web·policy·기능 smoke도 WP-6에서 수용했다.
 - [x] WP-5 — 2026-10-13 후속 독립 리뷰 수용: 소유권 경계·테스트 격리·cleanup 두 파일의 모든 hunk·hash·기존 테스트 보존 확인, findings 없음. 코디네이터가 새 Python·Web 결과와 소스 동일성을 대조했다. [후속 인수 근거](../../reviews/2026-10-12-r1-acceptance.md). 이전 [90개 소스 감사](../../reviews/2026-10-12-r1-final-source-review.md) 및 [최종 delta 리뷰](../../reviews/2026-10-12-r1-web-final-repair-review.md)는 보존한다.
-- [ ] WP-6 — R1-08 동일 커밋 CI·기능 smoke 인수
-- [ ] WP-7 — R1-09 실제 배포 후보 준비 인수
+- [x] WP-6 — 2026-10-13; 대상 C3 `862fa954c16d28a617271fe6f613d34226e2d558`. CI `38278947953`의 8개 job과 smoke `38278966315`의 functional PASS 수용. [같은 SHA checkout·최종 결과·한계](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance).
+- [ ] WP-7 — BLOCKED. C3 공식 plan/preflight·migration/복구 소스 검토·[구체적인 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md) 준비 완료. root 인증과 실제 build-health admission 해소 후 C3 이미지 ID·revision·공식 immutable manifest를 검증해야 완료된다. 담당: root 실행 가능한 운영자/세션 및 코디네이터.
 
 2026-10-13 후속 범위는 `scripts/qa/candidate-web-e2e-runner.py`와
 `scripts/qa/test_candidate_web_e2e_runner.py`다. 호출 세션·기존 자식의 소유권 제외,
@@ -447,3 +447,4 @@ cleanup 회귀를 검증한다. 새 테스트 하나를 추가하며 기존 테�
 | 2026-10-12 | 최종 Web 135/135·회귀 31 및 전체 기능 smoke를 수용하고 WP-4·WP-5 완료. 같은 후보 커밋의 hosted 검증 준비 | [Web](../../reviews/2026-10-12-r1-web-validation.md), [최종 리뷰](../../reviews/2026-10-12-r1-web-final-repair-review.md), [smoke](../../reviews/2026-10-12-r1-smoke-validation.md). 전체 R1·배포 후보 완료를 뜻하지 않음 |
 | 2026-10-13 | C2 CI·smoke terminal 회수 후 WP-4·WP-5 재개, WP-7 외부 전제 차단 기록 | Rust·DB·policy·smoke 성공, Python·Web 실패. 단일 signal-denying proof에서 실행기 소유권 결함 확인. 두 Python 파일에 한정한 수정·독립 리뷰·직렬 검증; [후보별 기록](../../reviews/2026-10-12-r1-acceptance.md) |
 | 2026-10-13 | WP-4·WP-5 후속 수용, C3 hosted 검증 준비 | 새 소스의 runner32·공유34·전체 Python482/skip10·backup6·Web135회와 독립 리뷰 통과; [근거·한계](../../reviews/2026-10-12-r1-acceptance.md) |
+| 2026-10-13 | WP-6 수용, R1-01~08 완료; WP-7은 외부 전제 차단 인계 | C3 CI 8개 job·별도 smoke 성공, 8개 checkout 대조. [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [exact-C3 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md). 실제 이미지·manifest·운영 활성화 없음 |
