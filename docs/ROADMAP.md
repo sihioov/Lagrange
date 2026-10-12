@@ -11,8 +11,8 @@
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
 | 현재 실행 우선순위 | R1 CI 복구 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
 | 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-5 로컬 검증·독립 리뷰 수용 |
-| 다음 착수 항목 | 후보 커밋 고정 → R1-08 동일 커밋의 CI·research smoke → R1-09 배포 후보 준비 |
-| 진행 중인 구현 항목 | R1-02~R1-07 로컬 검증 통과; 최종 커밋의 hosted 수용 전까지 DOING. R1-08 진행 중 |
+| 다음 착수 항목 | R1-08 후속 후보 C2의 CI·research smoke → R1-09 배포 후보 준비 |
+| 진행 중인 구현 항목 | 첫 후보 `79da119`의 실패를 보정한 7개 소스 파일의 독립 리뷰·로컬 검증 완료. DB 126개·runner 31개·artifact library 196개 통과; 새 후보의 hosted 검증 대기, R1-08 DOING |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
 
 ## 1. 목표와 문서의 역할
@@ -172,8 +172,8 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   float_roundtrip의 명시적 의존성과 legacy 합성 snapshot의 바이트·hash·tamper 회귀도 통과했다.
 - [ ] **R1-04 — PostgreSQL 초기화·업그레이드 검증.** DOING — 로컬 전체 validator `APPROVED`, hosted 검사 대기.
   staged 0038→0041, 빈 DB의 전체 59개 migration 및 checksum이 같은 no-op 재실행을 통과했다.
-  DB-gated 10개 선택은 122 pass·실패/ignored/SKIP 0이다.
-  [최종 PostgreSQL 검증](reviews/2026-10-12-r1-postgres.md), [DB 계약 수정](reviews/2026-10-12-r1-db-contract-repair.md).
+  후속 DB-gated 10개 선택은 auth library 4개를 포함해 126 pass·실패/ignored/SKIP 0이다.
+  [후속 인수 기록](reviews/2026-10-12-r1-acceptance.md), [기존 PostgreSQL 검증](reviews/2026-10-12-r1-postgres.md), [DB 계약 수정](reviews/2026-10-12-r1-db-contract-repair.md).
 - [ ] **R1-05 — Web 검증 환경 복구.** DOING — 설치 순서·소유 서버 실행기·현행 WS 테스트 계약의 로컬 검증 수용, hosted 검사 대기.
   lint·typecheck·unit·production build를 통과했고, 마지막 fixture/catalog 12개 검사도 통과했다.
   최종 공식 wrapper는 회귀 31개와 **브라우저 135/135회**를 통과했다(일반 121 + stream 13 + 별도 owner-empty 1).
@@ -192,6 +192,8 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   [runner·정적 계약 검증](reviews/2026-10-12-r1-runner.md); 동일 후보 커밋의 전체 policy job 대기.
 - [ ] **R1-08 — 통합 검증 확정.** DOING — 로컬 검증·독립 리뷰를 통과한 후보를 커밋한 뒤,
   **같은 최종 커밋**의 필수 CI와 research smoke 실행 URL·checkout SHA·단계별 결과를 확인한다.
+  첫 후보 `79da119`의 policy·Web 준비·artifact·DB rollback 후속 수정과 smoke 시간 보정은 로컬 검증·리뷰를 통과했다.
+  [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md)에 Python runner 중단과 미실행 단계도 구분한다.
   실패·기존 skip·미실행은 구분하고, 로컬 통과를 hosted 통과로 대신하지 않는다.
 - [ ] **R1-09 — 배포 후보 준비.** 정확한 커밋·이미지·manifest, migration 순서와 기존 릴리스 복구
   절차를 확인한다. 실제 운영 적용·결과는 R2의 릴리스 증거에 연결한다.
@@ -351,6 +353,9 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-12 | R1-02~R1-07 | DOING 유지; 후속 Rust·DB·Web 범위 확정 | 개별 검증에서 추가 진단과 기존 테스트 계약 불일치 발견. DB 리뷰 결함 수정, 고정 QA 포트 일치, Web 서버 소유 증명과 WS 전용 회귀 보완. 전체 검사를 축소하지 않음 | `ac0a083` 기반 작업 트리; [실행·검증 기록](reviews/2026-10-12-r1-execution.md), [Rust](reviews/2026-10-12-r1-rust.md), [DB](reviews/2026-10-12-r1-postgres.md), [runner](reviews/2026-10-12-r1-runner.md); 동일 최종 커밋·필수 CI·smoke는 아직 미확정 |
 
 | 2026-10-12 | R1-02~R1-08 | 수정·로컬 검증과 독립 소스 리뷰 수용; 동일 후보 커밋의 hosted 검증으로 이동 | Rust·DB·Python·Web 135회·기능 smoke 통과. 기존 실패·skip 이력은 보고서에 보존하고 R1 완료 체크는 hosted 결과 이후 판단 | 이 기록을 추가한 후보 커밋; [실행 기록](reviews/2026-10-12-r1-execution.md), [Web](reviews/2026-10-12-r1-web-validation.md), [workspace](reviews/2026-10-12-r1-workspace-validation.md), [smoke](reviews/2026-10-12-r1-smoke-validation.md) |
+
+| 2026-10-12 | R1-04·R1-05·R1-07·R1-08 | 첫 후보 hosted 실패로 제한된 후속 수정; DOING 유지 | 깨끗한 checkout의 누락 입력·target 생성 전제와 DB rollback 오류가 로컬 통과 뒤 발견됨. Python은 runner shutdown으로 결과 미완료 | `79da119`; [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md). 기존 로컬 성공과 hosted 실패를 구분 |
+| 2026-10-12 | R1-03~R1-08 | 후속 수정의 로컬 검증·리뷰 수용; hosted 검증 대기 | 7개 소스 파일 보정, DB 126개·runner 31개·artifact library 196개·CI 계약 10개 및 해당 strict Clippy 통과. 이전 실패 원인의 관측 한계 유지 | 이 기록을 추가한 후보 C2; [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md) |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

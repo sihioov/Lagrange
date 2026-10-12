@@ -1877,6 +1877,12 @@ class Harness:
 def create_evidence(root: Path) -> tuple[Path, Any]:
     target = root / "target"
     try:
+        target.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise RunnerError("TASK_TARGET_UNAVAILABLE") from exc
+    try:
         metadata = target.lstat()
     except OSError as exc:
         raise RunnerError("TASK_TARGET_UNAVAILABLE") from exc

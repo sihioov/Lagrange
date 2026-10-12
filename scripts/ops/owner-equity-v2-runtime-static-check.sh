@@ -35,7 +35,7 @@ grep -Fq 'FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e
   "$runner_dockerfile" || die 'runner runtime base is not the reviewed digest-pinned image'
 grep -Fq 'ARG LAGRANGE_CODE_COMMIT' "$runner_dockerfile" ||
   die 'runner Dockerfile must accept the exact release commit'
-grep -Fq 'cargo build --locked --release --package job-queue --bin owner-equity-v2-runner' \
+grep -Fq 'cargo build --locked --release --package job-queue --features market-stream-provisioning --bin owner-equity-v2-runner' \
   "$runner_dockerfile" || die 'runner binary build is missing'
 grep -Fq "printf '%s' \"\$LAGRANGE_CODE_COMMIT\" | grep -Eq '^[0-9a-f]{40}$'" \
   "$runner_dockerfile" || die 'runner Dockerfile must validate the commit shape'

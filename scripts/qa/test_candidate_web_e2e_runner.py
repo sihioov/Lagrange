@@ -1584,9 +1584,12 @@ while True: time.sleep(0.05)
                             self.assertNotIn("UNAPPROVED_INHERITED_VALUE", child_env)
 
             safe_root = Path(temp.name) / "safe-root"
-            (safe_root / "target").mkdir(parents=True, mode=0o700)
+            safe_root.mkdir(mode=0o700)
+            target = safe_root / "target"
+            self.assertFalse(target.exists())
             private_evidence, lock_fd = runner.create_evidence(safe_root)
             try:
+                self.assertEqual(target.stat().st_mode & 0o777, 0o700)
                 self.assertEqual(private_evidence.stat().st_mode & 0o777, 0o700)
                 self.assertEqual((private_evidence / "logs").stat().st_mode & 0o777, 0o700)
                 receipt = private_evidence / "receipt.json"
@@ -1594,6 +1597,60 @@ while True: time.sleep(0.05)
                 self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
             finally:
                 os.close(lock_fd)
+
+            target_mode = target.stat().st_mode & 0o777
+            second_evidence, second_lock_fd = runner.create_evidence(safe_root)
+            try:
+                self.assertNotEqual(second_evidence, private_evidence)
+                self.assertEqual(target.stat().st_mode & 0o777, target_mode)
+                self.assertEqual(second_evidence.stat().st_mode & 0o777, 0o700)
+            finally:
+                os.close(second_lock_fd)
+
+            victim = Path(temp.name) / "victim"
+            victim.mkdir(mode=0o700)
+            victim_marker = victim / "marker"
+            victim_marker.write_bytes(b"unchanged\n")
+            victim_mode = victim.stat().st_mode & 0o777
+            symlink_root = Path(temp.name) / "symlink-root"
+            symlink_root.mkdir(mode=0o700)
+            symlink_target = symlink_root / "target"
+            symlink_target.symlink_to(victim, target_is_directory=True)
+            with self.subTest(unsafe_root=symlink_root.name):
+                with self.assertRaises(runner.RunnerError) as raised:
+                    runner.create_evidence(symlink_root)
+                self.assertEqual(raised.exception.code, "TASK_TARGET_NOT_REAL_DIRECTORY")
+            self.assertTrue(symlink_target.is_symlink())
+            self.assertEqual(symlink_target.readlink(), victim)
+            self.assertFalse((symlink_root / ".candidate-web-e2e.lock").exists())
+            self.assertEqual(victim_marker.read_bytes(), b"unchanged\n")
+            self.assertEqual(victim.stat().st_mode & 0o777, victim_mode)
+            self.assertFalse((victim / ".candidate-web-e2e.lock").exists())
+
+            dangling_root = Path(temp.name) / "dangling-root"
+            dangling_root.mkdir(mode=0o700)
+            dangling_target = dangling_root / "target"
+            dangling_victim = Path(temp.name) / "dangling-victim"
+            dangling_target.symlink_to(dangling_victim, target_is_directory=True)
+            with self.assertRaises(runner.RunnerError) as raised:
+                runner.create_evidence(dangling_root)
+            self.assertEqual(raised.exception.code, "TASK_TARGET_NOT_REAL_DIRECTORY")
+            self.assertTrue(dangling_target.is_symlink())
+            self.assertEqual(dangling_target.readlink(), dangling_victim)
+            self.assertFalse(dangling_victim.exists())
+            self.assertFalse((dangling_root / ".candidate-web-e2e.lock").exists())
+
+            file_root = Path(temp.name) / "file-root"
+            file_root.mkdir(mode=0o700)
+            file_target = file_root / "target"
+            file_target.write_bytes(b"do not replace\n")
+            file_mode = file_target.stat().st_mode & 0o777
+            with self.assertRaises(runner.RunnerError) as raised:
+                runner.create_evidence(file_root)
+            self.assertEqual(raised.exception.code, "TASK_TARGET_NOT_REAL_DIRECTORY")
+            self.assertEqual(file_target.read_bytes(), b"do not replace\n")
+            self.assertEqual(file_target.stat().st_mode & 0o777, file_mode)
+            self.assertFalse((file_root / ".candidate-web-e2e.lock").exists())
 
             web_dir = Path(temp.name) / "web"
             web_dir.mkdir()

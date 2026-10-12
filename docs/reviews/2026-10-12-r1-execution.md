@@ -15,22 +15,22 @@
 
 | WP | Agent ID | Model / effort | 범위 | 상태·수용 | Pending request | 보고서 |
 | --- | --- | --- | --- | --- | --- | --- |
-| WP-1 / WP-4b·4c / WP-5R | `132d3b45-e0d1-454c-aeda-c14ed765a546` | `codex/gpt-6.1-sol` / high | 기준선·수정 계약 및 workspace 추가 실패 진단 | 18 target·42 case·U1 및 Web BODY·CLOCK source 리뷰 수용; 실제 idle | 없음 | [기준선](2026-10-12-r1-baseline.md); [workspace 후속 명세](2026-10-12-r1-workspace-followup.md) |
-| WP-2 | `3340e7a9-b101-45a9-935f-0f0d4c417775` | `codex/gpt-6-luna` / max | Rust 구현·개별 검증·보충 수정 | Rust 수정 수용; Web case4 controlled lifecycle 3파일 source/static 완료·실제 idle 회수 | 없음 | [Rust 검증](2026-10-12-r1-rust.md); [후속 명세](2026-10-12-r1-workspace-followup.md) |
-| WP-2b / WP-4c / WP-2g | `4807300d-7ce8-4bf8-8719-b90b18471804` | `codex/gpt-6-luna` / medium (검증 실행) | Rust focused 검증 및 Web 전체 검증 | 집중3/3·공식 전체135/135·회귀31·cleanup 증거 수용; 실제 idle | 없음 | [Rust lint 검증](2026-10-12-r1-rust-lint-validation.md); [Web 검증](2026-10-12-r1-web-validation.md) |
-| WP-2c / WP-2e | `0fe58b0a-20bc-4e47-b34a-5dc1410ee660` | `codex/gpt-6-luna` / max (명세 확정 구현) | D/E/F 구현·진단 후속; lint Scope A 15파일 | A1~A14 구현·정적 검사·15개 최종 hash·idle 회수; behavior 리뷰 및 strict6개 통과, C2 실제 검증 대기 | 없음 | [job-queue Rust 검증](2026-10-12-r1-jobqueue-rust.md); [lint 목록](2026-10-12-r1-rust-lint-inventory.md); [lint Scope A](2026-10-12-r1-rust-lint-a.md) |
+| WP-1 / WP-4b·4c / WP-5R | `132d3b45-e0d1-454c-aeda-c14ed765a546` | `codex/gpt-6.1-sol` / high | 기준선·수정 계약 및 workspace 추가 실패 진단 | 후보C DB 단일 진단·6개 probe·원래 guard 통과 수용; 과거 hosted 귀속은 미확인, 실제 idle | 없음 | [기준선](2026-10-12-r1-baseline.md); [workspace 후속 명세](2026-10-12-r1-workspace-followup.md) |
+| WP-2 | `3340e7a9-b101-45a9-935f-0f0d4c417775` | `codex/gpt-6-luna` / max | Rust 구현·개별 검증·보충 수정 | 후속 artifact 두 umask·library196·strict Clippy 통과 수용; 실제 idle | 없음 | [Rust 검증](2026-10-12-r1-rust.md); [후속 명세](2026-10-12-r1-workspace-followup.md) |
+| WP-2b / WP-4c / WP-2g | `4807300d-7ce8-4bf8-8719-b90b18471804` | `codex/gpt-6-luna` / medium (검증 실행) | Rust focused 검증 및 Web 전체 검증 | 후보C hosted 결과·clean checkout policy·runner31·CI 계약10 회수 완료; 실제 idle | 없음 | [Rust lint 검증](2026-10-12-r1-rust-lint-validation.md); [Web 검증](2026-10-12-r1-web-validation.md) |
+| WP-2c / WP-2e | `0fe58b0a-20bc-4e47-b34a-5dc1410ee660` | `codex/gpt-6-luna` / max (명세 확정 구현) | D/E/F 구현·진단 후속; lint Scope A 15파일 | A1~A14 구현·정적 검사·15개 최종 hash·idle 회수; behavior 리뷰 및 strict6개·C2 실제 검증 수용 | 없음 | [job-queue Rust 검증](2026-10-12-r1-jobqueue-rust.md); [lint 목록](2026-10-12-r1-rust-lint-inventory.md); [lint Scope A](2026-10-12-r1-rust-lint-a.md) |
 | WP-2d | `98ee0c64-8a17-4508-ac0e-90432e29e0cc` | `codex/gpt-6-astra` / high (Sol 용량 제한 복구) | Rust 전체 경고의 수정 명세 | 전체118 group/112 canonical·23파일 명세와 idle 회수; C-SHARED/REST/WIRE 수용 | 없음 | [Rust feature 보충 명세](2026-10-12-r1-rust-feature-followup.md); [전체 lint 명세](2026-10-12-r1-rust-lint-contract.md) |
 | WP-2f | `791e53f8-52a4-432e-887a-ef0069223481` | `codex/gpt-6-luna` / max | lint Scope B API 8파일 | B1~B8 구현·정적 검사·idle 회수; behavior 리뷰 및 strict6개 통과, DB/runtime 수용 별도 | 없음 | [lint Scope B](2026-10-12-r1-rust-lint-b.md) |
-| WP-3 | `7896c049-76df-4f75-af9c-243c82b267f9` | `codex/gpt-6.1-sol` / medium (관측된 복구 오류 후 상향) | DB harness·disposable DB·isolated actual API 검증 | DB122·actual API·전체 기능 smoke exit0/PASS/noSKIP 수용; 입력933 불변·정리·실제 idle | 없음 | [PostgreSQL 검증](2026-10-12-r1-postgres.md); [smoke 검증](2026-10-12-r1-smoke-validation.md) |
+| WP-3 | `7896c049-76df-4f75-af9c-243c82b267f9` | `codex/gpt-6.1-sol` / medium (관측된 복구 오류 후 상향) | DB harness·disposable DB·isolated actual API 검증 | 후속 DB126·전체 validator APPROVED·fmt/strict Clippy 수용; 입력1037 불변·정리·실제 idle | 없음 | [PostgreSQL 검증](2026-10-12-r1-postgres.md); [smoke 검증](2026-10-12-r1-smoke-validation.md) |
 | WP-3b | `90072c0e-2332-44be-a277-4e14fdc1c7c0` | `codex/gpt-6.1-sol` / high | DB-gated 세 실패의 schema·test 수정 명세 | 명세 수용, 실제 idle·pending 없음 확인 | 없음 | [DB 계약 명세](2026-10-12-r1-db-test-baseline.md) |
 | WP-3c | `84d1bbfe-8a4f-4234-89a7-c707ea0789e1` | `codex/gpt-6-luna` / max | schema gate SQL·migration-contract 테스트 두 파일 | focused9·package Clippy·독립 재리뷰·전체 validator122 통과; idle·정리·hash 회수 | 없음 | [DB 계약 수정](2026-10-12-r1-db-contract-repair.md) |
 | WP-4 / WP-4b | `bbbdf74e-df41-45ad-8ff4-e2c17a3ca202` | `codex/gpt-6-astra` / high (같은 두 실패 반복 후 model만 상향) | workflow·계약·smoke 및 Web QA supervisor | 최신 ledger 순번·공개 clock bounded readiness 한 파일 명세 수용; 실제 idle | 없음 | [Web 진단](2026-10-12-r1-web-browser-followup.md); [환경 수정](2026-10-12-r1-web-env-repair.md) |
-| WP-5 | `cc9c1dd1-a57e-4515-9286-1ee64b3cfb6f` | `codex/gpt-6.1-sol` / high (현재 지원 모델로 복귀) | 통합 변경 및 증거 독립 리뷰 | 최종 한 파일 delta·CONTROL1 해소 source 리뷰 수용; 실제 idle | 없음 | [최종 source 감사](2026-10-12-r1-final-source-review.md); [독립 리뷰](2026-10-12-r1-review.md) |
+| WP-5 | `cc9c1dd1-a57e-4515-9286-1ee64b3cfb6f` | `codex/gpt-6.1-sol` / high (현재 지원 모델로 복귀) | 통합 변경 및 증거 독립 리뷰 | 후보C 및 hosted 후속 7개 소스 파일의 독립 리뷰 수용; blocking 없음, 실제 idle | 없음 | [최종 source 감사](2026-10-12-r1-final-source-review.md); [독립 리뷰](2026-10-12-r1-review.md) |
 | WP-2h | `4461376b-63e1-4b4b-b1bf-2e46a0f52b82` | `codex/gpt-6-luna` / medium (검증 실행) | C2·runtime 역할 회귀 및 전체 workspace 검증 | workspace·strict6·golden/legacy 및 정리 수용;235 summary 집계 정정 수용·실제 idle | 없음 | [C2 fixture 검증](2026-10-12-r1-c2-fixture.md); [workspace 검증](2026-10-12-r1-workspace-validation.md) |
 
 알림은 각 create/follow-up에 `notifyOnFinish: true`로 등록한다. 콜백 누락 복구를 위한
 2분 간격·최대 2시간 heartbeat를 등록하고, 만료 전 남은 owned worker를 확인한다.
-현재 fallback은 `34564ebe`(2026-10-12 12:12:43~14:12:43 UTC, 최대60회)이며
+현재 fallback은 `f2a1c91c`(2026-10-12 13:54:52~15:54:52 UTC, 최대60회)이며
 새 WP-2h까지 포함한 열두 명의 owned worker를 명시한다. 이전 fallback은 삭제했고 새 활성 상태를 확인했다.
 알림이나 heartbeat 자체가 새 작업·권한의 승인 근거는 아니다.
 WP-5의 실제 Sol/high·같은 workspace·parent label과 pending 없음도 시작 후 확인했다.
@@ -40,7 +40,7 @@ WP-2b도 같은 workspace·parent·Luna/max 시작을 확인하고 알림과 활
 
 ## 자원 예약
 
-- 현재 무거운 검증 실행권: 없음. 최종 official Web wrapper가 종료 코드0으로 끝났고 회귀31·브라우저135/135·소유 자원 정리를 회수했다. 모든 worker는 실제 idle이며 pending request가 없다. 소스는 후보 커밋 확정을 위해 동결한다.
+- 현재 로컬 검증 실행권: 없음. 후보 C2의 DB 전체 검증과 후속 포맷·Clippy가 끝났고 소유 자원 정리를 확인했다. 모든 worker 결과를 회수했으며 새 후보 커밋의 hosted 검증을 준비한다. 첫 후보C의 실패 결과는 별도 보존한다.
 - 실행권은 이 기록의 최신 배정이 기준이며 heartbeat 등록 당시 상태를 현재 상태로 재사용하지 않는다.
 - WP-2 첫 종료와 잔존 compiler 없음을 확인한 뒤 task 전용 Cargo target/cache를 RAM-backed `/tmp`에서
   Git 제외된 `target/r1-runtime-fxi6ltmv/{cargo-target,cargo-home}`로 이동했다. 기존 두 경로는 symlink로 유지한다.
@@ -611,3 +611,104 @@ Rust·DB·smoke의 수용된 소스는 그대로이며 재실행하지 않는다
 전체 R1 완료는 아직 아니다. 소스/문서 후보 커밋C와 같은C의 hosted CI·smoke,
 이후 공식 release plan/preflight·실제 이미지/manifest가 남는다.
 후속 문서 커밋은 검증 대상C를 명시하며 C의 소스나 workflow를 실행 도중 바꾸지 않는다.
+
+
+## Candidate C hosted follow-up — 2026-10-12 14:08 UTC
+
+후보 `79da119e6e8b52be424ec8132ac2a52f65726471`을 clean 상태로 push하고
+CI38258860613·smoke38258865310의 동일 head를 확인했다. [인수 기록](2026-10-12-r1-acceptance.md)에
+첫 실패와 미완료 단계를 보존한다. 코디네이터가 완료 job의 로그 API로 정책·Web·DB·Python 근거를 회수했다.
+
+확정 구현은 Compose static checker의 두 process-local 합성 hash와 Web runner의 없는 target 생성이다.
+후자는 symlink·dangling symlink·일반 파일 거부를 유지하며 기존31개 검사의 한 항목을 확장했다.
+전체 policy의 다음 단계에서 발견한 Owner V2 Dockerfile marker는 이미 존재하는
+`--features market-stream-provisioning`을 정확히 요구하도록 검사 한 줄만 갱신했다.
+로컬 두 파일의775/기대755 불일치는 Git100755와 다른 checkout 환경 문제로 분리하고,
+기존 파일 모드를 바꾸지 않은 채 새 detached checkout+umask022로 해당 검사들을 검증한다.
+
+DB5375의55000/22P02 불일치는 WP-1의 source 진단 대상으로 분리했다. 오류 범위를 넓히거나
+migration 이력을 수정하지 않는다. Python의 runner shutdown을 assertion 실패로 분류하지 않는다.
+남은 C job 결과도 회수하며 새 후보는 수정된 소스·리뷰·검증 이후 고정한다.
+
+### 14:22 UTC hosted 후속 검사·리뷰 회수
+
+WP-5의 네 파일 source 리뷰와 실제 idle을 확인했다. 기존 target 재사용 테스트에서
+다른 초기 mode를 선택하라는 P3는 선택적 개선이며 현재 구현은 기존 mode를 변경하지 않는다.
+새 detached checkout에서 OPS_STATIC과 native runner31/skip0이 통과했다.
+별도 새 checkout의 단 한 번 native secrets static도 fakeroot 합성 소유권 검사를 포함해 통과했다.
+이전 mode·sandbox 실패는 보존하며 main checkout의 chmod는 하지 않았다.
+worker480의 실제 idle·pending없음, source/log hash와 owned checkout 제거를 회수했다.
+
+C의 전체 CI는 실패 종료했다. workspace job의 새 실패는 historical price artifact의
+unsafe reader 테스트 한 건이며 해당 library는195 pass/1 fail/0 ignored다.
+WP-5에는 보존 로그의 실패 전수 목록과 해당 test/source의 읽기 전용 진단을 배정했다.
+WP-1은 정확한 C archive에만 DB rollback의 유한 진단을 준비하며 아직 heavy 실행권은 없다.
+별도 hosted smoke는 마지막 snapshot에서 실행 중이다. 새 후보·전체 수용은 아직 보류한다.
+
+### Artifact 테스트의 준비 조건 수정·검증 배정
+
+WP-5가 C workspace 로그 전체의236개 test summary와 마지막 Cargo target 목록을 대조해
+실패가 `market-data --lib`의 한 테스트뿐임을 확인했다. 기본 tempfile mode는 umask에 따라
+달라지는데 해당 테스트는 unsafe 조건을 만들지 않고 `UnsafePath`를 요구했다.
+Root는 기존 테스트 한 곳에서만 Unix 소유 임시 경로를 canonicalize하고0770을 명시·검증했다.
+누락 하위 경로의 정확한 Io, unsafe reader의 정확한 UnsafePath, 최종 무기록 검증을 유지했다.
+같은 테스트의 non-Unix 두 API는 실제 계약인 UnsupportedPlatform을 각각 요구한다.
+제품 filesystem guard는 바꾸지 않았다.
+
+source `60298769aa267a4cd32d7e0c3343b76f65fddd79a0b449bd1881d53408fb6065`의
+단일 test 변경을 WP-5가 finding 없이 수용했고 실제 idle을 확인했다.
+WP-2(3340)에 두 launch umask의 정확한 테스트, library 전체, package strict Clippy의
+직렬 heavy 실행권을 부여했다. 실행 전 compiler 부재와 가용 memory를 확인했다.
+WP-1은 DB 진단 준비만 계속하며 이 slot의 종료 전에는 실행하지 않는다.
+WP-6(480)은 기존 C hosted 실행들의 최종 결과만 읽기 전용으로 회수한다.
+
+### Artifact 검증 수용·DB 단일 진단 실행권·smoke 시간 제한
+
+WP-2의 actual idle과 네 로그 hash를 확인했다. 두 umask의 exact case가 각각1 pass,
+market-data library196 pass/0 fail/0 ignored, all-target/all-feature Clippy가 통과했다.
+소스·lock 불변성과 owned compiler/TMPDIR 정리를 회수해 해당 국소 수정을 수용했다.
+
+WP-1의 정확한 C archive1827개 입력과 test-body에만 추가한126줄 관측의 준비 보고서를
+검토했다. 원래 assertion과 두 undo는 그대로다. 실제 idle 이후 하나의 임시 QA 프로젝트에서
+정확한 테스트 한 번만 수행하도록 heavy 실행권을 넘겼다. 주 작업 소스의 DB 수정은 아직 없다.
+
+C CI와 smoke의 모든 job/checkout SHA를 회수했다. 전체 CI는 실패, smoke는 취소다.
+코디네이터가 별도 check-run annotation을 읽어40분 최대 실행시간 초과를 확인했다.
+첫 research-worker image는14:19:57에 빌드됐고 두 번째 candidate-runner 컴파일 중 중단됐다.
+Root는 workflow의 제한만90분으로 조정하고 두 순차 cold build·자원 제한·기능 검사를 유지했다.
+한 hunk 독립 리뷰와 기존10개 CI 계약 검증을 배정했다. 새 후보 hosted 성공은 아직 미확인이다.
+
+### 14:44 UTC DB 진단 수용·fixture 수정·전체 검증
+
+단일 DB 진단은 exit0/1 pass/35 filtered였고6개 probe가 모두 실행됐다.
+EMPTY actor에서 두 query가22P02, MISSING/valid actor에서는 성공했다.
+원래 고정 연결은 MISSING에서 migration40/55000에 도달한 뒤 EMPTY로 바뀌었다.
+따라서 위험 경로와 session reset은 관측했지만 과거 hosted backend 상태를 재현했다고 주장하지 않는다.
+두 receipt hash, archive 불변성, owned QA/프로세스 정리와 worker 실제 idle을 대조했다.
+
+코디네이터는 검증된 위험 경로를 제거하는 테스트 준비 조건 보정을 채택했다.
+identity_provisioning_body만 수정해 예약된 scheduler actor를 typed UUID로 조회·검증하고,
+actor startup option을 가진 전용 migration_owner/max1 pool을 두 undo에 사용한다.
+동일 연결 unlock과 exact55000을 유지하며 정확한 실패 version40 검증을 추가했다.
+clean undo 후 pool을 닫고 나머지 invitation/audit/function/replay 검증은 그대로다.
+source hash는 `bef9ef3f060b912978bba263c95fea44cc7f4a0da4696d3fdaa437cdcfdea880`이다.
+WP-5에 단일 diff 리뷰, WP-3(789)에 전체 기존 DB validator122개와 package Clippy의
+직렬 heavy 검증을 배정했다. 중복된 별도36개 테스트는 실행하지 않는다.
+
+smoke timeout 한 hunk는 독립 리뷰 finding없음, 기존 CI contract10 pass/0 skip으로 수용했다.
+이 변경은 구조/서비스/권한/기능 검사 범위를 바꾸지 않으므로 다이어그램은 그대로다.
+
+
+### 14:55 UTC 후속 후보 C2 로컬 수용
+
+WP-5의 DB 단일 diff 리뷰와 WP-3의 전체 validator 결과를 실제 idle 이후 회수했다.
+validator/fmt/Clippy의 원래 종료 코드는 모두0이다. 10개 선택의 모든 terminal binary를
+집계하면 auth library4개를 포함해126 pass/0 fail/0 ignored이며62 filtered다.
+기존122 집계는 역사 기록으로 남기고 이번 인수에서는126을 사용한다.
+87개 runtime log의 SKIP은0, migration-contract36개와 staged/full59/no-op이 모두 통과했다.
+1,037개 입력 불변,102개 evidence manifest 항목 hash 일치와 소유 자원·process 정리를 확인했다.
+보고서와 manifest hash는 [후보별 인수 기록](2026-10-12-r1-acceptance.md)에 남겼다.
+
+후속7개 소스 파일의 독립 리뷰·필요한 로컬 검증을 수용했다. 구조 변화가 없어 diagram은
+수정하지 않는다. 네 추적 문서와 함께 후보C2를 만들고 같은C2의 CI·smoke를 각각 한 번
+실행한다. 현재까지 hosted 수용·R1 완료·production 이미지/manifest 생성은 주장하지 않는다.

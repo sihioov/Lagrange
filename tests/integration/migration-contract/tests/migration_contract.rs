@@ -5366,13 +5366,32 @@ async fn identity_provisioning_body(
             .any(|config| config == "statement_timeout=5s")
     );
 
-    let mut guarded = owner.acquire().await?;
+    // Rollback inspects forced-RLS candidate state. Use its reserved actor rather
+    // than depending on transaction-local actor history in the shared owner pool.
+    let rollback_actor: Uuid = sqlx::query_scalar(
+        "SELECT service_user_id FROM public.candidate_scheduler_control \
+         WHERE control_key = 'scheduler'",
+    )
+    .fetch_one(owner)
+    .await?;
+    assert_eq!(
+        rollback_actor,
+        Uuid::parse_str("00000000-0000-4000-8000-000000000042")?
+    );
+    let rollback_actor = rollback_actor.to_string();
+    let rollback_owner =
+        effective_role_pool(super_url, db, "migration_owner", Some(&rollback_actor), 1).await?;
+    let mut guarded = rollback_owner.acquire().await?;
     let blocked_rollback = MIGRATOR.undo(&mut *guarded, 38).await.unwrap_err();
     sqlx::query("SELECT pg_advisory_unlock_all()")
         .execute(&mut *guarded)
         .await?;
     drop(guarded);
     assert_eq!(migrate_pg_code(&blocked_rollback).as_deref(), Some("55000"));
+    assert!(matches!(
+        &blocked_rollback,
+        sqlx::migrate::MigrateError::ExecuteMigration(_, 40)
+    ));
     sqlx::query("DELETE FROM invitations WHERE id = $1")
         .bind(owner_invitation_id)
         .execute(&owner_actor)
@@ -5392,7 +5411,8 @@ async fn identity_provisioning_body(
         pending_tail, 0,
         "rollback must have no audit obligations left"
     );
-    MIGRATOR.undo(owner, 38).await?;
+    MIGRATOR.undo(&rollback_owner, 38).await?;
+    rollback_owner.close().await;
     let function_exists: bool = sqlx::query_scalar(
         "SELECT to_regprocedure('public.claim_invitation(uuid,uuid,text,text,text)') IS NOT NULL",
     )

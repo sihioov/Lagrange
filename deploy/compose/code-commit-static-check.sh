@@ -76,12 +76,14 @@ done
 command -v docker >/dev/null 2>&1 || die 'Docker Compose CLI is required'
 valid_commit=0123456789abcdef0123456789abcdef01234567
 if ! LAGRANGE_CODE_COMMIT="$valid_commit" \
+  RESEARCH_ENTITLEMENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
   RANGE_RAW_BATCH_ID=compose-config-disabled \
   RESEARCH_APP_ENV=production RESEARCH_FETCH_MODE=credentialed \
   docker compose --env-file "$env_example" -f "$compose" config --quiet; then
   die 'Compose rejected a valid 40-hex CI commit'
 fi
 if env -u LAGRANGE_CODE_COMMIT \
+  RESEARCH_ENTITLEMENT_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
   RANGE_RAW_BATCH_ID=compose-config-disabled \
   RESEARCH_APP_ENV=production RESEARCH_FETCH_MODE=credentialed \
   docker compose --env-file "$env_example" -f "$compose" config --quiet \

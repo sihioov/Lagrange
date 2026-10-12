@@ -2512,20 +2512,41 @@ mod tests {
     fn unsafe_writer_and_reader_do_not_write() {
         let root = tempfile::tempdir().unwrap();
         let candidate = crate::historical_price_only::artifact_test_candidate();
-        assert!(matches!(
-            write_historical_price_only_artifact(&root.path().join("missing"), &candidate),
-            Err(HistoricalPriceOnlyArtifactError::Io(_))
-        ));
         #[cfg(unix)]
-        assert!(matches!(
-            read_historical_price_only_artifact(root.path(), candidate.content_hash()),
-            Err(HistoricalPriceOnlyArtifactError::UnsafePath)
-        ));
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let operator_root = std::fs::canonicalize(root.path()).unwrap();
+            assert!(matches!(
+                write_historical_price_only_artifact(&operator_root.join("missing"), &candidate),
+                Err(HistoricalPriceOnlyArtifactError::Io(_))
+            ));
+            std::fs::set_permissions(&operator_root, std::fs::Permissions::from_mode(0o770))
+                .unwrap();
+            assert_eq!(
+                std::fs::metadata(&operator_root)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o770
+            );
+            assert!(matches!(
+                read_historical_price_only_artifact(&operator_root, candidate.content_hash()),
+                Err(HistoricalPriceOnlyArtifactError::UnsafePath)
+            ));
+        }
         #[cfg(not(unix))]
-        assert!(matches!(
-            read_historical_price_only_artifact(root.path(), candidate.content_hash()),
-            Err(HistoricalPriceOnlyArtifactError::UnsupportedPlatform)
-        ));
+        {
+            assert!(matches!(
+                write_historical_price_only_artifact(&root.path().join("missing"), &candidate),
+                Err(HistoricalPriceOnlyArtifactError::UnsupportedPlatform)
+            ));
+            assert!(matches!(
+                read_historical_price_only_artifact(root.path(), candidate.content_hash()),
+                Err(HistoricalPriceOnlyArtifactError::UnsupportedPlatform)
+            ));
+        }
         assert!(std::fs::read_dir(root.path()).unwrap().next().is_none());
     }
 
