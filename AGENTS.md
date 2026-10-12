@@ -1,5 +1,23 @@
 # Repository Agent Instructions
 
+## Development roadmap maintenance (mandatory)
+
+- Read [docs/ROADMAP.md](docs/ROADMAP.md) before substantial project work. It is the
+  Owner-adopted source for current priorities, task IDs, completion criteria, and progress.
+  `docs/STATUS.md` preserves dated historical evidence; its older "current" claims are not
+  the current execution plan.
+- Identify the relevant roadmap task ID before implementation. Update its checkbox/status,
+  blockers, top-level next action, and change history in the same change when work advances,
+  completes, changes scope, or reopens. Record post-commit deployment/observation evidence in
+  a follow-up documentation commit without modifying an installed immutable release.
+- Mark completion only with a date, target revision, and appropriate verification evidence.
+  Distinguish source implementation, isolated checks, deployment, real data receipt, and
+  Owner acceptance. Preserve earlier evidence when reopening an item; do not silently delete
+  unfinished tasks or weaken their acceptance criteria.
+- Roadmap adoption does not fill unresolved simulation-contract values or expand provider,
+  data-rights, or trading permissions. Preserve existing explicit approvals; do not request
+  them again merely because a task moves to a new roadmap stage.
+
 ## Production build resource policy (mandatory)
 
 - On the 14 GiB production host, divide a release image set into logical batches of two or three
