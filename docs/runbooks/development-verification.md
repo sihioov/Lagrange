@@ -202,6 +202,14 @@ local blobs without deleting remote cache entries or pruning shared builders. Th
 audit and six fresh Raw probe volumes, locked downloads, and offline
 compile run on every smoke.
 
+For hosted layer caching, each service's Compose `build --print` output is validated as a single
+Bake target before execution with the private builder and `--load`. Bake receives only the exact
+service export `fs.write` grant, plus the import `fs.read` grant when that store is configured.
+Unexpected targets, dependencies, outputs, privileges or cache paths stop before the build. Local
+and unavailable-cache paths retain the original single-service Compose command. This uses Bake's
+[explicit filesystem grants](https://docs.docker.com/reference/cli/docker/buildx/bake/#allow)
+without changing production builds or disabling filesystem admission.
+
 `cache-evidence.py record` writes private JSON and bounded step summaries with workflow/job/SHA,
 namespace, keys, exact/prefix/miss/unknown restore state, save outcome, bytes or unavailable, and
 actual command durations. A successful save action outcome is `attempted_unverified`: this action

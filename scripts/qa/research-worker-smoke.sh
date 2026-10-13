@@ -526,6 +526,84 @@ PY
     echo "RESEARCH_WORKER_SMOKE: $service cache export unavailable; continuing with the completed real build" >&2
   fi
 }
+build_service_image() {
+  [ "$#" -eq 1 ] || return 2
+  local service="$1"
+  case "$service" in research-worker|candidate-runner) ;; *) return 2 ;; esac
+  if [ "$hosted_build_cache" -ne 1 ] || [ ! -f "$compose_override" ]; then
+    rc build "${build_options[@]}" "$service"
+    return $?
+  fi
+  local bake_file="$temp_root/build-$service.bake.json"
+  local import_path="$import_root/$service" export_path="$new_root/$service" read_import
+  (umask 077; rc build --print "$service" >"$bake_file") || return $?
+  read_import="$(python3 - "$bake_file" "$compose_override" "$service" "$import_path" "$export_path" <<'PY'
+import json
+import pathlib
+import sys
+
+printed, override, service, imported, exported = sys.argv[1:]
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+def unique(pairs):
+    value = {}
+    for key, item in pairs:
+        require(key not in value, "duplicate JSON key")
+        value[key] = item
+    return value
+def read(path):
+    path = pathlib.Path(path)
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 262144, "unowned or oversized definition")
+    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
+def cache(value):
+    if isinstance(value, dict):
+        return {key: str(item).lower() if type(item) is bool else item for key, item in value.items()}
+    require(isinstance(value, str), "invalid cache entry")
+    pairs = [item.split("=", 1) for item in value.split(",")]
+    require(all(len(pair) == 2 for pair in pairs), "invalid cache attributes")
+    return unique(pairs)
+try:
+    for path in (imported, exported):
+        require(pathlib.Path(path).is_absolute() and not any(c in path for c in "*?[],\n\r"), "cache path is not a narrow absolute path")
+    definition = read(printed)
+    require(set(definition) == {"group", "target"}, "unexpected Bake definition fields")
+    require(definition["group"] == {"default": {"targets": [service]}}, "default group must select only this service")
+    require(isinstance(definition["target"], dict) and set(definition["target"]) == {service}, "Bake must contain exactly one target")
+    target = definition["target"][service]
+    allowed = {"context", "dockerfile", "target", "args", "tags", "labels", "platforms", "pull", "no-cache", "cache-from", "cache-to", "output"}
+    require(isinstance(target, dict) and set(target) <= allowed, "unexpected target fields or dependency graph")
+    require(isinstance(target.get("context"), str) and pathlib.Path(target["context"]).is_absolute(), "context must be a local absolute path")
+    require(isinstance(target.get("dockerfile"), str) and bool(target["dockerfile"]), "Dockerfile is missing")
+    require(isinstance(target.get("tags"), list) and bool(target["tags"]) and all(isinstance(tag, str) and tag for tag in target["tags"]), "image tags are missing")
+    for field in ("args", "labels"):
+        values = target.get(field, {})
+        require(isinstance(values, dict) and all(isinstance(key, str) and isinstance(value, (str, type(None))) for key, value in values.items()), "invalid target mapping")
+    for field in ("pull", "no-cache"):
+        require(field not in target or type(target[field]) is bool, "invalid build flag")
+    require("target" not in target or isinstance(target["target"], str), "invalid Dockerfile target")
+    require("platforms" not in target or isinstance(target["platforms"], list) and all(isinstance(value, str) for value in target["platforms"]), "invalid platforms")
+    require(target.get("output", []) in ([], ["type=docker"], [{"type": "docker"}]), "unexpected image output or registry push")
+    generated = read(override)
+    require(set(generated) == {"services"} and set(generated["services"]) == {service}, "generated override service mismatch")
+    build = generated["services"][service]["build"]
+    require(set(build) in ({"cache_to"}, {"cache_to", "cache_from"}), "unexpected generated cache fields")
+    expected_to = {"type": "local", "dest": exported, "mode": "max", "ignore-error": "true"}
+    require([cache(item) for item in build["cache_to"]] == [expected_to], "generated export store mismatch")
+    require([cache(item) for item in target.get("cache-to", [])] == [expected_to], "printed export store mismatch")
+    expected_from = [{"type": "local", "src": imported}] if "cache_from" in build else []
+    require([cache(item) for item in build.get("cache_from", [])] == expected_from, "generated import store mismatch")
+    require([cache(item) for item in target.get("cache-from", [])] == expected_from, "printed import store mismatch")
+    print("1" if expected_from else "0")
+except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError, AttributeError):
+    print("RESEARCH_WORKER_SMOKE: printed Bake definition rejected", file=sys.stderr)
+    raise SystemExit(2)
+PY
+)" || return $?
+  local grants=(--allow "fs.write=$export_path")
+  if [ "$read_import" = 1 ]; then grants+=(--allow "fs.read=$import_path"); fi
+  dkr buildx bake --builder "$buildx_builder" --file "$bake_file" --load "${grants[@]}" "$service"
+}
 context_audit_tag="${project}-context-audit"
 cleanup() {
   local total_seconds test_seconds
@@ -1261,7 +1339,7 @@ if ! configure_service_build_cache research-worker; then
   rm -f -- "$compose_override"
 fi
 started=$SECONDS
-rc build "${build_options[@]}" research-worker \
+build_service_image research-worker \
   || { build_seconds=$((build_seconds + SECONDS - started)); fail 'research-worker image build failed'; }
 build_seconds=$((build_seconds + SECONDS - started))
 promote_service_build_cache research-worker
@@ -1270,7 +1348,7 @@ if ! configure_service_build_cache candidate-runner; then
   rm -f -- "$compose_override"
 fi
 started=$SECONDS
-rc build "${build_options[@]}" candidate-runner \
+build_service_image candidate-runner \
   || { build_seconds=$((build_seconds + SECONDS - started)); fail 'candidate-runner image build failed'; }
 build_seconds=$((build_seconds + SECONDS - started))
 promote_service_build_cache candidate-runner

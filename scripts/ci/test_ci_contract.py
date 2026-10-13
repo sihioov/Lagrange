@@ -483,6 +483,142 @@ else:
             self.assertEqual(imported.joinpath("index.json").read_text(), new_index)
             self.assertFalse(exported.exists())
 
+    def _run_smoke_bake_helper(self, case="valid", service="research-worker", warm=False, sequence=False):
+        source = (ROOT / "scripts/qa/research-worker-smoke.sh").read_text()
+        functions = "configure_service_build_cache() {" + source.split("configure_service_build_cache() {", 1)[1].split('context_audit_tag="', 1)[0]
+        fake = '''import json, os, pathlib, sys
+kind, *args = sys.argv[1:]
+entry = {"kind": kind, "argv": args}
+if kind == "dkr":
+    entry["printed"] = json.loads(pathlib.Path(args[args.index("--file") + 1]).read_text())
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write(json.dumps(entry) + "\\n")
+case = os.environ["FAKE_CASE"]
+if kind == "dkr":
+    raise SystemExit(42 if case == "bake-failure" else 0)
+if "--print" not in args:
+    raise SystemExit(0)
+if case == "print-failure":
+    raise SystemExit(41)
+if case == "malformed":
+    print("{")
+    raise SystemExit(0)
+service = args[-1]
+override_path = pathlib.Path(os.environ["FAKE_OVERRIDE"])
+override = json.loads(override_path.read_text())
+build = override["services"][service]["build"]
+target = {"context": "/fixture/context", "dockerfile": "/fixture/context/Dockerfile", "tags": ["fixture/" + service + ":local"], "args": {"LAGRANGE_CODE_COMMIT": "0" * 40}, "labels": {"fixture": "preserved"}, "cache-to": build["cache_to"], "output": ["type=docker"]}
+if "cache_from" in build:
+    target["cache-from"] = build["cache_from"]
+value = {"group": {"default": {"targets": [service]}}, "target": {service: target}}
+if case == "extra-target": value["target"]["other"] = dict(target)
+if case == "extra-group": value["group"]["default"]["targets"].append("other")
+if case == "dependency": target["contexts"] = {"other": "target:other"}
+if case == "target-context": target["context"] = "target:other"
+if case == "bad-export": target["cache-to"] = ["type=local,dest=/unapproved,mode=max,ignore-error=true"]
+if case in ("bad-import", "unexpected-import"): target["cache-from"] = ["type=local,src=/unapproved"]
+if case == "push": target["output"] = ["type=image,push=true"]
+if case == "file-output": target["output"] = ["type=local,dest=/unapproved"]
+if case == "privilege": target["entitlements"] = ["security.insecure", "network.host"]
+if case == "bad-args": target["args"] = False
+if case == "bad-override":
+    override["services"]["other"] = {}
+    override_path.write_text(json.dumps(override))
+if case == "objects":
+    for key in ("cache-to", "cache-from"):
+        if key in target: target[key] = [dict(item.split("=", 1) for item in value.split(",")) for value in target[key]]
+    target["output"] = [{"type": "docker"}]
+print(json.dumps(value))
+'''
+        with tempfile.TemporaryDirectory(prefix="smoke-bake-helper-") as temp:
+            root = Path(temp)
+            work = root / "work"
+            work.mkdir(mode=0o700)
+            imported, exported = root / "cache/import", root / "cache/new"
+            if case == "wildcard":
+                exported = root / "cache/new*"
+            if warm:
+                for name in ("research-worker", "candidate-runner"):
+                    cache = imported / name
+                    (cache / "blobs").mkdir(parents=True)
+                    (cache / "index.json").write_text('{"manifests":[{}]}')
+            fake_path, log, override = root / "fake.py", root / "calls.jsonl", work / "override.json"
+            fake_path.write_text(fake)
+            env = {"PATH": os.defpath, "FAKE_LOG": str(log), "FAKE_CASE": case, "FAKE_OVERRIDE": str(override)}
+            local = case == "local"
+            preamble = (
+                "set -euo pipefail\n"
+                f"temp_root={shlex.quote(str(work))}\ncompose_override={shlex.quote(str(override))}\n"
+                f"import_root={shlex.quote(str(imported))}\nnew_root={shlex.quote(str(exported))}\n"
+                f"hosted_build_cache={0 if local else 1}\nbuildx_builder=fixture-builder\n"
+                + ("build_options=()\n" if local else "build_options=(--builder fixture-builder)\n")
+                + "research_worker_cache_promoted=false\ncandidate_runner_cache_promoted=false\nbuild_seconds=0\n"
+                + f"rc() {{ python3 {shlex.quote(str(fake_path))} rc \"$@\"; }}\n"
+                + f"dkr() {{ python3 {shlex.quote(str(fake_path))} dkr \"$@\"; }}\n"
+                + "fail() { exit 1; }\n"
+            )
+            if sequence:
+                body = "if ! configure_service_build_cache research-worker; then" + source.split("if ! configure_service_build_cache research-worker; then", 1)[1].split("command -v cargo", 1)[0]
+            else:
+                body = "" if case == "unavailable" else "configure_service_build_cache research-worker\n"
+                if service == "candidate-runner":
+                    body = "configure_service_build_cache candidate-runner\n"
+                body += f"build_service_image {shlex.quote(service)}\n"
+            result = subprocess.run(["bash", "-c", preamble + functions + body], env=env, capture_output=True, text=True, timeout=5)
+            calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+            printed = {p.name: p.read_text() for p in work.glob("*.bake.json")}
+            return result, calls, printed, str(work), str(imported), str(exported)
+
+    def test_smoke_bake_build_grants_only_service_cache_paths(self) -> None:
+        for service in ("research-worker", "candidate-runner"):
+            for warm in (False, True):
+                with self.subTest(service=service, warm=warm):
+                    result, calls, printed, work, imported, exported = self._run_smoke_bake_helper(service=service, warm=warm)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(calls[0], {"kind": "rc", "argv": ["build", "--print", service]})
+                    expected = ["buildx", "bake", "--builder", "fixture-builder", "--file", f"{work}/build-{service}.bake.json", "--load", "--allow", f"fs.write={exported}/{service}"]
+                    if warm:
+                        expected += ["--allow", f"fs.read={imported}/{service}"]
+                    self.assertEqual(calls[1]["argv"], expected + [service])
+                    self.assertEqual(len(calls), 2)
+                    value = json.loads(printed[f"build-{service}.bake.json"])
+                    self.assertEqual(value, calls[1]["printed"])
+                    self.assertEqual(printed[f"build-{service}.bake.json"], json.dumps(value) + "\n")
+                    self.assertEqual(value["target"][service]["context"], "/fixture/context")
+                    self.assertEqual(value["target"][service]["dockerfile"], "/fixture/context/Dockerfile")
+                    self.assertEqual(value["target"][service]["args"], {"LAGRANGE_CODE_COMMIT": "0" * 40})
+                    self.assertEqual(value["target"][service]["labels"], {"fixture": "preserved"})
+                    self.assertEqual(value["target"][service]["tags"], [f"fixture/{service}:local"])
+        result, calls, *_ = self._run_smoke_bake_helper(case="objects", warm=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(calls), 2)
+
+    def test_smoke_bake_build_rejects_unapproved_graph_paths_and_outputs(self) -> None:
+        for case in ("malformed", "extra-target", "extra-group", "dependency", "target-context", "bad-export", "bad-import", "unexpected-import", "push", "file-output", "privilege", "bad-args", "bad-override", "wildcard"):
+            with self.subTest(case=case):
+                result, calls, *_ = self._run_smoke_bake_helper(case=case, warm=case == "bad-import")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(any(call["kind"] == "dkr" for call in calls))
+        result, calls, *_ = self._run_smoke_bake_helper(service="unknown-service")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(calls, [])
+
+    def test_smoke_bake_build_preserves_failures_and_local_fallback(self) -> None:
+        for case, exit_code in (("print-failure", 41), ("bake-failure", 42)):
+            result, calls, *_ = self._run_smoke_bake_helper(case=case)
+            self.assertEqual(result.returncode, exit_code)
+            self.assertEqual(len(calls), 1 if case == "print-failure" else 2)
+            result, calls, *_ = self._run_smoke_bake_helper(case=case, sequence=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(any("candidate-runner" in call["argv"] for call in calls))
+        result, calls, *_ = self._run_smoke_bake_helper(sequence=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call["argv"][-1] for call in calls], ["research-worker", "research-worker", "candidate-runner", "candidate-runner"])
+        for case, args in (("local", ["build", "research-worker"]), ("unavailable", ["build", "--builder", "fixture-builder", "research-worker"])):
+            result, calls, *_ = self._run_smoke_bake_helper(case=case)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls, [{"kind": "rc", "argv": args}])
+
     def test_ci_runs_required_gates_and_disposable_data(self) -> None:
         path, ci = load_workflow("ci.yml")
         self.assertEqual(
@@ -750,7 +886,7 @@ else:
         self.assertIn("provision-runtime-secrets.sh|runtime-static-check.sh", script)
         self.assertNotIn("README.md|.gitignore|*.example|*.sh", script)
         self.assertEqual(
-            re.findall(r'^rc build "\$\{build_options\[@\]\}" ([^\n\\]+)', script, re.MULTILINE),
+            re.findall(r'^build_service_image ([^\n\\]+)', script, re.MULTILINE),
             ["research-worker ", "candidate-runner "],
         )
         self.assertIn("export COMPOSE_PARALLEL_LIMIT=1", script)
