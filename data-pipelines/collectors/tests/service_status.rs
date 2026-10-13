@@ -21,7 +21,8 @@ use uuid::Uuid;
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 const ROLE_BOOTSTRAP: &str = r#"
-SELECT pg_advisory_lock(424242001);
+-- Keep the bootstrap serialized until the enclosing transaction commits or rolls back.
+SELECT pg_advisory_xact_lock(424242001);
 DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'migration_owner') THEN
     CREATE ROLE migration_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
@@ -54,7 +55,6 @@ DO $role$ BEGIN
 END $role$;
 GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, research_writer, admin;
 GRANT CREATE ON SCHEMA public TO migration_owner;
-SELECT pg_advisory_unlock(424242001);
 "#;
 
 struct ScratchDb {
@@ -79,7 +79,22 @@ impl ScratchDb {
         sqlx::raw_sql(ROLE_BOOTSTRAP)
             .execute(&super_pool)
             .await
-            .map_err(|_| "fixture DB roles could not be bootstrapped")?;
+            .map_err(|error| {
+                let code = error
+                    .as_database_error()
+                    .and_then(|error| error.code())
+                    .filter(|code| {
+                        code.len() == 5
+                            && code
+                                .bytes()
+                                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+                    });
+                eprintln!(
+                    "service_status role bootstrap failed: SQLSTATE={}",
+                    code.as_deref().unwrap_or("unavailable")
+                );
+                "fixture DB roles could not be bootstrapped"
+            })?;
         let name = format!("status_{}_{}", std::process::id(), Uuid::new_v4().simple());
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE DATABASE \"{name}\" OWNER migration_owner"
@@ -137,6 +152,58 @@ impl ScratchDb {
             .await;
         }
     }
+}
+
+#[tokio::test]
+async fn role_bootstrap_lock_is_held_until_commit_or_rollback() {
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("service_status requires DATABASE_URL; database suite cannot skip");
+    let options = database_url
+        .parse::<PgConnectOptions>()
+        .expect("test database URL is not parseable");
+    let pool = connect(options)
+        .await
+        .expect("isolated test database connection failed");
+    for commit in [true, false] {
+        let mut transaction = pool.begin().await.expect("bootstrap transaction required");
+        let backend: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *transaction)
+            .await
+            .expect("bootstrap backend required");
+        sqlx::raw_sql(ROLE_BOOTSTRAP)
+            .execute(&mut *transaction)
+            .await
+            .expect("fixture role bootstrap required");
+        let lock_query = "SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_locks
+             WHERE locktype = 'advisory' AND pid = $1
+               AND classid = 0 AND objid = 424242001 AND objsubid = 1 AND granted
+        )";
+        let held: bool = sqlx::query_scalar(lock_query)
+            .bind(backend)
+            .fetch_one(&pool)
+            .await
+            .expect("bootstrap lock observation required");
+        assert!(held, "bootstrap unlocked before transaction completion");
+        if commit {
+            transaction
+                .commit()
+                .await
+                .expect("bootstrap commit required");
+        } else {
+            transaction
+                .rollback()
+                .await
+                .expect("bootstrap rollback required");
+        }
+        let held: bool = sqlx::query_scalar(lock_query)
+            .bind(backend)
+            .fetch_one(&pool)
+            .await
+            .expect("released bootstrap lock observation required");
+        assert!(!held, "bootstrap lock survived transaction completion");
+    }
+    pool.close().await;
 }
 
 async fn connect(options: PgConnectOptions) -> Result<PgPool, &'static str> {

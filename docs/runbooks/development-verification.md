@@ -249,6 +249,16 @@ local parser verification is pending where pwsh is unavailable.
 
 ## Final-check and scope limits
 
+The `44077a4` cold proof on 2026-10-13 completed its
+[research smoke](https://github.com/sihioov/Lagrange/actions/runs/38365911022), including the two
+sequential image builds, validated Docker exports and functional PASS. Eight unique cache uploads
+across CI and smoke matched REST entries (3,862,531,733 archive bytes). Smoke wall time was 3,426
+seconds; this is a cold measurement, not a demonstrated speedup. Its
+[CI run](https://github.com/sihioov/Lagrange/actions/runs/38365843138) failed one service-status DB
+fixture bootstrap, so no warm run was dispatched. The bounded test-fixture correction and a new
+same-SHA cold/warm proof remain pending. Individual smoke trap cleanup results were not emitted;
+do not infer them from workflow success.
+
 The hosted workflow remains the final gate and keeps its required jobs and aggregation. This runbook
 does not authorize provider access, trading, deployments, or a change to production build limits.
 It does not establish cache effectiveness or runtime performance. WP-3 hosted measurements and
