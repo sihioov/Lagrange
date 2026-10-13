@@ -1,6 +1,6 @@
 # R1 same-commit hosted acceptance
 
-Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke passed on `862fa954c16d28a617271fe6f613d34226e2d558`. R1-09 remains BLOCKED on root authentication and build-health prerequisites.**
+Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke passed on `862fa954c16d28a617271fe6f613d34226e2d558`. R1-09 remains BLOCKED on build-health prerequisites. Root authentication and protected output/state parent checks passed after the Owner's sudo setup on 2026-10-13.**
 Local validation and hosted validation are recorded separately. No production
 rollout or R1 completion is claimed.
 
@@ -46,6 +46,15 @@ receipts or production image evidence.
 root/health/resource observations, successful exact-C3 plan/preflight and final
 run/job/step receipts with independent original-log hashes.
 The image candidate remains C3 and R1-09 remains BLOCKED.
+
+At 05:14–05:16 UTC, after the Owner installed the temporary sudo utility,
+noninteractive root access, the enabled expiry timer and protected manifest/state
+parent metadata were verified. The C3 manifest and state directory were absent;
+official root plan/preflight with the manifest argument passed. Fresh inspection
+still showed research exited2 and Owner V2 running, so neither ordinary health
+nor the existing drained-reader alternative admitted a build. No images were
+built. [The follow-up evidence](2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소)
+supersedes the earlier root blocker without changing C3 or R1 completion criteria.
 
 ## Candidate C — 79da119e6e8b52be424ec8132ac2a52f65726471
 

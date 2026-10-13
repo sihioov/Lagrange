@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1-09 배포 후보 준비 마무리 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
 | 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-6 수용, WP-7 외부 전제 대기 |
 | main 통합 | 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 및 문서 갱신 `b0a2579`. 재개 시 fetch한 main은 `b0a2579`로 인계와 동일; C3와의 차이는 문서 6개 |
-| 다음 착수 항목 | R1-09 — root 실행 환경 확보와 reader 처리 중 작업·정지/재개 영향에 대한 운영 결정 후, 고정 C3의 실제 이미지·manifest 준비 |
+| 다음 착수 항목 | R1-09 — root 실행·보호 경로 확인 완료. reader 처리 중 작업·정지/재개 영향에 대한 운영 결정과 fresh health 충족 후, 고정 C3의 실제 이미지·manifest 준비 |
 | 진행 상태 | C3 `862fa95`의 CI 8개 job과 별도 기능 smoke 통과. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수. R1-01~08 DONE; R1-09 BLOCKED, 전체 R1 미완료 |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
 
@@ -135,7 +135,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 
 | 단계 | 사용자에게 생기는 결과 | 현재 상태 | 선행 조건 |
 | --- | --- | --- | --- |
-| R1 | 검증 가능한 개발·배포 기준선 | BLOCKED — CI·smoke 수용, 실제 이미지·manifest 전제 대기 | R1-09 root 인증·빌드 health 조건 |
+| R1 | 검증 가능한 개발·배포 기준선 | BLOCKED — CI·smoke 수용, 실제 이미지·manifest 전제 대기 | R1-09 빌드 health 조건; root 인증·보호 경로 확인 완료 |
 | R2 | 매 거래일 사용할 수 있는 일봉·신호·추천 베타 | TODO | 진단은 즉시 가능. 수정 릴리스의 운영 인수에는 R1 통과 필요 |
 | R3 | 실제 시장 시세가 전달되는 실시간 화면 | TODO | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
 | R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | BLOCKED — 구현 계약 미확정 | 결정안 작성은 즉시 가능. 구현은 R4-01의 구체적 승인, 출시에는 R1·R2 필요 |
@@ -213,17 +213,22 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   `38336666468`(functional PASS)도 최종 성공으로 회수했다. 실제 checkout SHA와
   원본 로그를 [재개 기록](reviews/2026-10-13-r1-resumption.md#기존-main-ci-회수)에
   별도로 대조했으며 C3의 검증·빌드 revision은 유지한다.
-- [ ] **R1-09 — 배포 후보 준비.** BLOCKED — 실제 빌드에 필요한 root 인증과 빌드 health 조건 미충족.
+- [ ] **R1-09 — 배포 후보 준비.** BLOCKED — root 인증·보호 경로는 확인했으나 빌드 health 조건 미충족.
   C3 공식 builder의 plan·preflight와 migration/복구 소스 검토는 완료했으나 실제 이미지·manifest는 없다.
   검증 커밋을 보존한 별도 checkout과 정확한 명령·출력 경로·해소 조건을
   [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)에 정리했다.
-  담당: root 실행 가능한 운영자/세션과 코디네이터. ordinary build health 또는 별도로 승인된
+  담당: 운영 결정의 Owner와 실행 코디네이터. ordinary build health 또는 별도로 승인된
   유효한 대체 조건을 충족한 뒤 서비스별 순차 빌드와 공식 manifest 검증을 수행한다.
   기존 예외 재사용·서비스 전환·운영 migration은 수행하지 않았다. 실제 운영 적용·결과는 R2에 남는다.
   2026-10-13 11:38 KST [재개 관측](reviews/2026-10-13-r1-resumption.md): sudo 인증 실패,
   research-worker exited2/unhealthy·나머지 10개 running/healthy 및 Owner V2 실행 중을 새로 확인했다.
   종료 원인은 미판정이다. exact-C3 plan/preflight와 보존 증거 14개 검증은 통과했으나
-  C3 image tag 12개 모두 부재, protected manifest 부재는 미확인이라 BLOCKED를 유지한다.
+  당시 C3 image tag 12개 모두 부재, protected manifest 부재는 미확인이었다.
+  **14:14~14:16 KST 후속 확인:** Owner가 72시간 sudo 설정을 직접 적용했고 비대화형 UID 0,
+  만료 timer(10월 16일 14:11:48 KST), 보호된 부모·state 경로와 C3 manifest 부재를 확인했다.
+  manifest 경로를 포함한 root plan/preflight도 통과했다. 새 관측에서도 research-worker exited2와
+  Owner V2 running으로 health 조건은 미충족이다. 이미지 12개·manifest는 아직 없으며
+  [sudo 적용 후 근거](reviews/2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소)를 보존한다.
 
 **종료 조건:** R1-01~R1-09 완료, 필수 CI·smoke 통과, 동일 커밋의 검증·배포 후보 근거 확보.
 규칙 변경이 필요하면 원래 검사의 목적을 충족하는 검증과 변경 이유를 함께 남긴다.
@@ -389,6 +394,7 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R1-09 | BLOCKED 유지; C3 입력·공식 plan/preflight 재검증과 현재 운영 전제 기록 | 최신 main `b0a2579`는 인계와 동일. root 인증·ordinary health는 현재도 미충족, 12개 C3 image tag 부재. reader 정지 경로의 작업 중단·재개 영향과 별도 운영 결정 필요를 구체화 | [R1 재개 근거](reviews/2026-10-13-r1-resumption.md); 대상 C3 `862fa95`, 11:38 KST 고정 필드 관측, 인계 14개 hash 대조; build/apply·운영 변경·R2 미착수 |
 | 2026-10-13 | R1-08·R1-09 | 기존 main CI·smoke 최종 결과 회수 완료; R1-09 BLOCKED 유지 | `b0a2579`의 CI 8개 job과 별도 functional smoke 모두 성공. 재실행 없이 실제 checkout 8개·원본 로그 대조. C3 이미지·manifest 검증 근거는 여전히 미확보 | [main 실행 인수](reviews/2026-10-12-r1-acceptance.md#resumption--existing-main-push-runs), [재개 기록](reviews/2026-10-13-r1-resumption.md); 두 worker 실제 idle·pending0 및 heartbeat 종료 확인 |
 | 2026-10-13 | R1-09 | BLOCKED 유지; Owner 직접 실행용 72시간 sudo 설정 스크립트 준비 | 현재 계정 전용 권한과 만료 timer, 원자적인 만료 처리·철회 기능을 준비하고 실제 parser·구문·격리 14회귀·독립 소스 리뷰 수용. 실제 root 설정은 미적용 | [후속 sudo 준비](reviews/2026-10-13-r1-resumption.md#후속-owner-요청--직접-실행할-72시간-sudo-설정-준비); C3·운영 범위 유지, 실제 설치·72시간 만료 미검증 |
+| 2026-10-13 | R1-09 | root 인증·보호 경로 전제 해소; health로 BLOCKED 유지 | Owner의 sudo 적용 후 UID 0·활성 만료 timer·보호 부모·C3 manifest/state 부재 확인. exact-C3 root plan/preflight 통과; 현재 research exited2·Owner V2 running으로 ordinary/drained 조건 모두 미충족 | [14:14~14:16 KST 후속 확인](reviews/2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소); 이미지 12개 부재, build·서비스 변경·R2 미착수 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

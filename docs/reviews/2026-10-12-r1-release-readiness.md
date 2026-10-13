@@ -16,6 +16,12 @@ immutable manifest의 검증 근거는 아직 확보하지 못했다. R1-09와 �
 기존 main `b0a2579`의 CI `38336666454`와 smoke `38336666468`도 최종 성공으로
 회수했다. 이 결과는 C3 이미지 후보를 바꾸거나 root·health 조건을 해소하지 않는다.
 
+**후속 14:14~14:16 KST:** Owner가 72시간 sudo 설정을 직접 적용한 뒤 root 인증·보호된
+output/state 부모 신뢰와 C3 manifest/state 부재를 확인했다. root로 manifest 인자를 포함한
+공식 plan/preflight도 통과했다. 새 health 관측은 research exited2·Owner V2 running으로
+ordinary/drained 조건을 충족하지 못한다. 따라서 아래 root 실패는 과거 기록이며 **현재 남은
+차단은 빌드 health**다. [sudo 적용 후 근거](2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소)를 따른다.
+
 ## 고정한 입력과 완료된 준비
 
 | 항목 | 고정 값·검증 |
@@ -27,7 +33,7 @@ immutable manifest의 검증 근거는 아직 확보하지 못했다. R1-09와 �
 | 빌드 전용 inert 입력 | `/tmp/lagrange-r1-image-only-jug13bqi/compose.env`, parent 0700 / file 0600 / UID 1000, regular·non-symlink·조상 symlink 없음 |
 | inert 입력 SHA-256 | `df9d4d1ceb45d0ddb79b98b1fc12c5a2925424c46b79b5d9959f0a1640b27bf6` |
 | 예정 systemd unit | `lagrange-r1-build-862fa954.service` — 관측 당시 not-found/inactive/dead |
-| 예정 manifest | `/etc/lagrange/release-manifests/862fa954c16d28a617271fe6f613d34226e2d558.manifest` — 보호된 부모 신뢰·출력 부재 미검증 |
+| 예정 manifest | `/etc/lagrange/release-manifests/862fa954c16d28a617271fe6f613d34226e2d558.manifest` — 후속 14:15 KST root 관측으로 보호된 부모 신뢰·출력 부재 확인 |
 
 checkout과 inert 입력은 의도적으로 보존했다. 후속 문서 커밋이 `orange-dugong` HEAD를
 바꾸더라도 빌드 소스를 그 HEAD로 바꾸지 않는다. 입력은 credential 없는 비활성
@@ -154,11 +160,11 @@ build/compiler/container/DB/systemd runtime을 만들지 않았다.
 - [x] 동일 C3의 CI·기능 smoke 수용.
 - [x] detached C3·inert 입력·공식 plan/preflight·정확한 명령 보존.
 - [x] Migration·backup·rollback 소스 계약과 미검증 운영 범위 기록.
-- [ ] root 인증·protected output/state 부모 신뢰·manifest 부재 확인.
+- [x] root 인증·protected output/state 부모 신뢰·manifest 부재 확인 — 2026-10-13 14:14~14:16 KST, C3, Owner sudo 적용 후 root metadata·공식 plan/preflight 근거. 실행 직전 재확인은 필요하다.
 - [ ] 실제 build-health admission 및 fresh 자원·OOM·compiler·timer 조건 충족.
 - [ ] 서비스별 순차 빌드와 실제 C3 이미지 ID·revision·공식 manifest 검증.
 
-마지막 세 항목이 충족돼야 [ROADMAP R1-09](../ROADMAP.md#5-r1--개발배포-기준-복구)를
+마지막 두 항목이 충족돼야 [ROADMAP R1-09](../ROADMAP.md#5-r1--개발배포-기준-복구)를
 완료 처리한다. 범위 안에서 준비 가능한 인계는 완료됐고 남은 외부 차단 조건은 위와 같다.
 
 ## 과거 준비 기록 — 2026-10-12 12:04 UTC

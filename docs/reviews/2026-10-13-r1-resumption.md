@@ -47,7 +47,7 @@ raw log를 저장하지 않고 hash·고정 필드만 보존했다. worker의 `g
 기능 PASS는 개별 cleanup receipt나 운영 이미지·manifest 검증을 대신하지 않는다.
 이 두 기존 실행의 최종 결과 회수에는 미해결 항목이 없다.
 
-## 현재 root·서비스·자원 관측
+## 첫 재개 당시 root·서비스·자원 관측 — 11:38 KST
 
 **2026-10-13 02:38:25~26 UTC (11:38:25~26 KST)**에 고정 필드만 읽었다.
 Docker env·provider 로그·응답 본문·운영 DB·비밀 파일은 읽지 않았다.
@@ -97,10 +97,9 @@ ordinary health 조건에서 임의로 research-worker를 제외할 근거도 �
 
 ## 다음에 필요한 조치와 영향
 
-1. **root 실행 가능한 운영자/세션:** C3 manifest의 no-clobber 출력과 보호된 부모·state 경로를
-   확인하고, fresh admission이 충족될 때 보존된 exact-C3 공식 명령을 실행한다.
-   암호·보호 경로의 권한은 변경하지 않는다. 후속 Owner 요청의 72시간 sudo 설정은
-   아래 별도 준비에 기록했으며 사용자가 직접 적용한다. image-only 작업은 이미 승인돼 있다.
+1. **root 전제 해소:** 후속 Owner sudo 적용 뒤 UID 0·만료 timer·보호된 부모·state 경로와
+   C3 manifest 부재를 아래 근거로 확인했다. 실행 직전 fresh admission을 다시 확인한다.
+   암호·보호 경로 권한은 변경하지 않았고 image-only 작업은 이미 승인돼 있다.
 2. **health 조건에 대한 별도 운영 결정:** 현재 ordinary 조건은 미충족이고 기존 stopped-reader
    대안도 미충족이다. 기존 대안을 택하려면 실행 중인
    `lagrange-station-owner-equity-v2-runner-1`의 처리 중 작업과 안전한 정지 가능성을 먼저 확인하고,
@@ -138,10 +137,62 @@ SHA-256은 `11e91cfe73fa0c9fda9a3757e1e8364356bed2fe17b1115516c1b653f0cc0e01`이
   Paseo `8689f94c-98ba-48dd-841d-ccfaa9c60915`(Sol/high)의 소스 리뷰에서
   초기 만료/설치 경합과 cleanup 보고 문제를 보완한 최종 delta에 남은 blocker가 없었다.
 
-**준비만 완료했으며 root 설치·실제 72시간 만료는 미검증이다.** 실제 sudo 권한은 아직
-부여하지 않았고 R1-09/R1의 BLOCKED 상태를 바꾸지 않는다. 이 설정 요청은 운영 서비스의
+**스크립트 준비 완료 당시에는 root 설치·실제 72시간 만료가 미검증이었다.** 이후 Owner의
+직접 적용과 root 확인은 다음 절에 기록한다. 이 설정 요청은 운영 서비스의
 정지·재시작·배포·migration·외부 데이터 API 호출 승인을 추가하지 않는다.
 상세 리뷰·격리 검증 영수증은 위 파일과 같은 `sudo72/` 디렉터리에 보존했다.
+
+## Owner sudo 적용 후 root 전제 해소
+
+Owner가 준비한 스크립트를 직접 실행하고 성공 출력을 전달했다. 코디네이터는
+**2026-10-13 05:14:50~05:16:26 UTC (14:14:50~14:16:26 KST)**에 다음을 새로 확인했다.
+`git fetch origin main` 결과도 계속 `b0a2579`이며 검증·빌드 후보 C3는 변경하지 않았다.
+
+| 확인 대상 | 새 근거와 판정 |
+| --- | --- |
+| 비대화형 root | `sudo -k -n /usr/bin/id -u` exit 0, UID 0. 이전 root 인증 차단 해소 |
+| sudo 만료 | `lagrange-r1-sudo72-l1nnx.timer` enabled/active/waiting, Persistent=yes. 다음 calendar 만료는 **2026-10-16 05:11:48 UTC / 14:11:48 KST**. 만료 service는 아직 inactive/dead이며 실제 72시간 만료는 미검증 |
+| protected 부모 | `/`, `/etc`, `/etc/lagrange`, `/etc/lagrange/release-manifests` 모두 root 소유·non-symlink directory·group/world writable 아님. manifest 부모 0755, `.lagrange-build-state` root:root 0700 |
+| C3 output/state | exact C3 manifest와 해당 commit의 state directory 모두 부재. root build lock directory는 root:root 0700으로 존재하나 lock을 획득하지 않았으며 현재 점유 여부는 미검증 |
+| 공식 root 검사 | 보존한 detached C3와 inert env로 manifest 인자를 포함한 `--plan → --preflight → --plan` 모두 exit 0. 앞뒤 source-input SHA-256 `78139d0c…d9b0b8c`, checkout clean. state 초기화·apply는 미실행 |
+| 현재 health | 지정 11개 중 10개 running/healthy. research-worker는 exited2/unhealthy, restart 7935, OOMKilled=false; Owner V2는 running/healthy. ordinary/drained 조건 모두 미충족 |
+| 자원·control | MemAvailable 4,676,104 KiB, SwapFree 83,744 KiB, memory PSI some/full avg10=0.00. 동일 C3 resource-policy 함수의 stop reason 없음. Docker/containerd active/running, compiler 목록 cargo/rustc/rustdoc 없음 |
+| OOM 관측 한계 | 읽기 가능한 현재 boot kernel journal의 04:44:50~05:14:51 UTC 구간은 row 0·OOM pattern 0. 전체 build 수명 관측이나 admission을 대신하지 않음 |
+| 동시 활성화 관측 | 설치된 KIS 계열 timer 10개 disabled/inactive, 현재 release의 daily service inactive/MainPID 0, project container 11개 중 one-off 없음. 미래 동시 실행 부재의 보증 아님 |
+| 실제 후보 artifact | exact C3 image tag 12개 전부 부재, protected manifest 부재. 예정 build unit도 not-found/inactive/dead. 실제 이미지 빌드·manifest 생성 미실행 |
+
+이 확인은 root 전제와 보호 경로의 읽기 전용 준비를 완료한다. fresh 공식 gate는 실제
+빌드 시 다시 실행해야 하며 **R1-09/R1은 health 차단으로 미완료**다. research exit2의
+원인이나 의도된 설치 모드는 이번 고정 필드 관측으로 단정하지 않는다.
+
+### 남은 운영 결정과 영향
+
+Paseo `9640452a-386d-40b6-8165-c2c923844963`(Sol/high)의 제한된 소스 검토를 회수하고
+코디네이터가 C3의 shutdown·attestation 코드와 대조했다. worker는 idle·pending 0이며
+운영 작업을 실행하지 않았다. 기존 대안은 **기존 Owner V2 컨테이너만 정상 종료(exit 0)**하고,
+이미 정지한 research-worker(exit 2)를 유지한 뒤 새 C3 전용 관측 기록을 만드는 경로다.
+기록 유효기간은 소스 계약상 최대 12시간이며 운영 중단 시간의 승인을 뜻하지 않는다.
+빌드 중 유효기간을 갱신하거나 reader를 재개하면 기존 attempt를 계속할 수 없다.
+
+05:19:58 UTC에 Owner V2의 Docker 고정 필드를 추가 확인했다. 기존 컨테이너 ID는
+`f293c7be42fb02f5b20f0bbcf1d7b6568518fdcb52b6c47c20deaba3f73a6af4`, 이미지 ID는
+`sha256:32bc37e1bffda89baefea466c0ba127c89b0cca69401c10ccf4f984c76cf6c50`이며 OCI revision은
+`fce9b90542cf9b1a911d46e4c4d3530db7efba4c`다. 실제 설정은 SIGTERM, StopTimeout=960초,
+init=true, restart=unless-stopped다. 이는 C3 배포가 아니라 현재 컨테이너의 정지·복귀 대상을
+고정하는 근거다. 해당 revision→C3의 runner binary 소스 diff도 대조했으며 shutdown 분기는
+변경되지 않았다. 전체 런타임 설정·현재 작업·활성 quote mode를 검증했다는 뜻은 아니다.
+
+승인이 필요한 범위는 이 한 컨테이너의 정상 정지, 승인된 시간 안의 C3 순차 빌드와
+fresh attestation, 빌드 종료·중단 후 같은 컨테이너의 재개다. 중단 중 Owner V2 일봉·신호
+갱신과 활성화된 실시간 수집이 영향을 받고 재개하면 기존 수집·DB recovery가 다시 동작할 수 있다.
+정지 전에 현재 작업·lease와 복구 조건을 확인해야 하며, running/healthy만으로 idle이라고
+판정하지 않는다. SIGTERM은 현재 작업을 기다리는 소스 경로지만 exit 0·작업 정산을 보장하지
+않는다. 실제 정상 종료·정산을 확인하지 못하면 빌드로 진행하지 않고, 강제 종료로 조건을
+맞추거나 research-worker를 시작하지 않는다. 운영 중단·복귀 절차와 한도는 아직 미승인이다.
+
+이는 최초 요청의 서비스 재시작·외부 API 호출 금지 범위를 넘어서는 운영 결정이므로
+sudo 설정 성공만으로 실행하지 않는다. 운영 배포·migration·R2·개발 속도 개선은 착수하지 않았다.
+상세 소스 근거와 미검증 범위는 private `root-enabled/health-action-review.md`에 보존했다.
 
 ## 보존 근거
 
@@ -167,3 +218,14 @@ Private fixed-field receipts:
 별도 문서 대조는 수치·hash 불일치를 찾지 못했다. 그 대조의 제한된 scope 밖이었던
 C3→main 문서 6개 목록과 코디네이터의 14-entry 독립 대조는 위
 `coordinator-input-check.json`에 별도로 기록했다.
+
+Owner sudo 적용 후 receipt는 위 private 경로의 `root-enabled/`에 별도로 보존했다.
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `host-observation.json` | `311240b90b685f66a40b66c3cb04b5056dd991065fcf8c21c44cd5f53c1fe224` |
+| `protected-paths.json` | `df3be3c6d91aa7c2b83fcb2ec6ed15b75e47a60979dd73fa7832caa254e821e5` |
+| `root-plan-preflight.json` | `378bcc9b815056ae6702e986067e56ece310b6bb6a4d911110d1a743d3a6888c` |
+| `activation-observation.json` | `8eef005972c41afc3cd59f877925e2bdac63ed449a97d542258631c97e1cdf22` |
+| `gate-assessment.json` | `a60d606cd093bac5cf0b9292b04017d681ec8bef22721cdc0a24e81e0041e168` |
+| `owner-runtime-metadata.json` | `9515fc67ea48e4e53f0d350fdd7785605a9ea7f7c087fb3d6e43eafed3c328ed` |

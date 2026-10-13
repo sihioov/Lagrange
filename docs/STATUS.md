@@ -12,7 +12,7 @@
 | 검증 대상 | C3 `862fa954c16d28a617271fe6f613d34226e2d558`; 코드·테스트·workflow·다이어그램은 해당 후보와 동일 |
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
-| R1-09 / 전체 R1 | BLOCKED — 11:38 KST 재관측에서도 root 인증·ordinary health 미충족. C3 plan/preflight 재검증 통과, exact image tag 12개 부재; protected manifest 부재는 미확인 |
+| R1-09 / 전체 R1 | BLOCKED — Owner sudo 적용 후 14:14~14:16 KST root 인증·보호 경로 확인과 manifest 경로 포함 C3 plan/preflight 통과. research exited2·Owner V2 running으로 health 미충족. 이미지 12개와 protected manifest 부재 확인 |
 | 다음 단계 | R1-09 배포 후보 준비를 마친 뒤 R2 일일 수집·추천·실제 Owner 사용 인수 진행. R2는 TODO |
 | 운영 반영 | 이번 main 통합으로 C3 이미지 빌드·서비스 전환·운영 migration·provider 호출을 실행하지 않음 |
 

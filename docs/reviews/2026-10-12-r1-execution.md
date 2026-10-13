@@ -1,6 +1,6 @@
 # R1 실행·수용 기록
 
-현재 상태: **C3 CI·기능 smoke 수용, R1-01~08 완료. R1-09 실제 이미지·manifest는 root 인증·빌드 health 전제로 BLOCKED.** [최종 인수](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [외부 차단 인계](2026-10-12-r1-release-readiness.md). 아래 과거 실행 기록의 상태는 그 관측 시점의 상태다.
+현재 상태: **C3 CI·기능 smoke 수용, R1-01~08 완료. Owner sudo 적용 후 root 인증·보호 경로는 확인했으나 R1-09 실제 이미지·manifest는 빌드 health 전제로 BLOCKED.** [최종 인수](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [sudo 적용 후 관측](2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소), [외부 차단 인계](2026-10-12-r1-release-readiness.md). 아래 과거 실행 기록의 상태는 그 관측 시점의 상태다.
 
 2026-10-13 Owner 요청으로 `1fe09ef`까지 main에 fast-forward 통합한 뒤 진행 문서를 갱신했다.
 검증 대상은 C3 `862fa95`이며 통합·문서 커밋이 배포 완료를 뜻하지 않는다.
