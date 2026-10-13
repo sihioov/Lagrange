@@ -24,7 +24,6 @@ jobs:
     # Allow both serial cold Rust image builds before functional validation.
     timeout-minutes: 90
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-smoke
       CARGO_INCREMENTAL: '0'
       RUSTUP_AUTO_INSTALL: '0'
     steps:
@@ -41,6 +40,7 @@ jobs:
             exit 2
           fi
           printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+          printf 'CARGO_TARGET_DIR=%s/lagrange-cargo-target-smoke\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
       - id: rust-install
         run: |
           started=$SECONDS

@@ -108,7 +108,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-clippy
       RUSTUP_AUTO_INSTALL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,6 +123,7 @@ jobs:
             exit 2
           fi
           printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+          printf 'CARGO_TARGET_DIR=%s/lagrange-cargo-target-clippy\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
       - id: rust-install
         run: |
           started=$SECONDS
@@ -234,8 +234,6 @@ jobs:
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/lagrange-npm-cache-web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -254,6 +252,7 @@ jobs:
             exit 2
           fi
           printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+          printf 'NPM_CONFIG_CACHE=%s/lagrange-npm-cache-web\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
       - id: npm-cache-identity
         env:
           CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
@@ -346,9 +345,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-workspace
       RUSTUP_AUTO_INSTALL: '0'
-      UV_CACHE_DIR: ${{ runner.temp }}/lagrange-uv-cache-workspace
       # Intraday tests require this exact disposable QA endpoint.
       DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55438/postgres
       LAGRANGE_QA_DB_PORT: '55438'
@@ -366,6 +363,8 @@ jobs:
             exit 2
           fi
           printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+          printf 'CARGO_TARGET_DIR=%s/lagrange-cargo-target-workspace\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
+          printf 'UV_CACHE_DIR=%s/lagrange-uv-cache-workspace\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
       - id: rust-install
         run: |
           started=$SECONDS
@@ -540,8 +539,6 @@ jobs:
   python-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      UV_CACHE_DIR: ${{ runner.temp }}/lagrange-uv-cache-python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -563,6 +560,7 @@ jobs:
             exit 2
           fi
           printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+          printf 'UV_CACHE_DIR=%s/lagrange-uv-cache-python\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
@@ -652,7 +650,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-postgres
       RUSTUP_AUTO_INSTALL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -668,6 +665,7 @@ jobs:
             exit 2
           fi
           printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+          printf 'CARGO_TARGET_DIR=%s/lagrange-cargo-target-postgres\n' "$RUNNER_TEMP" >>"$GITHUB_ENV"
       - id: rust-install
         run: |
           started=$SECONDS

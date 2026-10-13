@@ -305,7 +305,7 @@ git diff --check
 |---|---|---|---|---|
 | WP-1 | DONE | `6d117f4` | 지침 충돌·참조 경로 확인, 사용법/CLI 대조, `git diff --check` | 없음 |
 | WP-2 | DONE | `6d117f4` | QA 회귀 30개, CI 계약 10개 통과; QA fast 4개 통과, 적격 syntax 2개 재사용 확인; shell syntax·공백 확인 | PowerShell 구문 검증은 WP-3 hosted 환경에서 수행 |
-| WP-3 | IN_PROGRESS | 이 문서와 함께 확정하는 후보 | QA 38개, CI·cache 계약 22개, shell syntax·self-test·운영 build static·공백 검사 통과 | 같은 후보의 실제 cold/warm CI·smoke와 PowerShell 구문 검증 대기 |
+| WP-3 | IN_PROGRESS | `06f17b7` 및 workflow 선언 수정 후보 | QA 38개, CI·cache 계약 24개, actionlint 1.7.12, shell syntax·self-test·운영 build static·공백 검사 통과 | 수정 후보의 실제 cold/warm CI·smoke와 PowerShell 구문 검증 대기 |
 
 - [x] 1~3번: 지침·preflight·단계별 검증·결과 재사용 구현과 focused 검증 수용
 - [ ] 4~5번: cache·실행 환경 구현과 실제 cold/warm CI 증거 수용
@@ -317,3 +317,5 @@ git diff --check
 | 2026-10-13 | 실행 착수 | Owner의 후속 실행 요청. WP-1/2의 쓰기 범위를 나누어 병렬 진행 |
 | 2026-10-13 | 1단계 수용 | 16개 workspace package 탐색, symlink 입력 거부, pinned formatter 환경, 실패 진단, endpoint port 충돌, 잘못된 base ref 회귀를 포함한 30개 검사 통과. CI 계약 10개 통과. 제품·운영 구조 변경 없음 |
 | 2026-10-13 | 2단계 구현·focused 검증 수용 | 명시적 cache restore/save, hosted preflight, package별 Rust 선택과 로컬 heavy lock 구현. 코디네이터가 로컬 `ci` 라벨의 Cargo 2 유지 및 성공한 Docker export의 이전 store 교체를 보완하고 QA 38개·CI/cache 22개를 재검증. 실제 cache 효과는 아직 미검증 |
+| 2026-10-13 | 첫 후보의 workflow 선언 오류 확인 | `06f17b7`의 CI dispatch가 HTTP 422로 거부됨. job `env`의 `runner.temp` 7곳을 GitHub 오류와 actionlint 1.7.12로 확인. proof run·build는 시작되지 않았고 같은 담당자가 선언 위치와 회귀 검사를 수정 중. 이 기록은 실패 이력으로 보존 |
+| 2026-10-13 | workflow 선언 수정 검증 | 7개 경로를 기존 namespace 검증 뒤의 `GITHUB_ENV` 초기화로 옮김. 실제 초기화·잘못된 입력 차단 회귀를 포함한 계약 24개 및 actionlint 통과. 기존 cache 경로·키·필수 job 불변 |

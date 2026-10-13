@@ -29,6 +29,25 @@ CACHE_TARGETS = {
     "postgres-integration-validation": "${{ runner.temp }}/lagrange-cargo-target-postgres",
     "research-smoke": "${{ runner.temp }}/lagrange-cargo-target-smoke",
 }
+CACHE_RUNTIME_ENVS = {
+    "clippy": {"CARGO_TARGET_DIR": "lagrange-cargo-target-clippy"},
+    "web": {"NPM_CONFIG_CACHE": "lagrange-npm-cache-web"},
+    "workspace-tests": {
+        "CARGO_TARGET_DIR": "lagrange-cargo-target-workspace",
+        "UV_CACHE_DIR": "lagrange-uv-cache-workspace",
+    },
+    "python-tests": {"UV_CACHE_DIR": "lagrange-uv-cache-python"},
+    "postgres-integration-validation": {"CARGO_TARGET_DIR": "lagrange-cargo-target-postgres"},
+    "research-smoke": {"CARGO_TARGET_DIR": "lagrange-cargo-target-smoke"},
+}
+CACHE_FIRST_CONSUMERS = {
+    "clippy": "rust-install",
+    "web": "npm-cache-identity",
+    "workspace-tests": "rust-install",
+    "python-tests": "python-tools-install",
+    "postgres-integration-validation": "rust-install",
+    "research-smoke": "rust-install",
+}
 
 
 class UniqueBaseLoader(yaml.BaseLoader):
@@ -65,12 +84,44 @@ def command_lines(job: dict) -> list[str]:
     return [line.strip() for step in job["steps"] for line in step.get("run", "").splitlines()]
 
 
+def assert_runner_env_context(workflow: dict) -> None:
+    # runner is available in step env/with, but not workflow or job env.
+    locations = [("workflow", workflow.get("env", {}))]
+    locations.extend((f"job {job_id}", job.get("env", {})) for job_id, job in workflow["jobs"].items())
+    for location, env in locations:
+        for value in env.values():
+            for expression in re.findall(r"\$\{\{(.*?)\}\}", value, re.DOTALL):
+                expression = re.sub(r"'(?:[^']|'')*'", "", expression)
+                assert not re.search(r"\brunner\b", expression, re.IGNORECASE), f"runner context unavailable in {location} env"
+
+
+def assert_cache_runtime_env(job_id: str, job: dict) -> None:
+    if job_id not in CACHE_RUNTIME_ENVS:
+        return
+    steps = job["steps"]
+    initializer = next(step for step in steps if step.get("id") == "cache-epoch")
+    script = initializer["run"]
+    for variable, suffix in CACHE_RUNTIME_ENVS[job_id].items():
+        assert variable not in job.get("env", {}), "cache path must be initialized at runtime"
+        line = f"printf '{variable}=%s/{suffix}\\n' \"$RUNNER_TEMP\" >>\"$GITHUB_ENV\""
+        assert line in script, "runtime cache path initializer missing or mismatched"
+        assert script.index("\nfi\n") < script.index(line), "namespace validation must precede cache env writes"
+    assert not re.search(r"\$(?:\{)?(?:CARGO_TARGET_DIR|NPM_CONFIG_CACHE|UV_CACHE_DIR)\b", script), "persisted cache env must not be consumed in its initializer step"
+    consumer = next(step for step in steps if step.get("id") == CACHE_FIRST_CONSUMERS[job_id])
+    assert steps.index(initializer) < steps.index(consumer), "cache env must be initialized before consumer"
+    for step in steps:
+        if step.get("uses", "").startswith("actions/cache/"):
+            assert steps.index(initializer) < steps.index(step), "cache env must be initialized before consumer"
+
+
 def assert_cache_policy(workflow: dict) -> None:
+    assert_runner_env_context(workflow)
     for job_id, job in workflow["jobs"].items():
         assert job.get("permissions", {"contents": "read"}) == {"contents": "read"}, "job permissions expanded"
         ids = [step["id"] for step in job["steps"] if "id" in step]
         assert len(ids) == len(set(ids)), "duplicate step id"
         by_id = {step["id"]: step for step in job["steps"] if "id" in step}
+        assert_cache_runtime_env(job_id, job)
         for step in job["steps"]:
             use = step.get("uses", "")
             if step.get("run"):
@@ -97,7 +148,6 @@ def assert_cache_policy(workflow: dict) -> None:
                 assert paths == CARGO_DOWNLOAD_PATHS, "public Cargo path set changed"
             if step["id"].startswith("cargo-target"):
                 assert paths == {CACHE_TARGETS[job_id]}, "Cargo target is not job-private"
-                assert job["env"]["CARGO_TARGET_DIR"] == CACHE_TARGETS[job_id]
             kind = step["id"].rsplit("-", 1)[0]
             if kind not in {"cargo-download", "cargo-target"}:
                 expected_paths = {
@@ -205,11 +255,53 @@ class WorkflowContractTests(unittest.TestCase):
             with self.subTest(clause=clause), self.assertRaisesRegex(AssertionError, "trust/miss"):
                 assert_cache_policy(changed)
 
+    def test_workflow_and_job_env_reject_runner_context(self) -> None:
+        for name in ("ci.yml", "research-smoke.yml"):
+            _, baseline = load_workflow(name)
+            assert_cache_policy(baseline)  # Step-level runner paths remain valid.
+            for job_id in (None, *baseline["jobs"]):
+                for value in ("${{ runner.temp }}", "${{ runner['temp'] }}", "${{ format('{0}', runner.temp) }}"):
+                    changed = copy.deepcopy(baseline)
+                    location = changed if job_id is None else changed["jobs"][job_id]
+                    location.setdefault("env", {})["BAD_CACHE_PATH"] = value
+                    with self.subTest(workflow=name, job=job_id, value=value), self.assertRaisesRegex(AssertionError, "runner context unavailable"):
+                        assert_cache_policy(changed)
+            literal = copy.deepcopy(baseline)
+            literal["env"] = {"LITERAL": "runner.temp", "EXPRESSION_LITERAL": "${{ 'runner.temp' }}"}
+            assert_cache_policy(literal)
+
+    def test_cache_runtime_initialization_precedes_consumers(self) -> None:
+        for name in ("ci.yml", "research-smoke.yml"):
+            _, workflow = load_workflow(name)
+            for job_id, job in workflow["jobs"].items():
+                if job_id not in CACHE_RUNTIME_ENVS:
+                    continue
+                assert_cache_runtime_env(job_id, job)
+                changed = copy.deepcopy(job)
+                initializer = next(step for step in changed["steps"] if step.get("id") == "cache-epoch")
+                initializer["run"] = initializer["run"].replace('>>"$GITHUB_ENV"', '>>"$GITHUB_OUTPUT"')
+                with self.subTest(job=job_id, mutation="wrong destination"), self.assertRaisesRegex(AssertionError, "initializer missing or mismatched"):
+                    assert_cache_runtime_env(job_id, changed)
+                changed = copy.deepcopy(job)
+                steps = changed["steps"]
+                initializer = next(step for step in steps if step.get("id") == "cache-epoch")
+                steps.remove(initializer)
+                consumer = next(step for step in steps if step.get("id") == CACHE_FIRST_CONSUMERS[job_id])
+                steps.insert(steps.index(consumer) + 1, initializer)
+                with self.subTest(job=job_id, mutation="late initializer"), self.assertRaisesRegex(AssertionError, "before consumer"):
+                    assert_cache_runtime_env(job_id, changed)
+                changed = copy.deepcopy(job)
+                initializer = next(step for step in changed["steps"] if step.get("id") == "cache-epoch")
+                variable = next(iter(CACHE_RUNTIME_ENVS[job_id]))
+                initializer["run"] += f'printf "%s" "${variable}"\n'
+                with self.subTest(job=job_id, mutation="same step consumer"), self.assertRaisesRegex(AssertionError, "must not be consumed"):
+                    assert_cache_runtime_env(job_id, changed)
+
     def test_cache_epoch_is_ascii_validated_through_environment(self) -> None:
         for name in ("ci.yml", "research-smoke.yml"):
             _, workflow = load_workflow(name)
             self.assertEqual(workflow["on"]["workflow_dispatch"]["inputs"]["cache_epoch"]["type"], "string")
-            for job in workflow["jobs"].values():
+            for job_id, job in workflow["jobs"].items():
                 steps = job["steps"]
                 if not any("actions/cache/restore@" in step.get("uses", "") for step in steps):
                     continue
@@ -220,11 +312,27 @@ class WorkflowContractTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory(prefix="cache-epoch-") as temp:
                     sentinel = Path(temp) / "must-not-run"
                     output = Path(temp) / "output"
-                    for value in ("epoch_1.2-good", f"$(touch {sentinel})", "époch", "a\nvalue", "a" * 65):
-                        env = {**os.environ, "CACHE_EPOCH_INPUT": value, "GITHUB_OUTPUT": str(output)}
+                    github_env = Path(temp) / "env"
+                    runner_temp = Path(temp) / "runner temp"
+                    for value in ("epoch_1.2-good", "", f"$(touch {sentinel})", "époch", "a\nvalue", "a" * 65):
+                        output.write_text("")
+                        github_env.write_text("")
+                        env = {"PATH": os.defpath, "CACHE_EPOCH_INPUT": value, "GITHUB_OUTPUT": str(output), "GITHUB_ENV": str(github_env), "RUNNER_TEMP": str(runner_temp)}
                         result = subprocess.run(["bash", "-eu", "-c", validator["run"]], env=env, capture_output=True, text=True, timeout=5)
                         self.assertEqual(result.returncode, 0 if value == "epoch_1.2-good" else 2)
                         self.assertFalse(sentinel.exists())
+                        if result.returncode:
+                            self.assertEqual(github_env.read_text(), "", "invalid namespace wrote runtime cache env")
+                            self.assertEqual(output.read_text(), "")
+                            continue
+                        expected = {variable: str(runner_temp / suffix) for variable, suffix in CACHE_RUNTIME_ENVS[job_id].items()}
+                        self.assertEqual(github_env.read_text().splitlines(), [f"{variable}={path}" for variable, path in expected.items()])
+                        self.assertEqual(output.read_text(), f"value={value}\n")
+                        for variable, path in expected.items():
+                            kind = {"CARGO_TARGET_DIR": "cargo-target", "NPM_CONFIG_CACHE": "npm", "UV_CACHE_DIR": "uv"}[variable]
+                            restore = next(step for step in steps if step.get("id") == f"{kind}-restore")
+                            cache_path = restore["with"]["path"].replace("${{ runner.temp }}", str(runner_temp))
+                            self.assertEqual(cache_path, path + ("/_cacache" if variable == "NPM_CONFIG_CACHE" else ""))
 
     def test_preflight_lifecycle_and_hosted_powershell_parse(self) -> None:
         _, workflow = load_workflow("ci.yml")
