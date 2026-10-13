@@ -543,60 +543,73 @@ import pathlib
 import sys
 
 printed, override, service, imported, exported = sys.argv[1:]
-def require(condition, message):
+class Rejected(Exception):
+    pass
+
+def require(condition, code):
     if not condition:
-        raise ValueError(message)
+        raise Rejected(code)
 def unique(pairs):
     value = {}
     for key, item in pairs:
-        require(key not in value, "duplicate JSON key")
+        require(key not in value, "duplicate-key")
         value[key] = item
     return value
 def read(path):
     path = pathlib.Path(path)
-    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 262144, "unowned or oversized definition")
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 262144, "definition-file")
     return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
 def cache(value):
     if isinstance(value, dict):
         return {key: str(item).lower() if type(item) is bool else item for key, item in value.items()}
-    require(isinstance(value, str), "invalid cache entry")
+    require(isinstance(value, str), "cache-entry")
     pairs = [item.split("=", 1) for item in value.split(",")]
-    require(all(len(pair) == 2 for pair in pairs), "invalid cache attributes")
+    require(all(len(pair) == 2 for pair in pairs), "cache-attributes")
     return unique(pairs)
 try:
     for path in (imported, exported):
-        require(pathlib.Path(path).is_absolute() and not any(c in path for c in "*?[],\n\r"), "cache path is not a narrow absolute path")
+        require(pathlib.Path(path).is_absolute() and not any(c in path for c in "*?[],\n\r"), "cache-path")
     definition = read(printed)
-    require(set(definition) == {"group", "target"}, "unexpected Bake definition fields")
-    require(definition["group"] == {"default": {"targets": [service]}}, "default group must select only this service")
-    require(isinstance(definition["target"], dict) and set(definition["target"]) == {service}, "Bake must contain exactly one target")
+    require(set(definition) == {"group", "target"}, "definition-fields")
+    require(definition["group"] == {"default": {"targets": [service]}}, "default-group")
+    # Compose may print these unselected database dependencies even without
+    # --with-dependencies. They must never enter the executed Bake graph.
+    targets = definition["target"]
+    require(isinstance(targets, dict) and service in targets and
+            set(targets) <= {service, "db-migrate", "db-role-bootstrap"}, "target-set")
     target = definition["target"][service]
     allowed = {"context", "dockerfile", "target", "args", "tags", "labels", "platforms", "pull", "no-cache", "cache-from", "cache-to", "output"}
-    require(isinstance(target, dict) and set(target) <= allowed, "unexpected target fields or dependency graph")
-    require(isinstance(target.get("context"), str) and pathlib.Path(target["context"]).is_absolute(), "context must be a local absolute path")
-    require(isinstance(target.get("dockerfile"), str) and bool(target["dockerfile"]), "Dockerfile is missing")
-    require(isinstance(target.get("tags"), list) and bool(target["tags"]) and all(isinstance(tag, str) and tag for tag in target["tags"]), "image tags are missing")
+    require(isinstance(target, dict) and set(target) <= allowed, "target-fields")
+    require(isinstance(target.get("context"), str) and pathlib.Path(target["context"]).is_absolute(), "target-context")
+    require(isinstance(target.get("dockerfile"), str) and bool(target["dockerfile"]), "target-dockerfile")
+    require(isinstance(target.get("tags"), list) and bool(target["tags"]) and all(isinstance(tag, str) and tag for tag in target["tags"]), "target-tags")
     for field in ("args", "labels"):
         values = target.get(field, {})
-        require(isinstance(values, dict) and all(isinstance(key, str) and isinstance(value, (str, type(None))) for key, value in values.items()), "invalid target mapping")
+        require(isinstance(values, dict) and all(isinstance(key, str) and isinstance(value, (str, type(None))) for key, value in values.items()), "target-mapping")
     for field in ("pull", "no-cache"):
-        require(field not in target or type(target[field]) is bool, "invalid build flag")
-    require("target" not in target or isinstance(target["target"], str), "invalid Dockerfile target")
-    require("platforms" not in target or isinstance(target["platforms"], list) and all(isinstance(value, str) for value in target["platforms"]), "invalid platforms")
-    require(target.get("output", []) in ([], ["type=docker"], [{"type": "docker"}]), "unexpected image output or registry push")
+        require(field not in target or type(target[field]) is bool, "target-flag")
+    require("target" not in target or isinstance(target["target"], str) and not target["target"].startswith("target:"), "target-stage")
+    require("platforms" not in target or isinstance(target["platforms"], list) and all(isinstance(value, str) for value in target["platforms"]), "target-platforms")
+    require(target.get("output", []) in ([], ["type=docker"], [{"type": "docker"}]), "target-output")
     generated = read(override)
-    require(set(generated) == {"services"} and set(generated["services"]) == {service}, "generated override service mismatch")
+    require(set(generated) == {"services"} and set(generated["services"]) == {service}, "override-service")
     build = generated["services"][service]["build"]
-    require(set(build) in ({"cache_to"}, {"cache_to", "cache_from"}), "unexpected generated cache fields")
+    require(set(build) in ({"cache_to"}, {"cache_to", "cache_from"}), "override-fields")
     expected_to = {"type": "local", "dest": exported, "mode": "max", "ignore-error": "true"}
-    require([cache(item) for item in build["cache_to"]] == [expected_to], "generated export store mismatch")
-    require([cache(item) for item in target.get("cache-to", [])] == [expected_to], "printed export store mismatch")
+    require([cache(item) for item in build["cache_to"]] == [expected_to], "override-export")
+    require([cache(item) for item in target.get("cache-to", [])] == [expected_to], "target-export")
     expected_from = [{"type": "local", "src": imported}] if "cache_from" in build else []
-    require([cache(item) for item in build.get("cache_from", [])] == expected_from, "generated import store mismatch")
-    require([cache(item) for item in target.get("cache-from", [])] == expected_from, "printed import store mismatch")
+    require([cache(item) for item in build.get("cache_from", [])] == expected_from, "override-import")
+    require([cache(item) for item in target.get("cache-from", [])] == expected_from, "target-import")
+    definition["target"] = {service: target}
+    pathlib.Path(printed).write_text(json.dumps(definition) + "\n", encoding="utf-8")
     print("1" if expected_from else "0")
-except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError, AttributeError):
-    print("RESEARCH_WORKER_SMOKE: printed Bake definition rejected", file=sys.stderr)
+except Rejected as error:
+    # Only fixed codes supplied above can reach this branch; never echo input.
+    print(f"RESEARCH_WORKER_SMOKE: printed Bake definition rejected [{error}]", file=sys.stderr)
+    raise SystemExit(2)
+except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
+    print("RESEARCH_WORKER_SMOKE: printed Bake definition rejected [parse-or-type]", file=sys.stderr)
     raise SystemExit(2)
 PY
 )" || return $?

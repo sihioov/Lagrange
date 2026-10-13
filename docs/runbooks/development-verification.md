@@ -202,10 +202,14 @@ local blobs without deleting remote cache entries or pruning shared builders. Th
 audit and six fresh Raw probe volumes, locked downloads, and offline
 compile run on every smoke.
 
-For hosted layer caching, each service's Compose `build --print` output is validated as a single
-Bake target before execution with the private builder and `--load`. Bake receives only the exact
+For hosted layer caching, each service's Compose `build --print` output is reduced to one validated
+Bake target before execution with the private builder and `--load`. Compose also prints unselected
+`db-migrate` and `db-role-bootstrap` definitions; only these known auxiliary definitions may be
+present, and they are removed from the executed graph. The default group must select only the
+requested service and its values are preserved. Bake receives only the exact
 service export `fs.write` grant, plus the import `fs.read` grant when that store is configured.
-Unexpected targets, dependencies, outputs, privileges or cache paths stop before the build. Local
+Unknown targets, selected target references, outputs, privileges or cache paths stop before the
+build with a fixed rejection code. Local
 and unavailable-cache paths retain the original single-service Compose command. This uses Bake's
 [explicit filesystem grants](https://docs.docker.com/reference/cli/docker/buildx/bake/#allow)
 without changing production builds or disabling filesystem admission.

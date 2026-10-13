@@ -241,7 +241,7 @@ Node 설치 action의 암묵적 cache와 중복 저장하지 않는다. `node_mo
 
 Docker에는 다음 연결만 추가한다.
 
-1. hosted job에서 전용 `docker-container` Buildx builder를 준비한다. 서비스별 Compose `build --print` 결과가 단일 target과 허용된 cache 경로만 포함하는지 검사한 뒤, 명시적 builder·`--load`·해당 경로의 `fs.write`/필요한 `fs.read`만 지정해 Bake로 실행한다. Compose 설정의 tags·args·context·Dockerfile은 그대로 사용한다. 로컬 및 cache 미사용 경로는 기존 단일 서비스 Compose build를 유지한다. 근거: [Compose build](https://docs.docker.com/reference/cli/docker/compose/build/)와 [Bake filesystem grants](https://docs.docker.com/reference/cli/docker/buildx/bake/#allow).
+1. hosted job에서 전용 `docker-container` Buildx builder를 준비한다. 서비스별 Compose `build --print` 결과에서 선택되지 않은 두 DB 정의(`db-migrate`, `db-role-bootstrap`)를 제거하고, 실행할 target 하나와 허용된 cache 경로만 검증한다. 알 수 없는 target이나 선택 target의 다른 빌드 참조는 거부한다. 명시적 builder·`--load`·해당 경로의 `fs.write`/필요한 `fs.read`만 지정해 Bake로 실행하며 Compose 설정의 tags·args·context·Dockerfile은 그대로 사용한다. 로컬 및 cache 미사용 경로는 기존 단일 서비스 Compose build를 유지한다. 근거: [Compose build](https://docs.docker.com/reference/cli/docker/compose/build/)와 [Bake filesystem grants](https://docs.docker.com/reference/cli/docker/buildx/bake/#allow).
 2. 복원 cache는 읽기 입력으로 두고 새 export는 다른 디렉터리에 쓴다. 성공 후 owned 경로의 새 export만 저장 대상으로 승격한다. 기존 cache 전체 prune이나 운영 builder 전환을 하지 않는다.
 3. 임시 override의 `cache_from`/`cache_to`는 [Compose build 명세](https://docs.docker.com/reference/compose-file/build/#cache_from)에 맞추며 중간 build layer도 내보내도록 `mode=max`를 사용한다. cache가 없는 첫 실행도 가능해야 한다. unsupported exporter를 무시한 빌드를 cache 성공으로 보고하지 않는다.
 4. **연구 worker 한 서비스 → 종료 확인 → candidate runner 한 서비스** 순서를 유지한다. 기존 Dockerfile의 locked cache mount·workspace clean·mount 밖 binary 복사는 유지한다.
@@ -305,7 +305,7 @@ git diff --check
 |---|---|---|---|---|
 | WP-1 | DONE | `6d117f4` | 지침 충돌·참조 경로 확인, 사용법/CLI 대조, `git diff --check` | 없음 |
 | WP-2 | DONE | `6d117f4` | QA 회귀 30개, CI 계약 10개 통과; QA fast 4개 통과, 적격 syntax 2개 재사용 확인; shell syntax·공백 확인; `7d98b8a` hosted policy에서 PowerShell Parser 통과 | 없음 |
-| WP-3 | IN_PROGRESS | `06f17b7`, `7d98b8a`, `4239521` 및 Bake 경로 권한 수정 후보 | QA 38개, CI·cache 계약 28개, actionlint 1.7.12 및 기존 static/self-test 통과. `7d98b8a` cold CI 8개 job 통과, 실제 cache 7건 저장 확인. Bake 수정의 실제 Compose cold/warm 출력 검증 통과 | 수정 후보의 cold/warm CI·smoke 비교 대기; `4239521` Web 실패의 개별 원인은 미확인 |
+| WP-3 | IN_PROGRESS | `06f17b7`, `7d98b8a`, `4239521`, `c583769` 및 단일 target 수정 후보 | QA 38개, CI·cache 계약 29개, actionlint 1.7.12 및 기존 static/self-test 통과. `7d98b8a` cold CI 8개 job 통과, 실제 cache 7건 저장 확인. 실제 저장소 Compose의 두 서비스 cold/warm 출력 검사 4개 통과 | 수정 후보의 cold/warm CI·smoke 비교 대기; `4239521` Web 실패의 개별 원인은 미확인 |
 
 - [x] 1~3번: 지침·preflight·단계별 검증·결과 재사용 구현과 focused 검증 수용
 - [ ] 4~5번: cache·실행 환경 구현과 실제 cold/warm CI 증거 수용
@@ -323,3 +323,5 @@ git diff --check
 | 2026-10-13 | Buildx 출력 호환 수정 검증 | 기존 `BuildKit:`와 현재 upstream의 `BuildKit version:`을 모두 해석하고 누락·잘못된 값·복수 버전은 거부. 실제 workflow step을 fake Docker로 실행하는 회귀를 포함해 계약 25개 및 actionlint 통과. hosted inspect stdout이 남지 않아 이전 실패 지점의 정확한 명령은 추론으로 한정. 다른 검증은 변경 입력이 없어 재사용 |
 | 2026-10-13 | `4239521` cold 실패 회수 | [CI 38356819943](https://github.com/sihioov/Lagrange/actions/runs/38356819943)는 Rust·Python·DB·정책 검사를 통과했지만 Web E2E 및 required가 실패. 개별 browser assertion은 출력되지 않아 원인 미확인. [smoke 38356880385](https://github.com/sihioov/Lagrange/actions/runs/38356880385)는 builder 준비를 통과한 뒤 cache export의 명시적 `fs.write` 권한 요구로 실패. warm·재시도·취소 없이 두 결과를 보존 |
 | 2026-10-13 | Bake cache 경로 권한 수정 검증 | 동일 담당자가 격리된 후보에서 구현과 관련 검증 완료. 서비스 하나의 Compose 출력만 허용하고 해당 export 쓰기·사용 중인 import 읽기 경로만 Bake에 전달. 순차 실행·기존 fallback·cold Raw probe 보존. 28개 계약, 구문/self-test/actionlint 및 실제 Compose 출력의 cold/warm 검사 통과; 실제 hosted export는 다음 후보에서 검증 |
+| 2026-10-13 | 실제 저장소 Compose 대상 처리 보완 | `c583769`의 [smoke 38359910517](https://github.com/sihioov/Lagrange/actions/runs/38359910517)가 출력 정의 검사에서 실패. 로컬 실제 저장소 출력에는 선택되지 않은 DB 정의 2개도 포함되어 기존 검사가 거부함을 재현. 두 정의만 제거하고 실행 graph를 요청한 서비스 하나로 제한. 기존 28개 테스트를 보존한 29개 계약과 실제 저장소의 두 서비스 cold/warm 출력 검사 4개 통과. 거부 사유는 고정 코드로 출력하며 실제 build·cache 효과는 아직 미검증 |
+| 2026-10-13 | `c583769` CI 종료 회수 | [CI 38359807851](https://github.com/sihioov/Lagrange/actions/runs/38359807851)의 Web·workspace·required를 포함한 8개 job 모두 성공. main 작업 트리와 10개 입력 hash는 검증 전후 동일. smoke 실패가 남아 warm은 실행하지 않았으며, 수정된 다음 후보에서 같은 SHA의 cold/warm 쌍을 검증 |
