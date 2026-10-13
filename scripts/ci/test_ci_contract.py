@@ -373,6 +373,77 @@ class WorkflowContractTests(unittest.TestCase):
         probe = script.split("raw_init_ownership_probe() (", 1)[1].split("raw_init_ownership_probe\n", 1)[0]
         self.assertEqual(len(re.findall(r"^  dkr volume create ", probe, re.MULTILINE)), 6)
 
+    def test_smoke_builder_identity_accepts_buildx_labels_and_rejects_unknown_versions(self) -> None:
+        _, workflow = load_workflow("research-smoke.yml")
+        step = next(step for step in workflow["jobs"]["research-smoke"]["steps"] if step.get("id") == "buildx")
+        fake_docker = '''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_DOCKER_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps(args) + "\\n")
+if args == ["buildx", "create", "--driver", "docker-container", "--name", "fixture-builder"]:
+    print("fixture-builder")
+elif args == ["buildx", "inspect", "fixture-builder", "--bootstrap"]:
+    print(os.environ["FAKE_INSPECTION"])
+elif args == ["version", "--format", "{{.Server.Version}}"]:
+    print("28.5.1")
+elif args == ["compose", "version", "--short"]:
+    print("2.39.0")
+elif args == ["buildx", "version"]:
+    print("github.com/docker/buildx v0.36.1 fixture")
+else:
+    raise SystemExit("unexpected fake Docker invocation")
+'''
+        cases = {
+            "legacy": ("BuildKit:       v0.33.1\n", True),
+            "current": ("BuildKit version:  v0.33.1\n", True),
+            "prerelease": ("  BuildKit version: v0.33.1-rc1\n", True),
+            "missing": ("Status: running\n", False),
+            "empty": ("BuildKit version: \n", False),
+            "malformed": ("BuildKit version: unknown\n", False),
+            "lookalike": ("OtherBuildKit version: v0.33.1\n", False),
+            "ambiguous": ("BuildKit: v0.33.1\nBuildKit version: v0.34.0\n", False),
+        }
+        identities = {}
+        with tempfile.TemporaryDirectory(prefix="builder-identity-") as temp:
+            root = Path(temp)
+            docker = root / "docker"
+            docker.write_text(fake_docker)
+            docker.chmod(0o700)
+            for name, (inspection, expected_success) in cases.items():
+                with self.subTest(case=name):
+                    output, calls = root / "output", root / "calls"
+                    output.write_text("")
+                    calls.write_text("")
+                    env = {
+                        "PATH": str(root) + os.pathsep + os.defpath,
+                        "RESEARCH_SMOKE_BUILDER": "fixture-builder",
+                        "GITHUB_OUTPUT": str(output),
+                        "FAKE_DOCKER_LOG": str(calls),
+                        "FAKE_INSPECTION": "Name: fixture-builder\nDriver: docker-container\nNodes:\n" + inspection,
+                        "ImageOS": "ubuntu24",
+                        "ImageVersion": "fixture",
+                    }
+                    result = subprocess.run(["bash", "-eu", "-c", step["run"]], env=env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 0 if expected_success else 1, result.stderr)
+                    invocations = [json.loads(line) for line in calls.read_text().splitlines()]
+                    self.assertEqual(invocations[:2], [
+                        ["buildx", "create", "--driver", "docker-container", "--name", "fixture-builder"],
+                        ["buildx", "inspect", "fixture-builder", "--bootstrap"],
+                    ])
+                    if expected_success:
+                        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                        self.assertEqual(values["builder"], "fixture-builder")
+                        self.assertRegex(values["identity"], r"^[0-9a-f]{64}$")
+                        self.assertEqual(len(invocations), 5)
+                        identities[name] = values["identity"]
+                    else:
+                        self.assertEqual(output.read_text(), "")
+                        self.assertEqual(len(invocations), 2)
+                        self.assertIn("exactly one BuildKit version", result.stderr)
+        self.assertEqual(identities["legacy"], identities["current"])
+        self.assertNotEqual(identities["current"], identities["prerelease"])
+
     def test_smoke_cache_ignores_missing_export_and_promotes_only_valid_layout(self) -> None:
         source = (ROOT / "scripts/qa/research-worker-smoke.sh").read_text()
         functions = source.split("configure_service_build_cache() {", 1)[1].split('context_audit_tag="', 1)[0]

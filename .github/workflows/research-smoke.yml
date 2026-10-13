@@ -54,8 +54,12 @@ jobs:
           started=$SECONDS
           docker buildx create --driver docker-container --name "$RESEARCH_SMOKE_BUILDER"
           inspection="$(docker buildx inspect "$RESEARCH_SMOKE_BUILDER" --bootstrap)"
-          buildkit="$(sed -n 's/^[[:space:]]*BuildKit:[[:space:]]*//p' <<<"$inspection" | head -n 1)"
-          test -n "$buildkit"
+          mapfile -t buildkit_versions < <(sed -nE 's/^[[:space:]]*BuildKit( version)?:[[:space:]]*(v[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?)[[:space:]]*$/\2/p' <<<"$inspection")
+          if [ "${#buildkit_versions[@]}" -ne 1 ]; then
+            echo 'Private builder inspection must report exactly one BuildKit version' >&2
+            exit 1
+          fi
+          buildkit="${buildkit_versions[0]}"
           identity="$({ docker version --format '{{.Server.Version}}'; docker compose version --short; docker buildx version; printf '%s\n' "$buildkit"; } | sha256sum | awk '{print $1}')"
           image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
           printf 'builder=%s\nidentity=%s\nimage=%s\nseconds=%s\n' "$RESEARCH_SMOKE_BUILDER" "$identity" "$image" "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
