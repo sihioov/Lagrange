@@ -33,15 +33,15 @@ $foundOut = & "$root\scripts\validate-foundation.ps1" 2>&1
 if ($LASTEXITCODE -ne 0) { Fail 'validate-foundation' $foundOut }
 
 Step 'cargo fmt --all --check'
-cargo fmt --all --check 2>&1
+cargo fmt --all -- --check 2>&1
 if ($LASTEXITCODE -ne 0) { Fail 'cargo fmt --all --check' $null }
 
 Step 'cargo clippy --workspace --all-targets --all-features -- -D warnings'
-cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings 2>&1
 if ($LASTEXITCODE -ne 0) { Fail 'cargo clippy -D warnings' $null }
 
 Step 'cargo test --workspace'
-cargo test --workspace 2>&1
+cargo test --workspace --locked --no-fail-fast --features kis-client/test-support 2>&1
 if ($LASTEXITCODE -ne 0) { Fail 'cargo test --workspace' $null }
 
 Step 'npm run lint --workspaces --if-present'

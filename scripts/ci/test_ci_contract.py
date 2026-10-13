@@ -167,6 +167,10 @@ class WorkflowContractTests(unittest.TestCase):
         workspace_commands = [
             step.get("run", "") for step in ci["jobs"]["workspace-tests"]["steps"]
         ]
+        self.assertIn(
+            "cargo test -p api-server --test http_owner_equity_v2_chart --locked",
+            workspace_commands,
+        )
         self.assertIn("uv sync --project nt --locked", workspace_commands)
         self.assertLess(
             workspace_commands.index("uv sync --project nt --locked"),
@@ -254,13 +258,13 @@ class WorkflowContractTests(unittest.TestCase):
                 'bash "$root/scripts/validate-foundation.sh"',
                 "bash scripts/validate-foundation.sh",
             ),
-            ("cargo fmt --all --check", "cargo fmt --all -- --check"),
+            ("cargo fmt --all -- --check", "cargo fmt --all -- --check"),
             (
-                "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+                "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
                 "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
             ),
             (
-                "cargo test --workspace",
+                "cargo test --workspace --locked --no-fail-fast --features kis-client/test-support",
                 "cargo test --workspace --locked --no-fail-fast --features kis-client/test-support",
             ),
             (
@@ -302,6 +306,17 @@ class WorkflowContractTests(unittest.TestCase):
                 "scripts/verify-all.sh gate has no CI counterpart "
                 f"(missing from ci.yml): {ci_marker!r}",
             )
+
+        powershell_path = ROOT / "scripts" / "verify-all.ps1"
+        powershell_text = powershell_path.read_text(encoding="utf-8")
+        rust_commands = (
+            "cargo fmt --all -- --check",
+            "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+            "cargo test --workspace --locked --no-fail-fast --features kis-client/test-support",
+        )
+        for command in rust_commands:
+            self.assertIn(command, verify_all, f"Rust command missing from verify-all.sh: {command}")
+            self.assertIn(command, powershell_text, f"Rust command missing from verify-all.ps1: {command}")
 
     def test_smoke_runs_only_the_existing_functional_script(self) -> None:
         path, smoke = load_workflow("research-smoke.yml")

@@ -1,0 +1,424 @@
+{
+  "schema_version": 1,
+  "dispatcher_version": "1",
+  "common_patterns": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "package.json",
+    "package-lock.json",
+    "rust-toolchain.toml",
+    ".python-version",
+    ".cargo/**",
+    "nt/uv.lock",
+    ".github/workflows/**",
+    "scripts/check-pins.*",
+    "scripts/validate-foundation.*"
+  ],
+  "path_rules": [
+    { "patterns": ["docs/**", "*.md", "AGENTS.md"], "profiles": ["docs"] },
+    { "patterns": ["crates/**", "data-pipelines/collectors/**", "apps/api-server/auth/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**"], "profiles": ["rust"] },
+    { "patterns": ["apps/web/**", "package.json", "package-lock.json", "biome.json", "biome.jsonc"], "profiles": ["web"] },
+    { "patterns": ["nt/**", "scripts/ci/prepare_phase0.py", "tests/golden/phase0/**"], "profiles": ["python"] },
+    { "patterns": ["scripts/qa/**", "scripts/ci/**", "scripts/verify-all.*", ".github/workflows/**"], "profiles": ["qa"] },
+    { "patterns": ["deploy/db/**", "deploy/qa/qa-db.compose.yml", "migrations/**"], "profiles": ["db"] }
+  ],
+  "tools": {
+    "git": {
+      "version_argv": ["git", "--version"],
+      "version_regex": "^git version ([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)",
+      "minimum": "2.30"
+    },
+    "bash": {
+      "version_argv": ["bash", "--version"],
+      "version_regex": "^GNU bash, version ([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)"
+    },
+    "python3": {
+      "version_argv": ["python3", "--version"],
+      "version_regex": "^Python ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "minimum": "3.12",
+      "maximum_exclusive": "3.13"
+    },
+    "cargo": {
+      "version_argv": ["cargo", "+1.97.1", "--version"],
+      "version_regex": "^cargo ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "exact": "1.97.1",
+      "environment": { "RUSTUP_AUTO_INSTALL": "0" }
+    },
+    "rustc": {
+      "version_argv": ["rustc", "+1.97.1", "--version"],
+      "version_regex": "^rustc ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "exact": "1.97.1",
+      "environment": { "RUSTUP_AUTO_INSTALL": "0" }
+    },
+    "rustfmt": {
+      "version_argv": ["rustfmt", "+1.97.1", "--version"],
+      "version_regex": "^rustfmt ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "environment": { "RUSTUP_AUTO_INSTALL": "0" }
+    },
+    "node": {
+      "version_argv": ["node", "--version"],
+      "version_regex": "^v?([0-9]+)\\.",
+      "minimum": "24",
+      "maximum_exclusive": "25"
+    },
+    "npm": {
+      "version_argv": ["npm", "--version"],
+      "version_regex": "^([0-9]+\\.[0-9]+\\.[0-9]+)"
+    },
+    "uv": {
+      "version_argv": ["uv", "--version"],
+      "version_regex": "^uv ([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "exact": "0.12.1"
+    },
+    "docker": {
+      "version_argv": ["docker", "--version"],
+      "version_regex": "^Docker version ([0-9]+\\.[0-9]+\\.[0-9]+)"
+    },
+    "openssl": {
+      "version_argv": ["openssl", "version"],
+      "version_regex": "^OpenSSL ([0-9]+\\.[0-9]+\\.[0-9]+)"
+    },
+    "awk": { "presence_only": true },
+    "cat": { "presence_only": true },
+    "chmod": { "presence_only": true },
+    "cp": { "presence_only": true },
+    "date": { "presence_only": true },
+    "find": { "presence_only": true },
+    "grep": { "presence_only": true },
+    "head": { "presence_only": true },
+    "install": { "presence_only": true },
+    "mkdir": { "presence_only": true },
+    "mktemp": { "presence_only": true },
+    "rm": { "presence_only": true },
+    "sed": { "presence_only": true },
+    "sha256sum": { "presence_only": true },
+    "sort": { "presence_only": true },
+    "tail": { "presence_only": true },
+    "tr": { "presence_only": true },
+    "wc": { "presence_only": true }
+  },
+  "profiles": {
+    "docs": {
+      "description": "Documentation and repository-instruction checks.",
+      "fast": ["git-diff-check"],
+      "focused": ["foundation-static"],
+      "integration": []
+    },
+    "rust": {
+      "description": "Rust formatting, package/workspace checks, and hosted integration plan.",
+      "fast": ["cargo-format"],
+      "focused": ["cargo-clippy-workspace", "cargo-test-workspace"],
+      "integration": []
+    },
+    "web": {
+      "description": "Web package lint/typecheck, focused tests, build, and browser harness plan.",
+      "fast": ["web-lint", "web-typecheck"],
+      "focused": ["web-openapi", "web-test", "web-build", "web-e2e"],
+      "integration": []
+    },
+    "python": {
+      "description": "Python syntax, locked environment tests, and hosted integration plan.",
+      "fast": ["python-syntax"],
+      "focused": ["python-pytest", "python-backup-policy"],
+      "integration": []
+    },
+    "qa": {
+      "description": "QA/CI static checks and focused dispatcher/CI contract tests.",
+      "fast": ["git-diff-check", "qa-python-syntax", "qa-shell-syntax", "profiles-json"],
+      "focused": ["qa-unit-tests", "ci-contract-tests"],
+      "integration": []
+    },
+    "db": {
+      "description": "Disposable database static checks and self-test; runtime stays hosted/planned.",
+      "fast": ["db-static", "db-self-test"],
+      "focused": ["db-static", "db-self-test"],
+      "integration": []
+    },
+    "all": {
+      "description": "Union of the fast/focused profiles; integration prints every required hosted job.",
+      "fast": ["git-diff-check", "cargo-format", "web-lint", "web-typecheck", "python-syntax", "qa-python-syntax", "qa-shell-syntax", "profiles-json", "db-static", "db-self-test"],
+      "focused": ["foundation-static", "cargo-clippy-workspace", "cargo-test-workspace", "web-openapi", "web-test", "web-build", "web-e2e", "python-pytest", "python-backup-policy", "qa-unit-tests", "ci-contract-tests", "db-static", "db-self-test"],
+      "integration": []
+    }
+  },
+  "checks": {
+    "git-diff-check": {
+      "label": "Git whitespace check",
+      "argv": [
+        "python3",
+        "-B",
+        "-c",
+        "import subprocess,sys\nsep=sys.argv.index('--untracked',2)\nbase=sys.argv[1]\ntracked=sys.argv[2:sep]\nnew=sys.argv[sep+1:]\nrun=lambda args: subprocess.run(args,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)\nr=run(['git','diff','--check','--no-renames',base,'--',*tracked])\nsys.stdout.write(r.stdout)\nsys.stderr.write(r.stderr)\nif r.returncode: raise SystemExit(r.returncode)\nfor path in new:\n r=run(['git','diff','--no-index','--check','--','/dev/null',path])\n if r.returncode not in (0,1) or r.stdout or r.stderr:\n  sys.stdout.write(r.stdout)\n  sys.stderr.write(r.stderr)\n  raise SystemExit(1)",
+        "{base_commit}",
+        "{changed_paths}",
+        "--untracked",
+        "{untracked_paths}"
+      ],
+      "cwd": ".",
+      "inputs": ["@changed"],
+      "reuse": false,
+      "tools": ["git", "python3"],
+      "timeout_seconds": 30
+    },
+    "foundation-static": {
+      "label": "Documented workspace topology",
+      "argv": ["bash", "scripts/validate-foundation.sh"],
+      "cwd": ".",
+      "inputs": ["docs/**", "Cargo.toml", "crates/**/Cargo.toml", "apps/**/Cargo.toml", "tests/**/Cargo.toml", "data-pipelines/**/Cargo.toml"],
+      "reuse": false,
+      "tools": ["awk", "bash", "cat", "chmod", "cp", "find", "grep", "install", "mktemp", "openssl", "rm", "sed", "sha256sum", "sort", "tail", "tr", "wc"],
+      "timeout_seconds": 120
+    },
+    "cargo-format": {
+      "label": "Rust formatting",
+      "argv": ["cargo", "+1.97.1", "fmt", "--all", "--", "--check"],
+      "cwd": ".",
+      "inputs": ["**/*.rs", "**/Cargo.toml", "rust-toolchain.toml", ".rustfmt.toml", "rustfmt.toml", ".cargo/**"],
+      "reuse": true,
+      "reuse_kind": "formatter",
+      "tools": ["cargo", "rustfmt"],
+      "pin_manifest": true,
+      "timeout_seconds": 180
+    },
+    "cargo-clippy-workspace": {
+      "label": "Workspace Clippy",
+      "argv": ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"],
+      "package_argv": ["cargo", "clippy", "-p", "{package}", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"],
+      "cwd": ".",
+      "inputs": ["**/*.rs", "**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**"],
+      "reuse": false,
+      "tools": ["cargo", "rustc"],
+      "pin_manifest": true,
+      "timeout_seconds": 1800
+    },
+    "cargo-test-workspace": {
+      "label": "Workspace tests with CI test support",
+      "argv": ["cargo", "test", "--workspace", "--locked", "--no-fail-fast", "--features", "kis-client/test-support"],
+      "package_argv": ["cargo", "test", "-p", "{package}", "--locked"],
+      "cwd": ".",
+      "inputs": ["**/*.rs", "**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**"],
+      "reuse": false,
+      "tools": ["cargo", "rustc"],
+      "pin_manifest": true,
+      "required_env": ["DATABASE_URL", "LAGRANGE_QA_DB_PORT"],
+      "ports": [{ "name": "LAGRANGE_QA_DB_PORT", "default": 55438, "mode": "configured-endpoint" }],
+      "timeout_seconds": 3600
+    },
+    "web-lint": {
+      "label": "Web lint through the workspace command",
+      "argv": ["npm", "run", "lint", "--workspace", "@lagrange/web"],
+      "cwd": ".",
+      "inputs": ["apps/web/**", "apps/web/package.json", "package.json", "package-lock.json", "biome.json", "biome.jsonc"],
+      "reuse": false,
+      "tools": ["node", "npm"],
+      "required_paths": ["node_modules/@biomejs/biome/package.json"],
+      "prepare_if_missing": "npm ci",
+      "timeout_seconds": 900
+    },
+    "web-typecheck": {
+      "label": "Web TypeScript typecheck",
+      "argv": ["npm", "run", "typecheck", "--workspace", "@lagrange/web"],
+      "cwd": ".",
+      "inputs": ["apps/web/**", "apps/web/package.json", "package.json", "package-lock.json", "tsconfig.json"],
+      "reuse": false,
+      "tools": ["node", "npm"],
+      "required_paths": ["node_modules/typescript/package.json"],
+      "prepare_if_missing": "npm ci",
+      "timeout_seconds": 900
+    },
+    "web-openapi": {
+      "label": "API OpenAPI contract check from hosted Web job",
+      "argv": ["npm", "run", "openapi:check", "--workspace", "@lagrange/api-server"],
+      "cwd": ".",
+      "inputs": ["apps/api-server/**", "apps/web/**", "package.json", "package-lock.json", "apps/api-server/package.json"],
+      "reuse": false,
+      "tools": ["node", "npm"],
+      "required_paths": ["node_modules/openapi-typescript/package.json"],
+      "prepare_if_missing": "npm ci",
+      "timeout_seconds": 600
+    },
+    "web-test": {
+      "label": "Web Vitest suite",
+      "argv": ["npm", "test", "--workspace", "@lagrange/web"],
+      "cwd": ".",
+      "inputs": ["apps/web/**", "apps/web/package.json", "package.json", "package-lock.json"],
+      "reuse": false,
+      "tools": ["node", "npm"],
+      "required_paths": ["node_modules/vitest/package.json"],
+      "prepare_if_missing": "npm ci",
+      "timeout_seconds": 1200
+    },
+    "web-build": {
+      "label": "Web production build",
+      "argv": ["npm", "run", "build", "--workspace", "@lagrange/web"],
+      "cwd": ".",
+      "inputs": ["apps/web/**", "apps/web/package.json", "package.json", "package-lock.json", "tsconfig.json"],
+      "reuse": false,
+      "tools": ["node", "npm"],
+      "required_paths": ["node_modules/next/package.json"],
+      "prepare_if_missing": "npm ci",
+      "timeout_seconds": 2400
+    },
+    "web-e2e": {
+      "label": "Existing Web browser harness",
+      "argv": ["bash", "scripts/qa/candidate-web-e2e.sh"],
+      "cwd": ".",
+      "inputs": ["apps/web/**", "apps/api-server/**", "scripts/qa/candidate-web-e2e*", "package.json", "package-lock.json"],
+      "reuse": false,
+      "tools": ["bash", "node", "npm"],
+      "required_paths": ["node_modules/@playwright/test/package.json", "node_modules/next/package.json"],
+      "required_browsers": ["chromium"],
+      "prepare_if_missing": "npm ci; npx playwright install --with-deps chromium (run from apps/web)",
+      "ports": [
+        { "name": "CANDIDATE_E2E_API_PORT", "default": 38182 },
+        { "name": "CANDIDATE_E2E_WEB_PORT", "default": 33001 },
+        { "name": "market-stream-web", "default": 33043 }
+      ],
+      "timeout_seconds": 3600
+    },
+    "python-syntax": {
+      "label": "Python AST syntax",
+      "argv": ["python3", "-B", "-c", "import ast,pathlib,sys; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p) for p in sys.argv[1:]]", "{changed_python}"],
+      "cwd": ".",
+      "changed_patterns": ["nt/**", "scripts/ci/**", "scripts/qa/**", "tests/**/test_*.py"],
+      "inputs": ["nt/**/*.py", "scripts/ci/**/*.py", "scripts/qa/**/*.py", "tests/**/test_*.py", "nt/pyproject.toml", "nt/uv.lock", "pyproject.toml"],
+      "reuse": true,
+      "reuse_kind": "python-syntax",
+      "tools": ["python3"],
+      "pin_manifest": true,
+      "timeout_seconds": 120
+    },
+    "python-pytest": {
+      "label": "Existing locked Python test environment",
+      "argv": ["uv", "run", "--project", "nt", "--no-sync", "pytest", "-q"],
+      "cwd": ".",
+      "inputs": ["nt/**", "nt/pyproject.toml", "nt/uv.lock", "scripts/ci/prepare_phase0.py", "data/phase0/**"],
+      "reuse": false,
+      "tools": ["python3", "uv"],
+      "required_paths": ["nt/.venv/bin/python", "data/phase0"],
+      "python_packages": [{ "path": "nt/.venv/bin/python", "packages": { "pytest": "8", "pyarrow": "25", "nautilus_trader": "1.231.0" } }],
+      "prepare_by_path": { "nt/.venv/bin/python": "uv sync --project nt --locked", "data/phase0": "python scripts/ci/prepare_phase0.py --root data/phase0" },
+      "timeout_seconds": 3600
+    },
+    "python-backup-policy": {
+      "label": "Backup policy tests from Python hosted job",
+      "argv": ["bash", "scripts/backup/tests/test-validate-policy.sh"],
+      "cwd": ".",
+      "inputs": ["scripts/backup/**"],
+      "reuse": false,
+      "tools": ["bash"],
+      "timeout_seconds": 300
+    },
+    "qa-python-syntax": {
+      "label": "Changed QA/CI Python AST syntax",
+      "argv": ["python3", "-B", "-c", "import ast,pathlib,sys; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p) for p in sys.argv[1:]]", "{changed_python}"],
+      "cwd": ".",
+      "changed_patterns": ["scripts/qa/**", "scripts/ci/**"],
+      "inputs": ["scripts/qa/**/*.py", "scripts/ci/**/*.py", "scripts/qa/check-profiles.json"],
+      "reuse": true,
+      "reuse_kind": "python-syntax",
+      "tools": ["python3"],
+      "pin_manifest": true,
+      "timeout_seconds": 120
+    },
+    "qa-shell-syntax": {
+      "label": "Changed QA/CI shell syntax",
+      "argv": ["python3", "-B", "-c", "import subprocess,sys; [subprocess.run(['bash','-n',p],check=True) for p in sys.argv[1:]]", "{changed_shell}"],
+      "cwd": ".",
+      "changed_patterns": ["scripts/**/*.sh"],
+      "inputs": ["scripts/**/*.sh"],
+      "reuse": true,
+      "reuse_kind": "shell-syntax",
+      "tools": ["bash", "python3"],
+      "timeout_seconds": 120
+    },
+    "profiles-json": {
+      "label": "QA profile JSON syntax",
+      "argv": ["python3", "-B", "-m", "json.tool", "scripts/qa/check-profiles.json"],
+      "cwd": ".",
+      "inputs": ["scripts/qa/check-profiles.json"],
+      "reuse": false,
+      "tools": ["python3"],
+      "timeout_seconds": 30
+    },
+    "qa-unit-tests": {
+      "label": "dev-check regression tests",
+      "argv": ["python3", "-B", "-m", "unittest", "discover", "-s", "scripts/qa", "-p", "test_dev_check.py", "-v"],
+      "cwd": ".",
+      "inputs": ["scripts/qa/dev-check.py", "scripts/qa/check-profiles.json", "scripts/qa/test_dev_check.py"],
+      "reuse": false,
+      "tools": ["python3"],
+      "timeout_seconds": 600
+    },
+    "ci-contract-tests": {
+      "label": "Existing hosted CI contract tests",
+      "argv": ["python3", "-B", "-m", "unittest", "scripts.ci.test_ci_contract", "-v"],
+      "cwd": ".",
+      "inputs": ["scripts/ci/test_ci_contract.py", ".github/workflows/**", "scripts/verify-all.sh", "scripts/verify-all.ps1", "Cargo.toml", "Cargo.lock", "package.json", "package-lock.json"],
+      "reuse": false,
+      "tools": ["python3"],
+      "python_packages": [{ "path": "python3", "packages": { "PyYAML": "6.0.2" } }],
+      "prepare_if_missing": "Use the existing Python 3.12 environment with PyYAML 6.0.2; do not install during preflight.",
+      "timeout_seconds": 900
+    },
+    "db-static": {
+      "label": "Disposable database static contract",
+      "argv": ["bash", "deploy/db/integration-validation/static-check.sh"],
+      "cwd": ".",
+      "inputs": ["deploy/db/**", "deploy/qa/qa-db.compose.yml", "crates/**/tests/**"],
+      "reuse": false,
+      "tools": ["awk", "bash", "cat", "chmod", "cp", "find", "grep", "install", "mktemp", "openssl", "rm", "sed", "sha256sum", "sort", "tail", "tr", "wc"],
+      "timeout_seconds": 300
+    },
+    "db-self-test": {
+      "label": "Disposable database validator self-test (no Docker)",
+      "argv": ["bash", "deploy/db/integration-validation/validate.sh", "--self-test"],
+      "cwd": ".",
+      "inputs": ["deploy/db/integration-validation/**", "deploy/qa/qa-db.compose.yml"],
+      "reuse": false,
+      "tools": ["awk", "bash", "cat", "chmod", "cp", "find", "grep", "install", "mktemp", "openssl", "rm", "sed", "sha256sum", "sort", "tail", "tr", "wc"],
+      "timeout_seconds": 600
+    }
+  },
+  "integration_requirements": {
+    "docs": { "tools": ["git"], "paths": [], "required_env": [], "ports": [], "docker_daemon": false },
+    "rust": { "tools": ["cargo", "rustc", "rustfmt", "python3", "uv", "docker"], "paths": ["Cargo.lock", "nt/.venv/bin/python", "data/phase0"], "required_env": ["DATABASE_URL", "LAGRANGE_QA_DB_PORT"], "ports": [{ "name": "LAGRANGE_QA_DB_PORT", "default": 55438 }], "docker_daemon": true, "docker_compose": true, "python_packages": [{ "path": "nt/.venv/bin/python", "packages": { "pyarrow": "25", "nautilus_trader": "1.231.0" } }] },
+    "web": { "tools": ["node", "npm", "bash"], "paths": ["package-lock.json", "node_modules/@playwright/test/package.json", "node_modules/next/package.json"], "required_env": [], "ports": [{ "name": "CANDIDATE_E2E_API_PORT", "default": 38182 }, { "name": "CANDIDATE_E2E_WEB_PORT", "default": 33001 }, { "name": "market-stream-web", "default": 33043 }], "docker_daemon": false, "browsers": ["chromium"] },
+    "python": { "tools": ["python3", "uv", "bash"], "paths": ["nt/pyproject.toml", "nt/uv.lock", "data/phase0"], "required_env": [], "ports": [], "docker_daemon": false, "python_packages": [{ "path": "nt/.venv/bin/python", "packages": { "pytest": "8", "pyarrow": "25", "nautilus_trader": "1.231.0" } }] },
+    "qa": { "tools": ["git", "bash", "python3", "node"], "paths": ["scripts/check-pins.sh", "scripts/qa/check-profiles.json"], "required_env": [], "ports": [], "docker_daemon": false, "python_packages": [{ "path": "python3", "packages": { "PyYAML": "6.0.2" } }] },
+    "db": { "tools": ["awk", "bash", "cat", "chmod", "cp", "date", "docker", "find", "git", "grep", "install", "mktemp", "openssl", "rm", "sed", "sha256sum", "sort", "tail", "tr", "wc"], "paths": ["deploy/db/integration-validation/validate.sh", "deploy/qa/qa-db.compose.yml"], "required_env": [], "ports": [{ "name": "main-db-validation", "default": 55432 }, { "name": "test-db-validation", "default": 55433 }, { "name": "full-db-validation", "default": 55434 }], "docker_daemon": true, "docker_compose": true },
+    "all": { "tools": ["git", "bash", "python3", "cargo", "rustc", "rustfmt", "node", "npm", "uv", "docker", "openssl", "awk", "cat", "chmod", "cp", "date", "find", "grep", "install", "mktemp", "rm", "sed", "sha256sum", "sort", "tail", "tr", "wc"], "paths": ["Cargo.lock", "package-lock.json", "nt/pyproject.toml", "nt/uv.lock", "deploy/db/integration-validation/validate.sh", "deploy/qa/qa-db.compose.yml", "data/phase0"], "required_env": ["DATABASE_URL", "LAGRANGE_QA_DB_PORT"], "ports": [{ "name": "LAGRANGE_QA_DB_PORT", "default": 55438 }, { "name": "main-db-validation", "default": 55432 }, { "name": "test-db-validation", "default": 55433 }, { "name": "full-db-validation", "default": 55434 }, { "name": "CANDIDATE_E2E_API_PORT", "default": 38182 }, { "name": "CANDIDATE_E2E_WEB_PORT", "default": 33001 }, { "name": "market-stream-web", "default": 33043 }], "docker_daemon": true, "docker_compose": true, "browsers": ["chromium"], "python_packages": [{ "path": "nt/.venv/bin/python", "packages": { "pytest": "8", "pyarrow": "25", "nautilus_trader": "1.231.0" } }, { "path": "python3", "packages": { "PyYAML": "6.0.2" } }] }
+  },
+  "integration_plans": {
+    "docs": [
+      { "job": "required", "commands": ["Run the existing hosted CI jobs and required aggregation on the confirmed commit."], "prerequisites": ["Push or otherwise dispatch the confirmed commit to the existing hosted workflow."] }
+    ],
+    "rust": [
+      { "job": "format", "commands": ["cargo fmt --all -- --check"], "prerequisites": ["Hosted Ubuntu runner with the pinned Rust toolchain."] },
+      { "job": "clippy", "commands": ["cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"], "prerequisites": ["Hosted Ubuntu runner with the pinned Rust toolchain and locked dependencies."] },
+      { "job": "workspace-tests", "commands": ["cargo test -p api-server --test http_owner_equity_v2_chart --locked", "cargo test --workspace --locked --no-fail-fast --features kis-client/test-support"], "prerequisites": ["Hosted Ubuntu runner; disposable PostgreSQL at 127.0.0.1:55438; Python 3.12, pyarrow 25.0.0, uv 0.12.1; locked NT environment and prepared Phase0 data."] }
+    ],
+    "web": [
+      { "job": "web", "commands": ["npm ci", "npx playwright install --with-deps chromium (cwd apps/web)", "npm run openapi:check --workspace @lagrange/api-server", "npm run lint --workspace @lagrange/web", "npm run typecheck --workspace @lagrange/web", "npm test --workspace @lagrange/web", "npm run build --workspace @lagrange/web", "bash scripts/qa/candidate-web-e2e.sh"], "prerequisites": ["Hosted Ubuntu runner; Node 24; locked npm dependencies; Playwright Chromium and its system dependencies."] }
+    ],
+    "python": [
+      { "job": "python-tests", "commands": ["python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0 uv==0.12.1", "uv sync --project nt --locked", "python scripts/ci/prepare_phase0.py --root data/phase0", "uv run --project nt pytest -q", "bash scripts/backup/tests/test-validate-policy.sh"], "prerequisites": ["Hosted Ubuntu runner; Python 3.12; locked NT environment; Phase0 fixture preparation."] }
+    ],
+    "qa": [
+      { "job": "policy", "commands": ["bash scripts/check-pins.sh", "check Cargo.lock and package-lock.json", "bash scripts/validate-foundation.sh", "bash deploy/db/integration-validation/static-check.sh", "bash deploy/db/integration-validation/validate.sh --self-test", "bash deploy/compose/candidate-static-check.sh", "bash deploy/compose/backtest-static-check.sh", "bash deploy/compose/code-commit-static-check.sh", "bash deploy/db/migrate-static-check.sh", "bash deploy/nginx/auth-route-static-check.sh", "bash deploy/secrets/runtime-static-check.sh", "bash deploy/systemd/paper-runner-static-check.sh", "bash deploy/systemd/tailscale-tls-renewal-static-check.sh", "bash scripts/ops/static-check.sh", "bash scripts/ops/production-ops-static-check.sh", "bash scripts/ops/build-production-images-static-check.sh", "python -m unittest scripts.ci.test_ci_contract -v"], "prerequisites": ["Hosted Ubuntu runner; Node 24; Python 3.12; PyYAML 6.0.2; repository checkout."] }
+    ],
+    "db": [
+      { "job": "postgres-integration-validation", "commands": ["bash deploy/db/integration-validation/validate.sh --evidence-dir \"$RUNNER_TEMP/lagrange-pg-validation\"", "Print sanitized evidence.json and failure logs per the existing workflow."], "prerequisites": ["Hosted Ubuntu runner with Docker Compose; ports 55432, 55433, and 55434 available on loopback; private RUNNER_TEMP evidence directory."] }
+    ],
+    "all": [
+      { "job": "policy", "commands": ["bash scripts/check-pins.sh", "check Cargo.lock and package-lock.json", "bash scripts/validate-foundation.sh", "bash deploy/db/integration-validation/static-check.sh", "bash deploy/db/integration-validation/validate.sh --self-test", "bash deploy/compose/candidate-static-check.sh", "bash deploy/compose/backtest-static-check.sh", "bash deploy/compose/code-commit-static-check.sh", "bash deploy/db/migrate-static-check.sh", "bash deploy/nginx/auth-route-static-check.sh", "bash deploy/secrets/runtime-static-check.sh", "bash deploy/systemd/paper-runner-static-check.sh", "bash deploy/systemd/tailscale-tls-renewal-static-check.sh", "bash scripts/ops/static-check.sh", "bash scripts/ops/production-ops-static-check.sh", "bash scripts/ops/build-production-images-static-check.sh", "python -m unittest scripts.ci.test_ci_contract -v"], "prerequisites": ["Hosted Ubuntu runner; Node 24; Python 3.12; PyYAML 6.0.2; repository checkout."] },
+      { "job": "format", "commands": ["cargo fmt --all -- --check"], "prerequisites": ["Hosted Ubuntu runner with the pinned Rust toolchain."] },
+      { "job": "clippy", "commands": ["cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"], "prerequisites": ["Hosted Ubuntu runner with the pinned Rust toolchain and locked dependencies."] },
+      { "job": "web", "commands": ["npm ci", "npx playwright install --with-deps chromium (cwd apps/web)", "npm run openapi:check --workspace @lagrange/api-server", "npm run lint --workspace @lagrange/web", "npm run typecheck --workspace @lagrange/web", "npm test --workspace @lagrange/web", "npm run build --workspace @lagrange/web", "bash scripts/qa/candidate-web-e2e.sh"], "prerequisites": ["Hosted Ubuntu runner; Node 24; locked npm dependencies; Playwright Chromium and system dependencies."] },
+      { "job": "workspace-tests", "commands": ["docker compose -f deploy/qa/qa-db.compose.yml up -d --wait", "cargo test -p api-server --test http_owner_equity_v2_chart --locked", "cargo test --workspace --locked --no-fail-fast --features kis-client/test-support", "docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans (always)"], "prerequisites": ["Hosted Ubuntu runner; Docker Compose; loopback port 55438; Python 3.12, pyarrow 25.0.0, uv 0.12.1; locked NT environment and prepared Phase0 data."] },
+      { "job": "python-tests", "commands": ["python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0 uv==0.12.1", "uv sync --project nt --locked", "python scripts/ci/prepare_phase0.py --root data/phase0", "uv run --project nt pytest -q", "bash scripts/backup/tests/test-validate-policy.sh"], "prerequisites": ["Hosted Ubuntu runner; Python 3.12; locked NT environment; Phase0 fixture preparation."] },
+      { "job": "postgres-integration-validation", "commands": ["bash deploy/db/integration-validation/validate.sh --evidence-dir \"$RUNNER_TEMP/lagrange-pg-validation\"", "Print sanitized evidence.json and failure logs per the existing workflow."], "prerequisites": ["Hosted Ubuntu runner with Docker Compose; ports 55432, 55433, and 55434 available on loopback; private RUNNER_TEMP evidence directory."] },
+      { "job": "required", "commands": ["Require policy, format, clippy, web, workspace-tests, python-tests, and postgres-integration-validation to all succeed."], "prerequisites": ["Every required job above completed successfully on the same confirmed commit."] }
+    ]
+  }
+}

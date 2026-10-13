@@ -6,7 +6,7 @@
   Owner-adopted source for current priorities, task IDs, completion criteria, and progress.
   `docs/STATUS.md` preserves dated historical evidence; its older "current" claims are not
   the current execution plan.
-- Identify the relevant roadmap task ID before implementation. Update its checkbox/status,
+- For product roadmap work, identify the relevant roadmap task ID before implementation. Update its checkbox/status,
   blockers, top-level next action, and change history in the same change when work advances,
   completes, changes scope, or reopens. Record post-commit deployment/observation evidence in
   a follow-up documentation commit without modifying an installed immutable release.
@@ -269,3 +269,29 @@ folded edges are listed with evidence in the component file's header.
   sources (no network rendering service; diagram content stays local):
   `docker run --rm -v "$PWD/docs/diagrams:/data" plantuml/plantuml -tpng /data/component_architecture.puml /data/runtime_deployment.puml`
 - If a change does not alter the structure, leave the diagrams untouched.
+
+## Development procedure
+
+- For this repository's development-efficiency tooling plan, track WP-1 through WP-3 in
+  [`docs/superpowers/plans/2026-10-13-development-efficiency.md`](docs/superpowers/plans/2026-10-13-development-efficiency.md).
+  This plan tracks development tooling separately from the product roadmap; it does not change
+  product priorities or acceptance criteria.
+- The assigned worker owns implementation and its focused verification. Fix an in-scope missing
+  import, cwd/argument mistake, or regression directly and resume the affected check; do not add a
+  separate specification, validation worker, or approval stage for a small repair. The coordinator
+  handles genuinely small one- or two-file integration fixes. Use delegation for bounded independent
+  implementation or large-output testing, with non-overlapping write scopes. Follow global model
+  selection and escalation guidance by reference; do not duplicate it here.
+- Re-plan only the affected branch after the same cause fails twice, the contract is contradictory,
+  or the work needs scope expansion. Continue independent work while that branch is reconsidered.
+- Use the staged workflow and path-to-check mapping in
+  [`docs/runbooks/development-verification.md`](docs/runbooks/development-verification.md). The
+  `scripts/qa/dev-check.py` CLI provides plan, preflight, and staged checks with private receipts.
+  Fast checks do only the promised quick checks.
+- Integration runs use the existing hosted jobs and their established harnesses. Neither the QA
+  quick CLI nor `scripts/verify-all.{sh,ps1}` is the complete CI contract. Preserve every required
+  hosted check and the `required` aggregation. Run Biome through the Web package workspace so its
+  cwd is `apps/web` (for example, `npm run lint --workspace @lagrange/web` from repository root).
+- Receipt reuse is limited to eligible deterministic checks with complete matching inputs. Dynamic
+  environment/runtime checks and final CI always run; cache hits never replace validation. Phase 2
+  resource and cache work is handed off to WP-3; no runtime or performance result is implied here.

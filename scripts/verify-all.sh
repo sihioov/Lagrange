@@ -19,13 +19,13 @@ step=$((step+1)); echo; echo "[$step] validate-foundation (documented workspace 
 bash "$root/scripts/validate-foundation.sh" || { echo "FAILED: validate-foundation"; exit 1; }
 
 step=$((step+1)); echo; echo "[$step] cargo fmt --all --check"
-cargo fmt --all --check || { echo "FAILED: cargo fmt --all --check"; exit 1; }
+cargo fmt --all -- --check || { echo "FAILED: cargo fmt --all --check"; exit 1; }
 
 step=$((step+1)); echo; echo "[$step] cargo clippy --workspace --all-targets --all-features -- -D warnings"
-cargo clippy --workspace --all-targets --all-features -- -D warnings || { echo "FAILED: cargo clippy -D warnings"; exit 1; }
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings || { echo "FAILED: cargo clippy -D warnings"; exit 1; }
 
 step=$((step+1)); echo; echo "[$step] cargo test --workspace"
-cargo test --workspace || { echo "FAILED: cargo test --workspace"; exit 1; }
+cargo test --workspace --locked --no-fail-fast --features kis-client/test-support || { echo "FAILED: cargo test --workspace"; exit 1; }
 
 step=$((step+1)); echo; echo "[$step] npm run lint --workspaces --if-present"
 npm run lint --workspaces --if-present || { echo "FAILED: npm lint"; exit 1; }
