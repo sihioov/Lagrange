@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2-01 일일 실행 경로 진단. R2는 TODO이며 이번 작업에서 착수하지 않음 |
+| 다음 단계 | R2-01 일일 실행 경로 진단. [R2 Paseo 실행 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) 작성 완료; 10개 패키지 및 R2-01~09 실행은 TODO |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -22,6 +22,8 @@
 실제 image ID·manifest hash·정산·복귀의 [최종 인수](reviews/2026-10-13-r1-c3-images.md)를 확보해 R1을 완료했다.
 최신 root·서비스·자원 관측, C3 재검증과 기존 main 실행의 최종 결과는
 [R1 재개 기록](reviews/2026-10-13-r1-resumption.md)에 있다.
+R2는 계획만 작성했다. 현황·계약 대조 뒤 수정 범위를 확정하고 동일 후보 검증·운영 적용과
+실제 Owner 사용·연속 3거래일 관찰로 인수한다. worker 실행·운영 진단·새 코드/서비스 변경은 미착수다.
 아래 날짜별 운영 관측은 과거 기록이며 이번 재관측과 구분한다.
 
 ## 날짜별 구현·운영 기록 보존
