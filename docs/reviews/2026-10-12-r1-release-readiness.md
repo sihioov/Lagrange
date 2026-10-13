@@ -1,6 +1,6 @@
 # R1 C3 이미지 빌드 인계
 
-상태: **준비 완료, 실제 빌드는 외부 전제에 BLOCKED.** 2026-10-13 KST.
+상태: **DOING — 승인된 유지보수의 실제 C3 순차 빌드 시작.** 2026-10-13 KST.
 검증 후보는 `862fa954c16d28a617271fe6f613d34226e2d558`(C3)다.
 [동일 커밋 CI·기능 smoke](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)는
 통과했다. 기존 image-only 범위의 구체적인 인계를 완료했으며 실제 C3 이미지 ID와
@@ -21,6 +21,11 @@ output/state 부모 신뢰와 C3 manifest/state 부재를 확인했다. root로 
 공식 plan/preflight도 통과했다. 새 health 관측은 research exited2·Owner V2 running으로
 ordinary/drained 조건을 충족하지 못한다. 따라서 아래 root 실패는 과거 기록이며 **현재 남은
 차단은 빌드 health**다. [sudo 적용 후 근거](2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소)를 따른다.
+
+**후속 실행 승인·시작:** Owner가 기존 Owner V2의 정산·정상 정지, 최대 12시간 C3 빌드와
+동일 컨테이너 재개를 승인했다. 15:24 KST에 exit0·작업 정산·fresh attestation을 확인하고
+공식 빌드를 시작했다. 아래 초기 차단과 미실행 명령은 과거 준비로 보존하며 실제 실행의
+shared deadline·독립 복귀 감시·unit 속성은 [유지보수 기록](2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드)을 따른다.
 
 ## 고정한 입력과 완료된 준비
 
@@ -114,7 +119,7 @@ OOM을 확인한 뒤 다음 batch로 간다. OOM이나 서비스 종료가 생�
 
 완료하려면 공식 도구로 12개 이미지의 실제 local ID·OCI revision·saved-image bytes와
 최종 V2 manifest를 대조해야 한다. registry나 multi-platform image 증거가 아니다.
-현재 이 task가 생성·검증한 C3 이미지 ID·saved-byte receipt·manifest는 **없다**.
+초기 준비 당시 C3 이미지 ID·saved-byte receipt·manifest는 **없었다**. 후속 실제 순차 빌드의 결과는 [유지보수 기록](2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드)에 구분해 추가한다.
 이미지 생성은 release 설치·Compose up·운영 migration·provider 활성화를 허용하지 않는다.
 
 ## Migration·backup·rollback 인계 범위

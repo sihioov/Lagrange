@@ -1,6 +1,6 @@
 # R1 same-commit hosted acceptance
 
-Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke passed on `862fa954c16d28a617271fe6f613d34226e2d558`. R1-09 remains BLOCKED on build-health prerequisites. Root authentication and protected output/state parent checks passed after the Owner's sudo setup on 2026-10-13.**
+Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke passed on `862fa954c16d28a617271fe6f613d34226e2d558`. R1-09 is DOING under the Owner-approved maximum twelve-hour maintenance: original Owner V2 drained with exit0 and settled work, fresh C3 attestation accepted, official sequential image build started. Actual twelve-image/manifest and same-container restoration evidence remain required.**
 Local validation and hosted validation are recorded separately. No production
 rollout or R1 completion is claimed.
 
@@ -55,6 +55,8 @@ still showed research exited2 and Owner V2 running, so neither ordinary health
 nor the existing drained-reader alternative admitted a build. No images were
 built. [The follow-up evidence](2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소)
 supersedes the earlier root blocker without changing C3 or R1 completion criteria.
+
+The later [authorized maintenance](2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드) supersedes the preceding build-health blocker. C3 remains pinned; image preparation and runtime deployment are separate.
 
 ## Candidate C — 79da119e6e8b52be424ec8132ac2a52f65726471
 

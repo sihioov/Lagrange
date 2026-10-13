@@ -2,7 +2,7 @@
 
 2026-10-13 KST. 대상 작업은 **R1-09**이며 검증·빌드 후보는
 `862fa954c16d28a617271fe6f613d34226e2d558`(C3)로 유지한다.
-실제 이미지·immutable manifest 근거가 없어 R1-09와 전체 R1은 **BLOCKED**다.
+후속 Owner 승인으로 R1-09는 **DOING**이다. 실제 이미지·immutable manifest와 기존 Owner V2 복귀 검증 전에는 전체 R1을 완료하지 않는다.
 R2와 개발 속도 개선 5개 항목은 착수하지 않았다.
 
 ## 인계와 최신 main 대조
@@ -229,3 +229,52 @@ Owner sudo 적용 후 receipt는 위 private 경로의 `root-enabled/`에 별도
 | `activation-observation.json` | `8eef005972c41afc3cd59f877925e2bdac63ed449a97d542258631c97e1cdf22` |
 | `gate-assessment.json` | `a60d606cd093bac5cf0b9292b04017d681ec8bef22721cdc0a24e81e0041e168` |
 | `owner-runtime-metadata.json` | `9515fc67ea48e4e53f0d350fdd7785605a9ea7f7c087fb3d6e43eafed3c328ed` |
+
+## 승인된 Owner V2 유지보수와 C3 빌드
+
+Owner는 작업 정산 확인 뒤 기존 Owner V2 한 컨테이너의 정상 정지, 최대 12시간의
+C3 이미지 준비, 완료·중단 후 동일 컨테이너 재개를 제안한 질문에 “진행해”라고 승인했다.
+앞 절의 미승인 상태는 이 후속 결정으로 대체한다. 승인 대상은 기존 `fce9b90` 런타임의
+한시적 정지·복귀이며 C3 운영 배포·migration·research 시작·새 데이터 API 범위로 확대하지 않는다.
+
+2026-10-13 05:42:39 및 05:43:48 UTC의 반복 읽기 전용 조회에서 Owner V2 job의
+queued/running 및 running attempt는 모두 0이었다. 선택된 stream의 유효 producer lease,
+유효 browser consumer, pending subscription operation도 모두 0이었다. 역사 job 실패 5개와
+attempt 실패 7개는 보존하며 이번 유지보수의 실패로 해석하지 않는다. 조회는 repeatable-read
+READ ONLY와 operator-wide RLS 가시성 guard를 확인했고 실제 정지 전후 다시 실행한다.
+
+05:55:06 UTC 실행 전 확인에서 detached C3·inert env hash가 일치하고 root 공식
+plan/preflight가 통과했다. protected output/state/유지보수 디렉터리와 예정 unit은 아직 없었다.
+MemAvailable 4,829,756 KiB, SwapFree 364 KiB, PSI some/full avg10=0.00이며 같은 C3
+resource-policy의 stop reason은 없었다. cargo/rustc/rustdoc 및 최근 30분 kernel OOM 기록은
+없었고 Docker/containerd·나머지 serving health, KIS timer 비활성, Compose one-off 부재를 확인했다.
+
+운영 보조 스크립트는 root 전용 디렉터리에 helper 세 파일과 함께 설치하도록 준비했다.
+21개의 격리 fault test가 통과했으며 실제 lifecycle과 이미지 완료를 뜻하지 않는다.
+독립 제어 리뷰와 fresh admission 후 systemd의 pre-start가 SIGTERM으로 정상 정지하고,
+공식 builder가 순차 빌드를 수행하며, post-stop이 같은 container ID·image ID의 Owner V2를
+재개한다. 독립 리뷰에서 post-stop 종료 뒤 늦은 정지·compiler 잔존 시 복귀 책임이 끊길 수 있는
+문제를 발견해 별도 root recovery unit을 추가했다. 시작 20분·빌드 10시간·종료 20분·
+복귀 20분은 660분의 명목 phase 합계이며 hard wall-clock 보장으로 주장하지 않는다.
+독립 recovery와 drain은 recovery unit 시작 전 기록한 같은 12시간 window를 소비한다.
+stop은 그 window의 첫 1시간 안에서만 허용하며 arming 직전 recovery active를 확인한다.
+recovery는 intent가 없어도 원래 deadline 전에는 퇴장하지 않고, 필요하면
+10시간 30분에 해당 빌드 unit만 중단해 복귀 시간을 확보한다. 늦은 정지를 직접 관측한
+기록도 restore child 호출 전에 보존해 child timeout 뒤 복귀 완료를 다시 판단할 수 있다. Docker stop의
+강제 kill 대체 동작은 사용하지 않으며 실패·복귀 미완료는 별도 실패로 기록한다.
+attestation은 시작 기준 11시간까지만 유효하고 실행 도중 갱신하지 않는다.
+
+**실제 실행 시작:** 최종 제어 SHA `5d3e83b5…a11c79`와 recovery SHA `12b47417…04840`에
+대한 독립 소스 리뷰가 차단 사항 없음으로 끝났고, 같은 bytes의 격리 테스트는 각각
+24개·16개가 별도 실행에서 통과했다. 이전 설치본은 보존하고 미실행 제어 파일만 교체했다.
+06:22:43 UTC fresh root plan/preflight·입력 hash·자원·서비스 검사가 다시 통과했다.
+
+독립 recovery unit을 먼저 활성화하고 startup receipt를 확인한 뒤 공식 build unit을 시작했다.
+shared window는 **06:23:55.967950~18:23:55.967950 UTC**이며 attestation 만료는
+17:23:55.967950 UTC다. Owner V2는 **06:24:01.999737018 UTC exit 0**으로 정상 정지했고
+정지 전후 running job/attempt, 정지 후 유효 producer lease·epoch·pending subscription은 모두
+0이었다. research의 기존 stopped 상태와 나머지 serving identity는 유지됐다.
+06:24:02.382965 UTC의 fresh attestation 이후 실제 C3 공식 빌드가 시작됐다.
+서비스 한 개씩 Cargo jobs2·Compose parallel1, Nice10·idle I/O를 실제 unit 속성과 대조했다.
+현재 완료된 이미지·최종 manifest·Owner V2 복귀는 후속 검증 대상이다.
+private 영수증은 `target/r1-resume-20261013/maintenance/`에 보존한다.

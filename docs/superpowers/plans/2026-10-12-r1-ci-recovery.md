@@ -8,10 +8,12 @@ Native subagents: prohibited for worker packages
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
 - main 통합: 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 후 진행 문서 갱신. [통합 근거](../../reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13); 검증·빌드 대상은 C3 유지.
 - 상위 작업: [개발 로드맵 R1-01~R1-09](../../ROADMAP.md#5-r1--개발배포-기준-복구)
-- 상태: **C3 `862fa954c16d28a617271fe6f613d34226e2d558`의 CI 8개 job·별도 functional smoke 수용, WP-1~WP-6 완료.** [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 후보별 실패·최종 결과·기존 skip·관측 한계를 보존했다. WP-7/R1-09는 빌드 health 전제에 차단돼 있으며 Owner sudo 적용 후 root 인증·보호 경로 확인은 완료했다. [C3 이미지 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md)에 정확한 소스·명령·해소 조건을 준비했다. 실제 이미지·manifest와 전체 R1 완료는 아직 없다.
+- 상태: **C3 `862fa954c16d28a617271fe6f613d34226e2d558`의 CI 8개 job·별도 functional smoke 수용, WP-1~WP-6 완료.** [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 후보별 실패·최종 결과·기존 skip·관측 한계를 보존했다. WP-7/R1-09는 승인된 최대 12시간 유지보수에서 기존 Owner V2 정상 정지·정산과 fresh C3 attestation 후 공식 순차 빌드로 DOING이다. [C3 이미지 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md)에 정확한 소스·명령·해소 조건을 준비했다. 실제 12개 이미지·manifest의 최종 검증과 전체 R1 완료는 아직 남아 있다.
 - 재개: 2026-10-13 `/data/worktrees/3puw275b/excited-dolphin`에서 최신 main `b0a2579`와 인계 일치를 확인했다. [현재 전제·C3 재검증](../../reviews/2026-10-13-r1-resumption.md)은 기존 `orange-dugong` 아래 detached C3를 그대로 사용한다. 11:38 KST에도 root·health 차단은 남아 있다.
 - 기존 main 실행: `b0a2579`의 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 성공을 재실행 없이 회수했다. C3의 WP-6 근거와 분리하며 WP-7의 실제 이미지·manifest 조건은 그대로다.
 - 후속 root 전제 해소: 2026-10-13 14:14~14:16 KST, 비대화형 UID 0·활성 sudo 만료 timer·보호 경로와 C3 manifest/state 부재 확인, root plan/preflight 통과. fresh research exited2·Owner V2 running으로 health 차단은 남아 있다. [근거](../../reviews/2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소).
+
+- 후속 운영 승인: 기존 Owner V2만 정상 정지하고 완료·중단 뒤 같은 컨테이너를 재개한다. root·health admission 후 2026-10-13 15:24 KST 실제 C3 빌드를 시작했으며 [유지보수 기록](../../reviews/2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드)에 deadline·복귀 감시·검증을 남긴다. 운영 배포·migration·research 시작·새 provider 범위와 R2는 착수하지 않는다.
 
 ## Goal and boundaries
 
