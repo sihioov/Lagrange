@@ -42,6 +42,7 @@ use uuid::Uuid;
 
 const CODE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const ENTITLEMENT_REFERENCE: &str = "krx-2026-01";
+const WP5_SCHEDULE_ENTITLEMENT_REFERENCE: &str = "wp5-owner-equity-scheduler-date-window";
 const TARGET_SESSIONS: i32 = 130;
 const MINIMUM_SESSIONS: i32 = 121;
 
@@ -218,6 +219,28 @@ fn pins() -> OwnerEquityMutationPins {
         entitlement_reference: ENTITLEMENT_REFERENCE.to_owned(),
         entitlement_sha256: format!("sha256:{}", "d".repeat(64)),
         requested_through: TradingDate::parse("2026-08-31").expect("fixture date"),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScheduleFixtureDateWindow {
+    eligible: NaiveDate,
+    prior_close: NaiveDate,
+    initial_session: NaiveDate,
+    initial_candidate_start: NaiveDate,
+}
+
+fn schedule_fixture_date_window(eligible: NaiveDate) -> ScheduleFixtureDateWindow {
+    let prior_close = eligible.pred_opt().expect("prior fixture close");
+    let initial_session = prior_close.pred_opt().expect("initial fixture session");
+    let initial_candidate_start = initial_session
+        .checked_sub_signed(chrono::Duration::days(120))
+        .expect("initial candidate coverage start");
+    ScheduleFixtureDateWindow {
+        eligible,
+        prior_close,
+        initial_session,
+        initial_candidate_start,
     }
 }
 
@@ -430,6 +453,64 @@ async fn seed_schedule_calendar(harness: &Harness, session_date: NaiveDate, sess
                      pg_catalog.clock_timestamp())"
         ))
         .await;
+}
+
+async fn seed_wp5_schedule_entitlement(harness: &Harness, window: ScheduleFixtureDateWindow) {
+    let effective_from = window.initial_candidate_start;
+    let effective_until = window.eligible;
+    let sql = format!(
+        "INSERT INTO data_entitlements \
+         (id, contract_document_sha256, contract_reference, status, covered_datasets, \
+          covered_uses, effective_from, effective_until, managed_by) \
+         VALUES (gen_random_uuid(), repeat('d',64), \
+                 '{WP5_SCHEDULE_ENTITLEMENT_REFERENCE}', 'ACTIVE', \
+                 '[\"krx_eod_bars\"]'::jsonb, \
+                 '[\"dataset\",\"factor\",\"recommendation\",\"backtest\",\"report\",\"benchmark\",\"paper_view\",\"payload\",\"download\"]'::jsonb, \
+                 DATE '{effective_from}', DATE '{effective_until}', \
+                 (SELECT id FROM users WHERE email='owner@lagrange.test'))"
+    );
+    harness.seed_shared(&sql).await;
+}
+
+#[test]
+fn schedule_fixture_entitlement_window_covers_year_boundary_candidates() {
+    let cases = [
+        (
+            NaiveDate::from_ymd_opt(2026, 12, 31).expect("2026 boundary"),
+            NaiveDate::from_ymd_opt(2026, 12, 30).expect("2026 prior close"),
+            NaiveDate::from_ymd_opt(2026, 12, 29).expect("2026 initial session"),
+            NaiveDate::from_ymd_opt(2026, 8, 31).expect("2026 initial coverage"),
+        ),
+        (
+            NaiveDate::from_ymd_opt(2027, 1, 1).expect("2027 boundary"),
+            NaiveDate::from_ymd_opt(2026, 12, 31).expect("2027 prior close"),
+            NaiveDate::from_ymd_opt(2026, 12, 30).expect("2027 initial session"),
+            NaiveDate::from_ymd_opt(2026, 9, 1).expect("2027 initial coverage"),
+        ),
+    ];
+
+    for (eligible, expected_prior_close, expected_initial_session, expected_start) in cases {
+        let window = schedule_fixture_date_window(eligible);
+        assert_eq!(window.prior_close, expected_prior_close);
+        assert_eq!(window.initial_session, expected_initial_session);
+        assert_eq!(window.initial_candidate_start, expected_start);
+        let current_candidate_start = window
+            .eligible
+            .checked_sub_signed(chrono::Duration::days(120))
+            .expect("current candidate coverage start");
+        for candidate_date in [
+            window.initial_candidate_start,
+            window.initial_session,
+            window.prior_close,
+            current_candidate_start,
+            window.eligible,
+        ] {
+            assert!(
+                window.initial_candidate_start <= candidate_date
+                    && candidate_date <= window.eligible
+            );
+        }
+    }
 }
 
 async fn table_count(pool: &sqlx::PgPool, table: &str, owner: Uuid) -> i64 {
@@ -1094,10 +1175,16 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
         .fetch_one(&worker_pool)
         .await
         .expect("database clock");
-    let eligible = eligible_schedule_date(database_now.with_timezone(&seoul))
-        .expect("prior eligible date exists");
-    let prior_close = eligible.pred_opt().expect("prior fixture close");
-    let initial_session = prior_close.pred_opt().expect("initial fixture session");
+    let date_window = schedule_fixture_date_window(
+        eligible_schedule_date(database_now.with_timezone(&seoul))
+            .expect("prior eligible date exists"),
+    );
+    let ScheduleFixtureDateWindow {
+        eligible,
+        prior_close,
+        initial_session,
+        ..
+    } = date_window;
     let at_close = |date: NaiveDate| {
         seoul
             .from_local_datetime(&date.and_hms_opt(16, 30, 0).expect("close time"))
@@ -1105,7 +1192,11 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
             .expect("fixed-offset date")
     };
 
+    seed_wp5_schedule_entitlement(&harness, date_window).await;
+
     let mut mutation_pins = pins();
+    mutation_pins.entitlement_reference = WP5_SCHEDULE_ENTITLEMENT_REFERENCE.to_owned();
+    mutation_pins.entitlement_sha256 = format!("sha256:{}", "d".repeat(64));
     mutation_pins.requested_through =
         TradingDate::parse(&initial_session.to_string()).expect("initial session pin");
     let add = repo
@@ -1124,6 +1215,17 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
         .expect("claim initial membership")
         .expect("initial membership queued");
     assert_eq!(initial_claim.job.id, add.job_id);
+    let initial_payload: OwnerEquityJobPayload =
+        serde_json::from_value(initial_claim.job.payload_json.clone())
+            .expect("initial membership payload");
+    assert_eq!(
+        initial_payload.entitlement_reference,
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE
+    );
+    assert_eq!(
+        initial_payload.entitlement_sha256,
+        format!("sha256:{}", "d".repeat(64))
+    );
     assert_eq!(
         process_owner_equity_claim(&worker_pool, &queue, &initial_claim, &adapter)
             .await
@@ -1133,7 +1235,7 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
 
     let schedule_pins = OwnerEquitySchedulePins::new(
         CODE_COMMIT.to_owned(),
-        ENTITLEMENT_REFERENCE.to_owned(),
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE.to_owned(),
         format!("sha256:{}", "d".repeat(64)),
     )
     .expect("valid scheduler pins");
@@ -1191,7 +1293,10 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
         prior_close.to_string()
     );
     assert_eq!(older_payload.code_commit, CODE_COMMIT);
-    assert_eq!(older_payload.entitlement_reference, ENTITLEMENT_REFERENCE);
+    assert_eq!(
+        older_payload.entitlement_reference,
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE
+    );
     assert_eq!(
         older_payload.entitlement_sha256,
         format!("sha256:{}", "d".repeat(64))
@@ -1234,7 +1339,10 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
         eligible.to_string()
     );
     assert_eq!(current_payload.code_commit, CODE_COMMIT);
-    assert_eq!(current_payload.entitlement_reference, ENTITLEMENT_REFERENCE);
+    assert_eq!(
+        current_payload.entitlement_reference,
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE
+    );
     assert_eq!(
         current_payload.entitlement_sha256,
         format!("sha256:{}", "d".repeat(64))

@@ -4,7 +4,7 @@
 - 시작 시각: 2026-10-13 13:47 UTC / 22:47 KST.
 - 기준 workspace: `/data/worktrees/3puw275b/excited-dolphin`, branch `excited-dolphin`.
 - 적용 계획: [R2 일일 연구 베타](../superpowers/plans/2026-10-13-r2-daily-research-beta.md).
-- 상태: **R2 DOING; WP-1A/2 오프라인 진단 수용, G1 부분 결정. DB 진단과 U2는 미완료.** 실행 요청은 계획의 기존 승인·새 결정 구분을 유지한다.
+- 상태: **R2 DOING; DB 집계·복구 범위 검토 수용, F1/F2 초기 CI 성공·테스트 보정 완료·새 CI 대기. U2 채택 대기.** 실행 요청은 계획의 기존 승인·새 결정 구분을 유지한다.
 
 ## G0와 기준선
 
@@ -28,11 +28,12 @@
 | --- | --- | --- | --- |
 | WP-1A | `11a8f223-6f2d-4adb-89ab-86dbc917d2fd` / codex gpt-6-luna medium | 현재 호스트의 고정 metadata 수집, DB 조회문/runner 준비 | 부분 수용; 아래 G1과 각 보고서의 검증 한계 유지 |
 | WP-2 | `4213016a-e26d-4e09-bbc3-e7764797795c` / codex gpt-6.1-sol high | 기존 입력·calendar·추천·upgrade/복구 계약의 오프라인 대조 | 부분 수용; 아래 G1과 각 보고서의 검증 한계 유지 |
-| WP-1B | `4213016a-e26d-4e09-bbc3-e7764797795c` / codex gpt-6.1-sol high | operator READ ONLY SQL·runner 오프라인 구체화 | DOING; 실행 전 exact bytes 검토 |
-| WP-3/F1 | `8a7c638a-bf04-4ea0-892e-ae51c158b089` / codex gpt-6-luna max | daily→backfill 선택 날짜 보존·fake-host 회귀 | DOING |
-| WP-5/F2 | `7b793a02-47b0-4db5-bfa2-506185b2d67e` / codex gpt-6-luna max | Owner 동일 eligible day 재평가·격리 회귀 작성 | DOING; Rust/DB 실행은 자원 직렬화 후 |
+| WP-1B~F | `4213016a-e26d-4e09-bbc3-e7764797795c` / codex gpt-6.1-sol high; 운영 실행은 코디네이터·WP-1 worker | operator READ ONLY SQL·runner, 현재 집계 및 복구 날짜 검토 | 1C~E 실패 보존; 1F 성공·오프라인 검토 수용, 실제 복구는 미실행 |
+| WP-3/F1 | `8a7c638a-bf04-4ea0-892e-ae51c158b089` / codex gpt-6-luna max | daily→backfill 선택 날짜 보존·fake-host 회귀 | 초기 CI 성공; P2 격리 보정·hostile 환경 self-test 수용, 새 CI 대기 |
+| WP-5/F2 | `7b793a02-47b0-4db5-bfa2-506185b2d67e` / codex gpt-6-luna max | Owner 동일 eligible day 재평가·격리 회귀 작성 | 초기 cadence·동시 DB 회귀 CI 성공; 연도 경계 fixture 보정 소스 수용, 새 CI 대기 |
 | WP-4 | 미배정 | 새로운 ETF 입력·자동 추천 | BLOCKED; U2 결정안 대기 |
-| WP-6~10 | 미배정 | 후보 검증·리뷰·이미지·운영·관찰 | TODO |
+| WP-6/7 부분 | WP-1 worker / Luna medium; WP-2 worker / Sol high | `3ee453f` 기존 CI 회수와 F1/F2 독립 리뷰 | 초기 CI·리뷰 회수, P2 보정 검토 수용; 새 커밋 CI 및 최종 C_R2 인수는 별도 |
+| WP-8~10 | 미배정 | 이미지·운영·관찰 | TODO |
 
 ## WP-1A 읽기 범위
 
@@ -136,3 +137,85 @@ F1 worker의 실제 idle/pending0, baseline 재현 및 변경 self-test PASS를 
 먼저 같은 SHA의 기존 실행을 조회하고 중복 dispatch하지 않는다. 이 CI는 hosted disposable DB를
 사용한다. U2 구현 전의 부분 후보이므로 C_R2 최종 고정·출시 인수나 C3 대체를 뜻하지 않는다.
 Sol/high의 독립 소스 리뷰도 병행하며 finding이 있으면 수정·영향 검증을 갱신한다.
+
+### 부분 후보 푸시·CI와 리뷰 후속
+
+검증용 `3ee453fe38a54ae92cc098daf61b0eaf56f833cb`를 `origin/excited-dolphin`에
+푸시했다. 같은 SHA의 CI 목록은 비어 있었고 `workflow_dispatch`를 한 번 수행했다.
+[CI 38415230019](https://github.com/sihioov/Lagrange/actions/runs/38415230019)는
+14:39:26 UTC에 시작했고 14:56:44 UTC terminal success를 회수했다. main은 변경하지 않았다.
+기존 WP-1 worker에 이 실행만 읽고 최종 checkout·job/step·회귀 결과를 회수하도록 위임했다.
+
+[독립 리뷰](2026-10-13-r2-f1-f2-review.md)의 실제 idle/pending0·exact hashes를 확인했다.
+생산 코드의 구체적 finding은 없었으나 테스트에 P2 두 건이 있었다. fake-host 환경 상속을
+차단하고, 동적 DB 날짜와 일치하는 전용 QA entitlement를 넣도록 기존 두 구현 worker에 위임했다.
+공통 production rights나 실행 guard는 수정하지 않는다. F1 mock은 임시 디렉터리의 정확한
+ancestor **directory**만 합성 ownership/mode를 허용하고 file metadata는 fixture 내부로 제한한다.
+이는 실제 `/tmp` mode `1777`과 root-only guard 사이의 격리 테스트 전제를 명시한 것이다.
+두 후속 worker의 실제 idle/pending0과 전체 diff·hash를 확인했다. F1의 hostile 환경·
+baseline 재현·daily self-test는 통과했다. F2 전용 entitlement의 소스 보정은 검토했지만
+Rust·실제 역할 DB 실행은 여전히 별도 검증 대상이다. [P2 수용 판단](2026-10-13-r2-f1-f2-review.md#coordinator-disposition--fixture-corrections).
+
+CI worker의 실제 idle/pending0과 [최종 보고서](2026-10-13-r2-f1-f2-ci.md)를 회수하고
+run metadata를 재확인했다. 실행 job 7개와 required가 모두 성공했고, workspace 결과 행 합계는
+2,891 pass/0 fail/기존 ignored6, 별도 chart6 pass다. F2 late-calendar actual-role 회귀와
+cadence 5개도 `ok`였다. PostgreSQL은 APPROVED/59 migrations/skip guard ENFORCED다.
+이 성공은 `3ee453f`에 한정하며 이후 테스트 fixture 보정 bytes는 별도 커밋·CI로 검증한다.
+
+### DB 진단 실패 보존과 현재 기준일
+
+WP-1C는 typed rejection, WP-1D는 `DATABASE_PROCESS`/exit3에서 실패했다.
+현재 link와 postgres ID·image·이름 검사는 통과했다. 코디네이터는 원문 stderr를 저장하지 않고
+SQLSTATE/줄 번호만 추출하도록 진단을 보완했으며, bare SQLSTATE 형식의 누락은 합성 child로 재현했다.
+WP-1E에서 `42601`/line402를 확인하고 SQL의 indexes JSON 집계 닫는 괄호 하나 누락을 찾았다.
+SQL·contract·runner의 hash를 함께 고친 WP-1F는 14:51:08.639884 UTC에 exit0으로 끝났다.
+과거 실패·검토본은 각각 별도 private 경로에 보존했다. 상세 근거는
+[DB 기록](2026-10-13-r2-db-baseline.md)과 `target/r2-daily-beta/wp-1f/activation-review.json`이다.
+
+- 161개 schema 전제, 59개 migration 성공·source checksum 일치, pending/mismatch 0 확인.
+  7개 index의 존재/valid/ready/table/unique만 확인하며 full predicate 동등성을 주장하지 않는다.
+- daily가 쓰는 credentialed EOD 기록은 9개 날짜, 마지막 8월 31일이다. 최신 정확한 ETF11
+  발행은 8월 28일까지 8개 날짜이며 두 날짜 기준을 동일하게 취급하지 않는다.
+- 역사 추천 성공 2건의 최대 `as_of`는 8월 19일, 현재 v3 pin 일치 건수는 0이다.
+  이 결과만으로 과거 입력이 부정하거나 손상됐다고 판단하지 않는다.
+- Owner V2 active/READY 1개와 admission·신호 snapshot의 DB 연결 기준일은 10월 6일이다.
+  가장 최근 검증된 eligible calendar는 10월 7일; 10월 13일 calendar는 부재다.
+  조회 시 queued/running job·running attempt는 0이며 미래 정지/정산 보장은 아니다.
+- 공식 `--emit-sessions`를 읽기 전용으로 실행해 기존 artifact/manifest hash를 대조했다.
+  8월 18일~10월 13일의 37세션과 daily EOD 9개 날짜의 차이는 **28세션**이다.
+  provider 요청·state 갱신 없이 선택 목록만 검증했다. 실제 복구·요청 예산은 후속 검토 대상이다.
+
+전체 결과는 fixed-field JSON 검증·READ ONLY/rollback marker·전후 runtime identity 검사를 통과했다.
+물리 Raw/Curated bytes, Owner 로그인 화면, 실제 복구·배포 증거를 대신하지 않는다.
+U2는 계속 Owner 채택 대기이며 누락 수집·새 migration·운영 적용은 실행하지 않았다.
+
+### 알림 감시 갱신
+
+기존 heartbeat `0b20083f`를 삭제하고 네 owned worker ID를 포함하는 `a136717b`로 교체했다.
+2분 간격/최대60회/2026-10-13 16:50:32 UTC 만료이며 모든 follow-up은 `notifyOnFinish=true`다.
+운영 권한이나 sudo 만료를 연장하지 않았다. 결과 회수 후 실제 idle/pending0을 확인해 정리한다.
+
+### DB 집계·복구 범위 검토 수용 — 2026-10-14 KST
+
+Sol/high worker의 실제 idle·pending0과 [DB 기록](2026-10-13-r2-db-baseline.md),
+[복구 준비안](2026-10-13-r2-catch-up-readiness.md)을 회수했다. 코디네이터가 원본 집계의
+고정 필드·날짜 차이·source 근거를 대조하고 offline `verify-evidence.py`를 재실행해 PASS를 확인했다.
+수용 범위는 10월 13일의 READ ONLY snapshot과 그에 대한 오프라인 분석이다.
+28개 수집 후보와 8월 31일의 기존 EOD 발행 복구 후보를 분리하고, 기존 range recovery가
+전체 eligible manifest와 누적 generation에 미치는 파일·DB 효과를 운영 검토 대상으로 남겼다.
+
+조건부 2,577 logical GET / 10,308 dispatch 계산은 한 process의 소스 상한일 뿐 실행 예산이 아니다.
+특히 calendar의 shared retry 상한 4는 저장소 정책의 daily당 `chk-holiday` 최대 1회 호출을
+늘리는 승인이 아니다. 실제 실행은 그 정책과 token·process·전체 시간 상한을 함께 만족해야 한다.
+새 10월 14일 범위, 보호 bytes·복구 지점·정산·설치 전제는 실행 직전에 별도로 확정한다.
+U2를 임의 채택하거나 운영 실행으로 확대하지 않았다. 테스트 보정 두 파일과 관련 문서를
+하나의 후속 커밋으로 고정한 뒤 같은 SHA의 CI를 확인한다.
+
+### 후속 커밋 전 remote main 차이 — 2026-10-14 KST
+
+`git ls-remote`와 `git fetch origin main`으로 remote main이
+`1286e732c098eff307c9537c3cedffc58ec9f930`임을 확인했다. `b0a2579`와의 차이는 별도
+개발 속도 개선 작업 15개 파일이며 CI/workflow·검증 harness·collector 테스트·지침을 포함한다.
+`excited-dolphin`과의 merge-base는 여전히 `b0a2579`다. 이번 작업에서 제외된 개발 속도
+개선 5가지를 수행하거나 병합하지 않고 R2 수정과 fixture를 현재 브랜치의 workflow로 검증한다.
+최종 main 통합 시에는 이 차이와 검증 대상이 달라지는 점을 별도 처리해야 한다.

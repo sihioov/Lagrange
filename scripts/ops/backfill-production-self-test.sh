@@ -2,6 +2,8 @@
 # Fake-host integration checks for daily -> backfill session selection.
 # No real Docker, provider, production env, calendar, or protected host state is used.
 set -euo pipefail
+PATH=/usr/bin:/bin
+export PATH
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
@@ -13,12 +15,31 @@ fi
 [ "$#" -eq 0 ] || { echo 'BACKFILL_SELF_TEST: no positional arguments are accepted' >&2; exit 2; }
 
 fail() { echo "BACKFILL_SELF_TEST: $*" >&2; exit 1; }
-test_root=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-backfill-self-test.XXXXXX")
+test_root=$(/usr/bin/mktemp -d /tmp/lagrange-backfill-self-test.XXXXXX)
+case "$test_root" in
+  /tmp/lagrange-backfill-self-test.??????) ;;
+  *) fail 'mktemp returned a path outside the fixed self-test root pattern' ;;
+esac
+[ -d "$test_root" ] && [ "$(readlink -e -- "$test_root")" = "$test_root" ] ||
+  fail 'mktemp root is not a canonical real directory'
+readonly test_root
 cleanup() {
   if [ "${BACKFILL_SELF_TEST_KEEP:-0}" = 1 ]; then
     echo "BACKFILL_SELF_TEST_FIXTURE: $test_root" >&2
   else
-    rm -rf -- "$test_root"
+    case "$test_root" in
+      /tmp/lagrange-backfill-self-test.??????)
+        [ -d "$test_root" ] && [ "$(readlink -e -- "$test_root")" = "$test_root" ] || {
+          echo 'BACKFILL_SELF_TEST: refusing cleanup outside the canonical mktemp root' >&2
+          return 1
+        }
+        /usr/bin/rm -rf -- "$test_root"
+        ;;
+      *)
+        echo 'BACKFILL_SELF_TEST: refusing cleanup outside the fixed mktemp pattern' >&2
+        return 1
+        ;;
+    esac
   fi
 }
 trap cleanup EXIT
@@ -38,7 +59,8 @@ for source in \
   target="$repo/$source"
   mkdir -p "$(dirname "$target")"
   if [ "$mode" = baseline ]; then
-    git -C "$root" show "cea7baa6298402db79d655140ad4c199f57f8697:$source" >"$target"
+    /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C \
+      /usr/bin/git -C "$root" show "cea7baa6298402db79d655140ad4c199f57f8697:$source" >"$target"
   else
     cp -- "$root/$source" "$target"
   fi
@@ -108,11 +130,15 @@ printf '0\n'
 SH
 cat >"$fake_bin/chown" <<'SH'
 #!/usr/bin/env bash
-[ "$#" -eq 3 ] && [ "$2" = -- ] || exit 90
-case "$3" in
-  "${FIXTURE_ROOT:?}"/*) ;;
+[ "$#" -eq 3 ] && [ "$1" = root:root ] && [ "$2" = -- ] || exit 90
+fixture_root=$(readlink -e -- "${FIXTURE_ROOT:?}") || exit 91
+[ "$fixture_root" = "$FIXTURE_ROOT" ] || exit 91
+resolved=$(readlink -e -- "$3") || exit 91
+case "$resolved" in
+  "$fixture_root"|"$fixture_root"/*) ;;
   *) exit 91 ;;
 esac
+[ ! -L "$3" ] && { [ -d "$resolved" ] || [ -f "$resolved" ]; } || exit 91
 exit 0
 SH
 cat >"$fake_bin/stat" <<'SH'
@@ -120,30 +146,68 @@ cat >"$fake_bin/stat" <<'SH'
 set -euo pipefail
 format=
 path=
+stat_mode=${1-}
 if [ "${1-}" = -Lc ]; then
   format=${2-}
   [ "${3-}" = -- ] || exit 90
   path=${4-}
 elif [ "${1-}" = -c ]; then
   format=${2-}
-  path=${3-}
+  if [ "${3-}" = -- ]; then path=${4-}; else path=${3-}; fi
 else
-  exec /usr/bin/stat "$@"
+  exit 90
+fi
+fixture_root=$(readlink -e -- "${FIXTURE_ROOT:?}") || exit 91
+[ "$fixture_root" = "$FIXTURE_ROOT" ] || exit 91
+resolved=$(readlink -e -- "$path") || exit 91
+is_fixture_ancestor() {
+  local candidate=$1 allowed
+  while IFS= read -r allowed; do
+    [ "$candidate" = "$allowed" ] && return 0
+  done <<<"${FIXTURE_ANCESTOR_ALLOWLIST:?}"
+  return 1
+}
+in_fixture=0
+case "$resolved" in
+  "$fixture_root"|"$fixture_root"/*) in_fixture=1 ;;
+esac
+ancestor_allowlisted=0
+if [ -d "$path" ] && [ "$resolved" = "$path" ] && is_fixture_ancestor "$resolved"; then
+  ancestor_allowlisted=1
 fi
 case "$format" in
   '%d:%i:%u:%g:%a:%F')
-    resolved=$(readlink -f -- "$path")
+    [ "$in_fixture" -eq 1 ] && [ -f "$resolved" ] || exit 91
     inode=$(/usr/bin/stat -Lc '%d:%i' -- "$resolved")
     printf '%s:0:0:600:regular file\n' "$inode"
     ;;
   '%u:%g:%a:%F')
-    if [ -d "$path" ]; then printf '0:0:700:directory\n'; else printf '0:0:600:regular file\n'; fi
+    [ "$in_fixture" -eq 1 ] || exit 91
+    if [ -d "$resolved" ]; then
+      printf '0:0:700:directory\n'
+    elif [ -f "$resolved" ]; then
+      if [ -s "$resolved" ]; then printf '0:0:600:regular file\n'; else printf '0:0:600:regular empty file\n'; fi
+    else
+      exit 91
+    fi
     ;;
   '%u:%g:%a')
-    if [ -d "$path" ]; then printf '0:0:700\n'; else printf '0:0:600\n'; fi
+    if [ "$in_fixture" -eq 1 ]; then
+      if [ -d "$resolved" ]; then printf '0:0:700\n'; elif [ -f "$resolved" ]; then printf '0:0:600\n'; else exit 91; fi
+    elif [ "$ancestor_allowlisted" -eq 1 ] && [ "$stat_mode" = -Lc ] && [ "${3-}" = -- ]; then
+      # Deliberate test-only model for the daily ancestor guard. This is
+      # synthetic metadata for canonical directories in this fixture's exact
+      # ancestor chain, not evidence about their real host ownership or mode.
+      printf '0:0:755\n'
+    else
+      exit 91
+    fi
     ;;
-  '%a') /usr/bin/stat -c '%a' -- "$path" ;;
-  *) exit 92 ;;
+  '%a')
+    [ "$in_fixture" -eq 1 ] && [ -f "$resolved" ] || exit 91
+    /usr/bin/stat -c '%a' -- "$resolved"
+    ;;
+  *) exit 90 ;;
 esac
 SH
 cat >"$fake_bin/docker" <<'SH'
@@ -210,7 +274,20 @@ chmod 0755 "$fake_bin/date" "$fake_bin/id" "$fake_bin/chown" "$fake_bin/stat" "$
 
 new_case() {
   CASE_DIR="$test_root/$1"
-  mkdir -p "$CASE_DIR/state" "$CASE_DIR/calendar"
+  mkdir -p "$CASE_DIR/state" "$CASE_DIR/calendar" "$CASE_DIR/tmp" "$CASE_DIR/home"
+  FIXTURE_ROOT=$(readlink -e -- "$CASE_DIR") || fail 'cannot resolve fixture root'
+  [ "$FIXTURE_ROOT" = "$CASE_DIR" ] && [ -d "$FIXTURE_ROOT" ] ||
+    fail 'fixture root is not a canonical real directory'
+  FIXTURE_ANCESTOR_ALLOWLIST=
+  ancestor=$FIXTURE_ROOT
+  while :; do
+    [ -d "$ancestor" ] && [ "$(readlink -e -- "$ancestor")" = "$ancestor" ] ||
+      fail "fixture ancestor is not a canonical real directory: $ancestor"
+    FIXTURE_ANCESTOR_ALLOWLIST+="$ancestor"$'\n'
+    [ "$ancestor" = / ] && break
+    ancestor=${ancestor%/*}
+    [ -n "$ancestor" ] || ancestor=/
+  done
   printf 'LAGRANGE_DATA_DIR=%s/data\nLAGRANGE_CODE_COMMIT=0123456789abcdef0123456789abcdef01234567\nRESEARCH_ENTITLEMENT_REFERENCE=fixture-entitlement\nPOSTGRES_DB=lagrange\n' \
     "$CASE_DIR" >"$CASE_DIR/production.env"
   chmod 0600 "$CASE_DIR/production.env"
@@ -228,11 +305,10 @@ new_case() {
   FIXTURE_DOCKER_LOG="$CASE_DIR/docker.log"
   FIXTURE_VALIDATOR_LOG="$CASE_DIR/validator.log"
   FIXTURE_CLOCK_LOG="$CASE_DIR/clock.log"
-  FIXTURE_ROOT="$CASE_DIR"
   export FIXTURE_TODAY FIXTURE_NOW_HMS FIXTURE_EPOCH FIXTURE_CALENDAR_DATES
   export FIXTURE_WORKER_MODE FIXTURE_DB_SNAPSHOT FIXTURE_WORKER_ARG_LOG
-  export FIXTURE_DOCKER_LOG FIXTURE_VALIDATOR_LOG FIXTURE_CLOCK_LOG FIXTURE_ROOT
-  export PATH="$fake_bin:/usr/bin:/bin"
+  export FIXTURE_DOCKER_LOG FIXTURE_VALIDATOR_LOG FIXTURE_CLOCK_LOG
+  export FIXTURE_ROOT FIXTURE_ANCESTOR_ALLOWLIST
 }
 
 write_db() {
@@ -247,21 +323,34 @@ write_db() {
   } >"$FIXTURE_DB_SNAPSHOT"
 }
 
-invoke_daily() {
-  local fixture=$1 run_mode=$2
-  set +e
-  env \
+run_fixture() {
+  local fixture=$1 backfill_state=$2
+  shift 2
+  /usr/bin/env -i \
     PATH="$fake_bin:/usr/bin:/bin" \
+    HOME="$fixture/home" LC_ALL=C \
+    TMPDIR="$fixture/tmp" \
     FIXTURE_TODAY="$FIXTURE_TODAY" FIXTURE_NOW_HMS="$FIXTURE_NOW_HMS" FIXTURE_EPOCH="$FIXTURE_EPOCH" \
     FIXTURE_CALENDAR_DATES="$FIXTURE_CALENDAR_DATES" FIXTURE_WORKER_MODE="$FIXTURE_WORKER_MODE" \
     FIXTURE_DB_SNAPSHOT="$FIXTURE_DB_SNAPSHOT" FIXTURE_WORKER_ARG_LOG="$FIXTURE_WORKER_ARG_LOG" \
     FIXTURE_DOCKER_LOG="$FIXTURE_DOCKER_LOG" FIXTURE_VALIDATOR_LOG="$FIXTURE_VALIDATOR_LOG" \
     FIXTURE_CLOCK_LOG="$FIXTURE_CLOCK_LOG" FIXTURE_ROOT="$FIXTURE_ROOT" \
+    FIXTURE_ANCESTOR_ALLOWLIST="$FIXTURE_ANCESTOR_ALLOWLIST" \
     LAGRANGE_ENV_FILE="$fixture/production.env" \
     LAGRANGE_XKRX_CALENDAR_DIR="$fixture/calendar" \
+    LAGRANGE_BACKFILL_STATE="$backfill_state" \
     KIS_DAILY_STATE_DIR="$fixture/state" \
+    KIS_DAILY_STATE_FILE="$fixture/state/kis-daily-${FIXTURE_TODAY}.tsv" \
+    KIS_DAILY_EARLIEST_TODAY_KST=16:30 \
     KIS_DAILY_LOCK_FILE="$fixture/state/kis-daily.lock" \
     BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
+    "$@"
+}
+
+invoke_daily() {
+  local fixture=$1 run_mode=$2
+  set +e
+  run_fixture "$fixture" "$fixture/state/kis-daily-${FIXTURE_TODAY}.tsv" \
     bash "$ops/kis-daily-production.sh" "--$run_mode" \
     >"$fixture/daily.out" 2>"$fixture/daily.err"
   LAST_RC=$?
@@ -272,17 +361,7 @@ invoke_backfill() {
   local fixture=$1 state_path=$2
   shift 2
   set +e
-  env \
-    PATH="$fake_bin:/usr/bin:/bin" \
-    FIXTURE_TODAY="$FIXTURE_TODAY" FIXTURE_NOW_HMS="$FIXTURE_NOW_HMS" FIXTURE_EPOCH="$FIXTURE_EPOCH" \
-    FIXTURE_CALENDAR_DATES="$FIXTURE_CALENDAR_DATES" FIXTURE_WORKER_MODE="$FIXTURE_WORKER_MODE" \
-    FIXTURE_DB_SNAPSHOT="$FIXTURE_DB_SNAPSHOT" FIXTURE_WORKER_ARG_LOG="$FIXTURE_WORKER_ARG_LOG" \
-    FIXTURE_DOCKER_LOG="$FIXTURE_DOCKER_LOG" FIXTURE_VALIDATOR_LOG="$FIXTURE_VALIDATOR_LOG" \
-    FIXTURE_CLOCK_LOG="$FIXTURE_CLOCK_LOG" FIXTURE_ROOT="$FIXTURE_ROOT" \
-    LAGRANGE_ENV_FILE="$fixture/production.env" \
-    LAGRANGE_XKRX_CALENDAR_DIR="$fixture/calendar" \
-    LAGRANGE_BACKFILL_STATE="$state_path" \
-    BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
+  run_fixture "$fixture" "$state_path" \
     bash "$ops/backfill-production.sh" "$@" \
     >"$fixture/backfill.out" 2>"$fixture/backfill.err"
   LAST_RC=$?
@@ -293,17 +372,7 @@ invoke_backfill_filter() {
   local fixture=$1 state_path=$2 csv=$3 start=$4 end=$5
   shift 5
   set +e
-  env \
-    PATH="$fake_bin:/usr/bin:/bin" \
-    FIXTURE_TODAY="$FIXTURE_TODAY" FIXTURE_NOW_HMS="$FIXTURE_NOW_HMS" FIXTURE_EPOCH="$FIXTURE_EPOCH" \
-    FIXTURE_CALENDAR_DATES="$FIXTURE_CALENDAR_DATES" FIXTURE_WORKER_MODE="$FIXTURE_WORKER_MODE" \
-    FIXTURE_DB_SNAPSHOT="$FIXTURE_DB_SNAPSHOT" FIXTURE_WORKER_ARG_LOG="$FIXTURE_WORKER_ARG_LOG" \
-    FIXTURE_DOCKER_LOG="$FIXTURE_DOCKER_LOG" FIXTURE_VALIDATOR_LOG="$FIXTURE_VALIDATOR_LOG" \
-    FIXTURE_CLOCK_LOG="$FIXTURE_CLOCK_LOG" FIXTURE_ROOT="$FIXTURE_ROOT" \
-    LAGRANGE_ENV_FILE="$fixture/production.env" \
-    LAGRANGE_XKRX_CALENDAR_DIR="$fixture/calendar" \
-    LAGRANGE_BACKFILL_STATE="$state_path" \
-    BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS \
+  run_fixture "$fixture" "$state_path" \
     bash "$ops/backfill-production.sh" --start "$start" --end "$end" \
       --session-dates "$csv" "$@" \
     >"$fixture/backfill.out" 2>"$fixture/backfill.err"
@@ -321,6 +390,36 @@ expect_worker_log() {
 
 expect_no_worker() {
   [ ! -s "$1" ] || fail "worker was called unexpectedly: $(<"$1")"
+}
+
+assert_fake_rejects_external_file() {
+  local fixture=$1 external_file=$2 external_dir stat_rc chown_rc dir_stat_rc
+  external_dir=$(dirname -- "$external_file")
+  set +e
+  /usr/bin/env -i \
+    PATH="$fake_bin:/usr/bin:/bin" FIXTURE_ROOT="$FIXTURE_ROOT" \
+    FIXTURE_ANCESTOR_ALLOWLIST="$FIXTURE_ANCESTOR_ALLOWLIST" \
+    "$fake_bin/stat" -Lc '%u:%g:%a:%F' -- "$external_file" \
+    >"$fixture/external-stat.out" 2>"$fixture/external-stat.err"
+  stat_rc=$?
+  /usr/bin/env -i \
+    PATH="$fake_bin:/usr/bin:/bin" FIXTURE_ROOT="$FIXTURE_ROOT" \
+    FIXTURE_ANCESTOR_ALLOWLIST="$FIXTURE_ANCESTOR_ALLOWLIST" \
+    "$fake_bin/stat" -Lc '%u:%g:%a' -- "$external_dir" \
+    >"$fixture/external-dir-stat.out" 2>"$fixture/external-dir-stat.err"
+  dir_stat_rc=$?
+  /usr/bin/env -i \
+    PATH="$fake_bin:/usr/bin:/bin" FIXTURE_ROOT="$FIXTURE_ROOT" \
+    "$fake_bin/chown" root:root -- "$external_file" \
+    >"$fixture/external-chown.out" 2>"$fixture/external-chown.err"
+  chown_rc=$?
+  set -e
+  [ "$stat_rc" -ne 0 ] && [ ! -s "$fixture/external-stat.out" ] ||
+    fail 'fake stat certified an external test-owned file'
+  [ "$dir_stat_rc" -ne 0 ] && [ ! -s "$fixture/external-dir-stat.out" ] ||
+    fail 'fake stat certified a sibling directory outside the active fixture'
+  [ "$chown_rc" -ne 0 ] && [ ! -s "$fixture/external-chown.out" ] ||
+    fail 'fake chown certified an external test-owned file'
 }
 
 assert_no_execute_effects() {
@@ -348,6 +447,22 @@ fi
 # Check and execute must hand the same already-filtered sequence across the real
 # backfill date selection path. Today must become eligible exactly at 16:30 KST.
 new_case preclose
+sentinel_dir="$test_root/outside-case"
+mkdir -p "$sentinel_dir"
+hostile_state_sentinel="$sentinel_dir/daily-state-sentinel.tsv"
+sentinel_before="$test_root/daily-state-sentinel.before"
+printf 'test-owned external state sentinel\nbyte-two\n' >"$hostile_state_sentinel"
+cp -- "$hostile_state_sentinel" "$sentinel_before"
+assert_fake_rejects_external_file "$CASE_DIR" "$hostile_state_sentinel"
+had_inherited_state_file=${KIS_DAILY_STATE_FILE+x}
+inherited_state_file=${KIS_DAILY_STATE_FILE-}
+had_inherited_cutoff=${KIS_DAILY_EARLIEST_TODAY_KST+x}
+inherited_cutoff=${KIS_DAILY_EARLIEST_TODAY_KST-}
+export KIS_DAILY_STATE_FILE="$hostile_state_sentinel"
+export KIS_DAILY_EARLIEST_TODAY_KST=00:00
+[ "$KIS_DAILY_STATE_FILE" = "$hostile_state_sentinel" ] &&
+  [ "$KIS_DAILY_EARLIEST_TODAY_KST" = 00:00 ] ||
+  fail 'hostile state/cutoff values were not inherited by the fixture caller'
 write_db 2026-10-09
 FIXTURE_NOW_HMS=16:29:59
 export FIXTURE_NOW_HMS
@@ -359,9 +474,13 @@ expect_no_worker "$CASE_DIR/worker-argv.log"
 invoke_daily "$CASE_DIR" execute
 [ "$LAST_RC" -eq 0 ] || fail "pre-close execute failed with rc=$LAST_RC"
 expect_worker_log '2026-10-12' "$CASE_DIR/worker-argv.log"
+cmp -s "$sentinel_before" "$hostile_state_sentinel" ||
+  fail 'hostile inherited state-file override changed the external sentinel'
 grep -Fxq '16:29:59' "$CASE_DIR/clock.log" || fail 'fixture did not exercise 16:29:59 KST'
 daily_state="$CASE_DIR/state/kis-daily-2026-10-13.tsv"
 [ -f "$daily_state" ] || fail 'canonical daily state filename was not used'
+[ "$(readlink -e -- "$daily_state")" = "$daily_state" ] ||
+  fail 'daily state file did not resolve to the canonical fixture path'
 state_identity_before=$(head -n 1 "$daily_state")
 grep -Fq $'2026-10-12\tPUBLISHED\t' "$daily_state" || fail 'older hole was not published in state'
 grep -Fq $'2026-10-13\tPUBLISHED\t' "$daily_state" && fail 'today was marked PUBLISHED before close'
@@ -373,12 +492,28 @@ write_db 2026-10-09 2026-10-12
 invoke_daily "$CASE_DIR" execute
 [ "$LAST_RC" -eq 0 ] || fail "16:30 execution failed with rc=$LAST_RC"
 [ "$(wc -l <"$CASE_DIR/worker-argv.log")" -eq 2 ] || fail 'expected one worker invocation before and one at close'
+[ "$(head -n 1 "$CASE_DIR/worker-argv.log")" = 2026-10-12 ] ||
+  fail 'hostile inherited cutoff changed the pre-close worker argument'
 [ "$(tail -n 1 "$CASE_DIR/worker-argv.log")" = 2026-10-13 ] ||
   fail 'newly eligible today was skipped on repeated execution'
+[ "$(wc -l <"$CASE_DIR/clock.log")" -gt 0 ] || fail 'fixture clock log was empty'
 [ "$(head -n 1 "$daily_state")" = "$state_identity_before" ] ||
   fail 'full-range V4 state identity changed across the selection filter'
 grep -Fq $'2026-10-12\tPUBLISHED\t' "$daily_state" || fail 'repeated execution lost older PUBLISHED state'
 grep -Fq $'2026-10-13\tPUBLISHED\t' "$daily_state" || fail 'today did not publish after close'
+grep -Fxq '16:30:00' "$CASE_DIR/clock.log" || fail 'fixture did not exercise the exact 16:30:00 KST boundary'
+cmp -s "$sentinel_before" "$hostile_state_sentinel" ||
+  fail 'hostile inherited state-file override changed the sentinel after repeat execution'
+if [ "$had_inherited_state_file" = x ]; then
+  export KIS_DAILY_STATE_FILE="$inherited_state_file"
+else
+  unset KIS_DAILY_STATE_FILE
+fi
+if [ "$had_inherited_cutoff" = x ]; then
+  export KIS_DAILY_EARLIEST_TODAY_KST="$inherited_cutoff"
+else
+  unset KIS_DAILY_EARLIEST_TODAY_KST
+fi
 
 # Today-only pending work before close and a fully published range both return
 # without crossing into the backfill worker.
@@ -464,7 +599,8 @@ run_invalid_filter unsorted '2026-10-13,2026-10-12'
 
 new_case too-many-sessions
 big_csv_file="$CASE_DIR/sessions.csv"
-python3 -B - >"$big_csv_file" <<'PY'
+/usr/bin/env -i PATH=/usr/bin:/bin HOME="$CASE_DIR/home" LC_ALL=C TMPDIR="$CASE_DIR/tmp" \
+  python3 -B - >"$big_csv_file" <<'PY'
 import datetime as dt
 start = dt.date(2000, 1, 1)
 print(",".join((start + dt.timedelta(days=index)).isoformat() for index in range(10_001)))
@@ -473,7 +609,8 @@ big_csv=$(<"$big_csv_file")
 FIXTURE_CALENDAR_DATES=$big_csv
 export FIXTURE_CALENDAR_DATES
 first_big_date=2000-01-01
-last_big_date=$(python3 -B -c 'import datetime as d; print((d.date(2000,1,1)+d.timedelta(days=10000)).isoformat())')
+last_big_date=$(/usr/bin/env -i PATH=/usr/bin:/bin HOME="$CASE_DIR/home" LC_ALL=C TMPDIR="$CASE_DIR/tmp" \
+  python3 -B -c 'import datetime as d; print((d.date(2000,1,1)+d.timedelta(days=10000)).isoformat())')
 big_state="$CASE_DIR/persistent/state.tsv"
 invoke_backfill_filter "$CASE_DIR" "$big_state" "$big_csv" "$first_big_date" "$last_big_date" --execute
 [ "$LAST_RC" -eq 1 ] || fail "more than 10000 filter dates returned rc=$LAST_RC"

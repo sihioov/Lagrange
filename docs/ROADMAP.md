@@ -6,13 +6,13 @@
 
 | 관리 항목 | 현재 값 |
 | --- | --- |
-| 최종 갱신일 | 2026-10-13 (Asia/Seoul) |
+| 최종 갱신일 | 2026-10-14 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. R2 진단 수용·두 소스 결함 수정 진행, ETF 일일 입력 계약 결정 준비 |
-| 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — WP-1 DB 진단 준비, WP-3/F1·독립 WP-5/F2 DOING, WP-4는 U2 대기. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
-| main 통합 | 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 및 문서 갱신 `b0a2579`. 재개 시 fetch한 main은 `b0a2579`로 인계와 동일; C3와의 차이는 문서 6개 |
-| 다음 착수 항목 | WP-3/F1·WP-5/F2 격리 회귀, 운영 DB 집계문 검토·조회, ETF 자동 입력 승인·추천 계약 확정 |
+| 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. 현재 DB 기준일·누락 확인, F1/F2 검증과 ETF 일일 입력 계약 결정 진행 |
+| 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — WP-1 DB 집계·복구 범위 검토 수용, WP-3/F1·독립 WP-5/F2 테스트 보정 완료·새 CI 대기, WP-4는 U2 대기. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
+| main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
+| 다음 착수 항목 | F1/F2 테스트 보정 커밋 검증(`3ee453f` CI는 성공), 검토된 누락·발행 복구안의 실제 실행 범위와 예산 확정, ETF 자동 입력 승인·추천 계약(U2) 채택 |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2의 새 ETF 일일 입력 승인·자동 추천 계약과 실제 catch-up·운영 적용 차이를 판단. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 구체적인 시뮬레이션 계약은 미확정 |
 
@@ -254,22 +254,22 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 
 - [ ] **R2-01 — 실행 경로 진단.** 보호된 릴리스와 설치된 모드에 맞는 daily unit·timer·작업 결과를
   확인한다. 비활성 이유와 마지막 성공·누락 구간을 구분하고 상주 daemon과 중복 실행하지 않는다.
-  DOING — 2026-10-13, current `fce9b90`/`owner_daily`, daily timer 비활성, 실행 manifest 대상 3개 일치·5개 불일치 관측. 원인·발행일·누락은 아직 미확인; DB 집계문 준비 중.
+  DOING — 2026-10-14, 10월 13일 current `fce9b90`/`owner_daily`, daily timer 비활성, 실행 manifest 대상 3개 일치·5개 불일치 관측. 23:51 KST READ ONLY 집계·날짜 artifact의 28세션 누락과 별도 8월 31일 발행 복구 후보 검토를 수용. [DB 기록](reviews/2026-10-13-r2-db-baseline.md), [복구 범위·한계](reviews/2026-10-13-r2-catch-up-readiness.md); 실행 직전 상태·범위 판정은 남음.
 - [ ] **R2-02 — 거래일·시간창 운영 책임 확정.** 공식 당일 calendar/window 증거의 공급 경로,
   확인 담당, 준비 마감과 부재 시 동작을 기록한다. 기존 단일 calendar 요청·캐시 정책을 유지한다.
   DOING — 2026-10-13, WP-2에서 날짜 artifact·credentialed calendar·당일 window의 기존 경로와 책임을 대조.
 - [ ] **R2-03 — 승인된 일일 실행 복구.** 원인 수정과 R1 검증 후 commit-pinned installer·공식 helper로
   일일 실행을 복구한다. 복구할 날짜·요청 예산을 먼저 확인하고 승인 범위 밖의 과거 일괄 수집은 추가하지 않는다.
-  DOING — 2026-10-13, WP-3/F1: pre-close 필터 소실 재현·수정과 fake-host self-test PASS. 독립 리뷰·동일 커밋 CI 진행 예정, 운영 활성화 미실행.
+  DOING — 2026-10-14, WP-3/F1: pre-close 필터 소실 재현·수정과 fake-host self-test PASS. 리뷰의 환경 격리 보정·hostile 환경 회귀도 통과. `3ee453f` CI 성공, 후속 fixture 보정 검증 대기; 운영 활성화 미실행.
 - [ ] **R2-04 — ETF EOD와 추천 갱신 검증.** Raw, 정규화, Curated, 발행과 API의 기준일·출처를
   연결해 확인한다. Owner가 사용하는 ETF 추천도 매 거래일 승인된 입력으로 실행·성공·발행되며,
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  BLOCKED — 2026-10-13, v3 지원 끝 2026-08-28·daily enqueue 부재. 새 불변 입력·독립 자동 승인·예약 계약(U2) 확정 후 WP-4 착수; 코디네이터가 결정안 준비.
+  BLOCKED — 2026-10-13, v3 지원 끝 2026-08-28·daily enqueue 부재. 현재 ETF11 발행도 8월 28일까지 확인. [새 불변 입력·독립 자동 승인·예약 결정안](reviews/2026-10-13-r2-daily-input-decision.md)의 Owner 채택 후 WP-4 설계·구현 분해.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
-  DOING — 2026-10-13, WP-5/F2 독립 분기: 성공·실패 모두 완료 후 60초 재평가로 수정, cadence·동시 DB 회귀 추가. 실행 검증 대기; API/Web 계약 동결.
+  DOING — 2026-10-14, WP-5/F2 독립 분기: `3ee453f` CI에서 60초 cadence 5개·동시/late-calendar DB 회귀 통과. 후속 테스트 권리 기간 보정의 실행 검증 대기. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 확인; API/Web 계약 동결.
 - [ ] **R2-06 — 실제 Owner 사용 인수.** 정상 Auth0 로그인에서 종목 추가→상태 확인→READY→신호·차트,
   필터·상세, 재시도·비활성화, ETF 전략 설정·추천 조회를 확인한다. 사용자 세션을 추출하거나 가장하지 않는다.
 - [ ] **R2-07 — 실패·만료 표시와 복구.** 누락·노후·미래 데이터, 수집 실패, 세션 만료가 화면에
@@ -420,6 +420,12 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R2-01/03/04/05 | G1 부분 수용; R2-03/05 DOING, R2-04 BLOCKED | current daily 비활성·실행 이미지 3일치/5불일치, 과거 obsolete timer 비활성 기록 대조. F1/F2 국소 수정 착수, 새 ETF 자동 승격·추천 계약 결정안 요청. 운영 변경 없음 | [실행 기록](reviews/2026-10-13-r2-execution.md), [운영 기준선](reviews/2026-10-13-r2-runtime-baseline.md), [U2 결정안](reviews/2026-10-13-r2-daily-input-decision.md); 소스/DB 검증은 진행 중 |
 
 | 2026-10-13 | R2-03/05 | 소스 수정·부분 검증; DOING 유지 | F1 실제 backfill 선택 경로 재현과 fake-host self-test 통과. F2 monotonic 60초 재평가·cadence/DB 회귀 추가. production DB는 별도 READ ONLY 집계만 승인 | 이 소스 수정 커밋; [F1](reviews/2026-10-13-r2-daily-repair.md), [F2](reviews/2026-10-13-r2-owner-and-web.md), [조회 검토](reviews/2026-10-13-r2-db-probe-review.md). CI·독립 리뷰·운영 인수 미완료 |
+
+| 2026-10-13 | R2-01/03/04/05 | 현재 DB 기준일·28세션 누락 확인; F1/F2 부분 CI·테스트 보정 진행 | READ ONLY 도구 문법 오류를 고쳐 59 migration 일치·ETF 8/28·Owner 10/6 집계 확보. 독립 리뷰 P2 두 건 수용; U2 채택·운영 복구는 대기 | `3ee453f` [CI](https://github.com/sihioov/Lagrange/actions/runs/38415230019), [실행 기록](reviews/2026-10-13-r2-execution.md), [DB 기록](reviews/2026-10-13-r2-db-baseline.md); 실제 배포·provider 미실행 |
+
+| 2026-10-14 | R2-03/05 | 부분 후보 CI 성공; P2 fixture 두 건 보정 | 7개 실행 job·required, late-calendar/동시 DB와 cadence 회귀 통과. 환경 격리·연도 경계 보정의 후속 CI는 별도 | `3ee453f` [CI 근거](reviews/2026-10-13-r2-f1-f2-ci.md), [리뷰 판단](reviews/2026-10-13-r2-f1-f2-review.md); 운영 인수 미완료 |
+
+| 2026-10-14 | R2-01/03/04/05 | DB 집계·정확한 복구 후보·효과 분석 수용; DOING/BLOCKED 유지 | 10월 13일 READ ONLY 결과·59 source checksum·28개 수집 후보와 8월 31일 발행 복구 후보를 오프라인 검증. 요청량 계산은 실행 승인·강제 quota가 아님 | [DB 기록](reviews/2026-10-13-r2-db-baseline.md), [복구 준비안](reviews/2026-10-13-r2-catch-up-readiness.md), [수용 판단](reviews/2026-10-13-r2-execution.md); fresh G4·U2 채택 남음 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

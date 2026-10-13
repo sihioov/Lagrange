@@ -78,3 +78,61 @@ Updated DB test SHA256:
 The independent source reviewer receives these current bytes. Hosted CI uses
 its disposable QA database, avoiding a Rust compile on the memory-constrained
 production host. This is partial F1/F2 validation, not the final R2 release candidate.
+
+## WP-5/F2 dynamic entitlement fixture repair
+
+Baseline: `3ee453fe38a54ae92cc098daf61b0eaf56f833cb`. This repair is limited to the
+WP-5 disposable DB fixture and this appended record. The current test source SHA-256 is
+`0bcdabfb1bb7462e216e2fa2f6f29dfeeec881bc7726e40a6233703c4c7d16db`.
+
+The DB-clock eligible date now passes through `schedule_fixture_date_window`. The seam
+derives the prior close, initial request session, and first date in the 121-date initial
+candidate. Before adding the membership, the test seeds an ACTIVE entitlement into the
+fresh scratch database under the unique reference
+`wp5-owner-equity-scheduler-date-window`. Its inclusive effective window starts at that
+initial candidate date and ends on the eligible date. The fixture keeps its existing
+synthetic document hash, dataset, and use set; no production rights policy or schema is
+changed.
+
+This test's initial mutation pins and schedule pins now use that same reference and hash.
+The fake adapter already copies the job payload pins to `OwnerEquitySourcePins`; an added
+initial-payload assertion joins the existing incremental payload assertions to check that
+the test-specific pins propagate. The separate unregistered-rights rejection remains.
+The coordinator's valid-pins unadmitted-generation case and concurrent same-key result
+assertion `[0, 1]` are preserved.
+
+The offline date-window test covers the requested year boundary:
+
+| Eligible date | Prior close | Initial session | Initial candidate start | Entitlement end |
+| --- | --- | --- | --- | --- |
+| 2026-12-31 | 2026-12-30 | 2026-12-29 | 2026-08-31 | 2026-12-31 |
+| 2027-01-01 | 2026-12-31 | 2026-12-30 | 2026-09-01 | 2027-01-01 |
+
+For each date, it checks containment of the initial candidate start/session, prior close,
+current candidate start, and eligible date inside the seeded entitlement interval. The
+pure Rust test was added but not executed.
+
+Current source locations are anchored by `ScheduleFixtureDateWindow` at line 226,
+`seed_wp5_schedule_entitlement` at line 458, the year-boundary test at line 476, and
+`owner_equity_schedule_rechecks_late_calendar_after_older_job_settles` at line 1153.
+The changed DB call site begins at line 1178. In this report, the new section begins at
+line 82. This bounded change edits only the DB test and this report.
+
+Static checks run: `rustfmt --edition 2024 crates/api-server/tests/owner_equity_v2_db.rs`
+passed, and `git diff --check` passed. No Cargo test, compiler, database, Docker, provider,
+production, build, or install command was run. The exact focused validations remain
+unexecuted:
+
+```text
+cargo test --locked -p api-server --test owner_equity_v2_db schedule_fixture_entitlement_window_covers_year_boundary_candidates -- --exact
+cargo test --locked -p api-server --test owner_equity_v2_db owner_equity_schedule_rechecks_late_calendar_after_older_job_settles -- --exact
+```
+
+Hosted CI run `38415230019` uses the earlier pinned source and does not validate this
+repair; the coordinator owns execution of the focused commands against the resulting
+source. Compilation, the offline Rust test, actual-role DB behavior, and runtime behavior
+remain unverified. No source acceptance or runtime success is claimed. No further task
+decomposition is needed for this bounded fixture repair.
+
+Final worktree inspection also showed `docs/reviews/2026-10-13-r2-daily-repair.md`
+modified outside this task's allowlist. It was not edited here and was left untouched.
