@@ -7,9 +7,12 @@ It does not advance or revise product roadmap stages.
 
 ## Current availability
 
-The Phase 1 CLI and Phase 2 cache/resource source are implemented. Focused checks cover the CLI,
-cache contracts, fake child lifecycle, and export promotion. Hosted cold/warm proof on a committed
-candidate remains pending. Existing hosted jobs remain the final acceptance gates.
+Both phases are implemented and accepted. Focused checks cover the CLI, cache contracts, fake child
+lifecycle, and export promotion. Cold and warm CI and smoke passed on code commit
+`0ffcdaa86db8dad518733b9a5eabf8a3ca20f642` on 2026-10-13, with actual cache uploads and matched
+restores verified. The measurements below belong to that code commit; the subsequent documentation
+commit records those results and does not represent another CI execution. Existing hosted jobs remain
+the final acceptance gates.
 
 ## Staged workflow
 
@@ -247,19 +250,81 @@ restore/save transfers with install/build/test durations. All eight CI jobs and 
 remain mandatory. Hosted policy parses `verify-all.ps1` with pwsh's Parser without executing it;
 local parser verification is pending where pwsh is unavailable.
 
+## Accepted cold/warm measurements
+
+The coordinator accepted this proof on 2026-10-13. All four runs use code SHA
+`0ffcdaa86db8dad518733b9a5eabf8a3ca20f642`, ref `orange-dugong`, and cache namespace
+`dev-eff-0ffcdaa-20261013t0905`. The namespace was empty before cold; warm began only after cold
+checks, exports and actual uploads passed. Each phase ran once, consuming two CI and two smoke runs.
+
+| Workflow | Cold run | Warm run | Workflow wall, cold → warm | Observed reduction |
+| --- | --- | --- | --- | --- |
+| CI | [38374111152](https://github.com/sihioov/Lagrange/actions/runs/38374111152) | [38379831598](https://github.com/sihioov/Lagrange/actions/runs/38379831598) | 1,236 → 1,193 s (20:36 → 19:53) | 43 s, 3.5% |
+| Research smoke | [38374200057](https://github.com/sihioov/Lagrange/actions/runs/38374200057) | [38379903633](https://github.com/sihioov/Lagrange/actions/runs/38379903633) | 2,709 → 212 s (45:09 → 3:32) | 2,497 s, 92.2% |
+
+Workflow wall is `run_started_at` through terminal `updated_at`, including orchestration overhead.
+It is distinct from summed job durations: CI jobs run on separate VMs. The smoke job itself measured
+2,703 → 206 seconds. These are one matched cold/warm pair, not a repeatability guarantee or a claim
+about application runtime performance.
+
+All 13 cold restore records were misses; all 13 warm records were exact hits. Saved-key logs, REST
+inventory and warm matched-key logs prove ten distinct persisted cache entries totaling
+7,532,199,703 archive bytes, with the same IDs and versions retained through warm. Shared Cargo
+download reservation losers resolve to Clippy's successful upload; they are not additional uploads.
+All six `cache-evidence.py compare` commands passed. A save action's generic success was not used
+as proof of upload.
+
+The following values are seconds; each cell is cold / warm. Command totals sum the recorded install,
+build and test stages. Cache-step totals are recovered separately from hosted step timestamps.
+Cargo test commands can include compilation, so the test column is not pure test-body execution.
+
+| Job | Install | Build | Test | Command total | Cache steps | Whole job |
+| --- | --- | --- | --- | --- | --- | --- |
+| Clippy | 7 / 7 | 127 / 53 | 0 / 0 | 134 / 60 | 7 / 7 | 150 / 73 |
+| Python | 6 / 5 | 0 / 0 | 78 / 75 | 84 / 80 | 5 / 7 | 96 / 95 |
+| Web | 64 / 40 | 19 / 20 | 477 / 518 | 560 / 578 | 5 / 2 | 576 / 588 |
+| Workspace | 16 / 11 | 0 / 0 | 1,042 / 1,063 | 1,058 / 1,074 | 129 / 82 | 1,225 / 1,181 |
+| PostgreSQL | 8 / 8 | 0 / 0 | 681 / 431 | 689 / 439 | 17 / 22 | 712 / 470 |
+| Research smoke | 17 / 15 | 2,567 / 73 | 85 / 91 | 2,669 / 179 | 15 / 19 | 2,703 / 206 |
+
+The slower Web and workspace command totals prompted a cache-scope review. Web installation fell
+24 seconds and cache-step time fell 3 seconds, while its tests increased 41 seconds; the whole Web
+job increased 12 seconds. Workspace test time increased 21 seconds, but cache-step time fell
+47 seconds and the whole job fell 44 seconds. The cause of test-time variation is unverified.
+Keep the bounded download/build caches: the measured restore/install cost does not explain these
+regressions, and both overall workflows improved. Do not promise that every job or test becomes
+faster, or shrink caches based on an unproven attribution.
+
+Both CI runs passed all eight jobs, including `required`. Each policy job passed 30 CI/cache
+contracts, 38 QA tests and the hosted PowerShell Parser check. The corrected `service_status`
+target passed all four tests in each run, including the commit/rollback lock regression. Both Web
+jobs passed 61 Vitest files / 487 tests, 32 wrapper regressions, and the wrapper's complete-coverage
+gate. PostgreSQL passed its explicit runtime no-SKIP gate. Both smoke runs emitted functional PASS.
+Installs, checks and fresh Raw probes continued on warm hits; only immutable-key save steps and
+failure-only diagnostics were skipped. Sequential service builds and production build limits remain
+unchanged.
+
+Private evidence is retained under
+`target/dev-efficiency-20261013-xxewtlef/wp3/hosted-0ffcdaa/`. The coordinator verified all 102 files
+in `evidence-manifest.json` (SHA-256
+`7fa1c8fb83cf02ce8837dc1ff34d1640b5211c91c733744a939d4221631aed8f`) and all eleven before/after
+source pins. The separate `target/dev-efficiency-20261013-xxewtlef/coordinator-hosted-acceptance.json`
+records acceptance and the skipped-step audit. Private logs and receipts are not committed.
+
 ## Final-check and scope limits
 
-The `44077a4` cold proof on 2026-10-13 completed its
-[research smoke](https://github.com/sihioov/Lagrange/actions/runs/38365911022), including the two
-sequential image builds, validated Docker exports and functional PASS. Eight unique cache uploads
-across CI and smoke matched REST entries (3,862,531,733 archive bytes). Smoke wall time was 3,426
-seconds; this is a cold measurement, not a demonstrated speedup. Its
-[CI run](https://github.com/sihioov/Lagrange/actions/runs/38365843138) failed one service-status DB
-fixture bootstrap, so no warm run was dispatched. The bounded test-fixture correction and a new
-same-SHA cold/warm proof remain pending. Individual smoke trap cleanup results were not emitted;
-do not infer them from workflow success.
+Earlier failed candidates, including the `44077a4` fixture failure, remain in the
+[plan history](../superpowers/plans/2026-10-13-development-efficiency.md). The original bootstrap
+SQLSTATE was not emitted; passing the corrected fixture does not prove the earlier failure's cause.
 
-The hosted workflow remains the final gate and keeps its required jobs and aggregation. This runbook
-does not authorize provider access, trading, deployments, or a change to production build limits.
-It does not establish cache effectiveness or runtime performance. WP-3 hosted measurements and
-Owner/coordinator acceptance remain separate from implementation and focused checks.
+Hosted output did not expose individual browser counters/cleanup receipts, peak RSS/cgroup/OOM
+measurements, or successful removal of every smoke resource. The mandatory six fresh Raw volumes,
+locked download/offline compile and no-cache audit are evidenced by pinned successful control flow,
+not six individual receipts. Cleanup traps suppress errors; a successful cleanup step alone does not
+prove every removal. Seven older cache entries disappeared while all ten current entries remained;
+their disappearance cause and the configured quota are unknown. None of these missing measurements
+is inferred from successful runs.
+
+The hosted workflow remains the final gate and keeps its required jobs and aggregation. This work
+establishes the documented tooling and this bounded cache comparison. It does not authorize a main
+merge, provider access, trading, deployment, extra machines, or changed production build limits.

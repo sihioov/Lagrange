@@ -6,7 +6,8 @@ Native subagents: prohibited for worker packages
 - 작성일: 2026-10-13
 - 조사 기준: `b0a2579bef472ae6b604405d0ab6f50255786dd4`, `orange-dugong`의 깨끗한 작업 트리
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
-- 상태: **1단계 완료, 2단계 구현·focused 검증 완료 — 실제 cold/warm CI 검증 대기**
+- 상태: **1·2단계 완료 — 동일 후보의 cold/warm CI·smoke와 실제 cache 저장·복원 검증 수용**
+- 최종 검증 코드: `0ffcdaa86db8dad518733b9a5eabf8a3ca20f642`, cache epoch `dev-eff-0ffcdaa-20261013t0905`. 이후 이 계획과 사용 문서의 결과 기록은 문서만 변경하는 후속 커밋으로 구분한다.
 - 순서: **1단계 — 항목 1~3 → 2단계 — 항목 4~5**
 - 실행 단위: 3개 패키지. 각 담당자가 구현, 관련 회귀 검증, 사용 예시까지 완료한다.
 
@@ -305,11 +306,11 @@ git diff --check
 |---|---|---|---|---|
 | WP-1 | DONE | `6d117f4` | 지침 충돌·참조 경로 확인, 사용법/CLI 대조, `git diff --check` | 없음 |
 | WP-2 | DONE | `6d117f4` | QA 회귀 30개, CI 계약 10개 통과; QA fast 4개 통과, 적격 syntax 2개 재사용 확인; shell syntax·공백 확인; `7d98b8a` hosted policy에서 PowerShell Parser 통과 | 없음 |
-| WP-3 | IN_PROGRESS | `06f17b7`부터 `44077a4`까지 및 DB 테스트 초기화 수정 후보 | QA 38개, CI·cache 계약 30개, actionlint 1.7.12 및 기존 static/self-test 통과. Compose 2.38.2·5.4.0 출력 검사 8개와 실제 Bake print 8개 통과. `44077a4` cold smoke 성공, 실제 cache 8건·3,862,531,733 bytes 저장 확인 | `44077a4` workspace의 DB fixture 초기화 실패로 warm 미실행. 테스트 초기화 수정 후보의 CI와 같은 SHA cold/warm 비교 대기 |
+| WP-3 | DONE | `06f17b7`부터 `0ffcdaa`까지 | QA 38개, CI·cache 계약 30개, actionlint 1.7.12 및 기존 static/self-test 통과. Compose 출력 검사 8개와 실제 Bake print 8개 통과. `0ffcdaa`의 cold/warm CI 각각 8개 job, smoke 각각 성공. cache 10건·7,532,199,703 bytes의 실제 저장과 warm exact hit 13건 확인 | 완료 차단 항목 없음. 단일 비교의 성능·resource·cleanup 관측 한계는 아래와 사용 문서에 보존 |
 
 - [x] 1~3번: 지침·preflight·단계별 검증·결과 재사용 구현과 focused 검증 수용
-- [ ] 4~5번: cache·실행 환경 구현과 실제 cold/warm CI 증거 수용
-- [ ] 사용 명령·검증 대상 commit·제약을 문서화하고 구현 커밋 완료
+- [x] 4~5번: cache·실행 환경 구현과 실제 cold/warm CI 증거 수용
+- [x] 사용 명령·검증 대상 commit·제약을 문서화하고 구현 커밋 완료
 
 | 날짜 | 변경 | 근거 |
 |---|---|---|
@@ -329,3 +330,6 @@ git diff --check
 | 2026-10-13 | `08360fb` 종료 결과 수용 | [CI 38362839153](https://github.com/sihioov/Lagrange/actions/runs/38362839153)의 8개 job과 required 모두 성공. cache upload 7건·5,628,309,680 bytes를 로그와 REST에서 확인. smoke 실패로 warm은 실행하지 않았으며, 동일 SHA 검증 전후 10개 소스 hash와 clean 상태가 유지됨을 확인 |
 | 2026-10-13 | `44077a4` cold smoke·cache 저장 확인 | [smoke 38365911022](https://github.com/sihioov/Lagrange/actions/runs/38365911022) 성공: 서비스별 순차 build, 두 Docker cache export·저장, functional PASS. 전체 cold upload 8건·3,862,531,733 bytes를 로그와 REST에서 확인. smoke wall 3,426초이며 warm 성능은 미검증. [CI 38365843138](https://github.com/sihioov/Lagrange/actions/runs/38365843138)는 여섯 job 성공, `collectors --test service_status`의 DB 역할 초기화 한 건 때문에 workspace와 required 실패. 원본 SQLSTATE가 없어 hosted 원인은 미확정. 두 실행 모두 종료했고 warm은 실행하지 않음 |
 | 2026-10-13 | CI 테스트 초기화 범위 보완 | 필수 CI의 실패를 해결하기 위해 `data-pipelines/collectors/tests/service_status.rs` 한 파일을 후속 수정 범위에 추가. 단일 SQL 메시지의 commit 전에 session lock을 해제하던 처리를 같은 key의 transaction lock으로 변경하고, commit·rollback까지 lock이 유지·해제되는 DB 회귀 검사 한 개를 추가. 기존 세 테스트 본문과 필수 검증·동시 실행은 보존. 오류는 검증된 SQLSTATE만 출력. 제품·migration·운영 권한은 변경하지 않으며, 수정의 컴파일·DB 검증은 다음 hosted 후보에서 수행 |
+| 2026-10-13 | 최종 후보 cold/warm 수용 | 동일 `0ffcdaa`와 epoch에서 [cold CI 38374111152](https://github.com/sihioov/Lagrange/actions/runs/38374111152), [cold smoke 38374200057](https://github.com/sihioov/Lagrange/actions/runs/38374200057), [warm CI 38379831598](https://github.com/sihioov/Lagrange/actions/runs/38379831598), [warm smoke 38379903633](https://github.com/sihioov/Lagrange/actions/runs/38379903633) 모두 성공. 두 CI 모두 필수 8개 job과 `service_status` 4개 검사 통과. 원래 실패의 SQLSTATE·원인은 여전히 미확정이며 재현했다고 주장하지 않음 |
+| 2026-10-13 | 실제 cache 효과와 필수 검사 대조 | cold miss 13건에서 warm exact hit 13건으로 전환. upload 로그·REST·warm matched key로 unique cache 10건·7,532,199,703 bytes 및 같은 ID/version의 유지 확인. 비교 명령 6개 통과. 모든 설치·검사·Raw cold probe는 계속 실행; 생략된 step은 exact-hit 저장과 성공 시 불필요한 실패 진단뿐. CI workflow wall 1,236→1,193초, smoke 2,709→212초 |
+| 2026-10-13 | 코디네이터 수용·문서 마무리 | 증거 102개와 소스 pin 11개 대조 완료. [사용 문서의 실측 결과](../../runbooks/development-verification.md#accepted-coldwarm-measurements)에서 Web 테스트 시간 증가, cache 범위 유지 판단, 측정 한계를 명시. 기존 실패 이력은 보존. 검증 후 계획·사용 문서 두 파일만 결과 기록을 갱신하며, 후속 문서 커밋에 코드 SHA의 CI 결과를 새 실행으로 표시하지 않음. main 병합·운영 작업은 수행 범위에 없음 |
