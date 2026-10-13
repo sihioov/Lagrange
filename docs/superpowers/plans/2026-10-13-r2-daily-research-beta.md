@@ -7,9 +7,10 @@ Native subagents: prohibited for worker packages
 - 계획 기준 커밋: `0519c03bf566359592e18f0f77133c059c332f68`
 - 작업 디렉터리: `/data/worktrees/3puw275b/excited-dolphin`
 - 상위 작업: [로드맵 R2-01~R2-09](../../ROADMAP.md#6-r2--일일-연구-베타-완성)
-- 상태: **계획 작성 완료; WP-1~WP-10 및 R2-01~R2-09 실행 TODO.**
-- 이번 요청은 계획 작성이다. worker 실행, 운영 진단, 코드 수정, 빌드, 배포, migration,
-  timer 변경, provider 호출과 거래일 관찰은 시작하지 않았다.
+- 상태: **Owner 실행 요청 수신; WP-1 DB 진단 준비, WP-2 분석 수용; WP-3/F1·독립 WP-5/F2 착수, WP-4는 U2 대기.** R2-01/02 현황·계약 진단 진행.
+- 계획 작성 커밋 `cea7baa`에서는 worker·운영 진단·코드/운영 변경을 실행하지 않았다.
+  이후 2026-10-13 22:47 KST WP-1/2를 시작했다. [실행 기록](../../reviews/2026-10-13-r2-execution.md)에
+  현재 범위·담당·수용 상태를 기록한다. 빌드·배포·migration·timer 변경·provider 호출·거래일 관찰은 미착수다.
 - 아래 계획은 작업 분담·검증 계약이다. 새 데이터 입력 계약이나 운영 조치의 승인을 대신하지 않는다.
 
 ## Goal and boundaries
@@ -240,6 +241,9 @@ U2 해소 뒤에는 WP-4 결과와의 통합 회귀를 수행한다. 부분 검�
   `scripts/ops/kis-daily-calendar-refresh.sh`, `scripts/ops/xkrx-calendar-bootstrap.py`,
   `scripts/ops/lib/kis-daily-state.py`, `scripts/ops/kis-daily-production-self-test.sh`,
   `scripts/ops/test_xkrx_calendar_bootstrap.py`; G1에서 필요한 파일만 활성화한다.
+  2026-10-13 G1 F1 결정으로 `scripts/ops/backfill-production.sh`와
+  `scripts/ops/backfill-production-self-test.sh`를 추가했다. 정확한 활성 범위와 재현은
+  [실행 기록](../../reviews/2026-10-13-r2-execution.md)의 G1 부분 결정을 따른다.
   보고서는 `docs/reviews/2026-10-13-r2-daily-repair.md`.
 - 보존: commit/env/manifest 바인딩, 16:30 설치 gate·Persistent catch-up 영향, daemon/one-shot 배타성,
   실패 state·Raw 보존, 정확한 누락 세션 목록, root 소유권·lock, calendar lineage, typed 실패/74·75 의미.
@@ -414,7 +418,7 @@ U2 해소 뒤에는 WP-4 결과와의 통합 회귀를 수행한다. 부분 검�
 ### G0 — Pre-launch
 
 1. 현재 실행 요청의 범위와 `$paseo-delegate` 가용성을 확인하고 지침을 읽는다. 계획만 요청된 이번에는
-   WP를 시작하지 않는다. native subagent 실행은 금지한다.
+   WP를 시작하지 않았으며 후속 Owner 실행 요청에 따라 WP-1/2를 시작했다. native subagent 실행은 금지한다.
 2. HEAD/worktree·원격 main과 R1 문서 통합 상태를 확인한다. 기존 작업을 보존하며 제품·이미지 후보와
    문서 commit을 구분한다. actual workspace/cwd·모델/effort·소유 파일·증거 경로를 worker별로 기록한다.
 3. WP-1에 줄 고정 읽기 명령과 SQL 집계를 검토한다. 필요한 read-only 접근이 없으면 독립적인

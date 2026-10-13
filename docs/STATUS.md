@@ -9,11 +9,11 @@
 | 항목 | 확인된 상태 |
 | --- | --- |
 | main 통합 | `orange-dugong`의 R1 작업을 `1b8dca3` → `1fe09ef` fast-forward로 반영. 이후 변경은 이 요약을 포함한 문서 갱신 |
-| 검증 대상 | C3 `862fa954c16d28a617271fe6f613d34226e2d558`; 코드·테스트·workflow·다이어그램은 해당 후보와 동일 |
+| 검증 대상 | R1은 C3 `862fa954c16d28a617271fe6f613d34226e2d558`로 고정. R2 소스 수정은 별도 후보로 검증 예정 |
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2-01 일일 실행 경로 진단. [R2 Paseo 실행 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) 작성 완료; 10개 패키지 및 R2-01~09 실행은 TODO |
+| 다음 단계 | R2 DOING — [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)의 진단 수용, WP-3/F1·독립 WP-5/F2 수정 착수. R2-04는 새 ETF 입력·자동 추천 계약 대기. [실행 기록](reviews/2026-10-13-r2-execution.md)에서 결과 수용 추적 |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -22,8 +22,11 @@
 실제 image ID·manifest hash·정산·복귀의 [최종 인수](reviews/2026-10-13-r1-c3-images.md)를 확보해 R1을 완료했다.
 최신 root·서비스·자원 관측, C3 재검증과 기존 main 실행의 최종 결과는
 [R1 재개 기록](reviews/2026-10-13-r1-resumption.md)에 있다.
-R2는 계획만 작성했다. 현황·계약 대조 뒤 수정 범위를 확정하고 동일 후보 검증·운영 적용과
-실제 Owner 사용·연속 3거래일 관찰로 인수한다. worker 실행·운영 진단·새 코드/서비스 변경은 미착수다.
+R2 계획 작성 후 Owner의 실행 요청으로 현재 상태와 소스 계약을 대조했다. current `fce9b90`의 daily
+timer는 비활성이며 실행 manifest 대상 중 3개가 일치하고 5개는 과거 이미지다. 원인은 아직 추정하지 않는다.
+두 국소 결함의 코드·격리 회귀를 진행하며, DB 조회는 SQL 검토 후 실행한다. 서비스 변경·provider 호출은 미실행이다.
+기존 KIS 개인 이용 권리는 ADR-0005로 해결돼 있다. 새 ETF 일일 입력의 독립 승인·자동 추천 계약만 별도 결정한다.
+동일 후보 검증·운영 적용, 실제 Owner 사용·연속 3거래일 관찰은 후속 인수 조건이다.
 아래 날짜별 운영 관측은 과거 기록이며 이번 재관측과 구분한다.
 
 ## 날짜별 구현·운영 기록 보존
