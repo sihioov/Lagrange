@@ -260,7 +260,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   DOING — 2026-10-13, WP-2에서 날짜 artifact·credentialed calendar·당일 window의 기존 경로와 책임을 대조.
 - [ ] **R2-03 — 승인된 일일 실행 복구.** 원인 수정과 R1 검증 후 commit-pinned installer·공식 helper로
   일일 실행을 복구한다. 복구할 날짜·요청 예산을 먼저 확인하고 승인 범위 밖의 과거 일괄 수집은 추가하지 않는다.
-  DOING — 2026-10-13, WP-3/F1: pre-close 필터가 backfill 위임 시 소실되는 결함의 격리 재현·수정. 운영 활성화 미실행.
+  DOING — 2026-10-13, WP-3/F1: pre-close 필터 소실 재현·수정과 fake-host self-test PASS. 독립 리뷰·동일 커밋 CI 진행 예정, 운영 활성화 미실행.
 - [ ] **R2-04 — ETF EOD와 추천 갱신 검증.** Raw, 정규화, Curated, 발행과 API의 기준일·출처를
   연결해 확인한다. Owner가 사용하는 ETF 추천도 매 거래일 승인된 입력으로 실행·성공·발행되며,
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
@@ -269,7 +269,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   BLOCKED — 2026-10-13, v3 지원 끝 2026-08-28·daily enqueue 부재. 새 불변 입력·독립 자동 승인·예약 계약(U2) 확정 후 WP-4 착수; 코디네이터가 결정안 준비.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
-  DOING — 2026-10-13, WP-5/F2 독립 분기: 성공한 이전 close 검사 후 당일 재확인 억제를 수정. API/Web 계약 동결, 실제 데이터 검증 미실행.
+  DOING — 2026-10-13, WP-5/F2 독립 분기: 성공·실패 모두 완료 후 60초 재평가로 수정, cadence·동시 DB 회귀 추가. 실행 검증 대기; API/Web 계약 동결.
 - [ ] **R2-06 — 실제 Owner 사용 인수.** 정상 Auth0 로그인에서 종목 추가→상태 확인→READY→신호·차트,
   필터·상세, 재시도·비활성화, ETF 전략 설정·추천 조회를 확인한다. 사용자 세션을 추출하거나 가장하지 않는다.
 - [ ] **R2-07 — 실패·만료 표시와 복구.** 누락·노후·미래 데이터, 수집 실패, 세션 만료가 화면에
@@ -418,6 +418,8 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R2-01/02·전체 R2 | TODO → DOING | Owner 실행 요청으로 WP-1 호스트 증거 수집·DB 조회 준비와 WP-2 소스 계약 분석 시작. 새 SQL은 코디네이터 검토 전 미실행; 코드/운영 변경·provider 호출 없음 | 시작 `cea7baa`; fetch한 main은 `b0a2579`, 차이는 문서 9개. [R2 실행 기록](reviews/2026-10-13-r2-execution.md) |
 
 | 2026-10-13 | R2-01/03/04/05 | G1 부분 수용; R2-03/05 DOING, R2-04 BLOCKED | current daily 비활성·실행 이미지 3일치/5불일치, 과거 obsolete timer 비활성 기록 대조. F1/F2 국소 수정 착수, 새 ETF 자동 승격·추천 계약 결정안 요청. 운영 변경 없음 | [실행 기록](reviews/2026-10-13-r2-execution.md), [운영 기준선](reviews/2026-10-13-r2-runtime-baseline.md), [U2 결정안](reviews/2026-10-13-r2-daily-input-decision.md); 소스/DB 검증은 진행 중 |
+
+| 2026-10-13 | R2-03/05 | 소스 수정·부분 검증; DOING 유지 | F1 실제 backfill 선택 경로 재현과 fake-host self-test 통과. F2 monotonic 60초 재평가·cadence/DB 회귀 추가. production DB는 별도 READ ONLY 집계만 승인 | 이 소스 수정 커밋; [F1](reviews/2026-10-13-r2-daily-repair.md), [F2](reviews/2026-10-13-r2-owner-and-web.md), [조회 검토](reviews/2026-10-13-r2-db-probe-review.md). CI·독립 리뷰·운영 인수 미완료 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

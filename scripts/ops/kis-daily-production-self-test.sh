@@ -12,6 +12,8 @@ state_helper="$script_dir/lib/kis-daily-state.py"
 [ -x "$installer" ] || { echo 'KIS_DAILY_SELF_TEST: installer is not executable' >&2; exit 1; }
 [ -f "$state_helper" ] && [ ! -L "$state_helper" ] || { echo 'KIS_DAILY_SELF_TEST: state helper is missing or unsafe' >&2; exit 1; }
 bash -n "$runner"
+bash -n "$script_dir/backfill-production.sh"
+bash -n "$script_dir/backfill-production-self-test.sh"
 bash -n "$installer"
 python3 -B -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="ascii"))' "$state_helper"
 
@@ -471,4 +473,5 @@ if grep -Eq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD
   echo 'KIS_DAILY_SELF_TEST: installer contains a forbidden account/live surface' >&2
   exit 1
 fi
+bash "$script_dir/backfill-production-self-test.sh"
 echo 'KIS_DAILY_SELF_TEST: PASS (syntax, provider-free plan, immutable release unit paths, late apply gate, lock/calendar/DB/worker contracts)'

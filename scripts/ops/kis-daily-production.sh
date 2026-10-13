@@ -608,11 +608,14 @@ echo "  exact_missing_session_dates=$session_dates_csv"
 echo '  worker_contract=one research-worker --backfill-session-dates process; shared TokenManager/chk-holiday snapshot'
 
 set +e
+# Backfill revalidates this exact check/close-filtered list as a subset of the
+# full-range XKRX selection before it can write state or invoke the worker.
 LAGRANGE_ENV_FILE="$env_file" \
 LAGRANGE_XKRX_CALENDAR_DIR="$calendar_dir" \
 LAGRANGE_BACKFILL_STATE="$state_file" \
   bash "$script_dir/backfill-production.sh" \
-    --start "$range_start" --end "$today" --universe etf --auto-resume --execute
+    --start "$range_start" --end "$today" --session-dates "$session_dates_csv" \
+    --universe etf --auto-resume --execute
 worker_rc=$?
 set -e
 case "$worker_rc" in

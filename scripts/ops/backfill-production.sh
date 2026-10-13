@@ -13,6 +13,7 @@ state_file=${LAGRANGE_BACKFILL_STATE:-}
 calendar_dir=${LAGRANGE_XKRX_CALENDAR_DIR:-$root/data/calendars/xkrx}
 calendar_selection_file=
 calendar_metadata_file=
+selected_session_file=
 calendar_id=
 calendar_artifact_sha256=
 calendar_artifact_size=
@@ -21,6 +22,9 @@ calendar_session_count=0
 calendar_non_session_count=0
 start_date=
 end_date=
+session_dates_csv=
+session_dates_filter=0
+selected_session_count=0
 universes=etf
 mode=plan
 auto_resume=0
@@ -28,6 +32,7 @@ auto_resume=0
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/backfill-production.sh --start YYYY-MM-DD --end YYYY-MM-DD
+       [--session-dates YYYY-MM-DD[,YYYY-MM-DD...]]
        [--universe etf|candidate|all] [--plan|--execute]
 
 The plan covers the fixed 11-ETF KIS EOD dataset. Candidate universes
@@ -40,7 +45,10 @@ and a valid backfill-scope production config. It uses the existing idempotent wo
 no order/account endpoint is called. The state file is append-only and each
 session date must complete Raw -> normalized -> DB publication before progress
 is recorded. The validated XKRX scheduler artifact supplies the only session
-date input: weekends and closures create zero Docker, worker, or KIS calls.
+date source: weekends and closures create zero Docker, worker, or KIS calls.
+Optional --session-dates narrows that validated selection and does not change
+the full-range V4 state identity or the calendar source. Without it, selection
+is unchanged.
 The one worker process receives the exact sorted session list, makes one
 allowlisted KIS chk-holiday call for the first needed date, and validates later
 dates against its immutable cached snapshot. A date outside that snapshot makes
@@ -68,6 +76,13 @@ while [ "$#" -gt 0 ]; do
     --end)
       [ "$#" -ge 2 ] || die '--end needs YYYY-MM-DD'
       end_date=$2
+      shift 2
+      ;;
+    --session-dates)
+      [ "$#" -ge 2 ] || die '--session-dates needs a nonempty comma-separated ISO date list'
+      [ "$session_dates_filter" -eq 0 ] || die '--session-dates may be supplied only once'
+      session_dates_csv=$2
+      session_dates_filter=1
       shift 2
       ;;
     --universe)
@@ -292,7 +307,7 @@ load_calendar_selection() {
     die 'cannot stage the validated XKRX session list'
   calendar_metadata_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-xkrx-metadata.XXXXXX") ||
     die 'cannot stage the validated XKRX calendar metadata'
-  trap 'rm -f -- "$calendar_selection_file" "$calendar_metadata_file"' EXIT
+  trap cleanup_staged_files EXIT
   if ! python3 "$root/scripts/ops/xkrx-calendar-bootstrap.py" \
     --emit-sessions --start "$start_date" --end "$end_date" \
     --output-dir "$calendar_dir" >"$calendar_selection_file" 2>"$calendar_metadata_file"; then
@@ -365,6 +380,74 @@ PY
   fi
   IFS=$'\t' read -r calendar_id calendar_artifact_sha256 calendar_artifact_size \
     calendar_artifact_range calendar_session_count calendar_non_session_count <<<"$identity_line"
+}
+
+apply_session_date_filter() {
+  if [ "$session_dates_filter" -eq 0 ]; then
+    selected_session_file=$calendar_selection_file
+    selected_session_count=$calendar_session_count
+    return 0
+  fi
+
+  selected_session_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-xkrx-filtered-sessions.XXXXXX") ||
+    die 'cannot stage the selected XKRX sessions'
+  if ! selected_session_count=$(python3 - "$session_dates_csv" "$calendar_selection_file" \
+    "$start_date" "$end_date" "$selected_session_file" <<'PY'
+import datetime as dt
+import re
+import sys
+from pathlib import Path
+
+csv_text, calendar_path, start_text, end_text, output_path = sys.argv[1:]
+def invalid() -> None:
+    raise SystemExit("session-date filter failed closed validation")
+
+try:
+    csv_bytes = csv_text.encode("ascii")
+except UnicodeEncodeError:
+    invalid()
+if not csv_bytes or len(csv_bytes) > 1_000_000:
+    invalid()
+values = csv_text.split(",")
+if not values or len(values) > 10_000:
+    invalid()
+dates: list[dt.date] = []
+for value in values:
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        invalid()
+    try:
+        parsed = dt.date.fromisoformat(value)
+    except ValueError:
+        invalid()
+    if parsed.isoformat() != value:
+        invalid()
+    dates.append(parsed)
+if any(left >= right for left, right in zip(dates, dates[1:])):
+    invalid()
+try:
+    start = dt.date.fromisoformat(start_text)
+    end = dt.date.fromisoformat(end_text)
+except ValueError:
+    invalid()
+if any(not start <= value <= end for value in dates):
+    invalid()
+calendar_dates = Path(calendar_path).read_text(encoding="ascii").splitlines()
+calendar_set = set(calendar_dates)
+if any(value not in calendar_set for value in values):
+    invalid()
+Path(output_path).write_text("".join(value + "\n" for value in values), encoding="ascii")
+print(len(values))
+PY
+  ); then
+    die 'session-date filter must be nonempty, canonical, strictly increasing, unique, within the selected range and XKRX calendar, and at most 10000 dates / 1000000 bytes'
+  fi
+}
+
+cleanup_staged_files() {
+  local path
+  for path in "$calendar_selection_file" "$calendar_metadata_file" "$selected_session_file"; do
+    [ -z "$path" ] || rm -f -- "$path"
+  done
 }
 
 validate_state() {
@@ -444,7 +527,10 @@ check_auto_resume_state() {
 # execute gate is evaluated.  This makes a missing/tampered/out-of-range
 # scheduler input a fail-closed local error, and gives both paths identical
 # session counts and identity material.
+# Validate this optional narrowing against the complete XKRX selection before
+# execute config gates or protected state writes. It never changes V4 identity.
 load_calendar_selection
+apply_session_date_filter
 
 if [ "$mode" = execute ]; then
   [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
@@ -515,8 +601,8 @@ BACKFILL_PLAN: KIS read-only fixed ETF EOD
   civil range: $start_date..$end_date
   validated XKRX scheduler: calendar_id=$calendar_id artifact_sha256=$calendar_artifact_sha256
   artifact range: $calendar_artifact_range
-  session dates: $calendar_session_count (non-session skips: $calendar_non_session_count)
-  source dates: only validated XKRX sessions; no worker/KIS/Docker call for a skipped date
+  selected sessions: $selected_session_count of $calendar_session_count (non-session skips: $calendar_non_session_count)
+  source dates: only validated XKRX sessions, optionally narrowed by --session-dates; no worker/KIS/Docker call for a skipped date
   raw scope: kis/kr; normalized scope: kis-normalized/kr; DB logical provider: KRX
   idempotency: deterministic normalized batch/source_batch_id and exact manifest replay
   state identity: V4 pre-run inputs plus calendar id/hash/full artifact range
@@ -531,7 +617,7 @@ EOF
   exit 0
 fi
 
-dates=$(cat -- "$calendar_selection_file")
+dates=$(cat -- "$selected_session_file")
 published_suffix=$'\tPUBLISHED\t'"$run_identity"
 pending_dates=()
 while IFS= read -r date || [ -n "$date" ]; do
@@ -544,7 +630,7 @@ while IFS= read -r date || [ -n "$date" ]; do
 done <<<"$dates"
 
 if [ "${#pending_dates[@]}" -eq 0 ]; then
-  echo "BACKFILL: PASS (sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count; no worker/KIS/Docker call)"
+  echo "BACKFILL: PASS (selected_sessions=$selected_session_count calendar_sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count; no worker/KIS/Docker call)"
   exit 0
 fi
 
@@ -639,4 +725,4 @@ case "$progress_rc" in
     exit 1
     ;;
 esac
-echo "BACKFILL: PASS (civil_range=$start_date..$end_date sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count)"
+echo "BACKFILL: PASS (civil_range=$start_date..$end_date selected_sessions=$selected_session_count calendar_sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count)"

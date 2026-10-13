@@ -106,3 +106,33 @@ Owner의 obsolete timer 비활성화, 교체·재수집 미완료를 기록한�
 `notifyOnFinish=true`가 등록됐고 코디네이터는 활성 상태에서 결과를 수용한다.
 기존 heartbeat는 최초 두 ID만 감시하므로 새 worker 전체 감시를 대체한다고 주장하지 않는다.
 문서 8개의 로컬 링크 130개와 WP-1B가 아닌 WP-1A binding receipt hash를 직접 검증했다.
+
+### WP-1C — 검토한 운영 READ ONLY 집계 승인
+
+WP-1B의 SQL 전체와 runner를 직접 읽고 exact hash를 대조했다. 쿼리는 고정 catalog·
+metadata SELECT, READ ONLY/timeout/전역 가시성 guard 및 rollback만 포함한다.
+actor 설정·provider·새 container·운영 변경은 없다. local Docker socket 접근 가능도 확인했다.
+초안은 보존하고 `target/r2-daily-beta/wp-1c/`에 실행 검토본을 별도 만들었다.
+SQL 본문은 바꾸지 않고 inert gate와 연동 hash만 일치하도록 변경했으며,
+정의만 로드해 lexical scope·contract/source hash 검사를 통과했다. 이 시점 SQL은 미실행이다.
+
+- runner SHA256: `8ac22ff72999cd00e6b1d1502eb4d51868594033b66df24182c2b670dced1e94`
+- SQL SHA256: `e685570d8a5c17eb6d713388f7347d76b5eb8b38f5fb039d2ebcd578b55765df`
+- contract SHA256: `577a1d3526e2d9c7a29326ba02d7dec3654b4578aa3ae06b49db1defc7ab829c`
+- local migration manifest SHA256: `5793c369f863b0965dc8bb65936f2e4e75287360be4444d1351a4c53c2d67300`
+
+기존 WP-1 worker가 이 exact runner를 한 번 실행해 sanitised 집계만 회수하도록 승인한다.
+current·postgres ID/image·시작 시각·restart count가 전후 일치해야 하며 drift/실패는 중단한다.
+1초 lock·10초 statement·전체 180초 및 512KiB 출력 상한을 유지한다. AVAILABLE은 건강 판정이 아니다.
+
+### F1/F2 부분 검증 커밋 준비
+
+F1 worker의 실제 idle/pending0, baseline 재현 및 변경 self-test PASS를 회수하고 패치를
+직접 읽었다. F2는 monotonic cadence와 5개 unit case/actual-role DB case를 작성했으며
+실행은 아직 하지 않았다. 코디네이터는 동시 예약 assertion을 추가하고 fixture의 권리 검사를
+분리했다. 구조·API·schema·Compose 의존성은 바꾸지 않아 architecture diagrams는 유지한다.
+
+두 수정의 검증용 커밋을 별도로 고정해 기존 CI workflow를 feature branch에서 실행한다.
+먼저 같은 SHA의 기존 실행을 조회하고 중복 dispatch하지 않는다. 이 CI는 hosted disposable DB를
+사용한다. U2 구현 전의 부분 후보이므로 C_R2 최종 고정·출시 인수나 C3 대체를 뜻하지 않는다.
+Sol/high의 독립 소스 리뷰도 병행하며 finding이 있으면 수정·영향 검증을 갱신한다.
