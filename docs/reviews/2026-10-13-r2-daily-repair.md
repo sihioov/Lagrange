@@ -161,3 +161,17 @@ changed. These checks used
 synthetic fixtures only: no Docker daemon/container, DB, provider, production
 state/config, Cargo, root operation, service lifecycle, or Git write action was
 performed. Operational R2-03 acceptance remains separate and unverified.
+
+## Coordinator source acceptance — 2026-10-14 KST
+
+The corrected source is pinned at `f8b9296c14cb48dacdf8cacefab6c2abff92bf24`.
+[CI 38420816275](https://github.com/sihioov/Lagrange/actions/runs/38420816275)
+completed successfully, including policy and the required aggregate.
+[Independent delta review](2026-10-14-r2-fixture-review.md) closes P2-F1 at the exact
+`ccbd3762dfa5d2c0aa1503b01180f498f909e96d3578f48d916b99738448d5b0` bytes.
+Earlier failures and the temporary fixture-model blocker above remain historical evidence.
+F1 source repair and isolated verification are accepted. Actual collection,
+deployment and R2-03 operational acceptance remain unperformed.
+The [CI evidence report](2026-10-14-r2-fixture-ci.md) distinguishes successful
+policy steps from unavailable individual shell-result markers; the local
+fake-host/daily self-test evidence above supplies those direct results.

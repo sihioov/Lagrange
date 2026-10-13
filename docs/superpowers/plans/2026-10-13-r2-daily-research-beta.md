@@ -7,7 +7,7 @@ Native subagents: prohibited for worker packages
 - 계획 기준 커밋: `0519c03bf566359592e18f0f77133c059c332f68`
 - 작업 디렉터리: `/data/worktrees/3puw275b/excited-dolphin`
 - 상위 작업: [로드맵 R2-01~R2-09](../../ROADMAP.md#6-r2--일일-연구-베타-완성)
-- 상태: **Owner 실행 요청 수신; WP-1 DB 집계·복구 범위 검토와 WP-2 분석 수용; WP-3/F1·독립 WP-5/F2 초기 CI 성공, 테스트 보정 완료·새 CI 대기. WP-4는 U2 채택 대기.** R2-01/02 운영 책임·실행 전제 판정은 남음.
+- 상태: **Owner 실행 요청 수신; WP-1 DB 집계·복구 범위 검토와 WP-2 분석 수용; WP-3/F1·독립 WP-5/F2 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. WP-4는 U2 채택 대기.** R2-01/02 운영 책임·실행 전제 판정은 남음.
 - 계획 작성 커밋 `cea7baa`에서는 worker·운영 진단·코드/운영 변경을 실행하지 않았다.
   이후 2026-10-13 22:47 KST WP-1/2를 시작했다. [실행 기록](../../reviews/2026-10-13-r2-execution.md)에
   현재 범위·담당·수용 상태를 기록한다. 빌드·배포·migration·timer 변경·provider 호출·거래일 관찰은 미착수다.

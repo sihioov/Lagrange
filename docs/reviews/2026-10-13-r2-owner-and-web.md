@@ -136,3 +136,17 @@ decomposition is needed for this bounded fixture repair.
 
 Final worktree inspection also showed `docs/reviews/2026-10-13-r2-daily-repair.md`
 modified outside this task's allowlist. It was not edited here and was left untouched.
+
+## Coordinator source acceptance — 2026-10-14 KST
+
+The corrected source is pinned at `f8b9296c14cb48dacdf8cacefab6c2abff92bf24`.
+[CI 38420816275](https://github.com/sihioov/Lagrange/actions/runs/38420816275)
+completed successfully, including Rust compilation, workspace tests, PostgreSQL
+validation and the required aggregate. This supersedes the earlier unexecuted
+source-verification status for the corrected fixture, while preserving its history.
+[Independent delta review](2026-10-14-r2-fixture-review.md) closes P2-F2 at the exact
+`0bcdabfb1bb7462e216e2fa2f6f29dfeeec881bc7726e40a6233703c4c7d16db` bytes.
+F2 source acceptance does not establish deployed scheduling, real Owner/API/UI
+acceptance or WP-4 daily-input integration. Those R2-05 conditions remain open.
+The [accepted CI evidence](2026-10-14-r2-fixture-ci.md) records the year-boundary
+test, actual-role late-calendar regression and all five cadence tests as `ok`.

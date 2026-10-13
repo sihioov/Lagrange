@@ -4,7 +4,7 @@
 - 시작 시각: 2026-10-13 13:47 UTC / 22:47 KST.
 - 기준 workspace: `/data/worktrees/3puw275b/excited-dolphin`, branch `excited-dolphin`.
 - 적용 계획: [R2 일일 연구 베타](../superpowers/plans/2026-10-13-r2-daily-research-beta.md).
-- 상태: **R2 DOING; DB 집계·복구 범위 검토 수용, F1/F2 초기 CI 성공·테스트 보정 완료·새 CI 대기. U2 채택 대기.** 실행 요청은 계획의 기존 승인·새 결정 구분을 유지한다.
+- 상태: **R2 DOING; DB 집계·복구 범위 검토 수용, F1/F2 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. U2 채택 대기.** 실행 요청은 계획의 기존 승인·새 결정 구분을 유지한다.
 
 ## G0와 기준선
 
@@ -29,10 +29,10 @@
 | WP-1A | `11a8f223-6f2d-4adb-89ab-86dbc917d2fd` / codex gpt-6-luna medium | 현재 호스트의 고정 metadata 수집, DB 조회문/runner 준비 | 부분 수용; 아래 G1과 각 보고서의 검증 한계 유지 |
 | WP-2 | `4213016a-e26d-4e09-bbc3-e7764797795c` / codex gpt-6.1-sol high | 기존 입력·calendar·추천·upgrade/복구 계약의 오프라인 대조 | 부분 수용; 아래 G1과 각 보고서의 검증 한계 유지 |
 | WP-1B~F | `4213016a-e26d-4e09-bbc3-e7764797795c` / codex gpt-6.1-sol high; 운영 실행은 코디네이터·WP-1 worker | operator READ ONLY SQL·runner, 현재 집계 및 복구 날짜 검토 | 1C~E 실패 보존; 1F 성공·오프라인 검토 수용, 실제 복구는 미실행 |
-| WP-3/F1 | `8a7c638a-bf04-4ea0-892e-ae51c158b089` / codex gpt-6-luna max | daily→backfill 선택 날짜 보존·fake-host 회귀 | 초기 CI 성공; P2 격리 보정·hostile 환경 self-test 수용, 새 CI 대기 |
-| WP-5/F2 | `7b793a02-47b0-4db5-bfa2-506185b2d67e` / codex gpt-6-luna max | Owner 동일 eligible day 재평가·격리 회귀 작성 | 초기 cadence·동시 DB 회귀 CI 성공; 연도 경계 fixture 보정 소스 수용, 새 CI 대기 |
+| WP-3/F1 | `8a7c638a-bf04-4ea0-892e-ae51c158b089` / codex gpt-6-luna max | daily→backfill 선택 날짜 보존·fake-host 회귀 | 보정본 CI 성공, P2 격리 보정·hostile 환경 self-test·독립 리뷰 수용; 운영 복구는 별도 |
+| WP-5/F2 | `7b793a02-47b0-4db5-bfa2-506185b2d67e` / codex gpt-6-luna max | Owner 동일 eligible day 재평가·격리 회귀 작성 | cadence·동시 DB 회귀와 연도 경계 fixture 보정본 CI 성공·독립 리뷰 종료; 운영·WP-4 통합은 별도 |
 | WP-4 | 미배정 | 새로운 ETF 입력·자동 추천 | BLOCKED; U2 결정안 대기 |
-| WP-6/7 부분 | WP-1 worker / Luna medium; WP-2 worker / Sol high | `3ee453f` 기존 CI 회수와 F1/F2 독립 리뷰 | 초기 CI·리뷰 회수, P2 보정 검토 수용; 새 커밋 CI 및 최종 C_R2 인수는 별도 |
+| WP-6/7 부분 | WP-1 worker / Luna medium; WP-2 worker / Sol high | `3ee453f`·`f8b9296` 기존 CI 회수와 F1/F2 독립 리뷰 | 두 CI terminal success, 보정본 P2 리뷰 종료; 최종 C_R2 인수는 별도 |
 | WP-8~10 | 미배정 | 이미지·운영·관찰 | TODO |
 
 ## WP-1A 읽기 범위
@@ -219,3 +219,42 @@ U2를 임의 채택하거나 운영 실행으로 확대하지 않았다. 테스�
 `excited-dolphin`과의 merge-base는 여전히 `b0a2579`다. 이번 작업에서 제외된 개발 속도
 개선 5가지를 수행하거나 병합하지 않고 R2 수정과 fixture를 현재 브랜치의 workflow로 검증한다.
 최종 main 통합 시에는 이 차이와 검증 대상이 달라지는 점을 별도 처리해야 한다.
+
+### 보정된 부분 후보 — 2026-10-14 KST
+
+fixture 두 파일과 진행·진단 문서를 `f8b9296c14cb48dacdf8cacefab6c2abff92bf24`로
+커밋하고 `origin/excited-dolphin`에 푸시했다. 소스 hash는 F1
+`ccbd3762dfa5d2c0aa1503b01180f498f909e96d3578f48d916b99738448d5b0`, F2
+`0bcdabfb1bb7462e216e2fa2f6f29dfeeec881bc7726e40a6233703c4c7d16db`로 worker 검증본과 같다.
+기존 exact-SHA run 부재를 확인하고 CI를 한 번 dispatch했다.
+[CI 38420816275](https://github.com/sihioov/Lagrange/actions/runs/38420816275)는
+2026-10-13 15:17:43 UTC 시작이며 기존 Luna/medium worker가 terminal 근거를 회수한다.
+기존 Sol/high 리뷰어는 같은 두 파일의 P2 보정만 독립 재검토한다. 두 follow-up 모두
+실제 running/pending0, `notifyOnFinish=true`와 기존 bounded heartbeat 감시를 확인했다.
+후속 문서 커밋은 이 검증 대상과 구분하며 U2 구현 전의 부분 후보를 최종 C_R2로 부르지 않는다.
+
+Sol/high의 [정확한 보정본 독립 리뷰](2026-10-14-r2-fixture-review.md)를 실제 idle/pending0
+후 회수하고 소스 hash·HEAD blob·보고서의 근거를 직접 대조했다. P2-F1/P2-F2는 소스 수준에서
+모두 닫혔고 새 구체적 finding은 없다. 별도 CI의 실행 성공을 이 리뷰로 대신하지 않는다.
+private `review/` 부모를 0700으로 제한한 경미한 경로 범위 이탈은 보고서에 보존했고,
+이전 mode를 추측해 복원하지 않았다. product·운영 파일은 변경하지 않았다.
+
+### 보정본 CI 인수·이번 실행 정산 — 2026-10-14 KST
+
+`f8b9296`의 [CI 38420816275](2026-10-14-r2-fixture-ci.md)는 2026-10-13
+15:38:41 UTC terminal success다. 7개 실행 job의 checkout SHA와 required 성공을 회수했다.
+코디네이터가 GitHub terminal metadata와 private JSON·hash·mode를 별도로 대조했다.
+workspace 235개 결과 행 합계는 2,892 pass/0 fail/기존 ignored6이며 고유 테스트 수가 아니다.
+별도 chart6 pass, 새 year-boundary와 late-calendar 회귀 및 cadence5 모두 `ok`다.
+PostgreSQL APPROVED/59 migrations/skip guard ENFORCED이며 Web·Python 단계도 성공했다.
+CI policy의 개별 daily/backfill 결과 marker는 노출되지 않아 기존 로컬 실행 증거와 구분했다.
+
+F1/F2 소스 수정·보정·독립 리뷰·CI 검증을 수용한다. 최종 C_R2 고정, U2 새 입력 구현,
+main 통합, 이미지·운영 적용·실제 Owner 사용·연속 3거래일 인수는 완료하지 않았다.
+다음 의존 작업은 [U2 결정안](2026-10-13-r2-daily-input-decision.md) 채택 후 WP-4 설계·구현
+분해다. 그 사이 만든 DB·복구 준비안은 실제 운영 명령의 승인이나 실행 근거를 대신하지 않는다.
+
+네 owned worker의 실제 idle·pending0과 최종 보고 회수를 확인하고 15:51:04 UTC에
+heartbeat `a136717b`를 삭제했다. 남은 worker/background/permission wait는 없다.
+검증된 scheduler 재평가와 EOD/ETF 발행 복구 구분 교훈은 hook helper의 Mem0 `SAVED`와
+memory ID로 저장을 확인했다. 제안 상태인 U2는 채택된 결정으로 저장하지 않았다.

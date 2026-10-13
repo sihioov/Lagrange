@@ -9,11 +9,11 @@
 | 항목 | 확인된 상태 |
 | --- | --- |
 | main 통합 | R1 기준 `b0a2579`. 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`; 이번 R2는 기존 기준의 `excited-dolphin`에서 별도 검증 |
-| 검증 대상 | R1은 C3 `862fa954c16d28a617271fe6f613d34226e2d558`로 고정. R2 F1/F2 부분 후보 `3ee453f` CI 성공; 후속 fixture 보정과 최종 C_R2 인수는 별도 |
+| 검증 대상 | R1은 C3 `862fa954c16d28a617271fe6f613d34226e2d558`로 고정. R2 F1/F2는 초기 `3ee453f`와 보정본 `f8b9296` CI 성공·P2 리뷰 종료; U2 구현 전 부분 후보이며 최종 C_R2와 구분 |
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — 현재 DB 집계·누락 확인, WP-3/F1·독립 WP-5/F2 테스트 보정과 CI 검증. R2-04는 새 ETF 입력·자동 추천 계약 대기. [실행 기록](reviews/2026-10-13-r2-execution.md)에서 결과 수용 추적 |
+| 다음 단계 | R2 DOING — DB 집계·복구 범위 분석과 F1/F2 소스 검증 완료. 새 ETF 입력·자동 추천 계약 채택 후 WP-4 설계·구현; 최종 후보의 운영 적용·Owner 인수는 후속 단계. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -25,7 +25,7 @@
 R2 계획 작성 후 Owner의 실행 요청으로 현재 상태와 소스 계약을 대조했다. current `fce9b90`의 daily
 timer는 비활성이며 실행 manifest 대상 중 3개가 일치하고 5개는 과거 이미지다. 원인은 아직 추정하지 않는다.
 두 국소 결함은 `3ee453f`로 feature branch에 푸시해 기존 실행 부재 확인 후 CI를 한 번 요청했다.
-독립 리뷰의 두 테스트 격리·기간 finding은 보정했으며 새 커밋의 CI로 검증한다. 10월 13일 23:51 KST READ ONLY DB 집계는
+독립 리뷰의 두 테스트 격리·기간 finding은 보정본 `f8b9296`의 CI와 독립 소스 리뷰로 닫았다. 10월 13일 23:51 KST READ ONLY DB 집계는
 59개 migration checksum 일치, ETF11 발행 8월 28일·Owner V2 10월 6일을 확인했다.
 날짜 artifact와 daily DB 기록의 차이는 28세션이다. 조회 도구의 앞선 문법 오류·실패를 보존하고
 집계·정확한 날짜 차이와 [복구 범위 검토](reviews/2026-10-13-r2-catch-up-readiness.md)를 수용했다. 8월 31일은 기존 EOD의 별도 발행 복구 후보다. 서비스 변경·provider 호출은 미실행이다.
