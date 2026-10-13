@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
+import os
 import re
+import shlex
+import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -13,13 +18,35 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 SHA_ACTION = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
+CACHE_SHA = "27d5ce7f107fe9357f9df03efb73ab90386fccae"
+CARGO_DOWNLOAD_PATHS = {
+    "~/.cargo/registry/index", "~/.cargo/registry/cache", "~/.cargo/registry/src",
+    "~/.cargo/git/db", "~/.cargo/git/checkouts",
+}
+CACHE_TARGETS = {
+    "clippy": "${{ runner.temp }}/lagrange-cargo-target-clippy",
+    "workspace-tests": "${{ runner.temp }}/lagrange-cargo-target-workspace",
+    "postgres-integration-validation": "${{ runner.temp }}/lagrange-cargo-target-postgres",
+    "research-smoke": "${{ runner.temp }}/lagrange-cargo-target-smoke",
+}
+
+
+class UniqueBaseLoader(yaml.BaseLoader):
+    def construct_mapping(self, node, deep=False):
+        result = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in result:
+                raise AssertionError(f"duplicate workflow key: {key}")
+            result[key] = self.construct_object(value_node, deep=deep)
+        return result
 
 
 def load_workflow(name: str) -> tuple[Path, dict]:
     path = WORKFLOWS / name
     if not path.is_file():
         raise AssertionError(f"missing workflow: {path.relative_to(ROOT)}")
-    parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=UniqueBaseLoader)
     if not isinstance(parsed, dict):
         raise AssertionError(f"workflow is not a mapping: {name}")
     return path, parsed
@@ -32,6 +59,75 @@ def action_uses(workflow: dict) -> list[str]:
         for step in job.get("steps", [])
         if "uses" in step
     ]
+
+
+def command_lines(job: dict) -> list[str]:
+    return [line.strip() for step in job["steps"] for line in step.get("run", "").splitlines()]
+
+
+def assert_cache_policy(workflow: dict) -> None:
+    for job_id, job in workflow["jobs"].items():
+        assert job.get("permissions", {"contents": "read"}) == {"contents": "read"}, "job permissions expanded"
+        ids = [step["id"] for step in job["steps"] if "id" in step]
+        assert len(ids) == len(set(ids)), "duplicate step id"
+        by_id = {step["id"]: step for step in job["steps"] if "id" in step}
+        for step in job["steps"]:
+            use = step.get("uses", "")
+            if step.get("run"):
+                assert "cache-hit" not in step.get("if", ""), "cache hit must not skip a command"
+                assert step.get("continue-on-error") != "true", "check failure must not be masked"
+            if use.startswith("actions/setup-node@"):
+                assert "cache" not in step.get("with", {}), "duplicate implicit npm cache"
+                assert step.get("with", {}).get("package-manager-cache") == "false", "automatic npm cache must be disabled"
+            if not use.startswith("actions/cache"):
+                continue
+            assert use in {f"actions/cache/restore@{CACHE_SHA}", f"actions/cache/save@{CACHE_SHA}"}, "unapproved cache action"
+            assert step.get("continue-on-error") == "true", "cache failures need real-command fallback"
+            paths = set(step["with"]["path"].strip().splitlines())
+            allowed = set(CARGO_DOWNLOAD_PATHS) | {
+                *CACHE_TARGETS.values(),
+                "${{ runner.temp }}/lagrange-npm-cache-web/_cacache",
+                "${{ runner.temp }}/lagrange-uv-cache-workspace",
+                "${{ runner.temp }}/lagrange-uv-cache-python",
+                "${{ runner.temp }}/lagrange-smoke-build-cache/import/research-worker",
+                "${{ runner.temp }}/lagrange-smoke-build-cache/import/candidate-runner",
+            }
+            assert paths and paths <= allowed, "cache path not allowlisted"
+            if step["id"].startswith("cargo-download"):
+                assert paths == CARGO_DOWNLOAD_PATHS, "public Cargo path set changed"
+            if step["id"].startswith("cargo-target"):
+                assert paths == {CACHE_TARGETS[job_id]}, "Cargo target is not job-private"
+                assert job["env"]["CARGO_TARGET_DIR"] == CACHE_TARGETS[job_id]
+            kind = step["id"].rsplit("-", 1)[0]
+            if kind not in {"cargo-download", "cargo-target"}:
+                expected_paths = {
+                    ("web", "npm"): "${{ runner.temp }}/lagrange-npm-cache-web/_cacache",
+                    ("workspace-tests", "uv"): "${{ runner.temp }}/lagrange-uv-cache-workspace",
+                    ("python-tests", "uv"): "${{ runner.temp }}/lagrange-uv-cache-python",
+                    ("research-smoke", "docker-worker"): "${{ runner.temp }}/lagrange-smoke-build-cache/import/research-worker",
+                    ("research-smoke", "docker-candidate"): "${{ runner.temp }}/lagrange-smoke-build-cache/import/candidate-runner",
+                }
+                assert (job_id, kind) in expected_paths, "cache kind/job not allowlisted"
+                assert paths == {expected_paths[job_id, kind]}, "cache path belongs to another job or kind"
+            assert step["with"].get("key"), "cache key missing"
+            if "/save@" in use:
+                restore_id = step["id"].removesuffix("-save") + "-restore"
+                restore = by_id[restore_id]
+                condition = step.get("if", "")
+                assert condition.count("||") == 1, "save condition expands event/trust boundary"
+                for required in (
+                    "success()", "github.repository == 'sihioov/Lagrange'",
+                    "github.event_name == 'push'", "github.event_name == 'workflow_dispatch'",
+                    f"steps.{restore_id}.outcome == 'success'",
+                    f"steps.{restore_id}.outputs.cache-hit != 'true'",
+                ):
+                    assert required in condition, "save trust/miss condition missing"
+                assert step["with"]["path"] == restore["with"]["path"], "cold/warm path versions differ"
+                assert step["with"]["key"] == restore["with"]["key"], "restore/save keys differ"
+                assert "restore-keys" not in step["with"]
+            else:
+                assert step["with"].get("restore-keys"), "compatible restore prefix missing"
+                assert "if" not in step, "restores must remain unconditional"
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -67,6 +163,12 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertEqual(workflow["permissions"], {"contents": "read"})
             for use in action_uses(workflow):
                 self.assertRegex(use, SHA_ACTION)
+                self.assertIn(use, {
+                    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                    "actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903",
+                    "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+                    f"actions/cache/restore@{CACHE_SHA}", f"actions/cache/save@{CACHE_SHA}",
+                })
             for job in workflow["jobs"].values():
                 self.assertEqual(job["runs-on"], "ubuntu-latest")
                 self.assertIn("timeout-minutes", job)
@@ -77,8 +179,130 @@ class WorkflowContractTests(unittest.TestCase):
                         )
             text = path.read_text(encoding="utf-8").lower()
             self.assertNotIn("actions/upload-artifact", text)
-            self.assertNotIn("actions/cache", text)
             self.assertNotIn("target/", text)
+            self.assertNotIn("pull_request_target", text)
+            self.assertNotIn("secrets.", text)
+            self.assertNotRegex(text, r"steps\.[a-z-]+-save\.outputs")
+            assert_cache_policy(workflow)
+
+    def test_cache_policy_rejects_path_expansion_gate_skips_and_untrusted_saves(self) -> None:
+        _, baseline = load_workflow("ci.yml")
+        for bad_path in ("~/.cargo", "~/.cargo/credentials.toml", "target/", "node_modules", "data/phase0", "${{ runner.temp }}/receipts"):
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["clippy"]["steps"] if step.get("id") == "cargo-download-restore")
+            step["with"]["path"] = bad_path
+            with self.subTest(path=bad_path), self.assertRaisesRegex(AssertionError, "not allowlisted"):
+                assert_cache_policy(changed)
+        changed = copy.deepcopy(baseline)
+        step = next(step for step in changed["jobs"]["web"]["steps"] if step.get("id") == "npm-install")
+        step["if"] = "steps.npm-restore.outputs.cache-hit != 'true'"
+        with self.assertRaisesRegex(AssertionError, "must not skip"):
+            assert_cache_policy(changed)
+        for clause in ("github.repository == 'sihioov/Lagrange'", "steps.npm-restore.outputs.cache-hit != 'true'"):
+            changed = copy.deepcopy(baseline)
+            step = next(step for step in changed["jobs"]["web"]["steps"] if step.get("id") == "npm-save")
+            step["if"] = step["if"].replace(clause, "true")
+            with self.subTest(clause=clause), self.assertRaisesRegex(AssertionError, "trust/miss"):
+                assert_cache_policy(changed)
+
+    def test_cache_epoch_is_ascii_validated_through_environment(self) -> None:
+        for name in ("ci.yml", "research-smoke.yml"):
+            _, workflow = load_workflow(name)
+            self.assertEqual(workflow["on"]["workflow_dispatch"]["inputs"]["cache_epoch"]["type"], "string")
+            for job in workflow["jobs"].values():
+                steps = job["steps"]
+                if not any("actions/cache/restore@" in step.get("uses", "") for step in steps):
+                    continue
+                validator = next(step for step in steps if step.get("id") == "cache-epoch")
+                self.assertIn("github.event.inputs.cache_epoch", validator["env"]["CACHE_EPOCH_INPUT"])
+                self.assertIn("export LC_ALL=C", validator["run"])
+                self.assertNotIn("${{", validator["run"])
+                with tempfile.TemporaryDirectory(prefix="cache-epoch-") as temp:
+                    sentinel = Path(temp) / "must-not-run"
+                    output = Path(temp) / "output"
+                    for value in ("epoch_1.2-good", f"$(touch {sentinel})", "époch", "a\nvalue", "a" * 65):
+                        env = {**os.environ, "CACHE_EPOCH_INPUT": value, "GITHUB_OUTPUT": str(output)}
+                        result = subprocess.run(["bash", "-eu", "-c", validator["run"]], env=env, capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0 if value == "epoch_1.2-good" else 2)
+                        self.assertFalse(sentinel.exists())
+
+    def test_preflight_lifecycle_and_hosted_powershell_parse(self) -> None:
+        _, workflow = load_workflow("ci.yml")
+        jobs = workflow["jobs"]
+        for job_id in ("format", "clippy", "workspace-tests", "postgres-integration-validation"):
+            commands = command_lines(jobs[job_id])
+            install = "rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy"
+            first_preflight = next(line for line in commands if "dev-check.py preflight" in line)
+            self.assertLess(commands.index(install), commands.index(first_preflight), job_id)
+        commands = command_lines(jobs["workspace-tests"])
+        preflight = "python3 scripts/qa/dev-check.py preflight --profile rust --stage integration --environment ci"
+        self.assertLess(commands.index("uv sync --project nt --locked"), commands.index(preflight))
+        self.assertLess(commands.index("python scripts/ci/prepare_phase0.py --root data/phase0"), commands.index(preflight))
+        self.assertLess(commands.index(preflight), commands.index("docker compose -f deploy/qa/qa-db.compose.yml up -d --wait"))
+        policy_commands = "\n".join(command_lines(jobs["policy"]))
+        self.assertIn("python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v", policy_commands)
+        self.assertIn("python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v", policy_commands)
+        parser = next(step for step in jobs["policy"]["steps"] if step.get("shell") == "pwsh")
+        self.assertIn("Language.Parser]::ParseFile", parser["run"])
+        self.assertNotIn("&", parser["run"])
+        self.assertNotIn("verify-all.ps1", "\n".join(step.get("run", "") for step in jobs["policy"]["steps"] if step is not parser))
+
+    def test_smoke_build_cache_keeps_private_builder_and_cold_probes(self) -> None:
+        _, workflow = load_workflow("research-smoke.yml")
+        text = (WORKFLOWS / "research-smoke.yml").read_text()
+        self.assertIn("docker buildx create --driver docker-container --name", text)
+        self.assertNotRegex(text, r"\s--use(?:\s|$)")
+        self.assertNotIn("buildx prune", text)
+        self.assertNotIn("system prune", text)
+        for step in workflow["jobs"]["research-smoke"]["steps"]:
+            if step.get("id") in {"docker-worker-save", "docker-candidate-save"}:
+                self.assertIn("cache_promoted == 'true'", step["if"])
+        script = (ROOT / "scripts/qa/research-worker-smoke.sh").read_text()
+        self.assertIn('build_options=(--builder "$buildx_builder")', script)
+        self.assertIn('if [ "${GITHUB_ACTIONS:-}" = true ]; then', script)
+        self.assertIn("mode=max,ignore-error=true", script)
+        self.assertIn("dkr build --no-cache", script)
+        probe = script.split("raw_init_ownership_probe() (", 1)[1].split("raw_init_ownership_probe\n", 1)[0]
+        self.assertEqual(len(re.findall(r"^  dkr volume create ", probe, re.MULTILINE)), 6)
+
+    def test_smoke_cache_ignores_missing_export_and_promotes_only_valid_layout(self) -> None:
+        source = (ROOT / "scripts/qa/research-worker-smoke.sh").read_text()
+        functions = source.split("configure_service_build_cache() {", 1)[1].split('context_audit_tag="', 1)[0]
+        functions = "configure_service_build_cache() {" + functions
+        with tempfile.TemporaryDirectory(prefix="smoke-cache-functions-") as temp:
+            root = Path(temp)
+            imported = root / "import/research-worker"
+            exported = root / "new/research-worker"
+            imported.mkdir(parents=True)
+            exported.mkdir(parents=True)
+            override = root / "override.json"
+            preamble = (
+                "set -euo pipefail\nhosted_build_cache=1\nresearch_worker_cache_promoted=false\nresearch_worker_cache_bytes=unavailable\n"
+                f"import_root={shlex.quote(str(root / 'import'))}\nnew_root={shlex.quote(str(root / 'new'))}\ncompose_override={shlex.quote(str(override))}\n"
+            )
+            def execute(body):
+                return subprocess.run(["bash", "-c", preamble + functions + body], capture_output=True, text=True, timeout=5, check=True)
+            result = execute("configure_service_build_cache research-worker\npromote_service_build_cache research-worker\nprintf '%s' \"$research_worker_cache_promoted\"\n")
+            self.assertEqual(result.stdout, "false")
+            self.assertNotIn("cache_from", json.loads(override.read_text())["services"]["research-worker"]["build"])
+            old_index = '{"manifests":[{"digest":"sha256:old"}]}\n'
+            imported.joinpath("index.json").write_text(old_index)
+            imported.joinpath("blobs/sha256").mkdir(parents=True)
+            imported.joinpath("blobs/sha256/old").write_text("old")
+            execute("configure_service_build_cache research-worker\n")
+            build = json.loads(override.read_text())["services"]["research-worker"]["build"]
+            self.assertEqual(build["cache_from"], [f"type=local,src={imported}"])
+            self.assertEqual(imported.joinpath("index.json").read_text(), old_index)
+            new_index = '{"manifests":[{"digest":"sha256:new"}]}\n'
+            exported.joinpath("index.json").write_text(new_index)
+            exported.joinpath("blobs/sha256").mkdir(parents=True)
+            exported.joinpath("blobs/sha256/new").write_text("new")
+            result = execute("promote_service_build_cache research-worker\nprintf '%s' \"$research_worker_cache_promoted\"\n")
+            self.assertEqual(result.stdout, "true")
+            self.assertFalse(imported.joinpath("blobs/sha256/old").exists())
+            self.assertTrue(imported.joinpath("blobs/sha256/new").exists())
+            self.assertEqual(imported.joinpath("index.json").read_text(), new_index)
+            self.assertFalse(exported.exists())
 
     def test_ci_runs_required_gates_and_disposable_data(self) -> None:
         path, ci = load_workflow("ci.yml")
@@ -120,14 +344,17 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("cargo fmt --all -- --check", text)
         self.assertIn("CARGO_INCREMENTAL: '0'", text)
-        web_commands = [
-            step.get("run", "") for step in ci["jobs"]["web"]["steps"]
+        expected_web_commands = [
+            "npm ci", "npx playwright install --with-deps chromium",
+            "npm run openapi:check --workspace @lagrange/api-server",
+            "npm run lint --workspace @lagrange/web", "npm run typecheck --workspace @lagrange/web",
+            "npm test --workspace @lagrange/web", "npm run build --workspace @lagrange/web",
+            "bash scripts/qa/candidate-web-e2e.sh",
         ]
+        web_commands = [line for line in command_lines(ci["jobs"]["web"]) if line in expected_web_commands]
         self.assertEqual(
             web_commands,
             [
-                "",
-                "",
                 "npm ci",
                 "npx playwright install --with-deps chromium",
                 "npm run openapi:check --workspace @lagrange/api-server",
@@ -149,7 +376,7 @@ class WorkflowContractTests(unittest.TestCase):
         playwright_step = next(
             step
             for step in ci["jobs"]["web"]["steps"]
-            if step.get("run") == "npx playwright install --with-deps chromium"
+            if "npx playwright install --with-deps chromium" in step.get("run", "").splitlines()
         )
         self.assertEqual(playwright_step.get("working-directory"), "apps/web")
         policy_steps = ci["jobs"]["policy"]["steps"]
@@ -164,9 +391,7 @@ class WorkflowContractTests(unittest.TestCase):
             "pyarrow==25.0.0 uv==0.12.1",
             text,
         )
-        workspace_commands = [
-            step.get("run", "") for step in ci["jobs"]["workspace-tests"]["steps"]
-        ]
+        workspace_commands = command_lines(ci["jobs"]["workspace-tests"])
         self.assertIn(
             "cargo test -p api-server --test http_owner_equity_v2_chart --locked",
             workspace_commands,
@@ -346,7 +571,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("provision-runtime-secrets.sh|runtime-static-check.sh", script)
         self.assertNotIn("README.md|.gitignore|*.example|*.sh", script)
         self.assertEqual(
-            re.findall(r"^rc build ([^\n\\]+)", script, re.MULTILINE),
+            re.findall(r'^rc build "\$\{build_options\[@\]\}" ([^\n\\]+)', script, re.MULTILINE),
             ["research-worker ", "candidate-runner "],
         )
         self.assertIn("export COMPOSE_PARALLEL_LIMIT=1", script)

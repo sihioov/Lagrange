@@ -23,6 +23,11 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:  # Windows remains available for the non-heavy CLI stages.
+    fcntl = None  # type: ignore[assignment]
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = 1
@@ -57,6 +62,7 @@ FINGERPRINT_ENV = {
     "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER",
     "CARGO_INCREMENTAL",
+    "CARGO_BUILD_JOBS",
     "PYTHONPATH",
     "NODE_OPTIONS",
     "NPM_CONFIG_REGISTRY",
@@ -70,6 +76,147 @@ SECRET_ENV_NAME = re.compile(r"(?:KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL|ACCOUNT
 
 class InputError(Exception):
     """An invalid request or unresolved repository input."""
+
+
+class HeavySlotBusy(InputError):
+    """Another local heavy command currently owns the shared advisory lock."""
+
+
+HEAVY_CHECK_IDS = {
+    "cargo-clippy-workspace",
+    "cargo-test-workspace",
+    "python-pytest",
+    "web-test",
+    "web-build",
+    "web-e2e",
+}
+
+
+def validate_private_lock_directory(raw_path: str | Path) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute() or ".." in path.parts:
+        raise InputError("heavy lock directory must be an absolute path without parent traversal")
+    current = Path(path.anchor)
+    try:
+        for part in path.parts[1:]:
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise InputError("heavy lock directory path contains a symlink")
+        info = path.lstat()
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            raise InputError("heavy lock directory does not exist; create an owner-private mode-0700 directory") from exc
+        raise InputError("cannot inspect the heavy lock directory") from exc
+    if not stat.S_ISDIR(info.st_mode):
+        raise InputError("heavy lock location is not a directory")
+    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise InputError("heavy lock directory must be owned by the current user with mode 0700")
+    return path
+
+
+def heavy_lock_directory(explicit: str | Path | None = None) -> Path:
+    if not sys.platform.startswith("linux") or fcntl is None:
+        raise InputError("local focused heavy checks require a Linux advisory lock; use the hosted integration plan")
+    raw = str(explicit) if explicit is not None else os.environ.get("XDG_RUNTIME_DIR", "")
+    if not raw:
+        raise InputError("local focused heavy checks require XDG_RUNTIME_DIR or --heavy-lock-dir")
+    directory = validate_private_lock_directory(raw)
+    if directory == ROOT or ROOT in directory.parents:
+        raise InputError("heavy lock directory must be shared outside repository worktrees")
+    return directory
+
+
+class HeavySlot:
+    """Cross-worktree, user-wide advisory lock for one local heavy child."""
+
+    def __init__(self, directory: str | Path | None = None) -> None:
+        if os.name != "posix":
+            raise InputError("local focused heavy checks require a Linux advisory lock; use the hosted integration plan")
+        self.directory = heavy_lock_directory(directory)
+        self.path = self.directory / "lagrange-dev-check-heavy.lock"
+        self.descriptor: int | None = None
+
+    def __enter__(self) -> "HeavySlot":
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        created = False
+        try:
+            try:
+                self.descriptor = os.open(self.path, flags | os.O_EXCL, 0o600)
+                created = True
+            except FileExistsError:
+                self.descriptor = os.open(self.path, flags)
+            info = os.fstat(self.descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                raise InputError("heavy lock file must be a regular file owned by the current user")
+            if created:
+                os.fchmod(self.descriptor, 0o600)
+            elif stat.S_IMODE(info.st_mode) != 0o600:
+                raise InputError("existing heavy lock file must have mode 0600")
+            try:
+                fcntl.flock(self.descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                    raise HeavySlotBusy("another local heavy command holds the shared user lock; no child was started") from exc
+                raise InputError("could not acquire the shared local heavy lock") from exc
+            return self
+        except Exception:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        if self.descriptor is not None:
+            try:
+                fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(self.descriptor)
+            self.descriptor = None
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self.close()
+
+
+def run_child_with_heavy_slot(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    lock_directory: str | Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    with HeavySlot(lock_directory) as slot:
+        # The owned heavy command waits for its own full lifetime. Do not
+        # timeout-kill only a harness parent and release the slot underneath
+        # descendants it may have started.
+        child = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            pass_fds=(slot.descriptor,),
+        )
+        interrupted = False
+        while True:
+            try:
+                stdout, stderr = child.communicate()
+                break
+            except KeyboardInterrupt:
+                # Reap the owned child before releasing the slot. Inherited
+                # lock ownership also lasts through direct-child exit if the
+                # CLI is terminated abruptly; harnesses own their descendants.
+                interrupted = True
+        if interrupted:
+            raise KeyboardInterrupt
+        return subprocess.CompletedProcess(argv, child.returncode, stdout, stderr)
+
+
+def local_heavy_execution(environment: str) -> bool:
+    # An environment label cannot disable the local lock on a developer host.
+    return environment == "local" or os.environ.get("GITHUB_ACTIONS") != "true"
 
 
 def utc_now() -> str:
@@ -575,7 +722,10 @@ def check_python_packages(root: Path, requirements: list[dict[str, Any]]) -> lis
     results: list[dict[str, Any]] = []
     for item in requirements:
         raw_python = str(item.get("path", "python3"))
-        if raw_python == "python3":
+        if raw_python == "test-python":
+            # Rust Phase0 generators use PYTHON, defaulting to `python`.
+            python = shutil.which(os.environ.get("PYTHON") or "python")
+        elif raw_python == "python3":
             python = shutil.which("python3")
         else:
             python_path = portable_repo_path(root, raw_python)
@@ -583,6 +733,22 @@ def check_python_packages(root: Path, requirements: list[dict[str, Any]]) -> lis
         if not python:
             results.append({"ok": False, "error": f"missing Python environment: {raw_python}"})
             continue
+        expected_python = item.get("python_version")
+        if expected_python:
+            try:
+                version_result = subprocess.run(
+                    [python, "-B", "-c", "import sys; print('.'.join(map(str,sys.version_info[:2])))"],
+                    cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    timeout=10, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                version_result = None
+            found_python = version_result.stdout.strip() if version_result and version_result.returncode == 0 else None
+            results.append({
+                "ok": found_python == expected_python, "python": raw_python,
+                "package": "Python interpreter", "expected": expected_python,
+                "found": found_python, "error": None if found_python == expected_python else "wrong test Python interpreter version",
+            })
         for package, expected in item.get("packages", {}).items():
             script = (
                 "import importlib.metadata as m,sys; "
@@ -751,7 +917,11 @@ def selected_ids(config: dict[str, Any], profile: str, stage: str, package: str 
 
 
 def requirement_context(
-    config: dict[str, Any], profile: str, stage: str, check_ids: list[str]
+    config: dict[str, Any],
+    profile: str,
+    stage: str,
+    check_ids: list[str],
+    package: str | None = None,
 ) -> dict[str, Any]:
     requirements: dict[str, Any] = {
         "tools": {"git"},
@@ -764,6 +934,7 @@ def requirement_context(
         "browsers": set(),
         "pin_manifest": False,
         "prepare": {},
+        "database_url_exact": None,
     }
     if stage == "integration":
         req_profile = "all" if profile == "docs" else profile
@@ -776,6 +947,7 @@ def requirement_context(
         requirements["docker_compose"] = bool(req.get("docker_compose"))
         requirements["python_packages"].extend(req.get("python_packages", []))
         requirements["browsers"].update(req.get("browsers", []))
+        requirements["database_url_exact"] = req.get("database_url_exact")
     for check_id in check_ids:
         check = config["checks"][check_id]
         requirements["tools"].update(check.get("tools", []))
@@ -790,6 +962,19 @@ def requirement_context(
             for path in check.get("required_paths", []):
                 requirements["prepare"][path] = check["prepare_if_missing"]
         requirements["prepare"].update(check.get("prepare_by_path", {}))
+    if profile == "rust" and stage == "focused" and package is not None and "cargo-test-workspace" in check_ids:
+        # A deliberately small, source-backed map for package test suites with
+        # DB and/or Phase0 prerequisites. Unlisted pure packages need neither.
+        package_requirements = config.get("rust_package_prerequisites", {}).get(package, {})
+        requirements["tools"].update(package_requirements.get("tools", []))
+        requirements["paths"].extend(package_requirements.get("paths", []))
+        requirements["required_env"].update(package_requirements.get("required_env", []))
+        requirements["ports"].extend(package_requirements.get("ports", []))
+        requirements["docker_daemon"] = requirements["docker_daemon"] or bool(package_requirements.get("docker_daemon"))
+        requirements["docker_compose"] = requirements["docker_compose"] or bool(package_requirements.get("docker_compose"))
+        requirements["python_packages"].extend(package_requirements.get("python_packages", []))
+        requirements["prepare"].update(package_requirements.get("prepare", {}))
+        requirements["database_url_exact"] = package_requirements.get("database_url_exact")
     requirements["tools"] = sorted(requirements["tools"])
     if requirements["pin_manifest"]:
         requirements["tools"] = sorted(set(requirements["tools"]) | {"bash", "grep", "head", "sed", "tr"})
@@ -829,12 +1014,30 @@ def preflight_profile(
     package: str | None = None,
     *,
     port_bind: Any = None,
+    check_ids_override: list[str] | None = None,
+    heavy_lock_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    check_ids = selected_ids(config, profile, stage, package)
-    requirements = requirement_context(config, profile, stage, check_ids)
+    selected = selected_ids(config, profile, stage, package)
+    check_ids = list(check_ids_override) if check_ids_override is not None else selected
+    if any(check_id not in selected for check_id in check_ids):
+        raise InputError("preflight check selection must belong to the selected profile and stage")
+    requirements = requirement_context(config, profile, stage, check_ids, package)
     errors: list[str] = []
     observations: list[dict[str, Any]] = []
     tool_facts: dict[str, Any] = {}
+
+    if (
+        local_heavy_execution(environment)
+        and stage == "focused"
+        and set(check_ids) & HEAVY_CHECK_IDS
+    ):
+        try:
+            heavy_lock_directory(heavy_lock_dir)
+        except InputError as exc:
+            errors.append(str(exc))
+            observations.append({"kind": "heavy-slot", "status": "BLOCKED", "message": str(exc)})
+        else:
+            observations.append({"kind": "heavy-slot", "status": "READY", "scope": "user-wide"})
 
     for tool_name in requirements["tools"]:
         spec = config.get("tools", {}).get(tool_name)
@@ -853,6 +1056,9 @@ def preflight_profile(
         errors.append("missing environment variables: " + ", ".join(missing_env))
     for name in requirements["required_env"]:
         observations.append({"kind": "environment", "name": name, "present": name not in missing_env})
+    if requirements["database_url_exact"] and os.environ.get("DATABASE_URL") != requirements["database_url_exact"]:
+        errors.append("DATABASE_URL must match the fixed intraday disposable QA contract")
+        observations.append({"kind": "environment", "name": "DATABASE_URL", "present": "DATABASE_URL" not in missing_env, "valid": False})
     if (
         "DATABASE_URL" in requirements["required_env"]
         and "LAGRANGE_QA_DB_PORT" in requirements["required_env"]
@@ -907,23 +1113,38 @@ def preflight_profile(
             errors.append(port_item.get("reason", f"invalid port for {port_item['name']}"))
             observations.append({"kind": "port", **port_item, "ok": False, "errno": "INVALID_PORT"})
             continue
-        if port_item.get("mode") == "configured-endpoint":
+        if port_item.get("mode") in {"configured-endpoint", "reachable-endpoint"}:
             okay = (
                 "DATABASE_URL" not in missing_env
                 and "LAGRANGE_QA_DB_PORT" not in missing_env
                 and loopback_database_ok()
                 and os.environ.get("LAGRANGE_QA_DB_PORT") == str(port_item["port"])
+                and (not requirements["database_url_exact"] or os.environ.get("DATABASE_URL") == requirements["database_url_exact"])
             )
             result = {
                 "name": "/".join(port_item["names"]),
                 "port": port_item["port"],
                 "ok": okay,
                 "errno": None if okay else "ENDPOINT_NOT_CONFIGURED",
-                "mode": "configured-endpoint",
+                "mode": port_item["mode"],
             }
+            if okay and port_item["mode"] == "reachable-endpoint":
+                from urllib.parse import urlsplit
+
+                try:
+                    with socket.create_connection(
+                        (urlsplit(os.environ["DATABASE_URL"]).hostname, port_item["port"]),
+                        timeout=1,
+                    ):
+                        pass
+                except OSError as exc:
+                    result["ok"] = False
+                    result["errno"] = errno_name(exc.errno)
             observations.append({"kind": "port", **result})
-            if not okay:
+            if not result["ok"]:
                 errors.append(f"database endpoint port {result['port']} is not configured as the disposable loopback endpoint")
+                if result["errno"] != "ENDPOINT_NOT_CONFIGURED":
+                    errors[-1] = f"disposable database endpoint port {result['port']} is unreachable: observed errno {result['errno']}"
             continue
         result = check_port("/".join(port_item["names"]), port_item["port"], bind=port_bind)
         observations.append({"kind": "port", **result})
@@ -1076,7 +1297,13 @@ def safe_tool_facts(check: dict[str, Any], tool_facts: dict[str, Any]) -> dict[s
     return result
 
 
-def safe_fingerprint_environment(check: dict[str, Any], argv: list[str] | None = None) -> dict[str, Any]:
+def safe_fingerprint_environment(
+    check: dict[str, Any],
+    argv: list[str] | None = None,
+    *,
+    environment: str = "local",
+    heavy: bool = False,
+) -> dict[str, Any]:
     names = sorted(FINGERPRINT_ENV | set(check.get("fingerprint_env", [])))
     facts = safe_environment_facts(names)
     if argv and Path(argv[0]).name in {"cargo", "rustc", "rustfmt"}:
@@ -1088,6 +1315,13 @@ def safe_fingerprint_environment(check: dict[str, Any], argv: list[str] | None =
         }
     if argv and is_cargo_formatter(argv):
         facts["RUSTFMT"] = {"present": False, "sha256": None, "dispatcher_override": True}
+    if heavy and argv and Path(argv[0]).name == "cargo":
+        facts["CARGO_BUILD_JOBS"] = {
+            "present": True,
+            "value": "2",
+            "sha256": hashlib.sha256(b"2").hexdigest(),
+            "dispatcher_override": True,
+        }
     return facts
 
 
@@ -1098,13 +1332,15 @@ def is_cargo_formatter(argv: list[str]) -> bool:
     return bool(argv and Path(argv[0]).name == "cargo" and arguments and arguments[0] == "fmt")
 
 
-def command_environment(argv: list[str]) -> dict[str, str]:
+def command_environment(argv: list[str], *, environment: str = "local", heavy: bool = False) -> dict[str, str]:
     env = os.environ.copy()
     if argv and Path(argv[0]).name in {"cargo", "rustc", "rustfmt"}:
         env["RUSTUP_AUTO_INSTALL"] = "0"
     if is_cargo_formatter(argv):
         # cargo-fmt otherwise accepts an arbitrary executable instead of the probed toolchain.
         env.pop("RUSTFMT", None)
+    if heavy and argv and Path(argv[0]).name == "cargo":
+        env["CARGO_BUILD_JOBS"] = "2"
     return env
 
 
@@ -1265,6 +1501,7 @@ def fingerprint(
     changes: dict[str, Any],
     tool_facts: dict[str, Any],
     environment: str = "local",
+    heavy: bool = False,
 ) -> tuple[str, list[str], bool]:
     paths = input_paths_for_check(check, changes)
     dispatcher_records, dispatcher_safe = file_fingerprint(root, ["scripts/qa/dev-check.py"])
@@ -1287,7 +1524,9 @@ def fingerprint(
         "input_coverage_safe": coverage_safe,
         "tools": {name: tool_facts.get(name) for name in check.get("tools", [])},
         "environment_name": environment,
-        "environment": safe_fingerprint_environment(check, argv),
+        "environment": safe_fingerprint_environment(
+            check, argv, environment=environment, heavy=heavy
+        ),
         "platform": {"system": platform.system(), "release": platform.release(), "machine": platform.machine()},
     }
     encoded = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1516,12 +1755,18 @@ def execute_check(
     *,
     reuse: bool,
     environment: str = "local",
+    heavy_lock_dir: str | Path | None = None,
 ) -> dict[str, Any]:
+    heavy = local_heavy_execution(environment) and check_id in HEAVY_CHECK_IDS
     started = utc_now()
     monotonic_start = time.monotonic()
-    before_fingerprint, paths, coverage_safe = fingerprint(root, check_id, check, argv, cwd, changes, tool_facts, environment)
+    before_fingerprint, paths, coverage_safe = fingerprint(
+        root, check_id, check, argv, cwd, changes, tool_facts, environment, heavy
+    )
     receipt_tool_facts = safe_tool_facts(check, tool_facts)
-    receipt_environment_facts = safe_fingerprint_environment(check, argv)
+    receipt_environment_facts = safe_fingerprint_environment(
+        check, argv, environment=environment, heavy=heavy
+    )
     evidence = paths[:40]
     if len(paths) > 40:
         evidence.append(f"… {len(paths) - 40} additional input paths omitted")
@@ -1581,6 +1826,7 @@ def execute_check(
                 refresh_path_universe(root, changes),
                 tool_facts,
                 environment,
+                heavy,
             )
             if after_fingerprint == before_fingerprint and after_coverage_safe:
                 receipt = prior["receipt"]
@@ -1609,25 +1855,40 @@ def execute_check(
 
     timed_out = False
     start_error: str | None = None
+    heavy_slot_blocked = False
+    heavy_slot_message: str | None = None
     stdout = ""
     stderr = ""
     original_exit: int | None
     try:
-        result = subprocess.run(
-            argv,
-            cwd=cwd,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=command_environment(argv),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=float(check.get("timeout_seconds", 600)),
-            check=False,
-        )
+        effective_env = command_environment(argv, environment=environment, heavy=heavy)
+        if heavy:
+            result = run_child_with_heavy_slot(
+                argv,
+                cwd=cwd,
+                env=effective_env,
+                lock_directory=heavy_lock_dir,
+            )
+        else:
+            result = subprocess.run(
+                argv,
+                cwd=cwd,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=effective_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=float(check.get("timeout_seconds", 600)),
+                check=False,
+            )
         original_exit = result.returncode
         stdout = result.stdout
         stderr = result.stderr
+    except InputError as exc:
+        original_exit = None
+        heavy_slot_blocked = True
+        heavy_slot_message = str(exc)
     except subprocess.TimeoutExpired as exc:
         original_exit = None
         timed_out = True
@@ -1638,11 +1899,13 @@ def execute_check(
         start_error = errno_name(exc.errno)
     current_changes = refresh_path_universe(root, changes)
     after_fingerprint, _, after_coverage_safe = fingerprint(
-        root, check_id, check, argv, cwd, current_changes, tool_facts, environment
+        root, check_id, check, argv, cwd, current_changes, tool_facts, environment, heavy
     )
     inputs_stable = after_fingerprint == before_fingerprint and after_coverage_safe
     if start_error:
         verdict = "FAILED_START"
+    elif heavy_slot_blocked:
+        verdict = "BLOCKED_HEAVY_SLOT"
     elif timed_out:
         verdict = "FAILED_TIMEOUT"
     elif not inputs_stable:
@@ -1656,6 +1919,8 @@ def execute_check(
     if verdict not in {"PASS"}:
         if start_error:
             message = f"Command could not be started (errno {start_error})."
+        elif heavy_slot_blocked:
+            message = heavy_slot_message or "shared local heavy slot is unavailable; no child was started"
         elif timed_out:
             message = f"Command timed out after {check.get('timeout_seconds', 600)} seconds."
         elif not inputs_stable:
@@ -1682,6 +1947,7 @@ def execute_check(
         "original_target_head": None,
         "runtime_dependent": bool(check.get("runtime_dependent", False)),
         "timed_out": timed_out,
+        "heavy_slot_blocked": heavy_slot_blocked,
         "start_error": start_error,
         "reuse_eligible": False,
         "paths": paths,
@@ -1811,7 +2077,11 @@ def render_preflight(report: dict[str, Any]) -> str:
         elif kind == "environment":
             lines.append(f"  env {observation['name']}: {'present' if observation.get('present') else 'missing'}")
         elif kind == "port":
-            state = "available" if observation.get("ok") else f"blocked ({observation.get('errno')})"
+            state = (
+                "reachable disposable endpoint" if observation.get("mode") == "reachable-endpoint"
+                else "configured endpoint" if observation.get("mode") == "configured-endpoint"
+                else "available for startup"
+            ) if observation.get("ok") else f"blocked ({observation.get('errno')})"
             lines.append(f"  port {observation['port']}: {state}")
         elif kind == "docker-daemon":
             lines.append(f"  Docker daemon: {'available' if observation.get('available') else 'unavailable'}")
@@ -1832,6 +2102,12 @@ def render_preflight(report: dict[str, Any]) -> str:
                 package = observation.get("package", "Python environment")
                 state = f"{observation.get('found')}" if observation.get("ok") else "missing or wrong version"
                 lines.append(f"  Python package {package}: {state}")
+        elif kind == "heavy-slot":
+            lines.append(
+                "  local heavy slot: ready (shared user-wide advisory lock)"
+                if observation.get("status") == "READY"
+                else f"  local heavy slot: {observation.get('message', 'blocked')}"
+            )
     if report["errors"]:
         lines.append("Preflight blockers:")
         lines.extend(f"  - {error}" for error in report["errors"])
@@ -1859,6 +2135,12 @@ def render_plan(plan: dict[str, Any]) -> str:
         for profile in plan["profiles"]:
             lines.append(f"  {profile}")
             for stage in ("fast", "focused"):
+                if stage == "focused" and profile == "rust":
+                    lines.append("    focused: requires an explicit local --package; full workspace commands are hosted integration")
+                    continue
+                if stage == "focused" and profile == "all":
+                    lines.append("    focused: hosted integration only; broad local focused execution is blocked")
+                    continue
                 for check in plan["checks"][profile][stage]:
                     lines.append(f"    {stage}: {check['check_id']} — {json.dumps(check['argv'], ensure_ascii=False)} (cwd {check['cwd']}, reuse={str(check['reuse']).lower()})")
             for job in plan["integration_plans"].get(profile, []):
@@ -1880,6 +2162,9 @@ def build_plan(root: Path, config: dict[str, Any], base: str = "HEAD") -> dict[s
     for profile in selection["profiles"]:
         checks[profile] = {}
         for stage in ("fast", "focused"):
+            if stage == "focused" and profile in {"rust", "all"}:
+                checks[profile][stage] = []
+                continue
             check_ids = selected_ids(config, profile, stage)
             checks[profile][stage] = [
                 describe_check(check_id, config["checks"][check_id], changes, root)
@@ -1903,6 +2188,10 @@ def build_plan(root: Path, config: dict[str, Any], base: str = "HEAD") -> dict[s
         "requires_full_integration": selection["requires_full_integration"],
         "checks": checks,
         "integration_plans": integration_plans,
+        "local_focused_policy": {
+            "rust": "explicit-package-required; workspace integration is hosted-only",
+            "all": "hosted-integration-only",
+        },
     }
 
 
@@ -1915,11 +2204,18 @@ def run_profile(
     environment: str = "local",
     package: str | None = None,
     reuse: bool = False,
+    heavy_lock_dir: str | Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
+    if stage == "integration" or (profile == "all" and stage == "focused"):
+        raise InputError("broad integration execution is hosted plan-only")
+    if profile == "rust" and stage == "focused" and package is None:
+        raise InputError("Rust focused execution requires an explicit --package")
     validate_package(profile, stage, package, root)
     changes = collect_changes(root, base)
     check_ids = selected_ids(config, profile, stage, package)
-    preflight = preflight_profile(root, config, profile, stage, environment, package)
+    preflight = preflight_profile(
+        root, config, profile, stage, environment, package, heavy_lock_dir=heavy_lock_dir
+    )
     if preflight["status"] != "READY":
         return 2, {"status": "BLOCKED", "preflight": preflight, "results": [], "checks_not_run": True}
     run_id, run_dir = make_run_dir(root)
@@ -1972,6 +2268,7 @@ def run_profile(
                 preflight["tool_facts"],
                 reuse=reuse and stage != "integration",
                 environment=environment,
+                heavy_lock_dir=heavy_lock_dir,
             )
         results.append(result)
         print(f"{result['verdict']}: {check_id} — {result['label']}")
@@ -1989,8 +2286,9 @@ def run_profile(
                 f"(sha256 {diagnostic['sha256']}; truncated={str(diagnostic['truncated']).lower()})"
             )
     has_skips = any(result["verdict"] == "SKIPPED_NO_APPLICABLE_INPUT" for result in results)
+    slot_blocked = any(item["verdict"] == "BLOCKED_HEAVY_SLOT" for item in results)
     report = {
-        "status": "PASS_WITH_SKIPS" if complete and has_skips else "PASS" if complete else "FAILED",
+        "status": "BLOCKED" if slot_blocked else "PASS_WITH_SKIPS" if complete and has_skips else "PASS" if complete else "FAILED",
         "preflight": preflight,
         "run_id": run_id,
         "receipt_dir": str(run_dir.relative_to(root)),
@@ -1998,7 +2296,7 @@ def run_profile(
         "results": results,
         "first_failure": next((item for item in results if item["verdict"] not in {"PASS", "REUSED", "SKIPPED_NO_APPLICABLE_INPUT"}), None),
     }
-    return (0 if complete else 1), report
+    return (2 if slot_blocked else 0 if complete else 1), report
 
 
 def render_integration_plan(config: dict[str, Any], profile: str) -> str:
@@ -2049,6 +2347,8 @@ def build_parser(config: dict[str, Any]) -> argparse.ArgumentParser:
     preflight.add_argument("--base", default="HEAD", help="base commit or ref (default: HEAD; no fetch)")
     preflight.add_argument("--environment", choices=("local", "ci"), default="local", help="environment label (default: local)")
     preflight.add_argument("--package", help="actual Cargo workspace member (Rust focused stage only)")
+    preflight.add_argument("--check-id", action="append", choices=sorted(config["checks"]), help="narrow this preflight to one selected profile check; repeatable")
+    preflight.add_argument("--heavy-lock-dir", help="owner-private mode-0700 directory for the shared local heavy slot")
 
     run = commands.add_parser("run", description=shared, formatter_class=argparse.RawDescriptionHelpFormatter)
     run.add_argument("--profile", required=True, choices=profiles)
@@ -2056,6 +2356,7 @@ def build_parser(config: dict[str, Any]) -> argparse.ArgumentParser:
     run.add_argument("--base", default="HEAD", help="base commit or ref (default: HEAD; no fetch)")
     run.add_argument("--environment", choices=("local", "ci"), default="local", help="environment label (default: local)")
     run.add_argument("--package", help="actual Cargo workspace member (Rust focused stage only)")
+    run.add_argument("--heavy-lock-dir", help="owner-private mode-0700 directory for the shared local heavy slot")
     run.add_argument("--reuse", action="store_true", help="reuse only eligible deterministic receipts")
     return parser
 
@@ -2069,10 +2370,37 @@ def main(argv: list[str] | None = None) -> int:
             plan = build_plan(ROOT, config, args.base)
             print(json.dumps(plan, ensure_ascii=False, sort_keys=True, indent=2) if args.format == "json" else render_plan(plan))
             return 0
+        if args.profile == "all" and args.stage == "focused" and args.command in {"run", "preflight"}:
+            print("BLOCKED: broad local focused execution includes hosted integration work; no local check was started.")
+            print(render_integration_plan(config, "all"))
+            return 2
+        if (
+            args.profile == "rust"
+            and args.stage == "focused"
+            and args.package is None
+            and (args.command == "run" or (args.command == "preflight" and not args.check_id))
+        ):
+            print("BLOCKED: Rust focused local execution requires an explicit --package <workspace-package>.")
+            print(render_integration_plan(config, "rust"))
+            return 2
         validate_package(args.profile, args.stage, args.package, ROOT)
         if args.command == "preflight":
             resolve_commit(ROOT, args.base)
-            report = preflight_profile(ROOT, config, args.profile, args.stage, args.environment, args.package)
+            if args.check_id and args.stage == "integration":
+                raise InputError("--check-id cannot narrow an integration preflight")
+            allowed_checks = selected_ids(config, args.profile, args.stage, args.package)
+            if args.check_id and any(check_id not in allowed_checks for check_id in args.check_id):
+                raise InputError("preflight check selection must belong to the selected profile and stage")
+            report = preflight_profile(
+                ROOT,
+                config,
+                args.profile,
+                args.stage,
+                args.environment,
+                args.package,
+                check_ids_override=args.check_id,
+                heavy_lock_dir=args.heavy_lock_dir,
+            )
             print(render_preflight(report))
             return 0 if report["status"] == "READY" else 2
         if args.stage == "integration":
@@ -2089,6 +2417,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.environment,
                 None,
                 args.reuse,
+                args.heavy_lock_dir,
             )
             if fast_report.get("status") == "BLOCKED":
                 print(render_preflight(fast_report["preflight"]))
@@ -2111,6 +2440,7 @@ def main(argv: list[str] | None = None) -> int:
             args.environment,
             args.package,
             args.reuse,
+            args.heavy_lock_dir,
         )
         if report.get("status") == "BLOCKED":
             print(render_preflight(report["preflight"]))

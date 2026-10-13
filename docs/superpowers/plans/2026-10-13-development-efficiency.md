@@ -6,7 +6,7 @@ Native subagents: prohibited for worker packages
 - 작성일: 2026-10-13
 - 조사 기준: `b0a2579bef472ae6b604405d0ab6f50255786dd4`, `orange-dugong`의 깨끗한 작업 트리
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
-- 상태: **1단계 구현·검증 수용, 2단계 착수 준비**
+- 상태: **1단계 완료, 2단계 구현·focused 검증 완료 — 실제 cold/warm CI 검증 대기**
 - 순서: **1단계 — 항목 1~3 → 2단계 — 항목 4~5**
 - 실행 단위: 3개 패키지. 각 담당자가 구현, 관련 회귀 검증, 사용 예시까지 완료한다.
 
@@ -303,9 +303,9 @@ git diff --check
 
 | 패키지 | 상태 | 구현 commit | 검증 대상·명령/증거 | 미해결 |
 |---|---|---|---|---|
-| WP-1 | DONE | 1단계 구현 커밋에 포함 | 지침 충돌·참조 경로 확인, 사용법/CLI 대조, `git diff --check` | 없음 |
-| WP-2 | DONE | 1단계 구현 커밋에 포함 | QA 회귀 30개, CI 계약 10개 통과; QA fast 4개 통과, 적격 syntax 2개 재사용 확인; shell syntax·공백 확인 | PowerShell 구문 검증은 WP-3 hosted 환경에서 수행 |
-| WP-3 | TODO | — | — | 구현·실제 cold/warm CI 전 |
+| WP-1 | DONE | `6d117f4` | 지침 충돌·참조 경로 확인, 사용법/CLI 대조, `git diff --check` | 없음 |
+| WP-2 | DONE | `6d117f4` | QA 회귀 30개, CI 계약 10개 통과; QA fast 4개 통과, 적격 syntax 2개 재사용 확인; shell syntax·공백 확인 | PowerShell 구문 검증은 WP-3 hosted 환경에서 수행 |
+| WP-3 | IN_PROGRESS | 이 문서와 함께 확정하는 후보 | QA 38개, CI·cache 계약 22개, shell syntax·self-test·운영 build static·공백 검사 통과 | 같은 후보의 실제 cold/warm CI·smoke와 PowerShell 구문 검증 대기 |
 
 - [x] 1~3번: 지침·preflight·단계별 검증·결과 재사용 구현과 focused 검증 수용
 - [ ] 4~5번: cache·실행 환경 구현과 실제 cold/warm CI 증거 수용
@@ -316,3 +316,4 @@ git diff --check
 | 2026-10-13 | 계획 최초 작성 | 기존 지침·스크립트·workflow·cache 계약 조사. 구현과 런타임 검증은 수행하지 않음 |
 | 2026-10-13 | 실행 착수 | Owner의 후속 실행 요청. WP-1/2의 쓰기 범위를 나누어 병렬 진행 |
 | 2026-10-13 | 1단계 수용 | 16개 workspace package 탐색, symlink 입력 거부, pinned formatter 환경, 실패 진단, endpoint port 충돌, 잘못된 base ref 회귀를 포함한 30개 검사 통과. CI 계약 10개 통과. 제품·운영 구조 변경 없음 |
+| 2026-10-13 | 2단계 구현·focused 검증 수용 | 명시적 cache restore/save, hosted preflight, package별 Rust 선택과 로컬 heavy lock 구현. 코디네이터가 로컬 `ci` 라벨의 Cargo 2 유지 및 성공한 Docker export의 이전 store 교체를 보완하고 QA 38개·CI/cache 22개를 재검증. 실제 cache 효과는 아직 미검증 |

@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      cache_epoch:
+        description: ASCII cache namespace; use one fresh value for a cold run and the same value for its warm pair.
+        required: false
+        default: wp3-20261013
+        type: string
 
 permissions:
   contents: read
@@ -29,10 +35,13 @@ jobs:
       - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: '24'
+          package-manager-cache: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python -m pip install --disable-pip-version-check --no-cache-dir PyYAML==6.0.2
+      - name: Preflight policy checks
+        run: python3 scripts/qa/dev-check.py preflight --profile qa --stage focused --environment ci
       - run: bash scripts/check-pins.sh
       - name: Verify committed lockfiles
         run: |
@@ -58,7 +67,17 @@ jobs:
       - run: bash scripts/ops/static-check.sh
       - run: bash scripts/ops/production-ops-static-check.sh
       - run: bash scripts/ops/build-production-images-static-check.sh
-      - run: python -m unittest scripts.ci.test_ci_contract -v
+      - run: python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v
+      - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v
+      - name: Parse the legacy PowerShell entrypoint
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          $null = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $env:GITHUB_WORKSPACE 'scripts/verify-all.ps1'),
+            [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count -ne 0) { throw "verify-all.ps1 has parser errors" }
 
   format:
     runs-on: ubuntu-latest
@@ -67,20 +86,156 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: cargo fmt --all -- --check
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+      - name: Preflight formatter
+        env:
+          RUSTUP_AUTO_INSTALL: '0'
+        run: python3 scripts/qa/dev-check.py preflight --profile rust --stage fast --environment ci
+      - id: format
+        env:
+          RUSTUP_AUTO_INSTALL: '0'
+        run: |
+          started=$SECONDS
+          set +e
+          cargo fmt --all -- --check
+          result=$?
+          set -e
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+          exit "$result"
 
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-clippy
+      RUSTUP_AUTO_INSTALL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - id: cache-epoch
+        env:
+          CACHE_EPOCH_INPUT: ${{ github.event.inputs.cache_epoch || 'wp3-20261013' }}
+        run: |
+          export LC_ALL=C
+          if ! [[ "$CACHE_EPOCH_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo 'cache_epoch must be 1-64 ASCII letters, digits, dot, underscore, or hyphen' >&2
+            exit 2
+          fi
+          printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+      - id: rust-install
+        run: |
+          started=$SECONDS
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: rust-cache-identity
+        run: |
+          identity="$({ rustc +1.97.1 --version --verbose; cargo +1.97.1 --version; } | sha256sum | awk '{print $1}')"
+          flags="$(printf 'CARGO_INCREMENTAL=%s\nRUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${CARGO_INCREMENTAL:-}" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}" | sha256sum | awk '{print $1}')"
+          image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
+          printf 'identity=%s\nflags=%s\nimage=%s\n' "$identity" "$flags" "$image" >>"$GITHUB_OUTPUT"
+      - id: cargo-cache-keys
+        env:
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+          RUST_IDENTITY: ${{ steps.rust-cache-identity.outputs.identity }}
+          RUST_FLAGS_HASH: ${{ steps.rust-cache-identity.outputs.flags }}
+          RUNNER_IMAGE: ${{ steps.rust-cache-identity.outputs.image }}
+          INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}
+        run: |
+          download_prefix="cargo-download-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${RUST_IDENTITY}-${INPUTS_HASH}-"
+          target_prefix="cargo-target-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${RUST_IDENTITY}-clippy-all-features-incremental0-${RUST_FLAGS_HASH}-${INPUTS_HASH}-"
+          printf 'download_prefix=%s\ndownload_key=%s%s\ntarget_prefix=%s\ntarget_key=%s%s\n' \
+            "$download_prefix" "$download_prefix" "$SOURCE_SHA" "$target_prefix" "$target_prefix" "$SOURCE_SHA" >>"$GITHUB_OUTPUT"
+      - name: Restore public Cargo downloads
+        id: cargo-download-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cargo-cache-keys.outputs.download_key }}
+          restore-keys: ${{ steps.cargo-cache-keys.outputs.download_prefix }}
+      - name: Restore job-private Cargo build output
+        id: cargo-target-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-clippy
+          key: ${{ steps.cargo-cache-keys.outputs.target_key }}
+          restore-keys: ${{ steps.cargo-cache-keys.outputs.target_prefix }}
+      - name: Preflight workspace Clippy toolchain
+        run: python3 scripts/qa/dev-check.py preflight --profile rust --stage focused --check-id cargo-clippy-workspace --environment ci
+      - id: clippy
+        run: |
+          started=$SECONDS
+          set +e
+          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          result=$?
+          set -e
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+          exit "$result"
+      - name: Save public Cargo downloads
+        id: cargo-download-save
+        if: success() && steps.cargo-download-restore.outcome == 'success' && steps.cargo-download-restore.outputs.cache-hit != 'true' && steps.cargo-cache-keys.outputs.download_key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cargo-cache-keys.outputs.download_key }}
+      - name: Save job-private Cargo build output
+        id: cargo-target-save
+        if: success() && steps.cargo-target-restore.outcome == 'success' && steps.cargo-target-restore.outputs.cache-hit != 'true' && steps.cargo-cache-keys.outputs.target_key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-clippy
+          key: ${{ steps.cargo-cache-keys.outputs.target_key }}
+      - name: Write private cache evidence
+        if: always()
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/wp3-cache-evidence
+          SOURCE_SHA: ${{ github.sha }}
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          DOWNLOAD_KEY: ${{ steps.cargo-cache-keys.outputs.download_key }}
+          DOWNLOAD_MATCHED: ${{ steps.cargo-download-restore.outputs.cache-matched-key }}
+          DOWNLOAD_HIT: ${{ steps.cargo-download-restore.outputs.cache-hit }}
+          DOWNLOAD_RESTORE_OUTCOME: ${{ steps.cargo-download-restore.outcome }}
+          DOWNLOAD_SAVE_OUTCOME: ${{ steps.cargo-download-save.outcome }}
+          TARGET_KEY: ${{ steps.cargo-cache-keys.outputs.target_key }}
+          TARGET_MATCHED: ${{ steps.cargo-target-restore.outputs.cache-matched-key }}
+          TARGET_HIT: ${{ steps.cargo-target-restore.outputs.cache-hit }}
+          TARGET_RESTORE_OUTCOME: ${{ steps.cargo-target-restore.outcome }}
+          TARGET_SAVE_OUTCOME: ${{ steps.cargo-target-save.outcome }}
+          INSTALL_SECONDS: ${{ steps.rust-install.outputs.seconds || 'unavailable' }}
+          BUILD_SECONDS: ${{ steps.clippy.outputs.seconds || 'unavailable' }}
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          chmod 700 "$EVIDENCE_DIR"
+          python3 scripts/ci/cache-evidence.py record \
+            --workflow "$GITHUB_WORKFLOW" --job "$GITHUB_JOB" --sha "$SOURCE_SHA" --namespace "$CACHE_NAMESPACE" \
+            --cache-entry "cargo-download|$DOWNLOAD_KEY|$DOWNLOAD_MATCHED|$DOWNLOAD_HIT|$DOWNLOAD_RESTORE_OUTCOME|$DOWNLOAD_SAVE_OUTCOME|unavailable" \
+            --cache-entry "cargo-target|$TARGET_KEY|$TARGET_MATCHED|$TARGET_HIT|$TARGET_RESTORE_OUTCOME|$TARGET_SAVE_OUTCOME|unavailable" \
+            --duration install="$INSTALL_SECONDS" --duration build="$BUILD_SECONDS" --duration test=0 \
+            --output "$EVIDENCE_DIR/clippy.json" --summary "$GITHUB_STEP_SUMMARY"
 
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      NPM_CONFIG_CACHE: ${{ runner.temp }}/lagrange-npm-cache-web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -88,20 +243,112 @@ jobs:
       - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: '24'
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
+          package-manager-cache: false
+      - id: cache-epoch
+        env:
+          CACHE_EPOCH_INPUT: ${{ github.event.inputs.cache_epoch || 'wp3-20261013' }}
+        run: |
+          export LC_ALL=C
+          if ! [[ "$CACHE_EPOCH_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo 'cache_epoch must be 1-64 ASCII letters, digits, dot, underscore, or hyphen' >&2
+            exit 2
+          fi
+          printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+      - id: npm-cache-identity
+        env:
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+          INPUTS_HASH: ${{ hashFiles('package-lock.json', 'package.json', '**/package.json', '.npmrc') }}
+        run: |
+          image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
+          identity="$(printf '%s\n%s\n%s\n' "$(node --version)" "$(npm --version)" "$image" | sha256sum | awk '{print $1}')"
+          prefix="npm-download-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${image}-${RUNNER_ARCH_NAME}-node24-${identity}-${INPUTS_HASH}-web-"
+          printf 'prefix=%s\nkey=%s%s\n' "$prefix" "$prefix" "$SOURCE_SHA" >>"$GITHUB_OUTPUT"
+      - name: Restore npm download cache
+        id: npm-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-npm-cache-web/_cacache
+          key: ${{ steps.npm-cache-identity.outputs.key }}
+          restore-keys: ${{ steps.npm-cache-identity.outputs.prefix }}
+      - id: npm-install
+        run: |
+          started=$SECONDS
+          npm ci
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: playwright-install
+        run: |
+          started=$SECONDS
+          npx playwright install --with-deps chromium
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
         working-directory: apps/web
-      - run: npm run openapi:check --workspace @lagrange/api-server
-      - run: npm run lint --workspace @lagrange/web
-      - run: npm run typecheck --workspace @lagrange/web
-      - run: npm test --workspace @lagrange/web
-      - run: npm run build --workspace @lagrange/web
-      - run: bash scripts/qa/candidate-web-e2e.sh
+      - name: Preflight focused Web checks
+        run: python3 scripts/qa/dev-check.py preflight --profile web --stage focused --environment ci
+      - id: web-contract-checks
+        run: |
+          started=$SECONDS
+          npm run openapi:check --workspace @lagrange/api-server
+          npm run lint --workspace @lagrange/web
+          npm run typecheck --workspace @lagrange/web
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: web-tests
+        run: |
+          started=$SECONDS
+          npm test --workspace @lagrange/web
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: web-build
+        run: |
+          started=$SECONDS
+          npm run build --workspace @lagrange/web
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: web-e2e
+        run: |
+          started=$SECONDS
+          bash scripts/qa/candidate-web-e2e.sh
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Save npm download cache
+        id: npm-save
+        if: success() && steps.npm-restore.outcome == 'success' && steps.npm-restore.outputs.cache-hit != 'true' && steps.npm-cache-identity.outputs.key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-npm-cache-web/_cacache
+          key: ${{ steps.npm-cache-identity.outputs.key }}
+      - name: Write private Web cache evidence
+        if: always()
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          CACHE_KEY: ${{ steps.npm-cache-identity.outputs.key }}
+          CACHE_MATCHED: ${{ steps.npm-restore.outputs.cache-matched-key }}
+          CACHE_HIT: ${{ steps.npm-restore.outputs.cache-hit }}
+          CACHE_RESTORE_OUTCOME: ${{ steps.npm-restore.outcome }}
+          CACHE_SAVE_OUTCOME: ${{ steps.npm-save.outcome }}
+          INSTALL_SECONDS: ${{ steps.npm-install.outputs.seconds || 'unavailable' }}
+          INSTALL_PLAYWRIGHT: ${{ steps.playwright-install.outputs.seconds || 'unavailable' }}
+          TEST_SECONDS: ${{ steps.web-tests.outputs.seconds || 'unavailable' }}
+          TEST_CONTRACTS: ${{ steps.web-contract-checks.outputs.seconds || 'unavailable' }}
+          TEST_E2E: ${{ steps.web-e2e.outputs.seconds || 'unavailable' }}
+          BUILD_SECONDS: ${{ steps.web-build.outputs.seconds || 'unavailable' }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/wp3-cache-evidence"
+          chmod 700 "${RUNNER_TEMP}/wp3-cache-evidence"
+          python3 scripts/ci/cache-evidence.py record \
+            --workflow "$GITHUB_WORKFLOW" --job "$GITHUB_JOB" --sha "$SOURCE_SHA" --namespace "$CACHE_NAMESPACE" \
+            --cache-entry "npm-download|$CACHE_KEY|$CACHE_MATCHED|$CACHE_HIT|$CACHE_RESTORE_OUTCOME|$CACHE_SAVE_OUTCOME|unavailable" \
+            --duration install="$INSTALL_SECONDS" --duration install="$INSTALL_PLAYWRIGHT" --duration build="$BUILD_SECONDS" --duration test="$TEST_SECONDS" --duration test="$TEST_CONTRACTS" --duration test="$TEST_E2E" \
+            --output "${RUNNER_TEMP}/wp3-cache-evidence/web.json" --summary "$GITHUB_STEP_SUMMARY"
 
   workspace-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-workspace
+      RUSTUP_AUTO_INSTALL: '0'
+      UV_CACHE_DIR: ${{ runner.temp }}/lagrange-uv-cache-workspace
       # Intraday tests require this exact disposable QA endpoint.
       DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55438/postgres
       LAGRANGE_QA_DB_PORT: '55438'
@@ -109,22 +356,192 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - id: cache-epoch
+        env:
+          CACHE_EPOCH_INPUT: ${{ github.event.inputs.cache_epoch || 'wp3-20261013' }}
+        run: |
+          export LC_ALL=C
+          if ! [[ "$CACHE_EPOCH_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo 'cache_epoch must be 1-64 ASCII letters, digits, dot, underscore, or hyphen' >&2
+            exit 2
+          fi
+          printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+      - id: rust-install
+        run: |
+          started=$SECONDS
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: rust-cache-identity
+        run: |
+          identity="$({ rustc +1.97.1 --version --verbose; cargo +1.97.1 --version; } | sha256sum | awk '{print $1}')"
+          flags="$(printf 'CARGO_INCREMENTAL=%s\nRUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${CARGO_INCREMENTAL:-}" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}" | sha256sum | awk '{print $1}')"
+          image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
+          printf 'identity=%s\nflags=%s\nimage=%s\n' "$identity" "$flags" "$image" >>"$GITHUB_OUTPUT"
+      - id: cargo-cache-keys
+        env:
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+          RUST_IDENTITY: ${{ steps.rust-cache-identity.outputs.identity }}
+          RUST_FLAGS_HASH: ${{ steps.rust-cache-identity.outputs.flags }}
+          RUNNER_IMAGE: ${{ steps.rust-cache-identity.outputs.image }}
+          INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}
+        run: |
+          download_prefix="cargo-download-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${RUST_IDENTITY}-${INPUTS_HASH}-"
+          target_prefix="cargo-target-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${RUST_IDENTITY}-workspace-test-test-support-${RUST_FLAGS_HASH}-${INPUTS_HASH}-"
+          printf 'download_prefix=%s\ndownload_key=%s%s\ntarget_prefix=%s\ntarget_key=%s%s\n' \
+            "$download_prefix" "$download_prefix" "$SOURCE_SHA" \
+            "$target_prefix" "$target_prefix" "$SOURCE_SHA" >>"$GITHUB_OUTPUT"
+      - name: Restore public Cargo downloads
+        id: cargo-download-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cargo-cache-keys.outputs.download_key }}
+          restore-keys: ${{ steps.cargo-cache-keys.outputs.download_prefix }}
+      - name: Restore job-private Cargo build output
+        id: cargo-target-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-workspace
+          key: ${{ steps.cargo-cache-keys.outputs.target_key }}
+          restore-keys: ${{ steps.cargo-cache-keys.outputs.target_prefix }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0 uv==0.12.1
-      - run: uv sync --project nt --locked
-      - run: python scripts/ci/prepare_phase0.py --root data/phase0
+      - id: python-tools-install
+        run: |
+          started=$SECONDS
+          python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0 uv==0.12.1
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: uv-cache-keys
+        env:
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+          PYTHON_VERSION: '3.12'
+          UV_VERSION: '0.12.1'
+          INPUTS_HASH: ${{ hashFiles('nt/uv.lock', 'nt/pyproject.toml') }}
+        run: |
+          image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
+          identity="$(printf '%s\n%s\n%s\n' "$(python --version)" "$(uv --version)" "$image" | sha256sum | awk '{print $1}')"
+          prefix="uv-download-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${image}-${RUNNER_ARCH_NAME}-python${PYTHON_VERSION}-uv${UV_VERSION}-${identity}-${INPUTS_HASH}-workspace-"
+          printf 'prefix=%s\nkey=%s%s\n' "$prefix" "$prefix" "$SOURCE_SHA" >>"$GITHUB_OUTPUT"
+      - name: Restore uv download cache
+        id: uv-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-uv-cache-workspace
+          key: ${{ steps.uv-cache-keys.outputs.key }}
+          restore-keys: ${{ steps.uv-cache-keys.outputs.prefix }}
+      - id: uv-sync
+        run: |
+          started=$SECONDS
+          uv sync --project nt --locked
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: phase0
+        run: |
+          started=$SECONDS
+          python scripts/ci/prepare_phase0.py --root data/phase0
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Preflight workspace test prerequisites
+        run: python3 scripts/qa/dev-check.py preflight --profile rust --stage integration --environment ci
       - run: docker compose -f deploy/qa/qa-db.compose.yml up -d --wait
-      - name: Run Owner Equity V2 chart HTTP acceptance tests
-        run: cargo test -p api-server --test http_owner_equity_v2_chart --locked
-      - run: cargo test --workspace --locked --no-fail-fast --features kis-client/test-support
+      - id: chart-tests
+        name: Run Owner Equity V2 chart HTTP acceptance tests
+        run: |
+          started=$SECONDS
+          cargo test -p api-server --test http_owner_equity_v2_chart --locked
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: workspace-tests-command
+        run: |
+          started=$SECONDS
+          cargo test --workspace --locked --no-fail-fast --features kis-client/test-support
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
       - if: always()
         run: docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans
+      - name: Save public Cargo downloads
+        id: cargo-download-save
+        if: success() && steps.cargo-download-restore.outcome == 'success' && steps.cargo-download-restore.outputs.cache-hit != 'true' && steps.cargo-cache-keys.outputs.download_key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cargo-cache-keys.outputs.download_key }}
+      - name: Save job-private Cargo build output
+        id: cargo-target-save
+        if: success() && steps.cargo-target-restore.outcome == 'success' && steps.cargo-target-restore.outputs.cache-hit != 'true' && steps.cargo-cache-keys.outputs.target_key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-workspace
+          key: ${{ steps.cargo-cache-keys.outputs.target_key }}
+      - name: Save uv download cache
+        id: uv-save
+        if: success() && steps.uv-restore.outcome == 'success' && steps.uv-restore.outputs.cache-hit != 'true' && steps.uv-cache-keys.outputs.key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-uv-cache-workspace
+          key: ${{ steps.uv-cache-keys.outputs.key }}
+      - name: Write private workspace cache evidence
+        if: always()
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          DOWNLOAD_KEY: ${{ steps.cargo-cache-keys.outputs.download_key }}
+          DOWNLOAD_MATCHED: ${{ steps.cargo-download-restore.outputs.cache-matched-key }}
+          DOWNLOAD_HIT: ${{ steps.cargo-download-restore.outputs.cache-hit }}
+          DOWNLOAD_RESTORE_OUTCOME: ${{ steps.cargo-download-restore.outcome }}
+          DOWNLOAD_SAVE_OUTCOME: ${{ steps.cargo-download-save.outcome }}
+          TARGET_KEY: ${{ steps.cargo-cache-keys.outputs.target_key }}
+          TARGET_MATCHED: ${{ steps.cargo-target-restore.outputs.cache-matched-key }}
+          TARGET_HIT: ${{ steps.cargo-target-restore.outputs.cache-hit }}
+          TARGET_RESTORE_OUTCOME: ${{ steps.cargo-target-restore.outcome }}
+          TARGET_SAVE_OUTCOME: ${{ steps.cargo-target-save.outcome }}
+          UV_KEY: ${{ steps.uv-cache-keys.outputs.key }}
+          UV_MATCHED: ${{ steps.uv-restore.outputs.cache-matched-key }}
+          UV_HIT: ${{ steps.uv-restore.outputs.cache-hit }}
+          UV_RESTORE_OUTCOME: ${{ steps.uv-restore.outcome }}
+          UV_SAVE_OUTCOME: ${{ steps.uv-save.outcome }}
+          INSTALL_PIP: ${{ steps.python-tools-install.outputs.seconds || 'unavailable' }}
+          INSTALL_UV: ${{ steps.uv-sync.outputs.seconds || 'unavailable' }}
+          INSTALL_PHASE0: ${{ steps.phase0.outputs.seconds || 'unavailable' }}
+          INSTALL_RUST: ${{ steps.rust-install.outputs.seconds || 'unavailable' }}
+          TEST_CHART: ${{ steps.chart-tests.outputs.seconds || 'unavailable' }}
+          TEST_WORKSPACE: ${{ steps.workspace-tests-command.outputs.seconds || 'unavailable' }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/wp3-cache-evidence"
+          chmod 700 "${RUNNER_TEMP}/wp3-cache-evidence"
+          python3 scripts/ci/cache-evidence.py record \
+            --workflow "$GITHUB_WORKFLOW" --job "$GITHUB_JOB" --sha "$SOURCE_SHA" --namespace "$CACHE_NAMESPACE" \
+            --cache-entry "cargo-download|$DOWNLOAD_KEY|$DOWNLOAD_MATCHED|$DOWNLOAD_HIT|$DOWNLOAD_RESTORE_OUTCOME|$DOWNLOAD_SAVE_OUTCOME|unavailable" \
+            --cache-entry "cargo-target|$TARGET_KEY|$TARGET_MATCHED|$TARGET_HIT|$TARGET_RESTORE_OUTCOME|$TARGET_SAVE_OUTCOME|unavailable" \
+            --cache-entry "uv-download|$UV_KEY|$UV_MATCHED|$UV_HIT|$UV_RESTORE_OUTCOME|$UV_SAVE_OUTCOME|unavailable" \
+            --duration install="$INSTALL_PIP" --duration install="$INSTALL_UV" --duration install="$INSTALL_PHASE0" \
+            --duration install="$INSTALL_RUST" --duration build=0 --duration test="$TEST_CHART" --duration test="$TEST_WORKSPACE" \
+            --output "${RUNNER_TEMP}/wp3-cache-evidence/workspace-tests.json" --summary "$GITHUB_STEP_SUMMARY"
 
   python-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      UV_CACHE_DIR: ${{ runner.temp }}/lagrange-uv-cache-python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,26 +553,171 @@ jobs:
           # artifact rather than on real drift. Full history is the input those
           # tests actually assert against.
           fetch-depth: 0
+      - id: cache-epoch
+        env:
+          CACHE_EPOCH_INPUT: ${{ github.event.inputs.cache_epoch || 'wp3-20261013' }}
+        run: |
+          export LC_ALL=C
+          if ! [[ "$CACHE_EPOCH_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo 'cache_epoch must be 1-64 ASCII letters, digits, dot, underscore, or hyphen' >&2
+            exit 2
+          fi
+          printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0 uv==0.12.1
-      - run: uv sync --project nt --locked
-      - run: python scripts/ci/prepare_phase0.py --root data/phase0
-      - run: uv run --project nt pytest -q
-      - run: bash scripts/backup/tests/test-validate-policy.sh
+      - id: python-tools-install
+        run: |
+          started=$SECONDS
+          python -m pip install --disable-pip-version-check --no-cache-dir pyarrow==25.0.0 uv==0.12.1
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: uv-cache-keys
+        env:
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+          PYTHON_VERSION: '3.12'
+          UV_VERSION: '0.12.1'
+          INPUTS_HASH: ${{ hashFiles('nt/uv.lock', 'nt/pyproject.toml') }}
+        run: |
+          image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
+          identity="$(printf '%s\n%s\n%s\n' "$(python --version)" "$(uv --version)" "$image" | sha256sum | awk '{print $1}')"
+          prefix="uv-download-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${image}-${RUNNER_ARCH_NAME}-python${PYTHON_VERSION}-uv${UV_VERSION}-${identity}-${INPUTS_HASH}-python-tests-"
+          printf 'prefix=%s\nkey=%s%s\n' "$prefix" "$prefix" "$SOURCE_SHA" >>"$GITHUB_OUTPUT"
+      - name: Restore uv download cache
+        id: uv-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-uv-cache-python
+          key: ${{ steps.uv-cache-keys.outputs.key }}
+          restore-keys: ${{ steps.uv-cache-keys.outputs.prefix }}
+      - id: uv-sync
+        run: |
+          started=$SECONDS
+          uv sync --project nt --locked
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: phase0
+        run: |
+          started=$SECONDS
+          python scripts/ci/prepare_phase0.py --root data/phase0
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Preflight Python tests
+        run: python3 scripts/qa/dev-check.py preflight --profile python --stage focused --environment ci
+      - id: python-tests-command
+        run: |
+          started=$SECONDS
+          uv run --project nt pytest -q
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: backup-policy-tests
+        run: |
+          started=$SECONDS
+          bash scripts/backup/tests/test-validate-policy.sh
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Save uv download cache
+        id: uv-save
+        if: success() && steps.uv-restore.outcome == 'success' && steps.uv-restore.outputs.cache-hit != 'true' && steps.uv-cache-keys.outputs.key != '' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-uv-cache-python
+          key: ${{ steps.uv-cache-keys.outputs.key }}
+      - name: Write private Python cache evidence
+        if: always()
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          UV_KEY: ${{ steps.uv-cache-keys.outputs.key }}
+          UV_MATCHED: ${{ steps.uv-restore.outputs.cache-matched-key }}
+          UV_HIT: ${{ steps.uv-restore.outputs.cache-hit }}
+          UV_RESTORE_OUTCOME: ${{ steps.uv-restore.outcome }}
+          UV_SAVE_OUTCOME: ${{ steps.uv-save.outcome }}
+          INSTALL_PIP: ${{ steps.python-tools-install.outputs.seconds || 'unavailable' }}
+          INSTALL_UV: ${{ steps.uv-sync.outputs.seconds || 'unavailable' }}
+          INSTALL_PHASE0: ${{ steps.phase0.outputs.seconds || 'unavailable' }}
+          TEST_PYTHON: ${{ steps.python-tests-command.outputs.seconds || 'unavailable' }}
+          TEST_BACKUP: ${{ steps.backup-policy-tests.outputs.seconds || 'unavailable' }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/wp3-cache-evidence"
+          chmod 700 "${RUNNER_TEMP}/wp3-cache-evidence"
+          python3 scripts/ci/cache-evidence.py record \
+            --workflow "$GITHUB_WORKFLOW" --job "$GITHUB_JOB" --sha "$SOURCE_SHA" --namespace "$CACHE_NAMESPACE" \
+            --cache-entry "uv-download|$UV_KEY|$UV_MATCHED|$UV_HIT|$UV_RESTORE_OUTCOME|$UV_SAVE_OUTCOME|unavailable" \
+            --duration install="$INSTALL_PIP" --duration install="$INSTALL_UV" --duration install="$INSTALL_PHASE0" \
+            --duration build=0 --duration test="$TEST_PYTHON" --duration test="$TEST_BACKUP" \
+            --output "${RUNNER_TEMP}/wp3-cache-evidence/python-tests.json" --summary "$GITHUB_STEP_SUMMARY"
 
   postgres-integration-validation:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-postgres
+      RUSTUP_AUTO_INSTALL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate PostgreSQL migrations and serving-role boundaries
+      - id: cache-epoch
+        env:
+          CACHE_EPOCH_INPUT: ${{ github.event.inputs.cache_epoch || 'wp3-20261013' }}
+        run: |
+          export LC_ALL=C
+          if ! [[ "$CACHE_EPOCH_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo 'cache_epoch must be 1-64 ASCII letters, digits, dot, underscore, or hyphen' >&2
+            exit 2
+          fi
+          printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+      - id: rust-install
+        run: |
+          started=$SECONDS
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: cargo-cache-keys
+        env:
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+          INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}
+        run: |
+          identity="$({ rustc +1.97.1 --version --verbose; cargo +1.97.1 --version; } | sha256sum | awk '{print $1}')"
+          flags="$(printf 'CARGO_INCREMENTAL=%s\nRUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${CARGO_INCREMENTAL:-}" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}" | sha256sum | awk '{print $1}')"
+          image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
+          download_prefix="cargo-download-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${image}-${RUNNER_ARCH_NAME}-${identity}-${INPUTS_HASH}-"
+          target_prefix="cargo-target-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${image}-${RUNNER_ARCH_NAME}-${identity}-postgres-integration-${flags}-${INPUTS_HASH}-"
+          printf 'download_prefix=%s\ndownload_key=%s%s\ntarget_prefix=%s\ntarget_key=%s%s\n' \
+            "$download_prefix" "$download_prefix" "$SOURCE_SHA" "$target_prefix" "$target_prefix" "$SOURCE_SHA" >>"$GITHUB_OUTPUT"
+      - name: Restore public Cargo downloads
+        id: cargo-download-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cargo-cache-keys.outputs.download_key }}
+          restore-keys: ${{ steps.cargo-cache-keys.outputs.download_prefix }}
+      - name: Restore job-private Cargo build output
+        id: cargo-target-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-postgres
+          key: ${{ steps.cargo-cache-keys.outputs.target_key }}
+          restore-keys: ${{ steps.cargo-cache-keys.outputs.target_prefix }}
+      - name: Preflight PostgreSQL integration prerequisites
+        run: python3 scripts/qa/dev-check.py preflight --profile db --stage integration --environment ci
+      - id: postgres-validation
+        name: Validate PostgreSQL migrations and serving-role boundaries
         run: |
           evidence_dir="${RUNNER_TEMP}/lagrange-pg-validation"
+          started=$SECONDS
           bash deploy/db/integration-validation/validate.sh --evidence-dir "$evidence_dir"
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
       - name: Print sanitized PostgreSQL validation evidence
         if: always()
         run: |
@@ -176,6 +738,53 @@ jobs:
               tail -n 200 "$log_file"
               echo '::endgroup::'
             done
+      - name: Save Cargo download cache
+        id: cargo-download-save
+        if: success() && steps.cargo-download-restore.outcome == 'success' && steps.cargo-download-restore.outputs.cache-hit != 'true' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cargo-cache-keys.outputs.download_key }}
+      - name: Save Cargo target cache
+        id: cargo-target-save
+        if: success() && steps.cargo-target-restore.outcome == 'success' && steps.cargo-target-restore.outputs.cache-hit != 'true' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-postgres
+          key: ${{ steps.cargo-cache-keys.outputs.target_key }}
+      - name: Write private PostgreSQL cache evidence
+        if: always()
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          DOWNLOAD_KEY: ${{ steps.cargo-cache-keys.outputs.download_key }}
+          DOWNLOAD_MATCHED: ${{ steps.cargo-download-restore.outputs.cache-matched-key }}
+          DOWNLOAD_HIT: ${{ steps.cargo-download-restore.outputs.cache-hit }}
+          DOWNLOAD_RESTORE_OUTCOME: ${{ steps.cargo-download-restore.outcome }}
+          DOWNLOAD_SAVE_OUTCOME: ${{ steps.cargo-download-save.outcome }}
+          TARGET_KEY: ${{ steps.cargo-cache-keys.outputs.target_key }}
+          TARGET_MATCHED: ${{ steps.cargo-target-restore.outputs.cache-matched-key }}
+          TARGET_HIT: ${{ steps.cargo-target-restore.outputs.cache-hit }}
+          TARGET_RESTORE_OUTCOME: ${{ steps.cargo-target-restore.outcome }}
+          TARGET_SAVE_OUTCOME: ${{ steps.cargo-target-save.outcome }}
+          INSTALL_SECONDS: ${{ steps.rust-install.outputs.seconds || 'unavailable' }}
+          TEST_SECONDS: ${{ steps.postgres-validation.outputs.seconds || 'unavailable' }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/wp3-cache-evidence"
+          chmod 700 "${RUNNER_TEMP}/wp3-cache-evidence"
+          python3 scripts/ci/cache-evidence.py record \
+            --workflow "$GITHUB_WORKFLOW" --job "$GITHUB_JOB" --sha "$SOURCE_SHA" --namespace "$CACHE_NAMESPACE" \
+            --cache-entry "cargo-download|$DOWNLOAD_KEY|$DOWNLOAD_MATCHED|$DOWNLOAD_HIT|$DOWNLOAD_RESTORE_OUTCOME|$DOWNLOAD_SAVE_OUTCOME|unavailable" \
+            --cache-entry "cargo-target|$TARGET_KEY|$TARGET_MATCHED|$TARGET_HIT|$TARGET_RESTORE_OUTCOME|$TARGET_SAVE_OUTCOME|unavailable" \
+            --duration install="$INSTALL_SECONDS" --duration build=0 --duration test="$TEST_SECONDS" \
+            --output "${RUNNER_TEMP}/wp3-cache-evidence/postgres-integration-validation.json" --summary "$GITHUB_STEP_SUMMARY"
 
   required:
     if: always()

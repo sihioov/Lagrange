@@ -403,6 +403,7 @@ hostpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else p
 dkr() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' docker "$@"; }
 project="lagrange-research-smoke-$$-$(date +%s)"
 temp_root="$(mktemp -d "${TMPDIR:-/tmp}/${project}.XXXXXX")"
+smoke_started=$SECONDS
 raw_root="$temp_root/data"
 candidate_smoke_bundle="$temp_root/candidate-contract"
 eod_smoke_bundle="$temp_root/eod-contract"
@@ -414,9 +415,132 @@ candidate_secret="$runtime_secret_root/candidate-runner/db_worker_password"
 kis_app_key="$runtime_secret_root/research-worker/kis_app_key"
 kis_app_secret="$runtime_secret_root/research-worker/kis_app_secret"
 created=0
-rc() { dkr compose -p "$project" -f "$(hostpath "$compose_file")" "$@"; }
+research_worker_cache_promoted=false
+candidate_runner_cache_promoted=false
+research_worker_cache_bytes=unavailable
+candidate_runner_cache_bytes=unavailable
+build_seconds=0
+host_cargo_seconds=0
+buildx_builder="${RESEARCH_SMOKE_BUILDER:-}"
+hosted_build_cache=0
+build_options=()
+compose_override="$temp_root/build-cache.compose.json"
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  [[ "$buildx_builder" =~ ^[A-Za-z0-9_.-]+$ ]] || fail 'hosted Buildx builder name is malformed'
+  cache_root="${RUNNER_TEMP:?RUNNER_TEMP is required in hosted smoke}"
+  cache_root="$cache_root/lagrange-smoke-build-cache"
+  import_root="$cache_root/import"
+  new_root="$cache_root/new"
+  build_options=(--builder "$buildx_builder")
+  if mkdir -p "$import_root/research-worker" "$import_root/candidate-runner" \
+      "$new_root/research-worker" "$new_root/candidate-runner" \
+      && chmod 700 "$cache_root" "$import_root" "$new_root"; then
+    hosted_build_cache=1
+  else
+    echo 'RESEARCH_WORKER_SMOKE: local layer cache unavailable; real builds will run with the private builder' >&2
+  fi
+fi
+rc() {
+  if [ -f "$compose_override" ]; then
+    dkr compose -p "$project" -f "$(hostpath "$compose_file")" -f "$(hostpath "$compose_override")" "$@"
+  else
+    dkr compose -p "$project" -f "$(hostpath "$compose_file")" "$@"
+  fi
+}
+configure_service_build_cache() {
+  [ "$hosted_build_cache" -eq 1 ] || return 0
+  local service="$1" import_path="$import_root/$1" export_path="$new_root/$1"
+  python3 - "$compose_override" "$service" "$import_path" "$export_path" <<'PY' || return 1
+import json
+import pathlib
+import sys
+
+override, service, imported, exported = sys.argv[1:]
+import_path = pathlib.Path(imported)
+valid_import = False
+index = import_path / "index.json"
+blobs = import_path / "blobs"
+try:
+    value = json.loads(index.read_text(encoding="utf-8"))
+    valid_import = (
+        index.is_file() and not index.is_symlink()
+        and blobs.is_dir() and not blobs.is_symlink()
+        and isinstance(value.get("manifests"), list) and bool(value["manifests"])
+    )
+except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+    valid_import = False
+build = {"cache_to": [f"type=local,dest={exported},mode=max,ignore-error=true"]}
+if valid_import:
+    build["cache_from"] = [f"type=local,src={imported}"]
+pathlib.Path(override).write_text(
+    json.dumps({"services": {service: {"build": build}}}, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  mkdir -p "$export_path"
+}
+promote_service_build_cache() {
+  [ "$hosted_build_cache" -eq 1 ] || return 0
+  local service="$1" export_path="$new_root/$1" import_path="$import_root/$1"
+  if python3 - "$export_path" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+index = root / "index.json"
+blobs = root / "blobs"
+try:
+    value = json.loads(index.read_text(encoding="utf-8"))
+    okay = (
+        index.is_file() and not index.is_symlink()
+        and blobs.is_dir() and not blobs.is_symlink()
+        and isinstance(value.get("manifests"), list) and bool(value["manifests"])
+        and any(path.is_file() and not path.is_symlink() for path in blobs.rglob("*"))
+    )
+except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+    okay = False
+raise SystemExit(0 if okay else 1)
+PY
+  then
+    # Only this job's restored service directory is replaced, after the real
+    # build and new export succeed. Merging stores would retain stale blobs
+    # across source revisions; remote immutable caches and builders are untouched.
+    if ! rm -rf -- "$import_path" || ! mv -- "$export_path" "$import_path"; then
+      echo "RESEARCH_WORKER_SMOKE: $service cache promotion failed; completed real build remains valid" >&2
+      return 0
+    fi
+    local size
+    if ! size="$(python3 - "$import_path" <<'PY'
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+print(sum(path.stat().st_size for path in root.rglob("*") if path.is_file() and not path.is_symlink()))
+PY
+)"; then size=unavailable; fi
+    case "$service" in
+      research-worker) research_worker_cache_promoted=true; research_worker_cache_bytes="$size" ;;
+      candidate-runner) candidate_runner_cache_promoted=true; candidate_runner_cache_bytes="$size" ;;
+    esac
+  else
+    echo "RESEARCH_WORKER_SMOKE: $service cache export unavailable; continuing with the completed real build" >&2
+  fi
+}
 context_audit_tag="${project}-context-audit"
 cleanup() {
+  local total_seconds test_seconds
+  total_seconds=$((SECONDS - smoke_started))
+  test_seconds=$((total_seconds - build_seconds - host_cargo_seconds))
+  if [ "$test_seconds" -lt 0 ]; then test_seconds=0; fi
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    {
+      printf 'research_worker_cache_promoted=%s\n' "$research_worker_cache_promoted"
+      printf 'candidate_runner_cache_promoted=%s\n' "$candidate_runner_cache_promoted"
+      printf 'research_worker_cache_bytes=%s\n' "$research_worker_cache_bytes"
+      printf 'candidate_runner_cache_bytes=%s\n' "$candidate_runner_cache_bytes"
+      printf 'build_seconds=%s\nhost_cargo_seconds=%s\ntest_seconds=%s\n' "$build_seconds" "$host_cargo_seconds" "$test_seconds"
+    } >>"$GITHUB_OUTPUT" || echo 'RESEARCH_WORKER_SMOKE: timing outputs unavailable' >&2
+  fi
   if [ "$created" -eq 1 ]; then
     rc stop research-worker >/dev/null 2>&1 || true
     rc run --rm --no-deps --entrypoint /bin/sh --user 0:0 research-raw-init \
@@ -428,6 +552,10 @@ cleanup() {
   rm -rf -- "$temp_root"
 }
 trap cleanup EXIT
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  dkr buildx inspect "$buildx_builder" --bootstrap >/dev/null \
+    || fail 'private hosted Buildx builder is unavailable'
+fi
 
 raw_init_ownership_probe() (
   alpine='alpine@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d'
@@ -1128,15 +1256,31 @@ for fixture_root in (target, eod_target):
     fixture_root.chmod(0o755)
 PY
 
-rc build research-worker \
-  || fail 'research-worker image build failed'
-rc build candidate-runner \
-  || fail 'candidate-runner image build failed'
+if ! configure_service_build_cache research-worker; then
+  echo 'RESEARCH_WORKER_SMOKE: research-worker cache configuration unavailable; real build will run' >&2
+  rm -f -- "$compose_override"
+fi
+started=$SECONDS
+rc build "${build_options[@]}" research-worker \
+  || { build_seconds=$((build_seconds + SECONDS - started)); fail 'research-worker image build failed'; }
+build_seconds=$((build_seconds + SECONDS - started))
+promote_service_build_cache research-worker
+if ! configure_service_build_cache candidate-runner; then
+  echo 'RESEARCH_WORKER_SMOKE: candidate-runner cache configuration unavailable; real build will run' >&2
+  rm -f -- "$compose_override"
+fi
+started=$SECONDS
+rc build "${build_options[@]}" candidate-runner \
+  || { build_seconds=$((build_seconds + SECONDS - started)); fail 'candidate-runner image build failed'; }
+build_seconds=$((build_seconds + SECONDS - started))
+promote_service_build_cache candidate-runner
 command -v cargo >/dev/null 2>&1 || fail 'cargo is required to prove the manual --root Raw contract'
+started=$SECONDS
 manual_output="$(cargo run --quiet --locked -p collectors --bin collectors -- ingest-krx \
   --root "$raw_root" --date 2020-01-31 --mode synthetic \
   --bundle "$eod_smoke_bundle" --now 2020-01-31T08:00:00Z \
-  --entitlement-ref "$RESEARCH_ENTITLEMENT_REFERENCE")" || fail 'manual collectors --root ingest failed'
+  --entitlement-ref "$RESEARCH_ENTITLEMENT_REFERENCE")" || { host_cargo_seconds=$((SECONDS - started)); fail 'manual collectors --root ingest failed'; }
+host_cargo_seconds=$((SECONDS - started))
 direct_manifest="$raw_root/raw/manifests/provider=krx/market=kr/manifest.jsonl"
 [ -f "$direct_manifest" ] || fail "direct host Raw manifest is missing: $direct_manifest"
 [ ! -e "$raw_root/raw/raw" ] || fail 'Raw evidence was nested under <data>/raw/raw'

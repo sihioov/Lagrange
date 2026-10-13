@@ -293,5 +293,35 @@ folded edges are listed with evidence in the component file's header.
   hosted check and the `required` aggregation. Run Biome through the Web package workspace so its
   cwd is `apps/web` (for example, `npm run lint --workspace @lagrange/web` from repository root).
 - Receipt reuse is limited to eligible deterministic checks with complete matching inputs. Dynamic
-  environment/runtime checks and final CI always run; cache hits never replace validation. Phase 2
-  resource and cache work is handed off to WP-3; no runtime or performance result is implied here.
+  environment/runtime checks and final CI always run; cache hits never replace validation.
+
+### Development resources and hosted caches
+
+| Work | Default location | Concurrency |
+| --- | --- | --- |
+| Independent implementation/analysis | Local workspace | Two workers by default, at most three plus coordinator; separate write scopes |
+| Syntax, small stdlib checks, reads | Local workspace | At most two; separate output/receipt paths |
+| Workspace Rust, Web build/browser, Docker/DB integration | Existing hosted jobs | Existing VM parallelism; sequential heavy commands within each job |
+| Explicit local focused heavy checks | Development host | One shared Linux user/worktree advisory slot; Cargo jobs = 2 |
+| Production images | Existing production procedure | One service per Compose graph; Cargo 2, Compose 1 and existing batch health gates |
+
+- Full workspace/build/browser/smoke requests default to the hosted integration plan. Local Rust
+  focused execution requires a real `--package`; Web focused runs OpenAPI and Vitest after fast.
+- The local slot uses an owner-private mode-0700 `XDG_RUNTIME_DIR`, or one explicit shared private
+  directory outside worktrees. Acquire before spawning; hold through owned child exit/reap. Do not
+  unlink another lock or kill its owner. Interrupts wait for the owned child; existing harnesses own
+  descendants and cleanup. This slot coordinates dispatcher commands, not all host processes.
+- Hosted caches are limited to named public Cargo download directories, per-job `RUNNER_TEMP`
+  Cargo output, npm `_cacache`, uv downloads, and two per-service Docker layer stores. Keep credentials,
+  repository `target`, installed environments, provider data, DBs, receipts, and logs out of caches.
+- Use separate SHA-pinned restore/save actions. Pull requests restore only. Save only after success
+  on trusted same-repository push/dispatch and a successful miss/prefix restore; an exact hit needs
+  no save. Every install/check still runs. A successful save action outcome means attempted/unverified
+  until upload logs, inventory, and a warm matched key prove persistence.
+- Smoke uses an explicit private docker-container builder, separate import/new export directories,
+  `mode=max`, and successful export promotion. Keep research-worker then candidate-runner serial;
+  retain the no-cache context audit and six fresh Raw probe volumes with offline compilation every run.
+- Evidence comparisons require the same candidate SHA, validated ASCII `cache_epoch`, compatible key
+  and stable path set. Bound initial hosted proof to two CI and two smoke runs, reuse qualifying exact
+  runs, and report unknown limits/resource metrics as unavailable. No performance acceptance follows
+  from source checks alone. See [the runbook](docs/runbooks/development-verification.md).

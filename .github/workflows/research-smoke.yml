@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      cache_epoch:
+        description: ASCII namespace for a cold run and its warm pair on the same commit.
+        required: false
+        default: wp3-20261013
+        type: string
 
 permissions:
   contents: read
@@ -17,8 +23,187 @@ jobs:
     runs-on: ubuntu-latest
     # Allow both serial cold Rust image builds before functional validation.
     timeout-minutes: 90
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lagrange-cargo-target-smoke
+      CARGO_INCREMENTAL: '0'
+      RUSTUP_AUTO_INSTALL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: bash scripts/qa/research-worker-smoke.sh
+      - id: cache-epoch
+        env:
+          CACHE_EPOCH_INPUT: ${{ github.event.inputs.cache_epoch || 'wp3-20261013' }}
+        run: |
+          export LC_ALL=C
+          if ! [[ "$CACHE_EPOCH_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo 'cache_epoch must be 1-64 ASCII letters, digits, dot, underscore, or hyphen' >&2
+            exit 2
+          fi
+          printf 'value=%s\n' "$CACHE_EPOCH_INPUT" >>"$GITHUB_OUTPUT"
+      - id: rust-install
+        run: |
+          started=$SECONDS
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Prepare a private docker-container builder
+        id: buildx
+        env:
+          RESEARCH_SMOKE_BUILDER: lagrange-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          started=$SECONDS
+          docker buildx create --driver docker-container --name "$RESEARCH_SMOKE_BUILDER"
+          inspection="$(docker buildx inspect "$RESEARCH_SMOKE_BUILDER" --bootstrap)"
+          buildkit="$(sed -n 's/^[[:space:]]*BuildKit:[[:space:]]*//p' <<<"$inspection" | head -n 1)"
+          test -n "$buildkit"
+          identity="$({ docker version --format '{{.Server.Version}}'; docker compose version --short; docker buildx version; printf '%s\n' "$buildkit"; } | sha256sum | awk '{print $1}')"
+          image="$(printf '%s-%s' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | tr -c 'A-Za-z0-9._-' '-')"
+          printf 'builder=%s\nidentity=%s\nimage=%s\nseconds=%s\n' "$RESEARCH_SMOKE_BUILDER" "$identity" "$image" "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - id: cache-keys
+        env:
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+          RUNNER_IMAGE: ${{ steps.buildx.outputs.image }}
+          DOCKER_IDENTITY: ${{ steps.buildx.outputs.identity }}
+          CARGO_INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**') }}
+          DOCKER_INPUTS_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'rust-toolchain.toml', '.cargo/**', '.dockerignore', 'data-pipelines/collectors/Dockerfile', 'crates/job-queue/Dockerfile', 'deploy/compose/compose.yml') }}
+        run: |
+          rust_identity="$({ rustc +1.97.1 --version --verbose; cargo +1.97.1 --version; } | sha256sum | awk '{print $1}')"
+          flags="$(printf 'CARGO_INCREMENTAL=%s\nRUSTFLAGS=%s\nCARGO_ENCODED_RUSTFLAGS=%s\n' "${CARGO_INCREMENTAL:-}" "${RUSTFLAGS:-}" "${CARGO_ENCODED_RUSTFLAGS:-}" | sha256sum | awk '{print $1}')"
+          download_prefix="cargo-download-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${rust_identity}-${CARGO_INPUTS_HASH}-"
+          target_prefix="cargo-target-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${rust_identity}-host-collectors-smoke-${flags}-${CARGO_INPUTS_HASH}-"
+          worker_prefix="docker-layer-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${DOCKER_IDENTITY}-${DOCKER_INPUTS_HASH}-research-worker-"
+          candidate_prefix="docker-layer-${CACHE_NAMESPACE}-${RUNNER_OS_NAME}-${RUNNER_IMAGE}-${RUNNER_ARCH_NAME}-${DOCKER_IDENTITY}-${DOCKER_INPUTS_HASH}-candidate-runner-"
+          printf 'download_prefix=%s\ndownload_key=%s%s\ntarget_prefix=%s\ntarget_key=%s%s\nworker_prefix=%s\nworker_key=%s%s\ncandidate_prefix=%s\ncandidate_key=%s%s\n' \
+            "$download_prefix" "$download_prefix" "$SOURCE_SHA" "$target_prefix" "$target_prefix" "$SOURCE_SHA" \
+            "$worker_prefix" "$worker_prefix" "$SOURCE_SHA" "$candidate_prefix" "$candidate_prefix" "$SOURCE_SHA" >>"$GITHUB_OUTPUT"
+      - name: Restore cargo-download cache
+        id: cargo-download-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cache-keys.outputs.download_key }}
+          restore-keys: ${{ steps.cache-keys.outputs.download_prefix }}
+      - name: Restore cargo-target cache
+        id: cargo-target-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-smoke
+          key: ${{ steps.cache-keys.outputs.target_key }}
+          restore-keys: ${{ steps.cache-keys.outputs.target_prefix }}
+      - name: Restore docker-worker cache
+        id: docker-worker-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-smoke-build-cache/import/research-worker
+          key: ${{ steps.cache-keys.outputs.worker_key }}
+          restore-keys: ${{ steps.cache-keys.outputs.worker_prefix }}
+      - name: Restore docker-candidate cache
+        id: docker-candidate-restore
+        continue-on-error: true
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-smoke-build-cache/import/candidate-runner
+          key: ${{ steps.cache-keys.outputs.candidate_key }}
+          restore-keys: ${{ steps.cache-keys.outputs.candidate_prefix }}
+      - name: Preflight smoke host Cargo toolchain
+        run: python3 scripts/qa/dev-check.py preflight --profile rust --stage focused --check-id cargo-test-workspace --environment ci
+      - id: smoke
+        env:
+          RESEARCH_SMOKE_BUILDER: ${{ steps.buildx.outputs.builder }}
+        run: bash scripts/qa/research-worker-smoke.sh
+      - name: Save cargo-download cache
+        id: cargo-download-save
+        if: success() && steps.cargo-download-restore.outcome == 'success' && steps.cargo-download-restore.outputs.cache-hit != 'true' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: ${{ steps.cache-keys.outputs.download_key }}
+      - name: Save cargo-target cache
+        id: cargo-target-save
+        if: success() && steps.cargo-target-restore.outcome == 'success' && steps.cargo-target-restore.outputs.cache-hit != 'true' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-cargo-target-smoke
+          key: ${{ steps.cache-keys.outputs.target_key }}
+      - name: Save docker-worker cache
+        id: docker-worker-save
+        if: success() && steps.docker-worker-restore.outcome == 'success' && steps.docker-worker-restore.outputs.cache-hit != 'true' && steps.smoke.outputs.research_worker_cache_promoted == 'true' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-smoke-build-cache/import/research-worker
+          key: ${{ steps.cache-keys.outputs.worker_key }}
+      - name: Save docker-candidate cache
+        id: docker-candidate-save
+        if: success() && steps.docker-candidate-restore.outcome == 'success' && steps.docker-candidate-restore.outputs.cache-hit != 'true' && steps.smoke.outputs.candidate_runner_cache_promoted == 'true' && github.repository == 'sihioov/Lagrange' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        continue-on-error: true
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/lagrange-smoke-build-cache/import/candidate-runner
+          key: ${{ steps.cache-keys.outputs.candidate_key }}
+      - name: Write private smoke cache evidence
+        if: always()
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          CACHE_NAMESPACE: ${{ steps.cache-epoch.outputs.value }}
+          DOWNLOAD_KEY: ${{ steps.cache-keys.outputs.download_key }}
+          DOWNLOAD_MATCHED: ${{ steps.cargo-download-restore.outputs.cache-matched-key }}
+          DOWNLOAD_HIT: ${{ steps.cargo-download-restore.outputs.cache-hit }}
+          DOWNLOAD_RESTORE_OUTCOME: ${{ steps.cargo-download-restore.outcome }}
+          DOWNLOAD_SAVE_OUTCOME: ${{ steps.cargo-download-save.outcome }}
+          TARGET_KEY: ${{ steps.cache-keys.outputs.target_key }}
+          TARGET_MATCHED: ${{ steps.cargo-target-restore.outputs.cache-matched-key }}
+          TARGET_HIT: ${{ steps.cargo-target-restore.outputs.cache-hit }}
+          TARGET_RESTORE_OUTCOME: ${{ steps.cargo-target-restore.outcome }}
+          TARGET_SAVE_OUTCOME: ${{ steps.cargo-target-save.outcome }}
+          WORKER_KEY: ${{ steps.cache-keys.outputs.worker_key }}
+          WORKER_MATCHED: ${{ steps.docker-worker-restore.outputs.cache-matched-key }}
+          WORKER_HIT: ${{ steps.docker-worker-restore.outputs.cache-hit }}
+          WORKER_RESTORE_OUTCOME: ${{ steps.docker-worker-restore.outcome }}
+          WORKER_SAVE_OUTCOME: ${{ steps.docker-worker-save.outcome }}
+          CANDIDATE_KEY: ${{ steps.cache-keys.outputs.candidate_key }}
+          CANDIDATE_MATCHED: ${{ steps.docker-candidate-restore.outputs.cache-matched-key }}
+          CANDIDATE_HIT: ${{ steps.docker-candidate-restore.outputs.cache-hit }}
+          CANDIDATE_RESTORE_OUTCOME: ${{ steps.docker-candidate-restore.outcome }}
+          CANDIDATE_SAVE_OUTCOME: ${{ steps.docker-candidate-save.outcome }}
+          WORKER_BYTES: ${{ steps.smoke.outputs.research_worker_cache_bytes || 'unavailable' }}
+          CANDIDATE_BYTES: ${{ steps.smoke.outputs.candidate_runner_cache_bytes || 'unavailable' }}
+          INSTALL_RUST: ${{ steps.rust-install.outputs.seconds || 'unavailable' }}
+          INSTALL_BUILDER: ${{ steps.buildx.outputs.seconds || 'unavailable' }}
+          BUILD_SECONDS: ${{ steps.smoke.outputs.build_seconds || 'unavailable' }}
+          HOST_CARGO_SECONDS: ${{ steps.smoke.outputs.host_cargo_seconds || 'unavailable' }}
+          TEST_SECONDS: ${{ steps.smoke.outputs.test_seconds || 'unavailable' }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/wp3-cache-evidence"
+          chmod 700 "${RUNNER_TEMP}/wp3-cache-evidence"
+          python3 scripts/ci/cache-evidence.py record \
+            --workflow "$GITHUB_WORKFLOW" --job "$GITHUB_JOB" --sha "$SOURCE_SHA" --namespace "$CACHE_NAMESPACE" \
+            --cache-entry "cargo-download|$DOWNLOAD_KEY|$DOWNLOAD_MATCHED|$DOWNLOAD_HIT|$DOWNLOAD_RESTORE_OUTCOME|$DOWNLOAD_SAVE_OUTCOME|unavailable" \
+            --cache-entry "cargo-target|$TARGET_KEY|$TARGET_MATCHED|$TARGET_HIT|$TARGET_RESTORE_OUTCOME|$TARGET_SAVE_OUTCOME|unavailable" \
+            --cache-entry "docker-research-worker|$WORKER_KEY|$WORKER_MATCHED|$WORKER_HIT|$WORKER_RESTORE_OUTCOME|$WORKER_SAVE_OUTCOME|$WORKER_BYTES" \
+            --cache-entry "docker-candidate-runner|$CANDIDATE_KEY|$CANDIDATE_MATCHED|$CANDIDATE_HIT|$CANDIDATE_RESTORE_OUTCOME|$CANDIDATE_SAVE_OUTCOME|$CANDIDATE_BYTES" \
+            --duration install="$INSTALL_RUST" --duration install="$INSTALL_BUILDER" --duration build="$BUILD_SECONDS" --duration build="$HOST_CARGO_SECONDS" --duration test="$TEST_SECONDS" \
+            --output "${RUNNER_TEMP}/wp3-cache-evidence/research-smoke.json" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Remove only this job's private builder
+        if: always()
+        env:
+          RESEARCH_SMOKE_BUILDER: lagrange-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+        run: docker buildx rm "$RESEARCH_SMOKE_BUILDER" || true

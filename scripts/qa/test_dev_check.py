@@ -13,6 +13,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -274,9 +276,14 @@ class DevCheckCliTests(unittest.TestCase):
         self.assertIn("base ref does not resolve to a commit: missing-preflight-ref-xyz", result.stderr)
 
     def test_only_real_workspace_packages_are_accepted(self) -> None:
-        self.assertEqual(len(dev_check.workspace_packages(ROOT)), 16)
-        dev_check.validate_package("rust", "focused", "domain", ROOT)
-        dev_check.validate_package("rust", "focused", "job-queue", ROOT)
+        packages = {
+            "api-server", "api-server-auth", "auth", "collectors", "data-go-client", "domain",
+            "factor-engine", "job-queue", "kis-client", "market-data", "migration-contract",
+            "opendart-client", "portfolio-model", "result-model", "risk-gateway", "selector",
+        }
+        self.assertEqual(dev_check.workspace_packages(ROOT), packages)
+        for package in packages:
+            dev_check.validate_package("rust", "focused", package, ROOT)
         with self.assertRaisesRegex(dev_check.InputError, "not a Cargo workspace package"):
             dev_check.validate_package("rust", "focused", "not-a-member", ROOT)
         with self.assertRaisesRegex(dev_check.InputError, "supported only"):
@@ -314,6 +321,213 @@ class DevCheckCliTests(unittest.TestCase):
         self.assertIn("bash deploy/db/integration-validation/validate.sh --evidence-dir", result.stdout)
         self.assertIn("ports 55432, 55433, and 55434", result.stdout)
         self.assertNotIn("integration passed", result.stdout.lower())
+
+
+class FocusedExecutionPolicyTests(unittest.TestCase):
+    def test_broad_focus_and_integration_do_not_start_fake_children(self) -> None:
+        repo = TemporaryRepository()
+        try:
+            sentinel = repo.root / "must-not-start"
+            repo.config["checks"]["expensive"] = {
+                "argv": [sys.executable, "-B", "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()", str(sentinel)],
+                "inputs": ["src/**/*.py"], "tools": [], "cwd": ".", "reuse": False,
+            }
+            repo.config["profiles"]["all"]["focused"] = ["expensive"]
+            repo.config["profiles"]["rust"]["focused"] = ["expensive"]
+            repo.config["integration_plans"]["all"] = [{"job": "hosted", "commands": ["required hosted command"], "prerequisites": []}]
+            repo.write_config()
+            script = repo.root / "scripts/qa/dev-check.py"
+            for profile, stage, expected_exit in (("all", "focused", 2), ("rust", "focused", 2), ("all", "integration", 0)):
+                result = subprocess.run([sys.executable, "-B", str(script), "run", "--profile", profile, "--stage", stage], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, expected_exit, result.stderr)
+                self.assertIn("INTEGRATION PLAN ONLY", result.stdout)
+                self.assertFalse(sentinel.exists())
+            with self.assertRaisesRegex(dev_check.InputError, "hosted plan-only"):
+                dev_check.run_profile(repo.root, repo.config, "all", "focused")
+            with self.assertRaisesRegex(dev_check.InputError, "explicit --package"):
+                dev_check.run_profile(repo.root, repo.config, "rust", "focused")
+        finally:
+            repo.close()
+
+    def test_web_build_and_browser_remain_in_hosted_plan(self) -> None:
+        config = dev_check.load_config(ROOT)
+        self.assertEqual(config["profiles"]["web"]["focused"], ["web-openapi", "web-test"])
+        self.assertEqual(config["profiles"]["web"]["integration"], ["web-build", "web-e2e"])
+        plan = dev_check.render_integration_plan(config, "web")
+        self.assertIn("npm run build --workspace @lagrange/web", plan)
+        self.assertIn("bash scripts/qa/candidate-web-e2e.sh", plan)
+
+    def test_small_package_prerequisite_map_keeps_domain_pure(self) -> None:
+        config = dev_check.load_config(ROOT)
+        ids = config["profiles"]["rust"]["focused"]
+        domain = dev_check.requirement_context(config, "rust", "focused", ids, "domain")
+        self.assertEqual(domain["paths"], [])
+        self.assertEqual(domain["required_env"], [])
+        self.assertEqual(domain["ports"], [])
+        self.assertNotIn("python3", domain["tools"])
+        for package in ("job-queue", "api-server", "collectors", "result-model", "migration-contract"):
+            req = dev_check.requirement_context(config, "rust", "focused", ids, package)
+            self.assertEqual(req["required_env"], ["DATABASE_URL", "LAGRANGE_QA_DB_PORT"])
+            self.assertEqual(req["ports"][0]["mode"], "reachable-endpoint")
+            self.assertTrue(config["rust_package_prerequisites"][package]["source_evidence"])
+        market = dev_check.requirement_context(config, "rust", "focused", ids, "market-data")
+        self.assertEqual(market["ports"], [])
+        self.assertIn("data/phase0/curated/bars/market=kr", market["paths"])
+        self.assertEqual(dev_check.requirement_context(config, "rust", "focused", ids, "result-model")["paths"], [])
+        fixture_url = (ROOT / "crates/job-queue/tests/intraday_quotes_support/mod.rs").read_text().split('pub const QA_DATABASE_URL: &str = "', 1)[1].split('"', 1)[0]
+        for package in ("job-queue", "api-server"):
+            self.assertEqual(config["rust_package_prerequisites"][package]["database_url_exact"], fixture_url)
+
+    def test_existing_disposable_endpoint_is_probed_without_free_port_bind(self) -> None:
+        config = copy.deepcopy(dev_check.load_config(ROOT))
+        config["checks"]["cargo-test-workspace"]["tools"] = []
+        config["checks"]["cargo-test-workspace"]["pin_manifest"] = False
+        values = {"GITHUB_ACTIONS": "true", "DATABASE_URL": "postgres://fixture:fixture@127.0.0.1:55438/postgres", "LAGRANGE_QA_DB_PORT": "55438"}
+        with mock.patch.dict(os.environ, values), mock.patch.object(dev_check, "tool_version", return_value={"ok": True, "name": "git", "path": "/fake/git", "version": "2.50"}), mock.patch.object(dev_check, "safe_output_parent", return_value=[]):
+            with mock.patch.object(dev_check.socket, "create_connection") as connect:
+                report = dev_check.preflight_profile(ROOT, config, "rust", "focused", "ci", "collectors", check_ids_override=["cargo-test-workspace"], port_bind=lambda _: self.fail("must not bind an existing DB startup port"))
+                self.assertEqual(report["status"], "READY", report["errors"])
+                connect.assert_called_once_with(("127.0.0.1", 55438), timeout=1)
+            with mock.patch.object(dev_check.socket, "create_connection", side_effect=ConnectionRefusedError(errno.ECONNREFUSED, "fixture")):
+                report = dev_check.preflight_profile(ROOT, config, "rust", "focused", "ci", "collectors", check_ids_override=["cargo-test-workspace"])
+                self.assertEqual(report["status"], "BLOCKED")
+                self.assertIn("ECONNREFUSED", " ".join(report["errors"]))
+            config["rust_package_prerequisites"]["collectors"]["database_url_exact"] = values["DATABASE_URL"]
+            wrong_url = "postgres://wrong:PRIVATE_SENTINEL@127.0.0.1:55438/postgres"
+            with mock.patch.dict(os.environ, {"DATABASE_URL": wrong_url}), mock.patch.object(dev_check.socket, "create_connection") as connect:
+                report = dev_check.preflight_profile(ROOT, config, "rust", "focused", "ci", "collectors", check_ids_override=["cargo-test-workspace"])
+                self.assertEqual(report["status"], "BLOCKED")
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(report))
+                connect.assert_not_called()
+
+    def test_local_cargo_focus_executes_probed_pin_under_ambient_override(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="dev-check-focused-cargo-") as temp:
+            outer = Path(temp)
+            bin_dir = outer / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "git").symlink_to(shutil.which("git"))
+            capture = outer / "invocations"
+            cargo = bin_dir / "cargo"
+            cargo.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = "+1.97.1" ] && [ "$2" = "--version" ]; then echo "cargo 1.97.1"; exit 0; fi\n'
+                'if [ "$1" = "+1.97.1" ] && [ "$2" = "clippy" ] && [ "$3" = "--version" ]; then echo "clippy 0.1.97"; exit 0; fi\n'
+                'printf "%s|%s|%s\\n" "$*" "$RUSTUP_AUTO_INSTALL" "$CARGO_BUILD_JOBS" >> "$DEV_CHECK_CAPTURE"\n'
+                '[ "$1" = "+1.97.1" ] && [ "$RUSTUP_AUTO_INSTALL" = 0 ] && [ "$CARGO_BUILD_JOBS" = 2 ]\n'
+            )
+            cargo.chmod(0o700)
+            rustc = bin_dir / "rustc"
+            rustc.write_text('#!/bin/sh\n[ "$1" = "+1.97.1" ] && echo "rustc 1.97.1"\n')
+            rustc.chmod(0o700)
+            config = dev_check.load_config(ROOT)
+            repo = TemporaryRepository(tools={name: copy.deepcopy(config["tools"][name]) for name in ("git", "cargo", "cargo-clippy", "rustc")})
+            try:
+                (repo.root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/domain"]\n')
+                package_root = repo.root / "crates/domain"
+                package_root.mkdir(parents=True)
+                (package_root / "Cargo.toml").write_text('[package]\nname = "domain"\nversion = "0.1.0"\n')
+                ids = ["cargo-clippy-workspace", "cargo-test-workspace"]
+                repo.config["profiles"]["rust"]["focused"] = ids
+                for name in ids:
+                    check = copy.deepcopy(config["checks"][name])
+                    check["pin_manifest"] = False
+                    check["inputs"] = ["src/**/*.py"]
+                    repo.config["checks"][name] = check
+                repo.write_config()
+                with mock.patch.dict(os.environ, {"PATH": str(bin_dir), "RUSTUP_TOOLCHAIN": "unrelated-override", "CARGO_BUILD_JOBS": "19", "GITHUB_ACTIONS": "false", "DEV_CHECK_CAPTURE": str(capture)}):
+                    for environment in ("local", "ci"):
+                        status, report = dev_check.run_profile(repo.root, repo.config, "rust", "focused", environment=environment, package="domain", heavy_lock_dir=outer)
+                        self.assertEqual(status, 0, report)
+                        self.assertTrue(all(result["environment_facts"]["CARGO_BUILD_JOBS"]["value"] == "2" for result in report["results"]))
+                lines = capture.read_text().splitlines()
+                self.assertEqual(len(lines), 4)
+                self.assertTrue(all(line.startswith("+1.97.1 ") and line.endswith("|0|2") for line in lines))
+                self.assertTrue(all(result["argv"][:2] == ["cargo", "+1.97.1"] for result in report["results"]))
+            finally:
+                repo.close()
+
+
+class HeavySlotTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux advisory lock")
+    def test_conflicting_child_never_starts_first_is_reaped_and_slot_reacquires(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="dev-check-shared-slot-") as temp:
+            directory = Path(temp)
+            started, release, finished, second, third = [directory / name for name in ("started", "release", "finished", "second", "third")]
+            results, errors = [], []
+            child = [sys.executable, "-B", "-c", "import os,pathlib,sys,time; start,release,end=map(pathlib.Path,sys.argv[1:]); start.write_text(str(os.getpid())); deadline=time.monotonic()+4;\nwhile not release.exists() and time.monotonic()<deadline: time.sleep(.02)\nend.write_text('finished')", str(started), str(release), str(finished)]
+            def first():
+                try:
+                    results.append(dev_check.run_child_with_heavy_slot(child, cwd=directory, env=os.environ.copy(), lock_directory=directory))
+                except BaseException as exc:
+                    errors.append(exc)
+            thread = threading.Thread(target=first)
+            thread.start()
+            try:
+                deadline = time.monotonic() + 3
+                while not started.exists() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertTrue(started.exists(), errors)
+                inode = (directory / "lagrange-dev-check-heavy.lock").stat().st_ino
+                fake = [sys.executable, "-B", "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()", str(second)]
+                with self.assertRaises(dev_check.HeavySlotBusy):
+                    dev_check.run_child_with_heavy_slot(fake, cwd=directory, env=os.environ.copy(), lock_directory=directory)
+                self.assertFalse(second.exists())
+            finally:
+                release.touch()
+                thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(results[0].returncode, 0)
+            self.assertTrue(finished.exists())
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(int(started.read_text()), os.WNOHANG)
+            fake[-1] = str(third)
+            self.assertEqual(dev_check.run_child_with_heavy_slot(fake, cwd=directory, env=os.environ.copy(), lock_directory=directory).returncode, 0)
+            self.assertTrue(third.exists())
+            self.assertEqual((directory / "lagrange-dev-check-heavy.lock").stat().st_ino, inode)
+
+    def test_private_location_rejects_symlinks_and_permissions_without_repair(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="dev-check-lock-location-") as temp:
+            root = Path(temp)
+            public = root / "public"
+            public.mkdir(mode=0o755)
+            public.chmod(0o755)
+            with self.assertRaisesRegex(dev_check.InputError, "0700"):
+                dev_check.heavy_lock_directory(public)
+            self.assertEqual(stat_mode(public)[1], 0o755)
+            alias = root / "alias"
+            alias.symlink_to(root, target_is_directory=True)
+            with self.assertRaisesRegex(dev_check.InputError, "symlink"):
+                dev_check.heavy_lock_directory(alias)
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(root)}):
+                self.assertEqual(dev_check.heavy_lock_directory(), root)
+            with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}):
+                self.assertTrue(dev_check.local_heavy_execution("ci"))
+
+    def test_interrupt_waits_for_owned_child_before_releasing_lock(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="dev-check-lock-interrupt-") as temp:
+            directory = Path(temp)
+            child = mock.Mock(returncode=0)
+            calls = 0
+            def communicate():
+                nonlocal calls
+                calls += 1
+                with self.assertRaises(dev_check.HeavySlotBusy):
+                    with dev_check.HeavySlot(directory):
+                        pass
+                if calls == 1:
+                    raise KeyboardInterrupt
+                return "finished", ""
+            child.communicate.side_effect = communicate
+            with mock.patch.object(dev_check.subprocess, "Popen", return_value=child) as popen:
+                with self.assertRaises(KeyboardInterrupt):
+                    dev_check.run_child_with_heavy_slot(["fake"], cwd=directory, env={}, lock_directory=directory)
+            self.assertEqual(calls, 2)
+            self.assertNotIn("timeout", popen.call_args.kwargs)
+            self.assertEqual(len(popen.call_args.kwargs["pass_fds"]), 1)
+            child.kill.assert_not_called()
+            with dev_check.HeavySlot(directory):
+                pass
 
 
 class GitDiscoveryTests(unittest.TestCase):
