@@ -6,6 +6,7 @@ Native subagents: prohibited for worker packages
 - 작성일: 2026-10-12 KST
 - 계획 기준 커밋: `1b8dca3214ee98c4c23844b888dc4e1fde0ba4a2`
 - 작업 디렉터리: `/data/worktrees/3puw275b/orange-dugong`
+- main 통합: 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 후 진행 문서 갱신. [통합 근거](../../reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13); 검증·빌드 대상은 C3 유지.
 - 상위 작업: [개발 로드맵 R1-01~R1-09](../../ROADMAP.md#5-r1--개발배포-기준-복구)
 - 상태: **C3 `862fa954c16d28a617271fe6f613d34226e2d558`의 CI 8개 job·별도 functional smoke 수용, WP-1~WP-6 완료.** [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 후보별 실패·최종 결과·기존 skip·관측 한계를 보존했다. WP-7/R1-09는 root 인증·빌드 health 전제에 차단돼 있으며 [C3 이미지 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md)에 정확한 소스·명령·해소 조건을 준비했다. 실제 이미지·manifest와 전체 R1 완료는 아직 없다.
 

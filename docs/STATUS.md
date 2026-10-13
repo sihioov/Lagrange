@@ -1,12 +1,30 @@
 # Lagrange Station — 상태 종합
 
 > **2026-10-12 이후 개발 우선순위·진행·완료 체크는 [개발 로드맵](ROADMAP.md)에서 관리한다.**
-> 이 문서는 날짜별 과거 구현·운영 기록을 보존한다. 아래의 “현재”, “최신”, “남은 작업”은
-> 각 기록 당시의 표현이며, 9~10월 변경을 포함한 출발점과 이후 작업은 로드맵을 먼저 확인한다.
+> 이 문서는 최신 진행 요약과 날짜별 과거 구현·운영 기록을 함께 제공한다. 과거 기록의
+> “현재”, “최신”, “남은 작업”은 각 기록 당시의 표현이며 이후 우선순위는 로드맵을 먼저 확인한다.
+
+## 최신 진행 요약 — 2026-10-13 (Asia/Seoul)
+
+| 항목 | 확인된 상태 |
+| --- | --- |
+| main 통합 | `orange-dugong`의 R1 작업을 `1b8dca3` → `1fe09ef` fast-forward로 반영. 이후 변경은 이 요약을 포함한 문서 갱신 |
+| 검증 대상 | C3 `862fa954c16d28a617271fe6f613d34226e2d558`; 코드·테스트·workflow·다이어그램은 해당 후보와 동일 |
+| R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
+| R1-09 / 전체 R1 | BLOCKED — 실제 이미지·immutable manifest 생성 전 root 인증과 공식 빌드 health 조건 해소 필요 |
+| 다음 단계 | R1-09 배포 후보 준비를 마친 뒤 R2 일일 수집·추천·실제 Owner 사용 인수 진행. R2는 TODO |
+| 운영 반영 | 이번 main 통합으로 C3 이미지 빌드·서비스 전환·운영 migration·provider 호출을 실행하지 않음 |
+
+검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
+통합 기록은 [main 반영 기록](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13)에 있다.
+남은 조건과 정확한 빌드 입력·명령은 [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)를 따른다.
+아래 운영 관측은 과거 기록이며 이번 문서 갱신에서 운영 상태를 새로 조회한 결과가 아니다.
+
+## 날짜별 구현·운영 기록 보존
 
 **아래 보존 기록의 기준 시각: 2026-08-30 (Asia/Seoul), 기준 트리: 당시 기록에 명시된 커밋.**
 §0.1~§0.12는 운영·Stage6 진행 당시의 날짜별 스냅샷이고, §0.13~§0.16은 remediation
-당시의 기록이다. **현재 상태는 §0.48(고정 30종목 가격·거래량 빠른 베타 운영 배포와 직접 QA),
+당시의 기록이다. **보존 기록 당시 상태는 §0.48(고정 30종목 가격·거래량 빠른 베타 운영 배포와 직접 QA),
 §0.47(ETF11 10년 Raw 확장·v3 운영 배포와 직접 QA),
 §0.46(세션 만료 로그인 복구 운영 배포와 직접 QA),
 §0.45(Owner-beta 추천 remediation 운영 배포와 직접 QA),
@@ -22,7 +40,7 @@
 §0.36(main 병합 완료·release gate),
 §0.35(독립 v2 승인·release audit), §0.29(이틀치 발행 달성),
 §0.30(출시 준비도 실측), §0.31(독립 출시 준비도 분석)을 우선한다.** 출시까지의 작업
-순서는 §0.15에 정의돼 있고 그 현재 위치는 §0.48에 있다 — 작업 2의 봉인 artifact와
+순서는 §0.15에 정의돼 있고 그 당시 위치는 §0.48에 있다 — 작업 2의 봉인 artifact와
 작업 3의 독립 검토 승인 record, 작업 4의 추천 코드 경로, 새 immutable image/release
 설치·운영 적용과 설치본의 networkless approval/artifact check까지 완료했다. historical
 price-only artifact는 설계대로 `OWNER_ONLY`/`MATERIALIZED`/`UNREGISTERED`/

@@ -2,6 +2,10 @@
 
 현재 상태: **C3 CI·기능 smoke 수용, R1-01~08 완료. R1-09 실제 이미지·manifest는 root 인증·빌드 health 전제로 BLOCKED.** [최종 인수](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [외부 차단 인계](2026-10-12-r1-release-readiness.md). 아래 과거 실행 기록의 상태는 그 관측 시점의 상태다.
 
+2026-10-13 Owner 요청으로 `1fe09ef`까지 main에 fast-forward 통합한 뒤 진행 문서를 갱신했다.
+검증 대상은 C3 `862fa95`이며 통합·문서 커밋이 배포 완료를 뜻하지 않는다.
+[최신 통합 기록](#main-통합과-진행-문서-갱신--2026-10-13)을 참고한다.
+
 - 실행 요청: 2026-10-12 KST, Owner의 `$paseo-delegate 작업 진행해`.
 - 입력 커밋: `ac0a08364788e6c2f234cf85025a8d975f362d31`.
 - 작업 경로: `/data/worktrees/3puw275b/orange-dugong`.
@@ -828,3 +832,23 @@ pending0이고 결과를 회수했다. 등록했던 `b2a5c77b` 삭제 성공을 
 다이어그램은 바꾸지 않았다. 새 테스트·CI dispatch·이미지 빌드·main merge는 수행하지 않았다.
 범위 안의 CI 복구와 검토 가능한 인계는 종료하며, R1-09의 외부 전제와 실제 이미지·manifest
 검증이 다음 작업이다.
+
+## main 통합과 진행 문서 갱신 — 2026-10-13
+
+Owner가 기존 R1 작업을 main에 합치고 진행 문서를 최신화하도록 요청했다.
+원격 main `1b8dca3`와 branch `1fe09ef`를 fetch해 선형 관계를 확인했고,
+main을 `1fe09ef`까지 fast-forward했다. 기존 main checkout의 미추적 파일은 보존했다.
+C3 이후 기존 다섯 변경 파일이 모두 문서임을 확인했으며 통합 충돌은 없었다.
+
+CI `38278947953`과 smoke `38278966315`의 completed/success 및 C3 head SHA를
+읽기 전용으로 재확인했다. 통합 후 갱신은 STATUS·ROADMAP·인수 기록·실행 기록·
+배포 인계·계획의 여섯 문서에 한정한다. 소스·테스트·workflow·다이어그램은 C3와 동일하며
+추가 전체 테스트나 수동 CI 재실행은 이 문서 갱신의 검증으로 사용하지 않는다.
+
+Paseo `e34176ea-bf17-4935-b6ca-4838d48cf47e`(Luna/medium)의 읽기 전용 문서 점검을
+실제 idle·pending0에서 회수했다. STATUS의 과거 “현재” 표현을 구분하고 main 통합
+근거를 각 최신 요약에 반영했다. 과거 실패·미머지 기록은 당시 증거로 보존한다.
+문서 링크·공백·체크박스와 C3 대비 문서 전용 변경을 확인한 뒤 후속 문서 커밋을 남긴다.
+
+R1-01~08 DONE, R1-09와 전체 R1 BLOCKED, R2 TODO를 유지한다.
+main 통합은 실제 C3 이미지·manifest 생성, 운영 배포나 provider 작업을 수행하지 않는다.

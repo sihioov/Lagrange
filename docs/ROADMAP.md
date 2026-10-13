@@ -9,8 +9,9 @@
 | 최종 갱신일 | 2026-10-13 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R1 CI 복구 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
+| 현재 실행 우선순위 | R1-09 배포 후보 준비 마무리 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
 | 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-6 수용, WP-7 외부 전제 대기 |
+| main 통합 | 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward. 검증 대상은 C3 `862fa95`로 유지하며 이후 문서 갱신 커밋과 구분 |
 | 다음 착수 항목 | R1-09 — 검증된 C3의 실제 이미지·manifest 준비를 위한 root 인증·빌드 health 조건 해소 |
 | 진행 상태 | C3 `862fa95`의 CI 8개 job과 별도 기능 smoke 모두 통과. R1-01~08 DONE; R1-09 BLOCKED, 전체 R1 미완료 |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
@@ -23,7 +24,7 @@
 전용 백테스트, Paper 순으로 확장한다.
 
 - 이 문서: 현재 우선순위, 작업 체크리스트, 완료 기준, 차단 사유, 변경 이력.
-- [STATUS.md](STATUS.md): 과거 날짜별 구현·운영 기록. 본문의 “현재”는 해당 기록 당시를 뜻한다.
+- [STATUS.md](STATUS.md): 최신 진행 요약과 과거 날짜별 구현·운영 기록. 과거 기록의 “현재”는 해당 기록 당시를 뜻한다.
 - [요구사항서](Lagrange_Station_Requirements_v1.1.md)와
   [시스템 설계서](Lagrange_Station_System_Design_v1.1.md): 장기 제품 목표와 설계 근거.
 - `docs/decisions/`, `docs/contracts/`, `docs/runbooks/`: 개별 승인·계약·실행 절차의 근거.
@@ -205,6 +206,9 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   같은 SHA의 checkout·실제 테스트 실행·기능 PASS를 확인했다. C/C2 실패·취소·기존 skip과
   세부 출력 한계는 [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md)에 보존했다.
   이 결과를 추가하는 후속 문서 커밋은 검증 대상 C3와 구분한다.
+  2026-10-13 `1fe09ef`까지의 작업을 main에 fast-forward로 통합했다.
+  [통합 기록](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13)의 문서 갱신은
+  기존 C3 검증 대상이나 R1-09의 실제 이미지·manifest 완료 조건을 바꾸지 않는다.
 - [ ] **R1-09 — 배포 후보 준비.** BLOCKED — 실제 빌드에 필요한 root 인증과 빌드 health 조건 미충족.
   C3 공식 builder의 plan·preflight와 migration/복구 소스 검토는 완료했으나 실제 이미지·manifest는 없다.
   검증 커밋을 보존한 별도 checkout과 정확한 명령·출력 경로·해소 조건을
@@ -366,16 +370,14 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-12 | R1-01 | TODO → DOING | Owner가 `$paseo-delegate` 실행 요청; WP-1 실패 재현·수정 명세 확정 시작 | 입력 `ac0a083`; [실행 기록](reviews/2026-10-12-r1-execution.md); 완료 근거는 아직 없음 |
 | 2026-10-12 | R1-01; R1-02~R1-07 | R1-01 DONE; 수정 항목 DOING | WP-1 수용, 원인별 명세 확정. R1-03은 테스트 지원 feature를 CI에서 명시하며 실제 전체 테스트를 유지 | `ac0a083`; [기준선](reviews/2026-10-12-r1-baseline.md); [확정 실행 계약](superpowers/plans/2026-10-12-r1-ci-recovery.md); Docker/SQL/smoke와 최종 workspace 실행은 아직 미확인 |
 | 2026-10-12 | R1-02~R1-07 | DOING 유지; 후속 Rust·DB·Web 범위 확정 | 개별 검증에서 추가 진단과 기존 테스트 계약 불일치 발견. DB 리뷰 결함 수정, 고정 QA 포트 일치, Web 서버 소유 증명과 WS 전용 회귀 보완. 전체 검사를 축소하지 않음 | `ac0a083` 기반 작업 트리; [실행·검증 기록](reviews/2026-10-12-r1-execution.md), [Rust](reviews/2026-10-12-r1-rust.md), [DB](reviews/2026-10-12-r1-postgres.md), [runner](reviews/2026-10-12-r1-runner.md); 동일 최종 커밋·필수 CI·smoke는 아직 미확정 |
-
 | 2026-10-12 | R1-02~R1-08 | 수정·로컬 검증과 독립 소스 리뷰 수용; 동일 후보 커밋의 hosted 검증으로 이동 | Rust·DB·Python·Web 135회·기능 smoke 통과. 기존 실패·skip 이력은 보고서에 보존하고 R1 완료 체크는 hosted 결과 이후 판단 | 이 기록을 추가한 후보 커밋; [실행 기록](reviews/2026-10-12-r1-execution.md), [Web](reviews/2026-10-12-r1-web-validation.md), [workspace](reviews/2026-10-12-r1-workspace-validation.md), [smoke](reviews/2026-10-12-r1-smoke-validation.md) |
-
 | 2026-10-12 | R1-04·R1-05·R1-07·R1-08 | 첫 후보 hosted 실패로 제한된 후속 수정; DOING 유지 | 깨끗한 checkout의 누락 입력·target 생성 전제와 DB rollback 오류가 로컬 통과 뒤 발견됨. Python은 runner shutdown으로 결과 미완료 | `79da119`; [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md). 기존 로컬 성공과 hosted 실패를 구분 |
 | 2026-10-12 | R1-03~R1-08 | 후속 수정의 로컬 검증·리뷰 수용; hosted 검증 대기 | 7개 소스 파일 보정, DB 126개·runner 31개·artifact library 196개·CI 계약 10개 및 해당 strict Clippy 통과. 이전 실패 원인의 관측 한계 유지 | 이 기록을 추가한 후보 C2; [후보별 인수 기록](reviews/2026-10-12-r1-acceptance.md) |
 | 2026-10-13 | R1-02~R1-08 | C2 결과 회수; Python·Web 후속 수정으로 DOING 유지 | Rust·DB·policy 및 기능 smoke 통과. Python은 중단, Web은 cleanup 회귀 실패. 신호를 차단한 격리 재현으로 실행기 소유권 결함 확인 후 두 Python 파일 수정·리뷰·검증 진행 | `f5dff91`; [C2 결과와 후속 근거](reviews/2026-10-12-r1-acceptance.md), [실행 기록](reviews/2026-10-12-r1-execution.md) |
 | 2026-10-13 | R1-09 | BLOCKED; 실제 이미지·manifest 생성 전 외부 전제 기록 | 공식 plan·preflight는 통과했으나 root 인증과 운영 health 조건 미충족. 새 후보의 CI를 먼저 완료하고 구체적인 실행안을 인계 | C2의 읽기 전용 준비 결과; [배포 전제](reviews/2026-10-12-r1-acceptance.md); 운영 변경·예외 승인 없음 |
 | 2026-10-13 | R1-05·R1-06·R1-08 | 두 파일 후속 수정의 로컬 검증·독립 리뷰 수용; C3 hosted 검증으로 이동 | runner32·공유34·전체 Python482/skip10·backup6과 새 Web135회 통과. 기존 실패와 skip/환경 한계 보존 | 이 기록을 추가한 후보 C3; [로컬 인수·hash 근거](reviews/2026-10-12-r1-acceptance.md) |
-
 | 2026-10-13 | R1-02~R1-08; R1-09 | R1-02~08 DONE, R1-09 BLOCKED; 전체 R1 미완료 | 같은 C3의 CI 8개 job·기능 smoke 성공. 기존 skip·로그 한계를 구분하고, 실제 이미지·manifest는 root 인증·빌드 health 해소 전 미생성 | `862fa95`; [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md); 이 결과는 후속 문서 커밋에 기록 |
+| 2026-10-13 | R1-01~R1-09 | main 통합 완료; R1-01~08 DONE·R1-09 BLOCKED 유지 | Owner 요청으로 `1b8dca3` → `1fe09ef` fast-forward 후 진행 문서 갱신. C3 코드·workflow·다이어그램과 검증 근거를 보존하며 운영 빌드·배포는 미실행 | [main 통합](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13), [실행 기록](reviews/2026-10-12-r1-execution.md#main-통합과-진행-문서-갱신--2026-10-13); 문서 갱신은 이 기록을 추가한 커밋 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

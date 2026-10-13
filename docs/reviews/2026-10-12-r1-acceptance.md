@@ -4,6 +4,28 @@ Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke
 Local validation and hosted validation are recorded separately. No production
 rollout or R1 completion is claimed.
 
+## Main integration — 2026-10-13
+
+At the Owner's request, `main` was fast-forwarded from
+`1b8dca3214ee98c4c23844b888dc4e1fde0ba4a2` to
+`1fe09efaa2d1c17e2cceccb7a41f2459d5fad6a8`, retaining all five branch commits
+without conflict or rewriting tested C3. The follow-up commit refreshes progress
+documents only. Code, tests, workflows and rendered diagrams remain identical
+to C3 `862fa954c16d28a617271fe6f613d34226e2d558`.
+
+Both existing hosted runs were rechecked read-only: CI `38278947953` and smoke
+`38278966315` are completed/success with C3 as their exact head SHA. Those are
+candidate results, not a claim that a subsequent main-push CI run has passed.
+Integration checks cover ancestry, the documentation-only delta from C3,
+whitespace, local document links and unchanged R1 completion boundaries.
+
+R1-01 through R1-08 remain DONE. R1-09 and overall R1 remain BLOCKED; R2 is TODO.
+The [release handoff](2026-10-12-r1-release-readiness.md) still targets C3 and
+requires root authentication, build-health admission and actual image/manifest
+evidence. Main integration performs no production activation or provider work.
+Earlier statements below that main merge was outside scope describe the prior
+closeout; this separately authorized integration supersedes that scope limit.
+
 ## Candidate C — 79da119e6e8b52be424ec8132ac2a52f65726471
 
 The coordinator committed the 146 reviewed paths, verified a clean checkout,
