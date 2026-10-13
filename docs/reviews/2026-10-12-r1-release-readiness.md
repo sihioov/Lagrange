@@ -8,8 +8,11 @@ immutable manifest는 아직 없다. R1-09와 전체 R1은 미완료다.
 
 2026-10-13 `1fe09ef`까지의 R1 작업을 main에 fast-forward로 통합하고 진행 문서를 갱신했다.
 [통합 기록](2026-10-12-r1-acceptance.md#main-integration--2026-10-13)과 별개로 이 인계의
-실제 빌드 대상은 검증된 C3 그대로다. 아래 운영 관측은 기록된 시점의 증거이며
-main 통합에서 root·health 조건을 새로 검증하거나 해소한 것은 아니다.
+실제 빌드 대상은 검증된 C3 그대로다. main 통합 자체는 root·health 조건을 해소하지 않았다.
+이후 **2026-10-13 11:38 KST 재관측과 plan/preflight 재검증**을
+[R1 재개 기록](2026-10-13-r1-resumption.md)에 추가했다. root 인증과 ordinary health는
+여전히 미충족이고 C3 exact image tag 12개도 모두 부재였다. 보호된 manifest 부재는 미확인이다.
+아래 17:23 UTC 관측은 과거 증거로 보존하며 실행 전 admission으로 재사용하지 않는다.
 
 ## 고정한 입력과 완료된 준비
 

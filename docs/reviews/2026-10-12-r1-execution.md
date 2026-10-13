@@ -5,6 +5,8 @@
 2026-10-13 Owner 요청으로 `1fe09ef`까지 main에 fast-forward 통합한 뒤 진행 문서를 갱신했다.
 검증 대상은 C3 `862fa95`이며 통합·문서 커밋이 배포 완료를 뜻하지 않는다.
 [최신 통합 기록](#main-통합과-진행-문서-갱신--2026-10-13)을 참고한다.
+그 뒤 `b0a2579`에서 재개한 작업의 현재 root·health·C3 입력 검증은
+[R1 재개 기록](2026-10-13-r1-resumption.md)에 있다. 기존 main CI·smoke 최종 결과는 회수 중이다.
 
 - 실행 요청: 2026-10-12 KST, Owner의 `$paseo-delegate 작업 진행해`.
 - 입력 커밋: `ac0a08364788e6c2f234cf85025a8d975f362d31`.
@@ -852,3 +854,29 @@ Paseo `e34176ea-bf17-4935-b6ca-4838d48cf47e`(Luna/medium)의 읽기 전용 문�
 
 R1-01~08 DONE, R1-09와 전체 R1 BLOCKED, R2 TODO를 유지한다.
 main 통합은 실제 C3 이미지·manifest 생성, 운영 배포나 provider 작업을 수행하지 않는다.
+
+## R1 재개 — 2026-10-13 excited-dolphin
+
+Owner의 `$paseo-delegate` 요청으로 `/data/worktrees/3puw275b/excited-dolphin`에서
+main `b0a2579`와 인계 일치를 확인하고 기존 실행 회수 및 R1-09 준비를 이어갔다.
+코디네이터는 `ef6cdbb0-8409-4dba-86ca-c07eadccf377`, workspace는
+`wks_10fae7d550ab1704`다. 현재 profile은 코디네이터용 Astra 하나여서
+provider/model discovery 후 고정된 실행·수집 작업에 Luna/medium을 사용했다.
+두 worker 모두 같은 workspace·parent label·실제 model/effort를 확인했다.
+launch mode를 따로 지정하거나 변경하지 않았으며 기존 세션의 full-access mode를 상속했다.
+권한 대기 우회를 위한 mode 변경은 없었다.
+
+| Agent | 범위 | 상태·회수 |
+| --- | --- | --- |
+| `a4ec33d1-32e8-4148-9b1d-3eae239ce045` — Luna/medium | main CI `38336666454`·smoke `38336666468` 읽기 전용 회수 | 첫 in-progress 보고를 실제 idle/pending0에서 회수. 같은 run의 terminal 결과를 기다리는 후속 turn에 알림 재등록 |
+| `bf6b8f6d-7139-4b2c-8bd8-86a30e2bca52` — Luna/medium | exact-C3 입력·plan/preflight·인계 14개 hash 및 새 문서 수치 대조 | 준비·문서 대조 보고 모두 실제 idle/pending0에서 회수·수용. 수치·hash 불일치 없음; 검토 scope 밖의 main 문서 6개와 코디네이터 14-entry 대조는 별도 receipt로 확인 |
+
+worker는 추적 파일을 수정하지 않았다. 코디네이터가 새 host/timer 관측과
+receipt·C3 계약을 직접 대조하고 진행 문서를 갱신했다.
+[재개 기록](2026-10-13-r1-resumption.md)에 시각·값·hash·한계와 다음 운영 조치의 영향을 남겼다.
+root 인증 실패와 build health 미충족으로 `--apply`는 미실행이며 protected manifest 부재도
+미확인이다. 준비 가능한 read-only 작업을 완료한 것과 R1-09 완료는 구분한다.
+
+owned ledger는 `target/r1-resume-20261013/owned-workers.json`이다. create/follow-up마다
+완료 알림을 등록했고 2분 cadence의 bounded heartbeat `7bff8125`로 회수 누락을 보완한다.
+CI 최종 결과와 모든 owned turn의 idle·pending0 확인 후 모니터링을 종료한다.

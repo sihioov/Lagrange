@@ -9,6 +9,7 @@ Native subagents: prohibited for worker packages
 - main 통합: 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 후 진행 문서 갱신. [통합 근거](../../reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13); 검증·빌드 대상은 C3 유지.
 - 상위 작업: [개발 로드맵 R1-01~R1-09](../../ROADMAP.md#5-r1--개발배포-기준-복구)
 - 상태: **C3 `862fa954c16d28a617271fe6f613d34226e2d558`의 CI 8개 job·별도 functional smoke 수용, WP-1~WP-6 완료.** [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 후보별 실패·최종 결과·기존 skip·관측 한계를 보존했다. WP-7/R1-09는 root 인증·빌드 health 전제에 차단돼 있으며 [C3 이미지 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md)에 정확한 소스·명령·해소 조건을 준비했다. 실제 이미지·manifest와 전체 R1 완료는 아직 없다.
+- 재개: 2026-10-13 `/data/worktrees/3puw275b/excited-dolphin`에서 최신 main `b0a2579`와 인계 일치를 확인했다. [현재 전제·C3 재검증](../../reviews/2026-10-13-r1-resumption.md)은 기존 `orange-dugong` 아래 detached C3를 그대로 사용한다. 11:38 KST에도 root·health 차단은 남아 있다.
 
 ## Goal and boundaries
 
@@ -426,7 +427,7 @@ R1의 최종 상태는 상위 ROADMAP에서 관리하며 두 문서가 어긋나
 - [x] WP-4 — 2026-10-13 후속 로컬 수용: runner32·공유 multiprocessing34·전체 Python482/skip10·backup6·새 Web135회 통과. [후속 인수 근거](../../reviews/2026-10-12-r1-acceptance.md). 이전 수용·실패 근거는 보존한다: [Web](../../reviews/2026-10-12-r1-web-validation.md), [Python·정적 검사](../../reviews/2026-10-12-r1-runner.md), [전체 기능 smoke](../../reviews/2026-10-12-r1-smoke-validation.md). 최종 C3 hosted Python·Web·policy·기능 smoke도 WP-6에서 수용했다.
 - [x] WP-5 — 2026-10-13 후속 독립 리뷰 수용: 소유권 경계·테스트 격리·cleanup 두 파일의 모든 hunk·hash·기존 테스트 보존 확인, findings 없음. 코디네이터가 새 Python·Web 결과와 소스 동일성을 대조했다. [후속 인수 근거](../../reviews/2026-10-12-r1-acceptance.md). 이전 [90개 소스 감사](../../reviews/2026-10-12-r1-final-source-review.md) 및 [최종 delta 리뷰](../../reviews/2026-10-12-r1-web-final-repair-review.md)는 보존한다.
 - [x] WP-6 — 2026-10-13; 대상 C3 `862fa954c16d28a617271fe6f613d34226e2d558`. CI `38278947953`의 8개 job과 smoke `38278966315`의 functional PASS 수용. [같은 SHA checkout·최종 결과·한계](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance).
-- [ ] WP-7 — BLOCKED. C3 공식 plan/preflight·migration/복구 소스 검토·[구체적인 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md) 준비 완료. root 인증과 실제 build-health admission 해소 후 C3 이미지 ID·revision·공식 immutable manifest를 검증해야 완료된다. 담당: root 실행 가능한 운영자/세션 및 코디네이터.
+- [ ] WP-7 — BLOCKED. C3 공식 plan/preflight·migration/복구 소스 검토·[구체적인 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md) 준비 완료. 2026-10-13 11:38 KST [재관측·입력 재검증](../../reviews/2026-10-13-r1-resumption.md)에서도 root 인증·ordinary health 미충족, C3 image tag 12개 부재를 확인했다. root 인증과 실제 build-health admission 해소 후 C3 이미지 ID·revision·공식 immutable manifest를 검증해야 완료된다. 담당: root 실행 가능한 운영자/세션 및 코디네이터.
 
 2026-10-13 후속 범위는 `scripts/qa/candidate-web-e2e-runner.py`와
 `scripts/qa/test_candidate_web_e2e_runner.py`다. 호출 세션·기존 자식의 소유권 제외,
@@ -449,3 +450,4 @@ cleanup 회귀를 검증한다. 새 테스트 하나를 추가하며 기존 테�
 | 2026-10-13 | C2 CI·smoke terminal 회수 후 WP-4·WP-5 재개, WP-7 외부 전제 차단 기록 | Rust·DB·policy·smoke 성공, Python·Web 실패. 단일 signal-denying proof에서 실행기 소유권 결함 확인. 두 Python 파일에 한정한 수정·독립 리뷰·직렬 검증; [후보별 기록](../../reviews/2026-10-12-r1-acceptance.md) |
 | 2026-10-13 | WP-4·WP-5 후속 수용, C3 hosted 검증 준비 | 새 소스의 runner32·공유34·전체 Python482/skip10·backup6·Web135회와 독립 리뷰 통과; [근거·한계](../../reviews/2026-10-12-r1-acceptance.md) |
 | 2026-10-13 | WP-6 수용, R1-01~08 완료; WP-7은 외부 전제 차단 인계 | C3 CI 8개 job·별도 smoke 성공, 8개 checkout 대조. [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [exact-C3 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md). 실제 이미지·manifest·운영 활성화 없음 |
+| 2026-10-13 | WP-7 재개 후 BLOCKED 유지; 고정 C3의 read-only 준비 재검증 | [재개 기록](../../reviews/2026-10-13-r1-resumption.md): 최신 main과 인계 일치, plan/preflight exit0·인계 14개 hash 일치, 현재 root·health 차단과 image tag 12개 부재 확인. 서비스 변경·빌드·R2·속도 개선 작업 미착수 |

@@ -26,6 +26,18 @@ evidence. Main integration performs no production activation or provider work.
 Earlier statements below that main merge was outside scope describe the prior
 closeout; this separately authorized integration supersedes that scope limit.
 
+### Resumption — existing main-push runs
+
+On 2026-10-13, a fresh fetch confirmed main at
+`b0a2579bef472ae6b604405d0ab6f50255786dd4`, matching the handoff; the delta
+from C3 still contains only six progress documents. Existing main-push CI
+`38336666454` and smoke `38336666468` are being recovered without dispatch,
+rerun or cancellation. Their observed head is `b0a2579`, distinct from C3;
+terminal outcomes remain pending at this checkpoint.
+[The resumption record](2026-10-13-r1-resumption.md) preserves the fresh
+root/health/resource observations and successful exact-C3 plan/preflight.
+The image candidate remains C3 and R1-09 remains BLOCKED.
+
 ## Candidate C — 79da119e6e8b52be424ec8132ac2a52f65726471
 
 The coordinator committed the 146 reviewed paths, verified a clean checkout,

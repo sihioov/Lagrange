@@ -11,8 +11,8 @@
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
 | 현재 실행 우선순위 | R1-09 배포 후보 준비 마무리 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
 | 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-6 수용, WP-7 외부 전제 대기 |
-| main 통합 | 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward. 검증 대상은 C3 `862fa95`로 유지하며 이후 문서 갱신 커밋과 구분 |
-| 다음 착수 항목 | R1-09 — 검증된 C3의 실제 이미지·manifest 준비를 위한 root 인증·빌드 health 조건 해소 |
+| main 통합 | 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 및 문서 갱신 `b0a2579`. 재개 시 fetch한 main은 `b0a2579`로 인계와 동일; C3와의 차이는 문서 6개 |
+| 다음 착수 항목 | R1-09 — root 실행 환경 확보와 reader 처리 중 작업·정지/재개 영향에 대한 운영 결정 후, 고정 C3의 실제 이미지·manifest 준비 |
 | 진행 상태 | C3 `862fa95`의 CI 8개 job과 별도 기능 smoke 모두 통과. R1-01~08 DONE; R1-09 BLOCKED, 전체 R1 미완료 |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
 
@@ -216,6 +216,10 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   담당: root 실행 가능한 운영자/세션과 코디네이터. ordinary build health 또는 별도로 승인된
   유효한 대체 조건을 충족한 뒤 서비스별 순차 빌드와 공식 manifest 검증을 수행한다.
   기존 예외 재사용·서비스 전환·운영 migration은 수행하지 않았다. 실제 운영 적용·결과는 R2에 남는다.
+  2026-10-13 11:38 KST [재개 관측](reviews/2026-10-13-r1-resumption.md): sudo 인증 실패,
+  research-worker exited2/unhealthy·나머지 10개 running/healthy 및 Owner V2 실행 중을 새로 확인했다.
+  종료 원인은 미판정이다. exact-C3 plan/preflight와 보존 증거 14개 검증은 통과했으나
+  C3 image tag 12개 모두 부재, protected manifest 부재는 미확인이라 BLOCKED를 유지한다.
 
 **종료 조건:** R1-01~R1-09 완료, 필수 CI·smoke 통과, 동일 커밋의 검증·배포 후보 근거 확보.
 규칙 변경이 필요하면 원래 검사의 목적을 충족하는 검증과 변경 이유를 함께 남긴다.
@@ -378,6 +382,7 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R1-05·R1-06·R1-08 | 두 파일 후속 수정의 로컬 검증·독립 리뷰 수용; C3 hosted 검증으로 이동 | runner32·공유34·전체 Python482/skip10·backup6과 새 Web135회 통과. 기존 실패와 skip/환경 한계 보존 | 이 기록을 추가한 후보 C3; [로컬 인수·hash 근거](reviews/2026-10-12-r1-acceptance.md) |
 | 2026-10-13 | R1-02~R1-08; R1-09 | R1-02~08 DONE, R1-09 BLOCKED; 전체 R1 미완료 | 같은 C3의 CI 8개 job·기능 smoke 성공. 기존 skip·로그 한계를 구분하고, 실제 이미지·manifest는 root 인증·빌드 health 해소 전 미생성 | `862fa95`; [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md); 이 결과는 후속 문서 커밋에 기록 |
 | 2026-10-13 | R1-01~R1-09 | main 통합 완료; R1-01~08 DONE·R1-09 BLOCKED 유지 | Owner 요청으로 `1b8dca3` → `1fe09ef` fast-forward 후 진행 문서 갱신. C3 코드·workflow·다이어그램과 검증 근거를 보존하며 운영 빌드·배포는 미실행 | [main 통합](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13), [실행 기록](reviews/2026-10-12-r1-execution.md#main-통합과-진행-문서-갱신--2026-10-13); 문서 갱신은 이 기록을 추가한 커밋 |
+| 2026-10-13 | R1-09 | BLOCKED 유지; C3 입력·공식 plan/preflight 재검증과 현재 운영 전제 기록 | 최신 main `b0a2579`는 인계와 동일. root 인증·ordinary health는 현재도 미충족, 12개 C3 image tag 부재. reader 정지 경로의 작업 중단·재개 영향과 별도 운영 결정 필요를 구체화 | [R1 재개 근거](reviews/2026-10-13-r1-resumption.md); 대상 C3 `862fa95`, 11:38 KST 고정 필드 관측, 인계 14개 hash 대조; build/apply·운영 변경·R2 미착수 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

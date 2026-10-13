@@ -11,14 +11,15 @@
 | main 통합 | `orange-dugong`의 R1 작업을 `1b8dca3` → `1fe09ef` fast-forward로 반영. 이후 변경은 이 요약을 포함한 문서 갱신 |
 | 검증 대상 | C3 `862fa954c16d28a617271fe6f613d34226e2d558`; 코드·테스트·workflow·다이어그램은 해당 후보와 동일 |
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
-| R1-09 / 전체 R1 | BLOCKED — 실제 이미지·immutable manifest 생성 전 root 인증과 공식 빌드 health 조건 해소 필요 |
+| R1-09 / 전체 R1 | BLOCKED — 11:38 KST 재관측에서도 root 인증·ordinary health 미충족. C3 plan/preflight 재검증 통과, exact image tag 12개 부재; protected manifest 부재는 미확인 |
 | 다음 단계 | R1-09 배포 후보 준비를 마친 뒤 R2 일일 수집·추천·실제 Owner 사용 인수 진행. R2는 TODO |
 | 운영 반영 | 이번 main 통합으로 C3 이미지 빌드·서비스 전환·운영 migration·provider 호출을 실행하지 않음 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
 통합 기록은 [main 반영 기록](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13)에 있다.
 남은 조건과 정확한 빌드 입력·명령은 [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)를 따른다.
-아래 운영 관측은 과거 기록이며 이번 문서 갱신에서 운영 상태를 새로 조회한 결과가 아니다.
+최신 root·서비스·자원 관측과 C3 재검증은 [R1 재개 기록](reviews/2026-10-13-r1-resumption.md)에 있다.
+아래 날짜별 운영 관측은 과거 기록이며 이번 재관측과 구분한다.
 
 ## 날짜별 구현·운영 기록 보존
 
