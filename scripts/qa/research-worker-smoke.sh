@@ -590,7 +590,12 @@ try:
         require(field not in target or type(target[field]) is bool, "target-flag")
     require("target" not in target or isinstance(target["target"], str) and not target["target"].startswith("target:"), "target-stage")
     require("platforms" not in target or isinstance(target["platforms"], list) and all(isinstance(value, str) for value in target["platforms"]), "target-platforms")
-    require(target.get("output", []) in ([], ["type=docker"], [{"type": "docker"}]), "target-output")
+    # Compose 2.38 emits explicit load/push flags; newer Compose omits them.
+    # Admit only these exact local-engine forms, never arbitrary attributes.
+    require(target.get("output", []) in (
+        [], ["type=docker"], [{"type": "docker"}],
+        ["type=docker,load=true,push=false"],
+    ), "target-output")
     generated = read(override)
     require(set(generated) == {"services"} and set(generated["services"]) == {service}, "override-service")
     build = generated["services"][service]["build"]

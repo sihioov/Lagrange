@@ -206,7 +206,11 @@ For hosted layer caching, each service's Compose `build --print` output is reduc
 Bake target before execution with the private builder and `--load`. Compose also prints unselected
 `db-migrate` and `db-role-bootstrap` definitions; only these known auxiliary definitions may be
 present, and they are removed from the executed graph. The default group must select only the
-requested service and its values are preserved. Bake receives only the exact
+requested service and its values are preserved. Both Compose 2.38 local-load output
+(`type=docker,load=true,push=false`) and newer `type=docker` output are accepted exactly; registry
+push, destination paths, and additional outputs remain rejected. Compatibility checks exercise the
+actual runner-image Compose version as well as the local version before a new hosted proof.
+Bake receives only the exact
 service export `fs.write` grant, plus the import `fs.read` grant when that store is configured.
 Unknown targets, selected target references, outputs, privileges or cache paths stop before the
 build with a fixed rejection code. Local

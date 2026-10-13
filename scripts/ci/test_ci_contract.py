@@ -511,8 +511,9 @@ target = {"context": "/fixture/context", "dockerfile": "/fixture/context/Dockerf
 if "cache_from" in build:
     target["cache-from"] = build["cache_from"]
 value = {"group": {"default": {"targets": [service]}}, "target": {service: target}}
-if case == "auxiliary":
+if case in ("auxiliary", "compose-2.38"):
     value["target"].update({"db-migrate": {"context": "/unused"}, "db-role-bootstrap": {"context": "/unused"}})
+if case == "compose-2.38": target["output"] = ["type=docker,load=true,push=false"]
 if case == "auxiliary-group":
     value["target"]["db-migrate"] = dict(target)
     value["group"]["default"]["targets"].append("db-migrate")
@@ -531,6 +532,9 @@ if case == "target-context": target["context"] = "target:other"
 if case == "bad-export": target["cache-to"] = ["type=local,dest=/unapproved,mode=max,ignore-error=true"]
 if case in ("bad-import", "unexpected-import"): target["cache-from"] = ["type=local,src=/unapproved"]
 if case == "push": target["output"] = ["type=image,push=true"]
+if case == "docker-push": target["output"] = ["type=docker,load=true,push=true"]
+if case == "docker-dest": target["output"] = ["type=docker,load=true,push=false,dest=/unapproved"]
+if case == "multiple-outputs": target["output"] = ["type=docker,load=true,push=false", "type=registry"]
 if case == "file-output": target["output"] = ["type=local,dest=/unapproved"]
 if case == "privilege": target["entitlements"] = ["security.insecure", "network.host"]
 if case == "bad-args": target["args"] = False
@@ -625,8 +629,28 @@ print(json.dumps(value))
                     self.assertEqual(len(calls), 2)
                     self.assertEqual(json.loads(printed[f"build-{service}.bake.json"]), value)
 
+    def test_smoke_bake_build_preserves_compose_2_38_local_load_output(self) -> None:
+        for service in ("research-worker", "candidate-runner"):
+            for warm in (False, True):
+                with self.subTest(service=service, warm=warm):
+                    result, calls, printed, work, imported, exported = self._run_smoke_bake_helper(case="compose-2.38", service=service, warm=warm)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    value = calls[1]["printed"]
+                    self.assertEqual(value["group"], {"default": {"targets": [service]}})
+                    expected_target = {"context": "/fixture/context", "dockerfile": "/fixture/context/Dockerfile", "tags": [f"fixture/{service}:local"], "args": {"LAGRANGE_CODE_COMMIT": "0" * 40}, "labels": {"fixture": "preserved"}, "cache-to": [f"type=local,dest={exported}/{service},mode=max,ignore-error=true"], "output": ["type=docker,load=true,push=false"]}
+                    if warm:
+                        expected_target["cache-from"] = [f"type=local,src={imported}/{service}"]
+                    self.assertEqual(value["target"], {service: expected_target})
+                    argv = ["buildx", "bake", "--builder", "fixture-builder", "--file", f"{work}/build-{service}.bake.json", "--load", "--allow", f"fs.write={exported}/{service}"]
+                    if warm:
+                        argv += ["--allow", f"fs.read={imported}/{service}"]
+                    self.assertEqual(calls[1]["argv"], argv + [service])
+                    self.assertEqual(len(calls), 2)
+                    self.assertEqual(json.loads(printed[f"build-{service}.bake.json"]), value)
+
     def test_smoke_bake_build_rejects_unapproved_graph_paths_and_outputs(self) -> None:
         codes = {"malformed": "parse-or-type", "extra-target": "target-set", "extra-group": "default-group", "dependency": "target-fields", "target-context": "target-context", "bad-export": "target-export", "bad-import": "target-import", "unexpected-import": "target-import", "push": "target-output", "file-output": "target-output", "privilege": "target-fields", "bad-args": "target-mapping", "bad-override": "override-service", "wildcard": "cache-path", "auxiliary-group": "default-group", "other-rust": "target-set", "inherits": "target-fields", "target-stage": "target-stage", "bad-target": "target-fields", "bad-root": "parse-or-type", "duplicate": "duplicate-key"}
+        codes.update({"docker-push": "target-output", "docker-dest": "target-output", "multiple-outputs": "target-output"})
         for case, code in codes.items():
             with self.subTest(case=case):
                 result, calls, *_ = self._run_smoke_bake_helper(case=case, warm=case == "bad-import")

@@ -305,7 +305,7 @@ git diff --check
 |---|---|---|---|---|
 | WP-1 | DONE | `6d117f4` | 지침 충돌·참조 경로 확인, 사용법/CLI 대조, `git diff --check` | 없음 |
 | WP-2 | DONE | `6d117f4` | QA 회귀 30개, CI 계약 10개 통과; QA fast 4개 통과, 적격 syntax 2개 재사용 확인; shell syntax·공백 확인; `7d98b8a` hosted policy에서 PowerShell Parser 통과 | 없음 |
-| WP-3 | IN_PROGRESS | `06f17b7`, `7d98b8a`, `4239521`, `c583769` 및 단일 target 수정 후보 | QA 38개, CI·cache 계약 29개, actionlint 1.7.12 및 기존 static/self-test 통과. `7d98b8a` cold CI 8개 job 통과, 실제 cache 7건 저장 확인. 실제 저장소 Compose의 두 서비스 cold/warm 출력 검사 4개 통과 | 수정 후보의 cold/warm CI·smoke 비교 대기; `4239521` Web 실패의 개별 원인은 미확인 |
+| WP-3 | IN_PROGRESS | `06f17b7`, `7d98b8a`, `4239521`, `c583769`, `08360fb` 및 Compose output 호환 수정 후보 | QA 38개, CI·cache 계약 30개, actionlint 1.7.12 및 기존 static/self-test 통과. `7d98b8a` cold CI 8개 job 통과, 실제 cache 7건 저장 확인. 실제 저장소의 Compose 2.38.2·5.4.0 cold/warm 출력 검사 8개 및 실제 Bake print 8개 통과 | 수정 후보의 cold/warm CI·smoke 비교 대기; `4239521` Web 실패의 개별 원인은 미확인 |
 
 - [x] 1~3번: 지침·preflight·단계별 검증·결과 재사용 구현과 focused 검증 수용
 - [ ] 4~5번: cache·실행 환경 구현과 실제 cold/warm CI 증거 수용
@@ -325,3 +325,5 @@ git diff --check
 | 2026-10-13 | Bake cache 경로 권한 수정 검증 | 동일 담당자가 격리된 후보에서 구현과 관련 검증 완료. 서비스 하나의 Compose 출력만 허용하고 해당 export 쓰기·사용 중인 import 읽기 경로만 Bake에 전달. 순차 실행·기존 fallback·cold Raw probe 보존. 28개 계약, 구문/self-test/actionlint 및 실제 Compose 출력의 cold/warm 검사 통과; 실제 hosted export는 다음 후보에서 검증 |
 | 2026-10-13 | 실제 저장소 Compose 대상 처리 보완 | `c583769`의 [smoke 38359910517](https://github.com/sihioov/Lagrange/actions/runs/38359910517)가 출력 정의 검사에서 실패. 로컬 실제 저장소 출력에는 선택되지 않은 DB 정의 2개도 포함되어 기존 검사가 거부함을 재현. 두 정의만 제거하고 실행 graph를 요청한 서비스 하나로 제한. 기존 28개 테스트를 보존한 29개 계약과 실제 저장소의 두 서비스 cold/warm 출력 검사 4개 통과. 거부 사유는 고정 코드로 출력하며 실제 build·cache 효과는 아직 미검증 |
 | 2026-10-13 | `c583769` CI 종료 회수 | [CI 38359807851](https://github.com/sihioov/Lagrange/actions/runs/38359807851)의 Web·workspace·required를 포함한 8개 job 모두 성공. main 작업 트리와 10개 입력 hash는 검증 전후 동일. smoke 실패가 남아 warm은 실행하지 않았으며, 수정된 다음 후보에서 같은 SHA의 cold/warm 쌍을 검증 |
+| 2026-10-13 | Compose 버전별 local-load output 호환 | `08360fb`의 [smoke 38362905525](https://github.com/sihioov/Lagrange/actions/runs/38362905525)가 `[target-output]`으로 실패. [해당 runner 이미지](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/Ubuntu2404-Readme.md)의 Compose 2.38.2를 공식 release checksum으로 검증해 격리 실행했으며, 기존 코드에서 같은 거부를 재현. [공식 Compose 소스](https://github.com/docker/compose/blob/v2.38.2/pkg/compose/build_bake.go#L173)와 일치하는 `type=docker,load=true,push=false`만 추가 허용하고 push·dest·다중 출력은 거부. 두 버전×두 서비스×cold/warm 8개 및 실제 Buildx print 8개, 계약 30개 통과. 실제 hosted JSON 값은 출력되지 않아 이전 실패 원인의 직접 증거는 거부 코드로 한정; 다음 후보의 실제 빌드·저장·재사용 검증 대기 |
+| 2026-10-13 | `08360fb` 종료 결과 수용 | [CI 38362839153](https://github.com/sihioov/Lagrange/actions/runs/38362839153)의 8개 job과 required 모두 성공. cache upload 7건·5,628,309,680 bytes를 로그와 REST에서 확인. smoke 실패로 warm은 실행하지 않았으며, 동일 SHA 검증 전후 10개 소스 hash와 clean 상태가 유지됨을 확인 |
