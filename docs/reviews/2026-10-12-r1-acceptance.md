@@ -30,12 +30,21 @@ closeout; this separately authorized integration supersedes that scope limit.
 
 On 2026-10-13, a fresh fetch confirmed main at
 `b0a2579bef472ae6b604405d0ab6f50255786dd4`, matching the handoff; the delta
-from C3 still contains only six progress documents. Existing main-push CI
-`38336666454` and smoke `38336666468` are being recovered without dispatch,
-rerun or cancellation. Their observed head is `b0a2579`, distinct from C3;
-terminal outcomes remain pending at this checkpoint.
+from C3 still contains only six progress documents. Existing main-push
+[CI 38336666454](https://github.com/sihioov/Lagrange/actions/runs/38336666454) and
+[smoke 38336666468](https://github.com/sihioov/Lagrange/actions/runs/38336666468)
+both completed successfully without dispatch, rerun or cancellation.
+Their exact head is `b0a2579bef472ae6b604405d0ab6f50255786dd4`, distinct from C3.
+CI completed successfully at 02:44:34 UTC with all eight jobs passing; the
+coordinator independently checked all seven checkout command/output pairs and
+actual test-result markers. Smoke completed at 03:16:46 UTC; its checkout pair
+also matches main, and the original job log emits `RESEARCH_WORKER_SMOKE: functional PASS`.
+The PostgreSQL failure-diagnostic step was conditionally skipped; all validation
+steps succeeded. Functional smoke success does not establish separate cleanup
+receipts or production image evidence.
 [The resumption record](2026-10-13-r1-resumption.md) preserves the fresh
-root/health/resource observations and successful exact-C3 plan/preflight.
+root/health/resource observations, successful exact-C3 plan/preflight and final
+run/job/step receipts with independent original-log hashes.
 The image candidate remains C3 and R1-09 remains BLOCKED.
 
 ## Candidate C — 79da119e6e8b52be424ec8132ac2a52f65726471

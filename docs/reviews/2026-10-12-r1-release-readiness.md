@@ -4,7 +4,7 @@
 검증 후보는 `862fa954c16d28a617271fe6f613d34226e2d558`(C3)다.
 [동일 커밋 CI·기능 smoke](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)는
 통과했다. 기존 image-only 범위의 구체적인 인계를 완료했으며 실제 C3 이미지 ID와
-immutable manifest는 아직 없다. R1-09와 전체 R1은 미완료다.
+immutable manifest의 검증 근거는 아직 확보하지 못했다. R1-09와 전체 R1은 미완료다.
 
 2026-10-13 `1fe09ef`까지의 R1 작업을 main에 fast-forward로 통합하고 진행 문서를 갱신했다.
 [통합 기록](2026-10-12-r1-acceptance.md#main-integration--2026-10-13)과 별개로 이 인계의
@@ -13,6 +13,8 @@ immutable manifest는 아직 없다. R1-09와 전체 R1은 미완료다.
 [R1 재개 기록](2026-10-13-r1-resumption.md)에 추가했다. root 인증과 ordinary health는
 여전히 미충족이고 C3 exact image tag 12개도 모두 부재였다. 보호된 manifest 부재는 미확인이다.
 아래 17:23 UTC 관측은 과거 증거로 보존하며 실행 전 admission으로 재사용하지 않는다.
+기존 main `b0a2579`의 CI `38336666454`와 smoke `38336666468`도 최종 성공으로
+회수했다. 이 결과는 C3 이미지 후보를 바꾸거나 root·health 조건을 해소하지 않는다.
 
 ## 고정한 입력과 완료된 준비
 

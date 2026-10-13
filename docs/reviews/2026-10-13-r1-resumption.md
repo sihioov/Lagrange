@@ -15,12 +15,37 @@ main의 문서 커밋을 C3 대신 이미지 revision으로 사용하지 않는�
 
 ## 기존 main CI 회수
 
-회수 중: 기존 [CI 38336666454](https://github.com/sihioov/Lagrange/actions/runs/38336666454)와
+기존 [CI 38336666454](https://github.com/sihioov/Lagrange/actions/runs/38336666454)와
 [smoke 38336666468](https://github.com/sihioov/Lagrange/actions/runs/38336666468)는
 `push/main`, attempt 1, head `b0a2579bef472ae6b604405d0ab6f50255786dd4`다.
-둘 다 02:23:38 UTC에 생성됐다. 이 절은 terminal 결과를 회수한 뒤 확정한다.
+둘 다 02:23:38 UTC에 생성됐다. **CI는 02:44:34 UTC (11:44:34 KST) completed/success**이며
+`format`, `clippy`, `policy`, `workspace-tests`, `python-tests`, `web`,
+`postgres-integration-validation`, `required` 8개 job이 모두 성공했다.
+**별도 smoke도 03:16:46 UTC (12:16:46 KST) completed/success**다.
+smoke job은 02:23:41~03:16:46 UTC에 실행됐고 모든 step이 성공했다.
 새 dispatch·rerun·cancel은 수행하지 않았다. 기존 C3의 통과 근거는
 [C3 인수 기록](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 별도로 보존한다.
+
+코디네이터는 8개 CI job의 원본 job-log API 응답을 메모리에서 hash하고,
+checkout을 수행한 7개 job의 실제 `git log -1 --format=%H` 바로 다음 출력이
+모두 main SHA인지 직접 대조했다. `required`는 checkout 없는 집계 job이다.
+workspace 명령의 출력 235개 summary 합계는 2,886 pass·0 fail·6 ignored·180 filtered이며
+별도 chart HTTP 6개와 구분했다. 이는 고유 테스트 개수가 아니다.
+Python은 482 pass·10 skip·7 warning, DB는 `APPROVED`, Web wrapper는
+`state=passed exit=0 coverage=complete`를 실제 출력했다. 실행되지 않는 DB 실패 진단 step의
+조건부 skip은 검증 step 실패나 DB 테스트 skip으로 세지 않는다.
+기존 ignored/skip의 source 근거와 hosted 세부 출력 한계는 C3 기록에 보존하며
+이 main run이 출력하지 않은 사유·브라우저별 횟수·운영 결과는 새 관측으로 주장하지 않는다.
+
+smoke 원본 job-log API도 별도로 대조했다. `git log -1 --format=%H`와 바로 다음
+main SHA 출력은 117~118행, 실제 `RESEARCH_WORKER_SMOKE: functional PASS`는
+1722행에 있다. CI 7개와 smoke 1개를 합친 실제 checkout 8개가 모두 main과 일치한다.
+smoke 원본 응답은 139,065 bytes, SHA-256
+`14ea3ee4d9bb8c29fe8905fd69e99c8bf8e875826dc2aedcafcaaf674891dbf7`이며
+raw log를 저장하지 않고 hash·고정 필드만 보존했다. worker의 `gh run view --log` 출력은
+포맷이 달라 별도 hash를 가지므로 원본 API bytes와 혼용하지 않는다.
+기능 PASS는 개별 cleanup receipt나 운영 이미지·manifest 검증을 대신하지 않는다.
+이 두 기존 실행의 최종 결과 회수에는 미해결 항목이 없다.
 
 ## 현재 root·서비스·자원 관측
 
@@ -106,6 +131,11 @@ Private fixed-field receipts:
 | `preparation/handoff-check.json` | `55fe04163b0aa6ae20b609749c6b6aeed3100571bbc1ea918ef799f2b7d7ee17` |
 | `preparation/report.md` | `44423a50bfd706a99bb857593c36177211d6d18e6944d5e4058bcadc09060b9c` |
 | `coordinator-input-check.json` | `e0aa85cc8b912162cfa6f95af8960ec08cd50030845d9fc23f30f2c47b38e2e7` |
+| `coordinator-ci-evidence.json` — 원본 job-log API bytes의 hash·정확한 checkout pair | `00767a539f9511b0f80e66c0de36eb45a40aa32945fba9bd526597c98b729054` |
+| `coordinator-smoke-evidence.json` — 원본 smoke log의 checkout pair·functional PASS | `d21e815fbdb1f170f0c5b272dc3cb414df71e88f3a74d0cf3c1af192b3fc01b2` |
+| `ci/ci-final.json` — CI terminal run/job/step | `903ec5d0b70ba4d68864f45bad4a62fc1c156219a28071e41e0f3f66b92acd29` |
+| `ci/smoke-final.json` — smoke terminal run/job/step | `5127fb9220acf01ae4726d50335d566df81139b9352ed3675601540bc1cc06dc` |
+| `ci/summary.json` — 두 최종 실행의 수집 결과 | `42713732a7c69ef8a90cda1a3fff4f4cb8569549b06abff78ad31131a44b82e2` |
 
 별도 문서 대조는 수치·hash 불일치를 찾지 못했다. 그 대조의 제한된 scope 밖이었던
 C3→main 문서 6개 목록과 코디네이터의 14-entry 독립 대조는 위

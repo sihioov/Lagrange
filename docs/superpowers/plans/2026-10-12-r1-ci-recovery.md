@@ -10,6 +10,7 @@ Native subagents: prohibited for worker packages
 - 상위 작업: [개발 로드맵 R1-01~R1-09](../../ROADMAP.md#5-r1--개발배포-기준-복구)
 - 상태: **C3 `862fa954c16d28a617271fe6f613d34226e2d558`의 CI 8개 job·별도 functional smoke 수용, WP-1~WP-6 완료.** [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)에 후보별 실패·최종 결과·기존 skip·관측 한계를 보존했다. WP-7/R1-09는 root 인증·빌드 health 전제에 차단돼 있으며 [C3 이미지 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md)에 정확한 소스·명령·해소 조건을 준비했다. 실제 이미지·manifest와 전체 R1 완료는 아직 없다.
 - 재개: 2026-10-13 `/data/worktrees/3puw275b/excited-dolphin`에서 최신 main `b0a2579`와 인계 일치를 확인했다. [현재 전제·C3 재검증](../../reviews/2026-10-13-r1-resumption.md)은 기존 `orange-dugong` 아래 detached C3를 그대로 사용한다. 11:38 KST에도 root·health 차단은 남아 있다.
+- 기존 main 실행: `b0a2579`의 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 성공을 재실행 없이 회수했다. C3의 WP-6 근거와 분리하며 WP-7의 실제 이미지·manifest 조건은 그대로다.
 
 ## Goal and boundaries
 
@@ -451,3 +452,4 @@ cleanup 회귀를 검증한다. 새 테스트 하나를 추가하며 기존 테�
 | 2026-10-13 | WP-4·WP-5 후속 수용, C3 hosted 검증 준비 | 새 소스의 runner32·공유34·전체 Python482/skip10·backup6·Web135회와 독립 리뷰 통과; [근거·한계](../../reviews/2026-10-12-r1-acceptance.md) |
 | 2026-10-13 | WP-6 수용, R1-01~08 완료; WP-7은 외부 전제 차단 인계 | C3 CI 8개 job·별도 smoke 성공, 8개 checkout 대조. [최종 인수](../../reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [exact-C3 빌드 인계](../../reviews/2026-10-12-r1-release-readiness.md). 실제 이미지·manifest·운영 활성화 없음 |
 | 2026-10-13 | WP-7 재개 후 BLOCKED 유지; 고정 C3의 read-only 준비 재검증 | [재개 기록](../../reviews/2026-10-13-r1-resumption.md): 최신 main과 인계 일치, plan/preflight exit0·인계 14개 hash 일치, 현재 root·health 차단과 image tag 12개 부재 확인. 서비스 변경·빌드·R2·속도 개선 작업 미착수 |
+| 2026-10-13 | 기존 main CI·smoke terminal 근거 회수 완료; WP-7 BLOCKED 유지 | `b0a2579`의 CI 8개 job·기능 smoke success, 실제 checkout 8개 및 원본 로그 대조. [최종 main 결과](../../reviews/2026-10-13-r1-resumption.md#기존-main-ci-회수); C3 고정·R1-09 미완료·R2 TODO 유지, 두 worker 회수 및 모니터링 종료 |

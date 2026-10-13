@@ -13,7 +13,7 @@
 | 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-6 수용, WP-7 외부 전제 대기 |
 | main 통합 | 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 및 문서 갱신 `b0a2579`. 재개 시 fetch한 main은 `b0a2579`로 인계와 동일; C3와의 차이는 문서 6개 |
 | 다음 착수 항목 | R1-09 — root 실행 환경 확보와 reader 처리 중 작업·정지/재개 영향에 대한 운영 결정 후, 고정 C3의 실제 이미지·manifest 준비 |
-| 진행 상태 | C3 `862fa95`의 CI 8개 job과 별도 기능 smoke 모두 통과. R1-01~08 DONE; R1-09 BLOCKED, 전체 R1 미완료 |
+| 진행 상태 | C3 `862fa95`의 CI 8개 job과 별도 기능 smoke 통과. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수. R1-01~08 DONE; R1-09 BLOCKED, 전체 R1 미완료 |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
 
 ## 1. 목표와 문서의 역할
@@ -209,6 +209,10 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   2026-10-13 `1fe09ef`까지의 작업을 main에 fast-forward로 통합했다.
   [통합 기록](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13)의 문서 갱신은
   기존 C3 검증 대상이나 R1-09의 실제 이미지·manifest 완료 조건을 바꾸지 않는다.
+  같은 날 main `b0a2579`의 기존 CI `38336666454`(8개 job)와 smoke
+  `38336666468`(functional PASS)도 최종 성공으로 회수했다. 실제 checkout SHA와
+  원본 로그를 [재개 기록](reviews/2026-10-13-r1-resumption.md#기존-main-ci-회수)에
+  별도로 대조했으며 C3의 검증·빌드 revision은 유지한다.
 - [ ] **R1-09 — 배포 후보 준비.** BLOCKED — 실제 빌드에 필요한 root 인증과 빌드 health 조건 미충족.
   C3 공식 builder의 plan·preflight와 migration/복구 소스 검토는 완료했으나 실제 이미지·manifest는 없다.
   검증 커밋을 보존한 별도 checkout과 정확한 명령·출력 경로·해소 조건을
@@ -383,6 +387,7 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R1-02~R1-08; R1-09 | R1-02~08 DONE, R1-09 BLOCKED; 전체 R1 미완료 | 같은 C3의 CI 8개 job·기능 smoke 성공. 기존 skip·로그 한계를 구분하고, 실제 이미지·manifest는 root 인증·빌드 health 해소 전 미생성 | `862fa95`; [최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md); 이 결과는 후속 문서 커밋에 기록 |
 | 2026-10-13 | R1-01~R1-09 | main 통합 완료; R1-01~08 DONE·R1-09 BLOCKED 유지 | Owner 요청으로 `1b8dca3` → `1fe09ef` fast-forward 후 진행 문서 갱신. C3 코드·workflow·다이어그램과 검증 근거를 보존하며 운영 빌드·배포는 미실행 | [main 통합](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13), [실행 기록](reviews/2026-10-12-r1-execution.md#main-통합과-진행-문서-갱신--2026-10-13); 문서 갱신은 이 기록을 추가한 커밋 |
 | 2026-10-13 | R1-09 | BLOCKED 유지; C3 입력·공식 plan/preflight 재검증과 현재 운영 전제 기록 | 최신 main `b0a2579`는 인계와 동일. root 인증·ordinary health는 현재도 미충족, 12개 C3 image tag 부재. reader 정지 경로의 작업 중단·재개 영향과 별도 운영 결정 필요를 구체화 | [R1 재개 근거](reviews/2026-10-13-r1-resumption.md); 대상 C3 `862fa95`, 11:38 KST 고정 필드 관측, 인계 14개 hash 대조; build/apply·운영 변경·R2 미착수 |
+| 2026-10-13 | R1-08·R1-09 | 기존 main CI·smoke 최종 결과 회수 완료; R1-09 BLOCKED 유지 | `b0a2579`의 CI 8개 job과 별도 functional smoke 모두 성공. 재실행 없이 실제 checkout 8개·원본 로그 대조. C3 이미지·manifest 검증 근거는 여전히 미확보 | [main 실행 인수](reviews/2026-10-12-r1-acceptance.md#resumption--existing-main-push-runs), [재개 기록](reviews/2026-10-13-r1-resumption.md); 두 worker 실제 idle·pending0 및 heartbeat 종료 확인 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와
