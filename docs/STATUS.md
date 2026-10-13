@@ -12,13 +12,14 @@
 | 검증 대상 | C3 `862fa954c16d28a617271fe6f613d34226e2d558`; 코드·테스트·workflow·다이어그램은 해당 후보와 동일 |
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
-| R1-09 / 전체 R1 | DOING — 승인된 최대 12시간 유지보수에서 Owner V2 exit0·작업 정산과 fresh C3 attestation을 확인하고 공식 순차 빌드 시작. 실제 12개 이미지·manifest 및 같은 Owner V2 복귀의 최종 검증 대기 |
-| 다음 단계 | R1-09 배포 후보 준비를 마친 뒤 R2 일일 수집·추천·실제 Owner 사용 인수 진행. R2는 TODO |
-| 운영 반영 | 이번 main 통합으로 C3 이미지 빌드·서비스 전환·운영 migration·provider 호출을 실행하지 않음 |
+| R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
+| 다음 단계 | R2-01 일일 실행 경로 진단. R2는 TODO이며 이번 작업에서 착수하지 않음 |
+| 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
 통합 기록은 [main 반영 기록](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13)에 있다.
-남은 조건과 정확한 빌드 입력·명령은 [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)를 따른다.
+정확한 빌드 입력·명령과 운영 적용 전 남은 조건은 [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)를 따른다.
+실제 image ID·manifest hash·정산·복귀의 [최종 인수](reviews/2026-10-13-r1-c3-images.md)를 확보해 R1을 완료했다.
 최신 root·서비스·자원 관측, C3 재검증과 기존 main 실행의 최종 결과는
 [R1 재개 기록](reviews/2026-10-13-r1-resumption.md)에 있다.
 아래 날짜별 운영 관측은 과거 기록이며 이번 재관측과 구분한다.

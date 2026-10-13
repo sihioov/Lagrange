@@ -9,11 +9,11 @@
 | 최종 갱신일 | 2026-10-13 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R1-09 배포 후보 준비 마무리 → R2 일일 수집·실제 Owner 사용 흐름 완성 |
-| 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-6 수용, WP-7 외부 전제 대기 |
+| 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. R2는 아직 미착수 |
+| 상세 실행 계획 | [R1 Paseo 위임 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md) — WP-1~WP-7 수용·완료 |
 | main 통합 | 2026-10-13, `1b8dca3` → `1fe09ef` fast-forward 및 문서 갱신 `b0a2579`. 재개 시 fetch한 main은 `b0a2579`로 인계와 동일; C3와의 차이는 문서 6개 |
-| 다음 착수 항목 | R1-09 — 승인된 최대 12시간 유지보수에서 Owner V2 작업 정산·정상 정지, fresh C3 attestation과 순차 이미지·manifest 준비 후 같은 컨테이너 재개 |
-| 진행 상태 | C3 `862fa95`의 CI 8개 job과 별도 기능 smoke 통과. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수. R1-01~08 DONE; R1-09 DOING, 전체 R1 미완료 |
+| 다음 착수 항목 | R2-01 — 설치된 모드에 맞는 일일 실행 경로 진단. 이번 R1 작업에서는 착수하지 않음 |
+| 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R4-01 전용 백테스트의 구체적인 시뮬레이션 계약 |
 
 ## 1. 목표와 문서의 역할
@@ -135,7 +135,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 
 | 단계 | 사용자에게 생기는 결과 | 현재 상태 | 선행 조건 |
 | --- | --- | --- | --- |
-| R1 | 검증 가능한 개발·배포 기준선 | DOING — 승인된 유지보수·이미지 준비 | R1-09 실제 이미지·manifest·기존 Owner V2 복귀 검증 |
+| R1 | 검증 가능한 개발·배포 기준선 | DONE — 2026-10-13, C3 `862fa95` | [동일 후보 CI·이미지·manifest·복귀 근거](reviews/2026-10-13-r1-c3-images.md) 확보 |
 | R2 | 매 거래일 사용할 수 있는 일봉·신호·추천 베타 | TODO | 진단은 즉시 가능. 수정 릴리스의 운영 인수에는 R1 통과 필요 |
 | R3 | 실제 시장 시세가 전달되는 실시간 화면 | TODO | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
 | R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | BLOCKED — 구현 계약 미확정 | 결정안 작성은 즉시 가능. 구현은 R4-01의 구체적 승인, 출시에는 R1·R2 필요 |
@@ -213,12 +213,16 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   `38336666468`(functional PASS)도 최종 성공으로 회수했다. 실제 checkout SHA와
   원본 로그를 [재개 기록](reviews/2026-10-13-r1-resumption.md#기존-main-ci-회수)에
   별도로 대조했으며 C3의 검증·빌드 revision은 유지한다.
-- [ ] **R1-09 — 배포 후보 준비.** DOING — Owner가 최대 12시간의 기존 Owner V2 정상 정지·C3 빌드·동일 컨테이너 복귀를 승인했다.
-  C3 공식 builder의 plan·preflight와 migration/복구 소스 검토는 완료했고 실제 12개 이미지·manifest의 최종 검증을 진행한다.
+- [x] **R1-09 — 배포 후보 준비.** 완료 2026-10-13; 대상 C3 `862fa954c16d28a617271fe6f613d34226e2d558`.
+  공식 순차 빌드 12개·gate 49개 모두 PASS, 실제 image ID·revision·saved-byte 검증 기록과
+  root:root 0600 V2 manifest를 대조했다. manifest SHA-256은
+  `041fdaf1ddfe8746df3e4eacf3a180435a0cd2364952e3036da8c3e0e4ccb64f`다.
+  16:10:57 KST 빌드 PASS, 16:11:03 기존 Owner V2 healthy 복귀와 16:11:55 작업 정산을
+  [최종 근거](reviews/2026-10-13-r1-c3-images.md)로 확인했다. migration/복구 소스 검토도 수용했다.
   검증 커밋을 보존한 별도 checkout과 정확한 명령·출력 경로·해소 조건을
   [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)에 정리했다.
-  담당: 운영 결정의 Owner와 실행 코디네이터. ordinary build health 또는 별도로 승인된
-  유효한 대체 조건을 충족한 뒤 서비스별 순차 빌드와 공식 manifest 검증을 수행한다.
+  담당: 운영 결정의 Owner와 실행 코디네이터. 승인된 정지·정산과 fresh C3 attestation으로
+  build admission을 충족하고 서비스별 순차 빌드·공식 manifest 검증을 수행했다.
   기존 예외 재사용·서비스 전환·운영 migration은 수행하지 않았다. 실제 운영 적용·결과는 R2에 남는다.
   2026-10-13 11:38 KST [재개 관측](reviews/2026-10-13-r1-resumption.md): sudo 인증 실패,
   research-worker exited2/unhealthy·나머지 10개 running/healthy 및 Owner V2 실행 중을 새로 확인했다.
@@ -227,9 +231,9 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   **14:14~14:16 KST 후속 확인:** Owner가 72시간 sudo 설정을 직접 적용했고 비대화형 UID 0,
   만료 timer(10월 16일 14:11:48 KST), 보호된 부모·state 경로와 C3 manifest 부재를 확인했다.
   manifest 경로를 포함한 root plan/preflight도 통과했다. 새 관측에서도 research-worker exited2와
-  Owner V2 running으로 health 조건은 미충족이다. 이미지 12개·manifest는 아직 없으며
+  Owner V2 running으로 당시 health 조건은 미충족이었다. 그 시점에는 이미지 12개·manifest가 없었으며
   [sudo 적용 후 근거](reviews/2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소)를 보존한다.
-  후속 진행 승인과 읽기 전용 작업·lease 확인은 [유지보수 실행 기록](reviews/2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드)에 추가한다. 실제 이미지·manifest와 복귀가 검증되기 전에는 완료하지 않는다.
+  후속 진행 승인과 읽기 전용 작업·lease 확인은 [유지보수 실행 기록](reviews/2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드)에 보존한다. 위 완료 판정은 실제 이미지·manifest와 복귀 검증 후 내렸다.
 
 **종료 조건:** R1-01~R1-09 완료, 필수 CI·smoke 통과, 동일 커밋의 검증·배포 후보 근거 확보.
 규칙 변경이 필요하면 원래 검사의 목적을 충족하는 검증과 변경 이유를 함께 남긴다.
@@ -398,6 +402,7 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R1-09 | root 인증·보호 경로 전제 해소; health로 BLOCKED 유지 | Owner의 sudo 적용 후 UID 0·활성 만료 timer·보호 부모·C3 manifest/state 부재 확인. exact-C3 root plan/preflight 통과; 현재 research exited2·Owner V2 running으로 ordinary/drained 조건 모두 미충족 | [14:14~14:16 KST 후속 확인](reviews/2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소); 이미지 12개 부재, build·서비스 변경·R2 미착수 |
 
 | 2026-10-13 | R1-09 | BLOCKED → DOING; 최대 12시간의 유지보수 승인 | 현재 작업·lease 정산 확인 뒤 기존 Owner V2만 정상 정지하고 fresh C3 attestation으로 순차 빌드, 완료·중단 뒤 같은 컨테이너 재개. research 시작·운영 배포·migration·새 provider 범위는 제외 | [유지보수 실행 기록](reviews/2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드); 종료 증거 확보 전 미완료 |
+| 2026-10-13 | R1-09·전체 R1 | DOING → DONE; R1-01~09 모두 완료 | 같은 C3의 실제 12개 이미지·공식 V2 manifest, 49개 gate PASS/OOM 0, 동일 Owner V2 정상 복귀와 READ ONLY 정산 확인. R2·개발 속도 개선은 미착수 | `862fa95`; [이미지·manifest·복귀 최종 인수](reviews/2026-10-13-r1-c3-images.md), 16:10:57 빌드 PASS·16:11:55 최종 상태 확인; 후속 문서 커밋은 이미지 revision과 구분 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와

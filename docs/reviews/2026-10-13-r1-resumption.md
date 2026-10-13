@@ -2,7 +2,7 @@
 
 2026-10-13 KST. 대상 작업은 **R1-09**이며 검증·빌드 후보는
 `862fa954c16d28a617271fe6f613d34226e2d558`(C3)로 유지한다.
-후속 Owner 승인으로 R1-09는 **DOING**이다. 실제 이미지·immutable manifest와 기존 Owner V2 복귀 검증 전에는 전체 R1을 완료하지 않는다.
+**R1-09와 전체 R1 DONE — 2026-10-13 KST.** 후속 Owner 승인에 따른 실제 C3 이미지 12개·immutable manifest와 기존 Owner V2 복귀·작업 정산을 [최종 검증](2026-10-13-r1-c3-images.md)한 뒤 완료 처리했다.
 R2와 개발 속도 개선 5개 항목은 착수하지 않았다.
 
 ## 인계와 최신 main 대조
@@ -276,5 +276,20 @@ shared window는 **06:23:55.967950~18:23:55.967950 UTC**이며 attestation 만�
 0이었다. research의 기존 stopped 상태와 나머지 serving identity는 유지됐다.
 06:24:02.382965 UTC의 fresh attestation 이후 실제 C3 공식 빌드가 시작됐다.
 서비스 한 개씩 Cargo jobs2·Compose parallel1, Nice10·idle I/O를 실제 unit 속성과 대조했다.
-현재 완료된 이미지·최종 manifest·Owner V2 복귀는 후속 검증 대상이다.
+이 실행 시작 시점에는 완료된 이미지·최종 manifest·Owner V2 복귀가 후속 검증 대상이었다.
 private 영수증은 `target/r1-resume-20261013/maintenance/`에 보존한다.
+
+## 실제 이미지 검증과 R1 완료
+
+07:10:57 UTC 공식 builder가 12개 이미지·V2 manifest PASS를 출력했다. 서비스별 순차 실행과
+49개 gate(배치 B1~B4·final-bytes 포함)가 모두 통과했고 gate OOM은 0이었다.
+manifest SHA-256 `041fdaf1ddfe8746df3e4eacf3a180435a0cd2364952e3036da8c3e0e4ccb64f`,
+root:root 0600, canonical 14행을 확인하고 실제 tag ID·revision·saved-byte 기록과 대조했다.
+07:11:03 같은 Owner V2 컨테이너가 healthy로 복귀하고 systemd-run wait exit 0을 회수했으며
+독립 recovery도 07:11:08 복귀를 확인했다. 07:11:55의 별도 runtime·READ ONLY work 조회는
+원래 운영 identity·current link 유지, 작업·stream 미정산 0을 확인했다.
+
+[최종 이미지·manifest·복귀 기록](2026-10-13-r1-c3-images.md)에 시각·ID·hash·관측 범위와
+검증 한계를 보존한다. 앞 절의 차단·미실행 상태는 각 과거 시점의 기록이며 이 결과로 대체한다.
+동일 C3의 필수 CI·smoke와 migration/복구 소스 검토까지 연결해 WP-7/R1-09 및 전체 R1을 완료했다.
+R2, 운영 C3 설치·migration·새 provider 범위, 개발 속도 개선 5개 항목은 착수하지 않았다.

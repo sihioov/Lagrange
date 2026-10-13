@@ -1,8 +1,24 @@
 # R1 same-commit hosted acceptance
 
-Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke passed on `862fa954c16d28a617271fe6f613d34226e2d558`. R1-09 is DOING under the Owner-approved maximum twelve-hour maintenance: original Owner V2 drained with exit0 and settled work, fresh C3 attestation accepted, official sequential image build started. Actual twelve-image/manifest and same-container restoration evidence remain required.**
-Local validation and hosted validation are recorded separately. No production
-rollout or R1 completion is claimed.
+Status: **R1 DONE — completed 2026-10-13 on C3 `862fa954c16d28a617271fe6f613d34226e2d558`. All eight CI jobs and functional research smoke passed; twelve real image IDs/revisions and the official V2 manifest were verified, and the original Owner V2 container was restored healthy with settled work.**
+Local, hosted, image and runtime evidence remain distinct. R2 is TODO; no C3
+production rollout or migration is claimed. Earlier open/blocking states below
+are dated historical evidence, superseded by the final disposition immediately below.
+
+## R1-09 final image and maintenance acceptance — 2026-10-13
+
+The official C3 build emitted PASS at 07:10:57 UTC. All twelve services succeeded
+serially; all 49 gates including B1–B4 and final-bytes passed with no OOM records.
+The strict root-owned V2 manifest SHA-256 is
+`041fdaf1ddfe8746df3e4eacf3a180435a0cd2364952e3036da8c3e0e4ccb64f`.
+The coordinator matched actual tag IDs/revisions against manifest and saved-byte
+verification records, then recovered systemd-run exit0 and same-container
+restoration at 07:11:03 UTC, independently confirmed by recovery at 07:11:08.
+The 07:11:55 runtime and READ ONLY aggregate checks passed. Complete IDs, receipt
+hashes, resource samples and limits are in the [final image record](2026-10-13-r1-c3-images.md).
+Together with the retained migration/backup/rollback source review, this closes
+WP-7/R1-09 and overall R1. Production activation and real Owner/data acceptance
+remain R2; this documentation commit does not replace the tested/built C3 SHA.
 
 ## Main integration — 2026-10-13
 

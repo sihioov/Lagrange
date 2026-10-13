@@ -1,10 +1,13 @@
 # R1 C3 이미지 빌드 인계
 
-상태: **DOING — 승인된 유지보수의 실제 C3 순차 빌드 시작.** 2026-10-13 KST.
+상태: **DONE — 실제 C3 이미지·manifest와 기존 Owner V2 복귀 검증 완료.** 2026-10-13 KST.
 검증 후보는 `862fa954c16d28a617271fe6f613d34226e2d558`(C3)다.
 [동일 커밋 CI·기능 smoke](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance)는
-통과했다. 기존 image-only 범위의 구체적인 인계를 완료했으며 실제 C3 이미지 ID와
-immutable manifest의 검증 근거는 아직 확보하지 못했다. R1-09와 전체 R1은 미완료다.
+통과했다. 공식 순차 빌드의 12개 image ID·revision·saved-byte 기록과 immutable manifest를
+대조했고 기존 Owner V2 정상 복귀·작업 정산을 확인했다. **R1-09와 전체 R1은 완료**다.
+[최종 인수](2026-10-13-r1-c3-images.md)에 실제 ID·hash·49개 gate PASS/OOM 0과 한계를 남겼다.
+이하 초기 차단·미실행 상태와 예정 명령은 해당 준비 시점의 역사 기록이며 다시 실행할 지시가 아니다.
+완성된 manifest/state를 덮어쓰거나 같은 출력 경로로 apply를 재실행하지 않는다.
 
 2026-10-13 `1fe09ef`까지의 R1 작업을 main에 fast-forward로 통합하고 진행 문서를 갱신했다.
 [통합 기록](2026-10-12-r1-acceptance.md#main-integration--2026-10-13)과 별개로 이 인계의
@@ -166,11 +169,12 @@ build/compiler/container/DB/systemd runtime을 만들지 않았다.
 - [x] detached C3·inert 입력·공식 plan/preflight·정확한 명령 보존.
 - [x] Migration·backup·rollback 소스 계약과 미검증 운영 범위 기록.
 - [x] root 인증·protected output/state 부모 신뢰·manifest 부재 확인 — 2026-10-13 14:14~14:16 KST, C3, Owner sudo 적용 후 root metadata·공식 plan/preflight 근거. 실행 직전 재확인은 필요하다.
-- [ ] 실제 build-health admission 및 fresh 자원·OOM·compiler·timer 조건 충족.
-- [ ] 서비스별 순차 빌드와 실제 C3 이미지 ID·revision·공식 manifest 검증.
+- [x] 실제 build-health admission 및 fresh 자원·OOM·compiler·timer 조건 충족 — 2026-10-13, C3, 승인된 정상 정지·작업 정산·fresh attestation과 49개 공식 gate PASS.
+- [x] 서비스별 순차 빌드와 실제 C3 이미지 ID·revision·공식 manifest 검증 — 2026-10-13 16:10:57 KST PASS; [12개 이미지·V2 manifest·복귀 최종 근거](2026-10-13-r1-c3-images.md).
 
-마지막 두 항목이 충족돼야 [ROADMAP R1-09](../ROADMAP.md#5-r1--개발배포-기준-복구)를
-완료 처리한다. 범위 안에서 준비 가능한 인계는 완료됐고 남은 외부 차단 조건은 위와 같다.
+마지막 두 항목과 승인된 동일 컨테이너 복귀가 검증돼
+[ROADMAP R1-09](../ROADMAP.md#5-r1--개발배포-기준-복구)를 완료 처리했다.
+위 migration·backup·rollback의 운영 검증과 실제 적용은 R2에 남는다.
 
 ## 과거 준비 기록 — 2026-10-12 12:04 UTC
 
