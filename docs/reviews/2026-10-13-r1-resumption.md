@@ -99,7 +99,8 @@ ordinary health 조건에서 임의로 research-worker를 제외할 근거도 �
 
 1. **root 실행 가능한 운영자/세션:** C3 manifest의 no-clobber 출력과 보호된 부모·state 경로를
    확인하고, fresh admission이 충족될 때 보존된 exact-C3 공식 명령을 실행한다.
-   password·sudo 정책·경로 권한 변경으로 대체하지 않는다. image-only 작업은 이미 승인돼 있다.
+   암호·보호 경로의 권한은 변경하지 않는다. 후속 Owner 요청의 72시간 sudo 설정은
+   아래 별도 준비에 기록했으며 사용자가 직접 적용한다. image-only 작업은 이미 승인돼 있다.
 2. **health 조건에 대한 별도 운영 결정:** 현재 ordinary 조건은 미충족이고 기존 stopped-reader
    대안도 미충족이다. 기존 대안을 택하려면 실행 중인
    `lagrange-station-owner-equity-v2-runner-1`의 처리 중 작업과 안전한 정지 가능성을 먼저 확인하고,
@@ -115,6 +116,32 @@ ordinary health 조건에서 임의로 research-worker를 제외할 근거도 �
 승인 범위의 준비는 마쳤다. 실제 `--apply`, 서비스 start/stop/restart, 운영 배포·migration,
 외부 데이터 API 호출은 수행하지 않았다. root와 health 조건을 우회하는 사용자 권한 prebuild나
 수동 manifest 작성도 하지 않았다.
+
+## 후속 Owner 요청 — 직접 실행할 72시간 sudo 설정 준비
+
+Owner가 약 72시간의 sudo 권한 설정 스크립트를 요청하고 직접 실행하기로 했다.
+준비한 파일은
+`/data/worktrees/3puw275b/excited-dolphin/target/r1-resume-20261013/sudo72/enable-sudo-72h.sh`이며
+SHA-256은 `11e91cfe73fa0c9fda9a3757e1e8364356bed2fe17b1115516c1b653f0cc0e01`이다.
+이 파일은 제품 소스·C3 이미지 입력에 포함하지 않은 운영자용 보조 파일이다.
+
+- 적용 대상은 `l1nnx`(UID 1000) 계정 전체의 passwordless sudo `(root)`다.
+  기존 sudoers 파일을 덮어쓰지 않고 전용 파일과 만료용 systemd unit만 추가한다.
+- 현재 설치된 sudo-rs `0.2.13-0ubuntu1.2`의 실제 visudo는 `NOTAFTER`를 거부했다.
+  따라서 72시간 뒤 실행할 UTC calendar·monotonic timer를 먼저 등록·검증한 뒤 권한을 설정한다.
+  Persistent timer가 중단 중 놓친 calendar 시각을 다시 처리한다. 호스트 정지·시간 변경·
+  실행 지연까지 막는 절대적인 72시간 보장은 아니며 이미 시작한 root 프로세스를 종료하지 않는다.
+- 만료 시 권한 파일을 권한 없는 marker로 원자 교체한다. 설치의 no-clobber publish와 결합해
+  만료 후 늦게 재개된 설치가 권한을 되살리지 못하게 한다. 명시적 `revoke`는 marker와 unit을 정리한다.
+- 실제 sudoers·만료 marker parser, 생성 unit·calendar 및 Bash 구문 검사와
+  SIGKILL 두 경우를 포함한 비권한 격리 회귀 14개가 통과했다.
+  Paseo `8689f94c-98ba-48dd-841d-ccfaa9c60915`(Sol/high)의 소스 리뷰에서
+  초기 만료/설치 경합과 cleanup 보고 문제를 보완한 최종 delta에 남은 blocker가 없었다.
+
+**준비만 완료했으며 root 설치·실제 72시간 만료는 미검증이다.** 실제 sudo 권한은 아직
+부여하지 않았고 R1-09/R1의 BLOCKED 상태를 바꾸지 않는다. 이 설정 요청은 운영 서비스의
+정지·재시작·배포·migration·외부 데이터 API 호출 승인을 추가하지 않는다.
+상세 리뷰·격리 검증 영수증은 위 파일과 같은 `sudo72/` 디렉터리에 보존했다.
 
 ## 보존 근거
 

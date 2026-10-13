@@ -388,6 +388,7 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-13 | R1-01~R1-09 | main 통합 완료; R1-01~08 DONE·R1-09 BLOCKED 유지 | Owner 요청으로 `1b8dca3` → `1fe09ef` fast-forward 후 진행 문서 갱신. C3 코드·workflow·다이어그램과 검증 근거를 보존하며 운영 빌드·배포는 미실행 | [main 통합](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13), [실행 기록](reviews/2026-10-12-r1-execution.md#main-통합과-진행-문서-갱신--2026-10-13); 문서 갱신은 이 기록을 추가한 커밋 |
 | 2026-10-13 | R1-09 | BLOCKED 유지; C3 입력·공식 plan/preflight 재검증과 현재 운영 전제 기록 | 최신 main `b0a2579`는 인계와 동일. root 인증·ordinary health는 현재도 미충족, 12개 C3 image tag 부재. reader 정지 경로의 작업 중단·재개 영향과 별도 운영 결정 필요를 구체화 | [R1 재개 근거](reviews/2026-10-13-r1-resumption.md); 대상 C3 `862fa95`, 11:38 KST 고정 필드 관측, 인계 14개 hash 대조; build/apply·운영 변경·R2 미착수 |
 | 2026-10-13 | R1-08·R1-09 | 기존 main CI·smoke 최종 결과 회수 완료; R1-09 BLOCKED 유지 | `b0a2579`의 CI 8개 job과 별도 functional smoke 모두 성공. 재실행 없이 실제 checkout 8개·원본 로그 대조. C3 이미지·manifest 검증 근거는 여전히 미확보 | [main 실행 인수](reviews/2026-10-12-r1-acceptance.md#resumption--existing-main-push-runs), [재개 기록](reviews/2026-10-13-r1-resumption.md); 두 worker 실제 idle·pending0 및 heartbeat 종료 확인 |
+| 2026-10-13 | R1-09 | BLOCKED 유지; Owner 직접 실행용 72시간 sudo 설정 스크립트 준비 | 현재 계정 전용 권한과 만료 timer, 원자적인 만료 처리·철회 기능을 준비하고 실제 parser·구문·격리 14회귀·독립 소스 리뷰 수용. 실제 root 설정은 미적용 | [후속 sudo 준비](reviews/2026-10-13-r1-resumption.md#후속-owner-요청--직접-실행할-72시간-sudo-설정-준비); C3·운영 범위 유지, 실제 설치·72시간 만료 미검증 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와
