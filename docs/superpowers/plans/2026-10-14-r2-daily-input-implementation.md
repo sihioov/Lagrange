@@ -31,6 +31,9 @@ Native subagents: prohibited for worker packages
 | D2 | simple | 기존 Web 전략 설정·추천 DTO·테스트의 제한된 경로 목록; 직접 파일 확인 가능 | high | 새 UI 정책 판단이나 저장소 전수 조사 필요 시 중단하고 범위 반환 |
 | D2a | simple | lockfile에 고정된 Web 의존성 준비와 설치본 Next 가이드 읽기; lock hash·설치 exit로 확인 | high | 자원 부족·lock 불일치·설치 실패 시 반복 설치하지 않고 정확한 장애 반환 |
 | D3 | intermediate | D1 설계의 고정 규칙·권한·중복·복구에 대한 독립 소스 근거 리뷰 | medium | 새 아키텍처 설계를 리뷰어에게 요구하게 되면 코디네이터가 D1 개정 |
+| D4 | intermediate | D3-06에 따라 pure byte schema·정렬·hash·오류를 확정하는 제한된 계약 명세 | high | producer/DB/운영 의미 변경이 필요하면 해당 인터페이스를 코디네이터에게 반환 |
+| D5 | hard | D3-01~05의 반복 공급·독립 calendar projection·기존 ACL/발행/복구·harness 접점 교정 | high | 채택 경계 밖의 provider 취득이나 새 제품 정책은 실행하지 않고 정확한 G4 차이로 분리 |
+| I1a | intermediate | D4에서 고정한 unapproved wire 타입·encoding/hash와 provider-free 회귀 구현 | high | 명세에 없는 key/type/hash 의미가 필요하면 코드로 채우지 않고 D4 보정 요청 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
 검증 명령을 추가하고서** 시작한다. 현재 설계 작업을 소스 구현 완료로 세지 않는다.
@@ -43,6 +46,9 @@ Native subagents: prohibited for worker packages
 | D2 | 1 | simple | 기존 설정·추천 Web 접점과 검증 harness 목록 | `docs/reviews/2026-10-14-r2-daily-web-map.md`만 | Owner 채택·기준 확인 | codex gpt-6-luna medium, 직접 대조 가능한 소규모 조사 | 지정 경로의 DTO/화면/테스트 근거와 남은 접점 | 파일·symbol 존재와 source line 직접 확인 |
 | D2a | 1 | simple | Web 구현 전 설치본 가이드·의존성 준비 | ignored root/Web `node_modules/`, npm cache, `docs/reviews/2026-10-14-r2-web-prerequisites.md` | D2 인수·코디네이터 자원 확인 | D2 worker Luna medium | exact lock 유지·설치 결과·읽은 guide 경로 | root workspace `npm ci`, manifest/lock 전후 hash |
 | D3 | 2 | intermediate | 확정 전 설계의 독립 검토 | `docs/reviews/2026-10-14-r2-daily-input-design-review.md`만 | D1/D2 회수·코디네이터 통합 | codex gpt-6.1-sol high, 결론 산출물 리뷰 규칙 | actionable finding와 scope/증거 한계 | 채택 계약·실제 호출 경로·위협/회귀 행렬 대조 |
+| D4 | 3 | intermediate | 첫 pure contract 구현의 모든 byte schema 확정 | `docs/contracts/owner-beta-daily-etf11-input-v1.md`만 | D3-06 수용 | D3 worker Sol high, 제한된 계약 분석 | 정확한 object/field/type/order/validation/hash/fixture 표 | D1/U2·기존 domain 타입·serializer와 직접 대조 |
+| D5 | 3 | hard | 영향받은 설계·통합 패키지 교정 | `docs/reviews/2026-10-14-r2-daily-input-design-amendments.md`만 | D3-01~05 수용 | D1 worker Astra xhigh, 기존 열린 구조 교정 | finding별 해결안·exact SQL/공급/projection/harness 범위 | source 근거와 반례·실제 역할 검증 조건 |
+| I1a | 4 | intermediate | 독립 unapproved wire 계약·canonical hash 구현 | `crates/market-data/src/daily_price_only/{mod,contract}.rs`, `src/lib.rs`, `tests/daily_price_only.rs` | D4 코디네이터 인수·launch brief 고정 | Luna max | 새 pure module·golden/rejection 회귀 | rustfmt/diff, 이후 exact 후보 Rust/CI; 실행 전 source만 수용 |
 
 ## Worker briefs
 
@@ -123,8 +129,10 @@ D2a에 한해 아래 명시된 npm 의존성 준비와 설치본 가이드 읽�
 1. 현재 profile/model 지원과 workspace/parent를 확인한다. D1/D2는 disjoint report이므로 병렬 가능.
    `notifyOnFinish=true`, private owned-worker ledger와 bounded fallback을 유지한다.
 2. 실제 idle/pending0 후 보고서·source citation을 회수하고, 채택 계약과 scope를 직접 대조한다.
-3. 설계 접점과 migration 번호·구현 파일 소유권을 확정하고 D3의 구체적 finding을 해소한다.
-4. 구현 패키지를 상세 추가한 뒤 Luna/max로 시작한다. 실패·새 불확실성에만 단계적으로 상향한다.
+3. 설계 접점과 migration 번호·구현 파일 소유권을 확정하고 D3의 구체적 finding을 영향 범위별로 해소한다.
+4. 구현 패키지를 상세 추가한 뒤 Luna/max로 시작한다. D3가 허용한 pure I1a는 D4 인수 후
+   D5 교정과 병행할 수 있다. DB/독립 승인/storage/normalizer/운영 경로는 D5 수용 전 구현하지 않는다.
+   실패·새 불확실성에만 단계적으로 상향한다.
    공유 파일 변경은 순차로 배정하고 resource-heavy 검증은 hosted/격리 환경에서 순차 실행한다.
 5. 정확한 구현 후보에서 Rust/DB/Web/권한/입력 검증 및 구조 다이어그램·독립 리뷰를 통합한다.
    기존 f8b9296 결과를 새 코드의 실행 증거로 재사용하지 않는다.
@@ -155,3 +163,67 @@ D3는 특히 다음을 확인한다.
    검증/storage를 분리해 첫 구현 범위를 제시한다. 운영 값 부재를 소스 전체 착수 금지로 확대하지 않는다.
 
 새 product/source 작업의 exact 인터페이스와 수정 allowlist는 D3를 회수해 확정한다.
+
+## D3 판정·첫 구현 분리 — 2026-10-14
+
+[독립 리뷰](../../reviews/2026-10-14-r2-daily-input-design-review.md) 423행,
+SHA-256 `1ea75c9e1f8612475923775c5b2b49c2f3b7a4a2aa395e482d09cda1c4c9a487`를
+실제 idle/pending0 후 회수했다. 코디네이터는 기존 0009 config table grant,
+0049 worker output UPDATE 권한, calendar normalizer의 target-date 필터와 대조해 6개 finding을
+수용한다. U2 채택은 유지하고 R2-04 전체를 다시 승인 대기로 돌리지 않는다.
+
+### D4 — I1a exact byte 계약
+
+공통 보고·금지 규칙을 유지하며, 코디네이터는 다음 범위를 고정한다.
+
+- 새 파일 `docs/contracts/owner-beta-daily-etf11-input-v1.md`만 소유한다. D1/D3·다른 문서를 고치지 않는다.
+- D1 §§3~4와 D3-06의 policy/manifest/session/file/admission을 완전한 JSON/Rust field 표로 만든다.
+  모든 nested type, key 순서, optional/null/empty 규칙, enum literal, 날짜·UTC 시각 precision,
+  redacted request 구조, copied-source chain, action class/scope/interval/page, civil calendar binding,
+  normalization descriptor와 evidence hash preimage를 명시한다. `<...>` 같은 미정 wire field는 남기지 않는다.
+- I1a는 **unapproved value** parse/encode/hash와 문법·구조 불변식만 구현한다. Raw 의미 검증,
+  파일 신뢰·권한·storage, DB, provider, 승인 타입 constructor, runtime 활성화는 포함하지 않는다.
+- 기존 v2/v3 JSON·5-pin 의미·hash는 바꾸지 않는다. 정책 fixture의 가짜 hash가 production pin으로
+  취급되지 않게 fixture/validating wire/policy trust를 분리한다. 운영 control/Owner/예산은 wire 밖이다.
+- canonical serializer는 고정 struct key 순서·UTF-8 compact JSON·명시된 stable array 순서·integer/
+  string scalar로 정한다. unknown/duplicate keys와 모호한 값은 거부한다. 입력 map/array 정렬 허용
+  여부 및 parser hash 검증과 canonical encoder의 책임을 서로 모순 없이 고정한다.
+- API 함수 signature/return/error enum, content preimage의 제외 field, final manifest/admission hash,
+  finite error(외부 본문/값 없음)를 명시한다. 현재 domain `ContentHash`, 날짜·timestamp·BatchId와
+  serde 코드에 맞춘다. 새 dependency는 요구하지 않는다.
+- 정상 synthetic golden fixture와 parent/policy/lineage 변경, duplicate/unknown/불완전 필드,
+  날짜/순서/배열 경계, 역사 wire 보존의 정확한 테스트 기대를 정의한다. 순수 Python hash/JSON
+  fixture 산출은 허용하되 Rust compile/test와 source 구현은 금지한다.
+- 완료 기준은 Luna가 wire field/hash 결정을 발명하지 않고 I1a를 구현할 수 있는 명세다.
+  부족한 운영 값은 값 미정 schema가 아니라 typed input 자리로 명시한다.
+
+### D5 — 공급·권한·발행·검증 연결 교정
+
+- 새 `docs/reviews/2026-10-14-r2-daily-input-design-amendments.md`만 쓴다. 고정 D1/D3를 보존하며
+  finding별 어떤 절을 대체하는지 명시한다. D4는 wire 계약을 별도 소유한다.
+- D3-01: manifest batch date가 아니라 요청 구간으로 이미 저장된 WholeMarket/ETF11 range를
+  찾고 civil-day×class×scope×pagination coverage를 검증하도록 확정한다. 한 번의 catch-up이
+  다음 주말을 해결한다고 쓰지 않는다. 반복 공급의 구체적 source 제안·허용 기존 surface·변경되는
+  query/date 범위·요청 상한·실패 정책을 준비하되 새 네트워크 실행/승인으로 해석하지 않는다.
+- D3-02: 이미 취득한 credentialed 첫 페이지의 주변 calendar 행을 원래 hash/retrieval/source와
+  결합하는 별도 offline daily projection을 설계한다. generic normalizer나 data_batches를 위조·
+  변경하지 않고 새 SQL join·원래 target 포함·충돌·future/copy 검증·receipt 권한을 구체화한다.
+  소스가 필요한 civil 날짜를 포함하지 않으면 typed gap; 추가 chk-holiday 호출은 허용하지 않는다.
+- D3-03/04: 정확한 config INSERT/UPDATE column grants·DB epoch/ID/owner/opt-in trigger,
+  daily terminal run/output/item 불변성·current attempt settlement·direct DML 우회를 닫는다.
+  기존 역사 bytes/동작과 적법한 retry/recovery는 보존하고 DOWN의 원래 ACL 복원까지 명시한다.
+- D3-05: official `validate.sh`, 두 tests/common role bootstrap, production config validator,
+  secret/preflight/UID·membership·CONNECT/USAGE, generated OpenAPI 출력의 소유권을 정확히 추가한다.
+  새 role은 첫 0060/harness 실행 전에 준비하는 dependency로 옮긴다.
+- D3-06 중 runtime/SQL 부분: ADMITTED/REPLAY/BLOCKED 결과와 committed conflict event,
+  독립 pure normalization의 deterministic identity·무쓰기 경로를 확정한다. D4 field 명세를 중복 작성하지 않는다.
+- 테스트·DB·root·Docker·provider·설치·서비스 변경 없이 source 근거와 필요한 fixture/실제 역할
+  검증을 보고한다. 권한 승인 재요청 없이 source 준비를 계속하고 G4에서 필요한 추가 효과만 분리한다.
+
+### I1a — launch 전 고정할 공통 범위
+
+D4를 코디네이터가 읽고 정확한 SHA·함수/타입 목록·golden 조건을 launch brief에 붙인 뒤 시작한다.
+위 네 파일만 수정한다. `mod.rs`/`lib.rs`의 pure module 등록 외 다른 구조는 바꾸지 않는다.
+historical·provider·normalizer·Cargo/lock·policy registry·DB·API·Web·배포·diagram은 이 묶음 밖이다.
+운영 build/로컬 Cargo 없이 rustfmt와 소스 정합성만 확인하고, 실제 Rust 회귀는 순차 hosted 검증에
+맡긴다. 테스트 미실행을 성공으로 표시하지 않는다. 코디네이터가 문서·로드맵·커밋을 통합한다.

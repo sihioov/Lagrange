@@ -321,3 +321,29 @@ profile은 계속 코디네이터용 하나여서 repository 리뷰 배정 규�
 다음 작업은 D3의 구체적 source finding을 해소하고 첫 구현 묶음의 타입·파일·회귀를 확정해
 Luna/max에 위임하는 것이다. 운영 근거 부재만으로 독립 소스 작업 전체를 다시 차단하지 않는다.
 R2-04는 DOING이며 제품 코드·0060·실제 입력·자동 추천 실행은 아직 구현/검증하지 않았다.
+
+### D3 인수·D4/D5 분리 — 2026-10-14 KST
+
+[D3 리뷰](2026-10-14-r2-daily-input-design-review.md) 423행·SHA-256
+`1ea75c9e1f8612475923775c5b2b49c2f3b7a4a2aa395e482d09cda1c4c9a487`를 실제 idle/pending0 후
+회수했다. 코디네이터가 0009의 app table-level 권한, 0049 worker output UPDATE 권한,
+generic calendar의 target-date 필터 등 구체적인 소스와 대조해 6개 finding을 수용했다.
+설계상의 빈틈이며 아직 실행하지 않은 0060의 런타임 실패로 표현하지 않는다.
+
+- D3-01/02: trading-date-only 공급이 휴장일 action/calendar의 연속 증거를 자동 제공하지 않는다.
+  단발 catch-up으로 반복되는 다음 주말의 빈틈이 해소되지 않으며, 별도 offline 소비/projection과
+  구체적인 반복 공급안의 준비가 필요하다. 시장 API 호출 권한을 확대하지 않는다.
+- D3-03/04: 기존 table 권한을 정확히 교체하고 DB 소유 epoch·ID/owner 경계를 고정해야 한다.
+  최초 success gate뿐 아니라 발행 후 output/item/time 불변성·현재 attempt 결합도 명시해야 한다.
+- D3-05/06: 새 role·actual-role 검증을 기존 official harness에 연결하고, 완전한 byte schema와
+  typed admission conflict 결과·deterministic 무쓰기 normalization 경계를 고정한다.
+
+기존 Sol/high worker `e183dbb1-4e18-4278-a109-7bd9b0855530`는 D4의 정확한 pure wire 계약
+한 문서만, Astra/xhigh `1b2bd1a5-94ce-4e5c-9691-26e770617ee0`는 D5 설계 보완 한 문서만
+소유하도록 follow-up했다. 둘 다 notifyOnFinish=true·실제 running/pending0·같은 workspace/parent
+및 예상 runtime을 확인했다. 고정 D1/D3는 수정하지 않는다.
+
+D3 감시 `6d616899`를 삭제하고 D4/D5 전용 `f840501c`(2분·최대 60회·2026-10-14
+02:57:15 UTC 만료)를 등록했다. ledger는 전 단계 결과를 보존하고 새 범위로 갱신한다.
+D4가 고정되면 승인 타입·DB·파일 신뢰·provider와 분리된 I1a 계약/encoding/hash 코드·회귀를
+Luna/max에 위임한다. D5의 세부 교정이 필요한 경로만 그 결과와 리뷰를 기다린다.
