@@ -1408,3 +1408,29 @@ sequential after source and concurrent CI collection finish. Non-Linux returns
 UnsupportedPlatform without I/O. No live UID, scan budget, DB0060 or runtime authority
 is supplied. Plan Wave22/23 separates51-name existing-candidate CI collection from
 new snapshot implementation and later independent review/hosted verification.
+
+
+### Wave22/23 actual candidate, startup and monitor
+
+Candidate a888cd66c032c8931a4979434168568387c83a12 was committed and fast-forward
+pushed from c0ac599; remote SHA matched. The exact-SHA existing-run query was empty
+before one ci.yml dispatch at09:56:06.244UTC (exit0). An immediate query still returned
+zero during propagation; a later read recovered exactly one run38545976070 attempt1,
+created09:56:07UTC. No second dispatch, rerun or cancellation occurred. Frozen inventory
+3cd93ddc… records28source pins and51expected Linux Rust names; launch647783ce… records
+the real actions. These are expectations, not passing results.
+
+Collector11a8f223-6f2d-4adb-89ab-86dbc917d2fd, Luna/medium, actual startup
+09:56:59.924UTC; reporting bound11:26:59.924UTC. S2 implementer
+c2c91a6c-03ee-4276-9571-1a86bf475f09, Luna/max, actual startup09:56:31.201UTC;
+bound11:26:31.201UTC. Both actual running turns, expected parent/workspace/model/effort,
+pending0 and notification registration verified. S2 inputs a905e2e5… pin20read-only
+references and two absent new paths. The two new files are not in this CI candidate.
+
+Heartbeat1d43b527 covers only those workers every two minutes, max60, expiry
+11:58:15.858UTC. Previous1c5b74e2 was deleted after both old scopes were actually idle
+with full results recovered. Reconcile at reporting bounds and before expiry; an
+incomplete collection remains coordinator-owned. A same-daemon heartbeat cannot
+protect daemon outage. Registration awaits both current turns idle/full recovery;
+independent combined source review and a separate later candidate CI remain required.
+No local executable tests, build, database or operational action was authorized/run.
