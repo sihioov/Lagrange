@@ -1214,3 +1214,108 @@ Heartbeat `261b0071` runs every2minutes, at most60times, expires08:06:03 UTC.
 Notification registration, actual startup and scope are retained in private wave9 receipts
 and the ledger. The monitor must be reconciled/replaced before expiry; it cannot protect
 against the same daemon stopping. Review outcomes and all new execution evidence remain pending.
+
+
+## Wave 9 review disposition and bounded corrections — 2026-10-14
+
+[I0b-R](../../reviews/2026-10-14-r2-daily-role-wiring-review.md) (261 lines,
+`f83131c8cdbbf6211fe2b6f1f25426a73a4ecdcc6586eacedb6be29ba654db81`) and
+[I1b-S1-R](../../reviews/2026-10-14-r2-raw-manifest-evidence-review.md) (290 lines,
+`e0322d1774dbd0124d1619f7f69be983dc43a035df8d71ac8ec324d5e43c089b`) were recovered
+only after actual idle/pending0/full finals, at06:15:05 and06:16:34 UTC respectively.
+The coordinator checked all20 frozen inputs, 78 report links/line bounds, and the exact
+source paths behind all eight findings. Both reports are accepted as correction evidence;
+source acceptance remains pending. They are source findings, not observed compiler output,
+actual leaked credentials or host/runtime failures. Heartbeat261b0071 is closed.
+
+The frozen implementation commit is `f1dfb91cdc0cad7d5ae96a310ff462f40cb738a3`.
+The new corrections below are the first bounded repair of these package findings; no
+repeat-failure escalation signal has occurred. Repository routing therefore reuses the
+idle Luna/max implementers for fixed-specification work. Reviews remain Sol/high afterward.
+
+| Package | Complexity | Basis | Confidence | Reclassification / escalation |
+| --- | --- | --- | --- | --- |
+| I0b-F | intermediate | Three verified local inventory/fixture/log-gate defects with exact file and outcome boundaries | high | Missing interface/out-of-scope need: report; repeated failed correction or lost constraints: escalate one model tier |
+| I1b-S1-F | intermediate | Five verified two-file error/type/fixture corrections with unchanged API and trust contract | high | Contradictory error contract or repeated verification failure: report and escalate one tier |
+
+| Package | Wave | Objective / writable scope | Depends on | Worker | Verification |
+| --- | --- | --- | --- | --- | --- |
+| I0b-F | 10 | R01–03; runtime-static-check.sh, validate-production-config.sh, integration-validation/validate.sh only | I0b-R and frozen f1dfb91 inputs | fd32e206, gpt-6-luna/max | bash-n, inert source checks, written hosted self-tests, then delta review and exact-candidate CI |
+| I1b-S1-F | 10 | S1-R01–05; storage.rs and daily_price_only_storage.rs only | I1b-S1-R and frozen f1dfb91 inputs | 14d3d7c8, gpt-6-luna/max | scoped rustfmt/static checks, written regressions, then delta review and exact-candidate CI |
+
+The three I0b paths are `deploy/secrets/runtime-static-check.sh`,
+`scripts/ops/validate-production-config.sh`, and `deploy/db/integration-validation/validate.sh`.
+The two Raw paths remain under `crates/market-data/src/` and `crates/market-data/tests/`.
+All starting hashes are pinned in private `source-wave-10-inputs.json`. Reports, other source,
+D4/D5, four I0a references, pure wire/Python and roadmap/plan/Git remain worker-read-only.
+No local test/validator/self-test/provisioner/Cargo/rustc/Clippy/build/DB/root/Docker/provider/
+production execution is authorized. Tests are written for hosted execution, not run locally.
+
+### I0b-F fixed correction brief
+
+1. R01: add the eighth DB credential to both crypto and numeric fixture inventories in
+   runtime-static-check.sh. Keep crypto's deliberately malformed cursor, its intended
+   diagnostic, no-partial-write and no-value-output assertions. Extend the existing fakeroot
+   positive fixture to check the admitter file10003:10003/0440 and directory0750, and new
+   bootstrap file999:999/0400. Preserve the current rootless boundary and fakeroot availability
+   behavior; do not relax inventory validation or turn a failing case into a skip.
+2. R02: add `db-role-bootstrap/db_daily_input_admitter_password:999:999:400` to the release
+   runtime_specs list. Add inert selected-release inventory parity checking in runtime-static-
+   check.sh against the provisioner's release copies, comparing path, UID, GID and numeric mode,
+   not only counts. Treat source text as data: do not source/eval/run the provisioner or production
+   validator to derive maps. An unrecognized/ambiguous mapping must fail explicitly. Include
+   written in-memory removal, wrong-UID and wrong-mode variants that the parity helper rejects;
+   keep all other profile/source/DB-free requirements unchanged. Existing Python is available
+   to the hosted policy lane if needed; do not install packages or add a dependency manifest.
+3. R03: all three bootstrap callers must capture the real command status (avoid losing it with
+   `if ! command`), pass success and failure output through the same credential gate before any
+   record_log/evidence persistence, and preserve DENIED on bootstrap failure. Scan all8 credential
+   file values exactly without putting values in argv, diagnostics or environment. A missing,
+   empty or unreadable credential/raw file or scan error fails closed. No raw log is copied on
+   disclosure or scan failure: retain only a fixed redacted marker and safe numeric exit/category.
+   Clean failed bootstrap output may be sanitized/recorded, but its original failure remains.
+4. Keep this minimal gate callable by the existing `--self-test` branch before runtime setup,
+   using the same function as real callers, with no Docker/SQL activation. Move only needed pure
+   helper definitions above that branch; preserve ordinary non-bootstrap sanitizer behavior.
+   The gate takes explicit credential-directory/raw/destination/bootstrap-status inputs, emits no
+   raw text, and returns distinguishable clean-success, clean-bootstrap-failure, disclosure and
+   scan-error outcomes. Runtime callers translate every non-success into DENIED (not external
+   BLOCKED); preserve the original numeric bootstrap status in safe diagnostics if needed.
+5. In the existing self-test, write synthetic success/failure cases covering all8 credentials,
+   URL/env/bare SQL PASSWORD forms, clean success/failure, missing/unreadable scan input and
+   empty credential. Exercise the shared gate itself, capture diagnostics and evidence, and
+   assert no sentinel survives either channel. Do not use a copied mock of the implementation,
+   eval-extract functions, print fixture values or invoke a DB. These tests remain unexecuted
+   locally. SQL, roles, bootstrap-roles.sh, Compose and provisioning semantics stay unchanged.
+
+### I1b-S1-F fixed correction brief
+
+1. S1-R01: in the new sibling parser, consult serde is_eof only for the existing final torn-tail
+   rule, then discard the serde error on all rejected rows. Reuse the redacted
+   InvalidCommittedManifestRecord { path, line } variant for malformed typed/JSON records.
+   No raw serde source may remain reachable via Display, Debug or Error::source. Legacy reader
+   CorruptManifest behavior stays unchanged. Update the new malformed assertion and add valid-
+   shape rows with invalid FetchMode and typed hash/ID sentinel values; test all three error
+   exposure channels. Use explicit Result matching rather than requiring Debug on Ok evidence.
+2. S1-R02: make the borrowed &File reader binding mutable (or use a mutable local &File), and
+   annotate Vec<CommittedManifestEvidenceRecord>. Keep the same descriptor, read-only flags,
+   max+1 allocation/read and public API; do not add a path-based fallback or lint suppression.
+3. S1-R03: rename/scope the local fixture bindings that shadow fixture() in both identified
+   functions. Preserve fresh independent fixtures and all assertions; do not rename public API.
+4. S1-R04: the missing-tree test calls the public method with an explicit expected UID obtained
+   from its existing temp parent, not metadata of nonexistent Raw. Keep Raw absent and retain
+   missing-lock/no-creation assertions. Do not create Raw to obtain a UID or weaken production
+   ownership checks.
+5. S1-R05: only the sibling directory-open mapper maps LOOP and NOTDIR to a static UnsafePath
+   reason covering a symlink or non-directory component. Keep permission-denied failures and
+   no-follow flags without retries. Preserve legacy opener behavior; maintain strict directory-
+   alias/ancestor/control-symlink assertions and add an ordinary non-directory component case.
+   Keep leaf regular-file/UID/mode checks and existing exact-byte/limits/duplicate/replacement
+   regressions. Written tests do not establish actual platform errno or race behavior.
+
+Both notified workers must report every finding's disposition and exact files/line ranges/hashes,
+changes versus brief, static checks and guard-to-written-test map, unresolved/not-found/unverified
+items, required decomposition, background work and pending permissions. Do not invent missing
+policy. Return INCOMPLETE with precise residual scope if not finished in60min. Coordinator verifies
+actual idle/full final, reviews the resulting delta independently, and only then prepares one new
+hosted candidate with existing-run deduplication. No CI was launched for the rejected f1dfb91 bytes.

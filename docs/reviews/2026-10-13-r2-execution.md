@@ -864,3 +864,20 @@ Heartbeat `261b0071` runs every2minutes, at most60times, expires08:06:03 UTC.
 Notification registration, actual startup and scope are retained in private wave9 receipts
 and the ledger. The monitor must be reconciled/replaced before expiry; it cannot protect
 against the same daemon stopping. Review outcomes and all new execution evidence remain pending.
+
+
+## Wave 9 리뷰 회수·8개 소스 지적 수용 — 2026-10-14
+
+[DB 리뷰](2026-10-14-r2-daily-role-wiring-review.md)는06:15:05 UTC,
+[Raw 리뷰](2026-10-14-r2-raw-manifest-evidence-review.md)는06:16:34 UTC actual idle/pending0로
+회수했다. 각 full final과261/290행 hash,20개 고정 입력,78개 링크/행을 대조했다.
+코디네이터가 실제 소스를 열어 DB의 fixture source 누락·release bootstrap projection 누락·실패
+로그 scan 우회와 Raw의 serde diagnostic 노출·타입 검사·fixture shadowing·missing-tree 선행panic·
+NOTDIR 분류를 확인했다. 이는 소스 finding이며 실제 leak·compiler output·운영 실패 관측이 아니다.
+
+source 인수는 보류하고 고정f1dfb91에서 I0b-F(3개 shell 파일), I1b-S1-F(2개 Rust 파일)의 명세를
+[계획](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 고정했다. 첫 보정으로
+기존 Luna/max를 재사용하며 반복 실패 시 저장소 규칙에 따라 상향한다. 동일 실제 helper를 쓰는
+synthetic log 회귀와 release parity, redacted typed error 회귀를 작성하고 실제 실행은 hosted에 남긴다.
+기존261b0071 감시는 두 리뷰 회수 뒤 종료했다. 새 작업의 notified startup과 bounded 감시는 후속 기록한다.
+Mem0 context는 이번에도MCP_ERROR였으며 새 durable 저장 성공을 주장하지 않는다.
