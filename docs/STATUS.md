@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — `929fcd6` [전체 CI](reviews/2026-10-14-r2-harness-lint-ci.md)의 wire/I0a 부분 인수는 유지한다. 이후 역할·secret 배선과 Raw manifest reader의 DB3/Raw5 및 후속 parser 지적은 소스 리뷰 기준으로 해소했다. `1599e09`의 [물리 LF 리뷰](reviews/2026-10-14-r2-inventory-physical-line-review.md)를 회수·대조해 새 후보 hosted CI 준비로 전환했다. Raw Unix18개와 기존 wire30개 결과, shell 회귀·Clippy·PG 실제 증거는 새 후보에서 확인해야 한다. 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — `929fcd6` [전체 CI](reviews/2026-10-14-r2-harness-lint-ci.md)의 wire/I0a 부분 인수는 유지한다. 이후 역할·secret 배선과 Raw manifest reader의 DB3/Raw5 및 후속 parser 지적은 소스 리뷰 기준으로 해소했다. `1599e09`의 [물리 LF 리뷰](reviews/2026-10-14-r2-inventory-physical-line-review.md)를 회수·대조해 후보 `f9dfffb`의 [CI38530582876](https://github.com/sihioov/Lagrange/actions/runs/38530582876)을 한 번 시작하고 notified collector가 결과를 수집 중이다. Raw Unix18개와 기존 wire30개 결과, shell 회귀·Clippy·PG 실제 증거는 새 후보에서 확인해야 한다. 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

@@ -1903,3 +1903,30 @@ Before follow-up require actual collector idle/pending0 and prior full result re
 Use notifyOnFinish=true, verify actual startup/model/parent/workspace and preserve a
 bounded heartbeat in the owned-worker ledger. Recover substantive result after actual
 idle; renew/handoff before expiry. Same-daemon outage is not protected by the heartbeat.
+
+
+### Wave16 exact-candidate hosted CI started — 2026-10-14
+
+Candidate `f9dfffb9a5d4bfc38a9df347af0de154dbe6d11b` includes the reviewed role/Raw
+sources and source-review acceptance record. Fast-forward push and remote full SHA
+matched. The exact-SHA existing-run query was empty before one ci.yml dispatch.
+[Run38530582876](https://github.com/sihioov/Lagrange/actions/runs/38530582876), attempt1,
+workflow_dispatch, was created07:46:54 UTC with the exact candidate and in_progress.
+The dispatch itself finished exit0; a query made while it was still running was empty,
+and the subsequent query recovered this one run. No second dispatch/rerun/cancel occurred.
+Private launch receipt is target/r2-daily-beta/wp-4-integration/role-raw-ci-launch.json.
+
+Collector11a8f223-6f2d-4adb-89ab-86dbc917d2fd actually started07:48:54.511 UTC,
+codex/gpt-6-luna/medium, expected workspace/parent, pending0 and notifyOnFinish=true.
+The current configured profile is coordinator-only; the existing collector follows the
+repository's mechanical evidence-extraction model rule. Inventory SHA-256 is
+`cff8ed23dc181a66052253f4bbca82bcc333850961ea30037711ffc3722182fa`.
+The90-minute/09:30UTC bound resolves to09:18:54.511UTC; incomplete results must be
+recovered and coordinator monitoring retained. Heartbeat b6a564bf is every two minutes,
+max60, expires09:49:32UTC. Reconcile and renew/handoff before expiry; same-daemon outage
+is not protected. Ledger and private startup receipt preserve notification/runtime state.
+
+New exact-candidate outcomes are pending.30wire+18LinuxRaw direct results, shell regression
+wrapper/optional skips, strictClippy/required and isolatedPG roles/59migrations must be
+read from this run. No local test, DB, provider or operational execution was performed.
+The latest documentation commit is separate from the tested source candidate above.
