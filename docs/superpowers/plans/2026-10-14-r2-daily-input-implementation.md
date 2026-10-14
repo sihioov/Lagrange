@@ -35,6 +35,7 @@ Native subagents: prohibited for worker packages
 | D5 | hard | D3-01~05의 반복 공급·독립 calendar projection·기존 ACL/발행/복구·harness 접점 교정 | high | 채택 경계 밖의 provider 취득이나 새 제품 정책은 실행하지 않고 정확한 G4 차이로 분리 |
 | D6 | intermediate | 고정 D5 교정안의 기존 D3 finding 해소와 D4 접점만 독립 대조 | high | 새 제품 정책·전면 재설계가 필요하면 구체적 미해결 접점을 반환 |
 | I1a | intermediate | D4에서 고정한 unapproved wire 타입·encoding/hash와 provider-free 회귀 구현 | high | 명세에 없는 key/type/hash 의미가 필요하면 코드로 채우지 않고 D4 보정 요청 |
+| I0a | intermediate | D6가 검토한 새 admitter 역할의 격리 harness 준비를 기존 네 파일에 한정 | high | 운영 secret/Compose 변경 또는 새 migration 의미가 필요하면 해당 접점을 반환 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
 검증 명령을 추가하고서** 시작한다. 현재 설계 작업을 소스 구현 완료로 세지 않는다.
@@ -51,6 +52,7 @@ Native subagents: prohibited for worker packages
 | D5 | 3 | hard | 영향받은 설계·통합 패키지 교정 | `docs/reviews/2026-10-14-r2-daily-input-design-amendments.md`만 | D3-01~05 수용 | D1 worker Astra xhigh, 기존 열린 구조 교정 | finding별 해결안·exact SQL/공급/projection/harness 범위 | source 근거와 반례·실제 역할 검증 조건 |
 | D6 | 4 | intermediate | D5 및 보정 D4와의 연결 검토 | `docs/reviews/2026-10-14-r2-daily-input-amendments-review.md`만 | D4/D5 회수·hash 고정 | codex gpt-6.1-sol high, 독립 리뷰 규칙 | 구체적 미해결 finding 또는 범위 한정 closure | D3 failure path·현재 source·수정 인터페이스 대조; 실행 없음 |
 | I1a | 4 | intermediate | 독립 unapproved wire 계약·canonical hash 구현 | `crates/market-data/src/daily_price_only/{mod,contract}.rs`, `src/lib.rs`, `tests/daily_price_only.rs` | D4 코디네이터 인수·launch brief 고정 | Luna max | 새 pure module·golden/rejection 회귀 | rustfmt/diff, 이후 exact 후보 Rust/CI; 실행 전 source만 수용 |
+| I0a | 5 | intermediate | 첫 0060 전 격리 role/bootstrap 기반 준비 | 두 `tests/common/mod.rs`, migration-contract의 `role-bootstrap.sql`·`bootstrap.sql`만 | D6의 D3-05 source-design closure 수용 | Luna max | 새 role preflight·DB별 권한·direct-login helper | rustfmt/diff·source 확인; 실제 역할/DB 검증은 이후 hosted 순차 실행 |
 
 ## Worker briefs
 
@@ -279,3 +281,65 @@ SinglePage 응답 marker는 보존하되 따라가지 않으며, 겹치는 actio
 - source/계약/다른 보고서/진행 문서는 수정하지 않는다. 컴파일·테스트·DB·root·Docker·provider·
   production read·Git 쓰기·하위 위임 없이 hash/link/라인/syntax 검사만 허용한다.
 - 공통 보고 형식과 finding severity를 쓴다. closure는 source-review 한정이며 실행 성공이 아니다.
+
+## D6 인수·D6-01 보정 예약 — 2026-10-14
+
+[D6 보고](../../reviews/2026-10-14-r2-daily-input-amendments-review.md)는 289행·SHA-256
+`b95b5e652d2d459cb5de871943f1dcdcf1ffa6ec33b0d9dc324dcbd01b869269`다.
+실제 idle/pending0 후 회수하고 66개 링크와 배당 validator·fixture·기존 recovery query를 대조했다.
+D3-01~05의 **설계 수준 closure**를 수용한다. D5의 current attempt/claimed_by 확인은
+기존 recovery가 하는 일이 아니라 I2/I4가 구현해야 할 요구다. 현재 RecoveryAttempt/query에
+claimed_by가 없다는 D6의 근거 한정을 유지한다. 실행/운영 검증은 아직 없다.
+
+D6-01 P2를 수용한다. `normalize.rs:1890`의 required_present_string은 present string을
+trim하며 빈 결과를 허용하고, `kis_normalization.rs:85`의 유효 cash fixture도 세 코드가 비어 있다.
+다음 **단일 lexical 보정**을 확정한다. 이미 실행 중인 I1a의 입력 문서/hash는 바꾸지 않고,
+그 worker가 idle/pending0가 된 뒤 계약 갱신·hash 고정과 별도 follow-up으로 적용한다.
+
+- `dividend_kind`, `stock_kind`, `high_dividend_flag`의 `code`를 ASCII
+  `[A-Za-z0-9_-]{0,32}`로 바꾼다. empty string은 보존하되 missing은 MissingField,
+  null/non-string은 InvalidType, 그 밖의 문자·길이는 InvalidLiteral이다.
+- wire parser는 trim하거나 값을 만들어내지 않는다. I1b가 기존 shared validator의 trimmed
+  string을 그대로 매핑하고 이 별도 bounded wire 규칙을 검사한다. 허용 범위 밖은 typed rejection이며
+  임의 code/null 대체·행 삭제가 아니다. legacy validator는 바꾸지 않는다.
+- 회귀 row: 첫 golden의 dividend page FileKey, symbol069500, record_date2026-08-31,
+  세 code 모두 `""`, face_value5000, cash_amount100, cash_rate2, stock_rate0,
+  cash_payment_date2026-09-14, stock/odd_lot date null. §4의 기존 key 순서로 직렬화한
+  one-row array는 515 bytes·`sha256:0f87c41ba19ba820ee79a2a05f54c27b9a4af5f185a98b080bc429b56eaca864`다.
+  nonempty cash chain/manifest/proof/admission round-trip와 missing/null/type/32·33길이 거부를 추가한다.
+  기존 empty-cash golden 7개는 그대로다. private recipe는 `target/r2-daily-beta/wp-4-integration/`에 있다.
+
+현재 I1a는 `308b9909…` 명세로 계속 실행 중이다. 결과를 그대로 최종 수용하지 않고 위 보정 후
+정확한 후보의 코드 리뷰·Rust/CI를 진행한다. 새 미승인 입력이나 시장 API 동작을 허용하는 수정이 아니다.
+
+### I0a — 격리 role/harness 준비의 고정 실행 brief
+
+- cwd는 이 계획의 workspace. intermediate/high confidence, 명세가 정해진 구현이므로 Luna/max.
+  I1a와 파일이 겹치지 않으며 D6-01의 cash 문법에도 의존하지 않는다.
+- 소유 파일은 `crates/job-queue/tests/common/mod.rs`, `crates/api-server/tests/common/mod.rs`,
+  `tests/integration/migration-contract/role-bootstrap.sql`, 같은 디렉터리의 `bootstrap.sql` 네 개다.
+  D5 A5/A8-I0 중 이 네 fixture 경로만 맡는다. 운영 bootstrap/secret/Compose/official validator와
+  0060은 후속 I0/I2 소유이며 이번에는 고치거나 실행하지 않는다. 전체 I0 준비 완료를 주장하지 않는다.
+- cluster bootstrap에 `daily_input_admitter`를 absent일 때만 LOGIN NOINHERIT NOSUPERUSER
+  NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS, 기존 fixture password `lagrange`로 만든다.
+  이미 있는 role의 속성/멤버십을 임의 ALTER/REVOKE로 수리하지 않는다. 위 bool 속성을 검증하고,
+  role을 member/roleid 어느 쪽으로든 쓰는 pg_auth_members 행은 거부한다. recursive membership
+  closure로 app/worker에서 migration_owner/admitter에 닿는 경로도 거부한다(SET ROLE 포함).
+- 기존 supervisor bootstrap 잠금/기존 역할·URL·migration-owner 실행 방식은 보존한다.
+  새 역할의 DB별 CONNECT/USAGE와 CREATE 금지는 **새 scratch DB에서**, 첫 MIGRATOR 전에 확정한다.
+  migration-contract role-bootstrap은 cluster role만, bootstrap.sql은 DB-local grant만 소유한다.
+  supervisor public schema에 새 revoke/grant를 넣지 않는다. scratch public의 PUBLIC CREATE를
+  회수하고 migration_owner CREATE는 유지한다. 새 역할의 current DB CONNECT·public USAGE 및
+  current DB/public CREATE 없음도 검사한다. static SQL과 안전한 identifier 처리를 사용한다.
+- JQ ScratchDb와 API Harness에 각각 public async `daily_input_admitter_pool(&self) -> PgPool`
+  helper를 추가한다. 기존 연결 정보의 대상 scratch DB와 fixture password를 사용한 **직접 LOGIN**,
+  최대 연결 2, current_user=session_user=daily_input_admitter를 확인한다. SET ROLE/Owner actor
+  GUC는 쓰지 않고 URL/credential을 출력하지 않는다. 반환 pool은 호출자가 종료하는 계약이다.
+  기존 public 메서드/필드 의미는 보존하며 unrelated helper refactor는 하지 않는다.
+- 최소한의 기존 helper 패턴·sqlx API를 따르되 모순/필수 인접 수정이 있으면 구현으로 숨기지 않고 반환한다.
+  출처는 D5 A5, D6의 first-migration 절 및 현재 네 파일이다. 새 provider/생산 권한은 없다.
+- 로컬은 read-only source와 `rustfmt --edition 2024 --config skip_children=true`/check,
+  `git diff --check`만. Cargo/rustc/test/DB/root/Docker/network/production/lifecycle/Git write는 금지한다.
+  SQL 파서 실행·effective role 검증은 수행하지 않았다고 보고한다. 실제 검증은 official/harness
+  source 통합 후 격리 CI에서 순차 진행하며, 나머지 I0 연결 전 첫 0060 실행은 계속 금지한다.
+- 공통 최종 보고 형식과 직접 작업 규칙을 따른다. 문서·로드맵·커밋은 코디네이터가 통합한다.

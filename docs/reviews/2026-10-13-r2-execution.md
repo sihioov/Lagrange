@@ -382,3 +382,33 @@ private ledger의 전 단계 결과·감시 이력은 유지한다. 같은 daemo
 I1a에는 로컬 rustfmt/diff만 허용했다. 새 Rust 회귀의 실행은 정확한 후보 source review 후
 hosted/격리 환경에서 순차 검증하며 기존 F1/F2 CI를 새 코드에 재사용하지 않는다.
 운영 적용·migration·서비스 변경·시장 API 호출은 실행하지 않았다. R2-04는 DOING이다.
+
+### D6 인수·I0a 병행 — 2026-10-14 KST
+
+D6는 01:35:48 UTC 실제 idle/pending0 후 [289행 리뷰](2026-10-14-r2-daily-input-amendments-review.md),
+SHA-256 `b95b5e652d2d459cb5de871943f1dcdcf1ffa6ec33b0d9dc324dcbd01b869269`를 회수했다.
+코디네이터가 66개 링크, shared dividend validator·유효 fixture 및 recovery query를 직접 대조했다.
+D3-01~05의 설계 수준 해소를 수용한다. 실제 role/ACL·SQL race·storage·운영 성공은 아니다.
+D5의 current attempt/claimed_by 검사는 I2/I4의 새 구현 요구이며 기존 recovery에 이미 있는
+보호장치로 해석하지 않는다. 원본 D5와 D6의 증거 한정을 보존한다.
+
+D6-01 P2는 present-empty dividend metadata를 shared validator가 허용하지만 D4는 거부한다는
+인터페이스 모순이다. `[A-Za-z0-9_-]{0,32}`로 빈 문자열을 보존하고 missing/null/non-string을
+별도 거부하는 정확한 보정을 [후속 계획](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 고정했다.
+nonempty cash fixture의 one-row canonical array는 515 bytes·
+`sha256:0f87c41ba19ba820ee79a2a05f54c27b9a4af5f185a98b080bc429b56eaca864`로 계산했다.
+이는 Python fixture 계산이며 Rust/parser/실제 provider 검증이 아니다.
+실행 중인 I1a를 redirect하거나 기존 `308b9909…` 입력을 변경하지 않았다. 실제 종료·회수 후
+문서 hash를 갱신하고 notified follow-up으로 구현·회귀에 반영하기 전까지 P2는 구현상 미해소다.
+
+I0a는 D5 A5 중 격리 harness 네 파일만 따로 준비한다. worker
+`9a1860be-0df7-43a5-804c-a6d9c4120692`, codex gpt-6-luna/max의 실제 runtime·workspace·parent와
+running/pending0를 01:42:44 UTC에 확인했다. profile은 여전히 코디네이터용 하나라 지원 모델과
+저장소 구현 규칙을 적용했고 mode는 지정하지 않았다. I1a와 수정 파일이 겹치지 않는다.
+새 fixture role의 속성/멤버십 preflight·scratch DB 권한·직접 LOGIN helper만 소스에 추가한다.
+운영 bootstrap/secret/Compose/official validator는 이 묶음 밖이며 전체 I0 준비 완료가 아니다.
+나머지 연결 준비 전 첫 0060 실행은 계속 금지한다. worker는 Cargo/SQL/DB/운영 작업을 실행하지 않는다.
+
+I0a에 notifyOnFinish=true를 등록하고, 기존 I1a 알림도 유지했다. `8643dc9c`를 삭제해
+I1a/I0a 및 대기 중인 D6-01 follow-up만 다루는 `87552d56`으로 교체했다(2분·60회,
+03:43:07 UTC 만료). ledger에 D6 최종 결과·보정 예약·새 소유 범위를 보존했다.
