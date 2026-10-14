@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — 8de8cff 세 파일 보정의 [독립 리뷰](reviews/2026-10-14-r2-caller-integration-review.md)를 수용했다. 리뷰를 포함한 후보c0ac599를 원격 SHA와 대조하고 기존 실행 없음 확인 후 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)을 한 번 시작했다. notified collector가49개 Rust 직접 결과, Clippy·shell·PG 및 Web/Python 증거를 회수 중이다. f9 실패/929fcd6 부분 성공은 별도 근거이며 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. 다음은 I0c 직접 로그인 helper 회귀·공식 no-SKIP 배선과 I1b-S2의 실제 Raw snapshot 인터페이스 확정이다. 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

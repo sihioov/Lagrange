@@ -2260,3 +2260,142 @@ limits, isolated PG59/role-GUC and Python/Web results remain pending on this can
 The candidate inventory is expected evidence, not an execution report. No local
 compiler/test/script/DB/provider/production action was performed. Follow-up documentation
 HEAD is separate from the fixed CI candidate; full R2 acceptance remains open.
+
+
+## Wave19 partial source acceptance — 2026-10-14
+
+Existing run [38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035),
+attempt 1, exact `c0ac599cb1ede900e155f724687c57410b4bd0d9`, completed SUCCESS
+at08:59:29UTC: all seven execution jobs and required passed. Collector11a8f223
+reached actual idle/activeTurn null/pending0 at09:11:14.901UTC. Its substantive
+26-line [report](../../reviews/2026-10-14-r2-caller-role-raw-ci.md) SHA is
+989a3891493f3ece231de15050f6bb3d139f1034edf3c0fe87e4aef4b686a47c;
+private1861-line receipt SHA is9016b6c2c97c5e2b05763dec131f0e7199d8d9ed0017da53470e7b2694ab7b0e.
+The coordinator verified report/receipt modes and hashes, frozen launch/inventory,
+all26 source hashes against candidate blobs and current files, exact49-name inventory,
+and independently re-fetched the original workspace log with identical byte count/hash
+to confirm all49 named Rust and six chart direct passing rows. Prior f9 reports and
+supplemental receipts are unchanged. Heartbeat8b313a09 was deleted after full recovery.
+
+Accept I1a wire, I0a/I0b role/secret source wiring, I1b-S1 manifest evidence and the
+three caller/checker fixes only at the reviewed and hosted-tested scope. Workspace
+237 aggregate result rows sum to2941 passed,0 failed,6 ignored,180 filtered; these
+are not unique-test counts. Chart6 is a separate invocation. Python485 passed,
+10 skipped,7 warnings remains suite evidence; four quiet readiness/SIGTERM nodes
+remain UNKNOWN. Web61files/487tests, OpenAPI and E2E passed. Policy wrappers passed,
+including physical-line/literal checker integration; individual nested subcases were
+not printed. No explicit fakeroot/numeric skip notice appeared, which does not establish
+hidden-skip absence. PG APPROVED has equal59-migration checksum lists, NO_OP rerun,
+0039 guard, skip-marker enforcement, cleanup and direct-login role lists including
+daily_input_admitter. Safe evidence does not separately establish role GUC, app actor
+settings, helper pool capacity or bootstrap-gate subcases.
+
+Full I0 readiness, negative bootstrap/rollback cases,0060, complete Raw snapshot,
+copy/provider reconstruction, admission, runtime/Owner and final C_R2 remain open.
+The new report is a follow-up artifact, not part of the immutable CI candidate.
+No local executable verification, new workflow action or production action occurred.
+
+
+## Wave20 — remaining helper evidence and exact Raw snapshot contract
+
+Both packages continue existing U2 source authority. They have disjoint mutable scope
+and can run concurrently. The accepted c0 candidate remains fixed. No new CI is
+dispatched until relevant source/review gates are complete.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I0c | intermediate | Two existing pool helpers, fixed direct-role/privilege assertions and two official no-SKIP selections | high | Missing pinned dependency API or repeated verified failure returns to coordinator; no helper/role policy workaround |
+| I1b-S2-D | hard | D5 snapshot trust semantics need exact descriptor lifetime, aggregate bounds and public interface before safe implementation | high | Any new product/rights policy or POSIX guarantee not supported by existing trust assumptions is reported explicitly |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0c | 20 | intermediate | Write direct-login pool/capacity/privilege regressions and wire exact no-SKIP filters | owner_beta_publish.rs, http_owner_beta_access.rs, integration-validation/{validate,static-check}.sh only | Wave19 actual recovery and partial acceptance | Fresh codex/gpt-6-luna/max, fixed implementation rule | Two meaningful written tests and bounded two-call shell wiring | Scoped rustfmt/bash-n/diff/hash only, independent review and later hosted execution |
+| I1b-S2-D | 20 | hard | Freeze the next complete committed snapshot primitive without implementing it | docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md only | Accepted S1 plus frozen D1/D4/D5 | Fresh codex/gpt-6-astra/xhigh, architecture judgment rule | Exact types/lifetimes/limits/errors/ownership/tests, explicit proposals and gaps | Concrete source citations, frozen inputs, coordinator contract acceptance before implementation |
+
+Current configured profile is coordinator-only Astra/high. Provider inspection confirmed
+Luna and Astra available. Worker settings follow repository task rules; modes are not
+relaxed to bypass permissions. Fresh workers receive the full briefs below and their own
+notifyOnFinish registration. Actual startup/deadlines/IDs go into the private ledger and
+follow-up documentation. I0c reports within60minutes and S2-D within45minutes; recover
+INCOMPLETE at each bound and maintain a bounded heartbeat until results are recovered.
+No native delegation is permitted.
+
+### I0c fixed worker brief
+
+WP-4/I0c — direct-login harness regression source. Initial complexity intermediate, confidence high: two existing public test helpers, fixed SQL assertions and existing official no-SKIP wrapper. Model codex/gpt-6-luna/max follows the fixed-implementation rule. Repeated verified failure or a missing interface returns to the coordinator; do not invent a substitute or broaden scope.
+
+Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin, roadmap R2-04/09. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+Read root AGENTS.md, docs/ROADMAP.md and Wave20 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. User U2 source implementation authorization persists. No production/provider/DB execution or new live acquisition is authorized. Exact candidate c0ac599cb1ede900e155f724687c57410b4bd0d9 / existing CI38536460035 attempt1 succeeded. Collector reached actual idle/pending0/full final recovery at09:11:14.901UTC; coordinator independently matched26source hashes and49LinuxRust+6chart direct passing rows. This is partial source acceptance only. Report docs/reviews/2026-10-14-r2-caller-role-raw-ci.md has26lines SHA989a3891493f3ece231de15050f6bb3d139f1034edf3c0fe87e4aef4b686a47c. D4 remains950lines SHAfa0529033945437e78eca5b0805f0524a4ae3c75fc4f0a36321ec56b052e717f; D5 remains740lines SHA8a8796d992da533389bac97fab6abf86c7e89e75f0772f6deceb3d4051d651a6. Preserve historical v2/v3 and all prior failure evidence.
+
+No local Cargo/rustc/Clippy/tests/build; no parser/checker/validator/provisioner/self-test execution; no SQL/DB/root/Docker/provider/network/production or workflow actions; no dependencies, Git staging/commit/push, other-worker instructions or delegation. Static source/hash/diff and specifically listed syntax checks are allowed. No claims of compilation or actual test success. Do not print credentials, provider payloads or free-form metadata. Use only fresh memory-hook envelopes; a failed call is not saved/skipped. Coordinator owns acceptance, roadmap/status/plan/commits and later exact-candidate hosted verification.
+
+One task, exactly four writable existing files:
+/data/worktrees/3puw275b/excited-dolphin/crates/job-queue/tests/owner_beta_publish.rs
+/data/worktrees/3puw275b/excited-dolphin/crates/api-server/tests/http_owner_beta_access.rs
+/data/worktrees/3puw275b/excited-dolphin/deploy/db/integration-validation/validate.sh
+/data/worktrees/3puw275b/excited-dolphin/deploy/db/integration-validation/static-check.sh
+Frozen starting targets and read-only references are in target/r2-daily-beta/wp-4-integration/source-wave-20-I0c-inputs.json. Verify all before editing. Other worker writes only a separate Raw snapshot design document, not these files. Both common/mod.rs helpers and bootstrap roles/migrations are read-only. Do not change helper bodies, grants, credentials, old tests, D4/D5/wire/Raw/collector or product APIs. No0060 source or execution.
+
+Verified source: job-queue ScratchDb::create/drop_db and daily_input_admitter_pool at common/mod.rs:362; API Harness::new/teardown and daily_input_admitter_pool at common/mod.rs:579. Both helpers directly log in as daily_input_admitter, max_connections2, and inspect current_user/session_user/current_setting('app.actor_user_id',true). They remain uncalled in accepted code. The official validator currently runs ten named DB-gated suites; owner_beta_publish and http_owner_beta_access are not yet in that fixed list. Do not infer helper behavior from earlier59-migration PASS or a quiet workspace summary.
+
+Add exactly one named tokio test per Rust target:
+- job-queue: daily_input_admitter_pool_is_direct_bounded_and_unprivileged
+- api-server: http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged
+
+Use each existing harness/helper, never recreate a privileged equivalent or SET ROLE to impersonate login. If DATABASE_URL is absent, emit the fixed 'SKIP: DATABASE_URL not set' marker and return; configured harness failures must remain failures. The official no-SKIP wrapper must reject this marker.
+
+For each test:
+1. Obtain the helper pool, acquire two simultaneously held connections, query both current_user/session_user='daily_input_admitter', distinct pg_backend_pid, current_setting('role')='none', and both app.actor_user_id and app.actor_id absent (SQL NULL). Assert the exact seven role attributes: LOGIN true, INHERIT/SUPERUSER/CREATEDB/CREATEROLE/REPLICATION/BYPASSRLS false.
+2. Verify max_connections=2 using the actual pinned sqlx pool-options accessor if available (inspect cached dependency, do not guess). With both connections held, a third acquire must remain pending under a bounded100ms tokio timeout, not succeed. After releasing one connection a new acquire must succeed under a bounded10s timeout; pool size must not exceed2. No sleeps/busy loops and no global/session actor mutation. An unsupported accessor is reported, not replaced by an unproved assumption.
+3. Through an admitter connection verify CONNECT on current_database and USAGE on public, no effective CREATE on database/public, no incoming/outgoing pg_auth_members edges for that role. Keep role checks read-only; no cluster-wide role mutation.
+4. In separate transactions through the actual admitter connection, CREATE TABLE public.r2_admitter_forbidden_probe(id integer) and SET ROLE migration_owner must fail with SQLSTATE42501; inspect only typed error code, never dump SQL errors or URLs. Roll back each transaction, then recheck both session identities, role='none' and absent actor settings. An unexpectedly successful statement must not leave an object or changed role: capture result, rollback, then assert denial. No grants/role creation/changes.
+5. Release all held handles, close the returned pool explicitly before ScratchDb::drop_db or Harness::teardown. Preserve existing tests/assertions byte-for-byte except necessary imports. Add no blanket lint allowance. Harmless new fixed test diagnostics only.
+
+Append two calls after the existing ten official run_db_test calls, before final APPROVED:
+run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
+run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
+These filters keep this first helper check bounded; they do not establish all historical target tests or future daily suites. Existing ten calls, DATABASE_URL propagation, no-SKIP rejection, cleanup, bootstrap credential-gate and evidence maps must remain unchanged. Add static-check required literal markers for these exact two run_db_test lines using source checks, without refactoring its parser or execution. Do not edit .github/workflows/ci.yml. No separate test utility files.
+
+Allowed checks: scoped rustfmt --edition2024 --config skip_children=true and --check on the two Rust files; bash -n on the two shell files; scoped git diff --check; hashes and direct source preservation checks. Do not execute either new test or any wrapper.
+Report within60minutes of actual startup or INCOMPLETE with exact remaining scope. Final: changed files/line ranges/fullhash/counts; disposition of each guard and its written test; deviations/reasons; actual checks/results; unresolved/not-found/unverified explicitly none where empty; further decomposition/background/pending permissions. Negative bootstrap attribute/membership/CREATE/transaction rollback cases,0060, real OS UID/ACL and runtime remain separate later scope.
+
+### I1b-S2-D fixed worker brief
+
+WP-4/I1b-S2-D — exact committed Raw snapshot implementation contract. Initial complexity hard, confidence high: D5 fixes trust/approval semantics but does not supply concrete snapshot types, lock lifetime, aggregate bounds or descriptor ownership. These choices determine the security boundary and are the deliverable. Use codex/gpt-6-astra/xhigh under the repository architecture rule, not as an implementation escalation. Scope is the next snapshot primitive only, not a redesign of U2/D1/D5.
+
+Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin, roadmap R2-04/09. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+Read root AGENTS.md, docs/ROADMAP.md and Wave20 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. User U2 source implementation authorization persists. No production/provider/DB execution or new live acquisition is authorized. Exact candidate c0ac599cb1ede900e155f724687c57410b4bd0d9 / existing CI38536460035 attempt1 succeeded. Collector reached actual idle/pending0/full final recovery at09:11:14.901UTC; coordinator independently matched26source hashes and49LinuxRust+6chart direct passing rows. This is partial source acceptance only. Report docs/reviews/2026-10-14-r2-caller-role-raw-ci.md has26lines SHA989a3891493f3ece231de15050f6bb3d139f1034edf3c0fe87e4aef4b686a47c. D4 remains950lines SHAfa0529033945437e78eca5b0805f0524a4ae3c75fc4f0a36321ec56b052e717f; D5 remains740lines SHA8a8796d992da533389bac97fab6abf86c7e89e75f0772f6deceb3d4051d651a6. Preserve historical v2/v3 and all prior failure evidence.
+
+No local Cargo/rustc/Clippy/tests/build; no parser/checker/validator/provisioner/self-test execution; no SQL/DB/root/Docker/provider/network/production or workflow actions; no dependencies, Git staging/commit/push, other-worker instructions or delegation. Static source/hash/diff and specifically listed syntax checks are allowed. No claims of compilation or actual test success. Do not print credentials, provider payloads or free-form metadata. Use only fresh memory-hook envelopes; a failed call is not saved/skipped. Coordinator owns acceptance, roadmap/status/plan/commits and later exact-candidate hosted verification.
+
+Your only writable output is /data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md. This is a proposed implementation contract for coordinator acceptance; no source edits. Frozen inputs are target/r2-daily-beta/wp-4-integration/source-wave-20-S2D-inputs.json; verify them. Concurrent I0c modifies only two DB test targets and the validator/static checker; do not read or pin those mutable files. Report missing requirements, never infer approval or operational principals/budgets.
+
+D5 A6 at docs/reviews/2026-10-14-r2-daily-input-design-amendments.md:502-565 is binding:
+CommittedRawReader::snapshot(scope: ApprovedRawScope,limits:ScanLimits)->Result<CommittedRawSnapshot,DailyEvidenceError>.
+It owns exact complete manifest-line evidence plus verified metadata/immutable file handles, supports interval discovery and exact committed lookup, and never reconciles or writes. Explicit installer-verified trusted Raw UID, descriptor-relative no-follow opens, stable existing commit.lock under shared lock, regular files/hash checks, no group/other writes, no euid/root bypass. No copied-source resolution, provider validation/normalization, admission or runtime activation yet. Those consume the snapshot later.
+The accepted I1b-S1 RawStore::read_committed_manifest_evidence is manifest-only and releases its lock after a bounded scan. It preserves line bytes without LF, counts pre-dedup records, retains first equal parsed duplicate, ignores only torn serde-EOF tail and rejects conflicts. It verifies lock/manifest/parent bindings; it cannot by itself prove batch.json/provider bytes or an immutable multi-file snapshot. Existing RawStore writer/read_committed_manifest/orphan reconciliation and historical semantics must stay exact.
+
+Read source storage.rs, contract.rs, normalize.rs, historical_price_only.rs/historical_price_only_artifact.rs and the specific historical/v3 reader only where needed; locate bounded relevant symbols with rg (no broad repository survey). D1 §§3-5 and I1, D4 §§types/limits/file identity, D5 A6/A8, accepted S1 source/reviews and tests are evidence. Existing layout is data/raw/provider=<p>/market=<m>/date=<d>/batch=<uuid>/batch.json + files; manifest controls under data/raw/manifests/provider=<p>/market=<m>/. batch.json deserializes to ManifestEntry and must equal the committed entry. Metadata/FileEntry can carry sensitive submitted strings, so no Debug/Display/source() leaks.
+
+Produce one execution-ready contract without implementing it:
+1. Exact Rust public signatures/types/field visibility/getters and module ownership for the next smallest complete snapshot package. Bind ApprovedRawScope to explicit validated provider/market/trusted UID and separately supplied scan boundaries; do not let its name confer data rights or admission. State which values are installer/policy inputs, with explicit synthetic fixture values only.
+2. Explicit positive limits and checked arithmetic for manifest bytes/pre-dedup count, batch metadata bytes, provider file bytes, files/batches, aggregate retained bytes and open descriptors. No Default/unbounded allocation, no invented production budgets. Define max/exceeded/overflow behavior, and enforce before allocation/open/loop work. D4 limits cannot be weakened; clarify storage scan caps vs final D4 file/document caps.
+3. Atomicity/lock lifetime from manifest read through batch/file validation and snapshot return/Drop. Decide whether immutable bytes, retained readonly descriptors or both are required, and how consumers avoid reopening by path. Address append, directory/lock/manifest/batch/file replacement, in-place mutation, hardlinks, missing/torn/uncommitted batches, duplicate files, scope mismatch, metadata equality, size/hash validation and stat/path revalidation. Distinguish tested race rejection from the explicit trusted-owner immutable-write assumption; do not promise protection against a malicious trusted writer that POSIX cannot supply.
+4. Finite redacted error surface that exposes no serde/OS/free-form metadata/payload content. Prefer an additive snapshot-specific error boundary or enumerate every exhaustiveness integration if StoreError must grow. Prior failure at pipeline.rs/worker.rs arose from adding StoreError variants without callers. Do not silently assign those files to a storage worker or introduce wildcard weakening.
+5. Exact file allowlist and sequential registration ownership, meaningful fixtures/guard-to-test matrix, preservation checks and independent review/hosted acceptance. Source implementation should be executable by one worker without policy invention; if too large, partition at a real capability boundary with disjoint/sequential ownership, not arbitrary chunks. Explicitly list follow-up copy-chain, normalization, source-calendar/admission work excluded here.
+6. Source citations with exact valid file:line anchors. Every normative rule must trace to D4/D5/current accepted source or be visibly labeled a coordinator decision proposal with rationale. List any unresolved contradiction instead of hiding it. No edits to frozen D4/D5 or new live rights/API/retention decisions.
+
+Allowed checks: reads/diff/hash/report links and inert reasoning/calculations only; no fixtures/tests/code execution, no local parsers/checkers or network. Report within45minutes of actual startup or INCOMPLETE. Final: report path/linecount/hash; concrete implementation interface and decision proposals; source gaps/unverified and missing inputs explicitly none when empty; deviations/reasons; actual checks; further decomposition/background/pending permissions. Coordinator accepts/freezes the contract before any snapshot implementation worker starts.
+
+### Coordinator gates
+
+Verify actual startup, ownership, model/effort, pending requests and notification coverage.
+Require actual idle/pending0 plus substantive finals. Review I0c's four-file diff and test
+semantics before an independent source review; any change outside the allowlist returns
+for an explicit bounded revision. Accept/freeze the S2-D concrete contract before assigning
+snapshot implementation, with no invented live UID/budget or data-rights policy. Never
+start0060 from this partial gate. New source requires an exact-candidate hosted run after
+existing-run inspection; old c0 success cannot certify new tests or snapshot code. Keep
+I6 evidence-bound diagrams before main integration, and runtime/Owner gates separate.

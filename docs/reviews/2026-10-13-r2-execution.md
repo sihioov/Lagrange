@@ -1294,3 +1294,39 @@ limits, isolated PG59/role-GUC and Python/Web results remain pending on this can
 The candidate inventory is expected evidence, not an execution report. No local
 compiler/test/script/DB/provider/production action was performed. Follow-up documentation
 HEAD is separate from the fixed CI candidate; full R2 acceptance remains open.
+
+
+## Wave19 partial source acceptance — 2026-10-14
+
+Existing run [38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035),
+attempt 1, exact `c0ac599cb1ede900e155f724687c57410b4bd0d9`, completed SUCCESS
+at08:59:29UTC: all seven execution jobs and required passed. Collector11a8f223
+reached actual idle/activeTurn null/pending0 at09:11:14.901UTC. Its substantive
+26-line [report](2026-10-14-r2-caller-role-raw-ci.md) SHA is
+989a3891493f3ece231de15050f6bb3d139f1034edf3c0fe87e4aef4b686a47c;
+private1861-line receipt SHA is9016b6c2c97c5e2b05763dec131f0e7199d8d9ed0017da53470e7b2694ab7b0e.
+The coordinator verified report/receipt modes and hashes, frozen launch/inventory,
+all26 source hashes against candidate blobs and current files, exact49-name inventory,
+and independently re-fetched the original workspace log with identical byte count/hash
+to confirm all49 named Rust and six chart direct passing rows. Prior f9 reports and
+supplemental receipts are unchanged. Heartbeat8b313a09 was deleted after full recovery.
+
+Accept I1a wire, I0a/I0b role/secret source wiring, I1b-S1 manifest evidence and the
+three caller/checker fixes only at the reviewed and hosted-tested scope. Workspace
+237 aggregate result rows sum to2941 passed,0 failed,6 ignored,180 filtered; these
+are not unique-test counts. Chart6 is a separate invocation. Python485 passed,
+10 skipped,7 warnings remains suite evidence; four quiet readiness/SIGTERM nodes
+remain UNKNOWN. Web61files/487tests, OpenAPI and E2E passed. Policy wrappers passed,
+including physical-line/literal checker integration; individual nested subcases were
+not printed. No explicit fakeroot/numeric skip notice appeared, which does not establish
+hidden-skip absence. PG APPROVED has equal59-migration checksum lists, NO_OP rerun,
+0039 guard, skip-marker enforcement, cleanup and direct-login role lists including
+daily_input_admitter. Safe evidence does not separately establish role GUC, app actor
+settings, helper pool capacity or bootstrap-gate subcases.
+
+Full I0 readiness, negative bootstrap/rollback cases,0060, complete Raw snapshot,
+copy/provider reconstruction, admission, runtime/Owner and final C_R2 remain open.
+The new report is a follow-up artifact, not part of the immutable CI candidate.
+No local executable verification, new workflow action or production action occurred.
+
+Wave20 prepares disjoint I0c direct-login test source and I1b-S2-D snapshot interface design. The complete bounded briefs and model rationale are in the implementation plan. No worker has been launched yet.

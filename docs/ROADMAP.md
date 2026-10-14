@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | 8de8cff 세 파일 보정의 [독립 리뷰](reviews/2026-10-14-r2-caller-integration-review.md)를 수용했다. 리뷰를 포함한 후보c0ac599를 원격 SHA와 대조하고 기존 실행 없음 확인 후 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)을 한 번 시작했다. notified collector가49개 Rust 직접 결과, Clippy·shell·PG 및 Web/Python 증거를 회수 중이다. f9 실패/929fcd6 부분 성공은 별도 근거이며 0060·전체 입력·운영·Owner 인수는 남는다. |
+| 다음 착수 항목 | 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. 다음은 I0c 직접 로그인 helper 회귀·공식 no-SKIP 배선과 I1b-S2의 실제 Raw snapshot 인터페이스 확정이다. 0060·전체 입력·운영·Owner 인수는 남는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -266,8 +266,8 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했다. [D5/D6 설계](reviews/2026-10-14-r2-daily-input-amendments-review.md), [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md), [독립 보정 검토](reviews/2026-10-14-r2-daily-wire-final-review.md)와 정확한 `929fcd6`의 [CI 성공](reviews/2026-10-14-r2-harness-lint-ci.md)을 대조해 I1a/I0a 소스·hosted 검증을 부분 인수했다. 7개 실행 job/required·strict Clippy·신규 Rust30개·chart6 직접 PASS, Python suite485 pass/10 skip/7 warnings, PG59 migrations 통과다. Python 개별 readiness/SIGTERM node와 미호출 helper login/GUC/pool은 미검증이다. I0b/I1b-S1의 [11개 파일 인계](reviews/2026-10-14-r2-role-and-raw-source-handoff.md)를 actual idle/pending0에서 회수하고 실제 hash를 고정했다. 독립 리뷰의 DB 3개·Raw 5개 지적 중 Raw 두 파일 보정본을 회수했다(storage b1dca720…, fixture 1deec0dc…). DB 세 파일 보정본도 회수·고정했다. `de1889b`의 [Raw 재검토](reviews/2026-10-14-r2-raw-manifest-corrections-review.md)는 5개 소스 지적 해소·새 finding 없음으로 수용했고 DB 재검토는 기존 3개 지적 해소와 새 parser P2를 확인해 한 파일의 literal 문법 보정으로 연결했다. 보정본 332324fb…의 범위·19개 참조 hash·bash-n·전체 Python AST를 확인하고 독립 검토를 준비했다. 197행 독립 리뷰(34095bee…)에서 helper 문법은 확인했지만 wrapper 개행 처리 P2가 남았다. 물리 LF·파일 읽기 보정과 wrapper 회귀로 범위를 고정했다. Sol/max 보정본 0bede130…의 전체 결과·한 파일 범위·bash-n/26-node AST·기존10개 helper와 parity 보존을 확인해 독립 검토로 연결했다. 작성된 parser 회귀는 미실행이며 컴파일·실제 테스트 및 source 인수는 미완료다. 남은 I0·0060·실제 입력/발행·운영·Owner 인수는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에서 계속한다. 이전 실패 보고는 변경 이력과 실행 기록에 보존한다.
-  최신 검증 —8de8cff 세 파일의 [독립 리뷰](reviews/2026-10-14-r2-caller-integration-review.md)211행/eb2bef7c…를 소스 검토 기준으로 수용했다. 후보c0ac599의 CI38536460035이 진행 중이며49개 Rust·Clippy/shell/PG 실제 결과는 대기다. 기존 f9 실패와929fcd6 부분 성공은 별도 근거다.
+  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했다. [D5/D6 설계](reviews/2026-10-14-r2-daily-input-amendments-review.md)와 [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md)를 기준으로 I1a/I0a 및 I0b/I1b-S1·호출부 보정을 진행했다. 후보c0ac599의 [최종 CI](reviews/2026-10-14-r2-caller-role-raw-ci.md)에서7개 실행 job/required,49개 Rust·chart6 직접 PASS, Python suite485 pass/10 skip/7 warnings, Web/PG59 통과를 대조해 부분 소스와 hosted 검증을 인수했다. 과거929fcd6 부분 성공과 f9 실패·DB3/Raw5 및 후속 parser 지적/수정은 실행 기록과 변경 이력에 보존한다. 직접 로그인 helper의 actor GUC·연결 수·권한 거부, negative bootstrap/rollback,0060·전체 snapshot/입력·운영·Owner 인수는 남는다. 다음 bounded I0c/S2-D는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)을 따른다.
+  최신 검증 — c0ac599 / CI38536460035 성공을 actual idle/pending0와 최종 보고 회수 후 수용했다. 26개 고정 source와49개 Rust·chart6 직접 행을 원본 로그에 대조했다. 역할/secret/manifest/호출부 부분 인수이며 helper pool·actor GUC, 첫0060, 전체 snapshot과 운영 인수는 미완료다. I0c 회귀 소스와 S2-D 인터페이스를 다음 bounded wave로 준비했다.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -282,7 +282,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   하루라도 실패하면 원인 수정 후 연속 관찰을 다시 시작한다.
 - [ ] **R2-09 — 첫 베타 릴리스 인수.** exact revision·manifest·모드, 운영 적용, health·백업/복구
   근거와 정상 Owner 사용 결과를 묶는다. 운영 확인 결과를 후속 문서 커밋으로 남긴다.
-  DOING — 2026-10-14, `929fcd6`의 [전체 CI](reviews/2026-10-14-r2-harness-lint-ci.md)를 wire/I0a 부분 근거로 유지한다. 보정본 독립 검토 후 후보c0ac599의 CI38536460035을 시작했다. 결과 회수·0060·전체 입력 연결, 최종 C_R2와 운영/Owner 인수는 미완료다.
+  DOING — 2026-10-14, c0ac599의 [CI 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 추가 부분 근거로 수용했다. 기존929fcd6 부분 성공과 f9 실패를 보존한다. 남은 helper/0060·전체 입력 연결, 최종 C_R2와 운영/Owner 인수는 미완료다.
 
 **종료 조건:** R2-01~R2-09 완료, 연속 3거래일 무인 데이터·추천 갱신과 실제 Owner 사용 확인.
 컨테이너 health와 데이터·화면의 성공을 따로 기록한다. R3 미완료만으로 R2를 미완료로 되돌리지 않는다.
@@ -508,3 +508,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; caller 보정 독립 리뷰 수용·hosted 검증 준비 | 실제 idle/pending0/full final,32입력·17링크·소스 대조. 세 파일 보정과 신규 회귀에 새 finding 없음; compiler/tests는 아직 미실행 | source8de8cff; [리뷰](reviews/2026-10-14-r2-caller-integration-review.md) eb2bef7c…, [Wave19](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). 새 후보49개 Rust·Clippy/shell/PG 검증 필요 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; caller 보정 후보 CI 1회 시작 | c0ac599 fast-forward push·remote SHA·기존 실행 부재 확인,08:37:46UTC dispatch. Collector actual08:38:54.122UTC/pending0/notified,90분 보고 경계·bounded heartbeat 설정 | [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035), [실행 기록](reviews/2026-10-13-r2-execution.md).49개 Rust와 Clippy/shell/PG 실제 결과 대기 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; caller/role/Raw 부분 CI 인수·Wave20 준비 | c0ac599의7개 실행 job/required,49개 Rust와chart6 직접 통과를 실제 idle/최종 회수 후 대조. I0c helper 회귀와 S2-D snapshot 계약을 분리; 첫0060/운영 인수 아님 | [최종 CI](reviews/2026-10-14-r2-caller-role-raw-ci.md), [Wave20](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 소스26개 hash·원본 로그 및 기존 실패 증거 보존 |
