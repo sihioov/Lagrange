@@ -567,3 +567,13 @@ D6-01 present-empty 규칙은 소스상 일치하지만 bundle 실행 성공은 
 실제 follow-up은 I1a-F 02:44:30 UTC, I1a-CI-D 02:44:55 UTC에 시작했고 running/pending0와
 workspace/parent를 확인했다. `1d5a6342`를 삭제하고 `a80e3b3a`(2분·60회·04:45:39 UTC 만료)로
 교체했다. CI-D의 이번 반환 경계는 03:14:55 UTC다. 두 범위 밖의 실행 권한은 추가하지 않았다.
+
+### I1a-CI-D 회수 — 2026-10-14
+
+02:49:54 UTC actual idle/pending0 후 [추가 진단](../../reviews/2026-10-14-r2-daily-wire-ci-diagnostics.md)을
+회수했다. clippy exit101, chart compile exit101, PG의 `api-tenancy-rls` 단계 compile failure와
+enclosing exit1은 동일한 E0369/E0282 네 건이다. 원래 세 log response hash와 candidate workflow/
+validator blob을 직접 대조해 이 원인 증거를 수용했다. PG inner Cargo exit는 여전히 unknown이고
+후속 DB test·chart/new pure test 실행은 없다. SQLSTATE를 terminal 원인으로 간주하지 않는다.
+I1a-F 범위는 유지하며 실행 중 worker에게 새 지시를 보내지 않았다. `a80e3b3a`는 삭제하고
+`45e28caf`(2분·60회·04:51:06 UTC 만료)로 I1a-F만 관찰한다. I0/0060/runtime 인수는 미완료다.

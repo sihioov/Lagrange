@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | 부분 후보 `779b3fa`의 CI `38500926595` 실패 및 pure wire 독립 리뷰 6개 finding 회수. I1a-F 두 파일 보정·경계 회귀와 기존 실패 로그 추가 진단 진행. 이후 새 exact 후보 검증. I0a 실제 SQL·역할 검증과 남은 I0 연결, 복구 예산·C_R2 이미지·운영 적용은 후속 |
+| 다음 착수 항목 | 부분 후보 `779b3fa`의 CI `38500926595` 실패 및 pure wire 독립 리뷰 6개 finding 회수. 세 실패 job의 동일 컴파일 원인을 확인했고 I1a-F 두 파일 보정·경계 회귀 진행. 이후 새 exact 후보 검증. I0a 실제 SQL·역할 검증과 남은 I0 연결, 복구 예산·C_R2 이미지·운영 적용은 후속 |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -266,7 +266,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택해 승인 대기 해소. [Web 준비](reviews/2026-10-14-r2-web-prerequisites.md), [D5 교정안](reviews/2026-10-14-r2-daily-input-design-amendments.md), [D6 설계 검토](reviews/2026-10-14-r2-daily-input-amendments-review.md)를 수용했다. I1a-P2의 present-empty cash 규칙은 [고정 명세](contracts/owner-beta-daily-etf11-input-v1.md)와 일치한다. 그러나 전체 pure wire [리뷰의 6개 finding](reviews/2026-10-14-r2-daily-wire-review.md)과 `779b3fa`의 [CI 실패](reviews/2026-10-14-r2-daily-wire-ci.md)를 회수해 소스 인수를 보류했다. 컴파일 오류로 신규 16개 테스트는 미실행이다. 두 파일의 I1a-F 보정·경계 회귀와 기존 실패 로그 진단을 진행한다. I0a [소스 검토](reviews/2026-10-14-r2-isolated-role-harness-review.md)는 수용했지만 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 실제 SQL·role 검증과 나머지 I0 연결은 남는다. 기존 v3/ETF11 발행 8월 28일 관측은 보존하며 새 일일 입력·발행·운영 인수는 미완료다.
+  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택해 승인 대기 해소. [Web 준비](reviews/2026-10-14-r2-web-prerequisites.md), [D5 교정안](reviews/2026-10-14-r2-daily-input-design-amendments.md), [D6 설계 검토](reviews/2026-10-14-r2-daily-input-amendments-review.md)를 수용했다. I1a-P2의 present-empty cash 규칙은 [고정 명세](contracts/owner-beta-daily-etf11-input-v1.md)와 일치한다. 그러나 전체 pure wire [리뷰의 6개 finding](reviews/2026-10-14-r2-daily-wire-review.md)과 `779b3fa`의 [CI 실패](reviews/2026-10-14-r2-daily-wire-ci.md)를 회수해 소스 인수를 보류했다. 컴파일 오류로 신규 16개 테스트는 미실행이다. [실패 진단](reviews/2026-10-14-r2-daily-wire-ci-diagnostics.md)에서 clippy·chart·PG api-tenancy-rls가 같은 컴파일 오류로 멈춘 것을 확인했다. I1a-F 두 파일 보정·경계 회귀를 진행한다. I0a [소스 검토](reviews/2026-10-14-r2-isolated-role-harness-review.md)는 수용했지만 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 실제 SQL·role 검증과 나머지 I0 연결은 남는다. 기존 v3/ETF11 발행 8월 28일 관측은 보존하며 새 일일 입력·발행·운영 인수는 미완료다.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -450,3 +450,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; 정확한 부분 후보 hosted CI 시작 | `779b3fa` feature push 후 같은 SHA 기존 실행 없음 확인, ci.yml 1회 dispatch. 독립 소스 리뷰와 결과 회수 병행 | [CI 38500926595](https://github.com/sihioov/Lagrange/actions/runs/38500926595), [실행 기록](reviews/2026-10-13-r2-execution.md); 16개 새 테스트·I0a 실행 결과는 아직 미확인 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; 부분 후보 실패·6개 리뷰 finding 보정 | `779b3fa` CI clippy/workspace/PG/required 실패, 신규 16개 테스트 미실행. 역사 prefix 집계·timestamp·typed date·lint·경계 회귀·seal 크기 제한의 수정 범위를 확정하고 두 파일 보정 및 기존 실패 로그 진단 착수 | [CI 근거](reviews/2026-10-14-r2-daily-wire-ci.md), [독립 리뷰](reviews/2026-10-14-r2-daily-wire-review.md), [실행 기록](reviews/2026-10-13-r2-execution.md); source acceptance 보류, 중복 CI·운영 실행 없음 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; CI 실패 원인 보강 수용 | clippy·chart·PG api-tenancy-rls 모두 같은 네 컴파일 오류. SQLSTATE는 terminal 원인이 아님을 phase·로그 hash·candidate source로 대조. I1a-F 수정 범위 유지 | [진단 근거](reviews/2026-10-14-r2-daily-wire-ci-diagnostics.md), [실행 기록](reviews/2026-10-13-r2-execution.md); 신규 테스트·후속 DB 단계 미실행, 운영 인수 아님 |

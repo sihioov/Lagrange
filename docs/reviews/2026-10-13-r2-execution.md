@@ -548,3 +548,17 @@ Mem0 관련 context 조회는 MCP 응답 부재로 실패했으므로 조회 성
 문서 local link/행 경계 253개와 두 원본 보고서 hash를 확인했다. 추적 문서의 whitespace 검사는
 통과했다. 새 CI 보고서의 마지막 빈 줄은 `diff --check` 경고 한 건으로 남지만, 진행 중인 진단의
 고정 입력 hash를 보존하기 위해 원본을 수정하지 않았다.
+
+### 실패 원인 보강 완료 — 2026-10-14 KST
+
+I1a-CI-D는 02:49:54 UTC 실제 idle/pending0이며 [진단 보고](2026-10-14-r2-daily-wire-ci-diagnostics.md)와
+191행 receipt `355c446a89808d08d4c5197a83a098f5e9cacf312b3691edf06c27bdb5f4d74f`를 회수했다.
+원본 보고 47행·`220741f1…`도 private `diagnostics/recovered-report.md`에 보존하고 문서 끝 빈 줄만
+정리했다. 세 로그 응답 hash/길이는 초기 receipt와 같고 exact candidate workflow/validator blob과
+호출 순서도 확인했다. clippy·chart·PG api-tenancy-rls가 같은 네 E0369/E0282 컴파일 오류로 멈춘
+근거를 수용한다. chart test와 api-tenancy-rls 개별 test는 시작하지 않았고, PG의 enclosing exit는1,
+내부 Cargo 숫자 exit는 미출력이다. 앞선 guard SQLSTATE를 terminal 실패 원인으로 해석하지 않는다.
+
+I1a-F 소스 수정 범위는 그대로다. `a80e3b3a`를 삭제하고 I1a-F만 맡는 `45e28caf`
+(2분·60회·04:51:06 UTC 만료)로 교체했다. 종료된 진단 worker를 재실행하지 않았다.
+누적 manifest 집계 규칙의 Mem0 저장 시도는 MCP_ERROR로 실패했으며 저장 성공으로 기록하지 않는다.
