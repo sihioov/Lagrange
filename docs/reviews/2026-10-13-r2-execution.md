@@ -1020,3 +1020,22 @@ two minutes, at most30times, expiring 08:09:14 UTC. The ledger and private start
 receipt preserve notification and runtime evidence. Recover incomplete scope at the
 report bound and reconcile/renew/handoff before expiry; same-daemon outage remains
 unprotected. No parser/regression execution, new CI or source acceptance is claimed.
+
+
+## Literal wrapper review disposition — 2026-10-14
+
+I0b-F2-R reached actual idle/pending0 at 07:15:51 UTC; the full final and
+[197-line literal inventory review](2026-10-14-r2-inventory-literal-review.md) were recovered.
+Report SHA-256 is `34095bee08fc89b67967fff7b4dd8852aa79f0778b854dc173a00c84dce6c699`.
+The coordinator verified all21 frozen target/reference/prior-review inputs and26 report
+links/line bounds, then checked the proposed trigger against the source reader and three
+body loops. Default universal-newline reading and splitlines() can make a physical
+comment containing CR or U+2028 contribute a phantom mapping. This is source reasoning,
+not an executed parser/checker reproduction or an assertion about current live inputs.
+
+I0b-F-R01 is partially resolved: original dynamic tokens are blocked by shared helpers;
+the complete wrapper boundary remains open as I0b-F2-R01/P2. DB original3 and Raw5
+source-review closures remain intact. Heartbeat8235440c was deleted after full recovery.
+A bounded one-file correction will preserve decoded source newline characters, split
+only at LF, and cover actual reader/wrapper paths with inert in-memory fixtures.
+No parser/regression/test, new CI or operational action was performed in this recovery.

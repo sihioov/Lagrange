@@ -1651,3 +1651,91 @@ two minutes, at most30times, expiring 08:09:14 UTC. The ledger and private start
 receipt preserve notification and runtime evidence. Recover incomplete scope at the
 report bound and reconcile/renew/handoff before expiry; same-daemon outage remains
 unprotected. No parser/regression execution, new CI or source acceptance is claimed.
+
+
+## Literal wrapper review disposition — 2026-10-14
+
+I0b-F2-R reached actual idle/pending0 at 07:15:51 UTC; the full final and
+[197-line literal inventory review](../../reviews/2026-10-14-r2-inventory-literal-review.md) were recovered.
+Report SHA-256 is `34095bee08fc89b67967fff7b4dd8852aa79f0778b854dc173a00c84dce6c699`.
+The coordinator verified all21 frozen target/reference/prior-review inputs and26 report
+links/line bounds, then checked the proposed trigger against the source reader and three
+body loops. Default universal-newline reading and splitlines() can make a physical
+comment containing CR or U+2028 contribute a phantom mapping. This is source reasoning,
+not an executed parser/checker reproduction or an assertion about current live inputs.
+
+I0b-F-R01 is partially resolved: original dynamic tokens are blocked by shared helpers;
+the complete wrapper boundary remains open as I0b-F2-R01/P2. DB original3 and Raw5
+source-review closures remain intact. Heartbeat8235440c was deleted after full recovery.
+A bounded one-file correction will preserve decoded source newline characters, split
+only at LF, and cover actual reader/wrapper paths with inert in-memory fixtures.
+No parser/regression/test, new CI or operational action was performed in this recovery.
+
+
+### Wave 14 fixed physical-line correction brief
+
+| Package | Complexity | Basis | Confidence | Escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-F3 | intermediate | Known one-file reader/body-loop defect; meaningful wrapper/reader regressions require a bounded seam while preserving current literal semantics | high | Any need to change production mapping or external fixture scope must be reported; do not invent a shell interpreter |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-F3 | 14 | intermediate | Preserve physical LF/comment semantics before literal validation and cover whole wrapper paths | deploy/secrets/runtime-static-check.sh embedded Python only | Recovered I0b-F2-R01, source-wave-14-inputs.json | New codex/gpt-6.1-sol/max worker; model-only escalation from Luna/max | One-file diff/hash plus reader/wrapper guard-to-written-test map | bash-n/full AST/diff/hash only; later independent review and hosted CI |
+
+I0b-F and I0b-F2 have successive source-review failures against the same unknown-syntax
+rejection boundary: arbitrary dynamic tokens, then wrapper normalization before validation.
+This observed repeated incomplete closure triggers the repository's one-tier model escalation.
+Only the model changes from Luna to Sol; max effort is retained. Current Astra/high profile
+is coordinator-only. The new worker receives a fresh, self-contained context and has no
+other writable package. No costlier model was used before the observed validation failures.
+
+Target workspace: `/data/worktrees/3puw275b/excited-dolphin`. Only the embedded Python
+block in `deploy/secrets/runtime-static-check.sh` is writable, starting768lines,
+SHA-256 `332324fba66d9c9c5a8f8518d470bc1cf9a9df88b004743d8b23c5ee06069e06`.
+All shell bytes outside that block, nineteen reference files and prior reports are frozen.
+Read source2593fbe, the197-line review and private source-wave-14 inventory before editing.
+
+Required correction:
+- Read source text through a shared context-managed helper using UTF-8 and `newline=""`
+  so CR/CRLF and Unicode line separators are not translated before inspection. Keep file
+  path readers delegating to the real parsing path; no eval/exec/source or external fixture.
+- All three body loops split only on literal LF (`split("\n")`), not splitlines or
+  another universal-line operation. Retain ASCII space/tab trimming/field parsing and
+  the existing header/branch, duplicate, unknown-body and literal-field guards.
+- A physical comment remains a comment through its next LF, including embedded CR or
+  U+2028. The same characters in actual mapping tokens must fail literal validation or
+  unsupported syntax checks. Do not silently delete, translate or strip those characters.
+- Factor pure source-text wrappers if needed for in-memory tests, preserving both existing
+  path entrypoints and actual production parser helpers. Do not create a general shell parser
+  or broaden unrelated accepted syntax. Keep all prior helper/33-map parity/mutation checks.
+
+Required written regressions use actual production readers/wrappers, not copied regex or
+expected dictionaries as the implementation:
+- Valid LF/ASCII space-tab fixtures for both complete map wrappers have exact expected tuples.
+- For CR and U+2028, place a plausible extra mapping after a comment marker on the same physical
+  LF-ended line in each selected copy-function body, release branch and validator array.
+  It must not enter the map. A paired ordinary validator entry must still make inventories
+  differ, demonstrating that a phantom provisioner mapping cannot produce false parity.
+- Put those characters inside non-comment mapping lines/fields: reject with InventoryError.
+  Preserve duplicate/unknown-body rejection through the wrappers; only InventoryError counts
+  as an expected rejection, not a broad exception.
+- Exercise the actual path-reader seam without disk fixtures: a standard-library mocked open
+  may return an io.TextIOWrapper over io.BytesIO and model normal newline handling. It must
+  preserve the submitted CR/CRLF/U+2028 text and fail the regression if newline preservation
+  is removed. Fixed fake paths and bytes only; no source expression is executed or printed.
+  All fixture callbacks/reader handles are scoped and closed. New stdlib imports are allowed;
+  no dependency installation or new external fixture files.
+- Invoke written regressions only after all helpers they use are defined, before real map
+  construction. Do not claim they passed until actual hosted execution.
+
+Allowed local work: bounded reads, source edit, hashes/counts, bash-n, complete embedded
+Python AST and scoped diff/whitespace checks. No parser helper/wrapper/regression/checker/
+validator/provisioner/self-test/test execution, Cargo/rustc/Clippy/build, DB/SQL/root/Docker,
+provider/network/workflow/production action, Git write or delegation. Do not edit any docs,
+ledger, report, shell fixture, production mapping, Raw, wire, D4/D5 or I0a file.
+
+Final within30minutes of actual startup (else INCOMPLETE with exact residual scope): changed
+file/lines/hash, precise finding disposition and reader/wrapper-to-written-test map, deviations
+and reasons, actual checks/results, unresolved/missing/not-found/not-verified items (explicit
+none when empty), decomposition, background work and pending permissions. Coordinator owns
+independent review, integration, exact-candidate hosted CI and later operational acceptance.
