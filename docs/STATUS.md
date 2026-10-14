@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — `f9dfffb`의 [CI38530582876](reviews/2026-10-14-r2-role-raw-ci.md)은 실패했다. 수집기 세 match의 새 StoreError 처리 누락(E0004), bootstrap 자격정보 검사 기대값 7→8 누락을 확인했다. 세 파일 보정과 기존 PG 실패 로그·receipt 진단을 Wave17로 분리했다. 이번 wire30개·Raw18개는 컴파일 단계에서 막혀 미실행이다. `929fcd6`의 부분 성공 근거를 보존하며 보정 후 독립 리뷰·새 후보 CI를 진행한다. 0060·전체 입력·운영·Owner 인수는 후속이다 [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — f9dfffb 실패 원인인 수집기 세 match와 bootstrap 기대값 누락의 세 파일 보정본을 actual idle/pending0에서 회수했다. [추가 진단](reviews/2026-10-14-r2-role-raw-ci-diagnostics.md)으로 Clippy·chart·PG 실패 로그의 동일 E0004 세 건을 대조했다. 원본48개와 신규 회귀1개는 새 후보에서 실행 검증해야 한다. Wave18 독립 검토 후 기존 실행 부재를 확인해 새 후보 CI를 진행한다. 이전929fcd6 부분 성공과 실패 이력은 보존하며 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

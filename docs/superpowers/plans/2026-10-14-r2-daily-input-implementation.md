@@ -2069,3 +2069,80 @@ reconcile/renew/handoff before expiry. Same-daemon monitoring cannot protect dae
 Source correction and supplemental diagnosis are underway; no new candidate CI has
 been dispatched. The failed f9dfffb run and48 unexecuted Rust tests remain distinct from
 any future source review or execution. Coordinator owns result integration and verification.
+
+
+## Wave17 source and diagnostics recovered — 2026-10-14
+
+Both workers reached actual idle/activeTurn null/pending0, and full substantive finals
+were recovered: source14d3d7c8 at08:21:13.634UTC, diagnostics11a8f223 at08:19:52.294UTC.
+The memory-only diagnostic callback was supplemented by its substantive activity final.
+Heartbeat5b314fa7 was deleted after both results were recovered.
+
+The coordinator inspected the exact three-file source delta and matched final hashes:
+pipeline.rs1226lines `b31d2e830e10f17212826cad1f990203a437575e0d4cddc23aab2ec9954c2633`;
+worker.rs6797lines `9b03eef5aa5f3966d9d06c64bd0a2f42fc1e665457e3162e44d225cf7a3cf15a`;
+migrate-static-check.sh264lines `1a5c8411b7496c40720ed0691097889fb2b6ec6be82178eac7da230bde747589`.
+All23 read-only references remained exact. Eleven new error variants are explicitly
+Permanent in both classifiers and use the existing static integrity diagnostic; prior
+Io/FileExists and recursive wrapper semantics are unchanged. One written unit test
+covers all11 variants plus both wrappers through classification and redacted diagnostic
+paths. The bootstrap count alone changes7to8; db-migrate remains1. Worker rustfmt/bash-n/
+diff checks passed; coordinator diff/hash/source inspection passed. Tests are unexecuted.
+
+The supplemental15-line diagnostic report SHA is
+`16eca425449e48d3a39e370e6d5c456bf5d8c329bf318b3902df4b973be4fcb0`;
+private201-line receipt SHA is
+`0a1d2394cd1ecc350a76a707b29d452e5aab5605a9fd3b8431d49db2f92a9d46`.
+Coordinator verified original/supplemental hashes, private modes, identical three log
+response fingerprints and launch-to-inventory linkage. All three named logs show the
+same three E0004 diagnostics, including PG's retained api-tenancy-rls failure log.
+The pinned run_db_test source appends tests_run only after success, explaining omission
+of the failed phase. Outer PG step exit1 is known; nested Cargo exit remains unknown.
+No additional failure is ruled out. Original error-count/chart-comparison/inventory-link
+fields are corrected in the supplement without rewriting original evidence.
+
+This accepts the diagnostic evidence and recovers the source handoff, not compilation,
+tests or source acceptance. Independent delta review follows. The new unit-test name is
+worker::process_tests::committed_manifest_store_errors_are_permanent_and_diagnostic_redacted;
+a future hosted inventory therefore includes49 Linux Rust names (prior48 plus this one).
+No new candidate CI, local tests/scripts, database or operational action was run.
+
+
+### Wave18 independent caller integration review
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-I1b-S1-F-R | intermediate | Three fixed caller/checker changes, explicit behavior, one focused regression; review conclusion needs independent judgment | high | Concrete contract or compile/lint concern returns for bounded correction; no scope expansion |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-I1b-S1-F-R | 18 | intermediate | Independently review exact three-file integration delta | docs/reviews/2026-10-14-r2-caller-integration-review.md only | Recovered Wave17, fixed source-wave-18 inputs | Existing idle a4b5c1b9, codex/gpt-6.1-sol/high | One bounded source-review report | Reads/hash/rustfmt-check/bash-n/diff/links only; hosted CI later |
+
+WP-4/I0b-I1b-S1-F-R (Wave18), R2-04/09, independent source review. Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+Your sole writable output is /data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-14-r2-caller-integration-review.md. No source or other document writes. Prior workers are actual idle/pending0 and their substantive finals were recovered: source14d3d7c8 at08:21:13.634UTC and diagnostic11a8f223 at08:19:52.294UTC. No new CI exists. Previous exact f9dfffb9a5d4bfc38a9df347af0de154dbe6d11b/run38530582876 remains terminal failure.
+
+Classification intermediate/high confidence: three bounded integration changes with an explicit classification/diagnostic contract and one meaningful new unit test. Existing codex/gpt-6.1-sol/high follows the repository's independent-review rule; current configured profile is coordinator-only. Report conflicting or missing requirements, do not invent policy or broaden the task.
+
+Read root AGENTS.md, docs/ROADMAP.md and Wave17/18 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. Private target/r2-daily-beta/wp-4-integration/source-wave-18-inputs.json pins targets, read-only references and failure evidence. Compare these three current files against f2dc593 (the prior documentation HEAD with unchanged f9 candidate product bytes):
+- data-pipelines/collectors/src/pipeline.rs,1226lines,SHAb31d2e830e10f17212826cad1f990203a437575e0d4cddc23aab2ec9954c2633.
+- data-pipelines/collectors/src/worker.rs,6797lines,SHA9b03eef5aa5f3966d9d06c64bd0a2f42fc1e665457e3162e44d225cf7a3cf15a.
+- deploy/db/migrate-static-check.sh,264lines,SHA1a5c8411b7496c40720ed0691097889fb2b6ec6be82178eac7da230bde747589.
+
+Verified failure evidence is docs/reviews/2026-10-14-r2-role-raw-ci.md (27lines/fbe0d8930036cbc41e9a9e73c0e928c8df32f73327027b5ae25a90229f9f61d4), supplemental docs/reviews/2026-10-14-r2-role-raw-ci-diagnostics.md (15lines/16eca425449e48d3a39e370e6d5c456bf5d8c329bf318b3902df4b973be4fcb0). Supplemental private diagnostic-evidence.json is0a1d2394cd1ecc350a76a707b29d452e5aab5605a9fd3b8431d49db2f92a9d46. All three Clippy/chart/PG logs contain the same three primary E0004 errors. PG nested Cargo exit is not emitted. All30wire+18LinuxRaw and chart tests were not executed. Policy failed expected7 bootstrap entries vs8 in provisioner/Compose. Other source-review closures remain source-only.
+
+Coordinator-fixed contract:
+All11 new committed-manifest StoreError variants are explicitly Permanent in both store_failure_class and normalize_store_failure_class, and map to existing KIS_NORMALIZE_INTEGRITY_FAILURE in normalize_store_error_code. This includes limit/overflow/allocation and metadata/scope/conflict failures; no automatic retry is added. Existing Io/FileExists distinctions and CleanupFailed/IndeterminateBatchCommit recursion must remain exact. No new error code/public API/wildcard/lint allowance or reader activation.
+The11 variants are InvalidCommittedManifestReadLimits, CommittedManifestReadLimitOverflow, CommittedManifestReadAllocationFailed, CommittedManifestReadByteCountOverflow, CommittedManifestReadLineCountOverflow, CommittedManifestReadRecordCountOverflow, CommittedManifestByteLimitExceeded, CommittedManifestRecordLimitExceeded, CommittedManifestRecordScopeMismatch, InvalidCommittedManifestRecord, CommittedManifestRecordConflict.
+The new worker::process_tests::committed_manifest_store_errors_are_permanent_and_diagnostic_redacted must exercise all11 through both public pipeline classifiers and normalize_diagnostic, exact static code, absent optional fields and harmless path/reason redaction, plus both recursive wrappers. Inspect type/move/borrow/Debug compatibility against frozen storage.rs/normalize.rs and collectors lib reexports, fixture structure, test relevance and strict-lint exposure without executing anything. Ensure existing tests unchanged. Do not treat formatting as compilation.
+The shell diff must only change bootstrap expected_count7to8. db-migrate count1 and all999/999/0400/non-root checks remain. Check8 against frozen provisioner and Compose source, without executing or printing credential fixtures.
+
+Inspect the exact diff, target hashes/counts, all unchanged pinned references, preservation of boundaries and test semantics. No general re-review of earlier parser/storage architecture or new policy. A concrete new defect should cite exact source and practical consequence; uncertainty must be explicit. Source verdict only. Do not repair a defect yourself.
+
+Allowed: read source/diff/hash, scoped rustfmt --edition2024 --check with skip_children=true, bash -n, scoped diff whitespace, report link/line validation. No Cargo/rustc/Clippy/tests/build; no parser/checker/validator/provisioner/self-test execution; no SQL/DB/root/Docker/provider/network/production/workflow actions, dependencies, Git staging/commit/push, delegation or source edits. Input files are frozen for your review. Full R2/I0/0060/pool/full-snapshot/runtime/Owner acceptance is outside scope.
+Report within30minutes of actual startup or INCOMPLETE with exact remaining scope. Final: report path/line count/hash, each integration disposition/findings severity and anchors, deviations/reasons, checks/results, unresolved/not-found/unverified (explicit none when empty), decomposition/background/pending permissions. Coordinator owns acceptance and later one new exact-candidate hosted CI after existing-run query. Use only fresh memory-hook envelopes.
+
+Coordinator verifies actual idle/full report and compares concrete findings against the
+frozen delta. Only after source review acceptance does one new candidate hosted run
+follow existing-run inspection. A defect requires a new bounded correction brief, with
+the old failure evidence preserved. No operating authority expands.

@@ -1185,3 +1185,42 @@ reconcile/renew/handoff before expiry. Same-daemon monitoring cannot protect dae
 Source correction and supplemental diagnosis are underway; no new candidate CI has
 been dispatched. The failed f9dfffb run and48 unexecuted Rust tests remain distinct from
 any future source review or execution. Coordinator owns result integration and verification.
+
+
+## Wave17 source and diagnostics recovered — 2026-10-14
+
+Both workers reached actual idle/activeTurn null/pending0, and full substantive finals
+were recovered: source14d3d7c8 at08:21:13.634UTC, diagnostics11a8f223 at08:19:52.294UTC.
+The memory-only diagnostic callback was supplemented by its substantive activity final.
+Heartbeat5b314fa7 was deleted after both results were recovered.
+
+The coordinator inspected the exact three-file source delta and matched final hashes:
+pipeline.rs1226lines `b31d2e830e10f17212826cad1f990203a437575e0d4cddc23aab2ec9954c2633`;
+worker.rs6797lines `9b03eef5aa5f3966d9d06c64bd0a2f42fc1e665457e3162e44d225cf7a3cf15a`;
+migrate-static-check.sh264lines `1a5c8411b7496c40720ed0691097889fb2b6ec6be82178eac7da230bde747589`.
+All23 read-only references remained exact. Eleven new error variants are explicitly
+Permanent in both classifiers and use the existing static integrity diagnostic; prior
+Io/FileExists and recursive wrapper semantics are unchanged. One written unit test
+covers all11 variants plus both wrappers through classification and redacted diagnostic
+paths. The bootstrap count alone changes7to8; db-migrate remains1. Worker rustfmt/bash-n/
+diff checks passed; coordinator diff/hash/source inspection passed. Tests are unexecuted.
+
+The supplemental15-line diagnostic report SHA is
+`16eca425449e48d3a39e370e6d5c456bf5d8c329bf318b3902df4b973be4fcb0`;
+private201-line receipt SHA is
+`0a1d2394cd1ecc350a76a707b29d452e5aab5605a9fd3b8431d49db2f92a9d46`.
+Coordinator verified original/supplemental hashes, private modes, identical three log
+response fingerprints and launch-to-inventory linkage. All three named logs show the
+same three E0004 diagnostics, including PG's retained api-tenancy-rls failure log.
+The pinned run_db_test source appends tests_run only after success, explaining omission
+of the failed phase. Outer PG step exit1 is known; nested Cargo exit remains unknown.
+No additional failure is ruled out. Original error-count/chart-comparison/inventory-link
+fields are corrected in the supplement without rewriting original evidence.
+
+This accepts the diagnostic evidence and recovers the source handoff, not compilation,
+tests or source acceptance. Independent delta review follows. The new unit-test name is
+worker::process_tests::committed_manifest_store_errors_are_permanent_and_diagnostic_redacted;
+a future hosted inventory therefore includes49 Linux Rust names (prior48 plus this one).
+No new candidate CI, local tests/scripts, database or operational action was run.
+
+Wave18 independent three-file source review is prepared; its sole output is the caller-integration review report. No CI dispatch before source-review acceptance.

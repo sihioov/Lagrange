@@ -293,7 +293,18 @@ pub fn store_failure_class(error: &StoreError) -> FailureClass {
         | StoreError::InvalidBatchMetadata { .. }
         | StoreError::MissingEvidence { .. }
         | StoreError::Serialization { .. }
-        | StoreError::ManifestConflict { .. } => FailureClass::Permanent,
+        | StoreError::ManifestConflict { .. }
+        | StoreError::InvalidCommittedManifestReadLimits { .. }
+        | StoreError::CommittedManifestReadLimitOverflow
+        | StoreError::CommittedManifestReadAllocationFailed { .. }
+        | StoreError::CommittedManifestReadByteCountOverflow
+        | StoreError::CommittedManifestReadLineCountOverflow
+        | StoreError::CommittedManifestReadRecordCountOverflow
+        | StoreError::CommittedManifestByteLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordScopeMismatch { .. }
+        | StoreError::InvalidCommittedManifestRecord { .. }
+        | StoreError::CommittedManifestRecordConflict { .. } => FailureClass::Permanent,
     }
 }
 
@@ -350,7 +361,18 @@ fn normalize_store_failure_class(error: &StoreError) -> FailureClass {
         | StoreError::InvalidBatchMetadata { .. }
         | StoreError::MissingEvidence { .. }
         | StoreError::Serialization { .. }
-        | StoreError::ManifestConflict { .. } => FailureClass::Permanent,
+        | StoreError::ManifestConflict { .. }
+        | StoreError::InvalidCommittedManifestReadLimits { .. }
+        | StoreError::CommittedManifestReadLimitOverflow
+        | StoreError::CommittedManifestReadAllocationFailed { .. }
+        | StoreError::CommittedManifestReadByteCountOverflow
+        | StoreError::CommittedManifestReadLineCountOverflow
+        | StoreError::CommittedManifestReadRecordCountOverflow
+        | StoreError::CommittedManifestByteLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordScopeMismatch { .. }
+        | StoreError::InvalidCommittedManifestRecord { .. }
+        | StoreError::CommittedManifestRecordConflict { .. } => FailureClass::Permanent,
     }
 }
 

@@ -596,7 +596,18 @@ fn normalize_store_error_code(error: &StoreError) -> &'static str {
         | StoreError::InvalidBatchMetadata { .. }
         | StoreError::MissingEvidence { .. }
         | StoreError::Serialization { .. }
-        | StoreError::ManifestConflict { .. } => "KIS_NORMALIZE_INTEGRITY_FAILURE",
+        | StoreError::ManifestConflict { .. }
+        | StoreError::InvalidCommittedManifestReadLimits { .. }
+        | StoreError::CommittedManifestReadLimitOverflow
+        | StoreError::CommittedManifestReadAllocationFailed { .. }
+        | StoreError::CommittedManifestReadByteCountOverflow
+        | StoreError::CommittedManifestReadLineCountOverflow
+        | StoreError::CommittedManifestReadRecordCountOverflow
+        | StoreError::CommittedManifestByteLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordScopeMismatch { .. }
+        | StoreError::InvalidCommittedManifestRecord { .. }
+        | StoreError::CommittedManifestRecordConflict { .. } => "KIS_NORMALIZE_INTEGRITY_FAILURE",
     }
 }
 
@@ -6384,6 +6395,91 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
         assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_UNEXPECTED_ENDPOINT");
         assert_eq!(diagnostic.endpoint, None);
         assert_eq!(diagnostic.file_name, Some("bars.json"));
+    }
+
+    #[test]
+    fn committed_manifest_store_errors_are_permanent_and_diagnostic_redacted() {
+        use market_data::normalize::NormalizeError;
+        use market_data::storage::StoreError;
+
+        let assert_failure = |error: StoreError| {
+            assert_eq!(
+                crate::pipeline::store_failure_class(&error),
+                crate::FailureClass::Permanent
+            );
+            let normalize_error = NormalizeError::Store(error);
+            assert_eq!(
+                crate::pipeline::normalize_failure_class(&normalize_error),
+                crate::FailureClass::Permanent
+            );
+            let diagnostic = super::normalize_diagnostic(&normalize_error)
+                .expect("committed manifest normalization diagnostic");
+            assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_INTEGRITY_FAILURE");
+            assert_eq!(diagnostic.endpoint, None);
+            assert_eq!(diagnostic.http_status, None);
+            assert_eq!(diagnostic.response_kind, None);
+            assert_eq!(diagnostic.file_name, None);
+            let rendered = format!("{diagnostic:?}");
+            assert!(!rendered.contains("S1_SYNTHETIC_REASON"));
+            assert!(!rendered.contains("S1_SYNTHETIC_PATH"));
+            assert!(!rendered.contains("S1_SYNTHETIC_CLEANUP"));
+        };
+
+        for error in [
+            StoreError::InvalidCommittedManifestReadLimits {
+                reason: "S1_SYNTHETIC_REASON",
+            },
+            StoreError::CommittedManifestReadLimitOverflow,
+            StoreError::CommittedManifestReadAllocationFailed {
+                requested_bytes: usize::MAX,
+            },
+            StoreError::CommittedManifestReadByteCountOverflow,
+            StoreError::CommittedManifestReadLineCountOverflow,
+            StoreError::CommittedManifestReadRecordCountOverflow,
+            StoreError::CommittedManifestByteLimitExceeded { max_bytes: 128 },
+            StoreError::CommittedManifestRecordLimitExceeded { max_records: 8 },
+            StoreError::CommittedManifestRecordScopeMismatch {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 9,
+            },
+            StoreError::InvalidCommittedManifestRecord {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 10,
+            },
+            StoreError::CommittedManifestRecordConflict {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 11,
+            },
+        ] {
+            assert_failure(error);
+        }
+
+        assert_failure(StoreError::CleanupFailed {
+            path: "S1_SYNTHETIC_PATH".to_owned(),
+            original: Box::new(StoreError::InvalidCommittedManifestRecord {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 12,
+            }),
+            cleanup: std::io::Error::other("S1_SYNTHETIC_CLEANUP"),
+        });
+
+        let entry = market_data::storage::ManifestEntry {
+            batch_id: domain::BatchId::generate(),
+            provider: market_data::contract::PROVIDER_KIS_DAILY_RANGE.to_owned(),
+            market: market_data::contract::MARKET_KR.to_owned(),
+            date: domain::TradingDate::parse("2026-08-19").unwrap(),
+            retrieved_at: domain::UtcTimestamp::parse_rfc3339("2026-08-19T00:00:00Z").unwrap(),
+            mode: market_data::contract::FetchMode::Credentialed,
+            entitlement_reference: Some("fixture://kis".to_owned()),
+            files: Vec::new(),
+        };
+        assert_failure(StoreError::IndeterminateBatchCommit {
+            entry: Box::new(entry),
+            source: Box::new(StoreError::CommittedManifestRecordConflict {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 13,
+            }),
+        });
     }
 
     #[test]
