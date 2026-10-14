@@ -1390,3 +1390,21 @@ still requires actual idle/pending0 and source checks. Renew/handoff before expi
 same-daemon monitoring cannot protect a daemon outage. Private startup/input/sent-brief
 receipts and the owned-worker ledger record the transfer. New source tests, compilation,
 hosted verification and acceptance remain pending; no new CI or operational action.
+
+
+### Wave22/23 — I0c source correction and snapshot contract freeze, 2026-10-14
+
+I0c reviewer actual idle/pending0/full final recovered09:42:44.546UTC; report256lines
+c72b25e2… and33pins/42links verified. Its sole P2 concerned four redundant transaction
+receivers. Coordinator replaced only those receivers; exact f0c6590 substitution
+comparison, scoped rustfmt/check and whitespace passed. Shell targets and test guards
+are unchanged. No local compiler/Clippy/test/DB was run; new hosted evidence is needed.
+
+S2-D actual idle/pending0/full final recovered09:44:34.523UTC. Original861line proposal
+22145854… is preserved privately,17pins/67links checked. Coordinator accepted P1–P9
+with P10 Linux-only narrowing because cached rustix RawDir is linux_kernel-specific.
+Accepted contract898lines c6f15291… freezes two new source/test files; registration is
+sequential after source and concurrent CI collection finish. Non-Linux returns
+UnsupportedPlatform without I/O. No live UID, scan budget, DB0060 or runtime authority
+is supplied. Plan Wave22/23 separates51-name existing-candidate CI collection from
+new snapshot implementation and later independent review/hosted verification.

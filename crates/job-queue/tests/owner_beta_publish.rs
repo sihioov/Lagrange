@@ -1305,7 +1305,7 @@ async fn daily_input_admitter_pool_is_direct_bounded_and_unprivileged() {
             return Err("admitter effective privileges or membership edges are unexpected");
         }
 
-        let mut create_tx = (&mut *first)
+        let mut create_tx = first
             .begin()
             .await
             .map_err(|_| "admitter CREATE probe transaction could not begin")?;
@@ -1328,7 +1328,7 @@ async fn daily_input_admitter_pool_is_direct_bounded_and_unprivileged() {
             return Err("admitter CREATE probe was not denied with SQLSTATE 42501");
         }
 
-        let mut set_role_tx = (&mut *first)
+        let mut set_role_tx = first
             .begin()
             .await
             .map_err(|_| "admitter SET ROLE probe transaction could not begin")?;

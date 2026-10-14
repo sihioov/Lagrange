@@ -2487,3 +2487,88 @@ still requires actual idle/pending0 and source checks. Renew/handoff before expi
 same-daemon monitoring cannot protect a daemon outage. Private startup/input/sent-brief
 receipts and the owned-worker ledger record the transfer. New source tests, compilation,
 hosted verification and acceptance remain pending; no new CI or operational action.
+
+
+## Wave22 — bounded coordinator I0c receiver correction and hosted verification preparation
+
+I0c-R actual idle/pending0/full final recovered at09:42:44.546UTC. The256-line report
+SHA c72b25e2d666f57d9339ca43ee049ecaf85d05c151d4e829441c1ac428024196, all33pins
+and42local links match. Accept P2 I0c-R01 as source reasoning, not an observed fresh
+Clippy failure. Remaining written guards match the frozen I0c brief.
+
+Bounded coordinator source brief: in the two existing I0c Rust test targets only,
+replace each of the four `(&mut *first).begin()` receiver expressions with
+`first.begin()`, retaining the imported Connection trait and every other statement.
+No lint allowance, helper/grant/schema/validator/workflow change. Two-file/four-site
+mechanical correction is performed directly under repository guidance; review of the
+test semantics is already independent. Prove exact equality to f0c6590 after applying
+only those substitutions; scoped rustfmt/whitespace/hash only, no local compiler,
+Clippy,tests orDB. Corrected source acceptance remains contingent on hosted evidence.
+
+Prepare one new exact-candidate ci.yml run only after commit, fast-forward push,
+remote SHA verification and an empty exact-SHA existing-run query. Never rerun/cancel
+old candidates. Read-only collection is Luna/medium, actual-start90minute bound.
+Inventory includes prior49Linux tests plus two new helper names; distinguish their
+workspace rows from real configured-DB calls and no-SKIP evidence. PostgreSQL success
+prints evidence labels, while individual successful nested test logs may not be public;
+missing direct rows stay UNKNOWN, not invented passes. Preserve all prior failure and
+c0 partial-success receipts. No0060 or operational expansion. Snapshot proposal is a
+separate source contract and must be accepted/frozen before implementation.
+
+### Wave22 correction disposition and collector brief
+
+All four receiver substitutions are complete. Exact comparison to f0c6590 after only
+those substitutions passed; scoped rustfmt/check and whitespace passed. An initial
+inert count used a broader receiver substring and was corrected before the exact
+comparison; it caused no source change. The two shell targets and all prior guards
+remain unchanged. JQ1381lines SHA0f443089ea88b56ec0d02b04819b42eb6f02dc9aa82ddfdbe3bbfb4ca9dd7024;
+API327lines SHA036f398afff0315230c71e54daf9ce8460e39d396ba73b2367595fbfb6a36c4c.
+No compiler/Clippy/test success is claimed. I0c-R01 is source-corrected pending CI.
+
+Classification: simple, confidence high; fixed existing-run/log collection with a
+51-name inventory and inspectable artifacts. Luna/medium under the repository rubric;
+escalate one model tier on repeated incorrect extraction or lost evidence, not on wait.
+The only configured profile is Astra/high coordinator; it is not a worker assignment.
+The next exact candidate and launch receipt are coordinator-owned private artifacts.
+
+WP-4/I0c-CI — existing exact-candidate hosted CI evidence collection. Execution skill: $paseo-delegate. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin. Follow AGENTS.md, docs/ROADMAP.md R2-04/09, this plan Wave22, and the exact candidate/run/launch inventory supplied at dispatch. Prior c0ac599cb1ede900e155f724687c57410b4bd0d9/run38536460035 succeeded with 49 Linux Rust and6 chart direct rows, independently checked; it is baseline only. I0c source f0c6590 added two helper regressions and two exact official no-SKIP calls. Independent report docs/reviews/2026-10-14-r2-daily-admitter-helper-review.md (256lines/c72b25e2d666f57d9339ca43ee049ecaf85d05c151d4e829441c1ac428024196) had only four receiver-borrow sites; coordinator corrected exactly those, preserving all other statements and frozen references. Local rustfmt/bash-n/diff are not compiler/test success.
+Your ONLY writable outputs are docs/reviews/2026-10-14-r2-admitter-helper-ci.md and target/r2-daily-beta/ci/<new-candidate-short>/ (private evidence only, directories0700/files0600). Never modify any prior report/receipt, source, docs other than report, inventory, launch receipt, ledger, or workflow. No Git writes. A concurrent S2 worker may create two unregistered new snapshot files only; ignore them, and read source evidence at exact candidate using git show or pinned files. No workspace-wide searches.
+Read-only GitHub existing run/job/log metadata retrieval is authorized. Never dispatch, rerun, cancel, duplicate or change workflows. No local Cargo/rustc/Clippy/tests/builds/parser/checker/validator/provisioner/self-test/SQL/DB/root/Docker/provider/production or dependencies. Do not execute repository scripts. Raw logs and credentials never persisted; process logs in memory and keep safe fixed findings, sizes/hashes, job/step status, named test rows and response hashes only. Strip timestamp/ANSI before matching compiler diagnostics; missing matches are UNKNOWN, not zero errors. Do not print SQL error bodies, URLs with credentials or fixture secret literals.
+Wait event/bounded polls for existing run only; before90minutes from actual startup return substantive final or INCOMPLETE with exact remaining run/jobs and monitoring handoff. No silent abandonment. A running job with unavailable logs is not a pass. Require exact headSHA, attempt1, seven checkout log SHAs, all job/step statuses and required aggregate. Preserve old failure and c0 success evidence.
+Inventory expects51 Linux Rust names:30 wire+18 S1 Raw+1 collector+2 helper. Record each direct ok/failed/not-executed/unknown row and source target; non-Unix S1 case is excluded on Linux, never passed. Six chart rows separately; workspace result-row sums are not unique tests. Historical V2/V3 evidence is separate, never infer from counts.
+For new helpers, workspace-tests explicitly sets DATABASE_URL for disposable QA. Verify exact workflow and configured context; a direct ok row alone on a DB-absent skip path is not direct-login evidence. Official PostgreSQL validator retains10 calls and appends labels jobqueue-daily-admitter-pool and api-daily-admitter-pool, using exact filtered tests and no-SKIP gate. Record actual labels/APPROVED or DENIED/no-SKIP evidence, configured DB versus absent DB behavior, per-node rows if present, and any unprinted nested Cargo exit as UNKNOWN. Successful nested logs may not be printed; distinguish wrapper evidence from direct individual nested rows. This tests helper current/session identities, both actor GUCs, pool2/reacquisition, attributes, membership/privileges, typed42501 denials, rollback and cleanup only to the extent execution evidence establishes them.
+Record strictClippy/format/policy wrapper and individual subcases/fakeroot skip messages, PostgreSQL59 checksum equality/0039/cleanup, Python suite totals vs quiet readiness/SIGTERM node gaps, Web/OpenAPI/E2E and required. Never claim hidden-skip absence, negative bootstrap/rollback readiness, migration0060, full snapshot/provider reconstruction/admission, runtime/Owner/final C_R2.
+Relevant source reads are only the new two Rust targets, their common harnesses, integration validator/static-check, ci.yml and pinned policy scripts when needed to interpret printed markers. Do not sweep unrelated code. Hash all28 source pins against candidate; verify inventory/launch and baseline report/receipt unchanged. Missing/contradictory evidence stays explicit, no invented root cause or pass.
+Return report path/linecount/hash, private receipt path/mode/hash, run/SHA/terminal status, exact failures and51row outcome counts, actual checks, deviations/reasons, unresolved/unknown inputs (explicit none when empty), further decomposition/background/pending permissions. Memory errors are not saves; use only genuine fresh hooks. Coordinator owns acceptance.
+
+## Wave23 — accepted Linux snapshot source implementation
+
+S2-D was actual idle/pending0/full-final recovered at09:44:34.523UTC. Original861line
+proposal22145854 was preserved privately. Coordinator checked17pins/67links and the
+full API/lock/limits/errors/test design, accepting P1-P9 with P10 Linux-only amendment
+after checking cached rustix RawDir exports. Accepted contract898lines SHA
+c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056. This is an implementation
+freeze, not executable/source/runtime acceptance. No live operational value is filled.
+
+Classification: intermediate, confidence medium; architecture and all32guard cases
+are fixed, implementation is one cohesive two-file capability with independent
+review and later hosted verification. Luna/max for specified implementation; escalate
+model only on repeated failure/loop/lost context. Bound90minutes from actual startup.
+The two new files are disjoint from Wave22's28frozen source pins. Registration waits
+until both source worker and CI collector are idle with substantive finals recovered.
+Then pin the combined diff, independently review it, resolve concrete findings, and
+prepare a new exact candidate for hosted verification. Never mutate current CI source.
+
+WP-4/I1b-S2 — fixed-contract Linux committed Raw snapshot source and regressions. Execution skill: $paseo-delegate. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin; R2-04/09. Read AGENTS.md, docs/ROADMAP.md and this plan Wave23. The coordinator accepted/froze docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md:898lines SHA256 c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056. Read it IN FULL before editing. P1-P9 are now accepted choices with binding P10: initial implementation Linux only, cfg(target_os = "linux"); every other target including other Unix returns UnsupportedPlatform without I/O. Earlier proposal wording is author history, overridden by section12. Original861line proposal22145854 is preserved privately. Existing rustix1.1.4 RawDir is linux_kernel-only; no alternative platform implementation or dependency expansion.
+Your ONLY writable files, both new and absent at startup:
+- /data/worktrees/3puw275b/excited-dolphin/crates/market-data/src/daily_price_only/source.rs
+- /data/worktrees/3puw275b/excited-dolphin/crates/market-data/tests/daily_price_only_snapshot.rs
+Implement the complete specified API/capture/lock/resource machinery and meaningful integration/private tests S2-T01–32, with explicit guard-to-test mapping. No source stubs or TODO substitute for required behavior. New test may import market_data::daily_price_only::source, but DO NOT register module or modify mod.rs/lib.rs/Cargo/dependencies. Coordinator registers sequentially after your actual idle/full recovery and concurrent CI collection; until then these files are intentionally unregistered and not compiler-validated. No blanket lint exemptions or changes to existing errors/helpers to make integration easier. Use existing dependency source APIs locally if needed; report exact gaps instead of guessing.
+Frozen input inventory: target/r2-daily-beta/wp-4-integration/source-wave-23-S2-inputs.json. Verify every pin before edits and at final; no modifications to any reference, D4/D5, S1 storage/tests, wire, historical v2/v3, normalization, collectors, I0c targets, shell, workflows, docs/roadmap, ledger or another worker output. Prior c0 CI only accepted partial S1/wire/role source. Concurrent CI collector reads its exact candidate; no test/build run is allowed locally.
+Implement exactly contract signatures/private constructors/getters, complete-scope committed discovery and exact lookup, immutable captured bytes AND retained readonly descriptors, one shared lock through Drop, finite explicit ScanLimits and accounting for bytes/records/batches/files/path/depth/open FDs including transient descriptors. No default/unbounded caps/truncation/paging/cache fallback. Enforce limits before corresponding allocation/open/retention, checked arithmetic and bounded fallible allocation; metadata decoded with bounded seed/depth rules while preserving legacy Raw equality/unknown-field semantics and exact line bytes. Directory enumeration uses borrowed RawDir with fixed buffer, rewind, no duplicated descriptor. Root path absolute/no-follow; Raw UID explicit/no euid inference/root bypass/repair; outside-Raw ancestor policy as frozen. Read controls/leaves readonly, validate types/modes/UID/hardlinks/name-set/bindings/content/hash, final revalidation as specified. One nonblocking shared-lock attempt; fieldless DailyEvidenceError fixed code/Display/Debug/sourceNone, no StoreError growth, no leaked provider/path/parser/errno text. Bodies remain opaque storage evidence; no trusted-provider/admission claim.
+S2-T01–32 are required meaningful written tests: valid controls before each fault, exact/+1 bounds including aggregate and FD highwater, deterministic private phase hooks, before/after content/mode/inode checks excluding atime, shared reader/exclusive writer lock lifecycle and Drop/failure release, pathname/in-place changes, captured immutability, redaction and legacy parity. No sleeps to guess races; pure synthetic counters/stat seams are private cfg(test) only, no public trust bypass. Real cross-principal/ACL and non-Linux execution remain unverified; fixture UID is explicit and local, never a live default.
+No resolve_original/copy traversal/provider parsing/normalization/reconstruction/admission/DB0060/runtime/Owner work. No network/provider/production/SQL/DB/root/Docker/operations, local Cargo/rustc/Clippy/tests/build/parser/checker/validator/provisioner/self-test execution, dependency installation, Git writes/workflow/other agent actions. Allowed: bounded source reads/rg/hash/git show/diff, two-file edits, rustfmt --edition2024 --config skip_children=true and scoped --check, whitespace/static source/citation/pin checks only. Do not invoke test code or a standalone replacement parser as a workaround.
+One bounded direct task, report within90minutes of actual startup; if incomplete, stop with substantive INCOMPLETE and exact remaining contract rows/source issues, no silent narrowing. Do not invent missing/conflicting requirements; state them for coordinator decision before dependent work. No further delegation.
+Final: changed file ranges/linecounts/SHA256, P1–P10 disposition and all32guard-to-written-test mapping, exact checks actually run, preservation pins, deviations+reason, unresolved/missing/conflicting inputs (explicit none when empty), unverified compilation/Clippy/tests/non-Linux/runtime, background work/pending permissions and whether further decomposition is needed. Existing tests and generated bytes remain unexecuted unless hosted evidence later proves them. Fresh genuine memory hook only; errors are not saved. Coordinator owns independent review/registration/commits/new exact-candidate hosted CI/acceptance.
