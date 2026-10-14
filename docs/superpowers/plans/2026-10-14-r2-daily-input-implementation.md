@@ -1141,3 +1141,76 @@ diagram evidence/render는 I6 통합에서 수행하고 main 병합 전 완료�
 receipt를 남겼다. 새 감시 `ce11f12d`는2분 간격·최대60회·07:41:05 UTC 만료다. 만료 전에 실제
 상태를 회수해 갱신/인계하며 같은 daemon의 중단을 보호한다고 주장하지 않는다. 소스 구현은
 실행 중이며 아직 결과/리뷰/실제 테스트를 인수하지 않았다. 로컬/운영 실행 권한을 추가하지 않았다.
+
+
+## Wave 8 source recovery and independent review — 2026-10-14
+
+[Source handoff](../../reviews/2026-10-14-r2-role-and-raw-source-handoff.md) freezes eleven files.
+Both implementers are actual idle/pending0 with full finals recovered. Ten reported hashes
+match; I0b's validate-production-config.sh digest was malformed (65 characters). Its actual
+bytes are pinned in the handoff and private `source-wave-8-final-inputs.json`; the original
+report is preserved. Nine reference files remain byte-identical to 929fcd6. Static checks
+passed, but neither package is source-accepted or runtime-tested. ce11f12d is closed after
+both recoveries. No local compiler/test/DB or new operational action is authorized.
+
+### Review classification and execution graph
+
+| Package | Complexity | Basis | Confidence | Escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-R | intermediate | Nine-file review against fixed D5 role/secret maps and isolated validator contract | high | Missing or contradictory interface, or findings needing changes beyond frozen scope: report, do not invent policy |
+| I1b-S1-R | intermediate | Two-file review against fixed descriptor, exact-line and bounded-read contract | high | Unresolved race/trust contract or scope conflict: report concrete evidence for coordinator decomposition |
+
+| Package | Wave | Objective / writable scope | Depends on | Worker | Verification |
+| --- | --- | --- | --- | --- | --- |
+| I0b-R | 9 | Review I0b; only docs/reviews/2026-10-14-r2-daily-role-wiring-review.md | I0b full final and actual-byte freeze | Existing d9ca76a3, gpt-6.1-sol/high under repository code-review rule | Exact hashes, source delta/call paths, syntax/static checks, findings and execution gaps |
+| I1b-S1-R | 9 | Review Raw evidence sibling; only docs/reviews/2026-10-14-r2-raw-manifest-evidence-review.md | I1b-S1 full final and actual-byte freeze | Existing a4b5c1b9, gpt-6.1-sol/high under repository code-review rule | Exact hashes, legacy-preservation/directory-lock-parser paths, syntax/static checks, guard-to-test mapping |
+
+Current profile Astra/high is marked coordinator; it does not replace the repository's
+Sol/high code-review routing. Each reused reviewer must first be actual idle/pending0 with
+its prior final recovered. Notified follow-ups have disjoint report ownership. Reviewers
+must not edit frozen source, D4/D5, roadmap, ledger, other reports or Git, and must not invoke
+native delegation, Cargo/rustc/Clippy/tests/build/DB/root/Docker/provider/production commands.
+They may read relevant adjacent source to check an exact call path, not redesign later packages.
+
+I0b-R checks transactional preflight before mutations, strict attributes and direct/transitive
+memberships, effective database/schema CREATE, postflight and legacy bootstrap compatibility;
+eight-secret inventory/projection UID/mode/profile consistency and prohibited runtime grants;
+Compose binding and both validator maps/direct login lists. Inspect success and failure
+credential-log paths and distinguish role GUC, actor GUC and uncalled pool behavior. Determine
+which negative/rollback/log cases are written versus missing or unexecuted. Existing migrations
+remain 59; no hypothetical 0060 or future service is a passing requirement for this package.
+
+I1b-S1-R checks D4 exact-line hashing/EOF/duplicate ordering and pre-dedup limits; explicit
+caller limits/checked counters/bounded reads; absolute descriptor-relative no-follow path walk;
+Raw UID/mode/type trust with outside ancestors distinguished; existing read-only shared lock
+and inode/path revalidation before/after read; typed redacted errors/no-write and non-Unix
+closure. Review written boundary/replacement fixtures for compile/Clippy exposure and useful
+assertions without executing them. Preserve legacy reader/writer/orphan and all30 wire tests.
+
+Both reports must give prioritized concrete findings with source lines, trigger, consequence
+and bounded fix; state no findings explicitly if none. Record frozen hashes, checked files,
+written-test coverage and unverified execution separately. Final output must include changed
+file/line range, deviations/reasons, exact checks/results, unresolved/not-found/not-verified
+items, further decomposition, background work and permission waits. Missing requirements
+must be reported instead of invented. Return INCOMPLETE and the checked scope if unable to
+finish within 60 minutes; do not leave background work. Coordinator retains reconciliation.
+
+After actual idle/pending0/full final, the coordinator validates each report against the source,
+resolves concrete findings, commits roadmap/progress with the source delta, and prepares one
+new exact-candidate hosted CI only after checking existing runs. Successful static review does
+not prove compilation, actual SQL/permissions, Raw runtime trust or final R2 acceptance.
+Diagram evidence and local PNG rendering remain required in I6 before structural main merge.
+A replaced bounded heartbeat names only the assigned reviewers and does not protect daemon outage.
+
+
+### Wave 9 actual review startup — 2026-10-14
+
+I0b-R `d9ca76a3-b7dc-4913-944f-10ce8cc35d80` and I1b-S1-R
+`a4b5c1b9-3354-400b-be82-b8dec4f87278` both started at06:05:10 UTC as
+codex/gpt-6.1-sol/high, in the expected workspace/parent with pending0.
+Each notified follow-up writes only its assigned review report. Input bytes remain frozen.
+The 60-minute reporting boundary is07:05:10 UTC; incomplete work must be recovered explicitly.
+Heartbeat `261b0071` runs every2minutes, at most60times, expires08:06:03 UTC.
+Notification registration, actual startup and scope are retained in private wave9 receipts
+and the ledger. The monitor must be reconciled/replaced before expiry; it cannot protect
+against the same daemon stopping. Review outcomes and all new execution evidence remain pending.

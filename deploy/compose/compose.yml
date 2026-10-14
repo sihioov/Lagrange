@@ -312,6 +312,7 @@ services:
       DB_AUDIT_PASSWORD_FILE: /run/secrets/db_audit_password
       DB_RESEARCH_PASSWORD_FILE: /run/secrets/db_research_password
       DB_ADMIN_ROLE_PASSWORD_FILE: /run/secrets/db_admin_password
+      DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE: /run/secrets/db_daily_input_admitter_password
     secrets:
       - source: bootstrap_postgres_password
         target: postgres_password
@@ -345,6 +346,11 @@ services:
         mode: 0400
       - source: bootstrap_db_admin_password
         target: db_admin_password
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: bootstrap_db_daily_input_admitter_password
+        target: db_daily_input_admitter_password
         uid: "999"
         gid: "999"
         mode: 0400
@@ -1508,7 +1514,8 @@ services:
 # ----------------------------------------------------------------------
 # Secrets. `provision-runtime-secrets.sh` creates service-specific copies under
 # the runtime directory with numeric ownership (101 nginx, 999 postgres,
-# 10001 application workers, and 999 for non-root database one-shot jobs).
+# 10001 application workers, 10003 for the staged daily-input admitter copy,
+# and 999 for non-root database one-shot jobs).
 # Compose's long-syntax mode is defense in depth; native Linux bind-backed secrets still
 # rely on these host permissions. Values are injected under /run/secrets.
 # ----------------------------------------------------------------------
@@ -1545,6 +1552,8 @@ secrets:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_research_password
   bootstrap_db_admin_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_admin_password
+  bootstrap_db_daily_input_admitter_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_daily_input_admitter_password
   migrate_db_migration_owner_password:
     file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-migrate/db_migration_owner_password
   postgres_postgres_password:

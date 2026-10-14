@@ -76,6 +76,42 @@ impl ManifestEntry {
     }
 }
 
+/// Explicit allocation bounds for the read-only committed-manifest evidence
+/// reader. Callers must choose both limits for each scan.
+pub struct CommittedManifestReadLimits {
+    pub max_manifest_bytes: usize,
+    pub max_records: usize,
+}
+
+/// One committed JSONL record together with the exact bytes that were hashed.
+///
+/// This is manifest-only evidence. It does not verify `batch.json` or provider
+/// bytes and is not an approval capability.
+pub struct CommittedManifestEvidenceRecord {
+    entry: ManifestEntry,
+    line_bytes: Vec<u8>,
+    line_sha256: ContentHash,
+    line_number: usize,
+}
+
+impl CommittedManifestEvidenceRecord {
+    pub fn entry(&self) -> &ManifestEntry {
+        &self.entry
+    }
+
+    pub fn line_bytes(&self) -> &[u8] {
+        &self.line_bytes
+    }
+
+    pub fn line_sha256(&self) -> &ContentHash {
+        &self.line_sha256
+    }
+
+    pub fn line_number(&self) -> usize {
+        self.line_number
+    }
+}
+
 /// A typed failure from the raw zone.
 #[derive(Debug)]
 pub enum StoreError {
@@ -111,6 +147,28 @@ pub enum StoreError {
         line: usize,
         source: serde_json::Error,
     },
+    /// Invalid explicit limits for the bounded committed-manifest reader.
+    InvalidCommittedManifestReadLimits { reason: &'static str },
+    /// `max_manifest_bytes + 1` cannot be represented as a bounded read size.
+    CommittedManifestReadLimitOverflow,
+    /// The bounded manifest buffer could not be allocated.
+    CommittedManifestReadAllocationFailed { requested_bytes: usize },
+    /// The input byte counter overflowed while reading the manifest.
+    CommittedManifestReadByteCountOverflow,
+    /// The physical line counter overflowed while parsing the manifest.
+    CommittedManifestReadLineCountOverflow,
+    /// The complete-record counter overflowed while parsing the manifest.
+    CommittedManifestReadRecordCountOverflow,
+    /// The committed manifest contains more bytes than the caller allowed.
+    CommittedManifestByteLimitExceeded { max_bytes: usize },
+    /// The committed manifest contains more complete records than allowed.
+    CommittedManifestRecordLimitExceeded { max_records: usize },
+    /// A parsed manifest record does not match the requested provider/market.
+    CommittedManifestRecordScopeMismatch { path: String, line: usize },
+    /// A parsed manifest record has an invalid provider-file name.
+    InvalidCommittedManifestRecord { path: String, line: usize },
+    /// A later row for a batch id differs from the first parsed metadata row.
+    CommittedManifestRecordConflict { path: String, line: usize },
     /// A durable orphan's `batch.json` is malformed.
     CorruptBatchMetadata {
         path: String,
@@ -185,6 +243,45 @@ impl std::fmt::Display for StoreError {
                 f,
                 "corrupt Raw manifest record at {path} line {line}: {source}"
             ),
+            Self::InvalidCommittedManifestReadLimits { reason } => {
+                write!(f, "invalid committed-manifest read limits: {reason}")
+            }
+            Self::CommittedManifestReadLimitOverflow => {
+                f.write_str("committed-manifest byte limit overflows bounded read size")
+            }
+            Self::CommittedManifestReadAllocationFailed { requested_bytes } => write!(
+                f,
+                "could not allocate bounded committed-manifest buffer ({requested_bytes} bytes)"
+            ),
+            Self::CommittedManifestReadByteCountOverflow => {
+                f.write_str("committed-manifest input byte count overflowed")
+            }
+            Self::CommittedManifestReadLineCountOverflow => {
+                f.write_str("committed-manifest physical line count overflowed")
+            }
+            Self::CommittedManifestReadRecordCountOverflow => {
+                f.write_str("committed-manifest record count overflowed")
+            }
+            Self::CommittedManifestByteLimitExceeded { max_bytes } => write!(
+                f,
+                "committed Raw manifest exceeds the {max_bytes}-byte read limit"
+            ),
+            Self::CommittedManifestRecordLimitExceeded { max_records } => write!(
+                f,
+                "committed Raw manifest exceeds the {max_records}-record read limit"
+            ),
+            Self::CommittedManifestRecordScopeMismatch { path, line } => write!(
+                f,
+                "committed Raw manifest record at {path} line {line} has a scope mismatch"
+            ),
+            Self::InvalidCommittedManifestRecord { path, line } => write!(
+                f,
+                "committed Raw manifest record at {path} line {line} has invalid file metadata"
+            ),
+            Self::CommittedManifestRecordConflict { path, line } => write!(
+                f,
+                "committed Raw manifest record at {path} line {line} conflicts with an earlier batch row"
+            ),
             Self::CorruptBatchMetadata { path, source } => {
                 write!(f, "corrupt Raw batch metadata at {path}: {source}")
             }
@@ -230,7 +327,18 @@ impl std::error::Error for StoreError {
             Self::MissingEvidence { source, .. } | Self::Io { source, .. } => Some(source),
             Self::CleanupFailed { original, .. } => Some(original.as_ref()),
             Self::IndeterminateBatchCommit { source, .. } => Some(source.as_ref()),
-            Self::FileExists { .. }
+            Self::InvalidCommittedManifestReadLimits { .. }
+            | Self::CommittedManifestReadLimitOverflow
+            | Self::CommittedManifestReadAllocationFailed { .. }
+            | Self::CommittedManifestReadByteCountOverflow
+            | Self::CommittedManifestReadLineCountOverflow
+            | Self::CommittedManifestReadRecordCountOverflow
+            | Self::CommittedManifestByteLimitExceeded { .. }
+            | Self::CommittedManifestRecordLimitExceeded { .. }
+            | Self::CommittedManifestRecordScopeMismatch { .. }
+            | Self::InvalidCommittedManifestRecord { .. }
+            | Self::CommittedManifestRecordConflict { .. }
+            | Self::FileExists { .. }
             | Self::UnsafeFileName { .. }
             | Self::UnsafeScope { .. }
             | Self::ScopeMismatch { .. }
@@ -362,6 +470,96 @@ impl OpenedManifestControlFile {
             reason: "committed Raw manifest reads require descriptor-relative no-follow opens on this platform".to_owned(),
         })
     }
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct OpenedCommittedManifestEvidenceFile {
+    path: PathBuf,
+    parent: File,
+    leaf: std::ffi::OsString,
+    file: File,
+    trusted_raw_owner_uid: u32,
+}
+
+#[cfg(unix)]
+impl OpenedCommittedManifestEvidenceFile {
+    fn revalidate(&self) -> Result<(), StoreError> {
+        validate_committed_manifest_evidence_node(
+            &self.path,
+            &self.parent,
+            self.leaf.as_os_str(),
+            &self.file,
+            rustix::fs::FileType::RegularFile,
+            Some(self.trusted_raw_owner_uid),
+        )
+    }
+}
+
+#[cfg(unix)]
+fn revalidate_committed_manifest_evidence_directory(
+    path: &Path,
+    expected_directory: &File,
+    current_directory: &File,
+) -> Result<(), StoreError> {
+    use rustix::fs::fstat;
+
+    let expected = fstat(expected_directory)
+        .map_err(|error| io_err("inspect opened committed Raw directory", error.into()))?;
+    let current = fstat(current_directory)
+        .map_err(|error| io_err("inspect current committed Raw directory", error.into()))?;
+    if expected.st_dev != current.st_dev || expected.st_ino != current.st_ino {
+        return Err(StoreError::UnsafePath {
+            path: path.display().to_string(),
+            reason: "committed Raw control directory path changed during the read".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_committed_manifest_evidence_node(
+    path: &Path,
+    parent: &impl std::os::fd::AsFd,
+    leaf: &std::ffi::OsStr,
+    opened: &impl std::os::fd::AsFd,
+    expected: rustix::fs::FileType,
+    trusted_owner_uid: Option<u32>,
+) -> Result<(), StoreError> {
+    use rustix::fs::{AtFlags, FileType, Mode, fstat, statat};
+
+    let opened_stat = fstat(opened)
+        .map_err(|error| io_err("inspect committed manifest descriptor", error.into()))?;
+    let named_stat = statat(parent, leaf, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| io_err("revalidate committed manifest path", error.into()))?;
+    if FileType::from_raw_mode(opened_stat.st_mode) != expected
+        || FileType::from_raw_mode(named_stat.st_mode) != expected
+        || opened_stat.st_dev != named_stat.st_dev
+        || opened_stat.st_ino != named_stat.st_ino
+    {
+        return Err(StoreError::UnsafePath {
+            path: path.display().to_string(),
+            reason: "committed Raw manifest path changed, redirected, or has an unexpected type"
+                .to_owned(),
+        });
+    }
+    if let Some(owner_uid) = trusted_owner_uid {
+        let mode = Mode::from_raw_mode(opened_stat.st_mode);
+        if opened_stat.st_uid != owner_uid {
+            return Err(StoreError::UnsafePath {
+                path: path.display().to_string(),
+                reason: "committed Raw control object does not match the trusted Raw owner"
+                    .to_owned(),
+            });
+        }
+        if mode.intersects(Mode::WGRP | Mode::WOTH) {
+            return Err(StoreError::UnsafePath {
+                path: path.display().to_string(),
+                reason: "committed Raw control objects must not be group/other writable".to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -684,6 +882,167 @@ impl RawStore {
             path: self.manifest_path(provider, market).with_file_name(leaf).display().to_string(),
             reason: "committed Raw manifest reads require descriptor-relative no-follow opens on this platform".to_owned(),
         })
+    }
+
+    #[cfg(unix)]
+    fn open_committed_manifest_evidence_directory(
+        &self,
+        provider: &str,
+        market: &str,
+        trusted_raw_owner_uid: u32,
+    ) -> Result<(PathBuf, File), StoreError> {
+        use rustix::fs::{FileType, Mode, OFlags, open, openat};
+        use rustix::io::Errno;
+        use std::ffi::OsString;
+        use std::path::Component;
+
+        fn directory_open_error(path: &Path, context: &str, error: Errno) -> StoreError {
+            if error == Errno::LOOP {
+                StoreError::UnsafePath {
+                    path: path.display().to_string(),
+                    reason: "committed Raw paths must not contain symlinks".to_owned(),
+                }
+            } else {
+                io_err(context, error.into())
+            }
+        }
+
+        if !self.root.is_absolute() {
+            return Err(StoreError::UnsafePath {
+                path: self.root.display().to_string(),
+                reason: "committed manifest evidence requires an absolute RawStore root".to_owned(),
+            });
+        }
+
+        let mut components = Vec::<OsString>::new();
+        for component in self.root.components() {
+            match component {
+                Component::RootDir | Component::CurDir => {}
+                Component::Normal(name) => components.push(name.to_os_string()),
+                Component::ParentDir | Component::Prefix(_) => {
+                    return Err(StoreError::UnsafePath {
+                        path: self.root.display().to_string(),
+                        reason:
+                            "committed manifest evidence root must not contain parent components"
+                                .to_owned(),
+                    });
+                }
+            }
+        }
+
+        // `self.root` is the data directory. Ownership/mode policy begins at
+        // the appended Raw root; its outside ancestors are only walked safely.
+        let raw_root_component = components.len();
+        components.push(OsString::from("raw"));
+        components.push(OsString::from("manifests"));
+        components.push(OsString::from(format!("provider={provider}")));
+        components.push(OsString::from(format!("market={market}")));
+
+        let directory_flags =
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let mut directory =
+            File::from(open("/", directory_flags, Mode::empty()).map_err(|error| {
+                directory_open_error(Path::new("/"), "open filesystem root", error)
+            })?);
+        let mut path = PathBuf::from("/");
+        for (index, component) in components.iter().enumerate() {
+            path.push(component);
+            let child = openat(
+                &directory,
+                component.as_os_str(),
+                directory_flags,
+                Mode::empty(),
+            )
+            .map_err(|error| {
+                directory_open_error(
+                    &path,
+                    &format!("open committed Raw directory {}", path.display()),
+                    error,
+                )
+            })?;
+            let child = File::from(child);
+            let trusted_owner = (index >= raw_root_component).then_some(trusted_raw_owner_uid);
+            validate_committed_manifest_evidence_node(
+                &path,
+                &directory,
+                component.as_os_str(),
+                &child,
+                FileType::Directory,
+                trusted_owner,
+            )?;
+            directory = child;
+        }
+
+        Ok((path, directory))
+    }
+
+    #[cfg(unix)]
+    fn revalidate_committed_manifest_evidence_directory(
+        &self,
+        provider: &str,
+        market: &str,
+        trusted_raw_owner_uid: u32,
+        path: &Path,
+        opened_directory: &File,
+    ) -> Result<(), StoreError> {
+        let (current_path, current_directory) = self.open_committed_manifest_evidence_directory(
+            provider,
+            market,
+            trusted_raw_owner_uid,
+        )?;
+        if current_path != path {
+            return Err(StoreError::UnsafePath {
+                path: path.display().to_string(),
+                reason: "committed Raw control directory path changed during the read".to_owned(),
+            });
+        }
+        revalidate_committed_manifest_evidence_directory(path, opened_directory, &current_directory)
+    }
+
+    #[cfg(unix)]
+    fn open_committed_manifest_evidence_file(
+        parent_path: &Path,
+        parent: &File,
+        leaf: &str,
+        trusted_raw_owner_uid: u32,
+    ) -> Result<OpenedCommittedManifestEvidenceFile, StoreError> {
+        use rustix::fs::{Mode, OFlags, openat};
+        use rustix::io::Errno;
+
+        let path = parent_path.join(leaf);
+        let descriptor = openat(
+            parent,
+            leaf,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            if error == Errno::LOOP {
+                StoreError::UnsafePath {
+                    path: path.display().to_string(),
+                    reason: "committed Raw control files must not be symlink redirects".to_owned(),
+                }
+            } else {
+                io_err(
+                    &format!(
+                        "open existing committed Raw control file {}",
+                        path.display()
+                    ),
+                    error.into(),
+                )
+            }
+        })?;
+        let opened = OpenedCommittedManifestEvidenceFile {
+            path,
+            parent: parent
+                .try_clone()
+                .map_err(|error| io_err("duplicate committed Raw control directory", error))?,
+            leaf: leaf.into(),
+            file: File::from(descriptor),
+            trusted_raw_owner_uid,
+        };
+        opened.revalidate()?;
+        Ok(opened)
     }
 
     /// Persists one delivery as a new immutable batch and appends its manifest row.
@@ -1121,6 +1480,132 @@ impl RawStore {
         market: &str,
     ) -> Result<Vec<ManifestEntry>, StoreError> {
         self.read_committed_manifest_with_ops(provider, market, &SystemCommittedManifestReadOps)
+    }
+
+    /// Returns bounded, exact-line evidence from rows already committed to
+    /// the append-only Raw manifest. This does not inspect `batch.json` or
+    /// provider bytes and never reconciles orphan batches.
+    pub fn read_committed_manifest_evidence(
+        &self,
+        provider: &str,
+        market: &str,
+        trusted_raw_owner_uid: u32,
+        limits: CommittedManifestReadLimits,
+    ) -> Result<Vec<CommittedManifestEvidenceRecord>, StoreError> {
+        validate_scope(provider, market)?;
+        let read_buffer_bytes = committed_manifest_read_buffer_len(&limits)?;
+
+        #[cfg(unix)]
+        {
+            self.read_committed_manifest_evidence_with_ops(
+                provider,
+                market,
+                trusted_raw_owner_uid,
+                limits,
+                read_buffer_bytes,
+                &SystemCommittedManifestReadOps,
+            )
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = (trusted_raw_owner_uid, read_buffer_bytes);
+            Err(StoreError::UnsafePath {
+                path: self
+                    .manifest_path(provider, market)
+                    .display()
+                    .to_string(),
+                reason: "committed manifest evidence requires descriptor-relative no-follow opens on this platform"
+                    .to_owned(),
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    fn read_committed_manifest_evidence_with_ops<O: CommittedManifestReadOps + ?Sized>(
+        &self,
+        provider: &str,
+        market: &str,
+        trusted_raw_owner_uid: u32,
+        limits: CommittedManifestReadLimits,
+        read_buffer_bytes: usize,
+        operations: &O,
+    ) -> Result<Vec<CommittedManifestEvidenceRecord>, StoreError> {
+        let (parent_path, parent) = self.open_committed_manifest_evidence_directory(
+            provider,
+            market,
+            trusted_raw_owner_uid,
+        )?;
+        let commit_lock = Self::open_committed_manifest_evidence_file(
+            &parent_path,
+            &parent,
+            "commit.lock",
+            trusted_raw_owner_uid,
+        )?;
+        operations.after_control_open("commit.lock", &commit_lock.path);
+        self.revalidate_committed_manifest_evidence_directory(
+            provider,
+            market,
+            trusted_raw_owner_uid,
+            &parent_path,
+            &parent,
+        )?;
+        commit_lock.revalidate()?;
+        FileExt::lock_shared(&commit_lock.file)
+            .map_err(|error| io_err("lock committed Raw manifest evidence", error))?;
+
+        let result = (|| {
+            // Bind the shared lock to the still-named inode before opening
+            // the sibling manifest descriptor.
+            self.revalidate_committed_manifest_evidence_directory(
+                provider,
+                market,
+                trusted_raw_owner_uid,
+                &parent_path,
+                &parent,
+            )?;
+            commit_lock.revalidate()?;
+            let manifest = Self::open_committed_manifest_evidence_file(
+                &parent_path,
+                &parent,
+                "manifest.jsonl",
+                trusted_raw_owner_uid,
+            )?;
+            operations.after_control_open("manifest.jsonl", &manifest.path);
+            manifest.revalidate()?;
+
+            let bytes = read_committed_manifest_bounded(
+                &manifest.file,
+                &manifest.path,
+                limits.max_manifest_bytes,
+                read_buffer_bytes,
+            )?;
+
+            // Read only from the opened descriptor, then prove both control
+            // pathnames still refer to their validated inodes before parsing
+            // and exposing any records.
+            manifest.revalidate()?;
+            self.revalidate_committed_manifest_evidence_directory(
+                provider,
+                market,
+                trusted_raw_owner_uid,
+                &parent_path,
+                &parent,
+            )?;
+            commit_lock.revalidate()?;
+            parse_committed_manifest_evidence(
+                provider,
+                market,
+                &manifest.path,
+                &bytes,
+                limits.max_records,
+            )
+        })();
+        let unlock = FileExt::unlock(&commit_lock.file)
+            .map_err(|error| io_err("unlock committed Raw manifest evidence", error));
+        let records = result?;
+        unlock?;
+        Ok(records)
     }
 
     fn read_committed_manifest_with_ops<O: CommittedManifestReadOps + ?Sized>(
@@ -1765,6 +2250,193 @@ fn publish_batch_metadata_platform(
     }
 
     Ok(file)
+}
+
+fn committed_manifest_read_buffer_len(
+    limits: &CommittedManifestReadLimits,
+) -> Result<usize, StoreError> {
+    if limits.max_manifest_bytes == 0 {
+        return Err(StoreError::InvalidCommittedManifestReadLimits {
+            reason: "max_manifest_bytes must be positive",
+        });
+    }
+    if limits.max_records == 0 {
+        return Err(StoreError::InvalidCommittedManifestReadLimits {
+            reason: "max_records must be positive",
+        });
+    }
+    limits
+        .max_manifest_bytes
+        .checked_add(1)
+        .ok_or(StoreError::CommittedManifestReadLimitOverflow)
+}
+
+#[cfg(unix)]
+fn read_committed_manifest_bounded(
+    file: &File,
+    path: &Path,
+    max_bytes: usize,
+    read_buffer_bytes: usize,
+) -> Result<Vec<u8>, StoreError> {
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(read_buffer_bytes).map_err(|_| {
+        StoreError::CommittedManifestReadAllocationFailed {
+            requested_bytes: read_buffer_bytes,
+        }
+    })?;
+    bytes.resize(read_buffer_bytes, 0);
+
+    let mut read_bytes = 0usize;
+    while read_bytes < read_buffer_bytes {
+        match file.read(&mut bytes[read_bytes..]) {
+            Ok(0) => break,
+            Ok(count) => {
+                read_bytes = read_bytes
+                    .checked_add(count)
+                    .ok_or(StoreError::CommittedManifestReadByteCountOverflow)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(io_err(
+                    &format!("read committed Raw manifest {}", path.display()),
+                    error,
+                ));
+            }
+        }
+    }
+    if read_bytes > max_bytes {
+        return Err(StoreError::CommittedManifestByteLimitExceeded { max_bytes });
+    }
+    bytes.truncate(read_bytes);
+    Ok(bytes)
+}
+
+#[cfg(unix)]
+fn parse_committed_manifest_evidence(
+    provider: &str,
+    market: &str,
+    path: &Path,
+    bytes: &[u8],
+    max_records: usize,
+) -> Result<Vec<CommittedManifestEvidenceRecord>, StoreError> {
+    let mut records = Vec::new();
+    let mut first_by_batch = BTreeMap::<BatchId, usize>::new();
+    let mut complete_records = 0usize;
+    let mut physical_line = 1usize;
+    let mut start = 0usize;
+
+    while start < bytes.len() {
+        let relative_newline = bytes[start..].iter().position(|byte| *byte == b'\n');
+        let (end, terminated) = match relative_newline {
+            Some(offset) => (start + offset, true),
+            None => (bytes.len(), false),
+        };
+        let line_bytes = &bytes[start..end];
+        let nonblank = !line_bytes.iter().all(u8::is_ascii_whitespace);
+        let final_unterminated = !terminated && end == bytes.len();
+
+        if nonblank {
+            // A newline-terminated nonblank row is a complete physical record
+            // even when its JSON is malformed. Count it before parsing and
+            // before deduplication so the explicit record bound is effective.
+            if terminated {
+                complete_records = complete_records
+                    .checked_add(1)
+                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                if complete_records > max_records {
+                    return Err(StoreError::CommittedManifestRecordLimitExceeded { max_records });
+                }
+            }
+
+            let entry = match serde_json::from_slice::<ManifestEntry>(line_bytes) {
+                Ok(entry) => entry,
+                Err(source) if final_unterminated && source.is_eof() => break,
+                Err(source) => {
+                    return Err(StoreError::CorruptManifest {
+                        path: path.display().to_string(),
+                        line: physical_line,
+                        source,
+                    });
+                }
+            };
+
+            if !terminated {
+                complete_records = complete_records
+                    .checked_add(1)
+                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                if complete_records > max_records {
+                    return Err(StoreError::CommittedManifestRecordLimitExceeded { max_records });
+                }
+            }
+
+            if entry.provider != provider || entry.market != market {
+                return Err(StoreError::CommittedManifestRecordScopeMismatch {
+                    path: path.display().to_string(),
+                    line: physical_line,
+                });
+            }
+            if entry
+                .files
+                .iter()
+                .any(|file| validate_file_name(&file.file_name).is_err())
+            {
+                return Err(StoreError::InvalidCommittedManifestRecord {
+                    path: path.display().to_string(),
+                    line: physical_line,
+                });
+            }
+
+            if let Some(first_index) = first_by_batch.get(&entry.batch_id).copied() {
+                if records[first_index].entry != entry {
+                    return Err(StoreError::CommittedManifestRecordConflict {
+                        path: path.display().to_string(),
+                        line: physical_line,
+                    });
+                }
+            } else {
+                let next_len = records
+                    .len()
+                    .checked_add(1)
+                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                let requested_bytes = next_len
+                    .checked_mul(std::mem::size_of::<CommittedManifestEvidenceRecord>())
+                    .ok_or(StoreError::CommittedManifestReadRecordCountOverflow)?;
+                records.try_reserve(1).map_err(|_| {
+                    StoreError::CommittedManifestReadAllocationFailed { requested_bytes }
+                })?;
+                let mut exact_line = Vec::new();
+                exact_line
+                    .try_reserve_exact(line_bytes.len())
+                    .map_err(|_| StoreError::CommittedManifestReadAllocationFailed {
+                        requested_bytes: line_bytes.len(),
+                    })?;
+                exact_line.extend_from_slice(line_bytes);
+                let record_index = records.len();
+                first_by_batch.insert(entry.batch_id, record_index);
+                records.push(CommittedManifestEvidenceRecord {
+                    line_sha256: ContentHash::from_bytes(line_bytes),
+                    line_bytes: exact_line,
+                    entry,
+                    line_number: physical_line,
+                });
+            }
+        }
+
+        if terminated {
+            start = end
+                .checked_add(1)
+                .ok_or(StoreError::CommittedManifestReadByteCountOverflow)?;
+            if start < bytes.len() {
+                physical_line = physical_line
+                    .checked_add(1)
+                    .ok_or(StoreError::CommittedManifestReadLineCountOverflow)?;
+            }
+        } else {
+            break;
+        }
+    }
+
+    Ok(records)
 }
 
 fn parse_manifest_records(
@@ -2909,6 +3581,74 @@ mod tests {
         assert_eq!(
             fs::read_to_string(manifest_path).unwrap().lines().count(),
             1
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_manifest_evidence_rejects_lock_replacement_before_locking() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        store_test_batch(&store, BatchId::generate());
+        let trusted_uid = fs::metadata(root.path().join("raw")).unwrap().uid();
+        let limits = CommittedManifestReadLimits {
+            max_manifest_bytes: 4096,
+            max_records: 10,
+        };
+        let read_buffer_bytes = committed_manifest_read_buffer_len(&limits).unwrap();
+        let replacement = ReplaceOpenedCommitLock::default();
+
+        assert!(matches!(
+            store.read_committed_manifest_evidence_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                trusted_uid,
+                limits,
+                read_buffer_bytes,
+                &replacement,
+            ),
+            Err(StoreError::UnsafePath { .. })
+        ));
+        assert!(replacement.replaced.load(Ordering::SeqCst));
+        assert!(replacement.simulated_writer.lock().unwrap().is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn committed_manifest_evidence_rejects_manifest_replacement_before_read() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let store = RawStore::new(root.path());
+        store_test_batch(&store, BatchId::generate());
+        let trusted_uid = fs::metadata(root.path().join("raw")).unwrap().uid();
+        let limits = CommittedManifestReadLimits {
+            max_manifest_bytes: 4096,
+            max_records: 10,
+        };
+        let read_buffer_bytes = committed_manifest_read_buffer_len(&limits).unwrap();
+        let replacement = ReplaceOpenedManifest::default();
+
+        assert!(matches!(
+            store.read_committed_manifest_evidence_with_ops(
+                crate::contract::PROVIDER_KRX,
+                crate::contract::MARKET_KR,
+                trusted_uid,
+                limits,
+                read_buffer_bytes,
+                &replacement,
+            ),
+            Err(StoreError::UnsafePath { .. })
+        ));
+        assert!(replacement.0.load(Ordering::SeqCst));
+        assert_eq!(
+            fs::read(
+                store.manifest_path(crate::contract::PROVIDER_KRX, crate::contract::MARKET_KR)
+            )
+            .unwrap(),
+            b"not-json\n"
         );
     }
 }

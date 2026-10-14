@@ -71,7 +71,9 @@ declare -A role_files=(
   [audit_writer]="${DB_AUDIT_PASSWORD_FILE:-/run/secrets/db_audit_password}"
   [research_writer]="${DB_RESEARCH_PASSWORD_FILE:-/run/secrets/db_research_password}"
   [admin]="${DB_ADMIN_ROLE_PASSWORD_FILE:-/run/secrets/db_admin_password}"
+  [daily_input_admitter]="${DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE:-/run/secrets/db_daily_input_admitter_password}"
 )
+role_names+=(daily_input_admitter)
 
 sql_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-role-bootstrap.XXXXXX.sql")
 trap 'rm -f -- "$sql_file"' EXIT HUP INT TERM
@@ -85,11 +87,122 @@ sql_quote() {
 }
 
 {
-  printf '%s\n' 'SET lock_timeout = '\''5s'\'';' 'SET standard_conforming_strings = on;'
+  printf '%s\n' 'BEGIN;' 'SET LOCAL lock_timeout = '\''5s'\'';' 'SET LOCAL standard_conforming_strings = on;'
+  cat <<SQL
+DO \$role_preflight\$
+DECLARE
+  admitter_oid oid;
+BEGIN
+  SELECT oid INTO admitter_oid
+  FROM pg_roles
+  WHERE rolname = 'daily_input_admitter';
+
+  IF admitter_oid IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_roles
+      WHERE oid = admitter_oid
+        AND rolcanlogin
+        AND NOT rolinherit
+        AND NOT rolsuper
+        AND NOT rolcreatedb
+        AND NOT rolcreaterole
+        AND NOT rolreplication
+        AND NOT rolbypassrls
+    ) THEN
+      RAISE EXCEPTION 'daily_input_admitter has unexpected role attributes';
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM pg_auth_members
+      WHERE member = admitter_oid OR roleid = admitter_oid
+    ) THEN
+      RAISE EXCEPTION 'daily_input_admitter has unexpected role membership';
+    END IF;
+
+    IF has_database_privilege('daily_input_admitter', '$db_name', 'CREATE') THEN
+      RAISE EXCEPTION 'daily_input_admitter has unexpected database CREATE privilege';
+    END IF;
+    IF EXISTS (
+      SELECT 1
+      FROM pg_namespace AS ns
+      WHERE has_schema_privilege('daily_input_admitter'::name, ns.oid, 'CREATE')
+    ) THEN
+      RAISE EXCEPTION 'daily_input_admitter has unexpected schema CREATE privilege';
+    END IF;
+  END IF;
+
+  -- Treat every membership edge as reachable, including paths usable only
+  -- through SET ROLE when a member has NOINHERIT. UNION makes cycles terminate.
+  IF EXISTS (
+    WITH RECURSIVE membership_closure(start_role, reachable_role) AS (
+      SELECT oid, oid
+      FROM pg_roles
+      WHERE rolname IN ('app', 'worker')
+      UNION
+      SELECT closure.start_role, membership.roleid
+      FROM membership_closure AS closure
+      JOIN pg_auth_members AS membership ON membership.member = closure.reachable_role
+    )
+    SELECT 1
+    FROM membership_closure AS closure
+    JOIN pg_roles AS start_role ON start_role.oid = closure.start_role
+    JOIN pg_roles AS reachable_role ON reachable_role.oid = closure.reachable_role
+    WHERE start_role.rolname IN ('app', 'worker')
+      AND reachable_role.rolname IN ('migration_owner', 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'app or worker reaches a protected migration role';
+  END IF;
+
+  -- PUBLIC CREATE on the database or another schema is not part of the
+  -- legacy cleanup below, so reject it before changing any role or grant.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_database AS dbrow
+    CROSS JOIN LATERAL aclexplode(
+      coalesce(dbrow.datacl, acldefault('d', dbrow.datdba))
+    ) AS privilege
+    WHERE dbrow.datname = '$db_name'
+      AND privilege.grantee = 0
+      AND privilege.privilege_type = 'CREATE'
+  ) THEN
+    RAISE EXCEPTION 'PUBLIC has unexpected database CREATE privilege';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_namespace AS ns
+    CROSS JOIN LATERAL aclexplode(
+      coalesce(ns.nspacl, acldefault('n', ns.nspowner))
+    ) AS privilege
+    WHERE ns.nspname <> 'public'
+      AND privilege.grantee = 0
+      AND privilege.privilege_type = 'CREATE'
+  ) THEN
+    RAISE EXCEPTION 'PUBLIC has unexpected non-public schema CREATE privilege';
+  END IF;
+END
+\$role_preflight\$;
+SQL
   for role in "${role_names[@]}"; do
     password=$(read_secret "${role}_PASSWORD" "${role_files[$role]}")
     quoted=$(sql_quote "$password")
-    cat <<SQL
+    if [ "$role" = daily_input_admitter ]; then
+      cat <<SQL
+DO \$role\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$role') THEN
+    CREATE ROLE "$role" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION NOBYPASSRLS PASSWORD $quoted;
+  ELSE
+    ALTER ROLE "$role" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION NOBYPASSRLS PASSWORD $quoted;
+  END IF;
+END
+\$role\$;
+SQL
+    else
+      cat <<SQL
 DO \$role\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$role') THEN
@@ -100,14 +213,82 @@ BEGIN
 END
 \$role\$;
 SQL
+    fi
   done
   cat <<'SQL'
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT CONNECT ON DATABASE "__LAGRANGE_DB_NAME__"
-  TO migration_owner, app, worker, audit_writer, research_writer, admin;
+  TO migration_owner, app, worker, audit_writer, research_writer, admin,
+     daily_input_admitter;
 GRANT USAGE ON SCHEMA public
-  TO migration_owner, app, worker, audit_writer, research_writer, admin;
+  TO migration_owner, app, worker, audit_writer, research_writer, admin,
+     daily_input_admitter;
 GRANT CREATE ON SCHEMA public TO migration_owner;
+DO $role_postflight$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'daily_input_admitter'
+      AND rolcanlogin
+      AND NOT rolinherit
+      AND NOT rolsuper
+      AND NOT rolcreatedb
+      AND NOT rolcreaterole
+      AND NOT rolreplication
+      AND NOT rolbypassrls
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter role attributes mismatch after bootstrap';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_auth_members
+    WHERE member = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+       OR roleid = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter has role membership after bootstrap';
+  END IF;
+  IF NOT has_database_privilege('daily_input_admitter', '__LAGRANGE_DB_NAME__', 'CONNECT') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks database CONNECT after bootstrap';
+  END IF;
+  IF NOT has_schema_privilege('daily_input_admitter', 'public', 'USAGE') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks public schema USAGE after bootstrap';
+  END IF;
+  IF has_database_privilege('daily_input_admitter', '__LAGRANGE_DB_NAME__', 'CREATE') THEN
+    RAISE EXCEPTION 'daily_input_admitter has database CREATE after bootstrap';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_namespace AS ns
+    WHERE has_schema_privilege('daily_input_admitter'::name, ns.oid, 'CREATE')
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter has schema CREATE after bootstrap';
+  END IF;
+  IF EXISTS (
+    WITH RECURSIVE membership_closure(start_role, reachable_role) AS (
+      SELECT oid, oid
+      FROM pg_roles
+      WHERE rolname IN ('app', 'worker')
+      UNION
+      SELECT closure.start_role, membership.roleid
+      FROM membership_closure AS closure
+      JOIN pg_auth_members AS membership ON membership.member = closure.reachable_role
+    )
+    SELECT 1
+    FROM membership_closure AS closure
+    JOIN pg_roles AS start_role ON start_role.oid = closure.start_role
+    JOIN pg_roles AS reachable_role ON reachable_role.oid = closure.reachable_role
+    WHERE start_role.rolname IN ('app', 'worker')
+      AND reachable_role.rolname IN ('migration_owner', 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'app or worker reaches a protected migration role after bootstrap';
+  END IF;
+  IF NOT has_schema_privilege('migration_owner', 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'migration_owner lacks public schema CREATE after bootstrap';
+  END IF;
+END
+$role_postflight$;
+COMMIT;
 SQL
 } >"$sql_file"
 

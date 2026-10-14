@@ -836,3 +836,31 @@ I0b `fd32e206-9248-41cd-a86b-de07a33ea464`는05:40:08 UTC, I1b-S1
 둘 다 codex/gpt-6-luna/max, 동일 workspace/parent, pending0이며 notifyOnFinish가 등록됐다.
 감시 ce11f12d(2분/최대60회/07:41:05 UTC 만료)와 ledger/private brief·startup receipt를 준비했다.
 구현 결과를 완료로 간주하지 않고 실제 idle/final 회수→독립 리뷰→hosted 검증을 이어간다.
+
+
+## I0b / I1b-S1 소스 인계 회수 — 2026-10-14
+
+두 implementer의 full final과 actual idle/pending0를 회수했다. I0b는05:51:34 UTC,
+I1b-S1은05:53:34 UTC 종료했다. [인계 보고](2026-10-14-r2-role-and-raw-source-handoff.md)에
+11개 실제 파일 hash/행 수, 수정 범위, 정적 검사와 미실행 경계를 기록했다. I0b 보고의 한 digest가
+65자리여서 첫 비교와 parser가 거부했으며 원 보고를 보존하고 실제64자리 hash를 고정했다.
+이는 원인 추정이나 소스 인수가 아니다. 다른10개 보고 hash, 모든11개 행 수, 기존9개 참조 보존은 확인했다.
+
+코디네이터의 bash-n7개·rustfmt·diff, YAML1.1 정적 parse/secret binding 검사가 통과했다.
+초기 YAML1.2 checker의0400 해석을 수정했으며 Compose/DB/secret/provider 실행은 하지 않았다.
+모든 새 회귀와 SQL/role 검사는 미실행이다. 기존929fcd6 CI 성공을 이 소스에 재사용하지 않는다.
+ce11f12d는 두 결과 회수 후 종료했고 별도 보고만 쓰는 Sol/high 독립 리뷰 두 개를 준비했다.
+후속 actual startup과 새 bounded 감시를 기록한 뒤 concrete findings와 exact 후보 CI로 이어간다.
+
+
+### Wave 9 actual review startup — 2026-10-14
+
+I0b-R `d9ca76a3-b7dc-4913-944f-10ce8cc35d80` and I1b-S1-R
+`a4b5c1b9-3354-400b-be82-b8dec4f87278` both started at06:05:10 UTC as
+codex/gpt-6.1-sol/high, in the expected workspace/parent with pending0.
+Each notified follow-up writes only its assigned review report. Input bytes remain frozen.
+The 60-minute reporting boundary is07:05:10 UTC; incomplete work must be recovered explicitly.
+Heartbeat `261b0071` runs every2minutes, at most60times, expires08:06:03 UTC.
+Notification registration, actual startup and scope are retained in private wave9 receipts
+and the ledger. The monitor must be reconciled/replaced before expiry; it cannot protect
+against the same daemon stopping. Review outcomes and all new execution evidence remain pending.

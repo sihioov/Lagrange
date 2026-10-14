@@ -644,6 +644,7 @@ bootstrap_roles() {
     -e DB_AUDIT_PASSWORD_FILE=/validation/secrets/db_audit_password \
     -e DB_RESEARCH_PASSWORD_FILE=/validation/secrets/db_research_password \
     -e DB_ADMIN_ROLE_PASSWORD_FILE=/validation/secrets/db_admin_password \
+    -e DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE=/validation/secrets/db_daily_input_admitter_password \
     qa-db /bin/bash /validation/bootstrap-roles.sh
 }
 
@@ -666,6 +667,7 @@ run_role_psql() {
     audit_writer) secret_name=db_audit_password ;;
     research_writer) secret_name=db_research_password ;;
     admin) secret_name=db_admin_password ;;
+    daily_input_admitter) secret_name=db_daily_input_admitter_password ;;
     *) return 1 ;;
   esac
   "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
@@ -805,6 +807,7 @@ run_service_login() {
     audit_writer) secret_name=db_audit_password ;;
     research_writer) secret_name=db_research_password ;;
     admin) secret_name=db_admin_password ;;
+    daily_input_admitter) secret_name=db_daily_input_admitter_password ;;
     *) return 1 ;;
   esac
   "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
@@ -813,6 +816,105 @@ run_service_login() {
   expected="$role=$role"
   observed=$(tr -d '\r' <"$raw" | tail -n 1)
   [ "$observed" = "$expected" ]
+}
+
+run_admitter_catalog_assertions() {
+  local compose_function=$1 raw=$2 sql_file="$workdir/daily-input-admitter-catalog.sql"
+  cat >"$sql_file" <<'SQL'
+DO $daily_input_admitter_catalog$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'daily_input_admitter'
+      AND rolcanlogin
+      AND NOT rolinherit
+      AND NOT rolsuper
+      AND NOT rolcreatedb
+      AND NOT rolcreaterole
+      AND NOT rolreplication
+      AND NOT rolbypassrls
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter role attributes mismatch';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_auth_members
+    WHERE member = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+       OR roleid = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter has unexpected role membership';
+  END IF;
+  IF EXISTS (
+    WITH RECURSIVE membership_closure(start_role, reachable_role) AS (
+      SELECT oid, oid
+      FROM pg_roles
+      WHERE rolname IN ('app', 'worker')
+      UNION
+      SELECT closure.start_role, membership.roleid
+      FROM membership_closure AS closure
+      JOIN pg_auth_members AS membership ON membership.member = closure.reachable_role
+    )
+    SELECT 1
+    FROM membership_closure AS closure
+    JOIN pg_roles AS start_role ON start_role.oid = closure.start_role
+    JOIN pg_roles AS reachable_role ON reachable_role.oid = closure.reachable_role
+    WHERE start_role.rolname IN ('app', 'worker')
+      AND reachable_role.rolname IN ('migration_owner', 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'app or worker reaches a protected migration role';
+  END IF;
+  IF NOT has_database_privilege('daily_input_admitter', current_database(), 'CONNECT') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks database CONNECT';
+  END IF;
+  IF NOT has_schema_privilege('daily_input_admitter', 'public', 'USAGE') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks public schema USAGE';
+  END IF;
+  IF has_database_privilege('daily_input_admitter', current_database(), 'CREATE') THEN
+    RAISE EXCEPTION 'daily_input_admitter has database CREATE';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_namespace AS ns
+    WHERE has_schema_privilege('daily_input_admitter'::name, ns.oid, 'CREATE')
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter has schema CREATE';
+  END IF;
+  IF NOT has_schema_privilege('migration_owner', 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'migration_owner lacks public schema CREATE';
+  END IF;
+END
+$daily_input_admitter_catalog$;
+SELECT 'daily_input_admitter_catalog=PASS';
+SQL
+  if ! run_psql "$compose_function" "$sql_file" >"$raw" 2>&1; then
+    return 1
+  fi
+  grep -Fqx 'daily_input_admitter_catalog=PASS' "$raw"
+}
+
+run_admitter_role_guc_check() {
+  local compose_function=$1 raw=$2 sql_file="$workdir/daily-input-admitter-role-guc.sql"
+  cat >"$sql_file" <<'SQL'
+SELECT current_user || '=' || session_user || '=' || current_setting('role');
+SQL
+  if ! run_role_psql "$compose_function" daily_input_admitter "$sql_file" >"$raw" 2>&1; then
+    return 1
+  fi
+  grep -Fqx 'daily_input_admitter=daily_input_admitter=none' "$raw"
+}
+
+assert_bootstrap_log_redacts_credentials() {
+  local password_dir=$1 raw=$2 label=$3 name
+  local -a secret_names=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
+  )
+  for name in "${secret_names[@]}"; do
+    if grep -Fq -f "$password_dir/$name" "$raw"; then
+      fail "$label role bootstrap output exposed a credential value ($name)"
+    fi
+  done
 }
 
 run_app_actor_sql() {
@@ -931,9 +1033,10 @@ run_full_release_lane() {
     record_log "$full_bootstrap_raw" full-bootstrap.log
     fail 'full-release role bootstrap failed'
   fi
+  assert_bootstrap_log_redacts_credentials "$full_password_dir" "$full_bootstrap_raw" full-release
   record_log "$full_bootstrap_raw" full-bootstrap.log
 
-  for service_role in migration_owner app worker audit_writer research_writer admin; do
+  for service_role in migration_owner app worker audit_writer research_writer admin daily_input_admitter; do
     service_login_raw="$workdir/full-service-login-$service_role.log"
     if ! run_service_login full_compose "$service_role" "$service_login_raw"; then
       record_log "$service_login_raw" "full-service-login-$service_role.log"
@@ -942,6 +1045,16 @@ run_full_release_lane() {
     record_log "$service_login_raw" "full-service-login-$service_role.log"
     full_service_logins=$(append_csv "$full_service_logins" "$service_role")
   done
+  if ! run_admitter_catalog_assertions full_compose "$workdir/full-admitter-catalog.log"; then
+    record_log "$workdir/full-admitter-catalog.log" full-admitter-catalog.log
+    fail 'full-release daily_input_admitter catalog/privilege assertions failed'
+  fi
+  record_log "$workdir/full-admitter-catalog.log" full-admitter-catalog.log
+  if ! run_admitter_role_guc_check full_compose "$workdir/full-admitter-role-guc.log"; then
+    record_log "$workdir/full-admitter-role-guc.log" full-admitter-role-guc.log
+    fail 'full-release daily_input_admitter role GUC assertion failed'
+  fi
+  record_log "$workdir/full-admitter-role-guc.log" full-admitter-role-guc.log
 
   if ! run_disk_check full_compose "$full_disk_raw"; then
     record_log "$full_disk_raw" full-disk-before.log
@@ -1026,7 +1139,7 @@ test_password_dir="$workdir/test-secrets"
 full_password_dir="$workdir/full-secrets"
 mkdir -p "$main_password_dir" "$test_password_dir" "$full_password_dir"
 chmod 0700 -- "$main_password_dir" "$test_password_dir" "$full_password_dir"
-for role in postgres_password db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password; do
+for role in postgres_password db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password db_daily_input_admitter_password; do
   generate_secret "$main_password_dir/$role"
   generate_secret "$full_password_dir/$role"
 done
@@ -1037,7 +1150,7 @@ done
 # credential and is written only to the private temporary secret directory.
 printf '%s' 'lagrange' >"$test_password_dir/postgres_password"
 chmod 0400 -- "$test_password_dir/postgres_password"
-for role in db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password; do
+for role in db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password db_daily_input_admitter_password; do
   cp -- "$test_password_dir/postgres_password" "$test_password_dir/$role"
   chmod 0400 -- "$test_password_dir/$role"
 done
@@ -1094,9 +1207,10 @@ if ! bootstrap_roles main_compose >"$bootstrap_raw" 2>&1; then
   record_log "$bootstrap_raw" main-bootstrap.log
   fail 'production-like role bootstrap failed'
 fi
+assert_bootstrap_log_redacts_credentials "$main_password_dir" "$bootstrap_raw" staged
 record_log "$bootstrap_raw" main-bootstrap.log
 
-for service_role in migration_owner app worker audit_writer research_writer admin; do
+for service_role in migration_owner app worker audit_writer research_writer admin daily_input_admitter; do
   service_login_raw="$workdir/service-login-$service_role.log"
   if ! run_service_login main_compose "$service_role" "$service_login_raw"; then
     record_log "$service_login_raw" "service-login-$service_role.log"
@@ -1105,6 +1219,16 @@ for service_role in migration_owner app worker audit_writer research_writer admi
   record_log "$service_login_raw" "service-login-$service_role.log"
   service_logins=$(append_csv "$service_logins" "$service_role")
 done
+if ! run_admitter_catalog_assertions main_compose "$workdir/admitter-catalog.log"; then
+  record_log "$workdir/admitter-catalog.log" admitter-catalog.log
+  fail 'staged daily_input_admitter catalog/privilege assertions failed'
+fi
+record_log "$workdir/admitter-catalog.log" admitter-catalog.log
+if ! run_admitter_role_guc_check main_compose "$workdir/admitter-role-guc.log"; then
+  record_log "$workdir/admitter-role-guc.log" admitter-role-guc.log
+  fail 'staged daily_input_admitter role GUC assertion failed'
+fi
+record_log "$workdir/admitter-role-guc.log" admitter-role-guc.log
 
 build_raw="$workdir/db-tool-build.log"
 if [ -z "${LAGRANGE_DB_VALIDATION_IMAGE:-}" ]; then
@@ -1308,6 +1432,7 @@ if ! bootstrap_roles test_compose >"$test_bootstrap_raw" 2>&1; then
   record_log "$test_bootstrap_raw" test-bootstrap.log
   fail 'test-cluster role bootstrap failed'
 fi
+assert_bootstrap_log_redacts_credentials "$test_password_dir" "$test_bootstrap_raw" test-cluster
 record_log "$test_bootstrap_raw" test-bootstrap.log
 
 test_database_url="postgres://postgres:$(<"$test_password_dir/postgres_password")@127.0.0.1:${test_port}/postgres"

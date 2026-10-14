@@ -9,6 +9,7 @@ secret_gitignore="$root/deploy/secrets/.gitignore"
 env_example="$root/deploy/compose/.env.example"
 secrets_readme="$root/deploy/secrets/README.md"
 db_dockerfile="$root/deploy/db/Dockerfile"
+bootstrap_roles="$root/deploy/db/bootstrap-roles.sh"
 paper_wrapper="$root/deploy/runtime/paper-runner-entrypoint"
 
 die() {
@@ -38,8 +39,44 @@ grep -Fq 'for spec in "${copy_specs[@]}"' "$provision" \
 grep -Fq 'before creating the runtime' "$provision" \
   || die 'provisioner must preflight before writes'
 [ -f "$db_dockerfile" ] || die 'missing database one-shot Dockerfile'
+[ -f "$bootstrap_roles" ] || die 'missing database role bootstrap script'
 [ -f "$paper_wrapper" ] || die 'missing Paper runtime wrapper'
 bash -n "$paper_wrapper" || die 'Paper runtime wrapper has shell syntax errors'
+bash -n "$bootstrap_roles" || die 'database role bootstrap has shell syntax errors'
+grep -Fq 'DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE' "$bootstrap_roles" \
+  || die 'bootstrap must accept the admitter credential by file path'
+if grep -Fq 'DB_DAILY_INPUT_ADMITTER_PASSWORD=' "$bootstrap_roles"; then
+  die 'bootstrap must not accept the admitter credential as an environment value'
+fi
+grep -Fq 'BEGIN;' "$bootstrap_roles" && grep -Fq 'COMMIT;' "$bootstrap_roles" \
+  || die 'role changes and grants must be transactionally bounded'
+grep -Fq 'NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE' "$bootstrap_roles" \
+  || die 'admitter role attributes must remain direct-login and restricted'
+grep -Fq 'NOREPLICATION NOBYPASSRLS' "$bootstrap_roles" \
+  || die 'admitter role must not replicate or bypass row-level security'
+grep -Fq 'WHERE member = admitter_oid OR roleid = admitter_oid' "$bootstrap_roles" \
+  || die 'bootstrap must reject incoming and outgoing admitter memberships'
+grep -Fq 'WITH RECURSIVE membership_closure' "$bootstrap_roles" \
+  || die 'bootstrap must inspect transitive app/worker membership paths'
+grep -Fq 'UNION' "$bootstrap_roles" \
+  || die 'bootstrap membership closure must deduplicate cycles'
+if grep -Fq 'UNION ALL' "$bootstrap_roles"; then
+  die 'bootstrap membership closure must terminate on cycles'
+fi
+grep -Fq "has_database_privilege('daily_input_admitter'" "$bootstrap_roles" \
+  || die 'bootstrap must preflight and verify effective database privileges'
+grep -Fq "has_schema_privilege('daily_input_admitter'::name, ns.oid, 'CREATE')" "$bootstrap_roles" \
+  || die 'bootstrap must reject effective schema CREATE privileges'
+if grep -Eq 'REVOKE[^;]*daily_input_admitter' "$bootstrap_roles"; then
+  die 'bootstrap must not silently revoke an unexpected admitter grant'
+fi
+preflight_line=$(grep -nF 'DO \$role_preflight\$' "$bootstrap_roles" | cut -d: -f1)
+role_loop_line=$(grep -nF 'for role in "${role_names[@]}"; do' "$bootstrap_roles" | cut -d: -f1)
+[ -n "$preflight_line" ] && [ -n "$role_loop_line" ] \
+  || die 'bootstrap role preflight/mutation order is missing'
+if ! (( preflight_line < role_loop_line )); then
+  die 'existing role preflight must run before legacy role mutation'
+fi
 grep -Fq 'validate_health_state' "$paper_wrapper" \
   || die 'Paper runtime wrapper must validate loop progress in healthcheck'
 grep -Fq 'cycle_deadline_at' "$paper_wrapper" \
@@ -66,6 +103,8 @@ grep -Fq 'provision-runtime-secrets.sh' "$compose" \
   || die 'Compose documentation must reference the provisioner'
 grep -Fq 'deploy/secrets/provision-runtime-secrets.sh' "$env_example" \
   || die 'Compose env documentation must reference the provisioner'
+grep -Fq '${LAGRANGE_SECRET_SOURCE_DIR}/db_daily_input_admitter_password' "$env_example" \
+  || die 'Compose env documentation must identify the admitter source credential path'
 grep -Fq 'deploy/secrets/provision-runtime-secrets.sh' "$secrets_readme" \
   || die 'secret documentation must reference the provisioner'
 for service in reverse-proxy api-server db-role-bootstrap db-migrate postgres \
@@ -91,7 +130,7 @@ for service in db-role-bootstrap db-migrate; do
   grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]].*[[:space:]]999[[:space:]]+999[[:space:]]+0400[[:space:]]+yes$" "$provision" \
     || die "provisioner must install $service secrets as 999:999 mode 0400"
   expected_count=1
-  [ "$service" = db-role-bootstrap ] && expected_count=7
+  [ "$service" = db-role-bootstrap ] && expected_count=8
   provision_count=$(grep -Ec "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]" "$provision" || true)
   [ "$provision_count" -eq "$expected_count" ] \
     || die "$service provisioner entry count changed (expected $expected_count)"
@@ -113,9 +152,10 @@ done
 
 # Every selected runtime inventory entry is declared once in the provisioner
 # copy-spec functions and must remain aligned with validator runtime_specs. The
-# serving-prereqs list intentionally includes all non-KIS serving copies but no
-# KIS source; backup_encryption_key is source-only and is preflighted without a
-# runtime destination.
+# serving-prereqs list intentionally includes the staged owner-beta admitter
+# credential and other non-KIS serving copies but no KIS source;
+# backup_encryption_key is source-only and is preflighted without a runtime
+# destination. The staged admitter copy does not activate a Compose service.
 for expected in \
   'db-role-bootstrap postgres_password postgres_password 999 999 0400 yes' \
   'db-role-bootstrap db_migration_owner_password db_migration_owner_password 999 999 0400 yes' \
@@ -124,11 +164,13 @@ for expected in \
   'db-role-bootstrap db_audit_password db_audit_password 999 999 0400 yes' \
   'db-role-bootstrap db_research_password db_research_password 999 999 0400 yes' \
   'db-role-bootstrap db_admin_password db_admin_password 999 999 0400 yes' \
+  'db-role-bootstrap db_daily_input_admitter_password db_daily_input_admitter_password 999 999 0400 yes' \
   'db-migrate db_migration_owner_password db_migration_owner_password 999 999 0400 yes' \
   'postgres postgres_password postgres_password 999 999 0440 yes' \
   'research-schema-check postgres_password postgres_password 999 999 0440 yes' \
   'reverse-proxy lagrange_tls_cert tls/lagrange.crt 101 101 0440 no' \
   'reverse-proxy lagrange_tls_key tls/lagrange.key 101 101 0440 no' \
+  'owner-beta-daily-admitter db_daily_input_admitter_password db_daily_input_admitter_password 10003 10003 0440 yes' \
   'api-server db_app_password db_app_password 10001 10001 0440 yes' \
   'api-server db_admin_password db_admin_password 10001 10001 0440 yes' \
   'api-server db_audit_password db_audit_password 10001 10001 0440 yes' \
@@ -152,10 +194,21 @@ for expected in \
   'research-range-raw kis_app_secret kis_app_secret 10001 10001 0440 yes'; do
   read -r service target source uid gid mode single_line <<<"$expected"
   grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]+$target[[:space:]]+$source[[:space:]]+$uid[[:space:]]+$gid[[:space:]]+$mode[[:space:]]+$single_line$" "$provision" \
-    || die "infrastructure provisioner inventory missing: $expected"
+    || die "runtime provisioner inventory missing: $expected"
 done
+[ "$(grep -Ec '^[[:space:]]+add_copy[[:space:]]+owner-beta-daily-admitter[[:space:]]+db_daily_input_admitter_password[[:space:]]+db_daily_input_admitter_password[[:space:]]+10003[[:space:]]+10003[[:space:]]+0440[[:space:]]+yes$' "$provision" || true)" -eq 1 ] \
+  || die 'admitter runtime secret must be staged once as 10003:10003 mode 0440'
+if grep -Eq '^[[:space:]]+add_copy[[:space:]]+(api-server|research-worker|recommendation-runner|candidate-runner|owner-beta-runner|owner-beta-daily-producer|nt-backtest-worker-[12]|paper-scheduler|research-range-raw)[[:space:]].*db_daily_input_admitter_password' "$provision"; then
+  die 'admitter database credential must not be copied to an existing API, worker, producer, or raw service'
+fi
 grep -Fq 'add_extra_source backup_encryption_key yes' "$provision" \
   || die 'serving-prereqs/release backup source preflight is missing'
+grep -Fq 'DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE: /run/secrets/db_daily_input_admitter_password' "$compose" \
+  || die 'Compose bootstrap must receive only the admitter password-file path'
+grep -Fq 'bootstrap_db_daily_input_admitter_password:' "$compose" \
+  || die 'Compose bootstrap secret source is missing'
+grep -Fq 'file: ${LAGRANGE_RUNTIME_SECRET_DIR:-../secrets/runtime}/db-role-bootstrap/db_daily_input_admitter_password' "$compose" \
+  || die 'Compose bootstrap secret source must resolve to the staged runtime copy'
 serving_branch=$(awk '
   /^  serving-prereqs\)/ { in_scope=1; next }
   in_scope && /^  backfill\)/ { exit }
@@ -173,6 +226,17 @@ grep -Fq 'range-raw-recovery)' "$provision" \
   || die 'range-raw-recovery provisioner scope is missing'
 if grep -Eq 'add_copy|kis_app_key|kis_app_secret' <<<"$recovery_branch"; then
   die 'range-raw-recovery must not install runtime or KIS secret copies'
+fi
+raw_branch=$(awk '
+  /^  range-raw\)/ { in_scope=1; next }
+  in_scope && /^  range-raw-recovery\)/ { exit }
+  in_scope { print }
+' "$provision")
+if grep -Eq 'db_daily_input_admitter_password|db_(migration_owner|app|worker|audit|research|admin)_password|postgres_password' <<<"$raw_branch"; then
+  die 'range-raw must remain free of database credentials'
+fi
+if grep -Eq '^  owner-beta-daily-admitter:' "$compose"; then
+  die 'I0b must not add the deferred admitter runtime service'
 fi
 
 grep -Fq 'reject_dotdot()' "$provision" \

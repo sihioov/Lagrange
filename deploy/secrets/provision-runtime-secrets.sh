@@ -139,6 +139,7 @@ add_infrastructure_copies() {
   add_copy db-role-bootstrap db_audit_password db_audit_password 999 999 0400 yes
   add_copy db-role-bootstrap db_research_password db_research_password 999 999 0400 yes
   add_copy db-role-bootstrap db_admin_password db_admin_password 999 999 0400 yes
+  add_copy db-role-bootstrap db_daily_input_admitter_password db_daily_input_admitter_password 999 999 0400 yes
   add_copy db-migrate db_migration_owner_password db_migration_owner_password 999 999 0400 yes
   add_copy postgres postgres_password postgres_password 999 999 0440 yes
   add_copy research-schema-check postgres_password postgres_password 999 999 0440 yes
@@ -147,6 +148,7 @@ add_infrastructure_copies() {
 add_serving_copies() {
   add_copy reverse-proxy lagrange_tls_cert tls/lagrange.crt 101 101 0440 no
   add_copy reverse-proxy lagrange_tls_key tls/lagrange.key 101 101 0440 no
+  add_copy owner-beta-daily-admitter db_daily_input_admitter_password db_daily_input_admitter_password 10003 10003 0440 yes
   add_copy api-server db_app_password db_app_password 10001 10001 0440 yes
   add_copy api-server db_admin_password db_admin_password 10001 10001 0440 yes
   add_copy api-server db_audit_password db_audit_password 10001 10001 0440 yes

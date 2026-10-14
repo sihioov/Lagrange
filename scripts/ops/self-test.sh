@@ -814,7 +814,7 @@ if [ "$(id -u)" -eq 0 ]; then
   [ "$(stat -c '%u:%a' -- "$db_apply_source")" = '0:750' ]
   db_apply_output=$(LAGRANGE_SECRET_SOURCE_DIR="$db_apply_source" \
     bash "$ops/provision-db-secrets.sh" --apply)
-  grep -Fq 'APPLY: generated exactly seven distinct DB source secret files' \
+  grep -Fq 'APPLY: generated exactly eight distinct DB source secret files' \
     <<<"$db_apply_output"
   db_secret_names=(
     postgres_password
@@ -824,6 +824,7 @@ if [ "$(id -u)" -eq 0 ]; then
     db_audit_password
     db_research_password
     db_admin_password
+    db_daily_input_admitter_password
   )
   for name in "${db_secret_names[@]}"; do
     db_file="$db_apply_source/$name"
@@ -837,7 +838,7 @@ if [ "$(id -u)" -eq 0 ]; then
       exit 1
     fi
   done
-  [ "$(find "$db_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 7 ]
+  [ "$(find "$db_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 8 ]
   for ((i = 0; i < ${#db_secret_names[@]}; i++)); do
     for ((j = i + 1; j < ${#db_secret_names[@]}; j++)); do
       if cmp -s "$db_apply_source/${db_secret_names[i]}" \
@@ -851,7 +852,7 @@ if [ "$(id -u)" -eq 0 ]; then
   db_check_output=$(LAGRANGE_SECRET_SOURCE_DIR="$db_apply_source" \
     bash "$ops/provision-db-secrets.sh" --check)
   grep -Fxq 'DB_SECRET_CHECK: PASS' <<<"$db_check_output"
-  [ "$(find "$db_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 7 ]
+  [ "$(find "$db_apply_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 8 ]
 
   # Existing operators may have generated the same 32 bytes as strict
   # standard Base64 (`openssl rand -base64 32`). Verify that accepted format,
@@ -951,7 +952,7 @@ if [ "$(id -u)" -eq 0 ]; then
   fi
   grep -Fq 'DB_SECRET_CHECK: FAIL db_admin_password: missing file' \
     "$out_dir/db-secret-check-partial.out"
-  [ "$(find "$db_check_partial_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 6 ]
+  [ "$(find "$db_check_partial_source" -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 7 ]
 
   # Exercise the pairwise cmp gate as well as the missing-target gate.
   db_check_duplicate_source="$out_dir/db-secret-check-duplicate"
@@ -1246,7 +1247,8 @@ crypto_source="$out_dir/crypto-source"
 crypto_env="$out_dir/crypto.env"
 mkdir -p "$crypto_source/tls"
 for name in postgres_password db_migration_owner_password db_app_password \
-  db_worker_password db_audit_password db_research_password db_admin_password; do
+  db_worker_password db_audit_password db_research_password db_admin_password \
+  db_daily_input_admitter_password; do
   printf 'db-fixture-%s' "$name" >"$crypto_source/$name"
   chmod 0600 "$crypto_source/$name"
 done
@@ -1296,6 +1298,7 @@ serving_runtime="$out_dir/serving-runtime"
 mkdir -p "$serving_source/tls"
 for name in postgres_password db_migration_owner_password db_app_password \
   db_worker_password db_audit_password db_research_password db_admin_password \
+  db_daily_input_admitter_password \
   cursor_secret session_secret csrf_secret; do
   printf 'fixture-%s' "$name" >"$serving_source/$name"
   chmod 0600 "$serving_source/$name"
@@ -1322,7 +1325,8 @@ grep -Fq 'auth0_client_secret' "$out_dir/serving-prereqs-provision.out"
 # the shared credential value.
 mkdir -p "$out_dir/db-source-equality"
 for name in postgres_password db_migration_owner_password db_app_password \
-  db_worker_password db_audit_password db_research_password db_admin_password; do
+  db_worker_password db_audit_password db_research_password db_admin_password \
+  db_daily_input_admitter_password; do
   case "$name" in
     postgres_password|db_migration_owner_password) value=same-db-password ;;
     *) value="unique-$name" ;;
