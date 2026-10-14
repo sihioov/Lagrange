@@ -2719,3 +2719,146 @@ recovered. Reconcile at the reviewer bound and before expiry; recover substantiv
 INCOMPLETE if unfinished and explicitly renew/handoff. Same-daemon heartbeats
 cannot protect daemon outage. Frozen source remains uncompiled/unexecuted and
 no new CI was dispatched. Coordinator owns finding disposition and later gates.
+
+## Wave25 — bounded S2 source and regression corrections
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+### Wave24 review recovered; Wave25 source correction prepared — 2026-10-14
+
+Reviewer a4b5c1b9-3354-400b-be82-b8dec4f87278 reached actual idle with activeTurn null
+and pending0 at11:37:17.774UTC; full substantive final recovered11:37:27UTC within
+the original60minute bound. Report496lines SHA256
+`60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7` is preserved.
+Coordinator verified all29 pins, committed target bytes and19 baseline references,
+81 report links/line bounds, and concrete source/test anchors for R01–R16.
+
+Four P1 groups cover privacy/type/closure and integration-target compile blockers;
+twelve P2 groups cover strict-warning exposure, duplicate-field EOF parity, failure
+lock-last lifetime, lock identity policy, wrong/masked/nondeterministic assertions,
+missing operation/race coverage, stat-size mapping, preflight ordering and fixture
+modes. These are validated static findings and written-coverage gaps, not executed
+compiler/lint/test diagnostics. P1–P10 and all32 guard rows remain binding.
+S2 source acceptance is withheld. All34 existing S2 definitions remain UNEXECUTED.
+Old a888cd6 success excludes the new files and remains partial I0c evidence only.
+
+Heartbeat aeaa4fa6 was deleted only after actual idle/pending0/full final recovery.
+No running worker was redirected and no frozen source changed. The next package
+owns only source.rs and daily_price_only_snapshot.rs; mod.rs and20 readonly references,
+eight evidence artifacts and the accepted898-line contract stay frozen. Inventory
+source-wave-25-S2-correction-inputs.json:152lines,
+SHA256 `e03273e83e23948583fc8026622e7c83c5b255fb2db380cdde2f4f5391f006bf`.
+A fresh Luna/max correction context avoids resuming the old implementer's observed
+230408/258400-token context. This is no model/effort escalation. The sole configured
+Astra/high profile is labeled coordinator; repository specified-implementation routing
+selects Luna/max, whose availability was rechecked.
+
+Only source/static verification is authorized locally. Independent correction review
+precedes any new exact-candidate hosted CI; inspect existing runs first and dispatch
+once. No old run is rerun/cancelled/duplicated. Negative bootstrap/rollback,0060,
+provider/copy reconstruction/admission, diagrams before main, runtime/Owner/final C_R2
+remain open. Current Mem0 context returned MCP_ERROR; no history recovered or memory
+save is claimed, and no stale hook was retried.
+
+### Goal and boundaries
+
+Resolve S2-R01–R16 in the existing two-file implementation while preserving frozen
+P1–P10 and all32 guard requirements. Completion of this wave means a reviewable
+source handoff with every finding/test disposition, not compilation/runtime acceptance.
+The source baseline is411326865706ea9e7a1690aa49742cd0254d8450; report and private
+inventory fix the starting bytes. No public API/platform/dependency/operational expansion.
+
+### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F | intermediate | Exact architecture, outcomes and two-file ownership frozen; private resource ownership and deterministic observations require local judgment | medium | Repeated failed corrections, observed context loss/loop, or concrete contract conflict; stop/report exact scope and change only one routing axis |
+| WP-4/I1b-S2-F-R | intermediate | Independent disposition of bounded corrections and meaningful existing/new test assertions | medium | New cross-file requirement or unresolved ownership/contract conflict; no silent expansion |
+| WP-4/I1b-S2-CI | simple | Read-only evidence collection for one later exact candidate/run using an enumerated test inventory | high | Missing/ambiguous job logs or unprinted nested results remain UNKNOWN; no inferred success |
+
+### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F |25|intermediate|Resolve R01–R16 preserving P1–P10/T01–32|Only source.rs and daily_price_only_snapshot.rs|Recovered idle reviewer and frozen30 inputs|codex/gpt-6-luna/max, fresh context|Two-file source delta plus full dispositions|Coordinator concrete diff/hash/test inspection; syntax only locally|
+| WP-4/I1b-S2-F-R |26, not started|intermediate|Independent delta and finding review|One new report, filename/inputs fixed after correction recovery|Actual idle/full handoff and coordinator freeze|codex/gpt-6.1-sol/high|Source findings and guard dispositions|No source mutation/local executable checks|
+| WP-4/I1b-S2-CI |later, not started|simple|Collect one exact-candidate hosted result|One later report/private receipt, fixed at launch|Independent disposition, existing-run query and one dispatch|codex/gpt-6-luna/medium, direct only|Direct rows/jobs/unknowns|Coordinator rechecks identity, hashes and evidence|
+
+The later two rows express dependencies only; they are not launched or delegated
+until their exact scopes, inventories and self-contained briefs are recorded.
+No parallel writers share the two correction files.
+
+### Frozen correction brief
+
+```text
+WP-4/I1b-S2-F (Wave25), R2-04/09: first bounded correction of the registered Linux Raw snapshot source.
+Work directly. Do NOT create or prompt other agents with Paseo, native agents, teams, advisor or committee tools. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin, workspace wks_10fae7d550ab1704, coordinator ef6cdbb0-8409-4dba-86ca-c07eadccf377. Read root AGENTS.md, docs/ROADMAP.md R2-04/09 and Wave25 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. Intermediate fixed-contract correction, confidence medium: public API/semantics and correction outcomes are frozen; private ownership and deterministic test seams need local judgment. Repository route codex/gpt-6-luna/max, chosen for specified implementation cost, not latency. This is the first correction attempt; do not silently escalate. Report substantive INCOMPLETE with exact remaining IDs at 90 minutes from actual startup, or earlier if blocked; no silent scope reduction.
+
+Only writable files (absolute paths):
+1. /data/worktrees/3puw275b/excited-dolphin/crates/market-data/src/daily_price_only/source.rs — starting 2804 lines, SHA256 41ae987cd9b50abebf44d1cb01f44311317d3c73f5ed62907afa43b86a2ba092.
+2. /data/worktrees/3puw275b/excited-dolphin/crates/market-data/tests/daily_price_only_snapshot.rs — starting 1665 lines, SHA256 c375faad9fa7731354d850e5bd5d6b5b9cfebf3b13952117665524812c7b06d4.
+No mod.rs/lib.rs/Cargo/workflow/storage/writer/S1/wire/historical/normalizer/collector changes. No new source file, docs/report file, roadmap/ledger changes, dependencies, Git writes or adjacent refactor. The coordinator already registered pub mod source; mod.rs 9 lines/700469d6a510aa3ae7ad6a27fb42a78a76b243256e5c31cb5292104b4a6be74a stays frozen. Input target/r2-daily-beta/wp-4-integration/source-wave-25-S2-correction-inputs.json pins 2 targets,20 read-only references,8 artifacts. Verify every pin at start and all unchanged pins at finish.
+
+Read BOTH documents IN FULL before editing:
+- docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md,898 lines/c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056. P1-P9 are accepted with section12 P10 binding Linux-only override. Public signatures stay available on other platforms, returning UnsupportedPlatform before I/O. No platform/dependency expansion.
+- docs/reviews/2026-10-14-r2-raw-snapshot-source-review.md,496 lines/60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7. All R01-R16 plus P1-P10 and S2-T01-32 matrices are in scope. Reviewer a4b5c1b9 is actual idle/activeTurn null/pending0, full final recovered11:37:27UTC. Coordinator matched29 pins/81 report links and concrete code. Findings are static source reasoning, NOT compiler/test observations. Source411326865706ea9e7a1690aa49742cd0254d8450 is rejected for acceptance pending corrections. Old a888cd6/run38545976070 succeeded but excludes both new files. No S2 CI was dispatched.
+
+Correct every finding without changing the contract:
+R01: linux::snapshot pub(super) only; no public exposure.
+R02: explicit Vec<PendingBatch> before early field access.
+R03: returned files iterator captures shared self reference with move, preserving borrowing/signature.
+R04: correct hard_link import; rename locals shadowing error helper; source().is_none() at all four redaction assertions.
+R05: preserve crate-only entry getters and use them in real existing getter/lookup paths; reduce 8/10/11-argument private helpers via small private scan-context/reference grouping, correct slice/shared borrowing, use private result/state aliases or structs, width-correct checked stat conversions without same-type Clippy warnings. Fix needless borrow, overwritten initialization and explicit drop of non-Drop view. Address non-Linux PendingBatch dead-field exposure while preserving public limits/platform contract. No blanket allow/expect, public widening, ignored tests or weakened strict lint.
+R06: detect EVERY known duplicate manifest field before consuming its second value, including optional null-valued fields, like frozen serde derive; files seed already does this. Preserve unknown/optional fields and sequence schema parity. Add valid-control S1/legacy parity fixtures for duplicate known fields whose second value is incomplete/invalid; true EOF may be ignored only as contracted, resource error never EOF.
+R07: one private construction owner/guard must own partially initialized directories/names/manifest and the sole lock, with lock closed LAST on EVERY failure as well as successful snapshot Drop. Transfer that ownership on success; no duplicate/extra lock FD or changed formula. Locally returned temporary leaves must also close while the guard retains the lock. Add deterministic private cleanup-order/lock-held observation, not just after-return availability.
+R08: separate lock identity/type/UID/mode/nlink validation from evidence size/mtime/ctime fingerprints; never read lock contents. Same-inode harmless lock content/length/time variation must not invalidate a snapshot. Preserve strict manifest/metadata/body fingerprints and lock replacement rejection; add contrasting deterministic cases.
+R09: fix three wrong test oracles: body policy maximum valid67108864 / invalid67108865; preserve old metadata inode OUTSIDE the batch exact leaf set for same-byte pathname replacement; assert actual WouldBlock for contending writer rather than map through generic io_error. Keep later successful exclusive acquisition.
+R10: replace process-global /proc/self/fd count equality with per-construction owned-resource observation stable under concurrent unrelated tests. Do not serialize the whole suite, relax assertions, ignore tests or add descriptor duplicates. Corroborate real owned FDs/lifetimes and lock availability, not only the production logical counters. Test observation must itself be scoped/cleaned without altering production behavior.
+R11: restore valid depth32 manifest and establish valid controls before each independent root-byte/component fault. Assert intended pre-traversal boundary so a stale depth fault cannot pass.
+R12: close ALL eight missing coverage rows in the report with private cfg(test) observations and controlled fixtures:
+(a) reads capped to expected length plus at most one probe, short/growing input, and cap rejection before allocation/read;
+(b) file-count seed rejects before over-limit FileEntry materialization/body open; sentinel/malformed over-limit element including resource-failing unterminated tail;
+(c) aggregate/descriptor reserve-before-allocation/open, actual owned retained/high-water evidence, exact/under limits, duplicate-record/Arc charging, no forbidden extra open;
+(d) Linux relative root, upper manifests/provider and data provider/market path levels, and batch.json symlinks, each with valid control;
+(e) isolated batch.json FetchMode mismatch;
+(f) late extra leaf and binding replacement at final name observation points (BeforeFinalNames), not just early mutations;
+(g) earlier batch partition with later overlapping F_DT/T_DT metadata remains discoverable, without provider interval verification;
+(h) separate cooperating writer synchronizes a REAL nonblocking exclusive-contention observation while snapshot is held, then publication/fresh capture after Drop; no barrier-before-attempt or scheduling-based try_recv inference.
+R13: actual negative/nonrepresentable stat size -> SizeMismatch, representable over-cap -> SourceScanLimit, checked counter/layout arithmetic -> ArithmeticOverflow. Add pure target-appropriate private conversion test, including cfg32-bit case without giant allocation/file; do not claim32-bit execution.
+R14: nonallocating complete lexical root validation rejects ParentDir/Prefix BEFORE any component/name clone/reservation or filesystem open. Preserve configured root caps and no canonicalization. Observe no-copy/no-open order for invalid root.
+R15: validate each recorded positive body size/configured cap in retained-entry metadata preflight BEFORE data-tree/metadata I/O; preserve SizeMismatch vs SourceScanLimit and later actual stat/hash/byte checks. Prove capture hook/data-tree opens are unreachable for known-invalid metadata; retain valid-control comparisons.
+R16: both fixture builders explicitly protect EVERY newly created Raw-down directory, independent of host umask. Never chmod shared ancestors or production files; preserve T32 deliberately writable outside data root and intentional fault modes. No process-global umask mutation for parallel tests.
+
+Keep all P1-P10 and S2-T01-32 outcomes, exact byte/hash/physical-line semantics, complete manifest scope, all finite positive caps, checked reservation/arithmetic and original descriptor formula (C+7 empty; C+9+D+2B+F nonempty). Keep captured immutable bytes AND readonly retained FDs, explicit trusted UID/no euid/root bypass, no-follow walks, one nonblocking shared-lock attempt/no retry/repair, advisory-lock/ABA limits, finite fieldless errors/source None and no StoreError growth. Provider bytes remain opaque unapproved evidence. Do not broaden to copy/provider reconstruction/admission/0060/runtime/ACL claims. Public API and all frozen references are unchanged.
+Private refactoring is allowed ONLY to meet R05/R07/R08/R10/R12; no independent architecture redesign. Keep observer hooks cfg(test), deterministic and local, no sleeps or global test serialization; use actual production paths, not a second parser/reader. Each altered assertion must fail if the named guard is removed/reordered; do not merely mirror implementation counters. Preserve existing unrelated tests and ID map; adding narrowly focused tests in the same two files is allowed.
+
+No local Cargo/rustc/Clippy/tests/build/parser/helper/checker/validator/provisioner/self-test execution, including extracted standalone versions. No SQL/DB/root/Docker/provider/network/production/workflow or Git write actions. Do not execute any new fixture or regression locally. Allowed: bounded source and cached pinned-dependency reads, rg, inert text/hash/count/diff inspection, scoped rustfmt --edition 2024 --config skip_children=true and --check on the TWO owned files. No dependency installation. No raw CI logs needed. Reading narrow referenced domain types/cached std or dependency source to settle APIs is allowed; no broad searches that can print credentials. If inputs conflict, report exact conflict; do not invent values/authority.
+Only current genuine memory envelopes if supplied; no stale hooks, guessed scopes, alternate service or saved claim after errors.
+
+Final response must be substantive even if a subsequent memory callback fires: changed files/line ranges/counts/SHA256; every R01-R16 disposition with exact source/test anchors; P1-P10 preservation and updated S2-T01-32/test-name map, clearly WRITTEN_UNEXECUTED; checks actually run and results; deviations/reasons; unresolved/missing/conflicting inputs explicitly none if empty; further decomposition/background/pending permissions/auto-review denials explicitly none if empty. State compiler/lint/tests/platform unverified. Coordinator owns independent delta review, acceptance, docs/commits and later one exact-candidate hosted CI after existing-run inspection.
+```
+
+### Coordinator gates
+
+1. Preserve the496-line review, full final and failure history; verify30 input pins,
+   existing implementer/reviewer idle/pending0, current model availability and brief.
+   Commit this bounded source correction plan before launch. No new user permission
+   is needed within existing U2 source authority.
+2. Launch one notified direct Luna/max worker with only the two writable files.
+   Verify actual model/effort/workspace/parent/startup,90minute reporting deadline and
+   pending0. Register a bounded replacement monitor for the new scope/ID.
+3. At completion or reporting bound recover full substantive final or exact INCOMPLETE
+   scope and actual idle/pending0. No reassignment while a turn runs; no inference of
+   completion from rustfmt or callback alone. Reconcile before monitor expiry and
+   renew/handoff explicitly; same-daemon heartbeat cannot protect daemon outage.
+4. Check all R01–R16 dispositions and P1–P10/T01–32 against concrete final bytes,
+   written assertions, unchanged references and test inventory. Record any uncovered
+   requirement; preserve report/history and reject deficient source.
+5. Freeze one combined correction delta and assign an independent direct Sol/high
+   source review. Resolve concrete findings before one new exact-candidate hosted CI
+   after existing-run query. Do not dispatch S2 baseline4113268.
+6. Update ROADMAP R2-04/09, STATUS, execution log, commits and owned-worker ledger.
+   Accept only explicitly tested partial source. Remaining R2/runtime/Owner gates stay open.

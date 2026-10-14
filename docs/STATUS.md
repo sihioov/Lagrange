@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — 후보a888cd6의 [CI38545976070](https://github.com/sihioov/Lagrange/actions/runs/38545976070)에서51개 Rust·별도 chart6 직접 통과와 strict Clippy/required·PG59/0039/no-SKIP/cleanup을 원본 근거로 확인해 I0c를 부분 인수했다. [snapshot 소스](reviews/2026-10-14-r2-snapshot-source-handoff.md) 두 파일과 순차 등록을 커밋4113268로 고정해 Sol/high 독립 리뷰를 진행한다(보고 기한11:46:22UTC). 새 snapshot의33개 Linux 회귀·비 Linux1개는 미실행이며, 지적 보정 후 별도 exact-candidate CI가 필요하다. negative bootstrap/rollback·0060·입력 재구성/승인·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수는 유지한다. 등록 snapshot4113268의 [독립 리뷰](reviews/2026-10-14-r2-raw-snapshot-source-review.md)에서 4개 P1·12개 P2 그룹을 회수했고 실제 idle/pending0,29pins·81links와 소스를 대조했다. S2 소스 인수는 보류하고 [Wave25](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 두 파일 한정 보정·독립 재검토를 진행한다. 새 snapshot 테스트와 CI는 미실행이며 negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3118,3 +3118,39 @@ credential read, live KIS/provider call은 아직 수행하지 않았다.
 4. **없는 값은 없는 채로.** 0 대입·이월·기본값 대체는 하류에서 구분 불가능한 거짓 신호를 만든다.
 5. **게이트 증거를 조용히 바꾸지 않는다.** 골든 재승인·게이트 입력 변경은 명시적 행위이며 커밋 메시지에 선언한다.
 6. **차단을 위조하지 않는다.** BLOCKED_EXTERNAL은 실패가 아니라 이 시스템이 설계대로 멈춰 있다는 증거다.
+
+### Wave24 review recovered; Wave25 source correction prepared — 2026-10-14
+
+Reviewer a4b5c1b9-3354-400b-be82-b8dec4f87278 reached actual idle with activeTurn null
+and pending0 at11:37:17.774UTC; full substantive final recovered11:37:27UTC within
+the original60minute bound. Report496lines SHA256
+`60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7` is preserved.
+Coordinator verified all29 pins, committed target bytes and19 baseline references,
+81 report links/line bounds, and concrete source/test anchors for R01–R16.
+
+Four P1 groups cover privacy/type/closure and integration-target compile blockers;
+twelve P2 groups cover strict-warning exposure, duplicate-field EOF parity, failure
+lock-last lifetime, lock identity policy, wrong/masked/nondeterministic assertions,
+missing operation/race coverage, stat-size mapping, preflight ordering and fixture
+modes. These are validated static findings and written-coverage gaps, not executed
+compiler/lint/test diagnostics. P1–P10 and all32 guard rows remain binding.
+S2 source acceptance is withheld. All34 existing S2 definitions remain UNEXECUTED.
+Old a888cd6 success excludes the new files and remains partial I0c evidence only.
+
+Heartbeat aeaa4fa6 was deleted only after actual idle/pending0/full final recovery.
+No running worker was redirected and no frozen source changed. The next package
+owns only source.rs and daily_price_only_snapshot.rs; mod.rs and20 readonly references,
+eight evidence artifacts and the accepted898-line contract stay frozen. Inventory
+source-wave-25-S2-correction-inputs.json:152lines,
+SHA256 `e03273e83e23948583fc8026622e7c83c5b255fb2db380cdde2f4f5391f006bf`.
+A fresh Luna/max correction context avoids resuming the old implementer's observed
+230408/258400-token context. This is no model/effort escalation. The sole configured
+Astra/high profile is labeled coordinator; repository specified-implementation routing
+selects Luna/max, whose availability was rechecked.
+
+Only source/static verification is authorized locally. Independent correction review
+precedes any new exact-candidate hosted CI; inspect existing runs first and dispatch
+once. No old run is rerun/cancelled/duplicated. Negative bootstrap/rollback,0060,
+provider/copy reconstruction/admission, diagrams before main, runtime/Owner/final C_R2
+remain open. Current Mem0 context returned MCP_ERROR; no history recovered or memory
+save is claimed, and no stale hook was retried.

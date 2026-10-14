@@ -1485,3 +1485,39 @@ recovered. Reconcile at the reviewer bound and before expiry; recover substantiv
 INCOMPLETE if unfinished and explicitly renew/handoff. Same-daemon heartbeats
 cannot protect daemon outage. Frozen source remains uncompiled/unexecuted and
 no new CI was dispatched. Coordinator owns finding disposition and later gates.
+
+### Wave24 review recovered; Wave25 source correction prepared — 2026-10-14
+
+Reviewer a4b5c1b9-3354-400b-be82-b8dec4f87278 reached actual idle with activeTurn null
+and pending0 at11:37:17.774UTC; full substantive final recovered11:37:27UTC within
+the original60minute bound. Report496lines SHA256
+`60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7` is preserved.
+Coordinator verified all29 pins, committed target bytes and19 baseline references,
+81 report links/line bounds, and concrete source/test anchors for R01–R16.
+
+Four P1 groups cover privacy/type/closure and integration-target compile blockers;
+twelve P2 groups cover strict-warning exposure, duplicate-field EOF parity, failure
+lock-last lifetime, lock identity policy, wrong/masked/nondeterministic assertions,
+missing operation/race coverage, stat-size mapping, preflight ordering and fixture
+modes. These are validated static findings and written-coverage gaps, not executed
+compiler/lint/test diagnostics. P1–P10 and all32 guard rows remain binding.
+S2 source acceptance is withheld. All34 existing S2 definitions remain UNEXECUTED.
+Old a888cd6 success excludes the new files and remains partial I0c evidence only.
+
+Heartbeat aeaa4fa6 was deleted only after actual idle/pending0/full final recovery.
+No running worker was redirected and no frozen source changed. The next package
+owns only source.rs and daily_price_only_snapshot.rs; mod.rs and20 readonly references,
+eight evidence artifacts and the accepted898-line contract stay frozen. Inventory
+source-wave-25-S2-correction-inputs.json:152lines,
+SHA256 `e03273e83e23948583fc8026622e7c83c5b255fb2db380cdde2f4f5391f006bf`.
+A fresh Luna/max correction context avoids resuming the old implementer's observed
+230408/258400-token context. This is no model/effort escalation. The sole configured
+Astra/high profile is labeled coordinator; repository specified-implementation routing
+selects Luna/max, whose availability was rechecked.
+
+Only source/static verification is authorized locally. Independent correction review
+precedes any new exact-candidate hosted CI; inspect existing runs first and dispatch
+once. No old run is rerun/cancelled/duplicated. Negative bootstrap/rollback,0060,
+provider/copy reconstruction/admission, diagrams before main, runtime/Owner/final C_R2
+remain open. Current Mem0 context returned MCP_ERROR; no history recovered or memory
+save is claimed, and no stale hook was retried.
