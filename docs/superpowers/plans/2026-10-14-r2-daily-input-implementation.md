@@ -2862,3 +2862,20 @@ Final response must be substantive even if a subsequent memory callback fires: c
    after existing-run query. Do not dispatch S2 baseline4113268.
 6. Update ROADMAP R2-04/09, STATUS, execution log, commits and owned-worker ledger.
    Accept only explicitly tested partial source. Remaining R2/runtime/Owner gates stay open.
+
+### Wave25 actual correction startup and monitor
+
+Fresh direct worker `3591c5d4-6111-4961-9423-c4f6ab1c6f60`,
+codex/gpt-6-luna/max, actually started `2026-10-14T11:44:10.164Z`.
+Model/effort, workspace wks_10fae7d550ab1704 and coordinator parent,
+running/activeTurn and pending0 were verified. Completion/error/permission notification
+was registered by create_agent; no permission mode override was supplied.
+Its90minute reporting deadline is `2026-10-14T13:14:10.164Z`.
+
+Only source.rs and daily_price_only_snapshot.rs are writable under the committed
+`a89aa6b4955814ab9ec3b85b3d1bdd5b006e439e` correction brief and30 input pins.
+The former implementer remains idle; no concurrent source writer exists.
+Heartbeat `57665dd0` runs every two minutes,max60,expires `2026-10-14T13:44:37.427Z`.
+It replaces deleted aeaa4fa6 after complete prior reviewer recovery. Recover exact
+INCOMPLETE scope at the reporting bound, and renew/handoff before expiry; same-daemon
+heartbeat cannot protect daemon outage. No new CI or operational action was started.

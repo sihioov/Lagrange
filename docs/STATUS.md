@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수는 유지한다. 등록 snapshot4113268의 [독립 리뷰](reviews/2026-10-14-r2-raw-snapshot-source-review.md)에서 4개 P1·12개 P2 그룹을 회수했고 실제 idle/pending0,29pins·81links와 소스를 대조했다. S2 소스 인수는 보류하고 [Wave25](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 두 파일 한정 보정·독립 재검토를 진행한다. 새 snapshot 테스트와 CI는 미실행이며 negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수는 유지한다. 등록 snapshot4113268의 [독립 리뷰](reviews/2026-10-14-r2-raw-snapshot-source-review.md)에서 4개 P1·12개 P2 그룹을 회수했고 실제 idle/pending0,29pins·81links와 소스를 대조했다. S2 소스 인수는 보류하고 [Wave25](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 두 파일 한정 Luna/max 보정이11:44:10UTC에 실제 시작됐다(90분 보고 기한13:14:10UTC). 이후 독립 재검토한다. 새 snapshot 테스트와 CI는 미실행이며 negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3154,3 +3154,20 @@ once. No old run is rerun/cancelled/duplicated. Negative bootstrap/rollback,0060
 provider/copy reconstruction/admission, diagrams before main, runtime/Owner/final C_R2
 remain open. Current Mem0 context returned MCP_ERROR; no history recovered or memory
 save is claimed, and no stale hook was retried.
+
+### Wave25 actual correction startup and monitor
+
+Fresh direct worker `3591c5d4-6111-4961-9423-c4f6ab1c6f60`,
+codex/gpt-6-luna/max, actually started `2026-10-14T11:44:10.164Z`.
+Model/effort, workspace wks_10fae7d550ab1704 and coordinator parent,
+running/activeTurn and pending0 were verified. Completion/error/permission notification
+was registered by create_agent; no permission mode override was supplied.
+Its90minute reporting deadline is `2026-10-14T13:14:10.164Z`.
+
+Only source.rs and daily_price_only_snapshot.rs are writable under the committed
+`a89aa6b4955814ab9ec3b85b3d1bdd5b006e439e` correction brief and30 input pins.
+The former implementer remains idle; no concurrent source writer exists.
+Heartbeat `57665dd0` runs every two minutes,max60,expires `2026-10-14T13:44:37.427Z`.
+It replaces deleted aeaa4fa6 after complete prior reviewer recovery. Recover exact
+INCOMPLETE scope at the reporting bound, and renew/handoff before expiry; same-daemon
+heartbeat cannot protect daemon outage. No new CI or operational action was started.
