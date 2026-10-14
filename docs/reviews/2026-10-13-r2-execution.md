@@ -1370,3 +1370,23 @@ Source handoff is frozen for independent Sol/high review; I1b-S2-D continues unc
 No new CI or operational action. Full report/recovery and frozen review inputs are
 private artifacts under target/r2-daily-beta/wp-4-integration; complete review brief
 is in Wave21 of the implementation plan. Neither I0 nor0060/runtime is complete.
+
+
+### Wave21 actual review startup and monitoring handoff
+
+Source/brief commit `f0c65905317be41689c6cb3b7a3fd63312ee0ac2` is frozen.
+Reviewer `a4b5c1b9-3354-400b-be82-b8dec4f87278`, codex/gpt-6.1-sol/high,
+started09:30:26.183UTC; actual running turn, expected parent/workspace/model/effort
+and pending0 verified, follow-up notification enabled. Its30minute reporting
+deadline is10:00:26.183UTC. S2-D `7e07def6-4eaa-45fa-9a12-91fdd67b27d9`
+remains running/pending0 on its original contract, deadline10:05:40.793UTC.
+No running worker was redirected.
+
+Heartbeat `1c5b74e2` now covers only I0c-R and unchanged S2-D every two minutes,
+max60 runs, expiry11:31:04.762UTC. It explicitly took over S2-D before `c6e1b334`
+was deleted; completed I0c implementation was already idle/pending0/full-result recovered.
+At each reporting bound recover a substantive result or INCOMPLETE scope; acceptance
+still requires actual idle/pending0 and source checks. Renew/handoff before expiry;
+same-daemon monitoring cannot protect a daemon outage. Private startup/input/sent-brief
+receipts and the owned-worker ledger record the transfer. New source tests, compilation,
+hosted verification and acceptance remain pending; no new CI or operational action.

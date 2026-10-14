@@ -2467,3 +2467,23 @@ Review against the fixed I0c contract, not an invented broader gate:
 Allowed verification: bounded source reads/rg/git diff/show/hash, scoped rustfmt --edition2024 --check --config skip_children=true on two targets, bash -n on two shell files, scoped whitespace checks and report-link bounds. Do NOT execute tests,Cargo,rustc,Clippy,builds,validator/checker/parser/provisioner/self-test,SQL/DB/root/Docker/provider/network/workflow; no dependencies,Git writes,delegation or raw log/credential persistence. Hash frozen reference files without surveying unrelated code; relevant supporting reads are the two common harnesses and role bootstrap SQL, pinned manifests/Cargo.lock and cachedSQLx API, existing validator run_db_test/cleanup/no-SKIP sections, D5 I0 requirements. Read private CI receipt only if needed for boundary, never infer prior success covers new tests. Fresh memory-hook envelopes only, errors are not saved.
 
 Return within30minutes of actual startup or INCOMPLETE with exact remaining scope. Report findings with P1/P2 IDs, source anchors, concrete trigger/consequence and bounded remedy; if none state no concrete finding. Include a guard-to-written-test matrix, preservation and pin checks, unexecuted/unknown evidence, deviations/reasons, missing/conflicting inputs explicitly none where empty, further decomposition/background/pending permissions. Final response: report path,linecount,SHA256,summary,checks actually run,unresolved items. Coordinator owns source acceptance and future single exact-candidate hosted verification.
+
+
+### Wave21 actual review startup and monitoring handoff
+
+Source/brief commit `f0c65905317be41689c6cb3b7a3fd63312ee0ac2` is frozen.
+Reviewer `a4b5c1b9-3354-400b-be82-b8dec4f87278`, codex/gpt-6.1-sol/high,
+started09:30:26.183UTC; actual running turn, expected parent/workspace/model/effort
+and pending0 verified, follow-up notification enabled. Its30minute reporting
+deadline is10:00:26.183UTC. S2-D `7e07def6-4eaa-45fa-9a12-91fdd67b27d9`
+remains running/pending0 on its original contract, deadline10:05:40.793UTC.
+No running worker was redirected.
+
+Heartbeat `1c5b74e2` now covers only I0c-R and unchanged S2-D every two minutes,
+max60 runs, expiry11:31:04.762UTC. It explicitly took over S2-D before `c6e1b334`
+was deleted; completed I0c implementation was already idle/pending0/full-result recovered.
+At each reporting bound recover a substantive result or INCOMPLETE scope; acceptance
+still requires actual idle/pending0 and source checks. Renew/handoff before expiry;
+same-daemon monitoring cannot protect a daemon outage. Private startup/input/sent-brief
+receipts and the owned-worker ledger record the transfer. New source tests, compilation,
+hosted verification and acceptance remain pending; no new CI or operational action.

@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. I0c 네 파일 소스와 최종 보고를 회수·대조해 독립 리뷰를 준비했다. I1b-S2-D Raw snapshot 계약 작업은 계속된다. 새 회귀 2개의 실행과 소스/계약 인수는 미완료다. 0060·전체 입력·운영·Owner 인수는 남는다. |
+| 다음 착수 항목 | 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. I0c 네 파일 소스와 최종 보고를 회수·대조해 f0c6590으로 고정했고, Sol/high 독립 리뷰가 실행 중이다. I1b-S2-D Raw snapshot 계약 작업은 계속된다. 새 회귀 2개의 실행과 소스/계약 인수는 미완료다. 0060·전체 입력·운영·Owner 인수는 남는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -514,3 +514,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; Wave20 두 작업 실제 착수 | I0c 네 파일 회귀 소스와 S2-D 단일 계약 문서; 실제 startup·모델·부모·pending0 확인. 60/45분 보고 기한과 heartbeat c6e1b334를 기록; 새로운 실행/운영 인수 없음 | [Wave20 실행](reviews/2026-10-13-r2-execution.md), [고정 brief](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); brief commit1a2321b |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; I0c 소스 회수·독립 리뷰 준비 | 실제 idle/pending0/full final, 네 파일/27참조 hash와 원본 보존 확인. 직접 로그인 회귀2개 작성, 소스·실행 인수 보류; S2-D는 계속 | [Wave21](superpowers/plans/2026-10-14-r2-daily-input-implementation.md), [실행 기록](reviews/2026-10-13-r2-execution.md); rustfmt/bash-n/diff만 통과 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; I0c 독립 리뷰 실행·모니터 인계 | source f0c6590, reviewer a4b5c1b9 actual09:30:26.183UTC/pending0,30분 보고 기한. S2-D 원래 범위·기한 유지; heartbeat1c5b74e2로 명시적 인계 후c6e1b334 삭제 | [Wave21](superpowers/plans/2026-10-14-r2-daily-input-implementation.md), [실행 기록](reviews/2026-10-13-r2-execution.md); 소스 인수·새 CI는 대기 |
