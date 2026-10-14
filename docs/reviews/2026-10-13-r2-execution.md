@@ -622,3 +622,42 @@ running/pending0·workspace·parent·model/effort를 확인했다. 소유권은 
 기존 CI collector는 계속 exact `02a400e`의 run만 관찰한다. 두 결과의 actual idle/final 회수 후
 코디네이터가 원본 hash와 사본 diff를 대조해 통합하고 새 후보를 검증한다. `70aea161`을 삭제하고
 두 소유 worker의 `6dd677e4`(2분·60회·05:35:22 UTC 만료)로 감시를 교체했다.
+
+
+### 실제 CI 실패 회수·최종 Rust 보정 통합 — 2026-10-14
+
+`02a400e`의 [run38506113191](2026-10-14-r2-daily-wire-corrections-ci.md)은
+03:36:21 UTC terminal failure다. Clippy의 세 중첩 조건과 두 test type-complexity,
+workspace의 fixture shadow E0618, Python 준비 대기 실패를 회수했다. Chart 6개와 PG
+APPROVED/59 migrations는 통과했지만 신규 29개 Rust 테스트는 실행 result row가 없다.
+이 부분 성공으로 전체 후보나 `daily_input_admitter_pool`·0060 검증을 대신하지 않는다.
+
+격리 I1a-F2 03:39:43, 실제 CI collector 03:39:58, 추가 I1a-F2-C 03:43:54 UTC의
+actual idle/pending0와 final을 확인했다. 원본 hash와 사본 base `02a400e`·두 파일만의 delta를
+대조한 뒤 최종 contract4183행 `f086c065b903a00a022eeef3b37daf3b021691f0fa2fc525b17be1a7ed4ea523`,
+test2386행 `11a8255d60d5c4ff1e16f136e3246adf046fc7743c8248b7eb7de755e1d3cd74`를 통합했다.
+기존 D4 950행 `fa052903…`는 유지한다. source inventory는 25 통합+5 내부 테스트이며 아직 미실행이다.
+
+Sol/high `a4b5c1b9-3354-400b-be82-b8dec4f87278`의 notified I1a-F2-R을 03:48:23 UTC에
+시작했고 03:53:49 UTC actual idle/pending0 후 [226행 최종 리뷰](2026-10-14-r2-daily-wire-final-review.md)
+`e87f054c4a580414b9916288708d01b9b9b456451ea3bd03b2a00c5fb65109ab`를 회수했다.
+코디네이터가 정확한 diff·hash와 리뷰를 읽었다. CR-01~04 및 추가 short-circuit/shadow 진단의
+소스 수준 해소와 신규 finding 없음 판단을 수용한다. 30개 Rust 테스트·strict Clippy·컴파일
+성공은 후속 새 exact 후보 CI에서 확인해야 한다.
+
+Python 진단 담당은 03:45:29 UTC idle/pending0 후 [23행 보고](2026-10-14-r2-python-ci-diagnostics.md)
+`4ba38a0b24907da1a33cf23a8d01c62f457eb3184d66d43be48bab721a58b7de`를 회수했다.
+기존 200×0.005초 readiness polling이 SIGTERM 전에 실패했으며 child returncode가 없으므로
+startup 지연·조기 종료·제품 결함 중 하나로 단정하지 않는다. 기존 종료·잠금 해제 검증을 보존하는
+별도 10초 monotonic subprocess readiness helper와 결정론적 mock 회귀를 한 test 파일로 한정한다.
+
+등록 profile은 코디네이터용뿐이어서 저장소의 고정 명세 구현 규칙을 적용해 Luna/max
+`ba55a077-2880-408e-9424-29f476ebdd7f`에 I1a-PY-F를 맡겼다. 03:53:12 UTC notified launch와
+actual running/pending0·parent/workspace/model/effort를 확인했다. local test/module 실행,
+신호·운영·provider·Git write는 위임하지 않았다. `test_runtime.py`의 수정만 허용하며
+코디네이터 검토 후 새 source 후보에 포함한다.
+
+감시는 `6dd677e4`를 삭제하고 `f40a8ab8`(2분·60회·05:53:40 UTC 만료)로 교체했다.
+리뷰 결과는 회수됐고 Python 작업의 실제 상태·final을 계속 회수한다. 같은 daemon heartbeat는
+중단을 보호하지 못하며 만료 전 미완료 항목은 재조정한다. 기존 CI 재실행·중복 dispatch나
+운영 조치는 없었다. R2-04/09는 DOING이며 다음은 새 후보 검증이다.

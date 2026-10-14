@@ -1120,6 +1120,105 @@ fn every_json_input_byte_limit_accepts_exact_size_and_rejects_one_more() {
 }
 
 #[test]
+fn legal_proof_canonical_output_crosses_only_the_normalization_byte_bound() {
+    fn source_key(index: usize) -> DailyFileKeyV1Wire {
+        assert!(index < 1_000_000);
+        let prefix = format!("proof-source-{index:06}-");
+        let name = format!("{prefix}{}.json", "x".repeat(128 - prefix.len() - 5));
+        assert_eq!(name.len(), 128);
+        DailyFileKeyV1Wire {
+            provider: "kis".to_owned(),
+            market: "kr".to_owned(),
+            batch_id: batch("00000000-0000-4000-8000-000000000001"),
+            file_name: name,
+            wire_sha256: sh(1),
+        }
+    }
+
+    fn refresh_source_commitment(proof: &mut DailyNormalizationProofV1Wire) -> usize {
+        let document = &mut proof.documents[0];
+        let commitment = DailyNormalizedSourceCommitmentV1Wire {
+            schema: "owner-beta-daily-normalized-source-v1".to_owned(),
+            kind: document.kind,
+            session_date: document.session_date,
+            source_files: document.source_files.clone(),
+        };
+        let bytes = daily_normalized_source_preimage_v1(&commitment).unwrap();
+        document.source_evidence_sha256 = hash(&bytes);
+        bytes.len()
+    }
+
+    let limits = policy().limits;
+    let output_limit = usize::try_from(limits.max_normalization_bytes).unwrap();
+    assert_eq!(output_limit, 16_777_216);
+    let mut proof = DailyNormalizationProofV1Wire {
+        schema: "owner-beta-daily-etf11-normalization-v1".to_owned(),
+        normalizer_version: "daily-raw-reconstruction-v1".to_owned(),
+        evidence_sha256: sh(3),
+        documents: vec![DailyNormalizedDocumentV1Wire {
+            kind: DailyEvidenceKindV1::Bars,
+            session_date: date("2026-08-31"),
+            normalizer_version: "daily-raw-reconstruction-v1".to_owned(),
+            sha256: sh(1),
+            size_bytes: 1,
+            row_count: 0,
+            source_files: vec![source_key(0)],
+            source_evidence_sha256: sh(2),
+        }],
+    };
+    refresh_source_commitment(&mut proof);
+
+    // All identities are distinct by fixed-length ASCII filename. Sorting and
+    // refreshed hashes cannot change lengths. Measure the one-key overhead once:
+    // bytes(n) = overhead + n * (key_bytes + comma) - final_comma.
+    let key_bytes = serde_json::to_vec(&proof.documents[0].source_files[0])
+        .unwrap()
+        .len();
+    let overhead = serde_json::to_vec(&proof).unwrap().len() - key_bytes;
+    let stride = key_bytes.checked_add(1).unwrap();
+    let count = output_limit
+        .checked_sub(overhead)
+        .unwrap()
+        .checked_add(1)
+        .unwrap()
+        / stride;
+    assert_eq!(
+        (key_bytes, overhead, stride, count),
+        (313, 533, 314, 53_428)
+    );
+    assert!(count + 1 < usize::try_from(limits.max_file_evidence_per_session).unwrap());
+    assert!(proof.documents.len() < usize::try_from(limits.max_file_evidence_per_session).unwrap());
+    assert!(proof.documents[0].size_bytes <= limits.max_normalized_document_bytes);
+    proof.documents[0].source_files = (0..count).map(source_key).collect();
+    let inner_bytes = refresh_source_commitment(&mut proof);
+    assert_eq!(inner_bytes, 16_776_501);
+    assert!(inner_bytes < usize::try_from(limits.max_normalized_document_bytes).unwrap());
+
+    let expected_bytes = overhead + count.checked_mul(stride).unwrap() - 1;
+    let encoded = encode_daily_normalization_proof_v1(&proof).unwrap();
+    assert_eq!(encoded.len(), expected_bytes);
+    assert_eq!(encoded.len(), 16_776_924); // 292 bytes below the output limit.
+    assert!(encoded.len() < output_limit);
+    drop(encoded);
+
+    proof.documents[0].source_files.push(source_key(count));
+    let inner_bytes = refresh_source_commitment(&mut proof);
+    assert_eq!(inner_bytes, 16_776_815);
+    assert!(inner_bytes < usize::try_from(limits.max_normalized_document_bytes).unwrap());
+    // This unrestricted serialization is size evidence only. The public encoder
+    // must reject this otherwise legal proof at its 16 MiB output writer.
+    let raw_bytes = serde_json::to_vec(&proof).unwrap();
+    assert_eq!(raw_bytes.len(), expected_bytes + stride);
+    assert_eq!(raw_bytes.len(), 16_777_238); // 22 bytes above the output limit.
+    assert!(raw_bytes.len() > output_limit);
+    drop(raw_bytes);
+    assert_eq!(
+        encode_daily_normalization_proof_v1(&proof),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+}
+
+#[test]
 fn bundle_counts_follow_all_manifest_sessions_with_more_than_two_base_dates() {
     let mut fixture = fixture(true);
     fixture.draft.sessions.insert(1, date("2020-01-02"));
@@ -1348,7 +1447,7 @@ fn each_cash_code_accepts_empty_and_valid_32_byte_values() {
         let mut row = cash_row(&candidate.draft.daily_sources[0], ["", "", ""]);
         let code = "A".repeat(32);
         set_cash_row_code(&mut row, field, &code);
-        assert!(daily_cash_dividend_rows_preimage_v1(&[row.clone()]).is_ok());
+        assert!(daily_cash_dividend_rows_preimage_v1(std::slice::from_ref(&row)).is_ok());
         replace_cash_row_and_rebuild(&mut candidate, row);
 
         let bytes = encode_daily_price_manifest_v1(&candidate.manifest).unwrap();
@@ -1738,7 +1837,7 @@ fn ordered_action_pages_and_copy_hops_are_never_sorted() {
     }
     action.pages.push(second);
     refresh_corporate_document(&mut session);
-    assert!(daily_price_evidence_preimage_v1(&[session.clone()]).is_ok());
+    assert!(daily_price_evidence_preimage_v1(std::slice::from_ref(&session)).is_ok());
     let mut terminal_more = session.clone();
     terminal_more.actions[0].pages[1].response_continuation = Some("M".to_owned());
     assert!(daily_price_evidence_preimage_v1(&[terminal_more]).is_err());
@@ -1793,7 +1892,7 @@ fn ten_ordered_pages_and_sixteen_distinct_copy_hops_hit_their_bounds() {
         action.pages.push(page);
     }
     refresh_corporate_document(&mut ten_pages);
-    assert!(daily_price_evidence_preimage_v1(&[ten_pages.clone()]).is_ok());
+    assert!(daily_price_evidence_preimage_v1(std::slice::from_ref(&ten_pages)).is_ok());
 
     let mut eleven_pages = ten_pages;
     let action = &mut eleven_pages.actions[0];
@@ -1818,11 +1917,15 @@ fn ten_ordered_pages_and_sixteen_distinct_copy_hops_hit_their_bounds() {
     );
 
     let mut sixteen_hops = fixture.manifest.daily_sources[0].clone();
-    set_copy_depth(&mut sixteen_hops.calendar[0].source_file, 16, 3);
-    assert!(daily_price_evidence_preimage_v1(&[sixteen_hops.clone()]).is_ok());
+    for binding in &mut sixteen_hops.calendar {
+        set_copy_depth(&mut binding.source_file, 16, 3);
+    }
+    assert!(daily_price_evidence_preimage_v1(std::slice::from_ref(&sixteen_hops)).is_ok());
 
     let mut seventeen_hops = sixteen_hops;
-    set_copy_depth(&mut seventeen_hops.calendar[0].source_file, 17, 3);
+    for binding in &mut seventeen_hops.calendar {
+        set_copy_depth(&mut binding.source_file, 17, 3);
+    }
     assert_eq!(
         daily_price_evidence_preimage_v1(&[seventeen_hops]),
         Err(DailyWireErrorV1::LimitExceeded),
@@ -1875,7 +1978,7 @@ fn copied_calendar_keeps_terminal_request_target_and_changes_source_commitment()
                 hash(&daily_normalized_source_preimage_v1(&commitment).unwrap());
         }
     }
-    let copied_evidence = daily_price_evidence_preimage_v1(&[session.clone()]).unwrap();
+    let copied_evidence = daily_price_evidence_preimage_v1(std::slice::from_ref(&session)).unwrap();
     assert_ne!(hash(&copied_evidence), hash(&original_evidence));
 
     let mut wrong_terminal_target = session;
@@ -1904,7 +2007,7 @@ fn multi_hop_copy_order_compares_each_nanosecond() {
         set_copy_depth(&mut binding.source_file, 2, 3);
     }
     refresh_calendar_documents(&mut ordered);
-    assert!(daily_price_evidence_preimage_v1(&[ordered.clone()]).is_ok());
+    assert!(daily_price_evidence_preimage_v1(std::slice::from_ref(&ordered)).is_ok());
 
     let mut inverted = ordered;
     for binding in &mut inverted.calendar {
@@ -2227,34 +2330,34 @@ fn parent_policy_code_and_source_commitments_change_only_descendants() {
 
 #[test]
 fn verifier_commit_only_changes_admission_hash_and_stale_links_fail() {
-    let mut fixture = fixture(false);
-    let original_manifest_hash = hash_daily_price_manifest_v1(&fixture.manifest).unwrap();
-    let original_policy_hash = hash_daily_price_policy_v1(&fixture.policy).unwrap();
-    let original_evidence_hash = fixture.proof.evidence_sha256.clone();
-    let original_admission_hash = hash_daily_price_admission_v1(&fixture.admission).unwrap();
-    fixture.admission.verifier_code_commit = CodeCommit::parse(&"4".repeat(40)).unwrap();
-    let admission_hash = hash_daily_price_admission_v1(&fixture.admission).unwrap();
-    fixture.pins.admission_sha256 = admission_hash.clone();
+    let mut candidate = fixture(false);
+    let original_manifest_hash = hash_daily_price_manifest_v1(&candidate.manifest).unwrap();
+    let original_policy_hash = hash_daily_price_policy_v1(&candidate.policy).unwrap();
+    let original_evidence_hash = candidate.proof.evidence_sha256.clone();
+    let original_admission_hash = hash_daily_price_admission_v1(&candidate.admission).unwrap();
+    candidate.admission.verifier_code_commit = CodeCommit::parse(&"4".repeat(40)).unwrap();
+    let admission_hash = hash_daily_price_admission_v1(&candidate.admission).unwrap();
+    candidate.pins.admission_sha256 = admission_hash.clone();
     assert_ne!(admission_hash, original_admission_hash);
     assert_eq!(
-        hash_daily_price_manifest_v1(&fixture.manifest).unwrap(),
+        hash_daily_price_manifest_v1(&candidate.manifest).unwrap(),
         original_manifest_hash
     );
     assert_eq!(
-        hash_daily_price_policy_v1(&fixture.policy).unwrap(),
+        hash_daily_price_policy_v1(&candidate.policy).unwrap(),
         original_policy_hash
     );
-    assert_eq!(fixture.proof.evidence_sha256, original_evidence_hash);
+    assert_eq!(candidate.proof.evidence_sha256, original_evidence_hash);
     validate_daily_price_wire_bundle_v1(
-        &fixture.policy,
-        &fixture.manifest,
-        &fixture.proof,
-        &fixture.admission,
-        &fixture.pins,
+        &candidate.policy,
+        &candidate.manifest,
+        &candidate.proof,
+        &candidate.admission,
+        &candidate.pins,
     )
     .unwrap();
 
-    let mut stale = fixture.clone();
+    let mut stale = candidate.clone();
     stale.pins.policy_sha256 = sh(404);
     assert_eq!(
         validate_daily_price_wire_bundle_v1(
@@ -2267,7 +2370,7 @@ fn verifier_commit_only_changes_admission_hash_and_stale_links_fail() {
         Err(DailyWireErrorV1::HashMismatch)
     );
 
-    let mut stale_manifest = fixture.clone();
+    let mut stale_manifest = candidate.clone();
     stale_manifest.manifest.content_sha256 = sh(405);
     assert_eq!(
         encode_daily_price_manifest_v1(&stale_manifest.manifest),

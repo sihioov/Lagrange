@@ -717,3 +717,121 @@ running/pending0·workspace·parent·model/effort를 확인했다. 소유권은 
 기존 CI collector는 계속 exact `02a400e`의 run만 관찰한다. 두 결과의 actual idle/final 회수 후
 코디네이터가 원본 hash와 사본 diff를 대조해 통합하고 새 후보를 검증한다. `70aea161`을 삭제하고
 두 소유 worker의 `6dd677e4`(2분·60회·05:35:22 UTC 만료)로 감시를 교체했다.
+
+## I1a-F2 회수·실제 CI 진단 추가 보정 — 2026-10-14
+
+I1a-F2는 03:39:43 UTC actual idle/pending0 후 전체 보고를 회수했다. 사본의 두 파일은
+4185행 `b21aead5ebd2e5931cb811c469fa0954c932f0526ab265c9e439d4110ccca230`,
+2386행 `ee5c70a1dde4ae94ec05f1d4119fc6151d0eb83401f24a6ae1f4c4eb6adfb73d`다.
+CR-01~04 delta를 직접 읽었으며 25 integration+5 private test는 아직 작성 상태다.
+legal proof의 53,428/53,429 key 구성과 public commitment 재계산, 네 fixed writer 매핑을 확인했다.
+독립 검토·실행 성공은 아직 아니며 원본에는 통합하지 않았다.
+
+CI collector는 03:39:58 UTC actual idle/pending0이며 [CI 보고](../../reviews/2026-10-14-r2-daily-wire-corrections-ci.md)
+31행·`6fe75a87cb2b67d19544b933bc2e3b06d1cc1d7706e2b3325bb87730034357bd`를 회수했다.
+`02a400e` run38506113191은 03:36:21 UTC terminal failure다. chart6 및 PG APPROVED/59 migrations는
+통과했지만 세 collapsible-if와 두 test table type-complexity, test의 E0618, Python SIGTERM test 실패가
+남았다. 신규 29개 테스트는 result row가 없고 실행 근거가 없다. PG 성공은 최종 후보나 미호출 helper,
+0060/runtime 인수를 뜻하지 않는다. 원본·사본 모두 해당 fixture shadowing과 세 if를 아직 포함한다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I1a-F2-C | intermediate | 실제 E0618·세 lint 위치가 확정된 두 파일 국소 수정 | high | 추가 public 동작 변경 필요 또는 새 범위 밖 진단은 보고 후 재분해 |
+| I1a-PY-D | simple | 단일 Python CI 실패의 로그·source 증거 추출 | high | 로그로 원인을 구분할 수 없으면 UNKNOWN과 필요한 후속을 명시; 구현은 하지 않음 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I1a-F2-C | 3 | intermediate | 추가 compiler/lint 진단 제거 | 격리 F2 작업 사본의 같은 두 파일 | F2 idle/final·CI 진단 회수 | 기존 Sol/medium | 정확한 delta/hash·보존 확인 | rustfmt/diff; 실제 compiler는 후속 hosted |
+| I1a-PY-D | 3 | simple | Python 실패의 typed 증거·source 위치 회수 | 새 Python 진단 보고, `ci/02a400e/python-diagnostics/` | CI collector idle/final | 기존 Luna/medium | 실제 실패 조건·원인 판정 가능성·미확인 구분 | 기존 run의 python job 및 exact candidate source 읽기 |
+
+### I1a-F2-C 고정 실행 brief
+
+- 기존 Sol/medium `54eb1c89-2cf3-41bb-94cb-25dfe7152ee0`의 같은 사본·두 파일 notified follow-up.
+  위 F2 hash를 시작 입력으로 확인한다. CR-01~04·D4/API/golden/30 written test 범위를 보존한다.
+- contract의 UUID/commit lexical 검사 두 곳과 pair_value의 중첩 if를 의미가 같은 short-circuit
+  조건으로 합친다. pair_value의 replace는 name 일치 시에만 실행돼야 한다. strict lane을 약화하지 않는다.
+- test 마지막 verifier_commit_only_changes_admission_hash_and_stale_links_fail의 local fixture 변수가
+  함수 fixture(false)를 가린다. local binding과 해당 참조만 명확히 rename하고 마지막 새 fixture 호출과
+  기존 stale-hash/parent rejection assertion을 유지한다. helper/public 명칭 전체 rename은 금지한다.
+- local read/rustfmt/diff만 허용한다. Cargo/rustc/Clippy/test/build/DB/root/Docker/provider/운영/Git write와
+  하위 위임은 금지한다. 출력은 같은 파일 및 공통 최종 보고이고, coordinator가 원본 통합을 담당한다.
+
+### I1a-PY-D 고정 실행 brief
+
+- 기존 collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`가 run38506113191의 Python job
+  `115663895591` 로그만 read-only로 재조회한다. candidate는 exact `02a400e`다. workflow와
+  `nt/live-node/tests/test_runtime.py`의 해당 SIGTERM test 및 직접 호출하는 fixture/runtime source를
+  읽어 실제 assertion·예외 타입·exit·timeout·준비/종료 동기화 위치를 식별한다.
+- 출력은 `docs/reviews/2026-10-14-r2-python-ci-diagnostics.md` 하나와 private leaf뿐이다.
+  prior CI 보고/receipt를 바꾸지 않는다. safe diagnostic과 source anchor·log response hash만 저장한다.
+  raw 로그·provider/account/credential 내용·운영 파일은 읽거나 기록하지 않는다.
+- 불안정한 테스트인지 제품 결함인지 추정하지 않는다. 호출/실패 사실, source로 확인한 제약,
+  미확인 원인을 분리한다. source 변경·재현 실행·pytest·프로세스 신호 전송·workflow action·DB/운영/
+  Git write·하위 위임은 금지한다. 20분 또는 04:10 UTC 중 먼저 도달하면 결과/INCOMPLETE를 반환한다.
+  실제 수정·추가 검증은 결과를 검토한 코디네이터가 별도 범위로 정한다.
+
+## I1a-F2-C 통합·독립 검토와 Python 준비 대기 보정 — 2026-10-14
+
+03:43:54 UTC actual idle/pending0 후 F2-C를 회수했다. 최종 사본은 contract4183행
+`f086c065b903a00a022eeef3b37daf3b021691f0fa2fc525b17be1a7ed4ea523`, test2386행
+`11a8255d60d5c4ff1e16f136e3246adf046fc7743c8248b7eb7de755e1d3cd74`다. 코디네이터가 네 추가
+진단의 소스 보정을 읽고, 원본 hash·사본 base·두 파일만의 delta를 확인해 그대로 원본에 통합했다.
+이전 CI turn의 final도 이미 회수됐으며 새 Python 진단은 exact candidate의 별도 source 읽기였다.
+30개 written test와 static check는 실제 compiler/Clippy/test 성공을 대신하지 않는다.
+
+Python 진단은 03:45:29 UTC actual idle/pending0 후 [23행 보고](../../reviews/2026-10-14-r2-python-ci-diagnostics.md)
+`4ba38a0b24907da1a33cf23a8d01c62f457eb3184d66d43be48bab721a58b7de`를 회수했다.
+SIGTERM 전에 wait_for_cycle의 200×0.005초 대기가 실패했고 child exit 정보는 없었다.
+원인이 startup 지연인지 child 오류인지는 미확인이다. 아래 test-only 보정은 이를 구분할 수 있는
+bounded 대기 계약을 만들며, 기존 운영 runtime 결함이나 flaky 원인 확정을 주장하지 않는다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I1a-F2-R | intermediate | CR-01~04와 실제 compiler/lint 진단의 고정 두 파일 delta 검토 | high | source 모순·경계 위반 발견 시 구체적 finding으로 반환 |
+| I1a-PY-F | intermediate | 확정된 subprocess readiness 대기·오류 관측의 test-only 보정 | high | production runtime 수정·새 실행 권한이 필요하면 임의 확대 없이 보고 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I1a-F2-R | 4 | intermediate | 통합 Rust 보정의 독립 검토 | `docs/reviews/2026-10-14-r2-daily-wire-final-review.md` 하나 | F2-C idle/final·위 hash 통합 | 기존 Sol/high reviewer | source-only finding disposition | source/diff/hash·rustfmt check; 실행 추정 금지 |
+| I1a-PY-F | 4 | intermediate | Python SIGTERM 테스트의 준비 대기 개선 | `nt/live-node/tests/test_runtime.py` 하나 | 실제 Python 실패 진단 회수 | 새 Luna/max; 고정 명세 구현 | test-only delta·mock 경계 회귀 | Python compile/AST·diff만; pytest 실행은 hosted 후보 |
+
+### I1a-F2-R 고정 실행 brief
+
+- workspace는 원본이다. 위 두 hash와 D4950행 `fa052903…`, 이전 보정 리뷰309행 `72784303…`,
+  actual CI 보고31행 `6fe75a87…`를 고정한다. `02a400e` 대비 합친 F2/F2-C delta를 검토한다.
+- CR-01~04의 수정·guard 호출·fixture legality/비용, 세 short-circuit if와 fixture shadow 해소,
+  기존 API/golden/cash·R01/02/03/06 보존을 판정한다. code/test가 컴파일·통과했다고 추정하지 않는다.
+  출력은 위 report 하나이며 source/hash/diff/line/rustfmt check만 허용한다. local compiler/test/DB/
+  root/Docker/provider/운영/Git write/하위 위임은 금지한다. Python 범위는 별도 담당이다.
+
+### I1a-PY-F 고정 실행 brief
+
+- 원본 checkout의 위 test 파일 하나만 수정한다. credential-free/dry-run 테스트 계약을 유지한다.
+  production runtime/CLI/config·workflow·의존성·문서·Rust 파일은 변경하지 않는다.
+- 기존 thread 기반 wait_for_cycle 호출과 의미는 유지한다. 실패한 SIGTERM subprocess 테스트에는
+  별도 readiness helper를 추가해 monotonic 기준 10초 deadline과 짧은 polling interval을 사용한다.
+  매 poll에서 child.poll()을 확인하고 child가 종료됐으면 즉시 typed phase·returncode로 실패한다.
+  살아 있는 child가 유효한 cycle>=1 상태를 발행해야 다음 SIGTERM 검증으로 넘어간다.
+  deadline까지 준비되지 않으면 deadline/returncode/마지막으로 관측한 cycle의 안전한 숫자 정보로
+  명확히 실패한다. 임의 stderr/stdout·status 원문·provider/account 내용은 실패 메시지에 넣지 않는다.
+- 준비 이후 terminate→exit0→lock 부재→STOPPED status/stdout assertions와 finally kill/wait cleanup을
+  그대로 유지한다. 무한 재시도, 실패 skip/xfail, 종료 검증 약화, 실제 provider 접근은 금지한다.
+- monkeypatch/fake clock·fake child.poll·fake read_status로 결정론적인 회귀를 작성한다.
+  이전 1초보다 늦지만 deadline 안인 준비는 성공, deadline 전 조기 종료는 즉시 실패,
+  준비가 끝내 없으면 정확한 bounded 실패를 확인한다. 회귀 자체가 새 real subprocess나 sleep을
+  수행하지 않게 한다. 원인 미확인을 숨기지 말고 개선된 진단/준비 계약의 범위를 보고한다.
+- 허용 검사는 source read, ast.parse/compile(파일 실행·pyc 생성 없음), diff/whitespace뿐이다.
+  pytest/Python module runtime·프로세스 생성/신호·Cargo/build/DB/root/Docker/provider/운영/Git write/
+  하위 위임은 금지한다. 모순은 임의로 채우지 않는다. 공통 최종 보고와 정확한 파일 hash/라인,
+  추가 회귀 이름·미실행 한계를 반환한다. coordinator의 독립 review 후 새 exact 후보 CI에서 실행한다.
+
+
+### I1a-F2-R 수용·I1a-PY-F 실행 — 2026-10-14
+
+I1a-F2-R은 03:53:49 UTC actual idle/pending0 후 226행 보고 `e87f054c…`를 회수했다.
+CR-01~04와 추가 진단의 source-level 해소·신규 finding 없음만 수용한다. 최종 두 Rust hash는
+위 f086c065/11a8255d 그대로이며 30개 테스트는 hosted 실행 전이다. Python I1a-PY-F는
+Luna/max `ba55a077-2880-408e-9424-29f476ebdd7f`의 03:53:12 UTC notified launch와 실제
+running/pending0를 확인했다. 기존 두 Rust 파일 및 D4는 해당 작업의 소유 범위가 아니다.
+`f40a8ab8`(2분·60회·05:53:40 UTC 만료)로 기존 감시를 교체했으며 actual idle/final·코디네이터
+검토 뒤 새 정확한 source 후보를 hosted CI로 검증한다. 이전 CI run은 재실행하지 않는다.

@@ -1331,15 +1331,15 @@ fn validate_lexical_fields(value: &Value) -> Result<(), DailyWireErrorV1> {
                 if timestamp_field(key) && DailyWireTimestampV1::parse(text).is_err() {
                     return Err(DailyWireErrorV1::InvalidTimestamp);
                 }
-                if matches!(key, "batch_id" | "source_batch_id") {
-                    if !valid_uuid(text) || BatchId::from_str(text).is_err() {
-                        return Err(DailyWireErrorV1::InvalidUuid);
-                    }
+                if matches!(key, "batch_id" | "source_batch_id")
+                    && (!valid_uuid(text) || BatchId::from_str(text).is_err())
+                {
+                    return Err(DailyWireErrorV1::InvalidUuid);
                 }
-                if matches!(key, "code_commit" | "verifier_code_commit") {
-                    if !valid_commit(text) || CodeCommit::parse(text).is_err() {
-                        return Err(DailyWireErrorV1::InvalidCommit);
-                    }
+                if matches!(key, "code_commit" | "verifier_code_commit")
+                    && (!valid_commit(text) || CodeCommit::parse(text).is_err())
+                {
+                    return Err(DailyWireErrorV1::InvalidCommit);
                 }
                 if matches!(key, "file_name" | "file") && !valid_name(text) {
                     return Err(DailyWireErrorV1::InvalidName);
@@ -2004,10 +2004,8 @@ fn validate_policy(value: &DailyPricePolicyV1Wire) -> Result<(), DailyWireErrorV
 fn pair_value<'a>(pairs: &'a [(String, String)], key: &str) -> Result<&'a str, DailyWireErrorV1> {
     let mut found = None;
     for (name, value) in pairs {
-        if name == key {
-            if found.replace(value.as_str()).is_some() {
-                return Err(DailyWireErrorV1::DuplicateEntry);
-            }
+        if name == key && found.replace(value.as_str()).is_some() {
+            return Err(DailyWireErrorV1::DuplicateEntry);
         }
     }
     found.ok_or(DailyWireErrorV1::InconsistentFields)
@@ -2520,7 +2518,11 @@ fn date_range(start: TradingDate, end: TradingDate) -> Result<Vec<TradingDate>, 
     let mut dates = Vec::new();
     let mut date = start;
     loop {
-        check_civil_date_count(dates.len())?;
+        let next_len = dates
+            .len()
+            .checked_add(1)
+            .ok_or(DailyWireErrorV1::LimitExceeded)?;
+        check_civil_date_count(next_len)?;
         dates.push(date);
         if date == end {
             break;
@@ -3997,10 +3999,13 @@ pub fn validate_daily_price_wire_bundle_v1(
 mod resource_guard_tests {
     use super::*;
 
+    type CollectionGuard = (&'static str, u64, fn(usize) -> Result<(), DailyWireErrorV1>);
+    type DeclaredSizeGuard = (&'static str, u64, fn(u64) -> Result<(), DailyWireErrorV1>);
+
     #[test]
     fn every_collection_guard_accepts_its_bound_and_rejects_one_more() {
         let limits = fixed_limits();
-        let guards: [(&str, u64, fn(usize) -> Result<(), DailyWireErrorV1>); 7] = [
+        let guards: [CollectionGuard; 7] = [
             ("max_sessions", limits.max_sessions, check_session_count),
             (
                 "max_civil_dates_per_addition",
@@ -4048,7 +4053,7 @@ mod resource_guard_tests {
     #[test]
     fn every_declared_size_guard_accepts_its_bound_and_rejects_one_more() {
         let limits = fixed_limits();
-        let guards: [(&str, u64, fn(u64) -> Result<(), DailyWireErrorV1>); 4] = [
+        let guards: [DeclaredSizeGuard; 4] = [
             (
                 "max_source_file_bytes",
                 limits.max_source_file_bytes,
@@ -4149,15 +4154,30 @@ mod resource_guard_tests {
             Err(DailyWireErrorV1::LimitExceeded),
         );
 
-        let manifest_limit_u64 = fixed_limits().max_manifest_bytes;
-        let manifest_limit = usize::try_from(manifest_limit_u64).unwrap();
-        let exact =
-            canonical_bytes_limited(&"x".repeat(manifest_limit - 2), manifest_limit_u64).unwrap();
-        assert_eq!(exact.len(), manifest_limit);
-        drop(exact);
-        assert_eq!(
-            canonical_bytes_limited(&"x".repeat(manifest_limit - 1), manifest_limit_u64),
-            Err(DailyWireErrorV1::LimitExceeded),
-        );
+        // Legal policy/admission values cannot approach their fixed byte bounds.
+        // Isolate the writer for those bounds; the public encoders retain their
+        // legal success regressions in the integration tests.
+        let limits = fixed_limits();
+        for (name, actual_limit, fixed_value) in [
+            ("max_policy_bytes", limits.max_policy_bytes, 262_144),
+            ("max_manifest_bytes", limits.max_manifest_bytes, 16_777_216),
+            ("max_admission_bytes", limits.max_admission_bytes, 1_048_576),
+            (
+                "max_normalization_bytes",
+                limits.max_normalization_bytes,
+                16_777_216,
+            ),
+        ] {
+            assert_eq!(actual_limit, fixed_value, "{name} fixed value");
+            let limit = usize::try_from(actual_limit).unwrap();
+            let exact = canonical_bytes_limited(&"x".repeat(limit - 2), actual_limit).unwrap();
+            assert_eq!(exact.len(), limit, "{name} at bound");
+            drop(exact);
+            assert_eq!(
+                canonical_bytes_limited(&"x".repeat(limit - 1), actual_limit),
+                Err(DailyWireErrorV1::LimitExceeded),
+                "{name} above bound",
+            );
+        }
     }
 }
