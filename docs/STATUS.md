@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수는 유지한다. 등록 snapshot4113268의 [독립 리뷰](reviews/2026-10-14-r2-raw-snapshot-source-review.md)에서 4개 P1·12개 P2 그룹을 회수했고 실제 idle/pending0,29pins·81links와 소스를 대조했다. S2 소스 인수는 보류하고 [Wave25](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 두 파일 한정 Luna/max 보정이11:44:10UTC에 실제 시작됐다(90분 보고 기한13:14:10UTC). 이후 독립 재검토한다. 새 snapshot 테스트와 CI는 미실행이며 negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수는 유지한다. Wave25 보정 worker의 actual idle/pending0/full final을12:22:17UTC에 회수했고28참조·2원본·94링크와 두 파일 delta를 대조했다. 새 lock 테스트의 move 후 재사용은 코디네이터 C01로 국소 보정했다(source3987/4577d5f1,test1896/754a32ec). [보정 인계](reviews/2026-10-14-r2-snapshot-corrections-handoff.md)를 [Wave26](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 Sol/high 독립 리뷰로 검토한다. 45개 snapshot 정의(44Linux/1nonLinux)는 모두 미실행이며 S2 소스·새 CI 인수는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3171,3 +3171,26 @@ Heartbeat `57665dd0` runs every two minutes,max60,expires `2026-10-14T13:44:37.4
 It replaces deleted aeaa4fa6 after complete prior reviewer recovery. Recover exact
 INCOMPLETE scope at the reporting bound, and renew/handoff before expiry; same-daemon
 heartbeat cannot protect daemon outage. No new CI or operational action was started.
+
+### Wave25 correction recovered; Wave26 review prepared — 2026-10-14
+
+Correction worker3591c5d4 reached actual idle/activeTurn null/pending0 at12:22:07.583UTC;
+full substantive final recovered12:22:17UTC within90minutes. The memory-only callback
+was followed by recovery of the full78-line source report. Heartbeat57665dd0 was
+removed after recovery. Source-only handoff addresses16finding groups; acceptance
+remains withheld pending independent review and exact-candidate hosted verification.
+
+Coordinator matched28 unchanged reference/evidence pins,2baseline blobs,94 report
+links and the complete two-file delta. The worker source3986/c3233eb4 and test1896/754a32ec
+are preserved in its report. After idle, coordinator fixed a new moved-PathBuf use
+in the same-lock-inode test by moving a cloned hook_path; final source3987/4577d5f1,
+test1896/754a32ec,mod9/700469d6 unchanged. Scoped rustfmt/diff checks passed; no compiler,
+Clippy, parser, tests or operational action ran.45written definitions comprise44Linux
+and1nonLinux excluded from Linux expectations. The previous34-definition inventory
+and all prior CI evidence remain preserved.
+
+The exact bounded review is Wave26 WP-4/I1b-S2-F-R, Sol/high, one new report,
+60minutes from actual startup. Source/contract/D4/D5 and all pinned references freeze
+before launch. Coordinator C01 and resource/EOF/FD-observer/lint questions are explicit
+review inputs, not automatically closed findings. No new CI has been dispatched.
+Mem0 context returned MCP_ERROR; no save is claimed and no stale hook was retried.

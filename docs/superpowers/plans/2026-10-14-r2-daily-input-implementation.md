@@ -2879,3 +2879,113 @@ Heartbeat `57665dd0` runs every two minutes,max60,expires `2026-10-14T13:44:37.4
 It replaces deleted aeaa4fa6 after complete prior reviewer recovery. Recover exact
 INCOMPLETE scope at the reporting bound, and renew/handoff before expiry; same-daemon
 heartbeat cannot protect daemon outage. No new CI or operational action was started.
+
+## Wave26 — independent review of S2 corrections
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+### Goal and boundaries
+
+Freeze the two-file correction handoff for R2-04/09 and independently disposition
+R01–R16, P1–P10 and T01–32. The [handoff](../../reviews/2026-10-14-r2-snapshot-corrections-handoff.md)
+records actual idle/full-final recovery, the coordinator C01 ownership correction,
+static checks and45 unexecuted definitions. Source/compiler/test acceptance remains
+withheld. Prior a888cd6 partial success excludes S2. No CI has been dispatched.
+The recovered worker owns no active turn; heartbeat57665dd0 was deleted only after
+actual idle/activeTurn null/pending0/full final. No running worker was redirected.
+
+### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F-R | intermediate | Fixed contract, known findings and bounded source delta; judgment about lifetimes, parser parity and distinguishing tests | medium | Concrete cross-file/contract blocker or incomplete coverage at60-minute bound; report exact gap, no silent scope or routing expansion |
+
+### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F-R |26|intermediate|Independent correction and regression review|Only new docs/reviews/2026-10-14-r2-raw-snapshot-corrections-review.md|Recovered idle implementer, coordinator C01, frozen commit and inventory|codex/gpt-6.1-sol/high under repository review rule|Concrete findings plus all R/P/T dispositions|Coordinator exact-source disposition; no local executable checks|
+
+The sole configured Astra/high profile is labeled coordinator, so it does not fit
+this review package. Repository review routing uses Sol/high; the existing reviewer
+was observed actual idle/activeTurn null/pending0 with matching workspace/parent and
+model/effort. A full standalone brief remains required regardless of prior context.
+
+### Worker brief
+
+```text
+Package WP-4/I1b-S2-F-R (Wave26), roadmap R2-04/09.
+Workspace: /data/worktrees/3puw275b/excited-dolphin; workspaceId wks_10fae7d550ab1704.
+You are the independent reviewer, codex/gpt-6.1-sol/high. Complexity intermediate, medium confidence: fixed contract and bounded two-file correction, with ownership, parser parity and test-oracle judgment. Report exact unresolved scope if new architectural or cross-file requirements appear; do not invent requirements or expand the task.
+
+Objective and known facts
+- Review the corrected registered Linux snapshot against all original S2-R01–R16 findings, accepted P1–P10 and all S2-T01–32 guards. Evaluate actual production and test behavior from source, including regressions introduced by the correction. A confident implementer report is not evidence of correctness.
+- Original source baseline 411326865706ea9e7a1690aa49742cd0254d8450. Original496-line review SHA60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7 found4 P1/12 P2 groups.
+- Correction worker3591c5d4 completed its first correction within90minutes: actual idle/activeTurn null/pending0 updated12:22:07.583UTC; full substantive final recovered12:22:17UTC. Its memory-only callback was not treated as the source result. Heartbeat57665dd0 was deleted after full recovery.
+- Worker delivered source3986lines/c3233eb434bcc4af4769e31601e7cbc61fc0c21dd52c152aaf79389bc10d3a80 and test1896lines/754a32ec22ba32f7b6c57da9e3dfb335cdeb064926ecedd1591f4ff3c74d9dd7.
+- After worker idle, coordinator corrected one new moved-PathBuf use in s2_t23_same_lock_inode_ignores_contents_length_and_timestamps: original path remains for the post-hook metadata check; a cloned hook_path is moved into the closure. Current source3987lines SHA4577d5f10bbe4dda508c89b25ff04c638a274bc5050e5f9e9b7e03b5ba4d8bb5. Independently review C01 as well.
+- Current test1896lines SHA754a32ec22ba32f7b6c57da9e3dfb335cdeb064926ecedd1591f4ff3c74d9dd7; mod9lines SHA700469d6a510aa3ae7ad6a27fb42a78a76b243256e5c31cb5292104b4a6be74a unchanged.
+- Full correction delta +1796/-382 in only2source/test files. Coordinator checked28 unchanged pins,2 baseline blob pins,94 report links/line bounds, exact delta, scoped rustfmt and whitespace only.
+-45 definitions:15privateLinux+29integrationLinux+1nonLinux. All WRITTEN_UNEXECUTED. Existing34-definition inventory remains historical. Current test inventory enumerates44 expected Linux names and excludes1nonLinux; names are expected evidence, not execution.
+- Accepted contract898lines SHA c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056, including P10 Linux-only because RawDir is linux_kernel-gated. Frozen API/types/getters and fieldless error codes; existing StoreError remains untouched.
+- a888cd66c032c8931a4979434168568387c83a12/run38545976070 attempt1 SUCCESS covers prior I0c partial source only,51directRust+6separatechart; excludes S2. Original report/receipt and supplement preserve unknown nested helper result rows/exits. No new S2 CI has been dispatched.
+
+Exact write ownership
+ONLY create docs/reviews/2026-10-14-r2-raw-snapshot-corrections-review.md, relative to the absolute workspace above.
+Do not edit source/test/mod/lib/Cargo/workflow/storage/S1/wire/historical/normalizer/collector, prior reviews, contract/D4/D5, plan/roadmap/status, inventories/receipts/ledger, or any other file. No Git writes or other Git actions. Coordinator provided baseline text blobs and exact diff for read-only comparison.
+
+Required inputs
+1. AGENTS.md; docs/ROADMAP.md for current priorities; Wave26 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md.
+2. target/r2-daily-beta/wp-4-integration/source-wave-26-S2-review-inputs.json. Read sourceCommit and all pin metadata; verify3targets,19readonlyreferences and evidence artifacts using hashes/counts. Current tracked commit is recorded there; don't assume a historical CI validates it.
+3. docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md (whole accepted P1–P10/T01–32 contract).
+4. docs/reviews/2026-10-14-r2-raw-snapshot-source-review.md (all R01–R16, P/T matrices and limits).
+5. docs/reviews/2026-10-14-r2-snapshot-corrections-handoff.md.
+6. crates/market-data/src/daily_price_only/source.rs; crates/market-data/tests/daily_price_only_snapshot.rs; crates/market-data/src/daily_price_only/mod.rs.
+7. target/r2-daily-beta/wp-4-integration/wave25-I1b-S2-F-final.md; wave25-I1b-S2-F-coordinator-verification.json; source-wave-26-S2-test-inventory.json.
+8. target/r2-daily-beta/wp-4-integration/wave26-S2-baseline-source.txt; wave26-S2-baseline-snapshot.txt; wave26-S2-correction.diff. These are pinned copies/delta from4113268; do not execute any artifact.
+9. The other inventory-pinned source/reference/evidence files for concrete parity/API/context questions. D4/D5 and original CI evidence remain frozen. Do not perform repository-wide sweeps, network research or unbounded dependency/log searches. Report missing necessary inputs instead of guessing.
+
+Review scope
+- Disposition each R01–R16 separately: resolved at source-review level / still open / partial, with exact source/test locations and impact. For R12 explicitly inspect all8 missing-coverage groups a–h.
+- Preserve all P1–P10: exact public API and visibility; complete scope; explicit caps, checked arithmetic/reserve-before-allocation/open; legacy equality/schema/physical-line/EOF behavior; descriptor-relative no-follow UID/type/mode/link validation; lock lifetime on all success/failure paths; fieldless errors/sourceNone; two-file ownership; meaningful tests; Linux-only/no-I/O nonLinux.
+- Disposition every T01–T32 row with written test names, valid controls, isolated fault, actual operation/phase under observation, correct oracle and whether it distinguishes the specified failure. Cross-check all45 definitions, including r15_recorded_body_size_precedes_data_tree_and_leaf_io, not just s2_ names. Count Linux/nonLinux separately.
+- Check original compile blockers, newly introduced visibility/type/move/borrow issues, strict Clippy exposure under all-targets/all-features -D warnings, test feature gating and nonLinux source behavior. These are static findings, not compiler output.
+- Check ConstructionResources transfer/unwind order, temporary metadata/body release before sole lock close, no extra descriptor/dup, and actual cleanup-time contention observation.
+- Check separate lock fingerprint vs evidence fingerprints, recorded-size preflight before data tree/metadata I/O, final membership/path revalidation timing, optional known duplicates before second-value parse, and resource errors that cannot be swallowed as torn EOF.
+- Examine new observers for realism: raw FD/dev/ino reuse at shared ancestors under parallel tests, coverage of all owned opens, reserve/open and retained-byte order, exact/under caps, no suite-global FD count or serialized suite as proof.
+- Examine the malformed/EOF resource-failure fixture shape and duplicate invalid-second-value cases, remaining strict-lint exposure (including filter_map(...).last()), and writer-channel synchronization/liveness. Coordinator questions are hypotheses to verify, not findings to copy.
+- C01 is a coordinator source fix, not a reason to assume other new code compiles. Inspect the whole relevant delta and preserved source.
+
+Permitted local verification
+Read-only text inspection, hash/count comparison, in-memory source/diff/link inspection, scoped rustfmt --edition 2024 --config skip_children=true --check on the two targets. Formatting does not execute tests or establish compilation.
+NO local Cargo/rustc/Clippy/tests/build/parser/helper/checker/validator/provisioner/self-test/SQL/DB/root/Docker/provider/network/production/workflow actions. Do not execute test fixtures, standalone probes, repository scripts, source functions or arbitrary parser snippets. No CI dispatch/rerun/cancel; no Git actions; no dependency installation.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+Also do not create/send to Paseo workers or delegate in any other way. No background work.
+Do not fix source or weaken/skip tests or lint rules. If a finding needs a contract change or additional owned file, report exact blocker and bounded remaining scope.
+
+Reporting bound and final
+60minutes from actual provider turn start. At bound provide substantive INCOMPLETE handoff identifying reviewed/unreviewed R/P/T rows; no silent extension.
+Report must contain prioritized concrete findings with file:line, trigger and consequence; full R01–R16/P1–P10/T01–32 dispositions; source/test preservation; static commands/results; explicit UNEXECUTED compiler/tests/platform/CI status; deviations/reasons; unresolved or missing/conflicting inputs; further decomposition/background/pendingpermissions/auto-reviewdenials, explicitly none when empty.
+Only report file changes; include its line count, SHA256 and relevant links. If no concrete findings, state that explicitly without claiming compiler/test/runtime acceptance.
+Give a substantive final in this turn even if a later memory hook sends a separate callback. Follow only a currently supplied exact Mem0 envelope; no stale hook, invented ID/scope or memory-success claim after errors.
+Coordinator retains acceptance, source corrections/commits, independent finding disposition and one later exact-candidate hosted CI after checking existing runs. Negative bootstrap/rollback,0060, provider/copy reconstruction/admission, I6 diagrams before main, runtime/Owner and final C_R2 remain later; no operational expansion.
+```
+
+### Coordinator gates
+
+1. Commit the source/handoff/roadmap change and create the immutable Wave26 inventory
+   with exact commit,3targets,19references, baseline blobs/diff and evidence hashes.
+2. Reconfirm reviewer actual idle/pending0; send the complete bounded brief through
+   Paseo with background/notifyOnFinish. Verify actual startup/model/effort/parent,
+   record60-minute deadline and replace the completed correction monitor with a
+   review-only heartbeat. Same-daemon heartbeat cannot protect daemon outage.
+3. Recover substantive final/error and actual idle/pending0. Inspect all findings
+   against frozen source and meaningful tests. At bound recover INCOMPLETE exact
+   coverage, and reconcile/renew/handoff before monitor expiry.
+4. Apply bounded corrections only after idle and independently disposition them.
+   Only after source review closure prepare a new exact-candidate CI inventory,
+   inspect existing runs, and dispatch once. Never rerun/cancel/duplicate old CI.
+5. Preserve all historical evidence and keep docs/roadmap/commits/ledger current.
+   Negative bootstrap/rollback,0060, provider/copy reconstruction/admission,
+   diagrams before main, runtime/Owner and final C_R2 remain open.

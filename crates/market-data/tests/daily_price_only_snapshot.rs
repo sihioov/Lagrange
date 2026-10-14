@@ -1,21 +1,24 @@
 //! S2-T01–32 regressions for the fixed-contract committed Raw snapshot.
 //!
-//! Guard-to-test map: T01–T21 and T27/T29/T30/T32 are public integration
-//! cases below. T22/T23/T26 exercise the externally observable lock lifetime
-//! here; T23 pathname replacement, T24/T25/T28, and synthetic stat checks live
-//! in the source module's private tests to use deterministic phase/stat seams.
-//! T31 is compiled as a target-specific no-I/O case below.
+//! Guard-to-test map: S2-T01–21 and T27/T29/T30/T32 are public integration
+//! cases below; T22/T23/T26 cover lock lifetime and cooperating writers here.
+//! Source-module supplements use private deterministic seams: T03 duplicate
+//! field/sequence parity, T04 duplicate-Arc charging, T06 stat-size conversion,
+//! T07 bounded reads, T08 pre-materialization file limits, T09/T10 resource
+//! observations, T13 Linux
+//! root copy ordering, R15 recorded-size preflight, T23 lock replacement/identity,
+//! T24 final-name mutations, T25 revalidation, and T28 cleanup order. T13
+//! symlink levels are in the integration test below. T31 is target-specific.
 
 #[cfg(target_os = "linux")]
 mod linux_tests {
     use std::error::Error;
-    use std::fs::{self, OpenOptions};
+    use std::fs::{self, OpenOptions, hard_link};
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt, hard_link, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Barrier, mpsc};
+    use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
 
     use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
     use fs2::FileExt;
@@ -105,9 +108,9 @@ mod linux_tests {
         fs::create_dir(&data_root).unwrap();
         set_mode(&data_root, 0o777);
         let raw = raw_root(&data_root);
-        private_dir(&raw);
+        private_tree_dir(&data_root, &raw);
         let manifest_dir = manifest_dir(&data_root);
-        private_dir(&manifest_dir);
+        private_tree_dir(&data_root, &manifest_dir);
         private_file(&lock_path(&data_root), b"");
         for batch in &batches {
             write_batch(&data_root, batch);
@@ -154,6 +157,24 @@ mod linux_tests {
         set_mode(path, 0o700);
     }
 
+    fn private_tree_dir(root: &Path, path: &Path) {
+        let relative = path.strip_prefix(root).unwrap();
+        let mut current = root.to_path_buf();
+        for component in relative.components() {
+            let std::path::Component::Normal(name) = component else {
+                panic!("Raw fixture path must stay below its data root");
+            };
+            current.push(name);
+            match fs::create_dir(&current) {
+                Ok(()) => set_mode(&current, 0o700),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    assert!(fs::symlink_metadata(&current).unwrap().is_dir());
+                }
+                Err(error) => panic!("failed to create Raw fixture directory: {error}"),
+            }
+        }
+    }
+
     fn private_file(path: &Path, bytes: &[u8]) {
         fs::write(path, bytes).unwrap();
         set_mode(path, 0o600);
@@ -165,7 +186,7 @@ mod linux_tests {
 
     fn write_batch(data_root: &Path, batch: &TestBatch) {
         let path = batch_dir(data_root, &batch.entry);
-        private_dir(&path);
+        private_tree_dir(data_root, &path);
         let metadata = serde_json::to_vec_pretty(&batch.entry).unwrap();
         private_file(&path.join("batch.json"), &metadata);
         for (name, bytes) in &batch.bodies {
@@ -244,12 +265,19 @@ mod linux_tests {
             .count()
     }
 
-    fn tree_state(root: &Path) -> Vec<(PathBuf, u64, u64, u32, u32, u64, Option<Vec<u8>>)> {
-        fn visit(
-            root: &Path,
-            current: &Path,
-            state: &mut Vec<(PathBuf, u64, u64, u32, u32, u64, Option<Vec<u8>>)>,
-        ) {
+    #[derive(Debug, PartialEq, Eq)]
+    struct TreeState {
+        path: PathBuf,
+        device: u64,
+        inode: u64,
+        mode: u32,
+        uid: u32,
+        links: u64,
+        contents: Option<Vec<u8>>,
+    }
+
+    fn tree_state(root: &Path) -> Vec<TreeState> {
+        fn visit(root: &Path, current: &Path, state: &mut Vec<TreeState>) {
             let metadata = fs::symlink_metadata(current).unwrap();
             let contents = if metadata.is_file() {
                 Some(fs::read(current).unwrap())
@@ -264,15 +292,15 @@ mod linux_tests {
             } else {
                 None
             };
-            state.push((
-                current.strip_prefix(root).unwrap().to_path_buf(),
-                metadata.dev(),
-                metadata.ino(),
-                metadata.mode(),
-                metadata.uid(),
-                metadata.nlink(),
+            state.push(TreeState {
+                path: current.strip_prefix(root).unwrap().to_path_buf(),
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                mode: metadata.mode(),
+                uid: metadata.uid(),
+                links: metadata.nlink(),
                 contents,
-            ));
+            });
             if metadata.is_dir() {
                 let mut children: Vec<_> = fs::read_dir(current)
                     .unwrap()
@@ -287,7 +315,7 @@ mod linux_tests {
 
         let mut state = Vec::new();
         visit(root, root, &mut state);
-        state.sort_by(|left, right| left.0.cmp(&right.0));
+        state.sort_by(|left, right| left.path.cmp(&right.path));
         state
     }
 
@@ -409,7 +437,7 @@ mod linux_tests {
         );
         assert_eq!(
             snapshot.batches()[0].batch_json_sha256(),
-            &ContentHash::from_bytes(&snapshot.batches()[0].batch_json_bytes())
+            &ContentHash::from_bytes(snapshot.batches()[0].batch_json_bytes())
         );
         let stats: SnapshotStats = snapshot.stats();
         assert_eq!(stats.manifest_bytes, manifest.len());
@@ -535,6 +563,50 @@ mod linux_tests {
     }
 
     #[test]
+    fn s2_t03_known_duplicate_fields_reject_before_an_incomplete_second_value() {
+        let fixture = one_batch();
+        let mut row_value = serde_json::to_value(&fixture.batches[0].entry).unwrap();
+        row_value
+            .as_object_mut()
+            .unwrap()
+            .insert("entitlement_reference".to_owned(), serde_json::Value::Null);
+        let valid_row = serde_json::to_vec(&row_value).unwrap();
+        let mut valid_manifest = valid_row.clone();
+        valid_manifest.push(b'\n');
+        rewrite_manifest(&fixture, &valid_manifest);
+        valid_control(&fixture);
+        let legacy = RawStore::new(&fixture.data_root);
+        assert!(legacy.read_committed_manifest("kis", "kr").is_ok());
+
+        for field in [
+            "batch_id",
+            "provider",
+            "market",
+            "date",
+            "retrieved_at",
+            "mode",
+            "entitlement_reference",
+            "files",
+        ] {
+            rewrite_manifest(&fixture, &valid_manifest);
+            valid_control(&fixture);
+            assert!(legacy.read_committed_manifest("kis", "kr").is_ok());
+
+            let mut duplicate = valid_row.clone();
+            assert_eq!(duplicate.pop(), Some(b'}'));
+            duplicate.extend_from_slice(format!(",\"{field}\":").as_bytes());
+            let mut manifest = valid_manifest.clone();
+            manifest.extend_from_slice(&duplicate);
+            rewrite_manifest(&fixture, &manifest);
+            assert!(legacy.read_committed_manifest("kis", "kr").is_err());
+            assert_eq!(
+                error(&fixture, limits()),
+                DailyEvidenceError::InvalidManifest
+            );
+        }
+    }
+
+    #[test]
     fn s2_t04_equal_duplicates_keep_first_line_and_conflicts_fail_closed() {
         let fixture = one_batch();
         valid_control(&fixture);
@@ -547,12 +619,35 @@ mod linux_tests {
         let snapshot = scan(&fixture, limits()).unwrap();
         assert_eq!(snapshot.stats().manifest_records, 2);
         assert_eq!(snapshot.batches().len(), 1);
+        assert_eq!(snapshot.stats().files, 1);
         assert_eq!(
             snapshot.batches()[0].manifest_line_bytes(),
             first.as_slice()
         );
         assert_eq!(snapshot.batches()[0].manifest_line_number(), 1);
+        let retained_once = snapshot.manifest_bytes().len()
+            + snapshot.batches()[0].batch_json_bytes().len()
+            + snapshot.batches()[0]
+                .files()
+                .map(|file| file.bytes().len())
+                .sum::<usize>();
+        assert_eq!(snapshot.stats().retained_evidence_bytes, retained_once);
         drop(snapshot);
+
+        let exact_duplicate_cap = custom_limits(|values| values.max_retained_bytes = retained_once);
+        let snapshot = scan(&fixture, exact_duplicate_cap).unwrap();
+        assert_eq!(
+            snapshot.stats().retained_evidence_bytes,
+            retained_once,
+            "the duplicate manifest row is retained as manifest bytes, while the batch is captured once"
+        );
+        drop(snapshot);
+        let under_duplicate_cap =
+            custom_limits(|values| values.max_retained_bytes = retained_once - 1);
+        assert_eq!(
+            error(&fixture, under_duplicate_cap),
+            DailyEvidenceError::SourceScanLimit
+        );
 
         let mut changed = fixture.batches[0].entry.clone();
         changed.entitlement_reference = Some("changed".to_owned());
@@ -617,7 +712,6 @@ mod linux_tests {
 
     #[test]
     fn s2_t06_zero_overflow_and_policy_invalid_limits_fail_in_construction() {
-        let mut each = values();
         let zeroed: [fn(&mut ScanLimitValues); 12] = [
             |v: &mut ScanLimitValues| v.max_manifest_bytes = 0,
             |v: &mut ScanLimitValues| v.max_manifest_records = 0,
@@ -633,14 +727,14 @@ mod linux_tests {
             |v: &mut ScanLimitValues| v.max_metadata_json_depth = 0,
         ];
         for set_zero in zeroed {
-            each = values();
+            let mut each = values();
             set_zero(&mut each);
             assert_eq!(
                 ScanLimits::new(each).err(),
                 Some(DailyEvidenceError::InvalidLimits)
             );
         }
-        each = values();
+        let mut each = values();
         each.max_manifest_bytes = usize::MAX;
         assert_eq!(
             ScanLimits::new(each).err(),
@@ -653,7 +747,9 @@ mod linux_tests {
             Some(DailyEvidenceError::ArithmeticOverflow)
         );
         each = values();
-        each.max_source_file_bytes += 1;
+        each.max_source_file_bytes = 67_108_864;
+        assert!(ScanLimits::new(each).is_ok());
+        each.max_source_file_bytes = 67_108_865;
         assert_eq!(
             ScanLimits::new(each).err(),
             Some(DailyEvidenceError::InvalidLimits)
@@ -835,6 +931,8 @@ mod linux_tests {
             DailyEvidenceError::SourceScanLimit
         );
 
+        rewrite_manifest(&fixture, &line);
+        valid_control(&fixture);
         let root_over = custom_limits(|values| {
             values.max_data_root_bytes = fixture.data_root.as_os_str().as_bytes().len() - 1;
         });
@@ -843,6 +941,8 @@ mod linux_tests {
             DailyEvidenceError::SourceScanLimit
         );
 
+        rewrite_manifest(&fixture, &line);
+        valid_control(&fixture);
         let component_over = custom_limits(|values| {
             values.max_data_root_components = component_count(&fixture.data_root) - 1;
         });
@@ -945,6 +1045,33 @@ mod linux_tests {
             DailyEvidenceError::UnsafePath
         );
 
+        let manifests_fixture = one_batch();
+        valid_control(&manifests_fixture);
+        let original = raw_root(&manifests_fixture.data_root).join("manifests");
+        let moved = manifests_fixture._temp.path().join("saved-manifests");
+        fs::rename(&original, &moved).unwrap();
+        symlink(&moved, &original).unwrap();
+        assert_eq!(
+            error(&manifests_fixture, limits()),
+            DailyEvidenceError::UnsafePath
+        );
+
+        let manifest_provider_fixture = one_batch();
+        valid_control(&manifest_provider_fixture);
+        let original = raw_root(&manifest_provider_fixture.data_root)
+            .join("manifests")
+            .join("provider=kis");
+        let moved = manifest_provider_fixture
+            ._temp
+            .path()
+            .join("saved-manifest-provider");
+        fs::rename(&original, &moved).unwrap();
+        symlink(&moved, &original).unwrap();
+        assert_eq!(
+            error(&manifest_provider_fixture, limits()),
+            DailyEvidenceError::UnsafePath
+        );
+
         let manifest_link_fixture = one_batch();
         valid_control(&manifest_link_fixture);
         let manifest = manifest_path(&manifest_link_fixture.data_root);
@@ -990,6 +1117,17 @@ mod linux_tests {
             DailyEvidenceError::UnsafePath
         );
 
+        let batch_json_fixture = one_batch();
+        valid_control(&batch_json_fixture);
+        let original = metadata_path(&batch_json_fixture, 0);
+        let moved = batch_json_fixture._temp.path().join("saved-batch-json");
+        fs::rename(&original, &moved).unwrap();
+        symlink(&moved, &original).unwrap();
+        assert_eq!(
+            error(&batch_json_fixture, limits()),
+            DailyEvidenceError::UnsafePath
+        );
+
         let raw_fixture = one_batch();
         valid_control(&raw_fixture);
         let raw = raw_root(&raw_fixture.data_root);
@@ -998,6 +1136,33 @@ mod linux_tests {
         symlink(&moved_raw, &raw).unwrap();
         assert_eq!(
             error(&raw_fixture, limits()),
+            DailyEvidenceError::UnsafePath
+        );
+
+        let data_provider_fixture = one_batch();
+        valid_control(&data_provider_fixture);
+        let original = raw_root(&data_provider_fixture.data_root).join("provider=kis");
+        let moved = data_provider_fixture
+            ._temp
+            .path()
+            .join("saved-data-provider");
+        fs::rename(&original, &moved).unwrap();
+        symlink(&moved, &original).unwrap();
+        assert_eq!(
+            error(&data_provider_fixture, limits()),
+            DailyEvidenceError::UnsafePath
+        );
+
+        let data_market_fixture = one_batch();
+        valid_control(&data_market_fixture);
+        let original = raw_root(&data_market_fixture.data_root)
+            .join("provider=kis")
+            .join("market=kr");
+        let moved = data_market_fixture._temp.path().join("saved-data-market");
+        fs::rename(&original, &moved).unwrap();
+        symlink(&moved, &original).unwrap();
+        assert_eq!(
+            error(&data_market_fixture, limits()),
             DailyEvidenceError::UnsafePath
         );
 
@@ -1204,6 +1369,16 @@ mod linux_tests {
             DailyEvidenceError::BatchMetadataMismatch
         );
 
+        let mode_fixture = one_batch();
+        valid_control(&mode_fixture);
+        let mut changed_mode = mode_fixture.batches[0].entry.clone();
+        changed_mode.mode = FetchMode::Credentialed;
+        rewrite_batch_metadata(&mode_fixture, 0, &changed_mode);
+        assert_eq!(
+            error(&mode_fixture, limits()),
+            DailyEvidenceError::BatchMetadataMismatch
+        );
+
         let size_fixture = one_batch();
         valid_control(&size_fixture);
         let mut changed_size = size_fixture.batches[0].entry.clone();
@@ -1350,7 +1525,7 @@ mod linux_tests {
             .join("market=kr")
             .join("date=2026-10-10")
             .join("batch=incomplete");
-        private_dir(&incomplete);
+        private_tree_dir(&fixture.data_root, &incomplete);
         let before = tree_state(fixture._temp.path());
         let snapshot = scan(&fixture, limits()).unwrap();
         assert_eq!(snapshot.batches().len(), 1);
@@ -1368,9 +1543,14 @@ mod linux_tests {
 
     #[test]
     fn s2_t20_batch_partition_date_does_not_limit_committed_discovery() {
+        let mut earlier = batch(2, "2020-01-02", &[("old.json", b"old")]);
+        earlier.entry.files[0].request.query = vec![
+            ("F_DT".to_owned(), "20261012".to_owned()),
+            ("T_DT".to_owned(), "20261014".to_owned()),
+        ];
         let fixture = fixture_with(vec![
             batch(1, "2026-10-13", &[("new.json", b"new")]),
-            batch(2, "2020-01-02", &[("old.json", b"old")]),
+            earlier,
         ]);
         valid_control(&fixture);
         let snapshot = scan(&fixture, limits()).unwrap();
@@ -1382,6 +1562,12 @@ mod linux_tests {
         assert_eq!(
             snapshot.batches()[1].batch_date(),
             TradingDate::parse("2020-01-02").unwrap()
+        );
+        let old_metadata: serde_json::Value =
+            serde_json::from_slice(snapshot.batches()[1].batch_json_bytes()).unwrap();
+        assert_eq!(
+            old_metadata["files"][0]["request"]["query"],
+            serde_json::json!([["F_DT", "20261012"], ["T_DT", "20261014"]])
         );
     }
 
@@ -1457,6 +1643,16 @@ mod linux_tests {
             .open(lock_path(&fixture.data_root))
             .unwrap();
         FileExt::lock_exclusive(&writer).unwrap();
+        let competing_writer = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path(&fixture.data_root))
+            .unwrap();
+        assert!(matches!(
+            FileExt::try_lock_exclusive(&competing_writer),
+            Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock
+        ));
+        drop(competing_writer);
         assert_eq!(error(&fixture, limits()), DailyEvidenceError::LockBusy);
         FileExt::unlock(&writer).unwrap();
         assert!(scan(&fixture, limits()).is_ok());
@@ -1470,19 +1666,35 @@ mod linux_tests {
         let snapshot = scan(&fixture, limits()).unwrap();
         let data_root = fixture.data_root.clone();
         let appended = next.entry.clone();
-        let started = Arc::new(Barrier::new(2));
-        let worker_started = Arc::clone(&started);
+        let lock = lock_path(&fixture.data_root);
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
         let worker = thread::spawn(move || {
-            worker_started.wait();
+            let probe = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(lock)
+                .unwrap();
+            let contended = match FileExt::try_lock_exclusive(&probe) {
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => true,
+                Ok(()) => {
+                    FileExt::unlock(&probe).unwrap();
+                    false
+                }
+                Err(_) => false,
+            };
+            attempt_tx.send(contended).unwrap();
+            continue_rx.recv().unwrap();
+            drop(probe);
             let store = RawStore::new(data_root);
             let result = store.append_manifest("kis", "kr", &appended);
             done_tx.send(result.is_ok()).unwrap();
         });
-        started.wait();
-        assert!(done_rx.try_recv().is_err());
+        assert!(attempt_rx.recv().unwrap(), "writer must observe WouldBlock");
         drop(snapshot);
-        assert!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap());
+        continue_tx.send(()).unwrap();
+        assert!(done_rx.recv().unwrap());
         worker.join().unwrap();
         let fresh = scan(&fixture, limits()).unwrap();
         assert_eq!(fresh.batches().len(), 2);
@@ -1503,7 +1715,6 @@ mod linux_tests {
         changed[0] ^= 1;
         private_file(&body_path(&fixture, 0, 0), &changed);
         assert_eq!(captured.bytes(), expected.as_slice());
-        drop(captured);
         drop(snapshot);
         assert_eq!(error(&fixture, limits()), DailyEvidenceError::HashMismatch);
     }
@@ -1517,11 +1728,16 @@ mod linux_tests {
             &fixture,
             format!("{{\"provider\":\"{SENTINEL}\"}}\n").as_bytes(),
         );
-        let error = error(&fixture, limits());
-        let rendered = format!("{} {:?} {}", error, error, error.code());
+        let evidence_error = error(&fixture, limits());
+        let rendered = format!(
+            "{} {:?} {}",
+            evidence_error,
+            evidence_error,
+            evidence_error.code()
+        );
         assert!(!rendered.contains(SENTINEL));
-        assert_eq!(error.source(), None);
-        assert_eq!(error.to_string(), error.code());
+        assert!(evidence_error.source().is_none());
+        assert_eq!(evidence_error.to_string(), evidence_error.code());
 
         for field in ["batch_id", "mode", "content_hash", "file_name"] {
             let fixture = one_batch();
@@ -1544,10 +1760,15 @@ mod linux_tests {
                 _ => unreachable!(),
             }
             rewrite_manifest(&fixture, &serde_json::to_vec(&value).unwrap());
-            let error = error(&fixture, limits());
-            let rendered = format!("{} {:?} {}", error, error, error.code());
+            let evidence_error = error(&fixture, limits());
+            let rendered = format!(
+                "{} {:?} {}",
+                evidence_error,
+                evidence_error,
+                evidence_error.code()
+            );
             assert!(!rendered.contains(SENTINEL));
-            assert_eq!(error.source(), None);
+            assert!(evidence_error.source().is_none());
         }
 
         let metadata_fixture = one_batch();
@@ -1569,21 +1790,31 @@ mod linux_tests {
         let mut changed_body = metadata_fixture.batches[0].bodies[0].1.clone();
         changed_body[0] ^= 1;
         private_file(&body_path(&metadata_fixture, 0, 0), &changed_body);
-        let error = error(&metadata_fixture, limits());
-        let rendered = format!("{} {:?} {}", error, error, error.code());
+        let evidence_error = error(&metadata_fixture, limits());
+        let rendered = format!(
+            "{} {:?} {}",
+            evidence_error,
+            evidence_error,
+            evidence_error.code()
+        );
         assert!(!rendered.contains(SENTINEL));
-        assert_eq!(error.source(), None);
+        assert!(evidence_error.source().is_none());
 
         let os_fixture = one_batch();
         valid_control(&os_fixture);
         let missing = os_fixture._temp.path().join(SENTINEL).join("data");
-        let error = CommittedRawReader::new(&missing)
+        let evidence_error = CommittedRawReader::new(&missing)
             .snapshot(scope(&os_fixture), limits())
             .err()
             .unwrap();
-        let rendered = format!("{} {:?} {}", error, error, error.code());
+        let rendered = format!(
+            "{} {:?} {}",
+            evidence_error,
+            evidence_error,
+            evidence_error.code()
+        );
         assert!(!rendered.contains(SENTINEL));
-        assert_eq!(error.source(), None);
+        assert!(evidence_error.source().is_none());
     }
 
     #[test]

@@ -1538,3 +1538,26 @@ Heartbeat `57665dd0` runs every two minutes,max60,expires `2026-10-14T13:44:37.4
 It replaces deleted aeaa4fa6 after complete prior reviewer recovery. Recover exact
 INCOMPLETE scope at the reporting bound, and renew/handoff before expiry; same-daemon
 heartbeat cannot protect daemon outage. No new CI or operational action was started.
+
+### Wave25 correction recovered; Wave26 review prepared — 2026-10-14
+
+Correction worker3591c5d4 reached actual idle/activeTurn null/pending0 at12:22:07.583UTC;
+full substantive final recovered12:22:17UTC within90minutes. The memory-only callback
+was followed by recovery of the full78-line source report. Heartbeat57665dd0 was
+removed after recovery. Source-only handoff addresses16finding groups; acceptance
+remains withheld pending independent review and exact-candidate hosted verification.
+
+Coordinator matched28 unchanged reference/evidence pins,2baseline blobs,94 report
+links and the complete two-file delta. The worker source3986/c3233eb4 and test1896/754a32ec
+are preserved in its report. After idle, coordinator fixed a new moved-PathBuf use
+in the same-lock-inode test by moving a cloned hook_path; final source3987/4577d5f1,
+test1896/754a32ec,mod9/700469d6 unchanged. Scoped rustfmt/diff checks passed; no compiler,
+Clippy, parser, tests or operational action ran.45written definitions comprise44Linux
+and1nonLinux excluded from Linux expectations. The previous34-definition inventory
+and all prior CI evidence remain preserved.
+
+The exact bounded review is Wave26 WP-4/I1b-S2-F-R, Sol/high, one new report,
+60minutes from actual startup. Source/contract/D4/D5 and all pinned references freeze
+before launch. Coordinator C01 and resource/EOF/FD-observer/lint questions are explicit
+review inputs, not automatically closed findings. No new CI has been dispatched.
+Mem0 context returned MCP_ERROR; no save is claimed and no stale hook was retried.
