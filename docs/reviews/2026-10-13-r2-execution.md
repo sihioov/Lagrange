@@ -1561,3 +1561,33 @@ The exact bounded review is Wave26 WP-4/I1b-S2-F-R, Sol/high, one new report,
 before launch. Coordinator C01 and resource/EOF/FD-observer/lint questions are explicit
 review inputs, not automatically closed findings. No new CI has been dispatched.
 Mem0 context returned MCP_ERROR; no save is claimed and no stale hook was retried.
+
+### Wave26 actual independent correction review startup
+
+Source/handoff commit `7545094404628974c1bd626c84f6c3f704555f5f` is frozen.
+Input inventory source-wave-26-S2-review-inputs.json has 186 lines, SHA256
+`9bffe79342b2a5a1b61691ff63b6a1b36a992ddb9357d763479ae21272cc83bf`,
+and 38 pins: 3 targets, 19 references, 16 evidence artifacts. The committed
+correction delta and baseline copies are included. All 45 written definitions
+remain UNEXECUTED; 44 are Linux expectations and one non-Linux case is excluded.
+
+Existing independent reviewer `a4b5c1b9-3354-400b-be82-b8dec4f87278` was reconfirmed
+actual idle/activeTurn null/pending0 before the complete standalone brief was sent.
+The new WP-4/I1b-S2-F-R turn actually started `2026-10-14T12:38:23.234Z`.
+Codex/gpt-6.1-sol/high, workspace/parent, running/activeTurn and pending0 matched;
+background/notifyOnFinish were explicitly requested. No permission mode changed.
+The 60-minute reporting deadline is `2026-10-14T13:38:23.234Z`.
+
+Only docs/reviews/2026-10-14-r2-raw-snapshot-corrections-review.md is writable.
+All R01–R16 (including R12a–h), P1–P10, T01–T32, 45 test definitions and coordinator
+C01 require concrete independent disposition. No source/compiler/test acceptance
+or new CI/push is claimed. Bounded correction may follow only after actual idle,
+pending0 and full substantive final recovery; source-review closure precedes one
+new exact-candidate hosted CI after existing-run query.
+
+Heartbeat `b6352577` owns only this reviewer and scope, every two minutes/max60,
+expiring `2026-10-14T14:39:01.434Z`. It replaces the deleted completed-correction
+monitor57665dd0. Recover exact INCOMPLETE coverage at the reporting bound and
+renew or hand off before expiry; same-daemon heartbeat cannot protect daemon outage.
+The private startup receipt and owned-worker ledger record the actual lifecycle.
+Historical successes/failures and all later operational/Owner/0060/diagram gates remain.

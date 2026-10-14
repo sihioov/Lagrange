@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수는 유지한다. Wave25 보정 worker의 actual idle/pending0/full final을12:22:17UTC에 회수했고28참조·2원본·94링크와 두 파일 delta를 대조했다. 새 lock 테스트의 move 후 재사용은 코디네이터 C01로 국소 보정했다(source3987/4577d5f1,test1896/754a32ec). [보정 인계](reviews/2026-10-14-r2-snapshot-corrections-handoff.md)를 [Wave26](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 Sol/high 독립 리뷰로 검토한다. 45개 snapshot 정의(44Linux/1nonLinux)는 모두 미실행이며 S2 소스·새 CI 인수는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수는 유지한다. Wave25 보정과 코디네이터 C01을 `7545094404628974c1bd626c84f6c3f704555f5f`에 고정하고 [보정 인계](reviews/2026-10-14-r2-snapshot-corrections-handoff.md)를 [Wave26](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 Sol/high 독립 리뷰로 넘겼다. 리뷰어 a4b5c1b9의 실제 시작은 12:38:23.234UTC, 보고 기한은 13:38:23.234UTC이며 pending0·완료 알림을 확인했다. 38개 입력과 R01–R16/P1–P10/T01–32를 검토 중이다. 45개 snapshot 정의(44 Linux/1 non-Linux)는 모두 미실행이고 S2 소스 인수·새 CI는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3194,3 +3194,33 @@ The exact bounded review is Wave26 WP-4/I1b-S2-F-R, Sol/high, one new report,
 before launch. Coordinator C01 and resource/EOF/FD-observer/lint questions are explicit
 review inputs, not automatically closed findings. No new CI has been dispatched.
 Mem0 context returned MCP_ERROR; no save is claimed and no stale hook was retried.
+
+### Wave26 actual independent correction review startup
+
+Source/handoff commit `7545094404628974c1bd626c84f6c3f704555f5f` is frozen.
+Input inventory source-wave-26-S2-review-inputs.json has 186 lines, SHA256
+`9bffe79342b2a5a1b61691ff63b6a1b36a992ddb9357d763479ae21272cc83bf`,
+and 38 pins: 3 targets, 19 references, 16 evidence artifacts. The committed
+correction delta and baseline copies are included. All 45 written definitions
+remain UNEXECUTED; 44 are Linux expectations and one non-Linux case is excluded.
+
+Existing independent reviewer `a4b5c1b9-3354-400b-be82-b8dec4f87278` was reconfirmed
+actual idle/activeTurn null/pending0 before the complete standalone brief was sent.
+The new WP-4/I1b-S2-F-R turn actually started `2026-10-14T12:38:23.234Z`.
+Codex/gpt-6.1-sol/high, workspace/parent, running/activeTurn and pending0 matched;
+background/notifyOnFinish were explicitly requested. No permission mode changed.
+The 60-minute reporting deadline is `2026-10-14T13:38:23.234Z`.
+
+Only docs/reviews/2026-10-14-r2-raw-snapshot-corrections-review.md is writable.
+All R01–R16 (including R12a–h), P1–P10, T01–T32, 45 test definitions and coordinator
+C01 require concrete independent disposition. No source/compiler/test acceptance
+or new CI/push is claimed. Bounded correction may follow only after actual idle,
+pending0 and full substantive final recovery; source-review closure precedes one
+new exact-candidate hosted CI after existing-run query.
+
+Heartbeat `b6352577` owns only this reviewer and scope, every two minutes/max60,
+expiring `2026-10-14T14:39:01.434Z`. It replaces the deleted completed-correction
+monitor57665dd0. Recover exact INCOMPLETE coverage at the reporting bound and
+renew or hand off before expiry; same-daemon heartbeat cannot protect daemon outage.
+The private startup receipt and owned-worker ledger record the actual lifecycle.
+Historical successes/failures and all later operational/Owner/0060/diagram gates remain.
