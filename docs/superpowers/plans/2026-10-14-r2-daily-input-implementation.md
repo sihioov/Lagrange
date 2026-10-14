@@ -1739,3 +1739,17 @@ file/lines/hash, precise finding disposition and reader/wrapper-to-written-test 
 and reasons, actual checks/results, unresolved/missing/not-found/not-verified items (explicit
 none when empty), decomposition, background work and pending permissions. Coordinator owns
 independent review, integration, exact-candidate hosted CI and later operational acceptance.
+
+
+### Wave 14 actual physical-line correction startup — 2026-10-14
+
+Brief/review disposition is committed as `44558abd167513e513177399882ddd47756a2736`.
+New I0b-F3 worker `59ae7472-bcc3-41ec-a4ca-a507cce89f6e` actually started
+at 07:20:21 UTC, codex/gpt-6.1-sol/max, expected workspace/parent, pending0, notified.
+The model escalated one tier after observed repeated literal-boundary review failures;
+effort remains max. Only the same embedded Python block is writable.
+The30-minute report bound is07:50:21 UTC. Heartbeat `73a5aa5a` runs every two minutes,
+at most30times, expiring08:20:42 UTC. The ledger and private wave14 startup receipt
+preserve runtime and notification evidence. Recover incomplete scope at the report bound
+and reconcile/renew/handoff before expiry; same-daemon outage remains unprotected.
+No new source result, parser/test execution, CI or runtime acceptance is claimed.
