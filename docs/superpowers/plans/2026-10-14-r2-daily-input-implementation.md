@@ -2235,3 +2235,28 @@ Require actual idle and substantive final, then inspect safe evidence and every
 applicable result before partial acceptance. Failures receive bounded fixes after idle.
 No report alone closes full R2; remaining I0/0060/full snapshot/diagrams/runtime/Owner
 conditions keep their original acceptance criteria.
+
+
+### Wave19 exact-candidate CI and collector startup — 2026-10-14
+
+Candidate `c0ac599cb1ede900e155f724687c57410b4bd0d9` includes accepted source8de8cff
+and its independent review/verification brief. Fast-forward push fromf9dfffb completed;
+remote fullSHA matched and exact-SHA existing CI query was empty before one dispatch.
+The dispatch exited0, then [run38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)
+was recovered: attempt1/workflow_dispatch, created08:37:46UTC, exact candidate,
+in_progress. No duplicate, rerun or cancellation occurred. The final49-name/26-source
+inventory SHA is00912e5c51b611149f61560937b30604f352023f364a908e0eeb1d6f7e0d277b;
+private caller-role-raw-ci-launch.json SHA is924422d744a397ce6ffc719717995eb4551975c3b631e509c9aaced1adf8d4f9.
+
+Collector11a8f223-6f2d-4adb-89ab-86dbc917d2fd actually started08:38:54.122UTC,
+codex/gpt-6-luna/medium, correct workspace/parent, running/pending0, notified. Its90-minute
+report boundary is10:08:54.122UTC. Heartbeat8b313a09 runs every two minutes, max60,
+expires10:39:32.478UTC. Ledger and startup receipt retain actual state. Recover INCOMPLETE
+at the boundary and keep coordinator run monitoring until terminal or explicit handoff;
+reconcile/renew/handoff before heartbeat expiry. Same-daemon outage is not protected.
+
+All49 direct Rust outcomes, chart/Clippy/required, policy wrapper/individual-case/skip
+limits, isolated PG59/role-GUC and Python/Web results remain pending on this candidate.
+The candidate inventory is expected evidence, not an execution report. No local
+compiler/test/script/DB/provider/production action was performed. Follow-up documentation
+HEAD is separate from the fixed CI candidate; full R2 acceptance remains open.
