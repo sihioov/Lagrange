@@ -1752,3 +1752,26 @@ before expiry. Same-daemon monitoring cannot protect against daemon outage.
 Private startup/sent-brief receipts and owned ledger preserve earlier assignments.
 No compiler/test/CI acceptance and no S2 push/CI; review closure plus existing-run
 query still gate one exact-candidate hosted run. All later R2 gates remain open.
+
+### Wave29 C02 recovered and closed; Wave30 hosted candidate prepared
+
+Reviewer a4b5c1b9 actual idle2026-10-14T15:56:08.135Z, activeTurn null/pending0;
+coordinator full substantive final/report recovered15:56:16UTC. Report282lines,
+SHA5717c37c5a2fcb520d18a6af2198e5b3bb5f0e0dd7c8a2fe4bec8f58d8c88e78.
+Coordinator checked24pins,104links,49inventory definitions and exact19hunk committed
+diff, having read all changed source/import/assertion hunks. No concrete finding;
+C02 and carried-forward Wave28 source-review dispositions are closed. Earlier
+coverage limits, all49 unexecuted S2 definitions and platform limits remain.
+Private final/recovery preserved before monitor f18a17dc deletion15:57:36UTC.
+
+Wave30 prepares one new exact candidate hosted run after an existing-run query.
+28 earlier I0c source pins remain unchanged; only source.rs/test/mod registration
+are non-document changes since a888cd6. Candidate expected names are99 direct
+Linux Rust (30wire+18S1+1collector+2helper+19S2private+29S2integration),6 separate
+chart names and2 Linux-excluded platform cases. Source bcc66d3 bytes remain fixed.
+The planned fresh Luna/medium collector has one report/private directory,90-minute
+bound, read-only one-run retrieval and an explicit prohibition on any delegation.
+No new S2 push/CI has occurred at this preparation stage. Actual run identity and
+launch gates will be recorded separately before collection starts. No local
+compiler/test/DB/provider/production execution. All later R2 gates remain open.
+Current related Mem0 context returned MCP_ERROR; not saved and not retried.

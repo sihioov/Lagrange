@@ -3413,3 +3413,87 @@ before expiry. Same-daemon monitoring cannot protect against daemon outage.
 Private startup/sent-brief receipts and owned ledger preserve earlier assignments.
 No compiler/test/CI acceptance and no S2 push/CI; review closure plus existing-run
 query still gate one exact-candidate hosted run. All later R2 gates remain open.
+
+
+## Wave30 — exact snapshot candidate hosted verification
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+### Goal and boundaries
+
+Wave29 C02 review is fully recovered and closed at source-review level:
+282lines/5717c37c, actual idle15:56:08.135UTC, full recovery15:56:16/pending0;
+24pins,104links,49definitions and19hunks checked. No executable acceptance.
+The earlier Wave28 conclusions and limits carry forward. Monitor f18a17dc was
+deleted15:57:36UTC after persisted recovery. Prepare one final candidate containing
+the reviewed source and documentation, query existing exact-head runs, and dispatch
+ci.yml once only if none exists. The collector never dispatches or repairs code.
+
+### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-CI | simple | One supplied run/attempt, exact pins and99 enumerated Rust names; read-only extraction | high | Missing/ambiguous logs, deadline or unprinted nested evidence: report UNKNOWN/INCOMPLETE without inference or delegation |
+
+### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-CI |30|simple|Collect exact hosted compiler/lint/test and isolated job evidence|One snapshot CI report and one new private candidate evidence directory|Review closure, final candidate, existing-run query and identified single run|codex/gpt-6-luna/medium, fresh direct context; repository extraction route, current Astra profile is coordinator-only|Full report/receipt within90minutes|Coordinator identity/pin/row/log-hash and outcome checks; no inferred nested success|
+
+### Worker brief
+
+```text
+WP-4/I1b-S2-CI, Wave30, roadmap R2-04/R2-09: collect one existing exact-candidate hosted CI run directly.
+Workspace /data/worktrees/3puw275b/excited-dolphin, workspaceId wks_10fae7d550ab1704, parent ef6cdbb0-8409-4dba-86ca-c07eadccf377, branch excited-dolphin.
+Simple, high confidence: enumerated source pins,99 exact Rust names and one supplied run/attempt. Use codex/gpt-6-luna/medium for bounded evidence extraction; coordinator independently verifies identity, pins, safe evidence and counts. Current Astra/high profile is coordinator-only. Missing/ambiguous/unprinted evidence is UNKNOWN, not invented success. Report if direct completion needs decomposition; do not delegate.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No further delegation of ANY kind including Paseo MCP/CLI, native agents, Task/Agent/team, advisors, committees or hidden helpers. This explicit prohibition overrides generic repository delegation suggestions within your assignment.
+
+Read AGENTS.md, docs/ROADMAP.md and Wave30 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. Exact candidate/run/attempt/URL, launch receipt, input and test inventory paths/hashes are supplied in the launch supplement. Do not start from HEAD without verifying candidate identity; later coordinator documentation commits may advance HEAD.
+Known source closure: Wave28 full475line report146a220680bd186987d19e8ded27b00d43564f837a3cdcff0e3aebd0bdc6dfbd found no concrete remaining conditions after two corrections. Coordinator C02 formatted only19hunks to inherited2024 (six imports/assertions). Wave29 independent282line report5717c37c5a2fcb520d18a6af2198e5b3bb5f0e0dd7c8a2fe4bec8f58d8c88e78 had no findings. Actual reviewer idle15:56:08.135UTC/pending0/full final recovered15:56:16; coordinator verified24pins/104links/49definitions/19hunks. f18a17dc deleted15:57:36 after recovery. Reviewed source bcc66d327faba34637e05e905197606d6207df39; source4445/81799ccd, integration1972/765e62b8, mod9/700469d6. No compiler/test acceptance yet.
+Prior a888cd66c032c8931a4979434168568387c83a12/run38545976070 attempt1SUCCESS remains I0c partial only:51 direct Rust and6 separate chart,strictClippy/PG59/cleanup; nested helper rows/exits UNKNOWN. Preserve original docs/reviews/2026-10-14-r2-admitter-helper-ci.md, recovery supplement, target/r2-daily-beta/ci/a888cd6/ci-evidence.json and c0ac599/929fcd6/failure history. Never requery old logs as new evidence or rerun/cancel/duplicate any run.
+
+Exhaustive write allowlist:
+1. /data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-15-r2-snapshot-ci.md
+2. One exact new candidate artifact directory supplied at launch under /data/worktrees/3puw275b/excited-dolphin/target/r2-daily-beta/ci/ (directories0700/files0600), containing sanitized evidence only.
+All source, previous reports/receipts, input/test/launch inventories, roadmap/plan/ledger/workflows read-only. No Git writes, source repair, new scripts, dependencies or background work.
+Read-only GitHub metadata/jobs/log retrieval for the ONE SUPPLIED EXISTING RUN is authorized. No dispatch/rerun/cancel/duplicate/workflow edit, provider or production network. No local Cargo/rustc/Clippy/tests/build/Rust or Raw parser/project helper/checker/validator/provisioner/selftest/SQL/DB/root/sudo/Docker execution. Do not run repository scripts. Inert JSON/text metadata and in-memory log extraction is allowed.
+Never persist raw log bodies, even temporarily. Retrieve them into memory, retain only byte counts/hashes, safe job/step metadata, fixed sanitized diagnostics and named result rows. Do not print or save SQL bodies, credentials, URLs with secrets, provider bodies/messages, fixture secret literals or free-form OS/serde output. ANSI/timestamps must be removed before matching compiler/lint diagnostics. Absent matches mean UNKNOWN, not zero errors.
+
+Evidence obligations
+1. Verify exact repo sihioov/Lagrange, headSHA, branch excited-dolphin, workflow CI/ci.yml, event workflow_dispatch, run ID and attempt1 from metadata/launch receipt. Fetch all job pages; collect all seven execution jobs plus required aggregate and every step outcome. Recover each available completed job log once and reuse it in memory. Do not infer checkout SHA from head metadata alone: record seven actual checkout log SHAs or UNKNOWN.
+2. Freeze verification uses the supplied source/review/historical input pins and candidate git blobs read-only. New CI source files are the reviewed bytes; the only non-doc difference from a888cd6 is source.rs, its integration test and module registration. Never modify frozen inputs.
+3. Enumerated99 Linux Rust expected names:30 wire+18 S1 Raw+1 collector+2 helpers+19 S2 private+29 S2 integration. Match direct qualified test result rows exactly (S2 private prefix daily_price_only::source::linux::private_tests::, integration linux_tests::); record per-name PASS/FAIL/NOT_EXECUTED/UNKNOWN, job/step and row counts. Mark NOT_EXECUTED only when stage failure/exclusion proves no execution; missing evidence otherwise UNKNOWN. S2 non-Linux1 and S1 non-Unix1 are EXCLUDED_LINUX, never passed. All S2 definitions start WRITTEN_UNEXECUTED. 6 chart names have a separate explicit command/step and must stay separate. Cargo summary sums are result-row sums, not unique tests; historical V2/V3 require direct evidence or remain unverified.
+4. Verify format and exact strict Clippy --workspace --all-targets --all-features --locked -- -D warnings outcomes. On failure record sanitized compiler/lint codes, source path/line, phase and whether later test stages executed; do not invent a root cause. No repair in this task.
+5. For helper tests, workspace-tests uses disposable QA DATABASE_URL; a direct ok on a DB-absent skip branch is insufficient for DB evidence. PG official validator labels jobqueue-daily-admitter-pool and api-daily-admitter-pool/no-SKIP gate, APPROVED/DENIED, configured DB, roles/attribute/privilege/migration59 checksum equality/0039/cleanup need actual safe evidence. Successful wrappers with unprinted nested direct rows or Cargo exits remain UNKNOWN for those rows/exits. Do not equate wrapper success with hidden skip absence.
+6. Policy wrappers/subcases/fakeroot skip messages, Python suite totals vs quiet readiness/SIGTERM individual nodes, web/OpenAPI/lint/typecheck/test/build/E2E, cleanup and required gate must be classified separately. No claim of negative bootstrap/rollback readiness,0060,provider/copy reconstruction/admission,non-Linux/32bit/real cross-UID/ACL/mount coverage, runtime/Owner/final C_R2.
+7. A queued/running job or unavailable log is not a pass. Use bounded event-driven waits or modest polling for this existing run only; avoid blocking waits longer than60seconds. Within90minutes of actual startup, return substantive final or INCOMPLETE naming exact remaining run/jobs/evidence and monitoring handoff. Never silently abandon or extend the bound.
+
+Deliverables: report plus private ci-evidence.json with run/launch identity, all job/step statuses, input checks, log sizes/hashes/checkout SHAs,99 named rows with counts,6 chart rows,excluded cases, each domain outcome/unknown and precise limitations. Report exact report/receipt paths,linecounts,fullSHA256 and modes; actual commands/checks; changes/deviations/reasons; failures/unknowns/unresolved and missing/conflicting inputs (explicit none where empty); background work/pending permissions/auto-review denials/further decomposition (explicit none where empty). Supply FULL substantive final even if memory hook later sends a separate callback.
+Fresh exact memory hook only; errors are not saves, no guessed scope/stale retry. Coordinator owns acceptance and must recover actual idle/activeTurn null/pending0/full result before reassignment.
+```
+
+### Coordinator gates
+
+1. Preserve all reviews and recovery evidence. Keep R2-04/09 DOING; source-review
+   closure is not source/compiler/test acceptance. No local executable checks.
+2. Commit final candidate documentation and review, pin source/reviews/history,
+   prepare99 Rust plus6 separate chart names and both platform exclusions.
+   Verify source equals reviewed bcc66d3 bytes and28 earlier I0c inputs unchanged.
+3. Verify clean candidate and fast-forward feature-branch push. Feature pushes
+   do not trigger this workflow. Query ci.yml exact-head runs across all events;
+   if an existing run exists, reuse it. Otherwise record dispatch intent and issue
+   one workflow_dispatch only. A temporarily empty follow-up query never permits
+   redispatch. Never rerun/cancel old or new runs.
+4. Record exact run/head/attempt/event/branch/remote and launch receipt before
+   notified collector launch. Freeze its inputs; verify actual model/medium,
+   parent/workspace/running/pending0. Use a fresh scoped bounded monitor.
+5. Recover full final/error and actual idle/pending0; at90minutes recover exact
+   remaining jobs/evidence and renew/handoff before monitor expiry. Same-daemon
+   heartbeat is not outage protection. Validate all claimed evidence independently.
+6. Preserve all prior partial successes/failures and UNKNOWN nested helper fields.
+   New failures require a new bounded correction decision, not automatic reruns.
+   Negative bootstrap/rollback,0060,reconstruction/admission,I6 diagrams before
+   main,runtime/Owner/final C_R2 remain open. No main merge or operational action.
