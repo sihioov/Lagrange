@@ -37,6 +37,7 @@ Native subagents: prohibited for worker packages
 | I1a | intermediate | D4에서 고정한 unapproved wire 타입·encoding/hash와 provider-free 회귀 구현 | high | 명세에 없는 key/type/hash 의미가 필요하면 코드로 채우지 않고 D4 보정 요청 |
 | I0a | intermediate | D6가 검토한 새 admitter 역할의 격리 harness 준비를 기존 네 파일에 한정 | high | 운영 secret/Compose 변경 또는 새 migration 의미가 필요하면 해당 접점을 반환 |
 | I0a-R | intermediate | 고정된 네 harness 파일의 권한·실행 순서·직접 로그인 구현을 독립 검토 | high | 구체적 소스 반례만 반환하며 미실행 DB 검증을 source closure와 구분 |
+| I1a-P2 | intermediate | 회수된 I1a의 세 cash code 문법·오류와 고정 회귀를 두 파일에서 보정 | high | 규칙 밖의 의미 변경이 필요하면 해당 접점을 반환 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
 검증 명령을 추가하고서** 시작한다. 현재 설계 작업을 소스 구현 완료로 세지 않는다.
@@ -55,6 +56,7 @@ Native subagents: prohibited for worker packages
 | I1a | 4 | intermediate | 독립 unapproved wire 계약·canonical hash 구현 | `crates/market-data/src/daily_price_only/{mod,contract}.rs`, `src/lib.rs`, `tests/daily_price_only.rs` | D4 코디네이터 인수·launch brief 고정 | Luna max | 새 pure module·golden/rejection 회귀 | rustfmt/diff, 이후 exact 후보 Rust/CI; 실행 전 source만 수용 |
 | I0a | 5 | intermediate | 첫 0060 전 격리 role/bootstrap 기반 준비 | 두 `tests/common/mod.rs`, migration-contract의 `role-bootstrap.sql`·`bootstrap.sql`만 | D6의 D3-05 source-design closure 수용 | Luna max | 새 role preflight·DB별 권한·direct-login helper | rustfmt/diff·source 확인; 실제 역할/DB 검증은 이후 hosted 순차 실행 |
 | I0a-R | 5 | intermediate | I0a 구현의 독립 소스 리뷰 | `docs/reviews/2026-10-14-r2-isolated-role-harness-review.md`만 | I0a idle·결과 회수·네 파일 hash 고정 | Sol high, 코드 리뷰 규칙 | 구체적 finding 또는 범위 한정 source closure | 소스·SQL 문자열·연결 순서 대조; 실행 없음 |
+| I1a-P2 | 5 | intermediate | D6-01 present-empty cash metadata 구현·회귀 | `daily_price_only/contract.rs`, `tests/daily_price_only.rs`만 | I1a idle·보고 회수, 보정 D4 hash 고정 | 같은 Luna max | empty 보존·정확한 오류·515-byte fixture·nonempty bundle | rustfmt/diff; 후속 독립 리뷰·exact 후보 hosted Rust/CI |
 
 ## Worker briefs
 
@@ -382,3 +384,43 @@ I0a worker는 01:48:29 UTC에 실제 idle/pending0가 됐고 최종 보고를 �
 수용하지 않고 원래 고정 brief·모델·파일 소유권으로 각각 notified follow-up을 전달했다.
 02:07:37 UTC 새 turn의 running/pending0를 확인했다. I0a 네 hash와 I1a D4 hash는 그대로다.
 원인은 미확인이다. 원래 I1a 결과를 회수하기 전 D6-01을 적용하거나 source를 최종 수용하지 않는다.
+
+## I1a 원본 회수·D6-01 구현 follow-up / I0a-R 수용 — 2026-10-14
+
+I1a는 02:09:24 UTC 실제 idle/pending0 후 최종 보고를 회수했다. 네 파일 hash와 module 선언만
+추가된 lib.rs diff, 25 wire struct·4 enum·17 free function·2 timestamp method 목록을 직접 확인했다.
+원본 contract.rs는 4,058행·`e9fcfe944acf02db9ae9fd2bad6ec0b684cec63c837ada7bc6e7310c5e044ef0`,
+test는 1,504행·`c336bf9c4c3798efd469703b1c4fd82f6dc1ee95d1132e0afc2ebe5b5fc9a22f`다.
+rustfmt/diff 검사와 테스트 작성은 실제 Rust 실행이 아니다. 원본은 아직 최종 인수하지 않는다.
+
+예약했던 D6-01을 D4에 적용했다. 새 계약은 **950행**, SHA-256
+`fa0529033945437e78eca5b0805f0524a4ae3c75fc4f0a36321ec56b052e717f`다.
+기존 7개 Python golden은 그대로이며, 새 present-empty cash array도 515 bytes와 기존 고정 hash가
+일치했다. 이 계약을 I1a-P2의 입력으로 고정한다. D4 §11의 앞선 보정 기록도 보존했다.
+
+### I1a-P2 고정 실행 brief
+
+- 같은 Luna/max worker의 notified follow-up. 소유 파일은
+  `crates/market-data/src/daily_price_only/contract.rs`와
+  `crates/market-data/tests/daily_price_only.rs` 두 개뿐이다. module/lib/다른 소스/문서는 변경하지 않는다.
+- 위 D4 hash를 먼저 확인한다. 세 cash code에 `[A-Za-z0-9_-]{0,32}`를 적용해 빈 문자열을 그대로
+  보존한다. missing은 MissingField, null/non-string은 InvalidType, 허용하지 않은 문자·길이는
+  InvalidLiteral이다. 기존 valid_code 및 parse/typed encoder의 두 검증 경로를 같은 규칙으로 맞춘다.
+  wire parser의 trim/대체, legacy shared validator 수정, payload-bearing error는 금지한다.
+- §8의 별도 515-byte row를 구현하고 row-array preimage/hash, nonempty dividend chain과
+  proof/manifest/admission bundle parse→encode·재검증을 검사하는 회귀를 작성한다. witness count와
+  선택 정규화 행 수 및 내부 hash를 정확히 갱신한다. 기존 primary golden 7개는 변경하지 않는다.
+- 세 필드 각각 empty·정상 32바이트 통과, missing/null/non-string·33바이트·공백/control/non-ASCII/
+  허용 밖 문자의 정확한 오류를 확인한다. public typed preimage/encoder와 JSON parse 경로를 모두
+  다룬다. invalid row가 단순 HashMismatch 때문에 거부된 것을 lexical 회귀 통과로 세지 않는다.
+- 나머지 구현을 리팩터링하거나 original 명세의 별도 의미를 바꾸지 않는다. 범위 밖 결함을 발견하면
+  정확한 반례로 보고한다. 로컬 read/pure fixture 계산/rustfmt edition2024/check/diff만 허용한다.
+  Cargo/rustc/build/test/SQL/DB/root/Docker/network/provider/운영/Git write/하위 위임은 금지한다.
+- 공통 최종 보고 형식에 원본 대비 변경과 정확한 파일 hash·라인을 포함한다. written regression과
+  실제 실행을 구분하며 최종 검증은 독립 소스 리뷰와 exact candidate hosted/격리 CI로 넘긴다.
+
+I0a-R은 02:10:13 UTC idle/pending0 후 [157행 보고](../../reviews/2026-10-14-r2-isolated-role-harness-review.md),
+SHA-256 `6ad13d8a0f622e3cc5eadc1fb67e1a050340e7e9fcebce12114f1a606838e0dc`를 회수했다.
+직접 읽은 네 파일 diff·전후 hash·호출 순서와 일치하며 concrete finding 없음이라는 **소스 검토 한정**
+결론을 수용한다. 현재 검토 문서/계약의 45개 링크·라인 경계도 확인했다. 실제 compile/SQL/role/pool/
+ACL/cleanup은 미검증이며 나머지 I0 운영·official 연결 전 첫 0060 실행은 계속 금지한다.

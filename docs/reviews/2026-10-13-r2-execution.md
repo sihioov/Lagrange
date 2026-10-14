@@ -446,3 +446,29 @@ I0a 네 파일 hash는 이전 검토 입력과 일치하며 I1a의 D4 `308b9909�
 I1a 원래 결과 회수 → D6-01 계약/회귀 보정 → 독립 검증 순서는 그대로다.
 동일 scope이므로 기존 `7aba6810` 감시를 유지한다. 중단 원인·중단 중 지속 감시는 검증되지 않았다.
 이 회복은 source 작업 재개이며 컴파일·SQL·DB·운영 성공을 추가하지 않는다.
+
+### I1a 회수·빈 cash metadata 보정 / I0a 소스 검토 수용 — 2026-10-14 KST
+
+I1a는 02:09:24 UTC, I0a-R은 02:10:13 UTC에 각각 실제 idle/pending0가 됐고 최종 보고를
+회수했다. 앞선 보고 누락은 이 회수로 해소했으나 중단 원인을 추정하지 않는다.
+I1a 네 hash·25 wire struct/4 enum/17 free function/2 timestamp method와 lib module 선언을
+확인했다. 실제 Cargo/rustc/test는 실행하지 않았으며 원본 source acceptance는 보류한다.
+
+I1a의 기존 D4를 950행·`fa0529033945437e78eca5b0805f0524a4ae3c75fc4f0a36321ec56b052e717f`로
+보정했다. 세 cash code는 present-empty를 보존하고 missing/null/type/문자·길이 오류를 구별한다.
+7개 기존 Python golden이 그대로이고 추가 row-array는 515 bytes·`0f87c41b…`로 일치했다.
+[D4 §12](../contracts/owner-beta-daily-etf11-input-v1.md#12-d6-01-cash-metadata-correction--2026-10-14)와
+[정확한 follow-up](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 근거를 기록했다.
+같은 Luna/max `2ec1c669-0e57-462e-a397-d6b2c3fbd4a0`에게 contract.rs/test 두 파일만 맡겼고,
+notifyOnFinish=true와 실제 running/pending0·workspace·parent를 확인했다.
+
+[I0a-R 157행 보고](2026-10-14-r2-isolated-role-harness-review.md) SHA-256
+`6ad13d8a0f622e3cc5eadc1fb67e1a050340e7e9fcebce12114f1a606838e0dc`의 finding 없음 결론을
+기존 직접 diff·hash·호출 순서 확인과 대조해 **소스 검토 한정으로 수용**했다. D4/보고서의
+45개 링크·라인 경계도 확인했다. I0a 네 파일은 이 기록을 포함하는 소스 커밋의 검토 대상이며
+실제 compile/SQL/role/pool/ACL/cleanup 검증과 남은 I0 연결은 미완료다. 첫 0060 실행도 아직 없다.
+
+기존 `7aba6810` 감시는 삭제하고 `55390735`(2분·60회·04:15:17 UTC 만료)로 교체해 I1a-P2만
+관찰한다. 완료된 I0a/I0a-R 결과와 원본 I1a hash는 private ledger/receipt에 보존했다.
+보정본 회수 후 독립 리뷰와 정확한 후보의 hosted 순차 검증으로 이어간다. 생산 배포·migration·
+서비스·timer·시장 API 실행 권한은 변경하지 않았다.

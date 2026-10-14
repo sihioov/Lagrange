@@ -17,7 +17,7 @@
 //! same `jobs` rows would fail in ways that look like queue bugs.
 
 use sqlx::migrate::{MigrationType, Migrator};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Executor, PgPool};
 use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -26,10 +26,11 @@ use std::time::Duration;
 static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Role bootstrap executed as superuser on each fresh database.
+/// Role bootstrap reused as superuser on the supervisor and fresh databases.
 ///
-/// Roles are cluster-wide and created idempotently; per-database grants land
-/// via migration 0009.
+/// Role definitions are cluster-wide; the existing schema grants are legacy
+/// behavior. Keep new admitter privileges in the separate target-database
+/// bootstrap below, which runs only after a scratch database connection opens.
 const ROLE_BOOTSTRAP_SQL: &str = r#"
 DO $role$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'migration_owner') THEN
@@ -61,8 +62,85 @@ DO $role$ BEGIN
     CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
   END IF;
 END $role$;
+DO $role$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'daily_input_admitter') THEN
+    CREATE ROLE daily_input_admitter LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION NOBYPASSRLS PASSWORD 'lagrange';
+  END IF;
+END $role$;
+DO $role_preflight$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'daily_input_admitter'
+      AND rolcanlogin
+      AND NOT rolinherit
+      AND NOT rolsuper
+      AND NOT rolcreatedb
+      AND NOT rolcreaterole
+      AND NOT rolreplication
+      AND NOT rolbypassrls
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter role attributes mismatch';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_auth_members
+    WHERE member = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+       OR roleid = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter has unexpected role membership';
+  END IF;
+
+  IF EXISTS (
+    WITH RECURSIVE membership_closure(start_role, reachable_role) AS (
+      SELECT oid, oid
+      FROM pg_roles
+      WHERE rolname IN ('app', 'worker')
+      UNION
+      SELECT closure.start_role, membership.roleid
+      FROM membership_closure AS closure
+      JOIN pg_auth_members AS membership ON membership.member = closure.reachable_role
+    )
+    SELECT 1
+    FROM membership_closure AS closure
+    JOIN pg_roles AS start_role ON start_role.oid = closure.start_role
+    JOIN pg_roles AS reachable_role ON reachable_role.oid = closure.reachable_role
+    WHERE start_role.rolname IN ('app', 'worker')
+      AND reachable_role.rolname IN ('migration_owner', 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'app or worker reaches a protected migration role';
+  END IF;
+END $role_preflight$;
 GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, research_writer, admin;
 GRANT CREATE ON SCHEMA public TO migration_owner;
+"#;
+
+/// Per-scratch-database privileges for the isolated daily-input test role.
+const DAILY_INPUT_ADMITTER_DB_BOOTSTRAP_SQL: &str = r#"
+DO $database_privilege$ BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO daily_input_admitter', current_database());
+END $database_privilege$;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO daily_input_admitter;
+DO $privilege_preflight$ BEGIN
+  IF NOT has_database_privilege('daily_input_admitter', current_database(), 'CONNECT') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks CONNECT on the scratch database';
+  END IF;
+  IF NOT has_schema_privilege('daily_input_admitter', 'public', 'USAGE') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks USAGE on scratch public schema';
+  END IF;
+  IF has_database_privilege('daily_input_admitter', current_database(), 'CREATE') THEN
+    RAISE EXCEPTION 'daily_input_admitter has CREATE on the scratch database';
+  END IF;
+  IF has_schema_privilege('daily_input_admitter', 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'daily_input_admitter has CREATE on scratch public schema';
+  END IF;
+  IF NOT has_schema_privilege('migration_owner', 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'migration_owner lacks CREATE on scratch public schema';
+  END IF;
+END $privilege_preflight$;
 "#;
 
 /// SQLx 0.9's SQL audit requires dynamic DDL (a database name cannot be a bind
@@ -202,6 +280,9 @@ impl ScratchDb {
         ))
         .execute(&fresh)
         .await?;
+        sqlx::raw_sql(DAILY_INPUT_ADMITTER_DB_BOOTSTRAP_SQL)
+            .execute(&fresh)
+            .await?;
 
         // Production migrations run as migration_owner. Running them as the
         // supervisor makes SECURITY DEFINER functions owned by
@@ -270,6 +351,36 @@ impl ScratchDb {
         let host = rest.rsplit_once('@').map(|(_, h)| h).unwrap_or(rest);
         let host = host.rsplit_once('/').map(|(h, _)| h).unwrap_or(host);
         format!("{scheme}://{role}:lagrange@{host}/{}", self.name)
+    }
+
+    /// A direct-login pool for the isolated daily-input admission role.
+    ///
+    /// The caller owns the returned pool and must close it before dropping
+    /// this scratch database. It carries no SET ROLE or actor GUC setup.
+    pub async fn daily_input_admitter_pool(&self) -> PgPool {
+        let options: PgConnectOptions = self
+            .role_url("daily_input_admitter")
+            .parse()
+            .unwrap_or_else(|_| panic!("daily input admitter connection options parse"));
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .acquire_timeout(Duration::from_secs(10))
+            .connect_with(options)
+            .await
+            .unwrap_or_else(|_| panic!("daily input admitter test pool connects"));
+        let identities: (String, String, Option<String>) = sqlx::query_as(
+            "SELECT current_user, session_user, current_setting('app.actor_user_id', true)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|_| panic!("daily input admitter identity check runs"));
+        assert_eq!(identities.0, "daily_input_admitter");
+        assert_eq!(identities.1, "daily_input_admitter");
+        assert!(
+            identities.2.is_none(),
+            "admitter pool must not carry actor GUC"
+        );
+        pool
     }
 
     pub async fn drop_db(self) {

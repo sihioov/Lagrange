@@ -52,7 +52,7 @@ Thus transport reordering may converge while a stored noncanonical file fails cl
 | N | JSON integer token `0` or `[1-9][0-9]*`, u64 range; no `-0`, exponent/fraction/string/bool | `u64`; narrow casts checked |
 | I | One of the 11 exact instrument strings below | `domain::InstrumentId` |
 | S | One of the 11 exact six-digit symbols below | `String` |
-| code | ASCII `[A-Za-z0-9_-]{1,32}`; opaque recorded provider code, no invented interpretation | `String` |
+| code | ASCII `[A-Za-z0-9_-]{0,32}`; present empty string is valid opaque metadata, no invented interpretation | `String` |
 | decimal | String matching `(0\|[1-9][0-9]*)(\.[0-9]*[1-9])?`; max scale 28 and nonnegative i128 mantissa bound; `0.5` allowed, `0.0`/`1.00`/sign/exponent forbidden | `String`, validate with existing `FixedPoint::parse` |
 | filename | ASCII `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, no `..` anywhere; no separators/absolute path | `String` |
 
@@ -299,6 +299,14 @@ No ex-date/available_at/factor exists. No field presumes a receipt timestamp.
 Recorded cash rows are claimed exclusions, not newly trusted normalization.
 Shared [field validation](../../crates/market-data/src/normalize.rs#L1396) and complete
 non-ETF row validation remain mandatory in I1b; generic action behavior is untouched.
+
+The three `code` fields (`dividend_kind`, `stock_kind`, `high_dividend_flag`) are
+required strings, including a present empty string. Missing is `MissingField`;
+null or a non-string is `InvalidType`; unsupported characters or more than 32 ASCII
+bytes is `InvalidLiteral`. Wire parsing preserves the string exactly without trim
+or substitution. I1b maps the shared validator's trimmed string unchanged, then
+checks this bounded wire rule. Unsupported values fail with a typed rejection;
+never fabricate a code/null value or drop the cash row to make it fit.
 
 | `DailyCalendarBindingV1Wire` key order | Type / value |
 |---|---|
@@ -779,6 +787,25 @@ fixtures are separate required tests with the exact nested schemas above.
 
 Exact additional fixture recipes (all starting from the construction above):
 
+- **Present-empty cash metadata:** the following separate construction uses the
+  first golden's dividend page and does not mutate the seven primary golden values.
+  Its one-row array is exactly 515 bytes and hashes to
+  `sha256:0f87c41ba19ba820ee79a2a05f54c27b9a4af5f185a98b080bc429b56eaca864`.
+  Use the same row in a nonempty dividend chain, refresh its cash-row hash, set the
+  selected corporate-actions normalized row_count to one, and recompute evidence,
+  proof, manifest and admission links/counts. The complete bundle round-trips while
+  the three code strings remain empty; no Raw trust is established.
+
+```python
+dividend_page = next(a for a in actions if a["logical_class"] == "dividend")["pages"][0]
+cash_row = {"symbol":"069500", "record_date":"2026-08-31", "dividend_kind":"",
+    "face_value":"5000", "cash_dividend_amount":"100", "cash_dividend_rate":"2",
+    "stock_dividend_rate":"0", "cash_payment_date":"2026-09-14",
+    "stock_payment_date":None, "odd_lot_payment_date":None, "stock_kind":"",
+    "high_dividend_flag":"", "source_file":K(dividend_page)}
+print("present_empty_cash_rows", len(C([cash_row])), H(C([cash_row])))
+```
+
 - **Second addition:** retain the first session verbatim. Create the same 11 bars,
   11 references and seven whole-market one-page chains for 2026-09-01, all with batch
   UUID `00000000-0000-4000-8000-000000000002`, batch_date=2026-09-01,
@@ -860,6 +887,11 @@ Exact additional fixture recipes (all starting from the construction above):
     KSD last-page `M` without the next page still fails. Equivalent overlapping action
     witnesses may contain two claimed cash rows and a reconstructed row_count of one;
     counts record two witness occurrences, and the selected count remains I1b's check.
+13. For each of the three cash code fields, preserve empty and valid 32-byte strings;
+    reject missing as MissingField, null/non-string as InvalidType, and 33-byte,
+    whitespace, control, non-ASCII or other unsupported characters as InvalidLiteral.
+    Assert the 515-byte present-empty cash preimage above and a resealed nonempty
+    manifest/proof/admission bundle parse/encode round-trip. Do not silently trim.
 
 ## 10. Source alignment and D4 handoff
 
@@ -902,3 +934,17 @@ document hash distinct from the new reconstructed schema's hash. D5 A1/A2/A6 and
 linked existing provider/normalizer support these corrections. No field, signature,
 canonical preimage or primary empty-cash golden value changes. The exact revised hash
 is frozen in the I1a launch brief. Source review and Rust execution remain separate.
+
+## 12. D6-01 cash metadata correction — 2026-10-14
+
+The first I1a result used the 904-line contract, SHA256
+`308b9909932a323440557afc06ebd3c3a7fd26e44be38a502a02c25803ce377d`.
+After its actual idle/pending0 and result recovery, the coordinator applied the
+previously fixed D6-01 correction. The existing shared validator accepts present
+trimmed-empty strings, and its cash-dividend fixture uses them. This revision changes
+only the three opaque cash-code scalar rules, their explicit error classification,
+and the required additional fixture/rejections. Original fields, signatures, seven
+primary golden preimages and legacy validator behavior remain unchanged. I1b must
+preserve the shared validator's string and separately enforce this wire bound.
+The revised hash is frozen in the follow-up brief. Source correction and written
+regressions still require independent review and actual Rust validation.
