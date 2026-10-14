@@ -1775,3 +1775,44 @@ No new S2 push/CI has occurred at this preparation stage. Actual run identity an
 launch gates will be recorded separately before collection starts. No local
 compiler/test/DB/provider/production execution. All later R2 gates remain open.
 Current related Mem0 context returned MCP_ERROR; not saved and not retried.
+
+### Wave30 single candidate CI dispatched and collector verified — 2026-10-15 KST
+
+Candidate `245f4d9a911d03d58936f177904588826031d83e` contains the reviewed
+`bcc66d3` source bytes. After feature-branch fast-forward push, remote SHA
+verification and the 16:02:20.753872 UTC exact-head query returning zero runs,
+one dispatch created [CI 38594682124](https://github.com/sihioov/Lagrange/actions/runs/38594682124)
+at 2026-10-14 16:02:48 UTC. Attempt 1, `CI`/`ci.yml`, `workflow_dispatch`, branch
+`excited-dolphin` and the exact head were checked. A first empty propagation query
+was followed by a read-only query; dispatch was not repeated. Later bookkeeping
+commits remain local and do not alter the running candidate.
+
+Frozen inputs contain 51 pins (37 source files and 14 references/artifacts),
+99 Linux Rust names (30 wire, 18 S1, 1 collector, 2 helper, 19 S2 private and
+29 S2 integration), 6 separate chart names and 2 excluded platform cases.
+The input, inventory and launch receipts are respectively 226/8f96f87e,
+812/2446f369 and 62/225205ad; full hashes are in Wave30 of the implementation plan.
+Preparation flags in the frozen inputs remain historical. Actual dispatch is
+recorded in the separate launch receipt.
+
+Direct collector `6c5cc4eb-7247-415a-be5b-6cf83a189730`, codex/gpt-6-luna/medium,
+started 2026-10-14T16:04:01.894Z. Actual running/activeTurn/pending 0, expected
+workspace/parent/model/effort were verified at 16:06:59.376 UTC. Completion
+notification is enabled; permission mode was unchanged. The configured profile
+is coordinator-only, so repository bounded-extraction routing applies.
+Startup receipt: 44 lines, SHA
+`064984d13e85f82a725f5efb6138502946f93eadf7e92677ccaddebcdbfe995c`.
+
+The report bound is 17:34:01.894 UTC (10-15 02:34 KST). Scoped heartbeat
+`de67d496` was created 16:08:31.882 UTC, every two minutes/max 60, expiring
+18:08:31.878 UTC. The owned-worker ledger and private monitor receipt are updated.
+Recover actual idle/activeTurn null/pending 0 and a full substantive result before
+acceptance or follow-up. At the bound, identify remaining jobs/evidence and renew
+or hand off before expiry; the same daemon cannot protect against its own outage.
+
+No source/compiler/test acceptance is recorded. The collector may write only its
+new report and sanitized private candidate directory; raw logs remain in memory.
+Further delegation, source fixes, run cancellation/reruns and local execution are
+prohibited. Prior I0c partial successes, UNKNOWN nested helper evidence and all
+failures remain preserved. Negative bootstrap/rollback, 0060, reconstruction and
+admission, I6 diagrams before main, runtime/Owner and final C_R2 remain open.

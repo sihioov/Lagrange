@@ -3497,3 +3497,47 @@ Fresh exact memory hook only; errors are not saves, no guessed scope/stale retry
    New failures require a new bounded correction decision, not automatic reruns.
    Negative bootstrap/rollback,0060,reconstruction/admission,I6 diagrams before
    main,runtime/Owner/final C_R2 remain open. No main merge or operational action.
+
+### Wave30 actual dispatch and collector startup — 2026-10-15 KST
+
+Final candidate `245f4d9a911d03d58936f177904588826031d83e` was pushed to
+`excited-dolphin`; its source bytes equal reviewed `bcc66d3`. The exact-head,
+all-event CI query at 2026-10-14 16:02:20.753872 UTC returned zero existing runs.
+After remote SHA verification and persisted dispatch intent, one dispatch created
+[run 38594682124](https://github.com/sihioov/Lagrange/actions/runs/38594682124),
+attempt 1, workflow `CI`/`ci.yml`, event `workflow_dispatch`, at 16:02:48 UTC.
+An initially empty propagation query did not cause redispatch. No run was rerun
+or cancelled. Later local bookkeeping commits do not change this CI candidate.
+
+Frozen private inputs under `target/r2-daily-beta/wp-4-integration/`:
+
+| Artifact | Lines | SHA256 | Scope |
+| --- | ---: | --- | --- |
+| `wave30-S2-ci-inputs.json` | 226 | `8f96f87e899f15ec6bbf367d5caf64761334cf82fffcd8fffe456bf6d71cfea6` | 51 pins: 37 sources and 14 references/artifacts |
+| `wave30-S2-ci-test-inventory.json` | 812 | `2446f369c0a00514d82f60f02a87203c3f1841efa335b8b06772b1c17130e8c0` | 99 Linux Rust names, 6 separate chart names, 2 platform exclusions |
+| `wave30-S2-ci-launch.json` | 62 | `225205ad7b05b8e27fd19953d5152bb934888ca1795637a9b23f9115401cc652` | Existing-run query, one dispatch and actual run identity |
+
+The inputs' preparation-time `newCiDispatched:false` remains historical; the
+separate frozen launch receipt records the actual dispatch. No frozen file was
+rewritten to update progress.
+
+Collector `6c5cc4eb-7247-415a-be5b-6cf83a189730` actually started at
+2026-10-14T16:04:01.894Z as codex/gpt-6-luna/medium. At 16:06:59.376 UTC,
+running/activeTurn, pending 0, workspace, parent and model/effort matched.
+`notifyOnFinish` is true; inherited permission mode was unchanged. The available
+Astra/high profile is coordinator-only, so the repository's bounded extraction
+route applies. The startup receipt is `wave30-S2-CI-startup.json`, 44 lines,
+SHA `064984d13e85f82a725f5efb6138502946f93eadf7e92677ccaddebcdbfe995c`.
+
+The 90-minute reporting bound is 2026-10-14T17:34:01.894Z
+(2026-10-15 02:34:01.894 KST). Heartbeat `de67d496`, created 16:08:31.882 UTC,
+runs every two minutes, max 60, expiring 18:08:31.878 UTC. It covers only this
+collector and run. Actual idle/activeTurn null/pending 0 plus the full substantive
+final or error must precede acceptance, follow-up or monitor deletion. At the
+bound, recover precise remaining evidence and renew or hand off before expiry.
+Same-daemon monitoring cannot protect against daemon outage.
+
+The collector owns only the new snapshot CI report and sanitized candidate
+receipt directory. All frozen source and evidence remain read-only. No further
+delegation is allowed. Compiler, lint and test outcomes await recovery and
+coordinator verification; all later R2 acceptance gates remain open.

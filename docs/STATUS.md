@@ -4,7 +4,7 @@
 > 이 문서는 최신 진행 요약과 날짜별 과거 구현·운영 기록을 함께 제공한다. 과거 기록의
 > “현재”, “최신”, “남은 작업”은 각 기록 당시의 표현이며 이후 우선순위는 로드맵을 먼저 확인한다.
 
-## 최신 진행 요약 — 2026-10-14 (Asia/Seoul)
+## 최신 진행 요약 — 2026-10-15 (Asia/Seoul)
 
 | 항목 | 확인된 상태 |
 | --- | --- |
@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수와 실패 이력을 보존한다. Wave27 결과는 실제 idle·pending0·전체 결과 회수 후 [두 번째 보정 인계](reviews/2026-10-14-r2-snapshot-second-corrections-handoff.md) 커밋 bbac2e9로 고정했다. [Wave28 독립 리뷰](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 Sol/high 검토자 a4b5c1b9가 2026-10-14 15:05:18.207 UTC(10-15 00:05 KST)에 실제 시작했고 pending0·완료 알림을 확인했다. 입력 56개와 테스트 목록 49개(Linux 48·non-Linux 1)를 고정했다. 보고 기한은 16:05:18.207 UTC, 전용 감시는 6a6fca7d다. 모든 테스트는 미실행이며 소스 인수·새 S2 push/CI는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — Wave28과 [C02 독립 리뷰](reviews/2026-10-15-r2-snapshot-format-review.md)를 실제 idle·pending 0·전체 결과 회수 후 소스 검토 수준에서 종결했다. 후보 `245f4d9`의 기존 실행 부재 확인 후 [CI 38594682124](https://github.com/sihioov/Lagrange/actions/runs/38594682124) attempt 1을 한 번 시작했다. [Wave30](superpowers/plans/2026-10-14-r2-daily-input-implementation.md) 수집 담당자 `6c5cc4eb`(Luna/medium)는 10-14 16:04:01.894 UTC에 실제 시작했으며 pending 0·완료 알림을 확인했다. 보고 기한은 17:34:01.894 UTC(10-15 02:34 KST), 감시는 `de67d496`다. Rust 99개·별도 chart 6개와 compiler/strict lint/PG 결과 회수 중이며 새 실행 인수는 아직 없다. 기존 a888cd6 I0c 부분 성공·실패 이력과 negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 보존한다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
