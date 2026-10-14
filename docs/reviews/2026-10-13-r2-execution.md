@@ -661,3 +661,26 @@ actual running/pending0·parent/workspace/model/effort를 확인했다. local te
 리뷰 결과는 회수됐고 Python 작업의 실제 상태·final을 계속 회수한다. 같은 daemon heartbeat는
 중단을 보호하지 못하며 만료 전 미완료 항목은 재조정한다. 기존 CI 재실행·중복 dispatch나
 운영 조치는 없었다. R2-04/09는 DOING이며 다음은 새 후보 검증이다.
+
+
+### Python readiness 소스 검토·최종 보정 후보 준비 — 2026-10-14
+
+I1a-PY-F는 03:57:11 UTC actual idle/pending0 후 final과 한 파일 delta를 회수했다.
+`nt/live-node/tests/test_runtime.py` 479행의 SHA-256은
+`e2121f61d3be269b4b8b15313c6c0e8c4fe8ed34a218bac1c908cf72ae3dfb97`다.
+코디네이터가 helper와 세 mock 회귀를 직접 읽고 `ast.parse`·코드 객체 compile(실행 없음),
+기존 모든 함수의 AST 보존, SIGTERM 함수의 readiness 호출만 변경됨을 대조했다.
+대기 helper는 monotonic 10초·최대 0.05초 sleep, 매회 child.poll 및 반환 전 재확인,
+유한 숫자 cycle>=1만 준비로 인정하며 임의 status/provider 본문을 진단에 넣지 않는다.
+새 회귀는 1.25초 뒤 준비, 0.05초 조기 exit23, 10초 deadline을 fake clock/child/read_status로
+검증하도록 작성했다. 로컬 pytest·subprocess·signal은 실행하지 않았다.
+
+이전 thread helper·entrypoint caller와 SIGTERM 이후 terminate/wait0/lock 부재/STOPPED assertions,
+finally kill/wait는 보존됐다. 소스 검토를 수용하되 실제 Python 통과나 이전 실패의 원인 확정으로
+해석하지 않는다. Rust 보정은 `91435e4a73d15143756e7a2edfe912024b1a8d00`에 커밋됐고
+이 Python 보정을 더한 새 source commit을 검증 대상으로 삼는다. 기존 실패 run은 보존한다.
+
+검토 영수증은 `target/r2-daily-beta/wp-4-integration/python-readiness-review.json`,
+Rust 30개 작성 테스트 목록은 같은 경로의 `final-wire-test-inventory.json`이다. 두 파일은 0600이고
+실행 성공을 기록하지 않는다. 전체 source 후보 push 후 exact SHA 기존 실행 부재를 먼저 확인하고
+CI를 한 번 시작한다. source, review, hosted 실행, I0/0060 및 운영 인수의 경계는 유지한다.

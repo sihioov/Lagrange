@@ -835,3 +835,40 @@ Luna/max `ba55a077-2880-408e-9424-29f476ebdd7f`의 03:53:12 UTC notified launch�
 running/pending0를 확인했다. 기존 두 Rust 파일 및 D4는 해당 작업의 소유 범위가 아니다.
 `f40a8ab8`(2분·60회·05:53:40 UTC 만료)로 기존 감시를 교체했으며 actual idle/final·코디네이터
 검토 뒤 새 정확한 source 후보를 hosted CI로 검증한다. 이전 CI run은 재실행하지 않는다.
+
+
+## 최종 보정 후보 검증 package — 2026-10-14
+
+I1a-PY-F는 03:57:11 UTC actual idle/pending0 후 회수됐다. 한 test 파일479행/hash
+`e2121f61d3be269b4b8b15313c6c0e8c4fe8ed34a218bac1c908cf72ae3dfb97`의 제한된 소스 보정과
+AST·diff 검토를 수용한다. 기존 함수·종료/cleanup 보존 및 mock 회귀 3개를 직접 확인했다.
+Rust는 위 f086c065/11a8255d, D4는 fa052903 그대로다. 로컬 테스트 성공은 없으며
+다음은 이 세 파일을 포함한 정확한 후보의 hosted 검증이다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I1a-F3-CI | simple | 새 exact 후보의 기존 run에서 정해진 job·test·diagnostic 증거 회수 | high | 새 오류 분석·검증 범위 확대가 필요하면 사실과 UNKNOWN을 분리해 보고 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I1a-F3-CI | 5 | simple | 최종 보정 후보의 실제 hosted 결과 회수 | 새 final CI 보고와 candidate private leaf | F2-R/PY-F idle/final·코디네이터 소스 검토·정확한 후보 push/1회 dispatch | 기존 Luna/medium collector | 전체 job/step 결과·신규30 Rust와 Python 증거·실패 진단·한계 | read-only gh run/job/log 및 exact source/receipt 대조 |
+
+### I1a-F3-CI 고정 실행 brief
+
+- 실행은 코디네이터가 push·remote SHA·exact SHA 기존 run 조회 후 한 번 dispatch한 ID만 관찰한다.
+  full candidate SHA/run ID는 notified assignment에 고정한다. 재실행·dispatch·cancel을 하지 않는다.
+- 출력은 `docs/reviews/2026-10-14-r2-daily-wire-final-ci.md`와 private candidate leaf다.
+  이전 report/receipt/source/roadmap/Git은 쓰지 않는다. 원시 로그는 저장하지 않고 선택된 증거·hash만 남긴다.
+- 모든 7개 checkout SHA, job/step terminal state 및 required를 확인한다. 30개 Rust test 목록은
+  `target/r2-daily-beta/wp-4-integration/final-wire-test-inventory.json`과 exact source에 대조한다.
+  기존 golden/cash, private guard, public proof/seal 한계와 날짜/copy 보정의 실제 result row를 확인한다.
+  Chart6, workspace 합계·fail/ignored, 역사 v2/v3의 발견 여부, strict Clippy와 cleanup을 분리한다.
+- Python은 SIGTERM case와 새 mock 회귀 3개의 발견·실행 근거 수준을 정직하게 기록한다.
+  pytest -q의 파일별 progress/전체 합계가 개별 node PASS를 직접 보여주지 않으면 그 한계를 남긴다.
+  Web/OpenAPI/E2E 및 PG code_commit·59 migrations/checksum·0039 guard·skip marker·DB-gated
+  단계의 결과를 회수한다. 미호출 direct-login helper/0060/runtime 성공을 주장하지 않는다.
+- 오류가 있으면 typed compiler/lint/test 진단과 job/step/exit/source 위치를 남긴다. 출력을 보지 못한
+  테스트를 PASS로 추정하지 않고 NOT_EXECUTED/UNKNOWN으로 구분한다. 기존 10 Python skips 등도 보존한다.
+- 90분 또는 05:35 UTC 중 먼저 도달하면 수집된 근거와 INCOMPLETE를 반환한다. 코디네이터가
+  terminal까지 관찰 책임을 유지한다. local Cargo/test/build/DB/root/Docker/provider/운영/Git write와
+  하위 위임은 금지한다. 새 회귀를 로컬 실행해 빈 로그를 보충하지 않는다.
