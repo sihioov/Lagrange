@@ -204,8 +204,10 @@ done
 # closed so a new conditional/call cannot silently bypass the parity check.
 command -v python3 >/dev/null 2>&1 || die 'release inventory parity requires the existing python3 runtime'
 python3 - "$provision" "$production_validator" <<'PY' || die 'release provisioner and validator inventories must match by path, UID, GID, and numeric mode'
+import io
 import re
 import sys
+from unittest.mock import patch
 
 
 class InventoryError(Exception):
@@ -267,6 +269,12 @@ def add_unique(destination, item, source_label):
     destination[path] = metadata
 
 
+def read_inventory_source(path):
+    # Preserve every decoded character; only LF ends a shell source line.
+    with open(path, encoding="utf-8", newline="") as source_file:
+        return source_file.read()
+
+
 def parse_copy_function(source, function_name):
     matches = list(
         re.finditer(
@@ -277,7 +285,7 @@ def parse_copy_function(source, function_name):
     if len(matches) != 1:
         raise InventoryError(f"missing or ambiguous {function_name} definition")
     inventory = {}
-    for raw_line in matches[0].group(1).splitlines():
+    for raw_line in matches[0].group(1).split("\n"):
         line = raw_line.strip(" \t")
         if not line or line.startswith("#"):
             continue
@@ -286,7 +294,10 @@ def parse_copy_function(source, function_name):
 
 
 def parse_release_provisioner(path):
-    source = open(path, encoding="utf-8").read()
+    return parse_release_provisioner_source(read_inventory_source(path))
+
+
+def parse_release_provisioner_source(source):
     serving = parse_copy_function(source, "add_serving_copies")
     infrastructure = parse_copy_function(source, "add_infrastructure_copies")
     branches = list(re.finditer(r"(?ms)^  release\)\n(.*?)^    ;;$", source))
@@ -296,7 +307,7 @@ def parse_release_provisioner(path):
     inventory = {}
     calls = {"add_serving_copies": 0, "add_infrastructure_copies": 0}
     extras = 0
-    for raw_line in branches[0].group(1).splitlines():
+    for raw_line in branches[0].group(1).split("\n"):
         line = raw_line.strip(" \t")
         if not line or line.startswith("#"):
             continue
@@ -321,7 +332,10 @@ def parse_release_provisioner(path):
 
 
 def parse_validator_release(path):
-    source = open(path, encoding="utf-8").read()
+    return parse_validator_release_source(read_inventory_source(path))
+
+
+def parse_validator_release_source(source):
     matches = list(
         re.finditer(
             r"(?ms)^else\n  runtime_specs=\(\n(.*?)\n  \)\nfi\nfor spec in \"\$\{runtime_specs\[@\]\}\"; do",
@@ -331,7 +345,7 @@ def parse_validator_release(path):
     if len(matches) != 1:
         raise InventoryError("missing or ambiguous validator release runtime_specs branch")
     inventory = {}
-    for raw_line in matches[0].group(1).splitlines():
+    for raw_line in matches[0].group(1).split("\n"):
         line = raw_line.strip(" \t")
         if not line or line.startswith("#"):
             continue
@@ -509,7 +523,246 @@ def run_parser_regressions():
             raise InventoryError(f"parse_validator_spec positive regression #{positive_index} changed tuple")
 
 
-run_parser_regressions()
+def run_source_wrapper_regressions():
+    serving_row = "\t add_copy\tapi_server target-1\tcursor_secret 10001\t10001 0440 yes \t\n"
+    infrastructure_rows = (
+        "  add_copy reverse-proxy lagrange.crt tls/lagrange.crt 101 101 440 no\n"
+        "\tadd_copy db-role-bootstrap db_daily_input_admitter_password "
+        "db_daily_input_admitter_password 999 999 0400 yes\t\n"
+    )
+    release_row = "    add_copy \tresearch-range-raw kis_app_key kis_app_key 10001 10001 0440 yes\t\n"
+    validator_rows = (
+        " \tapi_server/target-1:10001:10001:440\treverse-proxy/lagrange.crt:101:101:0440 \t\n"
+        "\tdb-role-bootstrap/db_daily_input_admitter_password:999:999:400\n"
+        "    research-range-raw/kis_app_key:10001:10001:0440\t"
+    )
+    expected = {
+        "api_server/target-1": (10001, 10001, 0o440),
+        "reverse-proxy/lagrange.crt": (101, 101, 0o440),
+        "db-role-bootstrap/db_daily_input_admitter_password": (999, 999, 0o400),
+        "research-range-raw/kis_app_key": (10001, 10001, 0o440),
+    }
+
+    def provisioner_source(serving_suffix="", infrastructure_suffix="", release_suffix=""):
+        return (
+            "add_serving_copies() {\n"
+            "  # inert serving comment\n \t\n"
+            + serving_row + serving_suffix
+            + "}\n"
+            "add_infrastructure_copies() {\n"
+            + infrastructure_rows + infrastructure_suffix
+            + "}\n"
+            'case "$scope" in\n'
+            "  release)\n"
+            "\tadd_serving_copies \t\n"
+            "    add_infrastructure_copies\n"
+            + release_row + release_suffix
+            + "    add_extra_source backup_encryption_key yes\n"
+            "    ;;\n"
+            "esac\n"
+        )
+
+    def validator_source(suffix=""):
+        return (
+            'if [ "$scope" = infrastructure ]; then\n'
+            "  runtime_specs=()\n"
+            "else\n"
+            "  runtime_specs=(\n"
+            "    # inert validator comment\n \t\n"
+            + validator_rows + "\n" + suffix
+            + "  )\n"
+            "fi\n"
+            'for spec in "${runtime_specs[@]}"; do\n'
+            "  :\n"
+            "done\n"
+        )
+
+    def require_fixture_map(label, inventory, expected_map=expected):
+        if inventory != expected_map:
+            raise InventoryError(f"source wrapper regression changed map: {label}")
+
+    require_fixture_map("provisioner LF/ASCII whitespace", parse_release_provisioner_source(provisioner_source()))
+    require_fixture_map("validator LF/ASCII whitespace", parse_validator_release_source(validator_source()))
+
+    extra_copy = "add_copy extra_service extra_target cursor_secret 10001 10001 0440 yes"
+    extra_spec = "extra_service/extra_target:10001:10001:440"
+    extra_expected = dict(expected)
+    extra_expected["extra_service/extra_target"] = (10001, 10001, 0o440)
+    ordinary_extra_validator = parse_validator_release_source(validator_source("    " + extra_spec + "\n"))
+    require_fixture_map("ordinary validator extra row", ordinary_extra_validator, extra_expected)
+    locations = ("serving_suffix", "infrastructure_suffix", "release_suffix")
+
+    for separator_index, separator in enumerate(("\r", "\u2028")):
+        for location in locations:
+            source = provisioner_source(**{location: "    # note" + separator + extra_copy + "\n"})
+            inventory = parse_release_provisioner_source(source)
+            require_fixture_map(f"physical provisioner comment {location} #{separator_index}", inventory)
+            if inventory_parity(inventory, ordinary_extra_validator):
+                raise InventoryError("physical provisioner comment produced false inventory parity")
+        commented_validator = validator_source("    # note" + separator + extra_spec + "\n")
+        require_fixture_map(
+            f"physical validator comment #{separator_index}",
+            parse_validator_release_source(commented_validator),
+        )
+
+        bad_copy_lines = [
+            separator + extra_copy,
+            extra_copy + separator,
+            extra_copy + separator + "add_copy second_service second_target cursor_secret 10001 10001 0440 yes",
+        ]
+        for field_index in range(7):
+            fields = ["extra_service", "extra_target", "cursor_secret", "10001", "10001", "0440", "yes"]
+            value = fields[field_index]
+            fields[field_index] = value[:1] + separator + value[1:]
+            bad_copy_lines.append("add_copy " + " ".join(fields))
+        for location in locations:
+            for case_index, line in enumerate(bad_copy_lines):
+                source = provisioner_source(**{location: "    " + line + "\n"})
+                expect_inventory_error(
+                    f"physical provisioner mapping {location} #{separator_index}/{case_index}",
+                    lambda source=source: parse_release_provisioner_source(source),
+                )
+
+        bad_validator_lines = [
+            separator + extra_spec,
+            extra_spec + separator,
+            extra_spec + separator + "second_service/second_target:10001:10001:440",
+        ]
+        for field_index in range(5):
+            fields = ["extra_service", "extra_target", "10001", "10001", "440"]
+            value = fields[field_index]
+            fields[field_index] = value[:1] + separator + value[1:]
+            bad_validator_lines.append("/".join(fields[:2]) + ":" + ":".join(fields[2:]))
+        for case_index, line in enumerate(bad_validator_lines):
+            source = validator_source("    " + line + "\n")
+            expect_inventory_error(
+                f"physical validator mapping #{separator_index}/{case_index}",
+                lambda source=source: parse_validator_release_source(source),
+            )
+
+    for location, duplicate in zip(locations, (serving_row, infrastructure_rows, release_row)):
+        for kind, suffix in (("duplicate", duplicate), ("unknown body", "    unsupported_command\n")):
+            source = provisioner_source(**{location: suffix})
+            expect_inventory_error(
+                f"provisioner wrapper {kind} {location}",
+                lambda source=source: parse_release_provisioner_source(source),
+            )
+    for kind, suffix in (
+        ("duplicate", "    api_server/target-1:10001:10001:440\n"),
+        ("unknown body", "    unsupported_command\n"),
+    ):
+        source = validator_source(suffix)
+        expect_inventory_error(
+            f"validator wrapper {kind}",
+            lambda source=source: parse_validator_release_source(source),
+        )
+
+    for location in ("infrastructure_suffix", "release_suffix"):
+        source = provisioner_source(**{location: serving_row.replace("add_copy\t", "add_copy ")})
+        expect_inventory_error(
+            f"provisioner wrapper selected-path duplicate {location}",
+            lambda source=source: parse_release_provisioner_source(source),
+        )
+    for function_name, body in (
+        ("add_serving_copies", serving_row),
+        ("add_infrastructure_copies", infrastructure_rows),
+    ):
+        source = provisioner_source() + function_name + "() {\n" + body + "}\n"
+        expect_inventory_error(
+            f"provisioner wrapper duplicate definition {function_name}",
+            lambda source=source: parse_release_provisioner_source(source),
+        )
+    duplicate_branch = (
+        "  release)\n"
+        "    add_serving_copies\n"
+        "    add_infrastructure_copies\n"
+        "    add_extra_source backup_encryption_key yes\n"
+        "    ;;\n"
+    )
+    expect_inventory_error(
+        "provisioner wrapper duplicate release branch",
+        lambda: parse_release_provisioner_source(provisioner_source().replace("esac\n", duplicate_branch + "esac\n")),
+    )
+    expect_inventory_error(
+        "validator wrapper duplicate release branch",
+        lambda: parse_validator_release_source(validator_source() + validator_source()),
+    )
+    for selection in ("add_serving_copies", "add_infrastructure_copies", "add_extra_source backup_encryption_key yes"):
+        source = provisioner_source(release_suffix="    " + selection + "\n")
+        expect_inventory_error(
+            "provisioner wrapper duplicate function/source selection",
+            lambda source=source: parse_release_provisioner_source(source),
+        )
+
+    # The fake models open's newline argument with a real text decoder. It does
+    # not implement parsing or force preservation independently of the reader.
+    probe_text = "# probe\rwithin\r\n# probe\u2028within\n"
+    copy_comments = (
+        "    # reader\r" + extra_copy + "\n"
+        "    # reader\u2028" + extra_copy + "\n"
+        "    # reader CRLF\r\n"
+    )
+    validator_comments = (
+        "    # reader\r" + extra_spec + "\n"
+        "    # reader\u2028" + extra_spec + "\n"
+        "    # reader CRLF\r\n"
+    )
+    fixture_bytes = {
+        "inventory-regression-newlines.sh": probe_text.encode("utf-8"),
+        "inventory-regression-provisioner.sh": provisioner_source(
+            serving_suffix=copy_comments,
+            infrastructure_suffix=copy_comments,
+            release_suffix=copy_comments,
+        ).encode("utf-8"),
+        "inventory-regression-validator.sh": validator_source(validator_comments).encode("utf-8"),
+        "inventory-regression-validator-extra.sh": validator_source(
+            validator_comments + "    " + extra_spec + "\n"
+        ).encode("utf-8"),
+        "inventory-regression-provisioner-cr.sh": provisioner_source(
+            serving_suffix="    " + extra_copy + "\r\n"
+        ).encode("utf-8"),
+        "inventory-regression-provisioner-unicode.sh": provisioner_source(
+            serving_suffix="    " + extra_copy + "\u2028\n"
+        ).encode("utf-8"),
+        "inventory-regression-validator-cr.sh": validator_source("    " + extra_spec + "\r\n").encode("utf-8"),
+        "inventory-regression-validator-unicode.sh": validator_source("    " + extra_spec + "\u2028\n").encode("utf-8"),
+    }
+    opened_handles = []
+
+    def fake_open(path, mode="r", *, encoding=None, newline=None):
+        if path not in fixture_bytes or mode != "r" or encoding != "utf-8":
+            raise InventoryError("source reader regression received unsupported open arguments")
+        handle = io.TextIOWrapper(io.BytesIO(fixture_bytes[path]), encoding=encoding, newline=newline)
+        opened_handles.append(handle)
+        return handle
+
+    try:
+        with patch("builtins.open", side_effect=fake_open):
+            if read_inventory_source("inventory-regression-newlines.sh") != probe_text:
+                raise InventoryError("source reader regression normalized physical newline characters")
+            provisioner = parse_release_provisioner("inventory-regression-provisioner.sh")
+            validator = parse_validator_release("inventory-regression-validator.sh")
+            require_fixture_map("provisioner path reader", provisioner)
+            require_fixture_map("validator path reader", validator)
+            paired_validator = parse_validator_release("inventory-regression-validator-extra.sh")
+            require_fixture_map("validator path reader ordinary extra row", paired_validator, extra_expected)
+            if inventory_parity(provisioner, paired_validator):
+                raise InventoryError("source path reader comment produced false inventory parity")
+            for label, parser, path in (
+                ("provisioner CR", parse_release_provisioner, "inventory-regression-provisioner-cr.sh"),
+                ("provisioner Unicode", parse_release_provisioner, "inventory-regression-provisioner-unicode.sh"),
+                ("validator CR", parse_validator_release, "inventory-regression-validator-cr.sh"),
+                ("validator Unicode", parse_validator_release, "inventory-regression-validator-unicode.sh"),
+            ):
+                expect_inventory_error(
+                    f"source path reader mapping {label}",
+                    lambda parser=parser, path=path: parser(path),
+                )
+            if any(not handle.closed for handle in opened_handles):
+                raise InventoryError("source reader regression left a handle open")
+    finally:
+        for handle in opened_handles:
+            handle.close()
 
 
 def inventory_parity(provisioner, validator):
@@ -517,6 +770,8 @@ def inventory_parity(provisioner, validator):
 
 
 try:
+    run_parser_regressions()
+    run_source_wrapper_regressions()
     provisioner_release = parse_release_provisioner(sys.argv[1])
     validator_release = parse_validator_release(sys.argv[2])
     if not inventory_parity(provisioner_release, validator_release):

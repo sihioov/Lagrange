@@ -1053,3 +1053,22 @@ at most30times, expiring08:20:42 UTC. The ledger and private wave14 startup rece
 preserve runtime and notification evidence. Recover incomplete scope at the report bound
 and reconcile/renew/handoff before expiry; same-daemon outage remains unprotected.
 No new source result, parser/test execution, CI or runtime acceptance is claimed.
+
+
+## Physical-line correction recovered — 2026-10-14
+
+I0b-F3 reached actual idle/pending0 at07:32:49 UTC; full substantive final recovered.
+Only the embedded Python in runtime-static-check.sh changed:1023lines, SHA-256
+`0bede130507a141cd281ded771b0bfb00e77334809f79aabade8eff1c591365f`.
+The coordinator inspected the exact delta and checked nineteen references plus prior
+review, shell bytes outside the block, ten existing function ASTs and production parity
+body preservation. bash-n, complete26-node Python AST and scoped whitespace passed.
+No parser/wrapper/regression/checker or test was executed; the33-row parity remains unrun.
+
+The shared reader preserves newlines; all three source-body loops use physical LF.
+Both path entrypoints delegate to pure source-text wrappers. Written cases cover exact
+positive maps, CR/U+2028 comments and mapping rejection, phantom-row parity, wrapper
+selection/duplicate/unknown-body guards and actual reader entrypoints with mocked open
+and real in-memory TextIOWrapper handles. They do not establish execution success.
+The completed worker's73a5aa5a heartbeat was closed; independent source review follows
+before new exact-candidate CI. DB3/Raw5 source closures and all later acceptance gaps remain.

@@ -1753,3 +1753,59 @@ at most30times, expiring08:20:42 UTC. The ledger and private wave14 startup rece
 preserve runtime and notification evidence. Recover incomplete scope at the report bound
 and reconcile/renew/handoff before expiry; same-daemon outage remains unprotected.
 No new source result, parser/test execution, CI or runtime acceptance is claimed.
+
+
+## Physical-line correction recovered — 2026-10-14
+
+I0b-F3 reached actual idle/pending0 at07:32:49 UTC; full substantive final recovered.
+Only the embedded Python in runtime-static-check.sh changed:1023lines, SHA-256
+`0bede130507a141cd281ded771b0bfb00e77334809f79aabade8eff1c591365f`.
+The coordinator inspected the exact delta and checked nineteen references plus prior
+review, shell bytes outside the block, ten existing function ASTs and production parity
+body preservation. bash-n, complete26-node Python AST and scoped whitespace passed.
+No parser/wrapper/regression/checker or test was executed; the33-row parity remains unrun.
+
+The shared reader preserves newlines; all three source-body loops use physical LF.
+Both path entrypoints delegate to pure source-text wrappers. Written cases cover exact
+positive maps, CR/U+2028 comments and mapping rejection, phantom-row parity, wrapper
+selection/duplicate/unknown-body guards and actual reader entrypoints with mocked open
+and real in-memory TextIOWrapper handles. They do not establish execution success.
+The completed worker's73a5aa5a heartbeat was closed; independent source review follows
+before new exact-candidate CI. DB3/Raw5 source closures and all later acceptance gaps remain.
+
+
+### Wave 15 independent physical-line review
+
+| Package | Complexity | Basis | Confidence | Escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-F3-R | intermediate | One-file reader/wrapper delta and meaningful same-path fixtures; literal and inventory contracts are fixed | high | Any concrete remaining boundary defect needs a bounded follow-up, not new grammar policy |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-F3-R | 15 | intermediate | Independently disposition I0b-F2-R01 and preserve prior literal/role closures | docs/reviews/2026-10-14-r2-inventory-physical-line-review.md only | Recovered I0b-F3 and source-wave-15-inputs.json | Idle d9ca76a3, codex/gpt-6.1-sol/high per review rule | One bounded review report with exact hashes, findings and limits | Reads/hash/bash-n/full AST/diff/report links only; hosted execution later |
+
+Workspace `/data/worktrees/3puw275b/excited-dolphin`; sole source target is the1023-line
+script pinned above. Compare with2593fbef358f5cd163e58c514e577793daa4f749. Prior review
+is197lines, SHA34095bee08fc89b67967fff7b4dd8852aa79f0778b854dc173a00c84dce6c699.
+The source-wave-15 manifest pins final source,19 unchanged references and prior review.
+
+Check shared UTF-8/newline-preserving context manager, all three LF-only loops, complete
+path-to-source wrapper delegation and real physical comment boundaries. Check that
+unsupported characters reach literal rejection without invented mappings, prior helper
+semantics/duplicate/unknown selection/parity and safe diagnostics remain intact. Inspect
+exact positive fixtures, both separators in every wrapper position, paired ordinary extra
+validator false-parity regression, mapping rejection, and scoped mocked-open reader seam
+using real TextIOWrapper newline behavior and closed handles. Confirm only InventoryError
+counts as rejection and helper invocation order is valid. No copied parser may serve as
+its own expected outcome. Do not redesign shell parsing or review unrelated product scope.
+
+Only the named report is writable; no source/other docs/Git changes, delegation, parser/
+wrapper/regression/checker/self-test/test execution, validators/provisioners, Cargo/rustc/
+Clippy/build, DB/SQL/root/Docker/provider/network/workflow/production action. Read hashes,
+source/diff, bash-n, full Python AST and report citations/whitespace only. No dependency
+installation. Missing/conflicting requirements must be reported. Report within30minutes
+of actual startup or return INCOMPLETE with exact residual scope. Final: changedfile/range/
+hash, findings and disposition, deviations/reasons, actual checks/results, unresolved and
+missing/not-verified items (explicit none when empty), decomposition/background/pending
+permissions. Coordinator owns acceptance, any bounded fix, then one new exact-candidate
+hosted CI after existing-run inspection. No new CI has been dispatched for these sources.
