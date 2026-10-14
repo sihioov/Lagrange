@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. Wave20에서 I0c 직접 로그인 helper 회귀·공식 no-SKIP 배선과 I1b-S2-D Raw snapshot 인터페이스 확정에 착수했다. 각 소스/계약의 인수와 후속 hosted 검증은 별도다. 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. I0c 네 파일 소스와 최종 보고를 회수·대조해 독립 리뷰를 준비했다. I1b-S2-D Raw snapshot 계약 작업은 계속된다. 새 회귀 2개의 실행과 소스/계약 인수는 미완료다. 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

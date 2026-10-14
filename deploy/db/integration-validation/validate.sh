@@ -1703,6 +1703,8 @@ run_db_test api-paper-scheduler '-p api-server --test paper_scheduler'
 run_db_test api-paper-runner '-p api-server --test paper_runner'
 run_db_test jobqueue-contract '-p job-queue --test queue_contract'
 run_db_test jobqueue-paper-preview '-p job-queue --test paper_preview'
+run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
+run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 
 outcome=APPROVED
 detail='schema-only 0038 upgrade, staged 0039/0040/0041 checks, empty full-release endpoint and no-op rerun, catalog audits, and DB-gated tests passed without SKIP'

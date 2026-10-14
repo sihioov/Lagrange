@@ -48,6 +48,8 @@ grep -Fq 'PG_VALIDATION_SELF_TEST: PASS' "$self_output" || die 'self-test did no
 for required_marker in \
   'DATABASE_URL="$test_database_url"' \
   "grep -Fq 'SKIP:'" \
+  "run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
+  "run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
   'preflight-0039.sql' \
   'run_terminal_paper_check' \
   'preflight-catalog.sql' \

@@ -1355,3 +1355,18 @@ bounded handoff. Renew or hand off before expiry; this same-daemon heartbeat
 cannot protect against daemon outage. The old CI monitor8b313a09 is deleted
 after full recovery. No new CI or local executable/operational verification
 has been launched. New tests and snapshot proposals remain unaccepted.
+
+
+## Wave21 I0c source handoff — 2026-10-14
+
+I0c8712eeba actual idle/activeTurn null/pending0 at09:26:47.530UTC; full substantive
+final recovered. Four final targets and27unchanged references matched. Rust tests
+1381lines/37a358ad and327lines/82bbaf2b add one direct-login helper regression each;
+validator1711lines/29cdbb90 and static-check126lines/b12dad60 add the exact filtered
+calls and required markers. Existing Rust bodies are exact after import normalization;
+shell bodies are exact after removing the two added lines. Scoped rustfmt, both
+bash-n checks and whitespace passed; compiler/tests/DB execution remain unverified.
+Source handoff is frozen for independent Sol/high review; I1b-S2-D continues unchanged.
+No new CI or operational action. Full report/recovery and frozen review inputs are
+private artifacts under target/r2-daily-beta/wp-4-integration; complete review brief
+is in Wave21 of the implementation plan. Neither I0 nor0060/runtime is complete.

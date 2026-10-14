@@ -2424,3 +2424,46 @@ bounded handoff. Renew or hand off before expiry; this same-daemon heartbeat
 cannot protect against daemon outage. The old CI monitor8b313a09 is deleted
 after full recovery. No new CI or local executable/operational verification
 has been launched. New tests and snapshot proposals remain unaccepted.
+
+
+## Wave21 — I0c source recovery and independent review preparation (2026-10-14)
+
+I0c implementer8712eeba reached actual idle/activeTurn null/pending0 at09:26:47.530UTC.
+Its full final was recovered; the four target hashes/counts and27read-only references
+matched. Exact source comparison preserves both original test bodies except necessary
+imports; each shell file adds only the two fixed lines. Coordinator scoped rustfmt
+edition2024, two bash-n checks and whitespace checks passed. No test/compiler/validator
+ran, and source acceptance remains pending. The next review is intermediate/high
+confidence, Sol/high, report-only and bounded30minutes; I1b-S2-D continues its existing
+45minute assignment without redirection. The proposed review's frozen inventory is
+`target/r2-daily-beta/wp-4-integration/source-wave-21-I0c-review-inputs.json`.
+Old c0 hosted success remains evidence for the old candidate only.
+
+### I0c-R fixed worker brief
+
+WP-4/I0c-R — independent review of four-file direct-login helper regression source. Complexity intermediate, confidence high; conclusion is the deliverable, so use existing codex/gpt-6.1-sol/high per repository review rule. Current profile list contains only Astra/high coordinator; this is the explicit repository review assignment, not a permission-mode change.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin; parent ef6cdbb0-8409-4dba-86ca-c07eadccf377, workspace wks_10fae7d550ab1704. Read root AGENTS.md, docs/ROADMAP.md R2-04/09, and Wave20 plus Wave21 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. User U2 source authority persists; no operational expansion. Exact c0ac599cb1ede900e155f724687c57410b4bd0d9/run38536460035 attempt1 succeeded for prior partial source:49 named Linux Rust+6 chart direct rows, seven execution jobs and required. This success does not test the new I0c regressions.
+
+I0c implementer8712eeba-3e47-43ae-9c52-8c6fcef98b7f is actual idle/activeTurn null/pending0 at09:26:47.530UTC. Coordinator recovered its substantive final and matched four final target hashes and27unchanged references. New tests remain UNEXECUTED. Original source is preserved after reverting necessary imports and removing each new test; each shell delta is exactly two added lines. Scoped rustfmt/bash-n/whitespace passed only.
+Current frozen target pins and final source commit are in target/r2-daily-beta/wp-4-integration/source-wave-21-I0c-review-inputs.json (four targets,27references,two prior evidence artifacts). Verify all pinned byte hashes/counts before and after; baseline candidate is c0ac599. Source handoff and coordinator recovery: target/r2-daily-beta/wp-4-integration/wave20-I0c-final.md and wave20-I0c-recovery.json. The source commit is supplied in the launch appendix.
+
+Read-only review targets:
+- /data/worktrees/3puw275b/excited-dolphin/crates/job-queue/tests/owner_beta_publish.rs —1381 lines,37a358adc5f9c91e4c47cbe1770fd0ccf447d3e949b70d23531f456e70a659cc; imports near29,new test1206-1381.
+- /data/worktrees/3puw275b/excited-dolphin/crates/api-server/tests/http_owner_beta_access.rs —327lines,82bbaf2b3c96e000c721e4e7cd21cd1a93e6fc5ff840e5f9a9d4927f5abe4e8a; imports10-11,new test151-327.
+- /data/worktrees/3puw275b/excited-dolphin/deploy/db/integration-validation/validate.sh —1711lines,29cdbb90ab07a442077af7f3a52d33992b001d50a734dd01e507a6a8569282f4; added calls1706-1707.
+- /data/worktrees/3puw275b/excited-dolphin/deploy/db/integration-validation/static-check.sh —126lines,b12dad60ab21be461c991405dc0b48865780697555375d579e866ece033f8950; required markers51-52.
+Your ONLY writable output is /data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-14-r2-daily-admitter-helper-review.md. No source fixes. Concurrent worker7e07def6-4eaa-45fa-9a12-91fdd67b27d9 writes only the separate raw-snapshot-implementation-contract.md; do not inspect or modify that in-progress output, redirect it, or change frozen source.
+
+Review against the fixed I0c contract, not an invented broader gate:
+1. Exactly one tokio test per target: daily_input_admitter_pool_is_direct_bounded_and_unprivileged and http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged. Actual existing ScratchDb::create/drop_db + daily_input_admitter_pool (JQ common/mod.rs:362) and Harness::new/teardown + daily_input_admitter_pool (API common/mod.rs:579); no privileged replacement or SET ROLE impersonation. Absent DATABASE_URL emits fixed SKIP marker; configured failures remain failures. Existing helpers/roles/grants/migrations and old tests unchanged.
+2. Two simultaneously held direct-login connections: current_user/session_user daily_input_admitter; distinct backend PID, role none, SQL NULL for BOTH app.actor_user_id and app.actor_id. Seven role attributes LOGIN true, other six false. Options max2 using pinnedSQLx0.9 actual accessor (cached dependency read permitted, no network); third acquire stays pending for bounded100ms, releasing one allows bounded10s reacquire, poolsize<=2. No sleep/busyloop/global actor mutation.
+3. Actual admitter effective CONNECT/USAGE true, database/public CREATE false, no incoming/outgoing pg_auth_members. CREATE TABLE public.r2_admitter_forbidden_probe(id integer) and SET ROLE migration_owner in separate transactions each must yield typed SQLSTATE42501, rollback before asserting denial; unexpected success leaves no object or changed role. Post-rollback direct identities/role/actor checks. Redacted fixed diagnostics, no SQL error/URL/value dump. Held handles release and pool closes before scratch teardown, including check_result failure paths; evaluate actual borrow/drop semantics rather than assume.
+4. Preserve ten official run_db_test calls; append exactly the two filters from Wave20, DATABASE_URL propagation/no-SKIP guard/cleanup/outcome/evidence/bootstrap gate unchanged; static checker requires both literal lines. Distinguish written code and wrapper source from real nested execution evidence.
+5. Review source type/borrow/API correctness and strict -D warnings exposure in both test targets, harness compatibility, timeout/cancellation/reacquisition behavior, meaningful assertions and prior source preservation. Cite concrete source evidence for defects; absence of execution is a verification limit, not proof of compiler or runtime failure. No blanket lint exemptions or weakening tests.
+6. Do not extend to negative bootstrap attribute/membership/CREATE/transaction rollback probes,0060, provider/Raw snapshot/admission, real OS UID/ACL, runtime or Owner/full C_R2 acceptance. D4/D5 remain exact.
+
+Allowed verification: bounded source reads/rg/git diff/show/hash, scoped rustfmt --edition2024 --check --config skip_children=true on two targets, bash -n on two shell files, scoped whitespace checks and report-link bounds. Do NOT execute tests,Cargo,rustc,Clippy,builds,validator/checker/parser/provisioner/self-test,SQL/DB/root/Docker/provider/network/workflow; no dependencies,Git writes,delegation or raw log/credential persistence. Hash frozen reference files without surveying unrelated code; relevant supporting reads are the two common harnesses and role bootstrap SQL, pinned manifests/Cargo.lock and cachedSQLx API, existing validator run_db_test/cleanup/no-SKIP sections, D5 I0 requirements. Read private CI receipt only if needed for boundary, never infer prior success covers new tests. Fresh memory-hook envelopes only, errors are not saved.
+
+Return within30minutes of actual startup or INCOMPLETE with exact remaining scope. Report findings with P1/P2 IDs, source anchors, concrete trigger/consequence and bounded remedy; if none state no concrete finding. Include a guard-to-written-test matrix, preservation and pin checks, unexecuted/unknown evidence, deviations/reasons, missing/conflicting inputs explicitly none where empty, further decomposition/background/pending permissions. Final response: report path,linecount,SHA256,summary,checks actually run,unresolved items. Coordinator owns source acceptance and future single exact-candidate hosted verification.
