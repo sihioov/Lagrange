@@ -684,3 +684,20 @@ finally kill/wait는 보존됐다. 소스 검토를 수용하되 실제 Python �
 Rust 30개 작성 테스트 목록은 같은 경로의 `final-wire-test-inventory.json`이다. 두 파일은 0600이고
 실행 성공을 기록하지 않는다. 전체 source 후보 push 후 exact SHA 기존 실행 부재를 먼저 확인하고
 CI를 한 번 시작한다. source, review, hosted 실행, I0/0060 및 운영 인수의 경계는 유지한다.
+
+
+### 최종 보정 후보 hosted CI 시작 — 2026-10-14
+
+검증 source 후보는 `6429d331bef1bd201c33d49047139587a55a1435`다. `excited-dolphin`에
+fast-forward push하고 remote SHA를 확인했다. exact SHA 기존 CI 조회가 비어 있는 것을 확인한 뒤
+ci.yml을 한 번 dispatch했다. [run38509087712](https://github.com/sihioov/Lagrange/actions/runs/38509087712)는
+03:59:36 UTC 생성·workflow_dispatch·해당 full SHA·queued를 확인했다. 앞선 두 failed run은
+재실행하거나 취소하지 않았다. 이후 문서 커밋을 이 검증 source로 바꾸지 않는다.
+
+Luna/medium collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`의 I1a-F3-CI notified follow-up은
+04:00:36 UTC 실제 running/pending0·workspace/parent/model/effort를 확인했다. 90분 또는 05:35 UTC
+중 먼저 도달하는 경계까지 실제 결과를 회수하며 미완료라면 코디네이터가 관찰 책임을 유지한다.
+`05c2aada`(2분·60회·06:01:14 UTC 만료)로 감시를 교체하고 회수된 review/Python worker 감시는
+삭제했다. worker는 이 run의 read-only 증거만 수집하고 raw 로그나 provider 내용을 저장하지 않는다.
+30개 Rust test result, Python 파일/전체 suite와 개별 node 근거의 차이, required·Clippy·chart·PG·Web을
+구분한다. I0/0060·운영·Owner 인수는 이 부분 후보의 CI로 완료 처리하지 않는다.
