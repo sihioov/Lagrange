@@ -968,3 +968,22 @@ I1a-L-CI actual idle/pending0/final을 회수했다. 정확한 `d6bb23a`의30개
   운영·Git write·하위 위임은 금지한다. 별도 로컬 테스트로 로그 공백을 채우지 않는다.
 - 기존 worker는 실제 idle/pending0 확인 후 notified follow-up을 보낸다. actual startup과 scope를
   ledger에 기록하고 새 bounded heartbeat로 감시한다. 같은 daemon의 중단 한계는 유지한다.
+
+
+### I0a-L-CI 정확한 후보 검증 시작 — 2026-10-14
+
+검증 소스 후보는 `929fcd68eb99be5ec18bbbfbb585e6cc17655fee`다. feature branch의 fast-forward
+push·remote SHA와 exact SHA 기존 실행 부재를 확인한 뒤 ci.yml을 한 번 dispatch했다.
+[run38514204062](https://github.com/sihioov/Lagrange/actions/runs/38514204062)는 04:58:56 UTC 생성,
+workflow_dispatch·해당 full SHA·in_progress를 확인했다. 기존 실패 run은 재실행/취소하지 않았다.
+private launch receipt는 `target/r2-daily-beta/wp-4-integration/harness-lint-ci-launch.json`이다.
+
+기존 Luna/medium collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`에 I0a-L-CI notified follow-up을
+맡겼고 05:00:12 UTC actual running/pending0·workspace/parent/model/effort를 확인했다.
+새 inventory hash는 `71ddf8fd429cda222a0b0c69638d9832d25fc1f75955b143fdbbca5b82c97177`다.
+출력은 새 harness CI 보고와 candidate leaf뿐이다. 90분 또는06:45 UTC 중 먼저 도달하는 경계는
+06:30:12 UTC이며 미완료면 코디네이터가 관찰 책임을 유지한다. 새 감시`df0714ed`는2분·최대60회,
+07:00:41 UTC 만료다. 같은 daemon의 중단 한계는 유지한다.
+
+소스 후보와 이 후속 문서 커밋을 구분한다. 30개 Rust·strict Clippy/required·Python suite/node 근거·
+PG/helper/0060/runtime을 분리해 판정한다. 로컬 테스트나 추가 운영 조치 권한은 부여하지 않았다.
