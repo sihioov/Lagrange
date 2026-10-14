@@ -1124,3 +1124,20 @@ effort와 notifyOnFinish를 확인한다. ledger와 bounded heartbeat를 갱신�
 실제 full final을 확보하기 전에 인수하거나 실행 중 worker를 다른 범위로 돌리지 않는다.
 독립 source review와 변경에 적합한 hosted 실제 검증 뒤에만 다음 package를 연결한다. 구조 변화의
 diagram evidence/render는 I6 통합에서 수행하고 main 병합 전 완료한다. 새 런타임/운영 승인은 없다.
+
+
+### I0b / I1b-S1 actual startup — 2026-10-14
+
+명세와 부분 CI 인수는 `0a98b9f`에 커밋했다. 현재 profiles의 Astra/high는 코디네이터 전용이고,
+확정 구현의 비용 기준은 저장소 지침에 따라 Luna/max를 선택했다. MCP notified 생성 후 아래
+실제 startup과 parent/workspace/model/effort, pending0을 각각 확인했다.
+
+| Package | Agent | Actual start UTC | Model / effort | Writable scope |
+| --- | --- | --- | --- | --- |
+| I0b | `fd32e206-9248-41cd-a86b-de07a33ea464` | 05:40:08 | codex/gpt-6-luna / max | 위9개 DB/secret/validator/fixture 파일 |
+| I1b-S1 | `14d3d7c8-892a-4434-baa6-29de925837cb` | 05:40:35 | codex/gpt-6-luna / max | storage.rs와 새 storage fixture |
+
+두 worker의 `notifyOnFinish=true`를 등록했고 `owned-workers.json`과 private wave8 brief/startup
+receipt를 남겼다. 새 감시 `ce11f12d`는2분 간격·최대60회·07:41:05 UTC 만료다. 만료 전에 실제
+상태를 회수해 갱신/인계하며 같은 daemon의 중단을 보호한다고 주장하지 않는다. 소스 구현은
+실행 중이며 아직 결과/리뷰/실제 테스트를 인수하지 않았다. 로컬/운영 실행 권한을 추가하지 않았다.

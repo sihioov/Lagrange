@@ -829,3 +829,10 @@ manifest line/hash를 제공한다. 두 패키지는 intermediate/high confidenc
 새 서비스/프로파일·migration0060·normalizer/admission 전체 연결과 diagram 통합은 후속 소스
 범위이며 이 두 패키지에서 운영 실행을 하지 않는다. Mem0 context는 이 요청에서도 MCP_ERROR였고
 이전 durable 후보의 저장 성공을 주장하지 않는다.
+
+
+I0b `fd32e206-9248-41cd-a86b-de07a33ea464`는05:40:08 UTC, I1b-S1
+`14d3d7c8-892a-4434-baa6-29de925837cb`는05:40:35 UTC actual running으로 확인했다.
+둘 다 codex/gpt-6-luna/max, 동일 workspace/parent, pending0이며 notifyOnFinish가 등록됐다.
+감시 ce11f12d(2분/최대60회/07:41:05 UTC 만료)와 ledger/private brief·startup receipt를 준비했다.
+구현 결과를 완료로 간주하지 않고 실제 idle/final 회수→독립 리뷰→hosted 검증을 이어간다.

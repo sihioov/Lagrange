@@ -475,3 +475,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; 공용 harness lint 보정 후보 검증 시작 | `929fcd6` fast-forward push·remote SHA·exact SHA 기존 실행 없음 확인 후 ci.yml 1회 dispatch. 이전 실패 보고와 모든 역할/동작 미검증 한계 보존 | [CI 38514204062](https://github.com/sihioov/Lagrange/actions/runs/38514204062), [실행 기록](reviews/2026-10-13-r2-execution.md); 소스 후보와 이 후속 문서 커밋을 구분 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; wire/I0a 전체 CI 부분 인수, 다음 소스 범위 확정 | `929fcd6` run38514204062의7개 실행 job/required·strict Clippy·Rust30개·chart6 성공 확인. I0b 역할/secret 배선과 I1b-S1 원본 manifest 읽기를 분리; 운영/0060 실행 없음 | [CI 보고](reviews/2026-10-14-r2-harness-lint-ci.md), [실행 기록](reviews/2026-10-13-r2-execution.md), [고정 구현 brief](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 대상은 이 기록을 추가한 문서 커밋과 별도 소스 후보929fcd6 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; 두 소스 패키지 실행 시작 | I0b 역할·secret 배선과 I1b-S1 Raw manifest 원본 읽기를 각각 Luna/max에 위임. 수정 파일 분리, 실제 startup/pending0와 notified 완료 감시 확인 | 명세 커밋 `0a98b9f`; [실행 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md), [실행 기록](reviews/2026-10-13-r2-execution.md); 결과·리뷰·hosted 검증 대기 |
