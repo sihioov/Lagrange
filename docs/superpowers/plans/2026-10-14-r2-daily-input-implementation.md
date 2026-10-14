@@ -3300,3 +3300,92 @@ Startup receipt, full sent brief and assignment history are private0600 artifact
 the owned-worker ledger preserves all previous assignments and heartbeat history.
 No source/compiler/test/CI acceptance or S2 push/CI is claimed. Review closure and
 existing-run query precede one exact-candidate hosted run; all later gates remain.
+
+
+## Wave29 — C02 inherited-edition formatting correction and independent review
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+### Goal and boundaries
+
+Wave28 actual idle/pending0/full result recovery is complete. Its475-line review
+and source dispositions were checked against56 pins,124 links and49 definitions.
+Prior findings are closed at source-review level; no executable acceptance.
+Coordinator identified C02: the earlier standalone2021 formatting checks do not
+match the inherited workspace2024 edition. After idle, the coordinator formatted
+only the two Rust files. The [C02 handoff](../../reviews/2026-10-15-r2-snapshot-format-handoff.md)
+records the19-hunk correction, source hashes, preserved history and limits.
+
+### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-C02-R | simple | Fixed19-hunk formatting delta, import member permutations, assertion layout and49 retained definitions | high | Nonformat change, drift/missing evidence, substantive new finding or20-minute bound: report exact scope |
+
+### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-C02-R | 29 | simple | Independently disposition C02 and carried-forward source review | Only docs/reviews/2026-10-15-r2-snapshot-format-review.md | Recovered Wave28 and frozen corrected source | Existing codex/gpt-6.1-sol/high reviewer per repository code-review rule; coordinator-only Astra profile does not fit | Report and full final within20minutes | Coordinator pins/delta/inventory/links; later exact hosted candidate only after closure |
+
+### Worker brief
+
+```text
+Package WP-4/I1b-S2-C02-R, Wave29, roadmap R2-04/R2-09.
+Workspace /data/worktrees/3puw275b/excited-dolphin; workspaceId wks_10fae7d550ab1704; parent ef6cdbb0-8409-4dba-86ca-c07eadccf377; branch excited-dolphin.
+One independent review of coordinator C02 formatting-only correction to the two snapshot Rust files. Simple, confidence high: exact19-hunk mechanical delta and fixed input hashes; import alias or expression changes, input drift, missing evidence or new substantive concerns require precise findings/INCOMPLETE, not scope expansion. Use existing codex/gpt-6.1-sol/high reviewer under repository review routing. Configured Astra/high profile is coordinator-only. No mode/permission changes.
+20-minute reporting bound from actual startup; return reviewed/unreviewed scope at the bound. No background work or silent extension.
+
+Known facts and inputs
+- Read AGENTS.md, docs/ROADMAP.md, Wave29 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md and docs/reviews/2026-10-15-r2-snapshot-format-handoff.md.
+- Your preceding Wave28 report docs/reviews/2026-10-14-r2-raw-snapshot-second-corrections-review.md is immutable:475lines SHA146a220680bd186987d19e8ded27b00d43564f837a3cdcff0e3aebd0bdc6dfbd. Actual idle15:31:42.846UTC, coordinator full result recovery15:32:17UTC, activeTurn null/pending0; heartbeat6a6fca7d deleted15:34:22UTC after recovery. Coordinator validated56pins,124links,49definition line/name/report entries and concrete source conditions. Previous FR/R/R12/C01/P/T source-review dispositions remain, along with all documented coverage and execution limits.
+- Source baseline bbac2e951967e0ca3a7633171e5e09e2374bd696: source4413/0a6c29c7fff0bdbc48c5af0f1950c8522542270e43d374b9ee8ae6243b2729d3; integration1970/a5db9e0adc4ca909835be3a717c5579a8c1b356f7c1b7036f4dc6cae8cbb7f61.
+- Root Cargo.toml:35 declares edition2024; crates/market-data/Cargo.toml:5 inherits it. Original Wave23 used2024, but Wave27/28 briefs allowed2021. Your report correctly limited that prior formatting evidence. Coordinator edition2024 check returned1, then a two-file rustfmt formatting pass and check returned0. This is C02; do not attribute an unreported behavior defect to the prior reviewer.
+- Corrected source4445lines SHA81799ccdbef091766cf674edfacffd11ccf13aafbafd2feb6ba5a163e1fa96de; integration1972 SHA765e62b8101d2d5fa3440148332bbc69f5c2169a802921f6a2d28fbcb1773875; mod9/700469d6 unchanged.
+- Exact frozen source commit and pins are in target/r2-daily-beta/wp-4-integration/source-wave-29-S2-review-inputs.json. Verify before/after. Pinned files immutable. Coordinator roadmap/plan/ledger/startup bookkeeping is not frozen.
+- target/r2-daily-beta/wp-4-integration/wave29-C02-baseline-source.txt and wave29-C02-baseline-snapshot.txt preserve the reviewed baseline; compare with baseline Git blobs read-only. wave29-C02-format.diff contains19hunks: source+111/-79, integration+9/-7. wave29-C02-coordinator-verification.json records six import member permutations plus assertion layout changes and whitespace-elided non-import text equality. Treat claims as hypotheses; inspect the complete diff and surrounding source independently.
+- source-wave-29-S2-test-inventory.json is the successor of frozen source-wave-28-S2-test-inventory.json: all49 names and platform gates retained,19privateLinux+29integrationLinux+1nonLinux,48Linux expected. Every definition WRITTEN_UNEXECUTED. Verify exact lines, names and private path daily_price_only::source::linux::private_tests::; no test-run claim.
+- Accepted contract docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md898/c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056 P1-P10 remains unchanged. No behavioral design work or reopening of closed unrelated scopes is assigned. Prior reports and inventories keep their original revision-specific anchors.
+
+Exhaustive write allowlist
+Only /data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-15-r2-snapshot-format-review.md.
+Do not change source/test/mod/Cargo/toolchain/workflows/contracts/diagrams/earlier reports/inventories/roadmap/plan/ledger or create private artifacts/scripts. Findings are reported, not fixed. No Git writes.
+
+Review obligations
+1. Disposition C02 and all19hunks. Confirm inherited edition and format policy from files; compare exact supplied diff with baseline-to-candidate source. Inspect each changed use declaration for identical members/aliases/cfg scope and each assertion change for identical expressions, literal contents, delimiters and evaluation order. Do not rely only on whitespace deletion.
+2. Confirm no behavioral/API/visibility/cfg/guard/ownership/parser/lifetime change; review critical surrounding production imports and touched test assertions. Explain whether prior Wave28 FR/R/R12/C01/P/T source-review conclusions can carry forward at the new hashes. Do not claim compiler or test acceptance.
+3. Compare both definition inventories to source and check all49 retained definitions, qualification and platform gates. Verify changed line references. Do not modify historical reports to chase new lines.
+4. Confirm all frozen input pins before/after; validate report local links and line bounds. Note all missing/conflicting evidence and any exact unreviewed scope.
+5. Scoped static rustfmt check must use edition2024. CI later owns workspace cargo fmt, compile, strict lint and test evidence.
+
+Allowed checks
+Text reads/rg, hashes/counts, read-only Git/plain diff, scoped standalone rustfmt --edition2024 --config skip_children=true --check of the exact two files, static inventory and report whitespace/link/line checks. No Cargo/rustc/Clippy/tests/build, Rust/Raw parser execution, project helper/checker/validator/provisioner/self-test, SQL/DB/root/sudo/Docker/network/provider/production/workflow or background commands. No push/dispatch/rerun/cancel. No permission/mode relaxation.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No further delegation of ANY kind including Paseo MCP/CLI, native agents, advisors, committees or hidden helpers. Memory only through a fresh exact hook; errors are not saves, no guessed scope or stale retry. No sensitive diagnostics/provider data.
+
+Deliverable
+A bounded report with baseline/candidate full hashes, reviewed scope and disposition of C02/all19hunks/import and assertion categories, all49 inventory comparison, carried-forward conclusions and limits, commands/results, concrete findings or explicit none. Include changed files/line ranges; deviations/reasons; unresolved work; missing/conflicting or unverified evidence; further decomposition/background work/pending permissions/auto-review denials (explicit none when empty).
+Final chat must include report path/fullSHA/line count, findings, verification/limits and outstanding follow-up. Memory-only callback is not a substantive final.
+Coordinator requires actual idle/activeTurn null/pending0/full result recovery and concrete disposition before review closure. One new exact-candidate hosted CI only after closure AND existing-run query. No S2 push/CI yet. Never rerun/cancel/duplicate a888cd66c032c8931a4979434168568387c83a12/run38545976070 attempt1SUCCESS: I0cpartial51directRust/6chart/strictClippy/PG59/cleanup,nestedhelperrows/exitsUNKNOWN. Preserve c0ac599/929fcd6 and failures. Negative bootstrap/rollback,0060,provider/copy reconstruction/admission,I6diagrams before main,runtime/Owner/finalC_R2 remain open.
+```
+
+### Coordinator gates
+
+1. Preserve Wave28 report/final/recovery and old input inventories. Record its
+   monitor deletion after actual idle/pending0/full recovery. No stale acceptance.
+2. Commit the two-file C02 correction with roadmap, handoff and this bounded plan.
+   Freeze exact candidate/pins, baseline/diff and refreshed49-definition inventory.
+3. Reconfirm existing reviewer actual idle/pending0 and full previous recovery;
+   send a notified20-minute bounded follow-up through Paseo MCP. Verify actual
+   startup/model/high/workspace/parent, maintain owned ledger and a new scoped
+   monitor. Never redirect a running turn or mutate its frozen inputs.
+4. Recover full substantive final/error, actual idle/activeTurn null/pending0.
+   At the bound recover exact INCOMPLETE scope and reconcile/renew/handoff before
+   monitor expiry. Same-daemon monitoring cannot protect against daemon outage.
+5. Independently validate C02/delta/pins/inventory/report. Only source-review
+   closure permits preparing a final candidate, existing-run query and one
+   hosted CI dispatch; no old rerun/cancel/duplicate. Compiler/tests remain pending.
+6. Preserve all prior successes/failures and later gates: negative bootstrap/
+   rollback,0060,reconstruction/admission,I6 diagrams before main,runtime/Owner/
+   final C_R2. Keep roadmap/docs/commits/ledger current within existing authority.

@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::contract::{FetchMode, ResponseKind, SourceFileReference, MARKET_KR};
+use crate::contract::{FetchMode, MARKET_KR, ResponseKind, SourceFileReference};
 use crate::storage::ManifestEntry;
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 
@@ -527,8 +527,8 @@ mod linux {
 
     use fs2::FileExt;
     use rustix::fs::{
-        fstat, open, openat, seek, statat, AtFlags, FileType, Mode, OFlags, RawDir,
-        SeekFrom as RustixSeekFrom,
+        AtFlags, FileType, Mode, OFlags, RawDir, SeekFrom as RustixSeekFrom, fstat, open, openat,
+        seek, statat,
     };
     use rustix::io::Errno;
     use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -2772,7 +2772,7 @@ mod linux {
         use std::rc::Rc;
         use std::time::UNIX_EPOCH;
 
-        use crate::contract::{FetchMode, RequestMetadata, ResponseKind, MARKET_KR};
+        use crate::contract::{FetchMode, MARKET_KR, RequestMetadata, ResponseKind};
         use crate::storage::{FileEntry, ManifestEntry};
         use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
         use uuid::Uuid;
@@ -3223,16 +3223,20 @@ mod linux {
         }
 
         fn assert_no_batch_tree_or_leaf_open(observation: &Rc<RefCell<ResourceObservation>>) {
-            assert!(!observation
-                .borrow()
-                .events
-                .contains(&ObservationEvent::BatchTreeOpen));
-            assert!(observed_descriptors(observation)
-                .iter()
-                .all(|descriptor| !matches!(
-                    descriptor.role,
-                    DescriptorRole::Metadata | DescriptorRole::Provider
-                )));
+            assert!(
+                !observation
+                    .borrow()
+                    .events
+                    .contains(&ObservationEvent::BatchTreeOpen)
+            );
+            assert!(
+                observed_descriptors(observation)
+                    .iter()
+                    .all(|descriptor| !matches!(
+                        descriptor.role,
+                        DescriptorRole::Metadata | DescriptorRole::Provider
+                    ))
+            );
         }
 
         fn lock_exclusive(fixture: &Fixture) {
@@ -3259,9 +3263,11 @@ mod linux {
                     observation.borrow().lifetimes[0].identity,
                     observation.borrow().lifetimes[1].identity
                 );
-                assert!(initial
-                    .iter()
-                    .all(|descriptor| descriptor_is_live(&observation, *descriptor)));
+                assert!(
+                    initial
+                        .iter()
+                        .all(|descriptor| descriptor_is_live(&observation, *descriptor))
+                );
 
                 drop(first);
                 assert!(observation.borrow().lifetimes[initial[0].open_id].closed);
@@ -3419,12 +3425,14 @@ mod linux {
             );
             let mut bounded_values = test_limits().values();
             bounded_values.max_files_per_batch = fixture.entry.files.len();
-            assert!(scan_with_limits(
-                &fixture,
-                &fixture.data_root,
-                ScanLimits::new(bounded_values).unwrap()
-            )
-            .is_ok());
+            assert!(
+                scan_with_limits(
+                    &fixture,
+                    &fixture.data_root,
+                    ScanLimits::new(bounded_values).unwrap()
+                )
+                .is_ok()
+            );
 
             let mut full_entry = serde_json::to_value(&fixture.entry).unwrap();
             full_entry["files"]
@@ -3455,12 +3463,14 @@ mod linux {
                     ]
                     .concat(),
                 );
-                assert!(scan_with_limits(
-                    &fixture,
-                    &fixture.data_root,
-                    ScanLimits::new(bounded_values).unwrap()
-                )
-                .is_ok());
+                assert!(
+                    scan_with_limits(
+                        &fixture,
+                        &fixture.data_root,
+                        ScanLimits::new(bounded_values).unwrap()
+                    )
+                    .is_ok()
+                );
                 private_file(&manifest_path(&fixture), faulty_row);
                 let (result, observation) = with_resource_observation(|observation| {
                     (
@@ -3518,12 +3528,14 @@ mod linux {
             );
             let mut values = test_limits().values();
             values.max_files = 2;
-            assert!(scan_with_limits(
-                &fixture,
-                &fixture.data_root,
-                ScanLimits::new(values).unwrap()
-            )
-            .is_ok());
+            assert!(
+                scan_with_limits(
+                    &fixture,
+                    &fixture.data_root,
+                    ScanLimits::new(values).unwrap()
+                )
+                .is_ok()
+            );
             values.max_files = 1;
             let (result, observation) = with_resource_observation(|observation| {
                 (
@@ -3569,12 +3581,14 @@ mod linux {
             );
             let mut values = test_limits().values();
             values.max_batches = 2;
-            assert!(scan_with_limits(
-                &fixture,
-                &fixture.data_root,
-                ScanLimits::new(values).unwrap()
-            )
-            .is_ok());
+            assert!(
+                scan_with_limits(
+                    &fixture,
+                    &fixture.data_root,
+                    ScanLimits::new(values).unwrap()
+                )
+                .is_ok()
+            );
             values.max_batches = 1;
             let (result, observation) = with_resource_observation(|observation| {
                 (
@@ -3659,16 +3673,22 @@ mod linux {
                 snapshot.stats.open_descriptors,
                 snapshot.stats.peak_open_descriptors
             );
-            assert!(descriptors
-                .iter()
-                .all(|descriptor| descriptor_is_live(&observation, *descriptor)));
+            assert!(
+                descriptors
+                    .iter()
+                    .all(|descriptor| descriptor_is_live(&observation, *descriptor))
+            );
             for (index, descriptor) in descriptors.iter().enumerate() {
-                assert!(!descriptors[..index]
-                    .iter()
-                    .any(|earlier| earlier.raw_fd == descriptor.raw_fd));
-                assert!(!descriptors[..index]
-                    .iter()
-                    .any(|earlier| earlier.open_id == descriptor.open_id));
+                assert!(
+                    !descriptors[..index]
+                        .iter()
+                        .any(|earlier| earlier.raw_fd == descriptor.raw_fd)
+                );
+                assert!(
+                    !descriptors[..index]
+                        .iter()
+                        .any(|earlier| earlier.open_id == descriptor.open_id)
+                );
             }
             let reservations = events
                 .iter()
@@ -3736,9 +3756,11 @@ mod linux {
                         matches!(event, ObservationEvent::EvidenceBytesReserved { .. })
                     })
                     .unwrap();
-                assert!(!events[reserve_at + 1..attempt_at]
-                    .iter()
-                    .any(|event| matches!(event, ObservationEvent::EvidenceBufferReady { .. })));
+                assert!(
+                    !events[reserve_at + 1..attempt_at]
+                        .iter()
+                        .any(|event| matches!(event, ObservationEvent::EvidenceBufferReady { .. }))
+                );
             }
             drop(snapshot);
             assert_descriptors_closed(&observation, &descriptors, fixture._temp.path());
@@ -3761,9 +3783,11 @@ mod linux {
             );
             let retained_events = retained_observation.borrow().events.clone();
             let retained_descriptors = observed_descriptors(&retained_observation);
-            assert!(retained_descriptors
-                .iter()
-                .all(|descriptor| descriptor.role != DescriptorRole::Provider));
+            assert!(
+                retained_descriptors
+                    .iter()
+                    .all(|descriptor| descriptor.role != DescriptorRole::Provider)
+            );
             let buffer_count = retained_events
                 .iter()
                 .filter(|event| matches!(event, ObservationEvent::EvidenceBufferReady { .. }))
@@ -3886,14 +3910,16 @@ mod linux {
             assert!(!zero_capture_phase_seen.get());
             let zero_events = zero_observation.borrow().events.clone();
             assert!(!zero_events.contains(&ObservationEvent::BatchTreeOpen));
-            assert!(observed_descriptors(&zero_observation)
-                .iter()
-                .all(|descriptor| {
-                    !matches!(
-                        descriptor.role,
-                        DescriptorRole::Metadata | DescriptorRole::Provider
-                    )
-                }));
+            assert!(
+                observed_descriptors(&zero_observation)
+                    .iter()
+                    .all(|descriptor| {
+                        !matches!(
+                            descriptor.role,
+                            DescriptorRole::Metadata | DescriptorRole::Provider
+                        )
+                    })
+            );
 
             let fixture = make_fixture();
             assert!(
@@ -3930,14 +3956,16 @@ mod linux {
             assert!(!cap_capture_phase_seen.get());
             let cap_events = cap_observation.borrow().events.clone();
             assert!(!cap_events.contains(&ObservationEvent::BatchTreeOpen));
-            assert!(observed_descriptors(&cap_observation)
-                .iter()
-                .all(|descriptor| {
-                    !matches!(
-                        descriptor.role,
-                        DescriptorRole::Metadata | DescriptorRole::Provider
-                    )
-                }));
+            assert!(
+                observed_descriptors(&cap_observation)
+                    .iter()
+                    .all(|descriptor| {
+                        !matches!(
+                            descriptor.role,
+                            DescriptorRole::Metadata | DescriptorRole::Provider
+                        )
+                    })
+            );
         }
 
         #[test]
@@ -4288,10 +4316,12 @@ mod linux {
                 assert!(!descriptors.is_empty());
                 assert_descriptors_closed(&observation, &descriptors, fixture._temp.path());
                 assert_lock_closed_last(&observation);
-                assert!(observation
-                    .borrow()
-                    .events
-                    .contains(&ObservationEvent::ConstructionCleanupBeforeLockRelease));
+                assert!(
+                    observation
+                        .borrow()
+                        .events
+                        .contains(&ObservationEvent::ConstructionCleanupBeforeLockRelease)
+                );
                 assert_eq!(tree_state(fixture._temp.path()), tree_before);
                 lock_exclusive(&fixture);
             }
@@ -4301,9 +4331,11 @@ mod linux {
                 with_resource_observation(|observation| (scan(&fixture).unwrap(), observation));
             let descriptors = observed_descriptors(&observation);
             assert_eq!(descriptors.len(), snapshot.stats.open_descriptors);
-            assert!(descriptors
-                .iter()
-                .all(|descriptor| descriptor_is_live(&observation, *descriptor)));
+            assert!(
+                descriptors
+                    .iter()
+                    .all(|descriptor| descriptor_is_live(&observation, *descriptor))
+            );
             let competing = OpenOptions::new()
                 .read(true)
                 .write(true)

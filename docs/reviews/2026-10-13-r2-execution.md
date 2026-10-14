@@ -1696,3 +1696,35 @@ Startup receipt, full sent brief and assignment history are private0600 artifact
 the owned-worker ledger preserves all previous assignments and heartbeat history.
 No source/compiler/test/CI acceptance or S2 push/CI is claimed. Review closure and
 existing-run query precede one exact-candidate hosted run; all later gates remain.
+
+
+### Wave28 recovered; C02 inherited-edition correction and Wave29
+
+Reviewer a4b5c1b9 reached actual idle2026-10-14T15:31:42.846Z. At15:32:17UTC
+coordinator recovered the full substantive final and475-line report, verified
+activeTurn null/pending0,56 input pins,124 local links and49 definition entries.
+Report SHA146a220680bd186987d19e8ded27b00d43564f837a3cdcff0e3aebd0bdc6dfbd.
+Prior FR/R/R12/C01/P/T source-review conditions are closed; all execution and
+coverage limitations remain. Private final/recovery/verification receipts were
+persisted; heartbeat6a6fca7d deleted15:34:22UTC only after recovery.
+
+Coordinator's permitted edition2024 rustfmt check returned1: Cargo.toml declares
+2024, inherited by market-data, while Wave27/28 briefs requested2021. The review
+had expressly limited that older format evidence. After actual idle/pending0,
+coordinator formatted exactly source.rs and daily_price_only_snapshot.rs.
+The19-hunk delta changes six use-member orders and assertion layout only;
+complete hunk inspection, import member/alias comparison and whitespace-elided
+non-import text equality found no behavior edit. Scoped2024 check and whitespace
+check returned0. Source4445/81799ccd and integration1972/765e62b8 are the new bytes;
+mod9/700469d6 and earlier reports/artifacts remain unchanged. All49 definitions
+remain WRITTEN_UNEXECUTED,48 Linux expected/1 non-Linux excluded.
+
+[C02 handoff](2026-10-15-r2-snapshot-format-handoff.md) and Wave29 define an
+independent19-hunk review by the existing Sol/high reviewer, report-only,
+20-minute reporting bound and no further delegation. Freeze the corrected
+candidate and refreshed line inventory before notified follow-up. A fresh scoped
+monitor replaces the deleted one after actual startup. No S2 push/CI before
+review closure and existing-run query; no old rerun/cancel/duplicate. Prior I0c
+partial success and all failures remain. Negative bootstrap/rollback,0060,
+reconstruction/admission,I6 diagrams before main,runtime/Owner/final C_R2 stay open.
+Current Mem0 context failed and is not a save; no stale-hook retry.

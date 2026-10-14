@@ -13,9 +13,9 @@
 #[cfg(target_os = "linux")]
 mod linux_tests {
     use std::error::Error;
-    use std::fs::{self, hard_link, OpenOptions};
+    use std::fs::{self, OpenOptions, hard_link};
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::thread;
@@ -24,7 +24,7 @@ mod linux_tests {
     use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
     use fs2::FileExt;
     use market_data::contract::{
-        FetchMode, RequestMetadata, ResponseKind, SourceFileReference, MARKET_KR,
+        FetchMode, MARKET_KR, RequestMetadata, ResponseKind, SourceFileReference,
     };
     use market_data::daily_price_only::source::{
         ApprovedRawScope, CommittedRawReader, DailyEvidenceError, ScanLimitValues, ScanLimits,
@@ -1555,10 +1555,12 @@ mod linux_tests {
         let before = tree_state(fixture._temp.path());
         let snapshot = scan(&fixture, limits()).unwrap();
         assert_eq!(snapshot.batches().len(), 1);
-        assert!(!snapshot
-            .batches()
-            .iter()
-            .any(|batch| batch.batch_id() == orphan.entry.batch_id));
+        assert!(
+            !snapshot
+                .batches()
+                .iter()
+                .any(|batch| batch.batch_id() == orphan.entry.batch_id)
+        );
         drop(snapshot);
         assert_eq!(tree_state(fixture._temp.path()), before);
         assert!(orphan_path.exists());
