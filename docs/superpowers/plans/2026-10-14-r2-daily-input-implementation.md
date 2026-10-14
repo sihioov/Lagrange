@@ -987,3 +987,140 @@ private launch receipt는 `target/r2-daily-beta/wp-4-integration/harness-lint-ci
 
 소스 후보와 이 후속 문서 커밋을 구분한다. 30개 Rust·strict Clippy/required·Python suite/node 근거·
 PG/helper/0060/runtime을 분리해 판정한다. 로컬 테스트나 추가 운영 조치 권한은 부여하지 않았다.
+
+## 929fcd6 부분 인수와 다음 소스 패키지 — 2026-10-14
+
+[I0a-L-CI 보고](../../reviews/2026-10-14-r2-harness-lint-ci.md)와 private receipt를 회수했다.
+정확한 `929fcd68eb99be5ec18bbbfbb585e6cc17655fee`의 run38514204062는 05:17:46 UTC
+success이며 7개 실행 job과 required 모두 성공했다. 코디네이터는 7개 checkout, 현재 파일과
+candidate blob/hash, 30개 테스트 inventory와 직접 ok row, chart6, 이전 실패 근거 보존을 대조했다.
+collector는 05:19:34 UTC actual idle/pending0/full final 상태로 회수했고 감시 df0714ed는 종료했다.
+coordinator receipt는 `target/r2-daily-beta/wp-4-integration/harness-ci-recovery.json`이다.
+
+I1a의 순수 **unapproved** wire와 I0a의 소스/hosted 검증을 부분 인수한다. Python suite는
+485 pass/10 skip/7 warnings이며 개별 readiness/SIGTERM node 근거는 여전히 없다. PG는59개
+migration까지 통과했으며 미호출 helper의 직접 login/GUC/pool,0060, 실제 입력·운영·Owner·최종
+C_R2 인수가 아니다. `d6bb23a`, `6429d33`와 앞선 실패 기록은 그대로 보존한다.
+
+### 다음 wave의 분해와 판정
+
+두 패키지는 기존 U2 소스 구현 권한 안에서 병렬로 실행한다. 아래 명세와 소유 파일을 고정한 뒤
+새 Paseo worker를 생성한다. 운영 설정 읽기/쓰기, secret 생성, migration 실행, provider 호출,
+local Cargo/rustc/Clippy/test/build/DB/root/Docker 실행은 부여하지 않는다.
+
+| Package | Complexity | Basis | Confidence | Reclassification / escalation |
+| --- | --- | --- | --- | --- |
+| I0b | intermediate | D5 A5의 확정 역할·secret 배선을 기존 map/validator에 연결; 경계와 UID·mode가 고정됨 | high | 기존 계약과 충돌하거나 allowlist 밖 변경이 필요하면 보고; 반복 검증 실패 시 Luna→Sol 단계 상향 |
+| I1b-S1 | intermediate | D5 A6와 D4의 exact-line 규칙에 맞춘 bounded read-only sibling; 아래 API/중복/경로 규칙을 고정함 | high | descriptor/lock 경계가 충돌하거나 필요한 인터페이스가 빠지면 임의 대안 없이 보고; 반복 실패 시 단계 상향 |
+
+| Package | Wave | Objective / ownership | Dependency | Worker | Deliverable / validation |
+| --- | --- | --- | --- | --- | --- |
+| I0b | 8 | 아래9개 DB bootstrap·secret·Compose·validator·fixture 파일 | 929fcd6 부분 인수, D5 A5, I0a | 새 Luna/max; 확정 구현을 저비용부터 시작 | source delta·hash·권한/secret map; bash-n·정적 대조, 이후 독립 리뷰와 hosted 실제-role 검증 |
+| I1b-S1 | 8 | storage.rs와 새 daily_price_only_storage.rs 두 파일 | 929fcd6 부분 인수, D5 A6, D4 exact-line | 새 Luna/max; 확정 구현 | read-only manifest evidence API·경계 회귀; rustfmt/diff, 이후 독립 리뷰와 hosted 테스트 |
+
+의존 관계는 `929fcd6 → (I0b || I1b-S1) → 각 결과 회수/독립 검토 → 새 exact 후보 CI`다.
+I0b 이후에도0060의 actual-role/권한 거부/rollback/race 및 no-SKIP 연결이 완료돼야 첫0060을
+검증 환경에서 실행할 수 있다. I1b-S1은 전체 CommittedRawSnapshot이 아니다. batch.json과
+provider file descriptor/hash, copy chain, deterministic normalization, artifact/admission은
+S1 검토 후 다음 bounded source brief로 연결한다. 기존 wire/D4와 역사 v2/v3 동작은 바꾸지 않는다.
+
+### I0b 고정 실행 brief
+
+소유 파일은 다음9개뿐이다. 이 중 self-test.sh의 수정은 새8번째 credential 및 해당 runtime
+inventory의 fixture/기대값에 한정한 D5 allowlist의 명시적 확장이다.
+
+- `deploy/db/bootstrap-roles.sh`
+- `scripts/ops/provision-db-secrets.sh`
+- `deploy/secrets/provision-runtime-secrets.sh`
+- `deploy/secrets/runtime-static-check.sh`
+- `scripts/ops/validate-production-config.sh`
+- `deploy/compose/compose.yml`
+- `deploy/compose/.env.example`
+- `deploy/db/integration-validation/validate.sh`
+- `scripts/ops/self-test.sh`
+
+1. 새 역할은 `daily_input_admitter`, credential은 `db_daily_input_admitter_password`, bootstrap
+   env는 `DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE`이다. LOGIN/NOINHERIT/NOSUPERUSER/
+   NOCREATEDB/NOCREATEROLE/NOREPLICATION/NOBYPASSRLS를 고정한다. 기존 역할의 동작을
+   불필요하게 바꾸지 않는다. 기존 admitter 속성·incoming/outgoing membership와 app/worker의
+   transitive migration_owner/admitter 도달 경로는 변경 **전** 검사해 거부한다. 순환 경로를
+   종료하는 UNION closure를 사용한다. 전체 bootstrap SQL은 한 transaction에서 처리하여
+   거부 시 password/권한의 부분 변경을 남기지 않는다. 기존 잘못된 역할을 ALTER로 정상화하지 않는다.
+2. target DB CONNECT/public USAGE만 추가한다. PUBLIC CREATE 제거와 migration_owner CREATE는
+   기존 규칙을 유지한다. 기존 admitter의 직접/유효 CREATE 권한은 조용히 revoke하지 않고
+   거부하며, 완료 전 DB/schema effective CREATE 부재와 CONNECT/USAGE를 확인한다. 비밀번호는
+   file→private SQL/stdin 경로만 사용하고 argv/log/env-value 입력 인터페이스를 추가하지 않는다.
+3. source secret inventory는 기존7개+새1개다. 기존 all-or-nothing 생성·비덮어쓰기·newline/
+   symlink/format/distinctness 규칙을 보존한다. 기존7개 설치의 보완 provisioning은 운영 후속이며
+   소스 작업 중 실행하거나 자동 회전 경로를 추가하지 않는다.
+4. bootstrap projection은999:999/0400. 새 admitter projection은
+   `owner-beta-daily-admitter/db_daily_input_admitter_password`,10003:10003/0440이며
+   serving-prereqs/release에만 미리 준비한다. infrastructure/backfill에는 bootstrap copy만 추가,
+   range-raw/recovery의 DB-free 경계는 유지한다. validator의 required source/runtime_specs,
+   static inventory/count와 fixture를 같은 규칙으로 맞춘다. producer10002·API·worker에 새 credential을
+   주지 않는다. `.env.example`에는 file 경로 설명만 추가하고 비밀번호 값이나 사용하지 않는 env를 만들지 않는다.
+5. Compose는 db-role-bootstrap의 env/secret와 top-level bootstrap secret source만 연결한다.
+   새 admitter/producer 서비스·profile·mount·network·timer는 I6 이후 범위로 남긴다.
+6. official validator의 bootstrap env, 두 role→secret map, 생성 credential 목록, full/staged
+   direct-login 목록을 확장한다. 새 역할의 session_user/current_user 직접 login과 제한된
+   catalog/privilege 검사를 existing isolated cluster 경로에 넣는다. migration 목록은59로 유지하고
+   존재하지 않는0060/test target을 참조하거나 skip으로 우회하지 않는다. I0a 네 파일은 건드리지 않는다.
+7. 코드/fixture를 작성하고 bash-n·정적 inventory/SQL 대조만 수행한다. provisioner/validator/self-test를
+   실행하지 않는다. negative attribute/membership/CREATE, 실제 direct-login/GUC 및 credential 노출
+   거부의 남은 검증은 보고에 명시한다. 실제 hosted 검증과 독립 review 전 I0 완료를 선언하지 않는다.
+
+### I1b-S1 고정 실행 brief
+
+소유 파일은 `crates/market-data/src/storage.rs`와 새
+`crates/market-data/tests/daily_price_only_storage.rs`뿐이다. 기존 writer/read_committed_manifest/
+orphan recovery 경로를 완화하지 않는 sibling을 추가한다. 새 daily module 파일이나 mod/lib 변경은 없다.
+
+```rust
+pub struct CommittedManifestReadLimits {
+    pub max_manifest_bytes: usize,
+    pub max_records: usize,
+}
+RawStore::read_committed_manifest_evidence(
+    &self, provider: &str, market: &str, trusted_raw_owner_uid: u32,
+    limits: CommittedManifestReadLimits,
+) -> Result<Vec<CommittedManifestEvidenceRecord>, StoreError>
+```
+
+- `CommittedManifestEvidenceRecord`의 private fields는 parsed ManifestEntry, 원본 record bytes,
+  ContentHash, 1-based 물리 line number다. `entry()`, `line_bytes()`, `line_sha256()`, `line_number()`의
+  읽기 전용 getter를 제공한다. 승인 capability가 아닌 manifest-only evidence이며 provider bytes/
+  batch.json 검증을 했다고 표현하지 않는다. Debug/error에 record bytes나 free-form metadata를 출력하지 않는다.
+- bytes는 D4에 따라 마지막 LF만 제외한다. CR·공백·JSON key order를 보존한다. 기존 parser와 같이
+  blank line은 무시, 완전한 마지막 unterminated JSON은 포함, serde EOF인 불완전한 마지막 tail은
+  제외, 다른 malformed/scope/name 오류는 거부한다. 같은 batch의 동일 parsed entry 중복은 기존처럼
+  첫 physical record를 반환하며 다른 metadata는 거부한다. max_records는 dedup **전**의 완전한
+  nonblank record를 센다. returned order는 첫 등장 순서다.
+- caller가 두 한도를 명시한다(Default 없음).0과 byte bound의 checked +1 overflow는 typed error,
+  원본 파일 byte bound와 record count 초과도 typed StoreError로 반환한다. max+1까지만 읽고
+  검사하여 한도 전 무제한 read/allocation을 하지 않는다. policy의 실제 배포 scan 값은 여기서 정하지 않는다.
+- sibling은 RawStore root에 absolute·ParentDir 없는 경로를 요구한다. filesystem root부터 각
+  directory component를 descriptor-relative NOFOLLOW/DIRECTORY/CLOEXEC로 열어 root alias를
+  따라가지 않는다. Raw root 및 그 아래 manifest control dirs, lock, manifest의 소유자는 explicit
+  trusted_raw_owner_uid이고 group/other write가 없어야 한다. Raw 밖 ancestor의 owner/mode를
+  Raw owner라고 주장하지 않는다. regular leaf/type·opened inode/path binding을 검사한다.
+- 기존 commit.lock을 read-only로 열어 shared lock을 취득한다. lock inode를 open/lock/read 전후
+  대조하고 descriptor에서 manifest를 읽는다. 새 sibling은 manifest redirect도 fail closed한다.
+  no mkdir/create/chmod/chown/ACL/reconciliation/store/commit. root caller도 owner 확인을 우회하지
+  않고 reader euid와 trusted owner가 같다고 요구하지 않는다. OS permission denied는 그대로 실패하며
+  unsafe fallback이 없다. non-Unix는 typed unsupported/unsafe-path 오류로 닫는다.
+- public fixture에는 LF/CRLF/공백/unterminated/torn tail/중복·충돌, exact/+1 byte·record 한도,
+  zero/overflow limits, missing tree/lock, symlink/redirect, UID/mode/type 위반과 no-write를 포함한다.
+  기존 private descriptor hook을 sibling의 lock/manifest 교체 회귀에 한정해 재사용할 수 있다.
+  replacement, negative-owner와 no-write를 기계적으로 확인하되 실제 다른 UID의 OS ACL 테스트와
+  운영 권한 확인은 수행하지 않았다고 구분한다. legacy tests는 삭제/약화하지 않는다.
+- scoped rustfmt edition2024 및 diff/정적 검사만 한다. Rust tests/Cargo/rustc·DB·provider·root 실행은
+  코디네이터의 후속 exact-candidate hosted 검증으로 남긴다. D4와30개 기존 wire 테스트를 수정하지 않는다.
+
+### 회수와 다음 검증 gate
+
+두 brief에 native delegation 금지 문장과 파일/행·편차·검사 결과·미해결/미검증·추가 분해 필요 여부를
+반환하도록 명시한다. current profiles 조회 후 Luna/max를 적용하고 actual startup/workspace/parent/
+effort와 notifyOnFinish를 확인한다. ledger와 bounded heartbeat를 갱신한다. actual idle/pending0와
+실제 full final을 확보하기 전에 인수하거나 실행 중 worker를 다른 범위로 돌리지 않는다.
+독립 source review와 변경에 적합한 hosted 실제 검증 뒤에만 다음 package를 연결한다. 구조 변화의
+diagram evidence/render는 I6 통합에서 수행하고 main 병합 전 완료한다. 새 런타임/운영 승인은 없다.

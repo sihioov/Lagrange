@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | `d6bb23a` [CI 근거](reviews/2026-10-14-r2-daily-wire-lint-ci.md)의 30개 Rust 회귀 직접 PASS·6개 실행 job 성공과 Clippy/required 실패를 회수했다. 공용 harness의 `daily_input_admitter_pool` 한 메서드에 미사용 허용 이유를 명시한 `929fcd6`의 [CI 38514204062](https://github.com/sihioov/Lagrange/actions/runs/38514204062)를 한 번 시작해 결과를 회수한다. I0 나머지 연결·0060·실제 입력·운영 인수는 후속 |
+| 다음 착수 항목 | `929fcd6`의 [전체 CI](reviews/2026-10-14-r2-harness-lint-ci.md)와 신규 Rust30개 직접 PASS를 확인해 순수 unapproved wire/I0a 소스를 부분 인수했다. [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 따라 I0b 역할·secret·validator 배선과 I1b-S1 Raw manifest 원본 읽기 기반을 병렬 구현한다. 0060·전체 입력 검증·운영/Owner 인수는 후속 |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -266,7 +266,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했고 [D5/D6 설계 보완](reviews/2026-10-14-r2-daily-input-amendments-review.md)과 [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md)를 반영했다. 통합 Rust 보정의 [독립 검토](reviews/2026-10-14-r2-daily-wire-final-review.md)와 `d6bb23a`의 [CI 근거](reviews/2026-10-14-r2-daily-wire-lint-ci.md)를 회수했다. 30개 Rust 회귀가 직접 ok, workspace 236개 result row는 2,922 pass/0 fail/6 ignored/180 filtered 집계이며 chart6·PG·Web·Python 등 6개 실행 job은 성공했다. Python은 suite 485 pass/10 skip이며 새 3개 회귀·SIGTERM의 개별 node 로그는 없다. Clippy는 I0a 공용 helper 미사용 경고로 실패했다. 해당 메서드에만 이유를 명시한 허용을 추가했고 새 후보 required 성공 전까지 전체 소스 인수는 보류한다. I0a [소스 검토](reviews/2026-10-14-r2-isolated-role-harness-review.md)와 미호출 helper의 실제 동작·남은 I0·0060, 실제 입력·발행·운영·Owner 인수는 [후속](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)이다. 이전 `6429d33`의 [실행 근거](reviews/2026-10-14-r2-daily-wire-final-ci.md)는 보존한다.
+  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했다. [D5/D6 설계](reviews/2026-10-14-r2-daily-input-amendments-review.md), [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md), [독립 보정 검토](reviews/2026-10-14-r2-daily-wire-final-review.md)와 정확한 `929fcd6`의 [CI 성공](reviews/2026-10-14-r2-harness-lint-ci.md)을 대조해 I1a/I0a 소스·hosted 검증을 부분 인수했다. 7개 실행 job/required·strict Clippy·신규 Rust30개·chart6 직접 PASS, Python suite485 pass/10 skip/7 warnings, PG59 migrations 통과다. Python 개별 readiness/SIGTERM node와 미호출 helper login/GUC/pool은 미검증이다. I0b 역할·secret 배선과 I1b-S1 원본 manifest 읽기를 다음 소스 패키지로 분리했다. 남은 I0·0060·실제 입력/발행·운영·Owner 인수는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에서 계속한다. 이전 실패 보고는 변경 이력과 실행 기록에 보존한다.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -281,7 +281,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   하루라도 실패하면 원인 수정 후 연속 관찰을 다시 시작한다.
 - [ ] **R2-09 — 첫 베타 릴리스 인수.** exact revision·manifest·모드, 운영 적용, health·백업/복구
   근거와 정상 Owner 사용 결과를 묶는다. 운영 확인 결과를 후속 문서 커밋으로 남긴다.
-  DOING — 2026-10-14, 부분 후보 `d6bb23a`의 [CI](reviews/2026-10-14-r2-daily-wire-lint-ci.md)를 회수하고 공용 harness lint를 국소 보정했다. 새 후보 전체 CI와 남은 I0 연결·0060·최종 C_R2 및 운영/Owner 인수는 미완료다.
+  DOING — 2026-10-14, 부분 후보 `929fcd6`의 [전체 CI](reviews/2026-10-14-r2-harness-lint-ci.md)를 인수했다. 순수 wire/I0a 검증이며 남은 역할·Raw/입력·0060 연결, 최종 C_R2와 운영/Owner 인수는 미완료다.
 
 **종료 조건:** R2-01~R2-09 완료, 연속 3거래일 무인 데이터·추천 갱신과 실제 Owner 사용 확인.
 컨테이너 health와 데이터·화면의 성공을 따로 기록한다. R3 미완료만으로 R2를 미완료로 되돌리지 않는다.
@@ -473,3 +473,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; 30개 회귀 재통과·공용 harness lint 국소 보정 | `d6bb23a`의 6개 실행 job 성공과 Clippy/required 실패 회수. 각 integration binary가 별도 컴파일하는 공용 helper 한 메서드에 이유를 명시한 `allow(dead_code)` 추가; 본문·역할·권한·wire 코드 유지 | 이 harness 소스 커밋; [CI 근거](reviews/2026-10-14-r2-daily-wire-lint-ci.md), [판단과 검증](reviews/2026-10-13-r2-execution.md). 새 후보 strict lane/required와 helper 실제 동작·0060·운영 인수는 후속 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; 공용 harness lint 보정 후보 검증 시작 | `929fcd6` fast-forward push·remote SHA·exact SHA 기존 실행 없음 확인 후 ci.yml 1회 dispatch. 이전 실패 보고와 모든 역할/동작 미검증 한계 보존 | [CI 38514204062](https://github.com/sihioov/Lagrange/actions/runs/38514204062), [실행 기록](reviews/2026-10-13-r2-execution.md); 소스 후보와 이 후속 문서 커밋을 구분 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; wire/I0a 전체 CI 부분 인수, 다음 소스 범위 확정 | `929fcd6` run38514204062의7개 실행 job/required·strict Clippy·Rust30개·chart6 성공 확인. I0b 역할/secret 배선과 I1b-S1 원본 manifest 읽기를 분리; 운영/0060 실행 없음 | [CI 보고](reviews/2026-10-14-r2-harness-lint-ci.md), [실행 기록](reviews/2026-10-13-r2-execution.md), [고정 구현 brief](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 대상은 이 기록을 추가한 문서 커밋과 별도 소스 후보929fcd6 |

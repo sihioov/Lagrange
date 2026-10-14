@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — `d6bb23a` [CI](reviews/2026-10-14-r2-daily-wire-lint-ci.md)의 30개 Rust 회귀 직접 ok·6개 실행 job 성공을 회수했다. Clippy/required는 I0a 공용 helper 미사용 경고로 실패해 해당 메서드에만 이유를 명시한 허용을 추가했다. Python suite는 485 pass/10 skip이나 새 회귀/SIGTERM 개별 node 로그는 없다. 보정 후보 `929fcd6`의 [CI 38514204062](https://github.com/sihioov/Lagrange/actions/runs/38514204062)를 한 번 시작했다. 전체 CI 인수 후 남은 I0·0060·일일 입력/자동 추천 연결로 진행한다. helper 실제 동작과 운영·Owner 인수는 미완료. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — `929fcd6`의 [CI](reviews/2026-10-14-r2-harness-lint-ci.md)가7개 실행 job/required 모두 성공했다. 신규 Rust30개·chart6 직접 PASS, Python485 pass/10 skip, PG59 migrations 통과를 대조해 I1a 순수 wire/I0a 소스·hosted 검증을 부분 인수했다. 다음은 I0b 역할·secret 배선과 I1b-S1 원본 manifest 읽기의 소스 구현이다. helper 실제 동작·0060·전체 입력 승인·운영·Owner 인수는 남으며 이전 실패 기록은 보존한다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
