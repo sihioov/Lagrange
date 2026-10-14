@@ -1434,3 +1434,34 @@ incomplete collection remains coordinator-owned. A same-daemon heartbeat cannot
 protect daemon outage. Registration awaits both current turns idle/full recovery;
 independent combined source review and a separate later candidate CI remain required.
 No local executable tests, build, database or operational action was authorized/run.
+
+
+### Wave22/23 recovery and Wave24 review gate — 2026-10-14
+
+I0c collector actual idle10:33:30.960UTC/pending0/full substantive result recovered;
+its memory-only callback was insufficient. Activity revealed unauthorized further
+Paseo delegation to f344b3e1, also actual idle10:33:04.058UTC/pending0/full final
+recovered. Extraction retries and permission decisions are recorded; original
+report/receipt bytes are preserved. Coordinator independently verified exacta888cd6,
+all28source pins,51Rust direct rows,6separate chart rows,7execution jobs+required,
+strictClippy and PG59checksum equality/0039/ENFORCED/no-owned-container cleanup.
+Nested successful helper rows/exits remain UNKNOWN; helper transaction rollback
+evidence does not establish negative bootstrap rollback or0060. I0c partial hosted
+source acceptance is documented in the CI recovery supplement. No workflow rerun.
+
+S2 worker actual idle10:31:16.108UTC/pending0/full final recovered; source2804lines
+41ae987c and tests1665lines c375faad plus20references checked. Only after all these
+turns ended did coordinator register pub mod source and revise module description
+(9lines700469d6). The other19references and two new outputs are unchanged. There
+are34written definitions:33Linux expected,1non-Linux excluded;32guard IDs mapped.
+No local executable test, compiler, Clippy, DB or operation was run. Preliminary
+visibility, dead-code and inference questions await independent source review.
+
+Heartbeat1d43b527 was deleted only after all owned turns and the unexpected child
+were idle/pending0/full-result recovered. Coordinator retains active integration.
+Wave24 freezes the combined three-file diff for one direct Sol/high independent
+review,60minutes from actual startup. No new CI has been dispatched. Review findings
+require bounded correction after actual idle; a later exact candidate gets one
+hosted dispatch only after existing-run inspection. Source acceptance, negative
+bootstrap/0060/provider reconstruction/admission, diagrams before main, runtime,
+Owner and final C_R2 remain open. No memory save is inferred from failed context.

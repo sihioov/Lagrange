@@ -1,8 +1,9 @@
-//! Pure, unapproved wire contract for cumulative daily ETF11 price inputs.
+//! Daily ETF11 wire contracts and read-only, unapproved Raw evidence.
 //!
-//! Parsing and hashing this module's values conveys no approval, Raw-source
-//! trust, storage, database, or runtime capability.
+//! Parsing, hashing, and capturing evidence convey no provider verification,
+//! admission, database, or runtime authority.
 
 mod contract;
+pub mod source;
 
 pub use contract::*;

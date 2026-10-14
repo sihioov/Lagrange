@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | I0c 네 receiver 보정을 포함한 후보a888cd6를 반영하고 [CI38545976070](https://github.com/sihioov/Lagrange/actions/runs/38545976070)을 한 번 시작했다. Luna/medium collector가51개 Rust와 두 공식 DB helper 호출 증거를 수집한다. 확정한 [Linux snapshot 계약](reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md)에 따라 Luna/max worker가 신규 두 파일을 작성 중이다. 결과 회수 후 순차 등록·독립 리뷰·별도 CI가 필요하며, 0060·전체 입력·운영·Owner 인수는 남는다. |
+| 다음 착수 항목 | 후보a888cd6의 [CI38545976070](https://github.com/sihioov/Lagrange/actions/runs/38545976070)에서51개 Rust·별도 chart6 직접 통과와 strict Clippy/required·PG59/0039/no-SKIP/cleanup을 원본 근거로 확인해 I0c를 부분 인수했다. [snapshot 소스](reviews/2026-10-14-r2-snapshot-source-handoff.md) 두 파일과 순차 등록을 고정해 Sol/high 독립 리뷰를 준비한다. 새 snapshot의33개 Linux 회귀·비 Linux1개는 미실행이며, 지적 보정 후 별도 exact-candidate CI가 필요하다. negative bootstrap/rollback·0060·입력 재구성/승인·운영·Owner 인수는 남는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -267,7 +267,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
   DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했다. [D5/D6 설계](reviews/2026-10-14-r2-daily-input-amendments-review.md)와 [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md)를 기준으로 I1a/I0a 및 I0b/I1b-S1·호출부 보정을 진행했다. 후보c0ac599의 [최종 CI](reviews/2026-10-14-r2-caller-role-raw-ci.md)에서7개 실행 job/required,49개 Rust·chart6 직접 PASS, Python suite485 pass/10 skip/7 warnings, Web/PG59 통과를 대조해 부분 소스와 hosted 검증을 인수했다. 과거929fcd6 부분 성공과 f9 실패·DB3/Raw5 및 후속 parser 지적/수정은 실행 기록과 변경 이력에 보존한다. 직접 로그인 helper의 actor GUC·연결 수·권한 거부, negative bootstrap/rollback,0060·전체 snapshot/입력·운영·Owner 인수는 남는다. 다음 bounded I0c/S2-D는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)을 따른다.
-  최신 검증 — c0ac599의49개 Rust·chart6 및 전체 CI 성공은 부분 기준선으로 보존한다. I0c 네 receiver 보정을 포함한 후보a888cd6를 반영하고 [CI38545976070](https://github.com/sihioov/Lagrange/actions/runs/38545976070)을 한 번 시작했다. Luna/medium collector가51개 Rust와 두 공식 DB helper 호출 증거를 수집한다. 확정한 [Linux snapshot 계약](reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md)에 따라 Luna/max worker가 신규 두 파일을 작성 중이다. 결과 회수 후 순차 등록·독립 리뷰·별도 CI가 필요하며, 0060·전체 입력·운영·Owner 인수는 남는다.
+  최신 검증 — 후보a888cd6의 [CI38545976070](https://github.com/sihioov/Lagrange/actions/runs/38545976070)에서51개 Rust·별도 chart6 직접 통과와 strict Clippy/required·PG59/0039/no-SKIP/cleanup을 원본 근거로 확인해 I0c를 부분 인수했다. [snapshot 소스](reviews/2026-10-14-r2-snapshot-source-handoff.md) 두 파일과 순차 등록을 고정해 Sol/high 독립 리뷰를 준비한다. 새 snapshot의33개 Linux 회귀·비 Linux1개는 미실행이며, 지적 보정 후 별도 exact-candidate CI가 필요하다. negative bootstrap/rollback·0060·입력 재구성/승인·운영·Owner 인수는 남는다.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -282,7 +282,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   하루라도 실패하면 원인 수정 후 연속 관찰을 다시 시작한다.
 - [ ] **R2-09 — 첫 베타 릴리스 인수.** exact revision·manifest·모드, 운영 적용, health·백업/복구
   근거와 정상 Owner 사용 결과를 묶는다. 운영 확인 결과를 후속 문서 커밋으로 남긴다.
-  DOING — 2026-10-14, c0ac599의 [CI 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 추가 부분 근거로 수용했다. 기존929fcd6 부분 성공과 f9 실패를 보존한다. 남은 helper/0060·전체 입력 연결, 최종 C_R2와 운영/Owner 인수는 미완료다.
+  DOING — 2026-10-14, a888cd6의 [I0c hosted 근거](reviews/2026-10-14-r2-admitter-helper-ci-recovery.md)를 추가 부분 근거로 인수했다. c0ac599·929fcd6 부분 성공과 f9 실패를 보존한다. snapshot 독립 리뷰·새 CI, negative bootstrap/0060·전체 입력 연결, 최종 C_R2와 운영/Owner 인수는 미완료다.
 
 **종료 조건:** R2-01~R2-09 완료, 연속 3거래일 무인 데이터·추천 갱신과 실제 Owner 사용 확인.
 컨테이너 health와 데이터·화면의 성공을 따로 기록한다. R3 미완료만으로 R2를 미완료로 되돌리지 않는다.
@@ -520,3 +520,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; helper 리뷰 보정·snapshot 구현 계약 확정 | 두 worker 실제 idle/pending0/full final 회수. I0c 네 receiver만 보정,33pins/42links·정적 보존 확인. S2 제안17pins/67links와 Linux 전용 RawDir 경계 대조 후 P10 채택 | 이 후보 커밋; [helper 리뷰](reviews/2026-10-14-r2-daily-admitter-helper-review.md), [snapshot 계약](reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md), [Wave22/23](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). 새 CI·snapshot 소스/운영 인수 전 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; helper 후보 CI·Linux snapshot 구현 착수 | a888cd6 remote SHA·기존 실행 부재 확인 후 단일 dispatch. Collector09:56:59.924UTC/S2worker09:56:31.201UTC actual running/pending0/notified, 각각90분 보고 경계와 heartbeat1d43b527 설정 | [CI38545976070](https://github.com/sihioov/Lagrange/actions/runs/38545976070), [Wave22/23](superpowers/plans/2026-10-14-r2-daily-input-implementation.md).51개 회귀 결과·snapshot 소스/운영 인수 대기 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; I0c 부분 인수·snapshot 소스 회수와 등록 | 두 owned turn과 예상 밖 collector 자식의 actual idle/pending0/full final 회수. a888cd6의51Rust/chart6·28pins·strictClippy/required·PG 근거 직접 대조. snapshot 두 파일과 mod 등록 고정,34정의 중 Linux33/non-Linux1 미실행 | [CI 보강·위임 이탈](reviews/2026-10-14-r2-admitter-helper-ci-recovery.md), [소스 인계](reviews/2026-10-14-r2-snapshot-source-handoff.md), [Wave24 독립 리뷰](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). 대상은 이 인계 커밋; 새 CI·운영 실행 없음 |

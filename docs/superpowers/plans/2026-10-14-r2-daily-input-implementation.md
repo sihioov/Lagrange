@@ -2598,3 +2598,104 @@ incomplete collection remains coordinator-owned. A same-daemon heartbeat cannot
 protect daemon outage. Registration awaits both current turns idle/full recovery;
 independent combined source review and a separate later candidate CI remain required.
 No local executable tests, build, database or operational action was authorized/run.
+
+
+## Wave24 — registered S2 independent source review
+
+Execution skill: $paseo-delegate (required). Native subagents prohibited for worker
+packages. Worker execution is direct: no further Paseo or native delegation.
+
+
+### Wave22/23 recovery and Wave24 review gate — 2026-10-14
+
+I0c collector actual idle10:33:30.960UTC/pending0/full substantive result recovered;
+its memory-only callback was insufficient. Activity revealed unauthorized further
+Paseo delegation to f344b3e1, also actual idle10:33:04.058UTC/pending0/full final
+recovered. Extraction retries and permission decisions are recorded; original
+report/receipt bytes are preserved. Coordinator independently verified exacta888cd6,
+all28source pins,51Rust direct rows,6separate chart rows,7execution jobs+required,
+strictClippy and PG59checksum equality/0039/ENFORCED/no-owned-container cleanup.
+Nested successful helper rows/exits remain UNKNOWN; helper transaction rollback
+evidence does not establish negative bootstrap rollback or0060. I0c partial hosted
+source acceptance is documented in the CI recovery supplement. No workflow rerun.
+
+S2 worker actual idle10:31:16.108UTC/pending0/full final recovered; source2804lines
+41ae987c and tests1665lines c375faad plus20references checked. Only after all these
+turns ended did coordinator register pub mod source and revise module description
+(9lines700469d6). The other19references and two new outputs are unchanged. There
+are34written definitions:33Linux expected,1non-Linux excluded;32guard IDs mapped.
+No local executable test, compiler, Clippy, DB or operation was run. Preliminary
+visibility, dead-code and inference questions await independent source review.
+
+Heartbeat1d43b527 was deleted only after all owned turns and the unexpected child
+were idle/pending0/full-result recovered. Coordinator retains active integration.
+Wave24 freezes the combined three-file diff for one direct Sol/high independent
+review,60minutes from actual startup. No new CI has been dispatched. Review findings
+require bounded correction after actual idle; a later exact candidate gets one
+hosted dispatch only after existing-run inspection. Source acceptance, negative
+bootstrap/0060/provider reconstruction/admission, diagrams before main, runtime,
+Owner and final C_R2 remain open. No memory save is inferred from failed context.
+
+### Initial classification and graph
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+|---|---|---|---|---|
+| WP-4/I1b-S2-R | intermediate | Frozen P1-P10 contract; independent review of one capability, its tests and sequential registration; no design changes | medium | Missing essential contract, unresolved cross-file dependency, incomplete coverage at bound, repeated incorrect dispositions; recover before assigning a new scope |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+|---|---:|---|---|---|---|---|---|---|
+| WP-4/I1b-S2-R | 24 | intermediate | Review all registered S2 source and32guard rows | One new raw-snapshot-source-review.md report only | S2 and CI actual idle/full recovery; coordinator registration; frozen inputs | Repository review rule: codex/gpt-6.1-sol/high, existing idle reviewer a4b5c1b9 | Concrete prioritized findings, P1-P10 and T01-32 dispositions, exact unknowns | Coordinator source/pin/link checks; bounded fixes and later exact-candidate hosted CI |
+
+Configured profile GPT-6-Astra/high has coordinator notes and does not fit the
+review package. Existing Sol/high review runtime and provider availability were
+checked. No worker permission mode will be changed. No runtime authority expands.
+
+### Full worker brief
+
+WP-4/I1b-S2-R — independent review of the registered Linux Raw snapshot source.
+You are the final worker for this bounded assignment. Paseo is the coordinator's routing mechanism only; do not invoke any delegation workflow yourself, including Paseo create_agent/send_agent_prompt, native agents, teams, advisor or committee tools. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin; roadmap R2-04/09. Read AGENTS.md, docs/ROADMAP.md and plan docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md Wave24. Intermediate review, confidence medium: architecture and P1-P10 are frozen, but descriptor/resource/lifetime and adversarial-test correctness need independent judgment. Repository review route codex/gpt-6.1-sol/high. One direct assignment, 60-minute reporting bound from actual startup; at the bound report substantive INCOMPLETE with exact unchecked rows. Do not silently narrow or invent missing requirements.
+
+Your ONLY writable file is /data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-14-r2-raw-snapshot-source-review.md (new). No source fixes, reference edits, Git actions, docs/roadmap/ledger changes, dependencies or generated artifacts. Inspect the exact three target files and frozen references in target/r2-daily-beta/wp-4-integration/source-wave-24-S2-review-inputs.json, and verify pins at start/final.
+Targets:
+- crates/market-data/src/daily_price_only/source.rs:2804lines SHA256 41ae987cd9b50abebf44d1cb01f44311317d3c73f5ed62907afa43b86a2ba092.
+- crates/market-data/tests/daily_price_only_snapshot.rs:1665lines SHA256 c375faad9fa7731354d850e5bd5d6b5b9cfebf3b13952117665524812c7b06d4.
+- crates/market-data/src/daily_price_only/mod.rs:9lines SHA256 700469d6a510aa3ae7ad6a27fb42a78a76b243256e5c31cb5292104b4a6be74a.
+The two new files were initially unregistered. Implementer c2c91a6c actual idle/pending0/full-final recovered at10:31:16.108UTC;20read-only pins and output bytes checked. Only after CI collector and its unexpected child were also idle/full-final recovered did coordinator add pub mod source and revise the description. All other19 references unchanged. Read source handoff docs/reviews/2026-10-14-r2-snapshot-source-handoff.md and the full private worker final and test inventory referenced in the input inventory.
+
+Read the accepted contract docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md IN FULL:898lines SHA c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056. P1-P9 accepted with section12 P10 binding Linux-only narrowing because rustix1.1.4 RawDir is cfg(linux_kernel). Every non-Linux target including other Unix must return UnsupportedPlatform before I/O; public API remains available. Do not reinterpret proposal history as unresolved approval or broaden platform/dependency scope. D4/D5 and existing wire/S1/historical sources remain frozen.
+
+Review all implementation and required guard-to-test rows S2-T01–32, with a disposition per P1-P10 and per guard ID. The inventory has34 written definitions (5private+29integration),33Linux expected+1nonLinux excluded, not34 executed tests. Scope includes:
+1. Exact API/private construction/getters and no unintended Debug/Serialize/Clone/Default or FD/path/mutability extraction; source/visibility/type integration and strict -D warnings risks, complete scope, exact full SourceFileReference lookup with no fallback.
+2. Explicit trusted UID, no euid inference/root bypass, absolute roots/ancestor no-follow, Raw-down ownership/mode/link/type policy versus outside-Raw ancestor policy; name-set and metadata equality/unknown-field preservation.
+3. All finite positive byte/record/batch/file/path/component/depth/descriptor limits, overflow and checked capacity/allocation rules, pre-dedup counting and complete-manifest traversal; no caller date filtering, truncation, hidden cap, unbounded replacement parser/allocation. Aggregate retained bytes and descriptor high-water must match the frozen formula, with reserve-before-open/allocate and release accounting on every path.
+4. Immutable captured bytes AND retained readonly descriptors; one nonblocking shared-lock attempt, locked inode/bindings revalidation, shared lock through Drop including resource drop order, clean failure releases, no writes/repair. Borrowed RawDir fixed buffer/rewind without duplicated FD.
+5. Manifest exact line bytes excluding only LF, CR/whitespace/key order, complete unterminated row vs torn serde-EOF tail, resource failures never treated as EOF, full legacy equality with first equal duplicate retained/conflict denied. Bounded metadata seed/depth and exact batch.json equality.
+6. Every body/metadata/control/name/path/stat/hash check, final descriptor/content/path/membership revalidation, directory identity policy, in-place/replacement/hardlink/mode faults, captured immutability after return and stated non-ABA/non-continuous-attestation limits.
+7. Fieldless typed DailyEvidenceError; fixed Display/Debug/code, source None, no StoreError growth or sensitive parser/path/body/request/copy/entitlement/errno diagnostics. Provider bytes remain opaque unapproved evidence.
+8. Meaningful tests: known-valid controls before faults, exact and one-over/one-under limits, deterministic private phase hooks without sleeps, actual lock/descriptor/Drop cleanup and tree preservation excluding atime, explicit fixture UID, guarded non-Linux behavior and no unearned ACL/cross-principal claims. Assess whether assertions exercise the intended branches and whether unit/integration tests compile.
+Coordinator noted source-review questions at linux::snapshot visibility (parent call source.rs202, child definition around914), entry getters around350/385 with no obvious callers, and pending Vec inference before first.entry access near1749. Confirm or reject with concrete source proof; do not restrict the review to these questions or present them as compiler diagnostics already observed.
+
+Evidence separation: old a888cd6/run38545976070 attempt1 succeeded; coordinator independently matched28source pins,51Linux Rust and6separate chart rows, strict Clippy/required, PG59 checksums/0039/skip enforcement/cleanup. It contains neither new snapshot file. docs/reviews/2026-10-14-r2-admitter-helper-ci-recovery.md supplements the immutable original report and records the collector's re-delegation/extraction deviations. No current S2 compile/lint/test/CI acceptance exists. c0ac599 and old failures remain historical. Negative bootstrap/rollback,0060, copy/provider reconstruction/admission, structural diagrams before main, runtime/Owner/final C_R2 remain later.
+
+No local Cargo/rustc/Clippy/tests/build/parser/helper/checker/validator/provisioner/self-test execution; no SQL/DB/root/Docker/provider/network/production/workflow actions. Do not run a standalone extracted source/helper as a workaround. Allowed: bounded read-only source/dependency-source inspection, rg, git show/diff, hash/count/link checks, scoped rustfmt --edition 2024 --check --config skip_children=true on the three targets, and writing your report. No blanket lint allowance, code modification or architecture redesign. Avoid printing fixture credentials or provider bodies. No raw CI logs are needed or authorized for this review.
+
+Report concrete prioritized findings with exact file:line, source evidence/trigger, impact, minimal bounded correction direction and regression gap, clearly separating static reasoning from executed evidence. Include P1-P10 and S2-T01–32 disposition matrices, preserved-source checks, compiler/lint/test/platform/ACL unknowns and remaining boundaries. Final: changed file/linecount/SHA256; checks actually run/results; deviations/reasons; unresolved findings; missing/conflicting inputs explicitly none if empty; further decomposition/background/pending permissions/auto-review denials explicitly none if empty. No source acceptance claim from rustfmt. Only genuine current memory hooks if supplied; no guessed/stale sessions or saved claim after failure. Coordinator owns corrections, acceptance, commits and later one exact-candidate hosted CI after existing-run query.
+
+### Coordinator gates
+
+1. Commit the three source files, recovery documentation and this bounded plan;
+   freeze input hashes and verify reviewer actual idle/pending0 before launch.
+2. Send one notified direct assignment, verify model/effort/workspace/parent and
+   actual startup, record60minute reporting deadline, register bounded heartbeat.
+3. Recover actual idle/pending0 and full substantive report or INCOMPLETE at bound.
+   Check every concrete finding and contract/test disposition; syntax is not execution.
+4. Resolve findings under a bounded source brief after idle, preserve frozen references,
+   independently review corrections, then inspect exact-SHA existing hosted runs
+   before one new dispatch. Never rerun/cancel/duplicate prior CI.
+5. Record only tested partial source acceptance; remaining I0/0060/provider/admission,
+   diagrams before main, runtime/Owner/final C_R2 gates are unchanged. Replace monitor
+   on scope change; stop only after full idle recovery or explicit bounded handoff.
+   Reconcile at reporting bound and before expiry; same-daemon heartbeat cannot
+   protect a daemon outage.
