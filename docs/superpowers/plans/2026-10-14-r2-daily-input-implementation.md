@@ -2699,3 +2699,23 @@ Report concrete prioritized findings with exact file:line, source evidence/trigg
    on scope change; stop only after full idle recovery or explicit bounded handoff.
    Reconcile at reporting bound and before expiry; same-daemon heartbeat cannot
    protect a daemon outage.
+
+
+### Wave24 actual review startup and monitor
+
+Source handoff `411326865706ea9e7a1690aa49742cd0254d8450` is committed. Input inventory
+133lines SHA256 `5d2829c071973ac12195c7e03cedb91963381a990757b535a89d7a68cab828dd` fixes29pins:
+3targets,19unchanged references and7evidence artifacts. Reviewer
+`a4b5c1b9-3354-400b-be82-b8dec4f87278`, codex/gpt-6.1-sol/high,
+actually started `2026-10-14T10:46:22.467Z` with pending0, expected parent/workspace
+and notified follow-up verified. Its60minute reporting deadline is
+`2026-10-14T11:46:22.467Z`. The review owns only
+`docs/reviews/2026-10-14-r2-raw-snapshot-source-review.md`; no further delegation.
+
+Heartbeat `aeaa4fa6` runs every two minutes, max45, expiry
+`2026-10-14T12:16:57.662Z`. Previous1d43b527 was deleted after all prior
+owned turns and unexpected collector child were actual idle/pending0/full-final
+recovered. Reconcile at the reviewer bound and before expiry; recover substantive
+INCOMPLETE if unfinished and explicitly renew/handoff. Same-daemon heartbeats
+cannot protect daemon outage. Frozen source remains uncompiled/unexecuted and
+no new CI was dispatched. Coordinator owns finding disposition and later gates.
