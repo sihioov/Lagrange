@@ -44,6 +44,18 @@ const MATERIALIZER_VERSION: &str = "daily-price-only-v1";
 const BASE_KIND: &str = "historical_price_only_v3";
 const DAILY_ENDPOINT_PREFIX: &str = "/uapi/domestic-stock/v1/";
 
+type FileIdentityParts = (String, String, String, String);
+type FileKeySortParts = (String, String, String, String, String);
+type CashRowSortKey = (String, TradingDate, String, FileKeySortParts, Vec<u8>);
+type ActionSortKey = (
+    &'static str,
+    &'static str,
+    Option<String>,
+    TradingDate,
+    TradingDate,
+    Option<FileKeySortParts>,
+);
+
 /// Finite, payload-free failures for the unapproved daily wire contract.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DailyWireErrorV1 {
@@ -562,9 +574,7 @@ impl<'a> JsonScanner<'a> {
         self.whitespace();
         match self.bytes.get(self.cursor).copied() {
             Some(b'{') => {
-                if depth >= 32 {
-                    return Err(DailyWireErrorV1::LimitExceeded);
-                }
+                check_container_depth(depth, fixed_limits().max_json_depth)?;
                 self.cursor += 1;
                 self.whitespace();
                 let mut keys = BTreeSet::new();
@@ -596,9 +606,7 @@ impl<'a> JsonScanner<'a> {
                 }
             }
             Some(b'[') => {
-                if depth >= 32 {
-                    return Err(DailyWireErrorV1::LimitExceeded);
-                }
+                check_container_depth(depth, fixed_limits().max_json_depth)?;
                 self.cursor += 1;
                 self.whitespace();
                 if self.bytes.get(self.cursor) == Some(&b']') {
@@ -611,7 +619,7 @@ impl<'a> JsonScanner<'a> {
                     count = count
                         .checked_add(1)
                         .ok_or(DailyWireErrorV1::LimitExceeded)?;
-                    if count > 262_144 {
+                    if check_file_evidence_count(count).is_err() {
                         self.overlarge_array = true;
                     }
                     self.whitespace();
@@ -660,9 +668,10 @@ impl<'a> JsonScanner<'a> {
 }
 
 fn parse_json_bytes(bytes: &[u8], limit: usize) -> Result<Value, DailyWireErrorV1> {
-    if bytes.len() > limit {
-        return Err(DailyWireErrorV1::LimitExceeded);
-    }
+    check_collection_len(
+        bytes.len(),
+        u64::try_from(limit).map_err(|_| DailyWireErrorV1::LimitExceeded)?,
+    )?;
     if bytes.starts_with(&[0xef, 0xbb, 0xbf]) || std::str::from_utf8(bytes).is_err() {
         return Err(DailyWireErrorV1::InvalidJson);
     }
@@ -953,14 +962,6 @@ fn shape_session(value: &Value) -> Result<(), DailyWireErrorV1> {
     }
     for document in array(field(map, "normalized_documents")?)? {
         shape_normalized_document(document)?;
-    }
-    Ok(())
-}
-
-fn shape_document_commitment(value: &Value) -> Result<(), DailyWireErrorV1> {
-    let map = object(value, &["schema", "kind", "session_date", "source_files"])?;
-    for file in array(field(map, "source_files")?)? {
-        shape_file_key(file)?;
     }
     Ok(())
 }
@@ -1421,33 +1422,7 @@ fn validate_lexical_fields(value: &Value) -> Result<(), DailyWireErrorV1> {
                     {
                         return Err(DailyWireErrorV1::InvalidType);
                     }
-                    if child.is_string()
-                        && (date_field(child_key)
-                            || timestamp_field(child_key)
-                            || hash_field(child_key)
-                            || matches!(
-                                child_key.as_str(),
-                                "batch_id"
-                                    | "source_batch_id"
-                                    | "code_commit"
-                                    | "verifier_code_commit"
-                                    | "file_name"
-                                    | "file"
-                                    | "dividend_kind"
-                                    | "stock_kind"
-                                    | "high_dividend_flag"
-                                    | "face_value"
-                                    | "cash_dividend_amount"
-                                    | "cash_dividend_rate"
-                                    | "stock_dividend_rate"
-                                    | "symbol"
-                                    | "response_continuation"
-                            ))
-                    {
-                        visit(child, Some(child_key))?;
-                    } else {
-                        visit(child, Some(child_key))?;
-                    }
+                    visit(child, Some(child_key))?;
                 }
             }
             Value::Null | Value::Bool(_) | Value::Number(_) => {}
@@ -1479,18 +1454,11 @@ fn parse_typed<T: for<'de> Deserialize<'de>>(
     serde_json::from_value(value).map_err(|_| DailyWireErrorV1::InvalidType)
 }
 
-fn canonical_instruments() -> Result<Vec<InstrumentId>, DailyWireErrorV1> {
-    ETF11_INSTRUMENTS
-        .iter()
-        .map(|value| InstrumentId::from_str(value).map_err(|_| DailyWireErrorV1::InvalidLiteral))
-        .collect()
-}
-
 fn instrument_names(values: &[InstrumentId]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
 }
 
-fn file_identity_parts(file: &DailyFileEvidenceV1Wire) -> (String, String, String, String) {
+fn file_identity_parts(file: &DailyFileEvidenceV1Wire) -> FileIdentityParts {
     (
         file.provider.clone(),
         file.market.clone(),
@@ -1499,7 +1467,7 @@ fn file_identity_parts(file: &DailyFileEvidenceV1Wire) -> (String, String, Strin
     )
 }
 
-fn origin_identity_parts(file: &DailyFileOriginV1Wire) -> (String, String, String, String) {
+fn origin_identity_parts(file: &DailyFileOriginV1Wire) -> FileIdentityParts {
     (
         file.provider.clone(),
         file.market.clone(),
@@ -1508,7 +1476,7 @@ fn origin_identity_parts(file: &DailyFileOriginV1Wire) -> (String, String, Strin
     )
 }
 
-fn key_identity_parts(key: &DailyFileKeyV1Wire) -> (String, String, String, String) {
+fn key_identity_parts(key: &DailyFileKeyV1Wire) -> FileIdentityParts {
     (
         key.provider.clone(),
         key.market.clone(),
@@ -1517,7 +1485,7 @@ fn key_identity_parts(key: &DailyFileKeyV1Wire) -> (String, String, String, Stri
     )
 }
 
-fn key_sort_parts(key: &DailyFileKeyV1Wire) -> (String, String, String, String, String) {
+fn key_sort_parts(key: &DailyFileKeyV1Wire) -> FileKeySortParts {
     let (provider, market, batch, name) = key_identity_parts(key);
     (provider, market, batch, name, key.wire_sha256.to_string())
 }
@@ -1587,22 +1555,11 @@ fn canonicalize_file(file: &mut DailyFileEvidenceV1Wire) {
     }
 }
 
-fn canonicalize_key_set(keys: &mut Vec<DailyFileKeyV1Wire>) {
+fn canonicalize_key_set(keys: &mut [DailyFileKeyV1Wire]) {
     keys.sort_by_key(key_sort_parts);
 }
 
-fn cash_sort_key(
-    row: &DailyCashDividendRowV1Wire,
-) -> Result<
-    (
-        String,
-        TradingDate,
-        String,
-        (String, String, String, String, String),
-        Vec<u8>,
-    ),
-    DailyWireErrorV1,
-> {
+fn cash_sort_key(row: &DailyCashDividendRowV1Wire) -> Result<CashRowSortKey, DailyWireErrorV1> {
     validate_cash_row_scalars(row)?;
     let bytes = canonical_bytes_limited(row, 4096)?;
     Ok((
@@ -1731,14 +1688,8 @@ fn canonicalize_proof(value: &mut DailyNormalizationProofV1Wire) {
 fn canonicalize_evidence(
     sessions: &[DailySessionEvidenceV1Wire],
 ) -> Result<Vec<DailySessionEvidenceV1Wire>, DailyWireErrorV1> {
-    invalid_if(
-        sessions.is_empty() || sessions.len() > fixed_limits().max_sessions as usize,
-        if sessions.is_empty() {
-            DailyWireErrorV1::InconsistentFields
-        } else {
-            DailyWireErrorV1::LimitExceeded
-        },
-    )?;
+    invalid_if(sessions.is_empty(), DailyWireErrorV1::InconsistentFields)?;
+    check_session_count(sessions.len())?;
     for session in sessions {
         preflight_session(session)?;
     }
@@ -1754,6 +1705,66 @@ fn invalid_if(condition: bool, error: DailyWireErrorV1) -> Result<(), DailyWireE
     if condition { Err(error) } else { Ok(()) }
 }
 
+fn check_limit(actual: u64, maximum: u64) -> Result<(), DailyWireErrorV1> {
+    invalid_if(actual > maximum, DailyWireErrorV1::LimitExceeded)
+}
+
+fn check_collection_len(actual: usize, maximum: u64) -> Result<(), DailyWireErrorV1> {
+    check_limit(
+        u64::try_from(actual).map_err(|_| DailyWireErrorV1::LimitExceeded)?,
+        maximum,
+    )
+}
+
+fn check_container_depth(depth: usize, maximum: u64) -> Result<(), DailyWireErrorV1> {
+    let depth = u64::try_from(depth).map_err(|_| DailyWireErrorV1::LimitExceeded)?;
+    invalid_if(depth >= maximum, DailyWireErrorV1::LimitExceeded)
+}
+
+fn check_session_count(count: usize) -> Result<(), DailyWireErrorV1> {
+    check_collection_len(count, fixed_limits().max_sessions)
+}
+
+fn check_civil_date_count(count: usize) -> Result<(), DailyWireErrorV1> {
+    check_collection_len(count, fixed_limits().max_civil_dates_per_addition)
+}
+
+fn check_action_chain_count(count: usize) -> Result<(), DailyWireErrorV1> {
+    check_collection_len(count, fixed_limits().max_action_chains_per_session)
+}
+
+fn check_file_evidence_count(count: usize) -> Result<(), DailyWireErrorV1> {
+    check_collection_len(count, fixed_limits().max_file_evidence_per_session)
+}
+
+fn check_copy_hop_count(count: usize) -> Result<(), DailyWireErrorV1> {
+    check_collection_len(count, fixed_limits().max_copy_depth)
+}
+
+fn check_action_page_count(count: usize) -> Result<(), DailyWireErrorV1> {
+    check_collection_len(count, fixed_limits().max_pages_per_action_chain)
+}
+
+fn check_cash_row_count(count: usize) -> Result<(), DailyWireErrorV1> {
+    check_collection_len(count, fixed_limits().max_cash_rows_per_chain)
+}
+
+fn check_source_file_size(size: u64) -> Result<(), DailyWireErrorV1> {
+    check_limit(size, fixed_limits().max_source_file_bytes)
+}
+
+fn check_normalized_document_size(size: u64) -> Result<(), DailyWireErrorV1> {
+    check_limit(size, fixed_limits().max_normalized_document_bytes)
+}
+
+fn check_bars_descriptor_size(size: u64) -> Result<(), DailyWireErrorV1> {
+    check_limit(size, fixed_limits().max_bars_bytes)
+}
+
+fn check_normalization_descriptor_size(size: u64) -> Result<(), DailyWireErrorV1> {
+    check_limit(size, fixed_limits().max_normalization_bytes)
+}
+
 fn hash_bytes(bytes: &[u8]) -> ContentHash {
     ContentHash::from_bytes(bytes)
 }
@@ -1766,12 +1777,14 @@ struct BoundedVecWriter {
 
 impl Write for BoundedVecWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.bytes.len() > self.limit || bytes.len() > self.limit - self.bytes.len() {
+        let Some(next_len) = self.bytes.len().checked_add(bytes.len()) else {
             self.exceeded = true;
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "canonical wire byte limit exceeded",
-            ));
+            return Err(io::Error::other("canonical wire byte limit exceeded"));
+        };
+        let limit = u64::try_from(self.limit).unwrap_or(u64::MAX);
+        if check_collection_len(next_len, limit).is_err() {
+            self.exceeded = true;
+            return Err(io::Error::other("canonical wire byte limit exceeded"));
         }
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -1820,17 +1833,12 @@ fn fixed_limits() -> DailyResourceLimitsV1Wire {
 }
 
 fn preflight_request(request: &DailyRequestMetadataV1Wire) -> Result<(), DailyWireErrorV1> {
-    invalid_if(
-        request.query.len() > 262_144 || request.headers.len() > 262_144,
-        DailyWireErrorV1::LimitExceeded,
-    )
+    check_file_evidence_count(request.query.len())?;
+    check_file_evidence_count(request.headers.len())
 }
 
 fn preflight_file(file: &DailyFileEvidenceV1Wire) -> Result<(), DailyWireErrorV1> {
-    invalid_if(
-        file.copied_from.len() > fixed_limits().max_copy_depth as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_copy_hop_count(file.copied_from.len())?;
     preflight_request(&file.request)?;
     for origin in &file.copied_from {
         preflight_request(&origin.request)?;
@@ -1839,15 +1847,15 @@ fn preflight_file(file: &DailyFileEvidenceV1Wire) -> Result<(), DailyWireErrorV1
 }
 
 fn preflight_session(session: &DailySessionEvidenceV1Wire) -> Result<(), DailyWireErrorV1> {
-    invalid_if(
-        session.instruments.len() > 262_144
-            || session.bars.len() > 262_144
-            || session.reference.len() > 262_144
-            || session.calendar.len() > fixed_limits().max_civil_dates_per_addition as usize
-            || session.actions.len() > fixed_limits().max_action_chains_per_session as usize
-            || session.normalized_documents.len()
-                > 3 + fixed_limits().max_civil_dates_per_addition as usize,
-        DailyWireErrorV1::LimitExceeded,
+    let limits = fixed_limits();
+    check_file_evidence_count(session.instruments.len())?;
+    check_file_evidence_count(session.bars.len())?;
+    check_file_evidence_count(session.reference.len())?;
+    check_civil_date_count(session.calendar.len())?;
+    check_action_chain_count(session.actions.len())?;
+    check_collection_len(
+        session.normalized_documents.len(),
+        3 + limits.max_civil_dates_per_addition,
     )?;
     let mut file_count = session
         .bars
@@ -1862,11 +1870,8 @@ fn preflight_session(session: &DailySessionEvidenceV1Wire) -> Result<(), DailyWi
         preflight_file(&binding.source_file)?;
     }
     for action in &session.actions {
-        invalid_if(
-            action.pages.len() > fixed_limits().max_pages_per_action_chain as usize
-                || action.cash_dividends.len() > fixed_limits().max_cash_rows_per_chain as usize,
-            DailyWireErrorV1::LimitExceeded,
-        )?;
+        check_action_page_count(action.pages.len())?;
+        check_cash_row_count(action.cash_dividends.len())?;
         file_count = file_count
             .checked_add(action.pages.len())
             .ok_or(DailyWireErrorV1::LimitExceeded)?;
@@ -1874,15 +1879,9 @@ fn preflight_session(session: &DailySessionEvidenceV1Wire) -> Result<(), DailyWi
             preflight_file(file)?;
         }
     }
-    invalid_if(
-        file_count > fixed_limits().max_file_evidence_per_session as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_file_evidence_count(file_count)?;
     for document in &session.normalized_documents {
-        invalid_if(
-            document.source_files.len() > fixed_limits().max_file_evidence_per_session as usize,
-            DailyWireErrorV1::LimitExceeded,
-        )?;
+        check_file_evidence_count(document.source_files.len())?;
     }
     Ok(())
 }
@@ -1892,12 +1891,9 @@ fn preflight_manifest(
     sessions: &[TradingDate],
     daily_sources: &[DailySessionEvidenceV1Wire],
 ) -> Result<(), DailyWireErrorV1> {
-    invalid_if(
-        instruments.len() > 262_144
-            || sessions.len() > fixed_limits().max_sessions as usize
-            || daily_sources.len() > fixed_limits().max_sessions as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_file_evidence_count(instruments.len())?;
+    check_session_count(sessions.len())?;
+    check_session_count(daily_sources.len())?;
     for session in daily_sources {
         preflight_session(session)?;
     }
@@ -1905,22 +1901,14 @@ fn preflight_manifest(
 }
 
 fn preflight_policy(value: &DailyPricePolicyV1Wire) -> Result<(), DailyWireErrorV1> {
-    invalid_if(
-        value.instruments.len() > 262_144 || value.source_kinds.len() > 262_144,
-        DailyWireErrorV1::LimitExceeded,
-    )
+    check_file_evidence_count(value.instruments.len())?;
+    check_file_evidence_count(value.source_kinds.len())
 }
 
 fn preflight_proof(value: &DailyNormalizationProofV1Wire) -> Result<(), DailyWireErrorV1> {
-    invalid_if(
-        value.documents.len() > 262_144,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_file_evidence_count(value.documents.len())?;
     for document in &value.documents {
-        invalid_if(
-            document.source_files.len() > fixed_limits().max_file_evidence_per_session as usize,
-            DailyWireErrorV1::LimitExceeded,
-        )?;
+        check_file_evidence_count(document.source_files.len())?;
     }
     Ok(())
 }
@@ -2211,7 +2199,7 @@ fn validate_policy_and_bytes(
     canonicalize_policy(value);
     validate_policy(value)?;
     let bytes = canonical_bytes_limited(value, fixed_limits().max_policy_bytes)?;
-    invalid_if(bytes.len() > 262_144, DailyWireErrorV1::LimitExceeded)?;
+    check_collection_len(bytes.len(), fixed_limits().max_policy_bytes)?;
     Ok(bytes)
 }
 
@@ -2242,16 +2230,28 @@ fn validate_request_kind(
     )
 }
 
-fn validate_origin_fields(
-    provider: &str,
-    market: &str,
-    file_name: &str,
+struct OriginFields<'a> {
+    provider: &'a str,
+    market: &'a str,
+    file_name: &'a str,
     kind: DailyEvidenceKindV1,
     size_bytes: u64,
-    request: &DailyRequestMetadataV1Wire,
-    response_continuation: &Option<String>,
-    retrieval_precision: &str,
-) -> Result<(), DailyWireErrorV1> {
+    request: &'a DailyRequestMetadataV1Wire,
+    response_continuation: &'a Option<String>,
+    retrieval_precision: &'a str,
+}
+
+fn validate_origin_fields(fields: OriginFields<'_>) -> Result<(), DailyWireErrorV1> {
+    let OriginFields {
+        provider,
+        market,
+        file_name,
+        kind,
+        size_bytes,
+        request,
+        response_continuation,
+        retrieval_precision,
+    } = fields;
     invalid_if(
         !matches!(provider, "kis" | "kis-calendar") || market != "kr",
         DailyWireErrorV1::InvalidLiteral,
@@ -2261,10 +2261,8 @@ fn validate_origin_fields(
         DailyWireErrorV1::InconsistentFields,
     )?;
     invalid_if(!valid_name(file_name), DailyWireErrorV1::InvalidName)?;
-    invalid_if(
-        size_bytes == 0 || size_bytes > fixed_limits().max_source_file_bytes,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    invalid_if(size_bytes == 0, DailyWireErrorV1::LimitExceeded)?;
+    check_source_file_size(size_bytes)?;
     invalid_if(
         retrieval_precision != "batch",
         DailyWireErrorV1::InvalidLiteral,
@@ -2307,24 +2305,21 @@ fn validate_file_evidence(file: &DailyFileEvidenceV1Wire) -> Result<(), DailyWir
         !valid_domain_date(file.batch_date),
         DailyWireErrorV1::InvalidDate,
     )?;
-    validate_origin_fields(
-        &file.provider,
-        &file.market,
-        &file.file_name,
-        file.kind,
-        file.size_bytes,
-        &file.request,
-        &file.response_continuation,
-        &file.retrieval_precision,
-    )?;
+    validate_origin_fields(OriginFields {
+        provider: &file.provider,
+        market: &file.market,
+        file_name: &file.file_name,
+        kind: file.kind,
+        size_bytes: file.size_bytes,
+        request: &file.request,
+        response_continuation: &file.response_continuation,
+        retrieval_precision: &file.retrieval_precision,
+    })?;
     invalid_if(
         file.original_retrieval_precision != "batch",
         DailyWireErrorV1::InvalidLiteral,
     )?;
-    invalid_if(
-        file.copied_from.len() > fixed_limits().max_copy_depth as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_copy_hop_count(file.copied_from.len())?;
     let mut seen = BTreeSet::new();
     seen.insert(file_identity_parts(file));
     let mut prior_time = file.retrieved_at;
@@ -2337,16 +2332,16 @@ fn validate_file_evidence(file: &DailyFileEvidenceV1Wire) -> Result<(), DailyWir
             !valid_domain_date(origin.batch_date),
             DailyWireErrorV1::InvalidDate,
         )?;
-        validate_origin_fields(
-            &origin.provider,
-            &origin.market,
-            &origin.file_name,
-            origin.kind,
-            origin.size_bytes,
-            &origin.request,
-            &origin.response_continuation,
-            &origin.retrieval_precision,
-        )?;
+        validate_origin_fields(OriginFields {
+            provider: &origin.provider,
+            market: &origin.market,
+            file_name: &origin.file_name,
+            kind: origin.kind,
+            size_bytes: origin.size_bytes,
+            request: &origin.request,
+            response_continuation: &origin.response_continuation,
+            retrieval_precision: &origin.retrieval_precision,
+        })?;
         invalid_if(
             origin.kind != file.kind
                 || origin.wire_sha256 != file.wire_sha256
@@ -2356,7 +2351,7 @@ fn validate_file_evidence(file: &DailyFileEvidenceV1Wire) -> Result<(), DailyWir
             DailyWireErrorV1::InconsistentFields,
         )?;
         invalid_if(
-            prior_time < origin.retrieved_at,
+            prior_time.as_timestamp() < origin.retrieved_at.as_timestamp(),
             DailyWireErrorV1::InvalidOrder,
         )?;
         prior_time = origin.retrieved_at;
@@ -2525,12 +2520,10 @@ fn date_range(start: TradingDate, end: TradingDate) -> Result<Vec<TradingDate>, 
     let mut dates = Vec::new();
     let mut date = start;
     loop {
+        check_civil_date_count(dates.len())?;
         dates.push(date);
         if date == end {
             break;
-        }
-        if dates.len() > fixed_limits().max_civil_dates_per_addition as usize {
-            return Err(DailyWireErrorV1::LimitExceeded);
         }
         date = date
             .checked_add_days(1)
@@ -2593,11 +2586,8 @@ fn validate_cash_rows(
     previous_frontier: TradingDate,
     session_date: TradingDate,
 ) -> Result<(), DailyWireErrorV1> {
-    invalid_if(
-        rows.len() > fixed_limits().max_cash_rows_per_chain as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
-    let mut prior_key = None;
+    check_cash_row_count(rows.len())?;
+    let mut prior_key: Option<CashRowSortKey> = None;
     for row in rows {
         validate_cash_row_scalars(row)?;
         invalid_if(
@@ -2650,14 +2640,10 @@ fn validate_action_chain(
         DailyWireErrorV1::InconsistentFields,
     )?;
     invalid_if(
-        action.pages.is_empty()
-            || action.pages.len() > fixed_limits().max_pages_per_action_chain as usize,
-        if action.pages.is_empty() {
-            DailyWireErrorV1::InconsistentFields
-        } else {
-            DailyWireErrorV1::LimitExceeded
-        },
+        action.pages.is_empty(),
+        DailyWireErrorV1::InconsistentFields,
     )?;
+    check_action_page_count(action.pages.len())?;
     match action.scope {
         DailyActionScopeV1::WholeMarket => invalid_if(
             action.symbol.is_some(),
@@ -2757,24 +2743,22 @@ fn validate_calendar_binding(
             DailyWireErrorV1::InconsistentFields,
         )?;
     }
-    if binding.civil_date == session_date {
-        invalid_if(
-            binding.session_type != DailySessionTypeV1::Trading,
-            DailyWireErrorV1::InconsistentFields,
-        )?;
+    let expected_type = if binding.civil_date == session_date {
+        DailySessionTypeV1::Trading
     } else {
-        invalid_if(
-            binding.session_type != DailySessionTypeV1::Closed,
-            DailyWireErrorV1::InconsistentFields,
-        )?;
-    }
+        DailySessionTypeV1::Closed
+    };
+    invalid_if(
+        binding.session_type.literal() != expected_type.literal(),
+        DailyWireErrorV1::InconsistentFields,
+    )?;
     Ok(())
 }
 
 fn compare_file_identity_metadata(
     file: &DailyFileEvidenceV1Wire,
-    full: &mut BTreeMap<(String, String, String, String), DailyFileEvidenceV1Wire>,
-    origins: &mut BTreeMap<(String, String, String, String), DailyFileOriginV1Wire>,
+    full: &mut BTreeMap<FileIdentityParts, DailyFileEvidenceV1Wire>,
+    origins: &mut BTreeMap<FileIdentityParts, DailyFileOriginV1Wire>,
 ) -> Result<(), DailyWireErrorV1> {
     let identity = file_identity_parts(file);
     if let Some(previous) = full.get(&identity) {
@@ -2955,11 +2939,8 @@ fn validate_normalized_document(
         document.normalizer_version != NORMALIZER_VERSION,
         DailyWireErrorV1::InvalidLiteral,
     )?;
-    invalid_if(
-        document.size_bytes == 0
-            || document.size_bytes > fixed_limits().max_normalized_document_bytes,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    invalid_if(document.size_bytes == 0, DailyWireErrorV1::LimitExceeded)?;
+    check_normalized_document_size(document.size_bytes)?;
     invalid_if(
         document.source_files.is_empty(),
         DailyWireErrorV1::InconsistentFields,
@@ -3016,10 +2997,7 @@ fn validate_session(session: &DailySessionEvidenceV1Wire) -> Result<(), DailyWir
         .checked_add_days(1)
         .map_err(|_| DailyWireErrorV1::InvalidDate)?;
     let expected_civil_dates = date_range(first_civil_date, session.session_date)?;
-    invalid_if(
-        expected_civil_dates.len() > fixed_limits().max_civil_dates_per_addition as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_civil_date_count(expected_civil_dates.len())?;
     invalid_if(
         session.calendar.len() != expected_civil_dates.len(),
         DailyWireErrorV1::InconsistentFields,
@@ -3039,18 +3017,14 @@ fn validate_session(session: &DailySessionEvidenceV1Wire) -> Result<(), DailyWir
     }
 
     invalid_if(
-        session.actions.len() < 7
-            || session.actions.len() > fixed_limits().max_action_chains_per_session as usize,
-        if session.actions.len() < 7 {
-            DailyWireErrorV1::InconsistentFields
-        } else {
-            DailyWireErrorV1::LimitExceeded
-        },
+        session.actions.len() < 7,
+        DailyWireErrorV1::InconsistentFields,
     )?;
-    let mut previous_action_sort_key = None;
+    check_action_chain_count(session.actions.len())?;
+    let mut previous_action_sort_key: Option<ActionSortKey> = None;
     for action in &session.actions {
         validate_action_chain(action, session.previous_frontier, session.session_date)?;
-        let sort_key = (
+        let sort_key: ActionSortKey = (
             action.logical_class.literal(),
             action.scope.literal(),
             action.symbol.clone(),
@@ -3074,10 +3048,7 @@ fn validate_session(session: &DailySessionEvidenceV1Wire) -> Result<(), DailyWir
     validate_action_coverage(&session.actions, required_start, session.session_date)?;
 
     let files = session_file_occurrences(session);
-    invalid_if(
-        files.len() > fixed_limits().max_file_evidence_per_session as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_file_evidence_count(files.len())?;
     let mut full_files = BTreeMap::new();
     let mut origin_files = BTreeMap::new();
     for file in &files {
@@ -3174,21 +3145,21 @@ fn add_count(target: &mut u64, value: usize) -> Result<(), DailyWireErrorV1> {
     Ok(())
 }
 
-fn derive_counts(
-    sessions: &[DailySessionEvidenceV1Wire],
-    full_files: &mut BTreeMap<(String, String, String, String), DailyFileEvidenceV1Wire>,
-    origin_files: &mut BTreeMap<(String, String, String, String), DailyFileOriginV1Wire>,
+fn derive_evidence_counts(
+    daily_sources: &[DailySessionEvidenceV1Wire],
+    full_files: &mut BTreeMap<FileIdentityParts, DailyFileEvidenceV1Wire>,
+    origin_files: &mut BTreeMap<FileIdentityParts, DailyFileOriginV1Wire>,
 ) -> Result<DerivedCounts, DailyWireErrorV1> {
     let mut counts = DerivedCounts {
         instrument_count: 11,
-        added_session_count: u64::try_from(sessions.len())
+        added_session_count: u64::try_from(daily_sources.len())
             .map_err(|_| DailyWireErrorV1::LimitExceeded)?,
         ..DerivedCounts::default()
     };
     let mut unique_files = BTreeMap::new();
     let mut unique_documents = BTreeSet::new();
     let mut claimed_calendar_dates = BTreeSet::new();
-    for session in sessions {
+    for session in daily_sources {
         validate_session(session)?;
         claimed_calendar_dates.extend(session.calendar.iter().map(|binding| binding.civil_date));
         add_count(&mut counts.calendar_row_count, session.calendar.len())?;
@@ -3221,10 +3192,10 @@ fn derive_counts(
             )?;
         }
     }
-    if let Some(last_added_date) = sessions.last().map(|session| session.session_date) {
+    if let Some(last_added_date) = daily_sources.last().map(|session| session.session_date) {
         let base_frontier =
             TradingDate::parse(BASE_FRONTIER).map_err(|_| DailyWireErrorV1::InvalidDate)?;
-        for file in sessions
+        for file in daily_sources
             .iter()
             .flat_map(session_file_occurrences)
             .filter(|file| file.kind == DailyEvidenceKindV1::Calendar)
@@ -3238,16 +3209,26 @@ fn derive_counts(
             }
         }
     }
-    counts.session_count =
-        u64::try_from(sessions.len()).map_err(|_| DailyWireErrorV1::LimitExceeded)?;
-    counts.bar_count = counts
-        .session_count
-        .checked_mul(11)
-        .ok_or(DailyWireErrorV1::LimitExceeded)?;
     counts.source_file_count =
         u64::try_from(unique_files.len()).map_err(|_| DailyWireErrorV1::LimitExceeded)?;
     counts.normalized_document_count =
         u64::try_from(unique_documents.len()).map_err(|_| DailyWireErrorV1::LimitExceeded)?;
+    Ok(counts)
+}
+
+fn derive_counts(
+    total_session_count: usize,
+    daily_sources: &[DailySessionEvidenceV1Wire],
+    full_files: &mut BTreeMap<FileIdentityParts, DailyFileEvidenceV1Wire>,
+    origin_files: &mut BTreeMap<FileIdentityParts, DailyFileOriginV1Wire>,
+) -> Result<DerivedCounts, DailyWireErrorV1> {
+    let mut counts = derive_evidence_counts(daily_sources, full_files, origin_files)?;
+    counts.session_count =
+        u64::try_from(total_session_count).map_err(|_| DailyWireErrorV1::LimitExceeded)?;
+    counts.bar_count = counts
+        .session_count
+        .checked_mul(11)
+        .ok_or(DailyWireErrorV1::LimitExceeded)?;
     Ok(counts)
 }
 
@@ -3256,79 +3237,73 @@ fn validate_descriptor_name(name: &str, expected: &str) -> Result<(), DailyWireE
 }
 
 fn validate_manifest_payload(
-    schema: &str,
-    capability: &str,
-    audience: &str,
-    vendor_snapshot: bool,
-    strict_pit: bool,
-    base: &DailyBaseV1Wire,
-    parent_admission_sha256: &Option<ContentHash>,
-    range_start: TradingDate,
-    range_end: TradingDate,
-    instruments: &[InstrumentId],
-    sessions: &[TradingDate],
-    daily_sources: &[DailySessionEvidenceV1Wire],
-    bars: &DailyBarsDescriptorV1Wire,
-    normalization: &DailyNormalizationDescriptorV1Wire,
-    policy_sha256: &ContentHash,
-    materializer_version: &str,
-    code_commit: &CodeCommit,
+    value: &DailyPriceManifestDraftV1Wire,
 ) -> Result<DerivedCounts, DailyWireErrorV1> {
-    invalid_if(schema != MANIFEST_SCHEMA, DailyWireErrorV1::InvalidLiteral)?;
     invalid_if(
-        capability != "PRICE_RETURN_ONLY",
+        value.schema != MANIFEST_SCHEMA,
         DailyWireErrorV1::InvalidLiteral,
     )?;
-    invalid_if(audience != "OWNER_ONLY", DailyWireErrorV1::InvalidLiteral)?;
-    invalid_if(!vendor_snapshot, DailyWireErrorV1::InvalidLiteral)?;
-    invalid_if(strict_pit, DailyWireErrorV1::InvalidLiteral)?;
-    validate_base(base)?;
-    validate_instruments(instruments)?;
     invalid_if(
-        !valid_domain_date(range_start) || !valid_domain_date(range_end),
+        value.capability != "PRICE_RETURN_ONLY",
+        DailyWireErrorV1::InvalidLiteral,
+    )?;
+    invalid_if(
+        value.audience != "OWNER_ONLY",
+        DailyWireErrorV1::InvalidLiteral,
+    )?;
+    invalid_if(!value.vendor_snapshot, DailyWireErrorV1::InvalidLiteral)?;
+    invalid_if(value.strict_pit, DailyWireErrorV1::InvalidLiteral)?;
+    validate_base(&value.base)?;
+    validate_instruments(&value.instruments)?;
+    invalid_if(
+        !valid_domain_date(value.range_start) || !valid_domain_date(value.range_end),
         DailyWireErrorV1::InvalidDate,
     )?;
     invalid_if(
-        !valid_commit(code_commit.as_str()),
+        !valid_commit(value.code_commit.as_str()),
         DailyWireErrorV1::InvalidCommit,
     )?;
     let range_start_expected =
         TradingDate::parse(BASE_START).map_err(|_| DailyWireErrorV1::InvalidDate)?;
     let frontier = TradingDate::parse(BASE_FRONTIER).map_err(|_| DailyWireErrorV1::InvalidDate)?;
     invalid_if(
-        range_start != range_start_expected || range_end <= frontier,
+        value.range_start != range_start_expected || value.range_end <= frontier,
         DailyWireErrorV1::InconsistentFields,
     )?;
     invalid_if(
-        sessions.len() < 3 || sessions.len() > fixed_limits().max_sessions as usize,
-        if sessions.len() < 3 {
-            DailyWireErrorV1::InconsistentFields
-        } else {
-            DailyWireErrorV1::LimitExceeded
-        },
+        value.sessions.len() < 3,
+        DailyWireErrorV1::InconsistentFields,
     )?;
-    strictly_increasing(sessions)?;
+    check_session_count(value.sessions.len())?;
+    strictly_increasing(&value.sessions)?;
     invalid_if(
-        sessions.iter().any(|date| !valid_domain_date(*date)),
+        value.sessions.iter().any(|date| !valid_domain_date(*date)),
         DailyWireErrorV1::InvalidDate,
     )?;
     invalid_if(
-        sessions.first().copied() != Some(range_start)
-            || sessions.last().copied() != Some(range_end)
-            || !sessions.contains(&frontier),
+        value.sessions.first().copied() != Some(value.range_start)
+            || value.sessions.last().copied() != Some(value.range_end)
+            || !value.sessions.contains(&frontier),
         DailyWireErrorV1::InconsistentFields,
     )?;
     invalid_if(
-        daily_sources.is_empty()
-            || daily_sources.len() != sessions.iter().filter(|date| **date > frontier).count(),
+        value.daily_sources.is_empty()
+            || value.daily_sources.len()
+                != value
+                    .sessions
+                    .iter()
+                    .filter(|date| **date > frontier)
+                    .count(),
         DailyWireErrorV1::InconsistentFields,
     )?;
-    let source_dates: Vec<_> = daily_sources
+    let source_dates: Vec<_> = value
+        .daily_sources
         .iter()
         .map(|source| source.session_date)
         .collect();
     strictly_increasing(&source_dates)?;
-    let added_dates: Vec<_> = sessions
+    let added_dates: Vec<_> = value
+        .sessions
         .iter()
         .copied()
         .filter(|date| *date > frontier)
@@ -3338,38 +3313,39 @@ fn validate_manifest_payload(
         DailyWireErrorV1::InconsistentFields,
     )?;
     let mut previous = frontier;
-    for session in daily_sources {
+    for session in &value.daily_sources {
         invalid_if(
             session.previous_frontier != previous,
             DailyWireErrorV1::InconsistentFields,
         )?;
         previous = session.session_date;
     }
-    invalid_if(previous != range_end, DailyWireErrorV1::InconsistentFields)?;
     invalid_if(
-        parent_admission_sha256.is_none() != (daily_sources.len() == 1),
+        previous != value.range_end,
         DailyWireErrorV1::InconsistentFields,
     )?;
-    validate_descriptor_name(&bars.file, "bars.ndjson")?;
-    validate_descriptor_name(&normalization.file, "normalization.json")?;
     invalid_if(
-        bars.size_bytes == 0 || bars.size_bytes > fixed_limits().max_bars_bytes,
+        value.parent_admission_sha256.is_none() != (value.daily_sources.len() == 1),
+        DailyWireErrorV1::InconsistentFields,
+    )?;
+    validate_descriptor_name(&value.bars.file, "bars.ndjson")?;
+    validate_descriptor_name(&value.normalization.file, "normalization.json")?;
+    invalid_if(value.bars.size_bytes == 0, DailyWireErrorV1::LimitExceeded)?;
+    check_bars_descriptor_size(value.bars.size_bytes)?;
+    invalid_if(
+        value.normalization.size_bytes == 0,
         DailyWireErrorV1::LimitExceeded,
     )?;
-    invalid_if(
-        normalization.size_bytes == 0
-            || normalization.size_bytes > fixed_limits().max_normalization_bytes,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
-    let expected_bars = u64::try_from(sessions.len())
+    check_normalization_descriptor_size(value.normalization.size_bytes)?;
+    let expected_bars = u64::try_from(value.sessions.len())
         .map_err(|_| DailyWireErrorV1::LimitExceeded)?
         .checked_mul(11)
         .ok_or(DailyWireErrorV1::LimitExceeded)?;
     invalid_if(
-        bars.row_count != expected_bars,
+        value.bars.row_count != expected_bars,
         DailyWireErrorV1::InconsistentFields,
     )?;
-    let expected_documents = daily_sources.iter().try_fold(0u64, |sum, source| {
+    let expected_documents = value.daily_sources.iter().try_fold(0u64, |sum, source| {
         let calendar_count =
             u64::try_from(source.calendar.len()).map_err(|_| DailyWireErrorV1::LimitExceeded)?;
         sum.checked_add(3)
@@ -3377,17 +3353,21 @@ fn validate_manifest_payload(
             .ok_or(DailyWireErrorV1::LimitExceeded)
     })?;
     invalid_if(
-        normalization.row_count != expected_documents,
+        value.normalization.row_count != expected_documents,
         DailyWireErrorV1::InconsistentFields,
     )?;
     invalid_if(
-        materializer_version != MATERIALIZER_VERSION,
+        value.materializer_version != MATERIALIZER_VERSION,
         DailyWireErrorV1::InvalidLiteral,
     )?;
-    let _ = (policy_sha256, code_commit);
     let mut full_files = BTreeMap::new();
     let mut origin_files = BTreeMap::new();
-    derive_counts(daily_sources, &mut full_files, &mut origin_files)
+    derive_counts(
+        value.sessions.len(),
+        &value.daily_sources,
+        &mut full_files,
+        &mut origin_files,
+    )
 }
 
 fn draft_from_manifest(value: &DailyPriceManifestV1Wire) -> DailyPriceManifestDraftV1Wire {
@@ -3440,51 +3420,14 @@ fn manifest_from_draft(
 
 fn validate_draft(draft: &mut DailyPriceManifestDraftV1Wire) -> Result<(), DailyWireErrorV1> {
     canonicalize_draft(draft)?;
-    let dummy = manifest_from_draft(draft, hash_bytes(b"unapproved-draft"));
-    validate_manifest_payload(
-        &dummy.schema,
-        &dummy.capability,
-        &dummy.audience,
-        dummy.vendor_snapshot,
-        dummy.strict_pit,
-        &dummy.base,
-        &dummy.parent_admission_sha256,
-        dummy.range_start,
-        dummy.range_end,
-        &dummy.instruments,
-        &dummy.sessions,
-        &dummy.daily_sources,
-        &dummy.bars,
-        &dummy.normalization,
-        &dummy.policy_sha256,
-        &dummy.materializer_version,
-        &dummy.code_commit,
-    )?;
+    validate_manifest_payload(draft)?;
     Ok(())
 }
 
 fn validate_manifest(value: &mut DailyPriceManifestV1Wire) -> Result<(), DailyWireErrorV1> {
     canonicalize_manifest(value)?;
-    validate_manifest_payload(
-        &value.schema,
-        &value.capability,
-        &value.audience,
-        value.vendor_snapshot,
-        value.strict_pit,
-        &value.base,
-        &value.parent_admission_sha256,
-        value.range_start,
-        value.range_end,
-        &value.instruments,
-        &value.sessions,
-        &value.daily_sources,
-        &value.bars,
-        &value.normalization,
-        &value.policy_sha256,
-        &value.materializer_version,
-        &value.code_commit,
-    )?;
     let draft = draft_from_manifest(value);
+    validate_manifest_payload(&draft)?;
     let bytes = canonical_bytes_limited(&draft, fixed_limits().max_manifest_bytes)?;
     invalid_if(
         hash_bytes(&bytes) != value.content_sha256,
@@ -3517,13 +3460,10 @@ fn validate_admission(value: &DailyPriceAdmissionV1Wire) -> Result<(), DailyWire
         DailyWireErrorV1::InconsistentFields,
     )?;
     invalid_if(
-        !(3..=fixed_limits().max_sessions).contains(&counts.session_count),
-        if counts.session_count > fixed_limits().max_sessions {
-            DailyWireErrorV1::LimitExceeded
-        } else {
-            DailyWireErrorV1::InconsistentFields
-        },
+        counts.session_count < 3,
+        DailyWireErrorV1::InconsistentFields,
     )?;
+    check_limit(counts.session_count, fixed_limits().max_sessions)?;
     invalid_if(
         counts.bar_count != checked_mul(11, counts.session_count)?,
         DailyWireErrorV1::InconsistentFields,
@@ -3642,7 +3582,7 @@ fn validate_proof(value: &mut DailyNormalizationProofV1Wire) -> Result<(), Daily
         value.normalizer_version != NORMALIZER_VERSION,
         DailyWireErrorV1::InvalidLiteral,
     )?;
-    let mut prior = None;
+    let mut prior: Option<(TradingDate, &'static str)> = None;
     for document in &value.documents {
         let sort_key = (document.session_date, document.kind.literal());
         if let Some(previous) = prior {
@@ -3654,14 +3594,15 @@ fn validate_proof(value: &mut DailyNormalizationProofV1Wire) -> Result<(), Daily
         }
         prior = Some(sort_key);
         invalid_if(
+            !valid_domain_date(document.session_date),
+            DailyWireErrorV1::InvalidDate,
+        )?;
+        invalid_if(
             document.normalizer_version != NORMALIZER_VERSION,
             DailyWireErrorV1::InvalidLiteral,
         )?;
-        invalid_if(
-            document.size_bytes == 0
-                || document.size_bytes > fixed_limits().max_normalized_document_bytes,
-            DailyWireErrorV1::LimitExceeded,
-        )?;
+        invalid_if(document.size_bytes == 0, DailyWireErrorV1::LimitExceeded)?;
+        check_normalized_document_size(document.size_bytes)?;
         invalid_if(
             document.source_files.is_empty(),
             DailyWireErrorV1::InconsistentFields,
@@ -3785,6 +3726,7 @@ pub fn seal_daily_price_manifest_v1(
     let preimage = daily_price_content_preimage_v1(value)?;
     let mut result = manifest_from_draft(value, hash_bytes(&preimage));
     validate_manifest(&mut result)?;
+    canonical_bytes_limited(&result, fixed_limits().max_manifest_bytes)?;
     Ok(result)
 }
 
@@ -3835,7 +3777,7 @@ pub fn daily_price_evidence_preimage_v1(
     let sessions = canonicalize_evidence(value)?;
     let mut full_files = BTreeMap::new();
     let mut origins = BTreeMap::new();
-    derive_counts(&sessions, &mut full_files, &mut origins)?;
+    derive_evidence_counts(&sessions, &mut full_files, &mut origins)?;
     let commitment = DailyEvidenceCommitmentV1Wire {
         schema: EVIDENCE_SCHEMA.to_owned(),
         daily_sources: sessions,
@@ -3860,10 +3802,7 @@ pub fn daily_normalized_source_preimage_v1(
         !valid_domain_date(value.session_date),
         DailyWireErrorV1::InvalidDate,
     )?;
-    invalid_if(
-        value.source_files.len() > fixed_limits().max_file_evidence_per_session as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_file_evidence_count(value.source_files.len())?;
     let mut value = value.clone();
     canonicalize_key_set(&mut value.source_files);
     invalid_if(
@@ -3883,10 +3822,7 @@ pub fn daily_normalized_source_preimage_v1(
 pub fn daily_cash_dividend_rows_preimage_v1(
     value: &[DailyCashDividendRowV1Wire],
 ) -> Result<Vec<u8>, DailyWireErrorV1> {
-    invalid_if(
-        value.len() > fixed_limits().max_cash_rows_per_chain as usize,
-        DailyWireErrorV1::LimitExceeded,
-    )?;
+    check_cash_row_count(value.len())?;
     for row in value {
         validate_cash_row_scalars(row)?;
     }
@@ -3985,7 +3921,7 @@ pub fn validate_daily_price_wire_bundle_v1(
     validate_manifest(&mut canonical_manifest)?;
     let mut canonical_policy = policy.clone();
     canonicalize_policy(&mut canonical_policy);
-    let mut canonical_admission = admission.clone();
+    let canonical_admission = admission.clone();
     validate_admission(&canonical_admission)?;
 
     invalid_if(
@@ -4039,6 +3975,7 @@ pub fn validate_daily_price_wire_bundle_v1(
     let mut full_files = BTreeMap::new();
     let mut origin_files = BTreeMap::new();
     let derived = derive_counts(
+        canonical_manifest.sessions.len(),
         &canonical_manifest.daily_sources,
         &mut full_files,
         &mut origin_files,
@@ -4054,4 +3991,173 @@ pub fn validate_daily_price_wire_bundle_v1(
             || pins.policy_sha256 != policy_sha256,
         DailyWireErrorV1::HashMismatch,
     )
+}
+
+#[cfg(test)]
+mod resource_guard_tests {
+    use super::*;
+
+    #[test]
+    fn every_collection_guard_accepts_its_bound_and_rejects_one_more() {
+        let limits = fixed_limits();
+        let guards: [(&str, u64, fn(usize) -> Result<(), DailyWireErrorV1>); 7] = [
+            ("max_sessions", limits.max_sessions, check_session_count),
+            (
+                "max_civil_dates_per_addition",
+                limits.max_civil_dates_per_addition,
+                check_civil_date_count,
+            ),
+            (
+                "max_action_chains_per_session",
+                limits.max_action_chains_per_session,
+                check_action_chain_count,
+            ),
+            (
+                "max_file_evidence_per_session",
+                limits.max_file_evidence_per_session,
+                check_file_evidence_count,
+            ),
+            (
+                "max_copy_depth",
+                limits.max_copy_depth,
+                check_copy_hop_count,
+            ),
+            (
+                "max_pages_per_action_chain",
+                limits.max_pages_per_action_chain,
+                check_action_page_count,
+            ),
+            (
+                "max_cash_rows_per_chain",
+                limits.max_cash_rows_per_chain,
+                check_cash_row_count,
+            ),
+        ];
+
+        for (name, maximum, guard) in guards {
+            let maximum_len = usize::try_from(maximum).unwrap();
+            assert_eq!(guard(maximum_len), Ok(()), "{name} at bound",);
+            assert_eq!(
+                guard(maximum_len + 1),
+                Err(DailyWireErrorV1::LimitExceeded),
+                "{name} above bound",
+            );
+        }
+    }
+
+    #[test]
+    fn every_declared_size_guard_accepts_its_bound_and_rejects_one_more() {
+        let limits = fixed_limits();
+        let guards: [(&str, u64, fn(u64) -> Result<(), DailyWireErrorV1>); 4] = [
+            (
+                "max_source_file_bytes",
+                limits.max_source_file_bytes,
+                check_source_file_size,
+            ),
+            (
+                "max_normalized_document_bytes",
+                limits.max_normalized_document_bytes,
+                check_normalized_document_size,
+            ),
+            (
+                "max_bars_bytes",
+                limits.max_bars_bytes,
+                check_bars_descriptor_size,
+            ),
+            (
+                "max_normalization_bytes",
+                limits.max_normalization_bytes,
+                check_normalization_descriptor_size,
+            ),
+        ];
+        for (name, maximum, guard) in guards {
+            assert_eq!(guard(maximum), Ok(()), "{name} at bound");
+            assert_eq!(
+                guard(maximum + 1),
+                Err(DailyWireErrorV1::LimitExceeded),
+                "{name} above bound",
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_json_depth_and_civil_dates_accept_the_bound_and_reject_plus_one() {
+        let depth_limit = usize::try_from(fixed_limits().max_json_depth).unwrap();
+        for (depth, expected) in [
+            (depth_limit, Ok(())),
+            (depth_limit + 1, Err(DailyWireErrorV1::LimitExceeded)),
+        ] {
+            let json = format!("{}null{}", "[".repeat(depth), "]".repeat(depth));
+            assert_eq!(
+                parse_json_bytes(&json.into_bytes(), 1024).map(|_| ()),
+                expected,
+                "JSON container depth {depth}",
+            );
+        }
+
+        let first = TradingDate::new(2026, 1, 1).unwrap();
+        let at_bound = first.checked_add_days(369).unwrap();
+        assert_eq!(date_range(first, at_bound).unwrap().len(), 370);
+        let above_bound = first.checked_add_days(370).unwrap();
+        assert_eq!(
+            date_range(first, above_bound),
+            Err(DailyWireErrorV1::LimitExceeded),
+        );
+    }
+
+    #[test]
+    fn json_array_evidence_count_guard_accepts_its_bound_and_rejects_one_more() {
+        fn scan_numeric_array(count: usize) -> bool {
+            let mut bytes = Vec::with_capacity(count.saturating_mul(2).saturating_add(2));
+            bytes.push(b'[');
+            for index in 0..count {
+                if index > 0 {
+                    bytes.push(b',');
+                }
+                bytes.push(b'0');
+            }
+            bytes.push(b']');
+            let mut scanner = JsonScanner {
+                bytes: &bytes,
+                cursor: 0,
+                duplicate_key: false,
+                invalid_number: false,
+                overlarge_array: false,
+            };
+            scanner.value(0).unwrap();
+            scanner.overlarge_array
+        }
+
+        let maximum = usize::try_from(fixed_limits().max_file_evidence_per_session).unwrap();
+        assert!(!scan_numeric_array(maximum));
+        assert!(scan_numeric_array(maximum + 1));
+    }
+
+    #[test]
+    fn bounded_json_input_and_canonical_output_allow_exact_bytes_only() {
+        assert_eq!(parse_json_bytes(b"null", 4), Ok(Value::Null));
+        assert_eq!(
+            parse_json_bytes(b"null ", 4),
+            Err(DailyWireErrorV1::LimitExceeded),
+        );
+        assert_eq!(
+            canonical_bytes_limited(&"xxxxxx", 8),
+            Ok(b"\"xxxxxx\"".to_vec())
+        );
+        assert_eq!(
+            canonical_bytes_limited(&"xxxxxx", 7),
+            Err(DailyWireErrorV1::LimitExceeded),
+        );
+
+        let manifest_limit_u64 = fixed_limits().max_manifest_bytes;
+        let manifest_limit = usize::try_from(manifest_limit_u64).unwrap();
+        let exact =
+            canonical_bytes_limited(&"x".repeat(manifest_limit - 2), manifest_limit_u64).unwrap();
+        assert_eq!(exact.len(), manifest_limit);
+        drop(exact);
+        assert_eq!(
+            canonical_bytes_limited(&"x".repeat(manifest_limit - 1), manifest_limit_u64),
+            Err(DailyWireErrorV1::LimitExceeded),
+        );
+    }
 }

@@ -34,6 +34,38 @@ struct Fixture {
     pins: DailyPricePinsV1Wire,
 }
 
+type ActionSpec = (
+    DailyActionClassV1,
+    &'static str,
+    &'static str,
+    BTreeMap<String, String>,
+);
+type FileKeySortParts = (String, String, String, String, String);
+
+struct FileFixture<'a> {
+    kind: DailyEvidenceKindV1,
+    name: &'a str,
+    provider: &'a str,
+    batch_id: BatchId,
+    batch_date: &'a str,
+    batch_json_hash: ContentHash,
+    manifest_line_hash: ContentHash,
+    request: DailyRequestMetadataV1Wire,
+    retrieved_at: &'a str,
+    response_continuation: Option<&'a str>,
+}
+
+struct SessionFixture<'a> {
+    session_date: &'a str,
+    previous_frontier: &'a str,
+    calendar_dates: &'a [(&'a str, DailySessionTypeV1)],
+    batch_id: BatchId,
+    batch_date: &'a str,
+    batch_hash: ContentHash,
+    line_hash: ContentHash,
+    retrieved_at: &'a str,
+}
+
 fn hash(bytes: &[u8]) -> ContentHash {
     ContentHash::from_bytes(bytes)
 }
@@ -155,33 +187,22 @@ fn request(
     }
 }
 
-fn file(
-    kind: DailyEvidenceKindV1,
-    name: &str,
-    provider: &str,
-    batch_id: BatchId,
-    batch_date: &str,
-    batch_json_hash: ContentHash,
-    manifest_line_hash: ContentHash,
-    request: DailyRequestMetadataV1Wire,
-    retrieved_at: &str,
-    response_continuation: Option<&str>,
-) -> DailyFileEvidenceV1Wire {
-    let wire = format!("synthetic-wire:{name}");
-    let retrieved = ts(retrieved_at);
+fn file(seed: FileFixture<'_>) -> DailyFileEvidenceV1Wire {
+    let wire = format!("synthetic-wire:{}", seed.name);
+    let retrieved = ts(seed.retrieved_at);
     DailyFileEvidenceV1Wire {
-        provider: provider.to_owned(),
+        provider: seed.provider.to_owned(),
         market: "kr".to_owned(),
-        batch_id,
-        batch_date: date(batch_date),
-        batch_json_sha256: batch_json_hash,
-        manifest_line_sha256: manifest_line_hash,
-        file_name: name.to_owned(),
-        kind,
+        batch_id: seed.batch_id,
+        batch_date: date(seed.batch_date),
+        batch_json_sha256: seed.batch_json_hash,
+        manifest_line_sha256: seed.manifest_line_hash,
+        file_name: seed.name.to_owned(),
+        kind: seed.kind,
         wire_sha256: hash(wire.as_bytes()),
         size_bytes: wire.len() as u64,
-        request,
-        response_continuation: response_continuation.map(str::to_owned),
+        request: seed.request,
+        response_continuation: seed.response_continuation.map(str::to_owned),
         retrieved_at: retrieved,
         retrieval_precision: "batch".to_owned(),
         original_retrieved_at: retrieved,
@@ -200,7 +221,48 @@ fn file_key(file: &DailyFileEvidenceV1Wire) -> DailyFileKeyV1Wire {
     }
 }
 
-fn key_sort(file: &DailyFileKeyV1Wire) -> (String, String, String, String, String) {
+fn file_origin(
+    file: &DailyFileEvidenceV1Wire,
+    batch_number: u64,
+    retrieved_at: DailyWireTimestampV1,
+) -> DailyFileOriginV1Wire {
+    DailyFileOriginV1Wire {
+        provider: file.provider.clone(),
+        market: file.market.clone(),
+        batch_id: batch(&format!("00000000-0000-4000-8000-{batch_number:012x}")),
+        batch_date: file.batch_date,
+        batch_json_sha256: sh(batch_number + 1),
+        manifest_line_sha256: sh(batch_number + 2),
+        file_name: file.file_name.clone(),
+        kind: file.kind,
+        wire_sha256: file.wire_sha256.clone(),
+        size_bytes: file.size_bytes,
+        request: file.request.clone(),
+        response_continuation: file.response_continuation.clone(),
+        retrieved_at,
+        retrieval_precision: file.retrieval_precision.clone(),
+    }
+}
+
+fn set_copy_depth(file: &mut DailyFileEvidenceV1Wire, depth: usize, first_batch: u64) {
+    let mut copied_from = Vec::with_capacity(depth);
+    for hop in 0..depth {
+        let nanos = 123_456_788u32 - u32::try_from(hop).unwrap();
+        let retrieved_at = ts(&format!("2026-08-31T09:00:00.{nanos:09}Z"));
+        copied_from.push(file_origin(
+            file,
+            first_batch + u64::try_from(hop).unwrap(),
+            retrieved_at,
+        ));
+    }
+    file.original_retrieved_at = copied_from
+        .last()
+        .map(|origin| origin.retrieved_at)
+        .unwrap_or(file.retrieved_at);
+    file.copied_from = copied_from;
+}
+
+fn key_sort(file: &DailyFileKeyV1Wire) -> FileKeySortParts {
     (
         file.provider.clone(),
         file.market.clone(),
@@ -237,14 +299,7 @@ fn document(
     }
 }
 
-fn action_spec(
-    name: &str,
-) -> (
-    DailyActionClassV1,
-    &'static str,
-    &'static str,
-    BTreeMap<String, String>,
-) {
+fn action_spec(name: &str) -> ActionSpec {
     let mut extra = BTreeMap::new();
     let (class, path, tr_id) = match name {
         "bonus-issue" => (
@@ -296,29 +351,30 @@ fn action_spec(
     (class, path, tr_id, extra)
 }
 
-fn make_session(
-    session_date: &str,
-    previous_frontier: &str,
-    calendar_dates: &[(&str, DailySessionTypeV1)],
-    batch_id: BatchId,
-    batch_date: &str,
-    batch_hash: ContentHash,
-    line_hash: ContentHash,
-    retrieved_at: &str,
-) -> DailySessionEvidenceV1Wire {
+fn make_session(seed: SessionFixture<'_>) -> DailySessionEvidenceV1Wire {
+    let SessionFixture {
+        session_date,
+        previous_frontier,
+        calendar_dates,
+        batch_id,
+        batch_date,
+        batch_hash,
+        line_hash,
+        retrieved_at,
+    } = seed;
     let mut bars = Vec::new();
     let mut reference = Vec::new();
     for symbol in SYMBOLS {
         let ymd = session_date.replace('-', "");
-        bars.push(file(
-            DailyEvidenceKindV1::Bars,
-            &format!("bars-{symbol}.json"),
-            "kis",
+        bars.push(file(FileFixture {
+            kind: DailyEvidenceKindV1::Bars,
+            name: &format!("bars-{symbol}.json"),
+            provider: "kis",
             batch_id,
             batch_date,
-            batch_hash.clone(),
-            line_hash.clone(),
-            request(
+            batch_json_hash: batch_hash.clone(),
+            manifest_line_hash: line_hash.clone(),
+            request: request(
                 "quotations/inquire-daily-itemchartprice",
                 "FHKST03010100",
                 BTreeMap::from([
@@ -332,17 +388,17 @@ fn make_session(
                 "",
             ),
             retrieved_at,
-            Some(""),
-        ));
-        reference.push(file(
-            DailyEvidenceKindV1::Reference,
-            &format!("reference-{symbol}.json"),
-            "kis",
+            response_continuation: Some(""),
+        }));
+        reference.push(file(FileFixture {
+            kind: DailyEvidenceKindV1::Reference,
+            name: &format!("reference-{symbol}.json"),
+            provider: "kis",
             batch_id,
             batch_date,
-            batch_hash.clone(),
-            line_hash.clone(),
-            request(
+            batch_json_hash: batch_hash.clone(),
+            manifest_line_hash: line_hash.clone(),
+            request: request(
                 "quotations/inquire-price",
                 "FHKST01010100",
                 BTreeMap::from([
@@ -352,8 +408,8 @@ fn make_session(
                 "",
             ),
             retrieved_at,
-            Some(""),
-        ));
+            response_continuation: Some(""),
+        }));
     }
 
     let calendar_request = request(
@@ -366,18 +422,18 @@ fn make_session(
         ]),
         "",
     );
-    let calendar_file = file(
-        DailyEvidenceKindV1::Calendar,
-        "calendar-page-01.json",
-        "kis",
+    let calendar_file = file(FileFixture {
+        kind: DailyEvidenceKindV1::Calendar,
+        name: "calendar-page-01.json",
+        provider: "kis",
         batch_id,
         batch_date,
-        batch_hash.clone(),
-        line_hash.clone(),
-        calendar_request,
+        batch_json_hash: batch_hash.clone(),
+        manifest_line_hash: line_hash.clone(),
+        request: calendar_request,
         retrieved_at,
-        Some(""),
-    );
+        response_continuation: Some(""),
+    });
 
     let (action_start, action_end) = if session_date == "2026-08-31" {
         ("2026-08-29", "2026-08-31")
@@ -402,18 +458,18 @@ fn make_session(
             ("SHT_CD".to_owned(), String::new()),
         ]);
         query.extend(extra);
-        let page = file(
-            DailyEvidenceKindV1::CorporateActions,
-            &format!("{name}-page-01.json"),
-            "kis",
+        let page = file(FileFixture {
+            kind: DailyEvidenceKindV1::CorporateActions,
+            name: &format!("{name}-page-01.json"),
+            provider: "kis",
             batch_id,
             batch_date,
-            batch_hash.clone(),
-            line_hash.clone(),
-            request(&format!("ksdinfo/{path}"), tr_id, query, ""),
+            batch_json_hash: batch_hash.clone(),
+            manifest_line_hash: line_hash.clone(),
+            request: request(&format!("ksdinfo/{path}"), tr_id, query, ""),
             retrieved_at,
-            Some(""),
-        );
+            response_continuation: Some(""),
+        });
         actions.push(DailyActionChainV1Wire {
             logical_class: class,
             scope: DailyActionScopeV1::WholeMarket,
@@ -484,31 +540,31 @@ fn make_session(
 }
 
 fn make_sessions(two: bool) -> Vec<DailySessionEvidenceV1Wire> {
-    let mut sessions = vec![make_session(
-        "2026-08-31",
-        "2026-08-28",
-        &[
+    let mut sessions = vec![make_session(SessionFixture {
+        session_date: "2026-08-31",
+        previous_frontier: "2026-08-28",
+        calendar_dates: &[
             ("2026-08-29", DailySessionTypeV1::Closed),
             ("2026-08-30", DailySessionTypeV1::Closed),
             ("2026-08-31", DailySessionTypeV1::Trading),
         ],
-        batch("00000000-0000-4000-8000-000000000001"),
-        "2026-08-31",
-        sh(20),
-        sh(21),
-        "2026-08-31T09:00:00.123456789Z",
-    )];
+        batch_id: batch("00000000-0000-4000-8000-000000000001"),
+        batch_date: "2026-08-31",
+        batch_hash: sh(20),
+        line_hash: sh(21),
+        retrieved_at: "2026-08-31T09:00:00.123456789Z",
+    })];
     if two {
-        sessions.push(make_session(
-            "2026-09-01",
-            "2026-08-31",
-            &[("2026-09-01", DailySessionTypeV1::Trading)],
-            batch("00000000-0000-4000-8000-000000000002"),
-            "2026-09-01",
-            sh(22),
-            sh(23),
-            "2026-09-01T09:00:00.123456789Z",
-        ));
+        sessions.push(make_session(SessionFixture {
+            session_date: "2026-09-01",
+            previous_frontier: "2026-08-31",
+            calendar_dates: &[("2026-09-01", DailySessionTypeV1::Trading)],
+            batch_id: batch("00000000-0000-4000-8000-000000000002"),
+            batch_date: "2026-09-01",
+            batch_hash: sh(22),
+            line_hash: sh(23),
+            retrieved_at: "2026-09-01T09:00:00.123456789Z",
+        }));
     }
     sessions
 }
@@ -575,7 +631,25 @@ fn make_proof(sessions: &[DailySessionEvidenceV1Wire]) -> DailyNormalizationProo
     }
 }
 
-fn counts(sessions: &[DailySessionEvidenceV1Wire]) -> DailyAdmissionCountsV1Wire {
+fn proof_for_calendar_year(year: i32) -> DailyNormalizationProofV1Wire {
+    let mut proof = fixture(false).proof;
+    let mut document = proof.documents.remove(0);
+    document.session_date = TradingDate::new(year, 1, 1).unwrap();
+    let commitment = DailyNormalizedSourceCommitmentV1Wire {
+        schema: "owner-beta-daily-normalized-source-v1".to_owned(),
+        kind: document.kind,
+        session_date: document.session_date,
+        source_files: document.source_files.clone(),
+    };
+    document.source_evidence_sha256 = hash(&serde_json::to_vec(&commitment).unwrap());
+    proof.documents = vec![document];
+    proof
+}
+
+fn counts(
+    sessions: &[DailySessionEvidenceV1Wire],
+    total_session_count: usize,
+) -> DailyAdmissionCountsV1Wire {
     let mut files = BTreeSet::new();
     let mut calendar_rows = 0u64;
     let mut chains = 0u64;
@@ -613,7 +687,7 @@ fn counts(sessions: &[DailySessionEvidenceV1Wire]) -> DailyAdmissionCountsV1Wire
         }
     }
     let added = sessions.len() as u64;
-    let session_count = added + 2;
+    let session_count = total_session_count as u64;
     DailyAdmissionCountsV1Wire {
         instrument_count: 11,
         session_count,
@@ -656,7 +730,7 @@ fn fixture(two: bool) -> Fixture {
         verifier_code_commit: CodeCommit::parse(&"2".repeat(40)).unwrap(),
         normalizer_version: "daily-raw-reconstruction-v1".to_owned(),
         evidence_sha256: proof.evidence_sha256.clone(),
-        counts: counts(&manifest.daily_sources),
+        counts: counts(&manifest.daily_sources, manifest.sessions.len()),
     };
     let pins = DailyPricePinsV1Wire {
         content_sha256: manifest.content_sha256.clone(),
@@ -692,7 +766,10 @@ fn rebuild(fixture: &mut Fixture) {
     fixture.admission.parent_admission_sha256 = fixture.manifest.parent_admission_sha256.clone();
     fixture.admission.base = fixture.manifest.base.clone();
     fixture.admission.evidence_sha256 = fixture.proof.evidence_sha256.clone();
-    fixture.admission.counts = counts(&fixture.manifest.daily_sources);
+    fixture.admission.counts = counts(
+        &fixture.manifest.daily_sources,
+        fixture.draft.sessions.len(),
+    );
     fixture.pins = DailyPricePinsV1Wire {
         content_sha256: fixture.manifest.content_sha256.clone(),
         manifest_sha256: hash(&encode_daily_price_manifest_v1(&fixture.manifest).unwrap()),
@@ -814,6 +891,21 @@ fn assert_hash(actual: &ContentHash, expected: &str) {
     assert_eq!(actual.as_str(), expected);
 }
 
+fn assert_json_input_boundary<T>(
+    bytes: Vec<u8>,
+    limit: usize,
+    parse: impl Fn(&[u8]) -> Result<T, DailyWireErrorV1>,
+) where
+    T: std::fmt::Debug + PartialEq,
+{
+    assert!(bytes.len() <= limit);
+    let mut at_limit = bytes;
+    at_limit.resize(limit, b' ');
+    assert!(parse(&at_limit).is_ok());
+    at_limit.push(b' ');
+    assert_eq!(parse(&at_limit), Err(DailyWireErrorV1::LimitExceeded));
+}
+
 fn reverse_canonical_sets(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
@@ -874,6 +966,79 @@ fn refresh_corporate_document(session: &mut DailySessionEvidenceV1Wire) {
         hash(&daily_normalized_source_preimage_v1(&commitment).unwrap());
 }
 
+fn refresh_calendar_documents(session: &mut DailySessionEvidenceV1Wire) {
+    for binding in &session.calendar {
+        let document = session
+            .normalized_documents
+            .iter_mut()
+            .find(|document| {
+                document.kind == DailyEvidenceKindV1::Calendar
+                    && document.session_date == binding.civil_date
+            })
+            .unwrap();
+        document.source_files = vec![file_key(&binding.source_file)];
+        let commitment = DailyNormalizedSourceCommitmentV1Wire {
+            schema: "owner-beta-daily-normalized-source-v1".to_owned(),
+            kind: document.kind,
+            session_date: document.session_date,
+            source_files: document.source_files.clone(),
+        };
+        document.source_evidence_sha256 =
+            hash(&daily_normalized_source_preimage_v1(&commitment).unwrap());
+    }
+}
+
+fn near_limit_action(index: usize, file_name: String) -> DailyActionChainV1Wire {
+    let batch_number = 10_000 + u64::try_from(index).unwrap() * 17;
+    let (class, path, tr_id, extra) = action_spec("dividend");
+    let mut query = BTreeMap::from([
+        ("CTS".to_owned(), String::new()),
+        ("F_DT".to_owned(), "20260829".to_owned()),
+        ("T_DT".to_owned(), "20260831".to_owned()),
+        ("SHT_CD".to_owned(), "069500".to_owned()),
+    ]);
+    query.extend(extra);
+    let mut page = file(FileFixture {
+        kind: DailyEvidenceKindV1::CorporateActions,
+        name: &file_name,
+        provider: "kis",
+        batch_id: batch(&format!("00000000-0000-4000-8000-{batch_number:012x}")),
+        batch_date: "2026-08-31",
+        batch_json_hash: sh(batch_number + 1),
+        manifest_line_hash: sh(batch_number + 2),
+        request: request(&format!("ksdinfo/{path}"), tr_id, query, ""),
+        retrieved_at: "2026-08-31T09:00:00.123456789Z",
+        response_continuation: Some(""),
+    });
+    set_copy_depth(&mut page, 16, batch_number + 1);
+    DailyActionChainV1Wire {
+        logical_class: class,
+        scope: DailyActionScopeV1::Etf11Symbol,
+        symbol: Some("069500".to_owned()),
+        range_start: date("2026-08-29"),
+        range_end: date("2026-08-31"),
+        pages: vec![page],
+        cash_dividends: Vec::new(),
+        cash_dividend_rows_sha256: hash(b"[]"),
+    }
+}
+
+fn resize_action_filename(action: &mut DailyActionChainV1Wire, length: usize) {
+    let file_name = "x".repeat(length);
+    let wire = format!("synthetic-wire:{file_name}");
+    let wire_sha256 = hash(wire.as_bytes());
+    let size_bytes = wire.len() as u64;
+    let page = &mut action.pages[0];
+    page.file_name = file_name.clone();
+    page.wire_sha256 = wire_sha256.clone();
+    page.size_bytes = size_bytes;
+    for origin in &mut page.copied_from {
+        origin.file_name = file_name.clone();
+        origin.wire_sha256 = wire_sha256.clone();
+        origin.size_bytes = size_bytes;
+    }
+}
+
 #[test]
 fn synthetic_fixture_matches_pinned_bytes_hashes_and_bundle_links() {
     let fixture = fixture(false);
@@ -927,6 +1092,185 @@ fn synthetic_fixture_matches_pinned_bytes_hashes_and_bundle_links() {
         &fixture.pins,
     )
     .unwrap();
+}
+
+#[test]
+fn every_json_input_byte_limit_accepts_exact_size_and_rejects_one_more() {
+    let fixture = fixture(false);
+    assert_json_input_boundary(
+        encode_daily_price_policy_v1(&fixture.policy).unwrap(),
+        usize::try_from(fixture.policy.limits.max_policy_bytes).unwrap(),
+        parse_daily_price_policy_v1,
+    );
+    assert_json_input_boundary(
+        encode_daily_price_manifest_v1(&fixture.manifest).unwrap(),
+        usize::try_from(fixture.policy.limits.max_manifest_bytes).unwrap(),
+        parse_daily_price_manifest_v1,
+    );
+    assert_json_input_boundary(
+        encode_daily_price_admission_v1(&fixture.admission).unwrap(),
+        usize::try_from(fixture.policy.limits.max_admission_bytes).unwrap(),
+        parse_daily_price_admission_v1,
+    );
+    assert_json_input_boundary(
+        encode_daily_normalization_proof_v1(&fixture.proof).unwrap(),
+        usize::try_from(fixture.policy.limits.max_normalization_bytes).unwrap(),
+        parse_daily_normalization_proof_v1,
+    );
+}
+
+#[test]
+fn bundle_counts_follow_all_manifest_sessions_with_more_than_two_base_dates() {
+    let mut fixture = fixture(true);
+    fixture.draft.sessions.insert(1, date("2020-01-02"));
+    fixture.draft.bars.row_count = 55;
+    rebuild(&mut fixture);
+
+    assert_eq!(fixture.manifest.sessions.len(), 5);
+    assert_eq!(fixture.admission.counts.session_count, 5);
+    assert_eq!(fixture.admission.counts.bar_count, 55);
+    assert_eq!(fixture.admission.counts.added_session_count, 2);
+    validate_daily_price_wire_bundle_v1(
+        &fixture.policy,
+        &fixture.manifest,
+        &fixture.proof,
+        &fixture.admission,
+        &fixture.pins,
+    )
+    .unwrap();
+
+    let mut wrong_counts = fixture.admission.clone();
+    wrong_counts.counts.session_count = 4;
+    wrong_counts.counts.bar_count = 44;
+    assert_eq!(
+        validate_daily_price_wire_bundle_v1(
+            &fixture.policy,
+            &fixture.manifest,
+            &fixture.proof,
+            &wrong_counts,
+            &fixture.pins,
+        ),
+        Err(DailyWireErrorV1::InconsistentFields),
+    );
+}
+
+#[test]
+fn declared_source_document_bars_and_normalization_sizes_hit_exact_limits() {
+    let fixture = fixture(false);
+    let limits = &fixture.policy.limits;
+
+    let mut draft = fixture.draft.clone();
+    draft.daily_sources[0].bars[0].size_bytes = limits.max_source_file_bytes;
+    assert!(daily_price_content_preimage_v1(&draft).is_ok());
+    draft.daily_sources[0].bars[0].size_bytes += 1;
+    assert_eq!(
+        daily_price_content_preimage_v1(&draft),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+
+    let mut draft = fixture.draft.clone();
+    draft.daily_sources[0].normalized_documents[0].size_bytes =
+        limits.max_normalized_document_bytes;
+    assert!(daily_price_content_preimage_v1(&draft).is_ok());
+    draft.daily_sources[0].normalized_documents[0].size_bytes += 1;
+    assert_eq!(
+        daily_price_content_preimage_v1(&draft),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+
+    let mut draft = fixture.draft.clone();
+    draft.bars.size_bytes = limits.max_bars_bytes;
+    assert!(daily_price_content_preimage_v1(&draft).is_ok());
+    draft.bars.size_bytes += 1;
+    assert_eq!(
+        daily_price_content_preimage_v1(&draft),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+
+    let mut draft = fixture.draft;
+    draft.normalization.size_bytes = limits.max_normalization_bytes;
+    assert!(daily_price_content_preimage_v1(&draft).is_ok());
+    draft.normalization.size_bytes += 1;
+    assert_eq!(
+        daily_price_content_preimage_v1(&draft),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+}
+
+#[test]
+fn seal_rejects_a_valid_draft_whose_final_manifest_exceeds_the_byte_limit() {
+    let fixture = fixture(false);
+    let mut draft = fixture.draft;
+    let maximum = usize::try_from(fixture.policy.limits.max_manifest_bytes).unwrap();
+    let target_draft_size = maximum - 90;
+    let mut estimated_size = serde_json::to_vec(&draft).unwrap().len();
+    let maximum_actions = usize::try_from(fixture.policy.limits.max_action_chains_per_session)
+        .unwrap()
+        - draft.daily_sources[0].actions.len();
+    let mut extra_actions = Vec::new();
+
+    while estimated_size <= target_draft_size && extra_actions.len() < maximum_actions {
+        let action = near_limit_action(extra_actions.len(), "x".repeat(128));
+        let action_size = serde_json::to_vec(&action).unwrap().len();
+        let key_size = serde_json::to_vec(&file_key(&action.pages[0]))
+            .unwrap()
+            .len();
+        estimated_size = estimated_size
+            .checked_add(action_size + key_size + 2)
+            .unwrap();
+        extra_actions.push(action);
+    }
+    assert!(estimated_size > target_draft_size);
+
+    let mut characters_to_remove = (estimated_size - target_draft_size) / 18;
+    assert!(characters_to_remove <= extra_actions.len() * 28);
+    for action in &mut extra_actions {
+        if characters_to_remove == 0 {
+            break;
+        }
+        let reduction = characters_to_remove.min(28);
+        resize_action_filename(action, 128 - reduction);
+        characters_to_remove -= reduction;
+    }
+    assert_eq!(characters_to_remove, 0);
+
+    draft.daily_sources[0].actions.extend(extra_actions);
+    refresh_corporate_document(&mut draft.daily_sources[0]);
+    let preimage = daily_price_content_preimage_v1(&draft).unwrap();
+    assert!(preimage.len() <= maximum);
+    assert!(preimage.len() > maximum - 91);
+
+    let content_hash = hash(&preimage);
+    let mut final_manifest_bytes = preimage[..preimage.len() - 1].to_vec();
+    final_manifest_bytes
+        .extend_from_slice(format!(",\"content_sha256\":\"{content_hash}\"}}").as_bytes());
+    assert_eq!(final_manifest_bytes.len(), preimage.len() + 91);
+    assert!(final_manifest_bytes.len() > maximum);
+    assert_eq!(
+        seal_daily_price_manifest_v1(&draft),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+    drop(final_manifest_bytes);
+    drop(preimage);
+
+    let mut encodable_draft = draft;
+    let action = encodable_draft.daily_sources[0]
+        .actions
+        .iter_mut()
+        .find(|action| {
+            action.scope == DailyActionScopeV1::Etf11Symbol
+                && action.pages[0].file_name.starts_with("x")
+        })
+        .unwrap();
+    let file_name_length = action.pages[0].file_name.len();
+    resize_action_filename(action, file_name_length - 1);
+    refresh_corporate_document(&mut encodable_draft.daily_sources[0]);
+    let encodable_preimage = daily_price_content_preimage_v1(&encodable_draft).unwrap();
+    assert!(encodable_preimage.len() <= maximum - 91);
+    let sealed = seal_daily_price_manifest_v1(&encodable_draft).unwrap();
+    let final_bytes = encode_daily_price_manifest_v1(&sealed).unwrap();
+    assert!(final_bytes.len() <= maximum);
+    assert!(final_bytes.len() > maximum - 128);
 }
 
 #[test]
@@ -1270,6 +1614,28 @@ fn lexical_bounds_timestamp_precision_and_json_limits_are_fail_closed() {
 }
 
 #[test]
+fn proof_date_typed_and_json_paths_match_domain_year_bounds() {
+    for (year, valid) in [(0, false), (1, true), (9999, true), (10_000, false)] {
+        let proof = proof_for_calendar_year(year);
+        let raw = serde_json::to_vec(&proof).unwrap();
+        if valid {
+            let encoded = encode_daily_normalization_proof_v1(&proof).unwrap();
+            assert_eq!(parse_daily_normalization_proof_v1(&raw).unwrap(), proof);
+            assert_eq!(parse_daily_normalization_proof_v1(&encoded).unwrap(), proof);
+        } else {
+            assert_eq!(
+                encode_daily_normalization_proof_v1(&proof),
+                Err(DailyWireErrorV1::InvalidDate),
+            );
+            assert_eq!(
+                parse_daily_normalization_proof_v1(&raw),
+                Err(DailyWireErrorV1::InvalidDate),
+            );
+        }
+    }
+}
+
+#[test]
 fn single_page_markers_are_retained_and_legacy_hash_is_independent() {
     let fixture = fixture(false);
     let mut session = fixture.manifest.daily_sources[0].clone();
@@ -1405,6 +1771,65 @@ fn ordered_action_pages_and_copy_hops_are_never_sorted() {
 }
 
 #[test]
+fn ten_ordered_pages_and_sixteen_distinct_copy_hops_hit_their_bounds() {
+    let fixture = fixture(false);
+    let mut ten_pages = fixture.manifest.daily_sources[0].clone();
+    let action = &mut ten_pages.actions[0];
+    let first_page = action.pages[0].clone();
+    action.pages[0].response_continuation = Some("M".to_owned());
+    for page_index in 1..10 {
+        let name = format!("bonus-issue-page-{:02}.json", page_index + 1);
+        let wire = format!("synthetic-wire:{name}");
+        let mut page = first_page.clone();
+        page.file_name = name;
+        page.wire_sha256 = hash(wire.as_bytes());
+        page.size_bytes = wire.len() as u64;
+        page.response_continuation = Some(if page_index == 9 { "F" } else { "M" }.to_owned());
+        for (header, value) in &mut page.request.headers {
+            if header == "tr_cont" {
+                *value = "N".to_owned();
+            }
+        }
+        action.pages.push(page);
+    }
+    refresh_corporate_document(&mut ten_pages);
+    assert!(daily_price_evidence_preimage_v1(&[ten_pages.clone()]).is_ok());
+
+    let mut eleven_pages = ten_pages;
+    let action = &mut eleven_pages.actions[0];
+    action.pages[9].response_continuation = Some("M".to_owned());
+    let name = "bonus-issue-page-11.json";
+    let wire = format!("synthetic-wire:{name}");
+    let mut last_page = action.pages[0].clone();
+    last_page.file_name = name.to_owned();
+    last_page.wire_sha256 = hash(wire.as_bytes());
+    last_page.size_bytes = wire.len() as u64;
+    last_page.response_continuation = Some("F".to_owned());
+    for (header, value) in &mut last_page.request.headers {
+        if header == "tr_cont" {
+            *value = "N".to_owned();
+        }
+    }
+    action.pages.push(last_page);
+    refresh_corporate_document(&mut eleven_pages);
+    assert_eq!(
+        daily_price_evidence_preimage_v1(&[eleven_pages]),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+
+    let mut sixteen_hops = fixture.manifest.daily_sources[0].clone();
+    set_copy_depth(&mut sixteen_hops.calendar[0].source_file, 16, 3);
+    assert!(daily_price_evidence_preimage_v1(&[sixteen_hops.clone()]).is_ok());
+
+    let mut seventeen_hops = sixteen_hops;
+    set_copy_depth(&mut seventeen_hops.calendar[0].source_file, 17, 3);
+    assert_eq!(
+        daily_price_evidence_preimage_v1(&[seventeen_hops]),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+}
+
+#[test]
 fn copied_calendar_keeps_terminal_request_target_and_changes_source_commitment() {
     let fixture = fixture(false);
     let original_evidence =
@@ -1472,6 +1897,26 @@ fn copied_calendar_keeps_terminal_request_target_and_changes_source_commitment()
 }
 
 #[test]
+fn multi_hop_copy_order_compares_each_nanosecond() {
+    let fixture = fixture(false);
+    let mut ordered = fixture.manifest.daily_sources[0].clone();
+    for binding in &mut ordered.calendar {
+        set_copy_depth(&mut binding.source_file, 2, 3);
+    }
+    refresh_calendar_documents(&mut ordered);
+    assert!(daily_price_evidence_preimage_v1(&[ordered.clone()]).is_ok());
+
+    let mut inverted = ordered;
+    for binding in &mut inverted.calendar {
+        binding.source_file.copied_from[0].retrieved_at = ts("2026-08-31T09:00:00.123456786Z");
+    }
+    assert_eq!(
+        daily_price_evidence_preimage_v1(&[inverted]),
+        Err(DailyWireErrorV1::InvalidOrder),
+    );
+}
+
+#[test]
 fn page_copy_and_count_guards_fail_before_claims_are_hashed() {
     let fixture = fixture(false);
     let mut too_many_pages = fixture.manifest.daily_sources[0].clone();
@@ -1513,6 +1958,56 @@ fn page_copy_and_count_guards_fail_before_claims_are_hashed() {
     assert_eq!(
         encode_daily_price_admission_v1(&too_many_sessions),
         Err(DailyWireErrorV1::LimitExceeded)
+    );
+}
+
+#[test]
+fn admission_aggregate_counts_accept_each_upper_bound_and_reject_plus_one() {
+    let mut admission = fixture(false).admission;
+    let limits = policy().limits;
+    let added = limits.max_sessions - 2;
+    let chains = limits.max_action_chains_per_session * added;
+    admission.parent_admission_sha256 = Some(sh(77));
+    admission.counts.session_count = limits.max_sessions;
+    admission.counts.bar_count = limits.max_sessions * 11;
+    admission.counts.added_session_count = added;
+    admission.counts.calendar_row_count = limits.max_civil_dates_per_addition * added;
+    admission.counts.action_chain_count = chains;
+    admission.counts.action_page_count = limits.max_pages_per_action_chain * chains;
+    admission.counts.source_file_count = limits.max_file_evidence_per_session * added;
+    admission.counts.cash_dividend_row_count = limits.max_cash_rows_per_chain * chains;
+    admission.counts.normalized_document_count = added * 3 + admission.counts.calendar_row_count;
+    assert!(encode_daily_price_admission_v1(&admission).is_ok());
+
+    let mut over = admission.clone();
+    over.counts.calendar_row_count += 1;
+    assert_eq!(
+        encode_daily_price_admission_v1(&over),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+    let mut over = admission.clone();
+    over.counts.action_chain_count += 1;
+    assert_eq!(
+        encode_daily_price_admission_v1(&over),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+    let mut over = admission.clone();
+    over.counts.action_page_count += 1;
+    assert_eq!(
+        encode_daily_price_admission_v1(&over),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+    let mut over = admission.clone();
+    over.counts.source_file_count += 1;
+    assert_eq!(
+        encode_daily_price_admission_v1(&over),
+        Err(DailyWireErrorV1::LimitExceeded),
+    );
+    let mut over = admission;
+    over.counts.cash_dividend_row_count += 1;
+    assert_eq!(
+        encode_daily_price_admission_v1(&over),
+        Err(DailyWireErrorV1::LimitExceeded),
     );
 }
 

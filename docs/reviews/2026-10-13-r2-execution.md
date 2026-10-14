@@ -562,3 +562,29 @@ I1a-CI-D는 02:49:54 UTC 실제 idle/pending0이며 [진단 보고](2026-10-14-r
 I1a-F 소스 수정 범위는 그대로다. `a80e3b3a`를 삭제하고 I1a-F만 맡는 `45e28caf`
 (2분·60회·04:51:06 UTC 만료)로 교체했다. 종료된 진단 worker를 재실행하지 않았다.
 누적 manifest 집계 규칙의 Mem0 저장 시도는 MCP_ERROR로 실패했으며 저장 성공으로 기록하지 않는다.
+
+
+### I1a-F 수정본 회수와 독립 검증 전환 — 2026-10-14 KST
+
+03:12:53 UTC actual idle/pending0 뒤 최종 보고 전체를 회수했다. 수정 파일은 contract.rs와
+테스트 두 개뿐이다. 각각 4,163행·`79370bc25c927aa0d4b19e9646ab1bccfb845b8980a800217282a172901ccf2a`,
+2,283행·`ea08ac3ae55c7a4b667556cec100cd25ac32298d2d21a7c209b490c412f355e4`다.
+코디네이터는 전체 manifest sessions가 두 derive_counts 호출에 전달되는 점, checked bar 수,
+inner timestamp 비교, proof 날짜 검사, 최종 seal canonical byte 제한과 해당 회귀를 직접 대조했다.
+worker의 rustfmt/diff 검사와 작성된 24 integration+5 private unit test는 실제 Rust PASS가 아니다.
+고정 D4 950행·`fa052903…`, 7개 primary golden과 별도 515-byte cash 규칙을 유지한다.
+전체 delta는 6개 finding의 독립 후속 검토와 새 exact 후보 hosted CI로 넘긴다.
+
+[추가 실행 brief](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 두 package를
+먼저 분류했다. I1a-F-R은 intermediate/high confidence 코드 리뷰로 새 Sol/high
+`a4b5c1b9-3354-400b-be82-b8dec4f87278`에 report 한 파일만 맡겼다. 첫 create 호출은 input validation
+오류로 생성되지 않았고, 문자열 brief를 명시한 호출이 성공했다. 03:21:20 UTC running/pending0,
+workspace/parent/model/effort와 notified launch를 확인했다. 권한 모드는 변경하지 않았다.
+coordinator용 프로필 하나만 있어 저장소의 코드 리뷰 배정 규칙을 적용했다.
+I1a-F-CI는 simple/high confidence 결과 회수이며 새 full SHA/run 확인 후 기존 Luna/medium collector에
+notified follow-up한다. 같은 run의 재실행·취소는 하지 않는다. I0/0060/운영·최종 C_R2는 미완료다.
+
+코디네이터의 두 소스 rustfmt check와 diff whitespace 검사는 통과했고, 진행 문서의 local link/행
+경계 207개를 확인했다. primary golden test 본문과 cash fixture 상수는 `779b3fa` 대비 동일하다.
+신규 helper 선언까지 포함했던 첫 비교는 범위 오류로 실패했고, 상수·golden 본문을 분리한 대조로
+정정했다. 이 정적 검사는 golden의 실제 실행을 대체하지 않는다.

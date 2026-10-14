@@ -577,3 +577,60 @@ validator blob을 직접 대조해 이 원인 증거를 수용했다. PG inner C
 후속 DB test·chart/new pure test 실행은 없다. SQLSTATE를 terminal 원인으로 간주하지 않는다.
 I1a-F 범위는 유지하며 실행 중 worker에게 새 지시를 보내지 않았다. `a80e3b3a`는 삭제하고
 `45e28caf`(2분·60회·04:51:06 UTC 만료)로 I1a-F만 관찰한다. I0/0060/runtime 인수는 미완료다.
+
+## I1a-F 회수와 보정 후보 검증 — 2026-10-14
+
+03:12:53 UTC actual idle/pending0 뒤 두 파일의 최종 보고를 회수했다. 코디네이터가 전체 session 수의
+전달·checked bar 계산, proof 날짜 검사, 최종 seal byte 검사 및 관련 회귀를 직접 읽었다.
+수정 전후 diff는 두 파일에 한정되며 D4 950행 `fa052903…`와 public interface inventory는 유지한다.
+아래 hash를 독립 검토 입력으로 고정한다. 아직 컴파일·Clippy·테스트 성공이나 6개 finding 종결을
+주장하지 않는다. 기존 실패 후보와 로그는 보존하며 새 후보를 별도로 검증한다.
+
+| 입력 | 행 수 | SHA-256 |
+| --- | --- | --- |
+| `crates/market-data/src/daily_price_only/contract.rs` | 4163 | `79370bc25c927aa0d4b19e9646ab1bccfb845b8980a800217282a172901ccf2a` |
+| `crates/market-data/tests/daily_price_only.rs` | 2283 | `ea08ac3ae55c7a4b667556cec100cd25ac32298d2d21a7c209b490c412f355e4` |
+
+### 추가 package 분류와 순서
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I1a-F-R | intermediate | 고정된 6개 finding과 두 파일 delta의 의미·경계 회귀 검토 | high | 명세 모순 또는 범위 밖 Raw/DB 설계가 필요하면 해당 지점을 보고하고 코디네이터가 재분해 |
+| I1a-F-CI | simple | 정확한 후보의 기존 hosted run과 이름이 정해진 테스트 결과 회수 | high | 로그 부재·추가 분석 필요·반복 CLI 실패는 추정하지 않고 범위와 근거를 보고 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I1a-F-R | 1 | intermediate | R01~06 보정 및 새 회귀의 독립 검토 | `docs/reviews/2026-10-14-r2-daily-wire-corrections-review.md` 하나 | I1a-F idle·보고 회수·위 hash 고정 | 새 Paseo Sol/high, code-review 규칙 | finding별 판정·재현 경로·검증 한계 | hash·source/diff·line·rustfmt check, 실행 결과 추정 금지 |
+| I1a-F-CI | 1 | simple | 보정 commit의 실제 compiler/test 결과 회수 | `docs/reviews/2026-10-14-r2-daily-wire-corrections-ci.md`, 새 candidate의 private CI 하위 경로 | 코디네이터 commit/push·기존 실행 확인·단일 run 식별 | 기존 Paseo Luna/medium collector | job/step/test·checkout SHA·sanitized receipt | 기존 GitHub run 읽기; 로컬 Rust/DB 실행 금지 |
+
+### I1a-F-R 고정 실행 brief
+
+- 작업 디렉터리는 이 계획 상단과 같다. D4, 원래 I1a-R 316행 `92da4c04…`, CI-D 진단과
+  `779b3fa` 대비 현재 두 파일의 diff를 검토한다. wrapper/lib 및 D4는 변경하지 않는다.
+- R01 전체 manifest session/bar와 added/evidence 집계 분리, R02 nanosecond 비교·세 accumulator,
+  R03 typed/JSON 날짜 parity, R04 strict warning 노출, R05 모든 fixed guard의 실제 호출 및
+  bound/bound+1 회귀, R06 최종 seal/encoder 일치와 near-limit fixture를 각각 판정한다.
+  named helper만 검사한 제한과 public 경로 검증을 구분하고, 대형 fixture의 유효성·자원 크기를 점검한다.
+- 7개 primary golden, 515-byte cash와 정확한 오류, 25 struct/4 enum/17 public function/2 method,
+  unapproved-only 경계가 보존됐는지 확인한다. concrete source path·조건·영향 없이 결함을 추측하지 않는다.
+- 출력은 위 새 review 한 파일뿐이다. source/hash/diff/line 및 rustfmt check만 허용한다.
+  Cargo/rustc/Clippy/test/build/DB/SQL/root/Docker/provider/운영/Git write/하위 위임은 금지한다.
+  실제 실행은 CI 담당이 회수한다. 공통 보고 형식에 finding별 disposition과 정확한 입력 hash를 포함한다.
+
+### I1a-F-CI 고정 실행 brief
+
+- 코디네이터가 수정 소스와 진행 문서를 한 candidate로 commit/push하고 remote SHA를 확인한다.
+  해당 SHA의 기존 run을 먼저 조회하고 없을 때만 기존 ci.yml을 한 번 dispatch한다.
+  `38500926595`는 terminal failure로 보존하며 재실행·취소하지 않는다.
+- run ID/full SHA/시각/private 경로는 실제 조회 뒤 notified follow-up에 고정한다. collector는
+  그 run만 읽고 workflow 변경·추가 실행·Git write를 하지 않는다. 60초보다 자주 poll하지 않으며
+  시작 후 90분 또는 전달된 UTC 경계 중 먼저 도달하면 terminal 여부와 미회수 항목을 보고한다.
+- 7개 실행 job과 required, checkout-bearing log의 SHA, 신규 24 integration+5 private unit test의
+  정확한 이름/결과와 기존 historical v2/v3, chart, PG validation, Web/Python을 회수한다.
+  test 이름과 실행 여부는 로그로 확인하고, 미호출 direct-login helper·0060·runtime을 추론하지 않는다.
+  raw 로그는 메모리에서 필터링하고 안전한 진단·원본 응답 hash만 보존한다.
+- 로컬 Cargo/rustc/build/test/DB/root/Docker/provider/운영은 금지한다. source-only 리뷰와 hosted
+  실행 결과를 코디네이터가 함께 확인해야 이 부분 후보를 수용할 수 있다. 최종 C_R2 인수와는 구분한다.
+
+두 assignment 모두 공통 직접 작업 문장과 최종 보고 형식을 따른다. 실제 running·pending0·notifier를
+확인한 뒤 `45e28caf`를 새 두 scope의 bounded heartbeat로 교체하고 ledger에 회수·인수 상태를 분리한다.
