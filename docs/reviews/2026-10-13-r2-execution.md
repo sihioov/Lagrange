@@ -412,3 +412,24 @@ running/pending0를 01:42:44 UTC에 확인했다. profile은 여전히 코디네
 I0a에 notifyOnFinish=true를 등록하고, 기존 I1a 알림도 유지했다. `8643dc9c`를 삭제해
 I1a/I0a 및 대기 중인 D6-01 follow-up만 다루는 `87552d56`으로 교체했다(2분·60회,
 03:43:07 UTC 만료). ledger에 D6 최종 결과·보정 예약·새 소유 범위를 보존했다.
+
+### I0a 소스 회수·독립 리뷰 시작 — 2026-10-14 KST
+
+I0a worker의 01:48:29 UTC 실제 idle/pending0와 최종 보고를 회수했다. 코디네이터가
+`c073d7c` 기준 네 파일 diff를 직접 읽고 새 admitter의 속성/멤버십 fail-closed 검사,
+새 scratch DB에서 MIGRATOR 전 CONNECT·USAGE/CREATE 권한 확인, 최대 2개 연결의
+직접 LOGIN helper를 확인했다. 구체적인 파일 hash·행 수는
+[계획의 I0a 회수 절](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 고정했다.
+worker가 보고한 rustfmt/diff check 통과를 컴파일이나 SQL 실행 성공으로 재해석하지 않는다.
+
+기존 Sol/high worker `d9ca76a3-b7dc-4913-944f-10ce8cc35d80`가 I0a-R을 맡는다.
+D6 최종 보고와 판단은 보존하고, 새 보고서 `2026-10-14-r2-isolated-role-harness-review.md`만
+작성한다. profile 재조회 결과는 코디네이터용 하나였으므로 기존 지원 모델/effort와 리뷰 규칙을
+유지했다. notifyOnFinish=true로 follow-up을 전달하고 실제 running/pending0·workspace·parent를
+확인했다. 역할/SQL의 실제 실행 검증, 잔여 운영 bootstrap/secret/Compose/official validator와
+첫 0060 준비 완료는 주장하지 않는다.
+
+I1a는 01:49:02 UTC 현재 running/pending0이며 고정 `308b9909…` 명세를 유지한다.
+종료 후 D6-01 보정을 적용할 순서는 변하지 않았다. I0a 회수 후 기존 `87552d56` 감시를
+`7aba6810`(2분·60회·03:52:12 UTC 만료)으로 교체해 I1a/I0a-R만 관찰한다.
+이 변경은 소스 리뷰 착수이며 운영·DB·provider·build/test 실행은 없었다.

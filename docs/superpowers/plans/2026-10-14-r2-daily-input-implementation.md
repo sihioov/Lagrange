@@ -36,6 +36,7 @@ Native subagents: prohibited for worker packages
 | D6 | intermediate | 고정 D5 교정안의 기존 D3 finding 해소와 D4 접점만 독립 대조 | high | 새 제품 정책·전면 재설계가 필요하면 구체적 미해결 접점을 반환 |
 | I1a | intermediate | D4에서 고정한 unapproved wire 타입·encoding/hash와 provider-free 회귀 구현 | high | 명세에 없는 key/type/hash 의미가 필요하면 코드로 채우지 않고 D4 보정 요청 |
 | I0a | intermediate | D6가 검토한 새 admitter 역할의 격리 harness 준비를 기존 네 파일에 한정 | high | 운영 secret/Compose 변경 또는 새 migration 의미가 필요하면 해당 접점을 반환 |
+| I0a-R | intermediate | 고정된 네 harness 파일의 권한·실행 순서·직접 로그인 구현을 독립 검토 | high | 구체적 소스 반례만 반환하며 미실행 DB 검증을 source closure와 구분 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
 검증 명령을 추가하고서** 시작한다. 현재 설계 작업을 소스 구현 완료로 세지 않는다.
@@ -53,6 +54,7 @@ Native subagents: prohibited for worker packages
 | D6 | 4 | intermediate | D5 및 보정 D4와의 연결 검토 | `docs/reviews/2026-10-14-r2-daily-input-amendments-review.md`만 | D4/D5 회수·hash 고정 | codex gpt-6.1-sol high, 독립 리뷰 규칙 | 구체적 미해결 finding 또는 범위 한정 closure | D3 failure path·현재 source·수정 인터페이스 대조; 실행 없음 |
 | I1a | 4 | intermediate | 독립 unapproved wire 계약·canonical hash 구현 | `crates/market-data/src/daily_price_only/{mod,contract}.rs`, `src/lib.rs`, `tests/daily_price_only.rs` | D4 코디네이터 인수·launch brief 고정 | Luna max | 새 pure module·golden/rejection 회귀 | rustfmt/diff, 이후 exact 후보 Rust/CI; 실행 전 source만 수용 |
 | I0a | 5 | intermediate | 첫 0060 전 격리 role/bootstrap 기반 준비 | 두 `tests/common/mod.rs`, migration-contract의 `role-bootstrap.sql`·`bootstrap.sql`만 | D6의 D3-05 source-design closure 수용 | Luna max | 새 role preflight·DB별 권한·direct-login helper | rustfmt/diff·source 확인; 실제 역할/DB 검증은 이후 hosted 순차 실행 |
+| I0a-R | 5 | intermediate | I0a 구현의 독립 소스 리뷰 | `docs/reviews/2026-10-14-r2-isolated-role-harness-review.md`만 | I0a idle·결과 회수·네 파일 hash 고정 | Sol high, 코드 리뷰 규칙 | 구체적 finding 또는 범위 한정 source closure | 소스·SQL 문자열·연결 순서 대조; 실행 없음 |
 
 ## Worker briefs
 
@@ -343,3 +345,33 @@ trim하며 빈 결과를 허용하고, `kis_normalization.rs:85`의 유효 cash 
   SQL 파서 실행·effective role 검증은 수행하지 않았다고 보고한다. 실제 검증은 official/harness
   source 통합 후 격리 CI에서 순차 진행하며, 나머지 I0 연결 전 첫 0060 실행은 계속 금지한다.
 - 공통 최종 보고 형식과 직접 작업 규칙을 따른다. 문서·로드맵·커밋은 코디네이터가 통합한다.
+
+## I0a 회수·I0a-R 독립 검토 — 2026-10-14
+
+I0a worker는 01:48:29 UTC에 실제 idle/pending0가 됐고 최종 보고를 회수했다.
+네 파일의 diff에서 role preflight, scratch DB 전용 권한 준비, MIGRATOR 이전 호출,
+직접 로그인 helper 연결을 확인했다. 보고된 rustfmt/diff 검사는 소스 검사이며 SQL 실행이나
+실제 role 인수가 아니다. 원래 I0a의 source acceptance는 독립 리뷰와 후속 격리 검증을 남긴다.
+
+| 검토 입력 | 행 수 | SHA-256 |
+| --- | --- | --- |
+| `crates/job-queue/tests/common/mod.rs` | 399 | `973cb28656db8fd59e17f302f022ec167383b291bd1c0dd095b36425b62ac69d` |
+| `crates/api-server/tests/common/mod.rs` | 933 | `6735a723f3c874c129ed43685f8633c372a8384ba2d23da407bebb7d18ed7dcb` |
+| `tests/integration/migration-contract/role-bootstrap.sql` | 94 | `9dfe008fdd08b49587940e14fc6f441b2a0053da5f48651fec98fdb53c31b85a` |
+| `tests/integration/migration-contract/bootstrap.sql` | 33 | `24fcb7f582f927d9d94827597c74989e005c3378530a3b9c5677e6ac29bf3c77` |
+
+### I0a-R 실행 brief
+
+- intermediate/high confidence. 기존 독립 리뷰 worker를 Sol/high로 재사용한다. 소유 출력은
+  `docs/reviews/2026-10-14-r2-isolated-role-harness-review.md` 하나다.
+- 위 네 파일 hash와 diff 기준 `c073d7c`를 확인하고 I0a의 고정 brief/D5 A5에 맞춰 검토한다.
+  신규 role 속성·양방향 membership·cycle-safe transitive path 거부, 불량 기존 role의 무수리,
+  supervisor와 scratch의 grant 분리, migration 전 privilege 확인, direct LOGIN·actor GUC 없음,
+  기존 잠금·연결 정보·cleanup 의미와 SQLx 호출 정합성을 확인한다.
+- 도달 가능한 실패 경로와 정확한 source anchor가 있는 finding만 제시한다. 기존 baseline 문제와
+  새 회귀를 구분하며 전체 I0/0060/운영 준비가 안 됐다는 사실만으로 이 한정 변경을 거부하지 않는다.
+- 제품 소스와 I1a의 실행 중인 네 파일, D4 계약, 진행 문서·로드맵은 변경하지 않는다.
+  컴파일·Cargo·rustc·테스트·SQL parser·DB·root·Docker·network·provider·운영 읽기/실행·Git write 금지.
+  source read/hash/link/line 검사와 허용 네 파일의 rustfmt check·diff check만 허용한다.
+- 공통 최종 보고 형식을 따른다. SQL 실행·실제 role/pool/ACL은 미검증으로 남기고
+  coordinator의 인수 전 완료로 주장하지 않는다. 하위 위임 없이 직접 수행한다.
