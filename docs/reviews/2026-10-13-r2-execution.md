@@ -1816,3 +1816,26 @@ Further delegation, source fixes, run cancellation/reruns and local execution ar
 prohibited. Prior I0c partial successes, UNKNOWN nested helper evidence and all
 failures remain preserved. Negative bootstrap/rollback, 0060, reconstruction and
 admission, I6 diagrams before main, runtime/Owner and final C_R2 remain open.
+
+### Wave30 terminal CI metadata; full collector recovery pending — 2026-10-15 KST
+
+At 2026-10-14 16:15:07 UTC, coordinator independently recovered terminal metadata
+for candidate `245f4d9a911d03d58936f177904588826031d83e`,
+[run 38594682124](https://github.com/sihioov/Lagrange/actions/runs/38594682124),
+attempt 1, unchanged workflow/event/branch. All eight jobs are completed.
+Clippy, workspace-tests, postgres-integration-validation and required failed;
+format, web, policy and python-tests succeeded. These are job-level outcomes,
+not acceptance of uninspected nested results or individual test execution.
+
+The owned collector was actually running with its original activeTurn and
+pending 0 at 16:14:02.098 UTC; its activity says it is writing the report.
+No full substantive final has been recovered. Heartbeat `de67d496` remains active;
+the 17:34:01.894 UTC reporting bound is unchanged. No redirection, source repair,
+rerun, cancellation or new worker was issued. Detailed failure diagnostics and
+99 Rust/6 chart named results remain pending full recovery and independent checks.
+
+The private coordinator receipt `wave30-S2-CI-terminal-metadata.json` under
+`target/r2-daily-beta/wp-4-integration/` has 125 lines and SHA256
+`9b5e7942d15719fc16729a0e5a372e6627a3b0560163f987045d145cc64e5113`.
+It preserves all job identities/statuses without raw logs. Source/compiler/test
+acceptance remains withheld; prior partial successes and failures are preserved.
