@@ -1469,3 +1469,21 @@ is07:38:21 UTC. Heartbeat `e676d7dc` runs every2minutes, at most60times, expires
 The ledger and private wave11 startup receipts retain notification and lifecycle evidence.
 Coordinator must recover incomplete work explicitly and reconcile/replace before expiry;
 the same daemon heartbeat does not protect daemon outage. No new CI or execution acceptance.
+
+
+## Raw correction review recovered — 2026-10-14
+
+I1b-S1-F-R reached actual idle/pending0 at06:43:44 UTC; full final recovered.
+[Independent Raw correction review](../../reviews/2026-10-14-r2-raw-manifest-corrections-review.md) is199lines, SHA-256
+`f65bb3e3a47f8cea39dfccd74656602639340249f56ddbc76881fc846eb5e88b`.
+The coordinator checked the report, fifteen links/line bounds, all20 frozen inputs,
+and the five source dispositions against the previously inspected two-file delta.
+S1-R01–05 are closed at source-review level; no concrete new delta finding was identified.
+There are19 written definitions (16 Unix integration, one alternate non-Unix, two private
+Unix), normally18 selected on Unix. None were executed in this review or recovery.
+
+Compiler, strict Clippy, tests, actual errno/locks/races/permissions and non-Unix behavior
+remain unverified. Manifest-only evidence does not establish full snapshot/admission truth.
+I0b-F-R is still running without pending permissions; existing e676d7dc monitoring remains
+for its07:38:21 UTC reporting bound. Combined source acceptance and new exact-candidate
+CI await that review and any required correction. No new workflow or operational action.

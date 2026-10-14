@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — `929fcd6`의 [CI](reviews/2026-10-14-r2-harness-lint-ci.md)가7개 실행 job/required 모두 성공했다. 신규 Rust30개·chart6 직접 PASS, Python485 pass/10 skip, PG59 migrations 통과를 대조해 I1a 순수 wire/I0a 소스·hosted 검증을 부분 인수했다. I0b/I1b-S1의 [11개 파일 소스 인계](reviews/2026-10-14-r2-role-and-raw-source-handoff.md)를 회수해 두 독립 리뷰의 DB 3개·Raw 5개 소스 지적을 수용해 5개 파일 국소 보정으로 전환했다. DB 세 파일·Raw 두 파일 보정본을 `de1889b`로 커밋했고 두 독립 재검토가 진행 중이다. 두 수정본 검토와 새 후보 CI가 남는다. helper 실제 동작·0060·전체 입력 승인·운영·Owner 인수는 남으며 이전 실패 기록은 보존한다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — `929fcd6`의 [CI](reviews/2026-10-14-r2-harness-lint-ci.md)가7개 실행 job/required 모두 성공했다. 신규 Rust30개·chart6 직접 PASS, Python485 pass/10 skip, PG59 migrations 통과를 대조해 I1a 순수 wire/I0a 소스·hosted 검증을 부분 인수했다. I0b/I1b-S1의 [11개 파일 소스 인계](reviews/2026-10-14-r2-role-and-raw-source-handoff.md)를 회수해 두 독립 리뷰의 DB 3개·Raw 5개 소스 지적을 수용해 5개 파일 국소 보정으로 전환했다. 보정본 `de1889b`의 [Raw 재검토](reviews/2026-10-14-r2-raw-manifest-corrections-review.md)는 5개 소스 지적 해소·새 finding 없음으로 수용했다. DB 재검토는 진행 중이다. DB 재검토와 새 후보 CI가 남는다. helper 실제 동작·0060·전체 입력 승인·운영·Owner 인수는 남으며 이전 실패 기록은 보존한다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
