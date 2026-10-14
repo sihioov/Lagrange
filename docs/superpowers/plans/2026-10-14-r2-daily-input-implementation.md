@@ -3019,3 +3019,130 @@ monitor57665dd0. Recover exact INCOMPLETE coverage at the reporting bound and
 renew or hand off before expiry; same-daemon heartbeat cannot protect daemon outage.
 The private startup receipt and owned-worker ledger record the actual lifecycle.
 Historical successes/failures and all later operational/Owner/0060/diagram gates remain.
+
+## Wave27 — second bounded snapshot correction
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+### Goal and boundaries
+
+Correct FR01-FR09 in the existing two-file S2 source scope. The coordinator
+[disposition](../../reviews/2026-10-14-r2-snapshot-second-correction-scope.md)
+accepts the concrete review findings for correction only, specifies the FD-owner
+observation boundary, and fixes E01 in a preserved-successor baseline inventory.
+R2-04/09 remain DOING. Source, compile, tests and CI acceptance remain withheld.
+The previous reviewer is actual idle/pending0/full-result recovered and monitor
+b6352577 is deleted. All historical contracts/reports/CI evidence stay preserved.
+
+### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F2 | intermediate | Fixed contract and nine concrete findings in two files; private ownership observation design is specified, with bounded parser/liveness/test corrections | medium | Cannot preserve API/one-FD/lock-last within scope; conflicting requirement; repeated verification failure; report exact INCOMPLETE at90-minute bound, no silent expansion |
+
+### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F2 |27|intermediate|Correct FR01-FR09 and retain all R/P/T guards|Only source.rs and daily_price_only_snapshot.rs|Recovered independent review, coordinator decisions and frozen source/input inventory|codex/gpt-6.1-sol/max; one model-tier escalation, max effort unchanged|Two-file delta plus full substantive disposition report|Static preservation and exact delta, later independent review then one exact-candidate hosted CI|
+
+The initial Luna/max implementation and first Luna/max correction both failed
+independent verification. New compile blockers and recurring R10/R12 proof defects
+satisfy the repository escalation signal; no speculative higher-tier start.
+The only configured profile is Astra/high with coordinator notes. Current
+list_models/inspect_provider confirms Sol/max, so fallback is explicit.
+Only one worker is needed: the two mutable files overlap across all findings.
+Coordinator E01 bookkeeping is complete in a distinct successor artifact, not
+assigned to this source worker.
+
+### Worker brief
+
+```text
+Package WP-4/I1b-S2-F2 (Wave27), roadmap R2-04/09.
+Workspace /data/worktrees/3puw275b/excited-dolphin; workspaceId wks_10fae7d550ab1704.
+One bounded second correction of the Linux Raw snapshot implementation and its regression tests.
+Classification: intermediate, medium confidence. The public contract is fixed; remaining local ownership, parser and test-observation choices are specified below. Raise an exact INCOMPLETE/contradictory requirement if these cannot fit the two-file scope; do not invent a new design or widen scope.
+Routing: codex/gpt-6.1-sol/max. Initial implementation and first correction by Luna/max both failed independent source verification, including new compile blockers and recurring R10/R12 proof defects. Only model tier increases; max effort is retained. You implement directly; the existing independent reviewer is a different agent.
+
+Known facts and frozen inputs
+- Read AGENTS.md, docs/ROADMAP.md, this Wave27 brief, both independent reports, and the complete accepted P1-P10 contract first. Roadmap/plan are coordinator-owned and may receive startup bookkeeping; all inventory-pinned source/reference/artifact bytes are immutable except your two targets.
+- Source baseline 7545094404628974c1bd626c84f6c3f704555f5f. source.rs 3987 lines SHA256 4577d5f10bbe4dda508c89b25ff04c638a274bc5050e5f9e9b7e03b5ba4d8bb5; test 1896 lines SHA256 754a32ec22ba32f7b6c57da9e3dfb335cdeb064926ecedd1591f4ff3c74d9dd7. mod.rs remains9 lines/700469d6a510aa3ae7ad6a27fb42a78a76b243256e5c31cb5292104b4a6be74a.
+- Original implementation411326865706ea9e7a1690aa49742cd0254d8450 and496-line original review60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7 are preserved.
+- First correction worker3591c5d4 was actual idle/pending0/full result recovered12:22:17UTC. Coordinator C01 then fixed a moved PathBuf in the same-lock-inode test; preserve it.
+- Independent correction reviewer a4b5c1b9 finished actual idle/activeTurn null/pending0 at13:33:35.732UTC; full substantive final recovered13:33:46UTC, reconfirmed13:38:03UTC. No running worker is being redirected.
+- New report docs/reviews/2026-10-14-r2-raw-snapshot-corrections-review.md,543 lines SHA256 ebe51618235e06b3afe7e8075ecf7feb4c137d918a67c7be3ee715803f07d344, reports2 P1+8 P2 (FR01-09 and coordinator E01). Coordinator accepted the concrete issues for bounded correction only.
+- All38 Wave26 pins and119 report links were checked. All45 tests are WRITTEN_UNEXECUTED (15 private Linux+29 integration Linux+1 non-Linux).
+- Frozen new input inventory: /data/worktrees/3puw275b/excited-dolphin/target/r2-daily-beta/wp-4-integration/source-wave-27-S2-correction-inputs.json. Verify its target baseline and readOnlyReferences/evidenceArtifacts pins before edits and preserve non-target pins at final. It records the exact launch-doc commit.
+- Read-only current baseline copies: target/r2-daily-beta/wp-4-integration/wave27-S2-baseline-source.txt and wave27-S2-baseline-snapshot.txt. Prior baseline/diff/recovery artifacts are supplied through the inventory; do not run Git to reconstruct them.
+- E01 is coordinator-owned: source-wave-27-S2-baseline-test-inventory.json (423 lines/1d8ef030a3b3e285fe1f5cc8b6edde9cb9bb667bd5bf8bab3c9efb79e8738a54) fixes15 private module paths to daily_price_only::source::linux::private_tests::. It preserves45 definitions/platform states and the original2902947e inventory. This is a baseline, not the final CI inventory. You must report actual written test names/locations after edits; do not edit an inventory.
+
+Write allowlist (absolute, exhaustive)
+1. /data/worktrees/3puw275b/excited-dolphin/crates/market-data/src/daily_price_only/source.rs
+2. /data/worktrees/3puw275b/excited-dolphin/crates/market-data/tests/daily_price_only_snapshot.rs
+No new report/artifact/file writes, no registration/mod.rs, dependencies/Cargo, storage/S1, wire contracts, collectors/normalizers, migrations/workflows, diagrams, roadmap/docs/ledger or other path. The final substantive chat report is your deliverable alongside these two files.
+
+Fixed contract (do not weaken)
+Accepted docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md,898 lines/c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056, P1-P10 binding. Linux only; all other targets return UnsupportedPlatform before I/O. Opaque unapproved storage evidence, no provider truth or admission.
+Preserve exact API and crate-only getters, no capability Clone/Copy/Debug/Default/serialization or FD/path/mutable/Read/Seek extractor. Fixed29 fieldless errors/source None; no sensitive error Debug/logging. No StoreError change.
+Complete-scope exact manifest discovery, retained immutable bytes plus readonly descriptors and one existing nonblocking shared lock until last cleanup/Drop; no dup/try_clone/repair/retry/create. Explicit UID, no UID0/euid bypass, no-follow descriptor-relative traversal. No provider/copy reconstruction/admission.
+All12 positive limits, checked arithmetic/capacity,64MiB body/depth32, manifest/pre-dedup counts, complete Raw serde parity, known duplicate rejection before second-value parsing (including optional null), full ManifestEntry equality, exact bytes/physical line/first equal duplicate, resource error never swallowed as EOF.
+Retained evidence-byte accounting is not a hard RSS/OOM guarantee. Empty FD formula C+7; nonempty C+9+D+2B+F. No hidden extra descriptor. Lock fingerprint ignores contents/size/times, evidence and directory policies remain distinct.
+
+Required corrections (baseline anchors in report/source)
+FR01 P1: S3143 consumes bounded_limits, reused3154; ScanLimits is non-Copy/non-Clone. Construct fresh ScanLimits from Copy ScanLimitValues per call. Keep valid control/caps/observations; do not add capability traits.
+FR02 P1: S3234 unwrap requires Debug on BoundedParseError. Match/map to a fixed fieldless error; do not derive formatting for its serde payload. Keep sequence parity against legacy.
+FR03 P2: S3396-3402 double-ended filter_map(...).last() -> next_back/reverse find_map with same retained total. No lint allowances/suppression. Inspect touched code for analogous compile/lint mistakes by reading, without executing compiler/lints.
+FR04 P2: replace post-close raw-FD/dev/inode ownership inference. A parallel reader can reopen the same common ancestor at the old FD number. Preserve all-open accounting, live-handle native checks, lock-last failure proof and post-Drop native checks for fixture-unique objects.
+  Coordinator design decision: use a private owning-file RAII boundary for actual production source handles, with observation identity/state compiled only for tests. The owner contains the sole File, closes that File before marking its unique open-lifetime closed, and captures its observer at construction so close remains observable after the thread-local observation scope exits. A private Option<File> with take/drop before recording closure is one direct implementation. Use internal borrowing for existing File/AsFd/read/lock operations; expose no new public capability or trait. Immediately wrap every successfully opened File before any later fallible fstat/validation/read so early-return temporaries are covered. Trace every open site and ownership transfer; moving the owner must never emit close or create another FD.
+  Use a per-observation unique open ID, not raw_fd as a lifetime key. Test observations must survive snapshot Drop outside the collection closure. Keep lock last on both successful and failing paths. Test tokens/events must follow real native destruction, not a guessed cleanup branch or fixture-only stand-in. Production behavior/cfg remains the same; no test-only alternate cleanup algorithm.
+  Add a distinguishing owner-lifetime test using independently opened handles to the same shared inode with different open IDs; after one closes the other stays open and cannot reopen its ID. Do not require the OS to reuse a particular FD number. Validate actual live handles while owned, fixture-unique native object closure where sound, and a separately opened exclusive lock competitor after Drop and at BeforeLockRelease. Never assert post-close identity for shared ancestors. No global FD counts, process/suite serialization, extra dup/try_clone, sleeps or unsafe/raw-close tricks.
+FR05 P2: S2824 creates non-EOF ,{"sentinel":]} despite its name. Preserve that malformed case separately; build a genuine EOF tail ending immediately after the colon. Under permissive cap explicitly observe legacy serde and bounded Json is_eof true; under cap1 require SourceScanLimit, exactly one materialized entry and no BatchTreeOpen or metadata/provider open. For max_files and max_batches add independent valid-control faults with direct no-tree/open observations, not only final error. Do not run any parser locally.
+FR06 P2: I1663-1703 T26 has unbounded channel waits and blocking append after Drop. Bound all cross-thread receives (including continuation/completion), preserve a real pre-Drop exclusive WouldBlock handshake, and after Drop first perform a separate nonblocking exclusive probe. If release failed, return bounded failure before the blocking append. On controlled fixture success, unlock/drop the successful probe, append, and verify fresh capture. Timeout/error paths must release senders/resources and must not unconditionally join a possibly blocked worker. Do not replace actual contention with scheduling or sleep inference, nor alter production writer/retry code.
+FR07 P2: I397 T01 checks only first returned file. Iterate each expected batch and every file in order; assert complete identity, count/iterator length, distinct bytes/hash/size, batch association and each exact metadata commitment/line. Include expected values from fixture, not a returned field compared with itself. Preserve stats and unapproved opaque semantics.
+FR08 P2: verify_batch_membership S1785-1827 uses MissingCommittedEvidence at all phases. Distinguish initial missing from post-capture/final loss: latter SourceChanged. Keep initial MissingCommittedEvidence and extras UnexpectedBatchEntry. Add valid-control BeforeFinalNames move-outside cases for a captured body and captured batch.json, no extra leaf in set, hook invoked and exact SourceChanged. Preserve existing replacement/extra/initial-absence tests and final binding checks.
+FR09 P2: S1708 stored metadata survives through capture_batch return1758. Put full parse/equality in a short lexical scope ending before constructing/capturing body-bearing batch. Preserve Eq and typed errors. Explicitly show the destructor/lifetime boundary in final report. Do not add a test that merely sets an unrelated phase flag and calls it allocation proof; existing mismatch/valid controls plus a clear structural lifetime boundary can support static disposition. Executable/lifetime-runtime proof remains unverified.
+E01: no worker edit. Report the actual test module names after your changes; coordinator will regenerate candidate inventory. Keep all45 prior definitions unless a direct correction requires a named, explained replacement, and add meaningful cases above. All32 guard IDs must remain mapped.
+
+Verification and prohibitions
+- Source/static checks only: text reads/rg, exact hashes/line counts, plain text inspection/comparison of supplied baselines, scoped standalone rustfmt --edition 2021 on only the two owned files, whitespace/static preservation checks. These are not compiler/lint/test evidence.
+- NO local Cargo/rustc/Clippy/tests/build, parser/helper/checker/validator/provisioner/self-test execution, Python project suites, SQL/DB/root/sudo/Docker, provider/network/production/workflow actions. No Git writes, commit/push/dispatch/rerun/cancel. Do not spawn background processes or leave commands running. No runtime snippets to prove Rust behavior.
+- Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+- No further delegation of ANY kind, including Paseo MCP/CLI, native collaboration, advisors, committees or hidden helpers. No permission-mode relaxation. If exact permissions block an allowed static edit/check, report the request and wait; do not bypass it.
+- Preserve every frozen non-target input and historical report. No raw logs, credentials, provider bodies or free-form OS/serde diagnostics persisted or printed.
+- Prior exacta888cd66c032c8931a4979434168568387c83a12/run38545976070 attempt1SUCCESS is I0c partial baseline only, excludes S2.51 direct Rust/6 chart/strict Clippy/PG59 known; nested helper rows/exits UNKNOWN. Never touch existing CI.
+- All operational work, negative bootstrap/rollback,0060, input reconstruction/admission, I6 diagrams before main, runtime/Owner/final C_R2 remain open.
+
+Report bound and final deliverable
+90 minutes from actual startup. At bound give substantive INCOMPLETE with exact completed/remaining FR/R/P/T scope and current files; do not imply success or silently broaden time. Coordinator will reconcile, not interrupt/redirect a running worker opportunistically.
+Return a substantive final even if a later memory callback is SKIPPED:
+1. Changed files, line ranges, exact final SHA256 and line counts.
+2. FR01-FR09 concrete dispositions with old/new anchors and distinguishing written regressions; E01 coordinator-only acknowledgement. Any unresolved/partial entry explicit.
+3. Original R01-R16 including R12a-h and C01 preservation/disposition; every P1-P10 and T01-T32 mapped to concrete code/tests. Full names and Linux/non-Linux gates, additions/replacements/counts. State WRITTEN_UNEXECUTED.
+4. All-open ownership trace and normal/failure lock-last transfer/Drop reasoning, observation-scope lifetime, native evidence limits and genuine EOF resource contrast.
+5. Exact static checks and results, preserved input pins and scope. State compiler/Clippy/tests/platform/ACL/CI unverified.
+6. Deviations/reasons, missing/conflicting inputs, further decomposition, background work, pending permissions/auto-review denial, unresolved follow-up, and not-found/not-verified; say none explicitly when empty.
+No source acceptance claim. Coordinator will recover actual idle/pending0/full final, inspect exact two-file delta and then arrange independent bounded review. Only after review closure can one new exact-candidate hosted CI follow an existing-run query.
+```
+
+### Coordinator gates
+
+1. Persist idle/pending0/full-review recovery; accept concrete findings only, preserve
+   old reports and E01 inventory, commit this brief and roadmap update.
+2. Freeze two targets plus all non-target references/artifacts in
+   source-wave-27-S2-correction-inputs.json, including current baseline copies,
+   both reviews, accepted contract and exact launch-doc commit.
+3. Create one notified Paseo Sol/max worker; verify actual workspace/parent/model/
+   effort/running/pending0 and record90-minute deadline. Establish a new bounded
+   heartbeat for only that worker. Do not redirect while running.
+4. At completion/bound recover the full substantive final or exact INCOMPLETE
+   scope and actual lifecycle/pending requests. Renew/handoff before monitor
+   expiry; same-daemon heartbeat cannot protect a daemon outage.
+5. After actual idle/pending0/full recovery, inspect exact two-file delta, all
+   immutable pins, every FR/R/P/T and actual written names. Regenerate candidate
+   inventory with correct private module paths. Obtain independent bounded
+   disposition before any candidate push/hosted CI.
+6. After review closure only, query existing exact-candidate runs before one new
+   CI dispatch. Never rerun/cancel/duplicate old38545976070. No local executable
+   checks or operational expansion. Keep negative bootstrap/rollback,0060,
+   reconstruction/admission, diagrams before main, runtime/Owner/final C_R2 open.

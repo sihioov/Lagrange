@@ -1591,3 +1591,25 @@ monitor57665dd0. Recover exact INCOMPLETE coverage at the reporting bound and
 renew or hand off before expiry; same-daemon heartbeat cannot protect daemon outage.
 The private startup receipt and owned-worker ledger record the actual lifecycle.
 Historical successes/failures and all later operational/Owner/0060/diagram gates remain.
+
+### Wave26 review recovered; Wave27 correction prepared
+
+Actual reviewer idle/activeTurn null/pending0 at13:33:35.732UTC; full substantive
+final recovered13:33:46UTC and lifecycle reconfirmed13:38:03UTC. Report543lines/
+ebe51618235e06b3afe7e8075ecf7feb4c137d918a67c7be3ee715803f07d344 and38pins/119links
+were checked. Heartbeat b6352577 was deleted after persisted full recovery.
+The [coordinator disposition](2026-10-14-r2-snapshot-second-correction-scope.md)
+accepts FR01-09/E01 (2P1/8P2) for bounded correction, not source acceptance.
+R05/R10/R12 remain partial; all R/P/T/C01 and45 unexecuted definitions are preserved.
+E01 successor corrects15 private result module paths without editing the frozen
+Wave26 inventory; future candidate names must be regenerated from corrected source.
+
+One Wave27 two-file correction uses Sol/max after repeated Luna/max implementation
+and correction verification failures. Only model tier changes; max effort stays.
+The concrete FD-owner observation boundary, genuine EOF contrast, bounded writer
+handshake, complete getter oracle, captured-membership error and temporary metadata
+lifetime are specified before launch. Source7545094, both reviews,898-line contract,
+mod9 and prior CI remain frozen. No new snapshot push/CI or local executable check.
+Negative bootstrap/rollback,0060, reconstruction/admission,I6 diagrams before main,
+runtime/Owner/final C_R2 remain open. Current Mem0 context failed with MCP_ERROR;
+no memory was saved or stale hook retried.
