@@ -375,3 +375,10 @@ I0a worker는 01:48:29 UTC에 실제 idle/pending0가 됐고 최종 보고를 �
   source read/hash/link/line 검사와 허용 네 파일의 rustfmt check·diff check만 허용한다.
 - 공통 최종 보고 형식을 따른다. SQL 실행·실제 role/pool/ACL은 미검증으로 남기고
   coordinator의 인수 전 완료로 주장하지 않는다. 하위 위임 없이 직접 수행한다.
+
+### I1a/I0a-R 최종 보고 누락 후 재개 — 2026-10-14
+
+02:06 UTC 확인한 두 worker의 idle/pending0에는 최종/오류 보고가 없었다. 이를 완료로
+수용하지 않고 원래 고정 brief·모델·파일 소유권으로 각각 notified follow-up을 전달했다.
+02:07:37 UTC 새 turn의 running/pending0를 확인했다. I0a 네 hash와 I1a D4 hash는 그대로다.
+원인은 미확인이다. 원래 I1a 결과를 회수하기 전 D6-01을 적용하거나 source를 최종 수용하지 않는다.

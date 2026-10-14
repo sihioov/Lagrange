@@ -433,3 +433,16 @@ I1a는 01:49:02 UTC 현재 running/pending0이며 고정 `308b9909…` 명세를
 종료 후 D6-01 보정을 적용할 순서는 변하지 않았다. I0a 회수 후 기존 `87552d56` 감시를
 `7aba6810`(2분·60회·03:52:12 UTC 만료)으로 교체해 I1a/I0a-R만 관찰한다.
 이 변경은 소스 리뷰 착수이며 운영·DB·provider·build/test 실행은 없었다.
+
+### 최종 보고 누락 회복 — 2026-10-14 KST
+
+02:06 UTC heartbeat에서 I1a/I0a-R이 각각 02:04:19 UTC에 idle/pending0로 바뀐 것을 확인했다.
+그러나 MCP activity·read-only CLI wait에는 최종/오류 보고가 없고, I0a-R 보고 파일도 없었다.
+오류 필터 역시 빈 결과라 원인을 단정하지 않는다. 기존 부분 source와 검토 중간 의견은 완료 근거가 아니다.
+
+두 worker에 기존 범위·모델·고정 입력을 유지한 notified follow-up을 전달했고,
+02:07:37 UTC 새 turn의 실제 running/pending0·workspace·parent를 확인했다.
+I0a 네 파일 hash는 이전 검토 입력과 일치하며 I1a의 D4 `308b9909…`도 유지했다.
+I1a 원래 결과 회수 → D6-01 계약/회귀 보정 → 독립 검증 순서는 그대로다.
+동일 scope이므로 기존 `7aba6810` 감시를 유지한다. 중단 원인·중단 중 지속 감시는 검증되지 않았다.
+이 회복은 source 작업 재개이며 컴파일·SQL·DB·운영 성공을 추가하지 않는다.

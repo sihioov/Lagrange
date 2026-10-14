@@ -440,3 +440,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 차단 조건이 서로 일치하는지 확인한다.
 
 | 2026-10-14 | R2-04/09 | DOING 유지; I0a 소스 회수·독립 리뷰 착수 | 역할 속성/멤버십 검사·scratch DB 전용 grant·직접 로그인 helper 네 파일을 회수하고 hash 고정. I1a와 D6-01 보정 순서는 유지 | [실행 기록](reviews/2026-10-13-r2-execution.md), [I0a-R 범위](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 소스 인수·컴파일·SQL·실제 역할 검증은 미완료 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; 미완료 worker 재개 | I1a/I0a-R idle 전환에 최종 보고가 없어 인수하지 않고 동일 scope로 재개. 고정 계약·네 harness hash 유지 | [회복 기록](reviews/2026-10-13-r2-execution.md); 원인 미확인, 소스/실행 인수 추가 없음 |
