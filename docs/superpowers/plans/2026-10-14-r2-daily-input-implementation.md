@@ -3271,3 +3271,32 @@ Coordinator validates after actual idle/pending0/full final and only then consid
 6. Keep roadmap/docs/commits/ledger current. All later negative-bootstrap/rollback,
   0060,reconstruction/admission,I6 diagrams before main,runtime/Owner/final C_R2
    requirements stay open. Local executable checks remain prohibited.
+
+### Wave28 frozen inputs and actual reviewer startup — 2026-10-15 KST
+
+Source handoff commit is `bbac2e951967e0ca3a7633171e5e09e2374bd696`.
+The frozen review input inventory has343 lines,
+SHA256 `5506ed71915fde4631c0af6eb9029d673dbccf60d573f5a0dfcebd2949d5c744`,
+and56 pins:3 targets,22 references and31 historical/current evidence artifacts.
+Final candidate definition inventory has474 lines,
+SHA256 `91c08ebbd5f9969470f90c0614462de77b6b496b4133e9701f87d24ec9f03bf6`.
+Its49 definitions remain WRITTEN_UNEXECUTED:48 Linux expected,1 non-Linux excluded.
+
+Existing independent reviewer `a4b5c1b9-3354-400b-be82-b8dec4f87278` was confirmed
+idle/activeTurn null/pending0 with the preceding full result recovered before the
+new notified follow-up. Actual startup was2026-10-14T15:05:18.207Z
+(2026-10-15 00:05:18.207 KST), Sol/high, expected workspace and parent, pending0.
+The60-minute reporting deadline is2026-10-14T16:05:18.207Z.
+The only write target is `docs/reviews/2026-10-14-r2-raw-snapshot-second-corrections-review.md`.
+Source and all pinned bytes stay immutable; coordinator bookkeeping remains unpinned.
+
+Heartbeat `6a6fca7d` was created15:06:11.751UTC, every2minutes, max45,
+expires16:36:11.748UTC. It replaces the already deleted correction monitor,
+and must be reconciled/renewed/handed off before expiry. It does not protect
+against same-daemon outage. Actual lifecycle and pending requests plus full
+substantive result recovery gate acceptance/follow-up; idle without a full result
+is INCOMPLETE. The60-minute report must name exact reviewed/unreviewed scope.
+Startup receipt, full sent brief and assignment history are private0600 artifacts;
+the owned-worker ledger preserves all previous assignments and heartbeat history.
+No source/compiler/test/CI acceptance or S2 push/CI is claimed. Review closure and
+existing-run query precede one exact-candidate hosted run; all later gates remain.

@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수를 유지한다. Wave27 보정 작업자00e0a229의 실제 idle/activeTurn null/pending0와 전체176행 결과를14:50:48UTC 회수했다. [두 번째 보정 인계](reviews/2026-10-14-r2-snapshot-second-corrections-handoff.md)의 두 파일·46참조·2원본·8보존 영역을 확인했고 기존45개+추가4개, 총49개 정의(Linux48/non-Linux1)는 모두 미실행이다. 기존 감시1f6d4170은 회수 저장 후 종료했다. 고정된 소스에 대한 [Wave28 독립 리뷰](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)를 준비하며 소스 인수·새 S2 push/CI는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수와 실패 이력을 보존한다. Wave27 결과는 실제 idle·pending0·전체 결과 회수 후 [두 번째 보정 인계](reviews/2026-10-14-r2-snapshot-second-corrections-handoff.md) 커밋 bbac2e9로 고정했다. [Wave28 독립 리뷰](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의 Sol/high 검토자 a4b5c1b9가 2026-10-14 15:05:18.207 UTC(10-15 00:05 KST)에 실제 시작했고 pending0·완료 알림을 확인했다. 입력 56개와 테스트 목록 49개(Linux 48·non-Linux 1)를 고정했다. 보고 기한은 16:05:18.207 UTC, 전용 감시는 6a6fca7d다. 모든 테스트는 미실행이며 소스 인수·새 S2 push/CI는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
