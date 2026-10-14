@@ -1085,3 +1085,25 @@ at most30times, expiring08:36:02 UTC. Ledger and private startup receipt preserv
 runtime/notification evidence. Recover incomplete scope at the bound; reconcile and
 renew/handoff before expiry. Same-daemon monitoring does not protect daemon outage.
 No parser/regression execution, new CI or source acceptance is claimed.
+
+
+## Physical-line review accepted for hosted verification — 2026-10-14
+
+I0b-F3-R reached actual idle, activeTurn null and pending0 at07:42:11 UTC. Its full
+substantive final and [184-line review](2026-10-14-r2-inventory-physical-line-review.md)
+were recovered. Report SHA-256 is
+`c86b24227ec3f350b4e95af0000dbd34391756bc76cf646f0d5f56594175a27b`.
+The coordinator verified21 frozen target/reference/prior-review inputs and29 report
+links/line bounds, then directly inspected the production reader, three LF-only loops,
+actual path entrypoints and written wrapper/reader regression paths. No concrete
+unresolved delta finding was identified; I0b-F2-R01 is accepted as source-review closed.
+Original DB3/Raw5 source closures and prior review history remain intact.
+
+This does not establish parser/checker/regression, Rust, Clippy, SQL/DB or runtime
+success. Existing929fcd6/run38514204062 is baseline evidence only. The completed
+review heartbeat c45c1b07 was deleted after actual idle and full result recovery.
+The next package collects one new exact-candidate hosted run with48 expected Linux
+Rust rows (30 wire +18 Raw), shell wrapper/self-test markers, Clippy/required and
+isolated role/migration evidence. Non-Unix Raw coverage, optional fakeroot skips,
+individual shell subcase output, actor GUC/pool helper and0060 limits stay explicit.
+No local test, checker, DB, provider or operational command ran in this recovery.

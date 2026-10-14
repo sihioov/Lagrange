@@ -1822,3 +1822,84 @@ at most30times, expiring08:36:02 UTC. Ledger and private startup receipt preserv
 runtime/notification evidence. Recover incomplete scope at the bound; reconcile and
 renew/handoff before expiry. Same-daemon monitoring does not protect daemon outage.
 No parser/regression execution, new CI or source acceptance is claimed.
+
+
+## Physical-line review accepted for hosted verification — 2026-10-14
+
+I0b-F3-R reached actual idle, activeTurn null and pending0 at07:42:11 UTC. Its full
+substantive final and [184-line review](../../reviews/2026-10-14-r2-inventory-physical-line-review.md)
+were recovered. Report SHA-256 is
+`c86b24227ec3f350b4e95af0000dbd34391756bc76cf646f0d5f56594175a27b`.
+The coordinator verified21 frozen target/reference/prior-review inputs and29 report
+links/line bounds, then directly inspected the production reader, three LF-only loops,
+actual path entrypoints and written wrapper/reader regression paths. No concrete
+unresolved delta finding was identified; I0b-F2-R01 is accepted as source-review closed.
+Original DB3/Raw5 source closures and prior review history remain intact.
+
+This does not establish parser/checker/regression, Rust, Clippy, SQL/DB or runtime
+success. Existing929fcd6/run38514204062 is baseline evidence only. The completed
+review heartbeat c45c1b07 was deleted after actual idle and full result recovery.
+The next package collects one new exact-candidate hosted run with48 expected Linux
+Rust rows (30 wire +18 Raw), shell wrapper/self-test markers, Clippy/required and
+isolated role/migration evidence. Non-Unix Raw coverage, optional fakeroot skips,
+individual shell subcase output, actor GUC/pool helper and0060 limits stay explicit.
+No local test, checker, DB, provider or operational command ran in this recovery.
+
+
+### Wave16 exact-candidate role and Raw hosted verification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-I1b-S1-CI | simple | Fixed candidate, existing CI workflow and explicit test/phase inventory; bounded read-only evidence extraction follows established collector procedure | high | Missing or contradictory evidence is UNKNOWN; a new diagnostic needing source judgment returns to coordinator without scope expansion |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-I1b-S1-CI | 16 | simple | Recover exact-candidate role/Raw CI outcomes and limits | docs/reviews/2026-10-14-r2-role-raw-ci.md and target/r2-daily-beta/ci/<candidate-short>/ only | All source reviews recovered; candidate commit/push/remote check/existing-run query and one dispatch | Idle existing collector11a8f223, codex/gpt-6-luna/medium; current profile is coordinator-only | Safe report and private evidence receipt | Read-only GitHub run/job/log retrieval and source/inventory comparison; no local execution |
+
+Workspace `/data/worktrees/3puw275b/excited-dolphin`; repository sihioov/Lagrange,
+branch excited-dolphin. Full SHA and run ID will be pinned in the notified brief.
+The current role/Raw sources include1023-line runtime checker0bede130…, storage
+b1dca720… and Raw tests1deec0dc…. D4/D5, wire/I0a and Python remain frozen.
+Private `target/r2-daily-beta/wp-4-integration/role-raw-ci-test-inventory.json` pins
+source hashes, all30 wire names,16 Unix Raw integration names and2 private Raw names.
+The single non-Unix test is not expected to execute on Linux and is not a pass.
+
+Coordinator commits this review/brief, fast-forward pushes the candidate, checks the
+remote full SHA and exact-SHA existing CI runs, and dispatches existing ci.yml only
+if none exist. Never rerun/cancel/duplicate previous or new CI. Main merge, diagrams,
+0060 and runtime operations remain later source/acceptance packages.
+
+Collector brief:
+- Read the current roadmap, this package, exact-candidate ci.yml and the inventory.
+  Preserve all prior reports/receipts. Verify requested SHA in every checkout-bearing
+  job, run/attempt identity, job and step states, strict Clippy and required aggregate.
+- For each of48 expected Rust names record direct ok/failure/ignored/not-executed or
+  missing/unknown evidence. Capture chart6 and workspace totals as result-row sums,
+  not unique tests. Record historical V2/V3 only from actual directly identified rows.
+- Policy: distinguish PG validator self-test, runtime secret checker and ops steps.
+  Seek actual PG_VALIDATION_SELF_TEST/SECRETS_RUNTIME_STATIC/OPS_STATIC markers.
+  Wrapper success is not a separately printed result for every nested regression.
+  Capture any fakeroot-unavailable skip and do not call numeric metadata executed.
+- PostgreSQL: capture outcome, candidate identity, actual migration version/count and
+  checksum consistency,0039 guard, skip enforcement and cleanup. Extract explicit
+  admitter direct-login/catalog/effective-privilege/role-GUC/log-gate phase evidence
+  if exposed. Role GUC is not app.actor_id; no pool-helper/negative-role/rollback
+  or0060 success without the corresponding actual evidence.
+- Capture Python suite and Web/OpenAPI/E2E results. Quiet logs lacking individual
+  readiness/SIGTERM node rows remain unknown, even if the suite passes.
+- Read raw logs only in memory; persist selected safe fields and response byte counts/
+  hashes in0700/0600 private paths. Never persist raw logs, credential/body values,
+  free-form submitted metadata or environment secrets. On failure report safe typed
+  diagnostics and exact locations/command exit, without inferred root causes.
+- No dispatch/rerun/cancel, local parser/test/checker/validator/provisioner/self-test,
+  Cargo/rustc/Clippy/build, DB/SQL/root/Docker/provider/production/Git write/delegation.
+  Reporting bound90minutes from actual startup or09:30UTC, whichever is first.
+  At the bound return INCOMPLETE with actual results; coordinator retains monitoring.
+- Final: changed files/line ranges/hashes, deviations, actual checks and outcomes,
+  unresolved/follow-up and missing/unverified items (explicit none when empty),
+  background work and pending permissions. No source/runtime/C_R2 acceptance claim.
+
+Before follow-up require actual collector idle/pending0 and prior full result recovered.
+Use notifyOnFinish=true, verify actual startup/model/parent/workspace and preserve a
+bounded heartbeat in the owned-worker ledger. Recover substantive result after actual
+idle; renew/handoff before expiry. Same-daemon outage is not protected by the heartbeat.
