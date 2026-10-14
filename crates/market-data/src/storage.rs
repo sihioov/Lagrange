@@ -165,7 +165,7 @@ pub enum StoreError {
     CommittedManifestRecordLimitExceeded { max_records: usize },
     /// A parsed manifest record does not match the requested provider/market.
     CommittedManifestRecordScopeMismatch { path: String, line: usize },
-    /// A parsed manifest record has an invalid provider-file name.
+    /// A committed manifest record is malformed or contains invalid metadata.
     InvalidCommittedManifestRecord { path: String, line: usize },
     /// A later row for a batch id differs from the first parsed metadata row.
     CommittedManifestRecordConflict { path: String, line: usize },
@@ -276,7 +276,7 @@ impl std::fmt::Display for StoreError {
             ),
             Self::InvalidCommittedManifestRecord { path, line } => write!(
                 f,
-                "committed Raw manifest record at {path} line {line} has invalid file metadata"
+                "committed Raw manifest record at {path} line {line} has invalid metadata"
             ),
             Self::CommittedManifestRecordConflict { path, line } => write!(
                 f,
@@ -897,10 +897,12 @@ impl RawStore {
         use std::path::Component;
 
         fn directory_open_error(path: &Path, context: &str, error: Errno) -> StoreError {
-            if error == Errno::LOOP {
+            if error == Errno::LOOP || error == Errno::NOTDIR {
                 StoreError::UnsafePath {
                     path: path.display().to_string(),
-                    reason: "committed Raw paths must not contain symlinks".to_owned(),
+                    reason:
+                        "committed Raw directory components must not be symlinks or non-directories"
+                            .to_owned(),
                 }
             } else {
                 io_err(context, error.into())
@@ -2278,6 +2280,7 @@ fn read_committed_manifest_bounded(
     max_bytes: usize,
     read_buffer_bytes: usize,
 ) -> Result<Vec<u8>, StoreError> {
+    let mut reader = file;
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(read_buffer_bytes).map_err(|_| {
         StoreError::CommittedManifestReadAllocationFailed {
@@ -2288,7 +2291,7 @@ fn read_committed_manifest_bounded(
 
     let mut read_bytes = 0usize;
     while read_bytes < read_buffer_bytes {
-        match file.read(&mut bytes[read_bytes..]) {
+        match reader.read(&mut bytes[read_bytes..]) {
             Ok(0) => break,
             Ok(count) => {
                 read_bytes = read_bytes
@@ -2319,7 +2322,7 @@ fn parse_committed_manifest_evidence(
     bytes: &[u8],
     max_records: usize,
 ) -> Result<Vec<CommittedManifestEvidenceRecord>, StoreError> {
-    let mut records = Vec::new();
+    let mut records: Vec<CommittedManifestEvidenceRecord> = Vec::new();
     let mut first_by_batch = BTreeMap::<BatchId, usize>::new();
     let mut complete_records = 0usize;
     let mut physical_line = 1usize;
@@ -2351,11 +2354,10 @@ fn parse_committed_manifest_evidence(
             let entry = match serde_json::from_slice::<ManifestEntry>(line_bytes) {
                 Ok(entry) => entry,
                 Err(source) if final_unterminated && source.is_eof() => break,
-                Err(source) => {
-                    return Err(StoreError::CorruptManifest {
+                Err(_) => {
+                    return Err(StoreError::InvalidCommittedManifestRecord {
                         path: path.display().to_string(),
                         line: physical_line,
-                        source,
                     });
                 }
             };

@@ -112,6 +112,43 @@ mod unix_tests {
         fs::write(manifest_path(store), bytes).unwrap();
     }
 
+    fn malformed_record_error(store: &RawStore, bytes: &[u8]) -> StoreError {
+        write_manifest(store, bytes);
+        match read(store, bytes.len(), 1) {
+            Ok(_) => panic!("malformed committed manifest record must be rejected"),
+            Err(error) => error,
+        }
+    }
+
+    fn assert_malformed_error_is_redacted(error: StoreError, sentinel: &str) {
+        assert!(matches!(
+            &error,
+            StoreError::InvalidCommittedManifestRecord { line: 1, .. }
+        ));
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        assert!(!display.contains(sentinel));
+        assert!(!debug.contains(sentinel));
+        assert!(std::error::Error::source(&error).is_none());
+    }
+
+    fn valid_file_entry(file_name: &str) -> FileEntry {
+        FileEntry {
+            kind: ResponseKind::Reference,
+            file_name: file_name.to_owned(),
+            content_hash: ContentHash::from_bytes(b"synthetic"),
+            size_bytes: 9,
+            request: RequestMetadata {
+                endpoint: "test".to_owned(),
+                query: Vec::new(),
+                headers: Vec::new(),
+                mode: FetchMode::Synthetic,
+            },
+            response_continuation: None,
+            copied_from: None,
+        }
+    }
+
     #[test]
     fn returns_exact_crlf_whitespace_and_reordered_json_line_hash() {
         let fixture = fixture();
@@ -161,11 +198,8 @@ mod unix_tests {
     #[test]
     fn rejects_malformed_scope_and_filename_records_without_echoing_metadata() {
         let fixture = fixture();
-        write_manifest(&fixture.store, b"not-json\n");
-        assert!(matches!(
-            read(&fixture.store, 64, 1),
-            Err(StoreError::CorruptManifest { line: 1, .. })
-        ));
+        let error = malformed_record_error(&fixture.store, b"not-json\n");
+        assert_malformed_error_is_redacted(error, "not-json");
 
         let mut wrong_scope = fixture.entry.clone();
         wrong_scope.market = "us".to_owned();
@@ -176,20 +210,9 @@ mod unix_tests {
         ));
 
         let mut invalid_name = fixture.entry.clone();
-        invalid_name.files.push(FileEntry {
-            kind: ResponseKind::Reference,
-            file_name: "../private-metadata.json".to_owned(),
-            content_hash: ContentHash::from_bytes(b"synthetic"),
-            size_bytes: 9,
-            request: RequestMetadata {
-                endpoint: "test".to_owned(),
-                query: Vec::new(),
-                headers: Vec::new(),
-                mode: FetchMode::Synthetic,
-            },
-            response_continuation: None,
-            copied_from: None,
-        });
+        invalid_name
+            .files
+            .push(valid_file_entry("../private-metadata.json"));
         write_manifest(&fixture.store, &serde_json::to_vec(&invalid_name).unwrap());
         let error = match read(&fixture.store, 4096, 1) {
             Ok(_) => panic!("invalid provider filename must be rejected"),
@@ -200,6 +223,39 @@ mod unix_tests {
             StoreError::InvalidCommittedManifestRecord { line: 1, .. }
         ));
         assert!(!error.to_string().contains("../private-metadata.json"));
+    }
+
+    #[test]
+    fn malformed_typed_rows_do_not_expose_submitted_values() {
+        let fixture = fixture();
+
+        let fetch_mode_sentinel = "FETCH_MODE_SENTINEL_7A91";
+        let mut invalid_mode = serde_json::to_value(&fixture.entry).unwrap();
+        invalid_mode["mode"] = serde_json::Value::String(fetch_mode_sentinel.to_owned());
+        let mode_bytes = serde_json::to_vec(&invalid_mode).unwrap();
+        let mut mode_line = mode_bytes;
+        mode_line.push(b'\n');
+        let mode_error = malformed_record_error(&fixture.store, &mode_line);
+        assert_malformed_error_is_redacted(mode_error, fetch_mode_sentinel);
+
+        let hash_sentinel = "sha256:HASH_SENTINEL_5C28";
+        let mut invalid_hash = fixture.entry.clone();
+        invalid_hash.files.push(valid_file_entry("synthetic.json"));
+        let mut invalid_hash = serde_json::to_value(&invalid_hash).unwrap();
+        invalid_hash["files"][0]["content_hash"] =
+            serde_json::Value::String(hash_sentinel.to_owned());
+        let mut hash_line = serde_json::to_vec(&invalid_hash).unwrap();
+        hash_line.push(b'\n');
+        let hash_error = malformed_record_error(&fixture.store, &hash_line);
+        assert_malformed_error_is_redacted(hash_error, hash_sentinel);
+
+        let batch_id_sentinel = "BATCH_ID_SENTINEL_2D74";
+        let mut invalid_batch_id = serde_json::to_value(&fixture.entry).unwrap();
+        invalid_batch_id["batch_id"] = serde_json::Value::String(batch_id_sentinel.to_owned());
+        let mut batch_id_line = serde_json::to_vec(&invalid_batch_id).unwrap();
+        batch_id_line.push(b'\n');
+        let batch_id_error = malformed_record_error(&fixture.store, &batch_id_line);
+        assert_malformed_error_is_redacted(batch_id_error, batch_id_sentinel);
     }
 
     #[test]
@@ -320,7 +376,17 @@ mod unix_tests {
     fn missing_tree_and_missing_lock_are_not_created_or_repaired() {
         let absent = tempfile::tempdir().unwrap();
         let absent_store = RawStore::new(absent.path());
-        assert!(read(&absent_store, 4096, 10).is_err());
+        let expected_uid = fs::metadata(absent.path()).unwrap().uid();
+        assert!(
+            absent_store
+                .read_committed_manifest_evidence(
+                    PROVIDER_KRX,
+                    MARKET_KR,
+                    expected_uid,
+                    limits(4096, 10)
+                )
+                .is_err()
+        );
         assert!(!absent.path().join("raw").exists());
 
         let fixture = fixture();
@@ -379,23 +445,23 @@ mod unix_tests {
             Err(StoreError::UnsafePath { .. })
         ));
 
-        let fixture = fixture();
-        let path = manifest_path(&fixture.store);
+        let manifest_fixture = fixture();
+        let path = manifest_path(&manifest_fixture.store);
         let redirected_target = path.with_file_name("manifest-real.jsonl");
         fs::rename(&path, &redirected_target).unwrap();
         symlink(&redirected_target, &path).unwrap();
         assert!(matches!(
-            read(&fixture.store, 4096, 10),
+            read(&manifest_fixture.store, 4096, 10),
             Err(StoreError::UnsafePath { .. })
         ));
 
-        let fixture = fixture();
-        let lock = lock_path(&fixture.store);
+        let lock_fixture = fixture();
+        let lock = lock_path(&lock_fixture.store);
         let redirected_lock = lock.with_file_name("commit-lock-real");
         fs::rename(&lock, &redirected_lock).unwrap();
         symlink(&redirected_lock, &lock).unwrap();
         assert!(matches!(
-            read(&fixture.store, 4096, 10),
+            read(&lock_fixture.store, 4096, 10),
             Err(StoreError::UnsafePath { .. })
         ));
     }
@@ -414,13 +480,33 @@ mod unix_tests {
     }
 
     #[test]
+    fn rejects_ordinary_non_directory_path_component() {
+        let parent = tempfile::tempdir().unwrap();
+        let non_directory = parent.path().join("ordinary-component");
+        fs::write(&non_directory, b"fixture").unwrap();
+        let store = RawStore::new(&non_directory);
+        let expected_uid = fs::metadata(parent.path()).unwrap().uid();
+
+        let error = match store.read_committed_manifest_evidence(
+            PROVIDER_KRX,
+            MARKET_KR,
+            expected_uid,
+            limits(4096, 10),
+        ) {
+            Ok(_) => panic!("non-directory path component must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, StoreError::UnsafePath { .. }));
+    }
+
+    #[test]
     fn rejects_non_regular_controls_wrong_expected_uid_and_writable_modes() {
-        let fixture = fixture();
-        let wrong_uid = trusted_uid(&fixture.store).wrapping_add(1);
+        let uid_fixture = fixture();
+        let wrong_uid = trusted_uid(&uid_fixture.store).wrapping_add(1);
         // This checks the explicit expected UID value only. It does not
         // simulate a Raw tree owned by another OS UID or exercise ACL rules.
         assert!(matches!(
-            fixture.store.read_committed_manifest_evidence(
+            uid_fixture.store.read_committed_manifest_evidence(
                 PROVIDER_KRX,
                 MARKET_KR,
                 wrong_uid,
@@ -429,7 +515,7 @@ mod unix_tests {
             Err(StoreError::UnsafePath { .. })
         ));
 
-        let manifest = manifest_path(&fixture.store);
+        let manifest = manifest_path(&uid_fixture.store);
         let control_dir = manifest.parent().unwrap();
         let dir_mode = fs::symlink_metadata(control_dir)
             .unwrap()
@@ -437,7 +523,7 @@ mod unix_tests {
             .mode();
         fs::set_permissions(control_dir, fs::Permissions::from_mode(dir_mode | 0o020)).unwrap();
         assert!(matches!(
-            read(&fixture.store, 4096, 10),
+            read(&uid_fixture.store, 4096, 10),
             Err(StoreError::UnsafePath { .. })
         ));
         fs::set_permissions(control_dir, fs::Permissions::from_mode(dir_mode)).unwrap();
@@ -449,30 +535,30 @@ mod unix_tests {
         )
         .unwrap();
         assert!(matches!(
-            read(&fixture.store, 4096, 10),
+            read(&uid_fixture.store, 4096, 10),
             Err(StoreError::UnsafePath { .. })
         ));
 
-        let lock = lock_path(&fixture.store);
+        let lock = lock_path(&uid_fixture.store);
         fs::set_permissions(&manifest, fs::Permissions::from_mode(0o600)).unwrap();
         fs::remove_file(&lock).unwrap();
         fs::create_dir(&lock).unwrap();
         assert!(matches!(
-            read(&fixture.store, 4096, 10),
+            read(&uid_fixture.store, 4096, 10),
             Err(StoreError::UnsafePath { .. })
         ));
 
-        let fixture = fixture();
-        let manifest = manifest_path(&fixture.store);
+        let non_regular_manifest_fixture = fixture();
+        let manifest = manifest_path(&non_regular_manifest_fixture.store);
         fs::remove_file(&manifest).unwrap();
         fs::create_dir(&manifest).unwrap();
         assert!(matches!(
-            read(&fixture.store, 4096, 10),
+            read(&non_regular_manifest_fixture.store, 4096, 10),
             Err(StoreError::UnsafePath { .. })
         ));
 
-        let fixture = fixture();
-        let raw_root = fixture.store.root().join("raw");
+        let raw_mode_fixture = fixture();
+        let raw_root = raw_mode_fixture.store.root().join("raw");
         let metadata = fs::symlink_metadata(&raw_root).unwrap();
         fs::set_permissions(
             &raw_root,
@@ -480,7 +566,7 @@ mod unix_tests {
         )
         .unwrap();
         assert!(matches!(
-            read(&fixture.store, 4096, 10),
+            read(&raw_mode_fixture.store, 4096, 10),
             Err(StoreError::UnsafePath { .. })
         ));
     }

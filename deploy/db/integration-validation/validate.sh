@@ -108,6 +108,85 @@ case "$min_free_bytes" in
   ''|*[!0-9]*) die_usage 'LAGRANGE_VALIDATION_MIN_FREE_BYTES must be numeric' ;;
 esac
 
+bootstrap_gate_redacted_marker='BOOTSTRAP_OUTPUT_REDACTED'
+
+bootstrap_gate_write_marker() {
+  local destination=$1
+  if ! rm -f -- "$destination" 2>/dev/null; then
+    return 1
+  fi
+  if ! printf '%s\n' "$bootstrap_gate_redacted_marker" >"$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    return 1
+  fi
+  if ! chmod 0600 -- "$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    return 1
+  fi
+}
+
+bootstrap_record_gate() {
+  [ "$#" -eq 4 ] || return 21
+  local credential_directory=$1 raw_output=$2 destination=$3 bootstrap_status=$4
+  local name credential_path line_count grep_status
+  local -a secret_names=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
+  )
+
+  if [[ ! "$bootstrap_status" =~ ^[0-9]+$ ]]; then
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+  if ! rm -f -- "$destination" 2>/dev/null; then
+    return 21
+  fi
+  if [[ ! -f "$raw_output" || -L "$raw_output" || ! -r "$raw_output" || ! -s "$raw_output" ]]; then
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+
+  for name in "${secret_names[@]}"; do
+    credential_path="$credential_directory/$name"
+    if [[ ! -f "$credential_path" || -L "$credential_path" || ! -r "$credential_path" || ! -s "$credential_path" ]]; then
+      bootstrap_gate_write_marker "$destination" || true
+      return 21
+    fi
+    if ! line_count=$(wc -l <"$credential_path" 2>/dev/null) || [[ ! "$line_count" =~ ^[[:space:]]*0[[:space:]]*$ ]]; then
+      bootstrap_gate_write_marker "$destination" || true
+      return 21
+    fi
+    if grep -Fq -f "$credential_path" "$raw_output" >/dev/null 2>&1; then
+      if ! bootstrap_gate_write_marker "$destination"; then
+        return 21
+      fi
+      return 20
+    else
+      grep_status=$?
+      if [ "$grep_status" -ne 1 ]; then
+        bootstrap_gate_write_marker "$destination" || true
+        return 21
+      fi
+    fi
+  done
+
+  if ! cat -- "$raw_output" >"$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+  if ! chmod 0600 -- "$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+
+  if [ "$bootstrap_status" = 0 ]; then
+    return 0
+  fi
+  return 10
+}
+
 if [ "$self_test" -eq 1 ]; then
   self_workdir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-pg-validation-self.XXXXXX")
   case "$self_workdir" in
@@ -125,7 +204,7 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: bash is required' >&2
     exit 1
   }
-  for command_name in cat find grep install sha256sum sort tail wc; do
+  for command_name in cat chmod cmp cp find grep install mkdir mv rm sha256sum sort tail wc; do
     command -v "$command_name" >/dev/null 2>&1 || {
       echo "PG_VALIDATION_SELF_TEST: $command_name is required" >&2
       exit 1
@@ -254,6 +333,136 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: staged catalog rerun check is missing' >&2
     exit 1
   }
+
+  bootstrap_gate_fixture="$self_workdir/bootstrap-gate"
+  bootstrap_gate_credentials="$bootstrap_gate_fixture/credentials"
+  bootstrap_gate_destination="$bootstrap_gate_fixture/evidence/bootstrap.log"
+  bootstrap_gate_raw="$bootstrap_gate_fixture/bootstrap.raw"
+  bootstrap_gate_diagnostic="$bootstrap_gate_fixture/gate.diagnostic"
+  bootstrap_gate_expected_marker="$bootstrap_gate_fixture/redacted.expected"
+  mkdir -p "$bootstrap_gate_credentials" "${bootstrap_gate_destination%/*}"
+  bootstrap_gate_names=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
+  )
+  bootstrap_gate_sentinels=()
+  for bootstrap_gate_index in "${!bootstrap_gate_names[@]}"; do
+    printf -v bootstrap_gate_sentinel 'synthetic-r2-bootstrap-sentinel-%02d' "$bootstrap_gate_index"
+    bootstrap_gate_sentinels+=("$bootstrap_gate_sentinel")
+    printf '%s' "$bootstrap_gate_sentinel" >"$bootstrap_gate_credentials/${bootstrap_gate_names[$bootstrap_gate_index]}"
+  done
+  printf '%s\n' "$bootstrap_gate_redacted_marker" >"$bootstrap_gate_expected_marker"
+
+  bootstrap_gate_expect_case() {
+    local expected_status=$1 credential_directory=$2 raw_path=$3 destination=$4 bootstrap_exit=$5 marker_expected=$6
+    local observed_status name credential_path grep_status
+    if bootstrap_record_gate "$credential_directory" "$raw_path" "$destination" "$bootstrap_exit" \
+      >"$bootstrap_gate_diagnostic" 2>&1; then
+      observed_status=0
+    else
+      observed_status=$?
+    fi
+    [ "$observed_status" -eq "$expected_status" ] || return 1
+    [ ! -s "$bootstrap_gate_diagnostic" ] || return 1
+    if [ "$marker_expected" = yes ]; then
+      cmp -s -- "$bootstrap_gate_expected_marker" "$destination" || return 1
+    else
+      cmp -s -- "$raw_path" "$destination" || return 1
+    fi
+    for name in "${bootstrap_gate_names[@]}"; do
+      credential_path="$credential_directory/$name"
+      [[ -f "$credential_path" && -s "$credential_path" ]] || continue
+      if grep -Fq -f "$credential_path" "$bootstrap_gate_diagnostic" "$destination" 2>/dev/null; then
+        return 1
+      else
+        grep_status=$?
+        [ "$grep_status" -eq 1 ] || return 1
+      fi
+    done
+  }
+
+  for bootstrap_gate_index in "${!bootstrap_gate_names[@]}"; do
+    bootstrap_gate_sentinel=${bootstrap_gate_sentinels[$bootstrap_gate_index]}
+    for bootstrap_gate_form in url env sql; do
+      case "$bootstrap_gate_form" in
+        url)
+          printf 'CONTEXT: postgres://synthetic@fixture/db?password=%s\n' "$bootstrap_gate_sentinel" >"$bootstrap_gate_raw"
+          ;;
+        env)
+          printf 'DB_DAILY_INPUT_ADMITTER_PASSWORD=%s\n' "$bootstrap_gate_sentinel" >"$bootstrap_gate_raw"
+          ;;
+        sql)
+          printf "ERROR: ALTER ROLE daily_input_admitter PASSWORD '%s';\n" "$bootstrap_gate_sentinel" >"$bootstrap_gate_raw"
+          ;;
+      esac
+      for bootstrap_gate_exit in 0 7; do
+        if ! bootstrap_gate_expect_case 20 "$bootstrap_gate_credentials" "$bootstrap_gate_raw" \
+          "$bootstrap_gate_destination" "$bootstrap_gate_exit" yes; then
+          echo 'PG_VALIDATION_SELF_TEST: bootstrap gate disclosure case failed' >&2
+          exit 1
+        fi
+      done
+    done
+  done
+
+  printf '%s\n' 'role bootstrap completed without credentials' >"$bootstrap_gate_raw"
+  if ! bootstrap_gate_expect_case 0 "$bootstrap_gate_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 0 no; then
+    echo 'PG_VALIDATION_SELF_TEST: clean bootstrap success gate case failed' >&2
+    exit 1
+  fi
+  printf '%s\n' 'role bootstrap failed safely with exit 7' >"$bootstrap_gate_raw"
+  if ! bootstrap_gate_expect_case 10 "$bootstrap_gate_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 7 no; then
+    echo 'PG_VALIDATION_SELF_TEST: clean bootstrap failure gate case failed' >&2
+    exit 1
+  fi
+
+  bootstrap_gate_missing_credentials="$bootstrap_gate_fixture/missing-credentials"
+  bootstrap_gate_unreadable_credentials="$bootstrap_gate_fixture/unreadable-credentials"
+  bootstrap_gate_empty_credentials="$bootstrap_gate_fixture/empty-credentials"
+  mkdir -p "$bootstrap_gate_missing_credentials" "$bootstrap_gate_unreadable_credentials" "$bootstrap_gate_empty_credentials"
+  for bootstrap_gate_name in "${bootstrap_gate_names[@]:0:7}"; do
+    cp -- "$bootstrap_gate_credentials/$bootstrap_gate_name" "$bootstrap_gate_missing_credentials/$bootstrap_gate_name"
+    cp -- "$bootstrap_gate_credentials/$bootstrap_gate_name" "$bootstrap_gate_unreadable_credentials/$bootstrap_gate_name"
+    cp -- "$bootstrap_gate_credentials/$bootstrap_gate_name" "$bootstrap_gate_empty_credentials/$bootstrap_gate_name"
+  done
+  mkdir "$bootstrap_gate_unreadable_credentials/db_daily_input_admitter_password"
+  : >"$bootstrap_gate_empty_credentials/db_daily_input_admitter_password"
+  printf '%s\n' 'synthetic bootstrap output for scan-error cases' >"$bootstrap_gate_raw"
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_missing_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: missing credential scan input was not rejected safely' >&2
+    exit 1
+  fi
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_unreadable_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 7 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: unreadable credential scan input was not rejected safely' >&2
+    exit 1
+  fi
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_empty_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: empty credential scan input was not rejected safely' >&2
+    exit 1
+  fi
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_credentials" "$bootstrap_gate_fixture/missing.raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: missing bootstrap log was not rejected safely' >&2
+    exit 1
+  fi
+  : >"$bootstrap_gate_fixture/empty.raw"
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_credentials" "$bootstrap_gate_fixture/empty.raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: empty bootstrap log was not rejected safely' >&2
+    exit 1
+  fi
+  mkdir "$bootstrap_gate_fixture/unreadable.raw"
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_credentials" "$bootstrap_gate_fixture/unreadable.raw" \
+    "$bootstrap_gate_destination" 7 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: unreadable bootstrap log was not rejected safely' >&2
+    exit 1
+  fi
+
   echo 'PG_VALIDATION_SELF_TEST: PASS'
   exit 0
 fi
@@ -917,6 +1126,51 @@ assert_bootstrap_log_redacts_credentials() {
   done
 }
 
+bootstrap_gate_output_is_marker() {
+  local output=$1 marker
+  [[ -f "$output" && ! -L "$output" && -s "$output" ]] || return 1
+  marker=$(cat -- "$output" 2>/dev/null) || return 1
+  [ "$marker" = "$bootstrap_gate_redacted_marker" ]
+}
+
+record_bootstrap_result() {
+  local password_dir=$1 raw=$2 evidence_name=$3 label=$4 bootstrap_status=$5
+  local gated_output="$workdir/gated-$evidence_name" gate_status
+
+  if bootstrap_record_gate "$password_dir" "$raw" "$gated_output" "$bootstrap_status"; then
+    gate_status=0
+  else
+    gate_status=$?
+  fi
+
+  case "$gate_status" in
+    0)
+      assert_bootstrap_log_redacts_credentials "$password_dir" "$gated_output" "$label"
+      record_log "$gated_output" "$evidence_name"
+      ;;
+    10)
+      assert_bootstrap_log_redacts_credentials "$password_dir" "$gated_output" "$label"
+      record_log "$gated_output" "$evidence_name"
+      fail "$label role bootstrap failed (bootstrap exit=$bootstrap_status)"
+      ;;
+    20)
+      if bootstrap_gate_output_is_marker "$gated_output"; then
+        record_log "$gated_output" "$evidence_name"
+      fi
+      fail "$label role bootstrap output disclosed a credential; evidence redacted (bootstrap exit=$bootstrap_status)"
+      ;;
+    21)
+      if bootstrap_gate_output_is_marker "$gated_output"; then
+        record_log "$gated_output" "$evidence_name"
+      fi
+      fail "$label role bootstrap credential scan failed; evidence redacted (bootstrap exit=$bootstrap_status)"
+      ;;
+    *)
+      fail "$label role bootstrap credential gate returned an unknown category (gate=$gate_status bootstrap exit=$bootstrap_status)"
+      ;;
+  esac
+}
+
 run_app_actor_sql() {
   local compose_function=$1 raw=$2
   "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
@@ -1020,7 +1274,7 @@ run_full_release_lane() {
   local full_rerun_raw="$workdir/full-migrate-second.log"
   local catalog_first_raw="$workdir/full-catalog-first.log"
   local catalog_second_raw="$workdir/full-catalog-second.log"
-  local catalog_first_snapshot catalog_second_snapshot
+  local catalog_first_snapshot catalog_second_snapshot full_bootstrap_status
 
   full_started=1
   if ! full_compose up -d --wait qa-db >"$full_up_raw" 2>&1; then
@@ -1029,12 +1283,13 @@ run_full_release_lane() {
   fi
   record_log "$full_up_raw" full-up.log
 
-  if ! bootstrap_roles full_compose >"$full_bootstrap_raw" 2>&1; then
-    record_log "$full_bootstrap_raw" full-bootstrap.log
-    fail 'full-release role bootstrap failed'
+  if bootstrap_roles full_compose >"$full_bootstrap_raw" 2>&1; then
+    full_bootstrap_status=0
+  else
+    full_bootstrap_status=$?
   fi
-  assert_bootstrap_log_redacts_credentials "$full_password_dir" "$full_bootstrap_raw" full-release
-  record_log "$full_bootstrap_raw" full-bootstrap.log
+  record_bootstrap_result "$full_password_dir" "$full_bootstrap_raw" full-bootstrap.log \
+    full-release "$full_bootstrap_status"
 
   for service_role in migration_owner app worker audit_writer research_writer admin daily_input_admitter; do
     service_login_raw="$workdir/full-service-login-$service_role.log"
@@ -1203,12 +1458,12 @@ fi
 record_log "$main_up_raw" main-up.log
 
 bootstrap_raw="$workdir/main-bootstrap.log"
-if ! bootstrap_roles main_compose >"$bootstrap_raw" 2>&1; then
-  record_log "$bootstrap_raw" main-bootstrap.log
-  fail 'production-like role bootstrap failed'
+if bootstrap_roles main_compose >"$bootstrap_raw" 2>&1; then
+  bootstrap_status=0
+else
+  bootstrap_status=$?
 fi
-assert_bootstrap_log_redacts_credentials "$main_password_dir" "$bootstrap_raw" staged
-record_log "$bootstrap_raw" main-bootstrap.log
+record_bootstrap_result "$main_password_dir" "$bootstrap_raw" main-bootstrap.log staged "$bootstrap_status"
 
 for service_role in migration_owner app worker audit_writer research_writer admin daily_input_admitter; do
   service_login_raw="$workdir/service-login-$service_role.log"
@@ -1428,12 +1683,13 @@ fi
 record_log "$test_up_raw" test-up.log
 
 test_bootstrap_raw="$workdir/test-bootstrap.log"
-if ! bootstrap_roles test_compose >"$test_bootstrap_raw" 2>&1; then
-  record_log "$test_bootstrap_raw" test-bootstrap.log
-  fail 'test-cluster role bootstrap failed'
+if bootstrap_roles test_compose >"$test_bootstrap_raw" 2>&1; then
+  test_bootstrap_status=0
+else
+  test_bootstrap_status=$?
 fi
-assert_bootstrap_log_redacts_credentials "$test_password_dir" "$test_bootstrap_raw" test-cluster
-record_log "$test_bootstrap_raw" test-bootstrap.log
+record_bootstrap_result "$test_password_dir" "$test_bootstrap_raw" test-bootstrap.log \
+  test-cluster "$test_bootstrap_status"
 
 test_database_url="postgres://postgres:$(<"$test_password_dir/postgres_password")@127.0.0.1:${test_port}/postgres"
 # Every command receives DATABASE_URL. A SKIP marker is a hard failure.

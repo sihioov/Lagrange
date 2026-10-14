@@ -5,6 +5,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 compose="$root/deploy/compose/compose.yml"
 provision="$root/deploy/secrets/provision-runtime-secrets.sh"
+production_validator="$root/scripts/ops/validate-production-config.sh"
 secret_gitignore="$root/deploy/secrets/.gitignore"
 env_example="$root/deploy/compose/.env.example"
 secrets_readme="$root/deploy/secrets/README.md"
@@ -196,6 +197,150 @@ for expected in \
   grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]+$target[[:space:]]+$source[[:space:]]+$uid[[:space:]]+$gid[[:space:]]+$mode[[:space:]]+$single_line$" "$provision" \
     || die "runtime provisioner inventory missing: $expected"
 done
+
+# Parse the selected release copy map and validator's release runtime_specs as
+# inert source text. Never source, eval, or execute either production script to
+# derive these inventories. Unknown or ambiguous shell mapping syntax fails
+# closed so a new conditional/call cannot silently bypass the parity check.
+command -v python3 >/dev/null 2>&1 || die 'release inventory parity requires the existing python3 runtime'
+python3 - "$provision" "$production_validator" <<'PY' || die 'release provisioner and validator inventories must match by path, UID, GID, and numeric mode'
+import re
+import sys
+
+
+class InventoryError(Exception):
+    pass
+
+
+def parse_copy(line, source_label):
+    match = re.fullmatch(
+        r"add_copy\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)\s+([0-7]{3,4})\s+(yes|no)",
+        line,
+    )
+    if match is None:
+        raise InventoryError(f"unrecognized {source_label} add_copy mapping")
+    service, target, source, uid, gid, mode, single_line = match.groups()
+    if not service or not target or not source or single_line not in {"yes", "no"}:
+        raise InventoryError(f"ambiguous {source_label} add_copy mapping")
+    return f"{service}/{target}", (int(uid), int(gid), int(mode, 8))
+
+
+def add_unique(destination, item, source_label):
+    path, metadata = item
+    if path in destination:
+        raise InventoryError(f"ambiguous duplicate {source_label} path")
+    destination[path] = metadata
+
+
+def parse_copy_function(source, function_name):
+    matches = list(
+        re.finditer(
+            rf"(?ms)^{re.escape(function_name)}\(\) \{{\n(.*?)^\}}$",
+            source,
+        )
+    )
+    if len(matches) != 1:
+        raise InventoryError(f"missing or ambiguous {function_name} definition")
+    inventory = {}
+    for raw_line in matches[0].group(1).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        add_unique(inventory, parse_copy(line, function_name), function_name)
+    return inventory
+
+
+def parse_release_provisioner(path):
+    source = open(path, encoding="utf-8").read()
+    serving = parse_copy_function(source, "add_serving_copies")
+    infrastructure = parse_copy_function(source, "add_infrastructure_copies")
+    branches = list(re.finditer(r"(?ms)^  release\)\n(.*?)^    ;;$", source))
+    if len(branches) != 1:
+        raise InventoryError("missing or ambiguous release scope branch")
+
+    inventory = {}
+    calls = {"add_serving_copies": 0, "add_infrastructure_copies": 0}
+    extras = 0
+    for raw_line in branches[0].group(1).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line in calls:
+            calls[line] += 1
+            continue
+        if line == "add_extra_source backup_encryption_key yes":
+            extras += 1
+            continue
+        if line.startswith("add_copy "):
+            add_unique(inventory, parse_copy(line, "release scope"), "release scope")
+            continue
+        raise InventoryError("unrecognized release scope mapping syntax")
+    if calls != {"add_serving_copies": 1, "add_infrastructure_copies": 1} or extras != 1:
+        raise InventoryError("ambiguous release scope function/source selection")
+    for selected in (serving, infrastructure):
+        for path, metadata in selected.items():
+            add_unique(inventory, (path, metadata), "selected release")
+    if not inventory:
+        raise InventoryError("selected release inventory is empty")
+    return inventory
+
+
+def parse_validator_release(path):
+    source = open(path, encoding="utf-8").read()
+    matches = list(
+        re.finditer(
+            r"(?ms)^else\n  runtime_specs=\(\n(.*?)\n  \)\nfi\nfor spec in \"\$\{runtime_specs\[@\]\}\"; do",
+            source,
+        )
+    )
+    if len(matches) != 1:
+        raise InventoryError("missing or ambiguous validator release runtime_specs branch")
+    inventory = {}
+    spec_pattern = re.compile(r"([^:/\s]+/[^:/\s]+):(\d+):(\d+):([0-7]{3,4})\Z")
+    for raw_line in matches[0].group(1).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        for token in line.split():
+            match = spec_pattern.fullmatch(token)
+            if match is None:
+                raise InventoryError("unrecognized validator release runtime_specs mapping")
+            path_key, uid, gid, mode = match.groups()
+            add_unique(inventory, (path_key, (int(uid), int(gid), int(mode, 8))), "validator release")
+    if not inventory:
+        raise InventoryError("validator release inventory is empty")
+    return inventory
+
+
+def inventory_parity(provisioner, validator):
+    return provisioner == validator
+
+
+try:
+    provisioner_release = parse_release_provisioner(sys.argv[1])
+    validator_release = parse_validator_release(sys.argv[2])
+    if not inventory_parity(provisioner_release, validator_release):
+        raise InventoryError("selected release path/UID/GID/numeric mode inventories differ")
+
+    protected_path = "db-role-bootstrap/db_daily_input_admitter_password"
+    if protected_path not in provisioner_release:
+        raise InventoryError("selected release omits the admitter bootstrap credential")
+    expected_uid, expected_gid, expected_mode = provisioner_release[protected_path]
+
+    without_bootstrap = dict(provisioner_release)
+    del without_bootstrap[protected_path]
+    wrong_uid = dict(provisioner_release)
+    wrong_uid[protected_path] = (expected_uid + 1, expected_gid, expected_mode)
+    wrong_mode = dict(provisioner_release)
+    wrong_mode[protected_path] = (expected_uid, expected_gid, expected_mode ^ 0o040)
+    for variant in (without_bootstrap, wrong_uid, wrong_mode):
+        if inventory_parity(variant, validator_release):
+            raise InventoryError("in-memory release inventory mutation was not rejected")
+except (OSError, UnicodeError, InventoryError, IndexError) as error:
+    print(f"secrets-runtime-static-check: release inventory parity failed: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+
 [ "$(grep -Ec '^[[:space:]]+add_copy[[:space:]]+owner-beta-daily-admitter[[:space:]]+db_daily_input_admitter_password[[:space:]]+db_daily_input_admitter_password[[:space:]]+10003[[:space:]]+10003[[:space:]]+0440[[:space:]]+yes$' "$provision" || true)" -eq 1 ] \
   || die 'admitter runtime secret must be staged once as 10003:10003 mode 0440'
 if grep -Eq '^[[:space:]]+add_copy[[:space:]]+(api-server|research-worker|recommendation-runner|candidate-runner|owner-beta-runner|owner-beta-daily-producer|nt-backtest-worker-[12]|paper-scheduler|research-range-raw)[[:space:]].*db_daily_input_admitter_password' "$provision"; then
@@ -344,6 +489,7 @@ malformed_cursor=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde
 mkdir -p "$crypto_source/tls"
 for name in postgres_password db_migration_owner_password db_app_password \
   db_worker_password db_audit_password db_research_password db_admin_password \
+  db_daily_input_admitter_password \
   session_secret csrf_secret cursor_secret auth0_client_secret backup_encryption_key; do
   value=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   [ "$name" = cursor_secret ] && value=$malformed_cursor
@@ -379,6 +525,7 @@ if command -v fakeroot >/dev/null 2>&1; then
   mkdir -p "$numeric_source/tls"
   for name in postgres_password db_migration_owner_password db_app_password \
     db_worker_password db_audit_password db_research_password db_admin_password \
+    db_daily_input_admitter_password \
     auth0_client_secret; do
     printf 'fixture-%s' "$name" >"$numeric_source/$name"
     chmod 0600 "$numeric_source/$name"
@@ -405,6 +552,9 @@ if command -v fakeroot >/dev/null 2>&1; then
     [ "$(stat -c "%u:%g:%a" "$runtime_dir/api-server/session_secret")" = 10001:10001:440 ]
     [ "$(stat -c "%u:%g:%a" "$runtime_dir/reverse-proxy/lagrange_tls_cert")" = 101:101:440 ]
     [ "$(stat -c "%u:%g:%a" "$runtime_dir/db-role-bootstrap/postgres_password")" = 999:999:400 ]
+    [ "$(stat -c "%u:%g:%a" "$runtime_dir/owner-beta-daily-admitter/db_daily_input_admitter_password")" = 10003:10003:440 ]
+    [ "$(stat -c "%u:%g:%a" "$runtime_dir/owner-beta-daily-admitter")" = 10003:10003:750 ]
+    [ "$(stat -c "%u:%g:%a" "$runtime_dir/db-role-bootstrap/db_daily_input_admitter_password")" = 999:999:400 ]
     [ "$(stat -c "%u:%g:%a" "$runtime_dir/api-server")" = 10001:10001:750 ]
   ' _ "$provision" "$numeric_source" "$numeric_runtime" \
     >"$fixture/numeric-ownership.out" 2>&1; then

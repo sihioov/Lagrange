@@ -838,7 +838,9 @@ else
     db-role-bootstrap/db_migration_owner_password:999:999:400
     db-role-bootstrap/db_app_password:999:999:400 db-role-bootstrap/db_worker_password:999:999:400
     db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
-    db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
+    db-role-bootstrap/db_admin_password:999:999:400
+    db-role-bootstrap/db_daily_input_admitter_password:999:999:400
+    db-migrate/db_migration_owner_password:999:999:400
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
     research-worker/db_research_password:10001:10001:440 research-worker/kis_app_key:10001:10001:440
     research-worker/kis_app_secret:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440

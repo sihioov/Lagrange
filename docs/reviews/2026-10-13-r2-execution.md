@@ -896,3 +896,27 @@ The ledger and private wave10 startup receipts preserve actual status and notifi
 registration. Coordinator must recover incomplete work at the reporting boundary and
 reconcile/replace the heartbeat before expiry; same-daemon outage remains unprotected.
 No correction result, new source acceptance or fresh CI pass is claimed yet.
+
+
+## Raw 보정본 회수·독립 재검토 준비 — 2026-10-14
+
+I1b-S1-F는06:29:18 UTC actual idle/pending0다. 메모리 처리만 담긴 callback을 완료 보고로
+대체하지 않고 activity에서 전체 코드 보고서를 회수했다. 코디네이터는 S1-R01–05의
+redacted 오류, mutable borrow/명시 타입, fixture shadowing, missing-tree UID, NOTDIR 분류를
+실제 두 파일 diff와 대조했다. `storage.rs`3656행 `b1dca720…`, 새 fixture644행
+`1deec0dc…`를 고정했고 다른15개 non-owned 입력은 변경되지 않았다.
+rustfmt 및 scoped diff 검사는 통과했다. 컴파일·테스트·실제 errno/race 검증은 미실행이다.
+
+[후속 계획](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)의
+I1b-S1-F-R은 Sol/high의 두 파일 독립 delta review이며 결과 보고서 하나만 작성한다.
+I0b-F의 세 shell 파일 보정은 계속되고 있어 수정 중인 bytes를 인수하지 않았다.
+두 보정의 검토를 마친 뒤 같은 새 소스 후보의 hosted CI를 준비한다.
+R2-04/09는DOING이며 운영 조치·provider 호출·새 CI 실행은 추가하지 않았다.
+
+I0b-F도06:34:39 UTC actual idle/pending0에서 전체 보고서를 회수했다. 세 파일 hash는
+static-check 24ff74cc…, production validator a472d2f8…, integration validator d2d40082…다.
+코디네이터가 전체 delta와 세 finding의 변경 경로를 읽고 bash-n3건, embedded Python AST,
+scoped diff 검사를 통과했다. 33개 parity와 bootstrap gate 회귀는 작성 상태이며 실행하지 않았다.
+이로써 다섯 수정 파일과 나머지15개 고정 입력을 source-wave-11-inputs.json에 보존했다.
+두 implementer의 actual idle/pending0/full final을 확인해35d4c84a 감시를 종료했다.
+I0b-F-R과 I1b-S1-F-R의 별도 보고서 두 건을 병렬 검토한 뒤 새 후보 CI로 이어간다.

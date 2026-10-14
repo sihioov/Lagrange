@@ -1334,3 +1334,125 @@ The ledger and private wave10 startup receipts preserve actual status and notifi
 registration. Coordinator must recover incomplete work at the reporting boundary and
 reconcile/replace the heartbeat before expiry; same-daemon outage remains unprotected.
 No correction result, new source acceptance or fresh CI pass is claimed yet.
+
+
+## Wave 10 Raw correction recovery and delta review — 2026-10-14
+
+I1b-S1-F `14d3d7c8-892a-4434-baa6-29de925837cb` is actual idle/pending0
+at06:29:18 UTC. Its callback contained only the memory finish result; the coordinator
+recovered the substantive final from activity before accepting the handoff. All five
+S1-R01–05 dispositions were checked against the two-file delta. Scoped rustfmt and
+diff checks passed; the other15 frozen non-owned inputs are unchanged. I0b-F's three
+shell files remain independently in progress. Neither correction package is accepted
+from this source inspection, and no new hosted CI or local execution has occurred.
+
+| Frozen source | Lines | SHA-256 |
+| --- | ---: | --- |
+| crates/market-data/src/storage.rs | 3656 | `b1dca720210216d49d22858ac65b26a8f3cf230428629c9c4ec0ac64238e6fef` |
+| crates/market-data/tests/daily_price_only_storage.rs | 644 | `1deec0dc3060fbbf880b3801b78cf640b70aae7a1d0f1c99807fe41476000d45` |
+
+Private `source-wave-11-raw-inputs.json` pins these bytes, the nine unchanged references
+and the prior290-line review `e0322d17…`. The complete worker final and recovery receipt
+are under `target/r2-daily-beta/wp-4-integration/wave10-I1b-S1-F-*`.
+This remains manifest-only unapproved evidence; full snapshot, admission and runtime
+truth are outside this package.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation |
+| --- | --- | --- | --- | --- |
+| I1b-S1-F-R | intermediate | Independent two-file delta review against five fixed findings and unchanged trust/API contract | high | A contradictory error/trust requirement or repeated failed correction must be reported with concrete source evidence |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I1b-S1-F-R | 11 | intermediate | Check S1-R01–05 corrections, written regressions and preservation | Only docs/reviews/2026-10-14-r2-raw-manifest-corrections-review.md | Actual idle/full final and frozen two-file bytes | Reuse a4b5c1b9, gpt-6.1-sol/high under repository code-review rule | Findings or explicit no-findings, five dispositions and execution gaps | Hash/diff/source/call-path review, scoped rustfmt/whitespace, report links; no test execution |
+
+The reused reviewer was verified idle/pending0 with its prior final recovered. Current
+Paseo profile Astra/high is coordinator-only; the repository routes code review to Sol/high.
+The report scope is disjoint from the ongoing I0b-F three-file correction. Source bytes,
+D4/D5, other reports, diagrams, roadmap, ledger and Git are read-only to the reviewer.
+
+The fixed review brief is to inspect:
+1. All rejected sibling serde rows discard the original error and use the redacted typed
+   variant, with final torn-EOF behavior unchanged. Check Display, Debug and Error::source
+   sentinels for invalid FetchMode/hash/ID, and preservation of legacy CorruptManifest.
+2. The mutable borrowed reader and explicit vector type resolve the cited source defects
+   without changing descriptors, limits, allocation/read bounds or public API.
+3. The two fixture-shadowing repairs preserve fresh independent fixtures and every assertion.
+4. Missing-tree coverage reaches the public method using the existing parent UID and creates
+   no Raw tree; missing-lock and read-only assertions remain.
+5. Only the sibling directory mapper handles LOOP/NOTDIR as unsafe, with no-follow/no-retry,
+   permission-error closure and legacy opener unchanged. Verify ordinary non-directory,
+   symlink, redirected control, owner/mode/type, bounds and replacement written regressions.
+
+Inspect compile/strict-lint exposure at source level and report concrete issues; do not claim
+compiler success from rustfmt. Adjacent source may be read only to prove a relevant type or
+call path. No redesign or full snapshot work is authorized. No Cargo/rustc/Clippy/tests/
+self-tests/build/DB/root/Docker/provider/production or Git actions. The reviewer must complete
+directly without native or Paseo delegation and report missing/conflicting requirements.
+
+Return one report with prioritized findings, trigger/consequence/source anchors, bounded fix,
+five dispositions, exact checked hashes, actual static checks and unexecuted test limits.
+The final must include changed file/line range, deviations/reasons, unresolved/not-found/
+not-verified items (explicit none when empty), further decomposition, background work and
+pending permissions. The reporting bound is60minutes after actual startup; return INCOMPLETE
+with checked/residual scope if needed. Notifications and a bounded replacement heartbeat
+retain coordinator ownership; same-daemon outage is not protected.
+
+After actual idle/pending0/full result, the coordinator checks concrete findings against frozen
+bytes. I0b-F is recovered/reviewed separately. Only then is a combined exact-candidate hosted
+CI prepared after existing-run deduplication; no success claim may use929fcd6 for new code.
+I6 diagrams before structural main merge and I0/0060/full input/runtime/Owner remain open.
+
+
+### I0b correction recovery and paired review — 2026-10-14
+
+I0b-F `fd32e206-9248-41cd-a86b-de07a33ea464` also reached actual idle/pending0
+at06:34:39 UTC, before either wave11 review started. The substantive final, all three
+hashes, the full scoped diff, three bash syntax checks and embedded Python AST were
+recovered/checked. The written shared-gate and inventory cases were not executed.
+
+| Frozen source | Lines | SHA-256 |
+| --- | ---: | --- |
+| deploy/secrets/runtime-static-check.sh | 568 | `24ff74cce03ec8e9f899c2a14b6ae78f09f79a5b5e9e470a59417ddf3703dccd` |
+| scripts/ops/validate-production-config.sh | 889 | `a472d2f8079985f124d66d7efddda2c11e2955858014b7325f563dd3b3ff9ba2` |
+| deploy/db/integration-validation/validate.sh | 1709 | `d2d4008249f0c79d64da7e00281861dfbc7a533e6e5793f585411e7693f6f6b3` |
+
+Private `source-wave-11-inputs.json` now freezes all five corrections plus15 unchanged
+inputs. Both implementers are idle, have no permission requests and have full finals
+recovered. Heartbeat35d4c84a was deleted after those recoveries. Source acceptance remains
+pending. The two independent reviews below may proceed in parallel with separate report
+ownership; their startup and replacement monitoring are recorded after real launch.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation |
+| --- | --- | --- | --- | --- |
+| I0b-F-R | intermediate | Three fixed inventory/projection/log-gate corrections, bounded source and fixture review | high | Concrete unresolved credential/error-path contract or repeated failed correction: report and escalate one tier |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-F-R | 11 | intermediate | Check I0b-R01–03 and shared-gate failure paths without executing them | Only docs/reviews/2026-10-14-r2-daily-role-corrections-review.md | Actual idle/full final and frozen three-file bytes | Reuse d9ca76a3, gpt-6.1-sol/high under repository review rule | Findings or explicit none, three dispositions and written-test map | Hash/source/diff, bash syntax and inert Python AST; no self-tests or runtime |
+
+I0b-F-R reads the previous261-line role review `f83131c8…`, fixed wave10 brief and
+twenty-file freeze. Confirm eighth credentials in both fixtures, preserved malformed-cursor
+failure/no-value/no-partial-write assertions, and numeric admitter/bootstrap ownership.
+Review release33-entry parity by path/UID/GID/numeric mode against source data, unknown/
+ambiguous mapping rejection, and same-helper removal/wrong-UID/wrong-mode cases.
+
+Trace all three bootstrap outcomes through the shared eight-credential gate before evidence
+recording. Check original exit preservation, fail-closed unreadable/missing/empty inputs and
+scanner errors, no credential values in argv/diagnostics, fixed-marker-only disclosure/error
+evidence, and DENIED on every non-success. Distinguish the gate's synthetic tests from the
+runtime record/sanitizer/fail wrapper, including clean failed output and bare SQL PASSWORD.
+Confirm tests exercise the actual gate, with all eight credentials and both success/failure
+statuses, and state the limits of directory-based unreadable-input simulations. No actual
+credential leak or runtime success may be inferred from source.
+
+Inspect only relevant adjacent bootstrap/provisioner/Compose/helper source for concrete
+compatibility; role SQL and other15 frozen inputs must remain unchanged. Report concrete
+delta defects, absent coverage and unresolved interfaces precisely without inventing policy.
+No source edits or new files beyond the named report; no Cargo/rustc/Clippy/tests/self-tests/
+validators/provisioners/build/DB/root/Docker/provider/production/Git actions or delegation.
+Use the same complete final-report format and60-minute actual-start reporting bound as the
+paired Raw review. Coordinator owns acceptance and incomplete-result recovery.
+
+Both reviews are source-only. After actual idle/pending0/full finals the coordinator resolves
+findings, then prepares one exact-candidate hosted CI after checking existing runs. No CI
+was dispatched for these five-file corrections yet;929fcd6 is historical baseline evidence.
