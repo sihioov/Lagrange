@@ -2399,3 +2399,28 @@ snapshot implementation, with no invented live UID/budget or data-rights policy.
 start0060 from this partial gate. New source requires an exact-candidate hosted run after
 existing-run inspection; old c0 success cannot certify new tests or snapshot code. Keep
 I6 evidence-bound diagrams before main integration, and runtime/Owner gates separate.
+
+
+### Wave20 actual startup and bounded monitoring — 2026-10-14
+
+Brief commit is `1a2321bfe6c6d3978ff60a48d7a2aadb895007c7`.
+Both startup snapshots confirmed workspace `wks_10fae7d550ab1704`, parent
+`ef6cdbb0-8409-4dba-86ca-c07eadccf377`, expected model/effort, running active
+turns and pending permissions0. Completion notifications are enabled.
+
+| Package | Owned agent | Actual UTC startup | Reporting deadline UTC |
+| --- | --- | --- | --- |
+| I0c, Luna/max | 8712eeba-3e47-43ae-9c52-8c6fcef98b7f | 09:20:29.738 | 10:20:29.738 |
+| I1b-S2-D, Astra/xhigh | 7e07def6-4eaa-45fa-9a12-91fdd67b27d9 | 09:20:40.793 | 10:05:40.793 |
+
+Private startup receipts and separate frozen input inventories are under
+`target/r2-daily-beta/wp-4-integration/`; ownership is recorded in
+`target/r2-daily-beta/owned-workers.json`. Heartbeat `c6e1b334` checks only
+these two owned scopes every two minutes, at most60 runs, expiring11:24:26.583UTC.
+Reconcile at each reporting bound and recover an INCOMPLETE scope if needed.
+Do not redirect a running worker, accept idle without a substantive final, or
+delete monitoring before actual idle/pending0/result recovery or an explicit
+bounded handoff. Renew or hand off before expiry; this same-daemon heartbeat
+cannot protect against daemon outage. The old CI monitor8b313a09 is deleted
+after full recovery. No new CI or local executable/operational verification
+has been launched. New tests and snapshot proposals remain unaccepted.

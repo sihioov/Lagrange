@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. 다음은 I0c 직접 로그인 helper 회귀·공식 no-SKIP 배선과 I1b-S2의 실제 Raw snapshot 인터페이스 확정이다. 0060·전체 입력·운영·Owner 인수는 남는다. |
+| 다음 착수 항목 | 후보c0ac599의 [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035)와 [최종 증거](reviews/2026-10-14-r2-caller-role-raw-ci.md)를 회수·대조해 역할/Raw manifest/호출부 부분 소스를 인수했다. 49개 Rust·chart6 직접 통과와7개 실행 job/required 성공을 확인했다. Wave20에서 I0c 직접 로그인 helper 회귀·공식 no-SKIP 배선과 I1b-S2-D Raw snapshot 인터페이스 확정에 착수했다. 각 소스/계약의 인수와 후속 hosted 검증은 별도다. 0060·전체 입력·운영·Owner 인수는 남는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -267,7 +267,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
   DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했다. [D5/D6 설계](reviews/2026-10-14-r2-daily-input-amendments-review.md)와 [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md)를 기준으로 I1a/I0a 및 I0b/I1b-S1·호출부 보정을 진행했다. 후보c0ac599의 [최종 CI](reviews/2026-10-14-r2-caller-role-raw-ci.md)에서7개 실행 job/required,49개 Rust·chart6 직접 PASS, Python suite485 pass/10 skip/7 warnings, Web/PG59 통과를 대조해 부분 소스와 hosted 검증을 인수했다. 과거929fcd6 부분 성공과 f9 실패·DB3/Raw5 및 후속 parser 지적/수정은 실행 기록과 변경 이력에 보존한다. 직접 로그인 helper의 actor GUC·연결 수·권한 거부, negative bootstrap/rollback,0060·전체 snapshot/입력·운영·Owner 인수는 남는다. 다음 bounded I0c/S2-D는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)을 따른다.
-  최신 검증 — c0ac599 / CI38536460035 성공을 actual idle/pending0와 최종 보고 회수 후 수용했다. 26개 고정 source와49개 Rust·chart6 직접 행을 원본 로그에 대조했다. 역할/secret/manifest/호출부 부분 인수이며 helper pool·actor GUC, 첫0060, 전체 snapshot과 운영 인수는 미완료다. I0c 회귀 소스와 S2-D 인터페이스를 다음 bounded wave로 준비했다.
+  최신 검증 — c0ac599 / CI38536460035 성공을 actual idle/pending0와 최종 보고 회수 후 수용했다. 26개 고정 source와49개 Rust·chart6 직접 행을 원본 로그에 대조했다. 역할/secret/manifest/호출부 부분 인수이며 helper pool·actor GUC, 첫0060, 전체 snapshot과 운영 인수는 미완료다. I0c(8712eeba, Luna/max)와 S2-D(7e07def6, Astra/xhigh)의 실제 startup·pending0를 확인했다. 보고 기한은 각각10:20:29.738UTC/10:05:40.793UTC이며, 모니터c6e1b334로 결과를 회수한다.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -510,3 +510,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; caller 보정 후보 CI 1회 시작 | c0ac599 fast-forward push·remote SHA·기존 실행 부재 확인,08:37:46UTC dispatch. Collector actual08:38:54.122UTC/pending0/notified,90분 보고 경계·bounded heartbeat 설정 | [CI38536460035](https://github.com/sihioov/Lagrange/actions/runs/38536460035), [실행 기록](reviews/2026-10-13-r2-execution.md).49개 Rust와 Clippy/shell/PG 실제 결과 대기 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; caller/role/Raw 부분 CI 인수·Wave20 준비 | c0ac599의7개 실행 job/required,49개 Rust와chart6 직접 통과를 실제 idle/최종 회수 후 대조. I0c helper 회귀와 S2-D snapshot 계약을 분리; 첫0060/운영 인수 아님 | [최종 CI](reviews/2026-10-14-r2-caller-role-raw-ci.md), [Wave20](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 소스26개 hash·원본 로그 및 기존 실패 증거 보존 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; Wave20 두 작업 실제 착수 | I0c 네 파일 회귀 소스와 S2-D 단일 계약 문서; 실제 startup·모델·부모·pending0 확인. 60/45분 보고 기한과 heartbeat c6e1b334를 기록; 새로운 실행/운영 인수 없음 | [Wave20 실행](reviews/2026-10-13-r2-execution.md), [고정 brief](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); brief commit1a2321b |
