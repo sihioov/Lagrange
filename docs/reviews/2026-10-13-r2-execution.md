@@ -302,3 +302,22 @@ root package/lock과 npm help를 확인해 명령을 보정했고, 한 번의 ro
 Web 해석 경로, 가이드 다섯 개의 존재를 확인했다. D2a도 실제 idle/pending0 후 수용했다.
 의존성 설치는 ignored root node_modules와 npm cache만 바꿨으며 제품·lockfile은 그대로다.
 테스트·빌드·서버·브라우저 실행·운영 행위는 없었다. D1 구조 설계는 아직 진행 중이다.
+
+### D1 회수·D3 독립 검토 시작 — 2026-10-14 KST
+
+D1은 실제 idle/pending0 후 [926행 설계](2026-10-14-r2-daily-input-design.md)를 회수했다.
+SHA-256은 `e74934b7e5909dc69713bac16118a5d816d25e38498ebbe69dffa45304e9c670`이다.
+별도 daily 타입·기존 역사 replay 보존·0060 additive migration·독립 파일/DB principal·영구 예약
+방향과 I1~I7의 단계적 source allowlist를 제안한다. 소스 구현·테스트·운영 성공 근거는 아니다.
+코디네이터가 U2 및 기존 raw-price 요청·일일 action 조회·0052 발행 fence와 핵심 접점을 대조하고,
+휴장일 action/calendar 증거의 구조적 충족 가능성 등 확인 질문을 후속 계획에 고정했다.
+
+D3는 `e183dbb1-4e18-4278-a109-7bd9b0855530`, codex gpt-6.1-sol/high이며 이 고정 설계의
+독립 리뷰 보고서만 쓴다. 실제 runtime·동일 workspace/parent·running/pending0를 확인했다.
+profile은 계속 코디네이터용 하나여서 repository 리뷰 배정 규칙을 적용했고 mode는 지정하지 않았다.
+완료된 D1/D2 감시 `1aaa7e97`을 삭제하고, D3 전용 `6d616899`를 2분/최대 60회/
+2026-10-14 02:44:42 UTC 만료로 등록했다. create에 `notifyOnFinish=true`를 사용했다.
+
+다음 작업은 D3의 구체적 source finding을 해소하고 첫 구현 묶음의 타입·파일·회귀를 확정해
+Luna/max에 위임하는 것이다. 운영 근거 부재만으로 독립 소스 작업 전체를 다시 차단하지 않는다.
+R2-04는 DOING이며 제품 코드·0060·실제 입력·자동 추천 실행은 아직 구현/검증하지 않았다.

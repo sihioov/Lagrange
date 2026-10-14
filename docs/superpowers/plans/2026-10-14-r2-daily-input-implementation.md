@@ -130,3 +130,28 @@ D2a에 한해 아래 명시된 npm 의존성 준비와 설치본 가이드 읽�
    기존 f8b9296 결과를 새 코드의 실행 증거로 재사용하지 않는다.
 6. 소스 검증·커밋·진행 기록과 실제 배포·Owner 인수·3거래일 관찰을 분리한다.
    추가 운영 조치는 준비 가능한 산출물을 완성한 뒤 G4에서 명령·영향을 제시한다.
+
+## D1/D2 통합과 D3 입력 고정 — 2026-10-14
+
+D1/D2/D2a의 실제 idle/pending0와 보고 회수를 확인했다. D2의 현재 UI·DTO 및 설치본 Next
+가이드는 확인됐고 제품·schema는 아직 바꾸지 않았다. D1의
+[구조 제안](../../reviews/2026-10-14-r2-daily-input-design.md)은 926행,
+SHA-256 `e74934b7e5909dc69713bac16118a5d816d25e38498ebbe69dffa45304e9c670`으로
+D3 입력을 고정한다. 검토 중에는 D1 보고서를 다른 worker가 수정하지 않는다.
+
+코디네이터는 역사 타입·5-pin·수동 요청 보존, 별도 daily 타입, 새 0060 migration,
+기존 보호 job type/계산식 재사용, producer/admitter 파일·DB 분리, default OFF와 영구 예약 키의
+방향을 채택 계약에 맞는 검토 대상으로 수용한다. 세부 권한·SQL·storage를 검증 완료했다고
+주장하지 않으며, D3가 구현을 막는 구체적 설계 모순을 구분한다.
+
+D3는 특히 다음을 확인한다.
+
+1. 휴장일을 포함한 action/calendar 증거 요구를 현행 소스가 채울 수 있는지, 단순 운영 증거
+   부재인지 수집 경로의 구조적 누락인지. 자동 일일 동작을 영구 정지시키는 요구를 G4로 숨기지 않는다.
+2. generic action normalization과 별도 일일 cash-only 검증의 경계가 U2와 맞는지.
+3. 기존 table-level grant/definer/RLS와 새 column/role/epoch 권한의 실효성, lock 순서·발행·복구.
+4. snapshot 재봉인·동일 일 두 번째 실행·legacy hash 변경이 가능한 경로와 필요한 회귀.
+5. I1 전체가 너무 크거나 스키마의 구체성이 부족하면, 안정된 pure contract/fixture와 source
+   검증/storage를 분리해 첫 구현 범위를 제시한다. 운영 값 부재를 소스 전체 착수 금지로 확대하지 않는다.
+
+새 product/source 작업의 exact 인터페이스와 수정 allowlist는 D3를 회수해 확정한다.
