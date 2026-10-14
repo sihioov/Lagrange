@@ -647,3 +647,73 @@ I1a-F-CI collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`는 03:25:39 UTC notifi
 I1a-F-R과 I1a-F-CI만 감시하는 `70aea161`(2분·60회·05:26:14 UTC 만료)을 등록하고
 기존 `45e28caf`를 삭제했다. 실제 결과 회수 전 인수하지 않으며 만료 전 미완료 작업을 재조정한다.
 같은 daemon의 heartbeat는 daemon 중단을 보호하지 못한다. 이번 단계의 운영 권한 확대는 없다.
+
+## I1a-F-R 인수와 격리 보정 I1a-F2 — 2026-10-14
+
+03:30:35 UTC actual idle/pending0 뒤 [보정 리뷰](../../reviews/2026-10-14-r2-daily-wire-corrections-review.md)
+309행·`72784303a8c92984b9d6e070838b4aaa5094318ee1b7594f8a90568796946546`를 회수했다.
+R01/02/03/06의 소스 보정은 수용하지만 실행 인수는 대기한다. R04/R05는 CR-01~04 때문에 열린 상태다.
+코디네이터가 date_range의 push 이전 검사, 복사 fixture의 공유 identity 비교, 새 test-only lint 지점과
+출력 writer 매핑을 확인했다. 현재 `02a400e` CI는 진행 중이며 이 리뷰를 실제 실행 결과로 대신하지 않는다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I1a-F2 | intermediate | 네 finding의 두 파일 국소 보정과 고정 출력 제한 회귀 | high | fixed 계약을 바꿔야 하거나 legal proof fixture를 bounded 구성할 수 없으면 정확한 모순/한계를 보고 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I1a-F2 | 2 | intermediate | CR-01~04 보정 | 별도 Paseo worktree의 `contract.rs`, `tests/daily_price_only.rs` 두 파일만 | 리뷰 회수·정확한 `02a400e` 작업 사본 | Sol/medium; 앞선 Luna 구현·보정에 남은 R04/R05 문제로 모델 한 단계 상향 | 변경 파일·finding별 판정·guard/test matrix | source/rustfmt/diff만; 통합 뒤 exact-candidate hosted 검증 |
+
+### I1a-F2 고정 실행 brief
+
+- 코디네이터는 `02a400e0a6f5f413c32ebd7a19f70af2e46dbfff`에서 별도 Paseo worktree를 만든다.
+  실제 workspace/path는 생성 응답 뒤 assignment에 고정한다. 기존 checkout과 진행 중 CI 입력은
+  수정하지 않는다. 공유 원본 계획·리뷰는 read-only로 참고한다. worker는 commit/push하지 않는다.
+- 사본에서 소유한 두 파일의 시작 hash는 `79370bc2…`/`ea08ac3a…`, D4는 `fa052903…`다.
+  CR-01: date_range는 제안된 다음 길이를 checked arithmetic으로 검사한 뒤 추가하거나, 추가 후
+  terminal break 전에 검사한다. 기존 정확한 370/371 assertion과 public LimitExceeded 의미를 유지한다.
+- CR-02: 같은 calendar file identity의 모든 occurrence에 동일한 16/17-hop metadata를 적용한다.
+  16-hop public 성공과 17-hop LimitExceeded, 10/11-page pair 및 nanosecond inversion은 유지한다.
+  금지된 identity 불일치를 허용하도록 production 검사를 약화하지 않는다.
+- CR-03: 새 private guard table의 복잡한 tuple/function-pointer 타입에 private alias/entry type을
+  사용한다. singleton borrowed slice는 `std::slice::from_ref`로 바꾸되 값 이동이 필요한 호출은
+  의미를 보존한다. 같은 두 파일의 관련 strict warning을 정리하며 blanket allowance는 금지한다.
+- CR-04: policy/manifest/admission/normalization 네 fixed canonical output limit 각각을 이름과
+  실제 값에 결합한 isolated writer exact/+1 회귀로 매핑한다. policy/admission의 legal public
+  encoding은 상한에 도달할 수 없음을 정확히 기록하고 기존 public 성공 경로를 유지한다.
+  proof encoder에는 bounded legal success/overflow pair를 추가한다. 고유 source FileKeys와
+  적법한 날짜·schema·source commitment를 써서 다른 shape/hash/count 거부로 byte guard를 대신하지 않는다.
+  한 번의 bounded fixture 구성·길이 산식으로 필요한 수를 정하고 반복 전체 serialize의 이차 비용을
+  피한다. 실제 proof bytes가 한계 아래/위인지 확인하고 내부 commitment는 공개 constructor로 재계산한다.
+  전체 nested positive 최대 fixture를 임의로 늘리지 않는다. size/guard 도달 경로를 보고한다.
+- public wire/API·D4·7 primary golden·515-byte cash·오류 분류·기존 historical/I0a/module/Cargo 파일은
+  변경하지 않는다. Raw/DB/운영 동작을 추가하지 않는다. 정확한 경계가 모순되면 임의 정책 없이 보고한다.
+- 허용 검사는 source/hash/diff, bounded pure fixture 계산과 rustfmt edition2024/check뿐이다.
+  Cargo/rustc/Clippy/test/build/SQL/DB/root/Docker/provider/운영/Git write/하위 위임은 금지한다.
+  공통 최종 보고에 각 finding 수정 anchor, 정확한 source hash/행 수, guard→test 매핑, fixture 비용,
+  미실행·미검증 및 추가 분해 필요 여부를 포함한다. written test를 PASS로 보고하지 않는다.
+
+코디네이터는 현재 CI의 최종 결과·보고를 먼저 회수하고 worker가 idle인 것을 확인한 뒤 사본 diff를
+원본에 통합한다. 범위 밖 변경이 없는지·기존 소스 hash를 확인하고 새 후보를 따로 commit/검증한다.
+현재 CI를 재실행하거나 취소하지 않는다. 이후 독립 delta review와 hosted 결과를 함께 판정한다.
+
+
+### 보정 리뷰 회수와 I1a-F2 착수 — 2026-10-14
+
+03:30:35 UTC actual idle/pending0 후 보정 리뷰 309행·
+`72784303a8c92984b9d6e070838b4aaa5094318ee1b7594f8a90568796946546`를 직접 읽고
+hash를 확인했다. R01/02/03/06은 소스 수준 해소를 수용한다. date_range가 371번째 항목을
+추가한 뒤 terminal break하는 경로와 calendar의 공유 identity 중 첫 occurrence만 16-hop으로
+바꾸는 fixture를 직접 대조했다. 두 회귀의 실패 조건 및 test-only lint·출력 경계 누락을
+CR-01~04 수정 대상으로 수용했다. 실행 결과나 전체 source 합격으로 해석하지 않는다.
+
+기존 Luna 구현·보정 뒤 R04/R05가 남았으므로 모델을 한 단계 높여 Sol/medium에 국소 수정만 맡겼다.
+Paseo 작업 사본 `/data/worktrees/3puw275b/r2-wire-f2`, `wks_183cc4ee7b8bd2a6`, branch `r2-wire-f2`는
+정확한 `02a400e0a6f5f413c32ebd7a19f70af2e46dbfff` 기준이며 clean/시작 hash를 확인했다.
+worker `54eb1c89-2cf3-41bb-94cb-25dfe7152ee0`의 03:34:41 UTC notified launch와 실제
+running/pending0·workspace·parent·model/effort를 확인했다. 소유권은 사본의 두 Rust 파일뿐이며
+원본 CI의 고정 입력은 바꾸지 않는다. 로컬 compiler/test/DB/운영 실행은 맡기지 않았다.
+
+기존 CI collector는 계속 exact `02a400e`의 run만 관찰한다. 두 결과의 actual idle/final 회수 후
+코디네이터가 원본 hash와 사본 diff를 대조해 통합하고 새 후보를 검증한다. `70aea161`을 삭제하고
+두 소유 worker의 `6dd677e4`(2분·60회·05:35:22 UTC 만료)로 감시를 교체했다.

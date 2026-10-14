@@ -601,3 +601,24 @@ I1a-F-CI collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`는 03:25:39 UTC notifi
 I1a-F-R과 I1a-F-CI만 감시하는 `70aea161`(2분·60회·05:26:14 UTC 만료)을 등록하고
 기존 `45e28caf`를 삭제했다. 실제 결과 회수 전 인수하지 않으며 만료 전 미완료 작업을 재조정한다.
 같은 daemon의 heartbeat는 daemon 중단을 보호하지 못한다. 이번 단계의 운영 권한 확대는 없다.
+
+
+### 보정 리뷰 회수와 I1a-F2 착수 — 2026-10-14
+
+03:30:35 UTC actual idle/pending0 후 보정 리뷰 309행·
+`72784303a8c92984b9d6e070838b4aaa5094318ee1b7594f8a90568796946546`를 직접 읽고
+hash를 확인했다. R01/02/03/06은 소스 수준 해소를 수용한다. date_range가 371번째 항목을
+추가한 뒤 terminal break하는 경로와 calendar의 공유 identity 중 첫 occurrence만 16-hop으로
+바꾸는 fixture를 직접 대조했다. 두 회귀의 실패 조건 및 test-only lint·출력 경계 누락을
+CR-01~04 수정 대상으로 수용했다. 실행 결과나 전체 source 합격으로 해석하지 않는다.
+
+기존 Luna 구현·보정 뒤 R04/R05가 남았으므로 모델을 한 단계 높여 Sol/medium에 국소 수정만 맡겼다.
+Paseo 작업 사본 `/data/worktrees/3puw275b/r2-wire-f2`, `wks_183cc4ee7b8bd2a6`, branch `r2-wire-f2`는
+정확한 `02a400e0a6f5f413c32ebd7a19f70af2e46dbfff` 기준이며 clean/시작 hash를 확인했다.
+worker `54eb1c89-2cf3-41bb-94cb-25dfe7152ee0`의 03:34:41 UTC notified launch와 실제
+running/pending0·workspace·parent·model/effort를 확인했다. 소유권은 사본의 두 Rust 파일뿐이며
+원본 CI의 고정 입력은 바꾸지 않는다. 로컬 compiler/test/DB/운영 실행은 맡기지 않았다.
+
+기존 CI collector는 계속 exact `02a400e`의 run만 관찰한다. 두 결과의 actual idle/final 회수 후
+코디네이터가 원본 hash와 사본 diff를 대조해 통합하고 새 후보를 검증한다. `70aea161`을 삭제하고
+두 소유 worker의 `6dd677e4`(2분·60회·05:35:22 UTC 만료)로 감시를 교체했다.
