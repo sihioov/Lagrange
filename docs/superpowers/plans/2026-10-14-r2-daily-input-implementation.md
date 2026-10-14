@@ -929,3 +929,42 @@ workflow_dispatch·정확한 SHA·in_progress를 확인했다. dispatch 직후 �
 `7537b40b`(2분·60회·06:29:39 UTC 만료)로 감시를 교체하고 `05c2aada`를 삭제했다.
 미완료면 코디네이터가 감시 책임을 유지한다. 같은 daemon heartbeat의 중단 한계는 그대로다.
 이 후속 문서 커밋을 source 검증 대상으로 바꾸지 않는다. R2 운영 권한 확대나 로컬 테스트 실행은 없다.
+
+
+## I0a-L 공용 harness lint 보정·검증 — 2026-10-14
+
+I1a-L-CI actual idle/pending0/final을 회수했다. 정확한 `d6bb23a`의30개 Rust 회귀와6개 실행 job은
+성공했으며 I0a의 선택적 `daily_input_admitter_pool` 미사용 경고로 Clippy/required가 실패했다.
+코디네이터가 작은1-file 수정 규칙에 따라 메서드에만 이유를 설명한 `allow(dead_code)`를 추가했다.
+각 integration binary가 공용 모듈을 별도 컴파일하는 구조와 기존 role-specific helper 관행을
+확인했다. 본문·역할 SQL·pool/GUC assertion과 wire/Python 소스는 그대로다. 새 harness401행 hash는
+`242977cf561d54c88889feeb695c8de5b90a64910fd3fcbfde346a17a06e68fa`다.
+정확한 delta 대조·rustfmt/diff만 통과했으며 실제 Clippy는 새 후보에서 검증한다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I0a-L-CI | simple | 한 메서드 lint 범위 보정 후 고정 후보의 기존 run·정해진30개 테스트와 strict 결과 회수 | high | 새 진단/누락 근거는 UNKNOWN으로 구분해 반환; 원인 추정이나 실행 범위 확대 금지 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0a-L-CI | 7 | simple | 공용 harness lint 보정 후보의 전체 hosted 결과 회수 | `docs/reviews/2026-10-14-r2-harness-lint-ci.md`, 새 candidate private leaf | 기존 collector idle/final·국소 수정·push/기존 run 확인/1회 dispatch | 기존 Luna/medium collector | exact 후보/run·7개 job/required·30개 회귀·명확한 검증 한계 | read-only gh run/job/log 및 inventory·source·receipt 대조 |
+
+### I0a-L-CI 고정 실행 brief
+
+- notified prompt에서 full SHA와 run ID를 고정한다. 이전 run38511544759와 보고/receipt는 보존한다.
+  새 dispatch/rerun/cancel이나 다른 run의 성공을 섞지 않는다.
+- 출력은 위 새 보고와 `target/r2-daily-beta/ci/<candidate-short-sha>/`뿐이다. private0700/0600,
+  raw 로그 미보존, 선택된 결과와 원본 응답 byte count/hash만 기록한다.
+- `target/r2-daily-beta/wp-4-integration/harness-lint-test-inventory.json`의30개 Rust 이름과
+  exact source를 대조하고 각 직접 result row를 확인한다. chart6·workspace result 집계와
+  고유 테스트 수를 구분한다. historical V2/V3는 실제 발견한 직접 row만 기록한다.
+- 모든7개 checkout SHA·job/step terminal state·required·strict Clippy를 회수한다. Python485/10
+  수치는 과거 결과이므로 새 결과로 다시 확인한다. quiet 로그의 개별 node 부재를 성공으로 메꾸지 않는다.
+  Web/OpenAPI/E2E와 PG code_commit/59 migrations/checksum/0039 guard/skip markers/cleanup을 회수한다.
+- 오류가 있으면 typed 위치·명령·exit를 남긴다. helper의 실제 직접 로그인·GUC·max2 pool/0060/
+  runtime·Owner·최종C_R2 인수는 해당 실행 근거 없이는 미검증으로 유지한다.
+- 90분 또는06:45 UTC 중 먼저 도달하면 INCOMPLETE와 현재 증거를 반환한다. 코디네이터가
+  terminal까지 관찰 책임을 유지한다. 로컬 Cargo/rustc/Clippy/test/build/DB/root/Docker/provider/
+  운영·Git write·하위 위임은 금지한다. 별도 로컬 테스트로 로그 공백을 채우지 않는다.
+- 기존 worker는 실제 idle/pending0 확인 후 notified follow-up을 보낸다. actual startup과 scope를
+  ledger에 기록하고 새 bounded heartbeat로 감시한다. 같은 daemon의 중단 한계는 유지한다.

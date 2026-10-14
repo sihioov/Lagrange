@@ -357,6 +357,8 @@ impl ScratchDb {
     ///
     /// The caller owns the returned pool and must close it before dropping
     /// this scratch database. It carries no SET ROLE or actor GUC setup.
+    // Each integration-test binary compiles this module separately and may not use this helper.
+    #[allow(dead_code)]
     pub async fn daily_input_admitter_pool(&self) -> PgPool {
         let options: PgConnectOptions = self
             .role_url("daily_input_admitter")

@@ -744,3 +744,38 @@ workflow_dispatch·정확한 SHA·in_progress를 확인했다. dispatch 직후 �
 `7537b40b`(2분·60회·06:29:39 UTC 만료)로 감시를 교체하고 `05c2aada`를 삭제했다.
 미완료면 코디네이터가 감시 책임을 유지한다. 같은 daemon heartbeat의 중단 한계는 그대로다.
 이 후속 문서 커밋을 source 검증 대상으로 바꾸지 않는다. R2 운영 권한 확대나 로컬 테스트 실행은 없다.
+
+
+### I1a-L-CI 회수·I0a 공용 helper lint 보정 — 2026-10-14
+
+collector는 04:53:18 UTC actual idle/pending0 후 substantive final을 회수했다.
+[24행 CI 보고](2026-10-14-r2-daily-wire-lint-ci.md)의 SHA-256은
+`81c0e5cf6d99ddecf4edaac27851e18c3b748c5084d19937abc0825b43663e95`, private receipt1502행은
+`fe379c651e475127909c979f22895cf48dbc1773dbbed529b039e0517adbc647`다.
+정확한 `d6bb23a6c516c8a9ebffbd93229c0b92190db48b` / run38511544759는 04:49:18 UTC
+terminal failure다. 코디네이터가 7개 checkout SHA, 30개 이름의 정확한 집합과 직접 ok row,
+8개 terminal job 결과, Clippy 원본 응답 hash와 이전6429d33 보고/receipt 불변을 대조했다.
+검토 영수증은 `target/r2-daily-beta/wp-4-integration/lint-ci-recovery.json`(0600)이다.
+
+Clippy/required만 실패했고 나머지 6개 실행 job은 성공했다. 30개 Rust와 chart6의 직접 PASS를
+수용한다. workspace의236개 result row는2,922 pass/0 fail/6 ignored/180 filtered 집계이며
+고유 테스트 수가 아니다. Python485 pass/10 skipped/7 warnings는 suite 근거다. 새3개 mock과
+SIGTERM의 개별 node 결과는 quiet 로그에 없다. PG APPROVED/59 migrations의 양쪽 checksum 일치,
+0039 guard PASS/skip marker ENFORCED는 hosted 근거이며 숨은 skip 부재나 운영 인수로 확장하지 않는다.
+
+이번 정확한 오류는 `crates/job-queue/tests/common/mod.rs:360`의 `daily_input_admitter_pool`
+미사용으로 `-D warnings`가 승격한 `dead_code`, exit101이다. `owner_beta_publish.rs` 등은
+`mod common`을 각 integration binary에 별도로 컴파일한다. 다른 role-specific helper에도
+메서드 단위 허용이 있는 기존 테스트 구조를 확인했다. 코디네이터가 이 메서드에 설명 주석과
+`#[allow(dead_code)]`만 추가했다. 해당 helper의 선택적 사용 의도를 나타내는 범위이며,
+helper 본문·pool 설정·identity/GUC assertions·역할/권한 SQL은 동일하다.
+새 파일401행 SHA-256은 `242977cf561d54c88889feeb695c8de5b90a64910fd3fcbfde346a17a06e68fa`다.
+
+정확한 전후 문자열 대조, rustfmt edition2024/skip_children check, diff check를 통과했다.
+D4 `fa052903…`, wire contract `f086c065…`, wire test `1596ecbe…`, Python `e2121f61…`는
+보존됐다. 구조 변경이 없어 아키텍처 다이어그램은 변경하지 않았다. 로컬 compiler/Clippy/test/DB/
+운영 실행은 없었다. 이전 감시7537b40b는 모든 담당자가 idle/pending0/결과 회수된 뒤 삭제했다.
+
+새 소스 commit을 push하고 exact SHA 기존 run 부재 확인 후 전체 hosted CI를 한 번 검증한다.
+이전 실패 run은 재실행하지 않는다. 신규 CI로 미호출 helper의 실제 direct-login·GUC·pool 동작이나
+0060 readiness를 입증했다고 주장하지 않는다. I0의 나머지 연결과 실제 역할 검증은 계획대로 후속이다.
