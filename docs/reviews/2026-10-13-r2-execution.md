@@ -951,3 +951,20 @@ remain unverified. Manifest-only evidence does not establish full snapshot/admis
 I0b-F-R is still running without pending permissions; existing e676d7dc monitoring remains
 for its07:38:21 UTC reporting bound. Combined source acceptance and new exact-candidate
 CI await that review and any required correction. No new workflow or operational action.
+
+
+## DB 보정 리뷰 회수·literal 문법 보정 — 2026-10-14
+
+I0b-F-R는06:48:56 UTC actual idle/pending0에서 전체 결과를 회수했다.
+[229행 보고서](2026-10-14-r2-daily-role-corrections-review.md)의 hash
+`52d7400d…`, 입력20개, 링크/행30개를 확인했다. 기존 DB R01–03은 소스 검토 기준 해소다.
+새 P2는 source parser가 셸 변수/확장 문법을 고정 문자열로 받아들이는 점이다.
+코디네이터가 AST에서 추출한 regex와 inert 문자열/tuple로 반례를 확인했다.
+현재33개 literal inventory에 그런 표현식이 있다는 뜻은 아니며 실제 셸/검사기를 실행하지 않았다.
+
+[고정 후속 brief](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)는
+runtime-static-check.sh의 Python parser 한 곳에 ASCII literal component/source path 문법과
+실제 parser를 쓰는 거부 회귀를 추가하도록 한정한다. 기존 Luna/max의 첫 해당 지적 보정이다.
+두 reviewer 회수를 마쳐 e676d7dc 감시는 종료했다. Raw5개 지적 해소는 유지하고, 새 문법 보정의
+독립 검토 뒤 정확한 새 후보 hosted CI를 진행한다. 이번 Mem0 context는MCP_ERROR이며
+저장 성공으로 취급하지 않는다. 로컬 tests/DB/운영 조치는 추가하지 않았다.

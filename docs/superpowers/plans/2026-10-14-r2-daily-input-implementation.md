@@ -1487,3 +1487,77 @@ remain unverified. Manifest-only evidence does not establish full snapshot/admis
 I0b-F-R is still running without pending permissions; existing e676d7dc monitoring remains
 for its07:38:21 UTC reporting bound. Combined source acceptance and new exact-candidate
 CI await that review and any required correction. No new workflow or operational action.
+
+
+## Role correction review disposition and literal grammar repair — 2026-10-14
+
+I0b-F-R reached actual idle/pending0 at06:48:56 UTC; full final recovered.
+[Role correction review](../../reviews/2026-10-14-r2-daily-role-corrections-review.md)
+is229lines, SHA-256 `52d7400dc60c14e744178e59bcf2e31c43e5ca9a5bf299bfe8d4c24aa7f3ab03`.
+The coordinator checked all20 input hashes,30 links/line bounds and the claimed
+counterexample by applying AST-extracted regex constants to inert strings/tuples.
+No source parser function, checker, shell expression or test was executed.
+Original R01–03 are corrected at source-review level. I0b-F-R01 is a new P2:
+dynamic shell expressions can be interpreted as literal service/target/source/path
+fields by the source checker. Current33literal rows do not contain this syntax.
+
+Both reviewers are now idle/pending0 with full finals recovered; heartbeat e676d7dc
+was deleted. Raw's five source closures remain accepted. The new one-file repair
+below is necessary before a combined candidate CI; no workflow has been dispatched.
+
+| Package | Complexity | Basis | Confidence | Escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-F2 | simple | Fixed literal grammar and same-parser negative cases in one inert Python block | high | Current literal mapping cannot fit grammar: report; repeat failed correction: escalate one model tier |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-F2 | 12 | simple | Reject unknown shell token semantics before constructing release maps | deploy/secrets/runtime-static-check.sh only, embedded parser/regression block | I0b-F-R01 and frozen source-wave-12-inputs.json | Reuse idle fd32e206, gpt-6-luna/max for fixed-spec implementation | Exact source hash and grammar-to-written-test map | bash-n/AST/diff only; independent delta review and hosted execution later |
+
+This is the first repair of the newly identified parser gap. The original three
+findings closed, so repeated failure of this fixed grammar has not occurred.
+Current Astra/high profile is coordinator-only; the repository's fixed implementation
+route remains Luna/max. No implementation may be inferred from the future plan.
+
+### I0b-F2 fixed brief
+
+Only `deploy/secrets/runtime-static-check.sh` is writable, starting568lines and
+SHA-256 `24ff74cce03ec8e9f899c2a14b6ae78f09f79a5b5e9e470a59417ddf3703dccd`.
+Private `source-wave-12-inputs.json` pins the target and19 unchanged references.
+Scope is its new embedded parser plus meaningful same-parser regressions; no shell
+fixtures, log gate, role/provisioner/Compose behavior, other source/docs/Git changes.
+
+Use an explicit ASCII unquoted-literal grammar consistently:
+- component: `[A-Za-z0-9_][A-Za-z0-9_.-]*`;
+- service and target: exactly one component each;
+- source: components separated by single slashes, supporting `tls/lagrange.crt`
+  and `tls/lagrange.key`, excluding leading/trailing/repeated slash or dot/dotdot;
+- validator path: exactly service/target under the same component rules;
+- UID/GID: `[0-9]+` ASCII decimal; mode: existing `[0-7]{3,4}` converted base8;
+  single_line remains exactly yes/no.
+
+Validate the source field even though it is omitted from the parity tuple. Reject
+parameter/command/process substitution, quotes, escaping, glob/brace/tilde syntax,
+operators, extra/missing fields and unsupported numeric tokens before constructing
+records. Do not interpret shell or strip quotes. Keep error messages free of token
+dumps, and current path/UID/GID/mode semantics, unique entries and unknown-body checks.
+
+Write actual-parser rejection cases for dynamic tokens in all three copy positions
+and both validator path positions, invalid source paths, extra/missing arguments and
+dynamic/non-ASCII numeric values. A shared validator-spec parser helper is allowed.
+Use the same parser helpers as production source-map construction, not copied regex.
+Only InventoryError counts as expected rejection. Include valid ordinary names and
+TLS relative paths with exact tuple results, preserving current33-entry parity and
+the existing removal/wrong-UID/wrong-mode dictionary cases. All fixture strings stay
+inert; no eval/exec or external source fixture is permitted.
+
+Only reads, hashes, scoped bash-n, complete embedded Python AST and diff checks may
+run locally. No parser/regression loop/checker/self-test/provisioner/validator/test/
+Cargo/rustc/Clippy/build/DB/root/Docker/provider/network/workflow/production action.
+No other source or documentation edits, Git writes or delegation. Missing or conflicting
+requirements must be reported rather than filled in.
+
+Final report: changedfile/line ranges/hash/count, finding disposition and grammar-to-
+written-test map, deviations/reasons, actual commands/results, unresolved/not-found/
+not-verified items (explicit none when empty), decomposition, background work and pending
+permissions. Report within30minutes of actual startup, or return INCOMPLETE with precise
+residual scope. Coordinator retains recovery, review and exact-candidate hosted verification.
