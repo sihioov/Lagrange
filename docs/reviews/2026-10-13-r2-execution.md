@@ -1240,3 +1240,32 @@ The private caller-role-raw-ci-test-inventory.json prepares49 Linux Rust names a
 26 source hashes for later exact-candidate verification; it records not dispatched,
 review pending and unexecuted. Previous48 names and non-Unix exclusion are preserved.
 No new workflow action or local executable verification was performed.
+
+
+## Wave18 source-review acceptance for hosted verification — 2026-10-14
+
+Reviewer a4b5c1b9 reached actual idle/activeTurn null/pending0 at08:32:50.984UTC.
+The full substantive final and211-line caller integration review were recovered;
+report SHA-256 is `eb2bef7ccf71e9b149c0c1cbed3c2ae7bb02e386bf8e94fccc92c25ffff030ec`.
+The coordinator checked32 frozen target/reference/evidence inputs,17 report links and
+line bounds, and compared the reviewed classifications/diagnostics/test/count against
+the already inspected exact source delta. No concrete unresolved delta defect was found.
+All eleven direct variants and two wrappers are covered by the written new test.
+The review's initial inert Compose-user assumption was corrected against the existing
+image USER check, with no product defect inferred. Earlier source and failure history
+remain preserved. Heartbeat e535e79e was deleted after actual idle/full result recovery.
+
+Accept the bounded source review for hosted verification only. No fresh compilation,
+test, shell-checker or validator success is established. Source8de8cff remains fixed;
+the prepared inventory contains49 Linux names and26 source hashes. The coordinator's
+first inventory check hit a mixed string/object metadata TypeError, corrected the three
+new hash entries to the original string schema, then verified all26 hashes and49 names.
+This changed only the private prepared inventory; its correction receipt preserves
+before/after hashes and the failed check. No Rust or script test was executed.
+
+The next candidate includes this review/acceptance documentation. It will be committed,
+fast-forward pushed, checked against the remote fullSHA, then queried for existing
+exact-SHA runs before one dispatch. Previous f9dfffb failure and929fcd6 partial success
+remain distinct. No main integration,0060,provider or operational action is authorized.
+
+Wave19 read-only exact-candidate CI collection is prepared with the49-name inventory and explicit execution/skip limits. No new run has yet been dispatched.

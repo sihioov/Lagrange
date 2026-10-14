@@ -2162,3 +2162,76 @@ The private caller-role-raw-ci-test-inventory.json prepares49 Linux Rust names a
 26 source hashes for later exact-candidate verification; it records not dispatched,
 review pending and unexecuted. Previous48 names and non-Unix exclusion are preserved.
 No new workflow action or local executable verification was performed.
+
+
+## Wave18 source-review acceptance for hosted verification — 2026-10-14
+
+Reviewer a4b5c1b9 reached actual idle/activeTurn null/pending0 at08:32:50.984UTC.
+The full substantive final and211-line caller integration review were recovered;
+report SHA-256 is `eb2bef7ccf71e9b149c0c1cbed3c2ae7bb02e386bf8e94fccc92c25ffff030ec`.
+The coordinator checked32 frozen target/reference/evidence inputs,17 report links and
+line bounds, and compared the reviewed classifications/diagnostics/test/count against
+the already inspected exact source delta. No concrete unresolved delta defect was found.
+All eleven direct variants and two wrappers are covered by the written new test.
+The review's initial inert Compose-user assumption was corrected against the existing
+image USER check, with no product defect inferred. Earlier source and failure history
+remain preserved. Heartbeat e535e79e was deleted after actual idle/full result recovery.
+
+Accept the bounded source review for hosted verification only. No fresh compilation,
+test, shell-checker or validator success is established. Source8de8cff remains fixed;
+the prepared inventory contains49 Linux names and26 source hashes. The coordinator's
+first inventory check hit a mixed string/object metadata TypeError, corrected the three
+new hash entries to the original string schema, then verified all26 hashes and49 names.
+This changed only the private prepared inventory; its correction receipt preserves
+before/after hashes and the failed check. No Rust or script test was executed.
+
+The next candidate includes this review/acceptance documentation. It will be committed,
+fast-forward pushed, checked against the remote fullSHA, then queried for existing
+exact-SHA runs before one dispatch. Previous f9dfffb failure and929fcd6 partial success
+remain distinct. No main integration,0060,provider or operational action is authorized.
+
+
+### Wave19 exact-candidate caller/role/Raw hosted verification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-I1b-S1-F-CI | simple | Fixed existing run, seven jobs and explicit49-name inventory; established read-only extraction | high | Missing/contradictory evidence remains UNKNOWN and needs bounded diagnostic follow-up; no source policy invention |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-I1b-S1-F-CI | 19 | simple | Collect exact-candidate execution evidence after source-review closure | caller-role-raw-ci.md and private candidate CI leaf only | Wave18 recovery and coordinator commit/push/existing-run query/one dispatch | Existing idle11a8f223, codex/gpt-6-luna/medium | Safe report/receipt with49 named Rust results and explicit limits | Read-only existing GitHub run/job/logs; no local executable verification |
+
+WP-4/I0b-I1b-S1-F-CI (Wave19), R2-04/09. Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin, repository sihioov/Lagrange. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+One bounded read-only collection of the exact existing GitHub CI run and candidate supplied by the coordinator in the launch appendix. No dispatch, rerun, cancel or workflow mutation. Source corrections and independent review are recovered; this is hosted execution evidence only. Classification simple/high confidence: fixed jobs, test inventory and bounded extraction. Existing codex/gpt-6-luna/medium, since the only current configured profile is coordinator-only. Missing evidence is UNKNOWN, not a default pass/zero.
+
+Read root AGENTS.md, docs/ROADMAP.md, Wave19 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. Frozen source is the three-file8de8cff delta, independent review docs/reviews/2026-10-14-r2-caller-integration-review.md211lines SHAeb2bef7ccf71e9b149c0c1cbed3c2ae7bb02e386bf8e94fccc92c25ffff030ec. The final CI candidate includes documentation commits with unchanged26 source hashes. Read the private final candidate inventory and launch receipt named in the appendix, verify their full candidate/hash linkage and all source hashes.
+
+Writable only:
+/data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-14-r2-caller-role-raw-ci.md
+/data/worktrees/3puw275b/excited-dolphin/target/r2-daily-beta/ci/<exact-candidate-short>/ (0700 dirs,0600 receipts).
+No previous artifacts or other files may be modified. Preserve f9dfffb original reportfbe0d8930036cbc41e9a9e73c0e928c8df32f73327027b5ae25a90229f9f61d4/receiptac8e2b13f8ab2412ffbe150bfce702120da6da646d41ae6ac2117e0692761261 and supplemental report16eca425449e48d3a39e370e6d5c456bf5d8c329bf318b3902df4b973be4fcb0/receipt0a1d2394cd1ecc350a76a707b29d452e5aab5605a9fd3b8431d49db2f92a9d46.
+
+Retrieve existing run/jobs/logs read-only, verifying attempt1, exact fullSHA and all seven execution checkout SHAs. Observe to terminal or report INCOMPLETE at90minutes after actual startup, whichever first. Do not leave unreported background polling. Between reads use bounded waits, not a tight loop. Record all job/step outcomes, command execution vs skips, primary compiler/lint errors and safe locations if failure, strictClippy/required and cleanup. Strip ANSI and GitHub timestamp/prefix before extracting compiler headers; explicitly distinguish three primary errors from shared enum-note anchors. Do not repeat prior erroneous zero-error/default-message, false chart comparison or null inventory linkage. Count only supported observed entries, and assert receipt fields agree with the extracted evidence; absent remains UNKNOWN.
+
+Rust expected inventory is49 direct Linux names:30wire,18Raw (16integration+2private), plus worker::process_tests::committed_manifest_store_errors_are_permanent_and_diagnostic_redacted. List exact per-name PASS/FAIL/NOT_EXECUTED/UNKNOWN with direct rows; unit names may carry module prefixes, so distinguish the qualified collector name. The non-Unix Raw test is EXCLUDED_LINUX, never a pass. Preserve six chart direct-result rows separately and do not count compilation as harness execution. Sum Cargo result rows only when present; label row sums, not unique tests. Historical V2/V3 results need direct evidence or remain unverified.
+
+Policy: record the actual migrate-static checker outcome (bootstrap count8), runtime-secrets checker, production/ops/foundation/static checks and PG_VALIDATION_SELF_TEST. Distinguish wrapper success from individual nested case evidence. Capture explicit fakeroot/numeric fixture skip notices and missing/skipped steps; do not infer all hidden skips absent. The physical-LF/literal parsing and shared credential-gate subcases are not individual passes solely from one wrapper marker.
+
+PG: verdict/code_commit, failure phase if any, tests_run and actual execution, first/second migration counts/latest/checksum lists,0039guard,NO_OP,skip markers,cleanup. Record daily_input_admitter direct-role login, catalog and role-GUC evidence only when explicit; role GUC is not app.actor_id and does not prove the uncalled max-two-connection helper. If PG fails, inspect the named retained failure group in this same job log and compare compiler diagnostics to Clippy/chart; keep outer step vs nested Cargo exits distinct, with unprinted nested exits UNKNOWN. SQLSTATE negative guards alone are not terminal-failure causes. Migrations remain59;0060/pool/full snapshot/runtime are not accepted.
+
+Python: suite summary and skips/warnings; individual three readiness mocks/SIGTERM outcomes only if named rows exist, not inferred from quiet summary. Web/OpenAPI/E2E: explicit outcomes/coverage and cleanup. Do not promote this partial source to full R2/C_R2/provider/Owner/production readiness.
+
+Raw logs must be processed in memory and never printed or persisted. Store response byte sizes/SHA256 plus safe structured evidence only. Never retain credentials, fixture password literals, credential-bearing URLs, free-form provider output or payloads. Do not copy entire PG credentials fields. Before output, validate schema/types, exact candidate+inventory linkage, expected49-name matrix, failure/skipped classifications and hash/modes; assert primary diagnostics agree with narrative.
+
+Read-only source allowlist: exact-candidate .github/workflows/ci.yml, deploy/db/integration-validation/validate.sh, deploy/db/migrate-static-check.sh, deploy/secrets/runtime-static-check.sh, scripts/ops/static-check.sh; the three inventoried Rust test files and collector worker.rs for test-name matching; original artifacts above; final inventory/launch receipt. Hash reads of all26 inventory sources are permitted. Use git show candidate:path for workflow/phase interpretation and avoid outputting fixture credentials. No repository-wide source search. Report any required additional path instead of silently expanding.
+
+No local Cargo/rustc/Clippy/tests/build, parser/checker/validator/provisioner/self-test execution, DB/SQL/root/Docker/provider/production/lifecycle actions, dependency installation, source changes or Git writes. No worker instruction to another agent. Coordinator owns failure corrections and acceptance. Use only fresh memory hooks; failed context/finish is not saved/skipped. Final must be substantive even if a memory hook later emits another callback: output paths/line counts/hashes/modes; run/job/49test evidence and limits; deviations/reasons; checks/results; unresolved and not-found/unverified (explicit none when empty), further decomposition/background/pending permissions.
+
+Coordinator gates: commit exact review candidate, verify remoteSHA and absent existing
+run before dispatch; bind fullSHA/runID/attempt/inventory in notified launch appendix.
+Verify actual startup, pending requests and bounded notification/heartbeat coverage.
+Require actual idle and substantive final, then inspect safe evidence and every
+applicable result before partial acceptance. Failures receive bounded fixes after idle.
+No report alone closes full R2; remaining I0/0060/full snapshot/diagrams/runtime/Owner
+conditions keep their original acceptance criteria.

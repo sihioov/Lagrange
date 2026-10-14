@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — f9dfffb 실패 원인인 수집기 세 match와 bootstrap 기대값 누락의 세 파일 보정본을 actual idle/pending0에서 회수했다. [추가 진단](reviews/2026-10-14-r2-role-raw-ci-diagnostics.md)으로 Clippy·chart·PG 실패 로그의 동일 E0004 세 건을 대조했다. 원본48개와 신규 회귀1개는 새 후보에서 실행 검증해야 한다. Wave18 독립 검토 후 기존 실행 부재를 확인해 새 후보 CI를 진행한다. 이전929fcd6 부분 성공과 실패 이력은 보존하며 0060·전체 입력·운영·Owner 인수는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — 세 파일 보정본8de8cff의 [독립 리뷰](reviews/2026-10-14-r2-caller-integration-review.md)를 실제 idle/pending0에서 회수했다. 고정 입력32개·링크17개와 소스 의미를 대조해 새 결함 없음 판정을 소스 검토 기준으로 수용했다. 신규1개를 포함한 Rust49개, Clippy·shell·PG 실행은 새 후보 CI에서 확인한다. 기존 실행 부재 확인 뒤 한 번 dispatch하며 f9 실패/929fcd6 부분 성공과 0060·전체 입력·운영·Owner 잔여 조건을 보존한다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
