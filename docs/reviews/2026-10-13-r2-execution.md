@@ -920,3 +920,16 @@ scoped diff 검사를 통과했다. 33개 parity와 bootstrap gate 회귀는 작
 이로써 다섯 수정 파일과 나머지15개 고정 입력을 source-wave-11-inputs.json에 보존했다.
 두 implementer의 actual idle/pending0/full final을 확인해35d4c84a 감시를 종료했다.
 I0b-F-R과 I1b-S1-F-R의 별도 보고서 두 건을 병렬 검토한 뒤 새 후보 CI로 이어간다.
+
+
+### Wave 11 actual correction-review startup — 2026-10-14
+
+Five correction files and progress/briefs are committed as `de1889be8a0f3efa9bac2c1ab1a272c9c1609af0`.
+I0b-F-R `d9ca76a3-b7dc-4913-944f-10ce8cc35d80` and I1b-S1-F-R
+`a4b5c1b9-3354-400b-be82-b8dec4f87278` both actually started at06:38:21 UTC as
+codex/gpt-6.1-sol/high, expected workspace/parent, pending0. Notified follow-ups write only
+their two distinct reports; frozen source remains read-only. Their60-minute reporting bound
+is07:38:21 UTC. Heartbeat `e676d7dc` runs every2minutes, at most60times, expires08:39:02 UTC.
+The ledger and private wave11 startup receipts retain notification and lifecycle evidence.
+Coordinator must recover incomplete work explicitly and reconcile/replace before expiry;
+the same daemon heartbeat does not protect daemon outage. No new CI or execution acceptance.

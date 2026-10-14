@@ -1456,3 +1456,16 @@ paired Raw review. Coordinator owns acceptance and incomplete-result recovery.
 Both reviews are source-only. After actual idle/pending0/full finals the coordinator resolves
 findings, then prepares one exact-candidate hosted CI after checking existing runs. No CI
 was dispatched for these five-file corrections yet;929fcd6 is historical baseline evidence.
+
+
+### Wave 11 actual correction-review startup — 2026-10-14
+
+Five correction files and progress/briefs are committed as `de1889be8a0f3efa9bac2c1ab1a272c9c1609af0`.
+I0b-F-R `d9ca76a3-b7dc-4913-944f-10ce8cc35d80` and I1b-S1-F-R
+`a4b5c1b9-3354-400b-be82-b8dec4f87278` both actually started at06:38:21 UTC as
+codex/gpt-6.1-sol/high, expected workspace/parent, pending0. Notified follow-ups write only
+their two distinct reports; frozen source remains read-only. Their60-minute reporting bound
+is07:38:21 UTC. Heartbeat `e676d7dc` runs every2minutes, at most60times, expires08:39:02 UTC.
+The ledger and private wave11 startup receipts retain notification and lifecycle evidence.
+Coordinator must recover incomplete work explicitly and reconcile/replace before expiry;
+the same daemon heartbeat does not protect daemon outage. No new CI or execution acceptance.
