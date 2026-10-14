@@ -1561,3 +1561,16 @@ written-test map, deviations/reasons, actual commands/results, unresolved/not-fo
 not-verified items (explicit none when empty), decomposition, background work and pending
 permissions. Report within30minutes of actual startup, or return INCOMPLETE with precise
 residual scope. Coordinator retains recovery, review and exact-candidate hosted verification.
+
+
+### Wave 12 actual literal-repair startup — 2026-10-14
+
+Brief/review disposition commit is `4aed33c8632bbfd8269bccdb02c22b973079480d`.
+I0b-F2 `fd32e206-9248-41cd-a86b-de07a33ea464` actually started at06:56:03 UTC,
+codex/gpt-6-luna/max, expected workspace/parent, pending0, notified follow-up.
+Its only writable scope is the embedded parser/regressions in runtime-static-check.sh.
+The30-minute reporting bound is07:26:03 UTC. Heartbeat `843d6474` runs every2minutes,
+at most30times, expires07:56:48 UTC. The ledger and private wave12 startup receipt
+preserve actual runtime/notification evidence. Recover incomplete scope at the reporting
+bound and reconcile/renew/handoff before expiry; same-daemon outage remains unprotected.
+No new code result, parser/test execution, hosted CI or operational action is claimed.

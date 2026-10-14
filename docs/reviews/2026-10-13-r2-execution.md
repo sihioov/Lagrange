@@ -968,3 +968,16 @@ runtime-static-check.sh의 Python parser 한 곳에 ASCII literal component/sour
 두 reviewer 회수를 마쳐 e676d7dc 감시는 종료했다. Raw5개 지적 해소는 유지하고, 새 문법 보정의
 독립 검토 뒤 정확한 새 후보 hosted CI를 진행한다. 이번 Mem0 context는MCP_ERROR이며
 저장 성공으로 취급하지 않는다. 로컬 tests/DB/운영 조치는 추가하지 않았다.
+
+
+### Wave 12 actual literal-repair startup — 2026-10-14
+
+Brief/review disposition commit is `4aed33c8632bbfd8269bccdb02c22b973079480d`.
+I0b-F2 `fd32e206-9248-41cd-a86b-de07a33ea464` actually started at06:56:03 UTC,
+codex/gpt-6-luna/max, expected workspace/parent, pending0, notified follow-up.
+Its only writable scope is the embedded parser/regressions in runtime-static-check.sh.
+The30-minute reporting bound is07:26:03 UTC. Heartbeat `843d6474` runs every2minutes,
+at most30times, expires07:56:48 UTC. The ledger and private wave12 startup receipt
+preserve actual runtime/notification evidence. Recover incomplete scope at the reporting
+bound and reconcile/renew/handoff before expiry; same-daemon outage remains unprotected.
+No new code result, parser/test execution, hosted CI or operational action is claimed.
