@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — F1/F2 검증 완료·U2 채택. [D6](reviews/2026-10-14-r2-daily-input-amendments-review.md)의 설계 finding 5개 해소를 수용. I1a-P2 보정본을 회수·직접 대조하고 전체 pure wire 독립 리뷰와 exact 후보 hosted CI 준비 중. I0a 격리 role/harness 네 파일의 [독립 소스 검토](reviews/2026-10-14-r2-isolated-role-harness-review.md)는 수용. 컴파일·SQL·실제 역할 검증과 나머지 I0 연결은 [후속](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). 새 코드 실행·운영 적용·Owner 인수는 후속. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — F1/F2 검증 완료·U2 채택. [D6](reviews/2026-10-14-r2-daily-input-amendments-review.md)의 설계 finding 5개 해소를 수용. I1a-P2 보정본을 회수·직접 대조하고 전체 pure wire 독립 리뷰와 부분 후보 `779b3fa`의 [hosted CI](https://github.com/sihioov/Lagrange/actions/runs/38500926595) 진행 중. I0a 격리 role/harness 네 파일의 [독립 소스 검토](reviews/2026-10-14-r2-isolated-role-harness-review.md)는 수용. 컴파일·SQL·실제 역할 검증과 나머지 I0 연결은 [후속](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). 새 코드 실행·운영 적용·Owner 인수는 후속. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

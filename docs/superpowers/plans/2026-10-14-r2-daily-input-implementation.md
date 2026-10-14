@@ -475,3 +475,21 @@ valid_code, JSON lexical 검사, typed cash-row 검사와 새 fixture/bundle/오
   실제 direct-login/GUC/ACL 또는 아직 없는 0060 증거를 기존 CI 성공에서 추론하지 않는다.
 - 실패는 typed compiler/test/step 진단과 source anchor만 저장하고 raw verbose 로그·secret/provider
   본문은 저장하지 않는다. final report에 미실행/미검증과 stale 기존 CI의 한계를 명시한다.
+
+### 실제 후보·CI 회수 assignment — 2026-10-14
+
+- source 후보는 `779b3faa787922032c682b9cf3fe07675a3d976f`다. I0a와 I1a를 포함한 부분 후보로,
+  최종 C_R2가 아니다. feature branch로 fast-forward push했고 remote SHA를 확인했다.
+- exact-SHA existing-run 조회는 빈 배열이었다. 기존 ci.yml을 한 번 dispatch해
+  [run 38500926595](https://github.com/sihioov/Lagrange/actions/runs/38500926595),
+  workflow_dispatch·02:25:19 UTC 생성·해당 full SHA·queued를 확인했다. 중복 실행하지 않는다.
+- I1a-R Sol/high `d9ca76a3-b7dc-4913-944f-10ce8cc35d80`와 I1a-CI Luna/medium
+  `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`의 실제 running/pending0·workspace·parent를 확인했다.
+  둘 다 notified follow-up이다. CI worker는 이 run의 읽기만 하며 새 실행/취소/Git 권한이 없다.
+- CI 보고 파일은 위 표의 경로, private receipt는 `target/r2-daily-beta/ci/779b3fa/`다.
+  60초보다 자주 poll하지 않고, 90분 또는 04:00 UTC 중 먼저 오는 시각까지 관찰한다.
+  terminal 미도달·로그 부재·오류는 INCOMPLETE로 보고하고 coordinator가 명시적으로 인계/연장한다.
+- source의 `#[test]` 함수는 16개다. primary golden 및 세 cash 회귀를 포함한 실제 test 이름/결과를
+  checkout SHA와 결합한다. helper 미호출이나 아직 없는 0060의 실행을 추정하지 않는다.
+- `55390735` 감시는 끝내고 두 소유 worker만 다루는 `1d5a6342`로 교체했다.
+  2분·60회·04:27:42 UTC 만료이며 최종 결과/권한 대기를 회수하기 전 방치하지 않는다.

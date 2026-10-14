@@ -493,3 +493,19 @@ notified follow-up으로 맡겼다. 검토 범위는 pure wire 전체의 parser/
 정확한 SHA의 기존 run을 재조회하고, 없을 때만 기존 ci.yml을 한 번 dispatch한다.
 독립 리뷰와 hosted CI는 병행하며 운영 호스트에 Cargo/DB/Docker/build는 실행하지 않는다.
 새 CI의 checkout/job/개별 테스트와 미검증 한계는 별도 결과 회수로 기록한다.
+
+### 부분 후보 push·CI 1회 시작 — 2026-10-14 KST
+
+source 후보 `779b3faa787922032c682b9cf3fe07675a3d976f`를 feature branch에 push했다.
+원격 head가 같음을 확인하고 정확한 SHA의 기존 CI 조회가 빈 배열인 뒤 기존 ci.yml을 한 번만
+workflow_dispatch했다. [CI 38500926595](https://github.com/sihioov/Lagrange/actions/runs/38500926595)는
+02:25:19 UTC 생성·해당 full SHA·queued로 관측했다. 이 뒤 문서 커밋이 생겨도 검증 대상을 바꾸지 않는다.
+
+독립 리뷰 Sol/high `d9ca76a3-b7dc-4913-944f-10ce8cc35d80`와 CI 회수 Luna/medium
+`11a8f223-6f2d-4adb-89ab-86dbc917d2fd`의 실제 running/pending0와 parent/workspace를 확인했다.
+CI 담당자는 보고서·private sanitized receipt만 쓰며 해당 run/job/log를 읽는다. 새로운 실행·취소·
+로컬 build/DB/운영 작업은 맡기지 않았다. 16개 새 테스트의 실제 결과와 개별 미검증 범위를 회수한다.
+
+기존 `55390735`를 삭제하고 `1d5a6342`(2분·60회·04:27:42 UTC 만료)로 소유 범위를 바꿨다.
+CI worker의 04:00 UTC/90분 경계에서 terminal 미도달이면 incomplete를 회수해 책임을 명시적으로
+인계한다. 같은 daemon 중단까지 감시가 보호한다고 주장하지 않는다. 현재 CI/리뷰 성공은 미확인이다.
