@@ -1072,3 +1072,16 @@ selection/duplicate/unknown-body guards and actual reader entrypoints with mocke
 and real in-memory TextIOWrapper handles. They do not establish execution success.
 The completed worker's73a5aa5a heartbeat was closed; independent source review follows
 before new exact-candidate CI. DB3/Raw5 source closures and all later acceptance gaps remain.
+
+
+### Wave 15 actual physical-line review startup — 2026-10-14
+
+Source and review brief are committed as `1599e09dd6ef5e38006eeccaf4b0273ee5825d2f`.
+I0b-F3-R `d9ca76a3-b7dc-4913-944f-10ce8cc35d80` actually started
+at07:35:41 UTC, codex/gpt-6.1-sol/high, expected workspace/parent, pending0, notified.
+Only its independent review report is writable; source and references remain frozen.
+The30-minute reporting bound is08:05:41 UTC. Heartbeat `c45c1b07` runs every two minutes,
+at most30times, expiring08:36:02 UTC. Ledger and private startup receipt preserve
+runtime/notification evidence. Recover incomplete scope at the bound; reconcile and
+renew/handoff before expiry. Same-daemon monitoring does not protect daemon outage.
+No parser/regression execution, new CI or source acceptance is claimed.
