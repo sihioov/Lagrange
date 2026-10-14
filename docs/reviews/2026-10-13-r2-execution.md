@@ -1224,3 +1224,19 @@ a future hosted inventory therefore includes49 Linux Rust names (prior48 plus th
 No new candidate CI, local tests/scripts, database or operational action was run.
 
 Wave18 independent three-file source review is prepared; its sole output is the caller-integration review report. No CI dispatch before source-review acceptance.
+
+
+### Wave18 actual independent review startup — 2026-10-14
+
+Frozen source and review brief are committed as `8de8cff6e451383533f512fe7b0d4cdecb9b60fe`.
+Reviewer a4b5c1b9-3354-400b-be82-b8dec4f87278 actually started08:25:12.213UTC,
+codex/gpt-6.1-sol/high, expected workspace/parent, pending0, with notifyOnFinish.
+Only the independent caller-integration review report is writable. The30-minute bound
+is08:55:12.213UTC. Heartbeat e535e79e runs every two minutes, max30, expiring09:25:52.425UTC.
+Recover incomplete work at the bound and reconcile/renew/handoff before expiry;
+same-daemon monitoring cannot protect daemon outage. Ledger/startup receipt preserve state.
+
+The private caller-role-raw-ci-test-inventory.json prepares49 Linux Rust names and
+26 source hashes for later exact-candidate verification; it records not dispatched,
+review pending and unexecuted. Previous48 names and non-Unix exclusion are preserved.
+No new workflow action or local executable verification was performed.
