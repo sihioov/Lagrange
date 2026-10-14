@@ -634,3 +634,16 @@ I1a-F 범위는 유지하며 실행 중 worker에게 새 지시를 보내지 않
 
 두 assignment 모두 공통 직접 작업 문장과 최종 보고 형식을 따른다. 실제 running·pending0·notifier를
 확인한 뒤 `45e28caf`를 새 두 scope의 bounded heartbeat로 교체하고 ledger에 회수·인수 상태를 분리한다.
+
+
+### 보정 후보의 실제 hosted 검증 시작 — 2026-10-14
+
+소스 후보는 `02a400e0a6f5f413c32ebd7a19f70af2e46dbfff`다. feature branch push와 remote SHA를
+확인하고 해당 SHA의 기존 실행 수가 0임을 조회한 뒤 ci.yml을 한 번 dispatch했다.
+[CI 38506113191](https://github.com/sihioov/Lagrange/actions/runs/38506113191)는 03:24:45 UTC 생성,
+workflow_dispatch·해당 full SHA·in_progress를 확인했다. 이전 `779b3fa` run은 terminal failure로 보존한다.
+I1a-F-CI collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`는 03:25:39 UTC notified follow-up으로
+시작한 running/pending0·workspace·parent·Luna/medium을 확인했다. 결과 반환 경계는 04:55 UTC다.
+I1a-F-R과 I1a-F-CI만 감시하는 `70aea161`(2분·60회·05:26:14 UTC 만료)을 등록하고
+기존 `45e28caf`를 삭제했다. 실제 결과 회수 전 인수하지 않으며 만료 전 미완료 작업을 재조정한다.
+같은 daemon의 heartbeat는 daemon 중단을 보호하지 못한다. 이번 단계의 운영 권한 확대는 없다.
