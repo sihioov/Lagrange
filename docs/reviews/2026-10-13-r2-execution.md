@@ -347,3 +347,38 @@ D3 감시 `6d616899`를 삭제하고 D4/D5 전용 `f840501c`(2분·최대 60회�
 02:57:15 UTC 만료)를 등록했다. ledger는 전 단계 결과를 보존하고 새 범위로 갱신한다.
 D4가 고정되면 승인 타입·DB·파일 신뢰·provider와 분리된 I1a 계약/encoding/hash 코드·회귀를
 Luna/max에 위임한다. D5의 세부 교정이 필요한 경로만 그 결과와 리뷰를 기다린다.
+
+### D4/D5 회수·첫 구현 착수 — 2026-10-14 KST
+
+D5는 01:17:59 UTC, D4는 01:19:33 UTC의 실제 idle/pending0 후 최종 보고를 회수했다.
+[D5 교정안](2026-10-14-r2-daily-input-design-amendments.md)은 740행·SHA-256
+`8a8796d992da533389bac97fab6abf86c7e89e75f0772f6deceb3d4051d651a6`다.
+interval 기반 action 발견·별도 calendar projection, 실제 column 권한·DB epoch,
+terminal/current-attempt/복구·source-event lock과 첫 migration 전 harness 준비를 명시한다.
+코디네이터가 기존 config SQL·0052 trigger·bootstrap·validator·Raw reader를 직접 대조했다.
+실제 운영·DB 검증이나 제안된 반복 추가 취득의 승인이 아니며 독립 D6 검토를 남긴다.
+
+D4 원본 876행·`541bdfb7…`의 세 접점을 통합 중 보정했다. SinglePage는 반환 marker를
+보존하고 따라가지 않으며, 선택된 정규화 행과 겹치는 witness 관측 수를 구분하고,
+legacy calendar document hash를 새 daily schema의 hash와 동일하다고 강제하지 않는다.
+[최종 계약](../contracts/owner-beta-daily-etf11-input-v1.md)은 904행·SHA-256
+`308b9909932a323440557afc06ebd3c3a7fd26e44be38a502a02c25803ce377d`다.
+기본 golden 7개 byte/hash 계산, 상대 링크 17개·라인 경계와 D1/D3 불변을 직접 확인했다.
+이 명세를 pure unapproved wire의 구현 입력으로 수용한다. 실제 Raw/admission/DB 신뢰는 후속이다.
+private 계산 영수증은 `target/r2-daily-beta/wp-4-integration/d45-acceptance.json`이다.
+
+현재 profile은 계속 코디네이터용 하나여서 지원 모델을 확인하고 저장소 규칙으로 배정했다.
+
+| 패키지 | worker | 실제 runtime | 소유 범위 |
+| --- | --- | --- | --- |
+| I1a | `2ec1c669-0e57-462e-a397-d6b2c3fbd4a0` | codex gpt-6-luna / max | pure wire 모듈·등록·provider-free 테스트 네 파일 |
+| D6 | `d9ca76a3-b7dc-4913-944f-10ce8cc35d80` | codex gpt-6.1-sol / high | D5 및 보정 D4 접점의 독립 리뷰 문서 하나 |
+
+01:25:56 UTC에 실제 running/pending0, workspace와 parent 및 예상 모델/effort를 확인했다.
+mode는 새로 지정하지 않았다. 두 create에 notifyOnFinish=true를 지정했고, 완료된 D4/D5의
+`f840501c` 감시를 삭제해 `8643dc9c`로 교체했다(2분·60회·03:26:11 UTC 만료).
+private ledger의 전 단계 결과·감시 이력은 유지한다. 같은 daemon의 중단은 감시로 보호하지 못한다.
+
+I1a에는 로컬 rustfmt/diff만 허용했다. 새 Rust 회귀의 실행은 정확한 후보 source review 후
+hosted/격리 환경에서 순차 검증하며 기존 F1/F2 CI를 새 코드에 재사용하지 않는다.
+운영 적용·migration·서비스 변경·시장 API 호출은 실행하지 않았다. R2-04는 DOING이다.

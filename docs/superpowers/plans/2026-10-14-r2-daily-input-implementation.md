@@ -33,6 +33,7 @@ Native subagents: prohibited for worker packages
 | D3 | intermediate | D1 설계의 고정 규칙·권한·중복·복구에 대한 독립 소스 근거 리뷰 | medium | 새 아키텍처 설계를 리뷰어에게 요구하게 되면 코디네이터가 D1 개정 |
 | D4 | intermediate | D3-06에 따라 pure byte schema·정렬·hash·오류를 확정하는 제한된 계약 명세 | high | producer/DB/운영 의미 변경이 필요하면 해당 인터페이스를 코디네이터에게 반환 |
 | D5 | hard | D3-01~05의 반복 공급·독립 calendar projection·기존 ACL/발행/복구·harness 접점 교정 | high | 채택 경계 밖의 provider 취득이나 새 제품 정책은 실행하지 않고 정확한 G4 차이로 분리 |
+| D6 | intermediate | 고정 D5 교정안의 기존 D3 finding 해소와 D4 접점만 독립 대조 | high | 새 제품 정책·전면 재설계가 필요하면 구체적 미해결 접점을 반환 |
 | I1a | intermediate | D4에서 고정한 unapproved wire 타입·encoding/hash와 provider-free 회귀 구현 | high | 명세에 없는 key/type/hash 의미가 필요하면 코드로 채우지 않고 D4 보정 요청 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
@@ -48,6 +49,7 @@ Native subagents: prohibited for worker packages
 | D3 | 2 | intermediate | 확정 전 설계의 독립 검토 | `docs/reviews/2026-10-14-r2-daily-input-design-review.md`만 | D1/D2 회수·코디네이터 통합 | codex gpt-6.1-sol high, 결론 산출물 리뷰 규칙 | actionable finding와 scope/증거 한계 | 채택 계약·실제 호출 경로·위협/회귀 행렬 대조 |
 | D4 | 3 | intermediate | 첫 pure contract 구현의 모든 byte schema 확정 | `docs/contracts/owner-beta-daily-etf11-input-v1.md`만 | D3-06 수용 | D3 worker Sol high, 제한된 계약 분석 | 정확한 object/field/type/order/validation/hash/fixture 표 | D1/U2·기존 domain 타입·serializer와 직접 대조 |
 | D5 | 3 | hard | 영향받은 설계·통합 패키지 교정 | `docs/reviews/2026-10-14-r2-daily-input-design-amendments.md`만 | D3-01~05 수용 | D1 worker Astra xhigh, 기존 열린 구조 교정 | finding별 해결안·exact SQL/공급/projection/harness 범위 | source 근거와 반례·실제 역할 검증 조건 |
+| D6 | 4 | intermediate | D5 및 보정 D4와의 연결 검토 | `docs/reviews/2026-10-14-r2-daily-input-amendments-review.md`만 | D4/D5 회수·hash 고정 | codex gpt-6.1-sol high, 독립 리뷰 규칙 | 구체적 미해결 finding 또는 범위 한정 closure | D3 failure path·현재 source·수정 인터페이스 대조; 실행 없음 |
 | I1a | 4 | intermediate | 독립 unapproved wire 계약·canonical hash 구현 | `crates/market-data/src/daily_price_only/{mod,contract}.rs`, `src/lib.rs`, `tests/daily_price_only.rs` | D4 코디네이터 인수·launch brief 고정 | Luna max | 새 pure module·golden/rejection 회귀 | rustfmt/diff, 이후 exact 후보 Rust/CI; 실행 전 source만 수용 |
 
 ## Worker briefs
@@ -227,3 +229,53 @@ D4를 코디네이터가 읽고 정확한 SHA·함수/타입 목록·golden 조�
 historical·provider·normalizer·Cargo/lock·policy registry·DB·API·Web·배포·diagram은 이 묶음 밖이다.
 운영 build/로컬 Cargo 없이 rustfmt와 소스 정합성만 확인하고, 실제 Rust 회귀는 순차 hosted 검증에
 맡긴다. 테스트 미실행을 성공으로 표시하지 않는다. 코디네이터가 문서·로드맵·커밋을 통합한다.
+
+## D4/D5 회수·I1a launch 고정 — 2026-10-14
+
+두 worker의 실제 idle/pending0와 최종 보고를 회수했다. D5는 740행·SHA-256
+`8a8796d992da533389bac97fab6abf86c7e89e75f0772f6deceb3d4051d651a6`로 고정한다.
+D1/D3는 그대로 보존한다. 기존 config SQL·0052 gate·bootstrap/validator·Raw reader와 대조했고,
+공급/DB/storage/runtime 구현 전 D6가 구체적인 교정안의 남은 결함을 독립 검토한다.
+
+D4 원본 876행·`541bdfb7…`에서 코디네이터가 다음 세 접점을 직접 보정했다.
+SinglePage 응답 marker는 보존하되 따라가지 않으며, 겹치는 action witness 수와 선택한
+정규화 행 수를 분리하고, legacy calendar hash는 새 daily document hash와 구분한다.
+필드·signature·기본 golden byte는 바뀌지 않는다. 최종
+[D4 계약](../../contracts/owner-beta-daily-etf11-input-v1.md)은 904행·SHA-256
+`308b9909932a323440557afc06ebd3c3a7fd26e44be38a502a02c25803ce377d`다.
+7개 Python golden 계산과 17개 상대 링크·라인 경계 및 고정 D1/D3 hash를 직접 검증했다.
+이를 **pure unapproved wire 구현 명세로 수용**하며 Raw/DB/운영 인수로 확대하지 않는다.
+
+### I1a 실행 brief
+
+- cwd는 이 계획의 workspace. intermediate/high confidence; 고정 명세 구현이므로 Luna/max.
+- 위 D4의 정확한 hash를 먼저 확인한다. §6의 public struct 25개, enum 4개, private timestamp
+  wrapper, payload-free error enum과 public 함수 17개 및 timestamp method 2개가 고정 interface다.
+  §2~7의 key/null/lexical/order/bound/hash graph를 구현하며 별도 정책 결정을 만들지 않는다.
+- 수정 allowlist는 `crates/market-data/src/daily_price_only/mod.rs`, 같은 디렉터리의 `contract.rs`,
+  `crates/market-data/src/lib.rs`(module 선언만), `crates/market-data/tests/daily_price_only.rs` 네 파일뿐이다.
+  필드/함수 누락·상충이 있으면 해당 부분을 보고하며 Raw trust/approved type을 만들어 메우지 않는다.
+- §8의 Python construction을 Rust fixture로 옮겨 7개 고정 byte/hash를 검증한다. §9의
+  duplicate/unknown/missing nullable/type/lexical/depth/size/order/copy/coverage/internal hash,
+  parent/policy/code/source 변경 민감도와 보정한 SinglePage·witness·legacy hash 회귀를 넣는다.
+  원래 역사 golden을 수정하지 않고, 새 구조가 외부 실제 bytes를 신뢰하지 않는 negative case를 보존한다.
+- historical/provider/normalize/storage/Cargo/lock/registry/DB/API/Web/deploy/diagram/문서는 수정하지 않는다.
+  root/DB/Docker/provider/network/운영 read·build·Cargo/test 실행·Git 쓰기·하위 위임은 금지한다.
+- 로컬 검사: 허용 파일만 `rustfmt --edition 2024`와 `rustfmt --check`, `git diff --check`.
+  실제 Rust 검증은 source 검토 뒤 exact candidate hosted/격리 CI에서 코디네이터가 순차 실행한다.
+  예상 명령은 `cargo test --locked -p market-data --test daily_price_only`; 현 단계에서 실행하지 않는다.
+- 공통 보고 형식을 따른다. 구현/테스트 작성과 실행 PASS를 구분한다. D6와 같은 파일을 쓰지 않는다.
+
+### D6 실행 brief
+
+- cwd는 이 계획의 workspace. intermediate/high confidence; 결론 산출물 리뷰이므로 Sol/high.
+- 고정 D5와 보정 D4, D1/D3 및 채택 U2를 읽는다. 소유 파일은
+  `docs/reviews/2026-10-14-r2-daily-input-amendments-review.md` 하나다.
+- D3-01~05와 runtime 부분 06의 구체적 실패 경로를 교정안이 닫는지, 특히 source-event lock,
+  retry/cancel/attempt order, actual-role/harness 선행, calendar projection 순환 제거를 확인한다.
+  D4의 세 보정 및 D5 A6 reconstruction 사이에 남은 구체적 모순도 확인한다.
+- 전체 설계를 다시 작성하거나 I1a의 pure wire 구현을 운영 입력 부재로 차단하지 않는다.
+  새로운 blocker는 도달 가능한 source/interface 반례·수정 조건·영향 package와 함께 반환한다.
+- source/계약/다른 보고서/진행 문서는 수정하지 않는다. 컴파일·테스트·DB·root·Docker·provider·
+  production read·Git 쓰기·하위 위임 없이 hash/link/라인/syntax 검사만 허용한다.
+- 공통 보고 형식과 finding severity를 쓴다. closure는 source-review 한정이며 실행 성공이 아니다.

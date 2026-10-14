@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | U2 독립 설계 리뷰의 6개 finding을 보완하고, 먼저 구현할 입력 형식·encoding/hash 계약을 고정. 이 순수 모듈은 공급·DB 설계 보완과 분리해 진행. 실제 복구 예산·C_R2 이미지·운영 적용은 후속 단계 |
+| 다음 착수 항목 | 보정한 U2 입력 형식·encoding/hash 계약으로 첫 순수 모듈 I1a 구현. D5 공급/DB/발행 교정안의 독립 검토는 병행. 실제 복구 예산·C_R2 이미지·운영 적용은 후속 단계 |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -266,7 +266,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택해 승인 대기 해소. [Web 접점](reviews/2026-10-14-r2-daily-web-map.md)·[설치본 가이드](reviews/2026-10-14-r2-web-prerequisites.md)와 D1 구조 제안을 회수하고 [독립 리뷰의 6개 finding](reviews/2026-10-14-r2-daily-input-design-review.md)을 수용했다. [D4의 순수 입력 형식 확정·D5의 공급/권한/발행 보완](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)을 병행하며 첫 코드 묶음을 분리한다. 기존 v3/ETF11 발행 8월 28일 관측은 보존하며, 새 제품 코드·실행·발행은 아직 미검증.
+  DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택해 승인 대기 해소. [Web 접점](reviews/2026-10-14-r2-daily-web-map.md)·[설치본 가이드](reviews/2026-10-14-r2-web-prerequisites.md)와 구조 제안·[독립 리뷰](reviews/2026-10-14-r2-daily-input-design-review.md)를 회수했다. [입력 형식](contracts/owner-beta-daily-etf11-input-v1.md) `308b9909…`의 3개 통합 보정·7개 golden 계산을 수용해 I1a 구현으로 전환하고, [D5 교정안](reviews/2026-10-14-r2-daily-input-design-amendments.md)의 독립 검토는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 따라 병행한다. 기존 v3/ETF11 발행 8월 28일 관측은 보존하며, 새 코드 실행·발행은 아직 미검증.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -432,6 +432,7 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04 | BLOCKED → DOING; U2 계약 채택 | Owner의 “그걸로 진행해”에 따라 기존 v3를 보존하는 독립 검증 일일 입력과 전략별 opt-in 자동 추천 설계·구현 시작. 운영 조치·실제 입력·Owner·3거래일 인수는 후속 | [채택 기록](reviews/2026-10-13-r2-daily-input-decision.md), [WP-4 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 기준 `619634d`, 기록을 추가한 커밋 |
 
 | 2026-10-14 | R2-04 | DOING 유지; 독립 설계 리뷰 수용·영향 범위별 보완 | 반복 휴장일 action/calendar 공급, grant/epoch, 발행 후 불변성, harness, byte 계약 6개 finding 수용. 순수 계약 I1a 준비를 DB/운영 설계와 분리 | D1 `e74934b7…` 및 [D3](reviews/2026-10-14-r2-daily-input-design-review.md); [후속 분해](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). 소스 실행·DB·운영 성공을 주장하지 않음 |
+| 2026-10-14 | R2-04 | DOING 유지; 입력 계약 수용·첫 구현 전환 | D4의 SinglePage marker·witness 집계·legacy hash 접점 보정, 7개 golden·17개 링크 직접 확인. I1a 순수 코드와 D6 교정안 검토 분리 | D4 `308b9909…`, D5 `8a8796d9…`; [launch 명세](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). Rust/DB/운영 검증 전 |
 
 후속 행에는 `날짜 / ID / 이전 상태 → 이후 상태 / 이유·결정 / 대상 커밋·검증 링크·결과`를 넣는다.
 문서를 갱신한 뒤 상단의 최종 갱신일·다음 착수 항목·진행 중인 항목, §4 단계 상태, 해당 체크박스와
