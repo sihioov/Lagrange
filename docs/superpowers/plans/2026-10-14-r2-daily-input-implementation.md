@@ -40,6 +40,8 @@ Native subagents: prohibited for worker packages
 | I1a-P2 | intermediate | 회수된 I1a의 세 cash code 문법·오류와 고정 회귀를 두 파일에서 보정 | high | 규칙 밖의 의미 변경이 필요하면 해당 접점을 반환 |
 | I1a-R | intermediate | 고정 wire 구현 네 파일의 문법·hash·오류·bounded parser와 회귀를 독립 검토 | high | 새 신뢰/운영 정책을 요구하지 않고 도달 가능한 소스 반례를 반환 |
 | I1a-CI | simple | 정확한 부분 후보의 기존 hosted CI 결과·checkout·필수 회귀 증거 회수 | high | 실제 로그 누락/모순은 미검증으로 반환하며 새 run을 만들지 않음 |
+| I1a-F | intermediate | I1a-R01~06와 실제 컴파일 진단을 두 파일에서 보정 | high | 고정 D4를 바꿔야 하거나 같은 보정이 다시 실패하면 정확한 반례를 반환하고 재분해/상향 |
+| I1a-CI-D | simple | 종료된 세 실패 job의 typed 진단과 실패 phase를 추가 회수 | high | 원인 근거가 없으면 UNKNOWN으로 남기고 SQLSTATE만으로 원인을 추정하지 않음 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
 검증 명령을 추가하고서** 시작한다. 현재 설계 작업을 소스 구현 완료로 세지 않는다.
@@ -61,6 +63,8 @@ Native subagents: prohibited for worker packages
 | I1a-P2 | 5 | intermediate | D6-01 present-empty cash metadata 구현·회귀 | `daily_price_only/contract.rs`, `tests/daily_price_only.rs`만 | I1a idle·보고 회수, 보정 D4 hash 고정 | 같은 Luna max | empty 보존·정확한 오류·515-byte fixture·nonempty bundle | rustfmt/diff; 후속 독립 리뷰·exact 후보 hosted Rust/CI |
 | I1a-R | 6 | intermediate | 전체 pure wire와 보정본의 독립 코드 리뷰 | `docs/reviews/2026-10-14-r2-daily-wire-review.md`만 | I1a-P2 idle·최종 hash 고정 | Sol high | concrete finding 또는 범위 한정 source closure | 고정 D4·실제 source·meaningful 회귀·cached dependency 대조 |
 | I1a-CI | 6 | simple | I1a/I0a 부분 후보의 hosted CI 증거 회수 | `docs/reviews/2026-10-14-r2-daily-wire-ci.md`, private exact-SHA CI receipts | source 후보 commit/push·기존 run 조회 후 코디네이터가 한 번만 dispatch | Luna medium | 정확한 run/job/step/테스트 결과·미검증 항목 | GitHub read-only logs와 SHA·필수 테스트 marker 대조 |
+| I1a-F | 7 | intermediate | pure wire의 검증된 결함·경계 회귀 보정 | `daily_price_only/contract.rs`, `tests/daily_price_only.rs`만 | I1a-R 실제 idle·보고 회수, 기존 CI terminal failure 확인 | 기존 Luna max | 여섯 finding별 수정·필수 경계 회귀와 한계 | rustfmt/diff 후 독립 delta review·새 exact 후보 hosted CI |
+| I1a-CI-D | 7 | simple | 기존 실패 run의 원인 증거 보강 | `docs/reviews/2026-10-14-r2-daily-wire-ci-diagnostics.md`, private `ci/779b3fa/diagnostics/`만 | CI worker 실제 idle·final/receipt 회수 | 기존 Luna medium | job별 최초 실패 phase·typed compiler/test 진단 | 기존 run 로그를 메모리에서 필터·candidate source와 대조, 실행 변경 없음 |
 
 ## Worker briefs
 
@@ -493,3 +497,73 @@ valid_code, JSON lexical 검사, typed cash-row 검사와 새 fixture/bundle/오
   checkout SHA와 결합한다. helper 미호출이나 아직 없는 0060의 실행을 추정하지 않는다.
 - `55390735` 감시는 끝내고 두 소유 worker만 다루는 `1d5a6342`로 교체했다.
   2분·60회·04:27:42 UTC 만료이며 최종 결과/권한 대기를 회수하기 전 방치하지 않는다.
+
+## I1a 리뷰·CI 실패 인수와 보정 범위 — 2026-10-14
+
+기존 run `38500926595`는 `779b3faa787922032c682b9cf3fe07675a3d976f`에서 terminal failure다.
+코디네이터가 GitHub run identity/conclusion과 [CI 보고](../../reviews/2026-10-14-r2-daily-wire-ci.md)
+58행·`86c31bec…`, private receipt 741행·`aa44df38…`를 직접 대조했다. policy/format/Web/Python은
+성공했으나 clippy/workspace/PG/required는 실패했다. workspace 명령이 건너뛰어져 신규 16개
+테스트 성공 근거는 없다. PG의 59 migration/checksum/일부 guard는 전체 성공이 아니며 원인 확인이 남는다.
+
+I1a-CI는 02:40:08 UTC, I1a-R은 02:41:50 UTC actual idle/pending0이고 실질 최종 보고를 회수했다.
+리뷰 316행·`92da4c046f8653075a4fb8631475eb37d49b7ee4e1eee357ffe856f1538b7540`의
+[R01~06](../../reviews/2026-10-14-r2-daily-wire-review.md)을 source anchors와 대조해 수정 대상으로 수용한다.
+R02의 timestamp 비교 및 Option inference 3곳은 실제 CI compiler 진단으로도 확인됐다.
+D6-01 present-empty 규칙은 소스상 일치하지만 bundle 실행 성공은 아직 아니다.
+기존 후보를 수용하거나 같은 run을 재실행하지 않는다. 고정 D4 950행 `fa052903…`는 유지한다.
+
+### I1a-F 고정 실행 brief
+
+- 기존 구현 worker `2ec1c669-0e57-462e-a397-d6b2c3fbd4a0`, Luna/max. 읽을 입력은 이 계획,
+  D4, I1a-R 보고 전체와 CI 보고다. 수정은 `crates/market-data/src/daily_price_only/contract.rs`와
+  `crates/market-data/tests/daily_price_only.rs` 두 파일만. 원본 hash는 위 exact-input 표와 같다.
+  public 25 struct/4 enum/17 function/2 timestamp method·오류·wire bytes·7 golden·515-byte cash fixture,
+  기존 historical 코드·I0a 파일·계약·Cargo/lock·module registration은 변경하지 않는다.
+- R01: 전체 session/bar 수는 canonical manifest sessions 길이와 checked multiplication으로 구한다.
+  added/evidence 수는 daily_sources 기준을 유지한다. fixture의 base 2개를 제품 코드에 고정하지 않는다.
+  base가 2개보다 많은 valid bundle과 정확한 count 불일치 거부를 회귀로 추가한다.
+- R02: timestamp wrapper의 inner as_timestamp()를 비교해 nanosecond/nonincreasing copy order를
+  보존한다. 세 Option accumulator에 구체적 타입을 주고 필요하면 private type alias를 쓴다.
+  서로 다른 identity의 valid multi-hop과 시간 역전 거부를 추가한다.
+- R03: proof document.session_date도 typed encoder에서 0001..9999를 검증한다. 0/1/9999/10000년
+  parity 사례는 내부 commitment를 올바르게 재계산해 stale-hash 거부로 날짜 오류를 숨기지 않는다.
+- R04: 같은 visit 분기를 합치고 dead helper/불필요 mut을 제거한다. slice 인자, io::Error::other,
+  private tuple alias 등 국소 lint 정리를 한다. public API를 바꾸거나 crate-wide allow로 숨기지 않는다.
+  불가피한 private schema/fixture helper의 복잡도만 좁고 이유가 있는 allowance가 가능하다.
+- R05: D4 fixed guard 각각의 bound/bound+1을 의미 있게 검사한다. source/document/bar declared size,
+  civil dates, action chains, file occurrences, cash rows, sessions, pages/copies, input/output bytes와
+  depth를 매핑한다. positive pages/copies는 고유 identity와 유효 continuation/time을 사용한다.
+  다른 schema/byte 한계로 nominal positive가 불가능한 경우 guard를 격리하거나 실제 선행 거부를
+  명시한다. duplicate/hash/shape 오류를 해당 limit 검증처럼 세지 않는다. 거대 배열·무제한 반복은
+  피하고 가능한 경우 작은 내부 pure guard 테스트 또는 declared sizes를 사용한다. private helper
+  테스트는 같은 contract.rs의 cfg(test)에 한정할 수 있으나 public entry-point 회귀도 유지한다.
+- R06: seal이 반환하기 전 최종 manifest canonical byte bound를 검사한다. preimage/hash/기존 상한은
+  변경하지 않는다. near-limit draft/final pair에서 seal 성공이면 encode도 가능함을 검사한다.
+  불가능한 fixture나 명세 모순은 임의 규칙으로 메우지 말고 정확히 보고한다.
+- 실행은 read-only source, fixture용 순수 로컬 계산, rustfmt edition2024/check와 diff/whitespace만.
+  Cargo/rustc/build/test 실행, DB/SQL/root/Docker/network/provider/운영/Git write/위임은 금지한다.
+  최종 보고에 finding별 수정 anchor, guard→test matrix/미검증, 정확한 hash·행 수를 포함한다.
+  written test와 실제 PASS를 구분한다. 로드맵·문서·후속 CI는 코디네이터 소유다.
+
+### I1a-CI-D 고정 실행 brief
+
+- 기존 collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`, Luna/medium. 종료된 run38500926595의
+  clippy job115647446770, workspace job115647446703, PG job115647446742만 read-only 재검토한다.
+  기존 CI 보고/receipt는 동결한다. 새 보고 한 파일과 private diagnostics 하위 파일만 작성한다.
+- 최초 실패 step/phase, compiler/test/SQL의 typed 진단·source anchor·실제 exit를 회수한다.
+  chart step과 PG가 같은 market-data compile 실패인지 별개인지 실제 로그로 구분한다.
+  예상된 SQL guard 거부와 terminal 실패를 혼동하지 않는다. 근거가 없으면 UNKNOWN이다.
+- raw log는 메모리에서만 처리한다. 안전한 Rust diagnostic/source 위치, 명령의 이름·phase,
+  typed SQLSTATE/test 이름/상태와 원본 응답 hash만 남기며 URL credential/provider body/free-form
+  DB 행·원시 verbose 로그는 저장하거나 출력하지 않는다. 기존 candidate source/workflow read는 가능하다.
+- 새 run/재실행/취소/dispatch, 로컬 tests/build/DB/root/Docker/운영/provider/Git write는 금지한다.
+  30분 또는 03:30 UTC 중 먼저 도달한 시각까지 결과를 반환한다. 로그 부재나 분석 범위 초과는
+  INCOMPLETE로 남긴다. 소스 수정·원인 추정·추가 승인 요청은 하지 않는다.
+
+두 follow-up 모두 공통 직접 작업 문장과 최종 보고 규칙을 따른다. notified assignment 후 실제
+상태/범위가 확인되면 기존 heartbeat를 새 두 작업 범위로 교체한다. 기존 성공·실패 근거는 보존한다.
+
+실제 follow-up은 I1a-F 02:44:30 UTC, I1a-CI-D 02:44:55 UTC에 시작했고 running/pending0와
+workspace/parent를 확인했다. `1d5a6342`를 삭제하고 `a80e3b3a`(2분·60회·04:45:39 UTC 만료)로
+교체했다. CI-D의 이번 반환 경계는 03:14:55 UTC다. 두 범위 밖의 실행 권한은 추가하지 않았다.

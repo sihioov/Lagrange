@@ -509,3 +509,42 @@ CI 담당자는 보고서·private sanitized receipt만 쓰며 해당 run/job/lo
 기존 `55390735`를 삭제하고 `1d5a6342`(2분·60회·04:27:42 UTC 만료)로 소유 범위를 바꿨다.
 CI worker의 04:00 UTC/90분 경계에서 terminal 미도달이면 incomplete를 회수해 책임을 명시적으로
 인계한다. 같은 daemon 중단까지 감시가 보호한다고 주장하지 않는다. 현재 CI/리뷰 성공은 미확인이다.
+
+### 부분 후보 실패·독립 리뷰 회수와 보정 착수 — 2026-10-14 KST
+
+기존 [CI 38500926595](https://github.com/sihioov/Lagrange/actions/runs/38500926595)는
+`779b3faa787922032c682b9cf3fe07675a3d976f`에서 terminal failure, 마지막 갱신 02:33:49 UTC다.
+CI 담당자가 02:40:08 UTC 실제 idle/pending0가 된 뒤 memory-only 마지막 알림뿐 아니라
+activity의 실질 최종 보고를 회수했다. [58행 CI 보고](2026-10-14-r2-daily-wire-ci.md) hash
+`86c31becd2d1a93fb00dd3cf971bafa153c18149bf64de8ce0f6bfad1d45a509`와 private 741행 receipt
+`aa44df387554f6f3c76a047f97404a679dcc819ce1e9085c83dc5f4b5ddc14ca`를 직접 대조했다.
+GitHub run API에서도 exact SHA/event/attempt1/completed/failure를 확인했다. 재실행·취소는 없었다.
+
+policy/format/Web/Python은 성공, clippy/workspace/PG/required는 실패했다. timestamp E0369와
+Option accumulator 세 곳 E0282, unused mut 진단은 실제 compiler 결과다. chart 단계 실패 뒤
+workspace 명령이 skipped여서 신규 16개 pure test의 PASS는 없다. PG의 migration59·
+checksum 일치·일부 guard는 job 실패를 대체하지 않으며 terminal 원인은 추가 진단 대상으로 남긴다.
+
+I1a-R은 02:41:50 UTC actual idle/pending0였고 [316행 리뷰](2026-10-14-r2-daily-wire-review.md),
+hash `92da4c046f8653075a4fb8631475eb37d49b7ee4e1eee357ffe856f1538b7540`를 회수했다.
+코디네이터가 총 session/bar 집계와 daily_sources-only 호출, timestamp 비교, proof date 검증,
+strict lint 지점, 작성된 테스트 경계와 seal의 최종 byte 검사 부재를 실제 source와 대조했다.
+R01~06을 수정 대상으로 수용한다. 이는 finding 인수이며 구현 합격이 아니다. D6-01 empty code의
+소스 일치는 유지되지만 golden/bundle 실행 성공은 아직 없다. D4 950행·`fa052903…`는 바꾸지 않는다.
+
+새 범위는 [I1a-F·I1a-CI-D brief](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에
+먼저 고정했다. 구현자 `2ec1c669-0e57-462e-a397-d6b2c3fbd4a0` Luna/max는 contract.rs와 test
+두 파일의 보정·meaningful boundary matrix만 맡고, collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`
+Luna/medium은 기존 terminal run의 실패 phase·typed 진단을 별도 보고서/private leaf로 회수한다.
+프로필은 coordinator용 하나라 기존 확인된 worker 설정을 유지했다. 둘 다 notified follow-up이고
+02:44:30/02:44:55 UTC 시작한 실제 running/pending0·workspace·parent를 확인했다.
+collector는 30분 또는 03:30 UTC 중 먼저 도달하는 시각(이번에는 03:14:55 UTC)까지 반환한다.
+
+`1d5a6342` 감시는 삭제하고 `a80e3b3a`(2분·60회·04:45:39 UTC 만료)로 이 두 범위를 관찰한다.
+리뷰/CI 원본과 이전 ledger 이력은 보존한다. 보정 뒤 독립 delta review와 새 exact candidate의 hosted
+검증을 이어가며 기존 실패 run을 재실행하지 않는다. 로컬 Cargo/DB/빌드·새 provider·운영 변경은 없다.
+Mem0 관련 context 조회는 MCP 응답 부재로 실패했으므로 조회 성공이나 저장으로 간주하지 않았다.
+
+문서 local link/행 경계 253개와 두 원본 보고서 hash를 확인했다. 추적 문서의 whitespace 검사는
+통과했다. 새 CI 보고서의 마지막 빈 줄은 `diff --check` 경고 한 건으로 남지만, 진행 중인 진단의
+고정 입력 hash를 보존하기 위해 원본을 수정하지 않았다.
