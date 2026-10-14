@@ -1637,3 +1637,17 @@ unresolved/not-found/not-verified items (explicit none when empty), decompositio
 background work and pending permissions. Return within 30 minutes of actual startup,
 or INCOMPLETE with exact residual scope. Coordinator owns source acceptance, corrections,
 and one new exact-candidate hosted run after checking existing runs.
+
+
+### Wave 13 actual literal-review startup — 2026-10-14
+
+The one-file correction and review brief are committed as
+`2593fbef358f5cd163e58c514e577793daa4f749`. I0b-F2-R
+`d9ca76a3-b7dc-4913-944f-10ce8cc35d80` actually started at 07:08:49 UTC,
+codex/gpt-6.1-sol/high, expected workspace/parent, pending0, notified follow-up.
+Only the independent review report is writable; source and nineteen references remain frozen.
+The 30-minute reporting bound is 07:38:49 UTC. Heartbeat `8235440c` runs every
+two minutes, at most30times, expiring 08:09:14 UTC. The ledger and private startup
+receipt preserve notification and runtime evidence. Recover incomplete scope at the
+report bound and reconcile/renew/handoff before expiry; same-daemon outage remains
+unprotected. No parser/regression execution, new CI or source acceptance is claimed.

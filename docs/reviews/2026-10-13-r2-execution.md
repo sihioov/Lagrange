@@ -1006,3 +1006,17 @@ including helper use from full source-map parsing, preservation of prior closure
 and meaningful regressions. Source acceptance and a new exact-candidate hosted CI
 remain pending. Prior `929fcd6` success is baseline evidence only. I0/0060, full snapshot,
 diagrams before structural main integration, runtime and Owner acceptance remain open.
+
+
+### Wave 13 actual literal-review startup — 2026-10-14
+
+The one-file correction and review brief are committed as
+`2593fbef358f5cd163e58c514e577793daa4f749`. I0b-F2-R
+`d9ca76a3-b7dc-4913-944f-10ce8cc35d80` actually started at 07:08:49 UTC,
+codex/gpt-6.1-sol/high, expected workspace/parent, pending0, notified follow-up.
+Only the independent review report is writable; source and nineteen references remain frozen.
+The 30-minute reporting bound is 07:38:49 UTC. Heartbeat `8235440c` runs every
+two minutes, at most30times, expiring 08:09:14 UTC. The ledger and private startup
+receipt preserve notification and runtime evidence. Recover incomplete scope at the
+report bound and reconcile/renew/handoff before expiry; same-daemon outage remains
+unprotected. No parser/regression execution, new CI or source acceptance is claimed.
