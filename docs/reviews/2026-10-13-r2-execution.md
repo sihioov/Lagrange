@@ -1639,3 +1639,31 @@ reporting bound and reconcile/renew/handoff before expiry. Same-daemon monitorin
 cannot protect daemon outage. Private startup receipt and owned ledger record
 actual lifecycle and notification configuration. Existing CI/history and all
 later negative-bootstrap/0060/diagram/runtime/Owner/final C_R2 gates remain.
+
+
+### Wave27 second correction recovered; Wave28 independent review prepared
+
+Implementer00e0a229 Sol/max became actual idle14:50:24.974UTC; coordinator observed
+idle/activeTurn null/pending0 at14:50:48UTC and recovered the complete176-line final
+(f52a070c927450b2adc9eef07c75d9b74052551ac355f887dd9f815ee2f2f2bf), beyond the
+truncated notification. Private0600 final/recovery receipts were persisted before
+heartbeat1f6d4170 was deleted14:52:14UTC. Its90-minute bound was met.
+
+The [second correction handoff](2026-10-14-r2-snapshot-second-corrections-handoff.md)
+pins source4413/0a6c29c7 and integration1970/a5db9e0a; mod9/700469d6 remains unchanged.
+Coordinator inspected the full two-file delta, all46 unchanged pins, two committed
+baseline blobs and eight byte-identical preserved regions. Scoped rustfmt and
+whitespace checks returned0. Plain diff and Git differ only in hunk alignment.
+All45 baseline test names remain, four private definitions were added; final
+inventory has49 definitions,48 Linux expected and1 non-Linux excluded, all
+WRITTEN_UNEXECUTED. No coordinator source edit, compiler/test result or acceptance.
+
+Wave28 specifies one independent bounded Sol/high review of all FR/R/R12/C01/P/T
+and all49 definitions. Earlier reviewer remains idle/pending0 and full prior result
+recovered; notifications must be registered again on follow-up. Configured Astra
+profile is coordinator-only. Source/reference bytes freeze before launch.
+No new S2 push or CI; review closure and existing-run query precede one exact
+candidate hosted run. Prior I0c success and all older outcomes remain preserved;
+nested helper rows/exits UNKNOWN. Negative bootstrap/rollback,0060,reconstruction/
+admission,I6 diagrams before main,runtime/Owner/final C_R2 remain open.
+Current Mem0 context returned MCP_ERROR, not a save; no stale-hook retry.

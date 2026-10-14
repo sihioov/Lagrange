@@ -13,17 +13,18 @@
 #[cfg(target_os = "linux")]
 mod linux_tests {
     use std::error::Error;
-    use std::fs::{self, OpenOptions, hard_link};
+    use std::fs::{self, hard_link, OpenOptions};
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::thread;
+    use std::time::Duration;
 
     use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
     use fs2::FileExt;
     use market_data::contract::{
-        FetchMode, MARKET_KR, RequestMetadata, ResponseKind, SourceFileReference,
+        FetchMode, RequestMetadata, ResponseKind, SourceFileReference, MARKET_KR,
     };
     use market_data::daily_price_only::source::{
         ApprovedRawScope, CommittedRawReader, DailyEvidenceError, ScanLimitValues, ScanLimits,
@@ -397,6 +398,25 @@ mod linux_tests {
     fn s2_t01_valid_multi_batch_snapshot_keeps_exact_evidence_and_stats() {
         let fixture = fixture();
         let manifest = fs::read(manifest_path(&fixture.data_root)).unwrap();
+        let expected_metadata: Vec<_> = (0..fixture.batches.len())
+            .map(|index| fs::read(metadata_path(&fixture, index)).unwrap())
+            .collect();
+        let expected_bodies: Vec<_> = fixture
+            .batches
+            .iter()
+            .flat_map(|batch| batch.bodies.iter().map(|(_, bytes)| bytes.as_slice()))
+            .collect();
+        assert_eq!(expected_bodies.len(), 3);
+        for (index, bytes) in expected_bodies.iter().enumerate() {
+            for earlier in &expected_bodies[..index] {
+                assert_ne!(bytes, earlier);
+                assert_ne!(
+                    ContentHash::from_bytes(bytes),
+                    ContentHash::from_bytes(earlier)
+                );
+                assert_ne!(bytes.len(), earlier.len());
+            }
+        }
         let snapshot = scan(&fixture, limits()).unwrap();
         assert_eq!(snapshot.scope().provider(), "kis");
         assert_eq!(snapshot.scope().market(), "kr");
@@ -406,66 +426,72 @@ mod linux_tests {
             &ContentHash::from_bytes(&manifest)
         );
         assert_eq!(snapshot.batches().len(), 2);
-        assert_eq!(
-            snapshot.batches()[0].batch_id(),
-            fixture.batches[0].entry.batch_id
-        );
-        assert_eq!(
-            snapshot.batches()[1].batch_id(),
-            fixture.batches[1].entry.batch_id
-        );
-        assert_eq!(
-            snapshot.batches()[0].retrieved_at(),
-            fixture.batches[0].entry.retrieved_at
-        );
-        assert_eq!(snapshot.batches()[0].mode(), FetchMode::Synthetic);
-        assert_eq!(
-            snapshot.batches()[0].manifest_line_bytes(),
-            serde_json::to_vec(&fixture.batches[0].entry).unwrap()
-        );
-        let file = snapshot.batches()[0].files().next().unwrap();
-        assert_eq!(file.file_name(), "bars.json");
-        assert_eq!(file.kind(), ResponseKind::Bars);
-        assert_eq!(
-            file.size_bytes(),
-            u64::try_from(DEFAULT_BODY.len()).unwrap()
-        );
-        assert_eq!(file.bytes(), DEFAULT_BODY);
-        assert_eq!(
-            file.content_hash(),
-            &fixture.batches[0].entry.files[0].content_hash
-        );
-        assert_eq!(
-            snapshot.batches()[0].batch_json_sha256(),
-            &ContentHash::from_bytes(snapshot.batches()[0].batch_json_bytes())
-        );
+        for (batch_index, (captured, expected)) in
+            snapshot.batches().iter().zip(&fixture.batches).enumerate()
+        {
+            assert_eq!(captured.batch_id(), expected.entry.batch_id);
+            assert_eq!(captured.batch_date(), expected.entry.date);
+            assert_eq!(captured.retrieved_at(), expected.entry.retrieved_at);
+            assert_eq!(captured.mode(), expected.entry.mode);
+            let expected_line = serde_json::to_vec(&expected.entry).unwrap();
+            assert_eq!(captured.manifest_line_bytes(), expected_line.as_slice());
+            assert_eq!(
+                captured.manifest_line_sha256(),
+                &ContentHash::from_bytes(&expected_line)
+            );
+            assert_eq!(captured.manifest_line_number(), batch_index + 1);
+            assert_eq!(
+                captured.batch_json_bytes(),
+                expected_metadata[batch_index].as_slice()
+            );
+            assert_eq!(
+                captured.batch_json_sha256(),
+                &ContentHash::from_bytes(&expected_metadata[batch_index])
+            );
+            let parsed: ManifestEntry = serde_json::from_slice(captured.batch_json_bytes())
+                .map_err(|_| DailyEvidenceError::InvalidBatchMetadata)
+                .unwrap();
+            assert!(
+                parsed == expected.entry,
+                "captured metadata must equal the fixture's committed entry"
+            );
+            assert_eq!(expected.entry.files.len(), expected.bodies.len());
+            let mut files = captured.files();
+            assert_eq!(files.len(), expected.entry.files.len());
+            for (file_index, (entry, (name, bytes))) in expected
+                .entry
+                .files
+                .iter()
+                .zip(&expected.bodies)
+                .enumerate()
+            {
+                let file = files
+                    .next()
+                    .expect("every expected file must have a returned view");
+                assert_eq!(file.file_name(), entry.file_name.as_str());
+                assert_eq!(file.file_name(), name.as_str());
+                assert_eq!(file.kind(), entry.kind);
+                assert_eq!(file.size_bytes(), entry.size_bytes);
+                assert_eq!(file.size_bytes(), u64::try_from(bytes.len()).unwrap());
+                assert_eq!(file.bytes(), bytes.as_slice());
+                assert_eq!(file.content_hash(), &entry.content_hash);
+                assert_eq!(file.content_hash(), &ContentHash::from_bytes(bytes));
+                assert!(std::ptr::eq(file.batch(), captured));
+                assert_eq!(file.batch().batch_id(), expected.entry.batch_id);
+                assert_eq!(file.batch().retrieved_at(), expected.entry.retrieved_at);
+                assert_eq!(files.len(), expected.entry.files.len() - file_index - 1);
+            }
+            assert!(files.next().is_none());
+            assert_eq!(files.len(), 0);
+        }
         let stats: SnapshotStats = snapshot.stats();
         assert_eq!(stats.manifest_bytes, manifest.len());
         assert_eq!(stats.manifest_records, 2);
         assert_eq!(stats.batches, 2);
         assert_eq!(stats.files, 3);
         let retained = manifest.len()
-            + fixture
-                .batches
-                .iter()
-                .map(|batch| {
-                    fs::metadata(metadata_path(
-                        &fixture,
-                        fixture
-                            .batches
-                            .iter()
-                            .position(|item| item.entry.batch_id == batch.entry.batch_id)
-                            .unwrap(),
-                    ))
-                    .unwrap()
-                    .len() as usize
-                        + batch
-                            .bodies
-                            .iter()
-                            .map(|(_, body)| body.len())
-                            .sum::<usize>()
-                })
-                .sum::<usize>();
+            + expected_metadata.iter().map(Vec::len).sum::<usize>()
+            + expected_bodies.iter().map(|body| body.len()).sum::<usize>();
         assert_eq!(stats.retained_evidence_bytes, retained);
         assert_eq!(stats.open_descriptors, fd_bound(&fixture));
         assert_eq!(stats.peak_open_descriptors, fd_bound(&fixture));
@@ -1529,12 +1555,10 @@ mod linux_tests {
         let before = tree_state(fixture._temp.path());
         let snapshot = scan(&fixture, limits()).unwrap();
         assert_eq!(snapshot.batches().len(), 1);
-        assert!(
-            !snapshot
-                .batches()
-                .iter()
-                .any(|batch| batch.batch_id() == orphan.entry.batch_id)
-        );
+        assert!(!snapshot
+            .batches()
+            .iter()
+            .any(|batch| batch.batch_id() == orphan.entry.batch_id));
         drop(snapshot);
         assert_eq!(tree_state(fixture._temp.path()), before);
         assert!(orphan_path.exists());
@@ -1670,32 +1694,82 @@ mod linux_tests {
         let (attempt_tx, attempt_rx) = mpsc::channel();
         let (continue_tx, continue_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
+        let wait_bound = Duration::from_secs(5);
         let worker = thread::spawn(move || {
-            let probe = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(lock)
-                .unwrap();
-            let contended = match FileExt::try_lock_exclusive(&probe) {
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => true,
-                Ok(()) => {
-                    FileExt::unlock(&probe).unwrap();
-                    false
+            let result = (|| -> Result<(), &'static str> {
+                let probe = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&lock)
+                    .map_err(|_| "pre-Drop writer probe open failed")?;
+                let contended = match FileExt::try_lock_exclusive(&probe) {
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => true,
+                    Ok(()) => {
+                        FileExt::unlock(&probe)
+                            .map_err(|_| "pre-Drop writer probe unlock failed")?;
+                        false
+                    }
+                    Err(_) => return Err("pre-Drop writer probe failed"),
+                };
+                attempt_tx
+                    .send(contended)
+                    .map_err(|_| "writer attempt receiver closed")?;
+                drop(probe);
+                if !contended {
+                    return Err("writer did not observe WouldBlock before Drop");
                 }
-                Err(_) => false,
-            };
-            attempt_tx.send(contended).unwrap();
-            continue_rx.recv().unwrap();
-            drop(probe);
-            let store = RawStore::new(data_root);
-            let result = store.append_manifest("kis", "kr", &appended);
-            done_tx.send(result.is_ok()).unwrap();
+                continue_rx
+                    .recv_timeout(wait_bound)
+                    .map_err(|_| "writer continuation was not received within its bound")?;
+
+                // A fresh open description must acquire nonblockingly before
+                // the existing writer's blocking append path can be entered.
+                let released = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&lock)
+                    .map_err(|_| "post-Drop writer probe open failed")?;
+                FileExt::try_lock_exclusive(&released)
+                    .map_err(|_| "snapshot lock was not released before append")?;
+                FileExt::unlock(&released).map_err(|_| "post-Drop writer probe unlock failed")?;
+                drop(released);
+                let store = RawStore::new(data_root);
+                store
+                    .append_manifest("kis", "kr", &appended)
+                    .map_err(|_| "cooperating append failed")
+            })();
+            // Inner resources have unwound before completion is reported.
+            let _ = done_tx.send(result);
         });
-        assert!(attempt_rx.recv().unwrap(), "writer must observe WouldBlock");
+        let attempt = attempt_rx.recv_timeout(wait_bound);
+        drop(attempt_rx);
         drop(snapshot);
-        continue_tx.send(()).unwrap();
-        assert!(done_rx.recv().unwrap());
-        worker.join().unwrap();
+        let continued = if matches!(attempt, Ok(true)) {
+            continue_tx.send(()).is_ok()
+        } else {
+            false
+        };
+        drop(continue_tx);
+        let completion = done_rx.recv_timeout(wait_bound);
+        drop(done_rx);
+        if completion.is_ok() {
+            worker
+                .join()
+                .expect("completed writer must exit without panicking");
+        } else {
+            // No unbounded join when a worker has not reported completion.
+            drop(worker);
+        }
+        assert!(
+            matches!(attempt, Ok(true)),
+            "writer must observe WouldBlock within its bound"
+        );
+        assert!(continued, "writer continuation must be delivered");
+        assert_eq!(
+            completion,
+            Ok(Ok(())),
+            "writer completion must be bounded and successful"
+        );
         let fresh = scan(&fixture, limits()).unwrap();
         assert_eq!(fresh.batches().len(), 2);
         assert_eq!(fresh.batches()[1].batch_id(), next.entry.batch_id);

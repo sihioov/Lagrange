@@ -3172,3 +3172,102 @@ reporting bound and reconcile/renew/handoff before expiry. Same-daemon monitorin
 cannot protect daemon outage. Private startup receipt and owned ledger record
 actual lifecycle and notification configuration. Existing CI/history and all
 later negative-bootstrap/0060/diagram/runtime/Owner/final C_R2 gates remain.
+
+
+## Wave28 — independent review of second snapshot correction
+
+Execution skill: $paseo-delegate (required)
+Native subagents: prohibited for worker packages
+
+### Goal and boundaries
+
+Review the recovered Wave27 two-file correction against the full fixed contract,
+all prior findings and49 written tests. The [handoff](../../reviews/2026-10-14-r2-snapshot-second-corrections-handoff.md)
+records actual idle/pending0/full recovery,46 immutable pins,2 baseline blobs,
+8 preserved regions and exact delta. Source and executable acceptance stay withheld.
+Only the new review report may change; no implementation or operational expansion.
+
+### Initial classification
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F2-R | intermediate | Fixed contract and bounded nine-correction delta; ownership/observer and test-oracle judgments remain | medium | Missing/conflicting inputs, inability to inspect full required scope, further design needed or60-minute reporting bound; report exact INCOMPLETE |
+
+### Execution graph
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| WP-4/I1b-S2-F2-R | 28 | intermediate | Independently disposition FR/R/R12/C01/P/T and all49 definitions | Only docs/reviews/2026-10-14-r2-raw-snapshot-second-corrections-review.md | Recovered idle Wave27 result and frozen source/inventory | codex/gpt-6.1-sol/high, existing independent reviewer; Astra profile is coordinator-only | Complete report plus substantive final, bounded60minutes | Coordinator source/pin/link/disposition checks; later one exact-candidate hosted CI after review closure |
+
+### Worker brief
+
+```text
+Package WP-4/I1b-S2-F2-R (Wave28), roadmap R2-04/09.
+Workspace /data/worktrees/3puw275b/excited-dolphin; workspaceId wks_10fae7d550ab1704; parent ef6cdbb0-8409-4dba-86ca-c07eadccf377; branch excited-dolphin.
+One independent bounded review of the second Linux snapshot correction. You are the existing independent reviewer, not the Sol/max implementer.
+Classification intermediate, confidence medium: accepted contract and nine concrete corrections are fixed, but ownership/drop/observer validity and test oracles need judgment. Route codex/gpt-6.1-sol/high per repository review rules. The configured Astra/high profile is coordinator-only; retain the existing verified Sol/high reviewer without permission-mode changes.
+60-minute reporting bound from actual startup. At the bound return substantive INCOMPLETE with exact reviewed/unreviewed FR/R/P/T/test scope. Do not silently narrow or extend the task.
+
+Recovered facts and immutable inputs
+- Read AGENTS.md, docs/ROADMAP.md and Wave28 of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md.
+- Read the entire accepted docs/reviews/2026-10-14-r2-raw-snapshot-implementation-contract.md:898 lines SHA c6f15291ba24eef23421f3e80ead194bb4e5adac6a5733271eb0aeb05cbe6056. P1-P10 binding, Linux only; RawDir platform restriction and UnsupportedPlatform-before-I/O elsewhere remain.
+- Read both prior reports IN FULL: docs/reviews/2026-10-14-r2-raw-snapshot-source-review.md (496lines/60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7) and docs/reviews/2026-10-14-r2-raw-snapshot-corrections-review.md (543lines/ebe51618235e06b3afe7e8075ecf7feb4c137d918a67c7be3ee715803f07d344). Original R01-R16 including R12a-h and C01 remain obligations; original R05/R10/R12 were partial. Your preceding review found FR01-09 plus E01,2P1/8P2, not source acceptance.
+- Read docs/reviews/2026-10-14-r2-snapshot-second-correction-scope.md and docs/reviews/2026-10-14-r2-snapshot-second-corrections-handoff.md.
+- Implementer 00e0a229-8710-4ed5-8dde-599cb7a7d84f Sol/max started13:47:13.127UTC, reached actual idle14:50:24.974UTC; coordinator observed idle/activeTurn null/pending0 at14:50:48UTC and recovered the complete substantive final via get_agent_activity. The truncated completion notification was not used as the full result. Monitor1f6d4170 deleted14:52:14UTC only after persisted full recovery.
+- Complete worker final is target/r2-daily-beta/wp-4-integration/wave27-I1b-S2-F2-final.md,176lines SHA f52a070c927450b2adc9eef07c75d9b74052551ac355f887dd9f815ee2f2f2bf. Read all its FR/R/P/T/C01 dispositions and limits; claims are hypotheses to validate, not conclusions to copy.
+- Corrected source4413lines SHA0a6c29c7fff0bdbc48c5af0f1950c8522542270e43d374b9ee8ae6243b2729d3; integration1970lines SHAa5db9e0adc4ca909835be3a717c5579a8c1b356f7c1b7036f4dc6cae8cbb7f61; mod9lines SHA700469d6a510aa3ae7ad6a27fb42a78a76b243256e5c31cb5292104b4a6be74a. The exact source handoff commit is supplied in the frozen Wave28 input inventory.
+- Baseline7545094404628974c1bd626c84f6c3f704555f5f: source3987/4577d5f1, test1896/754a32ec. Supplied wave27-S2-baseline-source.txt and wave27-S2-baseline-snapshot.txt match its Git blobs. Read-only wave27-S2-second-correction.diff is1749lines/ec132c244bf22e22bcd06f6a749014a33d7305b8760506a768a4f45b92c2a19c. Plain diff counts source+694/-268, integration+159/-85; Git hunk alignment gives source+692/-266, same exact bytes.
+- Coordinator inspected the complete delta,46 immutable pins,2 baseline blobs and8 byte-identical preserved regions: public API/getters, errors/name policy, fingerprints/name pool, construction/final-lock layout, root/preflight, size/preflight, complete Raw parser, C01.
+- Frozen input inventory: /data/worktrees/3puw275b/excited-dolphin/target/r2-daily-beta/wp-4-integration/source-wave-28-S2-review-inputs.json. Verify all targets/references/artifacts before and after review. All pinned bytes immutable. Roadmap/plan/ledger are coordinator-owned and may receive startup bookkeeping.
+- Candidate definition inventory: target/r2-daily-beta/wp-4-integration/source-wave-28-S2-test-inventory.json.49 definitions =19 private Linux+29 Linux integration+1 non-Linux. All45 baseline names retained; four additions at source3249/3496/3549/4123. Private cargo names must use daily_price_only::source::linux::private_tests::. The frozen old414line2902947e and corrected baseline423line1d8ef030 inventories remain historical, not candidate execution evidence. Verify actual source names, gates and lines yourself.
+- All49 definitions WRITTEN_UNEXECUTED. No S2 push or hosted CI. Prior a888cd66c032c8931a4979434168568387c83a12/run38545976070 attempt1SUCCESS remains I0c-only partial baseline:51 direct Rust,6 chart,strict Clippy/required,PG59,cleanup; nested helper rows/exits UNKNOWN. Older c0ac599/929fcd6 partial successes and failures preserved. Never rerun/cancel/duplicate existing CI.
+
+Exhaustive write allowlist
+Only /data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-14-r2-raw-snapshot-second-corrections-review.md.
+All source/test/mod/Cargo/storage/contracts/diagrams/workflows/roadmap/ledger/inventories and previous reports read-only. No source corrections, new scripts/artifacts, Git writes or background work. A finding is documented, not fixed.
+
+Review obligations
+1. Read the full current source.rs and daily_price_only_snapshot.rs, all49 written tests and entire accepted contract; inspect supplied baseline/delta and frozen relevant references. Disposition every FR01-09/E01, R01-R16 including R12a-h, C01, P1-P10 and T01-T32. Identify missing/oracle-insufficient tests separately from source defects. Distinguish new regressions from previously existing gaps and source/static evidence from execution.
+2. FR01/FR02: fresh non-Copy ScanLimits per scan and fieldless mapping of BoundedParseError before unwrap. Inspect all touched/new code for borrow/move/type inference/visibility/cfg/strict-lint blockers, not just the old sites. No payload Debug or capability broadening. FR03 next_back retains the right assertion; do not claim Clippy pass from reading/rustfmt.
+3. FR04: actual production OwnedSourceFile owns exactly one File, closes it before recording closure; all five successful native opens wrap before fallible checks including ancestor and early-failure locals. Observer destination survives TLS scope exit and moves; per-open IDs cannot alias a reopened shared inode/raw slot. Check all open transfers and both normal/failure lock-last destruction. Evaluate real native live-handle/fixture-unique closure/BeforeLockRelease competitor evidence, not flags alone. The lock helper now transfers ownership into ConstructionResources.lock_file before validation and moves AfterLockOpen inside the helper; verify this preserves path/race guards and test semantics. Check cfg(test) instrumentation for borrow-panics, lifetime leaks, allocation or unintended semantic divergence and distinguish limits of the evidence.
+4. FR05: malformed suffix remains separate; genuine tail ends just after colon; permissive legacy+bounded Json.is_eof assertions actually distinguish classifications. Under cap1 expect SourceScanLimit, one materialized file and no tree/metadata/provider opens. Independent max_files and max_batches valid controls and pre-open observations must fail for the intended reason.
+5. FR06: all three receives bounded, real pre-Drop WouldBlock handshake; post-Drop separate exclusive nonblocking probe succeeds before existing blocking append, then unlock/drop. Assess timeout/error cleanup and avoiding unbounded joins, plus successful fresh capture. No sleeps or scheduler-based inference; no global counts or suite serialization.
+6. FR07: every batch/file view in order, iterator counts/exhaustion, fixture-derived identity/bytes/hash/size, batch association and exact line/metadata commitments. Look for self-comparison and non-distinct fixtures.
+7. FR08: initial missing -> MissingCommittedEvidence; later lost captured body/metadata -> SourceChanged; extra -> UnexpectedBatchEntry. New BeforeFinalNames move-outside cases must use valid controls, invoke hook, leave exact intended names and hit the desired check. Preserve binding/replacement/bytes revalidation.
+8. FR09: full temporary metadata parse/Eq ends lexically before body-bearing batch construction; no false RSS/runtime allocation proof. Preserve error mapping/equality and resource accounting.
+9. Preserve explicit UID/no root bypass, exact absolute no-follow traversal, one existing shared nonblocking lock/one FD, complete scope/first equal duplicate/full Eq, twelve positive caps/checks/64MiB/depth32, C+7/C+9+D+2B+F, immutable captured bytes,29 fieldless errors/sourceNone and opaque evidence-only API. No provider/copy reconstruction/admission or public handle escape.
+10. Evaluate known narrower gaps from prior reviews (completed-invalid duplicate second values, lookup market/name cases, equal-hash independent-file fixture, modified-case S1 comparison); disposition their relevance without inventing tests or broadening the contract. Regenerated inventory fixes E01 names but is not test execution proof.
+
+Permitted verification and prohibitions
+Text reads/rg, hashes/counts, plain baseline/diff comparisons, scoped standalone rustfmt --edition2021 --config skip_children=true --check of the two source files, report whitespace/link/line-bound checks only. Do not run repository helper/checker/validator or any parser even for fixtures. No Cargo/rustc/Clippy/tests/build, Python project suites/self-tests, SQL/DB/root/sudo/Docker, network/provider/production/workflows, git commit/push/dispatch/rerun/cancel or background commands. Do not alter mode/permissions to bypass waits.
+Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+No further delegation of ANY kind including Paseo MCP/CLI, native agents, advisors, committees or hidden helpers. No sensitive logs/provider bytes/credentials/free-form serde or OS diagnostics.
+Memory hooks use only the exact live hook envelope; no guessed scopes/stale retries. A memory-only callback is not your substantive result.
+
+Report and final
+Write a complete review with exact input revision/hashes and reviewed/unreviewed scope, prioritized findings with concrete source/test anchors and required bounded corrections, and explicit disposition tables for FR/R/R12/C01/P/T/all49 definitions. Record verification commands/results, inventory/line/name discrepancies, deviations, missing/conflicting inputs, further decomposition, pending permissions/auto-review denials, background work and unresolved/not-verified items; explicitly none where empty.
+A finding-free source review is not compiler/test/platform/ACL/CI acceptance. At60minutes report INCOMPLETE with exact remaining rows if necessary.
+Final chat must include report path, full SHA256/line count, findings or no findings, scope/verification/limitations and explicit outstanding follow-up even if memory finish later emits a separate callback.
+Coordinator validates after actual idle/pending0/full final and only then considers bounded corrections. One new exact-candidate hosted CI is allowed only after review closure and existing-run query. Negative bootstrap/rollback,0060,reconstruction/admission,I6 diagrams before main,runtime/Owner/final C_R2 remain open.
+```
+
+### Coordinator gates
+
+1. Keep Wave27 actual idle/pending0/full final receipts and historical evidence;
+   delete its monitor only after persisted recovery. Inspect exact two-file delta,
+  46 pins,2 baseline blobs and all written names; regenerate E01 candidate inventory.
+2. Commit the corrected handoff and this bounded brief, then freeze3 target files,
+   references, both reports, contract, baseline/diff/final/verification/name artifacts.
+3. Verify existing independent reviewer actual idle/pending0 and prior full result
+   recovered before notified follow-up. Register a monitor scoped to the new package,
+   record actual startup/model/effort/parent/workspace and60-minute reporting bound.
+4. No source/input mutation while review runs. Recover actual lifecycle/pending and
+   full substantive final/error; at the bound preserve exact INCOMPLETE scope and
+   reconcile/renew/handoff before monitor expiry. Same-daemon heartbeat is not outage protection.
+5. After idle/full recovery, validate every disposition against concrete source.
+   Only bounded corrections followed by independent disposition can close review.
+   Query existing exact-candidate runs before one new hosted CI; never rerun/cancel
+   old38545976070. No S2 push or CI before review closure.
+6. Keep roadmap/docs/commits/ledger current. All later negative-bootstrap/rollback,
+  0060,reconstruction/admission,I6 diagrams before main,runtime/Owner/final C_R2
+   requirements stay open. Local executable checks remain prohibited.

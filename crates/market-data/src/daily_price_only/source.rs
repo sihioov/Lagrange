@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::contract::{FetchMode, MARKET_KR, ResponseKind, SourceFileReference};
+use crate::contract::{FetchMode, ResponseKind, SourceFileReference, MARKET_KR};
 use crate::storage::ManifestEntry;
 use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
 
@@ -393,7 +393,7 @@ struct CapturedLeaf {
     bytes: Vec<u8>,
     content_hash: ContentHash,
     #[cfg(target_os = "linux")]
-    file: std::fs::File,
+    file: linux::OwnedSourceFile,
     #[cfg(target_os = "linux")]
     fingerprint: linux::Fingerprint,
     #[cfg(target_os = "linux")]
@@ -527,14 +527,59 @@ mod linux {
 
     use fs2::FileExt;
     use rustix::fs::{
-        AtFlags, FileType, Mode, OFlags, RawDir, SeekFrom as RustixSeekFrom, fstat, open, openat,
-        seek, statat,
+        fstat, open, openat, seek, statat, AtFlags, FileType, Mode, OFlags, RawDir,
+        SeekFrom as RustixSeekFrom,
     };
     use rustix::io::Errno;
     use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 
     const DIRECTORY_BUFFER_BYTES: usize = 4096;
     const READ_BUFFER_BYTES: usize = 8192;
+
+    /// Owns exactly one native file from open through its final destruction.
+    /// Moves transfer this owner without opening or closing a descriptor.
+    pub(super) struct OwnedSourceFile {
+        file: Option<File>,
+        #[cfg(test)]
+        observation: Option<OpenObservation>,
+    }
+
+    impl OwnedSourceFile {
+        fn new(file: File, #[cfg(test)] role: DescriptorRole) -> Self {
+            #[cfg(test)]
+            let observation = OpenObservation::register(&file, role);
+            Self {
+                file: Some(file),
+                #[cfg(test)]
+                observation,
+            }
+        }
+
+        fn file(&self) -> &File {
+            self.file
+                .as_ref()
+                .expect("source file is owned until its destructor")
+        }
+
+        #[cfg(test)]
+        fn observe_identity(&self, stat: &rustix::fs::Stat) {
+            if let Some(observation) = &self.observation {
+                observation.record_identity(stat.st_dev, stat.st_ino);
+            }
+        }
+    }
+
+    impl Drop for OwnedSourceFile {
+        fn drop(&mut self) {
+            // The production close happens first. Test state follows that same
+            // destruction, even after the thread-local collection scope ends.
+            drop(self.file.take());
+            #[cfg(test)]
+            if let Some(observation) = &self.observation {
+                observation.record_closed();
+            }
+        }
+    }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum NodeType {
@@ -717,7 +762,7 @@ mod linux {
     }
 
     struct DirectoryNode {
-        file: File,
+        file: OwnedSourceFile,
         parent: Option<usize>,
         name: Option<NameRange>,
         fingerprint: Fingerprint,
@@ -735,14 +780,14 @@ mod linux {
     }
 
     struct HeldFile {
-        file: File,
+        file: OwnedSourceFile,
         parent: usize,
         name: NameRange,
         fingerprint: Fingerprint,
     }
 
     struct HeldLock {
-        file: File,
+        file: OwnedSourceFile,
         parent: usize,
         name: NameRange,
         fingerprint: LockFingerprint,
@@ -923,32 +968,35 @@ mod linux {
         let resources = &mut scan.resources;
         let range = resources.names.append(name)?;
         let name_os = resources.names.get(range)?;
-        let pre_stat = stat_at(&resources.directories[parent_index].file, name_os, missing)?;
+        let pre_stat = stat_at(
+            resources.directories[parent_index].file.file(),
+            name_os,
+            missing,
+        )?;
         let pre_fingerprint = Fingerprint::from_stat(&pre_stat, NodeType::Directory, raw_owner)?;
         let file = resources.descriptors.open(|| {
             let descriptor = openat(
-                &resources.directories[parent_index].file,
+                resources.directories[parent_index].file.file(),
                 name_os,
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
             )
             .map_err(|error| errno_error(error, missing))?;
-            Ok(File::from(descriptor))
+            Ok(OwnedSourceFile::new(
+                File::from(descriptor),
+                #[cfg(test)]
+                DescriptorRole::Directory,
+            ))
         })?;
-        let opened_stat = fstat(&file).map_err(errno_io)?;
+        let opened_stat = fstat(file.file()).map_err(errno_io)?;
         #[cfg(test)]
-        observe_descriptor(
-            &file,
-            opened_stat.st_dev,
-            opened_stat.st_ino,
-            DescriptorRole::Directory,
-        );
+        file.observe_identity(&opened_stat);
         let opened = Fingerprint::from_stat(&opened_stat, NodeType::Directory, raw_owner)?;
         if opened != pre_fingerprint {
             return Err(DailyEvidenceError::SourceChanged);
         }
         let named = stat_at(
-            &resources.directories[parent_index].file,
+            resources.directories[parent_index].file.file(),
             resources.names.get(range)?,
             DailyEvidenceError::SourceChanged,
         )?;
@@ -1094,17 +1142,18 @@ mod linux {
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
             )
-            .map(File::from)
+            .map(|descriptor| {
+                OwnedSourceFile::new(
+                    File::from(descriptor),
+                    #[cfg(test)]
+                    DescriptorRole::Root,
+                )
+            })
             .map_err(|error| errno_error(error, DailyEvidenceError::MissingControl))
         })?;
-        let opened_root_stat = fstat(&root_file).map_err(errno_io)?;
+        let opened_root_stat = fstat(root_file.file()).map_err(errno_io)?;
         #[cfg(test)]
-        observe_descriptor(
-            &root_file,
-            opened_root_stat.st_dev,
-            opened_root_stat.st_ino,
-            DescriptorRole::Root,
-        );
+        root_file.observe_identity(&opened_root_stat);
         let opened_root = Fingerprint::from_stat(&opened_root_stat, NodeType::Directory, None)?;
         if opened_root != root_fingerprint {
             return Err(DailyEvidenceError::SourceChanged);
@@ -1160,16 +1209,14 @@ mod linux {
         )?;
 
         let lock_name = scan.resources.names.append(b"commit.lock")?;
-        let lock_file = open_lock_file(&mut scan, manifest_market, lock_name)?;
-        scan.resources.lock_file = Some(lock_file);
-        hit_phase(CapturePhase::AfterLockOpen)?;
+        open_lock_file(&mut scan, manifest_market, lock_name)?;
         {
             let lock_file = scan
                 .resources
                 .lock_file
                 .as_ref()
                 .ok_or(DailyEvidenceError::Io)?;
-            match FileExt::try_lock_shared(&lock_file.file) {
+            match FileExt::try_lock_shared(lock_file.file.file()) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     return Err(DailyEvidenceError::LockBusy);
@@ -1221,7 +1268,7 @@ mod linux {
                 .manifest_file
                 .as_ref()
                 .ok_or(DailyEvidenceError::Io)?;
-            read_exact_captured(&manifest_file.file, manifest_length, manifest_limit)?
+            read_exact_captured(manifest_file.file.file(), manifest_length, manifest_limit)?
         };
         revalidate_held_file(
             scan.resources
@@ -1308,6 +1355,7 @@ mod linux {
                 &scan.resources.directories[batch_directory],
                 batch.entry(),
                 &mut final_seen,
+                DailyEvidenceError::SourceChanged,
             )?;
         }
         revalidate_directories(
@@ -1415,11 +1463,12 @@ mod linux {
     ) -> Result<HeldFile, DailyEvidenceError> {
         let resources = &mut scan.resources;
         let name_os = resources.names.get(name)?;
-        let parent_file = &resources
+        let parent_file = resources
             .directories
             .get(parent)
             .ok_or(DailyEvidenceError::Io)?
-            .file;
+            .file
+            .file();
         let pre_stat = stat_at(parent_file, name_os, missing)?;
         let fingerprint = Fingerprint::from_stat(&pre_stat, NodeType::RegularFile, raw_owner)?;
         if let Some(maximum) = byte_cap {
@@ -1437,20 +1486,19 @@ mod linux {
                 Mode::empty(),
             )
             .map_err(|error| errno_error(error, missing))?;
-            Ok(File::from(descriptor))
+            Ok(OwnedSourceFile::new(
+                File::from(descriptor),
+                #[cfg(test)]
+                if name_os.as_bytes() == b"manifest.jsonl" {
+                    DescriptorRole::Manifest
+                } else {
+                    DescriptorRole::Metadata
+                },
+            ))
         })?;
-        let opened_stat = fstat(&file).map_err(errno_io)?;
+        let opened_stat = fstat(file.file()).map_err(errno_io)?;
         #[cfg(test)]
-        observe_descriptor(
-            &file,
-            opened_stat.st_dev,
-            opened_stat.st_ino,
-            if name_os.as_bytes() == b"manifest.jsonl" {
-                DescriptorRole::Manifest
-            } else {
-                DescriptorRole::Metadata
-            },
-        );
+        file.observe_identity(&opened_stat);
         let opened = Fingerprint::from_stat(&opened_stat, NodeType::RegularFile, raw_owner)?;
         if opened != fingerprint {
             return Err(DailyEvidenceError::SourceChanged);
@@ -1485,15 +1533,16 @@ mod linux {
         scan: &mut ScanContext,
         parent: usize,
         name: NameRange,
-    ) -> Result<HeldLock, DailyEvidenceError> {
+    ) -> Result<(), DailyEvidenceError> {
         let resources = &mut scan.resources;
         let raw_uid = scan.scope.trusted_raw_owner_uid;
         let name_os = resources.names.get(name)?;
-        let parent_file = &resources
+        let parent_file = resources
             .directories
             .get(parent)
             .ok_or(DailyEvidenceError::Io)?
-            .file;
+            .file
+            .file();
         let pre_stat = stat_at(parent_file, name_os, DailyEvidenceError::MissingControl)?;
         let fingerprint = LockFingerprint::from_stat(&pre_stat, raw_uid)?;
         let file = resources.descriptors.open(|| {
@@ -1504,16 +1553,26 @@ mod linux {
                 Mode::empty(),
             )
             .map_err(|error| errno_error(error, DailyEvidenceError::MissingControl))?;
-            Ok(File::from(descriptor))
+            Ok(OwnedSourceFile::new(
+                File::from(descriptor),
+                #[cfg(test)]
+                DescriptorRole::Lock,
+            ))
         })?;
-        let opened_stat = fstat(&file).map_err(errno_io)?;
+        // Retain the real lock owner in the final construction field before
+        // any post-open check can fail; even pre-acquisition failure closes
+        // the directory graph before this sole lock descriptor.
+        resources.lock_file = Some(HeldLock {
+            file,
+            parent,
+            name,
+            fingerprint,
+        });
+        let held = resources.lock_file.as_ref().ok_or(DailyEvidenceError::Io)?;
+        let opened_stat = fstat(held.file.file()).map_err(errno_io)?;
         #[cfg(test)]
-        observe_descriptor(
-            &file,
-            opened_stat.st_dev,
-            opened_stat.st_ino,
-            DescriptorRole::Lock,
-        );
+        held.file.observe_identity(&opened_stat);
+        hit_phase(CapturePhase::AfterLockOpen)?;
         let opened = LockFingerprint::from_stat(&opened_stat, raw_uid)?;
         if opened != fingerprint {
             return Err(DailyEvidenceError::SourceChanged);
@@ -1524,12 +1583,7 @@ mod linux {
             DailyEvidenceError::SourceChanged,
         )?;
         verify_lock_path_fingerprint(&named_stat, fingerprint, raw_uid)?;
-        Ok(HeldLock {
-            file,
-            parent,
-            name,
-            fingerprint,
-        })
+        Ok(())
     }
 
     fn revalidate_held_lock(
@@ -1541,10 +1595,10 @@ mod linux {
         let parent = directories
             .get(held.parent)
             .ok_or(DailyEvidenceError::SourceChanged)?;
-        let descriptor_stat = fstat(&held.file).map_err(errno_io)?;
+        let descriptor_stat = fstat(held.file.file()).map_err(errno_io)?;
         verify_lock_path_fingerprint(&descriptor_stat, held.fingerprint, raw_uid)?;
         let named = stat_at(
-            &parent.file,
+            parent.file.file(),
             names.get(held.name)?,
             DailyEvidenceError::SourceChanged,
         )?;
@@ -1565,11 +1619,12 @@ mod linux {
         let raw_uid = scan.scope.trusted_raw_owner_uid;
         let limits = &scan.limits;
         let name_range = resources.names.append(file_entry.file_name.as_bytes())?;
-        let parent_file = &resources
+        let parent_file = resources
             .directories
             .get(parent)
             .ok_or(DailyEvidenceError::Io)?
-            .file;
+            .file
+            .file();
         let name = resources.names.get(name_range)?;
         let pre_stat = stat_at(
             parent_file,
@@ -1597,16 +1652,15 @@ mod linux {
                 Mode::empty(),
             )
             .map_err(|error| errno_error(error, DailyEvidenceError::MissingCommittedEvidence))?;
-            Ok(File::from(descriptor))
+            Ok(OwnedSourceFile::new(
+                File::from(descriptor),
+                #[cfg(test)]
+                DescriptorRole::Provider,
+            ))
         })?;
-        let opened_stat = fstat(&file).map_err(errno_io)?;
+        let opened_stat = fstat(file.file()).map_err(errno_io)?;
         #[cfg(test)]
-        observe_descriptor(
-            &file,
-            opened_stat.st_dev,
-            opened_stat.st_ino,
-            DescriptorRole::Provider,
-        );
+        file.observe_identity(&opened_stat);
         let opened = Fingerprint::from_stat(&opened_stat, NodeType::RegularFile, Some(raw_uid))?;
         if opened != fingerprint {
             return Err(DailyEvidenceError::SourceChanged);
@@ -1617,10 +1671,17 @@ mod linux {
             DailyEvidenceError::SourceChanged,
         )?;
         verify_path_fingerprint(&named_stat, fingerprint, Some(raw_uid))?;
-        let captured =
-            read_exact_captured(&file, actual_size, limits.values.max_source_file_bytes)?;
+        let captured = read_exact_captured(
+            file.file(),
+            actual_size,
+            limits.values.max_source_file_bytes,
+        )?;
         let named_after = stat_at(parent_file, name, DailyEvidenceError::SourceChanged)?;
-        verify_path_fingerprint(&fstat(&file).map_err(errno_io)?, fingerprint, Some(raw_uid))?;
+        verify_path_fingerprint(
+            &fstat(file.file()).map_err(errno_io)?,
+            fingerprint,
+            Some(raw_uid),
+        )?;
         verify_path_fingerprint(&named_after, fingerprint, Some(raw_uid))?;
         let hash = ContentHash::from_bytes(&captured);
         if hash != file_entry.content_hash {
@@ -1681,6 +1742,7 @@ mod linux {
             &scan.resources.directories[batch_directory],
             &entry,
             &mut seen,
+            DailyEvidenceError::MissingCommittedEvidence,
         )?;
 
         let metadata_name = scan.resources.names.append(b"batch.json")?;
@@ -1695,7 +1757,7 @@ mod linux {
         let metadata_size = checked_stat_size(metadata.fingerprint)?;
         retained.reserve(metadata_size)?;
         let metadata_bytes = read_exact_captured(
-            &metadata.file,
+            metadata.file.file(),
             metadata_size,
             limits.max_batch_metadata_bytes,
         )?;
@@ -1705,10 +1767,14 @@ mod linux {
             &scan.resources.names,
             Some(raw_uid),
         )?;
-        let stored = parse_metadata(&metadata_bytes, &scan.limits)?;
-        if stored != entry {
-            return Err(DailyEvidenceError::BatchMetadataMismatch);
+        {
+            let stored = parse_metadata(&metadata_bytes, &scan.limits)?;
+            if stored != entry {
+                return Err(DailyEvidenceError::BatchMetadataMismatch);
+            }
         }
+        // `stored` and all of its owned metadata are destroyed at the scope
+        // boundary above, before any body-bearing batch or buffer is built.
         let metadata_hash = ContentHash::from_bytes(&metadata_bytes);
         let batch_json = CapturedLeaf {
             bytes: metadata_bytes,
@@ -1745,6 +1811,7 @@ mod linux {
             &scan.resources.directories[batch_directory],
             &entry,
             &mut seen,
+            DailyEvidenceError::SourceChanged,
         )?;
         let batch = CommittedRawBatch {
             entry,
@@ -1786,6 +1853,7 @@ mod linux {
         batch_directory: &DirectoryNode,
         entry: &ManifestEntry,
         seen: &mut [bool],
+        missing: DailyEvidenceError,
     ) -> Result<(), DailyEvidenceError> {
         if seen.len() != entry.files.len() {
             return Err(DailyEvidenceError::ArithmeticOverflow);
@@ -1793,8 +1861,12 @@ mod linux {
         seen.fill(false);
         let mut metadata_seen = false;
         let mut buffer = [MaybeUninit::<u8>::uninit(); DIRECTORY_BUFFER_BYTES];
-        seek(batch_directory.file.as_fd(), RustixSeekFrom::Start(0)).map_err(errno_io)?;
-        let mut directory = RawDir::new(batch_directory.file.as_fd(), &mut buffer);
+        seek(
+            batch_directory.file.file().as_fd(),
+            RustixSeekFrom::Start(0),
+        )
+        .map_err(errno_io)?;
+        let mut directory = RawDir::new(batch_directory.file.file().as_fd(), &mut buffer);
         while let Some(result) = directory.next() {
             let item = result.map_err(errno_io)?;
             let name = item.file_name().to_bytes();
@@ -1824,7 +1896,7 @@ mod linux {
             *slot = true;
         }
         if !metadata_seen || seen.iter().any(|seen_file| !seen_file) {
-            return Err(DailyEvidenceError::MissingCommittedEvidence);
+            return Err(missing);
         }
         Ok(())
     }
@@ -1839,9 +1911,9 @@ mod linux {
             .get(held.parent)
             .ok_or(DailyEvidenceError::SourceChanged)?;
         let name = names.get(held.name)?;
-        let descriptor_stat = fstat(&held.file).map_err(errno_io)?;
+        let descriptor_stat = fstat(held.file.file()).map_err(errno_io)?;
         verify_path_fingerprint(&descriptor_stat, held.fingerprint, raw_owner)?;
-        let named = stat_at(&parent.file, name, DailyEvidenceError::SourceChanged)?;
+        let named = stat_at(parent.file.file(), name, DailyEvidenceError::SourceChanged)?;
         verify_path_fingerprint(&named, held.fingerprint, raw_owner)
     }
 
@@ -1851,14 +1923,14 @@ mod linux {
         raw_uid: u32,
     ) -> Result<(), DailyEvidenceError> {
         for directory in directories {
-            let descriptor_stat = fstat(&directory.file).map_err(errno_io)?;
+            let descriptor_stat = fstat(directory.file.file()).map_err(errno_io)?;
             verify_path_fingerprint(&descriptor_stat, directory.fingerprint, None)?;
             if let (Some(parent_index), Some(name_range)) = (directory.parent, directory.name) {
                 let parent = directories
                     .get(parent_index)
                     .ok_or(DailyEvidenceError::SourceChanged)?;
                 let name = names.get(name_range)?;
-                let named = stat_at(&parent.file, name, DailyEvidenceError::SourceChanged)?;
+                let named = stat_at(parent.file.file(), name, DailyEvidenceError::SourceChanged)?;
                 let raw_owner = if directory.raw_protected {
                     Some(raw_uid)
                 } else {
@@ -1894,9 +1966,9 @@ mod linux {
         let parent = directories
             .get(capture.parent_index)
             .ok_or(DailyEvidenceError::SourceChanged)?;
-        let parent_stat = &parent.file;
+        let parent_stat = parent.file.file();
         let name = names.get(capture.name)?;
-        let descriptor_stat = fstat(&capture.file).map_err(errno_io)?;
+        let descriptor_stat = fstat(capture.file.file()).map_err(errno_io)?;
         verify_path_fingerprint(&descriptor_stat, capture.fingerprint, Some(raw_uid))?;
         let named = stat_at(parent_stat, name, DailyEvidenceError::SourceChanged)?;
         verify_path_fingerprint(&named, capture.fingerprint, Some(raw_uid))
@@ -1934,7 +2006,7 @@ mod linux {
         raw_uid: u32,
     ) -> Result<(), DailyEvidenceError> {
         revalidate_held_file(held, directories, names, Some(raw_uid))?;
-        compare_descriptor_bytes(&held.file, expected)?;
+        compare_descriptor_bytes(held.file.file(), expected)?;
         revalidate_held_file(held, directories, names, Some(raw_uid))
     }
 
@@ -1946,7 +2018,7 @@ mod linux {
         raw_uid: u32,
     ) -> Result<(), DailyEvidenceError> {
         revalidate_capture(capture, directories, names, raw_uid)?;
-        compare_descriptor_bytes(&capture.file, expected)?;
+        compare_descriptor_bytes(capture.file.file(), expected)?;
         revalidate_capture(capture, directories, names, raw_uid)
     }
 
@@ -2526,10 +2598,72 @@ mod linux {
     #[cfg(test)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct ObservedDescriptor {
+        open_id: usize,
         raw_fd: i32,
-        device: u64,
-        inode: u64,
         role: DescriptorRole,
+    }
+
+    #[cfg(test)]
+    struct ObservedLifetime {
+        descriptor: ObservedDescriptor,
+        identity: Option<(u64, u64)>,
+        closed: bool,
+    }
+
+    #[cfg(test)]
+    struct OpenObservation {
+        destination: Rc<RefCell<ResourceObservation>>,
+        open_id: usize,
+    }
+
+    #[cfg(test)]
+    impl OpenObservation {
+        fn register(file: &File, role: DescriptorRole) -> Option<Self> {
+            TEST_RESOURCE_OBSERVATION.with(|slot| {
+                let destination = Rc::clone(slot.borrow().as_ref()?);
+                let open_id = {
+                    let mut observation = destination.borrow_mut();
+                    // This index is allocated once per open and never reused,
+                    // regardless of native FD numbers or shared inode identity.
+                    let open_id = observation.lifetimes.len();
+                    let descriptor = ObservedDescriptor {
+                        open_id,
+                        raw_fd: file.as_raw_fd(),
+                        role,
+                    };
+                    observation.lifetimes.push(ObservedLifetime {
+                        descriptor,
+                        identity: None,
+                        closed: false,
+                    });
+                    observation
+                        .events
+                        .push(ObservationEvent::DescriptorOpened(descriptor));
+                    open_id
+                };
+                Some(Self {
+                    destination,
+                    open_id,
+                })
+            })
+        }
+
+        fn record_identity(&self, device: u64, inode: u64) {
+            let mut observation = self.destination.borrow_mut();
+            let lifetime = &mut observation.lifetimes[self.open_id];
+            assert!(!lifetime.closed, "identity belongs to a live source owner");
+            lifetime.identity = Some((device, inode));
+        }
+
+        fn record_closed(&self) {
+            let mut observation = self.destination.borrow_mut();
+            let lifetime = &mut observation.lifetimes[self.open_id];
+            assert!(!lifetime.closed, "each source owner is destroyed once");
+            lifetime.closed = true;
+            observation
+                .events
+                .push(ObservationEvent::DescriptorClosed(self.open_id));
+        }
     }
 
     #[cfg(test)]
@@ -2538,6 +2672,7 @@ mod linux {
         DescriptorReserved,
         DescriptorOpenAttempt,
         DescriptorOpened(ObservedDescriptor),
+        DescriptorClosed(usize),
         RootComponentsReserve(usize),
         RootComponentReserve(usize),
         EvidenceBytesReserved { amount: usize, total: usize },
@@ -2555,6 +2690,7 @@ mod linux {
     #[derive(Default)]
     struct ResourceObservation {
         events: Vec<ObservationEvent>,
+        lifetimes: Vec<ObservedLifetime>,
     }
 
     #[cfg(test)]
@@ -2569,16 +2705,6 @@ mod linux {
                 observation.borrow_mut().events.push(event);
             }
         });
-    }
-
-    #[cfg(test)]
-    fn observe_descriptor(file: &File, device: u64, inode: u64, role: DescriptorRole) {
-        observe_resource(ObservationEvent::DescriptorOpened(ObservedDescriptor {
-            raw_fd: file.as_raw_fd(),
-            device,
-            inode,
-            role,
-        }));
     }
 
     #[cfg(test)]
@@ -2646,7 +2772,7 @@ mod linux {
         use std::rc::Rc;
         use std::time::UNIX_EPOCH;
 
-        use crate::contract::{FetchMode, MARKET_KR, RequestMetadata, ResponseKind};
+        use crate::contract::{FetchMode, RequestMetadata, ResponseKind, MARKET_KR};
         use crate::storage::{FileEntry, ManifestEntry};
         use domain::{BatchId, ContentHash, TradingDate, UtcTimestamp};
         use uuid::Uuid;
@@ -2830,8 +2956,15 @@ mod linux {
             let mut incomplete = Vec::new();
             incomplete.extend_from_slice(&bytes[..files_end]);
             incomplete.extend_from_slice(b",{\"sentinel\":");
-            incomplete.extend_from_slice(&bytes[files_end..]);
             incomplete
+        }
+
+        fn with_malformed_over_limit_file(entry: &ManifestEntry) -> Vec<u8> {
+            let bytes = serde_json::to_vec(entry).unwrap();
+            let files_end = bytes.iter().rposition(|byte| *byte == b']').unwrap();
+            let mut malformed = with_incomplete_over_limit_file(entry);
+            malformed.extend_from_slice(&bytes[files_end..]);
+            malformed
         }
 
         fn scan(fixture: &Fixture) -> Result<CommittedRawSnapshot, DailyEvidenceError> {
@@ -3009,11 +3142,97 @@ mod linux {
                 .collect()
         }
 
-        fn descriptor_is_open(descriptor: ObservedDescriptor) -> bool {
+        fn native_descriptor_matches(descriptor: ObservedDescriptor, identity: (u64, u64)) -> bool {
             let path = format!("/proc/self/fd/{}", descriptor.raw_fd);
-            fs::metadata(path).is_ok_and(|metadata| {
-                metadata.dev() == descriptor.device && metadata.ino() == descriptor.inode
-            })
+            fs::metadata(path).is_ok_and(|metadata| (metadata.dev(), metadata.ino()) == identity)
+        }
+
+        fn descriptor_is_live(
+            observation: &Rc<RefCell<ResourceObservation>>,
+            descriptor: ObservedDescriptor,
+        ) -> bool {
+            let observation = observation.borrow();
+            let lifetime = &observation.lifetimes[descriptor.open_id];
+            assert_eq!(lifetime.descriptor, descriptor);
+            assert!(
+                !lifetime.closed,
+                "native live checks require the owning handle"
+            );
+            native_descriptor_matches(
+                descriptor,
+                lifetime.identity.expect("live object was statted"),
+            )
+        }
+
+        fn assert_descriptors_closed(
+            observation: &Rc<RefCell<ResourceObservation>>,
+            descriptors: &[ObservedDescriptor],
+            fixture_root: &Path,
+        ) {
+            let fixture_objects = tree_state(fixture_root);
+            let observation = observation.borrow();
+            for descriptor in descriptors {
+                let lifetime = &observation.lifetimes[descriptor.open_id];
+                assert_eq!(lifetime.descriptor, *descriptor);
+                assert!(
+                    lifetime.closed,
+                    "the native owning File must already be destroyed"
+                );
+                assert_eq!(
+                    observation
+                        .events
+                        .iter()
+                        .filter(|event| {
+                            **event == ObservationEvent::DescriptorClosed(descriptor.open_id)
+                        })
+                        .count(),
+                    1,
+                    "every open lifetime must close exactly once"
+                );
+                // Only this test can reopen its unique temporary tree. A
+                // shared ancestor's freed FD slot can belong to another test.
+                let unique_identity = lifetime.identity.filter(|identity| {
+                    fixture_objects
+                        .iter()
+                        .any(|object| (object.device, object.inode) == *identity)
+                });
+                if let Some(identity) = unique_identity {
+                    assert!(!native_descriptor_matches(*descriptor, identity));
+                }
+            }
+        }
+
+        fn assert_lock_closed_last(observation: &Rc<RefCell<ResourceObservation>>) {
+            let observation = observation.borrow();
+            let lock_ids: Vec<_> = observation
+                .lifetimes
+                .iter()
+                .filter(|lifetime| lifetime.descriptor.role == DescriptorRole::Lock)
+                .map(|lifetime| lifetime.descriptor.open_id)
+                .collect();
+            assert_eq!(lock_ids.len(), 1);
+            let last_close = observation
+                .events
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    ObservationEvent::DescriptorClosed(open_id) => Some(*open_id),
+                    _ => None,
+                });
+            assert_eq!(last_close, Some(lock_ids[0]));
+        }
+
+        fn assert_no_batch_tree_or_leaf_open(observation: &Rc<RefCell<ResourceObservation>>) {
+            assert!(!observation
+                .borrow()
+                .events
+                .contains(&ObservationEvent::BatchTreeOpen));
+            assert!(observed_descriptors(observation)
+                .iter()
+                .all(|descriptor| !matches!(
+                    descriptor.role,
+                    DescriptorRole::Metadata | DescriptorRole::Provider
+                )));
         }
 
         fn lock_exclusive(fixture: &Fixture) {
@@ -3024,6 +3243,67 @@ mod linux {
                 .unwrap();
             FileExt::try_lock_exclusive(&lock).unwrap();
             FileExt::unlock(&lock).unwrap();
+        }
+
+        #[test]
+        fn s2_t28_shared_inode_owners_keep_distinct_lifetimes_across_observation_scope() {
+            let (second, third, observation) = with_resource_observation(|observation| {
+                let first = OwnedSourceFile::new(File::open("/").unwrap(), DescriptorRole::Root);
+                first.observe_identity(&fstat(first.file()).unwrap());
+                let second = OwnedSourceFile::new(File::open("/").unwrap(), DescriptorRole::Root);
+                second.observe_identity(&fstat(second.file()).unwrap());
+                let initial = observed_descriptors(&observation);
+                assert_eq!(initial.len(), 2);
+                assert_ne!(initial[0].open_id, initial[1].open_id);
+                assert_eq!(
+                    observation.borrow().lifetimes[0].identity,
+                    observation.borrow().lifetimes[1].identity
+                );
+                assert!(initial
+                    .iter()
+                    .all(|descriptor| descriptor_is_live(&observation, *descriptor)));
+
+                drop(first);
+                assert!(observation.borrow().lifetimes[initial[0].open_id].closed);
+                assert!(descriptor_is_live(&observation, initial[1]));
+                let third = OwnedSourceFile::new(File::open("/").unwrap(), DescriptorRole::Root);
+                third.observe_identity(&fstat(third.file()).unwrap());
+                let opened = observed_descriptors(&observation);
+                assert_eq!(opened.len(), 3);
+                assert_ne!(opened[2].open_id, initial[0].open_id);
+                assert_ne!(opened[2].open_id, initial[1].open_id);
+                assert_eq!(
+                    observation.borrow().lifetimes[opened[2].open_id].identity,
+                    observation.borrow().lifetimes[initial[0].open_id].identity
+                );
+                assert!(observation.borrow().lifetimes[initial[0].open_id].closed);
+                assert!(descriptor_is_live(&observation, initial[1]));
+                assert!(descriptor_is_live(&observation, opened[2]));
+                (second, third, observation)
+            });
+
+            // Both real owners moved beyond the thread-local collection scope;
+            // their captured observer still records destruction of each File.
+            let opened = observed_descriptors(&observation);
+            drop(second);
+            assert!(observation.borrow().lifetimes[opened[1].open_id].closed);
+            assert!(descriptor_is_live(&observation, opened[2]));
+            drop(third);
+            let observation = observation.borrow();
+            assert!(observation.lifetimes.iter().all(|lifetime| lifetime.closed));
+            for descriptor in &opened {
+                assert_eq!(
+                    observation
+                        .events
+                        .iter()
+                        .filter(|event| {
+                            **event == ObservationEvent::DescriptorClosed(descriptor.open_id)
+                        })
+                        .count(),
+                    1
+                );
+            }
+            // Never query a closed shared ancestor's old FD slot as ownership.
         }
 
         #[test]
@@ -3137,10 +3417,14 @@ mod linux {
                 scan(&fixture).is_ok(),
                 "fixture must be valid before count fault"
             );
-            let mut values = test_limits().values();
-            values.max_files_per_batch = fixture.entry.files.len();
-            let bounded_limits = ScanLimits::new(values).unwrap();
-            assert!(scan_with_limits(&fixture, &fixture.data_root, bounded_limits).is_ok());
+            let mut bounded_values = test_limits().values();
+            bounded_values.max_files_per_batch = fixture.entry.files.len();
+            assert!(scan_with_limits(
+                &fixture,
+                &fixture.data_root,
+                ScanLimits::new(bounded_values).unwrap()
+            )
+            .is_ok());
 
             let mut full_entry = serde_json::to_value(&fixture.entry).unwrap();
             full_entry["files"]
@@ -3148,32 +3432,82 @@ mod linux {
                 .unwrap()
                 .push(serde_json::json!({"sentinel": "not a FileEntry"}));
             let over_limit = serde_json::to_vec(&full_entry).unwrap();
-            private_file(&manifest_path(&fixture), &over_limit);
-            let (full_result, full_observation) = with_resource_observation(|observation| {
-                (
-                    scan_with_limits(&fixture, &fixture.data_root, bounded_limits),
-                    observation,
-                )
-            });
-            assert_eq!(full_result.err(), Some(DailyEvidenceError::SourceScanLimit));
-            let full_events = full_observation.borrow().events.clone();
-            assert_eq!(
-                full_events
-                    .iter()
-                    .filter(|event| **event == ObservationEvent::FileEntryMaterialized)
-                    .count(),
-                fixture.entry.files.len()
-            );
-            assert!(!full_events.contains(&ObservationEvent::BatchTreeOpen));
-            let full_descriptors = observed_descriptors(&full_observation);
-            assert!(full_descriptors.iter().all(|descriptor| !matches!(
-                descriptor.role,
-                DescriptorRole::Metadata | DescriptorRole::Provider
-            )));
+            let malformed = with_malformed_over_limit_file(&fixture.entry);
+            let incomplete = with_incomplete_over_limit_file(&fixture.entry);
+            assert!(incomplete.ends_with(b",{\"sentinel\":"));
+            for (bytes, expect_eof) in [(&malformed, false), (&incomplete, true)] {
+                match serde_json::from_slice::<ManifestEntry>(bytes) {
+                    Err(error) => assert_eq!(error.is_eof(), expect_eof),
+                    Ok(_) => panic!("the second file entry must be incomplete or malformed"),
+                }
+                match parse_bounded_entry(bytes, test_limits().values.max_files_per_batch) {
+                    Err(BoundedParseError::Json(error)) => assert_eq!(error.is_eof(), expect_eof),
+                    _ => panic!("the permissive parser must report the actual JSON class"),
+                }
+            }
 
-            let mut values = test_limits().values();
-            values.max_files_per_batch = fixture.entry.files.len();
-            let bounded_limits = ScanLimits::new(values).unwrap();
+            for faulty_row in [&over_limit, &malformed, &incomplete] {
+                private_file(
+                    &manifest_path(&fixture),
+                    &[
+                        serde_json::to_vec(&fixture.entry).unwrap().as_slice(),
+                        b"\n",
+                    ]
+                    .concat(),
+                );
+                assert!(scan_with_limits(
+                    &fixture,
+                    &fixture.data_root,
+                    ScanLimits::new(bounded_values).unwrap()
+                )
+                .is_ok());
+                private_file(&manifest_path(&fixture), faulty_row);
+                let (result, observation) = with_resource_observation(|observation| {
+                    (
+                        scan_with_limits(
+                            &fixture,
+                            &fixture.data_root,
+                            ScanLimits::new(bounded_values).unwrap(),
+                        ),
+                        observation,
+                    )
+                });
+                assert_eq!(result.err(), Some(DailyEvidenceError::SourceScanLimit));
+                assert_eq!(
+                    observation
+                        .borrow()
+                        .events
+                        .iter()
+                        .filter(|event| **event == ObservationEvent::FileEntryMaterialized)
+                        .count(),
+                    1
+                );
+                assert_no_batch_tree_or_leaf_open(&observation);
+                assert_descriptors_closed(
+                    &observation,
+                    &observed_descriptors(&observation),
+                    fixture._temp.path(),
+                );
+                assert_lock_closed_last(&observation);
+            }
+        }
+
+        #[test]
+        fn s2_t08_total_file_cap_rejects_before_any_batch_tree_or_leaf_open() {
+            let mut fixture = make_fixture();
+            let mut second_file = fixture.entry.files[0].clone();
+            second_file.file_name = "second.json".to_owned();
+            second_file.content_hash = ContentHash::from_bytes(b"second opaque body");
+            second_file.size_bytes = u64::try_from(b"second opaque body".len()).unwrap();
+            fixture.entry.files.push(second_file);
+            private_file(
+                &batch_dir(&fixture).join("second.json"),
+                b"second opaque body",
+            );
+            private_file(
+                &metadata_path(&fixture),
+                &serde_json::to_vec_pretty(&fixture.entry).unwrap(),
+            );
             private_file(
                 &manifest_path(&fixture),
                 &[
@@ -3182,33 +3516,84 @@ mod linux {
                 ]
                 .concat(),
             );
-            assert!(scan_with_limits(&fixture, &fixture.data_root, bounded_limits).is_ok());
-            let incomplete = with_incomplete_over_limit_file(&fixture.entry);
-            private_file(&manifest_path(&fixture), &incomplete);
             let mut values = test_limits().values();
-            values.max_files_per_batch = fixture.entry.files.len();
-            let tail_limits = ScanLimits::new(values).unwrap();
-            let (tail_result, tail_observation) = with_resource_observation(|observation| {
+            values.max_files = 2;
+            assert!(scan_with_limits(
+                &fixture,
+                &fixture.data_root,
+                ScanLimits::new(values).unwrap()
+            )
+            .is_ok());
+            values.max_files = 1;
+            let (result, observation) = with_resource_observation(|observation| {
                 (
-                    scan_with_limits(&fixture, &fixture.data_root, tail_limits),
+                    scan_with_limits(
+                        &fixture,
+                        &fixture.data_root,
+                        ScanLimits::new(values).unwrap(),
+                    ),
                     observation,
                 )
             });
-            assert_eq!(tail_result.err(), Some(DailyEvidenceError::SourceScanLimit));
-            let tail_events = tail_observation.borrow().events.clone();
-            assert_eq!(
-                tail_events
-                    .iter()
-                    .filter(|event| **event == ObservationEvent::FileEntryMaterialized)
-                    .count(),
-                fixture.entry.files.len()
+            assert_eq!(result.err(), Some(DailyEvidenceError::SourceScanLimit));
+            assert_no_batch_tree_or_leaf_open(&observation);
+            assert_descriptors_closed(
+                &observation,
+                &observed_descriptors(&observation),
+                fixture._temp.path(),
             );
-            assert!(!tail_events.contains(&ObservationEvent::BatchTreeOpen));
-            let tail_descriptors = observed_descriptors(&tail_observation);
-            assert!(tail_descriptors.iter().all(|descriptor| !matches!(
-                descriptor.role,
-                DescriptorRole::Metadata | DescriptorRole::Provider
-            )));
+            assert_lock_closed_last(&observation);
+        }
+
+        #[test]
+        fn s2_t08_unique_batch_cap_rejects_before_any_batch_tree_or_leaf_open() {
+            let fixture = make_fixture();
+            let mut second = fixture.entry.clone();
+            second.batch_id = BatchId::from_uuid(Uuid::from_u128(2));
+            let second_directory = batch_path(&fixture.data_root, &second);
+            private_tree_dir(&fixture.data_root, &second_directory);
+            private_file(
+                &second_directory.join("batch.json"),
+                &serde_json::to_vec_pretty(&second).unwrap(),
+            );
+            private_file(&second_directory.join("bars.json"), BODY);
+            private_file(
+                &manifest_path(&fixture),
+                &[
+                    serde_json::to_vec(&fixture.entry).unwrap().as_slice(),
+                    b"\n",
+                    serde_json::to_vec(&second).unwrap().as_slice(),
+                    b"\n",
+                ]
+                .concat(),
+            );
+            let mut values = test_limits().values();
+            values.max_batches = 2;
+            assert!(scan_with_limits(
+                &fixture,
+                &fixture.data_root,
+                ScanLimits::new(values).unwrap()
+            )
+            .is_ok());
+            values.max_batches = 1;
+            let (result, observation) = with_resource_observation(|observation| {
+                (
+                    scan_with_limits(
+                        &fixture,
+                        &fixture.data_root,
+                        ScanLimits::new(values).unwrap(),
+                    ),
+                    observation,
+                )
+            });
+            assert_eq!(result.err(), Some(DailyEvidenceError::SourceScanLimit));
+            assert_no_batch_tree_or_leaf_open(&observation);
+            assert_descriptors_closed(
+                &observation,
+                &observed_descriptors(&observation),
+                fixture._temp.path(),
+            );
+            assert_lock_closed_last(&observation);
         }
 
         #[test]
@@ -3230,8 +3615,9 @@ mod linux {
             );
             let bytes = serde_json::to_vec(&sequence).unwrap();
             let legacy: ManifestEntry = serde_json::from_slice(&bytes).unwrap();
-            let bounded =
-                parse_bounded_entry(&bytes, test_limits().values.max_files_per_batch).unwrap();
+            let bounded = parse_bounded_entry(&bytes, test_limits().values.max_files_per_batch)
+                .map_err(|_| DailyEvidenceError::InvalidManifest)
+                .unwrap();
             assert_eq!(bounded, legacy);
         }
 
@@ -3273,17 +3659,16 @@ mod linux {
                 snapshot.stats.open_descriptors,
                 snapshot.stats.peak_open_descriptors
             );
-            assert!(
-                descriptors
-                    .iter()
-                    .all(|descriptor| descriptor_is_open(*descriptor))
-            );
+            assert!(descriptors
+                .iter()
+                .all(|descriptor| descriptor_is_live(&observation, *descriptor)));
             for (index, descriptor) in descriptors.iter().enumerate() {
-                assert!(
-                    !descriptors[..index]
-                        .iter()
-                        .any(|earlier| earlier.raw_fd == descriptor.raw_fd)
-                );
+                assert!(!descriptors[..index]
+                    .iter()
+                    .any(|earlier| earlier.raw_fd == descriptor.raw_fd));
+                assert!(!descriptors[..index]
+                    .iter()
+                    .any(|earlier| earlier.open_id == descriptor.open_id));
             }
             let reservations = events
                 .iter()
@@ -3351,18 +3736,14 @@ mod linux {
                         matches!(event, ObservationEvent::EvidenceBytesReserved { .. })
                     })
                     .unwrap();
-                assert!(
-                    !events[reserve_at + 1..attempt_at]
-                        .iter()
-                        .any(|event| matches!(event, ObservationEvent::EvidenceBufferReady { .. }))
-                );
+                assert!(!events[reserve_at + 1..attempt_at]
+                    .iter()
+                    .any(|event| matches!(event, ObservationEvent::EvidenceBufferReady { .. })));
             }
             drop(snapshot);
-            assert!(
-                descriptors
-                    .into_iter()
-                    .all(|descriptor| !descriptor_is_open(descriptor))
-            );
+            assert_descriptors_closed(&observation, &descriptors, fixture._temp.path());
+            assert_lock_closed_last(&observation);
+            lock_exclusive(&fixture);
 
             let mut values = test_limits().values();
             values.max_retained_bytes = actual_retained.checked_sub(1).unwrap();
@@ -3380,11 +3761,9 @@ mod linux {
             );
             let retained_events = retained_observation.borrow().events.clone();
             let retained_descriptors = observed_descriptors(&retained_observation);
-            assert!(
-                retained_descriptors
-                    .iter()
-                    .all(|descriptor| descriptor.role != DescriptorRole::Provider)
-            );
+            assert!(retained_descriptors
+                .iter()
+                .all(|descriptor| descriptor.role != DescriptorRole::Provider));
             let buffer_count = retained_events
                 .iter()
                 .filter(|event| matches!(event, ObservationEvent::EvidenceBufferReady { .. }))
@@ -3399,12 +3778,19 @@ mod linux {
                     ObservationEvent::EvidenceBytesReserved { total, .. } => Some(*total),
                     _ => None,
                 })
-                .last()
+                .next_back()
                 .unwrap();
             assert_eq!(
                 retained_high_water,
                 actual_retained.checked_sub(BODY.len()).unwrap()
             );
+            assert_descriptors_closed(
+                &retained_observation,
+                &retained_descriptors,
+                fixture._temp.path(),
+            );
+            assert_lock_closed_last(&retained_observation);
+            lock_exclusive(&fixture);
 
             let required = scan(&fixture).unwrap().stats.open_descriptors;
             let mut values = test_limits().values();
@@ -3428,11 +3814,9 @@ mod linux {
                 under_descriptors.len(),
                 component_count(&fixture.data_root) + 7
             );
-            assert!(
-                under_descriptors
-                    .into_iter()
-                    .all(|descriptor| !descriptor_is_open(descriptor))
-            );
+            assert_descriptors_closed(&under_observation, &under_descriptors, fixture._temp.path());
+            assert_lock_closed_last(&under_observation);
+            lock_exclusive(&fixture);
         }
 
         #[test]
@@ -3502,16 +3886,14 @@ mod linux {
             assert!(!zero_capture_phase_seen.get());
             let zero_events = zero_observation.borrow().events.clone();
             assert!(!zero_events.contains(&ObservationEvent::BatchTreeOpen));
-            assert!(
-                observed_descriptors(&zero_observation)
-                    .iter()
-                    .all(|descriptor| {
-                        !matches!(
-                            descriptor.role,
-                            DescriptorRole::Metadata | DescriptorRole::Provider
-                        )
-                    })
-            );
+            assert!(observed_descriptors(&zero_observation)
+                .iter()
+                .all(|descriptor| {
+                    !matches!(
+                        descriptor.role,
+                        DescriptorRole::Metadata | DescriptorRole::Provider
+                    )
+                }));
 
             let fixture = make_fixture();
             assert!(
@@ -3548,16 +3930,14 @@ mod linux {
             assert!(!cap_capture_phase_seen.get());
             let cap_events = cap_observation.borrow().events.clone();
             assert!(!cap_events.contains(&ObservationEvent::BatchTreeOpen));
-            assert!(
-                observed_descriptors(&cap_observation)
-                    .iter()
-                    .all(|descriptor| {
-                        !matches!(
-                            descriptor.role,
-                            DescriptorRole::Metadata | DescriptorRole::Provider
-                        )
-                    })
-            );
+            assert!(observed_descriptors(&cap_observation)
+                .iter()
+                .all(|descriptor| {
+                    !matches!(
+                        descriptor.role,
+                        DescriptorRole::Metadata | DescriptorRole::Provider
+                    )
+                }));
         }
 
         #[test]
@@ -3740,6 +4120,46 @@ mod linux {
         }
 
         #[test]
+        fn s2_t24_final_membership_loss_of_body_or_metadata_is_source_changed() {
+            for remove_metadata in [false, true] {
+                let fixture = make_fixture();
+                let path = if remove_metadata {
+                    metadata_path(&fixture)
+                } else {
+                    body_path(&fixture)
+                };
+                let remaining_name = if remove_metadata {
+                    "bars.json"
+                } else {
+                    "batch.json"
+                };
+                let batch_directory = batch_dir(&fixture);
+                let saved = fixture._temp.path().join("captured-inode-outside-batch");
+                let invoked = Rc::new(Cell::new(false));
+                let hook_invoked = Rc::clone(&invoked);
+                expect_replacement_error(
+                    &fixture,
+                    CapturePhase::BeforeFinalNames,
+                    mutation_at(
+                        CapturePhase::BeforeFinalNames,
+                        move || {
+                            fs::rename(&path, &saved).unwrap();
+                            assert!(!path.exists());
+                            assert!(saved.is_file());
+                            let remaining: Vec<_> = fs::read_dir(&batch_directory)
+                                .unwrap()
+                                .map(|entry| entry.unwrap().file_name())
+                                .collect();
+                            assert_eq!(remaining, vec![std::ffi::OsString::from(remaining_name)]);
+                        },
+                        hook_invoked,
+                    ),
+                    invoked,
+                );
+            }
+        }
+
+        #[test]
         fn s2_t25_in_place_bytes_mode_and_link_mutations_fail_revalidation() {
             assert_eq!(
                 validate_raw_stat_owner_mode(0o600, 4242, Some(4242)),
@@ -3866,17 +4286,12 @@ mod linux {
                 assert_eq!(result.err(), Some(DailyEvidenceError::Io));
                 let descriptors = observed_descriptors(&observation);
                 assert!(!descriptors.is_empty());
-                assert!(
-                    descriptors
-                        .into_iter()
-                        .all(|descriptor| !descriptor_is_open(descriptor))
-                );
-                assert!(
-                    observation
-                        .borrow()
-                        .events
-                        .contains(&ObservationEvent::ConstructionCleanupBeforeLockRelease)
-                );
+                assert_descriptors_closed(&observation, &descriptors, fixture._temp.path());
+                assert_lock_closed_last(&observation);
+                assert!(observation
+                    .borrow()
+                    .events
+                    .contains(&ObservationEvent::ConstructionCleanupBeforeLockRelease));
                 assert_eq!(tree_state(fixture._temp.path()), tree_before);
                 lock_exclusive(&fixture);
             }
@@ -3886,11 +4301,9 @@ mod linux {
                 with_resource_observation(|observation| (scan(&fixture).unwrap(), observation));
             let descriptors = observed_descriptors(&observation);
             assert_eq!(descriptors.len(), snapshot.stats.open_descriptors);
-            assert!(
-                descriptors
-                    .iter()
-                    .all(|descriptor| descriptor_is_open(*descriptor))
-            );
+            assert!(descriptors
+                .iter()
+                .all(|descriptor| descriptor_is_live(&observation, *descriptor)));
             let competing = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -3902,11 +4315,8 @@ mod linux {
             ));
             drop(competing);
             drop(snapshot);
-            assert!(
-                descriptors
-                    .into_iter()
-                    .all(|descriptor| !descriptor_is_open(descriptor))
-            );
+            assert_descriptors_closed(&observation, &descriptors, fixture._temp.path());
+            assert_lock_closed_last(&observation);
             lock_exclusive(&fixture);
         }
 
@@ -3919,49 +4329,65 @@ mod linux {
             );
             let lock_path = lock_path(&fixture);
             let lock_path_for_hook = lock_path.clone();
+            let fixture_root_for_hook = fixture._temp.path().to_path_buf();
             let cleanup_seen = Rc::new(Cell::new(false));
             let cleanup_seen_by_hook = Rc::clone(&cleanup_seen);
-            let result =
-                with_resource_observation(|observation| {
-                    let observation_for_hook = Rc::clone(&observation);
-                    with_phase_hook(
-                        move |phase| {
-                            if phase == CapturePhase::AfterBodyCapture {
-                                return Err(DailyEvidenceError::Io);
-                            }
-                            if phase == CapturePhase::BeforeLockRelease {
-                                let descriptors = observed_descriptors(&observation_for_hook);
-                                let lock_descriptors: Vec<_> = descriptors
-                                    .iter()
-                                    .filter(|descriptor| descriptor.role == DescriptorRole::Lock)
-                                    .copied()
-                                    .collect();
-                                assert_eq!(lock_descriptors.len(), 1);
-                                assert!(descriptor_is_open(lock_descriptors[0]));
-                                assert!(descriptors
+            let (result, observation) = with_resource_observation(|observation| {
+                let observation_for_hook = Rc::clone(&observation);
+                let result = with_phase_hook(
+                    move |phase| {
+                        if phase == CapturePhase::AfterBodyCapture {
+                            return Err(DailyEvidenceError::Io);
+                        }
+                        if phase == CapturePhase::BeforeLockRelease {
+                            let descriptors = observed_descriptors(&observation_for_hook);
+                            let lock_descriptors: Vec<_> = descriptors
+                                .iter()
+                                .filter(|descriptor| descriptor.role == DescriptorRole::Lock)
+                                .copied()
+                                .collect();
+                            assert_eq!(lock_descriptors.len(), 1);
+                            assert!(descriptor_is_live(
+                                &observation_for_hook,
+                                lock_descriptors[0]
+                            ));
+                            let non_lock: Vec<_> = descriptors
                                 .iter()
                                 .filter(|descriptor| descriptor.role != DescriptorRole::Lock)
-                                .all(|descriptor| !descriptor_is_open(*descriptor)));
-                                let competing = OpenOptions::new()
-                                    .read(true)
-                                    .write(true)
-                                    .open(&lock_path_for_hook)
-                                    .unwrap();
-                                assert!(matches!(
-                                    FileExt::try_lock_exclusive(&competing),
-                                    Err(ref error)
-                                        if error.kind() == std::io::ErrorKind::WouldBlock
-                                ));
-                                drop(competing);
-                                cleanup_seen_by_hook.set(true);
-                            }
-                            Ok(())
-                        },
-                        || scan(&fixture),
-                    )
-                });
+                                .copied()
+                                .collect();
+                            assert_descriptors_closed(
+                                &observation_for_hook,
+                                &non_lock,
+                                &fixture_root_for_hook,
+                            );
+                            let competing = OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .open(&lock_path_for_hook)
+                                .unwrap();
+                            assert!(matches!(
+                                FileExt::try_lock_exclusive(&competing),
+                                Err(ref error)
+                                    if error.kind() == std::io::ErrorKind::WouldBlock
+                            ));
+                            drop(competing);
+                            cleanup_seen_by_hook.set(true);
+                        }
+                        Ok(())
+                    },
+                    || scan(&fixture),
+                );
+                (result, observation)
+            });
             assert_eq!(result.err(), Some(DailyEvidenceError::Io));
             assert!(cleanup_seen.get());
+            assert_descriptors_closed(
+                &observation,
+                &observed_descriptors(&observation),
+                fixture._temp.path(),
+            );
+            assert_lock_closed_last(&observation);
             lock_exclusive(&fixture);
         }
     }
