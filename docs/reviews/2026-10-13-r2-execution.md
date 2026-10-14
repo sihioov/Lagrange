@@ -1134,3 +1134,37 @@ New exact-candidate outcomes are pending.30wire+18LinuxRaw direct results, shell
 wrapper/optional skips, strictClippy/required and isolatedPG roles/59migrations must be
 read from this run. No local test, DB, provider or operational execution was performed.
 The latest documentation commit is separate from the tested source candidate above.
+
+
+## Wave16 terminal failure recovered — 2026-10-14
+
+Run `38530582876`, attempt1, exact `f9dfffb9a5d4bfc38a9df347af0de154dbe6d11b`
+failed at07:57:15 UTC. Collector11a8f223 reached actual idle/activeTurn null/pending0
+at08:06:00.828 UTC; its full final, 27-line report and private receipt were recovered.
+Report SHA-256 `fbe0d8930036cbc41e9a9e73c0e928c8df32f73327027b5ae25a90229f9f61d4`;
+receipt SHA-256 `ac8e2b13f8ab2412ffbe150bfce702120da6da646d41ae6ac2117e0692761261`.
+All seven execution jobs checked out the exact candidate. Format/Python/Web passed;
+Clippy/workspace/policy/PG and required failed. The old heartbeat b6a564bf was deleted
+after actual idle and result recovery; no workflow rerun/cancel/duplicate was issued.
+
+Three exhaustive collector matches omitted the eleven newly added StoreError variants:
+pipeline.rs280/337 and worker.rs582. Clippy/chart compilation stopped at E0004, before
+the chart harness; workspace Cargo was skipped. All30 wire and18 Linux Raw results are
+NOT_EXECUTED, with non-Unix excluded. Policy passed PG_VALIDATION_SELF_TEST but stopped
+at migrate-static-check's stale bootstrap expected_count=7; the frozen provisioner and
+Compose each contain8 entries. Later runtime-secret and ops static checks were skipped.
+PG reports api-tenancy-rls failure; its exact compiler/phase mapping still needs the
+bounded diagnostic follow-up. Both59-migration checksum lists and0039/skip-marker/
+cleanup guards passed. Python485/10skip/7warnings and Web results remain suite evidence.
+
+Source-review closures of DB3/Raw5 and parser corrections are preserved; new source
+acceptance is withheld. The collector disclosed two read-only searches outside its
+narrow source boundary, one returning a fixture credential literal that was not copied
+to artifacts. This deviation remains in the report. Derived receipt errorCount=0 and
+launch inventory hash null require supplemental correction, without rewriting history.
+I0/0060/full snapshot, diagram integration before main, runtime and Owner acceptance
+remain open. No local tests, scripts, databases or operational commands ran.
+
+Wave17 prepares the disjoint three-file source correction and existing-run diagnostic
+packages in the implementation plan. Source has a60-minute reporting bound; diagnostics
+have30minutes, both measured from actual startup. Launch and monitoring evidence follows.

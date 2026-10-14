@@ -1930,3 +1930,125 @@ New exact-candidate outcomes are pending.30wire+18LinuxRaw direct results, shell
 wrapper/optional skips, strictClippy/required and isolatedPG roles/59migrations must be
 read from this run. No local test, DB, provider or operational execution was performed.
 The latest documentation commit is separate from the tested source candidate above.
+
+
+## Wave16 terminal failure recovered — 2026-10-14
+
+Run `38530582876`, attempt1, exact `f9dfffb9a5d4bfc38a9df347af0de154dbe6d11b`
+failed at07:57:15 UTC. Collector11a8f223 reached actual idle/activeTurn null/pending0
+at08:06:00.828 UTC; its full final, 27-line report and private receipt were recovered.
+Report SHA-256 `fbe0d8930036cbc41e9a9e73c0e928c8df32f73327027b5ae25a90229f9f61d4`;
+receipt SHA-256 `ac8e2b13f8ab2412ffbe150bfce702120da6da646d41ae6ac2117e0692761261`.
+All seven execution jobs checked out the exact candidate. Format/Python/Web passed;
+Clippy/workspace/policy/PG and required failed. The old heartbeat b6a564bf was deleted
+after actual idle and result recovery; no workflow rerun/cancel/duplicate was issued.
+
+Three exhaustive collector matches omitted the eleven newly added StoreError variants:
+pipeline.rs280/337 and worker.rs582. Clippy/chart compilation stopped at E0004, before
+the chart harness; workspace Cargo was skipped. All30 wire and18 Linux Raw results are
+NOT_EXECUTED, with non-Unix excluded. Policy passed PG_VALIDATION_SELF_TEST but stopped
+at migrate-static-check's stale bootstrap expected_count=7; the frozen provisioner and
+Compose each contain8 entries. Later runtime-secret and ops static checks were skipped.
+PG reports api-tenancy-rls failure; its exact compiler/phase mapping still needs the
+bounded diagnostic follow-up. Both59-migration checksum lists and0039/skip-marker/
+cleanup guards passed. Python485/10skip/7warnings and Web results remain suite evidence.
+
+Source-review closures of DB3/Raw5 and parser corrections are preserved; new source
+acceptance is withheld. The collector disclosed two read-only searches outside its
+narrow source boundary, one returning a fixture credential literal that was not copied
+to artifacts. This deviation remains in the report. Derived receipt errorCount=0 and
+launch inventory hash null require supplemental correction, without rewriting history.
+I0/0060/full snapshot, diagram integration before main, runtime and Owner acceptance
+remain open. No local tests, scripts, databases or operational commands ran.
+
+
+### Wave17 bounded integration corrections and diagnostics
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-I1b-S1-F | intermediate | Three verified caller/checker omissions, fixed classifications and scoped regression design | high | Missing enum/diagnostic contract or repeated failure of this correction returns to coordinator; no invented behavior |
+| I0b-I1b-S1-CI-D | simple | Three exact terminal job logs and fixed source/receipt fields | high | Missing or contradictory evidence stays UNKNOWN; any new diagnostic scope needs coordinator review |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-I1b-S1-F | 17 | intermediate | Repair exhaustive StoreError callers and bootstrap count | pipeline.rs, worker.rs, migrate-static-check.sh only | Recovered terminal failure and source-wave-17-inputs.json | Existing idle14d3d7c8, codex/gpt-6-luna/max per fixed implementation rule | Three-file delta, focused written regressions and full final | Scoped rustfmt/bash-n/diff/hash only; independent review and hosted CI later |
+| I0b-I1b-S1-CI-D | 17 | simple | Resolve compiler/PG mapping and derived receipt gaps | role-raw-ci-diagnostics.md and private f9dfffb/diagnostics only | Recovered terminal failure | Existing idle11a8f223, codex/gpt-6-luna/medium per evidence extraction rule | Supplemental safe report/receipt, originals preserved | Read-only existing three job logs and exact-candidate sources |
+
+The current configured profile is coordinator-only. Existing workers follow the
+repository model rules without changing permission settings. Source and diagnostic
+outputs are disjoint; diagnostics read git-show candidate bytes while live source is
+edited. The private source-wave-17 manifest pins3 writable files,23 references and the
+original CI report/receipt. No user decision or new operational authority is needed.
+
+#### I0b-I1b-S1-F worker brief
+
+WP-4/I0b-I1b-S1-F (Wave17), R2-04/09. Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+One bounded task: repair the verified source integration omissions in terminal failed CI run38530582876 attempt1, exact f9dfffb9a5d4bfc38a9df347af0de154dbe6d11b. Read root AGENTS.md, docs/ROADMAP.md and the Wave17 section of docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. Current source pins are target/r2-daily-beta/wp-4-integration/source-wave-17-inputs.json. Verify all three writable starting pins and preserve the23 read-only references. Previous I1b-S1 work is finished; this is a new notified follow-up after actual idle.
+
+Classification intermediate, high confidence: three fixed caller/checker corrections with explicit behavior and meaningful tests. Use existing codex/gpt-6-luna/max. These integration omissions were outside your prior two-file allowlist; no architecture decision is delegated. Missing or contradictory requirements must be reported rather than invented.
+
+Only writable files:
+1. /data/worktrees/3puw275b/excited-dolphin/data-pipelines/collectors/src/pipeline.rs (1204lines, SHAfa01d39af3df15a7cdd5c206adc2f1baee712f39626f923ec7ba4024aed57ffd).
+2. /data/worktrees/3puw275b/excited-dolphin/data-pipelines/collectors/src/worker.rs (6701lines, SHAde565faa0adf5bb1ba31ec5bf76784875a54bf12ae806e9864050b14e9c09e09).
+3. /data/worktrees/3puw275b/excited-dolphin/deploy/db/migrate-static-check.sh (264lines, SHAd65f82ea5482dd5725d211eacd9a83641a3f816b4acff8633dd46ee96e32ff8e).
+
+Verified diagnostics: E0004 at pipeline.rs280/337 and worker.rs582. The new StoreError variants in crates/market-data/src/storage.rs117 are absent from three exhaustive matches. Coordinator-fixed behavior: explicitly classify all11 variants below as FailureClass::Permanent in store_failure_class and normalize_store_failure_class, and as the existing static KIS_NORMALIZE_INTEGRITY_FAILURE code in normalize_store_error_code:
+InvalidCommittedManifestReadLimits { reason },
+CommittedManifestReadLimitOverflow,
+CommittedManifestReadAllocationFailed { requested_bytes },
+CommittedManifestReadByteCountOverflow,
+CommittedManifestReadLineCountOverflow,
+CommittedManifestReadRecordCountOverflow,
+CommittedManifestByteLimitExceeded { max_bytes },
+CommittedManifestRecordLimitExceeded { max_records },
+CommittedManifestRecordScopeMismatch { path, line },
+InvalidCommittedManifestRecord { path, line },
+CommittedManifestRecordConflict { path, line }.
+These bounded evidence/limit/validation failures must stop automatic retry. Preserve existing Io/FileExists distinctions, CleanupFailed and IndeterminateBatchCommit recursion, all other classifications and static diagnostics. No wildcard arm, lint allowance, new public API or error code, Raw reader wiring, provider behavior or storage.rs change.
+
+Add focused regression coverage in the existing worker.rs unit-test module for all11 variants through public crate::pipeline::store_failure_class and normalize_failure_class plus normalize_diagnostic. NormalizeError::Store contains StoreError by value (normalize.rs); you can borrow before consuming a fresh error. Assert Permanent, existing fixed error code and absent optional diagnostic fields; include harmless synthetic path/reason markers to prove they do not cross the diagnostic boundary. Cover recursive wrappers with a representative new failure if practical within existing fixture helpers; retain old Io/FileExists/wrapper tests. Avoid debug-dumping errors. No new file or dependency.
+
+Policy diagnosis is exact: migrate-static-check.sh expects7 bootstrap provisioner entries although the already frozen provisioner and Compose have8. Change only the db-role-bootstrap expected_count from7 to8 (a short explanation is permitted). db-migrate remains1, non-root999/999/0400 and all existing assertions stay intact. No broader shell refactor or copy of fixture credentials.
+
+Read-only references: the23 pins in inventory, storage.rs enum, crates/market-data/src/normalize.rs, existing relevant source/tests in the two owned Rust files, frozen CI report docs/reviews/2026-10-14-r2-role-raw-ci.md (27lines/fbe0d8930036cbc41e9a9e73c0e928c8df32f73327027b5ae25a90229f9f61d4) and private ci/f9dfffb/ci-evidence.json (ac8e2b13f8ab2412ffbe150bfce702120da6da646d41ae6ac2117e0692761261). No broad repository search: inspect exact files; report additional required paths before expanding.
+
+Allowed verification: read/hash/count, rustfmt --edition2024 with skip_children=true on owned Rust files and scoped --check, bash -n on owned shell file, scoped git diff --check and inert source inspection. No Cargo/rustc/Clippy/tests/build, checker/parser/validator/provisioner/self-test execution, SQL/DB/root/Docker, network/provider/operations, Git writes/staging/commits/push, or docs/roadmap edits. Do not change frozen D4/D5, wire, Raw storage/tests, role/secret/Compose files or workflow. Coordinator owns documentation, Git, independent review and hosted CI. A separate read-only CI diagnostic worker writes disjoint reports; leave those untouched.
+
+Report within60minutes of actual startup; return INCOMPLETE with exact residual work if needed. Final must include changed files/line ranges/hashes/counts; disposition of each correction and regression mapping; deviations with reasons; exact checks and results; unexecuted tests/compilation; unresolved follow-up and missing/conflicting inputs (explicit none if empty); further decomposition/background/pending permissions. No source acceptance or runtime success from rustfmt. Use only a fresh memory hook if supplied; never reuse stale requests.
+
+#### I0b-I1b-S1-CI-D worker brief
+
+WP-4/I0b-I1b-S1-CI-D (Wave17), R2-04/09. Workspace /data/worktrees/3puw275b/excited-dolphin, branch excited-dolphin. Do not use native subagent, Task, Agent, team, or delegation features. Complete this assignment directly and report if it needs further decomposition.
+
+One bounded read-only diagnostic follow-up after your actual idle/pending0/full final recovery at08:06:00.828UTC. Existing run38530582876 attempt1 for exact f9dfffb9a5d4bfc38a9df347af0de154dbe6d11b is terminal failure at07:57:15Z. Do not rerun, cancel, dispatch or mutate CI. Classification simple/high confidence, fixed evidence extraction; existing codex/gpt-6-luna/medium. Missing evidence must remain UNKNOWN; do not infer root cause from unrelated SQLSTATEs.
+
+Read root AGENTS.md, docs/ROADMAP.md, Wave17 in docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md. Only writable outputs:
+/data/worktrees/3puw275b/excited-dolphin/docs/reviews/2026-10-14-r2-role-raw-ci-diagnostics.md
+/data/worktrees/3puw275b/excited-dolphin/target/r2-daily-beta/ci/f9dfffb/diagnostics/ (0700 directories,0600 files).
+Never edit prior report/receipt/launch/test inventory or other docs/source. Preserve report27lines SHA fbe0d8930036cbc41e9a9e73c0e928c8df32f73327027b5ae25a90229f9f61d4 and receipt1704lines SHA ac8e2b13f8ab2412ffbe150bfce702120da6da646d41ae6ac2117e0692761261.
+
+Retrieve only three existing job logs from sihioov/Lagrange:
+clippy115741246073; workspace-tests115741245757; postgres-integration-validation115741246095.
+Verify attempt/run/candidate as needed with read-only metadata. Raw logs must remain in memory, never printed or persisted; retain response byte lengths/hashes and allowlisted compiler paths/codes/locations, fixed step/phase names, safe exit/status markers and explanatory source anchors only. No credentials, fixture credential literals, URLs with credentials, provider/free-form payloads or SQL password text in output.
+
+Known: Clippy and chart compilation report E0004 at pipeline.rs280/337 and worker.rs582; chart harness did not run and workspace test command was skipped. Prior receipt clippy.errorCount=0 and diagnosticMessage=null contradict the observed errors; identify primary compiler error headers/count safely rather than counting enum-note anchors or inferring zero errors. Record a supplemental correction without changing the original receipt.
+PG summary says DENIED / DB-gated test failed: api-tenancy-rls, while testsRun lists three earlier successful phases. Inspect the named failed test's retained log inside the PG job. Establish whether it has the same E0004 diagnostics; record actual command/phase exit only when emitted, distinguishing outer validator exit1 from inner Cargo exit. Inspect exact-candidate run_db_test source to explain append-after-success behavior if supported. Keep SQLSTATE guard evidence separate. No claim that test binaries ran if compilation failed.
+
+Also compare private wp-4-integration/role-raw-ci-launch.json (SHA79a29ecce8aacff7d8dc49b09392d779d55d3bbde0878e5970c06d854525dcfb) against prior receipt's launchReceipt.inventorySha256 null. Actual inventory target/r2-daily-beta/wp-4-integration/role-raw-ci-test-inventory.json SHA cff8ed23dc181a66052253f4bbca82bcc333850961ea30037711ffc3722182fa. Record the correct field/mapping and uncertainty in the supplemental receipt; preserve originals.
+
+Exact source allowlist: git show f9dfffb9a5d4bfc38a9df347af0de154dbe6d11b:.github/workflows/ci.yml; deploy/db/integration-validation/validate.sh; data-pipelines/collectors/src/pipeline.rs; data-pipelines/collectors/src/worker.rs; crates/market-data/src/storage.rs. The concurrent source worker may edit the two collector files, so use git show at this SHA, never live bytes as candidate evidence. No repository-wide rg or additional source location search; these paths supply required mapping. The existing policy report already records expected7vs8; no new policy log query is needed. If another source is essential, report it instead of expanding. Prior two out-of-scope searches remain preserved as a deviation; do not repeat them.
+
+Allowed read-only GitHub metadata/log retrieval, exact git show/source/hash reads, safe JSON/permissions/link checks. No scripts, tests, local reproduction, Cargo/rustc/Clippy/build/checker/validator/self-test/provisioner, DB/SQL/root/Docker/provider/production action or Git writes. No hidden skip absence, pool/GUC/0060/runtime/Owner/C_R2 claims. Sourcefix scope is separate; do not send instructions to its running worker.
+
+Report within30minutes of actual startup or return INCOMPLETE with exact missing evidence. Final: output paths/line ranges/hashes/modes, diagnostic findings and prior-field corrections, deviations/reasons, checks/results, unresolved/not-found/unverified (explicit none when empty), decomposition/background/pending permissions. No raw logs. Use only fresh memory hook envelopes.
+
+#### Coordinator gates
+
+Verify idle/pending0 and recovered prior results before each notified follow-up;
+record actual startup/deadlines and one bounded monitor. Inspect the exact three-file
+delta, written variant/diagnostic regressions, unchanged references and safe supplemental
+CI evidence. Resolve concrete findings with a new bounded brief after worker idle.
+Independent source review precedes one new exact-candidate hosted run after checking
+existing runs. Preserve old failures; do not infer passes from syntax/formatting.
+Keep R2-04/09 DOING until the broader acceptance criteria are actually met.
