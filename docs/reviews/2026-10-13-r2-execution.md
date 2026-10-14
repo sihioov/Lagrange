@@ -283,3 +283,22 @@ R2-04를 DOING으로 전환했다. 시작 HEAD는 clean `619634db32526032aae07ee
 private ledger에 소유 범위와 회수 상태를 보존한다. 같은 daemon의 감시는 daemon 중단을 보호하지 않는다.
 설계 결과를 통합·리뷰한 뒤 exact 파일 소유권과 인터페이스를 확정해 구현을 위임한다.
 운영 배포·migration·timer·provider 호출과 과거 추천 backfill은 이번 채택으로 실행하지 않는다.
+
+### WP-4 Web 접점·준비 수용 — 2026-10-14 KST
+
+D2의 [Web 접점 목록](2026-10-14-r2-daily-web-map.md)을 idle/pending0 후 회수했다.
+21개 링크·라인 경계와 실제 form/page/API DTO를 직접 대조했다. 기존 화면은 수동 추천 경로이며
+auto-update·일일 admission·expected session·support-through·별도 published_at 계약은 없다.
+이 목록은 제한된 경로의 소스 근거이며 실행·전역 완전성 증거가 아니다.
+
+설치본 Next 가이드가 없어 D2a를 동일 Luna/medium worker에 별도 범위로 배정했다.
+코디네이터 관측은 MemAvailable 2,844,548 KiB, swap free 92 KiB, workspace free 약 588 GB,
+compiler process 0이었다. Node heap 512 MiB·10분 timeout·install scripts 비활성으로 준비했다.
+최초 app-prefix 명령은 root workspace lockfile을 놓친 명세 오류로 EUSAGE/exit1이었다.
+root package/lock과 npm help를 확인해 명령을 보정했고, 한 번의 root workspace install이 exit0였다.
+이전 실패와 보정은 [prerequisite 기록](2026-10-14-r2-web-prerequisites.md)에 보존했다.
+
+코디네이터가 세 manifest/lock hash 불변, 설치된 Next 16.3.0·Vitest 4.1.10·Playwright 1.61.0의
+Web 해석 경로, 가이드 다섯 개의 존재를 확인했다. D2a도 실제 idle/pending0 후 수용했다.
+의존성 설치는 ignored root node_modules와 npm cache만 바꿨으며 제품·lockfile은 그대로다.
+테스트·빌드·서버·브라우저 실행·운영 행위는 없었다. D1 구조 설계는 아직 진행 중이다.

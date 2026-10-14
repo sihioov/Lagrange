@@ -266,7 +266,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  DOING — 2026-10-14, Owner가 [불변 일일 입력·독립 자동 승인·전략별 자동 추천 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택해 승인 대기 해소. [WP-4 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 설계·구현 진행. 기존 v3 지원 끝 2026-08-28·daily enqueue 부재와 ETF11 발행 8월 28일의 과거 관측은 보존하며, 새 경로 실행·발행은 미검증.
+  DOING — 2026-10-14, Owner가 [불변 일일 입력·독립 자동 승인·전략별 자동 추천 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택해 승인 대기 해소. [WP-4 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 설계·구현 진행. [Web 접점](reviews/2026-10-14-r2-daily-web-map.md)과 [설치본 가이드 준비](reviews/2026-10-14-r2-web-prerequisites.md)를 수용했으며 구조 설계는 검토 중이다. 기존 v3 지원 끝 2026-08-28·daily enqueue 부재와 ETF11 발행 8월 28일의 과거 관측은 보존하며, 새 경로 실행·발행은 미검증.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.

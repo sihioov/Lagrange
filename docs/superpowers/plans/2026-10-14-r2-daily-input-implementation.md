@@ -29,6 +29,7 @@ Native subagents: prohibited for worker packages
 |---|---|---|---|---|
 | D1 | hard | artifact/독립 권한/SQL snapshot/queue/replay를 잇는 새 구조 설계; 결론 자체가 산출물 | high | 현행 소스와 채택 규칙 충돌 또는 구현 묶음 하나로 검증 불가 시 누락 접점을 명시해 재분해 |
 | D2 | simple | 기존 Web 전략 설정·추천 DTO·테스트의 제한된 경로 목록; 직접 파일 확인 가능 | high | 새 UI 정책 판단이나 저장소 전수 조사 필요 시 중단하고 범위 반환 |
+| D2a | simple | lockfile에 고정된 Web 의존성 준비와 설치본 Next 가이드 읽기; lock hash·설치 exit로 확인 | high | 자원 부족·lock 불일치·설치 실패 시 반복 설치하지 않고 정확한 장애 반환 |
 | D3 | intermediate | D1 설계의 고정 규칙·권한·중복·복구에 대한 독립 소스 근거 리뷰 | medium | 새 아키텍처 설계를 리뷰어에게 요구하게 되면 코디네이터가 D1 개정 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
@@ -40,6 +41,7 @@ Native subagents: prohibited for worker packages
 |---|---:|---|---|---|---|---|---|---|
 | D1 | 1 | hard | 채택 계약을 실행 가능한 구조·인터페이스·파일 묶음으로 설계 | `docs/reviews/2026-10-14-r2-daily-input-design.md`만 | Owner 채택·기준 확인 | codex gpt-6-astra xhigh, 열린 아키텍처 판단 규칙 | 타입/DB/권한/예약/API/운영 접점과 정확한 수정 allowlist | 현재 소스 citation, 불변식·실패 행렬, 구현 분해 가능성 |
 | D2 | 1 | simple | 기존 설정·추천 Web 접점과 검증 harness 목록 | `docs/reviews/2026-10-14-r2-daily-web-map.md`만 | Owner 채택·기준 확인 | codex gpt-6-luna medium, 직접 대조 가능한 소규모 조사 | 지정 경로의 DTO/화면/테스트 근거와 남은 접점 | 파일·symbol 존재와 source line 직접 확인 |
+| D2a | 1 | simple | Web 구현 전 설치본 가이드·의존성 준비 | ignored root/Web `node_modules/`, npm cache, `docs/reviews/2026-10-14-r2-web-prerequisites.md` | D2 인수·코디네이터 자원 확인 | D2 worker Luna medium | exact lock 유지·설치 결과·읽은 guide 경로 | root workspace `npm ci`, manifest/lock 전후 hash |
 | D3 | 2 | intermediate | 확정 전 설계의 독립 검토 | `docs/reviews/2026-10-14-r2-daily-input-design-review.md`만 | D1/D2 회수·코디네이터 통합 | codex gpt-6.1-sol high, 결론 산출물 리뷰 규칙 | actionable finding와 scope/증거 한계 | 채택 계약·실제 호출 경로·위협/회귀 행렬 대조 |
 
 ## Worker briefs
@@ -57,6 +59,8 @@ Do not use native subagent, Task, Agent, team, or delegation features. Complete 
 공통 반환: 변경 파일·라인 범위, brief와 다른 처리 및 이유, 실제 검사·결과,
 미해결·후속, 찾지 못했거나 검증하지 않은 항목(없으면 `none`). background와 permission wait도 명시한다.
 읽기 전용 source 탐색·문서 syntax/link 검사만 가능하며 실행 테스트 통과를 주장하지 않는다.
+D2a에 한해 아래 명시된 npm 의존성 준비와 설치본 가이드 읽기를 허용한다. 제품 구현·테스트·
+빌드·브라우저 설치·서버 실행은 이 예외에 포함하지 않는다.
 
 ### D1 — 입력·예약 아키텍처
 
@@ -96,6 +100,23 @@ Do not use native subagent, Task, Agent, team, or delegation features. Complete 
   migration/rollback 실제 역할, 기본 OFF·owner isolation·기준일 의미.
 - finding에는 구체적 실패 경로·source line·수정 조건을 쓴다. 가설을 실제 결함으로 단정하지 않는다.
   테스트 실행·구현 파일 수정 없이 검증 가능한 인터페이스와 필요한 회귀를 판단한다.
+
+### D2a — 설치본 Web 가이드 준비
+
+- D2에서 `apps/web/node_modules/next/dist/docs/` 부재를 확인했다. 캐시에는 정확한 Next 16.3.0
+  tarball이 있다. 읽지 않은 가이드를 읽었다고 주장하거나 다른 버전의 기억으로 구현하지 않는다.
+- simple/high confidence. 코디네이터의 현재 가용 메모리·디스크·동시 compiler 부재 확인 후 시작한다.
+- 최초 app-prefix 명령은 app-local lockfile 부재로 EUSAGE/exit1이었다. root `package.json`의
+  workspace 선언과 실제 root lockfile, `npm ci --help`로 선택자를 확인해 명세 오류를 바로잡았다.
+  이 실패는 prerequisite 보고서에 보존하며 worker의 구현 실패로 상향 배정하지 않는다.
+- 위 작업 디렉터리에서 보정 명령 `timeout -k 15s 10m env NODE_OPTIONS=--max-old-space-size=512 npm ci --workspace apps/web --include-workspace-root=false --ignore-scripts --no-audit --no-fund`를 한 번 실행한다.
+  lockfile의 package registry 접근만 허용하며 시장 provider·인증서비스·운영 API는 금지한다.
+  설치 실패 시 root 사용·global 설정 변경·lock 재생성·재시도 없이 결과를 반환한다.
+- 허용 파일은 ignored dependency tree·npm cache와 새 prerequisite 보고서뿐이다. package/lock/source,
+  다른 보고서·진행 문서·Git은 변경하지 않는다. manifest/lock hash를 전후 대조한다.
+- installed Next docs에서 이번 기존 server page/client form와 unit/browser 테스트에 해당하는 가이드를
+  읽고 정확한 경로·version·주의점과 source가 아닌 준비 범위를 기록한다.
+- 완료 보고는 공통 형식. 설치 exit 0을 제품 테스트 성공으로 표시하지 않는다.
 
 ## Coordinator gates
 
