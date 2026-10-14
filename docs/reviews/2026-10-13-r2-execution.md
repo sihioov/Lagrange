@@ -1168,3 +1168,20 @@ remain open. No local tests, scripts, databases or operational commands ran.
 Wave17 prepares the disjoint three-file source correction and existing-run diagnostic
 packages in the implementation plan. Source has a60-minute reporting bound; diagnostics
 have30minutes, both measured from actual startup. Launch and monitoring evidence follows.
+
+
+### Wave17 actual startup — 2026-10-14
+
+The failure report and bounded briefs are committed as `4dd753e`. Source correction
+worker14d3d7c8-892a-4434-baa6-29de925837cb actually started08:17:10.940UTC,
+codex/gpt-6-luna/max; diagnostic worker11a8f223-6f2d-4adb-89ab-86dbc917d2fd started
+08:17:28.510UTC, codex/gpt-6-luna/medium. Both were running with pending0, expected
+workspace/parent and fresh notifyOnFinish registrations. No permission mode was changed.
+Source report is due09:17:10.940UTC; diagnostic report is due08:47:28.510UTC.
+Heartbeat5b314fa7 is every two minutes, max60, expires10:18:14.292UTC; ledger and private
+startup receipts preserve actual state. Recover incomplete scope at each bound and
+reconcile/renew/handoff before expiry. Same-daemon monitoring cannot protect daemon outage.
+
+Source correction and supplemental diagnosis are underway; no new candidate CI has
+been dispatched. The failed f9dfffb run and48 unexecuted Rust tests remain distinct from
+any future source review or execution. Coordinator owns result integration and verification.
