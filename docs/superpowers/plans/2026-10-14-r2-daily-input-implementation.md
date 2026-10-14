@@ -3146,3 +3146,29 @@ No source acceptance claim. Coordinator will recover actual idle/pending0/full f
    CI dispatch. Never rerun/cancel/duplicate old38545976070. No local executable
    checks or operational expansion. Keep negative bootstrap/rollback,0060,
    reconstruction/admission, diagrams before main, runtime/Owner/final C_R2 open.
+
+### Wave27 actual second correction startup
+
+Launch-doc commit `5dd9b308ef739a292ed9e965032d48e72dbcedac` records the complete
+review/disposition and standalone brief. Frozen source-wave-27-S2-correction-inputs.json
+has243 lines, SHA256
+`839727f0a3a248d0070f968297853a2a8b4e105ae81b73ba02a5dab8ad80ab85`,
+with48 pins:2 writable targets,22 read-only references,24 evidence artifacts.
+All pins matched immediately before launch; source targets matched committed bytes.
+
+One new Paseo worker `00e0a229-8710-4ed5-8dde-599cb7a7d84f` actually started
+`2026-10-14T13:47:13.127Z`, codex/gpt-6.1-sol/max, in the expected workspace
+under the expected parent. Running/activeTurn/pending0 matched; notifyOnFinish
+was explicitly requested and acknowledged. No permission mode was set or changed.
+Its90-minute reporting bound is `2026-10-14T15:17:13.127Z`.
+Only source.rs and daily_price_only_snapshot.rs may change. All pinned non-target
+inputs remain frozen. No source/compiler/test acceptance, new S2 push or CI.
+
+Heartbeat `1f6d4170` is scoped only to that worker, every two minutes/max60,
+expires `2026-10-14T15:48:03.113Z`. It replaces the fully recovered/deleted
+review monitor b6352577. Recover full substantive final/error and actual idle/
+pending0 before acceptance/follow-up; recover precise INCOMPLETE scope at the
+reporting bound and reconcile/renew/handoff before expiry. Same-daemon monitoring
+cannot protect daemon outage. Private startup receipt and owned ledger record
+actual lifecycle and notification configuration. Existing CI/history and all
+later negative-bootstrap/0060/diagram/runtime/Owner/final C_R2 gates remain.

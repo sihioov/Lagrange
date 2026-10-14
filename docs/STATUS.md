@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수를 유지한다. 7545094의 [보정 독립 리뷰](reviews/2026-10-14-r2-raw-snapshot-corrections-review.md)543행을 actual idle/pending0/full final로 회수했다. 38pins·119links와 잔여 지적을 대조해 2P1/8P2를 [Wave27 보정 범위](reviews/2026-10-14-r2-snapshot-second-correction-scope.md)로 수용했다. E01의 private 테스트 경로15개는 원본을 보존한 후속 목록에서 보정했다. 반복 검증 실패에 따라 모델만 Sol로 올리고 max effort를 유지하는 두 파일 보정을 준비한다. 45개 정의는 모두 미실행, S2 소스 인수·새 CI는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — a888cd6/run38545976070의 I0c 부분 인수를 유지한다. 7545094의 [보정 리뷰](reviews/2026-10-14-r2-raw-snapshot-corrections-review.md)543행과38pins·119links를 회수·대조했고 잔여2P1/8P2를 [Wave27 범위](reviews/2026-10-14-r2-snapshot-second-correction-scope.md)로 수용했다. E01 private 경로15개는 원본 보존 후속 목록에서 보정했다. 두 파일 보정 작업자 Sol/max00e0a229가13:47:13.127UTC 실제 시작, pending0·완료 알림과48pins 고정을 확인했다. 90분 보고 기한15:17:13.127UTC, 감시1f6d4170. 45개 기존 정의는 미실행이고 S2 소스 인수·새 CI는 보류한다. negative bootstrap/rollback·0060·입력 재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 남는다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
