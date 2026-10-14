@@ -889,3 +889,27 @@ Luna/medium collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`의 I1a-F3-CI notifi
 삭제했다. worker는 이 run의 read-only 증거만 수집하고 raw 로그나 provider 내용을 저장하지 않는다.
 30개 Rust test result, Python 파일/전체 suite와 개별 node 근거의 차이, required·Clippy·chart·PG·Web을
 구분한다. I0/0060·운영·Owner 인수는 이 부분 후보의 CI로 완료 처리하지 않는다.
+
+
+## I1a-L 국소 lint 보정·재검증 — 2026-10-14
+
+I1a-F3-CI actual idle/final을 회수했고 `6429d33`의 30개 Rust test는 직접 ok, Clippy 외 6개 실행
+job은 성공했다. 남은 test helper913:17의 중첩 조건 한 곳을 코디네이터가 같은 short-circuit
+let-chain으로 결합했다. 이는 작은 1-file 수정 직접 처리 규칙에 따른 통합 보정이다. D4·제품 contract·
+Python·test assertions는 바꾸지 않았다. 새 test2385행 SHA-256은
+`1596ecbe2b673264fdec2f41605e043f3d7fb79ea54463ac5075ad9da3cd0fdd`이며 rustfmt/diff만 확인했다.
+기존 full report/receipt는 보존하고 새 exact source 후보를 전체 hosted CI에서 검증한다.
+
+| Package | Complexity | Basis | Confidence | Reclassification or escalation signals |
+| --- | --- | --- | --- | --- |
+| I1a-L-CI | simple | 진단된 한 곳의 의미 보존 lint 보정 후 새 정확한 후보 결과 회수 | high | 새 진단·누락 로그는 사실과 UNKNOWN을 구분해 보고; 재실행·범위 확대하지 않음 |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I1a-L-CI | 6 | simple | 새 보정 후보의 strict lane 포함 전체 결과 회수 | `docs/reviews/2026-10-14-r2-daily-wire-lint-ci.md`, 새 candidate private leaf | 이전 collector idle/final·위 한 곳 수정·push/1회 dispatch | 기존 Luna/medium collector | candidate/run identity·7개 job/required·30개 회귀·정확한 한계 | I1a-F3-CI와 같은 read-only evidence 검증 |
+
+I1a-L-CI notified brief는 새 full SHA/run ID를 고정한다. 기존 `6429d33` 보고/receipt를 변경하지 않는다.
+30개 이름은 `target/r2-daily-beta/wp-4-integration/lint-correction-test-inventory.json`과 대조한다.
+Python suite/node 근거 차이, historical name filter의 한계, PG/helper/0060/runtime 구분은 이전과 같다.
+출력은 새 보고/leaf뿐이다. raw 로그 저장·로컬 테스트/컴파일/DB/운영·Git write·하위 위임 금지는
+유지한다. 90분 또는 06:10 UTC 중 먼저 도달하면 INCOMPLETE를 반환하고 코디네이터가 감시를 유지한다.

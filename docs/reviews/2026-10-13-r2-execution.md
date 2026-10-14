@@ -701,3 +701,30 @@ Luna/medium collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`의 I1a-F3-CI notifi
 삭제했다. worker는 이 run의 read-only 증거만 수집하고 raw 로그나 provider 내용을 저장하지 않는다.
 30개 Rust test result, Python 파일/전체 suite와 개별 node 근거의 차이, required·Clippy·chart·PG·Web을
 구분한다. I0/0060·운영·Owner 인수는 이 부분 후보의 CI로 완료 처리하지 않는다.
+
+
+### I1a 실제 테스트 근거 수용·마지막 lint 보정 — 2026-10-14
+
+I1a-F3-CI는 04:25:00 UTC actual idle/pending0 후 [38행 보고](2026-10-14-r2-daily-wire-final-ci.md)
+`ad5cf5b03bcf04e0b09b5235f7e3e32fa9121f9a0c06a26d19244cdd831196b0`와 private receipt
+`788e810fc785f061f8419023fae6403579fa4f89f7bf5b17009621512efd7c5d`를 회수했다.
+run38509087712는 정확한 `6429d33`에서 04:19:47 UTC terminal failure다. 코디네이터가 report/receipt
+hash와 30개 이름의 정확한 집합·각 ok row를 대조해 실행 증거를 수용했다. Clippy/required만 실패했고
+나머지 6개 실행 job은 성공했다. workspace 237개 result 집계의 2,928 passed/0 failed/6 ignored/
+180 filtered는 고유 테스트 수와 구분한다. chart6 및 PG APPROVED/59 migrations도 회수했다.
+Python suite 485 passed/10 skipped/7 warnings는 성공이나 새 mock 3개와 SIGTERM의 per-node 또는
+파일 progress row는 없어 각각의 직접 PASS 근거로 과장하지 않는다. 숨은 skip 부재도 주장하지 않는다.
+
+남은 진단은 test 파일913:17의 `clippy::collapsible_if`, exit101 한 건이다. 저장소의 작은 수정 직접
+처리 규칙에 따라 코디네이터가 `reverse_canonical_sets`의 matching-key 검사와 `Some(array)` 검사를
+short-circuit let-chain으로 합쳤다. matching key의 array만 reverse하고 모든 child의 재귀 방문을
+계속하는 의미는 동일하다. 파일 전체 diff가 이 조건 결합 한 곳뿐임을 정확한 문자열 대조로 확인했다.
+새 test 파일은 2385행 SHA-256 `1596ecbe2b673264fdec2f41605e043f3d7fb79ea54463ac5075ad9da3cd0fdd`다.
+contract/D4/Python 소스와 30개 테스트 이름·assertions는 유지한다. rustfmt edition2024 check와
+scoped diff check는 통과했다. 로컬 Cargo/Clippy/test/DB/운영 실행은 하지 않았다.
+
+이 작은 소스 보정의 새 commit을 대상으로 전체 hosted CI를 한 번 검증한다. 기존 실패 run의 재실행이
+아니며 exact SHA 기존 run 조회를 먼저 한다. 이전 30개 PASS는 `6429d33`의 근거로 보존한다.
+새 hash의 inventory는 `target/r2-daily-beta/wp-4-integration/lint-correction-test-inventory.json`에
+별도로 저장했다. I1a 전체 source 인수는 새 후보의 strict Clippy·required 성공까지 보류하며
+I0 helper/0060·실제 입력·운영/Owner 인수는 이번 부분 검증과 별개다.

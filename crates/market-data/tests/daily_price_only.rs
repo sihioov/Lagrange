@@ -926,10 +926,9 @@ fn reverse_canonical_sets(value: &mut serde_json::Value) {
                         | "documents"
                         | "query"
                         | "headers"
-                ) {
-                    if let Some(array) = child.as_array_mut() {
-                        array.reverse();
-                    }
+                ) && let Some(array) = child.as_array_mut()
+                {
+                    array.reverse();
                 }
                 reverse_canonical_sets(child);
             }
