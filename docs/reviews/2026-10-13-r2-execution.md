@@ -728,3 +728,19 @@ scoped diff check는 통과했다. 로컬 Cargo/Clippy/test/DB/운영 실행은 
 새 hash의 inventory는 `target/r2-daily-beta/wp-4-integration/lint-correction-test-inventory.json`에
 별도로 저장했다. I1a 전체 source 인수는 새 후보의 strict Clippy·required 성공까지 보류하며
 I0 helper/0060·실제 입력·운영/Owner 인수는 이번 부분 검증과 별개다.
+
+
+### I1a-L-CI 새 후보 launch — 2026-10-14
+
+lint 보정 source 후보는 `d6bb23a6c516c8a9ebffbd93229c0b92190db48b`다. feature branch의
+fast-forward push·remote SHA와 exact SHA 기존 CI 부재를 확인한 뒤 ci.yml을 한 번 dispatch했다.
+[run38511544759](https://github.com/sihioov/Lagrange/actions/runs/38511544759)는 04:28:16 UTC 생성,
+workflow_dispatch·정확한 SHA·in_progress를 확인했다. dispatch 직후 첫 조회는 전파 전 빈 목록이었고
+다음 읽기 조회에서 한 run을 찾았다. 두 번째 dispatch나 기존 failed run 재실행은 없었다.
+
+기존 collector `11a8f223-6f2d-4adb-89ab-86dbc917d2fd`에 I1a-L-CI notified follow-up을 맡겼고
+04:29:09 UTC actual running/pending0·workspace/parent/Luna medium을 확인했다. 반환 경계는
+90분 또는 06:10 UTC 중 이른 시점이다. 이전 report·receipt는 보존하고 새 보고/leaf에만 기록한다.
+`7537b40b`(2분·60회·06:29:39 UTC 만료)로 감시를 교체하고 `05c2aada`를 삭제했다.
+미완료면 코디네이터가 감시 책임을 유지한다. 같은 daemon heartbeat의 중단 한계는 그대로다.
+이 후속 문서 커밋을 source 검증 대상으로 바꾸지 않는다. R2 운영 권한 확대나 로컬 테스트 실행은 없다.

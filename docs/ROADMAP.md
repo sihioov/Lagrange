@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | `6429d33` [CI](reviews/2026-10-14-r2-daily-wire-final-ci.md)에서 30개 Rust 회귀 직접 PASS 및 6개 실행 job 성공을 회수했다. 남은 Clippy의 test helper 중첩 조건 한 곳을 의미 보존해 수정하고 새 exact 후보 전체 CI를 검증한다. I0 나머지 연결·0060·실제 입력·운영 인수는 후속 |
+| 다음 착수 항목 | `6429d33` [CI](reviews/2026-10-14-r2-daily-wire-final-ci.md)에서 30개 Rust 회귀 직접 PASS 및 6개 실행 job 성공을 회수했다. 남은 Clippy의 test helper 중첩 조건 한 곳을 의미 보존해 수정한 `d6bb23a`의 [CI 38511544759](https://github.com/sihioov/Lagrange/actions/runs/38511544759)를 한 번 시작했고 결과를 회수한다. I0 나머지 연결·0060·실제 입력·운영 인수는 후속 |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -466,3 +466,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; 최종 보정 후보 CI 시작 | `6429d33` push·remote SHA·exact SHA 기존 실행 없음 확인 후 03:59:36 UTC ci.yml 1회 dispatch. 검토된 Rust/Python 보정의 실제 실행 검증 | [CI 38509087712](https://github.com/sihioov/Lagrange/actions/runs/38509087712), [실행 기록](reviews/2026-10-13-r2-execution.md); source 후보와 이 후속 문서 커밋을 구분, 아직 전체 CI 인수 전 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; 30개 Rust 회귀 PASS·Clippy 한 곳 보정 | `6429d33`의 6개 실행 job 성공, Clippy/required만 실패. 30개 직접 ok·Python suite 485 pass와 개별 node 로그 부재를 구분. test helper 중첩 조건만 의미 보존해 결합 | 이 test 소스 커밋; [CI 근거](reviews/2026-10-14-r2-daily-wire-final-ci.md), [진행 판단](reviews/2026-10-13-r2-execution.md); 새 후보 strict Clippy/required·운영 인수 전 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; lint 보정 후보의 전체 CI 시작 | `d6bb23a` remote SHA·기존 실행 없음 확인 후 ci.yml 1회 dispatch. 이전 `6429d33` 30개 직접 PASS와 새 후보 실행을 구분 | [CI 38511544759](https://github.com/sihioov/Lagrange/actions/runs/38511544759), [실행 기록](reviews/2026-10-13-r2-execution.md); 새 source의 strict lane/required 결과 대기 |
