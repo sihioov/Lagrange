@@ -1839,3 +1839,40 @@ The private coordinator receipt `wave30-S2-CI-terminal-metadata.json` under
 `9b5e7942d15719fc16729a0e5a372e6627a3b0560163f987045d145cc64e5113`.
 It preserves all job identities/statuses without raw logs. Source/compiler/test
 acceptance remains withheld; prior partial successes and failures are preserved.
+
+### Wave30 full recovery and C03 compilation disposition — 2026-10-15 KST
+
+Collector `6c5cc4eb` actually became idle at 2026-10-14T16:17:06.762Z,
+activeTurn null/pending 0. Full substantive final recovered at 16:17:20 UTC;
+monitor `de67d496` deleted at 16:18:05 UTC after persisted recovery. The original
+51-line report and 2,760-line receipt remain unchanged. Their recoverable evidence
+gaps were filled directly by the coordinator without further delegation.
+
+[The recovery supplement](2026-10-15-r2-snapshot-ci-recovery.md) is 129 lines, SHA256
+`1e1a847af714d5a734ae36b8ba9ce7db12f7522dbe033416ff3d4004653dbc60`. Private
+`target/r2-daily-beta/ci/245f4d9/ci-recovery-evidence.json` is 3,490 lines,
+SHA256 `6a24281adf6a4fb6df85cc0654484e956192f3a9db87f7d88a4f0c5f54926ef3`.
+Eight jobs/84 steps, eight decoded-log hashes, seven actual checkout SHAs,
+51 input pins, all named status rows and 59 candidate migration checksums were
+reconciled. Raw logs stayed in memory. The exact run remains attempt 1/failure.
+
+C03-01: E0599 at source.rs:918 and :926, `Errno::ACCES` instead of the pinned
+rustix API's `ACCESS`. C03-02: Clippy lib-test E0425 at source.rs:3839 calls
+undefined `component_count`. These compile failures block acceptance. The
+bounded next correction is confined to the spellings and private C+7 oracle,
+preserving all guards and the 49 written S2 definitions. Later lint/test results
+cannot be inferred. No C03 source edit, new worker, push, dispatch, rerun or
+cancellation was performed during this recovery.
+
+All 99 expected workspace Rust cases and six chart cases are NOT_EXECUTED.
+PG stops at api-tenancy-rls compilation; both daily-admitter helper labels are
+not reached. Earlier PG 59-checksum/0039/catalog/role/cleanup evidence is recorded
+separately. Format/web/policy/Python jobs passed; Python reports 485 passed,
+10 skipped, seven warnings, and 10 policy CI-contract nodes have direct ok rows.
+Unprinted nested exit numbers and quiet Python nodes remain UNKNOWN.
+
+R2-04/09 remain DOING with C03 and subsequent verification open. Any later exact
+candidate verification retains independent disposition and existing-run query
+gates; the failed run is never rerun/cancelled/duplicated. Prior partial successes,
+all failures and remaining negative/bootstrap/0060/reconstruction/admission/I6/
+runtime/Owner/final C_R2 obligations remain preserved.

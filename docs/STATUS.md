@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — CI 후보 `245f4d9`의 [run 38594682124](https://github.com/sihioov/Lagrange/actions/runs/38594682124) attempt 1이 실패로 종료됐다. 코디네이터가 exact SHA와 8개 job 메타데이터를 확인했다: clippy·workspace-tests·PostgreSQL·required 실패, format·web·policy·python-tests 성공. 수집 담당자 `6c5cc4eb`는 실제 running/pending 0이며 전체 보고서와 직접 테스트 결과는 아직 회수 중이다. 감시 `de67d496`와 17:34:01.894 UTC(10-15 02:34 KST) 보고 기한을 유지한다. 원인·실행 여부·인수는 전체 결과 대조 후 판단한다. 재실행·취소·소스 수정은 하지 않았다. 기존 부분 성공·실패 이력과 후속 R2 인수 조건은 보존한다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — 후보 `245f4d9`의 단일 CI 실패와 [보강 회수](reviews/2026-10-15-r2-snapshot-ci-recovery.md)를 대조했다. 수집 담당자는 actual idle/pending 0/전체 결과 회수 완료이며 감시 `de67d496`는 종료했다. C03-01은 없는 `Errno::ACCES` 참조 두 곳, C03-02는 정의되지 않은 `component_count` 호출이다. Rust 99개와 별도 chart 6개는 미실행이고, 7개 checkout SHA·51개 입력·PG 59개 checksum 등 확보된 근거는 분리 보존한다. 다음 작업은 이 세 위치의 한정 보정과 후속 검증이다. 소스·컴파일·테스트 인수는 보류하며, 기존 부분 성공·실패와 negative bootstrap/rollback·0060·재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 열린 상태다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
