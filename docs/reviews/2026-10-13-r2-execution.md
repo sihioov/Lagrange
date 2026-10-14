@@ -881,3 +881,18 @@ source 인수는 보류하고 고정f1dfb91에서 I0b-F(3개 shell 파일), I1b-
 synthetic log 회귀와 release parity, redacted typed error 회귀를 작성하고 실제 실행은 hosted에 남긴다.
 기존261b0071 감시는 두 리뷰 회수 뒤 종료했다. 새 작업의 notified startup과 bounded 감시는 후속 기록한다.
 Mem0 context는 이번에도MCP_ERROR였으며 새 durable 저장 성공을 주장하지 않는다.
+
+
+### Wave 10 actual correction startup — 2026-10-14
+
+Review disposition and exact correction briefs were committed as `03811d0`.
+I0b-F `fd32e206-9248-41cd-a86b-de07a33ea464` and I1b-S1-F
+`14d3d7c8-892a-4434-baa6-29de925837cb` both started at06:23:29 UTC,
+actual running/pending0, expected workspace/parent and codex/gpt-6-luna/max.
+Each notified follow-up has its own5-file split (3 shell / 2 Rust); no operational
+or local execution authority was added. Completion boundary is07:23:29 UTC.
+Heartbeat `35d4c84a` is every2minutes, maximum60runs, expires08:24:16 UTC.
+The ledger and private wave10 startup receipts preserve actual status and notification
+registration. Coordinator must recover incomplete work at the reporting boundary and
+reconcile/replace the heartbeat before expiry; same-daemon outage remains unprotected.
+No correction result, new source acceptance or fresh CI pass is claimed yet.

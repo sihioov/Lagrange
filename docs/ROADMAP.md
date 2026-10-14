@@ -481,3 +481,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-14 | R2-04/09 | DOING 유지; DB 배선·Raw reader 소스 회수와 독립 리뷰 시작 | 두 worker actual idle/pending0/full final, 11개 파일 범위·정적 검사·9개 참조 보존 확인. 보고 hash 한 값의 형식 오류를 보존하고 실제 bytes 고정 | 이 소스 인계 커밋; [인계·한계](reviews/2026-10-14-r2-role-and-raw-source-handoff.md), [리뷰 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 독립 리뷰·컴파일·SQL·runtime·최종 R2 인수 전 |
 
 | 2026-10-14 | R2-04/09 | DOING 유지; 독립 리뷰 8개 지적 수용·국소 보정 | DB fixture/인벤토리/실패 로그와 Raw 오류 redaction/type/fixture/errno 문제를 직접 대조. 두 보고 actual idle/pending0/full final 확인 후 3개 shell·2개 Rust 파일 보정으로 분해 | 소스 기준f1dfb91; [DB 리뷰](reviews/2026-10-14-r2-daily-role-wiring-review.md), [Raw 리뷰](reviews/2026-10-14-r2-raw-manifest-evidence-review.md), [보정 명세](superpowers/plans/2026-10-14-r2-daily-input-implementation.md). 관측된 유출/운영 실패나 테스트 결과를 뜻하지 않음 |
+
+| 2026-10-14 | R2-04/09 | DOING 유지; 두 국소 보정 작업 시작 | 명세03811d0 기준 I0b-F 3개 shell·I1b-S1-F 2개 Rust 파일에 Luna/max notified follow-up. 06:23:29 UTC actual running/pending0 확인 | [실행 기록](reviews/2026-10-13-r2-execution.md), [정확한 보정 범위](superpowers/plans/2026-10-14-r2-daily-input-implementation.md); 결과·독립 재검토·새 후보 CI 대기 |

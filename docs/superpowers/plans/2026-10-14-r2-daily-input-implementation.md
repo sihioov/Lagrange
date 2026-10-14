@@ -1319,3 +1319,18 @@ items, required decomposition, background work and pending permissions. Do not i
 policy. Return INCOMPLETE with precise residual scope if not finished in60min. Coordinator verifies
 actual idle/full final, reviews the resulting delta independently, and only then prepares one new
 hosted candidate with existing-run deduplication. No CI was launched for the rejected f1dfb91 bytes.
+
+
+### Wave 10 actual correction startup — 2026-10-14
+
+Review disposition and exact correction briefs were committed as `03811d0`.
+I0b-F `fd32e206-9248-41cd-a86b-de07a33ea464` and I1b-S1-F
+`14d3d7c8-892a-4434-baa6-29de925837cb` both started at06:23:29 UTC,
+actual running/pending0, expected workspace/parent and codex/gpt-6-luna/max.
+Each notified follow-up has its own5-file split (3 shell / 2 Rust); no operational
+or local execution authority was added. Completion boundary is07:23:29 UTC.
+Heartbeat `35d4c84a` is every2minutes, maximum60runs, expires08:24:16 UTC.
+The ledger and private wave10 startup receipts preserve actual status and notification
+registration. Coordinator must recover incomplete work at the reporting boundary and
+reconcile/replace the heartbeat before expiry; same-daemon outage remains unprotected.
+No correction result, new source acceptance or fresh CI pass is claimed yet.
