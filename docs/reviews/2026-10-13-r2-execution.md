@@ -981,3 +981,28 @@ at most30times, expires07:56:48 UTC. The ledger and private wave12 startup recei
 preserve actual runtime/notification evidence. Recover incomplete scope at the reporting
 bound and reconcile/renew/handoff before expiry; same-daemon outage remains unprotected.
 No new code result, parser/test execution, hosted CI or operational action is claimed.
+
+
+## Literal parser correction recovered — 2026-10-14
+
+I0b-F2 reached actual idle/pending0 at 07:04:16 UTC. The callback contained only
+memory bookkeeping; the coordinator recovered the substantive source report from
+activity before closing heartbeat `843d6474`. Only the embedded Python block in
+`deploy/secrets/runtime-static-check.sh` changed: 768 lines, SHA-256
+`332324fba66d9c9c5a8f8518d470bc1cf9a9df88b004743d8b23c5ee06069e06`.
+All nineteen read-only references and the shell bytes outside that block are unchanged.
+Scoped bash-n, complete embedded Python AST (21 top-level nodes), and diff whitespace
+checks passed. No parser helper, regression body, checker, validator or test executed.
+
+The helpers validate ASCII literal components, relative source components, decimal
+UID/GID, octal modes and yes/no before constructing tuples. Seventeen disallowed
+shell tokens are covered in all three copy positions and both validator path positions;
+written cases also cover source paths, arity, numeric/mode spelling and positive TLS
+relative paths. The rejection helper catches only InventoryError. These are written
+regressions, not passing test results; current 33-row parity was not rerun.
+
+The following bounded independent review must inspect the concrete one-file delta,
+including helper use from full source-map parsing, preservation of prior closures,
+and meaningful regressions. Source acceptance and a new exact-candidate hosted CI
+remain pending. Prior `929fcd6` success is baseline evidence only. I0/0060, full snapshot,
+diagrams before structural main integration, runtime and Owner acceptance remain open.

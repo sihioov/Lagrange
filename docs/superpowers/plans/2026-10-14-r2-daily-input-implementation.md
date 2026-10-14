@@ -1574,3 +1574,66 @@ at most30times, expires07:56:48 UTC. The ledger and private wave12 startup recei
 preserve actual runtime/notification evidence. Recover incomplete scope at the reporting
 bound and reconcile/renew/handoff before expiry; same-daemon outage remains unprotected.
 No new code result, parser/test execution, hosted CI or operational action is claimed.
+
+
+## Literal parser correction recovered — 2026-10-14
+
+I0b-F2 reached actual idle/pending0 at 07:04:16 UTC. The callback contained only
+memory bookkeeping; the coordinator recovered the substantive source report from
+activity before closing heartbeat `843d6474`. Only the embedded Python block in
+`deploy/secrets/runtime-static-check.sh` changed: 768 lines, SHA-256
+`332324fba66d9c9c5a8f8518d470bc1cf9a9df88b004743d8b23c5ee06069e06`.
+All nineteen read-only references and the shell bytes outside that block are unchanged.
+Scoped bash-n, complete embedded Python AST (21 top-level nodes), and diff whitespace
+checks passed. No parser helper, regression body, checker, validator or test executed.
+
+The helpers validate ASCII literal components, relative source components, decimal
+UID/GID, octal modes and yes/no before constructing tuples. Seventeen disallowed
+shell tokens are covered in all three copy positions and both validator path positions;
+written cases also cover source paths, arity, numeric/mode spelling and positive TLS
+relative paths. The rejection helper catches only InventoryError. These are written
+regressions, not passing test results; current 33-row parity was not rerun.
+
+The following bounded independent review must inspect the concrete one-file delta,
+including helper use from full source-map parsing, preservation of prior closures,
+and meaningful regressions. Source acceptance and a new exact-candidate hosted CI
+remain pending. Prior `929fcd6` success is baseline evidence only. I0/0060, full snapshot,
+diagrams before structural main integration, runtime and Owner acceptance remain open.
+
+
+### Wave 13 independent literal parser review
+
+| Package | Complexity | Basis | Confidence | Escalation signal |
+| --- | --- | --- | --- | --- |
+| I0b-F2-R | intermediate | One-file delta but token validation must agree with complete source-map parsing and preserve earlier inventory/log closures | high | A concrete unhandled syntax or incompatible current literal row needs a bounded correction, not an invented rule |
+
+| Package | Wave | Complexity | Objective | Owned scope | Depends on | Worker selection | Deliverable | Verification |
+| --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| I0b-F2-R | 13 | intermediate | Independently disposition I0b-F-R01 and review the literal-parser delta | docs/reviews/2026-10-14-r2-inventory-literal-review.md only | Recovered I0b-F2; source-wave-13-inputs.json | Idle d9ca76a3, codex/gpt-6.1-sol/high under repository review rule | Concrete severity-ranked findings or explicit no finding, exact input hashes, limits | Read-only diff/source, bash-n, AST, hashes and report links; no parser/test/runtime execution |
+
+The sole writable output is the new review report. Target workspace is
+`/data/worktrees/3puw275b/excited-dolphin`. Review the final 768-line script pinned above
+against source `de1889be8a0f3efa9bac2c1ab1a272c9c1609af0` and the prior 229-line role
+correction review `52d7400dc60c14e744178e59bcf2e31c43e5ca9a5bf299bfe8d4c24aa7f3ab03`.
+The private source-wave-13 inventory pins the final target and nineteen read-only refs.
+
+Check the fixed grammar from I0b-F2, validation before record construction, exact
+validator service/target shape, relative TLS source paths, ASCII numeric/mode and
+single_line rules, unknown/duplicate rejection, no shell interpretation or token dumps,
+and preservation of the current inventory and prior removal/UID/mode mutations.
+Inspect complete wrapper-to-helper flow as well as helper-level cases; evaluate any
+whitespace/line splitting or normalization relevant to unsupported syntax rejection.
+Do not expand this into a general shell parser redesign. Verify that negative cases use
+the actual parsing helpers and only InventoryError counts as rejection. Preserve Raw,
+D4/D5, wire/I0a and prior role/log findings' source-only dispositions.
+
+No source/docs other than the review may be edited. No parser/regression loop/checker/
+validator/provisioner/self-test, Cargo/rustc/Clippy/build, SQL/DB/root/Docker/provider/
+network/workflow/production action, Git writes or delegation. Only source/hash/diff reads,
+bash-n, full Python AST and report/link checks are allowed. Missing or contradictory
+requirements must be reported rather than filled in. Report changedfile/line range/hash,
+findings with source proof and bounded follow-up, deviations/reasons, actual checks/results,
+unresolved/not-found/not-verified items (explicit none when empty), decomposition,
+background work and pending permissions. Return within 30 minutes of actual startup,
+or INCOMPLETE with exact residual scope. Coordinator owns source acceptance, corrections,
+and one new exact-candidate hosted run after checking existing runs.

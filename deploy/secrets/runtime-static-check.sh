@@ -212,17 +212,52 @@ class InventoryError(Exception):
     pass
 
 
+COMPONENT_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", re.ASCII)
+ASCII_DECIMAL_PATTERN = re.compile(r"[0-9]+", re.ASCII)
+OCTAL_MODE_PATTERN = re.compile(r"[0-7]{3,4}", re.ASCII)
+
+
+def require_component(value, source_label, field_name):
+    if COMPONENT_PATTERN.fullmatch(value) is None:
+        raise InventoryError(f"invalid {source_label} {field_name} literal")
+
+
+def split_ascii_fields(value):
+    stripped = value.strip(" \t")
+    return re.split(r"[ \t]+", stripped) if stripped else []
+
+
+def require_source_path(value, source_label):
+    components = value.split("/")
+    if not components or any(
+        component in {".", ".."} or COMPONENT_PATTERN.fullmatch(component) is None
+        for component in components
+    ):
+        raise InventoryError(f"invalid {source_label} source path literal")
+
+
+def parse_metadata(uid, gid, mode, source_label, single_line=None):
+    if ASCII_DECIMAL_PATTERN.fullmatch(uid) is None:
+        raise InventoryError(f"invalid {source_label} UID literal")
+    if ASCII_DECIMAL_PATTERN.fullmatch(gid) is None:
+        raise InventoryError(f"invalid {source_label} GID literal")
+    if OCTAL_MODE_PATTERN.fullmatch(mode) is None:
+        raise InventoryError(f"invalid {source_label} mode literal")
+    if single_line is not None and single_line not in {"yes", "no"}:
+        raise InventoryError(f"invalid {source_label} single_line literal")
+    return int(uid), int(gid), int(mode, 8)
+
+
 def parse_copy(line, source_label):
-    match = re.fullmatch(
-        r"add_copy\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)\s+([0-7]{3,4})\s+(yes|no)",
-        line,
-    )
-    if match is None:
+    fields = split_ascii_fields(line)
+    if len(fields) != 8 or fields[0] != "add_copy":
         raise InventoryError(f"unrecognized {source_label} add_copy mapping")
-    service, target, source, uid, gid, mode, single_line = match.groups()
-    if not service or not target or not source or single_line not in {"yes", "no"}:
-        raise InventoryError(f"ambiguous {source_label} add_copy mapping")
-    return f"{service}/{target}", (int(uid), int(gid), int(mode, 8))
+    _, service, target, source, uid, gid, mode, single_line = fields
+    require_component(service, source_label, "service")
+    require_component(target, source_label, "target")
+    require_source_path(source, source_label)
+    metadata = parse_metadata(uid, gid, mode, source_label, single_line)
+    return f"{service}/{target}", metadata
 
 
 def add_unique(destination, item, source_label):
@@ -243,7 +278,7 @@ def parse_copy_function(source, function_name):
         raise InventoryError(f"missing or ambiguous {function_name} definition")
     inventory = {}
     for raw_line in matches[0].group(1).splitlines():
-        line = raw_line.strip()
+        line = raw_line.strip(" \t")
         if not line or line.startswith("#"):
             continue
         add_unique(inventory, parse_copy(line, function_name), function_name)
@@ -262,7 +297,7 @@ def parse_release_provisioner(path):
     calls = {"add_serving_copies": 0, "add_infrastructure_copies": 0}
     extras = 0
     for raw_line in branches[0].group(1).splitlines():
-        line = raw_line.strip()
+        line = raw_line.strip(" \t")
         if not line or line.startswith("#"):
             continue
         if line in calls:
@@ -296,20 +331,185 @@ def parse_validator_release(path):
     if len(matches) != 1:
         raise InventoryError("missing or ambiguous validator release runtime_specs branch")
     inventory = {}
-    spec_pattern = re.compile(r"([^:/\s]+/[^:/\s]+):(\d+):(\d+):([0-7]{3,4})\Z")
     for raw_line in matches[0].group(1).splitlines():
-        line = raw_line.strip()
+        line = raw_line.strip(" \t")
         if not line or line.startswith("#"):
             continue
-        for token in line.split():
-            match = spec_pattern.fullmatch(token)
-            if match is None:
-                raise InventoryError("unrecognized validator release runtime_specs mapping")
-            path_key, uid, gid, mode = match.groups()
-            add_unique(inventory, (path_key, (int(uid), int(gid), int(mode, 8))), "validator release")
+        for token in split_ascii_fields(line):
+            add_unique(inventory, parse_validator_spec(token), "validator release")
     if not inventory:
         raise InventoryError("validator release inventory is empty")
     return inventory
+
+
+def parse_validator_spec(token):
+    fields = token.split(":")
+    if len(fields) != 4:
+        raise InventoryError("unrecognized validator release runtime_specs mapping")
+    path_key, uid, gid, mode = fields
+    path_components = path_key.split("/")
+    if len(path_components) != 2:
+        raise InventoryError("invalid validator release path literal")
+    service, target = path_components
+    require_component(service, "validator release", "service")
+    require_component(target, "validator release", "target")
+    metadata = parse_metadata(uid, gid, mode, "validator release")
+    return path_key, metadata
+
+
+def expect_inventory_error(label, operation):
+    try:
+        operation()
+    except InventoryError:
+        return
+    raise InventoryError(f"parser regression expected rejection: {label}")
+
+
+def run_parser_regressions():
+    disallowed_tokens = [
+        r"${service}",
+        r"$service",
+        r"$(id)",
+        "`id`",
+        '"literal"',
+        "'literal'",
+        r"literal\name",
+        "*",
+        "n?me",
+        "[abc]",
+        "{a,b}",
+        "~user",
+        "safe;id",
+        "safe|id",
+        "safe&",
+        "<(id)",
+        "safe>out",
+    ]
+    for token_index, token in enumerate(disallowed_tokens):
+        for field_index in range(3):
+            fields = ["service", "target", "source"]
+            fields[field_index] = token
+            line = "add_copy " + " ".join(fields + ["10003", "10003", "0440", "yes"])
+            position = ("service", "target", "source")[field_index]
+            expect_inventory_error(
+                f"parse_copy {position} token #{token_index}",
+                lambda line=line: parse_copy(line, "parser regression"),
+            )
+        for field_index in range(2):
+            path_components = ["service", "target"]
+            path_components[field_index] = token
+            spec = f"{'/'.join(path_components)}:10003:10003:440"
+            position = ("service", "target")[field_index]
+            expect_inventory_error(
+                f"parse_validator_spec {position} token #{token_index}",
+                lambda spec=spec: parse_validator_spec(spec),
+            )
+
+    invalid_sources = [
+        "/absolute",
+        "../parent",
+        "tls/../parent",
+        "tls//file",
+        "tls/",
+        "./tls/file",
+        "tls/./file",
+    ]
+    for source_index, source in enumerate(invalid_sources):
+        line = f"add_copy service target {source} 10003 10003 0440 yes"
+        expect_inventory_error(
+            f"parse_copy relative source #{source_index}",
+            lambda line=line: parse_copy(line, "parser regression"),
+        )
+
+    valid_copy = "add_copy service target source 10003 10003 0440 yes"
+    expect_inventory_error(
+        "parse_copy missing field",
+        lambda: parse_copy("add_copy service target source 10003 10003 0440", "parser regression"),
+    )
+    expect_inventory_error(
+        "parse_copy extra field",
+        lambda: parse_copy(valid_copy + " extra", "parser regression"),
+    )
+    expect_inventory_error(
+        "parse_copy non-ASCII field separator",
+        lambda: parse_copy("add_copy service target\u00a0source 10003 10003 0440 yes", "parser regression"),
+    )
+    for field_name, value in (("UID", "${uid}"), ("GID", "$gid"), ("UID", "١"), ("GID", "١")):
+        fields = ["service", "target", "source", "10003", "10003", "0440", "yes"]
+        fields[3 if field_name == "UID" else 4] = value
+        line = "add_copy " + " ".join(fields)
+        expect_inventory_error(
+            f"parse_copy {field_name} numeric token",
+            lambda line=line: parse_copy(line, "parser regression"),
+        )
+    for mode in ("0o440", "888", "44", "04400"):
+        line = f"add_copy service target source 10003 10003 {mode} yes"
+        expect_inventory_error(
+            "parse_copy unsupported mode",
+            lambda line=line: parse_copy(line, "parser regression"),
+        )
+    for single_line in ("YES", "true", "1"):
+        line = f"add_copy service target source 10003 10003 0440 {single_line}"
+        expect_inventory_error(
+            "parse_copy unsupported single_line spelling",
+            lambda line=line: parse_copy(line, "parser regression"),
+        )
+
+    valid_spec = "service/target:10003:10003:440"
+    expect_inventory_error(
+        "parse_validator_spec missing field",
+        lambda: parse_validator_spec("service/target:10003:10003"),
+    )
+    expect_inventory_error(
+        "parse_validator_spec extra field",
+        lambda: parse_validator_spec(valid_spec + ":extra"),
+    )
+    for field_name, value in (("UID", "${uid}"), ("GID", "$gid"), ("UID", "١"), ("GID", "١")):
+        fields = ["service/target", "10003", "10003", "440"]
+        fields[1 if field_name == "UID" else 2] = value
+        spec = ":".join(fields)
+        expect_inventory_error(
+            f"parse_validator_spec {field_name} numeric token",
+            lambda spec=spec: parse_validator_spec(spec),
+        )
+    for mode in ("0o440", "888", "44", "04400"):
+        spec = f"service/target:10003:10003:{mode}"
+        expect_inventory_error(
+            "parse_validator_spec unsupported mode",
+            lambda spec=spec: parse_validator_spec(spec),
+        )
+
+    positive_copies = (
+        (
+            "add_copy api_server target-1 cursor_secret 10001 10001 0440 yes",
+            ("api_server/target-1", (10001, 10001, 0o440)),
+        ),
+        (
+            "add_copy owner-beta_daily-admitter lagrange.crt tls/lagrange.crt 10003 10003 0440 no",
+            ("owner-beta_daily-admitter/lagrange.crt", (10003, 10003, 0o440)),
+        ),
+        (
+            "add_copy owner-beta_daily-admitter lagrange_key tls/lagrange.key 10003 10003 0400 yes",
+            ("owner-beta_daily-admitter/lagrange_key", (10003, 10003, 0o400)),
+        ),
+    )
+    for positive_index, (line, expected) in enumerate(positive_copies):
+        if parse_copy(line, "parser regression") != expected:
+            raise InventoryError(f"parse_copy positive regression #{positive_index} changed tuple")
+
+    positive_specs = (
+        (
+            "owner-beta_daily-admitter/db_daily_input_admitter_password:10003:10003:440",
+            ("owner-beta_daily-admitter/db_daily_input_admitter_password", (10003, 10003, 0o440)),
+        ),
+        ("api_server/cert.1:101:101:0440", ("api_server/cert.1", (101, 101, 0o440))),
+    )
+    for positive_index, (spec, expected) in enumerate(positive_specs):
+        if parse_validator_spec(spec) != expected:
+            raise InventoryError(f"parse_validator_spec positive regression #{positive_index} changed tuple")
+
+
+run_parser_regressions()
 
 
 def inventory_parity(provisioner, validator):
