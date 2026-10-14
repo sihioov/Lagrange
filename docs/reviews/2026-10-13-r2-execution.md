@@ -4,7 +4,7 @@
 - 시작 시각: 2026-10-13 13:47 UTC / 22:47 KST.
 - 기준 workspace: `/data/worktrees/3puw275b/excited-dolphin`, branch `excited-dolphin`.
 - 적용 계획: [R2 일일 연구 베타](../superpowers/plans/2026-10-13-r2-daily-research-beta.md).
-- 상태: **R2 DOING; DB 집계·복구 범위 검토 수용, F1/F2 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. U2 채택 대기.** 실행 요청은 계획의 기존 승인·새 결정 구분을 유지한다.
+- 상태: **R2 DOING; DB 진단과 F1/F2 보정본 `f8b9296` CI·독립 리뷰 수용. 2026-10-14 Owner가 U2를 채택해 WP-4 설계·구현 진행.** 운영 적용·실제 데이터·Owner·3거래일 인수는 후속이다.
 
 ## G0와 기준선
 
@@ -31,7 +31,7 @@
 | WP-1B~F | `4213016a-e26d-4e09-bbc3-e7764797795c` / codex gpt-6.1-sol high; 운영 실행은 코디네이터·WP-1 worker | operator READ ONLY SQL·runner, 현재 집계 및 복구 날짜 검토 | 1C~E 실패 보존; 1F 성공·오프라인 검토 수용, 실제 복구는 미실행 |
 | WP-3/F1 | `8a7c638a-bf04-4ea0-892e-ae51c158b089` / codex gpt-6-luna max | daily→backfill 선택 날짜 보존·fake-host 회귀 | 보정본 CI 성공, P2 격리 보정·hostile 환경 self-test·독립 리뷰 수용; 운영 복구는 별도 |
 | WP-5/F2 | `7b793a02-47b0-4db5-bfa2-506185b2d67e` / codex gpt-6-luna max | Owner 동일 eligible day 재평가·격리 회귀 작성 | cadence·동시 DB 회귀와 연도 경계 fixture 보정본 CI 성공·독립 리뷰 종료; 운영·WP-4 통합은 별도 |
-| WP-4 | 미배정 | 새로운 ETF 입력·자동 추천 | BLOCKED; U2 결정안 대기 |
+| WP-4 | 후속 계획에서 분해 | 새로운 ETF 입력·독립 검증·자동 추천 | DOING; 2026-10-14 U2 채택, 설계·구현 접점 확정 |
 | WP-6/7 부분 | WP-1 worker / Luna medium; WP-2 worker / Sol high | `3ee453f`·`f8b9296` 기존 CI 회수와 F1/F2 독립 리뷰 | 두 CI terminal success, 보정본 P2 리뷰 종료; 최종 C_R2 인수는 별도 |
 | WP-8~10 | 미배정 | 이미지·운영·관찰 | TODO |
 
@@ -258,3 +258,28 @@ main 통합, 이미지·운영 적용·실제 Owner 사용·연속 3거래일 �
 heartbeat `a136717b`를 삭제했다. 남은 worker/background/permission wait는 없다.
 검증된 scheduler 재평가와 EOD/ETF 발행 복구 구분 교훈은 hook helper의 Mem0 `SAVED`와
 memory ID로 저장을 확인했다. 제안 상태인 U2는 채택된 결정으로 저장하지 않았다.
+
+### U2 채택·WP-4 재개 — 2026-10-14 KST
+
+Owner가 다음 작업으로 안내한 일일 입력·자동 추천 계약에 **“그걸로 진행해”**라고 답해
+[U2 채택](2026-10-13-r2-daily-input-decision.md)을 기록했다. 계약 승인 대기를 해소하고
+R2-04를 DOING으로 전환했다. 시작 HEAD는 clean `619634db32526032aae07ee2024a10f69fc560c4`다.
+기존 v3·F1/F2 검증을 보존하며 새 입력·독립 admission·예약·화면의 접점을
+[WP-4 후속 계획](../superpowers/plans/2026-10-14-r2-daily-input-implementation.md)에 따라 분해한다.
+
+현재 profiles는 코디네이터용 Astra/high 하나뿐이다. worker용 profile은 없으므로 모델 지원을
+조회하고 repository 배정 규칙으로 D1 hard/Astra xhigh와 D2 simple/Luna medium을 선택했다.
+각 worker는 보고서 하나만 소유하며 제품 파일·다른 보고서·운영 상태를 변경하지 않는다.
+
+| 패키지 | worker | 실제 runtime | 범위 |
+| --- | --- | --- | --- |
+| D1 | `1b2bd1a5-94ce-4e5c-9691-26e770617ee0` | codex gpt-6-astra / xhigh | 일일 입력·독립 권한·DB/queue/API 구조 설계 |
+| D2 | `e8ae2870-0240-4826-b1dc-0c37d5b03eea` | codex gpt-6-luna / medium | 기존 Web 설정·추천 DTO와 검증 접점 목록 |
+
+두 worker의 cwd·workspace `wks_10fae7d550ab1704`·parent
+`ef6cdbb0-8409-4dba-86ca-c07eadccf377`, 실제 running/pending0을 확인했다.
+별도 mode 설정은 하지 않았다. `notifyOnFinish=true`와 두 worker만 대상으로 하는 heartbeat
+`1aaa7e97`(2분, 최대 60회, 2026-10-14 02:25:55 UTC 만료)을 등록했다.
+private ledger에 소유 범위와 회수 상태를 보존한다. 같은 daemon의 감시는 daemon 중단을 보호하지 않는다.
+설계 결과를 통합·리뷰한 뒤 exact 파일 소유권과 인터페이스를 확정해 구현을 위임한다.
+운영 배포·migration·timer·provider 호출과 과거 추천 backfill은 이번 채택으로 실행하지 않는다.

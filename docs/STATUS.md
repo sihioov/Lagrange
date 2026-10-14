@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — DB 집계·복구 범위 분석과 F1/F2 소스 검증 완료. 새 ETF 입력·자동 추천 계약 채택 후 WP-4 설계·구현; 최종 후보의 운영 적용·Owner 인수는 후속 단계. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — DB 진단과 F1/F2 검증 완료. 2026-10-14 Owner가 새 ETF 일일 입력·자동 추천 계약을 채택해 [WP-4 설계·구현](superpowers/plans/2026-10-14-r2-daily-input-implementation.md) 진행. 최종 후보의 운영 적용·Owner 인수는 후속 단계. [실행 기록](reviews/2026-10-13-r2-execution.md) |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -29,7 +29,7 @@ timer는 비활성이며 실행 manifest 대상 중 3개가 일치하고 5개는
 59개 migration checksum 일치, ETF11 발행 8월 28일·Owner V2 10월 6일을 확인했다.
 날짜 artifact와 daily DB 기록의 차이는 28세션이다. 조회 도구의 앞선 문법 오류·실패를 보존하고
 집계·정확한 날짜 차이와 [복구 범위 검토](reviews/2026-10-13-r2-catch-up-readiness.md)를 수용했다. 8월 31일은 기존 EOD의 별도 발행 복구 후보다. 서비스 변경·provider 호출은 미실행이다.
-기존 KIS 개인 이용 권리는 ADR-0005로 해결돼 있다. 새 ETF 일일 입력의 독립 승인·자동 추천 계약만 별도 결정한다.
+기존 KIS 개인 이용 권리는 ADR-0005로 해결돼 있다. 새 ETF 일일 입력의 독립 검증·자동 추천 계약은 2026-10-14 Owner가 채택했으며, 소스 구현과 후속 운영 검증을 진행한다.
 동일 후보 검증·운영 적용, 실제 Owner 사용·연속 3거래일 관찰은 후속 인수 조건이다.
 아래 날짜별 운영 관측은 과거 기록이며 이번 재관측과 구분한다.
 
