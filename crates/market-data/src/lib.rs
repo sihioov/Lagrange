@@ -44,6 +44,7 @@ pub mod candidate;
 pub mod candidate_normalize;
 pub mod contract;
 pub mod curate;
+pub mod daily_price_only;
 pub mod entitlement;
 pub mod fixed_stock_price_beta;
 pub mod fixed_stock_price_beta_approval;

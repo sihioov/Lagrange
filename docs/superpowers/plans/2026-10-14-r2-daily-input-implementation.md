@@ -38,6 +38,8 @@ Native subagents: prohibited for worker packages
 | I0a | intermediate | D6가 검토한 새 admitter 역할의 격리 harness 준비를 기존 네 파일에 한정 | high | 운영 secret/Compose 변경 또는 새 migration 의미가 필요하면 해당 접점을 반환 |
 | I0a-R | intermediate | 고정된 네 harness 파일의 권한·실행 순서·직접 로그인 구현을 독립 검토 | high | 구체적 소스 반례만 반환하며 미실행 DB 검증을 source closure와 구분 |
 | I1a-P2 | intermediate | 회수된 I1a의 세 cash code 문법·오류와 고정 회귀를 두 파일에서 보정 | high | 규칙 밖의 의미 변경이 필요하면 해당 접점을 반환 |
+| I1a-R | intermediate | 고정 wire 구현 네 파일의 문법·hash·오류·bounded parser와 회귀를 독립 검토 | high | 새 신뢰/운영 정책을 요구하지 않고 도달 가능한 소스 반례를 반환 |
+| I1a-CI | simple | 정확한 부분 후보의 기존 hosted CI 결과·checkout·필수 회귀 증거 회수 | high | 실제 로그 누락/모순은 미검증으로 반환하며 새 run을 만들지 않음 |
 
 구현 패키지는 D1/D2와 D3의 실제 결과를 통합한 뒤 이 문서에 **정확한 파일 소유권·인터페이스·
 검증 명령을 추가하고서** 시작한다. 현재 설계 작업을 소스 구현 완료로 세지 않는다.
@@ -57,6 +59,8 @@ Native subagents: prohibited for worker packages
 | I0a | 5 | intermediate | 첫 0060 전 격리 role/bootstrap 기반 준비 | 두 `tests/common/mod.rs`, migration-contract의 `role-bootstrap.sql`·`bootstrap.sql`만 | D6의 D3-05 source-design closure 수용 | Luna max | 새 role preflight·DB별 권한·direct-login helper | rustfmt/diff·source 확인; 실제 역할/DB 검증은 이후 hosted 순차 실행 |
 | I0a-R | 5 | intermediate | I0a 구현의 독립 소스 리뷰 | `docs/reviews/2026-10-14-r2-isolated-role-harness-review.md`만 | I0a idle·결과 회수·네 파일 hash 고정 | Sol high, 코드 리뷰 규칙 | 구체적 finding 또는 범위 한정 source closure | 소스·SQL 문자열·연결 순서 대조; 실행 없음 |
 | I1a-P2 | 5 | intermediate | D6-01 present-empty cash metadata 구현·회귀 | `daily_price_only/contract.rs`, `tests/daily_price_only.rs`만 | I1a idle·보고 회수, 보정 D4 hash 고정 | 같은 Luna max | empty 보존·정확한 오류·515-byte fixture·nonempty bundle | rustfmt/diff; 후속 독립 리뷰·exact 후보 hosted Rust/CI |
+| I1a-R | 6 | intermediate | 전체 pure wire와 보정본의 독립 코드 리뷰 | `docs/reviews/2026-10-14-r2-daily-wire-review.md`만 | I1a-P2 idle·최종 hash 고정 | Sol high | concrete finding 또는 범위 한정 source closure | 고정 D4·실제 source·meaningful 회귀·cached dependency 대조 |
+| I1a-CI | 6 | simple | I1a/I0a 부분 후보의 hosted CI 증거 회수 | `docs/reviews/2026-10-14-r2-daily-wire-ci.md`, private exact-SHA CI receipts | source 후보 commit/push·기존 run 조회 후 코디네이터가 한 번만 dispatch | Luna medium | 정확한 run/job/step/테스트 결과·미검증 항목 | GitHub read-only logs와 SHA·필수 테스트 marker 대조 |
 
 ## Worker briefs
 
@@ -424,3 +428,50 @@ SHA-256 `6ad13d8a0f622e3cc5eadc1fb67e1a050340e7e9fcebce12114f1a606838e0dc`를 �
 직접 읽은 네 파일 diff·전후 hash·호출 순서와 일치하며 concrete finding 없음이라는 **소스 검토 한정**
 결론을 수용한다. 현재 검토 문서/계약의 45개 링크·라인 경계도 확인했다. 실제 compile/SQL/role/pool/
 ACL/cleanup은 미검증이며 나머지 I0 운영·official 연결 전 첫 0060 실행은 계속 금지한다.
+
+## I1a-P2 회수·독립 리뷰와 hosted 검증 준비 — 2026-10-14
+
+02:20:06 UTC 실제 idle/pending0 후 I1a-P2 최종 보고를 회수했다. 코디네이터가
+valid_code, JSON lexical 검사, typed cash-row 검사와 새 fixture/bundle/오류 회귀를 직접 읽었다.
+세 값의 empty 보존·InvalidLiteral 분류가 같은 규칙을 따르며 문서 hash는 그대로다.
+테스트는 작성됐지만 Cargo/rustc/실행은 아직 없다. 이 source 후보를 독립 리뷰와 기계 검증에
+넘기며, 리뷰 완료나 CI 성공을 선취하지 않는다. I0a 코드도 함께 포함된 부분 후보이고 최종 C_R2가 아니다.
+
+| 정확한 리뷰 입력 | 행 수 | SHA-256 |
+| --- | --- | --- |
+| `crates/market-data/src/daily_price_only/mod.rs` | 8 | `e143131e3bc23628179d6f2fe2bff0f0539b960f86d311b5ad9627f1610b2135` |
+| `crates/market-data/src/daily_price_only/contract.rs` | 4057 | `4cf96f83b5a91e4891975e6fe577aa29a24fce92ce05b3c118cd9e4531285833` |
+| `crates/market-data/src/lib.rs` | 288 | `fc74f278107f2e6835014dffedaff5cc860f89094ca48fa1942e1c87747dfb75` |
+| `crates/market-data/tests/daily_price_only.rs` | 1788 | `860c728b9c76c838acbf95d4ab7a15967a0b8c7498d9cbc700ebeda9841973f1` |
+
+### I1a-R 고정 실행 brief
+
+- intermediate/high confidence, 독립 코드 리뷰 규칙에 따라 Sol/high. 네 파일의 exact hash와
+  D4 950행 `fa052903…`를 확인한다. 출력은 `docs/reviews/2026-10-14-r2-daily-wire-review.md` 하나다.
+- D4 §2~9와 code의 strict JSON duplicate/unknown/missing/type/lexical 검사, 깊이/크기/count 상한,
+  timestamp/numeric 보존, set 정렬과 ordered chain 구분, request/copy/coverage/hash graph,
+  모든 public parse/typed encode/preimage/bundle 경로를 검토한다. D6-01 보정도 포함한다.
+- 소스 한정의 구체적 도달 경로·line·실패 조건이 있는 finding만 반환한다. Raw trust/DB/운영 인수는
+  의도적으로 이 pure wire 밖이다. public unapproved type을 승인 타입처럼 해석하지 않는다.
+- 컴파일/strict clippy에 걸릴 수 있는 source 문제와 meaningful fixture의 누락도 확인하되
+  실제 compiler 결과처럼 보고하지 않는다. 실행 증거는 별도 exact candidate CI에서 회수한다.
+- 제품 소스/계약/로드맵/기존 리뷰는 수정하지 않는다. source/hash/link/line/rustfmt check만 허용하며
+  Cargo/rustc/test/DB/SQL/root/Docker/network/provider/운영/Git write/하위 위임은 금지한다.
+  cached dependency source read는 허용한다. 공통 최종 보고 형식을 따른다.
+
+### I1a-CI 준비와 회수 범위
+
+- 코디네이터가 이 부분 후보의 소스·진행 문서를 커밋해 기존 `excited-dolphin`에 fast-forward push한다.
+  main의 별도 개선은 통합하지 않는다. remote branch는 준비 시 `619634d`, 기존 두 CI는 terminal success였다.
+- push 후 exact head SHA의 기존 CI를 먼저 조회한다. 없을 때만 기존 `ci.yml` workflow_dispatch를
+  한 번 요청한다. feature push는 이 workflow를 자동 시작하지 않는다. run이 있으면 새 실행하지 않는다.
+- 독립 리뷰와 hosted 기계 검증은 병행 가능하다. 한 번에 한 후보 workflow만 운영하며 실제 Rust/DB
+  명령은 기존 hosted workflow의 순서를 유지한다. 운영 호스트의 Cargo/DB/Docker/build는 실행하지 않는다.
+- simple/high confidence 회수는 Luna/medium에 위임한다. 정확한 commit/run ID와 report/receipt 경로는
+  실제 dispatch 응답 뒤 brief에 고정한다. workflow 재실행/취소/새 실행·Git 변경 권한은 주지 않는다.
+- 7개 실행 job/required, 모든 checkout SHA, daily_price_only 테스트 3개 cash 회귀와 primary golden,
+  기존 historical v2/v3 테스트, PG migration/count/checksum/skip marker, Web/Python 결과를 실제 로그로
+  확인한다. 단순 step success로 개별 실행을 추정하지 않는다. 미호출 daily_input_admitter_pool의
+  실제 direct-login/GUC/ACL 또는 아직 없는 0060 증거를 기존 CI 성공에서 추론하지 않는다.
+- 실패는 typed compiler/test/step 진단과 source anchor만 저장하고 raw verbose 로그·secret/provider
+  본문은 저장하지 않는다. final report에 미실행/미검증과 stale 기존 CI의 한계를 명시한다.

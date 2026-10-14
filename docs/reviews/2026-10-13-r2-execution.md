@@ -472,3 +472,24 @@ notifyOnFinish=true와 실제 running/pending0·workspace·parent를 확인했�
 관찰한다. 완료된 I0a/I0a-R 결과와 원본 I1a hash는 private ledger/receipt에 보존했다.
 보정본 회수 후 독립 리뷰와 정확한 후보의 hosted 순차 검증으로 이어간다. 생산 배포·migration·
 서비스·timer·시장 API 실행 권한은 변경하지 않았다.
+
+### I1a-P2 회수·부분 후보 소스 검증 전환 — 2026-10-14 KST
+
+02:20:06 UTC I1a-P2의 actual idle/pending0와 최종 보고를 회수했다. contract.rs 4,057행·
+`4cf96f83b5a91e4891975e6fe577aa29a24fce92ce05b3c118cd9e4531285833`, test 1,788행·
+`860c728b9c76c838acbf95d4ab7a15967a0b8c7498d9cbc700ebeda9841973f1`를 고정했다.
+coordinator가 three-code empty/InvalidLiteral의 JSON·typed 경로와 nonempty cash fixture,
+정확한 오류를 요구하는 회귀를 읽었다. module/lib 선언과 D4 `fa052903…`는 변하지 않았다.
+원래 25 struct·4 enum·17 free function과 2 timestamp method도 유지했다.
+
+새 코드와 작성한 테스트는 이 부분 후보 커밋에 포함하며 실제 Rust/CI 성공은 아직 아니다.
+I1a-R은 기존 Sol/high `d9ca76a3-b7dc-4913-944f-10ce8cc35d80`에 최종 네 파일과 D4를 고정해
+notified follow-up으로 맡겼다. 검토 범위는 pure wire 전체의 parser/typed encoder/hash/상한과
+회귀이며 소스는 수정하지 않는다. 역할 프로필은 여전히 coordinator용 하나라 기존 검토자 설정을
+유지했다. I0a 코드의 실제 역할/SQL 인수와 최종 C_R2 판단은 이 코드 리뷰와 별개다.
+
+원격 feature branch는 `619634db32526032aae07ee2024a10f69fc560c4`였고 기존 두 CI는
+`38420816275`/`38415230019` terminal success였다. 새 후보를 커밋·fast-forward push한 뒤
+정확한 SHA의 기존 run을 재조회하고, 없을 때만 기존 ci.yml을 한 번 dispatch한다.
+독립 리뷰와 hosted CI는 병행하며 운영 호스트에 Cargo/DB/Docker/build는 실행하지 않는다.
+새 CI의 checkout/job/개별 테스트와 미검증 한계는 별도 결과 회수로 기록한다.
