@@ -12172,7 +12172,7 @@ async fn daily_0060_bundle(
     ))
 }
 
-async fn daily_0060_denied(pool: &PgPool, sql: &str, expected: &str) -> Daily0060Result {
+async fn daily_0060_denied(pool: &PgPool, sql: &'static str, expected: &str) -> Daily0060Result {
     let mut tx = pool.begin().await?;
     let result = sqlx::raw_sql(sql).execute(&mut *tx).await;
     let code = result.err().and_then(|e| {
@@ -12332,7 +12332,6 @@ async fn daily_0060_case(name: &'static str) {
 }
 
 async fn daily_0060_case_body(db: &Daily0060Db, name: &str) -> Daily0060Result {
-    use serde_json::json;
     match name {
         "role_preflight" => {
             let supervisor = admin_pool(&supervisor_db_url(&db.url, &db.name))
@@ -13153,7 +13152,12 @@ async fn daily_0060_down_categories(db: &Daily0060Db) -> Daily0060Result {
         let fixture = format!(
             "DO $$ DECLARE c record; BEGIN FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='public.{table}'::regclass AND contype='f' LOOP EXECUTE format('ALTER TABLE public.{table} DROP CONSTRAINT %I',c.conname); END LOOP; END $$; INSERT INTO public.{table} VALUES {values}"
         );
-        sqlx::raw_sql(&fixture).execute(&mut *tx).await?;
+        // Audit: suffix is from the fixed table list above; values contain only
+        // typed UUIDs, the fixed hex hash, and literal fixture SQL. No external
+        // text is interpolated. DDL identifiers cannot use SQL bind parameters.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(fixture))
+            .execute(&mut *tx)
+            .await?;
         daily_0060_expect_state(
             sqlx::raw_sql(DAILY_0060_DOWN)
                 .execute(&mut *tx)

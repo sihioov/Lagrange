@@ -646,7 +646,7 @@ BEGIN
         THEN RAISE EXCEPTION 'daily calendar row' USING ERRCODE='23514'; END IF;
         d:=public.daily_0060_date(day->'session_date');
         IF d=ANY(seen) OR (day->>'source_row_ordinal')::int=ANY(ords)
-           OR day->>'evidence_kind' IS DISTINCT FROM CASE WHEN d=target THEN 'REQUESTED_TARGET' ELSE 'DERIVED_SURROUNDING' END
+           OR day->>'evidence_kind' IS DISTINCT FROM (CASE WHEN d=target THEN 'REQUESTED_TARGET' ELSE 'DERIVED_SURROUNDING' END)
         THEN RAISE EXCEPTION 'daily calendar binding' USING ERRCODE='23514'; END IF;
         seen:=array_append(seen,d); ords:=array_append(ords,(day->>'source_row_ordinal')::int);
         lo:=LEAST(lo,d); hi:=GREATEST(hi,d); IF d=target THEN targets:=targets+1; END IF;
@@ -815,7 +815,7 @@ BEGIN
         FOR x IN SELECT value FROM jsonb_array_elements(s->'calendar') LOOP
             d:=d+1;
             IF NOT public.daily_0060_keys(x,ARRAY['civil_date','session_type','exchange','timezone','source_file','normalized_document_sha256','legacy_projection'])
-               OR public.daily_0060_date(x->'civil_date')<>d OR x->>'session_type' IS DISTINCT FROM CASE WHEN d=dt THEN 'TRADING' ELSE 'CLOSED' END
+               OR public.daily_0060_date(x->'civil_date')<>d OR x->>'session_type' IS DISTINCT FROM (CASE WHEN d=dt THEN 'TRADING' ELSE 'CLOSED' END)
                OR x->>'exchange' IS DISTINCT FROM 'KRX' OR x->>'timezone' IS DISTINCT FROM 'Asia/Seoul'
                OR NOT public.daily_0060_hash(x->'normalized_document_sha256')
             THEN RAISE EXCEPTION 'daily civil binding' USING ERRCODE='23514'; END IF;
@@ -860,7 +860,7 @@ BEGIN
                    OR (logical_class='paidin-subscription' AND q->>'GB1' IS DISTINCT FROM '1')
                    OR (logical_class='paidin-record' AND q->>'GB1' IS DISTINCT FROM '2')
                    OR (SELECT value->>1 FROM jsonb_array_elements(page#>'{request,headers}') WHERE value->>0='tr_cont')
-                      IS DISTINCT FROM CASE WHEN first_page IS NULL THEN '' ELSE 'N' END
+                      IS DISTINCT FROM (CASE WHEN first_page IS NULL THEN '' ELSE 'N' END)
                    OR page->>'wire_sha256'=ANY(symbols)
                    OR (prior_page IS NOT NULL AND prior_page->>'response_continuation' IS DISTINCT FROM 'M')
                    OR (first_origin IS NOT NULL AND ROW(o->'provider',o->'market',o->'batch_id',o->'batch_date',o->'retrieved_at')

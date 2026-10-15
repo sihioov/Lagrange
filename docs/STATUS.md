@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | 후보 `f5122dd5cc1725213cd0adef8f3ec4689a3460ad`의 [단일 CI 38689151958](reviews/2026-10-15-r2-daily-sql-ci.md) attempt1 회수 중. 기존 실행 0건·원격 SHA 확인 후 한 번 dispatch했으며, 224개 입력 pin·195개 후보 blob과 32개 DB 정의·73개 하위 사례를 고정했다. 새 SQL·컴파일·테스트 인수는 대기 중이다. 기존 `57ca4d1`의 부분 성공과 모든 실패를 보존한다. I3–I7·운영·Owner·3거래일 관찰·최종 C_R2는 미완료다. |
+| 다음 단계 | 0060 첫 후보 `f5122dd`의 [CI 실패](reviews/2026-10-15-r2-daily-sql-ci.md)를 전체 회수했다. 224pins/195blobs/7checkout 일치, bootstrap83 PASS; 새 DB32/하위73·workspace Rust99는 미실행이다. SQL CASE 조건의 괄호와 테스트 helper 3곳을 [C01](reviews/2026-10-15-r2-daily-sql-c01.md)로 한정 보정했다. 다음은 새 후보의 기존 실행 조회 후 단일 hosted 검증이다. 기존 성공·실패를 보존하며 I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

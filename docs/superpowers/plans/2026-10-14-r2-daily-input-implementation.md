@@ -4017,3 +4017,15 @@ run38689151958 attempt1 created2026-10-15T05:52:26Z. All-event exact-head query0
 and remote SHA match preceded exactly one dispatch.224pins/195tracked blobs
 match;32 new DB definitions/73 subcases remain pending. Direct coordinator
 recovery, no worker/delegation. No rerun/cancel/duplicate or local execution.
+
+## Wave38 — I2-C01 after complete failed-run recovery
+
+First candidatef5122dd/run38689151958 attempt1 FAILURE fully recovered:
+8jobs/84steps/8logs/7checkout,224pins/195blobs; bootstrap83 PASS,chart6 FAIL,
+new32/73 and prior99 workspace cases NOT_EXECUTED. Full evidence preserved.
+Coordinator corrects only0060 UP's three IF/CASE expression groupings and the
+Rust helper static SQL lifetime, explicit fixed-fixture SQL audit and unused import.
+32 names/73 subcases/old118 migrations unchanged. No worker or delegation.
+Source disposition precedes one new exact-head hosted run after existing-run query
+and remote SHA verification. All earlier failures/successes remain immutable.
+No local SQL/compiler/test/helper/provider/production operation or R2 acceptance.
