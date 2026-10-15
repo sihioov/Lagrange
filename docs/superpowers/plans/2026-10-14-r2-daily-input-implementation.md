@@ -4881,3 +4881,26 @@ written before dispatch; initial propagation did not cause another run. Source a
 frozen inputs remain immutable while running. Later documentation HEAD does not
 change this candidate. No source/compiler/test acceptance yet. Existing successes
 and failures preserved. No local execution or delegation; Ralph continues.
+
+### Wave59 accepted; Wave60 admitter readback scope — 2026-10-16 KST
+
+35b64fe/CI38792738853 attempt1 SUCCESS fully recovered at2026-10-15T19:41:06.405048+00:00.
+All8jobs/logs/7checkouts,584pins/334blobs and19new navigation names plus every prior
+required Rust group match. PG17exit0/noSKIP,14/6/6/8/24,32/73/83, both61UP
+checksum sets/NO_OP/roles/0039/catalog/cleanup, workspaceformat/strictClippy,
+web34+121/14 and Python487/10skip/7warnings pass.
+Receipt7854lines/SHA397ca7e33841ab6fd96680aba1308958898f118b49bd6fdda38a7622a29eebc6; direct coordinator review, not independent integration review.
+[Bounded evidence](../../reviews/2026-10-16-r2-daily-navigation-ci.md).
+Actual approved-base paired capability remains untested.
+
+Wave60 R2-04/09 WP-4/I4g2 owns ONLY migrations/0062_owner_beta_daily_admitter_readback
+UP/DOWN, job-queue runner/daily_admission.rs, tests/owner_beta_daily_schedule.rs and
+deploy/db/integration-validation/validate.sh. Add pending-cycle context, exact
+admission metadata and exact receipt readback through direct-admitter authority;
+old epoch/foreign identity cannot become current authority. No new table grants.
+18new definitions:14actualDB and4pure; dedicated schedule inventory14→28,
+full-release61→62 while staged0060 stays60. Existing0060/0061 and all prior tests
+remain unchanged. Source/static work only until direct review, new pins/inventory
+and one exact-candidate hosted CI. No new worker, local project/SQL execution or
+activation. Full producer/admitter wiring, real approved input, I5-I7, runtime/Owner/
+three trading days/final C_R2 remain open. R2-04/09 DOING; Ralph continues.
