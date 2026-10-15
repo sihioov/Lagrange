@@ -2905,3 +2905,29 @@ Two production-unchanged test corrections,12carried I4e definitions,3explicit
 collector actual-DB names and all prior gates frozen. No acceptance until complete
 result recovery. This later tracking-doc commit does not change the candidate.
 No rerun/cancel/duplicate/local project execution/delegation. Ralph continues.
+
+
+### Wave57 bounded acceptance and Wave58 supersession scope — 2026-10-16 KST
+
+c4f35bb/CI38784769462 attempt1 SUCCESS recovered at2026-10-15T18:43:36.629885+00:00.
+8jobs/logs/7checkouts,548pins/328blobs,2pure+10actualDB runner,3collector
+actualDB names and every carried group passed. PG17exit0/noSKIP,14/6/6/8/10,
+32/73/83 and60UPSHA384checksums both lanes passed. Web34+121/14,
+strictClippy/workspaceformat and Python487/10skip/7warnings passed.
+Receipt7484lines/SHA8fae21d9c8ca6d614569019e18ebba4ee47f45d4bd5628ba4ff5ee2a48dbc4e2.
+Old masked collector bootstrap root cause remains UNKNOWN; failure preserved.
+
+Wave58 owns six source files after full recovery: new0061supersession UP/DOWN,
+owner_beta/publish.rs,owner_beta_daily_runner.rs,integration-validation/validate.sh,
+migration-contract/tests/migration_contract.rs. Preserve0060 bytes, every prior
+runner definition and historical publication prefix. Typed direct-worker cancellation
+requires exact live job/attempt/run/reservation and trustworthy newer eligible date
+after control/source locks; keeps permanent reservation and publishes nothing.
+Apply at daily preflight/success/failure; manual cancellation remains unchanged.
+14new actualDB cases plus10old runner names required: source-fence races, actual
+role impersonation denial, real expired lease, cutoff after waits, rollback and
+61down/up preservation. Full-release endpoint61; staged0060/no-op remains60.
+No local project execution/delegation/production/provider action; coordinator
+direct review only. Freeze and exact-candidate CI before acceptance.
+I4g/full I4/I5-I7/independent integration review/runtime/Owner/three trading days/
+final C_R2 remain. Ralph continues.

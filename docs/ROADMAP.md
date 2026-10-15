@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave57 테스트 보정 후보 `c4f35bb` / [CI38784769462](https://github.com/sihioov/Lagrange/actions/runs/38784769462) attempt1 전체 회수. 548pins/328blobs·일일 실행12개·collector 실제DB3개·모든 기존 gate 대조 후 superseded 취소·producer/admitter 연결. I5–I7·운영·Owner·3거래일·최종 C_R2는 계속 진행한다. |
+| 다음 착수 항목 | Wave57 c4f35bb / CI38784769462 전체 성공을 범위별 인수. Wave58 migration0061 superseded 취소·14개 실제DB 회귀를 구현하고 정확한 후보 CI로 검증한 뒤 producer/admitter를 연결한다. I5–I7·운영·Owner·3거래일·최종 C_R2 계속 진행. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -271,7 +271,8 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   이전 검증 — 2026-10-15, `302f29a`의 [I1b-S4 복원 인수](reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md) 완료: CI38725299504 attempt1 전체 성공, 새32개·회귀·PG·strict lint와276pins/223blobs/7checkout 대조. 다음은 전체 소스 탐색/변경 감지, protected prefix와 artifact/admission/supply. 앞선 `eb0e839`의 [I1b-S3 원본 추적·달력 증명](reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md) 구현·hosted 검증 인수. CI 38711965495 attempt1의 8개 job 성공, 262pins/215blobs/7checkout·새22개·기존 정규화37개와 I2/R2 회귀를 대조했다. 다음은 가격·기준정보·기업행사 복원, 전체 source frontier와 artifact/admission/supply다. 전체 I1b, I3–I7·최종 독립 통합 리뷰·운영 UID/ACL·installer 파일시스템 rollback·Owner·연속 3거래일·최종 C_R2는 미완료이며 관측 기간은 아직 시작하지 않았다.
   최신 검증 — 2026-10-16, `bd33596` / CI38760423300 attempt1 전체 성공. [I3·S5c/def 범위별 인수](reviews/2026-10-16-r2-test-correction-ci-acceptance.md): 423pins/302blobs/7checkout, 일일 계산21·artifact/continuation63·서비스 상태38·기존 회귀·PG13단계와 발행8개 대조. 실제 승인 base 전체 통합·독립 검토는 별도이며 I4a 예약/승인 cycle 연결을 계속한다. 운영·Owner·3거래일은 미시작.
   후속 — 2026-10-16, [Wave53 전체 회수](reviews/2026-10-16-r2-daily-settlement-ci.md): 일일 스케줄14·실패 정산/복구12·실제DB16단계 통과, 웹 E2E 실패로 전체 후보는 미인수. [Wave54 성공 저장·진단 보완](reviews/2026-10-16-r2-daily-success-source.md)은 `47c7dbc` / CI38771904166 전체 성공으로 [범위별 인수](reviews/2026-10-16-r2-daily-success-ci.md). 다음은 한도가 있는 봉인 입력 체인 로더와 전체 런타임 연결이다.
-  최신 검증 — 2026-10-16, [Wave56 전체 회수](reviews/2026-10-16-r2-daily-runner-ci.md): 후보9343706의 새12개·기존 필수 Rust·PG17개 lane 통과, strict lint와 collector DB 초기화1개 실패로 전체 미인수. [Wave57 테스트 보정](reviews/2026-10-16-r2-daily-runner-lint-correction.md)은 운영 소스 변경 없이 재검증한다. 이전 Wave55 인수를 보존하며 전체 I4·실제 승인 base 통합·독립 리뷰·운영·Owner·관찰은 미완료.
+  이전 검증 — 2026-10-16, [Wave56 전체 회수](reviews/2026-10-16-r2-daily-runner-ci.md): 후보9343706의 새12개·기존 필수 Rust·PG17개 lane 통과, strict lint와 collector DB 초기화1개 실패로 전체 미인수. [Wave57 테스트 보정](reviews/2026-10-16-r2-daily-runner-lint-correction.md)은 운영 소스 변경 없이 재검증한다. 이전 Wave55 인수를 보존하며 전체 I4·실제 승인 base 통합·독립 리뷰·운영·Owner·관찰은 미완료.
+  최신 검증 — 2026-10-16, [Wave57 인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md): c4f35bb의 8jobs/logs·548pins/328blobs/7checkout 및 runner12·collector 실제DB3·이전 Rust/PG/Web 전부 통과. Wave58 안전한 superseded 취소를 진행한다. 전체 I4/실제 승인 입력 통합/독립 리뷰/운영/Owner/3거래일은 미완료.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -290,7 +291,9 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 
   이전 검증 — 2026-10-16, [Wave51 인수](reviews/2026-10-16-r2-test-correction-ci-acceptance.md)를 추가했다. Wave53 실제 역할 스케줄/실패 복구 검증은 통과했으나 웹 E2E 실패가 남았다. Wave54 일일 성공 저장과 진단 보완을 진행하며 최종 릴리스·Owner·3거래일 인수는 열려 있다.
 
-  최신 검증 — 2026-10-16, Wave54/55 범위별 인수는 보존. [Wave56](reviews/2026-10-16-r2-daily-runner-ci.md) 전체 실패를 회수하고 Wave57 테스트 fixture 보정을 진행한다. 최종 릴리스, 실제 승인 입력 전체 경로, I5–I7, 독립 통합 리뷰·운영·Owner·3거래일은 계속 열려 있다.
+  이전 검증 — 2026-10-16, Wave54/55 범위별 인수는 보존. [Wave56](reviews/2026-10-16-r2-daily-runner-ci.md) 전체 실패를 회수하고 Wave57 테스트 fixture 보정을 진행한다. 최종 릴리스, 실제 승인 입력 전체 경로, I5–I7, 독립 통합 리뷰·운영·Owner·3거래일은 계속 열려 있다.
+
+  최신 검증 — 2026-10-16, [Wave57 인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md): c4f35bb의 8jobs/logs·548pins/328blobs/7checkout 및 runner12·collector 실제DB3·이전 Rust/PG/Web 전부 통과. Wave58 안전한 superseded 취소를 진행한다. 전체 I4/실제 승인 입력 통합/독립 리뷰/운영/Owner/3거래일은 미완료.
 
 **종료 조건:** R2-01~R2-09 완료, 연속 3거래일 무인 데이터·추천 갱신과 실제 Owner 사용 확인.
 컨테이너 health와 데이터·화면의 성공을 따로 기록한다. R3 미완료만으로 R2를 미완료로 되돌리지 않는다.
@@ -717,3 +720,5 @@ tracking-doc HEAD does not change candidate. Full I4/I5-I7/operations/Owner/3day
 final C_R2 remain open. Ralph continues without further delegation.
 
 | 2026-10-16 | R2-04/09 | DOING; Wave56 실패 회수·Wave57 테스트 보정 | 8jobs/logs·7checkout·527pins/325blobs, 새2pure+10실제DB·PG17 통과. strict lint의 unused fixture methods 및 collector DB bootstrap1개 실패. 후자는 SQLSTATE 소실로 원인 UNKNOWN. 두 테스트 파일만 보정, 표준 역할/target grants·안전한 진단·불변 replay 검사. | [회수](reviews/2026-10-16-r2-daily-runner-ci.md), [보정](reviews/2026-10-16-r2-daily-runner-lint-correction.md); 후속 후보 미실행 |
+
+| 2026-10-16 | R2-04/09 | DOING; Wave57 인수·Wave58 취소 기능 | c4f35bb 전체 성공·548pins/328blobs/7checkout·2pure+10DB/collector3/PG17 및 이전 gates 대조. 0060 보존·0061 추가와14새DB회귀 착수 | [인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md); 운영·Owner·최종 R2 별도 |
