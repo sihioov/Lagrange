@@ -2,6 +2,8 @@
 //!
 //! Source verification is separate from admission, database, or runtime authority.
 
+pub mod admission;
+pub mod artifact;
 pub mod calendar;
 pub mod candidate;
 mod contract;

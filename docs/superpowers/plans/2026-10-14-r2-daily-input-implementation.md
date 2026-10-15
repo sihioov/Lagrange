@@ -45,8 +45,9 @@ execution restrictions remain in force; no further worker delegation.
   run38725299504 attempt1 SUCCESS,32required new cases and prior gates recovered.
   [Acceptance](../../reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md).
 - [ ] **Remaining I1b reconstruction/admission and I3–I7 integration.**
-  S5a/S5b exact candidate is now in hosted verification. Next is protected daily
-  parent/frontier persistence and artifact/admission/supply. Final integrated independent review remains open.
+  S5a/S5b bounded source/hosted verification is accepted at5f5f4e8/run38732527740.
+  S5c first storage/verification/readback is written and awaits its exact candidate CI.
+  Daily parent/frontier persistence, supply and final integrated independent review remain open.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -4322,3 +4323,22 @@ Wave46 now prepares descriptor-safe candidate storage, independent first candida
 verification and durable admission copy/readback. New unregistered artifact/admission
 files were prepared without changing active CI pins. No local project execution,
 new delegation, runtime/Owner/final acceptance. Ralph continues.
+
+
+## Wave46 — first candidate/admission storage and sealed readback
+
+Owned source: daily_price_only/{artifact,admission,history,mod}.rs. Accepted baseline
+5f5f4e8/run38732527740 is fully recovered before modification; documentation HEAD36fa991.
+[Source contract/disposition](../../reviews/2026-10-15-r2-daily-artifact-admission-source.md)
+binds separate roots/UIDs, descriptor-relative bounded reads, exact canonical bytes,
+copy/seal/fsync/no-replace publication, independent first-candidate reconstruction,
+D4 admission pins/counts and protected full-price readback. Direct coordinator only.
+No new worker, source/compiler acceptance or operational authority is inferred.
+
+27new definitions (26Linux expected,1nonLinux excluded), all21S5b/33S5a and earlier
+required groups are frozen by exact name and refreshed line. The real approved-base
+factory and complete distinct-UID flow, fault/crash durability and runtime remain
+unverified. No local project execution. One new exact candidate hosted CI only after
+all-event existing-run query0 and remote SHA match; never rerun/cancel/duplicate.
+After full result recovery, continue daily-parent/frontier/supply and I3–I7. Owner,
+three trading days and final C_R2 remain open; do not change priority to R3.

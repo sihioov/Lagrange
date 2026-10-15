@@ -7,7 +7,7 @@ use std::io::{self, Write};
 
 use chrono::Datelike;
 use domain::{ContentHash, FixedPoint, InstrumentId, TradingDate};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::contract::{fixed_limits, validate_file_request_for_symbol};
@@ -577,7 +577,8 @@ fn checked_addition(
     Ok(bars)
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 struct BarRow {
     instrument_id: String,
     session_date: TradingDate,
@@ -683,6 +684,130 @@ fn encode_cumulative_bars(
         }
     }
     Ok(writer.bytes)
+}
+
+/// First-admission readback only. The caller separately checks the four sealed
+/// files, pinned policy, admission and expected hashes before exposing a handle.
+pub(super) fn read_first_admission_bars(
+    prefix: &ProtectedHistoricalPrefix<'_>,
+    manifest: &super::DailyPriceManifestV1Wire,
+    bytes: &[u8],
+) -> Result<Vec<HistoricalPriceOnlyBar>, Error> {
+    let mut sessions = prefix.sessions().to_vec();
+    sessions.push(manifest.range_end);
+    if manifest.parent_admission_sha256.is_some()
+        || manifest.daily_sources.len() != 1
+        || manifest.sessions != sessions
+        || manifest.range_start != date(BASE_START)?
+        || manifest.range_end <= prefix.frontier()
+        || manifest.daily_sources[0].previous_frontier != prefix.frontier()
+        || manifest.daily_sources[0].session_date != manifest.range_end
+        || &manifest.base.pins != prefix.pins()
+        || &manifest.policy_sha256 != prefix.policy_sha256()
+        || manifest.bars.size_bytes != bytes.len() as u64
+        || manifest.bars.sha256 != ContentHash::from_bytes(bytes)
+    {
+        return Err(Error::InvalidContext);
+    }
+    let maximum = sessions.len().checked_mul(11).ok_or(Error::LimitExceeded)?;
+    let bars = decode_stored_bars(bytes, maximum)?;
+    if bars.len() != maximum || manifest.bars.row_count != maximum as u64 {
+        return Err(Error::InvalidBars);
+    }
+    let index = prefix_index(&bars, &sessions, manifest.range_start, manifest.range_end)?;
+    compare_preserved_rows(prefix.bars(), &bars, &index)?;
+    let additions = bars
+        .iter()
+        .filter(|bar| bar.session_date == manifest.range_end)
+        .cloned()
+        .collect();
+    checked_addition(additions, manifest.range_end)?;
+    Ok(bars)
+}
+
+fn compare_preserved_rows(
+    expected: &[HistoricalPriceOnlyBar],
+    actual: &[HistoricalPriceOnlyBar],
+    index: &BTreeMap<(InstrumentId, TradingDate), usize>,
+) -> Result<(), Error> {
+    for prior in expected {
+        let position = index
+            .get(&(prior.instrument_id.clone(), prior.session_date))
+            .ok_or(Error::SourceConflict)?;
+        let current = actual.get(*position).ok_or(Error::SourceConflict)?;
+        // Includes raw/adjusted representation, optional value and scale, not
+        // only rounded equality. Canonical readback must preserve all base bytes.
+        if BarRow::from(prior) != BarRow::from(current) {
+            return Err(Error::SourceConflict);
+        }
+    }
+    Ok(())
+}
+
+fn decode_stored_bars(
+    bytes: &[u8],
+    maximum_rows: usize,
+) -> Result<Vec<HistoricalPriceOnlyBar>, Error> {
+    if bytes.len() as u64 > fixed_limits().max_bars_bytes
+        || maximum_rows as u64
+            > fixed_limits()
+                .max_sessions
+                .checked_mul(11)
+                .ok_or(Error::LimitExceeded)?
+    {
+        return Err(Error::LimitExceeded);
+    }
+    if bytes.is_empty() || !bytes.ends_with(b"\n") {
+        return Err(Error::InvalidBars);
+    }
+    let mut bars = Vec::new();
+    for line in bytes[..bytes.len() - 1].split(|byte| *byte == b'\n') {
+        if bars.len() == maximum_rows || line.len() > 16 * 1024 {
+            return Err(Error::LimitExceeded);
+        }
+        let row: BarRow = serde_json::from_slice(line).map_err(|_| Error::InvalidBars)?;
+        if serde_json::to_vec(&row).map_err(|_| Error::Encoding)? != line {
+            return Err(Error::InvalidBars);
+        }
+        let instrument =
+            InstrumentId::parse(&row.instrument_id).map_err(|_| Error::InvalidIdentity)?;
+        if instrument.to_string() != row.instrument_id {
+            return Err(Error::InvalidIdentity);
+        }
+        let bar = HistoricalPriceOnlyBar {
+            instrument_id: instrument,
+            session_date: row.session_date,
+            raw_open: stored_decimal(&row.raw_open)?,
+            raw_high: stored_decimal(&row.raw_high)?,
+            raw_low: stored_decimal(&row.raw_low)?,
+            raw_close: stored_decimal(&row.raw_close)?,
+            raw_volume: row.raw_volume,
+            raw_trading_value: row
+                .raw_trading_value
+                .as_deref()
+                .map(stored_decimal)
+                .transpose()?,
+            adjusted_open: stored_decimal(&row.adjusted_open)?,
+            adjusted_high: stored_decimal(&row.adjusted_high)?,
+            adjusted_low: stored_decimal(&row.adjusted_low)?,
+            adjusted_close: stored_decimal(&row.adjusted_close)?,
+        };
+        validate_bar(&bar)?;
+        bars.try_reserve(1).map_err(|_| Error::LimitExceeded)?;
+        bars.push(bar);
+    }
+    Ok(bars)
+}
+
+fn stored_decimal(text: &str) -> Result<FixedPoint, Error> {
+    if text.len() > 80 {
+        return Err(Error::InvalidBars);
+    }
+    let value = FixedPoint::parse(text).map_err(|_| Error::InvalidBars)?;
+    if value.to_string() != text {
+        return Err(Error::InvalidBars);
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -1300,6 +1425,90 @@ mod tests {
         );
         assert_eq!(
             encode_cumulative_bars(&base, &base, 100_000),
+            Err(Error::SourceConflict)
+        );
+    }
+
+    #[test]
+    fn s5c_readback_canonical_rows_preserve_raw_and_adjusted_scales() {
+        let rows = decode_stored_bars(GOLDEN_ROW.as_bytes(), 1).unwrap();
+        assert_eq!(rows, [adjusted_base()]);
+        assert_eq!(rows[0].raw_open.scale(), 2);
+        assert_eq!(rows[0].adjusted_open.bits(), 500);
+        assert_eq!(
+            encode_cumulative_bars(&rows, &[], 1000).unwrap(),
+            GOLDEN_ROW.as_bytes()
+        );
+    }
+
+    #[test]
+    fn s5c_readback_rejects_noncanonical_or_ambiguous_rows() {
+        let cases = [
+            GOLDEN_ROW.trim_end().to_owned(),
+            format!("{GOLDEN_ROW}\n"),
+            GOLDEN_ROW.replace("{\"instrument_id\"", "{ \"instrument_id\""),
+            GOLDEN_ROW.replace("{\"instrument_id\"", "{\"unknown\":0,\"instrument_id\""),
+            GOLDEN_ROW.replace(
+                "\"raw_open\":\"10.00\"",
+                "\"raw_open\":\"10.00\",\"raw_open\":\"10.00\"",
+            ),
+            GOLDEN_ROW.replace("\"raw_open\":\"10.00\"", "\"raw_open\":10.0"),
+            GOLDEN_ROW.replace("\"raw_open\":\"10.00\"", "\"raw_open\":\"010.00\""),
+            GOLDEN_ROW.replace("\"raw_low\":\"9.00\"", "\"raw_low\":\"19.00\""),
+        ];
+        for bytes in cases {
+            assert!(decode_stored_bars(bytes.as_bytes(), 2).is_err());
+        }
+    }
+
+    #[test]
+    fn s5c_readback_row_budget_rejects_one_more_and_oversize_line() {
+        assert!(decode_stored_bars(GOLDEN_ROW.as_bytes(), 1).is_ok());
+        assert_eq!(
+            decode_stored_bars(format!("{GOLDEN_ROW}{GOLDEN_ROW}").as_bytes(), 1),
+            Err(Error::LimitExceeded)
+        );
+        assert_eq!(
+            decode_stored_bars(GOLDEN_ROW.as_bytes(), 0),
+            Err(Error::LimitExceeded)
+        );
+        let bytes = format!("{}\n", " ".repeat(16 * 1024 + 1));
+        assert_eq!(
+            decode_stored_bars(bytes.as_bytes(), 1),
+            Err(Error::LimitExceeded)
+        );
+    }
+
+    #[test]
+    fn s5c_readback_rejects_any_changed_historical_representation() {
+        let old = adjusted_base();
+        let index = BTreeMap::from([((old.instrument_id.clone(), old.session_date), 0)]);
+        assert_eq!(
+            compare_preserved_rows(
+                std::slice::from_ref(&old),
+                std::slice::from_ref(&old),
+                &index
+            ),
+            Ok(())
+        );
+        for field in 0..7 {
+            let mut changed = old.clone();
+            match field {
+                0 => changed.raw_open = fp("10.0"),
+                1 => changed.raw_volume += 1,
+                2 => changed.raw_trading_value = None,
+                3 => changed.adjusted_open = fp("5.0"),
+                4 => changed.adjusted_high = fp("7.00"),
+                5 => changed.adjusted_low = fp("4.00"),
+                _ => changed.adjusted_close = fp("5.00"),
+            }
+            assert_eq!(
+                compare_preserved_rows(std::slice::from_ref(&old), &[changed], &index),
+                Err(Error::SourceConflict)
+            );
+        }
+        assert_eq!(
+            compare_preserved_rows(&[old], &[], &BTreeMap::new()),
             Err(Error::SourceConflict)
         );
     }
