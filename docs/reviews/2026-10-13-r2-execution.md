@@ -2653,3 +2653,17 @@ for actual midnight/session-open behavior. Preserve production bytes and every
 prior failure. No new delegation/local execution. UnregisteredI4 drafts excluded.
 Freeze successor names/pins, query existing exact-head runs, remote equality, then
 one new CI. No source/runtime/Owner/finalC_R2 acceptance; Ralph continues.
+
+
+### Wave51 single correction candidate launch — 2026-10-16 KST
+
+Candidate `bd33596f515afe18437dad03bd940219c630d248`,
+[CI38760423300 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38760423300),
+created2026-10-15T15:27:03Z. CI/ci.yml/workflow_dispatch/excited-dolphin.
+All-event exact-head queries returned0 before/after push, remote SHA matched;
+exactly one dispatch.423pins/302committedblobs,21I3 definitions (one renamed and
+one added),38service-status definitions and all carried groups are frozen.
+Four test files/regions only; production bytes/SQL unchanged. Source disposition
+is direct coordinator only. Full hosted recovery pending; no acceptance yet.
+Unregistered I4 source preparation continues independently. Earlier failures,
+operational/Owner/three-trading-day/finalC_R2 gates remain.

@@ -19,7 +19,7 @@ Wave49 `edeaa5d` / CI38750900179에서 fixture·Paper 시계 보정과 일일 pa
 나머지 결과는 전체 회수했다. Wave50 `1c82592` / CI38755069474 attempt1에서 해당 보정과
 I3 새 계산19/20·S5def36/37 통과, 기존 서비스 상태2개를 포함한 총4개 실패를 전체 회수했다.
 컴파일·strict Clippy·PG와 실제DB 발행8개는 통과했다. [실패 근거](reviews/2026-10-16-r2-daily-factor-target-ci.md)를 보존하고
-Wave51 테스트 기대값/자정 세션 경계 보정을 진행한다. I4 초안은 별도 미등록 상태다.
+Wave51 테스트 기대값/자정 세션 경계 보정 후보 `bd33596`의 CI38760423300을 한 번 실행했다. I4 초안은 별도 미등록 상태다.
 
 | 항목 | 확인된 상태 |
 | --- | --- |
@@ -28,7 +28,7 @@ Wave51 테스트 기대값/자정 세션 경계 보정을 진행한다. I4 초�
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave51 테스트4개 실패의 bounded 보정과 새 후보 검증, 이후 I4 예약·실행 연결. 실제 승인 base 전체 흐름·통합 독립 검토·I4–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 단계 | Wave51 `bd33596` / CI38760423300 전체 결과 회수와 I4 예약·실행 연결 준비. 실제 승인 base 전체 흐름·통합 독립 검토·I4–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3450,3 +3450,17 @@ old factor/input/compute/target/publish and all prior groups retained. Direct co
 only, no new worker/local project execution/source acceptance. Freeze a new candidate,
 query all-event exact-head runs and dispatch once. I4–I7/runtime/Owner/3days/final C_R2
 remain; Ralph continues. Full approved-base end-to-end and independent review remain.
+
+
+### Wave51 single correction candidate launch — 2026-10-16 KST
+
+Candidate `bd33596f515afe18437dad03bd940219c630d248`,
+[CI38760423300 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38760423300),
+created2026-10-15T15:27:03Z. CI/ci.yml/workflow_dispatch/excited-dolphin.
+All-event exact-head queries returned0 before/after push, remote SHA matched;
+exactly one dispatch.423pins/302committedblobs,21I3 definitions (one renamed and
+one added),38service-status definitions and all carried groups are frozen.
+Four test files/regions only; production bytes/SQL unchanged. Source disposition
+is direct coordinator only. Full hosted recovery pending; no acceptance yet.
+Unregistered I4 source preparation continues independently. Earlier failures,
+operational/Owner/three-trading-day/finalC_R2 gates remain.
