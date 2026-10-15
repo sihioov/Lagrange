@@ -4242,3 +4242,18 @@ local project execution, provider action or duplicate CI. Next Wave44 integrates
 S5a full-snapshot discovery and canonical source observation/change detection;
 33 new written definitions are not yet registered or executed. Protected prefix,
 artifact/admission/supply and all runtime/Owner/final R2 gates remain open.
+
+## Wave44 — I1b-S5a complete snapshot discovery and observation
+
+Baseline4143051, after S4 actual full CI success. Integrate new discovery.rs,
+observation.rs and33 new tests (16 private/all-platform,17 Linux integration),
+plus two private context getters and module registrations.274 prior pins and
+all existing verifier bytes except those getters are preserved. Full snapshot
+enumeration, exact D4 session/doc reconstruction, calendar witnesses, raw bar
+observations and canonical change-event encoding are this bounded source slice.
+Protected-prefix/storage/admission authority is explicitly excluded and remains
+next. No delegation/local project execution. Scoped2024format/whitespace and
+direct coordinator source inspection pass; one fresh exact-candidate CI follows
+frozen inventory/pins, all-event existing-run query and remote SHA verification.
+No compiler/test/source acceptance before full recovery. R2/runtime/Owner/final
+C_R2 remain open and Ralph remains active.

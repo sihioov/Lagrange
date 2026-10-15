@@ -127,6 +127,14 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
         })
     }
 
+    pub(super) fn scopes(&self) -> &[&'snapshot CommittedRawSnapshot] {
+        &self.scopes
+    }
+
+    pub(super) fn observed_at(&self) -> UtcTimestamp {
+        self.observed_at
+    }
+
     fn lookup(
         &self,
         reference: &SourceFileReference,

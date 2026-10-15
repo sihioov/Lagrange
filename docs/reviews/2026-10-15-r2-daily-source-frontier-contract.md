@@ -1,6 +1,6 @@
 # R2 I1b-S5 — integrated discovery and source frontier
 
-Preparation only, 2026-10-15. S4 candidate48beb25/CI38722595047 was fully recovered: tests and PG pass, strict lint fails on one fixture type. C01 corrects that type; candidate302f29a/run38725299504 now passes strict Clippy and awaits full recovery. This preparation is separate from its frozen candidate.
+S5a source boundary, 2026-10-15. S4 candidate48beb25/CI38722595047 was fully recovered: tests and PG pass, strict lint fails on one fixture type. C01 candidate302f29a/run38725299504 is fully recovered and accepted for S4 only. S5a now integrates discovery/observation; protected-prefix and storage/admission work remains separate. This preparation is separate from its frozen candidate.
 
 ## Next concrete boundary
 
@@ -95,3 +95,20 @@ union. Only the later protected store/admitter may treat expected claims as a se
 No release/time/random value changes identity. The two modules are unregistered
 preparation until S4's frozen candidate is fully recovered. Tests, registration,
 protected-prefix verification and integrated error/event disposition remain work.
+
+## Wave44 S5a integration
+
+After S4 full recovery, the two modules and33 written tests are registered. Existing
+verify.rs adds only module-private accessors for the same captured scope references
+and observation instant. Discovery has no producer source-list parameter. Structurally
+canonical unrelated six-digit non-ETF price identities stay outside fixed ETF11;
+relevant price duplicates fail closed. A source count cap and128MiB aggregate parsed
+price/calendar bytes reject incomplete scans. Observation budgets include the exact
+prefix/array/separators and canonical input bytes before deduplication; exceeding
+16MiB or262144 claims fails. The byte-bound test uses the independently pinned
+1005-byte example through a private lower-bound seam; no production limit is changed.
+
+This slice does not close the full S5/frontier requirement: protected expected-state
+loading, raw/adjusted base-prefix overlap comparison, attribution of discovery
+failures to durable events and artifact/admission transactions remain subsequent
+work. No source/runtime acceptance is claimed before exact-candidate CI.

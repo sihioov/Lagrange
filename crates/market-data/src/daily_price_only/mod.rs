@@ -4,6 +4,8 @@
 
 pub mod calendar;
 mod contract;
+pub mod discovery;
+pub mod observation;
 pub mod reconstruct;
 pub mod source;
 pub mod verify;
