@@ -13,7 +13,9 @@ Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
 [범위별 인수](reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md)를 완료했다.
 새32개·기존 회귀·strict Clippy·PG를 개별 증거와 대조했고 이전48beb25 실패도 보존한다.
-S5a 전체 소스 탐색·관측/변경 감지와33개 회귀를 작성·직접 검토했고 새 후보 CI를 준비한다. 컴파일·테스트는 아직 미실행이다.
+S5a/S5b는 `5f5f4e8` / CI38732527740으로 범위별 인수했다. S5c의 이전 실패를 보존하고,
+Wave49 `edeaa5d` / CI38750900179에서 fixture·Paper 시계 보정과 일일 parent/frontier/supply를
+검증 중이다. 37개 새 회귀·S5c 26개·Paper 2개와 기존 검증의 전체 결과 회수가 남았다.
 
 | 항목 | 확인된 상태 |
 | --- | --- |
@@ -22,7 +24,7 @@ S5a 전체 소스 탐색·관측/변경 감지와33개 회귀를 작성·직접 
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | 남은 I1b 가격·기준정보·기업행사 복원, 전체 source frontier와 artifact/admission/supply. 원본 추적·달력 증명은 eb0e839의 [S3 인수](reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md)로 완료: CI 38711965495 attempt1 전체 성공, 새22개·기존 정규화37개와 I2/R2 회귀 확인. I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
+| 다음 단계 | Wave49 단일 CI 전체 결과 회수와 I3 계산 경로 준비. I1b 실제 승인 base 전체 흐름·독립 통합 리뷰, I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3410,3 +3412,18 @@ Direct coordinator review only; no independent/compiler/test/runtime acceptance.
 Freeze exact new/carried names and source/reference pins, query all-event exact-head
 runs, verify remote SHA and dispatch one new candidate. Existing runs remain unchanged.
 R2-04/09 and I3–I7/runtime/Owner/three trading days/final C_R2 stay open; Ralph continues.
+
+
+### Wave49 single candidate launch — 2026-10-15
+
+Candidate `edeaa5db456bc4c62e6eef6e7a561e6a49accff4`,
+[CI38750900179 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38750900179),
+created14:23:05UTC, CI/ci.yml/workflow_dispatch/excited-dolphin. Exact-head all-event
+queries before/after push returned0 and remote SHA matched; exactly one dispatch.
+348input pins/261committed candidate blobs and37new definitions are frozen; carried
+S5c26Linux and the2affected Paper clock tests are independently named, along with
+all prior required groups. Full recovery must inspect every failed workspace row,
+three direct-root fixture mode observations, setup and nonrecursive cleanup.
+No source/compiler/test acceptance yet. Only independent unregistered I3 preparation
+and mutable coordinator tracking docs may change while CI runs. Earlier failure
+receipts remain immutable. Runtime/Owner/three trading days/final C_R2 remain open.

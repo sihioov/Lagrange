@@ -4446,3 +4446,18 @@ Direct coordinator review only; no independent/compiler/test/runtime acceptance.
 Freeze exact new/carried names and source/reference pins, query all-event exact-head
 runs, verify remote SHA and dispatch one new candidate. Existing runs remain unchanged.
 R2-04/09 and I3–I7/runtime/Owner/three trading days/final C_R2 stay open; Ralph continues.
+
+
+### Wave49 single candidate launch — 2026-10-15
+
+Candidate `edeaa5db456bc4c62e6eef6e7a561e6a49accff4`,
+[CI38750900179 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38750900179),
+created14:23:05UTC, CI/ci.yml/workflow_dispatch/excited-dolphin. Exact-head all-event
+queries before/after push returned0 and remote SHA matched; exactly one dispatch.
+348input pins/261committed candidate blobs and37new definitions are frozen; carried
+S5c26Linux and the2affected Paper clock tests are independently named, along with
+all prior required groups. Full recovery must inspect every failed workspace row,
+three direct-root fixture mode observations, setup and nonrecursive cleanup.
+No source/compiler/test acceptance yet. Only independent unregistered I3 preparation
+and mutable coordinator tracking docs may change while CI runs. Earlier failure
+receipts remain immutable. Runtime/Owner/three trading days/final C_R2 remain open.
