@@ -1971,3 +1971,29 @@ Launch receipt SHA256
 All are private under target/r2-daily-beta/wp-4-integration. The preparation-time
 newCiDispatched:false stays historical. Later bookkeeping commits do not change
 the pinned candidate. Prior outcomes and all remaining R2 gates are preserved.
+
+## Wave33 — C04 full recovery and C05 test-only lint correction
+
+C04 d883c17/run38662224666 attempt1 completed with failure at 01:04:57 UTC.
+All eight jobs, 84 steps, eight logs, seven actual checkout SHAs and 62 pins were
+recovered. All 99 expected Linux Rust names and six separate chart names passed,
+including 48 Linux S2 cases. PG APPROVED/12 DB labels/59 matched checksums,
+NO_OP/0039/catalog/role/cleanup passed. Unprinted nested helper rows/exits remain
+UNKNOWN. Format/web/policy/Python passed. Clippy failed only on two test-code
+findings; required failed. C04's prior production lint conditions are closed.
+
+Only after full recovery, the coordinator removed the temporary metadata_path
+borrow and named the exact cfg(test) callback type. Both edits preserve lifetime,
+reset/drop and assertion semantics, C01 stored-PathBuf borrows and production
+behavior. Exact two-hunk comparison, 60 unchanged pins, 49 retained definitions,
+scoped standalone rustfmt 2024 and whitespace checks passed. No local compiler,
+Clippy, tests, project helpers, SQL/DB/provider actions or new delegation.
+
+See [C04 CI](2026-10-15-r2-snapshot-c04-ci.md) and
+[C05 correction](2026-10-15-r2-snapshot-test-lint-corrections.md).
+Commit and freeze C05, verify remote SHA and all-event exact-head existing-run
+query, then reuse an existing run or dispatch once. Recover the entire candidate
+before any further correction. Never rerun/cancel/duplicate historical runs.
+R2-04/09 remain DOING. Negative bootstrap/rollback, 0060, provider/copy
+reconstruction/admission, I6 diagrams before main, runtime, Owner and final C_R2
+remain open; the existing acceptance criteria and historical evidence are preserved.

@@ -1323,7 +1323,7 @@ mod linux_tests {
         let metadata_fixture = one_batch();
         valid_control(&metadata_fixture);
         hard_link(
-            &metadata_path(&metadata_fixture, 0),
+            metadata_path(&metadata_fixture, 0),
             metadata_fixture._temp.path().join("metadata-link"),
         )
         .unwrap();

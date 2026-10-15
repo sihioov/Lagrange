@@ -2724,8 +2724,11 @@ mod linux {
     }
 
     #[cfg(test)]
+    type TestPhaseHook = Box<dyn FnMut(CapturePhase) -> Result<(), DailyEvidenceError>>;
+
+    #[cfg(test)]
     thread_local! {
-        static TEST_PHASE_HOOK: RefCell<Option<Box<dyn FnMut(CapturePhase) -> Result<(), DailyEvidenceError>>>> = const { RefCell::new(None) };
+        static TEST_PHASE_HOOK: RefCell<Option<TestPhaseHook>> = const { RefCell::new(None) };
     }
 
     #[cfg(test)]
