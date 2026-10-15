@@ -60,7 +60,7 @@ function daily(): Record<string, unknown> {
 function accepted(value: Record<string, unknown>, expected: boolean): void {
   expect(ownerBetaRunSchema.safeParse(value).success).toBe(expected);
   const list = { ...value };
-  delete list.items;
+  delete list["items"];
   expect(ownerBetaRunListItemSchema.safeParse(list).success).toBe(expected);
 }
 function succeeded(): Record<string, unknown> {
@@ -141,7 +141,7 @@ describe("R2 daily API contracts", () => {
     accepted({ ...daily(), trigger_kind: undefined }, false);
     accepted({ ...daily(), input: undefined }, false);
     accepted({ ...daily(), input: { kind: "historical", ...base } }, false);
-    const input = daily().input as Record<string, unknown>;
+    const input = daily()["input"] as Record<string, unknown>;
     for (const key of [
       "content_sha256",
       "manifest_sha256",
@@ -162,14 +162,17 @@ describe("R2 daily API contracts", () => {
       accepted({ ...daily(), [key]: null }, false);
       const missingBase: Record<string, unknown> = { ...base };
       delete missingBase[key];
-      accepted({ ...daily(), input: { ...(daily().input as object), base: missingBase } }, false);
+      accepted(
+        { ...daily(), input: { ...(daily()["input"] as object), base: missingBase } },
+        false,
+      );
     }
     accepted(
-      { ...daily(), input: { ...(daily().input as object), provider_path: "/denied" } },
+      { ...daily(), input: { ...(daily()["input"] as object), provider_path: "/denied" } },
       false,
     );
     accepted(
-      { ...daily(), input: { ...(daily().input as object), base: { ...base, extra: true } } },
+      { ...daily(), input: { ...(daily()["input"] as object), base: { ...base, extra: true } } },
       false,
     );
     console.info("R2_DAILY_WEB_TEST:mixed_null_unknown_rejected:PASS");

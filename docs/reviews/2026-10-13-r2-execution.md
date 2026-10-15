@@ -3260,3 +3260,29 @@ Pre-push query0 at21:48:15.003073UTC,702pins/373candidate blobs match; remote68c
 Post-push remote exact and query0 at21:48:26.881343UTC before one dispatch21:48:28.621942.
 No rerun/cancel/duplicate. Full result recovery required; sources/inputs immutable.
 I7 preparation is read-only until I5 disposition; no source/compiler acceptance yet.
+
+### Wave64 failure recovered; Wave65 I5-C02 — 2026-10-16 KST
+
+3480afe/run38812634642 attempt1 FAILURE fully recovered:8terminaljobs/logs,
+7checkout,702pins/373blobs. StrictClippy/workspaceformat/OpenAPI/lint passed.
+I5Rust24PASS/1FAIL and allcarriedworkspace groups plus6chart passed; the same
+state_no_fallback SQLSTATE22P02 failed dedicatedPG (9/10newdailyHTTP passed).
+17PGtargets passed; finalAPI target failed,3laterprice-only names NOT_EXECUTED.
+PG32/73/83 cases,62checksumtwosets/noop/roles/0039/catalog/cleanup passed.
+Webtypecheck fiveTS4111 accesses; sixWeb/unit/build/E2E NOT_EXECUTED.
+Receipt6486/cc4d3ff6; no source acceptance. Preserve allold evidence.
+
+Register Wave65I5-C02: only http_owner_beta_daily.rs and r2-daily-api-contracts.test.ts.
+Use existing read-only admin pool for two cross-table write observations; replace
+five Record index-signature accesses with brackets. No production pool/RLS change,
+assertion removal, newdefinition, lint suppression orworkflow change. One new
+exactcandidateCI only after source review/freeze andexistingall-eventquery0/remotematch.
+No local execution/delegation. I7drafts remain RAMonly. I7/I6/runtime/Owner/3days/C_R2 open.
+Report: docs/reviews/2026-10-16-r2-daily-api-c01-ci.md.
+
+Wave65 I5-C02 source freeze: exact two-test-file correction reviewed. Only two
+verification connections and five property access expressions changed; no new
+names or weakened assertions. Rust2024/whitespace pass.722pins (700unchanged prior),
+inputs2931/b6f3b845,inventory5034/b1961038,source report34/2d4c0f56.
+All25Rust/6Web definitions carried; no product source/roles/workflow change.
+Fresh candidate CI remains required; no local project execution/delegation.

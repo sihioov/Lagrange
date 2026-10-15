@@ -221,7 +221,7 @@ async fn http_daily_state_is_read_only_and_never_uses_generic_ready_data() {
     run("state_no_fallback",DailyProcessMode::Disabled,|h| async move {
   let (id,_)=create(&h,&h.owner,Some(true)).await?;
   let before:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM jobs),(SELECT count(*) FROM owner_beta_recommendation_runs),(SELECT count(*) FROM audit_logs)")
-   .fetch_one(&h.owner_pool).await?;
+   .fetch_one(&h.admin_pool).await?;
   let disabled=state(&h,id).await;
   assert_eq!(disabled["state"],"DISABLED");assert_eq!(disabled["reason_code"],"RUNTIME_DISABLED");
   assert_eq!(disabled["expected_session"],Value::Null);assert_eq!(disabled["data_support_end"],Value::Null);
@@ -233,7 +233,7 @@ async fn http_daily_state_is_read_only_and_never_uses_generic_ready_data() {
   assert_eq!(current["data_support_end"],Value::Null);
   assert_eq!(current["recommendation_as_of"],Value::Null);
   let after:(i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM jobs),(SELECT count(*) FROM owner_beta_recommendation_runs),(SELECT count(*) FROM audit_logs)")
-   .fetch_one(&h.owner_pool).await?;
+   .fetch_one(&h.admin_pool).await?;
   assert_eq!(after,(before.0+1,before.1+1,before.2));
   Ok(())
  }).await;

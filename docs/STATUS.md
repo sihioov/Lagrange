@@ -6,6 +6,8 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
+현재: I4 실행 연결은 Wave62 범위별 인수 완료. I5는 Wave64의 두 테스트 결함을 Wave65에서 보정했으며, 새 후보 전체 검증을 준비한다. [실패 회수](reviews/2026-10-16-r2-daily-api-c01-ci.md), [보정 소스](reviews/2026-10-16-r2-daily-api-c02-source.md). 아래 단계별 기록은 당시 증거를 보존한다.
+
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
@@ -28,7 +30,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave63 I5 후보 68c6f64/CI38810733003 attempt1 실행 중. 683pins/371committed blobs 확인, 동일 SHA 기존 all-event run 0건·원격 일치 후 1회 dispatch. I7/I6·운영·Owner·3거래일·C_R2 미완료. |
+| 다음 단계 | Wave64 I5 CI38812634642 실패 전체 회수. Wave65 I5-C02 두 테스트 파일 보정·722pins 고정 완료; 새 후보1회 검증 준비. I7/I6·운영·Owner·3거래일·C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3790,3 +3792,29 @@ Pre-push query0 at21:48:15.003073UTC,702pins/373candidate blobs match; remote68c
 Post-push remote exact and query0 at21:48:26.881343UTC before one dispatch21:48:28.621942.
 No rerun/cancel/duplicate. Full result recovery required; sources/inputs immutable.
 I7 preparation is read-only until I5 disposition; no source/compiler acceptance yet.
+
+### Wave64 failure recovered; Wave65 I5-C02 — 2026-10-16 KST
+
+3480afe/run38812634642 attempt1 FAILURE fully recovered:8terminaljobs/logs,
+7checkout,702pins/373blobs. StrictClippy/workspaceformat/OpenAPI/lint passed.
+I5Rust24PASS/1FAIL and allcarriedworkspace groups plus6chart passed; the same
+state_no_fallback SQLSTATE22P02 failed dedicatedPG (9/10newdailyHTTP passed).
+17PGtargets passed; finalAPI target failed,3laterprice-only names NOT_EXECUTED.
+PG32/73/83 cases,62checksumtwosets/noop/roles/0039/catalog/cleanup passed.
+Webtypecheck fiveTS4111 accesses; sixWeb/unit/build/E2E NOT_EXECUTED.
+Receipt6486/cc4d3ff6; no source acceptance. Preserve allold evidence.
+
+Register Wave65I5-C02: only http_owner_beta_daily.rs and r2-daily-api-contracts.test.ts.
+Use existing read-only admin pool for two cross-table write observations; replace
+five Record index-signature accesses with brackets. No production pool/RLS change,
+assertion removal, newdefinition, lint suppression orworkflow change. One new
+exactcandidateCI only after source review/freeze andexistingall-eventquery0/remotematch.
+No local execution/delegation. I7drafts remain RAMonly. I7/I6/runtime/Owner/3days/C_R2 open.
+Report: docs/reviews/2026-10-16-r2-daily-api-c01-ci.md.
+
+Wave65 I5-C02 source freeze: exact two-test-file correction reviewed. Only two
+verification connections and five property access expressions changed; no new
+names or weakened assertions. Rust2024/whitespace pass.722pins (700unchanged prior),
+inputs2931/b6f3b845,inventory5034/b1961038,source report34/2d4c0f56.
+All25Rust/6Web definitions carried; no product source/roles/workflow change.
+Fresh candidate CI remains required; no local project execution/delegation.
