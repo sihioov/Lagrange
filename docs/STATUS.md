@@ -10,11 +10,10 @@ Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
-Wave42 S4 가격·기준정보·기업행사 오프라인 복원과 새32개 Linux 회귀를 작성했다.
-[직접 소스 검토](reviews/2026-10-15-r2-daily-provider-reconstruction-source-review.md)는
-완료했고 후보48beb25의 CI38722595047 전체 결과를 회수했다. 새32개·회귀·PG는
-통과했지만 fixture type_complexity 한 건으로 strict Clippy/required가 실패했다.
-[C01 구조체 보정](reviews/2026-10-15-r2-daily-provider-reconstruction-c01.md) 후 후보302f29a의 CI38725299504를 한 번 요청했다. Strict Clippy는 통과했고 전체 회수를 기다린다. S4 최종 인수는 아직 없다.
+S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
+[범위별 인수](reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md)를 완료했다.
+새32개·기존 회귀·strict Clippy·PG를 개별 증거와 대조했고 이전48beb25 실패도 보존한다.
+다음 S5a 전체 소스 탐색·관측/변경 감지의 통합 검증을 시작한다. 새 코드는 아직 미검증이다.
 
 | 항목 | 확인된 상태 |
 | --- | --- |

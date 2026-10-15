@@ -2382,3 +2382,19 @@ SHA verification preceded one dispatch. Strict Clippy/format/policy/Python passe
 remaining jobs need terminal/full-log recovery. No rerun/cancel/duplicate.
 Unregistered observation.rs/discovery.rs are independent S5 preparation and are
 excluded from this candidate, its pins and compiler/test claims.
+
+### Wave43 closeout — S4 bounded acceptance, 2026-10-15
+
+302f29a/run38725299504 attempt1 SUCCESS fully recovered11:26UTC.8 jobs/8 full
+log hashes/7 checkout SHAs/276pins/223candidateblobs match;83 steps success and
+conditional PG failure-log skip only. S4 32/S3 22/normalizer37/prior99/daily32/
+legacy28/transport3/chart6 named outcomes all pass, without adding overlapping
+groups. PG32/73/83/12 exits0-noSKIP/checksums60x2/NO_OP/roles/0039/catalog/0060/
+cleanup pass. Receipt2835lines/aded5ef10f56551258ff86d4ee4dd38866da08b7b26b605c41b91901521b661f.
+C01 source correction is accepted with offline S4 reconstruction only. Direct
+coordinator source review; no new independent review or runtime acceptance.
+The48beb25 failure, S3/I2 and earlier evidence remain immutable. No delegation,
+local project execution, provider action or duplicate CI. Next Wave44 integrates
+S5a full-snapshot discovery and canonical source observation/change detection;
+33 new written definitions are not yet registered or executed. Protected prefix,
+artifact/admission/supply and all runtime/Owner/final R2 gates remain open.
