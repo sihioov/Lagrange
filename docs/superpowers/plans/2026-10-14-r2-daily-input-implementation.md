@@ -58,7 +58,7 @@ execution restrictions remain in force; no further worker delegation.
   Wave57 c4f35bb/run38784769462 bounded I4e verification passed;
   Wave58 7a5b347/run38788565250 supersession passed. Wave59 bounded artifact
   navigation/paired frontier replay:3files/19definitions frozen at584pins;
-  exact-candidate CI pending, then producer/admitter wiring.
+  candidate35b64fe/run38792738853 attempt1 running, then producer/admitter wiring.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -4868,3 +4868,16 @@ Source/compiler/test acceptance pending a single exact-candidate hosted CI after
 existing-run and remote/pin/blob checks. No local execution/delegation. Full real
 approved-base flow, producer/admitter wiring, I5–I7, runtime/Owner/three trading
 days/final C_R2 remain open. Ralph continues.
+
+
+### Wave59 single candidate CI — 2026-10-16 KST
+
+Candidate35b64febac11eb258c86dc51a35d4d67ba7fe87b, run38792738853 attempt1,
+[CI](https://github.com/sihioov/Lagrange/actions/runs/38792738853), created2026-10-15T19:17:54Z.
+Before push: all-event exact-head query0 at19:17:29.784565UTC,584pins/334committed
+blobs matched; remote was accepted7a5b347. After one push, remote equality and
+query0 at19:17:52.583253UTC preceded exactly one workflow_dispatch. Reservation
+written before dispatch; initial propagation did not cause another run. Source and
+frozen inputs remain immutable while running. Later documentation HEAD does not
+change this candidate. No source/compiler/test acceptance yet. Existing successes
+and failures preserved. No local execution or delegation; Ralph continues.
