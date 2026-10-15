@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave59 35b64fe/CI38792738853 전체 성공 수용. Wave60 조회/복구18개·0062 소스 검토와603pins 고정, 정확한 후보 CI 대기. 전체 I4/I5–I7·실제 입력·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 단계 | Wave60 승인 조회/복구 후보ef62279/CI38796372356 attempt1 실행 중.603pins/18새 정의·28전용PG 이름 전체 회수. 전체 I4/I5–I7·실제 입력·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3627,3 +3627,16 @@ SQL/test acceptance yet. One exact-candidate hosted CI only after existing-run0 
 remote/pin/blob checks. Real transport loss/approved filesystem integration, full
 producer/admitter state+CLI, I5-I7/runtime/Owner/three trading days/finalC_R2 remain open.
 No local project/SQL execution or delegation. Ralph continues.
+
+### Wave60 single candidate CI — 2026-10-16 KST
+
+Candidate ef6227921be0a45b6947a03b98441d8fc343eff5, run38796372356 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38796372356, created2026-10-15T19:44:43Z.
+Pre-push all-event exact-head query0 at19:44:20.133320UTC;603pins/338candidate blobs
+match, remote35b64fe preserved until one push. Post-push remote equality and query0
+at19:44:41.733949UTC preceded one dispatch issued19:44:43.477725UTC. Reservation
+persisted before dispatch; no rerun/cancel/duplicate. Source and inputs frozen;
+later documentation HEAD does not change the tested candidate. Full eight-job/log,
+checkout/pin,18new/28dedicatedschedule and all earlier groups must be recovered.
+No local project/SQL execution, provider access or delegation. Full I4/I5-I7 and
+operational/Owner/three-day/final C_R2 remain open. Ralph continues.

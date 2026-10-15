@@ -4920,3 +4920,16 @@ SQL/test acceptance yet. One exact-candidate hosted CI only after existing-run0 
 remote/pin/blob checks. Real transport loss/approved filesystem integration, full
 producer/admitter state+CLI, I5-I7/runtime/Owner/three trading days/finalC_R2 remain open.
 No local project/SQL execution or delegation. Ralph continues.
+
+### Wave60 single candidate CI — 2026-10-16 KST
+
+Candidate ef6227921be0a45b6947a03b98441d8fc343eff5, run38796372356 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38796372356, created2026-10-15T19:44:43Z.
+Pre-push all-event exact-head query0 at19:44:20.133320UTC;603pins/338candidate blobs
+match, remote35b64fe preserved until one push. Post-push remote equality and query0
+at19:44:41.733949UTC preceded one dispatch issued19:44:43.477725UTC. Reservation
+persisted before dispatch; no rerun/cancel/duplicate. Source and inputs frozen;
+later documentation HEAD does not change the tested candidate. Full eight-job/log,
+checkout/pin,18new/28dedicatedschedule and all earlier groups must be recovered.
+No local project/SQL execution, provider access or delegation. Full I4/I5-I7 and
+operational/Owner/three-day/final C_R2 remain open. Ralph continues.
