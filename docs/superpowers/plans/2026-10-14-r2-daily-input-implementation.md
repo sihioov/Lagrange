@@ -52,7 +52,8 @@ execution restrictions remain in force; no further worker delegation.
 - [ ] **Remaining complete I1b integration and I4–I7.**
   S5a/S5b remain accepted at5f5f4e8/run38732527740; all previous failures preserved.
   Actual approved-base whole flow, distinct UID/ACL/crash evidence and integrated independent
-  review remain open. Next: I4a daily cycle coordination and actual-role tests.
+  review remain open. Wave54 bounded daily success/source and hosted regressions accepted;
+  next is Wave55 sealed-chain replay, then full runtime orchestration.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -4636,3 +4637,28 @@ Only scoped rustfmt/static source review locally, direct coordinator not indepen
 No fresh source/compiler/test acceptance. Old web failure preserved as causeUNKNOWN.
 Full I4 orchestration/approved-base success, I5-I7/integrated independent review/
 runtime/Owner/three-tradingdays/finalC_R2 remain. Ralph continues.
+
+
+### Wave54 success recovery and Wave55 sealed-chain replay — 2026-10-16 KST
+
+Wave54 47c7dbc / CI38771904166 attempt1 SUCCESS was fully recovered at
+2026-10-15T17:13:09.786418Z: eight terminal jobs/logs, seven checkouts, 488 pins
+and 318 committed blobs. All eight new Rust definitions and every carried group
+passed. Dedicated PG16 exits0/noSKIP, 14 schedule/6 daily publish/6 daily recovery/
+8 historical publish, daily32/subcases73/bootstrap83, 60 migration checksums in
+both lanes, roles/0039/catalog/cleanup passed. Web supervisor34 and both case
+receipts (121 off,14 stream; no skip/flaky/retry) passed. Receipt7195lines/SHA
+58738b0b249af386af29e54e42ac5a80ad40b8057bddb4432cefee4b476a31a7.
+Bounded source/hosted acceptance only; old Web failure remains cause UNKNOWN.
+
+After full recovery, Wave55 owns exactly daily_price_only/artifact.rs, replay.rs
+and mod.rs. Add metadata-only navigation under the unchanged directory/file
+guards, explicit node limits and cancellation checkpoints; reopen full bundles
+oldest-to-tip using existing approved-base/first/continuation verifiers. Navigation
+cannot create an admitted capability. Retain only the final cumulative leaf.
+No registry, SQL, authority, binary activation, provider or historical verifier
+change. Direct coordinator review only. Fifteen written, unexecuted regressions cover
+navigation and storage boundaries; actual approved-base whole-chain execution is
+still separate. Freeze final names/pins, query exact-head all-event runs, verify
+remote equality and dispatch one candidate. Full I4/I5-I7, integrated independent
+review, operations/Owner/three trading days/final C_R2 remain open. Ralph continues.

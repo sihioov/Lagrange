@@ -15,6 +15,7 @@ pub mod input;
 pub mod observation;
 mod price_extension;
 pub mod reconstruct;
+pub mod replay;
 pub mod source;
 pub mod supply;
 pub mod verify;

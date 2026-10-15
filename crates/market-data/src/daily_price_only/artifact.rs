@@ -339,6 +339,23 @@ fn opened_from_files(
     })
 }
 
+/// Unapproved parent-navigation bytes only. Full bundle/base verification is
+/// mandatory before any admitted capability can be constructed.
+pub(super) fn read_admission_metadata(
+    root: &DailyAdmissionRoot,
+    admission: &ContentHash,
+) -> Result<Vec<u8>, DailyArtifactError> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::read_admission_metadata(&root.inner, &leaf_name(admission)?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (root, admission);
+        Err(DailyArtifactError::UnsupportedPlatform)
+    }
+}
+
 pub(super) fn read_admission_files(
     root: &DailyAdmissionRoot,
     admission: &ContentHash,
@@ -963,11 +980,7 @@ mod linux {
         ))
     }
 
-    type LeafBytes = BTreeMap<&'static str, Vec<u8>>;
-    pub(super) fn read_leaf(
-        root: &Arc<Root>,
-        name: &str,
-    ) -> Result<(OpenedLeaf, LeafBytes), Error> {
+    fn open_leaf(root: &Arc<Root>, name: &str) -> Result<OpenedLeaf, Error> {
         root.revalidate()?;
         let directory = fs::openat(root.fd(), name, DIRECTORY_FLAGS, Mode::empty())
             .map_err(|_| Error::UnsafePath)?;
@@ -978,13 +991,21 @@ mod linux {
         }
         no_acl(&directory, true)?;
         exact_entries(&directory, root.layout.files())?;
-        let mut leaf = OpenedLeaf {
+        Ok(OpenedLeaf {
             root: Arc::clone(root),
             name: name.into(),
             directory,
             stat: snapshot(&stat),
             files: Vec::new(),
-        };
+        })
+    }
+
+    type LeafBytes = BTreeMap<&'static str, Vec<u8>>;
+    pub(super) fn read_leaf(
+        root: &Arc<Root>,
+        name: &str,
+    ) -> Result<(OpenedLeaf, LeafBytes), Error> {
+        let mut leaf = open_leaf(root, name)?;
         let mut bytes = BTreeMap::new();
         for &name in root.layout.files() {
             let (file, content) = read_file(&leaf.directory, name, root)?;
@@ -993,6 +1014,20 @@ mod linux {
         }
         leaf.revalidate()?;
         Ok((leaf, bytes))
+    }
+
+    /// Reads only navigation metadata under the same directory/file guards.
+    /// The other three filenames are checked, but their bytes are deliberately
+    /// not read here. This return value can never stand in for a full leaf.
+    pub(super) fn read_admission_metadata(root: &Arc<Root>, name: &str) -> Result<Vec<u8>, Error> {
+        if !matches!(root.layout, Layout::Admitted) {
+            return Err(Error::InvalidRoot);
+        }
+        let mut leaf = open_leaf(root, name)?;
+        let (file, bytes) = read_file(&leaf.directory, "admission.json", root)?;
+        leaf.files.push(file);
+        leaf.revalidate()?;
+        Ok(bytes)
     }
 
     struct Staging {
@@ -1305,6 +1340,96 @@ mod linux {
                 Err(Error::UnexpectedEntries)
             ));
         }
+        fn admitted_metadata_fixture(fixture: &Fixture) -> Arc<Root> {
+            let root = Arc::new(
+                Root::open_admitted(&fixture.path, fixture.root.owner, fixture.root.group).unwrap(),
+            );
+            let bytes = [
+                ("admission.json", b"navigation bytes only".as_slice()),
+                BYTES[0],
+                BYTES[1],
+                BYTES[2],
+            ];
+            publish(&root, NAME, &bytes).unwrap();
+            root
+        }
+
+        #[test]
+        fn i4d_metadata_reads_only_record_and_cannot_validate_other_files() {
+            let fixture = Fixture::new();
+            let root = admitted_metadata_fixture(&fixture);
+            let body = fixture.leaf().join("bars.ndjson");
+            std::fs::set_permissions(&body, std::fs::Permissions::from_mode(0o000)).unwrap();
+            assert_eq!(
+                read_admission_metadata(&root, NAME).unwrap(),
+                b"navigation bytes only"
+            );
+            assert!(matches!(read_leaf(&root, NAME), Err(Error::UnsafePath)));
+        }
+
+        #[test]
+        fn i4d_metadata_rejects_non_admission_layout_before_leaf_lookup() {
+            let fixture = Fixture::new();
+            assert!(matches!(
+                read_admission_metadata(&fixture.root, NAME),
+                Err(Error::InvalidRoot)
+            ));
+            let frontier = frontier_fixture(&fixture);
+            assert!(matches!(
+                read_admission_metadata(&frontier, NAME),
+                Err(Error::InvalidRoot)
+            ));
+        }
+
+        #[test]
+        fn i4d_metadata_requires_exact_entries_and_safe_record() {
+            for change in 0..3 {
+                let fixture = Fixture::new();
+                let root = admitted_metadata_fixture(&fixture);
+                let record = fixture.leaf().join("admission.json");
+                match change {
+                    0 => {
+                        std::fs::write(fixture.leaf().join("extra"), b"unexpected").unwrap();
+                    }
+                    1 => {
+                        std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o640))
+                            .unwrap();
+                    }
+                    _ => {
+                        std::fs::remove_file(&record).unwrap();
+                        symlink("bars.ndjson", &record).unwrap();
+                    }
+                }
+                let expected = if change == 0 {
+                    Error::UnexpectedEntries
+                } else {
+                    Error::UnsafePath
+                };
+                assert!(
+                    matches!(read_admission_metadata(&root, NAME), Err(error) if error == expected)
+                );
+            }
+        }
+
+        #[test]
+        fn i4d_metadata_rejects_oversize_before_reading_payload() {
+            let fixture = Fixture::new();
+            let root = admitted_metadata_fixture(&fixture);
+            let record = fixture.leaf().join("admission.json");
+            std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o640)).unwrap();
+            File::options()
+                .write(true)
+                .open(&record)
+                .unwrap()
+                .set_len(fixed_limits().max_admission_bytes + 1)
+                .unwrap();
+            std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o440)).unwrap();
+            assert!(matches!(
+                read_admission_metadata(&root, NAME),
+                Err(Error::LimitExceeded)
+            ));
+        }
+
         #[test]
         fn s5c_storage_copies_seals_and_reopens_exact_three_files() {
             let fixture = Fixture::new();
