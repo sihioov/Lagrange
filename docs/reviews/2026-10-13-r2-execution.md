@@ -2051,3 +2051,14 @@ ACL/mount/access, allocation/RSS and installer/consumer lifetime arrangements
 remain unverified. No main merge, runtime activation or permissions expansion.
 Next implementation requires its exact owned-file/interface scope in this plan;
 the existing prohibition on further delegation remains in force.
+
+### Wave34 I0d source handoff — 2026-10-15 UTC
+
+Owner continuation selects the remaining negative bootstrap/transaction rollback
+gate. Coordinator implemented 83 named cases in the official disposable PG lane,
+with unchanged production bootstrap and no migration0060/Rust/workflow changes.
+The exact scope and limits are in [source disposition](2026-10-15-r2-bootstrap-negative-source.md)
+and Wave34. Three shell syntax checks and static inspection passed; all cases
+remain WRITTEN_UNEXECUTED pending one exact-candidate hosted run. Previous I0b/I0c
+owners are actual idle/activeTurn null/pending0; no new delegation. C05 Linux S2
+acceptance, earlier failures and all later R2 gates remain preserved.

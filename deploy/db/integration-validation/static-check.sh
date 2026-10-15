@@ -14,6 +14,7 @@ die() {
 [ -x "$workflow" ] || die 'validate.sh must be executable'
 [ -x "$dir/migration-safety-audit.sh" ] || die 'migration-safety-audit.sh must be executable'
 for required in \
+  bootstrap-negative.sh \
   preflight-baseline.sql \
   preflight-0039.sql \
   preflight-catalog.sql \
@@ -30,6 +31,7 @@ for required in \
 done
 
 bash -n "$workflow" || die 'validate.sh has shell syntax errors'
+bash -n "$dir/bootstrap-negative.sh" || die 'bootstrap-negative.sh has shell syntax errors'
 bash -n "$dir/migration-safety-audit.sh" || die 'migration-safety-audit.sh has shell syntax errors'
 
 help_output="$dir/.static-help.$$"
@@ -62,6 +64,9 @@ for required_marker in \
   'export PGOPTIONS="-c lock_timeout=5s -c statement_timeout=60s"' \
   'run_migration_rerun_0039' \
   'run_full_release_lane' \
+  'run_bootstrap_negative_contract' \
+  '/validation/bootstrap-negative.sh --disposable-ci' \
+  'bootstrap_negative_cases' \
   'run_catalog_negative_probe' \
   'migration_checksums=' \
   'run_migration_rerun_0041' \

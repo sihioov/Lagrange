@@ -512,6 +512,7 @@ cleaned=0
 docker_ready=0
 stages_run=''
 tests_run=''
+bootstrap_negative_cases=''
 service_logins=''
 full_service_logins=''
 rollback_guard='NOT_RUN'
@@ -620,6 +621,16 @@ write_evidence() {
       first=0
     done
     printf '],\n'
+    printf '  "bootstrap_negative_cases": ['
+    first=1
+    IFS=',' read -r -a bootstrap_items <<<"$bootstrap_negative_cases"
+    for bootstrap_item in "${bootstrap_items[@]}"; do
+      [ -n "$bootstrap_item" ] || continue
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$bootstrap_item"
+      first=0
+    done
+    printf '],\n'
     printf '  "sanitized_evidence_dir": "%s"\n' "$(json_escape "$evidence_dir")"
     printf '}\n'
   } >"$evidence_dir/evidence.json"
@@ -632,6 +643,7 @@ write_evidence() {
     printf 'sequential\t0039,0040,0041\n'
     printf 'stages_run\t%s\n' "$stages_run"
     printf 'tests_run\t%s\n' "$tests_run"
+    printf 'bootstrap_negative_cases\t%s\n' "$bootstrap_negative_cases"
     printf 'direct_service_role_logins\t%s\n' "$service_logins"
     printf 'full_release_service_role_logins\t%s\n' "$full_service_logins"
     printf '0039_down_undelivered_guard\t%s\n' "$rollback_guard"
@@ -820,6 +832,7 @@ EOF
     printf '    volumes:\n'
     printf '      - %s:/validation/secrets:ro\n' "$password_dir"
     printf '      - %s:/validation/bootstrap-roles.sh:ro\n' "$role_script"
+    printf '      - %s:/validation/bootstrap-negative.sh:ro\n' "$script_dir/bootstrap-negative.sh"
     printf '      - %s:/validation/baseline-v1.json:ro\n' "$root/configs/strategies/baseline-v1.json"
     printf '      - %s:/validation/sync-baseline-strategy-catalog.sql:ro\n' "$root/deploy/db/sync-baseline-strategy-catalog.sql"
     if [ "$include_tool" -eq 1 ] && [ "$migration_mount" -eq 1 ]; then
@@ -855,6 +868,55 @@ bootstrap_roles() {
     -e DB_ADMIN_ROLE_PASSWORD_FILE=/validation/secrets/db_admin_password \
     -e DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE=/validation/secrets/db_daily_input_admitter_password \
     qa-db /bin/bash /validation/bootstrap-roles.sh
+}
+
+run_bootstrap_negative_contract() {
+  local raw="$workdir/bootstrap-negative.log" row
+  # Only this owned, fresh container receives private copies readable by the
+  # non-root postgres OS user. Real 0000-file denial must not run as root.
+  if ! main_compose exec -T -u 0 qa-db /bin/bash -ec '
+    destination=/tmp/lagrange-bootstrap-contract-inputs
+    test ! -e "$destination"
+    install -d -o postgres -g postgres -m 0700 "$destination"
+    for name in postgres_password db_migration_owner_password db_app_password \
+      db_worker_password db_audit_password db_research_password db_admin_password \
+      db_daily_input_admitter_password; do
+      install -o postgres -g postgres -m 0400 "/validation/secrets/$name" "$destination/$name"
+    done
+  ' >"$raw" 2>&1; then
+    fail 'could not prepare private disposable bootstrap-contract inputs'
+  fi
+  if ! main_compose exec -T -u postgres qa-db timeout 300s /bin/bash \
+    /validation/bootstrap-negative.sh --disposable-ci >"$raw" 2>&1; then
+    # Retain fixed case IDs only, even if an unexpected tool diagnostic occurs.
+    grep -E '^BOOTSTRAP_CONTRACT_(CASE:[a-z0-9_]+:(PASS|FAIL)|FAILURE:[a-z0-9_]+:[a-z0-9_]+)$' "$raw" \
+      >"$evidence_dir/bootstrap-negative.log" || true
+    chmod 0600 "$evidence_dir/bootstrap-negative.log"
+    fail 'actual bootstrap negative/rollback contract failed'
+  fi
+  grep -Fxq 'BOOTSTRAP_CONTRACT:PASS' "$raw" \
+    || fail 'bootstrap contract omitted its final verdict'
+  if ! awk '
+    /^BOOTSTRAP_CONTRACT_CASE:[a-z0-9_]+:PASS$/ {
+      if (seen[$0]++) exit 1
+      count++
+      next
+    }
+    /^BOOTSTRAP_CONTRACT:PASS$/ { verdict++; next }
+    { exit 1 }
+    END { if (count != 83 || verdict != 1) exit 1 }
+  ' "$raw"; then
+    fail 'bootstrap contract named outcomes are incomplete or malformed'
+  fi
+  while IFS= read -r row; do
+    case "$row" in
+      BOOTSTRAP_CONTRACT_CASE:*)
+        row=${row#BOOTSTRAP_CONTRACT_CASE:}
+        bootstrap_negative_cases=$(append_csv "$bootstrap_negative_cases" "$row")
+        ;;
+    esac
+  done <"$raw"
+  record_log "$raw" bootstrap-negative.log
 }
 
 run_psql() {
@@ -1464,6 +1526,8 @@ else
   bootstrap_status=$?
 fi
 record_bootstrap_result "$main_password_dir" "$bootstrap_raw" main-bootstrap.log staged "$bootstrap_status"
+
+run_bootstrap_negative_contract
 
 for service_role in migration_owner app worker audit_writer research_writer admin daily_input_admitter; do
   service_login_raw="$workdir/service-login-$service_role.log"

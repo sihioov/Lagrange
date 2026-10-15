@@ -3776,3 +3776,44 @@ ACL/mount/access, allocation/RSS and installer/consumer lifetime arrangements
 remain unverified. No main merge, runtime activation or permissions expansion.
 Next implementation requires its exact owned-file/interface scope in this plan;
 the existing prohibition on further delegation remains in force.
+
+## Wave34 — I0d actual negative bootstrap and transaction rollback
+
+Owner continuation on 2026-10-15 selects the remaining I0 bootstrap gate before
+any 0060 execution. Coordinator owns this bounded package directly; no worker
+delegation. Previous I0b/I0c owners are actual idle/activeTurn null/pending0.
+Baseline is d6bd790440be816c92a790dfc21ed64fb298b3e7, with accepted Linux S2
+candidate 7cdf3a68c754231bd4d828305ff6733638bcfe37 preserved.
+
+Writable implementation scope: new
+`deploy/db/integration-validation/bootstrap-negative.sh`, its invocation and
+named evidence in `validate.sh`, required source/syntax markers in `static-check.sh`,
+and the validation README. Coordinator also maintains this plan, ROADMAP, STATUS,
+execution/new review and private ownership/evidence records. Production bootstrap,
+provisioners, Compose services, workflow, migrations and Rust sources are frozen.
+
+Use only the official hosted disposable PostgreSQL lane, before migrations, to
+call the unchanged production bootstrap. Seed invalid admitter attributes,
+incoming/outgoing memberships, app/worker direct/transitive protected-role paths,
+and database/schema CREATE grants. Every rejection must match its fixed reason
+and leave role attributes/password verifiers, memberships and normalized ACLs
+unchanged. Exercise every one of the eight credential files for missing, empty,
+directory, symlink, LF, CR and real non-root unreadable-file failure. Do not print
+credentials, verifiers, catalog snapshots or raw bootstrap errors.
+
+A bounded two-connection fixture holds a database ACL row until the bootstrap
+hits its existing lock_timeout after role mutations and public CREATE revocation.
+Assert actual earlier statement completion, the exact lock-timeout failure,
+new-role absence and full catalog equality after rollback. Use readiness/release
+acknowledgments, finite client/statement bounds and cleanup on every exit; no
+timing-only sleeps or production failure hook. Positive bootstrap/rerun controls
+and the existing actual-login/catalog checks guard against a vacuous rejection.
+Each distinct case must have a named outcome in official CI evidence.
+
+Locally perform only source/text/hash/diff and shell syntax inspection. Do not
+run this fixture, project helpers, Cargo, SQL/DB, Docker or provisioners locally.
+After bounded coordinator source disposition, freeze one candidate; verify remote
+SHA and all-event exact-head existing CI runs, reuse an existing run or dispatch
+once. Recover all jobs and named outcomes before acceptance or correction. Keep
+all prior successes/failures intact. This package does not implement 0060/DOWN,
+provider/copy admission, runtime UID/ACL access, I6 diagrams, Owner or final C_R2.

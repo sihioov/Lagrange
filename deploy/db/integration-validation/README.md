@@ -8,6 +8,26 @@ the exit trap.
 
 ## Staged upgrade lane
 
+Before migrations, the unchanged production role bootstrap is exercised by
+`bootstrap-negative.sh` in this owned disposable cluster. The fixture runs as
+the non-root postgres OS user and emits 83 distinct case outcomes: three
+positive controls, seven invalid-role attributes, two membership directions,
+eight direct/transitive protected-role paths, six CREATE privilege cases,
+56 failures across all eight credential files, and one real lock-timeout
+rollback. Credentials, password verifiers and raw failure output are never
+printed. The JSON evidence includes every named outcome.
+
+Each rejected bootstrap must preserve the captured role attributes/password
+verifiers, memberships, database ownership/ACL and three fixture schema
+ownership/ACLs. ACLs are compared as sorted effective grant entries. A second
+connection acknowledges its database ACL lock before the late-failure case;
+the real bootstrap must complete all role statements and revoke public-schema
+CREATE, then fail at the following database GRANT with its existing lock
+timeout. The rollback must restore the earlier ACL and leave the new admitter
+absent. This verifies bootstrap transaction rollback, not migration0060 DOWN.
+The helper refuses migrated/colliding fixtures, has finite timeouts and removes
+its private credential copies. Existing role-login checks follow it.
+
 The upgrade cluster starts empty and receives the schema-only SQLx stage 0038.
 For this disposable stage only, the workflow overrides the migration image
 entrypoint with `/bin/bash`, validates its generated migration-owner password
