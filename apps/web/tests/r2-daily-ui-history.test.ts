@@ -109,11 +109,7 @@ describe("bounded same-configuration recommendation history", () => {
       error: { code: "FORBIDDEN", message: "forbidden", request_id: "test" },
     });
     await expect(
-      retainOwnerBetaHistory(
-        vi.fn().mockRejectedValue(denied),
-        page([row(1)], "next"),
-        CONFIG,
-      ),
+      retainOwnerBetaHistory(vi.fn().mockRejectedValue(denied), page([row(1)], "next"), CONFIG),
     ).rejects.toBe(denied);
     console.info("R2_DAILY_UI_TEST:history_access_failure_propagates:PASS");
   });

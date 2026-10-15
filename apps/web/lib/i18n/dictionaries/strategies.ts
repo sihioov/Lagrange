@@ -97,7 +97,8 @@ export const strategiesDictionary: LocaleDictionary<StrategiesDictionary> = {
   },
   ko: {
     dailyUpdateLabel: "추천 자동 일일 갱신",
-    dailyUpdateHelp: "기본값은 꺼짐입니다. 이 설정에 대해서만 직접 켤 수 있으며, 서비스 실행 여부는 일일 상태에 표시됩니다.",
+    dailyUpdateHelp:
+      "기본값은 꺼짐입니다. 이 설정에 대해서만 직접 켤 수 있으며, 서비스 실행 여부는 일일 상태에 표시됩니다.",
     dailyUpdateFailed: "변경을 확인하지 못했습니다. 마지막으로 확인한 설정을 표시합니다.",
     dailyOn: "켜짐",
     dailyOff: "꺼짐",

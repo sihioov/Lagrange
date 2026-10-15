@@ -28,10 +28,7 @@ export default async function StrategiesPage() {
   const api = await getProductApi();
   const session = await getServerSession();
   try {
-    const [catalog, licensing] = await Promise.all([
-      api.getStrategies(),
-      api.getLicensingStatus(),
-    ]);
+    const [catalog, licensing] = await Promise.all([api.getStrategies(), api.getLicensingStatus()]);
     const canDaily =
       session.role === "owner" &&
       session.owner_beta_access_mode === "owner_only" &&

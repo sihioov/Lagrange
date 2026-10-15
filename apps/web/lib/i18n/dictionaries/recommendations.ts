@@ -389,9 +389,11 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
   ko: {
     dailyEyebrow: "자동 일일 갱신",
     dailyHeading: "일일 추천 상태",
-    dailyDatesHelp: "기대 거래일, 입력 지원 종료일, 발행된 추천 기준일과 발행 시각은 서로 다릅니다. 수동 과거 실행은 일일 갱신의 성공을 뜻하지 않습니다.",
+    dailyDatesHelp:
+      "기대 거래일, 입력 지원 종료일, 발행된 추천 기준일과 발행 시각은 서로 다릅니다. 수동 과거 실행은 일일 갱신의 성공을 뜻하지 않습니다.",
     dailyUnverified: "현재 상태 확인 안 됨",
-    dailyLastObservation: "아래 날짜는 마지막 관측값입니다. 새로 조회해야 현재 상태를 확인할 수 있습니다.",
+    dailyLastObservation:
+      "아래 날짜는 마지막 관측값입니다. 새로 조회해야 현재 상태를 확인할 수 있습니다.",
     dailyExpectedSession: "기대 거래일",
     dailySupportEnd: "일일 데이터 지원 종료일",
     dailyPublishedAt: "발행 시각 (KST)",
@@ -402,9 +404,11 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
     dailyConfigHeading: "자동 갱신 대상 설정",
     dailySelectConfig: "이 설정 보기",
     dailyManualUnavailableTitle: "수동 과거 실행 이용 불가",
-    dailyManualUnavailableMessage: "과거 입력의 지원일을 확인할 수 없습니다. 일일 상태와 기존 결과는 별도로 표시합니다.",
+    dailyManualUnavailableMessage:
+      "과거 입력의 지원일을 확인할 수 없습니다. 일일 상태와 기존 결과는 별도로 표시합니다.",
     dailyPreviousResult: "이전 성공 결과",
-    dailyPreviousResultHelp: "선택한 실행이 대기 중이거나 성공하지 않아 이전 결과를 유지합니다. 결과 기준일이 갱신된 것은 아닙니다.",
+    dailyPreviousResultHelp:
+      "선택한 실행이 대기 중이거나 성공하지 않아 이전 결과를 유지합니다. 결과 기준일이 갱신된 것은 아닙니다.",
     dailyProvenanceLabel: "실행 출처",
     dailyManual: "수동 과거 실행",
     dailyAutomatic: "자동 일일 실행",
@@ -413,7 +417,8 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
     dailyAdmissionHash: "일일 입력 승인 해시",
     dailyPolicyHash: "일일 정책 해시",
     dailyBasePins: "기준 과거 입력 해시",
-    dailyHistoryIncomplete: "불러온 범위에서 성공 결과를 찾지 못했습니다. 더 오래된 실행에 결과가 있을 수 있습니다.",
+    dailyHistoryIncomplete:
+      "불러온 범위에서 성공 결과를 찾지 못했습니다. 더 오래된 실행에 결과가 있을 수 있습니다.",
     dailyOlderRuns: "이전 실행 더 보기",
     dailyResultAsOf: "최근 일일 추천 기준일",
     dailyStates: {

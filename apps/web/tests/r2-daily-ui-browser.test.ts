@@ -70,7 +70,10 @@ describe("daily preference and observation transport", () => {
   });
 
   it("preserves rejection and recovers expired sessions at the browser boundary", async () => {
-    for (const [code, status] of [["CSRF_DENIED", 403], ["SESSION_EXPIRED", 401]] as const) {
+    for (const [code, status] of [
+      ["CSRF_DENIED", 403],
+      ["SESSION_EXPIRED", 401],
+    ] as const) {
       const navigate = vi.fn();
       const fetcher: typeof fetch = async (input, init) =>
         new Request(input, init).method === "GET"

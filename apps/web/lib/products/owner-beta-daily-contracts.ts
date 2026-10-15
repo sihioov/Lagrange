@@ -103,8 +103,6 @@ export function ownerBetaDailyStatePath(configId: string): string {
   return OWNER_BETA_DAILY_STATE_PATH + "?" + query.toString();
 }
 
-export function ownerBetaDailyConfigPath(
-  configId: string,
-): `/api/v1/strategy-configs/${string}` {
+export function ownerBetaDailyConfigPath(configId: string): `/api/v1/strategy-configs/${string}` {
   return `/api/v1/strategy-configs/${uuidSchema.parse(configId)}`;
 }

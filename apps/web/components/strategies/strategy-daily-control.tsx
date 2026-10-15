@@ -31,7 +31,7 @@ export function StrategyDailyControl({ configId, enabled }: StrategyDailyControl
   useEffect(() => {
     setConfirmed(enabled);
     setFailed(false);
-  }, [configId, enabled]);
+  }, [enabled]);
 
   async function save(): Promise<void> {
     if (saving.current || confirmed === undefined) {
