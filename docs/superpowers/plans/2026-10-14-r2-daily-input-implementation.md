@@ -4480,3 +4480,17 @@ old factor/input/compute/target/publish and all prior groups retained. Direct co
 only, no new worker/local project execution/source acceptance. Freeze a new candidate,
 query all-event exact-head runs and dispatch once. I4–I7/runtime/Owner/3days/final C_R2
 remain; Ralph continues. Full approved-base end-to-end and independent review remain.
+
+
+### Wave50 I3 single candidate launch — 2026-10-15
+
+Candidate `1c82592321609dc2a46e0f84f63a01ad89a70f42`,
+[CI38755069474 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38755069474),
+created14:50:59UTC, CI/ci.yml/workflow_dispatch/excited-dolphin. All-event exact-head
+queries before/after push returned0; remoteSHA matched before exactly one dispatch.
+399pins/296committed blobs are frozen. Required evidence includes20new I3 definitions,
+29historical computation rows,37S5def and all carried groups. DedicatedPG must prove
+13outer exits0/noSKIP and all8owner-beta-publish named rows; their workspace result
+alone is not actualDB evidence. Full result recovery pending; no source/compiler/test
+acceptance. Only unregistered I4 preparation and mutable tracking docs may change.
+I4–I7/integrated independent review/runtime/Owner/3tradingdays/finalC_R2 remain open.
