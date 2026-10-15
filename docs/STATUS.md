@@ -3233,3 +3233,15 @@ monitor57665dd0. Recover exact INCOMPLETE coverage at the reporting bound and
 renew or hand off before expiry; same-daemon heartbeat cannot protect daemon outage.
 The private startup receipt and owned-worker ledger record the actual lifecycle.
 Historical successes/failures and all later operational/Owner/0060/diagram gates remain.
+
+### Wave44 single candidate launch — 2026-10-15
+
+S5a candidate `5a83e0d978444201237d404307f3e7ea8e79f037` is pushed and exactly one
+[CI38728478625 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38728478625)
+was dispatched at11:35:58UTC after remote equality and all-event exact-head query0.
+The pre-query unsupported gh flag failed before any receipt/dispatch; the corrected
+all-page read query returned0. No retry/duplicate of a dispatched workflow.
+Frozen287pins/231candidateblobs and33new written definitions await full hosted result.
+Later documentation HEAD does not change the pinned candidate. Source remains frozen;
+next protected-prefix preparation may use only new unregistered files. No new worker,
+local project execution, provider action or runtime/Owner acceptance.

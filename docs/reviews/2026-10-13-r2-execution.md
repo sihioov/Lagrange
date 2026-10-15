@@ -2413,3 +2413,15 @@ direct coordinator source inspection pass; one fresh exact-candidate CI follows
 frozen inventory/pins, all-event existing-run query and remote SHA verification.
 No compiler/test/source acceptance before full recovery. R2/runtime/Owner/final
 C_R2 remain open and Ralph remains active.
+
+### Wave44 single candidate launch — 2026-10-15
+
+S5a candidate `5a83e0d978444201237d404307f3e7ea8e79f037` is pushed and exactly one
+[CI38728478625 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38728478625)
+was dispatched at11:35:58UTC after remote equality and all-event exact-head query0.
+The pre-query unsupported gh flag failed before any receipt/dispatch; the corrected
+all-page read query returned0. No retry/duplicate of a dispatched workflow.
+Frozen287pins/231candidateblobs and33new written definitions await full hosted result.
+Later documentation HEAD does not change the pinned candidate. Source remains frozen;
+next protected-prefix preparation may use only new unregistered files. No new worker,
+local project execution, provider action or runtime/Owner acceptance.
