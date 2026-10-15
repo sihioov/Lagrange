@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave64 CI38812634642 실패 전체 회수. Wave65 I5-C02: 테스트 파일2개의 Web타입5곳·DB검증조회2곳 보정. I5Rust24/25·기존 회귀 통과, 제품 수용은 보류. 새 후보1회 검증 후I7/I6; 운영·Owner·3거래일·C_R2 미완료. |
+| 다음 착수 항목 | Wave65 I5-C02 후보abfca9c/CI38815899362 attempt1 실행 중. 두 테스트 파일 보정·722pins/375blobs, 기존 실행0·원격 일치 후1회 dispatch. 전체 결과 회수 후I7/I6; 운영·Owner·3거래일·C_R2 미완료. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -1005,3 +1005,13 @@ names or weakened assertions. Rust2024/whitespace pass.722pins (700unchanged pri
 inputs2931/b6f3b845,inventory5034/b1961038,source report34/2d4c0f56.
 All25Rust/6Web definitions carried; no product source/roles/workflow change.
 Fresh candidate CI remains required; no local project execution/delegation.
+
+Wave65 launch: candidate abfca9cdf186e559092209e8c7340ecad02728fb,
+CI38815899362 attempt1/workflow_dispatch/ci.yml/excited-dolphin,
+https://github.com/sihioov/Lagrange/actions/runs/38815899362, created22:15:53UTC.
+Pre-push all-event exact-head query0 at22:15:24.395495UTC,722pins/375committed blobs;
+remote3480afe. Post-push remote exact/query0 at22:15:52.145416UTC; one dispatch,
+issued22:15:54.192971UTC. No redispatch/rerun/cancel. Sources and inputs frozen;
+full8job/log/name recovery required. No I5/source/runtime acceptance yet.
+Later documentation HEAD is not the pinned source candidate. I7 preparation remains
+read-only/drafts; I7/I6/independent review/runtime/Owner/three trading days/C_R2 open.

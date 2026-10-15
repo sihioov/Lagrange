@@ -30,7 +30,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave64 I5 CI38812634642 실패 전체 회수. Wave65 I5-C02 두 테스트 파일 보정·722pins 고정 완료; 새 후보1회 검증 준비. I7/I6·운영·Owner·3거래일·C_R2 미완료. |
+| 다음 단계 | Wave65 I5-C02 후보abfca9c/CI38815899362 attempt1 실행 중. 두 테스트 파일 보정·722pins/375blobs, 기존 실행0·원격 일치 후1회 dispatch. 전체 결과 회수 후I7/I6; 운영·Owner·3거래일·C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3818,3 +3818,13 @@ names or weakened assertions. Rust2024/whitespace pass.722pins (700unchanged pri
 inputs2931/b6f3b845,inventory5034/b1961038,source report34/2d4c0f56.
 All25Rust/6Web definitions carried; no product source/roles/workflow change.
 Fresh candidate CI remains required; no local project execution/delegation.
+
+Wave65 launch: candidate abfca9cdf186e559092209e8c7340ecad02728fb,
+CI38815899362 attempt1/workflow_dispatch/ci.yml/excited-dolphin,
+https://github.com/sihioov/Lagrange/actions/runs/38815899362, created22:15:53UTC.
+Pre-push all-event exact-head query0 at22:15:24.395495UTC,722pins/375committed blobs;
+remote3480afe. Post-push remote exact/query0 at22:15:52.145416UTC; one dispatch,
+issued22:15:54.192971UTC. No redispatch/rerun/cancel. Sources and inputs frozen;
+full8job/log/name recovery required. No I5/source/runtime acceptance yet.
+Later documentation HEAD is not the pinned source candidate. I7 preparation remains
+read-only/drafts; I7/I6/independent review/runtime/Owner/three trading days/C_R2 open.
