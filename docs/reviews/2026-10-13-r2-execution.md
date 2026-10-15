@@ -2299,3 +2299,5 @@ started. No active worker/background task or pending permission remains for I2.
 I2 bounded acceptance remains at dee78c4/run38696988981. Coordinator starts the [I1b lineage/calendar slice](2026-10-15-r2-daily-evidence-lineage-contract.md) from440d4a8, with no worker or local executable verification. Source and test acceptance pending; remaining I1b and all later R2 gates stay open.
 
 Wave41 source candidate:22 Linux definitions and37 affected normalization names fixed; six source files. Scoped rustfmt2024/whitespace pass. Coordinator disposition only; compiler/tests pending.247 unchanged Wave40 pins preserved; snapshot/storage/0060/workflow unchanged. No local project execution or delegation.
+
+Wave41 launch: eb0e839b5e808fb1353451b47baa1850d248ebb9, run38711965495 attempt1 at2026-10-15T09:18:25Z. All-event exact-head query0 and remote SHA match preceded one dispatch.262pins/215blobs matched. New22/affected normalizer37 plus prior I2/R2 gates require full recovery. No rerun/cancel/delegation/local execution.
