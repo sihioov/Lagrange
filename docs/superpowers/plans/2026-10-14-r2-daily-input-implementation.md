@@ -46,7 +46,7 @@ execution restrictions remain in force; no further worker delegation.
   [Acceptance](../../reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md).
 - [ ] **Remaining I1b reconstruction/admission and I3–I7 integration.**
   S5a/S5b bounded source/hosted verification is accepted at5f5f4e8/run38732527740.
-  S5c remains unaccepted: Wave46/Wave47 fixture setup failures recovered; Wave48 C02 prepares a dedicated hosted fixture hierarchy.
+  S5c remains unaccepted: Wave46–48 fixture setup failures recovered; Wave49 combines direct-root C03 with prepared daily parent/frontier/supplier and bounded Paper clock fixtures.
   Daily parent/frontier persistence, supply and final integrated independent review remain open.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
@@ -4415,3 +4415,34 @@ terminal recovery, move only the isolated test hierarchy directly below the obse
 root0755, without chmod of any shared ancestor. Prepared unregistered daily-parent,
 frontier and pure disabled supplier code can then join one bounded successor scope;
 no acceptance or duplicate dispatch is inferred.
+
+
+### Wave48 complete failure recovery — 2026-10-15
+
+69513a8/38744953343 attempt1 FAILURE fully recovered:8terminaljobs/8logs/7exact
+checkouts,325pins/254candidateblobs. S5c26Linux10PASS/16fixtureUnsafePath failures;
+all retained named groups pass. Workspace also contains the independent failure
+`paper_io::tests::stalled_blocking_work_returns_at_its_deadline` at paper_io.rs:173:26,
+awaiting closure-start notification under automatically advancing paused time. This
+extra failure is preserved in all-workspace-failures.json; aggregate group success
+is not full-workspace success. Fixture /opt0777 violates the production guard.
+Clippy/format/web/Python/policy/PG and fixture/DB cleanup pass. PG32/73/83/12 exits0
+noSKIP/60checksums bothlanes/NO_OP/directroles/0039/catalog/cleanup all pass; unprinted
+nested helper rows/innerexits remainUNKNOWN. No source/runtime acceptance. Receipt
+3494lines SHA202d6d9637dae5e5b80db330e7a9f8e1ce52dd4a64b0e019f9f58fd276397408.
+Next bounded candidate combines the direct-root fixture correction, exact Paper test
+clock-start synchronization and prepared daily parent/frontier/supplier library.
+No old run rerun/cancel/duplicate; local project execution/delegation remain forbidden.
+
+
+## Wave49 — daily parent/frontier/supplier plus bounded fixture corrections
+
+After Wave48 full failure recovery, integrate the previously unregistered S5d/e/f
+library and37new regressions with the C03 direct-root hosted fixture and the two
+existing Paper clock-test synchronizations. Production Paper bytes and existing
+artifact guards remain intact. Shared price loop equivalence was checked after
+private field substitutions. [Source scope/limits](../../reviews/2026-10-15-r2-daily-continuation-frontier-contract.md).
+Direct coordinator review only; no independent/compiler/test/runtime acceptance.
+Freeze exact new/carried names and source/reference pins, query all-event exact-head
+runs, verify remote SHA and dispatch one new candidate. Existing runs remain unchanged.
+R2-04/09 and I3–I7/runtime/Owner/three trading days/final C_R2 stay open; Ralph continues.

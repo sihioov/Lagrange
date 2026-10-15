@@ -143,7 +143,7 @@ fn document_key(document: &DailyNormalizedDocumentV1Wire) -> (TradingDate, Daily
     (document.session_date, document.kind)
 }
 
-fn validate_documents<'a>(
+pub(super) fn validate_documents<'a>(
     expected: &[DailyNormalizedDocumentV1Wire],
     documents: impl Iterator<Item = (&'a DailyNormalizedDocumentV1Wire, &'a [u8])>,
 ) -> Result<(), Error> {

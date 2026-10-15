@@ -64,6 +64,124 @@ pub struct DailyAdmissionRoot {
     inner: std::sync::Arc<linux::Root>,
 }
 
+/// Separate admitter-owned operational state. It is not a D4 artifact root.
+pub struct DailySourceFrontierRoot {
+    #[cfg(target_os = "linux")]
+    inner: std::sync::Arc<linux::Root>,
+}
+impl DailySourceFrontierRoot {
+    pub fn open(
+        path: &Path,
+        trusted_owner: u32,
+        reader_group: u32,
+    ) -> Result<Self, DailyArtifactError> {
+        #[cfg(target_os = "linux")]
+        {
+            Ok(Self {
+                inner: std::sync::Arc::new(linux::Root::open_frontier(
+                    path,
+                    trusted_owner,
+                    reader_group,
+                )?),
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (path, trusted_owner, reader_group);
+            Err(DailyArtifactError::UnsupportedPlatform)
+        }
+    }
+}
+pub(super) struct OpenedSourceFrontierFiles {
+    record: Vec<u8>,
+    observation: Vec<u8>,
+    #[cfg(target_os = "linux")]
+    files: linux::OpenedLeaf,
+}
+impl OpenedSourceFrontierFiles {
+    pub(super) fn record_bytes(&self) -> &[u8] {
+        &self.record
+    }
+    pub(super) fn observation_bytes(&self) -> &[u8] {
+        &self.observation
+    }
+    pub(super) fn revalidate(&self) -> Result<(), DailyArtifactError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.files.revalidate()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(DailyArtifactError::UnsupportedPlatform)
+        }
+    }
+}
+
+pub(super) fn read_source_frontier_files(
+    root: &DailySourceFrontierRoot,
+    hash: &ContentHash,
+    admitted: &OpenedDailyCandidate,
+) -> Result<OpenedSourceFrontierFiles, DailyArtifactError> {
+    #[cfg(target_os = "linux")]
+    {
+        admitted.revalidate()?;
+        if !root.inner.state_for_admission(&admitted.files.root) {
+            return Err(DailyArtifactError::InvalidRoot);
+        }
+        let (files, mut bytes) = linux::read_leaf(&root.inner, &leaf_name(hash)?)?;
+        let record = bytes
+            .remove("frontier.json")
+            .ok_or(DailyArtifactError::InvalidArtifact)?;
+        let observation = bytes
+            .remove("observation.json")
+            .ok_or(DailyArtifactError::InvalidArtifact)?;
+        if ContentHash::from_bytes(&observation) != *hash {
+            return Err(DailyArtifactError::InvalidArtifact);
+        }
+        admitted.revalidate()?;
+        files.revalidate()?;
+        Ok(OpenedSourceFrontierFiles {
+            record,
+            observation,
+            files,
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (root, hash, admitted);
+        Err(DailyArtifactError::UnsupportedPlatform)
+    }
+}
+pub(super) fn publish_source_frontier_files(
+    root: &DailySourceFrontierRoot,
+    hash: &ContentHash,
+    admitted: &OpenedDailyCandidate,
+    record: &[u8],
+    observation: &[u8],
+) -> Result<(), DailyArtifactError> {
+    #[cfg(target_os = "linux")]
+    {
+        admitted.revalidate()?;
+        if !root.inner.state_for_admission(&admitted.files.root) {
+            return Err(DailyArtifactError::InvalidRoot);
+        }
+        if ContentHash::from_bytes(observation) != *hash {
+            return Err(DailyArtifactError::InvalidArtifact);
+        }
+        linux::publish(
+            &root.inner,
+            &leaf_name(hash)?,
+            &[("frontier.json", record), ("observation.json", observation)],
+        )?;
+        admitted.revalidate()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (root, hash, admitted, record, observation);
+        Err(DailyArtifactError::UnsupportedPlatform)
+    }
+}
+
 impl DailyAdmissionRoot {
     pub fn open(
         path: &Path,
@@ -152,6 +270,19 @@ impl OpenedDailyCandidate {
     pub fn matches_reconstruction(
         &self,
         candidate: &HistoricalDailyCandidate<'_, '_, '_, '_>,
+    ) -> Result<(), DailyArtifactError> {
+        self.revalidate()?;
+        if self.manifest_bytes != candidate.manifest_bytes()
+            || self.normalization_bytes != candidate.normalization_bytes()
+            || self.bars != candidate.bars_ndjson()
+        {
+            return Err(DailyArtifactError::Conflict);
+        }
+        self.revalidate()
+    }
+    pub fn matches_continuation_reconstruction(
+        &self,
+        candidate: &super::continuation::DailyContinuationCandidate<'_, '_, '_>,
     ) -> Result<(), DailyArtifactError> {
         self.revalidate()?;
         if self.manifest_bytes != candidate.manifest_bytes()
@@ -261,6 +392,81 @@ pub(super) fn publish_verified_admission(
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (root, verified);
+        Err(DailyArtifactError::UnsupportedPlatform)
+    }
+}
+
+pub(super) fn publish_verified_continuation(
+    root: &DailyAdmissionRoot,
+    verified: &super::continuation::VerifiedDailyContinuation<'_, '_, '_, '_>,
+) -> Result<(), DailyArtifactError> {
+    #[cfg(target_os = "linux")]
+    {
+        verified.candidate().revalidate()?;
+        if !root
+            .inner
+            .independent_from(&verified.candidate().files.root)
+        {
+            return Err(DailyArtifactError::InvalidRoot);
+        }
+        linux::publish(
+            &root.inner,
+            &leaf_name(&verified.pins().admission_sha256)?,
+            &[
+                ("admission.json", verified.admission_bytes()),
+                ("bars.ndjson", verified.candidate().bars_ndjson()),
+                ("manifest.json", verified.candidate().manifest_bytes()),
+                (
+                    "normalization.json",
+                    verified.candidate().normalization_bytes(),
+                ),
+            ],
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (root, verified);
+        Err(DailyArtifactError::UnsupportedPlatform)
+    }
+}
+
+/// Unapproved producer copy; only an opaque reconstructed continuation is accepted.
+pub fn write_daily_continuation_candidate(
+    root: &DailyCandidateRoot,
+    candidate: &super::continuation::DailyContinuationCandidate<'_, '_, '_>,
+) -> Result<OpenedDailyCandidate, DailyArtifactError> {
+    #[cfg(target_os = "linux")]
+    {
+        candidate
+            .parent()
+            .revalidate()
+            .map_err(|_| DailyArtifactError::SourceChanged)?;
+        check_bytes(
+            candidate.content_sha256(),
+            candidate.manifest_bytes(),
+            candidate.normalization_bytes(),
+            candidate.bars_ndjson(),
+        )?;
+        linux::publish(
+            &root.inner,
+            &leaf_name(candidate.content_sha256())?,
+            &[
+                ("bars.ndjson", candidate.bars_ndjson()),
+                ("manifest.json", candidate.manifest_bytes()),
+                ("normalization.json", candidate.normalization_bytes()),
+            ],
+        )?;
+        let opened = read_daily_candidate(root, candidate.content_sha256())?;
+        opened.matches_continuation_reconstruction(candidate)?;
+        candidate
+            .parent()
+            .revalidate()
+            .map_err(|_| DailyArtifactError::SourceChanged)?;
+        Ok(opened)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (root, candidate);
         Err(DailyArtifactError::UnsupportedPlatform)
     }
 }
@@ -380,16 +586,19 @@ mod linux {
         "manifest.json",
         "normalization.json",
     ];
+    const FRONTIER_FILES: [&str; 2] = ["frontier.json", "observation.json"];
     #[derive(Clone, Copy)]
     enum Layout {
         Candidate,
         Admitted,
+        Frontier,
     }
     impl Layout {
         fn files(self) -> &'static [&'static str] {
             match self {
                 Self::Candidate => &FILES,
                 Self::Admitted => &ADMITTED_FILES,
+                Self::Frontier => &FRONTIER_FILES,
             }
         }
     }
@@ -484,6 +693,15 @@ mod linux {
         }
         pub(super) fn open_admitted(path: &Path, owner: u32, group: u32) -> Result<Self, Error> {
             Self::open_with_layout(path, owner, group, Layout::Admitted)
+        }
+        pub(super) fn open_frontier(path: &Path, owner: u32, group: u32) -> Result<Self, Error> {
+            Self::open_with_layout(path, owner, group, Layout::Frontier)
+        }
+        pub(super) fn state_for_admission(&self, admitted: &Self) -> bool {
+            matches!(self.layout, Layout::Frontier)
+                && matches!(admitted.layout, Layout::Admitted)
+                && self.owner == admitted.owner
+                && self.identities.last() != admitted.identities.last()
         }
         fn open_with_layout(
             path: &Path,
@@ -654,7 +872,8 @@ mod linux {
     fn maximum(name: &str) -> u64 {
         let limits = fixed_limits();
         match name {
-            "admission.json" => limits.max_admission_bytes,
+            "admission.json" | "frontier.json" => limits.max_admission_bytes,
+            "observation.json" => limits.max_manifest_bytes,
             "bars.ndjson" => limits.max_bars_bytes,
             "manifest.json" => limits.max_manifest_bytes,
             _ => limits.max_normalization_bytes,
@@ -984,6 +1203,108 @@ mod linux {
             }
         }
 
+        fn frontier_fixture(fixture: &Fixture) -> Arc<Root> {
+            let path = fixture.directory.path().join("frontiers");
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o750)).unwrap();
+            Arc::new(Root::open_frontier(&path, fixture.root.owner, fixture.root.group).unwrap())
+        }
+        #[test]
+        fn s5e_frontier_storage_is_an_exact_separate_two_file_tree() {
+            let fixture = Fixture::new();
+            let root = frontier_fixture(&fixture);
+            let bytes = [
+                ("frontier.json", b"private record".as_slice()),
+                ("observation.json", b"private observation".as_slice()),
+            ];
+            publish(&root, NAME, &bytes).unwrap();
+            let (opened, actual) = read_leaf(&root, NAME).unwrap();
+            assert_eq!(actual.len(), 2);
+            assert_eq!(actual["frontier.json"], bytes[0].1);
+            assert_eq!(actual["observation.json"], bytes[1].1);
+            opened.revalidate().unwrap();
+            let path = fixture.directory.path().join("frontiers");
+            let candidate_layout = Arc::new(Root::open(&path, root.owner, root.group).unwrap());
+            let admission_layout =
+                Arc::new(Root::open_admitted(&path, root.owner, root.group).unwrap());
+            assert!(matches!(
+                read_leaf(&candidate_layout, NAME),
+                Err(Error::UnexpectedEntries)
+            ));
+            assert!(matches!(
+                read_leaf(&admission_layout, NAME),
+                Err(Error::UnexpectedEntries)
+            ));
+            assert_eq!(publish(&root, NAME, &BYTES), Err(Error::LimitExceeded));
+        }
+        #[test]
+        fn s5e_frontier_root_binds_admitter_identity_and_rejects_alias_or_candidate() {
+            let fixture = Fixture::new();
+            let state = frontier_fixture(&fixture);
+            let admission_path = fixture.directory.path().join("admitted");
+            std::fs::create_dir(&admission_path).unwrap();
+            std::fs::set_permissions(&admission_path, std::fs::Permissions::from_mode(0o750))
+                .unwrap();
+            let mut admitted =
+                Root::open_admitted(&admission_path, fixture.root.owner, fixture.root.group)
+                    .unwrap();
+            assert!(state.state_for_admission(&admitted));
+            assert!(!state.state_for_admission(&fixture.root));
+            let alias = Root::open_admitted(
+                &fixture.directory.path().join("frontiers"),
+                state.owner,
+                state.group,
+            )
+            .unwrap();
+            assert!(!state.state_for_admission(&alias));
+            // Pure expected-principal mismatch; this is not a distinct-UID runtime fixture.
+            admitted.owner = admitted.owner.checked_add(1).unwrap();
+            assert!(!state.state_for_admission(&admitted));
+        }
+        #[test]
+        fn s5e_frontier_exact_replay_keeps_inodes_and_changed_record_conflicts() {
+            let fixture = Fixture::new();
+            let root = frontier_fixture(&fixture);
+            let bytes = [
+                ("frontier.json", b"record".as_slice()),
+                ("observation.json", b"observation".as_slice()),
+            ];
+            publish(&root, NAME, &bytes).unwrap();
+            let path = fixture
+                .directory
+                .path()
+                .join("frontiers")
+                .join(NAME)
+                .join("frontier.json");
+            let inode = std::fs::metadata(&path).unwrap().ino();
+            publish(&root, NAME, &bytes).unwrap();
+            assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+            let changed = [("frontier.json", b"changed admission".as_slice()), bytes[1]];
+            assert_eq!(publish(&root, NAME, &changed), Err(Error::Conflict));
+            assert_eq!(std::fs::read(&path).unwrap(), bytes[0].1);
+        }
+        #[test]
+        fn s5e_frontier_revalidation_rejects_changed_observation_or_missing_record() {
+            let fixture = Fixture::new();
+            let root = frontier_fixture(&fixture);
+            let bytes = [
+                ("frontier.json", b"record".as_slice()),
+                ("observation.json", b"observation".as_slice()),
+            ];
+            publish(&root, NAME, &bytes).unwrap();
+            let (opened, _) = read_leaf(&root, NAME).unwrap();
+            let leaf = fixture.directory.path().join("frontiers").join(NAME);
+            let observation = leaf.join("observation.json");
+            std::fs::set_permissions(&observation, std::fs::Permissions::from_mode(0o640)).unwrap();
+            std::fs::write(&observation, b"other-value").unwrap();
+            std::fs::set_permissions(&observation, std::fs::Permissions::from_mode(0o440)).unwrap();
+            assert_eq!(opened.revalidate(), Err(Error::SourceChanged));
+            std::fs::remove_file(leaf.join("frontier.json")).unwrap();
+            assert!(matches!(
+                read_leaf(&root, NAME),
+                Err(Error::UnexpectedEntries)
+            ));
+        }
         #[test]
         fn s5c_storage_copies_seals_and_reopens_exact_three_files() {
             let fixture = Fixture::new();

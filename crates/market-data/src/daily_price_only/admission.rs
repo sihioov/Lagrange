@@ -209,6 +209,9 @@ pub struct SealedHistoricalDailyInput<'base> {
     bars: Vec<HistoricalPriceOnlyBar>,
 }
 impl SealedHistoricalDailyInput<'_> {
+    pub(super) fn opened(&self) -> &OpenedDailyCandidate {
+        &self.opened
+    }
     pub fn base(&self) -> &ApprovedHistoricalPriceOnlyArtifact {
         self.base
     }
@@ -292,7 +295,9 @@ pub fn write_verified_historical_admission<'base>(
     read_sealed_historical_daily_input(root, &verified.pins, verified.base, verified.policy)
 }
 
-fn counts(manifest: &DailyPriceManifestV1Wire) -> Result<DailyAdmissionCountsV1Wire, Error> {
+pub(super) fn counts(
+    manifest: &DailyPriceManifestV1Wire,
+) -> Result<DailyAdmissionCountsV1Wire, Error> {
     let mut files = BTreeSet::new();
     let mut calendar = 0u64;
     let mut actions = 0u64;

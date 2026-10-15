@@ -12,14 +12,12 @@ use serde_json::{Map, Value};
 
 use super::contract::{fixed_limits, validate_file_request_for_symbol};
 use super::discovery::DiscoveredSessionSources;
-use super::verify::{
-    DailyVerificationError as Error, RawEvidenceSnapshots, parse_provider_json, resolve_original,
-};
+use super::verify::{DailyVerificationError as Error, RawEvidenceSnapshots, parse_provider_json};
 use super::{
     DailyBasePinsV1Wire, DailyEvidenceKindV1, DailyFileEvidenceV1Wire, DailyPricePolicyV1Wire,
     hash_daily_price_policy_v1,
 };
-use crate::contract::{ResponseKind, SourceFileReference};
+use crate::contract::ResponseKind;
 use crate::normalize::parse_kis_date;
 use crate::providers::kis::KR_ETF_CORE_SYMBOLS;
 use crate::range_normalize::ExpectedRangeSessions;
@@ -38,7 +36,6 @@ pub struct ProtectedHistoricalPrefix<'base> {
     pins: DailyBasePinsV1Wire,
     policy_sha256: ContentHash,
     sessions: Vec<TradingDate>,
-    index: BTreeMap<(InstrumentId, TradingDate), usize>,
 }
 
 impl<'base> ProtectedHistoricalPrefix<'base> {
@@ -64,13 +61,12 @@ impl<'base> ProtectedHistoricalPrefix<'base> {
         if sessions.len() != 2_452 || base.bars().len() != 26_972 {
             return Err(Error::InvalidContext);
         }
-        let index = prefix_index(base.bars(), &sessions, date(BASE_START)?, date(BASE_END)?)?;
+        prefix_index(base.bars(), &sessions, date(BASE_START)?, date(BASE_END)?)?;
         Ok(Self {
             base,
             pins,
             policy_sha256,
             sessions,
-            index,
         })
     }
 
@@ -133,101 +129,23 @@ pub fn reconstruct_historical_extension<'proof, 'base, 'snapshot>(
     sources: &'proof DiscoveredSessionSources<'snapshot>,
     snapshots: &RawEvidenceSnapshots<'snapshot>,
 ) -> Result<ReconstructedHistoricalExtension<'proof, 'base, 'snapshot>, Error> {
-    check_extension_context(
-        prefix.frontier(),
-        prefix.policy_sha256(),
-        sources.session().previous_frontier,
-        sources.session().session_date,
-        sources.policy_sha256(),
+    let rebuilt = super::price_extension::reconstruct_prefix_prices(
+        super::price_extension::PricePrefixView {
+            bars: prefix.bars(),
+            sessions: prefix.sessions(),
+            policy_sha256: prefix.policy_sha256(),
+        },
+        sources,
+        snapshots,
     )?;
-    let target = sources.session().session_date;
-    let mut added = BTreeMap::new();
-    let mut target_observations = BTreeMap::new();
-    let mut inspected_rows = 0usize;
-    let mut compared_rows = 0usize;
-    let mut bytes = 0u64;
-    for observed in sources.observed_bars() {
-        let evidence = observed.source();
-        let reference = SourceFileReference {
-            provider: evidence.provider.clone(),
-            market: evidence.market.clone(),
-            batch_id: evidence.batch_id,
-            file_name: evidence.file_name.clone(),
-            content_hash: evidence.wire_sha256.clone(),
-            retrieved_at: evidence.retrieved_at.as_timestamp(),
-        };
-        let original = resolve_original(snapshots, &reference)?;
-        if original.evidence() != evidence {
-            return Err(Error::SourceConflict);
-        }
-        bytes = bytes
-            .checked_add(original.original_bytes().len() as u64)
-            .ok_or(Error::LimitExceeded)?;
-        if bytes > fixed_limits().max_bars_bytes {
-            return Err(Error::LimitExceeded);
-        }
-        let rows = exact_original_rows(original.original_bytes(), evidence)?;
-        if rows.len() != observed.rows().len() {
-            return Err(Error::SourceConflict);
-        }
-        for (row, canonical) in rows.iter().zip(observed.rows()) {
-            let expected_date = row.session_date.to_iso();
-            let expected_instrument = row.instrument_id.to_string();
-            if canonical.get("date").and_then(Value::as_str) != Some(expected_date.as_str())
-                || canonical.get("instrument").and_then(Value::as_str)
-                    != Some(expected_instrument.as_str())
-            {
-                return Err(Error::SourceConflict);
-            }
-            inspected_rows = inspected_rows.checked_add(1).ok_or(Error::LimitExceeded)?;
-            if compare_overlap(prefix.bars(), &prefix.index, prefix.sessions(), row)? {
-                compared_rows = compared_rows.checked_add(1).ok_or(Error::LimitExceeded)?;
-            }
-            if row.session_date == target {
-                if let Some(previous) = target_observations.get(&row.instrument_id) {
-                    if !same_raw_prices(previous, row) {
-                        return Err(Error::SourceConflict);
-                    }
-                } else {
-                    target_observations.insert(row.instrument_id.clone(), row.clone());
-                }
-            }
-        }
-        if sources.session().bars.contains(evidence) {
-            let row = rows
-                .into_iter()
-                .find(|row| row.session_date == target)
-                .ok_or(Error::SourceCoverageGap)?;
-            if added.insert(row.instrument_id.clone(), row).is_some() {
-                return Err(Error::SourceConflict);
-            }
-        }
-    }
-    let added_bars = checked_addition(added.into_values().collect(), target)?;
-    compare_target_observations(
-        &added_bars,
-        &target_observations.into_values().collect::<Vec<_>>(),
-    )?;
-    if prefix
-        .sessions
-        .len()
-        .checked_add(1)
-        .ok_or(Error::LimitExceeded)? as u64
-        > fixed_limits().max_sessions
-    {
-        return Err(Error::LimitExceeded);
-    }
-    let bars_ndjson =
-        encode_cumulative_bars(prefix.bars(), &added_bars, fixed_limits().max_bars_bytes)?;
-    let bars_sha256 = ContentHash::from_bytes(&bars_ndjson);
     Ok(ReconstructedHistoricalExtension {
         prefix,
         sources,
-        added_bars,
-        bars_ndjson,
-        bars_sha256,
-        inspected_rows,
-        compared_rows,
+        added_bars: rebuilt.added_bars,
+        bars_ndjson: rebuilt.bars_ndjson,
+        bars_sha256: rebuilt.bars_sha256,
+        inspected_rows: rebuilt.inspected_rows,
+        compared_rows: rebuilt.compared_rows,
     })
 }
 
@@ -241,7 +159,7 @@ fn checked_policy(
     hash_daily_price_policy_v1(policy).map_err(|_| Error::InvalidContext)
 }
 
-fn check_extension_context(
+pub(super) fn check_extension_context(
     frontier: TradingDate,
     policy: &ContentHash,
     previous: TradingDate,
@@ -265,7 +183,7 @@ fn instruments() -> Result<BTreeSet<InstrumentId>, Error> {
         .collect()
 }
 
-fn prefix_index(
+pub(super) fn prefix_index(
     bars: &[HistoricalPriceOnlyBar],
     sessions: &[TradingDate],
     start: TradingDate,
@@ -316,7 +234,7 @@ fn prefix_index(
     Ok(index)
 }
 
-fn compare_overlap(
+pub(super) fn compare_overlap(
     bars: &[HistoricalPriceOnlyBar],
     index: &BTreeMap<(InstrumentId, TradingDate), usize>,
     sessions: &[TradingDate],
@@ -337,7 +255,10 @@ fn compare_overlap(
     Ok(true)
 }
 
-fn same_raw_prices(old: &HistoricalPriceOnlyBar, observed: &HistoricalPriceOnlyBar) -> bool {
+pub(super) fn same_raw_prices(
+    old: &HistoricalPriceOnlyBar,
+    observed: &HistoricalPriceOnlyBar,
+) -> bool {
     let old_prices = [old.raw_open, old.raw_high, old.raw_low, old.raw_close];
     let new_prices = [
         observed.raw_open,
@@ -353,7 +274,7 @@ fn same_raw_prices(old: &HistoricalPriceOnlyBar, observed: &HistoricalPriceOnlyB
         && old.raw_trading_value.map(exact_parts) == observed.raw_trading_value.map(exact_parts)
 }
 
-fn compare_target_observations(
+pub(super) fn compare_target_observations(
     added: &[HistoricalPriceOnlyBar],
     observed: &[HistoricalPriceOnlyBar],
 ) -> Result<(), Error> {
@@ -372,7 +293,7 @@ fn compare_target_observations(
     Ok(())
 }
 
-fn exact_original_rows(
+pub(super) fn exact_original_rows(
     bytes: &[u8],
     evidence: &DailyFileEvidenceV1Wire,
 ) -> Result<Vec<HistoricalPriceOnlyBar>, Error> {
@@ -544,7 +465,7 @@ fn validate_bar(bar: &HistoricalPriceOnlyBar) -> Result<(), Error> {
     Ok(())
 }
 
-fn checked_addition(
+pub(super) fn checked_addition(
     mut bars: Vec<HistoricalPriceOnlyBar>,
     target: TradingDate,
 ) -> Result<Vec<HistoricalPriceOnlyBar>, Error> {
@@ -636,7 +557,7 @@ impl Write for BoundedBytes {
     }
 }
 
-fn encode_cumulative_bars(
+pub(super) fn encode_cumulative_bars(
     base: &[HistoricalPriceOnlyBar],
     added: &[HistoricalPriceOnlyBar],
     maximum: u64,
@@ -725,7 +646,7 @@ pub(super) fn read_first_admission_bars(
     Ok(bars)
 }
 
-fn compare_preserved_rows(
+pub(super) fn compare_preserved_rows(
     expected: &[HistoricalPriceOnlyBar],
     actual: &[HistoricalPriceOnlyBar],
     index: &BTreeMap<(InstrumentId, TradingDate), usize>,
@@ -744,7 +665,7 @@ fn compare_preserved_rows(
     Ok(())
 }
 
-fn decode_stored_bars(
+pub(super) fn decode_stored_bars(
     bytes: &[u8],
     maximum_rows: usize,
 ) -> Result<Vec<HistoricalPriceOnlyBar>, Error> {

@@ -105,7 +105,7 @@ jobs:
       # Intraday tests require this exact disposable QA endpoint.
       DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55438/postgres
       LAGRANGE_QA_DB_PORT: '55438'
-      LAGRANGE_DAILY_ARTIFACT_TEST_ROOT: /opt/lagrange-daily-artifact-${{ github.run_id }}-${{ github.run_attempt }}/runner
+      LAGRANGE_DAILY_ARTIFACT_TEST_ROOT: /lagrange-daily-artifact-${{ github.run_id }}-${{ github.run_attempt }}/runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -122,13 +122,14 @@ jobs:
       - name: Prepare protected daily artifact test parent
         run: |
           set -euo pipefail
-          fixture_anchor="/opt/lagrange-daily-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fixture_anchor="/lagrange-daily-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test "$LAGRANGE_DAILY_ARTIFACT_TEST_ROOT" = "$fixture_anchor/runner"
+          test "$(stat --format='%u:%a' /)" = '0:755'
           test ! -e "$fixture_anchor"
           test ! -L "$fixture_anchor"
           sudo mkdir -m 0755 -- "$fixture_anchor"
           sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" -- "$fixture_anchor/runner"
-          for fixture_node in / /opt "$fixture_anchor" "$fixture_anchor/runner"; do
+          for fixture_node in / "$fixture_anchor" "$fixture_anchor/runner"; do
             test ! -L "$fixture_node"
             stat --format='DAILY_ARTIFACT_FIXTURE_MODE:%u:%g:%a' -- "$fixture_node"
           done
@@ -137,7 +138,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          fixture_anchor="/opt/lagrange-daily-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fixture_anchor="/lagrange-daily-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test "$LAGRANGE_DAILY_ARTIFACT_TEST_ROOT" = "$fixture_anchor/runner"
           if test -d "$fixture_anchor/runner"; then sudo rmdir -- "$fixture_anchor/runner"; fi
           if test -d "$fixture_anchor"; then sudo rmdir -- "$fixture_anchor"; fi

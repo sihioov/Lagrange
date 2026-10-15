@@ -543,7 +543,9 @@ fn required_dates(previous: TradingDate, session: TradingDate) -> Result<Vec<Tra
     Ok(dates)
 }
 
-fn range_and_scope(query: &[(String, String)]) -> Result<(TradingDate, TradingDate, Scope), Error> {
+pub(super) fn range_and_scope(
+    query: &[(String, String)],
+) -> Result<(TradingDate, TradingDate, Scope), Error> {
     let get = |key: &str| -> Result<&str, Error> {
         let mut values = query.iter().filter(|(name, _)| name == key);
         let value = values.next().ok_or(Error::InvalidActions)?;
@@ -579,7 +581,7 @@ fn range_and_scope(query: &[(String, String)]) -> Result<(TradingDate, TradingDa
     Ok((start, end, scope))
 }
 
-fn action_page_identity(
+pub(super) fn action_page_identity(
     file: &DailyFileEvidenceV1Wire,
 ) -> Result<(Class, Option<String>, usize), Error> {
     let symbol = query_value(file, "SHT_CD").ok_or(Error::InvalidActions)?;
