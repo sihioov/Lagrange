@@ -4963,3 +4963,17 @@ Successor wave61-I4g2-C01 inputs2515lines/SHA8eddb0bb,620pins (602prior unchange
 inventory4380lines/SHA82087f44. One fresh exact-candidate hosted CI after all-event
 query0/remotematch; failed ef62279 preserved. No local project/SQL execution or
 workers. Full I4/I5-I7/runtime/Owner/three-day/final C_R2 remain open; Ralph continues.
+
+
+### Wave61 single corrected-candidate CI — 2026-10-16 KST
+
+Candidate 9d0d4591708cc618b9d050d2e223d5eea8b15b64, run38798878711 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38798878711, created2026-10-15T20:03:35Z.
+Prepush all-event exact-head query0 at20:01:16.761705UTC;620pins/340committed
+blobs match. Remote ef62279 preserved until one push. Postpush query0 and remote
+match at2026-10-15T20:03:33.671430+00:00 preceded one dispatch at2026-10-15T20:03:35.923138+00:00.
+Reservation persisted before dispatch. Source/inputs frozen; later documentation
+HEAD is not this candidate.18readback definitions/28dedicatedPG names and all prior
+gates require full recovery. No acceptance yet; never rerun/cancel/duplicate.
+No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three-day/
+final C_R2 remain open; Ralph continues with unregistered runtime draft only.
