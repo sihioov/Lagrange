@@ -1907,3 +1907,26 @@ R2-04/09 remain DOING. Negative bootstrap/rollback,0060,provider/copy
 reconstruction/admission,I6 diagrams before main,runtime,Owner and final C_R2
 remain open. The memory context request returned MCP_ERROR and was not retried;
 no memory was saved by that failed lookup.
+
+### Wave31 actual candidate dispatch — 2026-10-15 UTC
+
+Candidate/source commit `d00b4759ba9e08887d3871f64e8f53bfb1f02fa7` was pushed
+fast-forward to excited-dolphin. The all-event exact-head CI query returned zero
+at 00:22:49.936644 UTC, with remote SHA verified. One dispatch created
+[run 38659690888](https://github.com/sihioov/Lagrange/actions/runs/38659690888),
+attempt 1, workflow CI/ci.yml, workflow_dispatch, at 00:22:51 UTC. No old run was
+rerun/cancelled; no worker was delegated. The coordinator recovers this run
+within a 90-minute reporting bound ending 01:52:51 UTC.
+
+Frozen private inputs under target/r2-daily-beta/wp-4-integration:
+- wave31-C03-ci-inputs.json: 249 lines, 56 pins, SHA256
+  `9c5d89b602081d18ebce2d74d1131349f74cbbdde7dc7f60ff23181a35deef3a`.
+- wave31-C03-ci-test-inventory.json: 981 lines, 99 Linux Rust, six separate chart,
+  two excluded cases, SHA256
+  `b3255aa934d3e360a69a310c6336a86d13334805f30875d8eada9ae8d0db0dd0`.
+- wave31-C03-ci-launch.json: SHA256
+  `f099d9d5a03f62e2139e67f42929b473624a7823c3b7eaec971aeb9839ebe175`.
+
+The preparation inventory's newCiDispatched:false is historical; the launch
+receipt records actual dispatch. Later local documentation commits do not change
+the pinned candidate. Compiler/test acceptance and all later R2 gates stay open.
