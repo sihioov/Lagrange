@@ -2101,3 +2101,27 @@ signals replace elapsed sleeps/early close. All100 function names remain; all76
 prior pinned files remain byte-identical. Scoped rustfmt2024/whitespace passed.
 No local executable verification, new worker or production change. New exact
 candidate CI is required; no rerun/cancel of old runs. Broader R2 gates remain.
+
+### Wave35 I0d-C01 actual hosted dispatch — 2026-10-15 UTC
+
+Candidate 57ca4d1390b025e7efbe9ac452c614a8b5618889, CI38672658570 attempt1,
+workflow_dispatch, created02:45:18UTC. Remote SHA and all-event exact-head count0
+preceded one dispatch. Coordinator recovers all8jobs,85pins/60trackedblobs,
+three affected transport names,83bootstrap,99Rust,6chart,PG59 and strict checks.
+No rerun/cancel/duplicate or further delegation. Source bytes remain frozen.
+
+Frozen wave35-I0d-C01-ci-inputs.json:372lines, SHA256
+15e2a775179088173ed68fe2684b6a6298f1e2dbf0a09de95f1de66cda39d85f.
+Inventory:1676lines, SHA256
+8cc214bd11082c3438ed0fb6548778fe0e3d3c07bc5cfcd7c7e001fa1352d32c.
+Both are private under target/r2-daily-beta/wp-4-integration. Preparation states
+remain historical. The initial blob preparation wrongly treated an ignored
+private receipt as tracked; this read failed and was corrected using the tracked
+file list before dispatch. All76 previous pins match.
+
+Monitor clarification: the first b0a44ce7 request used delete_schedule, which
+does not manage heartbeats; its not-found/list result did not establish heartbeat
+absence. The subsequent delete_heartbeat request succeeded after full recovery.
+New heartbeat b6e4cf9e expires04:45:57UTC; reporting bound04:15:18UTC.
+Same-daemon outage protection is absent. Later documentation HEAD changes do not
+change the pinned candidate or authorize an extra CI run. Broader R2 gates open.

@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | I0d 후보 `dd1b92f`의 [CI](reviews/2026-10-15-r2-bootstrap-negative-ci.md)는 83개 bootstrap·Rust99·chart6·PG59·strict lint/format PASS, 기존 WebSocket 테스트 1개 실패로 전체 FAILURE다. 전체 증거 회수 뒤 [I0d-C01](reviews/2026-10-15-r2-bootstrap-ci-fixture-correction.md)의 테스트 서버 수명만 보정했다. 다음은 새 exact 후보 hosted 검증이다. C05 S2 인수·이전 실패를 보존하며 0060·provider/copy admission·I6·운영·Owner·최종 C_R2는 미완료다. |
+| 다음 착수 항목 | I0d-C01 후보 `57ca4d1`의 [CI 38672658570](https://github.com/sihioov/Lagrange/actions/runs/38672658570) attempt1을 원격 SHA·기존 실행 0 확인 후 한 번 시작했다. WebSocket 3개·bootstrap83·Rust99·chart6·PG59 결과를 직접 회수 중이다. [이전 실패](reviews/2026-10-15-r2-bootstrap-negative-ci.md)와 C05 S2 인수를 보존하며, 0060·provider/copy admission·I6·운영·Owner·최종 C_R2는 미완료다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -550,3 +550,4 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-15 | R2-04/09 | DOING 유지; I0d 실제 실패 경로 검증 작성 | 운영 bootstrap 불변, 83개 역할·권한·8개 secret·잠금 timeout rollback 사례와 named evidence 연결 | [소스 검토](reviews/2026-10-15-r2-bootstrap-negative-source.md); 로컬 문법·정적 검사만 통과, hosted 실행 전 |
 | 2026-10-15 | R2-04/09 | DOING 유지; I0d 단일 후보 CI 시작 | dd1b92f/38670368360 attempt1, 76pins·83새사례·99Rust·6chart 고정 | [CI](https://github.com/sihioov/Lagrange/actions/runs/38670368360); 직접 회수 중, 추가 위임·로컬 실행 없음 |
 | 2026-10-15 | R2-04/09 | DOING 유지; I0d 83개 PASS·전체 실패 회수, 테스트 fixture 보정 | dd1b92f/38670368360 attempt1 전체 회수, Rust99/chart6/PG59 통과. 기존 WebSocket Closed 실패를 제한된 handshake 보정으로 대응 | [실패 회수](reviews/2026-10-15-r2-bootstrap-negative-ci.md), [I0d-C01](reviews/2026-10-15-r2-bootstrap-ci-fixture-correction.md); 새 후보 검증 전 |
+| 2026-10-15 | R2-04/09 | DOING 유지; I0d-C01 단일 후보 CI 시작 | 57ca4d1/38672658570 attempt1, 85pins/60blobs·영향받은 transport3·bootstrap83·Rust99·chart6 고정 | [CI](https://github.com/sihioov/Lagrange/actions/runs/38672658570); 이전 실패 보존, 직접 회수 중 |
