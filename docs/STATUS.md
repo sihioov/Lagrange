@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave61 C01 후보9d0d459/CI38798878711 attempt1 실행 중.620pins/18새·28전용PG 이름 전체 회수. 전체 I4/I5–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 단계 | Wave61 전체 회수·실패 보존. Wave62 producer/admitter/혼합 worker 실행 연결 및 기존 migration 기대값 보정. 전체 R2·운영·Owner·3거래일은 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3684,3 +3684,31 @@ HEAD is not this candidate.18readback definitions/28dedicatedPG names and all pr
 gates require full recovery. No acceptance yet; never rerun/cancel/duplicate.
 No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three-day/
 final C_R2 remain open; Ralph continues with unregistered runtime draft only.
+
+
+### Wave61 recovered; Wave62 complete runtime connection — 2026-10-16 KST
+
+9d0d459/CI38798878711 attempt1 FAILURE fully recovered `2026-10-15T20:29:27.691352+00:00`.
+All8jobs/logs/7checkouts,620pins/340blobs; new18readback and28dedicatedschedule
+names PASS. Sole failing definition is the existing supersession DOWN/UP test:
+actual62migration versions vs hard-coded61. Both workspace and PG reproduce it.
+All other required Rust/PG contracts/Web/Python and strictClippy/format pass.
+Receipt8092lines/SHAeac40093b025b65ae9e560f86acbef40777a966eb77835e3ed35b89ade29557a; candidate not accepted.
+[Recovery report](reviews/2026-10-16-r2-daily-admitter-readback-c01-ci.md). Previous successes/failures remain immutable.
+
+Wave62 R2-04/09 WP-4/I4g3 owns exactly10source/test/harness paths: runner.rs;
+runner/daily_local_state.rs,daily_catalog.rs,daily_ingest.rs,daily_admission.rs;
+bin/owner-beta-runner.rs and its nested daily.rs; tests/owner_beta_daily_schedule.rs,
+owner_beta_daily_runner.rs; deploy/db/integration-validation/validate.sh.
+One coherent connection: private persistent full-cycle flock/minute gate/exact
+restart hints; bounded unapproved catalog + full sealed replay; producer with no
+DB/network; direct-admitter context/independentRaw validation/canonicalevents/
+exactreceipt recovery; disabled-default CLI and mixed worker with minute scheduler.
+Use only the real approved-v3 factory; no fake approval or data upload. Existing
+0060–0062 and historical disabled-mode runner behavior remain preserved. Fix the
+existing test to compare all embedded UP versions, retaining the DOWN/UP/data checks.
+Plan23new definitions (10Linux-native,9other non-DB,4actualDB); dedicatedschedule28→32.
+Direct coordinator review then frozen inputs/inventory and one exact-candidate CI.
+No source/compiler/test acceptance yet. No local project/SQL/provider/production
+execution or delegation. Full approved input/runtime/UIDACL/crash/installer/I5-I7/
+independent review/I6/G4/Owner/3trading days/final C_R2 remain open; Ralph continues.

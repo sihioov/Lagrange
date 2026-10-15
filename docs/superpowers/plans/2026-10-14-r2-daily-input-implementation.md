@@ -4977,3 +4977,31 @@ HEAD is not this candidate.18readback definitions/28dedicatedPG names and all pr
 gates require full recovery. No acceptance yet; never rerun/cancel/duplicate.
 No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three-day/
 final C_R2 remain open; Ralph continues with unregistered runtime draft only.
+
+
+### Wave61 recovered; Wave62 complete runtime connection — 2026-10-16 KST
+
+9d0d459/CI38798878711 attempt1 FAILURE fully recovered `2026-10-15T20:29:27.691352+00:00`.
+All8jobs/logs/7checkouts,620pins/340blobs; new18readback and28dedicatedschedule
+names PASS. Sole failing definition is the existing supersession DOWN/UP test:
+actual62migration versions vs hard-coded61. Both workspace and PG reproduce it.
+All other required Rust/PG contracts/Web/Python and strictClippy/format pass.
+Receipt8092lines/SHAeac40093b025b65ae9e560f86acbef40777a966eb77835e3ed35b89ade29557a; candidate not accepted.
+[Recovery report](../../reviews/2026-10-16-r2-daily-admitter-readback-c01-ci.md). Previous successes/failures remain immutable.
+
+Wave62 R2-04/09 WP-4/I4g3 owns exactly10source/test/harness paths: runner.rs;
+runner/daily_local_state.rs,daily_catalog.rs,daily_ingest.rs,daily_admission.rs;
+bin/owner-beta-runner.rs and its nested daily.rs; tests/owner_beta_daily_schedule.rs,
+owner_beta_daily_runner.rs; deploy/db/integration-validation/validate.sh.
+One coherent connection: private persistent full-cycle flock/minute gate/exact
+restart hints; bounded unapproved catalog + full sealed replay; producer with no
+DB/network; direct-admitter context/independentRaw validation/canonicalevents/
+exactreceipt recovery; disabled-default CLI and mixed worker with minute scheduler.
+Use only the real approved-v3 factory; no fake approval or data upload. Existing
+0060–0062 and historical disabled-mode runner behavior remain preserved. Fix the
+existing test to compare all embedded UP versions, retaining the DOWN/UP/data checks.
+Plan23new definitions (10Linux-native,9other non-DB,4actualDB); dedicatedschedule28→32.
+Direct coordinator review then frozen inputs/inventory and one exact-candidate CI.
+No source/compiler/test acceptance yet. No local project/SQL/provider/production
+execution or delegation. Full approved input/runtime/UIDACL/crash/installer/I5-I7/
+independent review/I6/G4/Owner/3trading days/final C_R2 remain open; Ralph continues.
