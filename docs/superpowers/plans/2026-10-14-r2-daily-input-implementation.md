@@ -3677,3 +3677,22 @@ A new exact candidate must repeat the existing-run/all-event/remote-SHA gate and
 reuse an existing run or dispatch once. The coordinator directly recovers it;
 no further delegation or local executable checks. Failed or successful historical
 runs are never rerun, cancelled or duplicated. All later R2 gates remain open.
+
+### Wave32 actual C04 dispatch — 2026-10-15 UTC
+
+Candidate `d883c17c4217a29681a649fd29641172f53b6355` was pushed fast-forward.
+The all-event exact-head query returned zero at 00:49:38.337751 UTC, after remote
+SHA verification. One dispatch created [run 38662224666](https://github.com/sihioov/Lagrange/actions/runs/38662224666),
+attempt 1, CI/ci.yml, workflow_dispatch, at 00:49:39 UTC. The first propagation
+query was empty; no redispatch occurred. The coordinator directly recovers this
+run with a reporting bound of 02:19:39 UTC, without new workers or local execution.
+
+Frozen wave32-C04-ci-inputs.json has 273 lines/62 pins, SHA256
+`48332c67d978e53cf6bf15672803095672f33a12810501f9f607b568ab545e11`.
+The 981-line wave32-C04-ci-test-inventory.json has 99 Rust/6 chart/2 exclusions,
+SHA256 `41f3d9e1294025201cf9fa3f738de89f019c0952390b55574104498cb13c5864`.
+Launch receipt SHA256
+`cd8f9dce057b973fbda8e27956a03a307586821b814d73cec9266398a103fe20`.
+All are private under target/r2-daily-beta/wp-4-integration. The preparation-time
+newCiDispatched:false stays historical. Later bookkeeping commits do not change
+the pinned candidate. Prior outcomes and all remaining R2 gates are preserved.
