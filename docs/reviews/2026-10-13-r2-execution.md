@@ -2860,3 +2860,32 @@ source/compiler/test acceptance; only direct review/scoped rustfmt locally.
 No rerun/cancel/duplicate. Source stays frozen until full result recovery; later
 tracking-doc HEAD does not change candidate. Full I4/I5-I7/operations/Owner/3days/
 final C_R2 remain open. Ralph continues without further delegation.
+
+
+### Wave56 failure recovery and Wave57 test-only correction — 2026-10-16 KST
+
+Wave56 9343706 / CI38780494397 attempt1 FAILURE fully recovered at
+2026-10-15T18:10:15.510174Z:8terminal jobs/full logs/7checkouts,527pins/325blobs.
+New2pure+10actualDB, all frozen carried Rust, PG17exits0/noSKIP with ten runner
+names, previous14/6/6/8 names and32/73/83/60checksums both lanes passed.
+Web34+121/14 and Python487pass/10skip/7warnings passed. StrictClippy rejected
+unused next_schedule/job_payloads in the new integration binary; workspace had
+one collector status_repository_is_fenced_best_effort_and_publication_bound
+failure in role bootstrap. Its underlying SQLSTATE/cause remains UNKNOWN.
+Receipt7518lines/SHA8861013bea51d47594fe0246bd151c2d4b987cba53d3835e2a5c1562a3434dc4.
+No candidate acceptance. Old successes and failures remain preserved.
+
+After full recovery, Wave57 owns ONLY owner_beta_daily_runner.rs and collectors
+tests/service_status.rs. Extend existing preflight test with bounded permanent
+reservation replay and exact unchanged payload/state checks, using both helpers.
+Collector harness reuses standard role and per-target bootstrap SQL; acquires
+canonical then legacy transaction locks with bounds; does not mutate supervisor
+schema. Target setup failure closes/drops/confirms absence of only its new DB.
+Diagnostics expose fixed stage plus SQLSTATE/error kind only. No source root-cause
+claim for the previous masked error. All other test bodies and production bytes
+remain unchanged. Scope rustfmt2024/whitespace PASS, direct coordinator review only.
+Fresh exact-candidate compilation/strict lint, all ten runner actual-DB and all
+three collector DB names are required along with all previous gates. Freeze inputs,
+query all-event exact-head runs, verify remote and dispatch once. No local project
+execution/delegation. Supersession, producer/admitter, I4-I7/runtime/independent
+review/Owner/three trading days/final C_R2 remain; Ralph continues.

@@ -20,42 +20,76 @@ use uuid::Uuid;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
-const ROLE_BOOTSTRAP: &str = r#"
-SELECT pg_advisory_lock(424242001);
-DO $role$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'migration_owner') THEN
-    CREATE ROLE migration_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
-  END IF;
-END $role$;
-DO $role$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'app') THEN
-    CREATE ROLE app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
-  END IF;
-END $role$;
-DO $role$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'worker') THEN
-    CREATE ROLE worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
-  END IF;
-END $role$;
-DO $role$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'audit_writer') THEN
-    CREATE ROLE audit_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
-  END IF;
-END $role$;
-DO $role$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'research_writer') THEN
-    CREATE ROLE research_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
-  END IF;
-END $role$;
-DO $role$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'admin') THEN
-    CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'lagrange';
-  END IF;
-END $role$;
-GRANT USAGE ON SCHEMA public TO migration_owner, app, worker, audit_writer, research_writer, admin;
-GRANT CREATE ON SCHEMA public TO migration_owner;
-SELECT pg_advisory_unlock(424242001);
-"#;
+// Reuse the real migration fixture contracts. Role creation is cluster-global;
+// schema privileges belong only to the newly created disposable database.
+const ROLE_BOOTSTRAP: &str =
+    include_str!("../../../tests/integration/migration-contract/role-bootstrap.sql");
+const DATABASE_BOOTSTRAP: &str =
+    include_str!("../../../tests/integration/migration-contract/bootstrap.sql");
+
+fn fixture_setup_error(stage: &'static str, error: &sqlx::Error) -> &'static str {
+    let code = error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .filter(|code| code.len() == 5 && code.bytes().all(|c| c.is_ascii_alphanumeric()));
+    if let Some(code) = code {
+        eprintln!("SERVICE_STATUS_FIXTURE:{stage}:SQLSTATE:{code}");
+    } else {
+        let kind = match error {
+            sqlx::Error::PoolTimedOut => "POOL_TIMEOUT",
+            sqlx::Error::PoolClosed => "POOL_CLOSED",
+            sqlx::Error::Io(_) => "IO",
+            _ => "OTHER",
+        };
+        eprintln!("SERVICE_STATUS_FIXTURE:{stage}:ERROR_KIND:{kind}");
+    }
+    "service-status fixture setup failed; see sanitized stage diagnostic"
+}
+
+async fn bootstrap_roles(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let result = async {
+        sqlx::raw_sql("SET LOCAL lock_timeout='10s'; SET LOCAL statement_timeout='30s'")
+            .execute(&mut *transaction)
+            .await?;
+        // Match the migration/job-queue fixture lock, then the older API fixture
+        // lock. Transaction ownership releases both on success or failure.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('lagrange-test-role-bootstrap'))")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(424242001)")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::raw_sql(ROLE_BOOTSTRAP)
+            .execute(&mut *transaction)
+            .await?;
+        Ok::<_, sqlx::Error>(())
+    }
+    .await;
+    match result {
+        Ok(()) => transaction.commit().await,
+        Err(error) => {
+            transaction.rollback().await?;
+            Err(error)
+        }
+    }
+}
+
+async fn remove_failed_setup(pool: &PgPool, name: &str) -> Result<(), &'static str> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"
+    )))
+    .execute(pool)
+    .await
+    .map_err(|error| fixture_setup_error("SETUP_CLEANUP", &error))?;
+    let absent: bool =
+        sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM pg_database WHERE datname=$1)")
+            .bind(name)
+            .fetch_one(pool)
+            .await
+            .map_err(|error| fixture_setup_error("SETUP_CLEANUP_CHECK", &error))?;
+    check(absent, "failed fixture database still exists")
+}
 
 struct ScratchDb {
     name: String,
@@ -76,10 +110,10 @@ impl ScratchDb {
             .parse::<PgConnectOptions>()
             .map_err(|_| "test database URL is not parseable")?;
         let super_pool = connect(base_options.clone()).await?;
-        sqlx::raw_sql(ROLE_BOOTSTRAP)
-            .execute(&super_pool)
-            .await
-            .map_err(|_| "fixture DB roles could not be bootstrapped")?;
+        if let Err(error) = bootstrap_roles(&super_pool).await {
+            super_pool.close().await;
+            return Err(fixture_setup_error("ROLE_BOOTSTRAP", &error));
+        }
         let name = format!("status_{}_{}", std::process::id(), Uuid::new_v4().simple());
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE DATABASE \"{name}\" OWNER migration_owner"
@@ -87,7 +121,25 @@ impl ScratchDb {
         .execute(&super_pool)
         .await
         .map_err(|_| "isolated service-status database could not be created")?;
-        drop(super_pool);
+        let target_setup = connect(base_options.clone().database(&name)).await;
+        let target_result = match target_setup {
+            Ok(target) => {
+                let result = sqlx::raw_sql(DATABASE_BOOTSTRAP)
+                    .execute(&target)
+                    .await
+                    .map_err(|error| fixture_setup_error("TARGET_GRANTS", &error));
+                target.close().await;
+                result.map(|_| ())
+            }
+            Err(error) => Err(error),
+        };
+        if let Err(error) = target_result {
+            let cleanup = remove_failed_setup(&super_pool, &name).await;
+            super_pool.close().await;
+            cleanup?;
+            return Err(error);
+        }
+        super_pool.close().await;
 
         let owner = connect(role_options(&base_options, "migration_owner", &name)).await?;
         let writer = connect(role_options(&base_options, "research_writer", &name)).await?;

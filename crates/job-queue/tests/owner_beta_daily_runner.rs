@@ -19,7 +19,7 @@ use job_queue::{
         runner::{
             daily_execution::{DailyExecutionContext, DailyExecutionMode, run_once_with_daily},
             daily_runtime::DailyProcessMode,
-            daily_schedule::schedule_daily_once,
+            daily_schedule::{DailyScheduleOutcome, DailyScheduleReport, schedule_daily_once},
         },
     },
 };
@@ -123,6 +123,25 @@ async fn daily_preflight_current_claim_is_read_only_and_releases_locks() {
             preflight_owner_beta_daily_claim(&f.worker, &q, &claim, &input).await?,
             DailyClaimPreflight::Ready
         );
+        assert_eq!(state(&f).await?, before);
+        let payloads = f.job_payloads().await?;
+        assert_eq!(payloads.len(), 1);
+        f.next_schedule().await?;
+        // A later cycle must replay the claimed permanent reservation. Preflight
+        // may neither keep its locks nor make the scheduler create another job.
+        assert_eq!(
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                schedule_daily_once(&f.worker, DailyProcessMode::OwnerOnly),
+            )
+            .await??,
+            DailyScheduleOutcome::Completed(DailyScheduleReport {
+                checked: 1,
+                replayed: 1,
+                ..Default::default()
+            })
+        );
+        assert_eq!(f.job_payloads().await?, payloads);
         assert_eq!(state(&f).await?, before);
         // A control writer needs the authority lock that preflight took.
         tokio::time::timeout(
