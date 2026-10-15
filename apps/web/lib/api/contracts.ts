@@ -37,6 +37,7 @@ export type ProductMutationPath =
   | `/api/v1/paper/accounts/${string}/recommendation-previews/${string}/apply`
   | `/api/v1/screener/screens/${string}`
   | `/api/v1/strategies/${string}/configs`
+  | `/api/v1/strategy-configs/${string}`
   | "/api/v1/research/owner-beta/equity-universe-v2/memberships"
   | "/api/v1/research/owner-beta/equity-universe-v2/quote-demands"
   | `/api/v1/research/owner-beta/equity-universe-v2/quote-demands/${string}`

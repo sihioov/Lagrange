@@ -20,11 +20,17 @@ function configurationBlockedCopy(
 
 export type StrategyCatalogProps = {
   readonly canConfigure: boolean;
+  readonly canDaily?: boolean;
   readonly strategies: readonly StrategyCatalogItem[];
   readonly t: StrategiesDictionary;
 };
 
-export function StrategyCatalog({ canConfigure, strategies, t }: StrategyCatalogProps) {
+export function StrategyCatalog({
+  canConfigure,
+  canDaily = false,
+  strategies,
+  t,
+}: StrategyCatalogProps) {
   return (
     <section aria-labelledby="strategy-catalog-title" className="product-section">
       <div className="section-heading">
@@ -50,7 +56,7 @@ export function StrategyCatalog({ canConfigure, strategies, t }: StrategyCatalog
               <p>{strategy.risk_description ?? t.noRiskDescriptionReported}</p>
             </div>
             {canConfigure && strategy.state !== "Retired" ? (
-              <StrategyConfigForm strategy={strategy} />
+              <StrategyConfigForm canDaily={canDaily} strategy={strategy} />
             ) : (
               <p className="blocked-inline" role="alert">
                 {configurationBlockedCopy(strategy.state, t)}

@@ -1,7 +1,42 @@
 import type { LocaleDictionary } from "@/lib/i18n/locale";
 import type { OwnerBetaReasonCode } from "@/lib/products/owner-beta-contracts";
+import type {
+  OwnerBetaDailyReasonCode,
+  OwnerBetaDailyStateCode,
+} from "@/lib/products/owner-beta-daily-contracts";
 
 export type RecommendationsDictionary = {
+  readonly dailyEyebrow: string;
+  readonly dailyHeading: string;
+  readonly dailyDatesHelp: string;
+  readonly dailyUnverified: string;
+  readonly dailyLastObservation: string;
+  readonly dailyExpectedSession: string;
+  readonly dailySupportEnd: string;
+  readonly dailyPublishedAt: string;
+  readonly dailyDueAt: string;
+  readonly dailyObservedAt: string;
+  readonly dailyReservedRun: string;
+  readonly dailyRefresh: string;
+  readonly dailyConfigHeading: string;
+  readonly dailySelectConfig: string;
+  readonly dailyManualUnavailableTitle: string;
+  readonly dailyManualUnavailableMessage: string;
+  readonly dailyPreviousResult: string;
+  readonly dailyPreviousResultHelp: string;
+  readonly dailyProvenanceLabel: string;
+  readonly dailyManual: string;
+  readonly dailyAutomatic: string;
+  readonly dailyContentHash: string;
+  readonly dailyManifestHash: string;
+  readonly dailyAdmissionHash: string;
+  readonly dailyPolicyHash: string;
+  readonly dailyBasePins: string;
+  readonly dailyHistoryIncomplete: string;
+  readonly dailyOlderRuns: string;
+  readonly dailyResultAsOf: string;
+  readonly dailyStates: Readonly<Record<OwnerBetaDailyStateCode, string>>;
+  readonly dailyReasons: Readonly<Record<OwnerBetaDailyReasonCode, string>>;
   readonly allCashAllocation: string;
   readonly asOf: (date: string) => string;
   readonly asOfDateLabel: string;
@@ -128,6 +163,78 @@ export type RecommendationsDictionary = {
 
 export const recommendationsDictionary: LocaleDictionary<RecommendationsDictionary> = {
   en: {
+    dailyEyebrow: "Automatic daily updates",
+    dailyHeading: "Daily recommendation status",
+    dailyDatesHelp:
+      "The expected session, input coverage, published result date and publication time are separate. A manual historical run does not confirm a daily update.",
+    dailyUnverified: "Current status not verified",
+    dailyLastObservation:
+      "Dates below are the last observation. Refresh to verify the current status.",
+    dailyExpectedSession: "Expected trading session",
+    dailySupportEnd: "Daily input coverage ends",
+    dailyPublishedAt: "Published at (KST)",
+    dailyDueAt: "Update due (KST)",
+    dailyObservedAt: "Observed at (KST)",
+    dailyReservedRun: "View the reserved run",
+    dailyRefresh: "Refresh daily status",
+    dailyConfigHeading: "Configuration for daily updates",
+    dailySelectConfig: "View this configuration",
+    dailyManualUnavailableTitle: "Manual historical runs unavailable",
+    dailyManualUnavailableMessage:
+      "Historical input discovery is unavailable. Daily status and existing results remain separate.",
+    dailyPreviousResult: "Previous successful result",
+    dailyPreviousResultHelp:
+      "This result is retained while the selected run is pending or unsuccessful. Its date has not advanced.",
+    dailyProvenanceLabel: "Run origin",
+    dailyManual: "Manual historical run",
+    dailyAutomatic: "Automatic daily run",
+    dailyContentHash: "Daily content commitment",
+    dailyManifestHash: "Daily manifest commitment",
+    dailyAdmissionHash: "Daily admission commitment",
+    dailyPolicyHash: "Daily policy commitment",
+    dailyBasePins: "Historical base commitments",
+    dailyHistoryIncomplete:
+      "No successful result was found in this loaded window. Older runs may still contain a result.",
+    dailyOlderRuns: "Older runs",
+    dailyResultAsOf: "Latest daily result as-of",
+    dailyStates: {
+      DISABLED: "Automatic updates off",
+      UNVERIFIABLE: "Unable to verify",
+      INPUT_PENDING: "Waiting for input",
+      INPUT_BLOCKED: "Input blocked",
+      QUEUED: "Queued",
+      RUNNING: "Computing",
+      RETRYING: "Waiting to retry",
+      FAILED: "Run failed",
+      CURRENT: "Expected session published",
+      STALE: "Update overdue",
+    },
+    dailyReasons: {
+      RUNTIME_DISABLED: "Daily execution is disabled for this release or service.",
+      CONFIG_DISABLED: "Automatic updates are off for this configuration.",
+      CONFIG_INACTIVE: "This strategy configuration is inactive.",
+      CONTROL_UNAVAILABLE: "Daily execution settings cannot be verified.",
+      CALENDAR_COVERAGE_GAP: "Trading calendar evidence is incomplete.",
+      VERIFICATION_EXPIRED: "Input verification has expired.",
+      INPUT_UNAVAILABLE: "Approved daily input is unavailable.",
+      INPUT_NOT_READY: "Daily input is not ready.",
+      BEFORE_ACTIVATION: "The expected session precedes daily activation.",
+      AWAITING_SCHEDULE: "Input is ready; waiting for reservation.",
+      JOB_QUEUED: "The daily run is queued.",
+      JOB_RUNNING: "The daily run is computing.",
+      JOB_RETRYING: "The daily run is waiting for a bounded retry.",
+      JOB_FAILED: "The daily run failed; previous results are retained.",
+      CAPACITY_EXCEEDED: "The current execution limit has been reached.",
+      SUPERSEDED: "A newer session superseded this reservation.",
+      CONFIGURATION_CHANGED: "The configuration changed after reservation.",
+      FUTURE_EVIDENCE: "Input contains evidence beyond the permitted date.",
+      SOURCE_CONFLICT: "Input sources conflict.",
+      SEALED_SOURCE_CHANGED: "Previously sealed source evidence changed.",
+      SOURCE_REVOKED: "Source evidence was revoked.",
+      SOURCE_INTEGRITY: "Source integrity could not be verified.",
+      CALENDAR_CONFLICT: "Calendar evidence conflicts.",
+      NONCASH_ACTION: "A non-cash corporate action blocks this price-only input.",
+    },
     allCashAllocation:
       "All-cash allocation: the governed constraints did not select an instrument for this proposal.",
     asOf: (date) => `As of ${date}`,
@@ -280,6 +387,73 @@ export const recommendationsDictionary: LocaleDictionary<RecommendationsDictiona
     ownerBetaVendorSnapshotValue: "Vendor snapshot",
   },
   ko: {
+    dailyEyebrow: "자동 일일 갱신",
+    dailyHeading: "일일 추천 상태",
+    dailyDatesHelp: "기대 거래일, 입력 지원 종료일, 발행된 추천 기준일과 발행 시각은 서로 다릅니다. 수동 과거 실행은 일일 갱신의 성공을 뜻하지 않습니다.",
+    dailyUnverified: "현재 상태 확인 안 됨",
+    dailyLastObservation: "아래 날짜는 마지막 관측값입니다. 새로 조회해야 현재 상태를 확인할 수 있습니다.",
+    dailyExpectedSession: "기대 거래일",
+    dailySupportEnd: "일일 데이터 지원 종료일",
+    dailyPublishedAt: "발행 시각 (KST)",
+    dailyDueAt: "갱신 기한 (KST)",
+    dailyObservedAt: "관측 시각 (KST)",
+    dailyReservedRun: "예약된 실행 보기",
+    dailyRefresh: "일일 상태 새로 조회",
+    dailyConfigHeading: "자동 갱신 대상 설정",
+    dailySelectConfig: "이 설정 보기",
+    dailyManualUnavailableTitle: "수동 과거 실행 이용 불가",
+    dailyManualUnavailableMessage: "과거 입력의 지원일을 확인할 수 없습니다. 일일 상태와 기존 결과는 별도로 표시합니다.",
+    dailyPreviousResult: "이전 성공 결과",
+    dailyPreviousResultHelp: "선택한 실행이 대기 중이거나 성공하지 않아 이전 결과를 유지합니다. 결과 기준일이 갱신된 것은 아닙니다.",
+    dailyProvenanceLabel: "실행 출처",
+    dailyManual: "수동 과거 실행",
+    dailyAutomatic: "자동 일일 실행",
+    dailyContentHash: "일일 내용 해시",
+    dailyManifestHash: "일일 매니페스트 해시",
+    dailyAdmissionHash: "일일 입력 승인 해시",
+    dailyPolicyHash: "일일 정책 해시",
+    dailyBasePins: "기준 과거 입력 해시",
+    dailyHistoryIncomplete: "불러온 범위에서 성공 결과를 찾지 못했습니다. 더 오래된 실행에 결과가 있을 수 있습니다.",
+    dailyOlderRuns: "이전 실행 더 보기",
+    dailyResultAsOf: "최근 일일 추천 기준일",
+    dailyStates: {
+      DISABLED: "자동 갱신 꺼짐",
+      UNVERIFIABLE: "상태 확인 불가",
+      INPUT_PENDING: "입력 대기",
+      INPUT_BLOCKED: "입력 차단",
+      QUEUED: "실행 대기",
+      RUNNING: "계산 중",
+      RETRYING: "재시도 대기",
+      FAILED: "실행 실패",
+      CURRENT: "기대 거래일 추천 발행됨",
+      STALE: "갱신 지연",
+    },
+    dailyReasons: {
+      RUNTIME_DISABLED: "릴리스 또는 서비스에서 일일 실행이 꺼져 있습니다.",
+      CONFIG_DISABLED: "이 설정의 자동 갱신이 꺼져 있습니다.",
+      CONFIG_INACTIVE: "전략 설정이 비활성 상태입니다.",
+      CONTROL_UNAVAILABLE: "일일 실행 설정을 확인할 수 없습니다.",
+      CALENDAR_COVERAGE_GAP: "거래일 달력 근거가 불완전합니다.",
+      VERIFICATION_EXPIRED: "입력 검증의 유효 시간이 지났습니다.",
+      INPUT_UNAVAILABLE: "승인된 일일 입력을 이용할 수 없습니다.",
+      INPUT_NOT_READY: "일일 입력이 아직 준비되지 않았습니다.",
+      BEFORE_ACTIVATION: "기대 거래일이 일일 실행 시작일보다 이전입니다.",
+      AWAITING_SCHEDULE: "입력이 준비되어 실행 예약을 기다립니다.",
+      JOB_QUEUED: "일일 실행이 대기열에 있습니다.",
+      JOB_RUNNING: "일일 실행을 계산 중입니다.",
+      JOB_RETRYING: "일일 실행이 정해진 범위의 재시도를 기다립니다.",
+      JOB_FAILED: "일일 실행이 실패했습니다. 이전 결과를 유지합니다.",
+      CAPACITY_EXCEEDED: "현재 실행 한도에 도달했습니다.",
+      SUPERSEDED: "새 거래일이 이 예약을 대체했습니다.",
+      CONFIGURATION_CHANGED: "예약 이후 설정이 변경되었습니다.",
+      FUTURE_EVIDENCE: "허용 날짜 이후의 입력 근거가 포함되어 있습니다.",
+      SOURCE_CONFLICT: "입력 출처가 서로 충돌합니다.",
+      SEALED_SOURCE_CHANGED: "봉인된 출처 근거가 변경되었습니다.",
+      SOURCE_REVOKED: "출처 근거가 철회되었습니다.",
+      SOURCE_INTEGRITY: "출처 무결성을 확인할 수 없습니다.",
+      CALENDAR_CONFLICT: "거래일 달력 근거가 충돌합니다.",
+      NONCASH_ACTION: "비현금 기업행사로 가격 수익률 전용 입력이 차단되었습니다.",
+    },
     allCashAllocation:
       "전액 현금 배분: 거버넌스 제약 조건이 이번 제안에 해당하는 종목을 선정하지 않았습니다.",
     asOf: (date) => `기준일: ${date}`,

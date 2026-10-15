@@ -1,9 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { StrategyCatalog } from "@/components/strategies/strategy-catalog";
 import { LocaleProvider } from "@/lib/i18n/client";
 import { strategiesDictionary } from "@/lib/i18n/dictionaries/strategies";
 import { strategySchema } from "@/lib/products/contracts";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: () => undefined }),
+}));
 
 describe("baseline strategy catalog contract", () => {
   it("accepts the JSON Schema features used by baseline packages and renders code defaults", () => {

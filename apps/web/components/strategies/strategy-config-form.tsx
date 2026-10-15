@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
@@ -105,10 +106,13 @@ function strategyConfigPath(strategyId: string): `/api/v1/strategies/${string}/c
 }
 
 export type StrategyConfigFormProps = {
+  readonly canDaily?: boolean;
   readonly strategy: StrategyCatalogItem;
 };
 
-export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
+export function StrategyConfigForm({ canDaily = false, strategy }: StrategyConfigFormProps) {
+  const router = useRouter();
+  const saving = useRef(false);
   const [state, setState] = useState<SubmissionState>({ kind: "idle" });
   const { locale } = useLocale();
   const t = strategiesDictionary[locale];
@@ -120,6 +124,9 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
   const activeSchema: ParameterSchema = schema;
 
   async function submit(form: HTMLFormElement): Promise<void> {
+    if (saving.current) {
+      return;
+    }
     const config: Record<string, unknown> = {};
     const formData = new FormData(form);
     for (const [name, definition] of Object.entries(activeSchema.properties)) {
@@ -130,20 +137,31 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
       }
       config[name] = result.value;
     }
+    saving.current = true;
     setState({ kind: "submitting" });
     try {
       const response = await mutateWithCsrf(strategyConfigPath(strategy.id), {
-        json: { config, is_active: true, strategy_version: version },
+        json: {
+          config,
+          is_active: true,
+          strategy_version: version,
+          ...(canDaily
+            ? { owner_beta_daily_enabled: formData.get("owner_beta_daily_enabled") === "on" }
+            : {}),
+        },
         method: "POST",
       });
       const saved = await parseBrowserApiResponse(response, strategyConfigSchema);
       setState({ kind: "saved", message: t.configurationSaved(saved.id) });
+      router.refresh();
     } catch (error) {
       if (error instanceof Error) {
         setState({ kind: "error", message: error.message });
         return;
       }
       throw error;
+    } finally {
+      saving.current = false;
     }
   }
 
@@ -208,6 +226,18 @@ export function StrategyConfigForm({ strategy }: StrategyConfigFormProps) {
             );
           })}
         </div>
+        {canDaily ? (
+          <label className="form-field" htmlFor={`strategy-${strategy.id}-daily`}>
+            <span>{t.dailyUpdateLabel}</span>
+            <input
+              defaultChecked={false}
+              id={`strategy-${strategy.id}-daily`}
+              name="owner_beta_daily_enabled"
+              type="checkbox"
+            />
+            <small>{t.dailyUpdateHelp}</small>
+          </label>
+        ) : null}
       </fieldset>
       <button className="primary-action" disabled={state.kind === "submitting"} type="submit">
         {state.kind === "submitting" ? t.savingConfiguration : t.saveStrategyConfiguration}

@@ -30,7 +30,9 @@ export function OwnerBetaHistory({ runs, t }: OwnerBetaHistoryProps) {
             <thead>
               <tr>
                 <th scope="col">{t.columnAsOf}</th>
+                <th scope="col">{t.dailyProvenanceLabel}</th>
                 <th scope="col">{t.columnCreated}</th>
+                <th scope="col">{t.dailyPublishedAt}</th>
                 <th scope="col">{t.columnStatus}</th>
                 <th scope="col">{t.columnRunId}</th>
               </tr>
@@ -39,7 +41,13 @@ export function OwnerBetaHistory({ runs, t }: OwnerBetaHistoryProps) {
               {newestFirst.map((run) => (
                 <tr key={run.id}>
                   <th scope="row">{formatDate(run.as_of)}</th>
+                  <td>{run.trigger_kind === "DAILY" ? t.dailyAutomatic : t.dailyManual}</td>
                   <td>{formatTimestamp(run.created_at)}</td>
+                  <td>
+                    {run.published_at === undefined
+                      ? t.notReported
+                      : formatTimestamp(run.published_at)}
+                  </td>
                   <td>
                     <StatusPill
                       label={run.status}
@@ -47,7 +55,9 @@ export function OwnerBetaHistory({ runs, t }: OwnerBetaHistoryProps) {
                     />
                   </td>
                   <td className="data-cell">
-                    <Link href={`/recommendations?run_id=${encodeURIComponent(run.id)}`}>
+                    <Link
+                      href={`/recommendations?run_id=${encodeURIComponent(run.id)}&daily_config_id=${encodeURIComponent(run.strategy_config_id)}`}
+                    >
                       {run.id}
                     </Link>
                   </td>

@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
+import { OwnerBetaDailyPanel } from "@/components/recommendations/owner-beta-daily-panel";
 import { OwnerBetaHistory } from "@/components/recommendations/owner-beta-history";
 import { OwnerBetaReport } from "@/components/recommendations/owner-beta-report";
 import { OwnerBetaRunForm } from "@/components/recommendations/owner-beta-run-form";
@@ -11,6 +13,7 @@ import { RecommendationReport } from "@/components/recommendations/recommendatio
 import { RecommendationRunForm } from "@/components/recommendations/recommendation-run-form";
 import { RecommendationRunStatus } from "@/components/recommendations/recommendation-run-status";
 import { StatePanel } from "@/components/states/state-panel";
+import { StrategyDailyControl } from "@/components/strategies/strategy-daily-control";
 import type { ApiSession } from "@/lib/api/contracts";
 import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
@@ -20,6 +23,8 @@ import {
 } from "@/lib/i18n/dictionaries/recommendations";
 import { getLocale } from "@/lib/i18n/server";
 import { type LicensingStatusModel, permitsUse } from "@/lib/products/contracts";
+import { ownerBetaDailyConfigPath } from "@/lib/products/owner-beta-daily-contracts";
+import { retainOwnerBetaHistory } from "@/lib/products/owner-beta-history";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -30,7 +35,11 @@ export const metadata: Metadata = {
 };
 
 type RecommendationsPageProps = {
-  readonly searchParams?: Promise<{ readonly run_id?: string | string[] }>;
+  readonly searchParams?: Promise<{
+    readonly daily_config_id?: string | string[];
+    readonly history_cursor?: string | string[];
+    readonly run_id?: string | string[];
+  }>;
 };
 
 function recommendationLicenseState(status: LicensingStatusModel): string {
@@ -92,35 +101,112 @@ function noRun(error: unknown): boolean {
   return error instanceof ApiProblem && error.code === "RESOURCE_NOT_FOUND";
 }
 
+async function optionalOwnerBetaRead<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (error) {
+    if (
+      isLoginRequiredError(error) ||
+      (error instanceof ApiProblem &&
+        ["DATASET_BLOCKED", "DATA_ENTITLEMENT_REQUIRED", "FORBIDDEN"].includes(error.code))
+    ) {
+      throw error;
+    }
+    return null;
+  }
+}
+
 async function OwnerBetaRecommendationsProductPage(
   { searchParams }: RecommendationsPageProps,
   t: RecommendationsDictionary,
 ) {
-  const requestedRunId = (await searchParams)?.run_id;
-  if (Array.isArray(requestedRunId)) {
+  const query = await searchParams;
+  const requestedRunId = query?.run_id;
+  const requestedConfigId = query?.daily_config_id;
+  const historyCursor = query?.history_cursor;
+  if (
+    Array.isArray(requestedRunId) ||
+    Array.isArray(requestedConfigId) ||
+    Array.isArray(historyCursor)
+  ) {
     return ownerBetaUnavailablePage(t);
   }
   const api = await getProductApi();
   try {
+    if (requestedConfigId !== undefined) {
+      ownerBetaDailyConfigPath(requestedConfigId);
+    }
     const licensing = await api.getLicensingStatus();
     if (!permitsUse(licensing, "recommendation")) {
       return ownerBetaBlockedPage(t.entitlementInactiveMessage, t);
     }
 
-    const [discovery, configs, history] = await Promise.all([
-      api.getOwnerBetaSupportedAsOf(),
+    const [discovery, configs, firstHistory] = await Promise.all([
+      optionalOwnerBetaRead(() => api.getOwnerBetaSupportedAsOf()),
       api.getStrategyConfigs(),
-      api.getOwnerBetaRecommendationRuns(),
+      api.getOwnerBetaRecommendationRuns({
+        ...(historyCursor === undefined ? {} : { cursor: historyCursor }),
+        limit: 100,
+      }),
     ]);
-    if (discovery.supported_as_of.length === 0) {
+    const requestedRun =
+      requestedRunId === undefined || requestedRunId === ""
+        ? null
+        : await api.getOwnerBetaRecommendationRun(requestedRunId);
+    if (
+      requestedConfigId !== undefined &&
+      requestedRun !== null &&
+      requestedRun.strategy_config_id !== requestedConfigId
+    ) {
       return ownerBetaUnavailablePage(t);
     }
-    const selectedRunId =
-      requestedRunId === undefined || requestedRunId === "" ? history.items[0]?.id : requestedRunId;
+    const preferredConfigId =
+      requestedConfigId ??
+      requestedRun?.strategy_config_id ??
+      firstHistory.items[0]?.strategy_config_id;
+    const selectedConfig =
+      configs.items.find((config) => config.id === preferredConfigId) ??
+      (preferredConfigId === undefined ? configs.items[0] : undefined);
+    if (requestedConfigId !== undefined && selectedConfig === undefined) {
+      return ownerBetaUnavailablePage(t);
+    }
+    const configId = selectedConfig?.id ?? preferredConfigId;
+    const history = await retainOwnerBetaHistory(
+      api.getOwnerBetaRecommendationRuns,
+      firstHistory,
+      configId,
+      historyCursor,
+    );
+    const selectedRunId = history.runs[0]?.id;
     const selected =
-      selectedRunId === undefined ? null : await api.getOwnerBetaRecommendationRun(selectedRunId);
+      requestedRun ??
+      (selectedRunId === undefined ? null : await api.getOwnerBetaRecommendationRun(selectedRunId));
+    const successful = history.runs.find((run) => run.status === "SUCCEEDED");
+    const report =
+      selected?.status === "SUCCEEDED"
+        ? selected
+        : successful === undefined
+          ? null
+          : await api.getOwnerBetaRecommendationRun(successful.id);
+    if (
+      (selected !== null && selected.strategy_config_id !== configId) ||
+      (report !== null && (report.strategy_config_id !== configId || report.status !== "SUCCEEDED"))
+    ) {
+      return ownerBetaUnavailablePage(t);
+    }
+    const dailyState =
+      selectedConfig?.owner_beta_daily_enabled === undefined
+        ? null
+        : await optionalOwnerBetaRead(() => api.getOwnerBetaDailyState(selectedConfig.id));
     const activeConfigs = configs.items.filter((config) => config.is_active);
     const inFlight = selected === null || selected.status === "SUCCEEDED" ? null : selected;
+    const olderQuery = new URLSearchParams();
+    if (configId !== undefined) {
+      olderQuery.set("daily_config_id", configId);
+    }
+    if (history.nextCursor !== null) {
+      olderQuery.set("history_cursor", history.nextCursor);
+    }
 
     return (
       <RoutePage description={t.ownerBetaRouteDescription} title={t.ownerBetaRouteTitle}>
@@ -132,7 +218,45 @@ async function OwnerBetaRecommendationsProductPage(
             {t.ownerBetaVendorSnapshotValue} · {t.ownerBetaStrictPitValue}
           </p>
         </aside>
-        {activeConfigs.length === 0 ? (
+        {configs.items.length === 0 ? null : (
+          <section aria-labelledby="owner-beta-config-title" className="workflow-panel">
+            <h2 id="owner-beta-config-title">{t.dailyConfigHeading}</h2>
+            <form action="/recommendations" className="config-form" method="GET">
+              <label className="form-field" htmlFor="daily-config-id">
+                <span>{t.selectStrategyConfig}</span>
+                <select defaultValue={configId} id="daily-config-id" name="daily_config_id">
+                  {configs.items.map((config) => (
+                    <option key={config.id} value={config.id}>
+                      {configLabel(config)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit">{t.dailySelectConfig}</button>
+            </form>
+            {selectedConfig === undefined ? null : (
+              <StrategyDailyControl
+                configId={selectedConfig.id}
+                enabled={selectedConfig.owner_beta_daily_enabled}
+                key={selectedConfig.id}
+              />
+            )}
+          </section>
+        )}
+        {selectedConfig?.owner_beta_daily_enabled === undefined ? null : (
+          <OwnerBetaDailyPanel
+            configId={selectedConfig.id}
+            initialState={dailyState}
+            key={selectedConfig.id}
+          />
+        )}
+        {discovery === null || discovery.supported_as_of.length === 0 ? (
+          <StatePanel
+            kind="error"
+            message={t.dailyManualUnavailableMessage}
+            title={t.dailyManualUnavailableTitle}
+          />
+        ) : activeConfigs.length === 0 ? (
           <StatePanel kind="empty" message={t.noConfigMessage} title={t.noConfigTitle} />
         ) : (
           <section aria-labelledby="owner-beta-run-title" className="workflow-panel">
@@ -160,15 +284,27 @@ async function OwnerBetaRecommendationsProductPage(
             runId={inFlight.id}
           />
         )}
-        {selected?.status === "SUCCEEDED" ? <OwnerBetaReport run={selected} t={t} /> : null}
-        {selected === null && history.items.length === 0 ? (
+        {report !== null && report.id !== selected?.id ? (
+          <aside className="warning-strip" role="status">
+            <strong>{t.dailyPreviousResult}</strong>
+            <p>{t.dailyPreviousResultHelp}</p>
+          </aside>
+        ) : null}
+        {report === null ? null : <OwnerBetaReport run={report} t={t} />}
+        {selected === null && history.runs.length === 0 && !history.hasMore ? (
           <StatePanel
             kind="empty"
             message={t.ownerBetaNoRunsMessage}
             title={t.noRecommendationTitle}
           />
         ) : null}
-        <OwnerBetaHistory runs={history.items} t={t} />
+        {history.previousResultSearchIncomplete ? (
+          <p role="status">{t.dailyHistoryIncomplete}</p>
+        ) : null}
+        <OwnerBetaHistory runs={history.runs} t={t} />
+        {history.hasMore ? (
+          <Link href={`/recommendations?${olderQuery.toString()}`}>{t.dailyOlderRuns}</Link>
+        ) : null}
       </RoutePage>
     );
   } catch (error) {

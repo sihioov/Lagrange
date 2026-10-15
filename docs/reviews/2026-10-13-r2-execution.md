@@ -3331,3 +3331,39 @@ Pre-push all-event head query0 at22:36:11.630786UTC;742pins/377committedblobs ma
 remoteabfca9c. Post-push remote exact/query0 at22:36:28.893520UTC, one dispatch
 issued22:36:30.580244UTC. No rerun/cancel/duplicate. Source/inputs frozen untilfull
 recovery. Later docsHEAD is not candidate. I5acceptance/I7/I6/runtime/Owner/3days/C_R2 open.
+
+### Wave66 acceptance; Wave67 I7 Web — 2026-10-16 KST
+
+7704749/CI38818261699 attempt1 SUCCESS; all8jobs/full-log hashes/7checkout,
+742pins/377committedblobs match. I5 Rust25,Web6,canonicalPGdailyAPI15 and
+18PGtargets exit0/noSKIP nowpass. All carried workspace groups/chart6,
+PG32/73/83/publish8/schedule32/dailyPublish6/recovery6/runner24,62checksums twice,
+no-op/roles/0039/catalog/cleanup and strictClippy/format/Web supervisor34/
+121OFF+14stream/Python/policy passed. Prior failures preserved. Accept bounded
+I5 source/executable contract only; no runtime/Owner acceptance.
+Report: docs/reviews/2026-10-16-r2-daily-api-c03-ci.md.
+
+Register Wave67I7 with26 exact paths in wave67-I7-ownership.json: strategy
+defaultOFF controls, selected daily config, independent expected/support/asof/
+published dates, finite status/reasons, retained same-config prior success,
+bounded cursor history and explicit manual provenance. POST adds explicitflag
+only withOwner capability; PATCH sends onlyflag withCSRF/idempotency and exact
+confirmed response. Unknown legacy flag is unreported/disabled. Poll30s/timeout10s,
+no overlap/hidden-current/foreign-config late response. Auth/entitlement deny
+remains authoritative; historical discovery errors do not erase daily evidence.
+Daily fourpins/nestedfivebase and legacyfive remain distinct.
+Nine new helper/component/test files and17existing paths; synthetic fixtures,
+18newVitest cases and8newbrowser cases. Browser inventory exact121->129OFF,
+14stream unchanged; 34supervisor case assertions stay strict. No local project
+execution, newworkers, backend orworkflow changes. I6/independent integrated
+review/actual approved-base threeUID/G4/Owner/3tradingdays/finalC_R2 remainopen.
+
+Wave67 I7 freeze:26 exact paths,18 new Vitest names/markers and8 newbrowser names.
+Original3 Owner cases retained byte-identically;129OFF/14stream expected and34
+supervisor names unchanged. Browser inventory-only diff confirmed. Allnewcases
+WRITTEN_UNEXECUTED. 795pins (740prior unchanged),
+inputs3247/cd06a374, inventory5321/b7837180,
+source report83/0fab5b04. Whitespace PASS.
+Direct source review only; no localprojectexecution/delegation. Prepare exactly
+one new candidate after all-eventquery0/remotematch. I6/integratedreview/runtime/
+Owner/threeactualtradingdays/finalC_R2 open.

@@ -1,6 +1,14 @@
 import type { LocaleDictionary } from "@/lib/i18n/locale";
 
 export type StrategiesDictionary = {
+  readonly dailyUpdateLabel: string;
+  readonly dailyUpdateHelp: string;
+  readonly dailyUpdateFailed: string;
+  readonly dailyOn: string;
+  readonly dailyOff: string;
+  readonly dailyConfigurationsHeading: string;
+  readonly dailyConfigurationsEmpty: string;
+  readonly dailyConfigurationInactive: string;
   readonly allowedMaximumFallback: string;
   readonly allowedMinimumFallback: string;
   readonly allowedParametersLegend: string;
@@ -37,6 +45,16 @@ export type StrategiesDictionary = {
 
 export const strategiesDictionary: LocaleDictionary<StrategiesDictionary> = {
   en: {
+    dailyUpdateLabel: "Automatic daily recommendations",
+    dailyUpdateHelp:
+      "Off by default. Enable explicitly for this configuration; service availability is shown with its daily status.",
+    dailyUpdateFailed:
+      "The setting could not be confirmed. The last confirmed setting is still shown.",
+    dailyOn: "On",
+    dailyOff: "Off",
+    dailyConfigurationsHeading: "Saved daily update settings",
+    dailyConfigurationsEmpty: "No saved configurations are available.",
+    dailyConfigurationInactive: "This configuration is inactive; automatic runs remain disabled.",
     allowedMaximumFallback: "the allowed maximum",
     allowedMinimumFallback: "the allowed minimum",
     allowedParametersLegend: "Allowed parameters",
@@ -78,6 +96,14 @@ export const strategiesDictionary: LocaleDictionary<StrategiesDictionary> = {
     versionLabel: (version) => `Version ${version}`,
   },
   ko: {
+    dailyUpdateLabel: "추천 자동 일일 갱신",
+    dailyUpdateHelp: "기본값은 꺼짐입니다. 이 설정에 대해서만 직접 켤 수 있으며, 서비스 실행 여부는 일일 상태에 표시됩니다.",
+    dailyUpdateFailed: "변경을 확인하지 못했습니다. 마지막으로 확인한 설정을 표시합니다.",
+    dailyOn: "켜짐",
+    dailyOff: "꺼짐",
+    dailyConfigurationsHeading: "저장된 자동 갱신 설정",
+    dailyConfigurationsEmpty: "저장된 설정이 없습니다.",
+    dailyConfigurationInactive: "비활성 설정이므로 자동 실행되지 않습니다.",
     allowedMaximumFallback: "허용 최댓값",
     allowedMinimumFallback: "허용 최솟값",
     allowedParametersLegend: "허용된 파라미터",

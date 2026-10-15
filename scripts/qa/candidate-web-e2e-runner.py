@@ -102,7 +102,7 @@ INTRADAY_TITLE_MAP = {
     "repeats cache-only app GETs 1, 10, and 100 times without demand mutations":
         "repeats stream GETs 1, 10, and 100 times without lease mutations",
 }
-FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 3, 9, 4, 3, 4, 1, 1, 39, 38)))
+FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 11, 9, 4, 3, 4, 1, 1, 39, 38)))
 FULL_FILE_COUNTS.update({INTRADAY_FILE: 12, STREAM_FILE: 1})
 DOTENV_NAMES = (
     ".env",
@@ -1290,7 +1290,7 @@ def compare_lane_inventories(
         "market-stream": {key for key in required if key.file in {INTRADAY_FILE, STREAM_FILE} or key == owner_key},
     }
     for lane, cases in lanes.items():
-        if len(cases) != (121 if lane == "off" else 14):
+        if len(cases) != (129 if lane == "off" else 14):
             contract_errors.append(f"{lane.upper()}_COUNT_MISMATCH")
         if {case.key for case in cases} != expected_lanes.get(lane, set()):
             contract_errors.append(f"{lane.upper()}_SELECTION_MISMATCH")
