@@ -2667,3 +2667,24 @@ Four test files/regions only; production bytes/SQL unchanged. Source disposition
 is direct coordinator only. Full hosted recovery pending; no acceptance yet.
 Unregistered I4 source preparation continues independently. Earlier failures,
 operational/Owner/three-trading-day/finalC_R2 gates remain.
+
+
+### Wave51 recovery and Wave52 I4a source package — 2026-10-16 KST
+
+Wave51 bd33596/38760423300 attempt1 SUCCESS fully recovered at15:49:32UTC:
+8terminaljobs/8logs/7checkout,423pins/302candidateblobs.21I3,37S5def,26S5c,
+38service-state and all prior named groups PASS. PG13exits0/noSKIP,8ownerpublish,
+32daily/73subcase/83bootstrap,60UPchecksums both lanes,NO_OP,roles/catalog/cleanup PASS.
+Receipt4433lines/SHA8bc9980b9a87acac4174899feba0549a8da7ed7b2a120c79ad61ce7e629263ee.
+Bounded source/hosted I3/S5cdef accepted; direct coordinator only. Midnight branch
+execution is not inferred from this green later run. Full approved-base integration,
+independent review, runtime/Owner/three-trading-day/finalC_R2 remain open.
+
+After full recovery, release frozen inputs for I4a: new daily_runtime/schedule/admission
+modules declared under runner; historical runner body unchanged. New schedule test
+and support fixture, plus dedicated validate.sh PG selection (14th lane) are owned.
+No migration/privilege or binary activation changes.14written definitions,12DB-required
+and2no-connection mode cases. Scope extension to one support file and PG lane is explicit.
+I4b publication/settlement test draft remains unregistered and excluded. No worker/local
+execution. Freeze direct-reviewed candidate, query existing exact-head all-event runs,
+verify remote equality, dispatch once and recover full evidence. Ralph continues.

@@ -1,5 +1,9 @@
 //! One-shot, lease-supervised owner-beta price recommendation worker.
 
+pub mod daily_admission;
+pub mod daily_runtime;
+pub mod daily_schedule;
+
 use std::{
     fmt,
     path::{Component, Path, PathBuf},

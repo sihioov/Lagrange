@@ -23,7 +23,7 @@ Current execution: coordinator directly; further worker delegation prohibited
 - 계획 작성 당시 기존 migration은 0059까지였다. 새 번호·테이블·역할·DTO·파일 소유권은 D1 후
   코디네이터가 확정한다. 이전 계약을 새 계약으로 임의 재해석하지 않는다.
 
-## Current accepted boundary — 2026-10-15
+## Current accepted boundary — 2026-10-16
 
 Owner requested “R2 끝날때까지 랄프로 계속 진행해” on2026-10-15. The native
 continuation goal is active for R2-01~09/final C_R2, without a token budget.
@@ -44,10 +44,15 @@ execution restrictions remain in force; no further worker delegation.
   Completed2026-10-15; candidate `302f29a2d6e9ce8502813a0b1cc0b9ef370fcdea`;
   run38725299504 attempt1 SUCCESS,32required new cases and prior gates recovered.
   [Acceptance](../../reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md).
-- [ ] **Remaining I1b reconstruction/admission and I3–I7 integration.**
-  S5a/S5b bounded source/hosted verification is accepted at5f5f4e8/run38732527740.
-  S5c/def remain unaccepted: Wave46–48 fixture failures and Wave49 test-fixture E0603 fully recovered. Wave50 corrects test-only visibility and adds I3 daily computation with20written tests.
-  Daily parent/frontier persistence, supply and final integrated independent review remain open.
+- [x] **WP-4/I3 and I1b-S5c/def bounded source/hosted verification.**
+  Completed2026-10-16 KST; candidate `bd33596f515afe18437dad03bd940219c630d248`;
+  [Wave51 acceptance](../../reviews/2026-10-16-r2-test-correction-ci-acceptance.md),
+  run38760423300 attempt1 SUCCESS.21 I3/37 S5def/26 S5c and carried regressions pass;
+  423pins/302blobs/7checkout and all dedicated PG gates reconciled. Coordinator review only.
+- [ ] **Remaining complete I1b integration and I4–I7.**
+  S5a/S5b remain accepted at5f5f4e8/run38732527740; all previous failures preserved.
+  Actual approved-base whole flow, distinct UID/ACL/crash evidence and integrated independent
+  review remain open. Next: I4a daily cycle coordination and actual-role tests.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -4523,3 +4528,24 @@ Four test files/regions only; production bytes/SQL unchanged. Source disposition
 is direct coordinator only. Full hosted recovery pending; no acceptance yet.
 Unregistered I4 source preparation continues independently. Earlier failures,
 operational/Owner/three-trading-day/finalC_R2 gates remain.
+
+
+### Wave51 recovery and Wave52 I4a source package — 2026-10-16 KST
+
+Wave51 bd33596/38760423300 attempt1 SUCCESS fully recovered at15:49:32UTC:
+8terminaljobs/8logs/7checkout,423pins/302candidateblobs.21I3,37S5def,26S5c,
+38service-state and all prior named groups PASS. PG13exits0/noSKIP,8ownerpublish,
+32daily/73subcase/83bootstrap,60UPchecksums both lanes,NO_OP,roles/catalog/cleanup PASS.
+Receipt4433lines/SHA8bc9980b9a87acac4174899feba0549a8da7ed7b2a120c79ad61ce7e629263ee.
+Bounded source/hosted I3/S5cdef accepted; direct coordinator only. Midnight branch
+execution is not inferred from this green later run. Full approved-base integration,
+independent review, runtime/Owner/three-trading-day/finalC_R2 remain open.
+
+After full recovery, release frozen inputs for I4a: new daily_runtime/schedule/admission
+modules declared under runner; historical runner body unchanged. New schedule test
+and support fixture, plus dedicated validate.sh PG selection (14th lane) are owned.
+No migration/privilege or binary activation changes.14written definitions,12DB-required
+and2no-connection mode cases. Scope extension to one support file and PG lane is explicit.
+I4b publication/settlement test draft remains unregistered and excluded. No worker/local
+execution. Freeze direct-reviewed candidate, query existing exact-head all-event runs,
+verify remote equality, dispatch once and recover full evidence. Ralph continues.

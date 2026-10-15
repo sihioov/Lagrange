@@ -1537,12 +1537,12 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
         replay_rows+=("$name:$actual")
-        printf 'PG_DB_TEST_ROW:jobqueue-owner-beta-publish:%s:%s\n' "$name" "$actual"
+        printf 'PG_DB_TEST_ROW:%s:%s:%s\n' "$label" "$name" "$actual"
       fi
     done <"$raw"
   fi
@@ -1556,6 +1556,28 @@ run_db_test() {
       [ "$actual" -eq 1 ] || fail "owner-beta unique publication test row missing: $expected"
     done
     [ "${#replay_rows[@]}" -eq 8 ] || fail 'owner-beta publication result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-schedule ]; then
+    for expected in \
+      daily_mode_defaults_off_and_rejects_ambiguous_configuration \
+      daily_disabled_mode_does_not_acquire_a_database_connection \
+      daily_absent_or_disabled_control_does_not_reserve_work \
+      daily_scheduler_reserves_canonical_snapshot_and_persistent_minute_gate \
+      daily_scheduler_new_session_replays_permanent_reservation_without_duplicate_job \
+      daily_scheduler_two_sessions_have_one_reservation_and_one_poll_receipt \
+      daily_scheduler_stage_lock_precedes_the_persistent_poll_gate \
+      daily_poll_roles_are_direct_and_cannot_be_interchanged \
+      daily_admission_cycle_holds_lock_past_minute_and_commits_failure_receipt \
+      daily_abandoned_admission_leaves_started_receipt_and_releases_session_lock \
+      daily_schedule_missing_fresh_input_commits_checked_without_job_or_fallback \
+      daily_schedule_capacity_includes_manual_jobs_without_reserving_on_deferral \
+      daily_schedule_rechecks_optin_and_uses_the_current_config_epoch \
+      daily_schedule_latest_failed_admission_cannot_fall_back_to_previous_verified_scan; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily schedule unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 14 ] || fail 'daily schedule result inventory changed'
   fi
   if [ "$label" = migration-contract ]; then
     for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do
@@ -1893,6 +1915,7 @@ run_db_test jobqueue-contract '-p job-queue --test queue_contract'
 run_db_test jobqueue-paper-preview '-p job-queue --test paper_preview'
 run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 run_db_test jobqueue-owner-beta-publish '-p job-queue --test owner_beta_publish'
+run_db_test jobqueue-owner-beta-daily-schedule '-p job-queue --test owner_beta_daily_schedule'
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 
 outcome=APPROVED
