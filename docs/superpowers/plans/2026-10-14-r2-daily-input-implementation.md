@@ -4011,3 +4011,9 @@ Final staged whitespace inspection found one extra blank line at UP EOF; it was
 removed before commit. The earlier source-input receipt remains historical;
 wave37-I2-final-source-inputs.json supersedes its UP pin and records the staged
 check correction. No SQL expression or definition changed.
+
+Wave37 hosted launch: candidatef5122dd5cc1725213cd0adef8f3ec4689a3460ad,
+run38689151958 attempt1 created2026-10-15T05:52:26Z. All-event exact-head query0
+and remote SHA match preceded exactly one dispatch.224pins/195tracked blobs
+match;32 new DB definitions/73 subcases remain pending. Direct coordinator
+recovery, no worker/delegation. No rerun/cancel/duplicate or local execution.

@@ -2189,3 +2189,9 @@ passed; new SQL, compilation, lint and tests are not executed locally.
 Next is one exact-candidate hosted attempt after checking all-event existing runs.
 No new worker, provider operation, production change or R3 priority switch.
 R2-04/09 remain DOING and the three-trading-day observation has not started.
+
+Wave37 hosted launch: candidatef5122dd5cc1725213cd0adef8f3ec4689a3460ad,
+run38689151958 attempt1 created2026-10-15T05:52:26Z. All-event exact-head query0
+and remote SHA match preceded exactly one dispatch.224pins/195tracked blobs
+match;32 new DB definitions/73 subcases remain pending. Direct coordinator
+recovery, no worker/delegation. No rerun/cancel/duplicate or local execution.
