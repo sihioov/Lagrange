@@ -2125,3 +2125,33 @@ absence. The subsequent delete_heartbeat request succeeded after full recovery.
 New heartbeat b6e4cf9e expires04:45:57UTC; reporting bound04:15:18UTC.
 Same-daemon outage protection is absent. Later documentation HEAD changes do not
 change the pinned candidate or authorize an extra CI run. Broader R2 gates open.
+
+### Wave35 full recovery and bounded I0d acceptance — 2026-10-15 UTC
+
+Candidate57ca4d1390b025e7efbe9ac452c614a8b5618889/run38672658570 attempt1
+completed SUCCESS at03:04:41UTC. All8jobs/84steps/8logs/7actualcheckoutSHAs,
+85pins/60candidateblobs were recovered. All83bootstrap,3affectedtransport,
+99requiredRust and6separatechart names have direct PASS evidence. Strictlint,
+workspaceformat,Web/Policy/Python,PG59/NO_OP/12labels/roles/catalog/0039/cleanup
+pass. Unprinted PG nestedhelper rows/numericCargoexits remain UNKNOWN.
+
+Coordinator accepts the bounded I0d bootstrap rejection/transaction-rollback
+package and C01 synthetic-server lifetime correction. This is not all I0/runtime
+or finalC_R2 acceptance. Original dd1b92f failure, C05 S2 acceptance and all prior
+outcomes remain immutable. No new independent worker review or delegation.
+No local executable validation/provider/production operation. Read-only watch
+exited0; heartbeatb6e4cf9e deleted after persisted full recovery; no background work.
+
+Final private ci/57ca4d1/ci-evidence.json:4147lines, SHA256
+44608dc770aab1f4d1891120eb7906cd06136b2296df4ce62065b4e500112ed4.
+PG receipt1248lines, SHA256
+00d37fbb8889ec65646211a4533a47907c50627c963b2af33bffcde1524e8231.
+Raw logs cleared after sanitized recovery. Later documentationHEAD does not
+change candidate; no bookkeeping CI dispatch. See the dated I0d acceptance report.
+
+Next is bounded I2 migration0060 schema/transaction authority: freeze its precise
+source/SQL/test interfaces and sequential I0 harness wiring before implementation
+or first execution, following D5 A2-A5/A8 and adopted D4. No0060 source or execution
+occurs in this wave. Provider/copy reconstruction/admission, runtime UID/ACL and
+provisioner filesystem rollback, I6 diagrams before structural main integration,
+runtime/Owner, three trading days and finalC_R2 remain open. R2-04/09 stay DOING.
