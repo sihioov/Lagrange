@@ -637,6 +637,8 @@ impl OwnedFixture {
             owner_beta_access: OwnerBetaAccessMode::Disabled,
             owner_beta_paper: OwnerBetaPaperMode::Disabled,
             owner_beta_price_input: OwnerBetaPriceInputMode::Disabled,
+            owner_beta_daily:
+                job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,
             owner_beta_equity_signals: OwnerBetaEquitySignalsMode::Disabled,
             stock_price_beta_artifact_root: PathBuf::from("/unused"),
             owner_equity_v2_pins: None,

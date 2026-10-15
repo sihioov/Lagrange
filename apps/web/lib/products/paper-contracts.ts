@@ -129,6 +129,8 @@ export const strategyConfigSchema = z
     created_at: z.string(),
     id: z.uuid(),
     is_active: z.boolean(),
+    owner_beta_daily_enabled: z.boolean().optional(),
+    owner_beta_daily_epoch: z.number().int().nonnegative().refine(Number.isSafeInteger).optional(),
     strategy_id: z.string(),
     strategy_version: z.string(),
     updated_at: z.string(),

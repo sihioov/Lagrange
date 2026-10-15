@@ -471,6 +471,8 @@ impl Harness {
             owner_beta_access: OwnerBetaAccessMode::Disabled,
             owner_beta_paper: OwnerBetaPaperMode::Disabled,
             owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
+            owner_beta_daily:
+                job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,
             owner_beta_equity_signals:
                 api_server::http::state::OwnerBetaEquitySignalsMode::Disabled,
             stock_price_beta_artifact_root: h.artifact_root.clone(),
@@ -607,6 +609,16 @@ impl Harness {
 
     pub async fn research_writer_pool(&self) -> PgPool {
         pool(&self.research_writer_url, 4).await
+    }
+
+    pub async fn restart_api_with_daily(
+        &mut self,
+        mode: job_queue::owner_beta::runner::daily_runtime::DailyProcessMode,
+    ) {
+        let mut cfg = (*self.state().cfg).clone();
+        cfg.owner_beta_access = OwnerBetaAccessMode::OwnerOnly;
+        cfg.owner_beta_daily = mode;
+        self.restart_api_with_config(cfg).await;
     }
 
     pub async fn restart_api_with_candidate_clock(

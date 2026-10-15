@@ -23,6 +23,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod daily;
+
 /// Fixed fields of the owner-beta read contract. These values are repeated
 /// here instead of inferred from the queue payload so a durable row cannot
 /// widen the public surface by changing its own metadata.
@@ -80,11 +82,22 @@ pub struct OwnerBetaPriceOnlyReadRunRow {
     pub vendor_snapshot: bool,
     pub strict_pit: bool,
     pub strategy_config_sha256: String,
-    pub candidate_content_sha256: String,
-    pub artifact_manifest_sha256: String,
-    pub stage5_manifest_sha256: String,
-    pub action_manifest_sha256: String,
-    pub approval_registry_sha256: String,
+    pub strategy_config_json: Value,
+    pub trigger_kind: String,
+    pub input: Value,
+    pub daily_pins: Option<Value>,
+    pub daily_config_epoch: Option<i64>,
+    pub daily_activation_epoch: Option<i64>,
+    pub daily_trigger_version: Option<String>,
+    pub daily_base_pins: Option<Value>,
+    pub daily_binding: bool,
+    pub job_type: Option<String>,
+    pub job_payload: Option<Value>,
+    pub candidate_content_sha256: Option<String>,
+    pub artifact_manifest_sha256: Option<String>,
+    pub stage5_manifest_sha256: Option<String>,
+    pub action_manifest_sha256: Option<String>,
+    pub approval_registry_sha256: Option<String>,
     pub factor_snapshot_sha256: Option<String>,
     pub target_snapshot_sha256: Option<String>,
     pub cash_weight: Option<String>,
@@ -579,72 +592,73 @@ impl OwnerBetaRecommendationRepo {
     }
 }
 
-const READ_RUN_SQL: &str = "
-    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
-           run.strategy_version, run.as_of, run.status, run.input_kind,
-           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
-           run.strategy_config_sha256, run.candidate_content_sha256,
-           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
-           run.action_manifest_sha256, run.approval_registry_sha256,
-           run.factor_snapshot_sha256, run.target_snapshot_sha256,
-           run.cash_weight::text AS cash_weight, run.error_code,
-           run.created_at, run.started_at, run.finished_at, run.updated_at,
-           (SELECT count(*)::bigint
-              FROM owner_beta_recommendation_items AS item
-             WHERE item.recommendation_run_id = run.id
-               AND item.owner_user_id = run.owner_user_id) AS item_count
-      FROM owner_beta_recommendation_runs AS run
-     WHERE run.id = $1 AND run.owner_user_id = $2";
+// The same immutable identity witnesses are used by detail, header and paging.
+// A failed join remains visible as invalid evidence; it does not hide the run.
+macro_rules! read_run_query {
+ ($count:literal,$tail:literal)=>{concat!(r#"
+    SELECT run.id,run.job_id,run.strategy_config_id,run.strategy_id,run.strategy_version,
+      run.as_of,run.status,run.input_kind,run.capability,run.audience,run.vendor_snapshot,run.strict_pit,
+      run.strategy_config_sha256,run.strategy_config_json,run.trigger_kind,
+      run.candidate_content_sha256,run.artifact_manifest_sha256,run.stage5_manifest_sha256,
+      run.action_manifest_sha256,run.approval_registry_sha256,
+      run.daily_pins,run.daily_config_epoch,run.daily_activation_epoch,run.daily_trigger_version,
+      admitted.evidence_json#>'{admission,base,pins}' AS daily_base_pins,
+      j.job_type,j.payload_json AS job_payload,
+      COALESCE((
+q.run_id=run.id AND q.job_id=run.job_id AND q.owner_user_id=run.owner_user_id
+AND q.strategy_config_id=run.strategy_config_id AND q.session_date=run.as_of
+AND q.config_epoch=run.daily_config_epoch AND q.activation_epoch=run.daily_activation_epoch
+AND q.trigger_version=run.daily_trigger_version AND q.strategy_config_sha256=run.strategy_config_sha256
+AND q.admission_sha256=run.daily_pins->>'admission_sha256'
+AND run.input_kind='owner_beta_daily_etf11_price_only_v1' AND run.trigger_kind='DAILY'
+AND admitted.owner_user_id=run.owner_user_id AND admitted.range_end=run.as_of
+AND run.daily_pins=jsonb_build_object('admission_sha256',admitted.admission_sha256,
+ 'content_sha256',admitted.content_sha256,'manifest_sha256',admitted.manifest_sha256,'policy_sha256',admitted.policy_sha256)
+AND j.owner_user_id=run.owner_user_id AND j.job_type='owner_beta_price_recommendation'
+AND j.payload_json=jsonb_build_object(
+ 'schema','owner-beta-daily-recommendation-v1','run_id',run.id,'strategy_config_id',run.strategy_config_id,
+ 'as_of',to_char(run.as_of,'YYYY-MM-DD'),
+ 'input',run.daily_pins||jsonb_build_object('kind',run.input_kind),
+ 'strategy',jsonb_build_object('strategy_id',run.strategy_id,'strategy_version',run.strategy_version,
+  'config_json',run.strategy_config_json,'config_sha256',run.strategy_config_sha256),
+ 'trigger',jsonb_build_object('kind','DAILY','version',run.daily_trigger_version,
+  'config_epoch',run.daily_config_epoch,'activation_epoch',run.daily_activation_epoch))
+AND run.candidate_content_sha256 IS NULL AND run.artifact_manifest_sha256 IS NULL
+AND run.stage5_manifest_sha256 IS NULL AND run.action_manifest_sha256 IS NULL
+AND run.approval_registry_sha256 IS NULL
+),false) AS daily_binding,
+      CASE WHEN run.input_kind='owner_beta_historical_price_only_v1' THEN jsonb_build_object(
+        'kind','historical','candidate_content_sha256',run.candidate_content_sha256,
+        'artifact_manifest_sha256',run.artifact_manifest_sha256,'stage5_manifest_sha256',run.stage5_manifest_sha256,
+        'action_manifest_sha256',run.action_manifest_sha256,'approval_registry_sha256',run.approval_registry_sha256)
+      WHEN run.input_kind='owner_beta_daily_etf11_price_only_v1'
+      THEN run.daily_pins||jsonb_build_object('kind','daily','base',admitted.evidence_json#>'{admission,base,pins}')
+      ELSE 'null'::jsonb END AS input,
+      run.factor_snapshot_sha256,run.target_snapshot_sha256,run.cash_weight::text AS cash_weight,
+      run.error_code,run.created_at,run.started_at,run.finished_at,run.updated_at,
+"#,$count,r#"
+      AS item_count
+    FROM public.owner_beta_recommendation_runs run
+    LEFT JOIN public.jobs j ON j.id=run.job_id AND j.owner_user_id=run.owner_user_id
+    LEFT JOIN public.owner_beta_daily_reservations q ON q.run_id=run.id AND q.owner_user_id=run.owner_user_id
+    LEFT JOIN public.owner_beta_daily_admissions admitted
+      ON admitted.admission_sha256=q.admission_sha256 AND admitted.owner_user_id=run.owner_user_id
+"#,$tail)};
+}
+const READ_RUN_SQL: &str = read_run_query!(
+    "(SELECT count(*)::bigint FROM public.owner_beta_recommendation_items item WHERE item.recommendation_run_id=run.id AND item.owner_user_id=run.owner_user_id)",
+    "WHERE run.id=$1 AND run.owner_user_id=$2"
+);
 const READ_RUN_HEADER_SQL: &str =
-    "\n    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
-           run.strategy_version, run.as_of, run.status, run.input_kind,
-           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
-           run.strategy_config_sha256, run.candidate_content_sha256,
-           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
-           run.action_manifest_sha256, run.approval_registry_sha256,
-           run.factor_snapshot_sha256, run.target_snapshot_sha256,
-           run.cash_weight::text AS cash_weight, run.error_code,
-           run.created_at, run.started_at, run.finished_at, run.updated_at,
-           0::bigint AS item_count
-      FROM owner_beta_recommendation_runs AS run
-     WHERE run.id = $1 AND run.owner_user_id = $2";
-const READ_RUNS_SQL: &str = "
-    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
-           run.strategy_version, run.as_of, run.status, run.input_kind,
-           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
-           run.strategy_config_sha256, run.candidate_content_sha256,
-           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
-           run.action_manifest_sha256, run.approval_registry_sha256,
-           run.factor_snapshot_sha256, run.target_snapshot_sha256,
-           run.cash_weight::text AS cash_weight, run.error_code,
-           run.created_at, run.started_at, run.finished_at, run.updated_at,
-           (SELECT count(*)::bigint
-              FROM owner_beta_recommendation_items AS item
-             WHERE item.recommendation_run_id = run.id
-               AND item.owner_user_id = run.owner_user_id) AS item_count
-      FROM owner_beta_recommendation_runs AS run
-     WHERE run.owner_user_id = $1
-       ORDER BY run.created_at DESC, run.id DESC
-       LIMIT $2";
-const READ_RUNS_AFTER_SQL: &str = "
-    SELECT run.id, run.job_id, run.strategy_config_id, run.strategy_id,
-           run.strategy_version, run.as_of, run.status, run.input_kind,
-           run.capability, run.audience, run.vendor_snapshot, run.strict_pit,
-           run.strategy_config_sha256, run.candidate_content_sha256,
-           run.artifact_manifest_sha256, run.stage5_manifest_sha256,
-           run.action_manifest_sha256, run.approval_registry_sha256,
-           run.factor_snapshot_sha256, run.target_snapshot_sha256,
-           run.cash_weight::text AS cash_weight, run.error_code,
-           run.created_at, run.started_at, run.finished_at, run.updated_at,
-           (SELECT count(*)::bigint
-              FROM owner_beta_recommendation_items AS item
-             WHERE item.recommendation_run_id = run.id
-               AND item.owner_user_id = run.owner_user_id) AS item_count
-      FROM owner_beta_recommendation_runs AS run
-     WHERE run.owner_user_id = $1
-       AND (run.created_at, run.id) < ($2::timestamptz, $3::uuid)
-       ORDER BY run.created_at DESC, run.id DESC
-       LIMIT $4";
+    read_run_query!("0::bigint", "WHERE run.id=$1 AND run.owner_user_id=$2");
+const READ_RUNS_SQL: &str = read_run_query!(
+    "(SELECT count(*)::bigint FROM public.owner_beta_recommendation_items item WHERE item.recommendation_run_id=run.id AND item.owner_user_id=run.owner_user_id)",
+    "WHERE run.owner_user_id=$1 ORDER BY run.created_at DESC,run.id DESC LIMIT $2"
+);
+const READ_RUNS_AFTER_SQL: &str = read_run_query!(
+    "(SELECT count(*)::bigint FROM public.owner_beta_recommendation_items item WHERE item.recommendation_run_id=run.id AND item.owner_user_id=run.owner_user_id)",
+    "WHERE run.owner_user_id=$1 AND (run.created_at,run.id)<($2::timestamptz,$3::uuid) ORDER BY run.created_at DESC,run.id DESC LIMIT $4"
+);
 const READ_ITEMS_SQL: &str = "
     SELECT item.recommendation_run_id, item.instrument_id,
            instrument.name AS instrument_name,
@@ -687,30 +701,116 @@ fn item_row_limit(run_count: usize) -> Result<i64, TenancyError> {
     i64::try_from(total).map_err(|_| integrity_error())
 }
 
+fn validate_read_input(row: &OwnerBetaPriceOnlyReadRunRow) -> Result<(), TenancyError> {
+    use job_queue::owner_beta::daily_input::{
+        OwnerBetaExecutionInput, decode_owner_beta_execution_input,
+    };
+    if row.job_type.as_deref() != Some(OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE) {
+        return Err(integrity_error());
+    }
+    let bytes = serde_json::to_vec(row.job_payload.as_ref().ok_or_else(integrity_error)?)
+        .map_err(|_| integrity_error())?;
+    let input = decode_owner_beta_execution_input(&bytes).map_err(|_| integrity_error())?;
+    let strategy = input.strategy_snapshot();
+    if input.run_id() != row.id
+        || input.strategy_config_id() != row.strategy_config_id
+        || input.as_of().as_naive_date() != row.as_of
+        || strategy.strategy_id() != row.strategy_id
+        || strategy.strategy_version() != row.strategy_version
+        || strategy.config_json() != &row.strategy_config_json
+        || strategy.config_sha256().as_str() != row.strategy_config_sha256
+    {
+        return Err(integrity_error());
+    }
+    let expected = match input {
+        OwnerBetaExecutionInput::Historical(input) => {
+            let pins = input.pins();
+            if row.input_kind != OWNER_BETA_PRICE_INPUT_KIND
+                || row.trigger_kind != "MANUAL"
+                || row.daily_pins.is_some()
+                || row.daily_config_epoch.is_some()
+                || row.daily_activation_epoch.is_some()
+                || row.daily_trigger_version.is_some()
+                || row.daily_base_pins.is_some()
+                || row.daily_binding
+                || row.candidate_content_sha256.as_deref()
+                    != Some(pins.candidate_content_sha256().as_str())
+                || row.artifact_manifest_sha256.as_deref()
+                    != Some(pins.artifact_manifest_sha256().as_str())
+                || row.stage5_manifest_sha256.as_deref()
+                    != Some(pins.stage5_manifest_sha256().as_str())
+                || row.action_manifest_sha256.as_deref()
+                    != Some(pins.action_manifest_sha256().as_str())
+                || row.approval_registry_sha256.as_deref()
+                    != Some(pins.approval_registry_sha256().as_str())
+            {
+                return Err(integrity_error());
+            }
+            serde_json::json!({
+                "kind":"historical",
+                "candidate_content_sha256":pins.candidate_content_sha256(),
+                "artifact_manifest_sha256":pins.artifact_manifest_sha256(),
+                "stage5_manifest_sha256":pins.stage5_manifest_sha256(),
+                "action_manifest_sha256":pins.action_manifest_sha256(),
+                "approval_registry_sha256":pins.approval_registry_sha256(),
+            })
+        }
+        OwnerBetaExecutionInput::Daily(input) => {
+            let base: market_data::daily_price_only::contract::DailyBasePinsV1Wire =
+                serde_json::from_value(row.daily_base_pins.clone().ok_or_else(integrity_error)?)
+                    .map_err(|_| integrity_error())?;
+            let pins = input.pins();
+            let expected_pins = serde_json::json!({
+                "content_sha256":pins.content_sha256(),"manifest_sha256":pins.manifest_sha256(),
+                "admission_sha256":pins.admission_sha256(),"policy_sha256":pins.policy_sha256()
+            });
+            if row.input_kind != "owner_beta_daily_etf11_price_only_v1"
+                || row.trigger_kind != "DAILY"
+                || !row.daily_binding
+                || row.daily_config_epoch != Some(input.config_epoch())
+                || row.daily_activation_epoch != Some(input.activation_epoch())
+                || row.daily_trigger_version.as_deref() != Some("owner-beta-daily-trigger-v1")
+                || row.daily_pins.as_ref() != Some(&expected_pins)
+                || row.candidate_content_sha256.is_some()
+                || row.artifact_manifest_sha256.is_some()
+                || row.stage5_manifest_sha256.is_some()
+                || row.action_manifest_sha256.is_some()
+                || row.approval_registry_sha256.is_some()
+            {
+                return Err(integrity_error());
+            }
+            serde_json::json!({
+                "kind":"daily","content_sha256":pins.content_sha256(),
+                "manifest_sha256":pins.manifest_sha256(),"admission_sha256":pins.admission_sha256(),
+                "policy_sha256":pins.policy_sha256(),"base":base
+            })
+        }
+    };
+    if row.input != expected {
+        return Err(integrity_error());
+    }
+    Ok(())
+}
+
 /// Validate every durable field that crosses the owner-beta read boundary.
-/// This function is intentionally pure and does not consult artifacts,
-/// approval registries, queue payloads, or mutable strategy configuration.
+/// This function is pure and compares the immutable queue snapshot and row;
+/// it never opens artifacts or consults mutable strategy configuration.
 fn validate_read_model(
     row: &OwnerBetaPriceOnlyReadRunRow,
     items: &[OwnerBetaPriceOnlyReadItemRow],
 ) -> Result<(), TenancyError> {
+    validate_read_input(row)?;
     if row.id.is_nil()
         || row.job_id.is_nil()
         || row.strategy_config_id.is_nil()
         || row.strategy_id.is_empty()
         || row.strategy_version.is_empty()
         || !OWNER_BETA_STATUSES.contains(&row.status.as_str())
-        || row.input_kind != OWNER_BETA_PRICE_INPUT_KIND
         || row.capability != OWNER_BETA_PRICE_CAPABILITY
         || row.audience != OWNER_BETA_PRICE_AUDIENCE
         || !row.vendor_snapshot
         || row.strict_pit
         || !valid_sha256(&row.strategy_config_sha256)
-        || !valid_sha256(&row.candidate_content_sha256)
-        || !valid_sha256(&row.artifact_manifest_sha256)
-        || !valid_sha256(&row.stage5_manifest_sha256)
-        || !valid_sha256(&row.action_manifest_sha256)
-        || !valid_sha256(&row.approval_registry_sha256)
         || !row
             .factor_snapshot_sha256
             .as_deref()
@@ -777,7 +877,11 @@ fn validate_read_model(
         "FAILED" => {
             if row.started_at.is_none()
                 || row.finished_at.is_none()
-                || !valid_error_code(row.error_code.as_deref(), false)
+                || !valid_error_code(
+                    row.error_code.as_deref(),
+                    false,
+                    row.trigger_kind == "DAILY",
+                )
                 || has_result_fields(row)
                 || !items.is_empty()
             {
@@ -786,7 +890,7 @@ fn validate_read_model(
         }
         "CANCELED" => {
             if row.finished_at.is_none()
-                || !valid_error_code(row.error_code.as_deref(), true)
+                || !valid_error_code(row.error_code.as_deref(), true, row.trigger_kind == "DAILY")
                 || has_result_fields(row)
                 || !items.is_empty()
             {
@@ -814,14 +918,20 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-fn valid_error_code(value: Option<&str>, canceled: bool) -> bool {
+fn valid_error_code(value: Option<&str>, canceled: bool, daily: bool) -> bool {
     let Some(value) = value else {
         return false;
     };
     if canceled {
-        value == OWNER_BETA_CANCELED_CODE
+        value == OWNER_BETA_CANCELED_CODE || daily && value == "DAILY_SESSION_SUPERSEDED"
     } else {
         OWNER_BETA_ERROR_CODES.contains(&value)
+            || daily
+                && [
+                    "OWNER_BETA_DAILY_AUTHORITY_DENIED",
+                    "OWNER_BETA_DAILY_EXECUTION_DISABLED",
+                ]
+                .contains(&value)
     }
 }
 
@@ -863,7 +973,13 @@ fn items_are_valid_success_publication(
             && item.rank.is_some()
             && item.exclusion_reason.is_none();
         let valid_excluded = item.excluded
-            && item.target_weight.is_none()
+            // Daily SQL publication requires an explicit zero for exclusions;
+            // historical publication retains its original NULL representation.
+            && if row.trigger_kind == "DAILY" {
+                item.target_weight.as_deref() == Some("0.000000")
+            } else {
+                item.target_weight.is_none()
+            }
             && item.rank.is_none()
             && item
                 .exclusion_reason
@@ -1369,6 +1485,19 @@ mod tests {
                 .expect("finished timestamp")
                 .with_timezone(&chrono::Utc),
         );
+        let strategy = job_queue::owner_beta::OwnerBetaStrategySnapshot::from_resolved_config(
+            &ResolvedConfig {
+                strategy_id: "buy_and_hold".into(),
+                strategy_version: "1.0.0".into(),
+                config: serde_json::json!({"lookback":200}),
+            },
+        )
+        .unwrap();
+        let pins = serde_json::json!({"candidate_content_sha256":hash(2),"artifact_manifest_sha256":hash(3),
+          "stage5_manifest_sha256":hash(4),"action_manifest_sha256":hash(5),"approval_registry_sha256":hash(6)});
+        let projection = serde_json::json!({"kind":"historical","candidate_content_sha256":hash(2),
+          "artifact_manifest_sha256":hash(3),"stage5_manifest_sha256":hash(4),
+          "action_manifest_sha256":hash(5),"approval_registry_sha256":hash(6)});
         OwnerBetaPriceOnlyReadRunRow {
             id: Uuid::parse_str("00000000-0000-4000-8000-000000000010").unwrap(),
             job_id: Uuid::parse_str("00000000-0000-4000-8000-000000000011").unwrap(),
@@ -1382,12 +1511,27 @@ mod tests {
             audience: OWNER_BETA_PRICE_AUDIENCE.to_owned(),
             vendor_snapshot: true,
             strict_pit: false,
-            strategy_config_sha256: hash(1),
-            candidate_content_sha256: hash(2),
-            artifact_manifest_sha256: hash(3),
-            stage5_manifest_sha256: hash(4),
-            action_manifest_sha256: hash(5),
-            approval_registry_sha256: hash(6),
+            strategy_config_sha256: strategy.config_sha256().to_string(),
+            strategy_config_json: strategy.config_json().clone(),
+            trigger_kind: "MANUAL".into(),
+            input: projection,
+            daily_pins: None,
+            daily_config_epoch: None,
+            daily_activation_epoch: None,
+            daily_trigger_version: None,
+            daily_base_pins: None,
+            daily_binding: false,
+            job_type: Some(OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE.into()),
+            job_payload: Some(serde_json::json!({
+              "run_id":"00000000-0000-4000-8000-000000000010",
+              "strategy_config_id":"00000000-0000-4000-8000-000000000012",
+              "as_of":"2026-08-19","strategy":strategy,"pins":pins
+            })),
+            candidate_content_sha256: Some(hash(2)),
+            artifact_manifest_sha256: Some(hash(3)),
+            stage5_manifest_sha256: Some(hash(4)),
+            action_manifest_sha256: Some(hash(5)),
+            approval_registry_sha256: Some(hash(6)),
             factor_snapshot_sha256: (status == "SUCCEEDED").then(|| hash(7)),
             target_snapshot_sha256: (status == "SUCCEEDED").then(|| hash(8)),
             cash_weight: (status == "SUCCEEDED").then(|| "0.000000".to_owned()),
@@ -1455,7 +1599,7 @@ mod tests {
         row.input_kind = OWNER_BETA_PRICE_INPUT_KIND.to_owned();
         row.strategy_config_sha256 = format!("sha256:{}", "A".repeat(64));
         assert!(validate_read_model(&row, &items).is_err());
-        row.strategy_config_sha256 = hash(1);
+        row.strategy_config_sha256 = read_row("SUCCEEDED").strategy_config_sha256;
         row.cash_weight = Some("0.1".to_owned());
         assert!(validate_read_model(&row, &items).is_err());
 
@@ -1487,5 +1631,122 @@ mod tests {
             .expect("failed fixture has a finish timestamp")
             - one_minute;
         assert!(validate_read_model(&failed, &[]).is_err());
+    }
+
+    fn daily_read_row(status: &str) -> OwnerBetaPriceOnlyReadRunRow {
+        let mut row = read_row(status);
+        let base = serde_json::json!({"candidate_content_sha256":hash(1),"artifact_manifest_sha256":hash(2),
+          "stage5_manifest_sha256":hash(3),"action_manifest_sha256":hash(4),"approval_registry_sha256":hash(5)});
+        let pins = serde_json::json!({"content_sha256":hash(6),"manifest_sha256":hash(7),
+          "admission_sha256":hash(8),"policy_sha256":hash(9)});
+        row.input_kind = "owner_beta_daily_etf11_price_only_v1".into();
+        row.trigger_kind = "DAILY".into();
+        row.candidate_content_sha256 = None;
+        row.artifact_manifest_sha256 = None;
+        row.stage5_manifest_sha256 = None;
+        row.action_manifest_sha256 = None;
+        row.approval_registry_sha256 = None;
+        row.daily_pins = Some(pins.clone());
+        row.daily_base_pins = Some(base.clone());
+        row.daily_binding = true;
+        row.daily_config_epoch = Some(2);
+        row.daily_activation_epoch = Some(1);
+        row.daily_trigger_version = Some("owner-beta-daily-trigger-v1".into());
+        row.as_of = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
+        row.input = serde_json::json!({"kind":"daily","content_sha256":hash(6),"manifest_sha256":hash(7),
+          "admission_sha256":hash(8),"policy_sha256":hash(9),"base":base});
+        row.job_payload = Some(serde_json::json!({
+          "schema":"owner-beta-daily-recommendation-v1","run_id":row.id,"strategy_config_id":row.strategy_config_id,
+          "as_of":"2026-10-15","input":{"kind":row.input_kind,"content_sha256":hash(6),"manifest_sha256":hash(7),
+            "admission_sha256":hash(8),"policy_sha256":hash(9)},
+          "strategy":{"strategy_id":row.strategy_id,"strategy_version":row.strategy_version,
+            "config_json":row.strategy_config_json,"config_sha256":row.strategy_config_sha256},
+          "trigger":{"kind":"DAILY","version":"owner-beta-daily-trigger-v1","config_epoch":2,"activation_epoch":1}
+        }));
+        row
+    }
+
+    #[test]
+    fn owner_beta_read_union_accepts_only_exact_daily_and_historical_commitments() {
+        let historical = read_row("PENDING");
+        assert!(validate_read_model(&historical, &[]).is_ok());
+        let daily = daily_read_row("PENDING");
+        assert!(validate_read_model(&daily, &[]).is_ok());
+        let mut value = daily.clone();
+        value.candidate_content_sha256 = Some(hash(1));
+        assert!(validate_read_model(&value, &[]).is_err());
+        let mut value = historical.clone();
+        value.daily_base_pins = daily.daily_base_pins.clone();
+        assert!(validate_read_model(&value, &[]).is_err());
+        let mut value = daily;
+        value.trigger_kind = "MANUAL".into();
+        assert!(validate_read_model(&value, &[]).is_err());
+        let mut value = historical;
+        value.input["candidate_content_sha256"] = serde_json::json!(hash(9));
+        assert!(validate_read_model(&value, &[]).is_err());
+    }
+
+    #[test]
+    fn owner_beta_read_daily_rejects_missing_reservation_base_epoch_and_payload_identity() {
+        let original = daily_read_row("PENDING");
+        for index in 0..8 {
+            let mut row = original.clone();
+            match index {
+                0 => row.daily_binding = false,
+                1 => row.daily_base_pins = None,
+                2 => row.daily_config_epoch = Some(3),
+                3 => row.daily_activation_epoch = Some(3),
+                4 => row.daily_pins.as_mut().unwrap()["policy_sha256"] = serde_json::json!(hash(1)),
+                5 => {
+                    row.job_payload.as_mut().unwrap()["run_id"] = serde_json::json!(Uuid::new_v4())
+                }
+                6 => row.strategy_config_json = serde_json::json!({"lookback":201}),
+                _ => row.input["base"]["candidate_content_sha256"] = serde_json::json!(hash(9)),
+            }
+            assert!(validate_read_model(&row, &[]).is_err(), "case {index}");
+        }
+    }
+
+    #[test]
+    fn owner_beta_read_daily_error_codes_do_not_expand_historical_failure_contract() {
+        for code in [
+            "OWNER_BETA_DAILY_AUTHORITY_DENIED",
+            "OWNER_BETA_DAILY_EXECUTION_DISABLED",
+        ] {
+            let mut daily = daily_read_row("FAILED");
+            daily.error_code = Some(code.into());
+            assert!(validate_read_model(&daily, &[]).is_ok());
+            let mut historical = read_row("FAILED");
+            historical.error_code = Some(code.into());
+            assert!(validate_read_model(&historical, &[]).is_err());
+        }
+        let mut daily = daily_read_row("CANCELED");
+        daily.error_code = Some("DAILY_SESSION_SUPERSEDED".into());
+        assert!(validate_read_model(&daily, &[]).is_ok());
+        let mut historical = read_row("CANCELED");
+        historical.error_code = daily.error_code;
+        assert!(validate_read_model(&historical, &[]).is_err());
+    }
+
+    #[test]
+    fn owner_beta_read_daily_exclusions_require_exact_sql_zero_without_changing_history() {
+        let mut daily = daily_read_row("SUCCEEDED");
+        daily.cash_weight = Some("0.000000".into());
+        let mut items = (0..KR_ETF_CORE_SYMBOLS.len())
+            .map(|index| read_item(index, index < 2))
+            .collect::<Vec<_>>();
+        assert!(validate_read_model(&daily, &items).is_err());
+        for item in items.iter_mut().filter(|item| item.excluded) {
+            item.target_weight = Some("0.000000".into());
+        }
+        assert!(validate_read_model(&daily, &items).is_ok());
+        let mut history = read_row("SUCCEEDED");
+        history.cash_weight = daily.cash_weight.clone();
+        assert!(validate_read_model(&history, &items).is_err());
+        items[2].target_weight = Some("0.100000".into());
+        items[0].target_weight = Some("0.400000".into());
+        assert!(validate_read_model(&daily, &items).is_err());
+        items[2].target_weight = Some("0".into());
+        assert!(validate_read_model(&daily, &items).is_err());
     }
 }

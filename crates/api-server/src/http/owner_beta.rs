@@ -392,8 +392,13 @@ fn read_run_dto(
         strategy_id: row.strategy_id,
         strategy_version: row.strategy_version,
         as_of: row.as_of,
-        status: row.status,
+        status: row.status.clone(),
         input_kind: row.input_kind,
+        trigger_kind: row.trigger_kind,
+        input: row.input,
+        published_at: (row.status == "SUCCEEDED")
+            .then_some(row.finished_at)
+            .flatten(),
         capability: row.capability,
         audience: row.audience,
         vendor_snapshot: row.vendor_snapshot,
@@ -426,8 +431,13 @@ fn read_list_item_dto(
         strategy_id: row.strategy_id,
         strategy_version: row.strategy_version,
         as_of: row.as_of,
-        status: row.status,
+        status: row.status.clone(),
         input_kind: row.input_kind,
+        trigger_kind: row.trigger_kind,
+        input: row.input,
+        published_at: (row.status == "SUCCEEDED")
+            .then_some(row.finished_at)
+            .flatten(),
         capability: row.capability,
         audience: row.audience,
         vendor_snapshot: row.vendor_snapshot,
@@ -472,7 +482,13 @@ fn read_item_dto(
             exposure_group: None,
         },
         rank: item.rank,
-        target_weight: item.target_weight,
+        // The validated daily SQL zero is not a selected target. Preserve the
+        // historical HTTP exclusion shape for both input variants.
+        target_weight: if item.excluded {
+            None
+        } else {
+            item.target_weight
+        },
         excluded: item.excluded,
         exclusion_reason: item.exclusion_reason,
         reason_codes,

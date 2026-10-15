@@ -36,6 +36,8 @@ const ROUTES = [
   ["POST", "/api/v1/strategies/{strategy_id}/configs", { mutating: true, idem: true, audit: true }],
   ["GET", "/api/v1/strategy-configs", {}],
   ["GET", "/api/v1/strategy-configs/{config_id}", {}],
+  ["PATCH", "/api/v1/strategy-configs/{config_id}", { mutating: true, idem: true, audit: true }],
+  ["GET", "/api/v1/recommendations/owner-beta/price-only/daily-state", { owner: true, entitlement: "recommendation", ownerBetaDaily: true }],
   // recommendations
   ["POST", "/api/v1/recommendations/runs", { mutating: true, idem: true, entitlement: "recommendation", audit: true }],
   ["GET", "/api/v1/recommendations/owner-beta/price-only/supported-as-of", {
@@ -375,8 +377,10 @@ function operation(route) {
           ? "Owner role; actor-scoped owner-managed equity universe V2"
           : flags.ownerBetaPrice
           ? "Owner role; sealed historical price-only input"
+          : flags.ownerBetaDaily
+          ? "Owner role; actor-scoped daily control, admission, reservation and publication metadata"
           : flags.ownerBetaPriceRead
-          ? "Owner role; actor-scoped sealed historical price-only read model"
+          ? "Owner role; actor-scoped historical or daily price-only read model"
           : cacheGet
           ? "Owner role; actor-scoped current intraday quote cache"
           : flags.ownerIntradayQuotes
@@ -388,7 +392,11 @@ function operation(route) {
             : "actor-scoped via RLS (foreign resources are indistinguishable from missing)",
       },
       entitlement: entitlement
-        ? flags.ownerBetaPrice || flags.ownerBetaPriceRead || flags.ownerBetaSupportedAsOf
+        ? flags.ownerBetaDaily
+          ? { use: entitlement, fail_closed: true, input: "owner_beta_daily_etf11_price_only_v1" }
+          : flags.ownerBetaPriceRead
+          ? { use: entitlement, fail_closed: true, input: ["owner_beta_historical_price_only_v1", "owner_beta_daily_etf11_price_only_v1"] }
+          : flags.ownerBetaPrice || flags.ownerBetaSupportedAsOf
           ? { use: entitlement, fail_closed: true, input: "owner_beta_historical_price_only_v1" }
           : { use: entitlement, fail_closed: true, dataset: entitlement === "candidate" ? "every exact pinned candidate source dataset" : "krx_eod_bars" }
         : { use: null, fail_closed: true },
@@ -408,6 +416,8 @@ function operation(route) {
               header: "Idempotency-Key",
               replay: flags.ownerBetaPrice
                 ? "same key + same body + current server-selected approval pins returns the durable result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+                : method === "patch" && path === "/api/v1/strategy-configs/{config_id}"
+                ? "same key + method + resource ID + body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
                 : "same key + same body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH",
             }
         : { required: false, note: "read-only" },
@@ -439,6 +449,9 @@ function operation(route) {
           ? { type: "string", pattern: "^[0-9]{6}\\.KRX$" }
           : { type: "string" };
     op.parameters.push(param(n, "path", schema, true));
+  }
+  if (flags.ownerBetaDaily) {
+    op.parameters.push(param("strategy_config_id", "query", { type: "string", format: "uuid" }, true));
   }
   if (path === "/api/v1/recommendations/latest") {
     op.parameters.push(param("strategy_config_id", "query", { type: "string", format: "uuid" }, false));
@@ -504,6 +517,12 @@ function successResponsesFor(method, path) {
     description,
     content: { "application/json": { schema: { $ref: schema } } },
   });
+  if (path === "/api/v1/strategy-configs/{config_id}" && method === "patch") {
+    return { "200": json("Actor-owned strategy configuration updated", "#/components/schemas/StrategyConfig") };
+  }
+  if (path === "/api/v1/recommendations/owner-beta/price-only/daily-state" && method === "get") {
+    return { "200": json("Owner daily input and recommendation state with independent dates", "#/components/schemas/OwnerBetaDailyState") };
+  }
   if (path === "/api/v1/admin/service-status" && method === "get") {
     return { "200": SERVICE_STATUS_SUCCESS };
   }
@@ -636,6 +655,7 @@ function isOwnerIntradayQuoteCache(route) {
 }
 
 function bodySchemaRef(path) {
+  if (path === "/api/v1/strategy-configs/{config_id}") return "#/components/schemas/UpdateStrategyConfigBody";
   if (path === `${STREAM_PREFIX}/stream-leases`) return "#/components/schemas/OwnerMarketStreamLeaseBody";
   if (path === `${STREAM_PREFIX}/stream-leases/{lease_id}`) return "#/components/schemas/OwnerMarketStreamReleaseBody";
   if (path.endsWith("/configs")) return "#/components/schemas/NewStrategyConfigBody";
@@ -807,6 +827,13 @@ function errorCodesFor(route) {
   if (flags.ownerBetaPriceRead) {
     codes.push("RESOURCE_NOT_FOUND", "RESULT_INTEGRITY_FAILED");
   }
+  if (flags.ownerBetaDaily) codes.push("INVALID_PARAMETER", "RESOURCE_NOT_FOUND", "RESULT_INTEGRITY_FAILED");
+  if (path === "/api/v1/strategies/{strategy_id}/configs" && route[0] === "POST") {
+    codes.push("FORBIDDEN");
+  }
+  if (path === "/api/v1/strategy-configs/{config_id}" && route[0] === "PATCH") {
+    codes.push("FORBIDDEN", "RESOURCE_NOT_FOUND", "INVALID_STRATEGY_PARAMETER");
+  }
   if (path.includes("/paper/accounts")) {
     codes.push("UNSUPPORTED_MARKET_CURRENCY", "DUPLICATE_RESOURCE");
   }
@@ -886,27 +913,343 @@ const SCHEMAS = {
     },
   },
   StrategyConfig: {
-    type: "object",
-    required: ["id", "strategy_id", "strategy_version", "config", "is_active"],
-    properties: {
-      id: { type: "string", format: "uuid" },
-      strategy_id: { type: "string" },
-      strategy_version: { type: "string" },
-      config: { type: "object", additionalProperties: true, description: "schema-bound parameters only; code is never accepted" },
-      is_active: { type: "boolean" },
-      created_at: ts,
-      updated_at: ts,
-    },
+    "type": "object",
+    "required": [
+      "id",
+      "strategy_id",
+      "strategy_version",
+      "config",
+      "is_active",
+      "owner_beta_daily_enabled",
+      "owner_beta_daily_epoch"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "strategy_id": {
+        "type": "string"
+      },
+      "strategy_version": {
+        "type": "string"
+      },
+      "config": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "schema-bound parameters only; code is never accepted"
+      },
+      "is_active": {
+        "type": "boolean"
+      },
+      "owner_beta_daily_enabled": {
+        "type": "boolean"
+      },
+      "owner_beta_daily_epoch": {
+        "type": "integer",
+        "minimum": 0,
+        "readOnly": true
+      },
+      "created_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "updated_at": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
   },
   NewStrategyConfigBody: {
-    type: "object",
-    required: ["strategy_version", "config"],
-    additionalProperties: false,
-    properties: {
-      strategy_version: { type: "string" },
-      config: { type: "object", additionalProperties: true },
-      is_active: { type: "boolean", default: true },
-    },
+    "type": "object",
+    "required": [
+      "strategy_version",
+      "config"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "strategy_version": {
+        "type": "string"
+      },
+      "config": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "is_active": {
+        "type": "boolean",
+        "default": true
+      },
+      "owner_beta_daily_enabled": {
+        "type": "boolean",
+        "default": false
+      }
+    }
+  },
+  UpdateStrategyConfigBody: {
+    "type": "object",
+    "minProperties": 1,
+    "additionalProperties": false,
+    "properties": {
+      "config": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "is_active": {
+        "type": "boolean"
+      },
+      "owner_beta_daily_enabled": {
+        "type": "boolean"
+      }
+    }
+  },
+  OwnerBetaHistoricalPins: {
+    "type": "object",
+    "required": [
+      "candidate_content_sha256",
+      "artifact_manifest_sha256",
+      "stage5_manifest_sha256",
+      "action_manifest_sha256",
+      "approval_registry_sha256"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "candidate_content_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "artifact_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "stage5_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "action_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "approval_registry_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    }
+  },
+  OwnerBetaHistoricalReadInput: {
+    "type": "object",
+    "required": [
+      "kind",
+      "candidate_content_sha256",
+      "artifact_manifest_sha256",
+      "stage5_manifest_sha256",
+      "action_manifest_sha256",
+      "approval_registry_sha256"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "kind": {
+        "type": "string",
+        "const": "historical"
+      },
+      "candidate_content_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "artifact_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "stage5_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "action_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "approval_registry_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    }
+  },
+  OwnerBetaDailyReadInput: {
+    "type": "object",
+    "required": [
+      "kind",
+      "content_sha256",
+      "manifest_sha256",
+      "admission_sha256",
+      "policy_sha256",
+      "base"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "kind": {
+        "type": "string",
+        "const": "daily"
+      },
+      "content_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "admission_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "policy_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "base": {
+        "$ref": "#/components/schemas/OwnerBetaHistoricalPins"
+      }
+    }
+  },
+  OwnerBetaDailyState: {
+    "type": "object",
+    "required": [
+      "enabled",
+      "runtime_enabled",
+      "expected_session",
+      "data_support_end",
+      "recommendation_as_of",
+      "published_at",
+      "input_kind",
+      "trigger_kind",
+      "current_reservation_run_id",
+      "state",
+      "reason_code",
+      "data_due_at",
+      "observed_at"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "runtime_enabled": {
+        "type": "boolean"
+      },
+      "expected_session": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date"
+      },
+      "data_support_end": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date"
+      },
+      "recommendation_as_of": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date"
+      },
+      "published_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time"
+      },
+      "input_kind": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "owner_beta_daily_etf11_price_only_v1",
+          null
+        ]
+      },
+      "trigger_kind": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "DAILY",
+          null
+        ]
+      },
+      "current_reservation_run_id": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "uuid"
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "DISABLED",
+          "UNVERIFIABLE",
+          "INPUT_PENDING",
+          "INPUT_BLOCKED",
+          "QUEUED",
+          "RUNNING",
+          "RETRYING",
+          "FAILED",
+          "CURRENT",
+          "STALE"
+        ]
+      },
+      "reason_code": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "RUNTIME_DISABLED",
+          "CONFIG_DISABLED",
+          "CONFIG_INACTIVE",
+          "CONTROL_UNAVAILABLE",
+          "CALENDAR_COVERAGE_GAP",
+          "VERIFICATION_EXPIRED",
+          "INPUT_UNAVAILABLE",
+          "INPUT_NOT_READY",
+          "BEFORE_ACTIVATION",
+          "AWAITING_SCHEDULE",
+          "JOB_QUEUED",
+          "JOB_RUNNING",
+          "JOB_RETRYING",
+          "JOB_FAILED",
+          "CAPACITY_EXCEEDED",
+          "SUPERSEDED",
+          "CONFIGURATION_CHANGED",
+          "FUTURE_EVIDENCE",
+          "SOURCE_CONFLICT",
+          "SEALED_SOURCE_CHANGED",
+          "SOURCE_REVOKED",
+          "SOURCE_INTEGRITY",
+          "CALENDAR_CONFLICT",
+          "NONCASH_ACTION",
+          null
+        ]
+      },
+      "data_due_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time"
+      },
+      "observed_at": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
   },
   RecommendationItem: {
     type: "object",
@@ -1091,8 +1434,8 @@ const SCHEMAS = {
     },
   },
   OwnerBetaPriceOnlyReadRun: {
-    type: "object",
-    required: [
+    "type": "object",
+    "required": [
       "id",
       "job_id",
       "strategy_config_id",
@@ -1106,49 +1449,266 @@ const SCHEMAS = {
       "vendor_snapshot",
       "strict_pit",
       "strategy_config_sha256",
-      "candidate_content_sha256",
-      "artifact_manifest_sha256",
-      "stage5_manifest_sha256",
-      "action_manifest_sha256",
-      "approval_registry_sha256",
       "created_at",
       "updated_at",
       "items",
+      "trigger_kind",
+      "input"
     ],
-    additionalProperties: false,
-    properties: {
-      id: uuid,
-      job_id: uuid,
-      strategy_config_id: uuid,
-      strategy_id: { type: "string", minLength: 1 },
-      strategy_version: { type: "string", minLength: 1 },
-      as_of: dateStr,
-      status: { type: "string", enum: ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"] },
-      input_kind: { type: "string", const: "owner_beta_historical_price_only_v1" },
-      capability: { type: "string", const: "PRICE_RETURN_ONLY" },
-      audience: { type: "string", const: "OWNER_ONLY" },
-      vendor_snapshot: { type: "boolean", const: true },
-      strict_pit: { type: "boolean", const: false },
-      strategy_config_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      candidate_content_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      artifact_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      stage5_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      action_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      approval_registry_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      factor_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
-      target_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
-      cash_weight: { type: ["string", "null"], pattern: "^(?:0\\.\\d{6}|1\\.000000)$" },
-      error_code: { type: ["string", "null"], pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
-      created_at: ts,
-      started_at: { type: ["string", "null"], format: "date-time" },
-      finished_at: { type: ["string", "null"], format: "date-time" },
-      updated_at: ts,
-      items: { type: "array", items: { $ref: "#/components/schemas/OwnerBetaPriceOnlyReadItem" } },
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "job_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "strategy_config_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "strategy_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "strategy_version": {
+        "type": "string",
+        "minLength": 1
+      },
+      "as_of": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "example": "2026-01-31"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "RUNNING",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELED"
+        ]
+      },
+      "input_kind": {
+        "type": "string",
+        "enum": [
+          "owner_beta_historical_price_only_v1",
+          "owner_beta_daily_etf11_price_only_v1"
+        ]
+      },
+      "trigger_kind": {
+        "type": "string",
+        "enum": [
+          "MANUAL",
+          "DAILY"
+        ]
+      },
+      "input": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+          },
+          {
+            "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+          }
+        ]
+      },
+      "capability": {
+        "type": "string",
+        "const": "PRICE_RETURN_ONLY"
+      },
+      "audience": {
+        "type": "string",
+        "const": "OWNER_ONLY"
+      },
+      "vendor_snapshot": {
+        "type": "boolean",
+        "const": true
+      },
+      "strict_pit": {
+        "type": "boolean",
+        "const": false
+      },
+      "strategy_config_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "candidate_content_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "artifact_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "stage5_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "action_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "approval_registry_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "factor_snapshot_sha256": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "target_snapshot_sha256": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "cash_weight": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^(?:0\\.\\d{6}|1\\.000000)$"
+      },
+      "error_code": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+      },
+      "created_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "started_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time"
+      },
+      "finished_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time"
+      },
+      "published_at": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Present only for SUCCEEDED, equal to finished_at."
+      },
+      "updated_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/OwnerBetaPriceOnlyReadItem"
+        }
+      }
     },
+    "oneOf": [
+      {
+        "required": [
+          "candidate_content_sha256",
+          "artifact_manifest_sha256",
+          "stage5_manifest_sha256",
+          "action_manifest_sha256",
+          "approval_registry_sha256"
+        ],
+        "properties": {
+          "input_kind": {
+            "const": "owner_beta_historical_price_only_v1"
+          },
+          "trigger_kind": {
+            "const": "MANUAL"
+          },
+          "input": {
+            "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+          }
+        }
+      },
+      {
+        "properties": {
+          "input_kind": {
+            "const": "owner_beta_daily_etf11_price_only_v1"
+          },
+          "trigger_kind": {
+            "const": "DAILY"
+          },
+          "input": {
+            "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "candidate_content_sha256"
+              ]
+            },
+            {
+              "required": [
+                "artifact_manifest_sha256"
+              ]
+            },
+            {
+              "required": [
+                "stage5_manifest_sha256"
+              ]
+            },
+            {
+              "required": [
+                "action_manifest_sha256"
+              ]
+            },
+            {
+              "required": [
+                "approval_registry_sha256"
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "status": {
+              "const": "SUCCEEDED"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "published_at"
+          ]
+        },
+        "else": {
+          "not": {
+            "required": [
+              "published_at"
+            ]
+          }
+        }
+      }
+    ]
   },
   OwnerBetaPriceOnlyReadListItem: {
-    type: "object",
-    required: [
+    "type": "object",
+    "required": [
       "id",
       "job_id",
       "strategy_config_id",
@@ -1162,43 +1722,255 @@ const SCHEMAS = {
       "vendor_snapshot",
       "strict_pit",
       "strategy_config_sha256",
-      "candidate_content_sha256",
-      "artifact_manifest_sha256",
-      "stage5_manifest_sha256",
-      "action_manifest_sha256",
-      "approval_registry_sha256",
       "created_at",
       "updated_at",
+      "trigger_kind",
+      "input"
     ],
-    additionalProperties: false,
-    properties: {
-      id: uuid,
-      job_id: uuid,
-      strategy_config_id: uuid,
-      strategy_id: { type: "string", minLength: 1 },
-      strategy_version: { type: "string", minLength: 1 },
-      as_of: dateStr,
-      status: { type: "string", enum: ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"] },
-      input_kind: { type: "string", const: "owner_beta_historical_price_only_v1" },
-      capability: { type: "string", const: "PRICE_RETURN_ONLY" },
-      audience: { type: "string", const: "OWNER_ONLY" },
-      vendor_snapshot: { type: "boolean", const: true },
-      strict_pit: { type: "boolean", const: false },
-      strategy_config_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      candidate_content_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      artifact_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      stage5_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      action_manifest_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      approval_registry_sha256: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
-      factor_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
-      target_snapshot_sha256: { type: ["string", "null"], pattern: "^sha256:[0-9a-f]{64}$" },
-      cash_weight: { type: ["string", "null"], pattern: "^(?:0\\.\\d{6}|1\\.000000)$" },
-      error_code: { type: ["string", "null"], pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
-      created_at: ts,
-      started_at: { type: ["string", "null"], format: "date-time" },
-      finished_at: { type: ["string", "null"], format: "date-time" },
-      updated_at: ts,
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "job_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "strategy_config_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "strategy_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "strategy_version": {
+        "type": "string",
+        "minLength": 1
+      },
+      "as_of": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "example": "2026-01-31"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "RUNNING",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELED"
+        ]
+      },
+      "input_kind": {
+        "type": "string",
+        "enum": [
+          "owner_beta_historical_price_only_v1",
+          "owner_beta_daily_etf11_price_only_v1"
+        ]
+      },
+      "trigger_kind": {
+        "type": "string",
+        "enum": [
+          "MANUAL",
+          "DAILY"
+        ]
+      },
+      "input": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+          },
+          {
+            "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+          }
+        ]
+      },
+      "capability": {
+        "type": "string",
+        "const": "PRICE_RETURN_ONLY"
+      },
+      "audience": {
+        "type": "string",
+        "const": "OWNER_ONLY"
+      },
+      "vendor_snapshot": {
+        "type": "boolean",
+        "const": true
+      },
+      "strict_pit": {
+        "type": "boolean",
+        "const": false
+      },
+      "strategy_config_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "candidate_content_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "artifact_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "stage5_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "action_manifest_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "approval_registry_sha256": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "factor_snapshot_sha256": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "target_snapshot_sha256": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "cash_weight": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^(?:0\\.\\d{6}|1\\.000000)$"
+      },
+      "error_code": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+      },
+      "created_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "started_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time"
+      },
+      "finished_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time"
+      },
+      "published_at": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Present only for SUCCEEDED, equal to finished_at."
+      },
+      "updated_at": {
+        "type": "string",
+        "format": "date-time"
+      }
     },
+    "oneOf": [
+      {
+        "required": [
+          "candidate_content_sha256",
+          "artifact_manifest_sha256",
+          "stage5_manifest_sha256",
+          "action_manifest_sha256",
+          "approval_registry_sha256"
+        ],
+        "properties": {
+          "input_kind": {
+            "const": "owner_beta_historical_price_only_v1"
+          },
+          "trigger_kind": {
+            "const": "MANUAL"
+          },
+          "input": {
+            "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+          }
+        }
+      },
+      {
+        "properties": {
+          "input_kind": {
+            "const": "owner_beta_daily_etf11_price_only_v1"
+          },
+          "trigger_kind": {
+            "const": "DAILY"
+          },
+          "input": {
+            "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "candidate_content_sha256"
+              ]
+            },
+            {
+              "required": [
+                "artifact_manifest_sha256"
+              ]
+            },
+            {
+              "required": [
+                "stage5_manifest_sha256"
+              ]
+            },
+            {
+              "required": [
+                "action_manifest_sha256"
+              ]
+            },
+            {
+              "required": [
+                "approval_registry_sha256"
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "status": {
+              "const": "SUCCEEDED"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "published_at"
+          ]
+        },
+        "else": {
+          "not": {
+            "required": [
+              "published_at"
+            ]
+          }
+        }
+      }
+    ]
   },
   OwnerBetaPriceOnlyReadPage: {
     type: "object",

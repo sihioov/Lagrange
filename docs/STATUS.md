@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave62 eed17d2/CI38804040503 attempt1 전체 성공을 회수해 실행 연결23개·PG17단계·642pins/346blobs/7checkout를 범위별 인수했다. I5 API·자동 갱신 설정·상태 조회를 다음으로 구현한다. 운영·Owner·3거래일·C_R2는 미완료. |
+| 다음 단계 | Wave63 I5 소스·계약 후보 고정: 25경로/25Rust·6Web 정의, PG15개 명명 검증·18단계. 683pins/이전640pins 불변 확인; 새 exact-candidate CI 대기. I7 화면·I6 운영·Owner·3거래일·C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3744,3 +3744,7 @@ and17dedicatedPGtargets require recovery. Source and frozeninputs stay immutable
 Later documentation HEAD is not the tested candidate. No acceptance yet. Next
 independent preparation is I5 daily API/config/read projection, then I7Web and I6
 installed runtime/diagrams. G4/Owner/3tradingdays/finalC_R2 remain open; Ralph continues.
+
+- 2026-10-16 Wave63 I5: 기존 Web strict decoder가 새 API 필드를 거부하는 구체적 호환성 문제를 확인하여 decoder 3개·회귀 테스트 1개를 같은 패키지에 추가(25경로). I7 UI·실제 사용 인수는 여전히 별도.
+
+- 2026-10-16 Wave63 I5 후보 고정: 설정 opt-in/epoch, 일일 상태와 historical/daily 조회 union, strict Web 계약, 실제 HTTP/RLS 검증을 작성했다. 직접 소스 검토·Rust2024 포맷·공백만 PASS이며 컴파일/테스트/운영 인수는 아직 없다. [소스 근거](reviews/2026-10-16-r2-daily-api-source.md).

@@ -1537,7 +1537,7 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-runner ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
@@ -1549,6 +1549,29 @@ run_db_test() {
   record_log "$raw" "test-$label.log"
   [ "$status" -eq 0 ] || fail "DB-gated test failed: $label"
   [ "$skip" = false ] || fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  if [ "$label" = api-owner-beta-daily ]; then
+    for expected in \
+      http_daily_config_defaults_and_partial_updates_preserve_optin_and_epoch \
+      http_daily_config_requires_owner_csrf_and_closed_request_fields \
+      http_daily_config_idempotency_is_bound_to_resource_and_audit_once \
+      http_daily_state_enforces_session_owner_entitlement_and_config_rls \
+      http_daily_state_is_read_only_and_never_uses_generic_ready_data \
+      http_daily_state_reads_exact_admission_and_rejects_expired_or_blocked_input \
+      http_daily_read_union_preserves_manual_pins_and_daily_pending_identity \
+      http_daily_state_distinguishes_running_retry_and_terminal_failure \
+      http_daily_published_result_retains_dates_across_disable_and_verification_loss \
+      http_daily_state_rechecks_exact_control_rights_and_calendar_gap \
+      owner_beta_price_only_missing_approved_artifact_root_is_static_503_without_enqueue_rows \
+      owner_beta_supported_as_of_missing_approved_artifact_is_static_503_without_writes \
+      owner_beta_price_only_read_routes_are_owner_only_and_do_not_require_price_mode \
+      http_owner_beta_access_is_central_exhaustive_and_non_leaking \
+      http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "API daily unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 15 ] || fail 'API daily result inventory changed'
+  fi
   if [ "$label" = jobqueue-owner-beta-publish ]; then
     for expected in published_owner_beta_target_persists_exact_results_and_seals_claim publication_config_lock_cannot_impersonate_another_owner canceled_before_owner_beta_publication_lock_has_no_outputs stale_swept_owner_beta_claim_cannot_publish_or_touch_run owner_beta_recovery_exhaustion_mirrors_failed_run owner_beta_recovery_mirrors_unclaimed_cancellation malformed_owner_beta_payload_is_terminal_without_inventing_a_run daily_input_admitter_pool_is_direct_bounded_and_unprivileged; do
       actual=0
@@ -1998,6 +2021,7 @@ run_db_test jobqueue-owner-beta-daily-publish '-p job-queue --test owner_beta_da
 run_db_test jobqueue-owner-beta-daily-recovery '-p job-queue --test owner_beta_daily_recovery'
 run_db_test jobqueue-owner-beta-daily-runner '-p job-queue --test owner_beta_daily_runner'
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
+run_db_test api-owner-beta-daily '-p api-server --test http_owner_beta_daily --test http_owner_beta_price_only --test http_owner_beta_access'
 
 outcome=APPROVED
 detail='schema-only 0038 upgrade, staged 0039/0040/0041 checks, empty full-release endpoint and no-op rerun, catalog audits, and DB-gated tests passed without SKIP'

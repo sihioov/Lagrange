@@ -168,6 +168,7 @@ pub struct ApiConfig {
     pub owner_beta_paper: OwnerBetaPaperMode,
     /// Separate activation for the sealed historical price-only input.
     pub owner_beta_price_input: OwnerBetaPriceInputMode,
+    pub owner_beta_daily: job_queue::owner_beta::runner::daily_runtime::DailyProcessMode,
     /// Separate activation for the sealed fixed-equity research snapshot.
     pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
     /// Absolute root containing content-hash artifact and snapshot directories.
@@ -312,6 +313,8 @@ impl ApiState {
                 owner_beta_access,
                 owner_beta_paper,
                 owner_beta_price_input,
+                owner_beta_daily:
+                    job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,
                 owner_beta_equity_signals,
                 stock_price_beta_artifact_root: std::path::PathBuf::from("/unused"),
                 owner_equity_v2_pins: None,

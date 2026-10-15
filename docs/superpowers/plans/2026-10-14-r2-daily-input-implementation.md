@@ -5048,3 +5048,46 @@ Web34+121/14,strict lint/format,Python487pass/10existing skips accepted at eed17
 Receipt8212lines/6691c9de; no rerun/cancel/duplicate. Three non-Linux cases excluded;
 unprinted nested helper rows/inner exits UNKNOWN. Proceed I5; real approved-base
 three-UID runtime,independent review,I6/I7,G4,Owner,3tradingdays/finalC_R2 remain open.
+
+### Wave63 I5 API/config/read contract — source ownership
+
+R2-04/09; baseline eed17d2 after Wave62 full recovery. Direct coordinator work;
+no delegation, local project execution or runtime activation. Initially21paths in
+private wave63-I5-ownership.json. Original I5 API/repository/contract/runtime paths
+plus new nested RLS projection and synthetic fixture support; four existing
+ApiConfig callers require additive defaultOFF fields. Generated TS and PG harness
+are included to bind contract and actual DB evidence. No migration/privilege or
+provider/workflow change. bin/api-server.rs needs no edit after callsite inspection.
+
+Implement explicit Owner-only defaultOFF opt-in, absent-update preservation,
+readonly SQL epoch, CSRF/idempotency/audit. New state query uses one SQL snapshot
+and DB clock, dedicated calendar/receipt/admission/reservation evidence, bounded
+370day proof and180second freshness. Keep expected/support/result/published dates
+separate, preserve old result on failure, and never count manual history as DAILY CURRENT.
+Run list/detail become strict historical/daily unions with immutable queue/pin/epoch
+agreement and no fabricated historical hashes. Daily run stays PENDING while its
+job runs; state reads actual queue status. Add scoped API/contract/state/real-role
+DB tests and dedicated noSKIP evidence. All new tests initially WRITTEN_UNEXECUTED.
+Existing independent-review, I6 diagrams, real approved-base/threeUID integration,
+G4,Owner/3tradingdays/finalC_R2 gates remain open.
+
+Wave63 scope addendum: 25 paths after adding the three existing Web strict decoders
+(products/contracts, paper-contracts, owner-beta-contracts) and r2-daily-api-contracts.test.ts.
+Current API fields otherwise make historical/config reads fail decoding. Keep legacy
+historical v1 readable; validate daily discriminants/pins/publication explicitly.
+I7 controls and rendered daily status remain separate. Read local Next16.3.0 TypeScript
+and data-security guides from the installed needy-snake worktree; no dependency or
+Next configuration change, local execution, provider call or delegation.
+
+Wave63 source freeze: 25 owned paths; 25 Rust definitions (15 no-connection,10 DB),
+six fixed-marker Web cases, required API PG15 names and18 total DB targets.
+683 pins include640 unchanged prior pins; only the owned common/PG harness pins changed.
+Source report docs/reviews/2026-10-16-r2-daily-api-source.md is87lines/daaae911.
+Direct review caught daily SQL zero versus historical NULL exclusions, kept calendar
+expected date on BAR blockers, and represented canceled claims awaiting drain.
+Scoped Rust2024 format/whitespace PASS; compiler/lint/tests/Web/OpenAPI/DB UNEXECUTED.
+Freeze wave63-I5-source-inputs.json2798lines/19448d92 and inventory5034/02182c44.
+Prepare one exact-candidate hosted CI after all-event query and remote equality;
+no local project execution/delegation. Prior Wave62 acceptance and earlier failures remain.
+I7/I6, independent integrated review, actual approved-base three-UID runtime, G4,
+Owner/3tradingdays/finalC_R2 remain open.
