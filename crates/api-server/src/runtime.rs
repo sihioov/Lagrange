@@ -551,11 +551,7 @@ where
     Ok(mode)
 }
 
-/// Parse the versioned, non-secret owner-beta price input mode. It is kept
-/// separate from the broader owner-only admission and Paper policy so a
-/// future input contract cannot accidentally inherit this route's trust
-/// assumptions. The generic `*_FILE` channel is forbidden for policy values.
-
+/// Parse the default-off daily mode within the Owner-only access boundary.
 fn owner_beta_daily_from<F>(
     get: &F,
     access: OwnerBetaAccessMode,
@@ -582,6 +578,10 @@ where
     Ok(mode)
 }
 
+/// Parse the versioned, non-secret owner-beta price input mode. It is kept
+/// separate from the broader owner-only admission and Paper policy so a
+/// future input contract cannot accidentally inherit this route's trust
+/// assumptions. The generic `*_FILE` channel is forbidden for policy values.
 fn owner_beta_price_input_from<F>(
     get: &F,
     owner_beta_access: OwnerBetaAccessMode,

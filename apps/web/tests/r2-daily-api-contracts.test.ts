@@ -182,9 +182,9 @@ describe("R2 daily API contracts", () => {
     accepted({ ...succeeded(), published_at: null }, false);
     accepted({ ...succeeded(), finished_at: null }, false);
     expect(ownerBetaRunSchema.safeParse({ ...succeeded(), items: [] }).success).toBe(false);
-    expect(
-      ownerBetaRunSchema.safeParse({ ...succeeded(), cash_weight: "0.900000" }).success,
-    ).toBe(false);
+    expect(ownerBetaRunSchema.safeParse({ ...succeeded(), cash_weight: "0.900000" }).success).toBe(
+      false,
+    );
     expect(
       ownerBetaRunSchema.safeParse({
         ...succeeded(),
@@ -209,4 +209,3 @@ describe("R2 daily API contracts", () => {
     console.info("R2_DAILY_WEB_TEST:queue_and_publication_separated:PASS");
   });
 });
-

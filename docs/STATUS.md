@@ -3757,3 +3757,28 @@ created2026-10-15T21:33:07Z; URL https://github.com/sihioov/Lagrange/actions/run
 No rerun/cancel/duplicate. Inputs/inventory remain frozen; documentation HEAD changes
 cannot change the reviewed candidate. Recover every job/log/checkouts and named evidence
 before acceptance. New tests/compiler/runtime acceptance remains open.
+
+### Wave63 full failure recovery; Wave64 I5-C01 — 2026-10-16 KST
+
+Candidate68c6f64/run38810733003 attempt1 FAILURE: all8jobs/logs and7checkout,
+683pins/371blobs matched; source acceptance false. E0603 private contract path,
+misplaced price-input doc comment/blank line and one Web test format error are
+concrete corrections. OpenAPI passed; all25newRust and6Web, carried workspace
+and following14PGtargets NOT_EXECUTED. PGfirst3targets,32/73/83named cases,
+62UPchecksum sets twice/noop/directroles/0039/catalog/cleanup passed separately.
+Receipt5393lines/1c133b8b; failure originals remain immutable. Register Wave64
+I5-C01 for only repos/owner_beta.rs,runtime.rs and r2-daily-api-contracts.test.ts.
+Use existing public re-export, restore intended comment and exact reported layouts.
+No visibility/gate/lint suppression/test-assertion weakening, new definitions,
+local execution or delegation. One new candidate only after reviewed correction,
+successor freeze, exact-head all-event query0 and remote equality. I7/I6,real
+approved-base threeUID integration,independent review,G4/Owner/3tradingdays/C_R2 open.
+Ralph continues; full failure detail: docs/reviews/2026-10-16-r2-daily-api-ci.md.
+
+Wave64 I5-C01 freeze: three-file exact diff reviewed; existing public export used,
+misplaced comment restored, hosted Web formatter layouts matched. All25Rust/6Web
+names/assertions preserved, no new definitions. Rust2024/whitespace PASS; compiler,
+lint/DB/Web still require hosted evidence. Successor702pins (680prior unchanged),
+inputs2862lines/377a0e14,inventory5034/c1d3121f,source report33/cfddf30f.
+Prior failure receipt remains immutable. No local project execution/delegation.
+Prepare one new exact-candidate CI after all-event run query0 and remote equality.

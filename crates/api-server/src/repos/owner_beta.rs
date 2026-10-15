@@ -756,7 +756,7 @@ fn validate_read_input(row: &OwnerBetaPriceOnlyReadRunRow) -> Result<(), Tenancy
             })
         }
         OwnerBetaExecutionInput::Daily(input) => {
-            let base: market_data::daily_price_only::contract::DailyBasePinsV1Wire =
+            let base: market_data::daily_price_only::DailyBasePinsV1Wire =
                 serde_json::from_value(row.daily_base_pins.clone().ok_or_else(integrity_error)?)
                     .map_err(|_| integrity_error())?;
             let pins = input.pins();
