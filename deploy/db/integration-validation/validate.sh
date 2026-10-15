@@ -1537,7 +1537,7 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-runner ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
@@ -1618,6 +1618,24 @@ run_db_test() {
       for row in "${daily_subcase_rows[@]}"; do [ "$row" != "$expected:PASS" ] || actual=$((actual+1)); done
       [ "$actual" -eq 1 ] || fail "0060 unique subcase row missing: $expected"
     done
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-runner ]; then
+    for expected in \
+      daily_preflight_current_claim_is_read_only_and_releases_locks \
+      daily_preflight_denies_disabled_authority_and_settles_without_outputs \
+      daily_preflight_rejects_edit_restore_epoch_without_resealing \
+      daily_preflight_rejects_changed_payload_and_foreign_attempt \
+      daily_preflight_finishes_audited_cancellation_exactly_once \
+      daily_mixed_runner_disabled_mode_blocks_without_file_approval \
+      daily_mixed_runner_current_thread_rejects_before_claim \
+      daily_mixed_runner_foreign_policy_stops_before_base_or_admission_io \
+      daily_mixed_runner_lease_mismatch_preserves_unclaimed_job \
+      daily_preflight_rejects_app_admitter_and_elevated_pools; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily runner unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 10 ] || fail 'daily runner result inventory changed'
   fi
   tests_run=$(append_csv "$tests_run" "$label")
 }
@@ -1946,6 +1964,7 @@ run_db_test jobqueue-owner-beta-publish '-p job-queue --test owner_beta_publish'
 run_db_test jobqueue-owner-beta-daily-schedule '-p job-queue --test owner_beta_daily_schedule'
 run_db_test jobqueue-owner-beta-daily-publish '-p job-queue --test owner_beta_daily_publish'
 run_db_test jobqueue-owner-beta-daily-recovery '-p job-queue --test owner_beta_daily_recovery'
+run_db_test jobqueue-owner-beta-daily-runner '-p job-queue --test owner_beta_daily_runner'
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 
 outcome=APPROVED

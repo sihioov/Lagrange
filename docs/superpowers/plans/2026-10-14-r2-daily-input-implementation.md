@@ -53,7 +53,8 @@ execution restrictions remain in force; no further worker delegation.
   S5a/S5b remain accepted at5f5f4e8/run38732527740; all previous failures preserved.
   Actual approved-base whole flow, distinct UID/ACL/crash evidence and integrated independent
   review remain open. Wave54 bounded daily success/source and hosted regressions accepted;
-  next is Wave55 sealed-chain replay, then full runtime orchestration.
+  Wave55 sealed-chain replay is accepted at3073e9e/run38776392579;
+  next is Wave56 mixed execution, then supersession and producer/admitter wiring.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -4677,3 +4678,34 @@ and the complete eight-job result are recovered. Existing evidence stays frozen.
 The source report,507-pin inputs and definition inventory remain immutable;
 this later documentation commit does not change the candidate. Direct coordinator
 review only. Full runtime/I5-I7/operations/Owner/three trading days/final C_R2 remain open.
+
+
+### Wave55 recovery and Wave56 mixed execution — 2026-10-16 KST
+
+Wave55 3073e9e / CI38776392579 attempt1 SUCCESS fully recovered17:44:41UTC:
+8jobs/logs/7checkouts,507pins/321blobs,new15 and all earlier Rust groups passed.
+PG16 exits0/noSKIP plus14schedule/6dailyPublish/6dailyRecovery/8historicalPublish,
+32/73/83/60checksums both lanes/roles/0039/catalog/cleanup; web34+121/14 passed.
+Receipt7287lines/SHA c65df16e29fddec5a8a87fbdaf8786dcdf97cbfc558b166f7c037a0cf0387917.
+Bounded source and hosted acceptance only. Actual approved-base whole flow remains.
+
+After full recovery, Wave56 owns runner.rs, new runner/daily_execution.rs, publish.rs,
+new tests/owner_beta_daily_runner.rs and deploy/db/integration-validation/validate.sh.
+Strict mixed decoder; unchanged historical body extracted; daily mode default OFF;
+multithread runtime and lease validation before claim. Current direct-worker DB
+preflight does not grant a retained capability. Real approved base and reopened
+sealed tip stay alive through unchanged atomic daily publication. Existing lease
+monitor/global compute bound retained; bounded reads are individually nonpreemptible.
+Two pure retry-class tests and ten actual-role DB preflight/dispatch tests planned;
+new dedicated no-SKIP lane. No SQL, queue, approval, provider or binary activation edit.
+Coordinator review only, no delegation/local project execution. Superseded-session
+cancellation, actual admitted happy path, full runtime, I5-I7, independent integration
+review, operations/Owner/three trading days/final C_R2 remain open.
+
+Wave56 source review and inventory frozen:527pins,504 prior pins unchanged, six
+byte-identical preserved regions; new12 definitions=2pure+10actualDB, plus five
+historical runner tests and all previous groups. Source inputs2164lines/SHA
+9c4fdf48af25d86625eb403eaad9802dd5ed966b595b24707663fc83e15ec14a;
+inventory3631lines/SHA3abf6ece64d120facacc24fcebe6916f70817467d98e897f05e807f812d8c4a8.
+No executable acceptance. One new candidate CI only after exact-head zero query
+and remote equality. Historical/SQL/approval bytes remain protected.

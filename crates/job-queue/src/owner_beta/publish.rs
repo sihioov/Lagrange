@@ -88,6 +88,8 @@ impl OwnerBetaPublicationError {
 pub enum OwnerBetaPublicationFailure {
     InputInvalid,
     EntitlementDenied,
+    DailyAuthorityDenied,
+    DailyExecutionDisabled,
     FactorInvalid,
     TargetInvalid,
     PublicationUnavailable,
@@ -100,7 +102,9 @@ impl OwnerBetaPublicationFailure {
     pub const fn class(self) -> ErrorClass {
         match self {
             Self::PublicationUnavailable | Self::ComputationUnavailable => ErrorClass::Transient,
-            Self::EntitlementDenied => ErrorClass::DataBlocked,
+            Self::EntitlementDenied | Self::DailyAuthorityDenied | Self::DailyExecutionDisabled => {
+                ErrorClass::DataBlocked
+            }
             Self::ComputationFailed => ErrorClass::Determinism,
             Self::InputInvalid | Self::FactorInvalid | Self::TargetInvalid | Self::Canceled => {
                 ErrorClass::Integrity
@@ -112,6 +116,8 @@ impl OwnerBetaPublicationFailure {
         match self {
             Self::InputInvalid => "OWNER_BETA_INPUT_INVALID",
             Self::EntitlementDenied => "OWNER_BETA_ENTITLEMENT_DENIED",
+            Self::DailyAuthorityDenied => "OWNER_BETA_DAILY_AUTHORITY_DENIED",
+            Self::DailyExecutionDisabled => "OWNER_BETA_DAILY_EXECUTION_DISABLED",
             Self::FactorInvalid => "OWNER_BETA_FACTOR_INVALID",
             Self::TargetInvalid => "OWNER_BETA_TARGET_INVALID",
             Self::PublicationUnavailable => "OWNER_BETA_PUBLICATION_UNAVAILABLE",
@@ -125,6 +131,8 @@ impl OwnerBetaPublicationFailure {
         match self {
             Self::InputInvalid => "owner-beta input rejected",
             Self::EntitlementDenied => "owner-beta entitlement unavailable",
+            Self::DailyAuthorityDenied => "owner-beta daily authority unavailable",
+            Self::DailyExecutionDisabled => "owner-beta daily execution disabled",
             Self::FactorInvalid => "owner-beta factor snapshot rejected",
             Self::TargetInvalid => "owner-beta target snapshot rejected",
             Self::PublicationUnavailable => "owner-beta publication unavailable",
@@ -960,6 +968,93 @@ async fn settle_daily_failure_in(
     Ok(outcome)
 }
 
+/// A momentary DB check, never a retained publication capability. Success must
+/// repeat the full gate inside its atomic publication transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DailyClaimPreflight {
+    Ready,
+    Canceled,
+}
+
+pub async fn preflight_owner_beta_daily_claim(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<DailyClaimPreflight, OwnerBetaPublicationError> {
+    validate_daily_claim(claim, input)?;
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let result = preflight_daily_claim_in(&mut transaction, queue, claim, input).await;
+    match result {
+        Ok(outcome) => transaction
+            .commit()
+            .await
+            .map(|()| outcome)
+            .map_err(|_| OwnerBetaPublicationError::CommitUnknown),
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+async fn preflight_daily_claim_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<DailyClaimPreflight, OwnerBetaPublicationError> {
+    // Runtime uses one direct worker principal, never an elevated/SET ROLE pool.
+    let direct_worker: bool = sqlx::query_scalar(
+        "SELECT session_user::text='worker' AND current_user::text='worker' \
+         AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
+         AND NOT rolreplication AND NOT rolbypassrls \
+         FROM pg_catalog.pg_roles WHERE rolname=current_user",
+    )
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    if !direct_worker {
+        return Err(OwnerBetaPublicationError::DailyAuthorityDenied);
+    }
+    let job = match queue.lock_claim_in(transaction, claim).await {
+        Ok(job) => job,
+        Err(QueueError::StaleClaim(_)) => {
+            return match settle_daily_failure_in(
+                transaction,
+                queue,
+                claim,
+                input,
+                OwnerBetaPublicationFailure::Canceled,
+            )
+            .await?
+            {
+                OwnerBetaPublicationOutcome::Canceled => Ok(DailyClaimPreflight::Canceled),
+                _ => Err(OwnerBetaPublicationError::QueueIntegrity),
+            };
+        }
+        Err(error) => return Err(queue_error(error)),
+    };
+    if job.id != claim.job.id
+        || job.owner_user_id != claim.job.owner_user_id
+        || job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || job.payload_json != claim.job.payload_json
+        || job.attempt_count != claim.job.attempt_count
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    lock_daily_run(transaction, claim, input).await?;
+    let allowed: bool = sqlx::query_scalar("SELECT public.lock_owner_beta_daily_run_gate($1)")
+        .bind(input.run_id())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(daily_gate_error)?;
+    if !allowed {
+        return Err(OwnerBetaPublicationError::DailyAuthorityDenied);
+    }
+    Ok(DailyClaimPreflight::Ready)
+}
+
 /// Publish a daily computation only while its exact reopened file capability
 /// remains valid. Serialized factors/targets alone cannot enter this boundary.
 /// Current SQL authority is rechecked under the same transaction as all writes.
@@ -1164,6 +1259,8 @@ mod tests {
         for failure in [
             OwnerBetaPublicationFailure::InputInvalid,
             OwnerBetaPublicationFailure::EntitlementDenied,
+            OwnerBetaPublicationFailure::DailyAuthorityDenied,
+            OwnerBetaPublicationFailure::DailyExecutionDisabled,
             OwnerBetaPublicationFailure::FactorInvalid,
             OwnerBetaPublicationFailure::TargetInvalid,
             OwnerBetaPublicationFailure::PublicationUnavailable,
