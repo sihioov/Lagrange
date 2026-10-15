@@ -4564,3 +4564,23 @@ Full terminal recovery pending; no source/compiler/test/runtime acceptance.
 Only unregistered I4b preparation and mutable tracking documents may change.
 Earlier failures and integrated independent review/runtime/Owner/3tradingdays/
 finalC_R2 remain open. No new worker/local project execution; Ralph continues.
+
+
+### Wave52 recovery and Wave53 daily settlement/recovery — 2026-10-16 KST
+
+Wave52 d0536f6/38764564342 attempt1 FAILURE fully recovered:8jobs/8logs/7checkouts,
+447pins/310candidateblobs. Three test-only E0433 tracing references block Clippy,
+workspace and new PG schedule target; all workspace rows and14new PG rows NOT_EXECUTED.
+Chart6PASS. PG32/73/83/60checksums bothlanes/12prior exits0/noSKIP/8publish/roles/
+NO_OP/catalog/0039/cleanup PASS; final API admitter target not reached.
+Receipt4022lines/SHA267d40ca7971593c6df9d119478eaffd32d809faa179715306dbc45a04e74f59.
+No source/compiler acceptance. Preserve prior bounded success and all failures.
+
+After full recovery, Wave53 owns publish.rs and recovery.rs daily-only extensions,
+new owner_beta_daily_publish/recovery tests, the3logging fixes in existing daily
+test/support files and2dedicated PG selections. Twelve new definitions require real
+roles and noSKIP. Historical publisher bytes/queue/migrations stay unchanged.
+Source disposition is direct coordinator only. Daily success, superseded cancellation,
+full runtime/approved input, integrated independent review/I5-I7/operations/Owner/
+3tradingdays/finalC_R2 remain. Freeze candidate, query exact-head all-event runs,
+verify remoteSHA, dispatch once and recover all results. No delegation/local execution.

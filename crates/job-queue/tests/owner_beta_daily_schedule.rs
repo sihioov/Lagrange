@@ -235,7 +235,7 @@ async fn daily_poll_roles_are_direct_and_cannot_be_interchanged() {
                     Ok(())
                 })
             })
-            .connect_with(options.log_statements(tracing::log::LevelFilter::Off))
+            .connect_with(options.disable_statement_logging())
             .await?;
         let identities: (String, String) = sqlx::query_as("SELECT current_user,session_user")
             .fetch_one(&impersonated)

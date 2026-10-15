@@ -104,7 +104,7 @@ async fn drop_checked(db: ScratchDb) {
     let admin = PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(10))
-        .connect_with(options.log_statements(tracing::log::LevelFilter::Off))
+        .connect_with(options.disable_statement_logging())
         .await
         .unwrap_or_else(|_| panic!("cleanup supervisor connection failed"));
     let absent = sqlx::query_scalar::<_, bool>(
@@ -129,7 +129,7 @@ async fn role_pool(db: &ScratchDb, role: &str, actor: Option<Uuid>) -> TestResul
     let pool = PgPoolOptions::new()
         .max_connections(4)
         .acquire_timeout(Duration::from_secs(10))
-        .connect_with(options.log_statements(tracing::log::LevelFilter::Off))
+        .connect_with(options.disable_statement_logging())
         .await?;
     let ids: (String, String) = sqlx::query_as("SELECT current_user,session_user")
         .fetch_one(&pool)

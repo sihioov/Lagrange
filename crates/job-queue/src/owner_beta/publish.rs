@@ -736,6 +736,228 @@ fn queue_error(error: QueueError) -> OwnerBetaPublicationError {
     }
 }
 
+// Daily settlement deliberately has a separate input binding. Requeued runs
+// remain byte-identical: 0060 rejects even timestamp-only PENDING updates.
+#[derive(sqlx::FromRow)]
+struct LockedDailyRun {
+    status: String,
+    owner_user_id: uuid::Uuid,
+    strategy_config_id: uuid::Uuid,
+    strategy_id: String,
+    strategy_version: String,
+    strategy_config_json: Value,
+    strategy_config_sha256: String,
+    as_of: chrono::NaiveDate,
+    job_id: uuid::Uuid,
+    input_kind: String,
+    trigger_kind: String,
+    capability: String,
+    daily_pins: Value,
+    daily_config_epoch: i64,
+    daily_activation_epoch: i64,
+    daily_trigger_version: String,
+    historical_pins_absent: bool,
+    factor_snapshot_sha256: Option<String>,
+    target_snapshot_sha256: Option<String>,
+    cash_weight: Option<String>,
+    error_code: Option<String>,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    finished_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Settle a daily claim even when current source/config authority has been
+/// revoked. Current authority permits success; an exact fresh claim still
+/// needs to release capacity on failure. Stale claims remain recovery-owned.
+pub async fn settle_owner_beta_daily_failure(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    failure: OwnerBetaPublicationFailure,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    validate_daily_claim(claim, input)?;
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let result = settle_daily_failure_in(&mut transaction, queue, claim, input, failure).await;
+    match result {
+        Ok(outcome) => transaction
+            .commit()
+            .await
+            .map(|()| outcome)
+            .map_err(|_| OwnerBetaPublicationError::CommitUnknown),
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+fn validate_daily_claim(
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<(), OwnerBetaPublicationError> {
+    input
+        .validate()
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    let payload = serde_json::to_value(input).map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    if claim.job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || claim.job.payload_json != payload
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(())
+}
+
+async fn lock_daily_run(
+    transaction: &mut Transaction<'_, Postgres>,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<LockedDailyRun, OwnerBetaPublicationError> {
+    let run: LockedDailyRun=sqlx::query_as(
+        "SELECT status, owner_user_id, strategy_config_id, strategy_id, strategy_version, \
+                strategy_config_json, strategy_config_sha256, as_of, job_id, input_kind, trigger_kind, capability, \
+                daily_pins, daily_config_epoch, daily_activation_epoch, daily_trigger_version, \
+                candidate_content_sha256 IS NULL AND artifact_manifest_sha256 IS NULL \
+                  AND stage5_manifest_sha256 IS NULL AND action_manifest_sha256 IS NULL \
+                  AND approval_registry_sha256 IS NULL AS historical_pins_absent, \
+                factor_snapshot_sha256,target_snapshot_sha256,cash_weight::text AS cash_weight, \
+                error_code,started_at,finished_at \
+         FROM public.owner_beta_recommendation_runs WHERE id=$1 FOR UPDATE")
+        .bind(input.run_id()).fetch_optional(&mut **transaction).await.map_err(database_error)?
+        .ok_or(OwnerBetaPublicationError::Integrity)?;
+    let strategy = input.strategy_snapshot();
+    let pins = input.pins();
+    let expected_pins = serde_json::json!({
+        "content_sha256":pins.content_sha256(),"manifest_sha256":pins.manifest_sha256(),
+        "admission_sha256":pins.admission_sha256(),"policy_sha256":pins.policy_sha256(),
+    });
+    if run.status != "PENDING"
+        || run.owner_user_id != claim.job.owner_user_id
+        || run.strategy_config_id != input.strategy_config_id()
+        || run.strategy_id != strategy.strategy_id()
+        || run.strategy_version != strategy.strategy_version()
+        || run.strategy_config_json != *strategy.config_json()
+        || run.strategy_config_sha256 != strategy.config_sha256().as_str()
+        || run.as_of != input.as_of().as_naive_date()
+        || run.job_id != claim.job.id
+        || run.input_kind != factor_engine::daily_price_only::DAILY_PRICE_ONLY_INPUT_KIND
+        || run.trigger_kind != "DAILY"
+        || run.capability != PRICE_ONLY_CAPABILITY
+        || run.daily_pins != expected_pins
+        || run.daily_config_epoch != input.config_epoch()
+        || run.daily_activation_epoch != input.activation_epoch()
+        || run.daily_trigger_version != super::daily_input::OWNER_BETA_DAILY_TRIGGER_VERSION
+        || !run.historical_pins_absent
+        || run.factor_snapshot_sha256.is_some()
+        || run.target_snapshot_sha256.is_some()
+        || run.cash_weight.is_some()
+        || run.error_code.is_some()
+        || run.started_at.is_some()
+        || run.finished_at.is_some()
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    let items:i64=sqlx::query_scalar(
+        "SELECT count(*) FROM public.owner_beta_recommendation_items WHERE recommendation_run_id=$1")
+        .bind(input.run_id()).fetch_one(&mut **transaction).await.map_err(database_error)?;
+    if items != 0 {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(run)
+}
+
+async fn settle_daily_failure_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    failure: OwnerBetaPublicationFailure,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    // Existing queue methods lock and fence job/attempt before the run.
+    let status = if failure == OwnerBetaPublicationFailure::Canceled {
+        queue
+            .settle_aborted_in(transaction, claim, failure.message())
+            .await
+            .map_err(queue_error)?
+            .status
+    } else {
+        match queue
+            .settle_failure_in(
+                transaction,
+                claim,
+                failure.class(),
+                failure.code(),
+                failure.message(),
+            )
+            .await
+            .map_err(queue_error)?
+        {
+            SettleResult::Committed(job) | SettleResult::Canceled(job) => job.status,
+        }
+    };
+    let locked: (uuid::Uuid, String, Value, i32) = sqlx::query_as(
+        "SELECT owner_user_id,job_type,payload_json,attempt_count FROM public.jobs WHERE id=$1",
+    )
+    .bind(claim.job.id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    if locked.0 != claim.job.owner_user_id
+        || locked.1 != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || locked.2 != claim.job.payload_json
+        || locked.3 != claim.job.attempt_count
+        || locked.3 != claim.attempt.attempt_no
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    let _run = lock_daily_run(transaction, claim, input).await?;
+    let (outcome, run_status, error_code) = match status {
+        JobStatus::Queued => return Ok(OwnerBetaPublicationOutcome::Retrying),
+        JobStatus::Failed => (
+            OwnerBetaPublicationOutcome::Failed,
+            "FAILED",
+            failure.code(),
+        ),
+        JobStatus::Canceled => (
+            OwnerBetaPublicationOutcome::Canceled,
+            "CANCELED",
+            "CANCELED",
+        ),
+        JobStatus::Running | JobStatus::Succeeded => {
+            return Err(OwnerBetaPublicationError::QueueIntegrity);
+        }
+    };
+    if status == JobStatus::Canceled {
+        // Generic cancellation settlement records the attempt but deliberately
+        // retains its lease. Daily consistency requires its fenced release in
+        // this same transaction before the run mirror can commit.
+        let cleared = sqlx::query(
+            "UPDATE public.jobs SET locked_by=NULL,locked_at=NULL,updated_at=now() \
+             WHERE id=$1 AND owner_user_id=$2 AND status='CANCELED' \
+               AND locked_by=$3 AND attempt_count=$4",
+        )
+        .bind(claim.job.id)
+        .bind(claim.job.owner_user_id)
+        .bind(&claim.worker_id)
+        .bind(claim.attempt.attempt_no)
+        .execute(&mut **transaction)
+        .await
+        .map_err(database_error)?;
+        if cleared.rows_affected() != 1 {
+            return Err(OwnerBetaPublicationError::QueueIntegrity);
+        }
+    }
+    let updated=sqlx::query(
+        "UPDATE public.owner_beta_recommendation_runs \
+         SET status=$3,error_code=$4,started_at=COALESCE(started_at,now()),finished_at=now(),updated_at=now() \
+         WHERE id=$1 AND owner_user_id=$2 AND job_id=$5 AND status='PENDING'")
+        .bind(input.run_id()).bind(claim.job.owner_user_id).bind(run_status).bind(error_code)
+        .bind(claim.job.id).execute(&mut **transaction).await.map_err(database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(outcome)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1537,7 +1537,7 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
@@ -1578,6 +1578,34 @@ run_db_test() {
       [ "$actual" -eq 1 ] || fail "daily schedule unique test row missing: $expected"
     done
     [ "${#replay_rows[@]}" -eq 14 ] || fail 'daily schedule result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-publish ]; then
+    for expected in \
+      daily_transient_failure_preserves_pending_row_and_permanent_reservation \
+      daily_terminal_failure_releases_capacity_but_preserves_reservation \
+      daily_expired_claim_cannot_settle_or_touch_the_pending_run \
+      daily_failure_still_settles_after_control_is_disabled \
+      daily_mismatched_payload_cannot_settle_the_valid_claim \
+      daily_cancellation_wins_failure_and_clears_claim_without_outputs; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily publish unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 6 ] || fail 'daily publish result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-recovery ]; then
+    for expected in \
+      daily_recovery_does_not_steal_a_live_claim \
+      daily_expired_recovery_requeues_the_same_job_and_preserves_all_sealed_rows \
+      daily_recovery_exhausts_three_attempts_without_replacing_the_reservation \
+      daily_racing_recoveries_orphan_and_requeue_only_once \
+      daily_recovery_mirrors_unclaimed_audited_cancellation \
+      daily_recovery_orphans_expired_canceled_attempt_and_releases_its_lease; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily recovery unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 6 ] || fail 'daily recovery result inventory changed'
   fi
   if [ "$label" = migration-contract ]; then
     for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do
@@ -1916,6 +1944,8 @@ run_db_test jobqueue-paper-preview '-p job-queue --test paper_preview'
 run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 run_db_test jobqueue-owner-beta-publish '-p job-queue --test owner_beta_publish'
 run_db_test jobqueue-owner-beta-daily-schedule '-p job-queue --test owner_beta_daily_schedule'
+run_db_test jobqueue-owner-beta-daily-publish '-p job-queue --test owner_beta_daily_publish'
+run_db_test jobqueue-owner-beta-daily-recovery '-p job-queue --test owner_beta_daily_recovery'
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 
 outcome=APPROVED
