@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave61 전체 회수·실패 보존. Wave62 producer/admitter/혼합 worker 실행 연결 및 기존 migration 기대값 보정. 전체 R2·운영·Owner·3거래일은 미완료. |
+| 다음 단계 | Wave62 전체 실행 연결 소스·23개 회귀 고정, 단일 후보 CI 검증. 다음 설치·배포 연결 및 전체 흐름 검증. 전체 R2·운영·Owner·3거래일은 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3712,3 +3712,19 @@ Direct coordinator review then frozen inputs/inventory and one exact-candidate C
 No source/compiler/test acceptance yet. No local project/SQL/provider/production
 execution or delegation. Full approved input/runtime/UIDACL/crash/installer/I5-I7/
 independent review/I6/G4/Owner/3trading days/final C_R2 remain open; Ralph continues.
+
+
+### Wave62 source frozen — 2026-10-16 KST
+
+R2-04/09 WP-4/I4g3 complete runtime connection:10registered files,23new definitions
+(10Linux-native,9other non-DB,4actualDB), all WRITTEN_UNEXECUTED. Producer/admitter
+persistent state, exact restart reconciliation, typed source events, CLI and mixed
+worker connected; OFF preserves historical path. Existing migration assertion now
+compares the entire embedded UP set. All0060–0062/dependencies/workflow unchanged.
+Direct source disposition (not independent), scopedrustfmt2024/whitespace pass.
+Report85lines/SHA05ec45c4;642pins including614unchanged prior pins, successorinputs
+2684lines/SHA c550b853, inventory4626/SHA a7496e3b. Dedicated PG schedule32, runner24,
+17targets retain no-SKIP/exit gates. New candidate CI pending exact-head query0 and
+remote/pin/blob comparison. No compiler/test/runtime acceptance. I5–I7, actual
+approved-v3/Raw three-UID flow, installer/crash/rollback, independent final review,
+I6diagrams before main/G4/Owner/3trading days/final C_R2 stay open. Ralph continues.

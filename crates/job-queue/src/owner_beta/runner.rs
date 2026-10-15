@@ -1,7 +1,10 @@
 //! One-shot, lease-supervised owner-beta price recommendation worker.
 
 pub mod daily_admission;
+mod daily_catalog;
 pub mod daily_execution;
+pub mod daily_ingest;
+mod daily_local_state;
 pub mod daily_runtime;
 pub mod daily_schedule;
 

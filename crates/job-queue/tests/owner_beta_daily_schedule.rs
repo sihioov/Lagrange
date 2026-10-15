@@ -942,3 +942,142 @@ async fn daily_admitter_readback_down_preserves_existing_daily_evidence() {
         Ok(())
     }).await;
 }
+
+fn typed_source_event(
+    owner: Uuid,
+    code: market_data::daily_price_only::observation::DailyBlockCode,
+) -> ReadbackResult<market_data::daily_price_only::observation::CanonicalSourceEvent> {
+    use market_data::daily_price_only::observation::{
+        DailySourceKind, canonical_source_event, canonical_source_observation,
+    };
+    // Synthetic canonical transport fixture only; this is not a Raw proof.
+    let file = serde_json::from_value(serde_json::json!({
+        "provider":"kis","market":"kr","batch_id":"00000000-0000-4000-8000-000000000001",
+        "batch_date":"2026-08-29","batch_json_sha256":readback_hash('1'),"manifest_line_sha256":readback_hash('2'),
+        "file_name":"calendar.json","kind":"calendar","wire_sha256":readback_hash('3'),"size_bytes":17,
+        "request":{"endpoint":"/uapi/domestic-stock/v1/quotations/chk-holiday",
+            "query":[["BASS_DT","20260829"],["CTX_AREA_FK",""],["CTX_AREA_NK",""]],
+            "headers":[["appkey","[REDACTED]"],["appsecret","[REDACTED]"],["authorization","[REDACTED]"],
+                ["tr_cont",""],["tr_id","CTCA0903R"]],"mode":"credentialed"},
+        "response_continuation":null,"retrieved_at":"2026-08-29T07:31:00.000000000Z","retrieval_precision":"batch",
+        "original_retrieved_at":"2026-08-29T07:31:00.000000000Z","original_retrieval_precision":"batch","copied_from":[]
+    }))?;
+    let observation = canonical_source_observation(&[file])?;
+    Ok(canonical_source_event(
+        owner,
+        DailySourceKind::Calendar,
+        code,
+        domain::TradingDate::parse("2026-08-29")?,
+        domain::TradingDate::parse("2026-08-29")?,
+        &observation,
+    )?)
+}
+
+#[tokio::test]
+async fn daily_typed_source_event_commits_exact_identity_and_failure_receipt() {
+    use market_data::daily_price_only::observation::DailyBlockCode;
+    run("typed_event_exact", |f| async move {
+        f.control(false).await?;
+        let cycle = readback_cycle(&f).await?;
+        let receipt = cycle.receipt_id();
+        let event = typed_source_event(f.owner_id, DailyBlockCode::SealedSourceChanged)?;
+        assert_eq!(
+            cycle.finish_source_event(&event).await?,
+            DailyBlockCode::SealedSourceChanged
+        );
+        let record = readback::read_daily_admission_receipt(&f.admitter, receipt)
+            .await?
+            .ok_or("receipt absent")?;
+        assert_eq!(
+            record.outcome(),
+            &readback::RecordedAdmissionOutcome::Failed {
+                failure: AdmissionPollFailure::InputBlocked,
+                source_frontier: Some(event.observation_sha256().clone()),
+                event: Some((DailyBlockCode::SealedSourceChanged, event.sha256().clone()))
+            }
+        );
+        let saved: (String, String) = sqlx::query_as(
+            "SELECT event_sha256,evidence_sha256 FROM owner_beta_daily_source_events",
+        )
+        .fetch_one(&f.db.pool)
+        .await?;
+        assert_eq!(
+            saved,
+            (
+                event.sha256().as_str().into(),
+                event.observation_sha256().as_str().into()
+            )
+        );
+        let admissions: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM owner_beta_daily_admissions")
+                .fetch_one(&f.db.pool)
+                .await?;
+        assert_eq!(admissions, 0);
+        Ok(())
+    })
+    .await;
+}
+#[tokio::test]
+async fn daily_typed_source_event_foreign_identity_rolls_back_before_completion() {
+    use market_data::daily_price_only::observation::DailyBlockCode;
+    run("typed_event_foreign", |f| async move {
+        f.control(false).await?;
+        let cycle = readback_cycle(&f).await?;
+        let receipt = cycle.receipt_id();
+        let before = readback_snapshot(&f).await?;
+        let event = typed_source_event(Uuid::new_v4(), DailyBlockCode::SealedSourceChanged)?;
+        assert_eq!(
+            cycle.finish_source_event(&event).await,
+            Err(DailyRuntimeError::DatabaseIntegrity)
+        );
+        assert_eq!(readback_snapshot(&f).await?, before);
+        let record = readback::read_daily_admission_receipt(&f.admitter, receipt)
+            .await?
+            .ok_or("receipt absent")?;
+        assert_eq!(
+            record.outcome(),
+            &readback::RecordedAdmissionOutcome::Started
+        );
+        Ok(())
+    })
+    .await;
+}
+#[tokio::test]
+async fn daily_typed_source_event_cannot_use_the_operator_revocation_boundary() {
+    use market_data::daily_price_only::observation::DailyBlockCode;
+    run("typed_event_revocation", |f| async move {
+        f.control(false).await?;
+        let cycle = readback_cycle(&f).await?;
+        let before = readback_snapshot(&f).await?;
+        let event = typed_source_event(f.owner_id, DailyBlockCode::SourceRevoked)?;
+        assert_eq!(
+            cycle.finish_source_event(&event).await,
+            Err(DailyRuntimeError::InvalidInput)
+        );
+        assert_eq!(readback_snapshot(&f).await?, before);
+        Ok(())
+    })
+    .await;
+}
+#[tokio::test]
+async fn daily_typed_source_event_restart_keeps_one_event_and_distinct_receipts() {
+    use market_data::daily_price_only::observation::DailyBlockCode;
+    run("typed_event_restart",|f|async move{
+        f.control(false).await?;
+        let event=typed_source_event(f.owner_id,DailyBlockCode::SealedSourceChanged)?;
+        let first=readback_cycle(&f).await?;let first_id=first.receipt_id();
+        first.finish_source_event(&event).await?;
+        readback_next(&f).await?;
+        let second=readback_cycle(&f).await?;let second_id=second.receipt_id();
+        assert_ne!(first_id,second_id);second.finish_source_event(&event).await?;
+        let count:i64=sqlx::query_scalar("SELECT count(*) FROM owner_beta_daily_source_events").fetch_one(&f.db.pool).await?;
+        assert_eq!(count,1);
+        for id in [first_id,second_id] {
+            let record=readback::read_daily_admission_receipt(&f.admitter,id).await?.ok_or("receipt absent")?;
+            assert!(record.completed_at().is_some());
+            assert!(matches!(record.outcome(),readback::RecordedAdmissionOutcome::Failed{event:Some((code,hash)),..}
+                if *code==DailyBlockCode::SealedSourceChanged && hash==event.sha256()));
+        }
+        Ok(())
+    }).await;
+}

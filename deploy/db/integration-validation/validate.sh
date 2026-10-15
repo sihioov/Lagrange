@@ -1586,12 +1586,16 @@ run_db_test() {
       daily_admitter_readback_retains_blocked_event_identity \
       daily_admitter_exact_input_absence_and_revocation_are_explicit \
       daily_admitter_readback_security_settings_are_fixed \
-      daily_admitter_readback_down_preserves_existing_daily_evidence; do
+      daily_admitter_readback_down_preserves_existing_daily_evidence \
+      daily_typed_source_event_commits_exact_identity_and_failure_receipt \
+      daily_typed_source_event_foreign_identity_rolls_back_before_completion \
+      daily_typed_source_event_cannot_use_the_operator_revocation_boundary \
+      daily_typed_source_event_restart_keeps_one_event_and_distinct_receipts; do
       actual=0
       for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
       [ "$actual" -eq 1 ] || fail "daily schedule unique test row missing: $expected"
     done
-    [ "${#replay_rows[@]}" -eq 28 ] || fail 'daily schedule result inventory changed'
+    [ "${#replay_rows[@]}" -eq 32 ] || fail 'daily schedule result inventory changed'
   fi
   if [ "$label" = jobqueue-owner-beta-daily-publish ]; then
     for expected in \

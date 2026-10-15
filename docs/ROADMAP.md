@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave61 전체 회수: 새18·PG28 통과, 기존 migration 개수 기대값1개 실패. Wave62에서 기대값 보정과 producer/admitter/혼합 worker 전체 실행 연결을 함께 구현·검증. 운영·Owner·3거래일·C_R2 계속. |
+| 다음 착수 항목 | Wave62 전체 실행 연결 10파일·새23테스트 구현/소스 검토 완료, 정확한 후보 CI 준비. 검증 후 설치·배포 연결과 전체 흐름 검증 진행. 운영·Owner·3거래일·C_R2 계속. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -275,7 +275,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   이전 검증 — 2026-10-16, [Wave57 인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md): c4f35bb의 8jobs/logs·548pins/328blobs/7checkout 및 runner12·collector 실제DB3·이전 Rust/PG/Web 전부 통과. Wave58 안전한 superseded 취소를 진행한다. 전체 I4/실제 승인 입력 통합/독립 리뷰/운영/Owner/3거래일은 미완료.
   최신 검증 — 2026-10-16, [Wave58 인수](reviews/2026-10-16-r2-daily-supersession-ci.md): 7a5b347의8jobs/logs·567pins/332blobs/7checkout·14새실제DB/총24runner·기존 Rust/PG/Web 모두 통과.0061취소 기능 범위 인수; 전체 I4·운영·Owner·최종 R2는 미완료. 후속 [Wave59 소스](reviews/2026-10-16-r2-daily-navigation-source.md)3파일/19개 검토·584pins 고정; 실행 미검증.
 
-  후속 — 2026-10-16, [Wave61 전체 회수](reviews/2026-10-16-r2-daily-admitter-readback-c01-ci.md): 새18·PG28 및 strict lint 통과, 기존 migration61 기대값1개 실패. Wave62 전체 실행 연결+해당 보정 진행; 운영·Owner 인수는 남음.
+  후속 — 2026-10-16, [Wave61 전체 회수](reviews/2026-10-16-r2-daily-admitter-readback-c01-ci.md): 새18·PG28 및 strict lint 통과, 기존 migration61 기대값1개 실패. [Wave62 전체 실행 연결](reviews/2026-10-16-r2-daily-runtime-connection-source.md)10파일·새23회귀 작성/후보 검증 대기; 운영·Owner 인수는 남음.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -923,3 +923,19 @@ Direct coordinator review then frozen inputs/inventory and one exact-candidate C
 No source/compiler/test acceptance yet. No local project/SQL/provider/production
 execution or delegation. Full approved input/runtime/UIDACL/crash/installer/I5-I7/
 independent review/I6/G4/Owner/3trading days/final C_R2 remain open; Ralph continues.
+
+
+### Wave62 source frozen — 2026-10-16 KST
+
+R2-04/09 WP-4/I4g3 complete runtime connection:10registered files,23new definitions
+(10Linux-native,9other non-DB,4actualDB), all WRITTEN_UNEXECUTED. Producer/admitter
+persistent state, exact restart reconciliation, typed source events, CLI and mixed
+worker connected; OFF preserves historical path. Existing migration assertion now
+compares the entire embedded UP set. All0060–0062/dependencies/workflow unchanged.
+Direct source disposition (not independent), scopedrustfmt2024/whitespace pass.
+Report85lines/SHA05ec45c4;642pins including614unchanged prior pins, successorinputs
+2684lines/SHA c550b853, inventory4626/SHA a7496e3b. Dedicated PG schedule32, runner24,
+17targets retain no-SKIP/exit gates. New candidate CI pending exact-head query0 and
+remote/pin/blob comparison. No compiler/test/runtime acceptance. I5–I7, actual
+approved-v3/Raw three-UID flow, installer/crash/rollback, independent final review,
+I6diagrams before main/G4/Owner/3trading days/final C_R2 stay open. Ralph continues.

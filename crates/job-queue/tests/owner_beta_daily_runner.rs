@@ -957,10 +957,14 @@ async fn daily_supersession_additive_migration_down_up_preserves_populated_rows(
         assert!(supersede_sql(&mut connection,&claim,&input).await?);
         drop(connection);
         assert_eq!(state(&f).await?,before);
-        let ledger:(i64,i64)=sqlx::query_as(
-            "SELECT count(*),max(version) FROM _sqlx_migrations WHERE success",
-        ).fetch_one(&f.db.pool).await?;
-        assert_eq!(ledger,(61,61));
+        let ledger:Vec<i64>=sqlx::query_scalar(
+            "SELECT version FROM _sqlx_migrations WHERE success ORDER BY version",
+        ).fetch_all(&f.db.pool).await?;
+        let mut expected:Vec<i64>=MIGRATOR.iter()
+            .filter(|migration|migration.migration_type.is_up_migration())
+            .map(|migration|migration.version).collect();
+        expected.sort_unstable();
+        assert_eq!(ledger,expected);
         Ok(())
     }).await;
 }

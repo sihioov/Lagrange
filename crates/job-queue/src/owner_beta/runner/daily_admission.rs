@@ -294,6 +294,50 @@ impl DailyAdmissionCycle {
         self.session.release().await
     }
 
+    /// Commit an attributable source event produced by complete Raw revalidation.
+    /// The returned SQL event hash must bind the same Owner/range/evidence tuple.
+    /// Unattributable IO errors belong to finish_failure, never this method.
+    pub async fn finish_source_event(
+        mut self,
+        event: &market_data::daily_price_only::observation::CanonicalSourceEvent,
+    ) -> Result<DailyBlockCode, DailyRuntimeError> {
+        if self.completed || event.code() == DailyBlockCode::SourceRevoked {
+            return Err(DailyRuntimeError::InvalidInput);
+        }
+        let payload = json!({
+            "source_kind": event.kind().code(),
+            "range_start": event.range_start(),
+            "range_end": event.range_end(),
+            "code": event.code().code(),
+            "evidence_sha256": event.observation_sha256(),
+        });
+        let mut transaction = self
+            .session
+            .connection()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        let result: SqlOutcome = sqlx::query_as(
+            "SELECT disposition, admission_sha256 AS identity, reason_code, event_sha256 \
+             FROM public.block_owner_beta_daily_input($1, $2)",
+        )
+        .bind(self.receipt)
+        .bind(payload)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+        let code = block_code(&result)?;
+        if code != event.code() || result.event_sha256.as_deref() != Some(event.sha256().as_str()) {
+            return Err(DailyRuntimeError::DatabaseIntegrity);
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|_| DailyRuntimeError::CommitUnknown)?;
+        self.session.release().await?;
+        Ok(code)
+    }
+
     /// End a cycle whose calendar operation already committed INPUT_BLOCKED.
     pub async fn finish_blocked(self) -> Result<(), DailyRuntimeError> {
         if !self.completed {
