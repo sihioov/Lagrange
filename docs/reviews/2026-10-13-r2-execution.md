@@ -2350,3 +2350,9 @@ Linux fixtures, all WRITTEN_UNEXECUTED. The six-path source scope and258 unchang
 prior pins were inspected; standalone2024format/whitespace passed. Source/compiler/
 test acceptance is pending one exact-candidate hosted run and full recovery. See
 [source disposition](2026-10-15-r2-daily-provider-reconstruction-source-review.md).
+
+Wave42 candidate48beb25 was pushed after271pins/221blob checks and dispatched once
+following exact-head all-event query0 and remoteSHA match. CI38722595047 attempt1
+created10:46:06UTC. Format/policy/Python success; fixture type_complexity at test
+line292 makes strict Clippy fail. Full terminal recovery is required before the
+narrow named-structure correction. No source/test acceptance or rerun/cancel.

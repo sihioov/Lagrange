@@ -4193,3 +4193,10 @@ boundaries and literal output bytes. Coordinator direct review, scoped2024format
 and whitespace passed; no independent or executable acceptance. Freeze inputs
 and exact definition names, then query all-event runs and remote SHA before one
 dispatch. S3/I2/R2 regressions and all eight jobs require full recovery.
+
+Wave42 first candidate48beb256b750c5c561263045cfa043d3b3eef71b:271pins/221candidate
+blobs checked. All-event exact-head query0 and remoteSHA matched before one dispatch
+at10:46:05UTC. Run38722595047 attempt1,created10:46:06UTC. No rerun/cancel/duplicate.
+At10:49:21UTC format/policy/Python passed; Clippy found fixture type_complexity
+at daily_price_only_reconstruction.rs:292. Remaining jobs still running; source
+bytes stay frozen until full recovery. S5 contract preparation is read-only.
