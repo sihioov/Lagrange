@@ -552,9 +552,11 @@ async fn daily_admitter_readback_requires_direct_principal_and_no_table_grants()
         f.ready().await?;
         let (id,hash)=readback_existing(&f).await?;
         for pool in [&f.app,&f.worker,&f.db.pool] {
-            for function in ["read_owner_beta_daily_admission_context","read_owner_beta_daily_admission_receipt"] {
-                let query=format!("SELECT count(*) FROM public.{function}($1)");
-                let error=sqlx::query_scalar::<_,i64>(&query).bind(id).fetch_one(pool).await.unwrap_err();
+            for query in [
+                "SELECT count(*) FROM public.read_owner_beta_daily_admission_context($1)",
+                "SELECT count(*) FROM public.read_owner_beta_daily_admission_receipt($1)",
+            ] {
+                let error=sqlx::query_scalar::<_,i64>(query).bind(id).fetch_one(pool).await.unwrap_err();
                 assert_eq!(error.as_database_error().and_then(|e|e.code()).as_deref(),Some("42501"));
             }
             let error=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM read_owner_beta_daily_admitted_input($1)")

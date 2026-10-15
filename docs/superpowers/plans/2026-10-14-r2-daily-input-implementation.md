@@ -4952,3 +4952,14 @@ Production/migrations/harness and18definitions/28PGnames remain unchanged. New
 review/pins and one new exact-candidate CI after all-event query0/remotematch.
 No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three
 trading days/final C_R2 remain open; Ralph continues.
+
+
+### Wave61 C01 source frozen — 2026-10-16 KST
+
+Only one privilege test changed +5/-3 to exact static SQL literals; all production
+code/migrations/harness unchanged.18readback definitions and28dedicated PG names
+retained. Direct review, scopedrustfmt2024 and whitespace pass; no execution claim.
+Successor wave61-I4g2-C01 inputs2515lines/SHA8eddb0bb,620pins (602prior unchanged),
+inventory4380lines/SHA82087f44. One fresh exact-candidate hosted CI after all-event
+query0/remotematch; failed ef62279 preserved. No local project/SQL execution or
+workers. Full I4/I5-I7/runtime/Owner/three-day/final C_R2 remain open; Ralph continues.

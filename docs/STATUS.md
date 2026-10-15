@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave60 ef62279/CI38796372356 실패 전체 회수; 18새/28전용PG 테스트는 컴파일 오류로 미실행. 한 테스트의 고정 SQL 보정 후 새 후보 검증. 전체 I4/I5–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 단계 | Wave61 C01 단일 테스트 SQL 보정 검토·620pins 고정. 새 후보 CI 검증 대기. 전체 I4/I5–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3659,3 +3659,14 @@ Production/migrations/harness and18definitions/28PGnames remain unchanged. New
 review/pins and one new exact-candidate CI after all-event query0/remotematch.
 No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three
 trading days/final C_R2 remain open; Ralph continues.
+
+
+### Wave61 C01 source frozen — 2026-10-16 KST
+
+Only one privilege test changed +5/-3 to exact static SQL literals; all production
+code/migrations/harness unchanged.18readback definitions and28dedicated PG names
+retained. Direct review, scopedrustfmt2024 and whitespace pass; no execution claim.
+Successor wave61-I4g2-C01 inputs2515lines/SHA8eddb0bb,620pins (602prior unchanged),
+inventory4380lines/SHA82087f44. One fresh exact-candidate hosted CI after all-event
+query0/remotematch; failed ef62279 preserved. No local project/SQL execution or
+workers. Full I4/I5-I7/runtime/Owner/three-day/final C_R2 remain open; Ralph continues.
