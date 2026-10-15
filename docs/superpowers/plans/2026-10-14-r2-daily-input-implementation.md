@@ -4218,3 +4218,11 @@ remote SHA before one new CI. No worker/delegation/local project execution.
 Unregistered S5 observation preparation stays outside the candidate. Ralph
 continues through integrated frontier/artifact/admission/supply and all remaining
 R2 gates, with no Owner/three-day/final C_R2 completion claim.
+
+Wave43 launch:302f29a2d6e9ce8502813a0b1cc0b9ef370fcdea, run38725299504 attempt1,
+created2026-10-15T11:09:10Z.276pins/223candidateblobs matched; the only non-document
+candidate change is the fixture structure. Exact-head all-event query0 and remote
+SHA verification preceded one dispatch. Strict Clippy/format/policy/Python passed;
+remaining jobs need terminal/full-log recovery. No rerun/cancel/duplicate.
+Unregistered observation.rs/discovery.rs are independent S5 preparation and are
+excluded from this candidate, its pins and compiler/test claims.

@@ -1,6 +1,6 @@
 # R2 I1b-S5 — integrated discovery and source frontier
 
-Preparation only, 2026-10-15. S4 candidate48beb25/CI38722595047 was fully recovered: tests and PG pass, strict lint fails on one fixture type. C01 corrects that type and awaits successor CI. This preparation is separate from its frozen candidate.
+Preparation only, 2026-10-15. S4 candidate48beb25/CI38722595047 was fully recovered: tests and PG pass, strict lint fails on one fixture type. C01 corrects that type; candidate302f29a/run38725299504 now passes strict Clippy and awaits full recovery. This preparation is separate from its frozen candidate.
 
 ## Next concrete boundary
 
@@ -68,3 +68,30 @@ append; release-only replay; full-row overlap against the approved prefix; calen
 gaps/conflicts/intervening TRADING; deterministic FileEvidence observation/event
 preimages; exact D4 session/doc commitments and private-borrow lifetime. Resource
 limits reject incomplete scans. Source/CI acceptance is pending implementation.
+
+## Concrete discovery disposition — source preparation
+
+D4 v1 has exactly one bar/reference file per symbol and one calendar binding per
+civil date. The new discovery function therefore rejects duplicate target price/
+reference deliveries, including equal alternatives, instead of choosing a source
+whose competitors cannot be represented. Calendar selects A2's smallest evidence
+hash and retains all equivalent projections in the operational observation; its
+selected one-file D4 document remains unchanged. Complete action witnesses follow
+S4. This changes no D4 schema or source-acquisition policy.
+
+The request contains Owner/policy/previous/target only, with no producer source
+list. Discovery enumerates both captured scopes, resolves original date/copies,
+reconstructs all four kinds, checks the sole next trading session and produces
+structurally validated D4 session evidence. All captured daily bar rows, including
+surrounding and other requested dates, are retained for the subsequent protected
+prefix comparison. A bounded scan/parse budget fails closed. The result is named
+DiscoveredSessionSources: it does not claim protected-base/prefix verification,
+sealed-storage provenance, artifact approval or SQL authority.
+
+Operational observation comparison is pure over canonical claims. Exact repeats
+replay; additions, conflicting variants and removal (including all files missing)
+produce deterministic SEALED_SOURCE_CHANGED evidence from the expected/observed
+union. Only the later protected store/admitter may treat expected claims as a seal.
+No release/time/random value changes identity. The two modules are unregistered
+preparation until S4's frozen candidate is fully recovered. Tests, registration,
+protected-prefix verification and integrated error/event disposition remain work.

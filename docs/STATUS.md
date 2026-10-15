@@ -14,7 +14,7 @@ Wave42 S4 가격·기준정보·기업행사 오프라인 복원과 새32개 Lin
 [직접 소스 검토](reviews/2026-10-15-r2-daily-provider-reconstruction-source-review.md)는
 완료했고 후보48beb25의 CI38722595047 전체 결과를 회수했다. 새32개·회귀·PG는
 통과했지만 fixture type_complexity 한 건으로 strict Clippy/required가 실패했다.
-[C01 구조체 보정](reviews/2026-10-15-r2-daily-provider-reconstruction-c01.md) 후 새 후보 CI를 준비한다. S4 최종 인수는 아직 없다.
+[C01 구조체 보정](reviews/2026-10-15-r2-daily-provider-reconstruction-c01.md) 후 후보302f29a의 CI38725299504를 한 번 요청했다. Strict Clippy는 통과했고 전체 회수를 기다린다. S4 최종 인수는 아직 없다.
 
 | 항목 | 확인된 상태 |
 | --- | --- |
