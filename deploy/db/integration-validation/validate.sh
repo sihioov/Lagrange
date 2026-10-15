@@ -1519,6 +1519,7 @@ run_daily_0060_staged() {
 
 run_db_test() {
   local label=$1 target=$2 status skip=false row name expected actual
+  local -a replay_rows=()
   local raw="$workdir/test-$label.log"
   if (cd "$root" && DATABASE_URL="$test_database_url" CARGO_TERM_COLOR=never cargo test --locked $target -- --nocapture) >"$raw" 2>&1; then status=0; else status=$?; fi
   if grep -Fq 'SKIP:' "$raw"; then skip=true; fi
@@ -1536,9 +1537,26 @@ run_db_test() {
       fi
     done <"$raw"
   fi
+  if [ "$label" = jobqueue-owner-beta-publish ]; then
+    while IFS= read -r row; do
+      if [[ "$row" =~ ^test[[:space:]]([a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
+        name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
+        replay_rows+=("$name:$actual")
+        printf 'PG_DB_TEST_ROW:jobqueue-owner-beta-publish:%s:%s\n' "$name" "$actual"
+      fi
+    done <"$raw"
+  fi
   record_log "$raw" "test-$label.log"
   [ "$status" -eq 0 ] || fail "DB-gated test failed: $label"
   [ "$skip" = false ] || fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  if [ "$label" = jobqueue-owner-beta-publish ]; then
+    for expected in published_owner_beta_target_persists_exact_results_and_seals_claim publication_config_lock_cannot_impersonate_another_owner canceled_before_owner_beta_publication_lock_has_no_outputs stale_swept_owner_beta_claim_cannot_publish_or_touch_run owner_beta_recovery_exhaustion_mirrors_failed_run owner_beta_recovery_mirrors_unclaimed_cancellation malformed_owner_beta_payload_is_terminal_without_inventing_a_run daily_input_admitter_pool_is_direct_bounded_and_unprivileged; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "owner-beta unique publication test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 8 ] || fail 'owner-beta publication result inventory changed'
+  fi
   if [ "$label" = migration-contract ]; then
     for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do
       actual=0
@@ -1874,6 +1892,7 @@ run_db_test api-paper-runner '-p api-server --test paper_runner'
 run_db_test jobqueue-contract '-p job-queue --test queue_contract'
 run_db_test jobqueue-paper-preview '-p job-queue --test paper_preview'
 run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
+run_db_test jobqueue-owner-beta-publish '-p job-queue --test owner_beta_publish'
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 
 outcome=APPROVED

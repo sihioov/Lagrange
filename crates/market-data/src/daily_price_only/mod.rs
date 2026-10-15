@@ -11,6 +11,7 @@ mod contract;
 pub mod discovery;
 pub mod frontier;
 pub mod history;
+pub mod input;
 pub mod observation;
 mod price_extension;
 pub mod reconstruct;

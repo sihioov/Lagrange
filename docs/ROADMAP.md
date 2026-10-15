@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave49 후보 `edeaa5d` / CI `38750900179` attempt1 한 번 발행, 전체 결과 회수 중. 37개 새 회귀·S5c 26개·Paper 시계 2개와 기존 검증을 대조한다. 동시에 미등록 I3 계산 경로 준비. I3–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 착수 항목 | Wave49 전체 실패 회수 후 test-only fixture 가시성 보정과 I3 일일 입력 로더·팩터·추천 계산 경로를 구현. Wave50 새 후보 검증 준비. I4–I7·통합 독립 검토·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -641,3 +641,5 @@ mutable coordinator tracking docs may change while CI runs. Ralph continues.
 - 2026-10-15 — R2-04/09 Wave49: full Wave48 failure recovery 뒤 daily parent/frontier/supplier와 격리 CI fixture/Paper clock 보정을 통합. 새37정의 미실행, 기존 증거 보존. [소스 범위·한계](reviews/2026-10-15-r2-daily-continuation-frontier-contract.md).
 
 - 2026-10-15: R2-04/09 Wave49 `edeaa5d`의 CI38750900179 attempt1 단일 발행. 348pins/261blobs 고정, 결과 대기. 이전 실패는 보존하며 I3 계산 경로 준비를 이어간다.
+
+- 2026-10-15 — R2-04/09 Wave50: Wave49 E0603 실패/전체 미실행 근거 보존, fixture 가시성 한정 보정과 I3 typed 계산 경로·20회귀 작성. [소스 범위와 한계](reviews/2026-10-15-r2-daily-factor-target-source.md). 실제 전체 승인 흐름과 운영 인수는 후속.

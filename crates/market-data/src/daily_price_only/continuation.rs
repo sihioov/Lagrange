@@ -596,7 +596,7 @@ pub(super) mod tests {
             }],
         }
     }
-    pub(super) fn fixture() -> (
+    pub(in crate::daily_price_only) fn fixture() -> (
         DailyPriceManifestV1Wire,
         DailyPricePinsV1Wire,
         DailyPriceManifestV1Wire,

@@ -24,6 +24,7 @@
 pub mod bars;
 pub mod candidate;
 pub mod contract;
+pub mod daily_price_only;
 pub mod factors;
 pub mod fixed_stock_price_beta;
 pub mod fundamentals;

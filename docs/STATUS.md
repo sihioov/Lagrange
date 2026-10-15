@@ -15,7 +15,8 @@ S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 a
 새32개·기존 회귀·strict Clippy·PG를 개별 증거와 대조했고 이전48beb25 실패도 보존한다.
 S5a/S5b는 `5f5f4e8` / CI38732527740으로 범위별 인수했다. S5c의 이전 실패를 보존하고,
 Wave49 `edeaa5d` / CI38750900179에서 fixture·Paper 시계 보정과 일일 parent/frontier/supply를
-검증 중이다. 37개 새 회귀·S5c 26개·Paper 2개와 기존 검증의 전체 결과 회수가 남았다.
+검증했다. Wave49는 테스트 fixture 가시성 E0603으로 Rust 테스트 미실행·실패,
+나머지 결과는 전체 회수했다. Wave50에서 해당 보정과 I3 일일 계산20회귀를 준비한다.
 
 | 항목 | 확인된 상태 |
 | --- | --- |
@@ -24,7 +25,7 @@ Wave49 `edeaa5d` / CI38750900179에서 fixture·Paper 시계 보정과 일일 pa
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave49 단일 CI 전체 결과 회수와 I3 계산 경로 준비. I1b 실제 승인 base 전체 흐름·독립 통합 리뷰, I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
+| 다음 단계 | Wave50 I3 계산 경로와 S5def test-only 보정의 단일 후보 검증. 실제 승인 base 전체 흐름·통합 독립 검토·I4–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3427,3 +3428,22 @@ three direct-root fixture mode observations, setup and nonrecursive cleanup.
 No source/compiler/test acceptance yet. Only independent unregistered I3 preparation
 and mutable coordinator tracking docs may change while CI runs. Earlier failure
 receipts remain immutable. Runtime/Owner/three trading days/final C_R2 remain open.
+
+
+## Wave50 — I3 loader/factor/target with S5def-C01
+
+Wave49 edeaa5d/38750900179 attempt1 is fully recovered FAILURE:8terminaljobs/
+8logs/7checkouts,348pins/261blobs. E0603 in2frontier test calls points to the private
+continuation fixture; Rust workspace tests never started. All required workspace
+names NOT_EXECUTED, separate chart6PASS. PG32/73/83/12/60checksums bothlanes/noSKIP/
+NO_OP/directroles/0039/catalog/cleanup PASS; web/format/policy/Python PASS. Fixture
+root0755/anchor0755/child0700, setup and cleanup PASS. Full private receipt3350lines
+SHA4cf38abd73e5abc4b7539974847a06fd36ad589153641200856acd7da2d6dbd0.
+After full recovery, only cfg(test) fixture visibility is widened within daily_price_only.
+I3 adds opaque sealed input adapter, explicit schema/duplicate-safe loader, daily factor
+and target preimages and compute seam. Historical canonical representations/arithmetic
+are preserved by9static region comparisons.20new tests are written/unexecuted, with
+old factor/input/compute/target/publish and all prior groups retained. Direct coordinator
+only, no new worker/local project execution/source acceptance. Freeze a new candidate,
+query all-event exact-head runs and dispatch once. I4–I7/runtime/Owner/3days/final C_R2
+remain; Ralph continues. Full approved-base end-to-end and independent review remain.

@@ -2605,3 +2605,22 @@ three direct-root fixture mode observations, setup and nonrecursive cleanup.
 No source/compiler/test acceptance yet. Only independent unregistered I3 preparation
 and mutable coordinator tracking docs may change while CI runs. Earlier failure
 receipts remain immutable. Runtime/Owner/three trading days/final C_R2 remain open.
+
+
+## Wave50 — I3 loader/factor/target with S5def-C01
+
+Wave49 edeaa5d/38750900179 attempt1 is fully recovered FAILURE:8terminaljobs/
+8logs/7checkouts,348pins/261blobs. E0603 in2frontier test calls points to the private
+continuation fixture; Rust workspace tests never started. All required workspace
+names NOT_EXECUTED, separate chart6PASS. PG32/73/83/12/60checksums bothlanes/noSKIP/
+NO_OP/directroles/0039/catalog/cleanup PASS; web/format/policy/Python PASS. Fixture
+root0755/anchor0755/child0700, setup and cleanup PASS. Full private receipt3350lines
+SHA4cf38abd73e5abc4b7539974847a06fd36ad589153641200856acd7da2d6dbd0.
+After full recovery, only cfg(test) fixture visibility is widened within daily_price_only.
+I3 adds opaque sealed input adapter, explicit schema/duplicate-safe loader, daily factor
+and target preimages and compute seam. Historical canonical representations/arithmetic
+are preserved by9static region comparisons.20new tests are written/unexecuted, with
+old factor/input/compute/target/publish and all prior groups retained. Direct coordinator
+only, no new worker/local project execution/source acceptance. Freeze a new candidate,
+query all-event exact-head runs and dispatch once. I4–I7/runtime/Owner/3days/final C_R2
+remain; Ralph continues. Full approved-base end-to-end and independent review remain.
