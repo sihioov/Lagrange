@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave58 superseded 취소 소스 검토·567pins·새14개 실제DB/총24 runner 고정. exact-candidate CI를 한 번 실행해0061·기존 gate 전체 대조 후 producer/admitter 연결. I5–I7·운영·Owner·3거래일·최종 C_R2 계속 진행. |
+| 다음 착수 항목 | Wave58 후보7a5b347 / CI38788565250 attempt1 실행 중. 567pins·14새DB/총24runner·0061 및 이전 gates 전체 회수 후 producer/admitter 연결. I5–I7·운영·Owner·3거래일·최종 C_R2 계속 진행. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -724,3 +724,21 @@ final C_R2 remain open. Ralph continues without further delegation.
 | 2026-10-16 | R2-04/09 | DOING; Wave57 인수·Wave58 취소 기능 | c4f35bb 전체 성공·548pins/328blobs/7checkout·2pure+10DB/collector3/PG17 및 이전 gates 대조. 0060 보존·0061 추가와14새DB회귀 착수 | [인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md); 운영·Owner·최종 R2 별도 |
 
 - 2026-10-16 — R2-04/09 Wave58: [superseded 취소 소스](reviews/2026-10-16-r2-daily-supersession-source.md)6파일·14개 DB 회귀 작성,567pins로 고정.0060/기존 회귀 보존. 소스·컴파일 인수는 새 후보 CI 이후 판단.
+
+
+### Wave58 single candidate CI — 2026-10-16 KST
+
+Candidate 7a5b347ca5e42ddc7ef0d5e1ceedb8dc2182fdf4,
+[CI38788565250 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38788565250),
+created2026-10-15T18:47:41Z, ci.yml/workflow_dispatch/excited-dolphin.
+Prepush all-event exact-head query0 at18:47:08.047566Z; remote equality and
+postpush query0 at18:47:40.135978Z preceded exactly one dispatch.
+567pins/332candidate blobs,544prior unchanged pins; source inputs2352lines/SHA
+bfa0f8fbe37570886652674a62740ddc4362abd4d08fe4ca81631b73e5651358;
+inventory3917lines/SHA3854f00aad7c126c10e174539b8a9be153a2b1ed4f9517dbddbe7b1a1866580e.
+Fourteen new actual-DB supersession tests and all24daily-runner names frozen.
+Full-release61UP checksums in both lanes, staged0060at60, PG17targets and all
+previous Rust/Web gates required. No acceptance until complete result recovery.
+This later tracking-doc commit does not change the candidate. No rerun/cancel/
+duplicate/local project execution/delegation. I4g preparation remains read-only
+during this run. Ralph continues through final C_R2.
