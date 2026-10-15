@@ -130,6 +130,158 @@ pub fn read_sealed_daily_chain<'base>(
     Ok(result)
 }
 
+/// Explicit navigation pins supplied by the caller. Their presence does not
+/// attest a DB admission or make a filesystem orphan visible to consumers.
+pub struct DailyObservationPins<'pins> {
+    pub admission: &'pins DailyPricePinsV1Wire,
+    pub source_frontier: &'pins ContentHash,
+    pub owner: uuid::Uuid,
+}
+
+/// Both independently reopened capabilities; only the current cumulative input
+/// and its current observation are retained. Refresh/DB gates remain separate.
+pub struct ReopenedDailyObservation<'base> {
+    chain: ReopenedDailyChain<'base>,
+    frontier: super::frontier::SealedSourceFrontier,
+}
+impl<'base> ReopenedDailyObservation<'base> {
+    pub fn as_parent(&self) -> SealedDailyParent<'_, 'base> {
+        self.chain.as_parent()
+    }
+    pub fn frontier(&self) -> &super::frontier::SealedSourceFrontier {
+        &self.frontier
+    }
+}
+
+/// Reopens exactly the requested admission and frontier pair in one forward
+/// walk. No full ancestor is reopened quadratically. Metadata never constructs a
+/// capability: every planned pair passes the existing full verification APIs.
+pub fn read_sealed_daily_observation<'base>(
+    admissions: &DailyAdmissionRoot,
+    frontiers: &super::artifact::DailySourceFrontierRoot,
+    expected: DailyObservationPins<'_>,
+    base: &'base ApprovedHistoricalPriceOnlyArtifact,
+    policy: &'base PinnedDailyPolicy,
+    limits: DailyReplayLimits,
+    mut keep_reading: impl FnMut() -> bool,
+) -> Result<ReopenedDailyObservation<'base>, DailyReplayError> {
+    let plan = discover_chain(
+        expected.admission,
+        policy.sha256(),
+        limits,
+        &mut keep_reading,
+        |hash| read_admission_metadata(admissions, hash).map_err(DailyReplayError::Artifact),
+    )?;
+    let frontier_plan = discover_frontier_chain(&plan, &expected, &mut keep_reading, |hash| {
+        super::frontier::read_daily_frontier_navigation(frontiers, hash)
+            .map_err(DailyReplayError::Verification)
+    })?;
+    let mut current: Option<ReopenedDailyObservation<'base>> = None;
+    for (pins, frontier_hash) in plan.iter().zip(&frontier_plan).rev() {
+        checkpoint(&mut keep_reading)?;
+        let next = match current.as_ref() {
+            None => SealedTip::First(
+                read_sealed_historical_daily_input(admissions, pins, base, policy)
+                    .map_err(DailyReplayError::Verification)?,
+            ),
+            Some(prior) => SealedTip::Continued(
+                read_sealed_daily_continuation(admissions, pins, base, policy, &prior.as_parent())
+                    .map_err(DailyReplayError::Verification)?,
+            ),
+        };
+        checkpoint(&mut keep_reading)?;
+        let chain = ReopenedDailyChain { tip: next };
+        let frontier = super::frontier::read_sealed_source_frontier(
+            frontiers,
+            frontier_hash,
+            expected.owner,
+            &chain.as_parent(),
+            current.as_ref().map(|prior| &prior.frontier),
+        )
+        .map_err(DailyReplayError::Verification)?;
+        checkpoint(&mut keep_reading)?;
+        current = Some(ReopenedDailyObservation { chain, frontier });
+    }
+    let result = current.ok_or(DailyReplayError::InvalidChain)?;
+    if result.as_parent().pins() != expected.admission
+        || result.frontier.sha256() != expected.source_frontier
+        || result.frontier.owner() != expected.owner
+    {
+        return Err(DailyReplayError::InvalidChain);
+    }
+    result
+        .as_parent()
+        .revalidate()
+        .map_err(DailyReplayError::Verification)?;
+    result
+        .frontier
+        .revalidate()
+        .map_err(DailyReplayError::Verification)?;
+    checkpoint(&mut keep_reading)?;
+    Ok(result)
+}
+
+fn discover_frontier_chain(
+    admissions: &[DailyPricePinsV1Wire],
+    expected: &DailyObservationPins<'_>,
+    keep_reading: &mut impl FnMut() -> bool,
+    mut read: impl FnMut(
+        &ContentHash,
+    ) -> Result<super::frontier::DailyFrontierNavigation, DailyReplayError>,
+) -> Result<Vec<ContentHash>, DailyReplayError> {
+    if admissions.is_empty()
+        || admissions.first() != Some(expected.admission)
+        || expected.owner.is_nil()
+    {
+        return Err(DailyReplayError::InvalidChain);
+    }
+    let mut result = Vec::new();
+    let mut visited = HashSet::new();
+    let mut requested = expected.source_frontier.clone();
+    let mut next_range: Option<(domain::TradingDate, domain::TradingDate)> = None;
+    for (index, pins) in admissions.iter().enumerate() {
+        checkpoint(keep_reading)?;
+        visited
+            .try_reserve(1)
+            .map_err(|_| DailyReplayError::LimitExceeded)?;
+        if !visited.insert(requested.clone()) {
+            return Err(DailyReplayError::InvalidChain);
+        }
+        let nav = read(&requested)?;
+        checkpoint(keep_reading)?;
+        if nav.owner() != expected.owner
+            || nav.policy_sha256() != &pins.policy_sha256
+            || nav.admission_sha256() != &pins.admission_sha256
+            || next_range
+                .is_some_and(|(start, end)| nav.range_start() != start || nav.range_end() >= end)
+        {
+            return Err(DailyReplayError::InvalidChain);
+        }
+        result
+            .try_reserve(1)
+            .map_err(|_| DailyReplayError::LimitExceeded)?;
+        result.push(requested.clone());
+        next_range = Some((nav.range_start(), nav.range_end()));
+        match (nav.parent_frontier_sha256(), index + 1 == admissions.len()) {
+            (None, true) => (),
+            (Some(parent), false) => requested = parent.clone(),
+            _ => return Err(DailyReplayError::InvalidChain),
+        }
+    }
+    Ok(result)
+}
+
+/// Unapproved, canonical pin navigation for one admission record. The full
+/// guarded replay and DB equality checks are still required for any current use.
+pub fn read_daily_admission_pins(
+    root: &DailyAdmissionRoot,
+    admission: &ContentHash,
+    policy: &ContentHash,
+) -> Result<DailyPricePinsV1Wire, DailyReplayError> {
+    let bytes = read_admission_metadata(root, admission).map_err(DailyReplayError::Artifact)?;
+    Ok(decode_navigation(&bytes, admission, policy)?.pins)
+}
+
 fn checkpoint(keep_reading: &mut impl FnMut() -> bool) -> Result<(), DailyReplayError> {
     if keep_reading() {
         Ok(())
@@ -536,5 +688,257 @@ mod tests {
             DailyReplayError::Interrupted.to_string(),
             "daily replay was interrupted"
         );
+    }
+
+    fn observation_owner() -> uuid::Uuid {
+        uuid::Uuid::from_u128(101)
+    }
+    fn frontier_navigation_bytes(
+        pins: &DailyPricePinsV1Wire,
+        frontier: &ContentHash,
+        parent: Option<&ContentHash>,
+        index: u64,
+    ) -> Vec<u8> {
+        // Unapproved metadata, never a synthetic sealed observation.
+        let parent = parent.map_or_else(|| "null".into(), |hash| format!("\"{hash}\""));
+        format!(
+            "{{\"schema\":\"owner-beta-daily-source-frontier-v1\",\"owner\":\"{}\",\"policy_sha256\":\"{}\",\"admission_sha256\":\"{}\",\"parent_frontier_sha256\":{},\"range_start\":\"2026-09-01\",\"range_end\":\"2026-09-{:02}\",\"observation_sha256\":\"{}\",\"source_file_count\":1}}",
+            observation_owner(),pins.policy_sha256,pins.admission_sha256,parent,index,frontier
+        ).into_bytes()
+    }
+    fn frontier_plan_fixture(
+        pins: &[DailyPricePinsV1Wire],
+    ) -> (ContentHash, BTreeMap<ContentHash, Vec<u8>>) {
+        let mut records = BTreeMap::new();
+        let mut parent = None;
+        for (index, pins) in pins.iter().enumerate() {
+            let current = hash(&format!("frontier-{index}"));
+            let bytes =
+                frontier_navigation_bytes(pins, &current, parent.as_ref(), index as u64 + 1);
+            records.insert(current.clone(), bytes);
+            parent = Some(current);
+        }
+        (parent.unwrap(), records)
+    }
+    fn read_frontier_navigation_fixture(
+        records: &BTreeMap<ContentHash, Vec<u8>>,
+        requested: &ContentHash,
+    ) -> Result<super::super::frontier::DailyFrontierNavigation, DailyReplayError> {
+        let bytes = records
+            .get(requested)
+            .ok_or(DailyReplayError::InvalidChain)?;
+        super::super::frontier::decode_frontier_navigation(bytes, requested).map_err(|error| {
+            DailyReplayError::Verification(DailyAdmissionVerificationError::Evidence(error))
+        })
+    }
+
+    #[test]
+    fn i4g_paired_navigation_returns_exact_matching_ancestry() {
+        let ChainFixture { tip, pins, .. } = chain(3);
+        let (frontier, records) = frontier_plan_fixture(&pins);
+        let expected = DailyObservationPins {
+            admission: &tip,
+            source_frontier: &frontier,
+            owner: observation_owner(),
+        };
+        let ordered = pins.into_iter().rev().collect::<Vec<_>>();
+        let mut reads = Vec::new();
+        let plan = discover_frontier_chain(&ordered, &expected, &mut || true, |hash| {
+            reads.push(hash.clone());
+            read_frontier_navigation_fixture(&records, hash)
+        })
+        .unwrap();
+        assert_eq!(
+            plan,
+            vec![hash("frontier-2"), hash("frontier-1"), hash("frontier-0")]
+        );
+        assert_eq!(reads, plan);
+    }
+
+    #[test]
+    fn i4g_paired_navigation_rejects_missing_parent_extra_parent_and_cycle() {
+        let ChainFixture { tip, pins, .. } = chain(2);
+        let (frontier, records) = frontier_plan_fixture(&pins);
+        let expected = DailyObservationPins {
+            admission: &tip,
+            source_frontier: &frontier,
+            owner: observation_owner(),
+        };
+        let ordered = pins.iter().rev().cloned().collect::<Vec<_>>();
+        for change in 0..3 {
+            let mut changed = records.clone();
+            match change {
+                0 => {
+                    changed.insert(
+                        frontier.clone(),
+                        frontier_navigation_bytes(&pins[1], &frontier, None, 2),
+                    );
+                }
+                1 => {
+                    let first = hash("frontier-0");
+                    changed.insert(
+                        first.clone(),
+                        frontier_navigation_bytes(&pins[0], &first, Some(&hash("extra")), 1),
+                    );
+                }
+                _ => {
+                    changed.insert(
+                        frontier.clone(),
+                        frontier_navigation_bytes(&pins[1], &frontier, Some(&frontier), 2),
+                    );
+                }
+            }
+            assert!(matches!(
+                discover_frontier_chain(&ordered, &expected, &mut || true, |hash| {
+                    read_frontier_navigation_fixture(&changed, hash)
+                }),
+                Err(DailyReplayError::InvalidChain)
+            ));
+        }
+    }
+
+    #[test]
+    fn i4g_paired_navigation_rejects_foreign_owner_policy_and_admission() {
+        let ChainFixture { tip, pins, .. } = chain(2);
+        let (frontier, records) = frontier_plan_fixture(&pins);
+        let ordered = pins.iter().rev().cloned().collect::<Vec<_>>();
+        let expected = DailyObservationPins {
+            admission: &tip,
+            source_frontier: &frontier,
+            owner: uuid::Uuid::from_u128(102),
+        };
+        assert!(matches!(
+            discover_frontier_chain(&ordered, &expected, &mut || true, |hash| {
+                read_frontier_navigation_fixture(&records, hash)
+            }),
+            Err(DailyReplayError::InvalidChain)
+        ));
+        let expected = DailyObservationPins {
+            admission: &tip,
+            source_frontier: &frontier,
+            owner: observation_owner(),
+        };
+        for change in 0..2 {
+            let mut changed = records.clone();
+            let mut foreign = pins[1].clone();
+            if change == 0 {
+                foreign.policy_sha256 = hash("foreign");
+            } else {
+                foreign.admission_sha256 = hash("foreign");
+            }
+            changed.insert(
+                frontier.clone(),
+                frontier_navigation_bytes(&foreign, &frontier, Some(&hash("frontier-0")), 2),
+            );
+            assert!(matches!(
+                discover_frontier_chain(&ordered, &expected, &mut || true, |hash| {
+                    read_frontier_navigation_fixture(&changed, hash)
+                }),
+                Err(DailyReplayError::InvalidChain)
+            ));
+        }
+    }
+
+    #[test]
+    fn i4g_paired_navigation_rejects_range_regression_and_changed_start() {
+        let ChainFixture { tip, pins, .. } = chain(2);
+        let (frontier, records) = frontier_plan_fixture(&pins);
+        let expected = DailyObservationPins {
+            admission: &tip,
+            source_frontier: &frontier,
+            owner: observation_owner(),
+        };
+        let ordered = pins.iter().rev().cloned().collect::<Vec<_>>();
+        for change in 0..2 {
+            let mut changed = records.clone();
+            let first = hash("frontier-0");
+            let bytes =
+                frontier_navigation_bytes(&pins[0], &first, None, if change == 0 { 2 } else { 1 });
+            let bytes = if change == 1 {
+                String::from_utf8(bytes)
+                    .unwrap()
+                    .replace(
+                        "\"range_start\":\"2026-09-01\"",
+                        "\"range_start\":\"2026-08-31\"",
+                    )
+                    .into_bytes()
+            } else {
+                bytes
+            };
+            changed.insert(first, bytes);
+            assert!(matches!(
+                discover_frontier_chain(&ordered, &expected, &mut || true, |hash| {
+                    read_frontier_navigation_fixture(&changed, hash)
+                }),
+                Err(DailyReplayError::InvalidChain)
+            ));
+        }
+    }
+
+    #[test]
+    fn i4g_paired_navigation_cancellation_stops_before_or_after_each_read() {
+        let ChainFixture { tip, pins, .. } = chain(2);
+        let (frontier, records) = frontier_plan_fixture(&pins);
+        let expected = DailyObservationPins {
+            admission: &tip,
+            source_frontier: &frontier,
+            owner: observation_owner(),
+        };
+        let ordered = pins.into_iter().rev().collect::<Vec<_>>();
+        assert!(matches!(
+            discover_frontier_chain(&ordered, &expected, &mut || false, |_| panic!(
+                "no read after cancellation"
+            )),
+            Err(DailyReplayError::Interrupted)
+        ));
+        let mut checks = 0;
+        let mut reads = 0;
+        let result = discover_frontier_chain(
+            &ordered,
+            &expected,
+            &mut || {
+                checks += 1;
+                checks < 2
+            },
+            |hash| {
+                reads += 1;
+                read_frontier_navigation_fixture(&records, hash)
+            },
+        );
+        assert!(matches!(result, Err(DailyReplayError::Interrupted)));
+        assert_eq!(reads, 1);
+    }
+
+    #[test]
+    fn i4g_paired_navigation_invalid_request_and_errors_do_not_become_proof() {
+        let ChainFixture { tip, pins, .. } = chain(1);
+        let frontier = hash("frontier-0");
+        let mut expected = DailyObservationPins {
+            admission: &tip,
+            source_frontier: &frontier,
+            owner: observation_owner(),
+        };
+        assert!(matches!(
+            discover_frontier_chain(&[], &expected, &mut || true, |_| panic!(
+                "empty plan must not read"
+            )),
+            Err(DailyReplayError::InvalidChain)
+        ));
+        expected.owner = uuid::Uuid::nil();
+        assert!(matches!(
+            discover_frontier_chain(&pins, &expected, &mut || true, |_| panic!(
+                "nil owner must not read"
+            )),
+            Err(DailyReplayError::InvalidChain)
+        ));
+        expected.owner = observation_owner();
+        assert!(matches!(
+            discover_frontier_chain(&pins, &expected, &mut || true, |_| Err(
+                DailyReplayError::Artifact(DailyArtifactError::SourceChanged)
+            )),
+            Err(DailyReplayError::Artifact(
+                DailyArtifactError::SourceChanged
+            ))
+        ));
     }
 }

@@ -92,6 +92,126 @@ impl DailySourceFrontierRoot {
         }
     }
 }
+
+/// A per-capture entry bound, including invisible staging entries. There is no
+/// default budget and this value grants no provider acquisition permission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DailyArtifactNameLimits {
+    max_entries: usize,
+}
+impl DailyArtifactNameLimits {
+    pub fn new(max_entries: u64) -> Result<Self, DailyArtifactError> {
+        if max_entries == 0 || max_entries > super::contract::fixed_limits().max_sessions {
+            return Err(DailyArtifactError::LimitExceeded);
+        }
+        Ok(Self {
+            max_entries: usize::try_from(max_entries)
+                .map_err(|_| DailyArtifactError::LimitExceeded)?,
+        })
+    }
+    pub fn max_entries(self) -> usize {
+        self.max_entries
+    }
+}
+
+/// A stable capture of names only, never evidence, approval or a latest pointer.
+/// Recognized .pending-PID-sequence entries consume the bound but are invisible.
+/// They are never followed, opened, removed, or promoted by this API.
+pub struct CapturedDailyArtifactNames {
+    names: Vec<ContentHash>,
+    #[cfg(target_os = "linux")]
+    captured: linux::NameCapture,
+}
+impl CapturedDailyArtifactNames {
+    pub fn names(&self) -> &[ContentHash] {
+        &self.names
+    }
+    pub fn revalidate(&self) -> Result<(), DailyArtifactError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.captured.revalidate()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(DailyArtifactError::UnsupportedPlatform)
+        }
+    }
+}
+
+impl DailyCandidateRoot {
+    pub fn capture_names(
+        &self,
+        limits: DailyArtifactNameLimits,
+    ) -> Result<CapturedDailyArtifactNames, DailyArtifactError> {
+        #[cfg(target_os = "linux")]
+        {
+            capture_root_names(&self.inner, limits)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = limits;
+            Err(DailyArtifactError::UnsupportedPlatform)
+        }
+    }
+}
+impl DailyAdmissionRoot {
+    pub fn capture_names(
+        &self,
+        limits: DailyArtifactNameLimits,
+    ) -> Result<CapturedDailyArtifactNames, DailyArtifactError> {
+        #[cfg(target_os = "linux")]
+        {
+            capture_root_names(&self.inner, limits)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = limits;
+            Err(DailyArtifactError::UnsupportedPlatform)
+        }
+    }
+}
+impl DailySourceFrontierRoot {
+    pub fn capture_names(
+        &self,
+        limits: DailyArtifactNameLimits,
+    ) -> Result<CapturedDailyArtifactNames, DailyArtifactError> {
+        #[cfg(target_os = "linux")]
+        {
+            capture_root_names(&self.inner, limits)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = limits;
+            Err(DailyArtifactError::UnsupportedPlatform)
+        }
+    }
+}
+#[cfg(target_os = "linux")]
+fn capture_root_names(
+    root: &std::sync::Arc<linux::Root>,
+    limits: DailyArtifactNameLimits,
+) -> Result<CapturedDailyArtifactNames, DailyArtifactError> {
+    let (captured, names) = linux::capture_names(root, limits.max_entries())?;
+    Ok(CapturedDailyArtifactNames { names, captured })
+}
+
+/// Unapproved frontier record bytes only; its observation payload remains
+/// unopened. A full input-bound frontier read is still mandatory.
+pub(super) fn read_source_frontier_metadata(
+    root: &DailySourceFrontierRoot,
+    frontier: &ContentHash,
+) -> Result<Vec<u8>, DailyArtifactError> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::read_frontier_metadata(&root.inner, &leaf_name(frontier)?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (root, frontier);
+        Err(DailyArtifactError::UnsupportedPlatform)
+    }
+}
+
 pub(super) struct OpenedSourceFrontierFiles {
     record: Vec<u8>,
     observation: Vec<u8>,
@@ -1030,6 +1150,164 @@ mod linux {
         Ok(bytes)
     }
 
+    #[derive(PartialEq, Eq)]
+    struct NameEntry {
+        name: Vec<u8>,
+        committed: Option<Snapshot>,
+    }
+    pub(super) struct NameCapture {
+        root: Arc<Root>,
+        max_entries: usize,
+        root_snapshot: Snapshot,
+        entries: Vec<NameEntry>,
+    }
+    impl NameCapture {
+        pub(super) fn revalidate(&self) -> Result<(), Error> {
+            let (entries, root_snapshot) = read_names(&self.root, self.max_entries)?;
+            if entries != self.entries || root_snapshot != self.root_snapshot {
+                return Err(Error::SourceChanged);
+            }
+            Ok(())
+        }
+    }
+
+    fn pending_name(name: &[u8]) -> bool {
+        let Some(tail) = name.strip_prefix(b".pending-") else {
+            return false;
+        };
+        let Some(separator) = tail.iter().position(|byte| *byte == b'-') else {
+            return false;
+        };
+        let (pid, sequence) = (&tail[..separator], &tail[separator + 1..]);
+        if pid.is_empty()
+            || pid.len() > 10
+            || sequence.is_empty()
+            || sequence.len() > 20
+            || !pid.iter().all(u8::is_ascii_digit)
+            || !sequence.iter().all(u8::is_ascii_digit)
+        {
+            return false;
+        }
+        let Ok(pid_value) = std::str::from_utf8(pid).unwrap_or("").parse::<u32>() else {
+            return false;
+        };
+        let Ok(sequence_value) = std::str::from_utf8(sequence).unwrap_or("").parse::<u64>() else {
+            return false;
+        };
+        pid_value != 0
+            && pid_value.to_string().as_bytes() == pid
+            && sequence_value.to_string().as_bytes() == sequence
+    }
+
+    fn read_names(
+        root: &Arc<Root>,
+        max_entries: usize,
+    ) -> Result<(Vec<NameEntry>, Snapshot), Error> {
+        if max_entries == 0 || max_entries as u64 > fixed_limits().max_sessions {
+            return Err(Error::LimitExceeded);
+        }
+        root.revalidate()?;
+        let before = snapshot(&fs::fstat(root.fd()).map_err(io)?);
+        let scan = fs::openat(root.fd(), ".", DIRECTORY_FLAGS, Mode::empty()).map_err(io)?;
+        if snapshot(&fs::fstat(&scan).map_err(io)?) != before {
+            return Err(Error::SourceChanged);
+        }
+        let mut buffer = [MaybeUninit::<u8>::uninit(); 4096];
+        let mut iterator = RawDir::new(&scan, &mut buffer);
+        let mut entries: Vec<NameEntry> = Vec::new();
+        while let Some(entry) = iterator.next() {
+            let entry = entry.map_err(io)?;
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            if entries.len() >= max_entries {
+                return Err(Error::LimitExceeded);
+            }
+            let committed = if pending_name(name) {
+                None
+            } else {
+                if name.len() != 64
+                    || !name
+                        .iter()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+                {
+                    return Err(Error::UnexpectedEntries);
+                }
+                let named = fs::statat(root.fd(), name, AtFlags::SYMLINK_NOFOLLOW)
+                    .map_err(|_| Error::SourceChanged)?;
+                if FileType::from_raw_mode(named.st_mode) != FileType::Directory
+                    || named.st_uid != root.owner
+                    || named.st_gid != root.group
+                    || named.st_mode & 0o7777 != 0o750
+                {
+                    return Err(Error::UnsafePath);
+                }
+                let directory = fs::openat(root.fd(), name, DIRECTORY_FLAGS, Mode::empty())
+                    .map_err(|_| Error::SourceChanged)?;
+                if snapshot(&fs::fstat(&directory).map_err(io)?) != snapshot(&named) {
+                    return Err(Error::SourceChanged);
+                }
+                no_acl(&directory, true)?;
+                Some(snapshot(&named))
+            };
+            entries.try_reserve(1).map_err(|_| Error::LimitExceeded)?;
+            entries.push(NameEntry {
+                name: name.to_vec(),
+                committed,
+            });
+        }
+        entries.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        if entries.windows(2).any(|pair| pair[0].name == pair[1].name) {
+            return Err(Error::UnexpectedEntries);
+        }
+        root.revalidate()?;
+        if snapshot(&fs::fstat(root.fd()).map_err(io)?) != before {
+            return Err(Error::SourceChanged);
+        }
+        Ok((entries, before))
+    }
+
+    pub(super) fn capture_names(
+        root: &Arc<Root>,
+        max_entries: usize,
+    ) -> Result<(NameCapture, Vec<domain::ContentHash>), Error> {
+        let (entries, root_snapshot) = read_names(root, max_entries)?;
+        let mut names = Vec::new();
+        names
+            .try_reserve_exact(entries.len())
+            .map_err(|_| Error::LimitExceeded)?;
+        for entry in &entries {
+            if entry.committed.is_some() {
+                let name =
+                    std::str::from_utf8(&entry.name).map_err(|_| Error::UnexpectedEntries)?;
+                names.push(
+                    domain::ContentHash::parse(&format!("sha256:{name}"))
+                        .map_err(|_| Error::UnexpectedEntries)?,
+                );
+            }
+        }
+        let captured = NameCapture {
+            root: Arc::clone(root),
+            max_entries,
+            root_snapshot,
+            entries,
+        };
+        captured.revalidate()?;
+        Ok((captured, names))
+    }
+
+    pub(super) fn read_frontier_metadata(root: &Arc<Root>, name: &str) -> Result<Vec<u8>, Error> {
+        if !matches!(root.layout, Layout::Frontier) {
+            return Err(Error::InvalidRoot);
+        }
+        let mut leaf = open_leaf(root, name)?;
+        let (file, bytes) = read_file(&leaf.directory, "frontier.json", root)?;
+        leaf.files.push(file);
+        leaf.revalidate()?;
+        Ok(bytes)
+    }
+
     struct Staging {
         name: String,
         fd: OwnedFd,
@@ -1765,6 +2043,259 @@ mod linux {
                 read_leaf(&fixture.root, NAME),
                 Err(Error::UnsafePath)
             ));
+        }
+
+        #[test]
+        fn i4g_catalog_limits_are_explicit_and_bounded() {
+            assert!(matches!(
+                super::super::DailyArtifactNameLimits::new(0),
+                Err(Error::LimitExceeded)
+            ));
+            assert!(matches!(
+                super::super::DailyArtifactNameLimits::new(fixed_limits().max_sessions + 1),
+                Err(Error::LimitExceeded)
+            ));
+            assert_eq!(
+                super::super::DailyArtifactNameLimits::new(2)
+                    .unwrap()
+                    .max_entries(),
+                2
+            );
+            let fixture = Fixture::new();
+            assert!(matches!(
+                capture_names(&fixture.root, 0),
+                Err(Error::LimitExceeded)
+            ));
+        }
+
+        #[test]
+        fn i4g_catalog_empty_and_sorted_names_are_navigation_only() {
+            let fixture = Fixture::new();
+            let (empty, names) = capture_names(&fixture.root, 2).unwrap();
+            assert!(names.is_empty());
+            empty.revalidate().unwrap();
+            for name in ["b".repeat(64), "1".repeat(64)] {
+                // Deliberately no bundle files: discovery conveys no artifact proof.
+                let path = fixture.path.join(name);
+                std::fs::create_dir(&path).unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o750)).unwrap();
+            }
+            assert!(matches!(empty.revalidate(), Err(Error::SourceChanged)));
+            let (capture, names) = capture_names(&fixture.root, 2).unwrap();
+            assert_eq!(names.len(), 2);
+            assert_eq!(names[0].as_str(), format!("sha256:{}", "1".repeat(64)));
+            assert_eq!(names[1].as_str(), format!("sha256:{}", "b".repeat(64)));
+            capture.revalidate().unwrap();
+            assert!(matches!(
+                read_leaf(&fixture.root, &"1".repeat(64)),
+                Err(Error::UnexpectedEntries)
+            ));
+        }
+
+        #[test]
+        fn i4g_catalog_staging_is_invisible_unopened_and_counted() {
+            let fixture = Fixture::new();
+            fixture.publish();
+            let path = fixture.path.join(".pending-12-0");
+            // Even a symlink in this reserved namespace is never followed.
+            symlink("/nonexistent-pending-target", &path).unwrap();
+            assert!(matches!(
+                capture_names(&fixture.root, 1),
+                Err(Error::LimitExceeded)
+            ));
+            let (capture, names) = capture_names(&fixture.root, 2).unwrap();
+            assert_eq!(names.len(), 1);
+            assert_eq!(names[0].as_str(), format!("sha256:{NAME}"));
+            capture.revalidate().unwrap();
+            assert!(
+                std::fs::symlink_metadata(&path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            std::fs::remove_file(&path).unwrap();
+            assert!(matches!(capture.revalidate(), Err(Error::SourceChanged)));
+        }
+
+        #[test]
+        fn i4g_catalog_unknown_names_and_malformed_staging_fail_closed() {
+            for name in [
+                "latest",
+                "README",
+                ".pending-0-0",
+                ".pending-01-0",
+                ".pending-1-00",
+                ".pending-1-1-extra",
+                ".pending-4294967296-0",
+                ".pending-1-18446744073709551616",
+            ] {
+                let fixture = Fixture::new();
+                std::fs::write(fixture.path.join(name), b"unapproved").unwrap();
+                assert!(
+                    matches!(
+                        capture_names(&fixture.root, 2),
+                        Err(Error::UnexpectedEntries)
+                    ),
+                    "{name}"
+                );
+            }
+            for name in ["A".repeat(64), "a".repeat(63), "g".repeat(64)] {
+                let fixture = Fixture::new();
+                std::fs::create_dir(fixture.path.join(name)).unwrap();
+                assert!(matches!(
+                    capture_names(&fixture.root, 2),
+                    Err(Error::UnexpectedEntries)
+                ));
+            }
+        }
+
+        #[test]
+        fn i4g_catalog_committed_names_require_guarded_directories() {
+            for change in 0..3 {
+                let fixture = Fixture::new();
+                let path = fixture.leaf();
+                match change {
+                    0 => std::fs::write(&path, b"not directory").unwrap(),
+                    1 => symlink(fixture.directory.path(), &path).unwrap(),
+                    _ => {
+                        std::fs::create_dir(&path).unwrap();
+                        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o770))
+                            .unwrap();
+                    }
+                }
+                assert!(matches!(
+                    capture_names(&fixture.root, 2),
+                    Err(Error::UnsafePath)
+                ));
+            }
+        }
+
+        #[test]
+        fn i4g_catalog_detects_replacement_and_nested_name_mutation() {
+            for change in 0..2 {
+                let fixture = Fixture::new();
+                fixture.publish();
+                let (capture, _) = capture_names(&fixture.root, 3).unwrap();
+                if change == 0 {
+                    std::fs::rename(fixture.leaf(), fixture.directory.path().join("old")).unwrap();
+                    std::fs::create_dir(fixture.leaf()).unwrap();
+                    std::fs::set_permissions(
+                        fixture.leaf(),
+                        std::fs::Permissions::from_mode(0o750),
+                    )
+                    .unwrap();
+                } else {
+                    std::fs::write(fixture.leaf().join("extra"), b"not approved").unwrap();
+                }
+                assert!(matches!(capture.revalidate(), Err(Error::SourceChanged)));
+            }
+        }
+
+        #[test]
+        fn i4g_catalog_rejects_root_rebinding_after_capture() {
+            let fixture = Fixture::new();
+            let (capture, _) = capture_names(&fixture.root, 2).unwrap();
+            std::fs::rename(&fixture.path, fixture.directory.path().join("moved")).unwrap();
+            std::fs::create_dir(&fixture.path).unwrap();
+            std::fs::set_permissions(&fixture.path, std::fs::Permissions::from_mode(0o750))
+                .unwrap();
+            assert!(matches!(capture.revalidate(), Err(Error::SourceChanged)));
+        }
+
+        #[test]
+        fn i4g_catalog_public_roots_keep_distinct_layouts() {
+            let fixture = Fixture::new();
+            let owner = fixture.root.owner;
+            let group = fixture.root.group;
+            let frontier = frontier_fixture(&fixture);
+            let limits = super::super::DailyArtifactNameLimits::new(2).unwrap();
+            let candidate =
+                super::super::DailyCandidateRoot::open(&fixture.path, owner, group).unwrap();
+            let admission =
+                super::super::DailyAdmissionRoot::open(&fixture.path, owner, group).unwrap();
+            let state = super::super::DailySourceFrontierRoot::open(
+                &fixture.directory.path().join("frontiers"),
+                owner,
+                group,
+            )
+            .unwrap();
+            assert!(candidate.capture_names(limits).unwrap().names().is_empty());
+            assert!(admission.capture_names(limits).unwrap().names().is_empty());
+            state.capture_names(limits).unwrap().revalidate().unwrap();
+            assert!(matches!(
+                read_frontier_metadata(&fixture.root, NAME),
+                Err(Error::InvalidRoot)
+            ));
+            assert!(matches!(
+                read_admission_metadata(&frontier, NAME),
+                Err(Error::InvalidRoot)
+            ));
+        }
+
+        #[test]
+        fn i4g_frontier_navigation_opens_only_record_with_full_record_guards() {
+            let fixture = Fixture::new();
+            let root = frontier_fixture(&fixture);
+            let files = [
+                ("frontier.json", b"unapproved navigation".as_slice()),
+                ("observation.json", b"unapproved observation".as_slice()),
+            ];
+            publish(&root, NAME, &files).unwrap();
+            let observation = fixture
+                .directory
+                .path()
+                .join("frontiers")
+                .join(NAME)
+                .join("observation.json");
+            std::fs::set_permissions(&observation, std::fs::Permissions::from_mode(0o000)).unwrap();
+            assert_eq!(read_frontier_metadata(&root, NAME).unwrap(), files[0].1);
+            assert!(matches!(read_leaf(&root, NAME), Err(Error::UnsafePath)));
+            let record = observation.with_file_name("frontier.json");
+            std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o640)).unwrap();
+            assert!(matches!(
+                read_frontier_metadata(&root, NAME),
+                Err(Error::UnsafePath)
+            ));
+        }
+
+        #[test]
+        fn i4g_frontier_navigation_rejects_extras_symlinks_and_oversize() {
+            for change in 0..3 {
+                let fixture = Fixture::new();
+                let root = frontier_fixture(&fixture);
+                let files = [
+                    ("frontier.json", b"unapproved navigation".as_slice()),
+                    ("observation.json", b"unapproved observation".as_slice()),
+                ];
+                publish(&root, NAME, &files).unwrap();
+                let leaf = fixture.directory.path().join("frontiers").join(NAME);
+                let record = leaf.join("frontier.json");
+                match change {
+                    0 => std::fs::write(leaf.join("extra"), b"extra").unwrap(),
+                    1 => {
+                        std::fs::remove_file(&record).unwrap();
+                        symlink("observation.json", &record).unwrap();
+                    }
+                    _ => {
+                        std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o640))
+                            .unwrap();
+                        File::options()
+                            .write(true)
+                            .open(&record)
+                            .unwrap()
+                            .set_len(fixed_limits().max_admission_bytes + 1)
+                            .unwrap();
+                        std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o440))
+                            .unwrap();
+                    }
+                }
+                let expected = match change {
+                    0 => Error::UnexpectedEntries,
+                    1 => Error::UnsafePath,
+                    _ => Error::LimitExceeded,
+                };
+                assert!(matches!(read_frontier_metadata(&root,NAME),Err(error) if error==expected));
+            }
         }
     }
 }

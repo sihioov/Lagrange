@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave58 취소 기능 7a5b347/CI38788565250 전체 성공 범위별 인수. Wave59 승인 기록 탐색·증거 이력 재검증19개를 구현한 뒤 producer/admitter 연결. I5–I7·운영·Owner·3거래일·최종 C_R2 계속 진행. |
+| 다음 착수 항목 | Wave59 승인 기록 탐색·증거 이력 재검증3파일/19개 소스 고정(584pins). 새 후보 CI 한 번 회수 후 producer/admitter 연결. I5–I7·운영·Owner·3거래일·최종 C_R2 계속 진행. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -273,7 +273,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   후속 — 2026-10-16, [Wave53 전체 회수](reviews/2026-10-16-r2-daily-settlement-ci.md): 일일 스케줄14·실패 정산/복구12·실제DB16단계 통과, 웹 E2E 실패로 전체 후보는 미인수. [Wave54 성공 저장·진단 보완](reviews/2026-10-16-r2-daily-success-source.md)은 `47c7dbc` / CI38771904166 전체 성공으로 [범위별 인수](reviews/2026-10-16-r2-daily-success-ci.md). 다음은 한도가 있는 봉인 입력 체인 로더와 전체 런타임 연결이다.
   이전 검증 — 2026-10-16, [Wave56 전체 회수](reviews/2026-10-16-r2-daily-runner-ci.md): 후보9343706의 새12개·기존 필수 Rust·PG17개 lane 통과, strict lint와 collector DB 초기화1개 실패로 전체 미인수. [Wave57 테스트 보정](reviews/2026-10-16-r2-daily-runner-lint-correction.md)은 운영 소스 변경 없이 재검증한다. 이전 Wave55 인수를 보존하며 전체 I4·실제 승인 base 통합·독립 리뷰·운영·Owner·관찰은 미완료.
   이전 검증 — 2026-10-16, [Wave57 인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md): c4f35bb의 8jobs/logs·548pins/328blobs/7checkout 및 runner12·collector 실제DB3·이전 Rust/PG/Web 전부 통과. Wave58 안전한 superseded 취소를 진행한다. 전체 I4/실제 승인 입력 통합/독립 리뷰/운영/Owner/3거래일은 미완료.
-  최신 검증 — 2026-10-16, [Wave58 인수](reviews/2026-10-16-r2-daily-supersession-ci.md): 7a5b347의8jobs/logs·567pins/332blobs/7checkout·14새실제DB/총24runner·기존 Rust/PG/Web 모두 통과.0061취소 기능 범위 인수; 전체 I4·운영·Owner·최종 R2는 미완료.
+  최신 검증 — 2026-10-16, [Wave58 인수](reviews/2026-10-16-r2-daily-supersession-ci.md): 7a5b347의8jobs/logs·567pins/332blobs/7checkout·14새실제DB/총24runner·기존 Rust/PG/Web 모두 통과.0061취소 기능 범위 인수; 전체 I4·운영·Owner·최종 R2는 미완료. 후속 [Wave59 소스](reviews/2026-10-16-r2-daily-navigation-source.md)3파일/19개 검토·584pins 고정; 실행 미검증.
 
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
@@ -296,7 +296,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   이전 검증 — 2026-10-16, Wave54/55 범위별 인수는 보존. [Wave56](reviews/2026-10-16-r2-daily-runner-ci.md) 전체 실패를 회수하고 Wave57 테스트 fixture 보정을 진행한다. 최종 릴리스, 실제 승인 입력 전체 경로, I5–I7, 독립 통합 리뷰·운영·Owner·3거래일은 계속 열려 있다.
 
   이전 검증 — 2026-10-16, [Wave57 인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md): c4f35bb의 8jobs/logs·548pins/328blobs/7checkout 및 runner12·collector 실제DB3·이전 Rust/PG/Web 전부 통과. Wave58 안전한 superseded 취소를 진행한다. 전체 I4/실제 승인 입력 통합/독립 리뷰/운영/Owner/3거래일은 미완료.
-  최신 검증 — 2026-10-16, [Wave58 인수](reviews/2026-10-16-r2-daily-supersession-ci.md): 7a5b347의8jobs/logs·567pins/332blobs/7checkout·14새실제DB/총24runner·기존 Rust/PG/Web 모두 통과.0061취소 기능 범위 인수; 전체 I4·운영·Owner·최종 R2는 미완료.
+  최신 검증 — 2026-10-16, [Wave58 인수](reviews/2026-10-16-r2-daily-supersession-ci.md): 7a5b347의8jobs/logs·567pins/332blobs/7checkout·14새실제DB/총24runner·기존 Rust/PG/Web 모두 통과.0061취소 기능 범위 인수; 전체 I4·운영·Owner·최종 R2는 미완료. 후속 [Wave59 소스](reviews/2026-10-16-r2-daily-navigation-source.md)3파일/19개 검토·584pins 고정; 실행 미검증.
 
 
 **종료 조건:** R2-01~R2-09 완료, 연속 3거래일 무인 데이터·추천 갱신과 실제 Owner 사용 확인.
@@ -769,3 +769,19 @@ Direct coordinator review, new frozen input/inventory and one exact-candidate CI
 required. Runtime context/receipts, producer/admitter wiring, full I4/I5-I7,
 independent integration review/UID/ACL/crash/I6 diagrams/G4/operations/Owner/three
 trading days/final C_R2 remain open. Ralph continues.
+
+
+### Wave59 source frozen — 2026-10-16 KST
+
+R2-04/09, WP-4/I4g1: three-file insertions +1064/-0 reviewed directly;19 new
+WRITTEN_UNEXECUTED definitions (10 Linux filesystem,9 pure navigation). Protected
+bounded name capture and explicitly pinned paired replay preserve existing full
+validators, SQL and all prior tests. No latest authority or synthetic approved base.
+Scoped standalone rustfmt2024/whitespace pass; four original function regions
+and564 unchanged prior pins match. Source report89lines/SHA7a6c820c4cf06e67c83b4349e2d7498a3c1071debf235812bd9ee8de457360c4.
+Frozen wave59-I4g1 inputs2421lines/SHA3d2e70d57651133d7e3c0ef005749b41bf77b4ab0bc4b0ba23385641c0b83086,
+584pins; inventory4090lines/SHA614f08edbe605d58f2e861735072ac13a893507df25df656a3ebae6006f0cbc9.
+Source/compiler/test acceptance pending a single exact-candidate hosted CI after
+existing-run and remote/pin/blob checks. No local execution/delegation. Full real
+approved-base flow, producer/admitter wiring, I5–I7, runtime/Owner/three trading
+days/final C_R2 remain open. Ralph continues.

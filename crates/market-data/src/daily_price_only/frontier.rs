@@ -28,6 +28,64 @@ struct FrontierRecord {
     source_file_count: u64,
 }
 
+/// Unapproved navigation copied from one protected state record. This is not a
+/// source observation, sealed frontier, admission or current database authority.
+pub struct DailyFrontierNavigation {
+    record: FrontierRecord,
+}
+impl DailyFrontierNavigation {
+    pub fn owner(&self) -> Uuid {
+        self.record.owner
+    }
+    pub fn policy_sha256(&self) -> &ContentHash {
+        &self.record.policy_sha256
+    }
+    pub fn admission_sha256(&self) -> &ContentHash {
+        &self.record.admission_sha256
+    }
+    pub fn parent_frontier_sha256(&self) -> Option<&ContentHash> {
+        self.record.parent_frontier_sha256.as_ref()
+    }
+    pub fn range_start(&self) -> TradingDate {
+        self.record.range_start
+    }
+    pub fn range_end(&self) -> TradingDate {
+        self.record.range_end
+    }
+}
+
+/// Reads only the record, never its observation payload. The returned hash links
+/// are navigation hints; read_sealed_source_frontier remains mandatory.
+pub fn read_daily_frontier_navigation(
+    root: &super::artifact::DailySourceFrontierRoot,
+    expected: &ContentHash,
+) -> Result<DailyFrontierNavigation, super::admission::DailyAdmissionVerificationError> {
+    use super::admission::DailyAdmissionVerificationError as AdmissionError;
+    let bytes = super::artifact::read_source_frontier_metadata(root, expected)
+        .map_err(AdmissionError::Artifact)?;
+    decode_frontier_navigation(&bytes, expected).map_err(AdmissionError::Evidence)
+}
+
+pub(super) fn decode_frontier_navigation(
+    bytes: &[u8],
+    expected: &ContentHash,
+) -> Result<DailyFrontierNavigation, Error> {
+    if bytes.len() as u64 > fixed_limits().max_admission_bytes {
+        return Err(Error::LimitExceeded);
+    }
+    let record: FrontierRecord =
+        serde_json::from_slice(bytes).map_err(|_| Error::InvalidEvidence)?;
+    if record.schema != SCHEMA
+        || record.owner.is_nil()
+        || record.range_end < record.range_start
+        || record.observation_sha256 != *expected
+        || serde_json::to_vec(&record).map_err(|_| Error::Encoding)? != bytes
+    {
+        return Err(Error::InvalidEvidence);
+    }
+    Ok(DailyFrontierNavigation { record })
+}
+
 // Private implementations retain the complete verification borrow, including
 // captured sources and their lock lifetime. There is no wire-to-proof constructor.
 trait VerificationBorrow {
@@ -1140,5 +1198,76 @@ mod tests {
             price_identity_touches(&copy, date("2026-10-15"), date("2026-10-15")),
             Ok(false)
         );
+    }
+
+    #[test]
+    fn i4g_frontier_navigation_is_canonical_record_only() {
+        let observation = observation();
+        let record = record(&observation);
+        let bytes = serde_json::to_vec(&record).unwrap();
+        let nav = decode_frontier_navigation(&bytes, observation.sha256()).unwrap();
+        assert_eq!(nav.owner(), record.owner);
+        assert_eq!(nav.policy_sha256(), &record.policy_sha256);
+        assert_eq!(nav.admission_sha256(), &record.admission_sha256);
+        assert_eq!(
+            nav.parent_frontier_sha256(),
+            record.parent_frontier_sha256.as_ref()
+        );
+        assert_eq!(nav.range_start(), record.range_start);
+        assert_eq!(nav.range_end(), record.range_end);
+        // No observation body or sealed input was supplied by this metadata test.
+    }
+
+    #[test]
+    fn i4g_frontier_navigation_rejects_noncanonical_unknown_duplicate_and_hash() {
+        let observation = observation();
+        let bytes = serde_json::to_vec(&record(&observation)).unwrap();
+        let mut whitespace = bytes.clone();
+        whitespace.push(b' ');
+        let unknown = String::from_utf8(bytes.clone())
+            .unwrap()
+            .replacen("{", "{\"extra\":0,", 1)
+            .into_bytes();
+        let duplicate = String::from_utf8(bytes.clone())
+            .unwrap()
+            .replacen(
+                "{",
+                "{\"schema\":\"owner-beta-daily-source-frontier-v1\",",
+                1,
+            )
+            .into_bytes();
+        for changed in [whitespace, unknown, duplicate] {
+            assert!(matches!(
+                decode_frontier_navigation(&changed, observation.sha256()),
+                Err(Error::InvalidEvidence)
+            ));
+        }
+        assert!(matches!(
+            decode_frontier_navigation(&bytes, &hash("wrong-observation")),
+            Err(Error::InvalidEvidence)
+        ));
+    }
+
+    #[test]
+    fn i4g_frontier_navigation_rejects_invalid_record_envelope_before_planning() {
+        let observation = observation();
+        for change in 0..3 {
+            let mut changed = record(&observation);
+            match change {
+                0 => changed.schema = "other".into(),
+                1 => changed.owner = Uuid::nil(),
+                _ => changed.range_end = date("2000-01-01"),
+            }
+            let bytes = serde_json::to_vec(&changed).unwrap();
+            assert!(matches!(
+                decode_frontier_navigation(&bytes, observation.sha256()),
+                Err(Error::InvalidEvidence)
+            ));
+        }
+        let oversized = vec![0; fixed_limits().max_admission_bytes as usize + 1];
+        assert!(matches!(
+            decode_frontier_navigation(&oversized, observation.sha256()),
+            Err(Error::LimitExceeded)
+        ));
     }
 }
