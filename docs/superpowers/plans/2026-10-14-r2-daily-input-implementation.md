@@ -29,8 +29,14 @@ Current execution: coordinator directly; further worker delegation prohibited
   Completed2026-10-15; candidate `dee78c4531e1cb14eefd8abb3bf90189d382ca6e`;
   [acceptance](../../reviews/2026-10-15-r2-daily-sql-acceptance.md),
   run38696988981 attempt1 SUCCESS. Full evidence and limits are recorded in Wave40.
+- [x] **WP-4/I1b-S3 — original/copy lineage and offline calendar proof.**
+  Completed2026-10-15; candidate `eb0e839b5e808fb1353451b47baa1850d248ebb9`;
+  [acceptance](../../reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md),
+  run38711965495 attempt1 SUCCESS. New22 and affected normalizer37 names pass;
+  all prior I2/R2 gates are reconciled in Wave41. Coordinator review only.
 - [ ] **Remaining I1b reconstruction/admission and I3–I7 integration.**
-  Next bounded work is offline original/copy/provider reconstruction and admission.
+  Next is bars/reference/actions reconstruction, complete source frontier and
+  artifact/admission/supply. Final integrated independent review remains open.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -4133,3 +4139,34 @@ Coordinator implementation starts from440d4a8 under the [bounded contract](../..
 Wave41 source candidate:22 Linux definitions and37 affected normalization names fixed; six source files. Scoped rustfmt2024/whitespace pass. Coordinator disposition only; compiler/tests pending.247 unchanged Wave40 pins preserved; snapshot/storage/0060/workflow unchanged. No local project execution or delegation.
 
 Wave41 launch: eb0e839b5e808fb1353451b47baa1850d248ebb9, run38711965495 attempt1 at2026-10-15T09:18:25Z. All-event exact-head query0 and remote SHA match preceded one dispatch.262pins/215blobs matched. New22/affected normalizer37 plus prior I2/R2 gates require full recovery. No rerun/cancel/delegation/local execution.
+
+### Wave41 closeout — 2026-10-15 bounded S3 acceptance
+
+Candidate eb0e839b5e808fb1353451b47baa1850d248ebb9, run38711965495 attempt1,
+completed SUCCESS at09:40:29 UTC. All8 jobs/84 steps and8 full log digests are
+recovered:83 steps passed; only the conditional PG failure-log dump was skipped.
+All262 input pins,215 committed blobs and7 actual checkout SHAs match.
+
+All22 new Linux S3 names,37 affected normalizer/calendar names,99 prior R2 Rust,
+32 daily SQL,28 affected legacy DB,3 transport and6 separate chart names passed.
+Canonical PG separately confirms32 daily/73 unique subcases,12 outer DB exits0
+without SKIP,83 bootstrap names,60 candidate migration SHA384 checksums twice,
+NO_OP, direct roles,0039/catalog/0060 rollback and cleanup. Groups are not an
+added unique-test total. Unprinted nested rows/inner exits remain UNKNOWN;
+two carried non-Linux exclusions and Python10 skips/7 warnings remain explicit.
+
+The coordinator accepts only original/copy lineage and offline calendar
+projection/document/range-proof behavior. Source disposition is direct, not an
+independent review. Accepted snapshot/storage/0060/workflow remain unchanged.
+The sanitized final receipt is target/r2-daily-beta/ci/eb0e839/ci-evidence.json,
+2641 lines, SHA256 bcf9f0aa778c59a823dc16d9b428ba57f73d77f45e986cc9196f0d12dea10cc6.
+Raw logs were not persisted; no local project execution, worker/delegation,
+provider/production action or CI rerun/cancel occurred.
+
+[S3 acceptance](../../reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md)
+records the limits. R2-04/09 remain DOING. Remaining I1b bars/reference/actions,
+sealed frontier and artifact/admission/supply, I3–I7/final integrated review,
+runtime UID/ACL, installer filesystem rollback, I6 diagrams before main,
+operational activation, Owner and three consecutive trading days/final C_R2
+remain open. Observation has not started. No active worker, background task or
+pending permission remains for S3; all historical evidence is preserved.

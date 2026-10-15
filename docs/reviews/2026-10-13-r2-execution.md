@@ -2301,3 +2301,32 @@ I2 bounded acceptance remains at dee78c4/run38696988981. Coordinator starts the 
 Wave41 source candidate:22 Linux definitions and37 affected normalization names fixed; six source files. Scoped rustfmt2024/whitespace pass. Coordinator disposition only; compiler/tests pending.247 unchanged Wave40 pins preserved; snapshot/storage/0060/workflow unchanged. No local project execution or delegation.
 
 Wave41 launch: eb0e839b5e808fb1353451b47baa1850d248ebb9, run38711965495 attempt1 at2026-10-15T09:18:25Z. All-event exact-head query0 and remote SHA match preceded one dispatch.262pins/215blobs matched. New22/affected normalizer37 plus prior I2/R2 gates require full recovery. No rerun/cancel/delegation/local execution.
+
+## 2026-10-15 — Wave41 I1b-S3 accepted within its boundary
+
+Candidate eb0e839b5e808fb1353451b47baa1850d248ebb9/run38711965495 attempt1
+completed SUCCESS at09:40:29 UTC. All8 jobs/84 steps/8 log digests were recovered;
+83 steps passed and the PG failure-log-only step was skipped.262 pins/215 blobs
+and7 actual checkout SHAs match. All22 S3 and37 affected normalizer/calendar
+names pass, as do99 prior Rust,32 daily SQL,28 affected legacy DB,3 transport and
+6 separate chart names. These are separately reconciled inventory groups.
+
+Dedicated PG confirms32 names/73 unique subcases,12 actual DB outer exits0 with
+no SKIP,83 bootstrap cases,60 migration SHA384 checksums twice,NO_OP/direct
+roles/0039/catalog/0060 rollback/cleanup. Unprinted nested names/inner exits remain
+UNKNOWN;2 carried non-Linux exclusions and Python485 pass/10 skip/7 warnings
+are retained. Receipt: target/r2-daily-beta/ci/eb0e839/ci-evidence.json,
+2641 lines, SHA256 bcf9f0aa778c59a823dc16d9b428ba57f73d77f45e986cc9196f0d12dea10cc6.
+
+[S3 acceptance](2026-10-15-r2-daily-evidence-lineage-acceptance.md) closes only
+original/copy lineage and offline calendar projection/document/continuous-date
+proof. This is coordinator source disposition and hosted evidence reconciliation,
+not a new independent review. No local project execution, further worker,
+provider/production action or run rerun/cancel occurred; raw logs were not saved.
+
+R2-04/09 remain DOING. Next is I1b bars/reference/actions, complete source
+frontier and artifact/admission/supply. I3–I7/final integrated independent review,
+runtime UID/ACL, installer filesystem rollback, diagrams before main,
+operational activation, Owner use, three trading days and final C_R2 remain open.
+No observation period, active worker/background task or pending permission is
+claimed. Earlier I2/snapshot acceptance and all failures remain preserved.

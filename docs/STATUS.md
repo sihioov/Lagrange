@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | I1b-S3 원본 추적·달력 증명 후보 eb0e839의 [CI 38711965495](reviews/2026-10-15-r2-daily-evidence-lineage-ci.md) attempt1 회수 중.262pins/215blobs·새22개·기존 정규화37개와 I2/R2 회귀 목록을 고정했다. 소스·컴파일·테스트 인수 전이다. 남은 가격·기업행사 복원/admission, I3–I7·운영·Owner·3거래일은 미완료다. |
+| 다음 단계 | 남은 I1b 가격·기준정보·기업행사 복원, 전체 source frontier와 artifact/admission/supply. 원본 추적·달력 증명은 eb0e839의 [S3 인수](reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md)로 완료: CI 38711965495 attempt1 전체 성공, 새22개·기존 정규화37개와 I2/R2 회귀 확인. I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
