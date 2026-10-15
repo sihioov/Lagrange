@@ -2238,3 +2238,19 @@ run38694431037 attempt1 at2026-10-15T06:46:22Z. Exact-head all-event query0
 and remote SHA match preceded one dispatch.241pins/202blobs matched. Recovery
 includes32 daily definitions/73 subcases and28 affected legacy names. No rerun,
 cancel, source mutation or local execution while the candidate runs.
+
+## Wave40 — I2-C03 numeric subcase capture
+
+C02 a252cfb/run38694431037 attempt1 completed FAILURE07:05:45 UTC. All8 jobs,
+84 steps,8 logs/7checkout,241pins/202blobs recovered before edits. Workspace
+32daily/28legacy/99Rust/6chart/3transport pass. Dedicated PG32 and all73 fixed
+subcase names pass in actual logs, but the harness captured72: [a-z_]+ omitted
+receipt_policy_sha256. Its exact-name gate failed and later11 DB labels were
+NOT_EXECUTED.60checksum×2/no-op/roles/rollback/bootstrap83/cleanup passed.
+
+Only validate.sh's subcase class changes to [a-z0-9_]+. The73-name/unique-row
+check remains; no SQL/Rust/assertion/grant/workflow changes. Scoped bash-n and
+whitespace pass. No local harness/DB/compiler/test execution or delegation.
+Preserve C02 and earlier evidence. Freeze Wave40 inputs, then query all-event
+exact-head runs/remote SHA before one new hosted attempt. Full12 label exits,
+canonical32/73 evidence and all other candidate gates remain required.

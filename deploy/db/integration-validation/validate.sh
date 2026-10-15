@@ -1530,7 +1530,7 @@ run_db_test() {
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
         daily_named_rows+=("$name:$actual")
         printf 'PG_DB_TEST_ROW:migration-contract:%s:%s\n' "$name" "$actual"
-      elif [[ "$row" =~ ^DAILY_0060_SUBCASE:[a-z_]+:PASS$ ]]; then
+      elif [[ "$row" =~ ^DAILY_0060_SUBCASE:[a-z0-9_]+:PASS$ ]]; then
         daily_subcase_rows+=("${row#DAILY_0060_SUBCASE:}")
         printf '%s\n' "$row"
       fi
