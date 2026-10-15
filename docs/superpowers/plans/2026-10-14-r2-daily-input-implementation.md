@@ -4342,3 +4342,15 @@ unverified. No local project execution. One new exact candidate hosted CI only a
 all-event existing-run query0 and remote SHA match; never rerun/cancel/duplicate.
 After full result recovery, continue daily-parent/frontier/supply and I3–I7. Owner,
 three trading days and final C_R2 remain open; do not change priority to R3.
+
+
+### Wave46 single candidate launch — 2026-10-15
+
+Candidate718d99d0f5db63636681b12457e32079b72f8c5c is frozen at313input pins/
+250committed blobs.27new definitions:26Linux expected,1nonLinux excluded; carried
+S5b21/S5a33 and earlier required groups have refreshed anchors. Before/after push,
+all-event exact-head queries returned0 and remote SHA matched. One dispatch only:
+run38737242162 attempt1, CI/ci.yml/workflow_dispatch/excited-dolphin, created
+2026-10-15T12:46:39Z. Full recovery is pending; no compiler/test acceptance yet.
+Never rerun/cancel/duplicate. While running, only unregistered successor files and
+mutable coordinator tracking docs may change. All prior evidence remains intact.
