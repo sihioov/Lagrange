@@ -2254,3 +2254,9 @@ whitespace pass. No local harness/DB/compiler/test execution or delegation.
 Preserve C02 and earlier evidence. Freeze Wave40 inputs, then query all-event
 exact-head runs/remote SHA before one new hosted attempt. Full12 label exits,
 canonical32/73 evidence and all other candidate gates remain required.
+
+Wave40 launch: dee78c4531e1cb14eefd8abb3bf90189d382ca6e,
+run38696988981 attempt1 created2026-10-15T07:10:31Z.249pins/204blobs match;
+all-event exact-head query0 and remote SHA match preceded one dispatch.
+Recover full12 DB exits and canonical32/73 rows with all other candidate gates.
+No worker/delegation, rerun/cancel or local executable verification.
