@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — C05 후보 `7cdf3a68c754231bd4d828305ff6733638bcfe37`의 원격 SHA와 기존 exact-head/all-event 실행 0을 확인한 뒤 [CI 38664342216](https://github.com/sihioov/Lagrange/actions/runs/38664342216) attempt 1을 한 번 요청했다(01:12:05 UTC). 69개 고정 입력과 Rust 99개/chart 6개/제외 2개 목록으로 직접 회수 중이다. C03/C04 테스트 부분 성공과 strict-lint 실패를 보존하며, C05와 후속 R2 인수는 아직 미완료다. |
+| 다음 단계 | R2 DOING — 2026-10-15 후보 `7cdf3a68c754231bd4d828305ff6733638bcfe37`의 [CI 38664342216](https://github.com/sihioov/Lagrange/actions/runs/38664342216) attempt 1 전체 8개 작업이 SUCCESS다. 69개 입력·7개 실제 checkout, Rust 99개와 별도 chart 6개 직접 PASS, strict Clippy·workspace format·PG59/cleanup을 대조해 I1b-S2의 Linux 소스·hosted 검증을 부분 인수했다. [인수 범위와 한계](reviews/2026-10-15-r2-snapshot-c05-ci.md)를 기준으로 다음은 남은 negative bootstrap/rollback, 0060, provider/copy reconstruction/admission 범위를 고정한다. I6 diagrams before main·운영·Owner·최종 C_R2는 계속 미완료다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

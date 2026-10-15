@@ -2015,3 +2015,39 @@ Launch receipt SHA256 `e1d76fa40263439302107f4ae1da974226f23abefc2f23873f8736015
 All live under target/r2-daily-beta/wp-4-integration. Preparation-time
 newCiDispatched:false remains historical. Later documentation HEAD does not
 change the pinned candidate. Earlier evidence and later R2 gates are preserved.
+
+### Wave33 C05 full recovery and bounded S2 acceptance — 2026-10-15 UTC
+
+Candidate `7cdf3a68c754231bd4d828305ff6733638bcfe37`,
+[run 38664342216](https://github.com/sihioov/Lagrange/actions/runs/38664342216),
+attempt1 completed SUCCESS at 01:32:59 UTC. The coordinator recovered all eight
+jobs, 84 step states (83 success, the conditional PG failure-log step skipped),
+eight logs once each, seven actual checkout SHAs, and all 69 pins/52 candidate
+blobs. All 99 required Linux Rust names and six separate chart names have direct
+PASS rows, including all 48 Linux S2 cases; one S2 non-Linux and one S1 non-Unix
+case remain excluded. Strict Clippy and workspace format passed. PG APPROVED
+includes 12 DB labels, both helpers, 59 candidate-matched checksums, NO_OP,
+0039/catalog/role/cleanup. Unprinted nested helper rows/exits remain UNKNOWN.
+
+C03 compile and C04/C05 lint conditions are closed for this candidate. Wave28/C02
+independent reviews plus bounded coordinator source dispositions and the fresh
+hosted run support partial acceptance of Linux S2 source/verification. No new
+independent worker review is claimed. No local Cargo/compiler/Clippy/tests,
+project helpers, DB/provider/production execution or further delegation occurred.
+
+See [C05 acceptance](2026-10-15-r2-snapshot-c05-ci.md). Private final receipt
+has 3,799 lines, SHA256 da010b43e68b20b2124032f11158506e02bdd9981455fc2462b84473089a4e49;
+PG receipt SHA256 ffce0521e26081124d882d664970ab2cc45052a8ff657160088fb7fd2b78be32.
+Both live under target/r2-daily-beta/ci/7cdf3a6, directory0700/files0600. Raw logs
+were memory-only. Historical preparation states, original reviews, receipts and
+all failed/partial candidates remain immutable. Later documentation HEAD does
+not change the candidate; no additional CI dispatch is needed for bookkeeping.
+
+The bounded S2 package has no remaining concrete source correction. R2-04/09
+remain DOING: negative bootstrap/rollback, 0060, provider/copy reconstruction/
+admission, I6 diagrams before structural main merge, runtime/Owner, three trading
+days and final C_R2 remain open. Non-Linux/32bit and actual cross-principal UID/
+ACL/mount/access, allocation/RSS and installer/consumer lifetime arrangements
+remain unverified. No main merge, runtime activation or permissions expansion.
+Next implementation requires its exact owned-file/interface scope in this plan;
+the existing prohibition on further delegation remains in force.
