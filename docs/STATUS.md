@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave58 후보7a5b347 / CI38788565250 attempt1 전체 회수.567pins/332blobs·14새DB/총24runner. 그다음 producer/admitter 연결. 전체 I4·실제 승인 base 전체 흐름·독립 통합 리뷰·I5–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 단계 | Wave58 7a5b347/CI38788565250 범위별 인수. Wave59 승인 기록 탐색·paired frontier 재검증19개, 이후 producer/admitter 연결. 전체 I4·실제 승인 입력 통합·I5–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3536,3 +3536,26 @@ previous Rust/Web gates required. No acceptance until complete result recovery.
 This later tracking-doc commit does not change the candidate. No rerun/cancel/
 duplicate/local project execution/delegation. I4g preparation remains read-only
 during this run. Ralph continues through final C_R2.
+
+
+### Wave58 bounded acceptance and Wave59 navigation scope — 2026-10-16 KST
+
+7a5b347/CI38788565250 attempt1 SUCCESS fully recovered at2026-10-15T19:12:16.938922+00:00.
+8jobs/logs/7checkouts,567pins/332blobs,14new actualDB supersession and all24runner
+names pass. All prior Rust/chart groups, PG17exit0/noSKIP,14/6/6/8/24,
+32/73/83, both61UPchecksums/NO_OP/roles/0039/catalog/cleanup, web34+121/14,
+workspaceformat/strictClippy and Python487/10skip/7warnings pass.
+Receipt7738lines/SHAe79c08f443a851059d0f0d32c0cd1f96a6b99ae3dcd965833c9807d07dbce589; no local project/SQL execution or delegation.
+
+Wave59 owns ONLY daily_price_only/artifact.rs,frontier.rs,replay.rs after full
+recovery. Add explicit bounded stable protected-name capture; recognized staging
+is invisible, bounded and never followed/deleted. Metadata is unapproved navigation.
+Reopen one exact admission/frontier ancestry pair through every existing full
+validator, retaining current cumulative leaf/frontier. Preserve previous functions
+and test definitions; add19names (10native filesystem,3frontier decoder,6paired
+navigation). No DB/CLI/activation, source acquisition or new approval constructor.
+Actual approved-base returned capabilities remain an isolated-runtime evidence gap.
+Direct coordinator review, new frozen input/inventory and one exact-candidate CI
+required. Runtime context/receipts, producer/admitter wiring, full I4/I5-I7,
+independent integration review/UID/ACL/crash/I6 diagrams/G4/operations/Owner/three
+trading days/final C_R2 remain open. Ralph continues.
