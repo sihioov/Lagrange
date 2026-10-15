@@ -926,7 +926,7 @@ BEGIN
                 SELECT jsonb_build_array(public.daily_0060_file_key(value->'source_file')) INTO required_keys
                     FROM jsonb_array_elements(s->'calendar') WHERE value->>'civil_date'=d::text AND value->'normalized_document_sha256'=doc->'sha256';
             ELSE
-                SELECT jsonb_agg(k ORDER BY k) INTO required_keys FROM (SELECT DISTINCT public.daily_0060_file_key(value) k FROM jsonb_array_elements(session_files) WHERE value->>'kind'=doc->>'kind') u;
+                SELECT jsonb_agg(u.source_key ORDER BY u.source_key) INTO required_keys FROM (SELECT DISTINCT public.daily_0060_file_key(value) AS source_key FROM jsonb_array_elements(session_files) WHERE value->>'kind'=doc->>'kind') u;
             END IF;
             SELECT jsonb_agg(value ORDER BY value) INTO actual_keys FROM jsonb_array_elements(doc->'source_files');
             IF required_keys IS NULL OR actual_keys IS DISTINCT FROM required_keys THEN RAISE EXCEPTION 'daily document sources' USING ERRCODE='23514'; END IF;
@@ -1443,6 +1443,13 @@ AS $$ DECLARE row_data jsonb; jid uuid; owner_id uuid; j public.jobs; r public.o
     old_actor text:=current_setting('app.actor_user_id',true);
 BEGIN
     IF TG_OP='DELETE' THEN row_data:=to_jsonb(OLD); ELSE row_data:=to_jsonb(NEW); END IF;
+    -- Unrelated queue traffic must not acquire daily authority or lock job rows.
+    -- The migration-owned reservation is permanent and its internal policy sees
+    -- every tenant, so a reserved job cannot evade checks by losing its tag.
+    IF TG_TABLE_NAME='jobs'
+       AND row_data#>>'{payload_json,schema}' IS DISTINCT FROM 'owner-beta-daily-recommendation-v1'
+       AND NOT EXISTS(SELECT 1 FROM public.owner_beta_daily_reservations WHERE job_id=(row_data->>'id')::uuid)
+    THEN RETURN NULL; END IF;
     owner_id:=(row_data->>'owner_user_id')::uuid;
     IF owner_id IS NULL THEN SELECT owner_user_id INTO owner_id FROM public.owner_beta_daily_control WHERE id='etf11'; END IF;
     IF owner_id IS NULL THEN RETURN NULL; END IF;

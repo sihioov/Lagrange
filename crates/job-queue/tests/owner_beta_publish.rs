@@ -30,7 +30,6 @@ use sqlx::{Connection, PgPool};
 use uuid::Uuid;
 
 const RUN_ID: &str = "00000000-0000-4000-8000-000000000101";
-const CONFIG_ID: &str = "00000000-0000-4000-8000-000000000102";
 const AS_OF: &str = "2026-08-24";
 
 struct Fixture {
@@ -92,20 +91,10 @@ fn sentinel_hash(number: u8) -> String {
     format!("sha256:{number:064x}")
 }
 
-fn fixture() -> Fixture {
-    let resolved = ResolvedConfig {
-        strategy_id: "buy_and_hold".to_owned(),
-        strategy_version: "1.0.0".to_owned(),
-        config: json!({
-            "benchmark_instrument": "069500.KRX",
-            "target_weight": 1.0,
-        }),
-    };
-    let strategy = OwnerBetaStrategySnapshot::from_resolved_config(&resolved)
-        .expect("test strategy snapshot must be constructible");
+fn fixture(config_id: Uuid, strategy: OwnerBetaStrategySnapshot) -> Fixture {
     let input: OwnerBetaPriceRecommendationInput = serde_json::from_value(json!({
         "run_id": RUN_ID,
-        "strategy_config_id": CONFIG_ID,
+        "strategy_config_id": config_id.to_string(),
         "as_of": AS_OF,
         "pins": {
             "candidate_content_sha256": sentinel_hash(1),
@@ -168,8 +157,17 @@ async fn role_pool(db: &ScratchDb, role: &str, actor: Option<Uuid>) -> PgPool {
         .unwrap_or_else(|_| panic!("connect as {role}"))
 }
 
-async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid, fixture: &Fixture) -> Uuid {
-    let config_id = fixture.input.strategy_config_id();
+async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid) -> (Fixture, Uuid) {
+    let resolved = ResolvedConfig {
+        strategy_id: "buy_and_hold".to_owned(),
+        strategy_version: "1.0.0".to_owned(),
+        config: json!({
+            "benchmark_instrument": "069500.KRX",
+            "target_weight": 1.0,
+        }),
+    };
+    let strategy = OwnerBetaStrategySnapshot::from_resolved_config(&resolved)
+        .expect("test strategy snapshot must be constructible");
 
     sqlx::query(
         "INSERT INTO strategies (id, display_name, state) \
@@ -179,19 +177,20 @@ async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid, fixture: &Fi
     .await
     .expect("seed strategy registry");
 
-    sqlx::query(
+    // Exercise the app's permitted insert columns; the database owns config IDs.
+    let config_id: Uuid = sqlx::query_scalar(
         "INSERT INTO user_strategy_configs \
-         (id, owner_user_id, strategy_id, strategy_version, config_json) \
-         VALUES ($1, $2, $3, $4, $5)",
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, $2, $3, $4) RETURNING id",
     )
-    .bind(config_id)
     .bind(owner_id)
-    .bind(fixture.input.strategy_snapshot().strategy_id())
-    .bind(fixture.input.strategy_snapshot().strategy_version())
-    .bind(fixture.input.strategy_snapshot().config_json())
-    .execute(app)
+    .bind(strategy.strategy_id())
+    .bind(strategy.strategy_version())
+    .bind(strategy.config_json())
+    .fetch_one(app)
     .await
     .expect("app role inserts its own strategy config");
+    let fixture = fixture(config_id, strategy);
 
     for item in fixture.target.items() {
         let instrument_id = item.instrument_id();
@@ -264,7 +263,7 @@ async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid, fixture: &Fi
     .await
     .expect("app role inserts owner-beta run projection");
 
-    job.id
+    (fixture, job.id)
 }
 
 fn queue_config(lease: Duration) -> QueueConfig {
@@ -279,8 +278,6 @@ async fn published_owner_beta_target_persists_exact_results_and_seals_claim() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
-    assert_eq!(fixture.target.items().len(), 11, "fixture must cover ETF11");
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -290,7 +287,8 @@ async fn published_owner_beta_target_persists_exact_results_and_seals_claim() {
     .await
     .expect("seed publication owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
+    assert_eq!(fixture.target.items().len(), 11, "fixture must cover ETF11");
     let worker = role_pool(&db, "worker", None).await;
     let worker_can_update_configs: bool = sqlx::query_scalar(
         "SELECT has_table_privilege(\
@@ -555,7 +553,6 @@ async fn publication_config_lock_cannot_impersonate_another_owner() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_a: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -573,15 +570,13 @@ async fn publication_config_lock_cannot_impersonate_another_owner() {
     .await
     .expect("seed publication owner B");
     let app_a = role_pool(&db, "app", Some(owner_a)).await;
-    let job_id = seed_fixture(&db, &app_a, owner_a, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app_a, owner_a).await;
     let app_b = role_pool(&db, "app", Some(owner_b)).await;
-    let other_config_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO user_strategy_configs \
-         (id, owner_user_id, strategy_id, strategy_version, config_json) \
-         VALUES ($1, $2, $3, $4, $5)",
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, $2, $3, $4)",
     )
-    .bind(other_config_id)
     .bind(owner_b)
     .bind(fixture.input.strategy_snapshot().strategy_id())
     .bind(fixture.input.strategy_snapshot().strategy_version())
@@ -703,7 +698,6 @@ async fn canceled_before_owner_beta_publication_lock_has_no_outputs() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -713,7 +707,7 @@ async fn canceled_before_owner_beta_publication_lock_has_no_outputs() {
     .await
     .expect("seed cancellation owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let audit = role_pool(&db, "audit_writer", None).await;
     let worker = role_pool(&db, "worker", None).await;
     let app_queue = JobQueue::new(
@@ -826,7 +820,6 @@ async fn stale_swept_owner_beta_claim_cannot_publish_or_touch_run() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -836,7 +829,7 @@ async fn stale_swept_owner_beta_claim_cannot_publish_or_touch_run() {
     .await
     .expect("seed stale owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let worker = role_pool(&db, "worker", None).await;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(1)));
     let claim = queue
@@ -926,7 +919,6 @@ async fn owner_beta_recovery_exhaustion_mirrors_failed_run() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -936,7 +928,7 @@ async fn owner_beta_recovery_exhaustion_mirrors_failed_run() {
     .await
     .expect("seed exhausted owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let worker = role_pool(&db, "worker", None).await;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(1)));
     queue
@@ -1027,7 +1019,6 @@ async fn owner_beta_recovery_mirrors_unclaimed_cancellation() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -1040,7 +1031,7 @@ async fn owner_beta_recovery_mirrors_unclaimed_cancellation() {
     .await
     .expect("seed unclaimed cancellation owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let audit = role_pool(&db, "audit_writer", None).await;
     let app_queue = JobQueue::new(
         app.clone(),

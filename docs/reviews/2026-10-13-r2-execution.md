@@ -2211,3 +2211,24 @@ No local SQL/compiler/test/helper/provider/production operation or R2 acceptance
 Wave38 launched6fbc976/run38690484091 attempt1 at2026-10-15T06:06:33Z after
 remote SHA verification and all-event exact-head query0.230pins/197blobs match.
 No rerun/cancel/delegation; direct full recovery is pending.
+
+## Wave39 — I2-C02 after complete C01 failure recovery
+
+C01 candidate6fbc976/run38690484091 attempt1 completed FAILURE. All8 jobs,
+84 steps (80success/3failure/1skip),8 log hashes,7 checkout SHAs,230 pins and197
+blobs recovered. Existing99 Rust/6 chart/3 transport, strict Clippy, bootstrap83
+and PG0060 apply/rerun/roles/rollback passed at their observed stages. New daily
+workspace tests16PASS/16FAIL,28 legacy failures and isolated UUID compilation
+failure keep I2 open. Dedicated PG32/73 and later11 labels were NOT_EXECUTED;
+workspace73 subcase rows remain unprinted/UNKNOWN.
+
+Coordinator source corrections: qualify manifest aggregate alias; return from
+non-daily/unreserved jobs consistency events before authority/jobs access;
+stringify three UUID JSON values; preserve app-role config creation using DB
+allocated IDs in the six publication fixtures. This adds only that fixture file
+to the two-source correction scope. All guards/grants/32names/73subcases and118
+old migrations remain. Direct coordinator disposition, no worker/delegation.
+See the C02 source report and preserved C01 result. Scoped rustfmt/whitespace
+pass; no local executable DB/compiler/test evidence. Next: freeze Wave39 inputs,
+query all-event exact-head runs and remote SHA, then one new hosted attempt.
+No old run rerun/cancel. R2-04/09 and all subsequent gates remain open.

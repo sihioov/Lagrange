@@ -12770,7 +12770,7 @@ async fn daily_0060_evidence_or_queue_case(db: &Daily0060Db, name: &str) -> Dail
             if name == "admission_transport" {
                 let mut variants = Vec::new();
                 let mut changed = input.clone();
-                changed["owner_user_id"] = json!(db.owner_id);
+                changed["owner_user_id"] = json!(db.owner_id.to_string());
                 variants.push(changed);
                 let mut changed = input.clone();
                 changed["admission"]["counts"]["bar_count"] = json!(26982);
@@ -13407,7 +13407,7 @@ async fn daily_0060_queue_case(db: &Daily0060Db, name: &str) -> Daily0060Result 
             assert_eq!(db.reserve(config, &input).await?.2, "BLOCKED");
         }
         "direct_daily_spoof" => {
-            let payload = json!({"schema":"owner-beta-daily-recommendation-v1","run_id":Uuid::new_v4(),"strategy_config_id":config,"as_of":input["manifest"]["range_end"],
+            let payload = json!({"schema":"owner-beta-daily-recommendation-v1","run_id":Uuid::new_v4().to_string(),"strategy_config_id":config.to_string(),"as_of":input["manifest"]["range_end"],
                 "input":{"kind":"owner_beta_daily_etf11_price_only_v1","content_sha256":input["admission"]["content_sha256"],"manifest_sha256":input["admission"]["manifest_sha256"],"admission_sha256":input["admission_sha256"],"policy_sha256":input["admission"]["policy_sha256"]},
                 "strategy":daily_0060_strategy(),"trigger":{"kind":"DAILY","version":"owner-beta-daily-trigger-v1","config_epoch":0,"activation_epoch":1}});
             let key = format!(
