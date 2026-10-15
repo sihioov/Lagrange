@@ -4,6 +4,7 @@
 
 pub mod calendar;
 mod contract;
+pub mod reconstruct;
 pub mod source;
 pub mod verify;
 

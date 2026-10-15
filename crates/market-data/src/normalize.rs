@@ -810,7 +810,7 @@ fn normalize_bars(
     )
 }
 
-fn canonical_bar(
+pub(crate) fn canonical_bar(
     file_name: &str,
     row: &Map<String, Value>,
     instrument: &str,
@@ -1925,7 +1925,7 @@ fn canonical_instrument(symbol: &str) -> String {
     format!("{symbol}.KRX")
 }
 
-fn parse_kis_date(
+pub(crate) fn parse_kis_date(
     kind: ResponseKind,
     file_name: &str,
     field: &str,

@@ -1584,7 +1584,9 @@ fn cash_sort_key(row: &DailyCashDividendRowV1Wire) -> Result<CashRowSortKey, Dai
     ))
 }
 
-fn canonicalize_action(action: &mut DailyActionChainV1Wire) -> Result<(), DailyWireErrorV1> {
+pub(super) fn canonicalize_action(
+    action: &mut DailyActionChainV1Wire,
+) -> Result<(), DailyWireErrorV1> {
     for page in &mut action.pages {
         canonicalize_file(page);
     }
@@ -1825,7 +1827,7 @@ pub(super) fn canonical_bytes_limited<T: Serialize>(
     }
 }
 
-fn fixed_limits() -> DailyResourceLimitsV1Wire {
+pub(super) fn fixed_limits() -> DailyResourceLimitsV1Wire {
     DailyResourceLimitsV1Wire {
         max_policy_bytes: 262_144,
         max_manifest_bytes: 16_777_216,
@@ -2417,7 +2419,7 @@ fn terminal_origin_timestamp(file: &DailyFileEvidenceV1Wire) -> DailyWireTimesta
         .unwrap_or(file.retrieved_at)
 }
 
-fn validate_file_request_for_symbol(
+pub(super) fn validate_file_request_for_symbol(
     file: &DailyFileEvidenceV1Wire,
     kind: DailyEvidenceKindV1,
     symbol: &str,
@@ -2643,7 +2645,7 @@ fn validate_cash_rows(
     )
 }
 
-fn validate_action_chain(
+pub(super) fn validate_action_chain(
     action: &DailyActionChainV1Wire,
     previous_frontier: TradingDate,
     session_date: TradingDate,
@@ -3839,6 +3841,13 @@ pub fn daily_normalized_source_preimage_v1(
 pub fn daily_cash_dividend_rows_preimage_v1(
     value: &[DailyCashDividendRowV1Wire],
 ) -> Result<Vec<u8>, DailyWireErrorV1> {
+    let rows = canonical_cash_rows(value)?;
+    canonical_bytes_limited(&rows, fixed_limits().max_manifest_bytes)
+}
+
+pub(super) fn canonical_cash_rows(
+    value: &[DailyCashDividendRowV1Wire],
+) -> Result<Vec<DailyCashDividendRowV1Wire>, DailyWireErrorV1> {
     check_cash_row_count(value.len())?;
     for row in value {
         validate_cash_row_scalars(row)?;
@@ -3854,8 +3863,7 @@ pub fn daily_cash_dividend_rows_preimage_v1(
             return Err(DailyWireErrorV1::DuplicateEntry);
         }
     }
-    let rows: Vec<_> = keyed.into_iter().map(|(_, row)| row).collect();
-    canonical_bytes_limited(&rows, fixed_limits().max_manifest_bytes)
+    Ok(keyed.into_iter().map(|(_, row)| row).collect())
 }
 
 /// Parses and canonicalizes the proof carried by `normalization.json`.

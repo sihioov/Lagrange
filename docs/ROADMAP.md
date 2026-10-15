@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-15 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
+| 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | 남은 I1b 가격·기준정보·기업행사 복원, 전체 source frontier와 artifact/admission/supply 구현. 원본 추적·달력 증명은 eb0e839의 [S3 인수](reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md)로 완료: CI 38711965495 attempt1 전체 성공, 새22개·기존 정규화37개 및 I2/R2 회귀 확인. I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
+| 다음 착수 항목 | Wave42 S4 가격·기준정보·기업행사 복원과 새32개 회귀 작성·[직접 소스 검토](reviews/2026-10-15-r2-daily-provider-reconstruction-source-review.md) 완료, 고정 후보 hosted CI 검증 대기. 다음은 전체 source frontier와 artifact/admission/supply. S3 eb0e839/CI38711965495 인수는 보존. I3–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -581,3 +581,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-15 | R2-04/09 | DOING 유지; I1b-S3 단일 후보 CI 시작 | eb0e839/38711965495 attempt1,262pins/215blobs, exact-head query0·원격 확인 후 한 번 dispatch | [회수 기록](reviews/2026-10-15-r2-daily-evidence-lineage-ci.md); 이전 결과 보존, 검증 대기 |
 
 | 2026-10-15 | R2-04/09 | DOING 유지; I1b-S3 구현·hosted 검증 완료 | eb0e839/38711965495 attempt1 전체 성공.262pins/215blobs/7checkout·8logs, 새22·정규화37·기존99·DB32/73·legacy28·chart6·transport3·bootstrap83·PG60×2/cleanup 대조 | [S3 인수](reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md); 다음 가격·기업행사 복원/frontier/admission, 전체 I1b·운영·Owner·3거래일은 미완료 |
+
+| 2026-10-15 | R2 전체 | DOING; Owner 지시로 Ralph 목표 활성화 | R2-01~09와 최종 C_R2 완료까지 연속 진행. 작은 완료마다 사용자 재지시를 기다리지 않으며 기존 권한·실행 제한과 실제 Owner/시간 경과 조건 유지 | 이 기록의 커밋. 시작점52cba24; 다음 I1b-S4 가격·기준정보·기업행사 오프라인 복원 |

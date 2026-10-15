@@ -25,6 +25,12 @@ Current execution: coordinator directly; further worker delegation prohibited
 
 ## Current accepted boundary — 2026-10-15
 
+Owner requested “R2 끝날때까지 랄프로 계속 진행해” on2026-10-15. The native
+continuation goal is active for R2-01~09/final C_R2, without a token budget.
+Continue dependency work after each bounded package; do not switch priority to R3
+or infer operational/Owner/market-time completion. Existing permissions and
+execution restrictions remain in force; no further worker delegation.
+
 - [x] **WP-4/I2 — migration0060 source and isolated hosted verification.**
   Completed2026-10-15; candidate `dee78c4531e1cb14eefd8abb3bf90189d382ca6e`;
   [acceptance](../../reviews/2026-10-15-r2-daily-sql-acceptance.md),
@@ -4170,3 +4176,20 @@ runtime UID/ACL, installer filesystem rollback, I6 diagrams before main,
 operational activation, Owner and three consecutive trading days/final C_R2
 remain open. Observation has not started. No active worker, background task or
 pending permission remains for S3; all historical evidence is preserved.
+
+## Wave42 — I1b-S4 provider reconstruction
+
+Baseline52cba24. Direct coordinator implementation follows the
+[bounded reconstruction contract](../../reviews/2026-10-15-r2-daily-provider-reconstruction-contract.md).
+Own new reconstruct.rs and daily_price_only_reconstruction.rs, plus narrow
+verify/contract/mod/normalize adapters. Implement price/reference and complete
+action-bundle reconstruction before freezing the next candidate. S3 and I2
+acceptance stay separate. No source/compiler/test acceptance is claimed yet.
+
+Wave42 source disposition: price/reference require exact11 coverage and original
+date; complete7/77 action bundles cover each civil cell, compare full row multisets
+and retain deterministic whole-chain witnesses. New32 Linux definitions cover
+boundaries and literal output bytes. Coordinator direct review, scoped2024format
+and whitespace passed; no independent or executable acceptance. Freeze inputs
+and exact definition names, then query all-event runs and remote SHA before one
+dispatch. S3/I2/R2 regressions and all eight jobs require full recovery.

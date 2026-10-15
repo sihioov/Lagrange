@@ -2330,3 +2330,23 @@ runtime UID/ACL, installer filesystem rollback, diagrams before main,
 operational activation, Owner use, three trading days and final C_R2 remain open.
 No observation period, active worker/background task or pending permission is
 claimed. Earlier I2/snapshot acceptance and all failures remain preserved.
+
+## 2026-10-15 — Ralph continuation and Wave42 start
+
+Owner explicitly requested continuous work until R2 completion. The native goal
+is active, with no requested token budget. Earlier R3 discussion does not change
+the R2 priority. Bounded package completion is not final C_R2; real Owner and
+three-trading-day evidence remain mandatory. Existing execution restrictions and
+the no-further-delegation boundary remain unchanged.
+
+From52cba24, coordinator starts [I1b-S4 provider reconstruction](2026-10-15-r2-daily-provider-reconstruction-contract.md).
+No source/hosted acceptance yet; no new CI, worker or operational action launched.
+
+### 2026-10-15 Wave42 S4 source disposition
+
+Ralph remains active through actual R2 completion. Direct source implementation
+adds offline bars/reference and complete action-bundle reconstruction with32 new
+Linux fixtures, all WRITTEN_UNEXECUTED. The six-path source scope and258 unchanged
+prior pins were inspected; standalone2024format/whitespace passed. Source/compiler/
+test acceptance is pending one exact-candidate hosted run and full recovery. See
+[source disposition](2026-10-15-r2-daily-provider-reconstruction-source-review.md).

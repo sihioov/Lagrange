@@ -40,6 +40,12 @@ pub enum DailyVerificationError {
     InvalidProviderJson,
     ProviderResponse,
     InvalidCalendar,
+    InvalidBars,
+    InvalidReference,
+    InvalidActions,
+    NonCashAction,
+    SourceCoverageGap,
+    SourceConflict,
     CalendarTargetMissing,
     CalendarConflict,
     CalendarCoverageGap,
@@ -64,6 +70,12 @@ impl DailyVerificationError {
             Self::InvalidProviderJson => "INVALID_PROVIDER_JSON",
             Self::ProviderResponse => "PROVIDER_RESPONSE",
             Self::InvalidCalendar => "INVALID_CALENDAR",
+            Self::InvalidBars => "INVALID_BARS",
+            Self::InvalidReference => "INVALID_REFERENCE",
+            Self::InvalidActions => "INVALID_ACTIONS",
+            Self::NonCashAction => "NONCASH_ACTION",
+            Self::SourceCoverageGap => "SOURCE_COVERAGE_GAP",
+            Self::SourceConflict => "SOURCE_CONFLICT",
             Self::CalendarTargetMissing => "CALENDAR_TARGET_MISSING",
             Self::CalendarConflict => "CALENDAR_CONFLICT",
             Self::CalendarCoverageGap => "CALENDAR_COVERAGE_GAP",
@@ -133,6 +145,16 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
         snapshot
             .lookup_exact(reference)
             .map_err(DailyVerificationError::Snapshot)
+    }
+
+    pub(super) fn kis_snapshot(
+        &self,
+    ) -> Result<&'snapshot CommittedRawSnapshot, DailyVerificationError> {
+        self.scopes
+            .iter()
+            .copied()
+            .find(|snapshot| snapshot.scope().provider() == "kis")
+            .ok_or(DailyVerificationError::InvalidContext)
     }
 }
 
