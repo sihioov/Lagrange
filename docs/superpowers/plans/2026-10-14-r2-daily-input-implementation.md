@@ -4549,3 +4549,18 @@ and2no-connection mode cases. Scope extension to one support file and PG lane is
 I4b publication/settlement test draft remains unregistered and excluded. No worker/local
 execution. Freeze direct-reviewed candidate, query existing exact-head all-event runs,
 verify remote equality, dispatch once and recover full evidence. Ralph continues.
+
+
+### Wave52 I4a single candidate launch — 2026-10-16 KST
+
+Candidate `d0536f6ab49cf429d1ab05b130d515469872c3d5`,
+[CI38764564342 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38764564342),
+created2026-10-15T15:55:22Z, CI/ci.yml/workflow_dispatch/excited-dolphin.
+All-event exact-head queries before/after push returned0; remote SHA matched.
+One dispatch only; propagation recovery returned exactly one matching run.
+447pins/310candidateblobs and14new named definitions frozen. DedicatedPG must
+prove14outer exits0/noSKIP plus all14daily schedule and8historical publish rows.
+Full terminal recovery pending; no source/compiler/test/runtime acceptance.
+Only unregistered I4b preparation and mutable tracking documents may change.
+Earlier failures and integrated independent review/runtime/Owner/3tradingdays/
+finalC_R2 remain open. No new worker/local project execution; Ralph continues.

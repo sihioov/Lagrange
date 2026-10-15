@@ -19,7 +19,7 @@ Wave49 `edeaa5d` / CI38750900179에서 fixture·Paper 시계 보정과 일일 pa
 나머지 결과는 전체 회수했다. Wave50 `1c82592` / CI38755069474 attempt1에서 해당 보정과
 I3 새 계산19/20·S5def36/37 통과, 기존 서비스 상태2개를 포함한 총4개 실패를 전체 회수했다.
 컴파일·strict Clippy·PG와 실제DB 발행8개는 통과했다. [실패 근거](reviews/2026-10-16-r2-daily-factor-target-ci.md)를 보존하고
-Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수해 [I3/S5cdef 범위별 인수](reviews/2026-10-16-r2-test-correction-ci-acceptance.md)를 완료했다. 423pins/302blobs/7checkout·계산21·artifact/continuation63·서비스 상태38·기존 회귀·PG13단계/발행8개를 대조했다. I4a 예약/승인 cycle 연결과 실제 역할 14개 검사 후보를 준비한다.
+Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수해 [I3/S5cdef 범위별 인수](reviews/2026-10-16-r2-test-correction-ci-acceptance.md)를 완료했다. 423pins/302blobs/7checkout·계산21·artifact/continuation63·서비스 상태38·기존 회귀·PG13단계/발행8개를 대조했다. I4a 후보 `d0536f6` / CI38764564342 attempt1을 한 번 실행했으며 전체 결과를 회수 중이다. 447pins/310blobs와 실제 역할 14개 검사는 고정, 아직 인수하지 않았다.
 
 | 항목 | 확인된 상태 |
 | --- | --- |
@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave52 I4a 일일 cycle/예약 소스 연결 및 실제 역할 검사. I4 전체·실제 승인 base 전체 흐름·통합 독립 검토·I5–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 단계 | Wave52 I4a CI38764564342 전체 결과 회수와 I4b 일일 정산 후속 준비. I4 전체·실제 승인 base 전체 흐름·통합 독립 검토·I5–I7·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
