@@ -30,7 +30,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave66 I5-C03 한 줄 보정의 새 후보 전체 검증 후I7/I6. 운영·Owner·3거래일·C_R2 미완료. |
+| 다음 단계 | Wave66 후보7704749/CI38818261699 attempt1 전체 결과 회수 후I7/I6. 운영·Owner·3거래일·C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3855,3 +3855,11 @@ names and cardinality/uniqueness/exit0/noSKIP unchanged. No new definitions.
 inventory5034/ec40abff, source report31/3148ee42.
 Whitespace PASS; no local project execution/delegation. Prepare one new exact
 candidate after all-event query0 and remote equality. I5 acceptance remains pending.
+
+Wave66 launch: candidate77047494433f08674e2d0127293cefa3c5446acb,
+CI38818261699 attempt1/workflow_dispatch/ci.yml/excited-dolphin, created22:36:30UTC.
+https://github.com/sihioov/Lagrange/actions/runs/38818261699
+Pre-push all-event head query0 at22:36:11.630786UTC;742pins/377committedblobs match,
+remoteabfca9c. Post-push remote exact/query0 at22:36:28.893520UTC, one dispatch
+issued22:36:30.580244UTC. No rerun/cancel/duplicate. Source/inputs frozen untilfull
+recovery. Later docsHEAD is not candidate. I5acceptance/I7/I6/runtime/Owner/3days/C_R2 open.
