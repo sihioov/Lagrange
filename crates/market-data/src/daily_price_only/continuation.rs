@@ -791,8 +791,11 @@ pub(super) mod tests {
     fn s5d_readback_preserves_entire_daily_prefix_and_new_grid() {
         let (old, _, mut next) = fixture();
         let prior = grid(&old.sessions);
-        let all = grid(&next.sessions);
+        let mut all = grid(&next.sessions);
         let bytes = encoded(&mut next, &all);
+        // The wire contract orders instrument/date, not universe declaration.
+        // Compare every decoded field in that exact canonical sequence.
+        all.sort_by_key(|bar| (bar.instrument_id.clone(), bar.session_date));
         assert_eq!(read_child_bars(&prior, &next, &bytes).unwrap(), all);
     }
     #[test]

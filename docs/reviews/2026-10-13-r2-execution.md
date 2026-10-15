@@ -2638,3 +2638,18 @@ queries before/after push returned0; remoteSHA matched before exactly one dispat
 alone is not actualDB evidence. Full result recovery pending; no source/compiler/test
 acceptance. Only unregistered I4 preparation and mutable tracking docs may change.
 I4–I7/integrated independent review/runtime/Owner/3tradingdays/finalC_R2 remain open.
+
+
+### Wave50 full failure recovery and Wave51 bounded correction — 2026-10-16 KST
+
+1c82592/38755069474 attempt1 FAILURE fully recovered:8jobs/8logs/7checkouts,
+399pins/296candidateblobs. I3 19PASS/1FAIL,S5def36PASS/1FAIL and2existingservice
+status failures. All other required groups,Clippy/format/web/Python/policy/PG pass;
+PG13exits0/noSKIP and8actualownerpublish named rows pass. Receipt4262lines
+SHA80fac796f6ff09c6548509bac62298505a7744b3af33909439027c36b9e2a236.
+Release frozen source for four-file test-only correction: daily compute expectations,
+continuation expected canonical order, service_status_reads and its test support
+for actual midnight/session-open behavior. Preserve production bytes and every
+prior failure. No new delegation/local execution. UnregisteredI4 drafts excluded.
+Freeze successor names/pins, query existing exact-head runs, remote equality, then
+one new CI. No source/runtime/Owner/finalC_R2 acceptance; Ralph continues.

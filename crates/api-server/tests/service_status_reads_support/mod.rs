@@ -973,6 +973,8 @@ pub async fn role_pool(url: &str) -> PgPool {
 /// one server call. Its captured DB clock is never replaced or passed by callers.
 /// Half-second margins and the measured observation delay bound distinguish the
 /// inside/outside cases without sleeps; this does not prove exact TTL equality.
+/// Immediately after KST midnight, an age-valid quote can still predate this
+/// session. Assert that independent denial instead of expecting previous-day live.
 pub async fn check_quote_sql_boundaries(
     harness: &Harness,
     app: &PgPool,
@@ -1171,9 +1173,20 @@ pub async fn check_quote_sql_boundaries(
         if row_value::<i64>(&row, "demand_count") != 1 {
             return Err("SQL timing or proof invalidity removed the demanded identity");
         }
+        let before_open = seeded_at - chrono::Duration::milliseconds(i64::from(provider_ms))
+            < stream.open_at
+            || seeded_at - chrono::Duration::milliseconds(i64::from(receipt_ms)) < stream.open_at;
+        if before_open {
+            if row_value::<i64>(&row, "live_count") != 0 {
+                return Err("quote before the current session open became live");
+            }
+            eprintln!("SERVICE_STATUS_TIMING_CASE:BEFORE_OPEN_DENIED");
+            continue;
+        }
         if row_value::<i64>(&row, "live_count") != expected_live {
             return Err(reason);
         }
+        eprintln!("SERVICE_STATUS_TIMING_CASE:IN_SESSION_EXPECTATION_MATCHED");
     }
     sqlx::raw_sql(
         "DROP FUNCTION public.service_status_test_quote_timing(

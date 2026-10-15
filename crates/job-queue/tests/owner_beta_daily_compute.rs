@@ -19,7 +19,8 @@ use job_queue::owner_beta::daily_target::{
     OWNER_BETA_DAILY_TARGET_SNAPSHOT_SCHEMA, build_daily_target_snapshot,
 };
 use job_queue::owner_beta::{
-    OwnerBetaPriceRecommendationInput, OwnerBetaStrategySnapshot, build_target_snapshot,
+    OwnerBetaPriceRecommendationInput, OwnerBetaStrategySnapshot, OwnerBetaTargetSnapshotError,
+    build_target_snapshot,
 };
 use job_queue::resolver::ResolvedConfig;
 use market_data::KR_ETF_CORE_SYMBOLS;
@@ -318,12 +319,16 @@ fn five_daily_strategies_preserve_historical_arithmetic_and_distinct_hashes() {
 }
 
 #[test]
-fn daily_relative_nulls_are_explicit_all_cash_without_forward_fill() {
+fn daily_relative_nulls_fail_closed_without_forward_fill() {
     let input = daily(&strategy(
         "relative_momentum",
         json!({"top_n":3,"lookback_months":12}),
     ));
     let mut snapshot = factors(&input, &["momentum_12_1"], None);
+    assert_eq!(
+        build_daily_target_snapshot(&input, &snapshot),
+        Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)
+    );
     let mut older = snapshot.rows.clone();
     for row in &mut older {
         row.date = "2026-08-28".into();
@@ -332,7 +337,52 @@ fn daily_relative_nulls_are_explicit_all_cash_without_forward_fill() {
     }
     snapshot.rows.splice(0..0, older);
     rehash(&mut snapshot);
+    assert_eq!(
+        build_daily_target_snapshot(&input, &snapshot),
+        Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)
+    );
+    let legacy_input = historical(input.strategy_snapshot());
+    assert_eq!(
+        build_target_snapshot(&legacy_input, &historical_factors(&legacy_input, &snapshot)),
+        Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)
+    );
+
+    // One current value enables exactly that identity. The ten earlier, larger
+    // values cannot fill the other current NULLs or compete for selection.
+    let current = snapshot
+        .rows
+        .iter_mut()
+        .find(|row| row.date == date().to_iso())
+        .unwrap();
+    current.raw = Some(1.0);
+    current.normalized = Some(0.0);
+    let selected = current.instrument.clone();
+    rehash(&mut snapshot);
     let target = build_daily_target_snapshot(&input, &snapshot).unwrap();
+    assert_eq!(target.items().len(), 11);
+    assert_eq!(target.cash_weight_ppm(), 0);
+    for item in target.items() {
+        assert_eq!(
+            item.target_weight_ppm(),
+            (item.instrument_id() == selected).then_some(1_000_000)
+        );
+    }
+}
+
+#[test]
+fn daily_trend_equal_averages_preserve_explicit_all_cash() {
+    let input = daily(&strategy(
+        "trend_following",
+        json!({"benchmark_instrument":"069500.KRX","fast_ma":100,"slow_ma":200}),
+    ));
+    let snapshot = factors(&input, &["trend_100", "trend_200"], Some(0.0));
+    let target = build_daily_target_snapshot(&input, &snapshot).unwrap();
+    let legacy_input = historical(input.strategy_snapshot());
+    let legacy =
+        build_target_snapshot(&legacy_input, &historical_factors(&legacy_input, &snapshot))
+            .unwrap();
+    assert_eq!(target.items(), legacy.items());
+    assert_eq!(target.portfolio_reasons(), legacy.portfolio_reasons());
     assert_eq!(target.cash_weight_ppm(), 1_000_000);
     assert!(
         target
@@ -344,7 +394,7 @@ fn daily_relative_nulls_are_explicit_all_cash_without_forward_fill() {
         target
             .portfolio_reasons()
             .iter()
-            .any(|r| r.code() == "ALL_CASH_NO_ELIGIBLE")
+            .any(|r| r.code() == "TREND_NEGATIVE_CASH")
     );
 }
 
