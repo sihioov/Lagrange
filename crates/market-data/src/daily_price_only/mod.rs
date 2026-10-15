@@ -1,9 +1,10 @@
 //! Daily ETF11 wire contracts and read-only, unapproved Raw evidence.
 //!
-//! Parsing, hashing, and capturing evidence convey no provider verification,
-//! admission, database, or runtime authority.
+//! Source verification is separate from admission, database, or runtime authority.
 
+pub mod calendar;
 mod contract;
 pub mod source;
+pub mod verify;
 
 pub use contract::*;

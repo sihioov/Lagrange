@@ -4125,3 +4125,9 @@ three consecutive trading days and final C_R2 remain open. Observation has not
 started. No active worker/background task or pending permission remains for I2.
 
 [I2 acceptance](../../reviews/2026-10-15-r2-daily-sql-acceptance.md).
+
+## Wave41 — I1b-S3 original lineage and calendar reconstruction
+
+Coordinator implementation starts from440d4a8 under the [bounded contract](../../reviews/2026-10-15-r2-daily-evidence-lineage-contract.md). Cross-scope borrowed snapshots, exact original/copy validation, pure calendar projection, deterministic reconstructed documents and continuous civil-date proofs are this slice. Accepted S2 and I2 remain frozen. No worker/delegation or local project execution. Scoped rustfmt2024 and inert source inspection only before one new exact-candidate hosted CI. Bars/reference/actions and admission remain subsequent I1b work; all R2 runtime/Owner/final gates remain open.
+
+Wave41 source candidate:22 Linux definitions and37 affected normalization names fixed; six source files. Scoped rustfmt2024/whitespace pass. Coordinator disposition only; compiler/tests pending.247 unchanged Wave40 pins preserved; snapshot/storage/0060/workflow unchanged. No local project execution or delegation.

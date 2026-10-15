@@ -2293,3 +2293,9 @@ three consecutive trading days and final C_R2 remain open. Observation has not
 started. No active worker/background task or pending permission remains for I2.
 
 [I2 acceptance](2026-10-15-r2-daily-sql-acceptance.md).
+
+## 2026-10-15 — Wave41 I1b-S3 starts
+
+I2 bounded acceptance remains at dee78c4/run38696988981. Coordinator starts the [I1b lineage/calendar slice](2026-10-15-r2-daily-evidence-lineage-contract.md) from440d4a8, with no worker or local executable verification. Source and test acceptance pending; remaining I1b and all later R2 gates stay open.
+
+Wave41 source candidate:22 Linux definitions and37 affected normalization names fixed; six source files. Scoped rustfmt2024/whitespace pass. Coordinator disposition only; compiler/tests pending.247 unchanged Wave40 pins preserved; snapshot/storage/0060/workflow unchanged. No local project execution or delegation.

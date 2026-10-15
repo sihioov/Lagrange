@@ -1555,6 +1555,19 @@ fn canonicalize_file(file: &mut DailyFileEvidenceV1Wire) {
     }
 }
 
+/// Internal verifier adapter. This uses the same D4 validation and encoder;
+/// it does not turn the returned wire value into an approved artifact.
+pub(super) fn canonical_file_evidence(
+    file: &DailyFileEvidenceV1Wire,
+) -> Result<(DailyFileEvidenceV1Wire, Vec<u8>), DailyWireErrorV1> {
+    preflight_file(file)?;
+    let mut file = file.clone();
+    canonicalize_file(&mut file);
+    validate_file_evidence(&file)?;
+    let bytes = canonical_bytes_limited(&file, fixed_limits().max_manifest_bytes)?;
+    Ok((file, bytes))
+}
+
 fn canonicalize_key_set(keys: &mut [DailyFileKeyV1Wire]) {
     keys.sort_by_key(key_sort_parts);
 }
@@ -1795,7 +1808,7 @@ impl Write for BoundedVecWriter {
     }
 }
 
-fn canonical_bytes_limited<T: Serialize>(
+pub(super) fn canonical_bytes_limited<T: Serialize>(
     value: &T,
     limit: u64,
 ) -> Result<Vec<u8>, DailyWireErrorV1> {
@@ -2457,7 +2470,9 @@ fn validate_file_request_for_symbol(
     )
 }
 
-fn validate_calendar_request(file: &DailyFileEvidenceV1Wire) -> Result<(), DailyWireErrorV1> {
+pub(super) fn validate_calendar_request(
+    file: &DailyFileEvidenceV1Wire,
+) -> Result<(), DailyWireErrorV1> {
     validate_file_evidence(file)?;
     invalid_if(
         file.kind != DailyEvidenceKindV1::Calendar,
