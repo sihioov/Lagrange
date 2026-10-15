@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: I4 실행 연결은 Wave62 범위별 인수 완료. I5는 Wave64의 두 테스트 결함을 Wave65에서 보정했으며, 새 후보 전체 검증을 준비한다. [실패 회수](reviews/2026-10-16-r2-daily-api-c01-ci.md), [보정 소스](reviews/2026-10-16-r2-daily-api-c02-source.md). 아래 단계별 기록은 당시 증거를 보존한다.
+현재: Wave65의 I5 Rust25·Web6·실제DB15가 통과했다. PG 결과 이름의 숫자503 누락으로 전체 검증은 실패해 [Wave66 한 줄 보정](reviews/2026-10-16-r2-daily-api-c03-source.md)을 준비했다. [전체 회수](reviews/2026-10-16-r2-daily-api-c02-ci.md). 아래 날짜별 기록은 과거 증거를 보존한다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
@@ -30,7 +30,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave65 I5-C02 후보abfca9c/CI38815899362 attempt1 실행 중. 두 테스트 파일 보정·722pins/375blobs, 기존 실행0·원격 일치 후1회 dispatch. 전체 결과 회수 후I7/I6; 운영·Owner·3거래일·C_R2 미완료. |
+| 다음 단계 | Wave66 I5-C03 한 줄 보정의 새 후보 전체 검증 후I7/I6. 운영·Owner·3거래일·C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3828,3 +3828,30 @@ issued22:15:54.192971UTC. No redispatch/rerun/cancel. Sources and inputs frozen;
 full8job/log/name recovery required. No I5/source/runtime acceptance yet.
 Later documentation HEAD is not the pinned source candidate. I7 preparation remains
 read-only/drafts; I7/I6/independent review/runtime/Owner/three trading days/C_R2 open.
+
+### Wave65 recovery; Wave66 I5-C03 — 2026-10-16 KST
+
+abfca9c/run38815899362 attempt1 FAILURE fully recovered:8jobs/logs/7checkout,
+722pins/375blobs. Workspace I5Rust25/25 and allcarriedgroups+chart6 PASS;
+Web6new/34supervisor/121OFF+14stream PASS,noSKIP/flaky/retry. StrictClippy/format/
+Python/policy PASS. All18PGcommands exit0/noSKIP and actualdailyAPI15 names PASS.
+PG validator failed because replay [a-z_]+ drops two names containing503;
+canonical13/15 guard correctly refused acceptance. Full PG loghash2c6f28ba,
+actual row anchors1935/1937; receipt8693/159718d2 and supplement211/24ba4eeb.
+PGothernamed groups/62checksums twice/noop/roles/0039/catalog/cleanup PASS;
+nestedunprintedhelperrows/exits UNKNOWN. Original failure remains preserved.
+
+Wave66I5-C03 owns only deploy/db/integration-validation/validate.sh, one regexp
+allowingdigits after a valid initial character. Preserveexact15/uniqueness/
+cardinality/exit0/noSKIP and every test assertion. No product/role/workflow change.
+No localprojectexecution/delegation; one freshcandidateCI afterreview/freeze and
+exact-headall-eventquery0/remotematch. I7 drafts remain RAMonly. I7/I6/independent
+review/real approved-base threeUID/G4/Owner/3tradingdays/C_R2 remainopen; Ralphcontinues.
+Report: docs/reviews/2026-10-16-r2-daily-api-c02-ci.md.
+
+Wave66 I5-C03 freeze: exact one-line harness replacement reviewed; all15 required
+names and cardinality/uniqueness/exit0/noSKIP unchanged. No new definitions.
+742pins (721prior unchanged), inputs3000/9286375b,
+inventory5034/ec40abff, source report31/3148ee42.
+Whitespace PASS; no local project execution/delegation. Prepare one new exact
+candidate after all-event query0 and remote equality. I5 acceptance remains pending.

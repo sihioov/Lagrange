@@ -3296,3 +3296,30 @@ issued22:15:54.192971UTC. No redispatch/rerun/cancel. Sources and inputs frozen;
 full8job/log/name recovery required. No I5/source/runtime acceptance yet.
 Later documentation HEAD is not the pinned source candidate. I7 preparation remains
 read-only/drafts; I7/I6/independent review/runtime/Owner/three trading days/C_R2 open.
+
+### Wave65 recovery; Wave66 I5-C03 — 2026-10-16 KST
+
+abfca9c/run38815899362 attempt1 FAILURE fully recovered:8jobs/logs/7checkout,
+722pins/375blobs. Workspace I5Rust25/25 and allcarriedgroups+chart6 PASS;
+Web6new/34supervisor/121OFF+14stream PASS,noSKIP/flaky/retry. StrictClippy/format/
+Python/policy PASS. All18PGcommands exit0/noSKIP and actualdailyAPI15 names PASS.
+PG validator failed because replay [a-z_]+ drops two names containing503;
+canonical13/15 guard correctly refused acceptance. Full PG loghash2c6f28ba,
+actual row anchors1935/1937; receipt8693/159718d2 and supplement211/24ba4eeb.
+PGothernamed groups/62checksums twice/noop/roles/0039/catalog/cleanup PASS;
+nestedunprintedhelperrows/exits UNKNOWN. Original failure remains preserved.
+
+Wave66I5-C03 owns only deploy/db/integration-validation/validate.sh, one regexp
+allowingdigits after a valid initial character. Preserveexact15/uniqueness/
+cardinality/exit0/noSKIP and every test assertion. No product/role/workflow change.
+No localprojectexecution/delegation; one freshcandidateCI afterreview/freeze and
+exact-headall-eventquery0/remotematch. I7 drafts remain RAMonly. I7/I6/independent
+review/real approved-base threeUID/G4/Owner/3tradingdays/C_R2 remainopen; Ralphcontinues.
+Report: docs/reviews/2026-10-16-r2-daily-api-c02-ci.md.
+
+Wave66 I5-C03 freeze: exact one-line harness replacement reviewed; all15 required
+names and cardinality/uniqueness/exit0/noSKIP unchanged. No new definitions.
+742pins (721prior unchanged), inputs3000/9286375b,
+inventory5034/ec40abff, source report31/3148ee42.
+Whitespace PASS; no local project execution/delegation. Prepare one new exact
+candidate after all-event query0 and remote equality. I5 acceptance remains pending.

@@ -1539,7 +1539,7 @@ run_db_test() {
   fi
   if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ]; then
     while IFS= read -r row; do
-      if [[ "$row" =~ ^test[[:space:]]([a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
+      if [[ "$row" =~ ^test[[:space:]]([a-z_][a-z0-9_]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
         replay_rows+=("$name:$actual")
         printf 'PG_DB_TEST_ROW:%s:%s:%s\n' "$label" "$name" "$actual"

@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave65 I5-C02 후보abfca9c/CI38815899362 attempt1 실행 중. 두 테스트 파일 보정·722pins/375blobs, 기존 실행0·원격 일치 후1회 dispatch. 전체 결과 회수 후I7/I6; 운영·Owner·3거래일·C_R2 미완료. |
+| 다음 착수 항목 | Wave65 전체 회수: I5Rust25·Web6·실제DB15 통과, PG결과 이름의 숫자503 누락으로 검증기 실패. Wave66I5-C03 한 줄 보정 후새 후보1회 검증, 다음I7/I6. 운영·Owner·3거래일·C_R2 미완료. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -266,7 +266,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  DOING — 2026-10-16, [Wave62 실행 연결](reviews/2026-10-16-r2-daily-runtime-connection-ci.md)은 범위별 인수했다. [Wave64 I5 CI](reviews/2026-10-16-r2-daily-api-c01-ci.md)는 새 Rust24/25·기존 회귀·strict lint 통과, 테스트 측 DB조회1건과 Web타입5곳으로 실패했다. [Wave65 두 테스트 파일 보정](reviews/2026-10-16-r2-daily-api-c02-source.md)을 검토·고정했으며 새 후보 전체 CI가 다음 단계다. I5 인수·I7 화면·I6 설치/격리·독립 통합 리뷰·운영·Owner·3거래일은 미완료이고 관찰은 시작 전이다.
+  DOING — 2026-10-16, [Wave65 전체 회수](reviews/2026-10-16-r2-daily-api-c02-ci.md): I5 Rust25·Web6·실제DB15와 기존 회귀 통과. 결과 이름에 포함된 숫자503을 검증기가 누락해 전체 인수는 보류했다. [Wave66 한 줄 보정](reviews/2026-10-16-r2-daily-api-c03-source.md) 후새 후보 CI가 다음이다. I7화면·I6설치/격리·독립 통합 리뷰·운영·Owner·3거래일은 미완료이며 관찰은 시작 전이다.
   채택 당시 기록 — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했다. [D5/D6 설계](reviews/2026-10-14-r2-daily-input-amendments-review.md)와 [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md)를 기준으로 I1a/I0a 및 I0b/I1b-S1·호출부 보정을 진행했다. 후보c0ac599의 [최종 CI](reviews/2026-10-14-r2-caller-role-raw-ci.md)에서7개 실행 job/required,49개 Rust·chart6 직접 PASS, Python suite485 pass/10 skip/7 warnings, Web/PG59 통과를 대조해 부분 소스와 hosted 검증을 인수했다. 과거929fcd6 부분 성공과 f9 실패·DB3/Raw5 및 후속 parser 지적/수정은 실행 기록과 변경 이력에 보존한다. 직접 로그인 helper의 actor GUC·연결 수·권한 거부, negative bootstrap/rollback,0060·전체 snapshot/입력·운영·Owner 인수는 남는다. 다음 bounded I0c/S2-D는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)을 따른다.
   이전 검증 — 2026-10-15, I2 migration0060 구현·격리 hosted 검증 완료 — `dee78c4`의 [CI 38696988981](reviews/2026-10-15-r2-daily-sql-c03-ci.md) attempt1 전체 성공. 249pins/204blobs/7checkout, DB32·세부73·실제 DB12단계와 회귀를 대조해 [I2를 범위 한정 인수](reviews/2026-10-15-r2-daily-sql-acceptance.md)했다.
   이전 검증 — 2026-10-15, `302f29a`의 [I1b-S4 복원 인수](reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md) 완료: CI38725299504 attempt1 전체 성공, 새32개·회귀·PG·strict lint와276pins/223blobs/7checkout 대조. 다음은 전체 소스 탐색/변경 감지, protected prefix와 artifact/admission/supply. 앞선 `eb0e839`의 [I1b-S3 원본 추적·달력 증명](reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md) 구현·hosted 검증 인수. CI 38711965495 attempt1의 8개 job 성공, 262pins/215blobs/7checkout·새22개·기존 정규화37개와 I2/R2 회귀를 대조했다. 다음은 가격·기준정보·기업행사 복원, 전체 source frontier와 artifact/admission/supply다. 전체 I1b, I3–I7·최종 독립 통합 리뷰·운영 UID/ACL·installer 파일시스템 rollback·Owner·연속 3거래일·최종 C_R2는 미완료이며 관측 기간은 아직 시작하지 않았다.
@@ -291,7 +291,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   하루라도 실패하면 원인 수정 후 연속 관찰을 다시 시작한다.
 - [ ] **R2-09 — 첫 베타 릴리스 인수.** exact revision·manifest·모드, 운영 적용, health·백업/복구
   근거와 정상 Owner 사용 결과를 묶는다. 운영 확인 결과를 후속 문서 커밋으로 남긴다.
-  DOING — 2026-10-16, [Wave62 실행 연결](reviews/2026-10-16-r2-daily-runtime-connection-ci.md)은 범위별 인수했다. [Wave64 I5 CI](reviews/2026-10-16-r2-daily-api-c01-ci.md)는 새 Rust24/25·기존 회귀·strict lint 통과, 테스트 측 DB조회1건과 Web타입5곳으로 실패했다. [Wave65 두 테스트 파일 보정](reviews/2026-10-16-r2-daily-api-c02-source.md)을 검토·고정했으며 새 후보 전체 CI가 다음 단계다. I5 인수·I7 화면·I6 설치/격리·독립 통합 리뷰·운영·Owner·3거래일은 미완료이고 관찰은 시작 전이다.
+  DOING — 2026-10-16, [Wave65 전체 회수](reviews/2026-10-16-r2-daily-api-c02-ci.md): I5 Rust25·Web6·실제DB15와 기존 회귀 통과. 결과 이름에 포함된 숫자503을 검증기가 누락해 전체 인수는 보류했다. [Wave66 한 줄 보정](reviews/2026-10-16-r2-daily-api-c03-source.md) 후새 후보 CI가 다음이다. I7화면·I6설치/격리·독립 통합 리뷰·운영·Owner·3거래일은 미완료이며 관찰은 시작 전이다.
   이전 검증 — 2026-10-15, [I2 인수](reviews/2026-10-15-r2-daily-sql-acceptance.md)를 보존하고 `eb0e839`의 [I1b-S3 인수](reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md)를 추가했다. CI 38711965495 attempt1 전체 성공과 새22개·기존 정규화37개·DB32/73 등 회귀를 확인했다. 남은 I1b 복원/admission/supply, I3–I7·최종 독립 통합 리뷰·운영 UID/ACL·installer 파일시스템 rollback·Owner·연속 3거래일·최종 C_R2는 미완료다. 운영 관측 기간은 아직 시작하지 않았다.
 
   이전 검증 — 2026-10-16, [Wave51 인수](reviews/2026-10-16-r2-test-correction-ci-acceptance.md)를 추가했다. Wave53 실제 역할 스케줄/실패 복구 검증은 통과했으나 웹 E2E 실패가 남았다. Wave54 일일 성공 저장과 진단 보완을 진행하며 최종 릴리스·Owner·3거래일 인수는 열려 있다.
@@ -1015,3 +1015,30 @@ issued22:15:54.192971UTC. No redispatch/rerun/cancel. Sources and inputs frozen;
 full8job/log/name recovery required. No I5/source/runtime acceptance yet.
 Later documentation HEAD is not the pinned source candidate. I7 preparation remains
 read-only/drafts; I7/I6/independent review/runtime/Owner/three trading days/C_R2 open.
+
+### Wave65 recovery; Wave66 I5-C03 — 2026-10-16 KST
+
+abfca9c/run38815899362 attempt1 FAILURE fully recovered:8jobs/logs/7checkout,
+722pins/375blobs. Workspace I5Rust25/25 and allcarriedgroups+chart6 PASS;
+Web6new/34supervisor/121OFF+14stream PASS,noSKIP/flaky/retry. StrictClippy/format/
+Python/policy PASS. All18PGcommands exit0/noSKIP and actualdailyAPI15 names PASS.
+PG validator failed because replay [a-z_]+ drops two names containing503;
+canonical13/15 guard correctly refused acceptance. Full PG loghash2c6f28ba,
+actual row anchors1935/1937; receipt8693/159718d2 and supplement211/24ba4eeb.
+PGothernamed groups/62checksums twice/noop/roles/0039/catalog/cleanup PASS;
+nestedunprintedhelperrows/exits UNKNOWN. Original failure remains preserved.
+
+Wave66I5-C03 owns only deploy/db/integration-validation/validate.sh, one regexp
+allowingdigits after a valid initial character. Preserveexact15/uniqueness/
+cardinality/exit0/noSKIP and every test assertion. No product/role/workflow change.
+No localprojectexecution/delegation; one freshcandidateCI afterreview/freeze and
+exact-headall-eventquery0/remotematch. I7 drafts remain RAMonly. I7/I6/independent
+review/real approved-base threeUID/G4/Owner/3tradingdays/C_R2 remainopen; Ralphcontinues.
+Report: docs/reviews/2026-10-16-r2-daily-api-c02-ci.md.
+
+Wave66 I5-C03 freeze: exact one-line harness replacement reviewed; all15 required
+names and cardinality/uniqueness/exit0/noSKIP unchanged. No new definitions.
+742pins (721prior unchanged), inputs3000/9286375b,
+inventory5034/ec40abff, source report31/3148ee42.
+Whitespace PASS; no local project execution/delegation. Prepare one new exact
+candidate after all-event query0 and remote equality. I5 acceptance remains pending.
