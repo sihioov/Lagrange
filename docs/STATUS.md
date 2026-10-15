@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave68 I7-C01 보정 후보3e4cdb3/CI38823547944 attempt1 실행 중. [Wave67 실패](reviews/2026-10-16-r2-daily-web-ci.md)는 보존하며 전체 결과 회수 전 인수하지 않는다. 이후I6 설치·격리·다이어그램. 운영·Owner·3거래일 미완료. 아래 날짜별 기록은 과거 증거다.
+현재: Wave68 I7-C01의 전체 실패 결과를 [회수](reviews/2026-10-16-r2-daily-web-c01-ci.md)했다. Rust·DB·strict lint/UI18 통과와 브라우저2실패를 구분하고, Wave69 C02의 fixture/대기/진단4파일을 보정한다. 이후I6·운영·Owner·3거래일·C_R2는 미완료다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
@@ -30,7 +30,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave68 I7-C01 전체 CI 회수 후I6. 운영·Owner·3거래일·C_R2 미완료. |
+| 다음 단계 | Wave69 I7-C02 후속 후보 검증, 이어서I6. 운영·Owner·3거래일·C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3951,3 +3951,32 @@ Expected18UI/8newbrowser, owner11 total,129OFF/14stream,34supervisor,6carriedWeb
 all priorRust/PG targets remain required. Reporting bound00:56:08UTC; no daemon
 outage guarantee. Later documentationHEAD is separate from pinned candidate.
 No compiler/test acceptance yet. I6/G4/Owner/3tradingdays/finalC_R2 remainopen.
+
+### Wave68 full failure recovery; Wave69 I7-C02 — 2026-10-16 KST
+
+3e4cdb3/CI38823547944 attempt1 fully recovered:8terminal/full logs,7checkouts,
+815pins/415candidateblobs. Six execution jobs passed; Web/required failed.
+All18UI,6carriedWeb,34supervisor passed;129OFF had127passed/1failed/1timedOut,
+14stream passed, no skip/retry/flaky and cleanup/reservation passed.
+FAILED fixture omits required error_code; timeout's exact operation remains
+UNKNOWN. Two unbounded test waits identified statically, not claimed as cause.
+[Full recovery](reviews/2026-10-16-r2-daily-web-c01-ci.md) preserves all evidence.
+
+Wave69 I7-C02 owns only recommendation-fixture.mjs, Owner browser spec and the
+candidate-web-e2e runner/supervisor test pair, as listed in private ownership.
+Correct fixture code with strict-schema negatives, bounded actual late response
+and configuration isolation, allowlisted source-location diagnostics/hostile
+tests. All existing definition names and acceptance guards remain required.
+No product/backend change, local execution, worker or new CI yet. I6, integrated
+review, actual approved-base/threeUID, G4/Owner/3tradingdays/finalC_R2 stay open.
+
+Wave69 I7-C02 frozen:4 exact test/fixture/diagnostic paths. Failed detail now
+satisfies the unchanged schema; bounded real response/cancellation handshakes
+retain all config/date assertions. Allowlisted failed-attempt source positions
+preserve raw-output secrecy and strict runner result/inventory/cleanup checks.
+All18UI/8newbrowser/11Owner/34supervisor names retained,129OFF/14stream required.
+834pins/811prior unchanged.
+Inputs3400/160a445b, inventory5321/a0a3ce62,
+report49/2d2ef43e.
+Direct source review only; no local project execution or new acceptance.
+I6/actual approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.

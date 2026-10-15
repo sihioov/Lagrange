@@ -3419,3 +3419,32 @@ Expected18UI/8newbrowser, owner11 total,129OFF/14stream,34supervisor,6carriedWeb
 all priorRust/PG targets remain required. Reporting bound00:56:08UTC; no daemon
 outage guarantee. Later documentationHEAD is separate from pinned candidate.
 No compiler/test acceptance yet. I6/G4/Owner/3tradingdays/finalC_R2 remainopen.
+
+### Wave68 full failure recovery; Wave69 I7-C02 — 2026-10-16 KST
+
+3e4cdb3/CI38823547944 attempt1 fully recovered:8terminal/full logs,7checkouts,
+815pins/415candidateblobs. Six execution jobs passed; Web/required failed.
+All18UI,6carriedWeb,34supervisor passed;129OFF had127passed/1failed/1timedOut,
+14stream passed, no skip/retry/flaky and cleanup/reservation passed.
+FAILED fixture omits required error_code; timeout's exact operation remains
+UNKNOWN. Two unbounded test waits identified statically, not claimed as cause.
+docs/reviews/2026-10-16-r2-daily-web-c01-ci.md preserves all evidence.
+
+Wave69 I7-C02 owns only recommendation-fixture.mjs, Owner browser spec and the
+candidate-web-e2e runner/supervisor test pair, as listed in private ownership.
+Correct fixture code with strict-schema negatives, bounded actual late response
+and configuration isolation, allowlisted source-location diagnostics/hostile
+tests. All existing definition names and acceptance guards remain required.
+No product/backend change, local execution, worker or new CI yet. I6, integrated
+review, actual approved-base/threeUID, G4/Owner/3tradingdays/finalC_R2 stay open.
+
+Wave69 I7-C02 frozen:4 exact test/fixture/diagnostic paths. Failed detail now
+satisfies the unchanged schema; bounded real response/cancellation handshakes
+retain all config/date assertions. Allowlisted failed-attempt source positions
+preserve raw-output secrecy and strict runner result/inventory/cleanup checks.
+All18UI/8newbrowser/11Owner/34supervisor names retained,129OFF/14stream required.
+834pins/811prior unchanged.
+Inputs3400/160a445b, inventory5321/a0a3ce62,
+report49/2d2ef43e.
+Direct source review only; no local project execution or new acceptance.
+I6/actual approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.

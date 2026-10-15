@@ -1478,6 +1478,28 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
     state = safe_enum(outcome.state, {"passed", "running"} | {
         code.lower() for code in known_errors
     }, "other_failure")
+
+    def attempt(row: Mapping[str, Any], case_file: str) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "status": safe_enum(row.get("status"), attempt_statuses),
+            "retry": count(row.get("retry", 0)),
+        }
+        location = row.get("errorLocation")
+        if result["status"] in {"failed", "timedOut", "interrupted"} and isinstance(location, dict):
+            source = location.get("file")
+            line, column = count(location.get("line")), count(location.get("column"))
+            # Emit only a known repository-relative source identity and numbers.
+            # Error messages, stacks, code frames and arbitrary path prefixes never cross.
+            if (
+                case_file in files
+                and isinstance(source, str)
+                and (source == case_file or source.endswith("/apps/web/" + case_file))
+                and line is not None and line > 0
+                and column is not None and column > 0
+            ):
+                result["error_location"] = {"file": case_file, "line": line, "column": column}
+        return result
+
     cases = []
     for case in outcome.cases[:1000]:
         cases.append({
@@ -1492,10 +1514,7 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
             "expected_status": safe_enum(case.expected_status, attempt_statuses),
             "attempt_count": len(case.results),
             "attempts": [
-                {
-                    "status": safe_enum(row.get("status"), attempt_statuses),
-                    "retry": count(row.get("retry", 0)),
-                }
+                attempt(row, case.key.file)
                 for row in case.results[:16]
             ],
         })

@@ -1781,7 +1781,11 @@ while True: time.sleep(0.05)
         good = runner.Case(runner.CaseKey("chromium", runner.STOCK_BETA_FILE, 42, "good fixture", "id1"),
                            (), "expected", "passed", ({"status": "passed", "retry": 0},), ())
         failed = runner.Case(runner.CaseKey("chromium", runner.STOCK_BETA_FILE, 56, "failed fixture", "id2"),
-                             (), "unexpected", "passed", ({"status": "timedOut", "retry": 0},), ())
+                             (), "unexpected", "passed",
+                             ({"status": "timedOut", "retry": 0,
+                               "errorLocation": {"file": "/private/checkout/apps/web/" + runner.STOCK_BETA_FILE,
+                                                 "line": 61, "column": 9},
+                               "error": {"message": "PRIVATE_ERROR", "stack": "PRIVATE_STACK"}},), ())
         outcome = runner.LaneOutcome("off", "command_failed", 1, 2, 1, 0, 0,
                                      "COMMAND_FAILED", True, cases=[good, failed])
         row = runner.hosted_lane_evidence(outcome)
@@ -1789,7 +1793,13 @@ while True: time.sleep(0.05)
         self.assertEqual((row["selected"], row["passed"], row["case_count"]), (2, 1, 2))
         self.assertEqual([case["line"] for case in row["cases"]], [42, 56])
         self.assertEqual([case["status"] for case in row["cases"]], ["expected", "unexpected"])
-        self.assertEqual(row["cases"][1]["attempts"], [{"status": "timedOut", "retry": 0}])
+        self.assertEqual(row["cases"][1]["attempts"], [{
+            "status": "timedOut", "retry": 0,
+            "error_location": {"file": runner.STOCK_BETA_FILE, "line": 61, "column": 9},
+        }])
+        self.assertNotIn("/private/checkout", json.dumps(row))
+        self.assertNotIn("PRIVATE_ERROR", json.dumps(row))
+        self.assertNotIn("PRIVATE_STACK", json.dumps(row))
         self.assertNotEqual(row["cases"][0]["identity_sha256"], row["cases"][1]["identity_sha256"])
         output = io.StringIO()
         with mock.patch("sys.stdout", output):
@@ -1814,6 +1824,23 @@ while True: time.sleep(0.05)
         self.assertNotIn("annotations", row["cases"][0])
         self.assertNotIn("title", row["cases"][0])
         self.assertFalse(row["cleanup_ok"])
+        for location in [
+            {"file": sentinel, "line": 1, "column": 1},
+            {"file": runner.STOCK_BETA_FILE, "line": True, "column": 1},
+            {"file": runner.STOCK_BETA_FILE, "line": 0, "column": 1},
+            {"file": runner.STOCK_BETA_FILE, "line": 1, "column": -1},
+            {"file": runner.STOCK_BETA_FILE, "line": 1, "column": 1_000_001},
+            {"file": runner.STOCK_BETA_FILE, "line": sentinel, "column": 1},
+            {"file": runner.STOCK_BETA_FILE, "line": 1},
+            sentinel,
+        ]:
+            failed = runner.Case(runner.CaseKey("chromium", runner.STOCK_BETA_FILE, 42, "fixture", "id"),
+                                 (), "unexpected", "passed",
+                                 ({"status": "failed", "retry": 0, "errorLocation": location},), ())
+            rejected = runner.hosted_lane_evidence(runner.LaneOutcome(
+                "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[failed]))
+            self.assertNotIn("error_location", rejected["cases"][0]["attempts"][0])
+            self.assertNotIn(sentinel, json.dumps(rejected))
 
 
 if __name__ == "__main__":

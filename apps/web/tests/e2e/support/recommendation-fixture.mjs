@@ -294,6 +294,7 @@ function dailyRun({ pending = false, failed = false } = {}) {
       },
     },
     status: failed ? "FAILED" : pending ? "PENDING" : "SUCCEEDED",
+    error_code: failed ? "OWNER_BETA_COMPUTATION_FAILED" : undefined,
     items: unfinished ? [] : base.items,
     factor_snapshot_sha256: unfinished ? undefined : base.factor_snapshot_sha256,
     target_snapshot_sha256: unfinished ? undefined : base.target_snapshot_sha256,

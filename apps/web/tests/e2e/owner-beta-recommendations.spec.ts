@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { ownerBetaRunSchema } from "@/lib/products/owner-beta-contracts";
 import { appAlert } from "./support/alerts";
 
 const syntheticApiOrigin = process.env["SYNTHETIC_API_ORIGIN"] ?? "http://127.0.0.1:38180";
@@ -229,6 +230,22 @@ test("daily pending and failed runs retain a prior result across paginated histo
       dailyRuntime: "enabled",
       dailyState: state,
     });
+    const pendingId = "00000000-0000-4000-8000-000000000603";
+    const runPath = "/api/v1/recommendations/owner-beta/price-only/runs";
+    const response = await request.get(`${syntheticApiOrigin}${runPath}/${pendingId}`);
+    expect(response.status()).toBe(200);
+    const fixture = ownerBetaRunSchema.parse(await response.json());
+    expect(fixture.status).toBe(state === "queued" ? "PENDING" : "FAILED");
+    expect(fixture.items).toEqual([]);
+    if (state === "failed") {
+      expect(fixture.error_code).toBe("OWNER_BETA_COMPUTATION_FAILED");
+      const withoutError = { ...fixture, error_code: undefined };
+      expect(ownerBetaRunSchema.safeParse(withoutError).success).toBe(false);
+    } else {
+      expect(fixture.error_code).toBeUndefined();
+      const withError = { ...fixture, error_code: "OWNER_BETA_COMPUTATION_FAILED" };
+      expect(ownerBetaRunSchema.safeParse(withError).success).toBe(false);
+    }
     await page.goto("/recommendations");
     const panel = page.getByRole("region", { name: "Daily recommendation status" });
     await expect(panel).toContainText(state === "queued" ? "Queued" : "Run failed");
@@ -271,43 +288,67 @@ test("daily configuration switch isolates dates and late client observations", a
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  let reached: (() => void) | undefined;
-  const intercepted = new Promise<void>((resolve) => {
-    reached = resolve;
-  });
-  let finished: (() => void) | undefined;
-  const delivered = new Promise<void>((resolve) => {
-    finished = resolve;
-  });
-  await page.route(`**${DAILY_PATH}?strategy_config_id=${DAILY_CONFIG_ID}`, async (route) => {
-    reached?.();
+  let intercepted = false;
+  let delivered = false;
+  let deliveryRejected = false;
+  let oldRequest: import("@playwright/test").Request | undefined;
+  const origin = new URL(page.url()).origin;
+  const matchDaily = (url: URL): boolean =>
+    url.origin === origin &&
+    url.pathname === DAILY_PATH &&
+    url.searchParams.get("strategy_config_id") === DAILY_CONFIG_ID;
+  const holdDaily = async (route: import("@playwright/test").Route): Promise<void> => {
+    oldRequest = route.request();
+    const response = await route.fetch({ timeout: 5_000 });
+    expect(response.status()).toBe(200);
+    intercepted = true;
     await gate;
     try {
-      await route.continue();
+      await route.fulfill({ response });
     } catch {
-      // Navigation cancels the old configuration request.
+      deliveryRejected = true;
     } finally {
-      finished?.();
+      delivered = true;
     }
-  });
-  await panel.getByRole("button", { name: "Refresh daily status" }).click();
-  await intercepted;
+  };
+  await page.route(matchDaily, holdDaily, { times: 1 });
   try {
+    await panel.getByRole("button", { name: "Refresh daily status" }).click({ noWaitAfter: true });
+    await expect
+      .poll(() => intercepted, {
+        message: "old configuration response intercepted",
+        timeout: 5_000,
+      })
+      .toBe(true);
     await page
       .getByLabel("Select a strategy configuration.", { exact: true })
       .selectOption(SECOND_DAILY_CONFIG_ID);
-    await page.getByRole("button", { name: "View this configuration" }).click();
+    await page
+      .getByRole("button", { name: "View this configuration" })
+      .click({ noWaitAfter: true });
     await expect(page).toHaveURL(new RegExp(`daily_config_id=${SECOND_DAILY_CONFIG_ID}`));
+    release?.();
+    await expect
+      .poll(() => delivered, { message: "old configuration response completed", timeout: 5_000 })
+      .toBe(true);
+    if (deliveryRejected) {
+      await expect
+        .poll(() => oldRequest !== undefined && oldRequest.failure() !== null, {
+          message: "navigation canceled the old configuration request",
+          timeout: 5_000,
+        })
+        .toBe(true);
+    }
     await expect(panel).toContainText("Automatic updates off");
+    await expect(panel).not.toContainText("Oct 15, 2026");
+    await expect(page.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    await expect(
+      page.getByRole("region", { name: "Owner-only recommendation", exact: true }),
+    ).toHaveCount(0);
   } finally {
     release?.();
+    await page.unroute(matchDaily, holdDaily);
   }
-  await delivered;
-  await expect(panel).not.toContainText("Oct 15, 2026");
-  await expect(page.getByRole("switch")).toHaveAttribute("aria-checked", "false");
-  await expect(
-    page.getByRole("region", { name: "Owner-only recommendation", exact: true }),
-  ).toHaveCount(0);
 });
 
 test("daily status session expiry returns to login without inventing a fresh result", async ({
