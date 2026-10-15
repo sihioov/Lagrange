@@ -1997,3 +1997,21 @@ before any further correction. Never rerun/cancel/duplicate historical runs.
 R2-04/09 remain DOING. Negative bootstrap/rollback, 0060, provider/copy
 reconstruction/admission, I6 diagrams before main, runtime, Owner and final C_R2
 remain open; the existing acceptance criteria and historical evidence are preserved.
+
+### Wave33 actual C05 dispatch — 2026-10-15 UTC
+
+Candidate `7cdf3a68c754231bd4d828305ff6733638bcfe37` was pushed fast-forward.
+All-event exact-head CI query returned zero at 01:11:57.229 UTC after remote SHA
+verification. One dispatch created [run 38664342216](https://github.com/sihioov/Lagrange/actions/runs/38664342216),
+attempt 1, at 01:12:05 UTC. The first propagation query was empty; no redispatch.
+Coordinator directly recovers all jobs within the 02:42:05 UTC reporting bound.
+No further worker or local executable checks; frozen sources stay unchanged.
+
+Private frozen inputs: wave33-C05-ci-inputs.json, 301 lines/69 pins, SHA256
+`7be479d3c08665f44571be8f41ae61838a5e45aa01d82be8535ebe91ef3b9c0d`;
+wave33-C05-ci-test-inventory.json, 981 lines/99 Rust/6 chart/2 exclusions, SHA256
+`b6db33cc8cb014e45bf066b321dbe44bcf76442babb5e224f92683f4160dcea7`.
+Launch receipt SHA256 `e1d76fa40263439302107f4ae1da974226f23abefc2f23873f8736015a4cefb8`.
+All live under target/r2-daily-beta/wp-4-integration. Preparation-time
+newCiDispatched:false remains historical. Later documentation HEAD does not
+change the pinned candidate. Earlier evidence and later R2 gates are preserved.
