@@ -40,9 +40,13 @@ execution restrictions remain in force; no further worker delegation.
   [acceptance](../../reviews/2026-10-15-r2-daily-evidence-lineage-acceptance.md),
   run38711965495 attempt1 SUCCESS. New22 and affected normalizer37 names pass;
   all prior I2/R2 gates are reconciled in Wave41. Coordinator review only.
+- [x] **WP-4/I1b-S4 — bounded offline provider reconstruction.**
+  Completed2026-10-15; candidate `302f29a2d6e9ce8502813a0b1cc0b9ef370fcdea`;
+  run38725299504 attempt1 SUCCESS,32required new cases and prior gates recovered.
+  [Acceptance](../../reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md).
 - [ ] **Remaining I1b reconstruction/admission and I3–I7 integration.**
-  Next is bars/reference/actions reconstruction, complete source frontier and
-  artifact/admission/supply. Final integrated independent review remains open.
+  S5a/S5b exact candidate is now in hosted verification. Next is protected daily
+  parent/frontier persistence and artifact/admission/supply. Final integrated independent review remains open.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -4293,3 +4297,17 @@ review, local project execution, new delegation/provider/production action or
 source acceptance. Freeze all21new and carried names/pins, query exact-head runs,
 verify remote SHA and dispatch one new candidate. Never rerun/cancel/duplicate.
 Ralph continues through R2; runtime/Owner/three trading days/final C_R2 remain open.
+
+### Wave45 single candidate launch — 2026-10-15
+
+Candidate `5f5f4e845de5011f7ee2e7d0a1fe0e27d0d18f18`,
+[CI38732527740 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38732527740),
+created12:09:30UTC. All-event exact-head queries before/after push returned0, remote
+SHA matched, then exactly one workflow_dispatch returned0 and one matching run was
+recovered.303pins/243candidateblobs,21new definitions and33carried S5a names are frozen.
+Other required groups retain their earlier exact inventories; no aggregate count
+is treated as unique evidence. Wave44 failure remains immutable. Source acceptance
+awaits full jobs/logs/checkout and named-result recovery. Coordinator direct only;
+no local executable verification or delegation. Subsequent documentation commits
+do not alter the candidate. Prepare only independent unregistered successor files
+while CI runs. Runtime/Owner/three trading days/final C_R2 remain open.

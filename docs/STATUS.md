@@ -3269,3 +3269,17 @@ review, local project execution, new delegation/provider/production action or
 source acceptance. Freeze all21new and carried names/pins, query exact-head runs,
 verify remote SHA and dispatch one new candidate. Never rerun/cancel/duplicate.
 Ralph continues through R2; runtime/Owner/three trading days/final C_R2 remain open.
+
+### Wave45 single candidate launch — 2026-10-15
+
+Candidate `5f5f4e845de5011f7ee2e7d0a1fe0e27d0d18f18`,
+[CI38732527740 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38732527740),
+created12:09:30UTC. All-event exact-head queries before/after push returned0, remote
+SHA matched, then exactly one workflow_dispatch returned0 and one matching run was
+recovered.303pins/243candidateblobs,21new definitions and33carried S5a names are frozen.
+Other required groups retain their earlier exact inventories; no aggregate count
+is treated as unique evidence. Wave44 failure remains immutable. Source acceptance
+awaits full jobs/logs/checkout and named-result recovery. Coordinator direct only;
+no local executable verification or delegation. Subsequent documentation commits
+do not alter the candidate. Prepare only independent unregistered successor files
+while CI runs. Runtime/Owner/three trading days/final C_R2 remain open.
