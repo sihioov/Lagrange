@@ -66,6 +66,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Migrations embedded at compile time from the workspace `migrations/` dir.
 static MIGRATOR: Migrator = sqlx::migrate!("../../../migrations");
 
+const DAILY_0060_UP: &str =
+    include_str!("../../../../migrations/0060_owner_beta_daily_inputs.up.sql");
+const DAILY_0060_DOWN: &str =
+    include_str!("../../../../migrations/0060_owner_beta_daily_inputs.down.sql");
+
 const SOURCE_INDEX_UP_SQL: &str =
     include_str!("../../../../migrations/0024_research_publication_source_index.up.sql");
 const SOURCE_INDEX_DOWN_SQL: &str =
@@ -11787,4 +11792,2285 @@ async fn owner_equity_universe_v2_contract_body(
     );
     let _ = (entitlement_id, calendar_batch_id);
     Ok(())
+}
+
+// 0060 tests use disposable synthetic authority. None of these hashes or dates
+// assert approval of a real artifact. Every serving pool is a direct login.
+type Daily0060Result<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
+
+#[derive(Clone)]
+struct Daily0060Db {
+    url: String,
+    name: String,
+    owner_id: Uuid,
+    owner: PgPool,
+    app: PgPool,
+    worker: PgPool,
+    admitter: PgPool,
+}
+
+fn daily_0060_hash_value(digit: char) -> String {
+    format!("sha256:{}", digit.to_string().repeat(64))
+}
+
+fn daily_0060_policy() -> serde_json::Value {
+    use serde_json::json;
+    json!({
+        "schema":"owner-beta-daily-etf11-policy-v1","capability":"PRICE_RETURN_ONLY",
+        "audience":"OWNER_ONLY","vendor_snapshot":true,"strict_pit":false,
+        "base":{"kind":"historical_price_only_v3","pins":{
+            "candidate_content_sha256":daily_0060_hash_value('1'),"artifact_manifest_sha256":daily_0060_hash_value('2'),
+            "stage5_manifest_sha256":daily_0060_hash_value('3'),"action_manifest_sha256":daily_0060_hash_value('4'),"approval_registry_sha256":daily_0060_hash_value('5')}},
+        "instruments":["069500.KRX","102110.KRX","114260.KRX","132030.KRX","133690.KRX","143850.KRX","148070.KRX","153130.KRX","192090.KRX","195930.KRX","229200.KRX"],
+        "price_semantics":"KIS_FID_ORG_ADJ_PRC_1_RAW_OHLC","cash_action_policy":"CASH_DIVIDENDS_EXCLUDED_NONCASH_BLOCKED_V1",
+        "normalizer_version":"daily-raw-reconstruction-v1","materializer_version":"daily-price-only-v1",
+        "source_kinds":[{"provider":"kis","market":"kr","kind":"bars"},{"provider":"kis","market":"kr","kind":"calendar"},
+            {"provider":"kis","market":"kr","kind":"corporate_actions"},{"provider":"kis","market":"kr","kind":"reference"},{"provider":"kis-calendar","market":"kr","kind":"calendar"}],
+        "limits":{"max_policy_bytes":262144,"max_manifest_bytes":16777216,"max_admission_bytes":1048576,"max_normalization_bytes":16777216,
+            "max_bars_bytes":134217728,"max_sessions":20000,"max_civil_dates_per_addition":370,"max_action_chains_per_session":32768,
+            "max_file_evidence_per_session":262144,"max_source_file_bytes":67108864,"max_normalized_document_bytes":67108864,
+            "max_copy_depth":16,"max_pages_per_action_chain":10,"max_cash_rows_per_chain":100000,"max_json_depth":32}
+    })
+}
+
+async fn daily_0060_login(url: &str, db: &str, role: &str, actor: Uuid) -> Daily0060Result<PgPool> {
+    let options: sqlx::postgres::PgConnectOptions = url.parse()?;
+    let pool = PgPoolOptions::new()
+        .max_connections(3)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(options.username(role).database(db).options([
+            ("app.actor_user_id", actor.to_string()),
+            ("statement_timeout", "15000".to_owned()),
+            ("lock_timeout", "7000".to_owned()),
+        ]))
+        .await?;
+    let ids: (String, String) = sqlx::query_as("SELECT current_user,session_user")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(ids.0, role);
+    assert_eq!(ids.0, ids.1, "0060 requires a real login, not SET ROLE");
+    Ok(pool)
+}
+
+impl Daily0060Db {
+    async fn new(url: String, version: i64) -> Daily0060Result<Self> {
+        let (name, effective_owner) = create_contract_db(&url)
+            .await
+            .map_err(|_| "fixture bootstrap")?;
+        effective_owner.close().await;
+        let setup = async {
+        let owner_id = Uuid::new_v4();
+        let owner = daily_0060_login(&url, &name, "migration_owner", owner_id).await?;
+        MIGRATOR.run_to(version, &owner).await?;
+        sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'https://daily.invalid','daily-owner','daily@example.invalid')")
+            .bind(owner_id).execute(&owner).await?;
+        sqlx::query("INSERT INTO roles(id) VALUES('owner') ON CONFLICT DO NOTHING").execute(&owner).await?;
+        sqlx::query("INSERT INTO user_roles(user_id,role_id) VALUES($1,'owner')").bind(owner_id).execute(&owner).await?;
+        sqlx::query("INSERT INTO strategies(id,display_name) VALUES('daily_fixture','Daily fixture')").execute(&owner).await?;
+        let policy = daily_0060_policy();
+        for instrument in policy["instruments"].as_array().ok_or("instruments")? {
+            let id = instrument.as_str().ok_or("instrument")?;
+            sqlx::query("INSERT INTO instruments(id,symbol,venue,currency) VALUES($1,split_part($1,'.',1),'KRX','KRW') ON CONFLICT DO NOTHING")
+                .bind(id).execute(&owner).await?;
+        }
+        sqlx::query("INSERT INTO data_entitlements(contract_document_sha256,contract_reference,status,covered_datasets,covered_uses,effective_from,effective_until,managed_by) VALUES($1,'daily-fixture','ACTIVE','[\"krx_eod_bars\"]','[\"recommendation\"]','2016-08-29','2099-12-31',$2)")
+            .bind("a".repeat(64)).bind(owner_id).execute(&owner).await?;
+        let app = daily_0060_login(&url, &name, "app", owner_id).await?;
+        let worker = daily_0060_login(&url, &name, "worker", owner_id).await?;
+        let admitter = daily_0060_login(&url, &name, "daily_input_admitter", owner_id).await?;
+        Ok::<Self,Box<dyn Error + Send + Sync>>(Self {url:url.clone(),name:name.clone(),owner_id,owner,app,worker,admitter})
+        }.await;
+        if setup.is_err() {
+            drop_contract_db(&url, &name)
+                .await
+                .map_err(|_| "failed setup cleanup")?;
+        }
+        setup
+    }
+
+    async fn close(self) -> Daily0060Result {
+        self.app.close().await;
+        self.worker.close().await;
+        self.admitter.close().await;
+        self.owner.close().await;
+        drop_contract_db(&self.url, &self.name)
+            .await
+            .map_err(|_| "fixture cleanup")?;
+        Ok(())
+    }
+
+    async fn control(&self, enabled: bool) -> Daily0060Result {
+        sqlx::query("INSERT INTO owner_beta_daily_control(owner_user_id,policy_sha256,policy_json,entitlement_reference,entitlement_sha256,first_auto_session,max_jobs_per_owner,lease_seconds,backoff_seconds) VALUES($1,$2,$3,'daily-fixture',$4,'2026-08-29',4,60,1)")
+            .bind(self.owner_id).bind(daily_0060_hash_value('b')).bind(daily_0060_policy()).bind(daily_0060_hash_value('a')).execute(&self.owner).await?;
+        if enabled {
+            sqlx::query("UPDATE owner_beta_daily_control SET enabled=true")
+                .execute(&self.owner)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn config(&self, enabled: bool) -> Daily0060Result<Uuid> {
+        Ok(sqlx::query_scalar("INSERT INTO user_strategy_configs(owner_user_id,strategy_id,strategy_version,config_json,daily_enabled) VALUES($1,'daily_fixture','1.0.0','{}',$2) RETURNING id")
+            .bind(self.owner_id).bind(enabled).fetch_one(&self.app).await?)
+    }
+
+    async fn slot(&self) -> Daily0060Result<Uuid> {
+        Ok(
+            sqlx::query_scalar(
+                "SELECT receipt_id FROM take_owner_beta_daily_admission_poll_slot()",
+            )
+            .fetch_one(&self.admitter)
+            .await?,
+        )
+    }
+
+    async fn next_slot(&self) -> Daily0060Result<Uuid> {
+        // Test-only release-authority time fixture. Serving roles have no DML.
+        sqlx::query("UPDATE owner_beta_daily_poll_state SET next_poll_at=clock_timestamp()-interval '1 second'").execute(&self.owner).await?;
+        self.slot().await
+    }
+
+    async fn expected(&self) -> Daily0060Result<String> {
+        Ok(sqlx::query_scalar("SELECT ((clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date-CASE WHEN (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::time<time '16:30' THEN 1 ELSE 0 END)::text")
+            .fetch_one(&self.owner).await?)
+    }
+
+    async fn project(
+        &self,
+        receipt: Uuid,
+        file: &serde_json::Value,
+        days: &serde_json::Value,
+    ) -> Daily0060Result<String> {
+        let key: String=sqlx::query_scalar("SELECT daily_0060_digest('owner-beta-daily-calendar-source-v1'||chr(10)||owner_user_id::text||chr(10)||policy_sha256||chr(10)||'daily-raw-reconstruction-v1'||chr(10)||daily_0060_file_bytes($1)) FROM owner_beta_daily_control")
+            .bind(file).fetch_one(&self.owner).await?;
+        Ok(sqlx::query_scalar(
+            "SELECT disposition FROM project_owner_beta_daily_calendar($1,$2,$3,$4)",
+        )
+        .bind(receipt)
+        .bind(key)
+        .bind(file)
+        .bind(days)
+        .fetch_one(&self.admitter)
+        .await?)
+    }
+
+    async fn admit(&self, receipt: Uuid, input: &serde_json::Value) -> Daily0060Result<String> {
+        Ok(
+            sqlx::query_scalar("SELECT disposition FROM admit_owner_beta_daily_input($1,$2)")
+                .bind(receipt)
+                .bind(input)
+                .fetch_one(&self.admitter)
+                .await?,
+        )
+    }
+
+    async fn ready(&self) -> Daily0060Result<(Uuid, serde_json::Value, Uuid)> {
+        self.control(true).await?;
+        let config = self.config(true).await?;
+        let receipt = self.slot().await?;
+        let end = self.expected().await?;
+        let (input, file, days) = daily_0060_bundle(self, &end).await?;
+        assert_eq!(self.project(receipt, &file, &days).await?, "PROJECTED");
+        assert_eq!(self.admit(receipt, &input).await?, "ADMITTED");
+        Ok((config, input, receipt))
+    }
+
+    async fn reserve(
+        &self,
+        config: Uuid,
+        input: &serde_json::Value,
+    ) -> Daily0060Result<(Option<Uuid>, Option<Uuid>, String)> {
+        Ok(sqlx::query_as("SELECT run_id,job_id,disposition FROM reserve_owner_beta_daily_run($1,$2::text::date,$3,(SELECT daily_epoch FROM user_strategy_configs WHERE id=$1),$4)")
+            .bind(config).bind(input["manifest"]["range_end"].as_str().ok_or("end")?)
+            .bind(input["admission_sha256"].as_str().ok_or("hash")?).bind(daily_0060_strategy())
+            .fetch_one(&self.worker).await?)
+    }
+
+    async fn claim(&self, job: Uuid) -> Daily0060Result<Uuid> {
+        let mut tx = self.worker.begin().await?;
+        let no: i32=sqlx::query_scalar("UPDATE jobs SET status='RUNNING',attempt_count=attempt_count+1,locked_by='daily-fixture-worker',locked_at=clock_timestamp() WHERE id=$1 RETURNING attempt_count")
+            .bind(job).fetch_one(&mut *tx).await?;
+        let attempt: Uuid=sqlx::query_scalar("INSERT INTO job_attempts(job_id,attempt_no,outcome,claimed_by) VALUES($1,$2,'RUNNING','daily-fixture-worker') RETURNING id")
+            .bind(job).bind(no).fetch_one(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(attempt)
+    }
+}
+
+fn daily_0060_strategy() -> serde_json::Value {
+    serde_json::json!({"strategy_id":"daily_fixture","strategy_version":"1.0.0","config_json":{},"config_sha256":daily_0060_hash_value('c')})
+}
+
+fn daily_0060_file_fixture(
+    kind: &str,
+    date: &str,
+    name: &str,
+    endpoint: &str,
+    tr: &str,
+    mut query: Vec<(&str, String)>,
+) -> serde_json::Value {
+    use serde_json::json;
+    query.sort_by(|a, b| a.0.cmp(b.0));
+    json!({"provider":"kis","market":"kr","batch_id":format!("00000000-0000-4000-8000-{}0060",date.replace('-',"")),"batch_date":date,
+        "batch_json_sha256":daily_0060_hash_value('1'),"manifest_line_sha256":daily_0060_hash_value('2'),"file_name":name,"kind":kind,
+        "wire_sha256":daily_0060_hash_value('3'),"size_bytes":1,"request":{"endpoint":format!("/uapi/domestic-stock/v1/{endpoint}"),
+            "query":query,"headers":[["appkey","[REDACTED]"],["appsecret","[REDACTED]"],["authorization","[REDACTED]"],["tr_cont",""],["tr_id",tr]],"mode":"credentialed"},
+        "response_continuation":null,"retrieved_at":"2026-08-29T00:00:00.000000000Z","retrieval_precision":"batch",
+        "original_retrieved_at":"2026-08-29T00:00:00.000000000Z","original_retrieval_precision":"batch","copied_from":[]})
+}
+
+fn daily_0060_file_key_fixture(f: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"provider":f["provider"],"market":f["market"],"batch_id":f["batch_id"],"file_name":f["file_name"],"wire_sha256":f["wire_sha256"]})
+}
+
+async fn daily_0060_bundle(
+    db: &Daily0060Db,
+    end: &str,
+) -> Daily0060Result<(serde_json::Value, serde_json::Value, serde_json::Value)> {
+    use serde_json::json;
+    let dates: Vec<String>=sqlx::query_scalar("SELECT (date '2026-08-29'+n)::text FROM generate_series(0,$1::text::date-date '2026-08-29') n ORDER BY n")
+        .bind(end).fetch_all(&db.owner).await?;
+    if dates.is_empty() || dates.len() > 370 {
+        return Err("fixture date out of bounded extension".into());
+    }
+    let base: Vec<String>=sqlx::query_scalar("SELECT d::text FROM (SELECT date '2016-08-29'+n d FROM generate_series(0,2450) n UNION ALL SELECT date '2026-08-28') x ORDER BY d")
+        .fetch_all(&db.owner).await?;
+    let calendar = daily_0060_file_fixture(
+        "calendar",
+        "2026-08-29",
+        "calendar.json",
+        "quotations/chk-holiday",
+        "CTCA0903R",
+        vec![
+            ("BASS_DT", "20260829".into()),
+            ("CTX_AREA_FK", String::new()),
+            ("CTX_AREA_NK", String::new()),
+        ],
+    );
+    let mut days = Vec::new();
+    let mut bindings = Vec::new();
+    let mut documents = Vec::new();
+    for (ordinal, date) in dates.iter().enumerate() {
+        let session_type = if date == end { "TRADING" } else { "CLOSED" };
+        days.push(json!({"session_date":date,"session_type":session_type,"evidence_kind":if ordinal==0 {"REQUESTED_TARGET"} else {"DERIVED_SURROUNDING"},"source_row_ordinal":ordinal,"source_row_sha256":daily_0060_hash_value('4')}));
+        bindings.push(json!({"civil_date":date,"session_type":session_type,"exchange":"KRX","timezone":"Asia/Seoul","source_file":calendar,"normalized_document_sha256":daily_0060_hash_value('5'),"legacy_projection":null}));
+        documents.push(json!({"kind":"calendar","session_date":date,"normalizer_version":"daily-raw-reconstruction-v1","sha256":daily_0060_hash_value('5'),"size_bytes":1,"row_count":1,"source_files":[daily_0060_file_key_fixture(&calendar)],"source_evidence_sha256":daily_0060_hash_value('6')}));
+    }
+    let policy = daily_0060_policy();
+    let mut bars = Vec::new();
+    let mut refs = Vec::new();
+    for instrument in policy["instruments"]
+        .as_array()
+        .ok_or("fixture instruments")?
+    {
+        let symbol = instrument
+            .as_str()
+            .ok_or("fixture symbol")?
+            .split('.')
+            .next()
+            .ok_or("fixture symbol")?;
+        bars.push(daily_0060_file_fixture(
+            "bars",
+            end,
+            &format!("bars-{symbol}.json"),
+            "quotations/inquire-daily-itemchartprice",
+            "FHKST03010100",
+            vec![
+                ("FID_COND_MRKT_DIV_CODE", "J".into()),
+                ("FID_INPUT_ISCD", symbol.into()),
+                ("FID_INPUT_DATE_1", end.replace('-', "")),
+                ("FID_INPUT_DATE_2", end.replace('-', "")),
+                ("FID_PERIOD_DIV_CODE", "D".into()),
+                ("FID_ORG_ADJ_PRC", "1".into()),
+            ],
+        ));
+        refs.push(daily_0060_file_fixture(
+            "reference",
+            end,
+            &format!("reference-{symbol}.json"),
+            "quotations/inquire-price",
+            "FHKST01010100",
+            vec![
+                ("FID_COND_MRKT_DIV_CODE", "J".into()),
+                ("FID_INPUT_ISCD", symbol.into()),
+            ],
+        ));
+    }
+    let mut actions = Vec::new();
+    let mut pages = Vec::new();
+    for (class, path, tr, extras) in [
+        (
+            "paidin-subscription",
+            "paidin-capin",
+            "HHKDB669100C0",
+            vec![("GB1", "1".into())],
+        ),
+        (
+            "paidin-record",
+            "paidin-capin",
+            "HHKDB669100C0",
+            vec![("GB1", "2".into())],
+        ),
+        ("bonus-issue", "bonus-issue", "HHKDB669101C0", vec![]),
+        (
+            "dividend",
+            "dividend",
+            "HHKDB669102C0",
+            vec![("GB1", "0".into()), ("HIGH_GB", String::new())],
+        ),
+        ("merger-split", "merger-split", "HHKDB669104C0", vec![]),
+        (
+            "reverse-split",
+            "rev-split",
+            "HHKDB669105C0",
+            vec![("MARKET_GB", "0".into())],
+        ),
+        ("capital-decrease", "cap-dcrs", "HHKDB669106C0", vec![]),
+    ] {
+        let mut query = vec![
+            ("CTS", String::new()),
+            ("F_DT", "20260829".into()),
+            ("T_DT", end.replace('-', "")),
+            ("SHT_CD", String::new()),
+        ];
+        query.extend(extras);
+        let page = daily_0060_file_fixture(
+            "corporate_actions",
+            "2026-08-29",
+            &format!("{class}-{end}.json"),
+            &format!("ksdinfo/{path}"),
+            tr,
+            query,
+        );
+        actions.push(json!({"logical_class":class,"scope":"whole_market","symbol":null,"range_start":"2026-08-29","range_end":end,"pages":[page],"cash_dividends":[],"cash_dividend_rows_sha256":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}));
+        pages.push(page);
+    }
+    for (kind, files, rows) in [
+        ("bars", &bars, 11),
+        ("reference", &refs, 11),
+        ("corporate_actions", &pages, 0),
+    ] {
+        documents.push(json!({"kind":kind,"session_date":end,"normalizer_version":"daily-raw-reconstruction-v1","sha256":daily_0060_hash_value('7'),"size_bytes":1,"row_count":rows,
+            "source_files":files.iter().map(daily_0060_file_key_fixture).collect::<Vec<_>>(),"source_evidence_sha256":daily_0060_hash_value('8')}));
+    }
+    let mut sessions = base;
+    sessions.push(end.to_owned());
+    let manifest = json!({"schema":"owner-beta-daily-etf11-input-v1","capability":"PRICE_RETURN_ONLY","audience":"OWNER_ONLY","vendor_snapshot":true,"strict_pit":false,
+        "base":policy["base"],"parent_admission_sha256":null,"range_start":"2016-08-29","range_end":end,"instruments":policy["instruments"],"sessions":sessions,
+        "daily_sources":[{"session_date":end,"previous_frontier":"2026-08-28","instruments":policy["instruments"],"bars":bars,"reference":refs,"calendar":bindings,"actions":actions,"normalized_documents":documents}],
+        "bars":{"file":"bars.ndjson","sha256":daily_0060_hash_value('9'),"size_bytes":1,"row_count":26983},
+        "normalization":{"file":"normalization.json","sha256":daily_0060_hash_value('9'),"size_bytes":1,"row_count":3+dates.len()},
+        "policy_sha256":daily_0060_hash_value('b'),"materializer_version":"daily-price-only-v1","code_commit":"0".repeat(40),"content_sha256":daily_0060_hash_value('d')});
+    let admission = json!({"schema":"owner-beta-daily-etf11-admission-v1","content_sha256":daily_0060_hash_value('d'),"manifest_sha256":daily_0060_hash_value('e'),"policy_sha256":daily_0060_hash_value('b'),
+        "parent_admission_sha256":null,"base":policy["base"],"verifier_code_commit":"0".repeat(40),"normalizer_version":"daily-raw-reconstruction-v1","evidence_sha256":daily_0060_hash_value('f'),
+        "counts":{"instrument_count":11,"session_count":2453,"bar_count":26983,"added_session_count":1,"source_file_count":30,"calendar_row_count":dates.len(),"action_chain_count":7,"action_page_count":7,"cash_dividend_row_count":0,"normalized_document_count":3+dates.len()}});
+    Ok((
+        json!({"admission_sha256":daily_0060_hash_value('0'),"source_frontier_sha256":daily_0060_hash_value('6'),"admission":admission,"manifest":manifest}),
+        calendar,
+        json!(days),
+    ))
+}
+
+async fn daily_0060_denied(pool: &PgPool, sql: &str, expected: &str) -> Daily0060Result {
+    let mut tx = pool.begin().await?;
+    let result = sqlx::raw_sql(sql).execute(&mut *tx).await;
+    let code = result.err().and_then(|e| {
+        e.as_database_error()
+            .and_then(|d| d.code())
+            .map(|s| s.into_owned())
+    });
+    assert_eq!(
+        code.as_deref(),
+        Some(expected),
+        "fixed denial case SQLSTATE"
+    );
+    tx.rollback().await?;
+    Ok(())
+}
+
+async fn daily_0060_publish(
+    db: &Daily0060Db,
+    run: Uuid,
+    job: Uuid,
+    attempt: Uuid,
+) -> Daily0060Result {
+    let mut tx = db.worker.begin().await?;
+    daily_0060_publish_in(&mut tx, db.owner_id, run, job, attempt).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn daily_0060_publish_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner: Uuid,
+    run: Uuid,
+    job: Uuid,
+    attempt: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT lock_owner_beta_daily_run_gate($1)")
+        .bind(run)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("INSERT INTO owner_beta_recommendation_items(recommendation_run_id,owner_user_id,instrument_id,rank,target_weight) SELECT $1,$2,id,row_number() OVER(ORDER BY id),0 FROM instruments WHERE id=ANY(ARRAY['069500.KRX','102110.KRX','114260.KRX','132030.KRX','133690.KRX','143850.KRX','148070.KRX','153130.KRX','192090.KRX','195930.KRX','229200.KRX'])")
+        .bind(run).bind(owner).execute(&mut **tx).await?;
+    sqlx::query("UPDATE owner_beta_recommendation_runs SET status='SUCCEEDED',factor_snapshot_sha256=$2,target_snapshot_sha256=$3,cash_weight=1,finished_at=now(),updated_at=now() WHERE id=$1")
+        .bind(run).bind(daily_0060_hash_value('7')).bind(daily_0060_hash_value('8')).execute(&mut **tx).await?;
+    sqlx::query("UPDATE jobs SET status='SUCCEEDED',locked_by=NULL,locked_at=NULL,finished_at=now(),updated_at=now() WHERE id=$1").bind(job).execute(&mut **tx).await?;
+    sqlx::query("UPDATE job_attempts SET outcome='SUCCEEDED',finished_at=now() WHERE id=$1")
+        .bind(attempt)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn daily_0060_snapshot(db: &Daily0060Db) -> Daily0060Result<serde_json::Value> {
+    Ok(sqlx::query_scalar("SELECT jsonb_build_object('jobs',(SELECT jsonb_agg(to_jsonb(j) ORDER BY id) FROM jobs j),'runs',(SELECT jsonb_agg(to_jsonb(r)-ARRAY['trigger_kind','daily_pins','daily_config_epoch','daily_activation_epoch','daily_trigger_version'] ORDER BY id) FROM owner_beta_recommendation_runs r),'items',(SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM owner_beta_recommendation_items i),'configs',(SELECT jsonb_agg(to_jsonb(c)-ARRAY['daily_enabled','daily_epoch'] ORDER BY id) FROM user_strategy_configs c))")
+        .fetch_one(&db.owner).await?)
+}
+
+async fn daily_0060_history(db: &Daily0060Db) -> Daily0060Result {
+    sqlx::query("INSERT INTO strategies(id,display_name) VALUES('owner_beta_contract','Historical fixture')").execute(&db.owner).await?;
+    let config: Uuid=sqlx::query_scalar("INSERT INTO user_strategy_configs(owner_user_id,strategy_id,strategy_version,config_json) VALUES($1,'owner_beta_contract','1.0.0','{\"benchmark\":\"069500.KRX\"}') RETURNING id")
+        .bind(db.owner_id).fetch_one(&db.app).await?;
+    for version in [2, 3] {
+        for status in ["PENDING", "FAILED", "CANCELED", "SUCCEEDED"] {
+            let pin = daily_0060_hash_value(if version == 2 { '2' } else { '3' });
+            let pins = OwnerBetaRuntimeHashes {
+                candidate: &pin,
+                artifact: &pin,
+                stage5: &pin,
+                action: &pin,
+                approval: &pin,
+                strategy: &pin,
+            };
+            let run = Uuid::new_v4();
+            let job = insert_owner_beta_runtime_run(
+                &db.app,
+                db.owner_id,
+                config,
+                run,
+                &format!("historical-{version}-{status}"),
+                &pins,
+            )
+            .await?;
+            if status == "SUCCEEDED" {
+                sqlx::query("INSERT INTO owner_beta_recommendation_items(recommendation_run_id,owner_user_id,instrument_id,rank,target_weight) VALUES($1,$2,'069500.KRX',1,1)")
+                    .bind(run).bind(db.owner_id).execute(&db.worker).await?;
+                sqlx::query("UPDATE owner_beta_recommendation_runs SET status='SUCCEEDED',factor_snapshot_sha256=$2,target_snapshot_sha256=$2,cash_weight=0,finished_at='2026-08-28 09:00:00Z' WHERE id=$1")
+                    .bind(run).bind(&pin).execute(&db.worker).await?;
+            } else if status != "PENDING" {
+                sqlx::query("UPDATE owner_beta_recommendation_runs SET status=$2,finished_at='2026-08-28 09:00:00Z' WHERE id=$1").bind(run).bind(status).execute(&db.worker).await?;
+            }
+            sqlx::query("UPDATE jobs SET status=$2 WHERE id=$1")
+                .bind(job)
+                .bind(if status == "PENDING" {
+                    "QUEUED"
+                } else {
+                    status
+                })
+                .execute(&db.worker)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn daily_0060_wait_blocked(pool: &PgPool, pid: i32) -> Daily0060Result {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT cardinality(pg_blocking_pids($1))>0")
+                .bind(pid)
+                .fetch_one(pool)
+                .await?;
+            if blocked {
+                return Ok::<(), sqlx::Error>(());
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await??;
+    Ok(())
+}
+
+async fn daily_0060_case(name: &'static str) {
+    let Ok(url) = require_db_url() else {
+        return;
+    };
+    let version = if matches!(
+        name,
+        "role_preflight" | "up_preserves_histories" | "down_unused" | "down_atomicity"
+    ) {
+        59
+    } else {
+        60
+    };
+    let db = match Daily0060Db::new(url, version).await {
+        Ok(db) => db,
+        Err(_) => panic!("DAILY_0060_SETUP_FAILED:{name}"),
+    };
+    let task_db = db.clone();
+    let result = tokio::spawn(async move { daily_0060_case_body(&task_db, name).await }).await;
+    let cleanup = db.close().await;
+    assert!(cleanup.is_ok(), "DAILY_0060_CLEANUP_FAILED:{name}");
+    let result = match result {
+        Ok(result) => result,
+        Err(_) => panic!("DAILY_0060_CASE:{name}:PANIC"),
+    };
+    if let Err(error) = result {
+        let code = error
+            .downcast_ref::<sqlx::Error>()
+            .and_then(|e| e.as_database_error())
+            .and_then(|e| e.code())
+            .map(|v| v.into_owned());
+        panic!(
+            "DAILY_0060_CASE:{name}:FAIL:{}",
+            code.as_deref().unwrap_or("NO_SQLSTATE")
+        );
+    }
+    println!("DAILY_0060_CASE:{name}:PASS");
+}
+
+async fn daily_0060_case_body(db: &Daily0060Db, name: &str) -> Daily0060Result {
+    use serde_json::json;
+    match name {
+        "role_preflight" => {
+            let supervisor = admin_pool(&supervisor_db_url(&db.url, &db.name))
+                .await
+                .map_err(|_| "supervisor fixture")?;
+            // Uncommitted cluster-role poison is visible only in this connection.
+            // The test-only definer makes that connection a direct migration-owner
+            // login throughout; it never gives the production migration CREATEROLE.
+            sqlx::raw_sql("CREATE FUNCTION public.daily_fixture_poison(p text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN CASE p WHEN 'super' THEN ALTER ROLE daily_input_admitter SUPERUSER; WHEN 'inherit' THEN ALTER ROLE daily_input_admitter INHERIT; WHEN 'createdb' THEN ALTER ROLE daily_input_admitter CREATEDB; WHEN 'createrole' THEN ALTER ROLE daily_input_admitter CREATEROLE; WHEN 'bypass' THEN ALTER ROLE daily_input_admitter BYPASSRLS; WHEN 'replication' THEN ALTER ROLE daily_input_admitter REPLICATION; WHEN 'nologin' THEN ALTER ROLE daily_input_admitter NOLOGIN; WHEN 'member' THEN GRANT worker TO daily_input_admitter; WHEN 'reverse' THEN GRANT daily_input_admitter TO app; WHEN 'schema' THEN GRANT CREATE ON SCHEMA public TO daily_input_admitter; WHEN 'database' THEN EXECUTE format('GRANT CREATE ON DATABASE %I TO daily_input_admitter',current_database()); WHEN 'nousage' THEN REVOKE USAGE ON SCHEMA public FROM PUBLIC,daily_input_admitter; WHEN 'noconnect' THEN EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC,daily_input_admitter',current_database()); WHEN 'protected_direct' THEN GRANT migration_owner TO app; WHEN 'protected_transitive' THEN GRANT migration_owner TO admin; GRANT admin TO worker; ELSE RAISE EXCEPTION 'fixed fixture only'; END CASE; END $$; REVOKE ALL ON FUNCTION public.daily_fixture_poison(text) FROM PUBLIC; GRANT EXECUTE ON FUNCTION public.daily_fixture_poison(text) TO migration_owner;")
+                .execute(&supervisor).await?;
+            for poison in [
+                "super",
+                "inherit",
+                "createdb",
+                "createrole",
+                "bypass",
+                "replication",
+                "nologin",
+                "member",
+                "reverse",
+                "schema",
+                "database",
+                "nousage",
+                "noconnect",
+                "protected_direct",
+                "protected_transitive",
+            ] {
+                let mut tx = db.owner.begin().await?;
+                sqlx::query("SELECT daily_fixture_poison($1)")
+                    .bind(poison)
+                    .execute(&mut *tx)
+                    .await?;
+                let error = sqlx::raw_sql(DAILY_0060_UP)
+                    .execute(&mut *tx)
+                    .await
+                    .err()
+                    .ok_or("preflight accepted")?;
+                assert_eq!(
+                    error.as_database_error().and_then(|e| e.code()).as_deref(),
+                    Some("42501")
+                );
+                tx.rollback().await?;
+                let absent: bool = sqlx::query_scalar(
+                    "SELECT to_regclass('public.owner_beta_daily_control') IS NULL",
+                )
+                .fetch_one(&db.owner)
+                .await?;
+                assert!(absent);
+                println!("DAILY_0060_SUBCASE:role_{poison}:PASS");
+            }
+            sqlx::raw_sql("DROP FUNCTION public.daily_fixture_poison(text)")
+                .execute(&supervisor)
+                .await?;
+            supervisor.close().await;
+            MIGRATOR.run(&db.owner).await?;
+        }
+        "up_preserves_histories" | "down_unused" | "down_atomicity" => {
+            daily_0060_history(db).await?;
+            let before = daily_0060_snapshot(db).await?;
+            let old_functions: Vec<String>=sqlx::query_scalar("SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname IN ('owner_beta_recommendation_runs_validate_job_binding','owner_beta_recommendation_runs_lock_strategy_config_on_success') ORDER BY proname").fetch_all(&db.owner).await?;
+            MIGRATOR.run(&db.owner).await?;
+            assert_eq!(daily_0060_snapshot(db).await?, before);
+            if name != "up_preserves_histories" {
+                db.control(false).await?;
+                sqlx::query("INSERT INTO owner_beta_daily_poll_state(stage,next_poll_at) VALUES('ADMISSION',clock_timestamp()),('SCHEDULE',clock_timestamp())").execute(&db.owner).await?;
+                if name == "down_atomicity" {
+                    let mut tx = db.owner.begin().await?;
+                    sqlx::query("UPDATE owner_beta_daily_control SET enabled=true")
+                        .execute(&mut *tx)
+                        .await?;
+                    let error = sqlx::raw_sql(DAILY_0060_DOWN)
+                        .execute(&mut *tx)
+                        .await
+                        .err()
+                        .ok_or("down accepted")?;
+                    assert_eq!(
+                        error.as_database_error().and_then(|e| e.code()).as_deref(),
+                        Some("55000")
+                    );
+                    tx.rollback().await?;
+                    assert_eq!(daily_0060_snapshot(db).await?, before);
+                }
+                MIGRATOR.undo(&db.owner, 59).await?;
+                assert_eq!(daily_0060_snapshot(db).await?, before);
+                let restored: Vec<String>=sqlx::query_scalar("SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname IN ('owner_beta_recommendation_runs_validate_job_binding','owner_beta_recommendation_runs_lock_strategy_config_on_success') ORDER BY proname").fetch_all(&db.owner).await?;
+                assert_eq!(old_functions, restored);
+                let acl: bool=sqlx::query_scalar("SELECT has_table_privilege('app','user_strategy_configs','INSERT') AND has_table_privilege('app','user_strategy_configs','UPDATE') AND (SELECT relforcerowsecurity FROM pg_class WHERE oid='user_strategy_configs'::regclass)").fetch_one(&db.owner).await?;
+                assert!(acl);
+                MIGRATOR.run(&db.owner).await?;
+                assert_eq!(daily_0060_snapshot(db).await?, before);
+            }
+        }
+        "repeat_is_noop" => {
+            let ledger = migration_ledger_snapshot(&db.owner).await?;
+            let before = daily_0060_snapshot(db).await?;
+            MIGRATOR.run(&db.owner).await?;
+            assert_eq!(migration_ledger_snapshot(&db.owner).await?, ledger);
+            assert_eq!(daily_0060_snapshot(db).await?, before);
+            assert_eq!(applied_count(&db.owner).await?, 60);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM owner_beta_daily_control")
+                    .fetch_one(&db.owner)
+                    .await?,
+                0
+            );
+        }
+        "catalog_authority" => {
+            let rows: Vec<(String,bool,bool,String)>=sqlx::query_as("SELECT relname,relrowsecurity,relforcerowsecurity,pg_get_userbyid(relowner) FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r' AND relname LIKE 'owner_beta_daily_%' ORDER BY relname").fetch_all(&db.owner).await?;
+            assert_eq!(rows.len(), 10);
+            assert!(rows.iter().all(|r| r.1 && r.2 && r.3 == "migration_owner"));
+            let functions: Vec<(String,i64)>=sqlx::query_as("SELECT proname,oid::bigint FROM pg_proc WHERE pronamespace='public'::regnamespace AND (proname LIKE 'daily\\_0060\\_%' ESCAPE '\\' OR proname LIKE '%owner_beta_daily%') ORDER BY proname").fetch_all(&db.owner).await?;
+            assert!(functions.len() > 12);
+            let admitter_functions = [
+                "take_owner_beta_daily_admission_poll_slot",
+                "project_owner_beta_daily_calendar",
+                "admit_owner_beta_daily_input",
+                "block_owner_beta_daily_input",
+                "finish_owner_beta_daily_admission_poll",
+                "read_owner_beta_daily_source_evidence",
+            ];
+            let worker_functions = [
+                "take_owner_beta_daily_schedule_poll_slot",
+                "finish_owner_beta_daily_schedule_poll",
+                "owner_beta_daily_schedule_candidates",
+                "reserve_owner_beta_daily_run",
+                "lock_owner_beta_daily_run_gate",
+            ];
+            for (function, oid) in &functions {
+                for role in [
+                    "app",
+                    "worker",
+                    "admin",
+                    "audit_writer",
+                    "research_writer",
+                    "daily_input_admitter",
+                ] {
+                    let allowed: bool = sqlx::query_scalar(
+                        "SELECT has_function_privilege($1,$2::bigint::oid,'EXECUTE')",
+                    )
+                    .bind(role)
+                    .bind(oid)
+                    .fetch_one(&db.owner)
+                    .await?;
+                    assert_eq!(
+                        allowed,
+                        (role == "worker" && worker_functions.contains(&function.as_str()))
+                            || (role == "daily_input_admitter"
+                                && admitter_functions.contains(&function.as_str())),
+                        "0060 function ACL: {function}/{role}"
+                    );
+                }
+            }
+            let bad: i64=sqlx::query_scalar("SELECT count(*) FROM pg_proc p WHERE pronamespace='public'::regnamespace AND (proname LIKE 'daily\\_0060\\_%' ESCAPE '\\' OR proname LIKE '%owner_beta_daily%') AND (pg_get_userbyid(proowner)<>'migration_owner' OR NOT coalesce(proconfig @> ARRAY['search_path=pg_catalog, pg_temp','lock_timeout=5s','statement_timeout=30s'],false) OR EXISTS(SELECT 1 FROM aclexplode(coalesce(proacl,acldefault('f',proowner))) WHERE grantee=0 AND privilege_type='EXECUTE'))")
+                .fetch_one(&db.owner).await?;
+            assert_eq!(bad, 0);
+            for column in [
+                "id",
+                "owner_user_id",
+                "strategy_id",
+                "strategy_version",
+                "daily_epoch",
+                "created_at",
+            ] {
+                let allowed: bool = sqlx::query_scalar(
+                    "SELECT has_column_privilege('app','user_strategy_configs',$1,'UPDATE')",
+                )
+                .bind(column)
+                .fetch_one(&db.owner)
+                .await?;
+                assert!(!allowed);
+            }
+            assert!(sqlx::query_scalar::<_,bool>("SELECT has_column_privilege('app','user_strategy_configs','daily_enabled','UPDATE')").fetch_one(&db.owner).await?);
+        }
+        "direct_principal_denials" => {
+            db.control(false).await?;
+            for role in [
+                "app",
+                "worker",
+                "research_writer",
+                "admin",
+                "daily_input_admitter",
+            ] {
+                let pool = daily_0060_login(&db.url, &db.name, role, db.owner_id).await?;
+                for statement in [
+                    "CREATE TABLE public.daily_spoof(id integer)",
+                    "SET ROLE migration_owner",
+                    "INSERT INTO owner_beta_daily_control(id) VALUES('etf11')",
+                    "DELETE FROM owner_beta_daily_poll_receipts",
+                    "SELECT daily_0060_take_slot('ADMISSION')",
+                    "SELECT revoke_owner_beta_daily_input(NULL,NULL)",
+                ] {
+                    daily_0060_denied(&pool, statement, "42501").await?;
+                }
+                if role != "daily_input_admitter" {
+                    daily_0060_denied(
+                        &pool,
+                        "SELECT admit_owner_beta_daily_input(NULL,'{}')",
+                        "42501",
+                    )
+                    .await?;
+                }
+                if role != "worker" {
+                    daily_0060_denied(
+                        &pool,
+                        "SELECT reserve_owner_beta_daily_run(NULL,NULL,NULL,0,'{}')",
+                        "42501",
+                    )
+                    .await?;
+                }
+                pool.close().await;
+                println!("DAILY_0060_SUBCASE:direct_{role}:PASS");
+            }
+            let receipt = db.slot().await?;
+            let done: String = sqlx::query_scalar(
+                "SELECT finish_owner_beta_daily_admission_poll($1,'INPUT_PENDING',NULL)",
+            )
+            .bind(receipt)
+            .fetch_one(&db.admitter)
+            .await?;
+            assert_eq!(done, "COMPLETED");
+        }
+        "config_owner_optin" | "config_epoch" => {
+            let config = db.config(false).await?;
+            sqlx::query("UPDATE user_strategy_configs SET daily_enabled=true WHERE id=$1")
+                .bind(config)
+                .execute(&db.app)
+                .await?;
+            if name == "config_owner_optin" {
+                sqlx::query("DELETE FROM user_roles WHERE user_id=$1")
+                    .bind(db.owner_id)
+                    .execute(&db.owner)
+                    .await?;
+                daily_0060_denied(
+                    &db.app,
+                    "UPDATE user_strategy_configs SET config_json='{\"new\":true}'",
+                    "42501",
+                )
+                .await?;
+                sqlx::query("UPDATE user_strategy_configs SET daily_enabled=false")
+                    .execute(&db.app)
+                    .await?;
+                daily_0060_denied(
+                    &db.app,
+                    "UPDATE user_strategy_configs SET daily_enabled=true",
+                    "42501",
+                )
+                .await?;
+                let foreign = daily_0060_login(&db.url, &db.name, "app", Uuid::new_v4()).await?;
+                assert_eq!(
+                    sqlx::query("UPDATE user_strategy_configs SET daily_enabled=true")
+                        .execute(&foreign)
+                        .await?
+                        .rows_affected(),
+                    0
+                );
+                foreign.close().await;
+            } else {
+                sqlx::raw_sql("UPDATE user_strategy_configs SET updated_at=clock_timestamp(); UPDATE user_strategy_configs SET config_json='{\"edited\":true}'; UPDATE user_strategy_configs SET config_json='{}'; UPDATE user_strategy_configs SET daily_enabled=false; UPDATE user_strategy_configs SET daily_enabled=true;").execute(&db.app).await?;
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>("SELECT daily_epoch FROM user_strategy_configs")
+                        .fetch_one(&db.app)
+                        .await?,
+                    5
+                );
+                daily_0060_denied(
+                    &db.app,
+                    "UPDATE user_strategy_configs SET daily_epoch=0",
+                    "42501",
+                )
+                .await?;
+                daily_0060_denied(
+                    &db.owner,
+                    "UPDATE user_strategy_configs SET owner_user_id=gen_random_uuid()",
+                    "42501",
+                )
+                .await?;
+                let mut overflow = db.owner.begin().await?;
+                sqlx::raw_sql("ALTER TABLE user_strategy_configs DISABLE TRIGGER daily_0060_config_epoch; UPDATE user_strategy_configs SET daily_epoch=9223372036854775807; ALTER TABLE user_strategy_configs ENABLE TRIGGER daily_0060_config_epoch").execute(&mut *overflow).await?;
+                daily_0060_expect_state(
+                    sqlx::query("UPDATE user_strategy_configs SET daily_enabled=false")
+                        .execute(&mut *overflow)
+                        .await
+                        .map_err(Into::into),
+                    "23514",
+                );
+                overflow.rollback().await?;
+                println!("DAILY_0060_SUBCASE:config_overflow:PASS");
+            }
+        }
+        "control_epoch" => {
+            db.control(false).await?;
+            for statement in [
+                "UPDATE owner_beta_daily_control SET enabled=true",
+                "UPDATE owner_beta_daily_control SET enabled=false",
+                "UPDATE owner_beta_daily_control SET max_jobs_per_owner=5",
+                "UPDATE owner_beta_daily_control SET lease_seconds=61",
+                "UPDATE owner_beta_daily_control SET backoff_seconds=2",
+                "UPDATE owner_beta_daily_control SET first_auto_session='2026-08-30'",
+                "UPDATE owner_beta_daily_control SET entitlement_reference='changed'",
+                "UPDATE owner_beta_daily_control SET policy_sha256='sha256:9999999999999999999999999999999999999999999999999999999999999999'",
+                "UPDATE owner_beta_daily_control SET entitlement_sha256='sha256:8888888888888888888888888888888888888888888888888888888888888888'",
+                "UPDATE owner_beta_daily_control SET policy_json=jsonb_set(policy_json,'{base,pins,candidate_content_sha256}',to_jsonb('sha256:9999999999999999999999999999999999999999999999999999999999999999'::text))",
+            ] {
+                sqlx::raw_sql(statement).execute(&db.owner).await?;
+            }
+            sqlx::query("UPDATE owner_beta_daily_control SET updated_at=clock_timestamp()")
+                .execute(&db.owner)
+                .await?;
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT activation_epoch FROM owner_beta_daily_control"
+                )
+                .fetch_one(&db.owner)
+                .await?,
+                10
+            );
+            daily_0060_denied(
+                &db.owner,
+                "UPDATE owner_beta_daily_control SET activation_epoch=0",
+                "42501",
+            )
+            .await?;
+            daily_0060_denied(&db.owner, "DELETE FROM owner_beta_daily_control", "42501").await?;
+            daily_0060_denied(&db.owner, DAILY_0060_DOWN, "55000").await?;
+        }
+        _ => daily_0060_evidence_or_queue_case(db, name).await?,
+    }
+    Ok(())
+}
+
+fn daily_0060_expect_state<T>(result: Daily0060Result<T>, expected: &str) {
+    let error = match result {
+        Ok(_) => panic!("daily operation unexpectedly accepted"),
+        Err(error) => error,
+    };
+    let code = error
+        .downcast_ref::<sqlx::Error>()
+        .and_then(|e| e.as_database_error())
+        .and_then(|e| e.code());
+    assert_eq!(code.as_deref(), Some(expected), "daily operation SQLSTATE");
+}
+
+async fn daily_0060_evidence_or_queue_case(db: &Daily0060Db, name: &str) -> Daily0060Result {
+    use serde_json::json;
+    match name {
+        "calendar_projection" | "calendar_before_admission" | "calendar_gap_cutoff" => {
+            db.control(false).await?;
+            let receipt = db.slot().await?;
+            let end = db.expected().await?;
+            let (_, file, days) = daily_0060_bundle(db, &end).await?;
+            if name == "calendar_projection" {
+                let mut missing = days.clone();
+                missing.as_array_mut().ok_or("days")?.remove(0);
+                daily_0060_expect_state(db.project(receipt, &file, &missing).await, "23514");
+                let mut future = file.clone();
+                future["retrieved_at"] = json!("2099-01-01T00:00:00.000000000Z");
+                daily_0060_expect_state(db.project(receipt, &future, &days).await, "23514");
+                let mut leaking = file.clone();
+                leaking["request"]["headers"][0][1] = json!("synthetic-not-redacted");
+                daily_0060_expect_state(db.project(receipt, &leaking, &days).await, "23514");
+                let mut duplicate = days.clone();
+                duplicate
+                    .as_array_mut()
+                    .ok_or("days")?
+                    .push(days[0].clone());
+                daily_0060_expect_state(db.project(receipt, &file, &duplicate).await, "23514");
+            }
+            assert_eq!(db.project(receipt, &file, &days).await?, "PROJECTED");
+            assert_eq!(db.project(receipt, &file, &days).await?, "REPLAY");
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM owner_beta_daily_admissions")
+                    .fetch_one(&db.owner)
+                    .await?,
+                0
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM trading_calendars")
+                    .fetch_one(&db.owner)
+                    .await?,
+                0
+            );
+            if name == "calendar_projection" {
+                let mut original = file.clone();
+                for key in [
+                    "original_retrieved_at",
+                    "original_retrieval_precision",
+                    "copied_from",
+                ] {
+                    original.as_object_mut().ok_or("origin")?.remove(key);
+                }
+                let mut copied = file.clone();
+                copied["batch_id"] = json!("00000000-0000-4000-8000-000000000099");
+                copied["retrieved_at"] = json!("2026-08-29T00:00:01.000000000Z");
+                copied["copied_from"] = json!([original]);
+                assert_eq!(db.project(receipt, &copied, &days).await?, "PROJECTED");
+                let mut cycle = copied.clone();
+                cycle["copied_from"][0]["batch_id"] = cycle["batch_id"].clone();
+                daily_0060_expect_state(db.project(receipt, &cycle, &days).await, "23514");
+                println!("DAILY_0060_SUBCASE:calendar_copy_lineage:PASS");
+                let mut conflicting = file.clone();
+                conflicting["wire_sha256"] = json!(daily_0060_hash_value('f'));
+                let mut changed = days.clone();
+                changed[0]["session_type"] = json!("TRADING");
+                assert_eq!(
+                    db.project(receipt, &conflicting, &changed).await?,
+                    "BLOCKED"
+                );
+                assert_eq!(
+                    db.project(receipt, &conflicting, &changed).await?,
+                    "BLOCKED"
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT count(*) FROM owner_beta_daily_source_events"
+                    )
+                    .fetch_one(&db.owner)
+                    .await?,
+                    1
+                );
+            }
+            if name == "calendar_gap_cutoff" {
+                let before: Option<String>=sqlx::query_scalar("SELECT daily_0060_expected_at(c,$1::text::date+time '16:29:59')::text FROM owner_beta_daily_control c").bind(&end).fetch_one(&db.owner).await?;
+                let after: Option<String>=sqlx::query_scalar("SELECT daily_0060_expected_at(c,$1::text::date+time '16:30:00')::text FROM owner_beta_daily_control c").bind(&end).fetch_one(&db.owner).await?;
+                assert_eq!(before, None);
+                assert_eq!(after.as_deref(), Some(end.as_str()));
+                let gap: Option<String>=sqlx::query_scalar("SELECT daily_0060_expected_at(c,$1::text::date+1+time '16:30:00')::text FROM owner_beta_daily_control c").bind(&end).fetch_one(&db.owner).await?;
+                assert_eq!(gap, None);
+                daily_0060_denied(&db.admitter,"SELECT * FROM read_owner_beta_daily_source_evidence('2025-01-01','2026-01-07')","23514").await?;
+            }
+        }
+        "admission_transport" | "admission_conflict_replay" => {
+            db.control(false).await?;
+            let receipt = db.slot().await?;
+            let (input, file, days) = daily_0060_bundle(db, &db.expected().await?).await?;
+            db.project(receipt, &file, &days).await?;
+            if name == "admission_transport" {
+                let mut variants = Vec::new();
+                let mut changed = input.clone();
+                changed["owner_user_id"] = json!(db.owner_id);
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["admission"]["counts"]["bar_count"] = json!(26982);
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["base"]["pins"]["candidate_content_sha256"] =
+                    json!(daily_0060_hash_value('9'));
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["sessions"][0] = json!("2016-08-30");
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["daily_sources"][0]["previous_frontier"] = json!("2026-08-27");
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["daily_sources"][0]["bars"][0]["wire_sha256"] = json!(null);
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["daily_sources"][0]["actions"][0]["pages"][0]["response_continuation"] =
+                    json!("M");
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["admission"]["counts"]["source_file_count"] = json!("30");
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["daily_sources"][0]["bars"][0]["provider"] = json!(null);
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["daily_sources"][0]["actions"][0]["scope"] = json!(null);
+                variants.push(changed);
+                let mut changed = input.clone();
+                changed["manifest"]["daily_sources"][0]["bars"][0]["retrieved_at"] =
+                    json!("2026-99-01T00:00:00.000000000Z");
+                variants.push(changed);
+                for changed in variants {
+                    daily_0060_expect_state(db.admit(receipt, &changed).await, "23514");
+                }
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT count(*) FROM owner_beta_daily_admissions"
+                    )
+                    .fetch_one(&db.owner)
+                    .await?,
+                    0
+                );
+            }
+            assert_eq!(db.admit(receipt, &input).await?, "ADMITTED");
+            let stamp: String =
+                sqlx::query_scalar("SELECT admitted_at::text FROM owner_beta_daily_admissions")
+                    .fetch_one(&db.owner)
+                    .await?;
+            assert_eq!(db.admit(receipt, &input).await?, "REPLAY");
+            let new_receipt = db.next_slot().await?;
+            assert_eq!(db.admit(new_receipt, &input).await?, "REPLAY");
+            assert_eq!(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT admitted_at::text FROM owner_beta_daily_admissions"
+                )
+                .fetch_one(&db.owner)
+                .await?,
+                stamp
+            );
+            if name == "admission_conflict_replay" {
+                let conflict_receipt = db.next_slot().await?;
+                let mut changed = input.clone();
+                changed["admission_sha256"] = json!(daily_0060_hash_value('9'));
+                assert_eq!(db.admit(conflict_receipt, &changed).await?, "BLOCKED");
+                assert_eq!(db.admit(conflict_receipt, &changed).await?, "BLOCKED");
+                let mut different = changed.clone();
+                different["admission_sha256"] = json!(daily_0060_hash_value('8'));
+                daily_0060_expect_state(db.admit(conflict_receipt, &different).await, "23514");
+                println!("DAILY_0060_SUBCASE:blocked_replay_identity:PASS");
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT count(*) FROM owner_beta_daily_admission_events"
+                    )
+                    .fetch_one(&db.owner)
+                    .await?,
+                    1
+                );
+                assert_eq!(
+                    sqlx::query_scalar::<_, i64>(
+                        "SELECT count(*) FROM owner_beta_daily_admissions"
+                    )
+                    .fetch_one(&db.owner)
+                    .await?,
+                    1
+                );
+            }
+        }
+        "admission_parent_chain" => {
+            db.control(false).await?;
+            let end = db.expected().await?;
+            let prior: String = sqlx::query_scalar("SELECT ($1::text::date-1)::text")
+                .bind(&end)
+                .fetch_one(&db.owner)
+                .await?;
+            let (first, file, days) = daily_0060_bundle(db, &prior).await?;
+            let receipt = db.slot().await?;
+            db.project(receipt, &file, &days).await?;
+            db.admit(receipt, &first).await?;
+            let (mut second, _, _) = daily_0060_bundle(db, &end).await?;
+            let calendar = daily_0060_file_fixture(
+                "calendar",
+                &end,
+                "calendar.json",
+                "quotations/chk-holiday",
+                "CTCA0903R",
+                vec![
+                    ("BASS_DT", end.replace('-', "")),
+                    ("CTX_AREA_FK", String::new()),
+                    ("CTX_AREA_NK", String::new()),
+                ],
+            );
+            let one_day = json!([{"session_date":end,"session_type":"TRADING","evidence_kind":"REQUESTED_TARGET","source_row_ordinal":0,"source_row_sha256":daily_0060_hash_value('4')}]);
+            let mut addition = second["manifest"]["daily_sources"][0].clone();
+            addition["previous_frontier"] = json!(prior);
+            let binding = json!({"civil_date":end,"session_type":"TRADING","exchange":"KRX","timezone":"Asia/Seoul","source_file":calendar,"normalized_document_sha256":daily_0060_hash_value('5'),"legacy_projection":null});
+            addition["calendar"] = json!([binding]);
+            let mut docs = addition["normalized_documents"]
+                .as_array()
+                .ok_or("docs")?
+                .iter()
+                .filter(|v| v["kind"] != "calendar")
+                .cloned()
+                .collect::<Vec<_>>();
+            docs.push(json!({"kind":"calendar","session_date":end,"normalizer_version":"daily-raw-reconstruction-v1","sha256":daily_0060_hash_value('5'),"size_bytes":1,"row_count":1,"source_files":[daily_0060_file_key_fixture(&calendar)],"source_evidence_sha256":daily_0060_hash_value('6')}));
+            addition["normalized_documents"] = json!(docs);
+            second["manifest"]["sessions"] = first["manifest"]["sessions"].clone();
+            second["manifest"]["sessions"]
+                .as_array_mut()
+                .ok_or("sessions")?
+                .push(json!(end));
+            second["manifest"]["daily_sources"] =
+                json!([first["manifest"]["daily_sources"][0], addition]);
+            second["manifest"]["parent_admission_sha256"] = first["admission_sha256"].clone();
+            second["admission"]["parent_admission_sha256"] = first["admission_sha256"].clone();
+            second["admission_sha256"] = json!(daily_0060_hash_value('1'));
+            let count = first["admission"]["counts"]["calendar_row_count"]
+                .as_u64()
+                .ok_or("count")?
+                + 1;
+            second["admission"]["counts"] = json!({"instrument_count":11,"session_count":2454,"bar_count":26994,"added_session_count":2,"source_file_count":60,"calendar_row_count":count,"action_chain_count":14,"action_page_count":14,"cash_dividend_row_count":0,"normalized_document_count":6+count});
+            second["manifest"]["bars"]["row_count"] = json!(26994);
+            second["manifest"]["normalization"]["row_count"] = json!(6 + count);
+            let receipt = db.next_slot().await?;
+            db.project(receipt, &calendar, &one_day).await?;
+            let mut wrong = second.clone();
+            wrong["manifest"]["sessions"][0] = json!("2016-08-30");
+            daily_0060_expect_state(db.admit(receipt, &wrong).await, "23514");
+            assert_eq!(db.admit(receipt, &second).await?, "ADMITTED");
+            sqlx::query("SELECT revoke_owner_beta_daily_input($1,$2)")
+                .bind(first["admission_sha256"].as_str().ok_or("hash")?)
+                .bind(daily_0060_hash_value('9'))
+                .execute(&db.owner)
+                .await?;
+            let usable: bool = sqlx::query_scalar(
+                "SELECT daily_0060_admission_usable(c,$1,false) FROM owner_beta_daily_control c",
+            )
+            .bind(second["admission_sha256"].as_str().ok_or("hash")?)
+            .fetch_one(&db.owner)
+            .await?;
+            assert!(!usable);
+        }
+        "poll_rate_and_crash" => {
+            db.control(false).await?;
+            let (a, b) = tokio::join!(
+                sqlx::query_scalar::<_, Uuid>(
+                    "SELECT receipt_id FROM take_owner_beta_daily_admission_poll_slot()"
+                )
+                .fetch_optional(&db.admitter),
+                sqlx::query_scalar::<_, Uuid>(
+                    "SELECT receipt_id FROM take_owner_beta_daily_admission_poll_slot()"
+                )
+                .fetch_optional(&db.admitter)
+            );
+            let a = a?;
+            let b = b?;
+            assert_eq!(usize::from(a.is_some()) + usize::from(b.is_some()), 1);
+            let old = a.or(b).ok_or("slot")?;
+            let new = db.next_slot().await?;
+            assert_ne!(old, new);
+            let result = sqlx::query_scalar::<_, String>(
+                "SELECT finish_owner_beta_daily_admission_poll($1,'INPUT_PENDING',NULL)",
+            )
+            .bind(old)
+            .fetch_one(&db.admitter)
+            .await;
+            daily_0060_expect_state(result.map_err(Into::into), "23514");
+            let unfinished: bool=sqlx::query_scalar("SELECT completed_at IS NULL FROM owner_beta_daily_poll_receipts WHERE receipt_id=$1").bind(old).fetch_one(&db.owner).await?;
+            assert!(unfinished);
+        }
+        "receipt_authority" => {
+            db.control(true).await?;
+            let receipt = db.slot().await?;
+            for result in ["VERIFIED", "CHECKED", "unknown"] {
+                daily_0060_expect_state(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT finish_owner_beta_daily_admission_poll($1,$2,NULL)",
+                    )
+                    .bind(receipt)
+                    .bind(result)
+                    .fetch_one(&db.admitter)
+                    .await
+                    .map_err(Into::into),
+                    "23514",
+                );
+            }
+            daily_0060_expect_state(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT finish_owner_beta_daily_schedule_poll($1,'CHECKED')",
+                )
+                .bind(receipt)
+                .fetch_one(&db.worker)
+                .await
+                .map_err(Into::into),
+                "23514",
+            );
+            for expected in ["COMPLETED", "REPLAY"] {
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT finish_owner_beta_daily_admission_poll($1,'INPUT_PENDING',NULL)"
+                    )
+                    .bind(receipt)
+                    .fetch_one(&db.admitter)
+                    .await?,
+                    expected
+                );
+            }
+            daily_0060_expect_state(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT finish_owner_beta_daily_admission_poll($1,'IO_FAILED',NULL)",
+                )
+                .bind(receipt)
+                .fetch_one(&db.admitter)
+                .await
+                .map_err(Into::into),
+                "23514",
+            );
+            for field in ["owner_user_id", "policy_sha256"] {
+                let mut wrong = db.owner.begin().await?;
+                if field == "owner_user_id" {
+                    let other = Uuid::new_v4();
+                    sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'https://daily.invalid','receipt-owner','receipt@example.invalid')").bind(other).execute(&mut *wrong).await?;
+                    sqlx::query("UPDATE owner_beta_daily_poll_receipts SET owner_user_id=$1 WHERE receipt_id=$2").bind(other).bind(receipt).execute(&mut *wrong).await?;
+                } else {
+                    sqlx::query("UPDATE owner_beta_daily_poll_receipts SET policy_sha256=$1 WHERE receipt_id=$2").bind(daily_0060_hash_value('9')).bind(receipt).execute(&mut *wrong).await?;
+                }
+                // Same direct owner connection sees its uncommitted poison. This
+                // isolates derived authority without manufacturing a new receipt.
+                daily_0060_expect_state(
+                    sqlx::query(
+                        "SELECT finish_owner_beta_daily_admission_poll($1,'INPUT_PENDING',NULL)",
+                    )
+                    .bind(receipt)
+                    .execute(&mut *wrong)
+                    .await
+                    .map_err(Into::into),
+                    "23514",
+                );
+                wrong.rollback().await?;
+                println!("DAILY_0060_SUBCASE:receipt_{field}:PASS");
+            }
+            let stale = db.next_slot().await?;
+            sqlx::query("UPDATE owner_beta_daily_control SET enabled=false")
+                .execute(&db.owner)
+                .await?;
+            daily_0060_expect_state(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT finish_owner_beta_daily_admission_poll($1,'INPUT_PENDING',NULL)",
+                )
+                .bind(stale)
+                .fetch_one(&db.admitter)
+                .await
+                .map_err(Into::into),
+                "23514",
+            );
+        }
+        "down_all_tenants" => {
+            daily_0060_down_categories(db).await?;
+            let hidden = Uuid::new_v4();
+            sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'https://daily.invalid','hidden','hidden@example.invalid')").bind(hidden).execute(&db.owner).await?;
+            let hidden_owner =
+                daily_0060_login(&db.url, &db.name, "migration_owner", hidden).await?;
+            sqlx::query("INSERT INTO user_strategy_configs(owner_user_id,strategy_id,strategy_version,config_json) VALUES($1,'daily_fixture','1.0.0','{}')").bind(hidden).execute(&hidden_owner).await?;
+            sqlx::raw_sql("UPDATE user_strategy_configs SET config_json='{\"edited\":true}'; UPDATE user_strategy_configs SET config_json='{}'").execute(&hidden_owner).await?;
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM user_strategy_configs")
+                    .fetch_one(&db.owner)
+                    .await?,
+                0
+            );
+            daily_0060_denied(&db.owner, DAILY_0060_DOWN, "55000").await?;
+            assert!(sqlx::query_scalar::<_,bool>("SELECT relforcerowsecurity FROM pg_class WHERE oid='user_strategy_configs'::regclass").fetch_one(&db.owner).await?);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT daily_epoch FROM user_strategy_configs")
+                    .fetch_one(&hidden_owner)
+                    .await?,
+                2
+            );
+            hidden_owner.close().await;
+            println!("DAILY_0060_SUBCASE:down_hidden_epoch:PASS");
+        }
+        _ => daily_0060_queue_case(db, name).await?,
+    }
+    Ok(())
+}
+
+async fn daily_0060_down_categories(db: &Daily0060Db) -> Daily0060Result {
+    db.control(false).await?;
+    let h = daily_0060_hash_value('9');
+    let owner = db.owner_id;
+    let mut tx = db.owner.begin().await?;
+    // An isolated run is normally impossible because of the reservation matrix.
+    // This rollback-only release fixture isolates DOWN's own run guard; all
+    // trigger/FK changes and the orphan row disappear on transaction rollback.
+    sqlx::raw_sql("ALTER TABLE owner_beta_recommendation_runs DISABLE TRIGGER USER; DO $$ DECLARE c record; BEGIN FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='public.owner_beta_recommendation_runs'::regclass AND contype='f' LOOP EXECUTE format('ALTER TABLE public.owner_beta_recommendation_runs DROP CONSTRAINT %I',c.conname); END LOOP; END $$").execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO owner_beta_recommendation_runs(owner_user_id,strategy_config_id,job_id,as_of,strategy_id,strategy_version,strategy_config_json,strategy_config_sha256,input_kind,trigger_kind,daily_pins,daily_config_epoch,daily_activation_epoch,daily_trigger_version) VALUES($1,gen_random_uuid(),gen_random_uuid(),'2026-08-29','daily_fixture','1.0.0','{}',$2,'owner_beta_daily_etf11_price_only_v1','DAILY',jsonb_build_object('content_sha256',$2::text,'manifest_sha256',$2::text,'admission_sha256',$2::text,'policy_sha256',$2::text),0,0,'owner-beta-daily-trigger-v1')").bind(owner).bind(&h).execute(&mut *tx).await?;
+    daily_0060_expect_state(
+        sqlx::raw_sql(DAILY_0060_DOWN)
+            .execute(&mut *tx)
+            .await
+            .map_err(Into::into),
+        "55000",
+    );
+    tx.rollback().await?;
+    println!("DAILY_0060_SUBCASE:down_daily_run:PASS");
+    // Each category is the only used daily family in this transaction. Remove
+    // its FK dependencies ONLY inside the release-authority disposable fixture;
+    // refusal aborts and rollback restores every constraint and fixture row.
+    for (suffix, values) in [
+        (
+            "admissions",
+            format!(
+                "('{h}','{owner}','{h}','{h}','{h}',NULL,'2016-08-29','2026-08-29',2453,26983,'{{}}',clock_timestamp())"
+            ),
+        ),
+        (
+            "admission_events",
+            format!("('{h}','{h}','{owner}','REVOKED','{h}',clock_timestamp())"),
+        ),
+        (
+            "reservations",
+            format!(
+                "('{owner}',gen_random_uuid(),'2026-08-29','owner-beta-daily-trigger-v1',gen_random_uuid(),gen_random_uuid(),'{h}','{h}',0,0,clock_timestamp())"
+            ),
+        ),
+        (
+            "calendar_sources",
+            format!(
+                "('{h}','{owner}','{h}','daily-raw-reconstruction-v1','kis','kr',gen_random_uuid(),'2026-08-29','2026-08-29','calendar.json','{h}','{h}',clock_timestamp(),'[]','{{}}',clock_timestamp())"
+            ),
+        ),
+        (
+            "calendar_days",
+            format!("('{owner}','{h}','2026-08-29','TRADING','REQUESTED_TARGET',0,'{h}')"),
+        ),
+        (
+            "source_events",
+            format!(
+                "('{h}','{owner}','ACTION','2026-08-29','2026-08-29','NONCASH_ACTION','{h}',NULL,clock_timestamp())"
+            ),
+        ),
+        (
+            "publication_claims",
+            format!(
+                "(gen_random_uuid(),gen_random_uuid(),'{owner}',gen_random_uuid(),1,'fixture',clock_timestamp(),60,clock_timestamp())"
+            ),
+        ),
+        (
+            "poll_receipts",
+            format!(
+                "(gen_random_uuid(),'ADMISSION','{owner}','{h}',0,clock_timestamp(),NULL,NULL,NULL,NULL,NULL,NULL)"
+            ),
+        ),
+    ] {
+        let table = format!("owner_beta_daily_{suffix}");
+        let mut tx = db.owner.begin().await?;
+        let fixture = format!(
+            "DO $$ DECLARE c record; BEGIN FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='public.{table}'::regclass AND contype='f' LOOP EXECUTE format('ALTER TABLE public.{table} DROP CONSTRAINT %I',c.conname); END LOOP; END $$; INSERT INTO public.{table} VALUES {values}"
+        );
+        sqlx::raw_sql(&fixture).execute(&mut *tx).await?;
+        daily_0060_expect_state(
+            sqlx::raw_sql(DAILY_0060_DOWN)
+                .execute(&mut *tx)
+                .await
+                .map_err(Into::into),
+            "55000",
+        );
+        tx.rollback().await?;
+        println!("DAILY_0060_SUBCASE:down_{suffix}:PASS");
+    }
+    let mut tx = db.owner.begin().await?;
+    sqlx::raw_sql("UPDATE owner_beta_daily_control SET enabled=true; UPDATE owner_beta_daily_control SET enabled=false").execute(&mut *tx).await?;
+    daily_0060_expect_state(
+        sqlx::raw_sql(DAILY_0060_DOWN)
+            .execute(&mut *tx)
+            .await
+            .map_err(Into::into),
+        "55000",
+    );
+    tx.rollback().await?;
+    println!("DAILY_0060_SUBCASE:down_restored_off:PASS");
+    let mut tx = db.owner.begin().await?;
+    sqlx::query("INSERT INTO owner_beta_daily_poll_state(stage,next_poll_at,last_completed_at,last_result_code) VALUES('ADMISSION',clock_timestamp(),clock_timestamp(),'INPUT_PENDING')").execute(&mut *tx).await?;
+    daily_0060_expect_state(
+        sqlx::raw_sql(DAILY_0060_DOWN)
+            .execute(&mut *tx)
+            .await
+            .map_err(Into::into),
+        "55000",
+    );
+    tx.rollback().await?;
+    println!("DAILY_0060_SUBCASE:down_poll_state:PASS");
+    let mut tx = db.owner.begin().await?;
+    sqlx::query("INSERT INTO user_strategy_configs(owner_user_id,strategy_id,strategy_version,config_json,daily_enabled) VALUES($1,'daily_fixture','1.0.0','{}',true)").bind(owner).execute(&mut *tx).await?;
+    daily_0060_expect_state(
+        sqlx::raw_sql(DAILY_0060_DOWN)
+            .execute(&mut *tx)
+            .await
+            .map_err(Into::into),
+        "55000",
+    );
+    tx.rollback().await?;
+    println!("DAILY_0060_SUBCASE:down_config_optin:PASS");
+    Ok(())
+}
+
+async fn daily_0060_wait_clock(db: &Daily0060Db, job: Uuid, expired: bool) -> Daily0060Result {
+    tokio::time::timeout(Duration::from_secs(5),async {
+        loop {
+            let ready: bool=sqlx::query_scalar("SELECT CASE WHEN $2 THEN locked_at+make_interval(secs=>c.lease_seconds)<=clock_timestamp() ELSE available_at<=clock_timestamp() END FROM jobs j CROSS JOIN owner_beta_daily_control c WHERE j.id=$1")
+                .bind(job).bind(expired).fetch_one(&db.owner).await?;
+            if ready {return Ok::<(),sqlx::Error>(());}
+            tokio::task::yield_now().await;
+        }
+    }).await??;
+    Ok(())
+}
+
+async fn daily_0060_queue_case(db: &Daily0060Db, name: &str) -> Daily0060Result {
+    use serde_json::json;
+    let (config, input, receipt) = db.ready().await?;
+    match name {
+        "event_and_freshness" => {
+            let usable: bool = sqlx::query_scalar(
+                "SELECT daily_0060_admission_usable(c,$1,true) FROM owner_beta_daily_control c",
+            )
+            .bind(input["admission_sha256"].as_str().ok_or("hash")?)
+            .fetch_one(&db.owner)
+            .await?;
+            assert!(usable);
+            sqlx::query("UPDATE owner_beta_daily_poll_receipts SET started_at=clock_timestamp()-interval '182 seconds',completed_at=clock_timestamp()-interval '181 seconds' WHERE receipt_id=$1").bind(receipt).execute(&db.owner).await?;
+            assert_eq!(db.reserve(config, &input).await?.2, "BLOCKED");
+            let new = db.next_slot().await?;
+            let event = json!({"source_kind":"ACTION","range_start":"2026-08-29","range_end":input["manifest"]["range_end"],"code":"NONCASH_ACTION","evidence_sha256":daily_0060_hash_value('8')});
+            let first: String =
+                sqlx::query_scalar("SELECT event_sha256 FROM block_owner_beta_daily_input($1,$2)")
+                    .bind(new)
+                    .bind(&event)
+                    .fetch_one(&db.admitter)
+                    .await?;
+            let replay: String =
+                sqlx::query_scalar("SELECT event_sha256 FROM block_owner_beta_daily_input($1,$2)")
+                    .bind(new)
+                    .bind(&event)
+                    .fetch_one(&db.admitter)
+                    .await?;
+            assert_eq!(first, replay);
+            assert_eq!(db.reserve(config, &input).await?.2, "BLOCKED");
+            assert!(sqlx::query_scalar::<_,bool>("SELECT verified_admission_sha256 IS NULL FROM owner_beta_daily_poll_state WHERE stage='ADMISSION'").fetch_one(&db.owner).await?);
+        }
+        "reservation_dedup" => {
+            let (one, two) = tokio::join!(db.reserve(config, &input), db.reserve(config, &input));
+            let one = one?;
+            let two = two?;
+            assert_eq!((one.0, one.1), (two.0, two.1));
+            assert!(one.2 == "RESERVED" || two.2 == "RESERVED");
+            let before = daily_0060_snapshot(db).await?;
+            sqlx::raw_sql("UPDATE user_strategy_configs SET daily_enabled=false; UPDATE user_strategy_configs SET daily_enabled=true; UPDATE user_strategy_configs SET config_json='{\"changed\":true}'").execute(&db.app).await?;
+            let again = db.reserve(config, &input).await?;
+            assert_eq!(again.0, one.0);
+            assert_eq!(again.1, one.1);
+            assert_eq!(again.2, "REPLAY");
+            let after = daily_0060_snapshot(db).await?;
+            assert_eq!(before["jobs"], after["jobs"]);
+            assert_eq!(before["runs"], after["runs"]);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM owner_beta_daily_reservations")
+                    .fetch_one(&db.owner)
+                    .await?,
+                1
+            );
+        }
+        "capacity_deferral" => {
+            for _ in 0..4 {
+                sqlx::query(
+                    "INSERT INTO jobs(owner_user_id,job_type) VALUES($1,'fixture-capacity')",
+                )
+                .bind(db.owner_id)
+                .execute(&db.app)
+                .await?;
+            }
+            let result = db.reserve(config, &input).await?;
+            assert_eq!(result, (None, None, "DEFERRED".into()));
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM owner_beta_daily_reservations")
+                    .fetch_one(&db.owner)
+                    .await?,
+                0
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM job_attempts")
+                    .fetch_one(&db.worker)
+                    .await?,
+                0
+            );
+        }
+        "latest_only" => {
+            let candidates: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM owner_beta_daily_schedule_candidates()")
+                    .fetch_one(&db.worker)
+                    .await?;
+            assert_eq!(candidates, 1);
+            for (label, sql, denied) in [
+                (
+                    "first_auto",
+                    "UPDATE owner_beta_daily_control SET first_auto_session=current_date+2",
+                    false,
+                ),
+                (
+                    "disabled",
+                    "UPDATE owner_beta_daily_control SET enabled=false",
+                    false,
+                ),
+                (
+                    "expired_rights",
+                    "UPDATE data_entitlements SET effective_until=current_date-1",
+                    true,
+                ),
+                (
+                    "unknown_calendar",
+                    "ALTER TABLE owner_beta_daily_calendar_days DISABLE TRIGGER USER; DELETE FROM owner_beta_daily_calendar_days",
+                    false,
+                ),
+            ] {
+                let mut tx = db.owner.begin().await?;
+                sqlx::raw_sql(sql).execute(&mut *tx).await?;
+                let observed = sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM owner_beta_daily_schedule_candidates()",
+                )
+                .fetch_one(&mut *tx)
+                .await;
+                if denied {
+                    daily_0060_expect_state(observed.map_err(Into::into), "42501");
+                } else {
+                    assert_eq!(observed?, 0);
+                }
+                tx.rollback().await?;
+                println!("DAILY_0060_SUBCASE:latest_{label}:PASS");
+            }
+            // Project the next eligible date without admitting it. The private
+            // clock adapter feeds the unchanged production cutoff calculation.
+            let future: String = sqlx::query_scalar("SELECT ($1::text::date+1)::text")
+                .bind(input["manifest"]["range_end"].as_str().ok_or("end")?)
+                .fetch_one(&db.owner)
+                .await?;
+            let calendar = daily_0060_file_fixture(
+                "calendar",
+                &future,
+                "calendar.json",
+                "quotations/chk-holiday",
+                "CTCA0903R",
+                vec![
+                    ("BASS_DT", future.replace('-', "")),
+                    ("CTX_AREA_FK", String::new()),
+                    ("CTX_AREA_NK", String::new()),
+                ],
+            );
+            let days = json!([{"session_date":future,"session_type":"TRADING","evidence_kind":"REQUESTED_TARGET","source_row_ordinal":0,"source_row_sha256":daily_0060_hash_value('4')}]);
+            let scan = db.next_slot().await?;
+            db.project(scan, &calendar, &days).await?;
+            db.admit(scan, &input).await?;
+            let mut tx = db.owner.begin().await?;
+            sqlx::raw_sql("CREATE TABLE validation_daily_clock(wall_time timestamp NOT NULL); REVOKE ALL ON validation_daily_clock FROM PUBLIC").execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT INTO validation_daily_clock VALUES($1::text::date+time '16:30:00')",
+            )
+            .bind(&future)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::raw_sql("CREATE OR REPLACE FUNCTION public.daily_0060_expected(c public.owner_beta_daily_control) RETURNS date LANGUAGE sql SET search_path=pg_catalog,pg_temp AS $$ SELECT public.daily_0060_expected_at(c,(SELECT wall_time FROM public.validation_daily_clock)) $$").execute(&mut *tx).await?;
+            let expected: String = sqlx::query_scalar(
+                "SELECT daily_0060_expected(c)::text FROM owner_beta_daily_control c",
+            )
+            .fetch_one(&mut *tx)
+            .await?;
+            assert_eq!(expected, future);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM owner_beta_daily_schedule_candidates()"
+                )
+                .fetch_one(&mut *tx)
+                .await?,
+                0
+            );
+            assert_eq!(sqlx::query_scalar::<_,String>("SELECT disposition FROM reserve_owner_beta_daily_run($1,$2::text::date,$3,(SELECT daily_epoch FROM user_strategy_configs WHERE id=$1),$4)").bind(config).bind(input["manifest"]["range_end"].as_str().ok_or("end")?).bind(input["admission_sha256"].as_str().ok_or("hash")?).bind(daily_0060_strategy()).fetch_one(&mut *tx).await?,"BLOCKED");
+            tx.rollback().await?;
+            println!("DAILY_0060_SUBCASE:latest_newest_missing:PASS");
+            // A later scan with no usable input must clear support immediately.
+            let next = db.next_slot().await?;
+            sqlx::query("SELECT finish_owner_beta_daily_admission_poll($1,'INPUT_PENDING',NULL)")
+                .bind(next)
+                .execute(&db.admitter)
+                .await?;
+            assert_eq!(db.reserve(config, &input).await?.2, "BLOCKED");
+            println!("DAILY_0060_SUBCASE:latest_failed_scan:PASS");
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM owner_beta_daily_schedule_candidates()"
+                )
+                .fetch_one(&db.worker)
+                .await?,
+                0
+            );
+            sqlx::query("UPDATE owner_beta_daily_control SET enabled=false")
+                .execute(&db.owner)
+                .await?;
+            assert_eq!(db.reserve(config, &input).await?.2, "BLOCKED");
+        }
+        "direct_daily_spoof" => {
+            let payload = json!({"schema":"owner-beta-daily-recommendation-v1","run_id":Uuid::new_v4(),"strategy_config_id":config,"as_of":input["manifest"]["range_end"],
+                "input":{"kind":"owner_beta_daily_etf11_price_only_v1","content_sha256":input["admission"]["content_sha256"],"manifest_sha256":input["admission"]["manifest_sha256"],"admission_sha256":input["admission_sha256"],"policy_sha256":input["admission"]["policy_sha256"]},
+                "strategy":daily_0060_strategy(),"trigger":{"kind":"DAILY","version":"owner-beta-daily-trigger-v1","config_epoch":0,"activation_epoch":1}});
+            let key = format!(
+                "owner-beta:daily:v1:{}:{config}:{}",
+                db.owner_id,
+                input["manifest"]["range_end"].as_str().ok_or("end")?
+            );
+            let mut tx = db.app.begin().await?;
+            sqlx::query("INSERT INTO jobs(owner_user_id,job_type,payload_json,idempotency_key) VALUES($1,'owner_beta_price_recommendation',$2,$3)").bind(db.owner_id).bind(&payload).bind(&key).execute(&mut *tx).await?;
+            daily_0060_expect_state(tx.commit().await.map_err(Into::into), "23514");
+            let mut mixed = payload.clone();
+            mixed["pins"] = json!({});
+            daily_0060_expect_state(sqlx::query("INSERT INTO jobs(owner_user_id,job_type,payload_json,idempotency_key) VALUES($1,'owner_beta_price_recommendation',$2,$3)").bind(db.owner_id).bind(mixed).bind(&key).execute(&db.app).await.map_err(Into::into),"23514");
+            let mut unknown = payload.clone();
+            unknown["schema"] = json!("owner-beta-daily-recommendation-v99");
+            daily_0060_expect_state(sqlx::query("INSERT INTO jobs(owner_user_id,job_type,payload_json,idempotency_key) VALUES($1,'owner_beta_price_recommendation',$2,$3)").bind(db.owner_id).bind(unknown).bind(&key).execute(&db.app).await.map_err(Into::into),"23514");
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM jobs")
+                    .fetch_one(&db.worker)
+                    .await?,
+                0
+            );
+        }
+        "revoke_publish_races" => {
+            daily_0060_races(db).await?;
+        }
+        _ => {
+            let (run, job, disposition) = db.reserve(config, &input).await?;
+            assert_eq!(disposition, "RESERVED");
+            let run = run.ok_or("run")?;
+            let job = job.ok_or("job")?;
+            let attempt = db.claim(job).await?;
+            match name {
+                "valid_publish" | "terminal_immutability" => {
+                    daily_0060_publish(db, run, job, attempt).await?;
+                    let states: (String,String,String,i64)=sqlx::query_as("SELECT r.status,j.status,a.outcome,(SELECT count(*) FROM owner_beta_recommendation_items WHERE recommendation_run_id=r.id) FROM owner_beta_recommendation_runs r JOIN jobs j ON j.id=r.job_id JOIN job_attempts a ON a.job_id=j.id AND a.attempt_no=j.attempt_count WHERE r.id=$1").bind(run).fetch_one(&db.owner).await?;
+                    assert_eq!(
+                        states,
+                        (
+                            "SUCCEEDED".into(),
+                            "SUCCEEDED".into(),
+                            "SUCCEEDED".into(),
+                            11
+                        )
+                    );
+                    let same_actor: String =
+                        sqlx::query_scalar("SELECT current_setting('app.actor_user_id')")
+                            .fetch_one(&db.worker)
+                            .await?;
+                    assert_eq!(same_actor, db.owner_id.to_string());
+                    if name == "terminal_immutability" {
+                        let before = daily_0060_snapshot(db).await?;
+                        for statement in [
+                            "UPDATE owner_beta_recommendation_runs SET status='PENDING',factor_snapshot_sha256=NULL,target_snapshot_sha256=NULL,cash_weight=NULL",
+                            "UPDATE owner_beta_recommendation_runs SET cash_weight=0",
+                            "UPDATE owner_beta_recommendation_runs SET updated_at=clock_timestamp()",
+                            "UPDATE jobs SET status='QUEUED'",
+                            "UPDATE job_attempts SET outcome='RUNNING'",
+                            "DELETE FROM owner_beta_recommendation_runs",
+                            "DELETE FROM owner_beta_recommendation_items",
+                            "UPDATE owner_beta_recommendation_items SET rank=rank+1",
+                        ] {
+                            daily_0060_denied(&db.owner, statement, "42501").await?;
+                        }
+                        sqlx::query("UPDATE jobs SET status=status")
+                            .execute(&db.worker)
+                            .await?;
+                        assert_eq!(daily_0060_snapshot(db).await?, before);
+                    }
+                }
+                "claim_fences" => {
+                    daily_0060_denied(
+                        &db.worker,
+                        "UPDATE job_attempts SET claimed_by='stale-worker'",
+                        "42501",
+                    )
+                    .await?;
+                    daily_0060_denied(
+                        &db.worker,
+                        "UPDATE jobs SET locked_by='stale-worker'",
+                        "23514",
+                    )
+                    .await?;
+                    daily_0060_denied(
+                        &db.worker,
+                        "UPDATE job_attempts SET outcome='SUCCEEDED'",
+                        "23514",
+                    )
+                    .await?;
+                    sqlx::query("UPDATE jobs SET locked_at='2099-01-01' WHERE id=$1")
+                        .bind(job)
+                        .execute(&db.worker)
+                        .await?;
+                    assert!(
+                        sqlx::query_scalar::<_, bool>(
+                            "SELECT locked_at<=clock_timestamp() FROM jobs WHERE id=$1"
+                        )
+                        .bind(job)
+                        .fetch_one(&db.worker)
+                        .await?
+                    );
+                    daily_0060_denied(&db.worker,"INSERT INTO owner_beta_daily_publication_claims(run_id) SELECT id FROM owner_beta_recommendation_runs","42501").await?;
+                    sqlx::query("UPDATE owner_beta_daily_control SET lease_seconds=1")
+                        .execute(&db.owner)
+                        .await?;
+                    daily_0060_wait_clock(db, job, true).await?;
+                    daily_0060_denied(
+                        &db.worker,
+                        "UPDATE jobs SET locked_at=clock_timestamp()",
+                        "23514",
+                    )
+                    .await?;
+                    daily_0060_expect_state(
+                        sqlx::query("SELECT lock_owner_beta_daily_run_gate($1)")
+                            .bind(run)
+                            .execute(&db.worker)
+                            .await
+                            .map_err(Into::into),
+                        "23514",
+                    );
+                }
+                "retry_and_recovery" => {
+                    let mut tx = db.worker.begin().await?;
+                    sqlx::query("UPDATE jobs SET status='QUEUED',locked_by=NULL,locked_at=NULL,available_at='2099-01-01' WHERE id=$1").bind(job).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE job_attempts SET outcome='FAILED' WHERE id=$1")
+                        .bind(attempt)
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.commit().await?;
+                    assert!(sqlx::query_scalar::<_,bool>("SELECT available_at<clock_timestamp()+interval '2 seconds' FROM jobs WHERE id=$1").bind(job).fetch_one(&db.worker).await?);
+                    daily_0060_wait_clock(db, job, false).await?;
+                    let second = db.claim(job).await?;
+                    sqlx::query("UPDATE owner_beta_daily_control SET lease_seconds=1")
+                        .execute(&db.owner)
+                        .await?;
+                    daily_0060_wait_clock(db, job, true).await?;
+                    let mut tx = db.worker.begin().await?;
+                    sqlx::query("UPDATE job_attempts SET outcome='ORPHANED' WHERE id=$1")
+                        .bind(second)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query(
+                        "UPDATE jobs SET status='QUEUED',locked_by=NULL,locked_at=NULL WHERE id=$1",
+                    )
+                    .bind(job)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                    daily_0060_wait_clock(db, job, false).await?;
+                    let third = db.claim(job).await?;
+                    let mut tx = db.worker.begin().await?;
+                    sqlx::query("UPDATE owner_beta_recommendation_runs SET status='FAILED',error_code='FIXTURE_EXHAUSTED' WHERE id=$1").bind(run).execute(&mut *tx).await?;
+                    sqlx::query(
+                        "UPDATE jobs SET status='FAILED',locked_by=NULL,locked_at=NULL WHERE id=$1",
+                    )
+                    .bind(job)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query("UPDATE job_attempts SET outcome='FAILED' WHERE id=$1")
+                        .bind(third)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("SET CONSTRAINTS ALL IMMEDIATE")
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.rollback().await?;
+                    println!("DAILY_0060_SUBCASE:retry_exhausted_live:PASS");
+                    daily_0060_wait_clock(db, job, true).await?;
+                    let mut tx = db.worker.begin().await?;
+                    sqlx::query("UPDATE job_attempts SET outcome='ORPHANED' WHERE id=$1")
+                        .bind(third)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query(
+                        "UPDATE jobs SET status='FAILED',locked_by=NULL,locked_at=NULL WHERE id=$1",
+                    )
+                    .bind(job)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query("UPDATE owner_beta_recommendation_runs SET status='FAILED',error_code='FIXTURE_EXHAUSTED' WHERE id=$1").bind(run).execute(&mut *tx).await?;
+                    tx.commit().await?;
+                    println!("DAILY_0060_SUBCASE:retry_exhausted_orphan:PASS");
+                    assert_eq!(
+                        sqlx::query_scalar::<_, i32>("SELECT attempt_count FROM jobs WHERE id=$1")
+                            .bind(job)
+                            .fetch_one(&db.worker)
+                            .await?,
+                        3
+                    );
+                    assert_eq!(db.reserve(config, &input).await?.1, Some(job));
+                }
+                "cancel_drain" => {
+                    sqlx::query("UPDATE jobs SET status='CANCELED' WHERE id=$1")
+                        .bind(job)
+                        .execute(&db.worker)
+                        .await?;
+                    daily_0060_denied(&db.worker, "UPDATE jobs SET status='QUEUED'", "23514")
+                        .await?;
+                    daily_0060_expect_state(
+                        sqlx::query("SELECT lock_owner_beta_daily_run_gate($1)")
+                            .bind(run)
+                            .execute(&db.worker)
+                            .await
+                            .map_err(Into::into),
+                        "23514",
+                    );
+                    let mut tx = db.worker.begin().await?;
+                    sqlx::query("UPDATE job_attempts SET outcome='FAILED',error_code='CANCELED' WHERE id=$1").bind(attempt).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE jobs SET locked_by=NULL,locked_at=NULL WHERE id=$1")
+                        .bind(job)
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query(
+                        "UPDATE owner_beta_recommendation_runs SET status='CANCELED' WHERE id=$1",
+                    )
+                    .bind(run)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                    assert_eq!(db.reserve(config, &input).await?.1, Some(job));
+                    println!("DAILY_0060_SUBCASE:cancel_live:PASS");
+                    // Each extra config has its own permanent reservation, so
+                    // queued and expired cancellation exercise distinct jobs.
+                    for expired in [false, true] {
+                        let config = db.config(true).await?;
+                        let (run, job, _) = db.reserve(config, &input).await?;
+                        let run = run.ok_or("cancel run")?;
+                        let job = job.ok_or("cancel job")?;
+                        let attempt = if expired {
+                            Some(db.claim(job).await?)
+                        } else {
+                            None
+                        };
+                        sqlx::query("UPDATE jobs SET status='CANCELED' WHERE id=$1")
+                            .bind(job)
+                            .execute(&db.worker)
+                            .await?;
+                        if expired {
+                            sqlx::query("UPDATE owner_beta_daily_control SET lease_seconds=1")
+                                .execute(&db.owner)
+                                .await?;
+                            daily_0060_wait_clock(db, job, true).await?;
+                        }
+                        let mut tx = db.worker.begin().await?;
+                        if let Some(attempt) = attempt {
+                            sqlx::query("UPDATE job_attempts SET outcome='ORPHANED' WHERE id=$1")
+                                .bind(attempt)
+                                .execute(&mut *tx)
+                                .await?;
+                            sqlx::query(
+                                "UPDATE jobs SET locked_by=NULL,locked_at=NULL WHERE id=$1",
+                            )
+                            .bind(job)
+                            .execute(&mut *tx)
+                            .await?;
+                        }
+                        sqlx::query("UPDATE owner_beta_recommendation_runs SET status='CANCELED' WHERE id=$1").bind(run).execute(&mut *tx).await?;
+                        tx.commit().await?;
+                        assert_eq!(db.reserve(config, &input).await?.1, Some(job));
+                        println!(
+                            "DAILY_0060_SUBCASE:cancel_{}:PASS",
+                            if expired { "expired" } else { "queued" }
+                        );
+                    }
+                }
+                "deferred_consistency" => {
+                    let before = daily_0060_snapshot(db).await?;
+                    for invalid in ["queued", "running", "succeeded", "failed", "canceled"] {
+                        for immediate in [false, true] {
+                            let mut tx = db.worker.begin().await?;
+                            match invalid {
+                                "queued" => {
+                                    sqlx::query("UPDATE jobs SET status='QUEUED',locked_by=NULL,locked_at=NULL WHERE id=$1").bind(job).execute(&mut *tx).await?;
+                                }
+                                "running" => {
+                                    sqlx::query(
+                                        "UPDATE job_attempts SET outcome='FAILED' WHERE id=$1",
+                                    )
+                                    .bind(attempt)
+                                    .execute(&mut *tx)
+                                    .await?;
+                                }
+                                "succeeded" => {
+                                    sqlx::query("UPDATE owner_beta_recommendation_runs SET status='SUCCEEDED',factor_snapshot_sha256=$2,target_snapshot_sha256=$2,cash_weight=1 WHERE id=$1").bind(run).bind(daily_0060_hash_value('9')).execute(&mut *tx).await?;
+                                    sqlx::query("UPDATE jobs SET status='SUCCEEDED',locked_by=NULL,locked_at=NULL WHERE id=$1").bind(job).execute(&mut *tx).await?;
+                                    sqlx::query(
+                                        "UPDATE job_attempts SET outcome='SUCCEEDED' WHERE id=$1",
+                                    )
+                                    .bind(attempt)
+                                    .execute(&mut *tx)
+                                    .await?;
+                                }
+                                "failed" => {
+                                    sqlx::query("UPDATE jobs SET status='FAILED',locked_by=NULL,locked_at=NULL WHERE id=$1").bind(job).execute(&mut *tx).await?;
+                                    sqlx::query(
+                                        "UPDATE job_attempts SET outcome='FAILED' WHERE id=$1",
+                                    )
+                                    .bind(attempt)
+                                    .execute(&mut *tx)
+                                    .await?;
+                                }
+                                "canceled" => {
+                                    sqlx::query("UPDATE jobs SET status='CANCELED' WHERE id=$1")
+                                        .bind(job)
+                                        .execute(&mut *tx)
+                                        .await?;
+                                    sqlx::query("UPDATE owner_beta_recommendation_runs SET status='FAILED' WHERE id=$1").bind(run).execute(&mut *tx).await?;
+                                }
+                                _ => unreachable!(),
+                            }
+                            if immediate {
+                                daily_0060_expect_state(
+                                    sqlx::query("SET CONSTRAINTS ALL IMMEDIATE")
+                                        .execute(&mut *tx)
+                                        .await
+                                        .map_err(Into::into),
+                                    "23514",
+                                );
+                                tx.rollback().await?;
+                            } else {
+                                daily_0060_expect_state(
+                                    tx.commit().await.map_err(Into::into),
+                                    "23514",
+                                );
+                            }
+                            assert_eq!(daily_0060_snapshot(db).await?, before);
+                            println!(
+                                "DAILY_0060_SUBCASE:matrix_{invalid}_{}:PASS",
+                                if immediate { "immediate" } else { "commit" }
+                            );
+                        }
+                    }
+                    let mut tx = db.worker.begin().await?;
+                    sqlx::query("INSERT INTO owner_beta_recommendation_items(recommendation_run_id,owner_user_id,instrument_id,rank,target_weight) VALUES($1,$2,'069500.KRX',1,1)").bind(run).bind(db.owner_id).execute(&mut *tx).await?;
+                    daily_0060_expect_state(tx.commit().await.map_err(Into::into), "23514");
+                    assert_eq!(daily_0060_snapshot(db).await?, before);
+                    daily_0060_publish(db, run, job, attempt).await?;
+                }
+                "cutoff_while_waiting" => {
+                    // First prove freshness is checked after a real authority wait.
+                    let mut blocker = db.owner.begin().await?;
+                    sqlx::query("SELECT 1 FROM owner_beta_daily_control FOR UPDATE")
+                        .execute(&mut *blocker)
+                        .await?;
+                    let mut waiter = db.worker.acquire().await?;
+                    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                        .fetch_one(&mut *waiter)
+                        .await?;
+                    let waiting = tokio::spawn(async move {
+                        sqlx::query("SELECT lock_owner_beta_daily_run_gate($1)")
+                            .bind(run)
+                            .execute(&mut *waiter)
+                            .await
+                    });
+                    daily_0060_wait_blocked(&db.owner, pid).await?;
+                    sqlx::query("UPDATE owner_beta_daily_poll_receipts SET started_at=clock_timestamp()-interval '182 seconds',completed_at=clock_timestamp()-interval '181 seconds' WHERE receipt_id=$1").bind(receipt).execute(&mut *blocker).await?;
+                    blocker.commit().await?;
+                    daily_0060_expect_state(
+                        tokio::time::timeout(Duration::from_secs(8), waiting)
+                            .await??
+                            .map_err(Into::into),
+                        "23514",
+                    );
+                    println!("DAILY_0060_SUBCASE:wait_freshness:PASS");
+
+                    // A private scratch-DB clock adapter feeds the unchanged pure
+                    // cutoff function. Production has no table/GUC clock override.
+                    // This tests an eligible-date boundary at any CI wall time.
+                    let future: String = sqlx::query_scalar("SELECT ($1::text::date+1)::text")
+                        .bind(input["manifest"]["range_end"].as_str().ok_or("end")?)
+                        .fetch_one(&db.owner)
+                        .await?;
+                    let calendar = daily_0060_file_fixture(
+                        "calendar",
+                        &future,
+                        "calendar.json",
+                        "quotations/chk-holiday",
+                        "CTCA0903R",
+                        vec![
+                            ("BASS_DT", future.replace('-', "")),
+                            ("CTX_AREA_FK", String::new()),
+                            ("CTX_AREA_NK", String::new()),
+                        ],
+                    );
+                    let days = json!([{"session_date":future,"session_type":"TRADING","evidence_kind":"REQUESTED_TARGET","source_row_ordinal":0,"source_row_sha256":daily_0060_hash_value('4')}]);
+                    let fresh = db.next_slot().await?;
+                    db.project(fresh, &calendar, &days).await?;
+                    db.admit(fresh, &input).await?;
+                    sqlx::raw_sql("CREATE TABLE public.validation_daily_clock(wall_time timestamp NOT NULL); REVOKE ALL ON public.validation_daily_clock FROM PUBLIC;").execute(&db.owner).await?;
+                    sqlx::query(
+                        "INSERT INTO validation_daily_clock VALUES($1::text::date+time '16:29:59')",
+                    )
+                    .bind(&future)
+                    .execute(&db.owner)
+                    .await?;
+                    sqlx::raw_sql("CREATE OR REPLACE FUNCTION public.daily_0060_expected(c public.owner_beta_daily_control) RETURNS date LANGUAGE sql SET search_path=pg_catalog,pg_temp AS $$ SELECT public.daily_0060_expected_at(c,(SELECT wall_time FROM public.validation_daily_clock)) $$").execute(&db.owner).await?;
+                    sqlx::query("SELECT lock_owner_beta_daily_run_gate($1)")
+                        .bind(run)
+                        .execute(&db.worker)
+                        .await?;
+                    let mut blocker = db.owner.begin().await?;
+                    sqlx::query("SELECT 1 FROM owner_beta_daily_control FOR UPDATE")
+                        .execute(&mut *blocker)
+                        .await?;
+                    let mut waiter = db.worker.acquire().await?;
+                    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                        .fetch_one(&mut *waiter)
+                        .await?;
+                    let waiting = tokio::spawn(async move {
+                        sqlx::query("SELECT lock_owner_beta_daily_run_gate($1)")
+                            .bind(run)
+                            .execute(&mut *waiter)
+                            .await
+                    });
+                    daily_0060_wait_blocked(&db.owner, pid).await?;
+                    sqlx::query("UPDATE validation_daily_clock SET wall_time=wall_time::date+time '16:30:00'").execute(&mut *blocker).await?;
+                    blocker.commit().await?;
+                    daily_0060_expect_state(
+                        tokio::time::timeout(Duration::from_secs(8), waiting)
+                            .await??
+                            .map_err(Into::into),
+                        "23514",
+                    );
+                    assert_eq!(
+                        sqlx::query_scalar::<_, i64>(
+                            "SELECT count(*) FROM owner_beta_daily_publication_claims"
+                        )
+                        .fetch_one(&db.owner)
+                        .await?,
+                        0
+                    );
+                    println!("DAILY_0060_SUBCASE:wait_eligible_boundary:PASS");
+                }
+                _ => return Err("unknown fixed daily case".into()),
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn daily_0060_races(parent: &Daily0060Db) -> Daily0060Result {
+    for mutation in ["config", "off_on", "control", "rights", "owner", "source"] {
+        for publish_first in [false, true] {
+            let db = Daily0060Db::new(parent.url.clone(), 60).await?;
+            let task_db = db.clone();
+            let result = tokio::spawn(async move {
+                daily_0060_one_race(&task_db, mutation, publish_first).await
+            })
+            .await;
+            let cleanup = db.close().await;
+            cleanup?;
+            result??;
+            println!(
+                "DAILY_0060_SUBCASE:race_{mutation}_{}:PASS",
+                if publish_first {
+                    "publish_first"
+                } else {
+                    "revoke_first"
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn daily_0060_one_race(
+    db: &Daily0060Db,
+    mutation: &str,
+    publish_first: bool,
+) -> Daily0060Result {
+    let (config, input, _) = db.ready().await?;
+    let (run, job, _) = db.reserve(config, &input).await?;
+    let run = run.ok_or("run")?;
+    let job = job.ok_or("job")?;
+    let attempt = db.claim(job).await?;
+    let command = match mutation {
+        "config" => {
+            "UPDATE user_strategy_configs SET config_json='{\"edited\":true}'; UPDATE user_strategy_configs SET config_json='{}'"
+        }
+        "off_on" => {
+            "UPDATE user_strategy_configs SET daily_enabled=false; UPDATE user_strategy_configs SET daily_enabled=true"
+        }
+        "control" => "UPDATE owner_beta_daily_control SET enabled=false",
+        "rights" => "UPDATE data_entitlements SET status='REVOKED'",
+        "owner" => "DELETE FROM user_roles WHERE role_id='owner'",
+        "source" => {
+            "SELECT revoke_owner_beta_daily_input('sha256:0000000000000000000000000000000000000000000000000000000000000000','sha256:9999999999999999999999999999999999999999999999999999999999999999')"
+        }
+        _ => return Err("unknown race".into()),
+    };
+    if publish_first {
+        let mut tx = db.worker.begin().await?;
+        daily_0060_publish_in(&mut tx, db.owner_id, run, job, attempt).await?;
+        let mut mutator = db.owner.acquire().await?;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *mutator)
+            .await?;
+        let pending =
+            tokio::spawn(async move { sqlx::raw_sql(command).execute(&mut *mutator).await });
+        daily_0060_wait_blocked(&db.owner, pid).await?;
+        tx.commit().await?;
+        tokio::time::timeout(Duration::from_secs(8), pending).await???;
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM owner_beta_recommendation_runs WHERE id=$1"
+            )
+            .bind(run)
+            .fetch_one(&db.worker)
+            .await?,
+            "SUCCEEDED"
+        );
+    } else {
+        let mut tx = db.owner.begin().await?;
+        sqlx::raw_sql(command).execute(&mut *tx).await?;
+        let mut waiter = db.worker.acquire().await?;
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *waiter)
+            .await?;
+        let pending = tokio::spawn(async move {
+            sqlx::query("SELECT lock_owner_beta_daily_run_gate($1)")
+                .bind(run)
+                .execute(&mut *waiter)
+                .await
+        });
+        daily_0060_wait_blocked(&db.owner, pid).await?;
+        tx.commit().await?;
+        let error = tokio::time::timeout(Duration::from_secs(8), pending)
+            .await??
+            .err()
+            .ok_or("revocation lost")?;
+        let code = error.as_database_error().and_then(|e| e.code());
+        assert!(matches!(code.as_deref(), Some("23514" | "42501")));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM owner_beta_recommendation_items")
+                .fetch_one(&db.worker)
+                .await?,
+            0
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn daily_0060_role_preflight() {
+    daily_0060_case("role_preflight").await;
+}
+#[tokio::test]
+async fn daily_0060_up_preserves_histories() {
+    daily_0060_case("up_preserves_histories").await;
+}
+#[tokio::test]
+async fn daily_0060_repeat_is_noop() {
+    daily_0060_case("repeat_is_noop").await;
+}
+#[tokio::test]
+async fn daily_0060_catalog_authority() {
+    daily_0060_case("catalog_authority").await;
+}
+#[tokio::test]
+async fn daily_0060_direct_principal_denials() {
+    daily_0060_case("direct_principal_denials").await;
+}
+#[tokio::test]
+async fn daily_0060_config_owner_optin() {
+    daily_0060_case("config_owner_optin").await;
+}
+#[tokio::test]
+async fn daily_0060_config_epoch() {
+    daily_0060_case("config_epoch").await;
+}
+#[tokio::test]
+async fn daily_0060_control_epoch() {
+    daily_0060_case("control_epoch").await;
+}
+#[tokio::test]
+async fn daily_0060_calendar_projection() {
+    daily_0060_case("calendar_projection").await;
+}
+#[tokio::test]
+async fn daily_0060_calendar_before_admission() {
+    daily_0060_case("calendar_before_admission").await;
+}
+#[tokio::test]
+async fn daily_0060_calendar_gap_cutoff() {
+    daily_0060_case("calendar_gap_cutoff").await;
+}
+#[tokio::test]
+async fn daily_0060_admission_transport() {
+    daily_0060_case("admission_transport").await;
+}
+#[tokio::test]
+async fn daily_0060_admission_parent_chain() {
+    daily_0060_case("admission_parent_chain").await;
+}
+#[tokio::test]
+async fn daily_0060_admission_conflict_replay() {
+    daily_0060_case("admission_conflict_replay").await;
+}
+#[tokio::test]
+async fn daily_0060_poll_rate_and_crash() {
+    daily_0060_case("poll_rate_and_crash").await;
+}
+#[tokio::test]
+async fn daily_0060_receipt_authority() {
+    daily_0060_case("receipt_authority").await;
+}
+#[tokio::test]
+async fn daily_0060_event_and_freshness() {
+    daily_0060_case("event_and_freshness").await;
+}
+#[tokio::test]
+async fn daily_0060_reservation_dedup() {
+    daily_0060_case("reservation_dedup").await;
+}
+#[tokio::test]
+async fn daily_0060_capacity_deferral() {
+    daily_0060_case("capacity_deferral").await;
+}
+#[tokio::test]
+async fn daily_0060_latest_only() {
+    daily_0060_case("latest_only").await;
+}
+#[tokio::test]
+async fn daily_0060_direct_daily_spoof() {
+    daily_0060_case("direct_daily_spoof").await;
+}
+#[tokio::test]
+async fn daily_0060_valid_publish() {
+    daily_0060_case("valid_publish").await;
+}
+#[tokio::test]
+async fn daily_0060_terminal_immutability() {
+    daily_0060_case("terminal_immutability").await;
+}
+#[tokio::test]
+async fn daily_0060_claim_fences() {
+    daily_0060_case("claim_fences").await;
+}
+#[tokio::test]
+async fn daily_0060_retry_and_recovery() {
+    daily_0060_case("retry_and_recovery").await;
+}
+#[tokio::test]
+async fn daily_0060_cancel_drain() {
+    daily_0060_case("cancel_drain").await;
+}
+#[tokio::test]
+async fn daily_0060_deferred_consistency() {
+    daily_0060_case("deferred_consistency").await;
+}
+#[tokio::test]
+async fn daily_0060_revoke_publish_races() {
+    daily_0060_case("revoke_publish_races").await;
+}
+#[tokio::test]
+async fn daily_0060_cutoff_while_waiting() {
+    daily_0060_case("cutoff_while_waiting").await;
+}
+#[tokio::test]
+async fn daily_0060_down_unused() {
+    daily_0060_case("down_unused").await;
+}
+#[tokio::test]
+async fn daily_0060_down_all_tenants() {
+    daily_0060_case("down_all_tenants").await;
+}
+#[tokio::test]
+async fn daily_0060_down_atomicity() {
+    daily_0060_case("down_atomicity").await;
 }

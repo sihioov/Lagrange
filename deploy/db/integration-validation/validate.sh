@@ -230,7 +230,7 @@ if [ "$self_test" -eq 1 ]; then
 
   self_migrations="$self_workdir/migrations"
   mkdir -p "$self_migrations"
-  for limit in 38 39 40 41; do
+  for limit in 38 39 40 41 59 60; do
     stage="$self_migrations/$limit"
     mkdir -p "$stage"
     while IFS= read -r migration; do
@@ -275,6 +275,9 @@ if [ "$self_test" -eq 1 ]; then
     "$script_dir/preflight-catalog.sql" \
     "$script_dir/preflight-0040.sql" \
     "$script_dir/preflight-0041.sql" \
+    "$script_dir/preflight-0060.sql" \
+    "$script_dir/actual-role-0060.sql" \
+    "$script_dir/rollback-0060-guard.sql" \
     "$script_dir/hazards.sql" \
     "$script_dir/rollback-0039-guard.sql" \
     "$script_dir/rollback-0039-postflight.sql" \
@@ -512,6 +515,10 @@ cleaned=0
 docker_ready=0
 stages_run=''
 tests_run=''
+daily_harness='NOT_RUN'
+db_test_results=()
+daily_named_rows=()
+daily_subcase_rows=()
 bootstrap_negative_cases=''
 service_logins=''
 full_service_logins=''
@@ -589,7 +596,7 @@ write_evidence() {
     printf '  "finished_at": "%s",\n' "$escaped_finished"
     printf '  "code_commit": "%s",\n' "$validation_code_commit"
     printf '  "postgres_image": "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a",\n'
-    printf '  "upgrade": {"baseline": "0038_schema_only", "sequential": ["0039", "0040", "0041"], "catalog_sha256": "%s"},\n' "$catalog_sha256"
+    printf '  "upgrade": {"baseline": "0038_schema_only", "sequential": ["0039", "0040", "0041", "0059", "0060"], "catalog_sha256": "%s"},\n' "$catalog_sha256"
     printf '  "full_release": {"first_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "second_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "rerun": "%s"},\n' \
       "$(json_escape "$full_migration_count_first")" "$(json_escape "$full_latest_migration_first")" \
       "$(json_escape "$full_migration_checksums_first")" "$(json_escape "$full_migration_count_second")" \
@@ -611,6 +618,28 @@ write_evidence() {
     printf '],\n'
     printf '  "checks": {"direct_service_role_logins": "%s", "full_release_service_role_logins": "%s", "0039_down_undelivered_guard": "%s", "skip_markers": "%s"},\n' \
       "$(json_escape "$service_logins")" "$(json_escape "$full_service_logins")" "$rollback_guard" "$skip_guard"
+    printf '  "daily_0060_harness": "%s",\n' "$daily_harness"
+    printf '  "db_test_results": ['
+    first=1
+    for row in "${db_test_results[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '%s' "$row"; first=0
+    done
+    printf '],\n'
+    printf '  "daily_0060_named_rows": ['
+    first=1
+    for row in "${daily_named_rows[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$row"; first=0
+    done
+    printf '],\n'
+    printf '  "daily_0060_subcase_rows": ['
+    first=1
+    for row in "${daily_subcase_rows[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$row"; first=0
+    done
+    printf '],\n'
     printf '  "tests_run": ['
     first=1
     IFS=',' read -r -a test_items <<<"$tests_run"
@@ -640,7 +669,7 @@ write_evidence() {
     printf 'detail\t%s\n' "$detail"
     printf 'code_commit\t%s\n' "$validation_code_commit"
     printf 'baseline\t0038\n'
-    printf 'sequential\t0039,0040,0041\n'
+    printf 'sequential\t0039,0040,0041,0059,0060\n'
     printf 'stages_run\t%s\n' "$stages_run"
     printf 'tests_run\t%s\n' "$tests_run"
     printf 'bootstrap_negative_cases\t%s\n' "$bootstrap_negative_cases"
@@ -746,7 +775,7 @@ generate_secret() {
 make_stages() {
   migration_root="$workdir/migrations"
   mkdir -p "$migration_root"
-  for limit in 38 39 40 41; do
+  for limit in 38 39 40 41 59 60; do
     stage="$migration_root/$limit"
     mkdir -p "$stage"
     while IFS= read -r migration; do
@@ -1385,6 +1414,7 @@ run_full_release_lane() {
   fi
   record_log "$full_migrate_raw" full-migrate-first.log
   run_full_ledger_report full_compose first
+  [ "$full_count:$full_latest" = "60:60" ] || fail '0060 full-release ledger must contain 60 rows'
   full_migration_count_first=$full_count
   full_latest_migration_first=$full_latest
   full_migration_checksums_first=$full_checksums
@@ -1436,16 +1466,90 @@ run_full_release_lane() {
   record_log "$full_disk_raw" full-disk-after.log
 }
 
+run_daily_0060_staged() {
+  local raw role step status first_ledger second_ledger
+  run_migration_stage 59
+  raw="$workdir/preflight-0060-before.log"
+  if ! run_role_psql main_compose migration_owner "$script_dir/preflight-0060.sql" --set seed=1 >"$raw" 2>&1; then
+    record_log "$raw" preflight-0060-before.log; fail '0060 historical seed failed'
+  fi
+  record_log "$raw" preflight-0060-before.log
+  run_migration_stage 60
+  run_full_ledger_report main_compose staged-0060-first
+  first_ledger=$full_checksums
+  [ "$full_count:$full_latest" = '60:60' ] || fail '0060 staged ledger must contain 60 rows'
+  for step in first rerun; do
+    if [ "$step" = rerun ]; then
+      run_migration_stage 60
+      run_full_ledger_report main_compose staged-0060-second
+      second_ledger=$full_checksums
+      [ "$first_ledger" = "$second_ledger" ] || fail '0060 rerun changed migration checksums'
+    fi
+    raw="$workdir/preflight-0060-$step.log"
+    if ! run_role_psql main_compose migration_owner "$script_dir/preflight-0060.sql" --set seed=0 >"$raw" 2>&1; then
+      record_log "$raw" "preflight-0060-$step.log"; fail "0060 historical preservation failed: $step"
+    fi
+    record_log "$raw" "preflight-0060-$step.log"
+  done
+  for role in app worker research_writer admin daily_input_admitter; do
+    raw="$workdir/actual-role-0060-$role.log"
+    if ! run_role_psql main_compose "$role" "$script_dir/actual-role-0060.sql" >"$raw" 2>&1; then
+      record_log "$raw" "actual-role-0060-$role.log"; fail "0060 actual role failed: $role"
+    fi
+    grep -Fqx "DAILY_0060_HARNESS:actual_$role:PASS" "$raw" || fail '0060 actual role result missing'
+    printf 'DAILY_0060_HARNESS:actual_%s:PASS\n' "$role"
+    record_log "$raw" "actual-role-0060-$role.log"
+  done
+  for step in unused seed_hidden attempt post; do
+    raw="$workdir/rollback-0060-$step.log"
+    if run_role_psql main_compose migration_owner "$script_dir/rollback-0060-guard.sql" \
+       --set "unused=$([ "$step" = unused ] && printf 1 || printf 0)" \
+       --set "seed_hidden=$([ "$step" = seed_hidden ] && printf 1 || printf 0)" \
+       --set "attempt=$([ "$step" = attempt ] && printf 1 || printf 0)" >"$raw" 2>&1; then status=0; else status=$?; fi
+    record_log "$raw" "rollback-0060-$step.log"
+    if [ "$step" = attempt ]; then
+      [ "$status" -ne 0 ] && grep -Eq 'ERROR:[[:space:]]+55000:' "$raw" || fail '0060 populated DOWN did not refuse with 55000'
+    else
+      [ "$status" -eq 0 ] || fail "0060 rollback assertion failed: $step"
+    fi
+    printf 'DAILY_0060_HARNESS:rollback_%s:PASS\n' "$step"
+  done
+  daily_harness=PASS
+}
+
 run_db_test() {
-  local label=$1 target=$2
-  raw="$workdir/test-$label.log"
-  if ! (cd "$root" && DATABASE_URL="$test_database_url" CARGO_TERM_COLOR=never cargo test --locked $target -- --nocapture) >"$raw" 2>&1; then
-    record_log "$raw" "test-$label.log"
-    fail "DB-gated test failed: $label"
+  local label=$1 target=$2 status skip=false row name expected actual
+  local raw="$workdir/test-$label.log"
+  if (cd "$root" && DATABASE_URL="$test_database_url" CARGO_TERM_COLOR=never cargo test --locked $target -- --nocapture) >"$raw" 2>&1; then status=0; else status=$?; fi
+  if grep -Fq 'SKIP:' "$raw"; then skip=true; fi
+  db_test_results+=("{\"label\":\"$label\",\"exit_code\":$status,\"skip_markers\":$skip}")
+  printf 'PG_DB_TEST_EXIT:%s:%s:SKIP_%s\n' "$label" "$status" "$skip"
+  if [ "$label" = migration-contract ]; then
+    while IFS= read -r row; do
+      if [[ "$row" =~ ^test[[:space:]](daily_0060_[a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
+        name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
+        daily_named_rows+=("$name:$actual")
+        printf 'PG_DB_TEST_ROW:migration-contract:%s:%s\n' "$name" "$actual"
+      elif [[ "$row" =~ ^DAILY_0060_SUBCASE:[a-z_]+:PASS$ ]]; then
+        daily_subcase_rows+=("${row#DAILY_0060_SUBCASE:}")
+        printf '%s\n' "$row"
+      fi
+    done <"$raw"
   fi
   record_log "$raw" "test-$label.log"
-  if grep -Fq 'SKIP:' "$raw"; then
-    fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  [ "$status" -eq 0 ] || fail "DB-gated test failed: $label"
+  [ "$skip" = false ] || fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  if [ "$label" = migration-contract ]; then
+    for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do
+      actual=0
+      for row in "${daily_named_rows[@]}"; do [ "$row" != "daily_0060_$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "0060 unique test row missing: $expected"
+    done
+    for expected in role_super role_inherit role_createdb role_createrole role_bypass role_replication role_nologin role_member role_reverse role_schema role_database role_nousage role_noconnect role_protected_direct role_protected_transitive direct_app direct_worker direct_research_writer direct_admin direct_daily_input_admitter config_overflow calendar_copy_lineage blocked_replay_identity receipt_owner_user_id receipt_policy_sha256 down_daily_run down_admissions down_admission_events down_reservations down_calendar_sources down_calendar_days down_source_events down_publication_claims down_poll_receipts down_restored_off down_poll_state down_config_optin down_hidden_epoch latest_first_auto latest_disabled latest_expired_rights latest_unknown_calendar latest_newest_missing latest_failed_scan cancel_live cancel_expired cancel_queued retry_exhausted_live retry_exhausted_orphan wait_freshness wait_eligible_boundary matrix_queued_commit matrix_queued_immediate matrix_running_commit matrix_running_immediate matrix_succeeded_commit matrix_succeeded_immediate matrix_failed_commit matrix_failed_immediate matrix_canceled_commit matrix_canceled_immediate race_config_publish_first race_config_revoke_first race_off_on_publish_first race_off_on_revoke_first race_control_publish_first race_control_revoke_first race_rights_publish_first race_rights_revoke_first race_owner_publish_first race_owner_revoke_first race_source_publish_first race_source_revoke_first; do
+      actual=0
+      for row in "${daily_subcase_rows[@]}"; do [ "$row" != "$expected:PASS" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "0060 unique subcase row missing: $expected"
+    done
   fi
   tests_run=$(append_csv "$tests_run" "$label")
 }
@@ -1707,6 +1811,8 @@ if ! run_psql main_compose "$script_dir/preflight-0041.sql" >"$workdir/preflight
   fail '0041 no-op rerun changed final Paper outbox invariants'
 fi
 record_log "$workdir/preflight-0041-rerun.log" preflight-0041-rerun.log
+
+run_daily_0060_staged
 
 hazard_final_raw="$workdir/hazards-final-disk.log"
 if ! run_disk_check main_compose "$hazard_final_raw"; then

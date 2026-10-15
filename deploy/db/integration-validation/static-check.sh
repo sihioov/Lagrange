@@ -20,6 +20,9 @@ for required in \
   preflight-catalog.sql \
   preflight-0040.sql \
   preflight-0041.sql \
+  preflight-0060.sql \
+  actual-role-0060.sql \
+  rollback-0060-guard.sql \
   hazards.sql \
   identity-boundary.sql \
   service-login.sql \
@@ -64,6 +67,10 @@ for required_marker in \
   'export PGOPTIONS="-c lock_timeout=5s -c statement_timeout=60s"' \
   'run_migration_rerun_0039' \
   'run_full_release_lane' \
+  'run_daily_0060_staged' \
+  'PG_DB_TEST_ROW:migration-contract:' \
+  'PG_DB_TEST_EXIT:' \
+  'daily_0060_named_rows' \
   'run_bootstrap_negative_contract' \
   '/validation/bootstrap-negative.sh --disposable-ci' \
   'bootstrap_negative_cases' \

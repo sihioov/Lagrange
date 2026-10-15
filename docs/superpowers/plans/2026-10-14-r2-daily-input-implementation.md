@@ -3976,3 +3976,38 @@ wave36-I2-db-test-requirements.json is141lines, SHA256
 686076570efe182d43333a55df6112c09e1801a5675468067e89df8c19621dd7.
 Both reside under target/r2-daily-beta/wp-4-integration and say explicitly that
 the requirements are not implemented or executed. No0060 file exists yet.
+
+## Wave37 — I2 complete SQL/test/harness source candidate
+
+Coordinator directly implements WP-4/I2 under the immutable Wave36 contract.
+No workers or further delegation. Baseline7ffce881; last executed57ca4d1 and all
+prior evidence remain preserved. Complete0060 UP/DOWN,32 separate actual-role
+DB definitions and73 fixed subcases are written, with the sequential I0 harness
+extended0059→0060. All118 old migrations are unchanged. No runtime activation or
+provider work is part of the candidate.
+
+Source disposition: [I2 report](../../reviews/2026-10-15-r2-daily-sql-source.md).
+The report records the concrete guards, ten tables, exact role entrypoints,
+canonical-byte trust boundary, direct principals, test clock/dependency fixtures,
+and the private completion-binding refinement for exact operation replay.
+All32 definitions and73 subcases remain WRITTEN_UNEXECUTED. Source inspection is
+coordinator work and is not independent review or executable acceptance.
+
+The only local executable checks are scoped standalone rustfmt edition2024 and
+bash -n. No Cargo/compiler/Clippy/SQL/DB/helper/validator/self-test/Docker/provider
+execution. The existing official CI workflow and historical source are preserved.
+After pinning this complete candidate, query all-event runs by exact head, verify
+the remote revision, and dispatch at most one hosted attempt. Recover all job,
+checkout, test/subcase,60-checksum/no-op,role/rollback and cleanup evidence before
+acceptance or bounded correction. Do not rerun/cancel/duplicate old runs.
+
+R2-04/09 stay DOING. I3–I7, provider/copy reconstruction, runtime UID/ACL, installer
+filesystem rollback, I6 diagrams before main, Owner and three-trading-day evidence
+remain separate open gates. R3 priority is unchanged. Private successors are
+wave37-I2-definition-inventory.json and wave37-I2-source-inputs.json under
+target/r2-daily-beta/wp-4-integration; older frozen receipts remain immutable.
+
+Final staged whitespace inspection found one extra blank line at UP EOF; it was
+removed before commit. The earlier source-input receipt remains historical;
+wave37-I2-final-source-inputs.json supersedes its UP pin and records the staged
+check correction. No SQL expression or definition changed.

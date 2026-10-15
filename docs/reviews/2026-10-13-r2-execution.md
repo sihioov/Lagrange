@@ -2175,3 +2175,17 @@ new fixture, CI run, provider request or production operation. Existing checksum
 source acceptances, failed runs and UNKNOWN_NOT_PRINTED helper outcomes are preserved.
 Next is the complete SQL/test/harness candidate, followed by source disposition and
 one exact-head hosted run. No background work, heartbeat or pending permission.
+
+### Wave37 I2 source assembly — 2026-10-15
+
+Completed the two0060 migration files,32 direct-role DB definitions,73 fixed
+subcases and official staged/full/DB-test harness wiring. Baseline7ffce881.
+[Coordinator source disposition](2026-10-15-r2-daily-sql-source.md) records source
+anchors, the internal completion-binding field and all fixture limitations.
+Old118 migrations, prior contracts, old test bodies and earlier CI evidence remain
+preserved. Allowed scoped rustfmt/bash syntax/whitespace and inert pin comparisons
+passed; new SQL, compilation, lint and tests are not executed locally.
+
+Next is one exact-candidate hosted attempt after checking all-event existing runs.
+No new worker, provider operation, production change or R3 priority switch.
+R2-04/09 remain DOING and the three-trading-day observation has not started.

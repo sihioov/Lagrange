@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | I0d와 C01을 후보 `57ca4d1390b025e7efbe9ac452c614a8b5618889`의 [CI 38672658570](https://github.com/sihioov/Lagrange/actions/runs/38672658570) attempt1 전체 SUCCESS로 한정 인수했다. bootstrap83·영향받은 WebSocket3·기존 Rust99·chart6·strict lint/format·PG59/cleanup 직접 PASS. [인수 범위](reviews/2026-10-15-r2-bootstrap-negative-acceptance.md)를 보존한다. [I2 구현 계약](reviews/2026-10-15-r2-daily-sql-implementation-contract.md)에서 0060의 SQL 전달 형식·검증 기록·권한·롤백과 32개 실제 역할 테스트 요구를 고정했다. 다음은 이 계약에 맞는 완전한 0060 UP/DOWN·테스트·공식 harness 후보 작성이며, 아직 SQL 구현·실행은 하지 않았다. provider/copy admission·I6·운영·Owner·최종 C_R2는 미완료다. |
+| 다음 단계 | 0060 UP/DOWN·32개 실제 역할 DB 테스트·73개 고정 하위 사례·공식 순차 검증 스크립트의 [소스 후보](reviews/2026-10-15-r2-daily-sql-source.md)를 작성했다. 이전 118개 migration은 불변이고, 허용된 Rust 포맷·셸 문법·소스 정합성 확인을 마쳤다. 새 SQL·컴파일·테스트는 아직 실행하지 않았으며, 다음은 정확한 후보의 기존 CI 실행 부재 확인 후 단일 hosted 검증이다. 기존 `57ca4d1`/run38672658570의 bootstrap83·Rust99·chart6·PG59 부분 인수를 보존한다. provider/copy admission·I3–I7·운영·Owner·3거래일 관찰·최종 C_R2는 미완료다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
