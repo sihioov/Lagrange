@@ -2232,3 +2232,9 @@ See the C02 source report and preserved C01 result. Scoped rustfmt/whitespace
 pass; no local executable DB/compiler/test evidence. Next: freeze Wave39 inputs,
 query all-event exact-head runs and remote SHA, then one new hosted attempt.
 No old run rerun/cancel. R2-04/09 and all subsequent gates remain open.
+
+Wave39 hosted launch: a252cfbabcfeb1c94cb006587fe160feb7e6d867,
+run38694431037 attempt1 at2026-10-15T06:46:22Z. Exact-head all-event query0
+and remote SHA match preceded one dispatch.241pins/202blobs matched. Recovery
+includes32 daily definitions/73 subcases and28 affected legacy names. No rerun,
+cancel, source mutation or local execution while the candidate runs.
