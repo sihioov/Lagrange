@@ -59,7 +59,8 @@ execution restrictions remain in force; no further worker delegation.
   Wave58 supersession and Wave59 navigation/paired frontier replay passed.
   Wave61 readback18 and PG28 pass; existing migration count assertion failed.
   Wave62 full runtime connection and exact-version assertion correction: eed17d2,
-  run38804040503 attempt1 running,642pins/346blobs,23new definitions pending.
+  run38804040503 attempt1 SUCCESS,642pins/346blobs/7checkout,23new definitions PASS.
+  [Bounded hosted acceptance](../../reviews/2026-10-16-r2-daily-runtime-connection-ci.md).
   Next I5 API/config/read projection, I7 Web and I6 controlled release integration.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
@@ -5037,3 +5038,13 @@ and17dedicatedPGtargets require recovery. Source and frozeninputs stay immutable
 Later documentation HEAD is not the tested candidate. No acceptance yet. Next
 independent preparation is I5 daily API/config/read projection, then I7Web and I6
 installed runtime/diagrams. G4/Owner/3tradingdays/finalC_R2 remain open; Ralph continues.
+
+### Wave62 full recovery and bounded acceptance — 2026-10-16 KST
+
+At21:02:04UTC all8terminaljobs/logs and7checkout recovered. All642pins/346blobs,
+23new definitions and all carried named groups pass. PG17targets exit0/noSKIP,
+32schedule/readback and24runner names pass;62migration checksum sets match twice.
+Web34+121/14,strict lint/format,Python487pass/10existing skips accepted at eed17d2.
+Receipt8212lines/6691c9de; no rerun/cancel/duplicate. Three non-Linux cases excluded;
+unprinted nested helper rows/inner exits UNKNOWN. Proceed I5; real approved-base
+three-UID runtime,independent review,I6/I7,G4,Owner,3tradingdays/finalC_R2 remain open.
