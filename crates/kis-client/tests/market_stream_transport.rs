@@ -864,7 +864,7 @@ async fn buffered_malformed_wrong_and_late_ack_variants_poison_before_receipts()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_pingpong_and_incomplete_following_frame_preserve_prior_receipts() {
-    let (mut session, _directory, approval_task, ws_task) =
+    let (mut session, _directory, approval_task, ws_task, finish_tx) =
         session_with_buffered_followup(br#"{"header":{"tr_id":"PINGPONG"}}"#.to_vec(), false).await;
     let first = session.next_event().await.unwrap();
     let second = session.next_event().await.unwrap();
@@ -873,16 +873,22 @@ async fn buffered_pingpong_and_incomplete_following_frame_preserve_prior_receipt
     assert!(matches!(second, MarketStreamEvent::Receipt(_)));
     assert!(matches!(heartbeat, MarketStreamEvent::ApplicationHeartbeat));
     drop(session);
+    finish_tx
+        .send(())
+        .expect("fixture stays open through assertions");
     approval_task.await.unwrap();
     ws_task.await.unwrap();
 
-    let (mut session, _directory, approval_task, ws_task) =
+    let (mut session, _directory, approval_task, ws_task, finish_tx) =
         session_with_buffered_followup(Vec::new(), true).await;
     assert!(matches!(
         session.next_event().await.unwrap(),
         MarketStreamEvent::Receipt(_)
     ));
     drop(session);
+    finish_tx
+        .send(())
+        .expect("fixture stays open through assertions");
     approval_task.await.unwrap();
     ws_task.await.unwrap();
 }
@@ -2823,7 +2829,7 @@ async fn bounded_idle_never_returns_while_a_control_write_is_unfinished() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bounded_idle_poison_scan_precedes_queued_receipts() {
-    let (mut session, _directory, approval_task, ws_task) =
+    let (mut session, _directory, approval_task, ws_task, finish_tx) =
         session_with_buffered_followup(ack("005930", "SUBSCRIBE SUCCESS"), false).await;
     assert_eq!(
         session
@@ -2835,6 +2841,9 @@ async fn bounded_idle_poison_scan_precedes_queued_receipts() {
     );
     assert!(session.is_closed());
     drop(session);
+    finish_tx
+        .send(())
+        .expect("fixture stays open through assertions");
     approval_task.await.unwrap();
     ws_task.await.unwrap();
 }
@@ -3033,7 +3042,7 @@ async fn run_data_then_nine_controls_server(listener: TcpListener) {
 }
 
 async fn assert_buffered_text_poison(followup: Vec<u8>, generation: &'static str) {
-    let (mut session, _directory, approval_task, ws_task) =
+    let (mut session, _directory, approval_task, ws_task, finish_tx) =
         session_with_buffered_followup(followup, false).await;
     assert_eq!(
         session.next_event().await.unwrap_err(),
@@ -3042,6 +3051,9 @@ async fn assert_buffered_text_poison(followup: Vec<u8>, generation: &'static str
     );
     assert!(session.is_closed(), "{generation}");
     drop(session);
+    finish_tx
+        .send(())
+        .expect("fixture stays open through assertions");
     approval_task.await.unwrap();
     ws_task.await.unwrap();
 }
@@ -3183,6 +3195,7 @@ async fn session_with_buffered_followup(
     tempfile::TempDir,
     tokio::task::JoinHandle<()>,
     tokio::task::JoinHandle<()>,
+    oneshot::Sender<()>,
 ) {
     let directory = tempfile::tempdir().unwrap();
     let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
@@ -3195,12 +3208,18 @@ async fn session_with_buffered_followup(
     ));
     let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let ws_port = ws_listener.local_addr().unwrap().port();
+    let (start_tx, start_rx) = oneshot::channel();
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let (finish_tx, finish_rx) = oneshot::channel();
     let ws_task = tokio::spawn(async move {
         let (mut stream, _) = ws_listener.accept().await.unwrap();
         websocket_handshake(&mut stream).await;
         let _ = read_server_frame(&mut stream).await;
         write_server_frame(&mut stream, 0x1, &ack("005930", "SUBSCRIBE SUCCESS"), true).await;
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::timeout(Duration::from_secs(5), start_rx)
+            .await
+            .expect("client must finish subscribing")
+            .expect("client must request buffered frames");
         let mut bytes = server_frame_bytes(0x1, &packed_market_message(&[10, 11]), true);
         if incomplete_header {
             bytes.push(0x81);
@@ -3208,12 +3227,14 @@ async fn session_with_buffered_followup(
             bytes.extend(server_frame_bytes(0x1, &followup, true));
         }
         stream.write_all(&bytes).await.unwrap();
-        if incomplete_header {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        } else {
-            let mut sink = [0u8; 512];
-            let _ = tokio::time::timeout(Duration::from_millis(100), stream.read(&mut sink)).await;
-        }
+        ready_tx.send(()).expect("client must await written frames");
+        // An incomplete header is intentional. Keep its socket alive until the
+        // receipt assertions finish, so fixture EOF cannot poison prior data.
+        tokio::time::timeout(Duration::from_secs(5), finish_rx)
+            .await
+            .expect("client assertions must finish")
+            .expect("client must release the fixture");
+        drop(stream);
     });
     let approval = ApprovalClient::for_loopback(
         &format!("http://127.0.0.1:{approval_port}"),
@@ -3231,8 +3252,12 @@ async fn session_with_buffered_followup(
     .await
     .unwrap();
     session.subscribe("005930").await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    (session, directory, approval_task, ws_task)
+    start_tx.send(()).expect("fixture must await subscription");
+    tokio::time::timeout(Duration::from_secs(5), ready_rx)
+        .await
+        .expect("fixture must write buffered frames")
+        .expect("fixture must acknowledge written frames");
+    (session, directory, approval_task, ws_task, finish_tx)
 }
 
 async fn run_distinct_then_duplicate_server(listener: TcpListener) {

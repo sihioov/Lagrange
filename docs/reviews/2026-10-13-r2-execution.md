@@ -2081,3 +2081,23 @@ It expects 83 named bootstrap cases,99 direct Rust,6 separate chart and2
 platform exclusions. Source checks verified67 unchanged prior pins and56
 candidate blobs. Prior C05 acceptance and all failures remain preserved.
 No local executable checks or additional delegation. R2-04/09 remain DOING.
+
+### Wave34 terminal recovery and Wave35 I0d-C01 — 2026-10-15 UTC
+
+Candidate dd1b92f/run38670368360 attempt1 completed FAILURE at02:34:01UTC.
+All8jobs/84steps/8log hashes/7checkout SHAs/76pins/56blobs were recovered.
+All83 bootstrap,99 required Rust,6 separate chart,PG59,strict lint/format passed.
+One existing buffered incomplete-frame transport test failed Closed at882:36.
+Whole CI and final C_R2 are not accepted; original failure remains immutable.
+Private receipt ci/dd1b92f/ci-evidence.json has5105lines, SHA256
+8331eac9b1b17db6936d61f487cb3e81760b76daaaafc71505d8f0f64e4eb48b.
+Raw logs were memory-only and cleared after recovery. The b0a44ce7 deletion
+request returned not found; current schedule listing also lacks it. Do not claim
+that deletion succeeded. This absent monitor cannot protect subsequent work.
+
+After recovery, coordinator directly corrected only the shared buffered-followup
+fixture and four callers: bounded subscribe/start, write-ready and assertion-end
+signals replace elapsed sleeps/early close. All100 function names remain; all76
+prior pinned files remain byte-identical. Scoped rustfmt2024/whitespace passed.
+No local executable verification, new worker or production change. New exact
+candidate CI is required; no rerun/cancel of old runs. Broader R2 gates remain.

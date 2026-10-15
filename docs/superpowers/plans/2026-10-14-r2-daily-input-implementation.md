@@ -3836,3 +3836,47 @@ It expects 83 named bootstrap cases,99 direct Rust,6 separate chart and2
 platform exclusions. Source checks verified67 unchanged prior pins and56
 candidate blobs. Prior C05 acceptance and all failures remain preserved.
 No local executable checks or additional delegation. R2-04/09 remain DOING.
+
+## Wave35 — I0d-C01 bounded WebSocket fixture lifetime correction
+
+After full terminal recovery of dd1b92f/run38670368360 attempt1, the 83 I0d
+cases, 99 required Rust and six chart cases passed; whole CI failed on the
+existing buffered_pingpong_and_incomplete_following_frame_preserve_prior_receipts
+fixture (Closed at line882). Preserve the failure and all prior acceptance.
+
+Coordinator directly owns only crates/kis-client/tests/market_stream_transport.rs
+plus roadmap/status/execution/review and private evidence. No delegation.
+Replace the shared session_with_buffered_followup helper's 25/50/200ms sleeps
+and 100ms read-based lifetime with explicit bounded start-after-subscribe,
+write-ready and assertion-complete signals. Update its four call sites. Keep
+all existing receipt/heartbeat/poison assertions, synthetic bytes and production
+transport behavior unchanged. No timeout inflation, ignored tests, serialization,
+production changes or workflow changes. Actual CI scheduling is not observable;
+the concrete source defect is the fixture's lifetime dependency on wall time.
+
+Only static inspection and scoped standalone edition-2024 rustfmt are local.
+Freeze the corrected candidate and successor inventories; verify unchanged I0d
+and S2 bytes. Query all-event exact-head runs after remote SHA verification and
+reuse one or dispatch once if none exists. Require the three affected named
+transport tests, all prior 83/99/6 evidence and every CI job before acceptance.
+Old runs are never rerun/cancelled. 0060 and all broader R2 gates stay open.
+
+### Wave34 terminal recovery and Wave35 I0d-C01 — 2026-10-15 UTC
+
+Candidate dd1b92f/run38670368360 attempt1 completed FAILURE at02:34:01UTC.
+All8jobs/84steps/8log hashes/7checkout SHAs/76pins/56blobs were recovered.
+All83 bootstrap,99 required Rust,6 separate chart,PG59,strict lint/format passed.
+One existing buffered incomplete-frame transport test failed Closed at882:36.
+Whole CI and final C_R2 are not accepted; original failure remains immutable.
+Private receipt ci/dd1b92f/ci-evidence.json has5105lines, SHA256
+8331eac9b1b17db6936d61f487cb3e81760b76daaaafc71505d8f0f64e4eb48b.
+Raw logs were memory-only and cleared after recovery. The b0a44ce7 deletion
+request returned not found; current schedule listing also lacks it. Do not claim
+that deletion succeeded. This absent monitor cannot protect subsequent work.
+
+After recovery, coordinator directly corrected only the shared buffered-followup
+fixture and four callers: bounded subscribe/start, write-ready and assertion-end
+signals replace elapsed sleeps/early close. All100 function names remain; all76
+prior pinned files remain byte-identical. Scoped rustfmt2024/whitespace passed.
+No local executable verification, new worker or production change. New exact
+candidate CI is required; no rerun/cancel of old runs. Broader R2 gates remain.
