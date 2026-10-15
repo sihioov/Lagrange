@@ -46,7 +46,7 @@ execution restrictions remain in force; no further worker delegation.
   [Acceptance](../../reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md).
 - [ ] **Remaining I1b reconstruction/admission and I3–I7 integration.**
   S5a/S5b bounded source/hosted verification is accepted at5f5f4e8/run38732527740.
-  S5c first storage/verification/readback is written and awaits its exact candidate CI.
+  S5c remains unaccepted: Wave46/Wave47 fixture setup failures recovered; Wave48 C02 prepares a dedicated hosted fixture hierarchy.
   Daily parent/frontier persistence, supply and final integrated independent review remain open.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
@@ -4376,3 +4376,16 @@ created13:11:01UTC. Exact-head all-event query0/remotematch preceded one dispatc
 319pins/252blobs/26Linux expected plus1new exclusion are frozen. Full result recovery
 pending; no acceptance. Prior failed candidate remains preserved. Only unregistered
 successor files and mutable tracking docs change while the run is active.
+
+
+### 2026-10-15 — Wave48 C02 protected hosted fixture
+
+Wave47 2824dd0/run38740542364 attempt1 is fully recovered FAILURE:8jobs/8logs/
+7checkouts,319pins/252blobs. Same16Root::open UnsafePath setup failures,10newpasses;
+all prior named groups,Clippy/format/web/Python/policy/PG32/73/83/12/60checksums/cleanup
+pass. HOME alone did not meet the fixture precondition; precise ancestor cause unknown.
+C02 uses a new run/attempt-specific root0755 ancestor and runner0700 child in isolated
+hostedCI, explicit test env, nonrecursive cleanup.33088productionbytes unchanged;
+no guards weakened or local privileged/project execution. Scope is onlyartifact
+privatefixture and CIworkspace harness.27names retained. Unregistered S5d/e drafts
+remain excluded; no source/runtime/Owner/final C_R2 acceptance. See C02 review record.

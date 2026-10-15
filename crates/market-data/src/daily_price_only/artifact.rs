@@ -955,10 +955,11 @@ mod linux {
         }
         impl Fixture {
             fn new() -> Self {
-                // CI checkout ancestry is not a protected storage contract.
-                // Keep all production checks and place the private fixture under
-                // the test user's home, with no /tmp or permissive fallback.
-                let fixture_parent = std::env::var_os("HOME").expect("fixture home is required");
+                // Hosted CI supplies a dedicated root-owned ancestor tree.
+                // Local runs may use HOME, which must pass the identical guards.
+                // Never bypass ancestry/ACL checks or fall back to /tmp.
+                let fixture_parent = std::env::var_os("LAGRANGE_DAILY_ARTIFACT_TEST_ROOT")
+                    .unwrap_or_else(|| std::env::var_os("HOME").expect("fixture home is required"));
                 let directory = Builder::new()
                     .prefix(".daily-artifact-")
                     .tempdir_in(std::path::PathBuf::from(fixture_parent))
