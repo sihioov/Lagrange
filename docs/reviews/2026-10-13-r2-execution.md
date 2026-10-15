@@ -2207,3 +2207,7 @@ Rust helper static SQL lifetime, explicit fixed-fixture SQL audit and unused imp
 Source disposition precedes one new exact-head hosted run after existing-run query
 and remote SHA verification. All earlier failures/successes remain immutable.
 No local SQL/compiler/test/helper/provider/production operation or R2 acceptance.
+
+Wave38 launched6fbc976/run38690484091 attempt1 at2026-10-15T06:06:33Z after
+remote SHA verification and all-event exact-head query0.230pins/197blobs match.
+No rerun/cancel/delegation; direct full recovery is pending.

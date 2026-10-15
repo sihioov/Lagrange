@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | 0060 첫 후보 `f5122dd`의 [CI 실패](reviews/2026-10-15-r2-daily-sql-ci.md)를 전체 회수했다. 224pins/195blobs/7checkout 일치, bootstrap83 PASS; 새 DB32/하위73·workspace Rust99는 미실행이다. SQL CASE 조건의 괄호와 테스트 helper 3곳을 [C01](reviews/2026-10-15-r2-daily-sql-c01.md)로 한정 보정했다. 다음은 새 후보의 기존 실행 조회 후 단일 hosted 검증이다. 기존 성공·실패를 보존하며 I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
+| 다음 착수 항목 | 보정 후보 `6fbc976`의 [CI 38690484091](reviews/2026-10-15-r2-daily-sql-c01-ci.md) attempt1 회수 중. 기존 실행 0건·원격 SHA 확인 후 한 번 dispatch했고 230pins/197blobs를 대조했다. 첫 후보의 전체 실패와 bootstrap83 부분 성공을 보존한다. C01 SQL·컴파일·DB32/하위73·기존 Rust99 검증 대기. I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -267,7 +267,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
   DOING — 2026-10-14, Owner가 [U2 계약](reviews/2026-10-13-r2-daily-input-decision.md)을 채택했다. [D5/D6 설계](reviews/2026-10-14-r2-daily-input-amendments-review.md)와 [고정 wire 명세](contracts/owner-beta-daily-etf11-input-v1.md)를 기준으로 I1a/I0a 및 I0b/I1b-S1·호출부 보정을 진행했다. 후보c0ac599의 [최종 CI](reviews/2026-10-14-r2-caller-role-raw-ci.md)에서7개 실행 job/required,49개 Rust·chart6 직접 PASS, Python suite485 pass/10 skip/7 warnings, Web/PG59 통과를 대조해 부분 소스와 hosted 검증을 인수했다. 과거929fcd6 부분 성공과 f9 실패·DB3/Raw5 및 후속 parser 지적/수정은 실행 기록과 변경 이력에 보존한다. 직접 로그인 helper의 actor GUC·연결 수·권한 거부, negative bootstrap/rollback,0060·전체 snapshot/입력·운영·Owner 인수는 남는다. 다음 bounded I0c/S2-D는 [후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)을 따른다.
-  최신 검증 — 2026-10-15, 0060 첫 후보 `f5122dd`의 [CI 실패](reviews/2026-10-15-r2-daily-sql-ci.md)를 전체 회수했다. 224pins/195blobs/7checkout 일치, bootstrap83 PASS; 새 DB32/하위73·workspace Rust99는 미실행이다. SQL CASE 조건의 괄호와 테스트 helper 3곳을 [C01](reviews/2026-10-15-r2-daily-sql-c01.md)로 한정 보정했다. 다음은 새 후보의 기존 실행 조회 후 단일 hosted 검증이다. 기존 성공·실패를 보존하며 I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다.
+  최신 검증 — 2026-10-15, 보정 후보 `6fbc976`의 [CI 38690484091](reviews/2026-10-15-r2-daily-sql-c01-ci.md) attempt1 회수 중. 기존 실행 0건·원격 SHA 확인 후 한 번 dispatch했고 230pins/197blobs를 대조했다. 첫 후보의 전체 실패와 bootstrap83 부분 성공을 보존한다. C01 SQL·컴파일·DB32/하위73·기존 Rust99 검증 대기. I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다.
 - [ ] **R2-05 — Owner V2 갱신 검증.** 정상 등록된 종목의 수집·generation·artifact·신호·차트가
   같은 입력을 가리키는지 확인한다. ETF 공용 기준일과 Owner 종목 기준일을 각각 검증한다.
   DOING — 2026-10-14, WP-5/F2 독립 분기: 60초 cadence·동시/late-calendar 회귀와 권리 기간 fixture 보정본 `f8b9296` CI 성공·독립 P2 리뷰 종료. 10월 13일 운영 READY 1개·DB 신호 기준일 10월 6일 관측; 실제 갱신·API/Owner 화면 인수와 WP-4 통합은 남음.
@@ -282,7 +282,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   하루라도 실패하면 원인 수정 후 연속 관찰을 다시 시작한다.
 - [ ] **R2-09 — 첫 베타 릴리스 인수.** exact revision·manifest·모드, 운영 적용, health·백업/복구
   근거와 정상 Owner 사용 결과를 묶는다. 운영 확인 결과를 후속 문서 커밋으로 남긴다.
-  DOING — 2026-10-15, 0060 첫 후보 `f5122dd`의 [CI 실패](reviews/2026-10-15-r2-daily-sql-ci.md)를 전체 회수했다. 224pins/195blobs/7checkout 일치, bootstrap83 PASS; 새 DB32/하위73·workspace Rust99는 미실행이다. SQL CASE 조건의 괄호와 테스트 helper 3곳을 [C01](reviews/2026-10-15-r2-daily-sql-c01.md)로 한정 보정했다. 다음은 새 후보의 기존 실행 조회 후 단일 hosted 검증이다. 기존 성공·실패를 보존하며 I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다.
+  DOING — 2026-10-15, 보정 후보 `6fbc976`의 [CI 38690484091](reviews/2026-10-15-r2-daily-sql-c01-ci.md) attempt1 회수 중. 기존 실행 0건·원격 SHA 확인 후 한 번 dispatch했고 230pins/197blobs를 대조했다. 첫 후보의 전체 실패와 bootstrap83 부분 성공을 보존한다. C01 SQL·컴파일·DB32/하위73·기존 Rust99 검증 대기. I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다.
 
 **종료 조건:** R2-01~R2-09 완료, 연속 3거래일 무인 데이터·추천 갱신과 실제 Owner 사용 확인.
 컨테이너 health와 데이터·화면의 성공을 따로 기록한다. R3 미완료만으로 R2를 미완료로 되돌리지 않는다.
@@ -560,3 +560,5 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-15 | R2-04/09 | DOING 유지; I2 첫 단일 후보 CI 시작 | f5122dd/38689151958 attempt1; 224pins/195blobs/32definitions/73subcases, 기존 실행 부재 확인 후 한 번 dispatch | [회수 기록](reviews/2026-10-15-r2-daily-sql-ci.md); 실행 증거 대기, 기존 성공·실패 보존 |
 
 | 2026-10-15 | R2-04/09 | DOING 유지; I2 실패 전체 회수와 C01 한정 보정 | 첫 후보8jobs/84steps/224pins/195blobs/7checkout 회수. SQL IF/CASE grouping과 테스트 helper 3곳 보정 | [CI 실패](reviews/2026-10-15-r2-daily-sql-ci.md), [C01](reviews/2026-10-15-r2-daily-sql-c01.md); 새 후보 검증 전 |
+
+| 2026-10-15 | R2-04/09 | DOING 유지; I2-C01 단일 후보 CI 시작 | 6fbc976/38690484091 attempt1,230pins/197blobs, exact-head query0 후 단일 dispatch | [회수 기록](reviews/2026-10-15-r2-daily-sql-c01-ci.md); 이전 실패·부분 성공 보존 |
