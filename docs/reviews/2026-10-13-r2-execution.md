@@ -2463,3 +2463,14 @@ awaits full jobs/logs/checkout and named-result recovery. Coordinator direct onl
 no local executable verification or delegation. Subsequent documentation commits
 do not alter the candidate. Prepare only independent unregistered successor files
 while CI runs. Runtime/Owner/three trading days/final C_R2 remain open.
+
+### Wave45 acceptance and Wave46 preparation — 2026-10-15
+
+5f5f4e8/38732527740 attempt1 is fully recovered SUCCESS:8jobs/7checkouts,303pins/
+243blobs,21new S5b and33S5a named cases pass; all carried groups and PG32/73/83/12/
+60checksums in both lanes/cleanup pass. [Bounded acceptance](2026-10-15-r2-daily-protected-prefix-acceptance.md)
+retains the real approved-factory/full-candidate integration limit and all prior failures.
+Wave46 now prepares descriptor-safe candidate storage, independent first candidate
+verification and durable admission copy/readback. New unregistered artifact/admission
+files were prepared without changing active CI pins. No local project execution,
+new delegation, runtime/Owner/final acceptance. Ralph continues.
