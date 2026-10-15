@@ -288,50 +288,57 @@ mod linux_tests {
         prices(&snapshot).err().unwrap()
     }
 
+    struct ActionFixtureSpec {
+        label: &'static str,
+        path: &'static str,
+        tr: &'static str,
+        extras: &'static [(&'static str, &'static str)],
+    }
+
     // Independent fixture matrix: class, provider filename, path, TR and extras.
-    const ACTIONS: [(&str, &str, &str, &[(&str, &str)]); 7] = [
-        (
-            "corporate-actions-paidin-subscription",
-            "paidin-capin",
-            "HHKDB669100C0",
-            &[("GB1", "1")],
-        ),
-        (
-            "corporate-actions-paidin-record",
-            "paidin-capin",
-            "HHKDB669100C0",
-            &[("GB1", "2")],
-        ),
-        (
-            "corporate-actions-bonus",
-            "bonus-issue",
-            "HHKDB669101C0",
-            &[],
-        ),
-        (
-            "corporate-actions-dividend",
-            "dividend",
-            "HHKDB669102C0",
-            &[("GB1", "0"), ("HIGH_GB", "")],
-        ),
-        (
-            "corporate-actions-merger-split",
-            "merger-split",
-            "HHKDB669104C0",
-            &[],
-        ),
-        (
-            "corporate-actions-reverse-split",
-            "rev-split",
-            "HHKDB669105C0",
-            &[("MARKET_GB", "0")],
-        ),
-        (
-            "corporate-actions-capital-decrease",
-            "cap-dcrs",
-            "HHKDB669106C0",
-            &[],
-        ),
+    const ACTIONS: [ActionFixtureSpec; 7] = [
+        ActionFixtureSpec {
+            label: "corporate-actions-paidin-subscription",
+            path: "paidin-capin",
+            tr: "HHKDB669100C0",
+            extras: &[("GB1", "1")],
+        },
+        ActionFixtureSpec {
+            label: "corporate-actions-paidin-record",
+            path: "paidin-capin",
+            tr: "HHKDB669100C0",
+            extras: &[("GB1", "2")],
+        },
+        ActionFixtureSpec {
+            label: "corporate-actions-bonus",
+            path: "bonus-issue",
+            tr: "HHKDB669101C0",
+            extras: &[],
+        },
+        ActionFixtureSpec {
+            label: "corporate-actions-dividend",
+            path: "dividend",
+            tr: "HHKDB669102C0",
+            extras: &[("GB1", "0"), ("HIGH_GB", "")],
+        },
+        ActionFixtureSpec {
+            label: "corporate-actions-merger-split",
+            path: "merger-split",
+            tr: "HHKDB669104C0",
+            extras: &[],
+        },
+        ActionFixtureSpec {
+            label: "corporate-actions-reverse-split",
+            path: "rev-split",
+            tr: "HHKDB669105C0",
+            extras: &[("MARKET_GB", "0")],
+        },
+        ActionFixtureSpec {
+            label: "corporate-actions-capital-decrease",
+            path: "cap-dcrs",
+            tr: "HHKDB669106C0",
+            extras: &[],
+        },
     ];
 
     fn action_name(label: &str, symbol: Option<&str>, page: usize) -> String {
@@ -349,7 +356,13 @@ mod linux_tests {
             vec![None]
         };
         for symbol in symbols {
-            for (label, path, tr, extras) in ACTIONS {
+            for ActionFixtureSpec {
+                label,
+                path,
+                tr,
+                extras,
+            } in ACTIONS
+            {
                 let mut query = vec![
                     ("F_DT".into(), start.replace('-', "")),
                     ("T_DT".into(), end.replace('-', "")),
@@ -865,7 +878,7 @@ mod linux_tests {
 
     #[test]
     fn s4_every_noncash_class_blocks_target_etf_and_non_etf_is_validated() {
-        for (index, (label, _, _, _)) in ACTIONS.iter().enumerate() {
+        for (index, ActionFixtureSpec { label, .. }) in ACTIONS.iter().enumerate() {
             let row = match index {
                 0..=2 => {
                     json!({"sht_cd":"069500","record_date":"20261012","right_dt":"20261013","fix_rate":"1"})

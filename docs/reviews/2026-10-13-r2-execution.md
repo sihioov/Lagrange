@@ -2356,3 +2356,21 @@ following exact-head all-event query0 and remoteSHA match. CI38722595047 attempt
 created10:46:06UTC. Format/policy/Python success; fixture type_complexity at test
 line292 makes strict Clippy fail. Full terminal recovery is required before the
 narrow named-structure correction. No source/test acceptance or rerun/cancel.
+
+## Wave43 — S4-C01 after full terminal recovery
+
+2026-10-15 11:05UTC recovery:48beb25/run38722595047 attempt1 FAILURE;
+eight jobs/logs,271pins/221blobs/seven checkouts matched. New32 S4 and every
+required regression group passed; dedicated PG32/73/83/12 exits/checksums60x2,
+NO_OP/direct roles/0039/catalog/0060/cleanup passed. Strict Clippy alone found
+the fixture tuple type_complexity; required failed accordingly. Original
+receipt and named evidence are preserved. No acceptance is inferred from tests.
+
+After recovery, C01 changes only the fixture matrix to a named structure and
+two destructuring sites. All literals/order/32names/test bodies otherwise match;
+270 prior pins remain unchanged. Scoped2024format/whitespace and direct source
+review pass. Freeze successor inputs, query exact-head all-event runs and verify
+remote SHA before one new CI. No worker/delegation/local project execution.
+Unregistered S5 observation preparation stays outside the candidate. Ralph
+continues through integrated frontier/artifact/admission/supply and all remaining
+R2 gates, with no Owner/three-day/final C_R2 completion claim.

@@ -1,8 +1,6 @@
 # R2 I1b-S5 — integrated discovery and source frontier
 
-Preparation only, 2026-10-15. S4 candidate48beb25 is still running in CI38722595047;
-its test fixture type-complexity diagnostic awaits full-run recovery and bounded
-correction. This document changes no frozen S4 input or executable source.
+Preparation only, 2026-10-15. S4 candidate48beb25/CI38722595047 was fully recovered: tests and PG pass, strict lint fails on one fixture type. C01 corrects that type and awaits successor CI. This preparation is separate from its frozen candidate.
 
 ## Next concrete boundary
 
@@ -11,6 +9,9 @@ pure reconstruction capabilities. The caller supplies trusted Owner/policy and a
 requested extension, not an authoritative list of files. No provider request,
 filesystem write, DB mutation, scheduling eligibility or admission is granted.
 New frontier.rs and its dedicated integration fixtures may own the orchestration;
+observation.rs owns the fixed D5 operational observation/event encoding, without
+claiming source existence or admission. It can be prepared as an unregistered
+module while S4 runs, then registered and tested within the integrated S5 candidate.
 narrow sequential adapters in calendar/reconstruct/verify/contract remain possible.
 Do not edit S4 while its current hosted candidate is unresolved.
 
