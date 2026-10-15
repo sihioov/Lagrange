@@ -3464,3 +3464,18 @@ Four test files/regions only; production bytes/SQL unchanged. Source disposition
 is direct coordinator only. Full hosted recovery pending; no acceptance yet.
 Unregistered I4 source preparation continues independently. Earlier failures,
 operational/Owner/three-trading-day/finalC_R2 gates remain.
+
+
+### Wave53 I4b single candidate launch — 2026-10-16 KST
+
+Candidate `a72aaa4fef618a7bdb7a292b171fd70d6245d52b`,
+[CI38768192668 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38768192668),
+created2026-10-15T16:20:40Z, CI/ci.yml/workflow_dispatch/excited-dolphin.
+Exact-head all-event queries before/after push returned0 and remote SHA matched.
+Dispatch issued once; recovered exactly one matching run. Frozen467pins/314candidate
+blobs;12new daily failure/recovery,14carried I4a and8affected unit definitions.
+DedicatedPG must report16outer exits0/noSKIP,14schedule+6dailyPublish+6dailyRecovery
++8historicalPublish named rows, plus preserved migration/bootstrap/checksum gates.
+Full terminal evidence pending. No source/compiler/test acceptance. Success publication,
+full approved-input orchestration and I5-I7/runtime/Owner/3tradingdays/finalC_R2 remain.
+No new worker or local project execution. Source/inputs stay frozen during this run.
