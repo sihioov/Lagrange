@@ -1413,7 +1413,7 @@ mod linux {
     fn distinct_date_count(pending: &[PendingBatch]) -> Result<usize, DailyEvidenceError> {
         let mut dates = Vec::new();
         for batch in pending {
-            if dates.iter().any(|date| *date == batch.entry.date) {
+            if dates.contains(&batch.entry.date) {
                 continue;
             }
             dates
@@ -2261,9 +2261,7 @@ mod linux {
                     maximum = maximum.max(depth);
                 }
                 b'}' | b']' => {
-                    if depth > 0 {
-                        depth -= 1;
-                    }
+                    depth = depth.saturating_sub(1);
                 }
                 _ => {}
             }

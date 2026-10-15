@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — C03 보정 후보 `d00b4759ba9e08887d3871f64e8f53bfb1f02fa7`를 feature 브랜치에 올렸다. exact-head/all-event 조회 0과 원격 SHA 확인 후 [CI 38659690888](https://github.com/sihioov/Lagrange/actions/runs/38659690888) attempt 1을 한 번 시작했다(2026-10-15 00:22:51 UTC). 코디네이터가 직접 결과를 회수 중이며, 56개 고정 입력·Rust 99개/chart 6개/제외 2개 목록을 보존했다. 컴파일·테스트 인수는 미완료이고 이전 실패와 후속 R2 조건은 그대로 남는다. |
+| 다음 단계 | R2 DOING — C03 후보 `d00b475`의 [CI](reviews/2026-10-15-r2-snapshot-c03-ci.md)에서 Rust 99개·별도 chart 6개·PG59·Web·Python·policy·format을 확인했다. strict Clippy 세 지적 때문에 전체는 실패였다. 전체 회수 후 C04로 두 표현만 동등한 연산으로 보정했고, 55개 불변 pin·49개 S2 정의·scoped rustfmt를 확인했다. [C04 기록](reviews/2026-10-15-r2-snapshot-lint-corrections.md). 다음은 새 후보의 기존 실행 조회 후 단일 hosted 검증이며, 전체 소스·운영·Owner·최종 C_R2 인수는 미완료다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

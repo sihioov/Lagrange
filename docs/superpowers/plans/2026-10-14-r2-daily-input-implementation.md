@@ -3655,3 +3655,25 @@ Frozen private inputs under target/r2-daily-beta/wp-4-integration:
 The preparation inventory's newCiDispatched:false is historical; the launch
 receipt records actual dispatch. Later local documentation commits do not change
 the pinned candidate. Compiler/test acceptance and all later R2 gates stay open.
+
+## Wave32 — C03 full CI recovery and bounded strict-lint correction
+
+C03 candidate d00b475/run38659690888 attempt1 is terminal failure. All eight
+jobs, 84 steps, eight logs, seven checkout SHAs and 56 pins were recovered. The 99
+expected Linux Rust names and six separate chart names have direct PASS rows; all
+48 Linux S2 cases ran. PG APPROVED lists 12 DB labels including both helpers, 59
+candidate-matched migration checksums, NO_OP and 0039/catalog/role/cleanup evidence.
+Unprinted nested PG rows/exits remain UNKNOWN. Format/web/policy/Python passed;
+strict Clippy's three findings and required failed. Original partial evidence is preserved.
+
+The coordinator then corrected exactly two source expressions: dates.contains for
+manual_contains, and depth.saturating_sub(1) for collapsible_match/implicit_saturating_sub.
+Date equality, fallible reserve, zero-depth behavior, checked depth growth and max
+tracking are unchanged. No blanket allows, guard weakening, dependencies or new
+worker. All 49 S2 definitions and 55 other pins are unchanged; standalone rustfmt 2024
+and whitespace pass. See [C03 CI](../../reviews/2026-10-15-r2-snapshot-c03-ci.md) and [C04 correction](../../reviews/2026-10-15-r2-snapshot-lint-corrections.md).
+
+A new exact candidate must repeat the existing-run/all-event/remote-SHA gate and
+reuse an existing run or dispatch once. The coordinator directly recovers it;
+no further delegation or local executable checks. Failed or successful historical
+runs are never rerun, cancelled or duplicated. All later R2 gates remain open.
