@@ -4599,3 +4599,25 @@ DedicatedPG must report16outer exits0/noSKIP,14schedule+6dailyPublish+6dailyReco
 Full terminal evidence pending. No source/compiler/test acceptance. Success publication,
 full approved-input orchestration and I5-I7/runtime/Owner/3tradingdays/finalC_R2 remain.
 No new worker or local project execution. Source/inputs stay frozen during this run.
+
+
+### Wave53 recovery and Wave54 daily success boundary — 2026-10-16 KST
+
+Wave53 a72aaa4/38768192668 attempt1 FAILURE fully recovered:8jobs/8logs/7checkouts,
+467pins/314candidateblobs. All required Rust groups PASS, including12I4b/14I4a/8unit,
+strictClippy/format/Python/policy and PG16exits0/noSKIP,14schedule+6dailyPublish+
+6dailyRecovery+8historicalPublish,32/73/83/60checksums bothlanes/roles/cleanup PASS.
+Web E2E failed; only state=failed/exit1/coverage=complete retained, no artifact.
+Exact failed case/root cause UNKNOWN. Receipt4857lines/SHA
+589b80b9bafa70fce788f71bd45a092ea94a72d6567492e04a3dcfc4a42528ea.
+
+After full recovery, Wave54 owns publish.rs daily success boundary and two web
+supervisor files for safe failure diagnostics. Public success requires opaque
+admitted input plus opaque computation, exact transaction gate and revalidation;
+eight pure tests cannot prove real approved-base success. Two web tests preserve
+32existing definitions. No tests/timeouts/retries/guards relaxed and no claim that
+old web failure is fixed. Historical publisher/settlement/queue/SQL preserved.
+Direct coordinator source review only. Freeze names/pins, query existing exact-head
+all-event runs, verify remote equality, dispatch once and recover all evidence.
+Full I4 integration, independent review/I5-I7/runtime/Owner/3tradingdays/finalC_R2
+remain; Ralph continues without delegation or local project execution.

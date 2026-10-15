@@ -1445,6 +1445,80 @@ class LaneOutcome:
     retry_attempts: int = 0
 
 
+def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
+    """Public CI evidence excludes process output, tokens, titles and annotations."""
+    known_errors = {
+        "COMMAND_FAILED", "LANE_TIMEOUT", "LANE_INTERNAL_FAILURE", "CLEANUP_FAILED",
+        "PORT_BUSY_AFTER_CLEANUP", "LISTENER_REMAINS_AFTER_CLEANUP",
+        "PLAYWRIGHT_JSON_INVALID", "RESULT_MISSING", "RESULT_UNEXPECTED",
+        "RESULT_SKIPPED", "RESULT_FLAKY", "RESULT_RETRY", "RESULT_INVENTORY_MISMATCH",
+        "OWNER_EMPTY_SELECTION_MISMATCH", "RESULT_DUPLICATE_KEY", "ACTUAL_CASE_SELECTED",
+        "COMMAND_TIMEOUT", "INTERRUPTED", "CHILD_START_FAILED", "PIDFD_UNAVAILABLE",
+        "CHILD_IDENTITY_UNVERIFIED", "SERVER_EXITED", "LISTENER_START_TIMEOUT",
+        "LISTENER_OWNER_UNVERIFIED", "FOREIGN_LISTENER", "COMPETING_LISTENER",
+        "LISTENER_ADDRESS_MISMATCH", "LISTENER_NOT_OWNED", "LISTENER_CHANGED",
+        "LISTENER_OWNER_AMBIGUOUS", "UNEXPECTED_OWNED_PORT", "ROOT_GENERATION_MISMATCH",
+        "READINESS_HTTP_FAILED", "READINESS_BODY_TOO_LARGE", "API_IDENTITY_INVALID",
+        "API_IDENTITY_MISMATCH", "WEB_RELAY_IDENTITY_INVALID",
+        "WEB_RELAY_IDENTITY_MISMATCH", "WEB_HEALTH_MISMATCH", "PLAYWRIGHT_REPORT_ERRORS",
+    }
+    statuses = {"expected", "unexpected", "flaky", "skipped"}
+    attempt_statuses = {"passed", "failed", "timedOut", "interrupted", "skipped"}
+    files = set(OFF_FILES) | {INTRADAY_FILE, STREAM_FILE}
+
+    def count(value: Any) -> int | None:
+        return value if type(value) is int and 0 <= value <= 1_000_000 else None
+
+    def safe_enum(value: Any, allowed: set[str], fallback: str = "UNKNOWN") -> str:
+        return value if isinstance(value, str) and value in allowed else fallback
+
+    error = outcome.error if isinstance(outcome.error, str) and outcome.error in known_errors else (
+        None if outcome.error is None else "OTHER_FAILURE"
+    )
+    state = safe_enum(outcome.state, {"passed", "running"} | {
+        code.lower() for code in known_errors
+    }, "other_failure")
+    cases = []
+    for case in outcome.cases[:1000]:
+        cases.append({
+            "project": "chromium" if case.key.project == "chromium" else "UNKNOWN",
+            "file": safe_enum(case.key.file, files, "UNLISTED"),
+            "line": count(case.key.line),
+            "identity_sha256": hashlib.sha256(json_bytes({
+                "project": case.key.project, "file": case.key.file, "line": case.key.line,
+                "title": case.key.title, "test_id": case.key.test_id,
+            })).hexdigest(),
+            "status": safe_enum(case.status, statuses),
+            "expected_status": safe_enum(case.expected_status, attempt_statuses),
+            "attempt_count": len(case.results),
+            "attempts": [
+                {
+                    "status": safe_enum(row.get("status"), attempt_statuses),
+                    "retry": count(row.get("retry", 0)),
+                }
+                for row in case.results[:16]
+            ],
+        })
+    return {
+        "schema": "candidate-web-hosted-lane-v1",
+        "lane": safe_enum(outcome.lane, {"off", "market-stream"}),
+        "state": state, "error": error, "exit_code": count(outcome.exit_code),
+        "selected": count(outcome.selected), "passed": count(outcome.passed),
+        "skipped": count(outcome.skipped), "flaky": count(outcome.flaky),
+        "retry_attempts": count(outcome.retry_attempts),
+        "cleanup_ok": outcome.cleanup_ok is True,
+        "reservation_ok": outcome.reservation_ok is True,
+        "case_count": len(outcome.cases), "cases": cases,
+        "case_rows_truncated": len(outcome.cases) > len(cases),
+    }
+
+
+def emit_hosted_lane_evidence(outcome: LaneOutcome) -> None:
+    # The full private receipt remains local; only this explicit allowlist is
+    # copied into hosted job logs, including on browser failure.
+    print("CANDIDATE_WEB_LANE:" + json_bytes(hosted_lane_evidence(outcome)).decode("ascii").strip(), flush=True)
+
+
 class Harness:
     def __init__(
         self,
@@ -1870,6 +1944,7 @@ class Harness:
                 break
             outcome = self._run_lane(lane, lane_expected[lane])
             self.lane_records[lane] = outcome
+            emit_hosted_lane_evidence(outcome)
             write_private(
                 self.evidence_dir / lane / "lane.json",
                 json_bytes(

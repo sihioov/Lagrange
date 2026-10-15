@@ -37,6 +37,7 @@ pub enum OwnerBetaPublicationError {
     QueueIntegrity,
     Integrity,
     EntitlementDenied,
+    DailyAuthorityDenied,
     CommitUnknown,
 }
 
@@ -64,6 +65,7 @@ impl OwnerBetaPublicationError {
             Self::QueueIntegrity => "owner-beta publication queue contract failed",
             Self::Integrity => "owner-beta publication integrity check failed",
             Self::EntitlementDenied => "owner-beta publication entitlement is inactive",
+            Self::DailyAuthorityDenied => "owner-beta daily authority is unavailable",
             Self::CommitUnknown => "owner-beta publication commit outcome is unknown",
         }
     }
@@ -71,7 +73,7 @@ impl OwnerBetaPublicationError {
     pub const fn class(self) -> ErrorClass {
         match self {
             Self::DatabaseTransient | Self::QueueTransient => ErrorClass::Transient,
-            Self::EntitlementDenied => ErrorClass::DataBlocked,
+            Self::EntitlementDenied | Self::DailyAuthorityDenied => ErrorClass::DataBlocked,
             Self::DatabaseIntegrity
             | Self::QueueClaimLost
             | Self::QueueIntegrity
@@ -958,6 +960,201 @@ async fn settle_daily_failure_in(
     Ok(outcome)
 }
 
+/// Publish a daily computation only while its exact reopened file capability
+/// remains valid. Serialized factors/targets alone cannot enter this boundary.
+/// Current SQL authority is rechecked under the same transaction as all writes.
+pub async fn publish_owner_beta_daily_success(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    admitted: &market_data::daily_price_only::input::AdmittedDailyPriceInputV1<'_, '_>,
+    computation: &super::daily_compute::OwnerBetaDailyComputation,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    validate_daily_claim(claim, input)?;
+    input
+        .validate_admitted(admitted)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    validate_daily_computation(
+        input,
+        computation.factor_snapshot(),
+        computation.target_snapshot(),
+    )?;
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let result =
+        publish_daily_success_in(&mut transaction, queue, claim, input, admitted, computation)
+            .await;
+    match result {
+        Ok(outcome) => {
+            // A failed final descriptor check rolls back every output and queue
+            // transition. An uncertain commit is never retried inline.
+            if outcome == OwnerBetaPublicationOutcome::Published
+                && input.validate_admitted(admitted).is_err()
+            {
+                let _ = transaction.rollback().await;
+                return Err(OwnerBetaPublicationError::Integrity);
+            }
+            transaction
+                .commit()
+                .await
+                .map(|()| outcome)
+                .map_err(|_| OwnerBetaPublicationError::CommitUnknown)
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+fn validate_daily_computation(
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    factor: &factor_engine::daily_price_only::DailyPriceOnlyFactorSnapshot,
+    target: &super::daily_target::OwnerBetaDailyTargetSnapshotV1,
+) -> Result<(), OwnerBetaPublicationError> {
+    input
+        .validate()
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    input
+        .validate_factor_snapshot(factor)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    target
+        .validate_hash()
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    let expected = super::daily_target::build_daily_target_snapshot(input, factor)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    if &expected != target {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(())
+}
+
+fn daily_item_weight(item: &super::OwnerBetaTargetItem) -> String {
+    // 0060 requires excluded daily items to have numeric zero; historical
+    // publication retains its existing NULL representation.
+    item.target_weight()
+        .unwrap_or_else(|| "0.000000".to_owned())
+}
+
+fn daily_gate_error(error: sqlx::Error) -> OwnerBetaPublicationError {
+    if error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .as_deref()
+        == Some("23514")
+    {
+        OwnerBetaPublicationError::DailyAuthorityDenied
+    } else {
+        database_error(error)
+    }
+}
+
+async fn publish_daily_success_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    admitted: &market_data::daily_price_only::input::AdmittedDailyPriceInputV1<'_, '_>,
+    computation: &super::daily_compute::OwnerBetaDailyComputation,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    let job = match queue.lock_claim_in(transaction, claim).await {
+        Ok(job) => job,
+        Err(QueueError::StaleClaim(_)) => {
+            return settle_daily_failure_in(
+                transaction,
+                queue,
+                claim,
+                input,
+                OwnerBetaPublicationFailure::Canceled,
+            )
+            .await;
+        }
+        Err(error) => return Err(queue_error(error)),
+    };
+    if job.id != claim.job.id
+        || job.owner_user_id != claim.job.owner_user_id
+        || job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || job.payload_json != claim.job.payload_json
+        || job.attempt_count != claim.job.attempt_count
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    lock_daily_run(transaction, claim, input).await?;
+    let allowed: bool = sqlx::query_scalar("SELECT public.lock_owner_beta_daily_run_gate($1)")
+        .bind(input.run_id())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(daily_gate_error)?;
+    if !allowed {
+        return Err(OwnerBetaPublicationError::DailyAuthorityDenied);
+    }
+    input
+        .validate_admitted(admitted)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    let target = computation.target_snapshot();
+    for item in target.items() {
+        let excluded = item.target_weight_ppm().is_none();
+        let reasons = Value::Array(
+            item.reasons()
+                .iter()
+                .map(|reason| Value::String(reason.code().to_owned()))
+                .collect(),
+        );
+        let factors = serde_json::to_value(item.factors())
+            .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+        let rank = item
+            .rank()
+            .map(i32::try_from)
+            .transpose()
+            .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+        let exclusion = if excluded {
+            Some(
+                item.reasons()
+                    .first()
+                    .ok_or(OwnerBetaPublicationError::Integrity)?
+                    .code(),
+            )
+        } else {
+            None
+        };
+        let changed = sqlx::query(
+            "INSERT INTO public.owner_beta_recommendation_items
+             (recommendation_run_id,owner_user_id,instrument_id,rank,target_weight,reason_codes,factors_json,excluded,exclusion_reason)
+             VALUES($1,$2,$3,$4,$5::numeric,$6,$7,$8,$9)")
+            .bind(input.run_id()).bind(claim.job.owner_user_id).bind(item.instrument_id())
+            .bind(rank).bind(daily_item_weight(item)).bind(reasons).bind(factors).bind(excluded).bind(exclusion)
+            .execute(&mut **transaction).await.map_err(database_error)?;
+        if changed.rows_affected() != 1 {
+            return Err(OwnerBetaPublicationError::Integrity);
+        }
+    }
+    input
+        .validate_admitted(admitted)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    // The daily run trigger rechecks authority with clock_timestamp() and owns
+    // started_at/finished_at/updated_at, including waits across the KST cutoff.
+    let changed = sqlx::query(
+        "UPDATE public.owner_beta_recommendation_runs
+         SET status='SUCCEEDED',factor_snapshot_sha256=$3,target_snapshot_sha256=$4,cash_weight=$5::numeric,error_code=NULL
+         WHERE id=$1 AND owner_user_id=$2 AND status='PENDING'")
+        .bind(input.run_id()).bind(claim.job.owner_user_id)
+        .bind(computation.factor_snapshot().hash.as_str()).bind(target.target_snapshot_sha256().as_str())
+        .bind(target.cash_weight()).execute(&mut **transaction).await.map_err(database_error)?;
+    if changed.rows_affected() != 1 {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    match queue
+        .settle_success_in(transaction, claim)
+        .await
+        .map_err(queue_error)?
+    {
+        SettleResult::Committed(job) if job.status == JobStatus::Succeeded => {
+            Ok(OwnerBetaPublicationOutcome::Published)
+        }
+        _ => Err(OwnerBetaPublicationError::QueueClaimLost),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1076,5 +1273,189 @@ mod tests {
                 .iter()
                 .all(|instrument| instrument.ends_with(".KRX"))
         );
+    }
+}
+
+#[cfg(test)]
+mod daily_success_tests {
+    // Synthetic computation-only fixtures. They cannot construct an admitted
+    // input, enter the public publisher or prove filesystem/SQL integration.
+    use super::super::daily_input::OwnerBetaDailyRecommendationInputV1;
+    use super::super::daily_target::{OwnerBetaDailyTargetSnapshotV1, build_daily_target_snapshot};
+    use super::*;
+    use crate::resolver::ResolvedConfig;
+    use domain::{ContentHash, TradingDate};
+    use factor_engine::daily_price_only::{
+        DAILY_FACTOR_SNAPSHOT_SCHEMA, DAILY_PRICE_ONLY_INPUT_KIND, DailyPriceOnlyFactorSnapshot,
+    };
+    use factor_engine::snapshot::{FactorRow, NormalizationMeta};
+    use std::collections::BTreeMap;
+
+    fn input(weight: f64) -> OwnerBetaDailyRecommendationInputV1 {
+        let strategy=super::super::OwnerBetaStrategySnapshot::from_resolved_config(&ResolvedConfig {
+            strategy_id:"buy_and_hold".to_owned(),strategy_version:"1.0.0".to_owned(),
+            config:serde_json::json!({"benchmark_instrument":"069500.KRX","target_weight":weight}),
+        }).unwrap();
+        serde_json::from_value(serde_json::json!({
+            "schema":"owner-beta-daily-recommendation-v1",
+            "run_id":"00000000-0000-4000-8000-000000000001",
+            "strategy_config_id":"00000000-0000-4000-8000-000000000002","as_of":"2026-08-31",
+            "input":{"kind":"owner_beta_daily_etf11_price_only_v1","content_sha256":ContentHash::from_bytes(b"content"),
+                "manifest_sha256":ContentHash::from_bytes(b"manifest"),"admission_sha256":ContentHash::from_bytes(b"admission"),
+                "policy_sha256":ContentHash::from_bytes(b"policy")},
+            "strategy":strategy,
+            "trigger":{"kind":"DAILY","version":"owner-beta-daily-trigger-v1","config_epoch":1,"activation_epoch":2}
+        })).unwrap()
+    }
+    fn factor(input: &OwnerBetaDailyRecommendationInputV1) -> DailyPriceOnlyFactorSnapshot {
+        let mut value = DailyPriceOnlyFactorSnapshot {
+            schema: DAILY_FACTOR_SNAPSHOT_SCHEMA.to_owned(),
+            input_kind: DAILY_PRICE_ONLY_INPUT_KIND.to_owned(),
+            capability: PRICE_ONLY_CAPABILITY.to_owned(),
+            as_of: input.as_of(),
+            content_sha256: input.pins().content_sha256().to_string(),
+            manifest_sha256: input.pins().manifest_sha256().to_string(),
+            admission_sha256: input.pins().admission_sha256().to_string(),
+            policy_sha256: input.pins().policy_sha256().to_string(),
+            factor_versions: BTreeMap::new(),
+            normalization: NormalizationMeta {
+                id: "fixture".to_owned(),
+                version: "1".to_owned(),
+                params: BTreeMap::new(),
+            },
+            rows: Vec::new(),
+            hash: ContentHash::from_bytes(b"placeholder"),
+        };
+        value.hash = value.compute_hash().unwrap();
+        value
+    }
+    fn fixtures() -> (
+        OwnerBetaDailyRecommendationInputV1,
+        DailyPriceOnlyFactorSnapshot,
+        OwnerBetaDailyTargetSnapshotV1,
+    ) {
+        let input = input(1.0);
+        let factor = factor(&input);
+        let target = build_daily_target_snapshot(&input, &factor).unwrap();
+        (input, factor, target)
+    }
+    #[test]
+    fn daily_publication_validation_binds_exact_computation() {
+        let (input, factor, target) = fixtures();
+        assert_eq!(validate_daily_computation(&input, &factor, &target), Ok(()));
+    }
+    #[test]
+    fn daily_publication_validation_rejects_each_rehashed_foreign_pin() {
+        let (input, factor, target) = fixtures();
+        for index in 0..4 {
+            let mut changed = factor.clone();
+            let other = ContentHash::from_bytes(b"foreign").to_string();
+            match index {
+                0 => changed.content_sha256 = other,
+                1 => changed.manifest_sha256 = other,
+                2 => changed.admission_sha256 = other,
+                _ => changed.policy_sha256 = other,
+            }
+            changed.hash = changed.compute_hash().unwrap();
+            assert_eq!(
+                validate_daily_computation(&input, &changed, &target),
+                Err(OwnerBetaPublicationError::Integrity)
+            );
+        }
+    }
+    #[test]
+    fn daily_publication_validation_rejects_stale_hash_and_date() {
+        let (input, factor, target) = fixtures();
+        let mut changed = factor.clone();
+        changed.hash = ContentHash::from_bytes(b"stale");
+        assert_eq!(
+            validate_daily_computation(&input, &changed, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+        changed = factor;
+        changed.as_of = TradingDate::parse("2026-09-01").unwrap();
+        changed.hash = changed.compute_hash().unwrap();
+        assert_eq!(
+            validate_daily_computation(&input, &changed, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+    }
+    #[test]
+    fn daily_publication_validation_rejects_nonfinite_factor_rows() {
+        let (input, mut factor, target) = fixtures();
+        factor.rows.push(FactorRow {
+            date: input.as_of().to_iso(),
+            instrument: "069500.KRX".to_owned(),
+            factor: "unexpected".to_owned(),
+            raw: Some(f64::NAN),
+            normalized: None,
+        });
+        assert_eq!(
+            validate_daily_computation(&input, &factor, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+    }
+    #[test]
+    fn daily_publication_validation_rejects_other_valid_strategy_target() {
+        let (original, factor, target) = fixtures();
+        let other = input(0.5);
+        let other_target = build_daily_target_snapshot(&other, &factor).unwrap();
+        assert!(other_target.validate_hash().is_ok());
+        assert_eq!(
+            validate_daily_computation(&original, &factor, &other_target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+        assert_eq!(
+            validate_daily_computation(&other, &factor, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+    }
+    #[test]
+    fn daily_publication_validation_rejects_changed_discriminants() {
+        let (input, factor, target) = fixtures();
+        for index in 0..3 {
+            let mut changed = factor.clone();
+            match index {
+                0 => changed.schema = "wrong".to_owned(),
+                1 => changed.input_kind = PRICE_ONLY_INPUT_KIND.to_owned(),
+                _ => changed.capability = "wrong".to_owned(),
+            }
+            changed.hash = changed.compute_hash().unwrap();
+            assert_eq!(
+                validate_daily_computation(&input, &changed, &target),
+                Err(OwnerBetaPublicationError::Integrity)
+            );
+        }
+    }
+    #[test]
+    fn daily_excluded_projection_has_zero_weight_and_no_rank() {
+        let (_, _, target) = fixtures();
+        let mut selected = 0;
+        let mut excluded = 0;
+        for item in target.items() {
+            if item.target_weight_ppm().is_none() {
+                excluded += 1;
+                assert_eq!(daily_item_weight(item), "0.000000");
+                assert!(item.rank().is_none());
+                assert!(!item.reasons().is_empty());
+            } else {
+                selected += 1;
+                assert_eq!(daily_item_weight(item), "1.000000");
+                assert_eq!(item.rank(), Some(1));
+            }
+        }
+        assert_eq!((selected, excluded), (1, 10));
+        assert_eq!(target.cash_weight(), "0.000000");
+    }
+    #[test]
+    fn daily_authority_denial_is_value_free_and_not_retryable() {
+        let error = OwnerBetaPublicationError::DailyAuthorityDenied;
+        assert_eq!(error.class(), ErrorClass::DataBlocked);
+        assert!(!error.class().retryable());
+        assert_eq!(
+            error.to_string(),
+            "owner-beta daily authority is unavailable"
+        );
+        assert_eq!(format!("{error:?}"), error.to_string());
     }
 }

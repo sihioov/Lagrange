@@ -1777,5 +1777,44 @@ while True: time.sleep(0.05)
             temp.cleanup()
 
 
+    def test_hosted_lane_evidence_keeps_named_locations_and_each_result(self) -> None:
+        good = runner.Case(runner.CaseKey("chromium", runner.STOCK_BETA_FILE, 42, "good fixture", "id1"),
+                           (), "expected", "passed", ({"status": "passed", "retry": 0},), ())
+        failed = runner.Case(runner.CaseKey("chromium", runner.STOCK_BETA_FILE, 56, "failed fixture", "id2"),
+                             (), "unexpected", "passed", ({"status": "timedOut", "retry": 0},), ())
+        outcome = runner.LaneOutcome("off", "command_failed", 1, 2, 1, 0, 0,
+                                     "COMMAND_FAILED", True, cases=[good, failed])
+        row = runner.hosted_lane_evidence(outcome)
+        self.assertEqual((row["lane"], row["state"], row["exit_code"]), ("off", "command_failed", 1))
+        self.assertEqual((row["selected"], row["passed"], row["case_count"]), (2, 1, 2))
+        self.assertEqual([case["line"] for case in row["cases"]], [42, 56])
+        self.assertEqual([case["status"] for case in row["cases"]], ["expected", "unexpected"])
+        self.assertEqual(row["cases"][1]["attempts"], [{"status": "timedOut", "retry": 0}])
+        self.assertNotEqual(row["cases"][0]["identity_sha256"], row["cases"][1]["identity_sha256"])
+        output = io.StringIO()
+        with mock.patch("sys.stdout", output):
+            runner.emit_hosted_lane_evidence(outcome)
+        self.assertEqual(json.loads(output.getvalue().split(":", 1)[1]), row)
+
+    def test_hosted_lane_evidence_excludes_untrusted_text_and_token_fields(self) -> None:
+        sentinel = "PRIVATE_SENTINEL_DO_NOT_EMIT"
+        case = runner.Case(runner.CaseKey(sentinel, sentinel, -1, sentinel, sentinel),
+                           (sentinel,), sentinel, sentinel,
+                           ({"status": sentinel, "retry": sentinel, "error": sentinel, "stdout": sentinel},),
+                           ({"type": sentinel, "description": sentinel},))
+        outcome = runner.LaneOutcome(sentinel, sentinel, 1, 1, 0, 0, 0,
+                                     sentinel, False, token_sha256=sentinel, cases=[case])
+        row = runner.hosted_lane_evidence(outcome)
+        self.assertNotIn(sentinel, json.dumps(row))
+        self.assertEqual((row["lane"], row["state"], row["error"]), ("UNKNOWN", "other_failure", "OTHER_FAILURE"))
+        self.assertEqual(row["cases"][0]["file"], "UNLISTED")
+        self.assertIsNone(row["cases"][0]["line"])
+        self.assertIsNone(row["cases"][0]["attempts"][0]["retry"])
+        self.assertNotIn("token_sha256", row)
+        self.assertNotIn("annotations", row["cases"][0])
+        self.assertNotIn("title", row["cases"][0])
+        self.assertFalse(row["cleanup_ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
