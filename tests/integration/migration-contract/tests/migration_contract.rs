@@ -12427,7 +12427,8 @@ async fn daily_0060_case_body(db: &Daily0060Db, name: &str) -> Daily0060Result {
         "repeat_is_noop" => {
             let ledger = migration_ledger_snapshot(&db.owner).await?;
             let before = daily_0060_snapshot(db).await?;
-            MIGRATOR.run(&db.owner).await?;
+            // This fixture deliberately remains the 0060 no-op boundary.
+            MIGRATOR.run_to(60, &db.owner).await?;
             assert_eq!(migration_ledger_snapshot(&db.owner).await?, ledger);
             assert_eq!(daily_0060_snapshot(db).await?, before);
             assert_eq!(applied_count(&db.owner).await?, 60);

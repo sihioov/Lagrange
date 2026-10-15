@@ -1414,7 +1414,7 @@ run_full_release_lane() {
   fi
   record_log "$full_migrate_raw" full-migrate-first.log
   run_full_ledger_report full_compose first
-  [ "$full_count:$full_latest" = "60:60" ] || fail '0060 full-release ledger must contain 60 rows'
+  [ "$full_count:$full_latest" = "61:61" ] || fail '0061 full-release ledger must contain 61 rows'
   full_migration_count_first=$full_count
   full_latest_migration_first=$full_latest
   full_migration_checksums_first=$full_checksums
@@ -1630,12 +1630,26 @@ run_db_test() {
       daily_mixed_runner_current_thread_rejects_before_claim \
       daily_mixed_runner_foreign_policy_stops_before_base_or_admission_io \
       daily_mixed_runner_lease_mismatch_preserves_unclaimed_job \
-      daily_preflight_rejects_app_admitter_and_elevated_pools; do
+      daily_preflight_rejects_app_admitter_and_elevated_pools \
+      daily_supersession_preflight_cancels_and_replays_only_exact_identity \
+      daily_supersession_failure_cleanup_cancels_instead_of_retrying \
+      daily_supersession_cleanup_remains_possible_after_authority_revocation \
+      daily_supersession_missing_calendar_does_not_invent_a_newer_session \
+      daily_supersession_conflicting_calendar_does_not_cancel \
+      daily_supersession_transaction_rollback_restores_every_output_and_lease \
+      daily_supersession_samples_cutoff_after_waiting_for_control \
+      daily_supersession_foreign_worker_attempt_and_payload_cannot_cancel \
+      daily_supersession_expired_real_lease_cannot_settle \
+      daily_supersession_rejects_other_real_principals_and_restores_actor \
+      daily_supersession_additive_migration_down_up_preserves_populated_rows \
+      daily_supersession_does_not_replace_an_audited_manual_cancel_reason \
+      daily_supersession_observes_source_conflict_committed_while_waiting \
+      daily_supersession_holds_source_fence_until_atomic_commit; do
       actual=0
       for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
       [ "$actual" -eq 1 ] || fail "daily runner unique test row missing: $expected"
     done
-    [ "${#replay_rows[@]}" -eq 10 ] || fail 'daily runner result inventory changed'
+    [ "${#replay_rows[@]}" -eq 24 ] || fail 'daily runner result inventory changed'
   fi
   tests_run=$(append_csv "$tests_run" "$label")
 }

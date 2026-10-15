@@ -875,6 +875,33 @@ async fn lock_daily_run(
     Ok(run)
 }
 
+async fn cancel_superseded_daily_claim_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<bool, OwnerBetaPublicationError> {
+    sqlx::query_scalar("SELECT public.cancel_superseded_owner_beta_daily_claim($1,$2,$3,$4,$5)")
+        .bind(input.run_id())
+        .bind(claim.job.id)
+        .bind(claim.attempt.id)
+        .bind(claim.attempt.attempt_no)
+        .bind(&claim.worker_id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(|error| {
+            if error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref()
+                == Some("55000")
+            {
+                OwnerBetaPublicationError::QueueClaimLost
+            } else {
+                database_error(error)
+            }
+        })
+}
+
 async fn settle_daily_failure_in(
     transaction: &mut Transaction<'_, Postgres>,
     queue: &JobQueue,
@@ -882,6 +909,29 @@ async fn settle_daily_failure_in(
     input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
     failure: OwnerBetaPublicationFailure,
 ) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    // A failed publication can cross the eligible-date boundary after preflight.
+    // Ask the typed SQL authority again; never infer supersession from a generic
+    // constraint failure, missing admission, or an authority error.
+    if failure != OwnerBetaPublicationFailure::Canceled {
+        match queue.lock_claim_in(transaction, claim).await {
+            Ok(job) => {
+                if job.id != claim.job.id
+                    || job.owner_user_id != claim.job.owner_user_id
+                    || job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+                    || job.payload_json != claim.job.payload_json
+                    || job.attempt_count != claim.job.attempt_count
+                {
+                    return Err(OwnerBetaPublicationError::Integrity);
+                }
+                lock_daily_run(transaction, claim, input).await?;
+                if cancel_superseded_daily_claim_in(transaction, claim, input).await? {
+                    return Ok(OwnerBetaPublicationOutcome::Canceled);
+                }
+            }
+            Err(QueueError::StaleClaim(_)) => {}
+            Err(error) => return Err(queue_error(error)),
+        }
+    }
     // Existing queue methods lock and fence job/attempt before the run.
     let status = if failure == OwnerBetaPublicationFailure::Canceled {
         queue
@@ -1044,6 +1094,9 @@ async fn preflight_daily_claim_in(
         return Err(OwnerBetaPublicationError::Integrity);
     }
     lock_daily_run(transaction, claim, input).await?;
+    if cancel_superseded_daily_claim_in(transaction, claim, input).await? {
+        return Ok(DailyClaimPreflight::Canceled);
+    }
     let allowed: bool = sqlx::query_scalar("SELECT public.lock_owner_beta_daily_run_gate($1)")
         .bind(input.run_id())
         .fetch_one(&mut **transaction)
@@ -1175,6 +1228,9 @@ async fn publish_daily_success_in(
         return Err(OwnerBetaPublicationError::Integrity);
     }
     lock_daily_run(transaction, claim, input).await?;
+    if cancel_superseded_daily_claim_in(transaction, claim, input).await? {
+        return Ok(OwnerBetaPublicationOutcome::Canceled);
+    }
     let allowed: bool = sqlx::query_scalar("SELECT public.lock_owner_beta_daily_run_gate($1)")
         .bind(input.run_id())
         .fetch_one(&mut **transaction)
