@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 일일 수집·실제 Owner 사용 흐름 완성. F1/F2 소스·CI 검증과 DB 진단 완료; Owner가 채택한 ETF 일일 입력·자동 추천 계약의 설계·구현 진행 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | I0d의 실제 negative bootstrap/트랜잭션 rollback 검증 83개 사례를 작성했다. [소스 범위와 한계](reviews/2026-10-15-r2-bootstrap-negative-source.md), [Wave34](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)를 고정해 새 exact 후보 hosted CI를 준비한다. 7cdf3a6의 S2 Linux 인수는 보존하며, 이번 83개는 아직 WRITTEN_UNEXECUTED다. 0060·provider/copy admission·I6 diagrams before main·운영·Owner·최종 C_R2는 미완료다. |
+| 다음 착수 항목 | I0d 후보 `dd1b92f`의 [CI 38670368360](https://github.com/sihioov/Lagrange/actions/runs/38670368360) attempt1을 원격 SHA·기존 실행 0 확인 후 한 번 시작했다. 83개 bootstrap 실패/롤백 사례와 기존 Rust99/chart6·PG59를 직접 회수 중이며, 소스는 고정했다. [범위](reviews/2026-10-15-r2-bootstrap-negative-source.md); C05 S2 Linux 인수와 이전 실패는 보존. 0060·provider/copy admission·I6·운영·Owner·최종 C_R2는 미완료다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -548,3 +548,4 @@ API·화면 확인 / 실패·복구 여부 / 안전한 증거 링크`다.
 | 2026-10-15 | R2-04/09 | DOING 유지; C05 단일 후보 CI 시작 | 7cdf3a6/38664342216 attempt1, 원격 SHA·기존 실행 0 확인 후 한 번 dispatch; 최초 빈 조회 뒤 재요청 없음 | [CI](https://github.com/sihioov/Lagrange/actions/runs/38664342216); 69 pins, 99 Rust/6 chart/2 exclusions, 직접 회수 중 |
 | 2026-10-15 | R2-04/09 | DOING 유지; S2 Linux 소스·hosted 검증 부분 인수 | 7cdf3a6/38664342216 attempt1 전체 8개 job SUCCESS, 69pins/7checkout/99 Rust·6 chart/strict Clippy/PG59·cleanup 직접 확인 | [C05 인수](reviews/2026-10-15-r2-snapshot-c05-ci.md); 48 Linux S2 PASS·1 non-Linux 제외, 후속 R2 게이트와 이전 실패 보존 |
 | 2026-10-15 | R2-04/09 | DOING 유지; I0d 실제 실패 경로 검증 작성 | 운영 bootstrap 불변, 83개 역할·권한·8개 secret·잠금 timeout rollback 사례와 named evidence 연결 | [소스 검토](reviews/2026-10-15-r2-bootstrap-negative-source.md); 로컬 문법·정적 검사만 통과, hosted 실행 전 |
+| 2026-10-15 | R2-04/09 | DOING 유지; I0d 단일 후보 CI 시작 | dd1b92f/38670368360 attempt1, 76pins·83새사례·99Rust·6chart 고정 | [CI](https://github.com/sihioov/Lagrange/actions/runs/38670368360); 직접 회수 중, 추가 위임·로컬 실행 없음 |

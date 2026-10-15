@@ -3817,3 +3817,22 @@ SHA and all-event exact-head existing CI runs, reuse an existing run or dispatch
 once. Recover all jobs and named outcomes before acceptance or correction. Keep
 all prior successes/failures intact. This package does not implement 0060/DOWN,
 provider/copy admission, runtime UID/ACL access, I6 diagrams, Owner or final C_R2.
+
+### Wave34 actual I0d dispatch — 2026-10-15 UTC
+
+Candidate `dd1b92f3dc3c2bdc151a763e90fba734aa7af747` was pushed fast-forward.
+Remote SHA and all-event exact-head existing CI count0 were verified at
+02:19:07 UTC. One dispatch created [run 38670368360](https://github.com/sihioov/Lagrange/actions/runs/38670368360),
+attempt1, workflow_dispatch, at 02:19:24 UTC. No rerun/cancel/duplicate.
+Coordinator directly recovers all jobs by 03:49:24 UTC; heartbeat b0a44ce7
+expires04:20:03 UTC and cannot protect a same-daemon outage. Sources/inputs are
+frozen until full recovery; later documentation HEAD does not change candidate.
+
+Frozen private wave34-I0d-ci-inputs.json:331lines/76pins, SHA256
+68fa9678b0bb3b23e79309dc4e696697af0d0e2c72c96e70ff3f2d895f5501ba.
+Inventory:1648lines, SHA256
+d56a6d806146407bc17df21573dbeff1d4dc581bbdf4048bc9f204af350608f0.
+It expects 83 named bootstrap cases,99 direct Rust,6 separate chart and2
+platform exclusions. Source checks verified67 unchanged prior pins and56
+candidate blobs. Prior C05 acceptance and all failures remain preserved.
+No local executable checks or additional delegation. R2-04/09 remain DOING.

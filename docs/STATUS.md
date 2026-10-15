@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — I0d의 실제 negative bootstrap/트랜잭션 rollback 검증 83개 사례를 작성했다. [소스 범위와 한계](reviews/2026-10-15-r2-bootstrap-negative-source.md), [Wave34](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)를 고정해 새 exact 후보 hosted CI를 준비한다. 7cdf3a6의 S2 Linux 인수는 보존하며, 이번 83개는 아직 WRITTEN_UNEXECUTED다. 0060·provider/copy admission·I6 diagrams before main·운영·Owner·최종 C_R2는 미완료다. |
+| 다음 단계 | I0d 후보 `dd1b92f`의 [CI 38670368360](https://github.com/sihioov/Lagrange/actions/runs/38670368360) attempt1을 원격 SHA·기존 실행 0 확인 후 한 번 시작했다. 83개 bootstrap 실패/롤백 사례와 기존 Rust99/chart6·PG59를 직접 회수 중이며, 소스는 고정했다. [범위](reviews/2026-10-15-r2-bootstrap-negative-source.md); C05 S2 Linux 인수와 이전 실패는 보존. 0060·provider/copy admission·I6·운영·Owner·최종 C_R2는 미완료다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
