@@ -2155,3 +2155,23 @@ or first execution, following D5 A2-A5/A8 and adopted D4. No0060 source or execu
 occurs in this wave. Provider/copy reconstruction/admission, runtime UID/ACL and
 provisioner filesystem rollback, I6 diagrams before structural main integration,
 runtime/Owner, three trading days and finalC_R2 remain open. R2-04/09 stay DOING.
+
+### Wave36 I2 implementation contract — 2026-10-15
+
+Continued R2 after the R3 readiness discussion. R2's three-trading-day observation
+is a completion criterion after operational recovery, not a waiting period already
+in progress. No R3 priority change, production action or new worker was made.
+
+The coordinator fixed the [0060 SQL implementation contract](2026-10-15-r2-daily-sql-implementation-contract.md)
+against D1/D5/D6/D4 and the current migration/queue/harness source. Six concrete
+interface gaps have explicit dispositions: external admission hash/manifest transport,
+receipt identity, stale-scan fencing, protected policy projection, retry-setting
+binding and direct-login evidence. The fixed scope contains ten tables and32 named
+DB test requirements. These requirements are SPECIFIED_NOT_IMPLEMENTED.
+
+The last executed candidate remains57ca4d1/run38672658570 SUCCESS. This wave changes
+documentation only; it neither adds0060 to the embedded migrator nor executes a
+new fixture, CI run, provider request or production operation. Existing checksums,
+source acceptances, failed runs and UNKNOWN_NOT_PRINTED helper outcomes are preserved.
+Next is the complete SQL/test/harness candidate, followed by source disposition and
+one exact-head hosted run. No background work, heartbeat or pending permission.

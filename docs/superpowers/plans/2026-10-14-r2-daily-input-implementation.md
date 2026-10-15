@@ -3934,3 +3934,45 @@ or first execution, following D5 A2-A5/A8 and adopted D4. No0060 source or execu
 occurs in this wave. Provider/copy reconstruction/admission, runtime UID/ACL and
 provisioner filesystem rollback, I6 diagrams before structural main integration,
 runtime/Owner, three trading days and finalC_R2 remain open. R2-04/09 stay DOING.
+
+## Wave36 — I2 SQL interfaces and validation boundary
+
+The user's continuation is handled as continuing the existing R2 priority.
+R3 readiness was discussed, but no priority switch or R2 completion was adopted.
+Coordinator owns WP-4/I2-D directly; no new worker or delegation. Baseline c2c419e;
+last executed candidate57ca4d1/run38672658570 remains unchanged.
+
+The [0060 implementation contract](../../reviews/2026-10-15-r2-daily-sql-implementation-contract.md)
+fixes six previously unbound integration seams: the SQL admission transport around
+unchanged D4 bytes, receipt-bearing calendar/completion functions, latest-receipt
+fencing, protected policy projection, configured retry backoff and direct-login
+evidence. It enumerates ten tables, callable role ownership, the six I2 files and
+four sequential I0 harness files. Its 32 named DB tests are specified only, not
+implemented definitions or passed tests. Full source/ACL/lineage/queue/rollback
+requirements from D1/D5/D6 remain; the prior reports are not edited.
+
+The existing embedded MIGRATOR automatically sees a new0060 file. Therefore the
+UP/DOWN pair, actual-role tests and sequential official harness wiring must form
+one complete candidate before any hosted execution. There is no partial-migration
+CI dispatch or local SQL/compiler/test execution. Static contract review and fixed
+source pins are the evidence for this wave; no new implementation/CI/operational
+acceptance is claimed. No background work or heartbeat is needed for this direct
+documentation package. Current Mem0 context failed with MCP_ERROR and was not retried.
+
+Next is I2 source assembly against this contract: catalog/ACL/epoch, source and
+receipt authority, reservation/publication/queue guards, exact unused-only DOWN,
+32 actual-role cases and I0 harness wiring. Source disposition precedes one new
+exact-candidate hosted run after checking existing runs. Preserve old successes,
+failures and unknown nested-helper evidence. R2-04/09 remain DOING; production,
+Owner use, three consecutive trading days and final C_R2 are still open.
+
+Wave36 static verification: all24 cited baseline inputs and all118 migration files
+through0059 are byte-identical to c2c419e. The348-line contract is SHA256
+f7702cf677ca383a964262ab893baa2f0a91d303875127b83aa53db36ee88cb9;
+11 local links/line bounds and32 unique requirement names checked. Private frozen
+wave36-I2-interface-inputs.json is734lines, SHA256
+fb8a9a319e57ddf2de51e83232e08fa488f95d0bd7f56f2155da1846d4f148c4;
+wave36-I2-db-test-requirements.json is141lines, SHA256
+686076570efe182d43333a55df6112c09e1801a5675468067e89df8c19621dd7.
+Both reside under target/r2-daily-beta/wp-4-integration and say explicitly that
+the requirements are not implemented or executed. No0060 file exists yet.
