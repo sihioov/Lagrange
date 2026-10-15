@@ -3365,3 +3365,17 @@ Full recovery must include explicit protected-fixture setup and nonrecursive cle
 steps and four mode/UID/GID observations. No source/compiler/runtime acceptance.
 Prior two failures remain preserved. Only unregistered successor preparation and
 mutable coordinator tracking docs may change while CI runs. Ralph continues.
+
+
+### Wave48 partial fixture diagnosis — 2026-10-15
+
+The still-running workspace job printed16S5c fixture UnsafePath failures at
+artifact.rs:972:69. Its explicit mode observations are root0755,/opt0777,
+owned-anchor0755,runner-child0700. Thus /opt violates the unchanged no-group/other-
+write ancestry guard; the precise first rejection is not instrumented. This is
+partial evidence, not final run recovery. Web/PG/lint/format/policy/Python completed
+successfully. Preserve the running candidate and all prior failures. After full
+terminal recovery, move only the isolated test hierarchy directly below the observed
+root0755, without chmod of any shared ancestor. Prepared unregistered daily-parent,
+frontier and pure disabled supplier code can then join one bounded successor scope;
+no acceptance or duplicate dispatch is inferred.
