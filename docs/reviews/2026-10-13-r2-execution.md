@@ -2498,3 +2498,16 @@ run38737242162 attempt1, CI/ci.yml/workflow_dispatch/excited-dolphin, created
 2026-10-15T12:46:39Z. Full recovery is pending; no compiler/test acceptance yet.
 Never rerun/cancel/duplicate. While running, only unregistered successor files and
 mutable coordinator tracking docs may change. All prior evidence remains intact.
+
+
+### 2026-10-15 — Wave47 S5c-C01 after full failed-run recovery
+
+Wave46 718d99d/run38737242162 attempt1:8terminal jobs/8logs/7checkouts,313pins/
+250blobs recovered. S5c26Linux:10pass/16fixture UnsafePath failures before behavior
+assertions;1nonLinux excluded. Prior named groups, strictClippy/format/web/Python/
+PG32/73/83/12/60checksums/cleanup pass; workspace/required fail. Preserve all evidence.
+C01 changes only test fixture parent from checkout to required HOME, keeping33088
+production bytes identical and all27names. Exact rejected ancestor/ACL cause was not
+printed. No local project execution or new delegation. Freeze one successor and
+single hosted verification, not a rerun. Source/runtime/final C_R2 remain unaccepted.
+Unregistered continuation/price_extension/frontier preparation is excluded.

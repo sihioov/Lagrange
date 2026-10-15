@@ -955,11 +955,13 @@ mod linux {
         }
         impl Fixture {
             fn new() -> Self {
-                // Production path checks are retained. /tmp's writable ancestor
-                // is intentionally not accepted even when the leaf is private.
+                // CI checkout ancestry is not a protected storage contract.
+                // Keep all production checks and place the private fixture under
+                // the test user's home, with no /tmp or permissive fallback.
+                let fixture_parent = std::env::var_os("HOME").expect("fixture home is required");
                 let directory = Builder::new()
                     .prefix(".daily-artifact-")
-                    .tempdir_in(std::env::current_dir().unwrap())
+                    .tempdir_in(std::path::PathBuf::from(fixture_parent))
                     .unwrap();
                 let path = directory.path().join("candidates");
                 std::fs::create_dir(&path).unwrap();
