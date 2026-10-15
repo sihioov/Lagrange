@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | C03 `dee78c4`의 [CI 38696988981](reviews/2026-10-15-r2-daily-sql-c03-ci.md) attempt1 회수 중. 249pins/204blobs와 exact-head 기존 실행 0건·원격 SHA 일치를 확인한 뒤 한 번 dispatch했다. C02 DB32/73·회귀28 성공을 보존하며, 이번 후보의 canonical73행·전체 DB12·모든 job 검증을 기다린다. I2 최종 인수와 I3–I7·운영·Owner·3거래일·최종 C_R2는 미완료다. |
+| 다음 단계 | I2 migration0060 구현·격리 hosted 검증 완료 — `dee78c4`의 [CI 38696988981](reviews/2026-10-15-r2-daily-sql-c03-ci.md) attempt1 전체 성공. 249pins/204blobs/7checkout, DB32·세부73·실제 DB12단계와 회귀를 대조해 [I2를 범위 한정 인수](reviews/2026-10-15-r2-daily-sql-acceptance.md)했다. 다음은 남은 I1b 오프라인 원본·복사본·provider 복원 검증과 admission 라이브러리다. I3–I7·운영 UID/ACL·installer 파일시스템 rollback·Owner·연속 3거래일·최종 C_R2는 미완료이며 관측 기간은 아직 시작하지 않았다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

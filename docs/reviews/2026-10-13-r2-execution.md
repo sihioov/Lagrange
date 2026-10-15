@@ -2260,3 +2260,36 @@ run38696988981 attempt1 created2026-10-15T07:10:31Z.249pins/204blobs match;
 all-event exact-head query0 and remote SHA match preceded one dispatch.
 Recover full12 DB exits and canonical32/73 rows with all other candidate gates.
 No worker/delegation, rerun/cancel or local executable verification.
+
+### Wave40 closeout — 2026-10-15 I2 bounded acceptance
+
+Candidate `dee78c4531e1cb14eefd8abb3bf90189d382ca6e`, run38696988981 attempt1,
+completed SUCCESS at07:33:13 UTC. Coordinator recovered eight jobs/84 steps,
+eight log hashes and seven actual checkout SHAs; all249 frozen pins and204
+committed candidate blobs match.83 steps succeeded; the conditional PG failure
+log dump alone was skipped.
+
+Workspace individually passed32 daily,28 affected legacy,99 prior R2 Rust and
+three transport names; the separate chart step passed six names. Canonical PG
+evidence contains exactly32 daily outcomes and73 unique subcases,12 DB label
+exits0/no-SKIP and83 named bootstrap passes. All60 SHA384 migration checksums
+match twice, rerun is NO_OP, direct roles/0039/catalog/0060 rollback gates pass,
+and cleanup is PASS_NO_OWNED_CONTAINERS. Unprinted nested cases/inner exits stay
+UNKNOWN; two Linux platform exclusions and Python's existing skips are retained.
+
+I2 implementation and isolated hosted verification are DONE at that exact
+revision. This is coordinator source disposition and evidence reconciliation,
+not a new independent review or runtime acceptance. All earlier failed
+candidates and partial successes remain immutable. No new worker, delegation,
+rerun/cancel or local project execution occurred. The final sanitized receipt
+under target/r2-daily-beta/ci/dee78c4 is2265lines, SHA256
+241dcf762329aa3eb3aba04f6df124ad07e2b5cef6b888577d0929d3abb8712d.
+
+Next is remaining I1b offline original/copy/provider reconstruction and admission
+library work against D4/D5, preserving the accepted snapshot and SQL boundaries.
+R2-04/09 remain DOING. I3–I7/final integrated review, runtime UID/ACL, installer
+filesystem rollback, I6 diagrams before main, operational activation, Owner use,
+three consecutive trading days and final C_R2 remain open. Observation has not
+started. No active worker/background task or pending permission remains for I2.
+
+[I2 acceptance](2026-10-15-r2-daily-sql-acceptance.md).
