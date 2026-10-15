@@ -434,7 +434,7 @@ mod tests {
                 4 => changed.batch_id = BatchId::from_uuid(Uuid::from_u128(8)),
                 _ => {
                     changed.retrieved_at =
-                        DailyWireTimestampV1::parse("2026-10-12T07:32:00Z").unwrap();
+                        DailyWireTimestampV1::parse("2026-10-12T07:32:00.000000000Z").unwrap();
                     changed.original_retrieved_at = changed.retrieved_at;
                 }
             }
@@ -448,7 +448,7 @@ mod tests {
         copy.provider = "kis-calendar".into();
         copy.batch_id = BatchId::from_uuid(Uuid::from_u128(9));
         copy.batch_date = date("2026-10-13");
-        copy.retrieved_at = DailyWireTimestampV1::parse("2026-10-13T07:31:00Z").unwrap();
+        copy.retrieved_at = DailyWireTimestampV1::parse("2026-10-13T07:31:00.000000000Z").unwrap();
         copy.copied_from.push(DailyFileOriginV1Wire {
             provider: original.provider.clone(),
             market: original.market.clone(),

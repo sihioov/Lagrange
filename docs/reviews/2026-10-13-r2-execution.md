@@ -2425,3 +2425,27 @@ Frozen287pins/231candidateblobs and33new written definitions await full hosted r
 Later documentation HEAD does not change the pinned candidate. Source remains frozen;
 next protected-prefix preparation may use only new unregistered files. No new worker,
 local project execution, provider action or runtime/Owner acceptance.
+
+## Wave45 — first protected historical continuation, candidate and S5a-C01
+
+S5a5a83e0d/run38728478625 is fully recovered before edits:8terminal jobs,7exact
+checkouts,287pins/231blobs.31/33new cases pass;2positive timestamp fixtures fail
+InvalidTimestamp before their assertions. Production observer remains byte-identical;
+C01 adds the exact nine-digit fraction to those2strings only. No parser weakening.
+All carried named regressions, strict lint, PG60/32/73/83/12, cleanup and other jobs
+pass, while workspace/required fail. Full immutable failure receipt remains preserved.
+
+New history.rs/candidate.rs and21private regressions implement only the first
+approved-v3 continuation and its in-memory D4 candidate. The opaque approved base,
+fixed calendar/grid, every original price overlap, exact arithmetic, complete source
+documents and canonical bytes are bound. Daily admitted parents, persisted frontier,
+immutable storage/admission/supply remain later. No synthetic approved handle exists.
+Real full-base/factory and snapshot-to-candidate integration are not exercised by
+these private fixtures; they remain explicit integration work. The production
+approval/normalizer/discovery/SQL/workflow/dependencies and old tests stay unchanged.
+
+Coordinator direct review and scoped standalone2024format only; no independent
+review, local project execution, new delegation/provider/production action or
+source acceptance. Freeze all21new and carried names/pins, query exact-head runs,
+verify remote SHA and dispatch one new candidate. Never rerun/cancel/duplicate.
+Ralph continues through R2; runtime/Owner/three trading days/final C_R2 remain open.
