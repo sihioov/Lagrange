@@ -3154,3 +3154,17 @@ Report85lines/SHA05ec45c4;642pins including614unchanged prior pins, successorinp
 remote/pin/blob comparison. No compiler/test/runtime acceptance. I5–I7, actual
 approved-v3/Raw three-UID flow, installer/crash/rollback, independent final review,
 I6diagrams before main/G4/Owner/3trading days/final C_R2 stay open. Ralph continues.
+
+
+### Wave62 single candidate CI — 2026-10-16 KST
+
+Candidate eed17d2bf79b287d65ca33e1ca0d1c3eee82995f; run38804040503 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38804040503, created20:41:53UTC.
+All-event exact-head query0 at20:41:30.641533UTC;642pins/346committed blobs match.
+One push from9d0d459, then remote match and query0 at20:41:52.500048UTC before
+one dispatch20:41:54.245017UTC. Reservation persisted; no rerun/cancel/duplicate.
+Full8jobs/logs/7checkout,23newnames and all carried groups plus32schedule/24runner
+and17dedicatedPGtargets require recovery. Source and frozeninputs stay immutable.
+Later documentation HEAD is not the tested candidate. No acceptance yet. Next
+independent preparation is I5 daily API/config/read projection, then I7Web and I6
+installed runtime/diagrams. G4/Owner/3tradingdays/finalC_R2 remain open; Ralph continues.

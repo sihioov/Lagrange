@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave62 전체 실행 연결 10파일·새23테스트 구현/소스 검토 완료, 정확한 후보 CI 준비. 검증 후 설치·배포 연결과 전체 흐름 검증 진행. 운영·Owner·3거래일·C_R2 계속. |
+| 다음 착수 항목 | Wave62 실행 연결 eed17d2/CI38804040503 검증 중. 후보 고정 상태에서 I5 자동 갱신 API·상태 조회 준비; 이후 I7 화면·I6 설치 연결. 운영·Owner·3거래일·C_R2 계속. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -939,3 +939,17 @@ Report85lines/SHA05ec45c4;642pins including614unchanged prior pins, successorinp
 remote/pin/blob comparison. No compiler/test/runtime acceptance. I5–I7, actual
 approved-v3/Raw three-UID flow, installer/crash/rollback, independent final review,
 I6diagrams before main/G4/Owner/3trading days/final C_R2 stay open. Ralph continues.
+
+
+### Wave62 single candidate CI — 2026-10-16 KST
+
+Candidate eed17d2bf79b287d65ca33e1ca0d1c3eee82995f; run38804040503 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38804040503, created20:41:53UTC.
+All-event exact-head query0 at20:41:30.641533UTC;642pins/346committed blobs match.
+One push from9d0d459, then remote match and query0 at20:41:52.500048UTC before
+one dispatch20:41:54.245017UTC. Reservation persisted; no rerun/cancel/duplicate.
+Full8jobs/logs/7checkout,23newnames and all carried groups plus32schedule/24runner
+and17dedicatedPGtargets require recovery. Source and frozeninputs stay immutable.
+Later documentation HEAD is not the tested candidate. No acceptance yet. Next
+independent preparation is I5 daily API/config/read projection, then I7Web and I6
+installed runtime/diagrams. G4/Owner/3tradingdays/finalC_R2 remain open; Ralph continues.
