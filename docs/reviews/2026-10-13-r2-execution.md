@@ -3066,3 +3066,22 @@ later documentation HEAD does not change the tested candidate. Full eight-job/lo
 checkout/pin,18new/28dedicatedschedule and all earlier groups must be recovered.
 No local project/SQL execution, provider access or delegation. Full I4/I5-I7 and
 operational/Owner/three-day/final C_R2 remain open. Ralph continues.
+
+
+### Wave60 failure recovered; Wave61 bounded C01 — 2026-10-16 KST
+
+ef62279/CI38796372356 attempt1 FAILURE fully recovered at2026-10-15T19:59:10.819424+00:00.
+8jobs/logs/7checkouts,603pins/338blobs match. Workspace and dedicated28schedule
+tests did not execute because one new privilege test passes a dynamic String to
+SQLx0.9 query_scalar (E0277); strictClippy reports the same defect.6chart, web34+
+121/14, Python487/10skip/7warnings, PG32/73/83/8historicalpublish, both62UPchecksum
+sets/NO_OP/roles/0039/catalog/cleanup pass. Later daily PG groups remain UNKNOWN.
+Receipt7146lines/SHAa58c2eb7a1bfdc6be764c8bb353067c96094f7c139f703b24046aa892bb48b0d; no source acceptance.
+[Full evidence](2026-10-16-r2-daily-admitter-readback-ci.md). Preserve candidate/run and all prior evidence.
+
+After full recovery, C01 owns only tests/owner_beta_daily_schedule.rs: replace the
+two dynamically formatted privilege queries with their exact static literals.
+Production/migrations/harness and18definitions/28PGnames remain unchanged. New
+review/pins and one new exact-candidate CI after all-event query0/remotematch.
+No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three
+trading days/final C_R2 remain open; Ralph continues.

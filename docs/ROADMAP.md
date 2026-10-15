@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave60 승인 조회/복구 ef62279/CI38796372356 attempt1 실행 중,603pins/18새 정의·28전용PG 이름 검증. 전체 회수 후 producer/admitter 상태·실행 연결, I5–I7·운영·Owner·3거래일·최종 C_R2 계속. |
+| 다음 착수 항목 | Wave60 ef62279/CI38796372356 실패 전체 회수. 테스트 SQL 문자열 E0277 한 곳 C01 보정 후 새 후보 검증. 이어 producer/admitter 상태·실행 연결과 I5–I7·운영·Owner·3거래일·최종 C_R2 계속. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -850,3 +850,22 @@ later documentation HEAD does not change the tested candidate. Full eight-job/lo
 checkout/pin,18new/28dedicatedschedule and all earlier groups must be recovered.
 No local project/SQL execution, provider access or delegation. Full I4/I5-I7 and
 operational/Owner/three-day/final C_R2 remain open. Ralph continues.
+
+
+### Wave60 failure recovered; Wave61 bounded C01 — 2026-10-16 KST
+
+ef62279/CI38796372356 attempt1 FAILURE fully recovered at2026-10-15T19:59:10.819424+00:00.
+8jobs/logs/7checkouts,603pins/338blobs match. Workspace and dedicated28schedule
+tests did not execute because one new privilege test passes a dynamic String to
+SQLx0.9 query_scalar (E0277); strictClippy reports the same defect.6chart, web34+
+121/14, Python487/10skip/7warnings, PG32/73/83/8historicalpublish, both62UPchecksum
+sets/NO_OP/roles/0039/catalog/cleanup pass. Later daily PG groups remain UNKNOWN.
+Receipt7146lines/SHAa58c2eb7a1bfdc6be764c8bb353067c96094f7c139f703b24046aa892bb48b0d; no source acceptance.
+[Full evidence](reviews/2026-10-16-r2-daily-admitter-readback-ci.md). Preserve candidate/run and all prior evidence.
+
+After full recovery, C01 owns only tests/owner_beta_daily_schedule.rs: replace the
+two dynamically formatted privilege queries with their exact static literals.
+Production/migrations/harness and18definitions/28PGnames remain unchanged. New
+review/pins and one new exact-candidate CI after all-event query0/remotematch.
+No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three
+trading days/final C_R2 remain open; Ralph continues.
