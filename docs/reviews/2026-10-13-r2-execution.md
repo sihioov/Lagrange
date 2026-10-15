@@ -2511,3 +2511,12 @@ production bytes identical and all27names. Exact rejected ancestor/ACL cause was
 printed. No local project execution or new delegation. Freeze one successor and
 single hosted verification, not a rerun. Source/runtime/final C_R2 remain unaccepted.
 Unregistered continuation/price_extension/frontier preparation is excluded.
+
+
+### Wave47 C01 single candidate launch — 2026-10-15
+
+Candidate2824dd0c2503ee37ab828bafdf0ddb0750974951, CI38740542364 attempt1,
+created13:11:01UTC. Exact-head all-event query0/remotematch preceded one dispatch.
+319pins/252blobs/26Linux expected plus1new exclusion are frozen. Full result recovery
+pending; no acceptance. Prior failed candidate remains preserved. Only unregistered
+successor files and mutable tracking docs change while the run is active.
