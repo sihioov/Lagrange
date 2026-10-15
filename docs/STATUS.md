@@ -13,7 +13,7 @@
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | R2 DOING — 후보 `245f4d9`의 단일 CI 실패와 [보강 회수](reviews/2026-10-15-r2-snapshot-ci-recovery.md)를 대조했다. 수집 담당자는 actual idle/pending 0/전체 결과 회수 완료이며 감시 `de67d496`는 종료했다. C03-01은 없는 `Errno::ACCES` 참조 두 곳, C03-02는 정의되지 않은 `component_count` 호출이다. Rust 99개와 별도 chart 6개는 미실행이고, 7개 checkout SHA·51개 입력·PG 59개 checksum 등 확보된 근거는 분리 보존한다. 다음 작업은 이 세 위치의 한정 보정과 후속 검증이다. 소스·컴파일·테스트 인수는 보류하며, 기존 부분 성공·실패와 negative bootstrap/rollback·0060·재구성/승인·diagrams before main·운영·Owner·최종 C_R2는 열린 상태다. [실행 기록](reviews/2026-10-13-r2-execution.md) |
+| 다음 단계 | R2 DOING — C03의 컴파일 결함 두 건을 source.rs의 세 hunk로 한정 보정했다. `ACCESS` 상수와 독립적인 fixture 구성요소 수 계산으로 기존 C+7·정리·권한 조건을 유지한다. 다른 50개 고정 입력과 S2 49개 정의는 보존했고 scoped rustfmt/whitespace는 통과했다. [C03 기록](reviews/2026-10-15-r2-snapshot-compile-corrections.md). 다음은 정확한 새 후보의 기존 실행 조회 후 단일 hosted CI와 직접 결과 회수다. 로컬 실행 검증·추가 위임은 금지하며, 컴파일/테스트·나머지 R2 인수는 아직 보류한다. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

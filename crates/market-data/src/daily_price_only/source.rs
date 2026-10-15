@@ -915,7 +915,7 @@ mod linux {
             missing
         } else if error == Errno::LOOP || error == Errno::NOTDIR {
             DailyEvidenceError::UnsafePath
-        } else if error == Errno::ACCES || error == Errno::PERM {
+        } else if error == Errno::ACCESS || error == Errno::PERM {
             DailyEvidenceError::PermissionDenied
         } else {
             DailyEvidenceError::Io
@@ -923,7 +923,7 @@ mod linux {
     }
 
     fn errno_io(error: Errno) -> DailyEvidenceError {
-        if error == Errno::ACCES || error == Errno::PERM {
+        if error == Errno::ACCESS || error == Errno::PERM {
             DailyEvidenceError::PermissionDenied
         } else {
             DailyEvidenceError::Io
@@ -3834,10 +3834,12 @@ mod linux {
                 descriptor.role,
                 DescriptorRole::Metadata | DescriptorRole::Provider
             )));
-            assert_eq!(
-                under_descriptors.len(),
-                component_count(&fixture.data_root) + 7
-            );
+            let data_root_components = fixture
+                .data_root
+                .components()
+                .filter(|component| matches!(component, std::path::Component::Normal(_)))
+                .count();
+            assert_eq!(under_descriptors.len(), data_root_components + 7);
             assert_descriptors_closed(&under_observation, &under_descriptors, fixture._temp.path());
             assert_lock_closed_last(&under_observation);
             lock_exclusive(&fixture);

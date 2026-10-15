@@ -1876,3 +1876,34 @@ candidate verification retains independent disposition and existing-run query
 gates; the failed run is never rerun/cancelled/duplicated. Prior partial successes,
 all failures and remaining negative/bootstrap/0060/reconstruction/admission/I6/
 runtime/Owner/final C_R2 obligations remain preserved.
+
+## Wave31 — C03 bounded compilation repair and exact-candidate verification
+
+The user requested continuation after Wave30 failure recovery. The coordinator
+owns the three-location repair, static disposition and new-candidate hosted
+verification directly. No worker package or additional delegation is created.
+The collector and reviewer were reconfirmed actually idle, activeTurn null and
+pending permissions zero before editing. The former monitor remains deleted.
+
+C03-01 replaces the two invalid `Errno::ACCES` references with pinned `ACCESS`.
+C03-02 supplies the independent fixture normal-component count while retaining
+exact C+7, pre-open exclusions and lock-last cleanup. Only source.rs changes;
+all remaining 50 prior pins and 49 S2 names are unchanged. Scoped standalone
+edition-2024 rustfmt and whitespace checks pass. This is source-level disposition
+of independently recovered compiler findings, not compiler/test acceptance or a
+new independent worker review. No local executable checks are permitted.
+
+See [C03 source disposition](2026-10-15-r2-snapshot-compile-corrections.md). The previous candidate/run failure remains immutable. Commit
+this repair with roadmap/docs, pin the final candidate, query all-event exact-head
+existing runs, verify a fast-forward feature-branch push and remote SHA, then
+reuse an existing run or dispatch CI once. Never rerun/cancel/duplicate any run.
+The coordinator collects the seven execution jobs plus required and every step,
+actual checkout SHAs, 99 direct Rust names, six chart names, two exclusions,
+strict Clippy/workspace format and PG migration/role/helper/cleanup evidence.
+Missing direct rows/exits remain UNKNOWN unless phase evidence proves otherwise.
+Raw logs remain in memory only; safe metadata, hashes and named rows may persist.
+
+R2-04/09 remain DOING. Negative bootstrap/rollback,0060,provider/copy
+reconstruction/admission,I6 diagrams before main,runtime,Owner and final C_R2
+remain open. The memory context request returned MCP_ERROR and was not retried;
+no memory was saved by that failed lookup.
