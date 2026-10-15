@@ -28,7 +28,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave59 탐색19개·35b64fe/CI38792738853 전체 성공 범위별 인수. Wave60 좁은 승인 조회/영수증 복구5파일·18개 소스 작업. 전체 I4/I5–I7·실제 입력·운영·Owner·3거래일·최종 C_R2 미완료. |
+| 다음 단계 | Wave59 35b64fe/CI38792738853 전체 성공 수용. Wave60 조회/복구18개·0062 소스 검토와603pins 고정, 정확한 후보 CI 대기. 전체 I4/I5–I7·실제 입력·운영·Owner·3거래일·최종 C_R2 미완료. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -3611,3 +3611,19 @@ remain unchanged. Source/static work only until direct review, new pins/inventor
 and one exact-candidate hosted CI. No new worker, local project/SQL execution or
 activation. Full producer/admitter wiring, real approved input, I5-I7, runtime/Owner/
 three trading days/final C_R2 remain open. R2-04/09 DOING; Ralph continues.
+
+### Wave60 source frozen — 2026-10-16 KST
+
+R2-04/09 WP-4/I4g2: five-file narrow direct-admitter context/input/receipt readback.
+0062 additive UP/DOWN; no new table grant or activation. Existing0060/0061 and prior
+Rust boundary/test bodies preserved.18WRITTEN_UNEXECUTED definitions=14actualDB+4pure;
+dedicated schedule/readback28names, full-release62UP, staged0060 remains60.
+Direct coordinator source review (not independent); scopedrustfmt2024/whitespace pass.
+Source report96lines/SHA3296f32b126c73590710de211aa950a7a057a47adca752003ec62aa87db56ed5.
+Frozen wave60-I4g2 inputs2483lines/SHAfe288aed5018cc0ebf7a26f32dd87d607d3328013c773b4cef87b2e3b568cc36,
+603pins; inventory4380lines/SHAf85982d9ca18041ec0b19ce13472df9f6b92843e7ab719c0394590d185421902.
+581 unchanged prior pins and original function regions preserved. No source/compiler/
+SQL/test acceptance yet. One exact-candidate hosted CI only after existing-run0 and
+remote/pin/blob checks. Real transport loss/approved filesystem integration, full
+producer/admitter state+CLI, I5-I7/runtime/Owner/three trading days/finalC_R2 remain open.
+No local project/SQL execution or delegation. Ralph continues.

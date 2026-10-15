@@ -7,6 +7,7 @@ mod owner_beta_daily_support;
 use std::time::Duration;
 
 use job_queue::owner_beta::daily_input::OwnerBetaDailyRecommendationInputV1;
+use job_queue::owner_beta::runner::daily_admission as readback;
 use job_queue::owner_beta::runner::{
     daily_admission::{AdmissionPollFailure, DailyAdmissionCycle, DailyAdmissionStart},
     daily_runtime::{DailyProcessMode, DailyRuntimeError},
@@ -403,6 +404,539 @@ async fn daily_schedule_latest_failed_admission_cannot_fall_back_to_previous_ver
         assert_eq!(schedule_daily_once(&f.worker,ON).await?,
             DailyScheduleOutcome::Completed(DailyScheduleReport::default()));
         assert!(f.job_payloads().await?.is_empty());
+        Ok(())
+    }).await;
+}
+
+type ReadbackResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn readback_hash(byte: char) -> domain::ContentHash {
+    domain::ContentHash::parse(&format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
+}
+async fn readback_cycle(
+    f: &owner_beta_daily_support::DailyFixture,
+) -> ReadbackResult<DailyAdmissionCycle> {
+    match DailyAdmissionCycle::start(&f.admitter, ON).await? {
+        DailyAdmissionStart::Started(cycle) => Ok(cycle),
+        _ => Err("readback cycle did not start".into()),
+    }
+}
+async fn readback_next(f: &owner_beta_daily_support::DailyFixture) -> ReadbackResult {
+    sqlx::query("UPDATE owner_beta_daily_poll_state SET next_poll_at=clock_timestamp()-interval '1 second' WHERE stage='ADMISSION'")
+        .execute(&f.db.pool).await?;
+    Ok(())
+}
+async fn readback_existing(
+    f: &owner_beta_daily_support::DailyFixture,
+) -> ReadbackResult<(Uuid, domain::ContentHash)> {
+    let (id,hash): (Uuid,String) = sqlx::query_as(
+        "SELECT receipt_id,admission_sha256 FROM owner_beta_daily_poll_receipts WHERE stage='ADMISSION' AND result_code='VERIFIED'")
+        .fetch_one(&f.db.pool).await?;
+    Ok((id, domain::ContentHash::parse(&hash)?))
+}
+async fn readback_snapshot(f: &owner_beta_daily_support::DailyFixture) -> ReadbackResult<String> {
+    Ok(sqlx::query_scalar(
+        "SELECT public.daily_0060_digest(jsonb_build_object(\
+         'admissions',(SELECT jsonb_agg(to_jsonb(a) ORDER BY a.admission_sha256) FROM owner_beta_daily_admissions a),\
+         'receipts',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.receipt_id) FROM owner_beta_daily_poll_receipts r),\
+         'state',(SELECT jsonb_agg(to_jsonb(s) ORDER BY s.stage) FROM owner_beta_daily_poll_state s),\
+         'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY e.event_sha256) FROM owner_beta_daily_source_events e))::text)")
+        .fetch_one(&f.db.pool).await?)
+}
+
+#[tokio::test]
+async fn daily_admitter_context_is_pending_scoped_and_default_off() {
+    run("readback_empty_context", |f| async move {
+        f.control(false).await?;
+        let mut cycle = readback_cycle(&f).await?;
+        let before = readback_snapshot(&f).await?;
+        let context = cycle.context().await?;
+        assert_eq!(context.owner(), f.owner_id);
+        assert_eq!(context.policy_sha256(), &readback_hash('b'));
+        assert_eq!(context.activation_epoch(), 0);
+        assert!(!context.enabled());
+        assert_eq!(context.entitlement_reference(), "daily-fixture");
+        assert_eq!(context.entitlement_sha256(), &readback_hash('a'));
+        assert_eq!(context.first_auto_session().to_string(), "2026-08-29");
+        assert!(context.latest_admission_sha256().is_none());
+        assert!(!context.source_blocked());
+        let receipt = readback::read_daily_admission_receipt(&f.admitter, cycle.receipt_id())
+            .await?
+            .ok_or("missing receipt")?;
+        assert_eq!(receipt.receipt_id(), cycle.receipt_id());
+        assert!(receipt.matches_current_cycle());
+        assert_eq!(receipt.owner(), context.owner());
+        assert_eq!(receipt.policy_sha256(), context.policy_sha256());
+        assert!(context.observed_at() >= receipt.started_at());
+        assert_eq!(
+            receipt.outcome(),
+            &readback::RecordedAdmissionOutcome::Started
+        );
+        assert_eq!(readback_snapshot(&f).await?, before);
+        cycle
+            .finish_failure(AdmissionPollFailure::InputPending)
+            .await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_admitter_context_returns_exact_committed_tip() {
+    run("readback_committed_context", |f| async move {
+        f.ready().await?;
+        let (_, hash) = readback_existing(&f).await?;
+        readback_next(&f).await?;
+        let mut cycle = readback_cycle(&f).await?;
+        let context = cycle.context().await?;
+        assert_eq!(context.latest_admission_sha256(), Some(&hash));
+        let input = readback::read_committed_daily_input(&f.admitter, &hash)
+            .await?
+            .ok_or("missing committed input")?;
+        assert_eq!(input.owner(), context.owner());
+        assert_eq!(input.pins().policy_sha256, *context.policy_sha256());
+        assert_eq!(input.pins().admission_sha256, hash);
+        assert!(input.parent_admission_sha256().is_none());
+        assert_eq!(input.range_start().to_string(), "2016-08-29");
+        assert!(input.range_end() > input.range_start());
+        assert_eq!(input.session_count(), 2453);
+        assert!(input.unblocked_at_read());
+        cycle
+            .finish_failure(AdmissionPollFailure::InputPending)
+            .await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_admitter_context_rejects_completed_and_superseded_receipts() {
+    for completed in [true, false] {
+        run("readback_context_lifecycle", move |f| async move {
+            f.control(false).await?;
+            let mut cycle = readback_cycle(&f).await?;
+            let id = cycle.receipt_id();
+            if completed {
+                sqlx::query("SELECT finish_owner_beta_daily_admission_poll($1,'IO_FAILED',NULL)")
+                    .bind(id)
+                    .execute(&f.admitter)
+                    .await?;
+            } else {
+                readback_next(&f).await?;
+                let next: Uuid = sqlx::query_scalar(
+                    "SELECT receipt_id FROM take_owner_beta_daily_admission_poll_slot()",
+                )
+                .fetch_one(&f.admitter)
+                .await?;
+                assert_ne!(next, id);
+            }
+            assert!(matches!(
+                cycle.context().await,
+                Err(DailyRuntimeError::DatabaseIntegrity)
+            ));
+            let record = readback::read_daily_admission_receipt(&f.admitter, id)
+                .await?
+                .ok_or("missing old receipt")?;
+            assert_eq!(record.completed_at().is_some(), completed);
+            assert_eq!(record.matches_current_cycle(), completed);
+            drop(cycle);
+            Ok(())
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn daily_admitter_readback_requires_direct_principal_and_no_table_grants() {
+    run("readback_direct_principal", |f| async move {
+        f.ready().await?;
+        let (id,hash)=readback_existing(&f).await?;
+        for pool in [&f.app,&f.worker,&f.db.pool] {
+            for function in ["read_owner_beta_daily_admission_context","read_owner_beta_daily_admission_receipt"] {
+                let query=format!("SELECT count(*) FROM public.{function}($1)");
+                let error=sqlx::query_scalar::<_,i64>(&query).bind(id).fetch_one(pool).await.unwrap_err();
+                assert_eq!(error.as_database_error().and_then(|e|e.code()).as_deref(),Some("42501"));
+            }
+            let error=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM read_owner_beta_daily_admitted_input($1)")
+                .bind(hash.as_str()).fetch_one(pool).await.unwrap_err();
+            assert_eq!(error.as_database_error().and_then(|e|e.code()).as_deref(),Some("42501"));
+        }
+        let mut elevated=f.db.pool.acquire().await?;
+        elevated.close_on_drop();
+        sqlx::query("SET ROLE daily_input_admitter").execute(&mut *elevated).await?;
+        let error=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM read_owner_beta_daily_admission_receipt($1)")
+            .bind(id).fetch_one(&mut *elevated).await.unwrap_err();
+        assert_eq!(error.as_database_error().and_then(|e|e.code()).as_deref(),Some("42501"));
+        elevated.close().await?;
+        for table in ["owner_beta_daily_control","owner_beta_daily_admissions","owner_beta_daily_poll_receipts","owner_beta_daily_source_events"] {
+            let allowed:bool=sqlx::query_scalar(
+                "SELECT has_table_privilege('daily_input_admitter',$1,'SELECT,INSERT,UPDATE,DELETE')")
+                .bind(format!("public.{table}")).fetch_one(&f.db.pool).await?;
+            assert!(!allowed);
+        }
+        Ok(())
+    }).await;
+}
+
+#[tokio::test]
+async fn daily_admitter_readback_rechecks_owner_and_exact_rights() {
+    for revoke_owner in [true, false] {
+        run("readback_current_authority", move |f| async move {
+            f.ready().await?;
+            let (id, hash) = readback_existing(&f).await?;
+            readback_next(&f).await?;
+            let mut cycle = readback_cycle(&f).await?;
+            if revoke_owner {
+                sqlx::query("DELETE FROM user_roles WHERE user_id=$1 AND role_id='owner'")
+                    .bind(f.owner_id)
+                    .execute(&f.db.pool)
+                    .await?;
+            } else {
+                sqlx::query("UPDATE data_entitlements SET status='REVOKED'")
+                    .execute(&f.db.pool)
+                    .await?;
+            }
+            assert!(matches!(
+                cycle.context().await,
+                Err(DailyRuntimeError::DatabaseIntegrity)
+            ));
+            assert!(matches!(
+                readback::read_committed_daily_input(&f.admitter, &hash).await,
+                Err(DailyRuntimeError::DatabaseIntegrity)
+            ));
+            assert!(matches!(
+                readback::read_daily_admission_receipt(&f.admitter, id).await,
+                Err(DailyRuntimeError::DatabaseIntegrity)
+            ));
+            drop(cycle);
+            Ok(())
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn daily_admitter_readback_filters_foreign_owner_policy_and_stage() {
+    run("readback_scoped_rows", |f| async move {
+        f.ready().await?;
+        let (old_id,old_hash)=readback_existing(&f).await?;
+        let foreign=Uuid::new_v4();
+        sqlx::query("INSERT INTO users(id,issuer,subject,email) VALUES($1,'https://daily.invalid','readback-foreign','readback-foreign@example.invalid')")
+            .bind(foreign).execute(&f.db.pool).await?;
+        for (owner,policy,stage) in [
+            (foreign,readback_hash('b'),"ADMISSION"),
+            (f.owner_id,readback_hash('c'),"ADMISSION"),
+            (f.owner_id,readback_hash('b'),"SCHEDULE"),
+        ] {
+            let id:Uuid=sqlx::query_scalar(
+                "INSERT INTO owner_beta_daily_poll_receipts(stage,owner_user_id,policy_sha256,activation_epoch) VALUES($1,$2,$3,1) RETURNING receipt_id")
+                .bind(stage).bind(owner).bind(policy.as_str()).fetch_one(&f.db.pool).await?;
+            assert!(readback::read_daily_admission_receipt(&f.admitter,id).await?.is_none());
+            let error=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM read_owner_beta_daily_admission_context($1)")
+                .bind(id).fetch_one(&f.admitter).await.unwrap_err();
+            assert_eq!(error.as_database_error().and_then(|e|e.code()).as_deref(),Some("23514"));
+        }
+        sqlx::query(
+            "INSERT INTO owner_beta_daily_admissions(admission_sha256,owner_user_id,policy_sha256,content_sha256,manifest_sha256,\
+             parent_admission_sha256,range_start,range_end,session_count,bar_count,evidence_json)\
+             SELECT $1,$2,policy_sha256,content_sha256,manifest_sha256,parent_admission_sha256,range_start,range_end,session_count,bar_count,evidence_json \
+             FROM owner_beta_daily_admissions WHERE admission_sha256=$3")
+            .bind(readback_hash('c').as_str()).bind(foreign).bind(old_hash.as_str()).execute(&f.db.pool).await?;
+        assert!(readback::read_committed_daily_input(&f.admitter,&readback_hash('c')).await?.is_none());
+        sqlx::query("UPDATE owner_beta_daily_control SET policy_sha256=$1")
+            .bind(readback_hash('d').as_str()).execute(&f.db.pool).await?;
+        assert!(readback::read_daily_admission_receipt(&f.admitter,old_id).await?.is_none());
+        assert!(readback::read_committed_daily_input(&f.admitter,&old_hash).await?.is_none());
+        readback_next(&f).await?;
+        let mut cycle=readback_cycle(&f).await?;
+        assert!(matches!(cycle.context().await,Err(DailyRuntimeError::DatabaseIntegrity)));
+        drop(cycle);
+        Ok(())
+    }).await;
+}
+
+#[tokio::test]
+async fn daily_admitter_receipt_recovery_distinguishes_started_and_completed_failure() {
+    for failure in [
+        AdmissionPollFailure::InputPending,
+        AdmissionPollFailure::InputBlocked,
+        AdmissionPollFailure::IoFailed,
+    ] {
+        run("readback_failure_reply", move |f| async move {
+            f.control(false).await?;
+            let cycle = readback_cycle(&f).await?;
+            let id = cycle.receipt_id();
+            let pending = readback::read_daily_admission_receipt(&f.admitter, id)
+                .await?
+                .ok_or("missing receipt")?;
+            assert_eq!(
+                pending.outcome(),
+                &readback::RecordedAdmissionOutcome::Started
+            );
+            cycle.finish_failure(failure).await?;
+            // Ignore the original finish response; a new query recovers exact committed state.
+            let before = readback_snapshot(&f).await?;
+            let complete = readback::read_daily_admission_receipt(&f.admitter, id)
+                .await?
+                .ok_or("missing completion")?;
+            assert_eq!(
+                complete.outcome(),
+                &readback::RecordedAdmissionOutcome::Failed {
+                    failure,
+                    source_frontier: None,
+                    event: None
+                }
+            );
+            assert!(complete.completed_at().is_some());
+            assert!(complete.matches_current_cycle());
+            assert_eq!(readback_snapshot(&f).await?, before);
+            assert!(matches!(
+                DailyAdmissionCycle::start(&f.admitter, ON).await?,
+                DailyAdmissionStart::NotDue
+            ));
+            Ok(())
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn daily_admitter_receipt_recovery_matches_verified_commit_without_mutation() {
+    run("readback_verified_reply", |f| async move {
+        f.ready().await?;
+        let (id, hash) = readback_existing(&f).await?;
+        let before = readback_snapshot(&f).await?;
+        let receipt = readback::read_daily_admission_receipt(&f.admitter, id)
+            .await?
+            .ok_or("missing receipt")?;
+        let input = readback::read_committed_daily_input(&f.admitter, &hash)
+            .await?
+            .ok_or("missing input")?;
+        assert_eq!(
+            receipt.outcome(),
+            &readback::RecordedAdmissionOutcome::Verified {
+                admission: hash.clone(),
+                source_frontier: input.source_frontier_sha256().clone(),
+            }
+        );
+        assert_eq!(receipt.owner(), input.owner());
+        assert_eq!(receipt.policy_sha256(), &input.pins().policy_sha256);
+        assert!(receipt.completed_at().is_some());
+        assert!(receipt.matches_current_cycle());
+        for _ in 0..2 {
+            assert!(
+                readback::read_daily_admission_receipt(&f.admitter, id)
+                    .await?
+                    .is_some()
+            );
+            assert!(
+                readback::read_committed_daily_input(&f.admitter, &hash)
+                    .await?
+                    .is_some()
+            );
+        }
+        assert_eq!(readback_snapshot(&f).await?, before);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_admitter_receipt_keeps_old_epoch_results_historical() {
+    run("readback_old_epoch", |f| async move {
+        f.ready().await?;
+        let (id, _) = readback_existing(&f).await?;
+        let old = readback::read_daily_admission_receipt(&f.admitter, id)
+            .await?
+            .ok_or("missing original")?;
+        assert!(old.matches_current_cycle());
+        sqlx::query("UPDATE owner_beta_daily_control SET enabled=false")
+            .execute(&f.db.pool)
+            .await?;
+        let prior = readback::read_daily_admission_receipt(&f.admitter, id)
+            .await?
+            .ok_or("missing old epoch")?;
+        assert_eq!(prior.activation_epoch(), old.activation_epoch());
+        assert_eq!(prior.outcome(), old.outcome());
+        assert!(!prior.matches_current_cycle());
+        readback_next(&f).await?;
+        let mut cycle = readback_cycle(&f).await?;
+        let context = cycle.context().await?;
+        assert!(context.activation_epoch() > prior.activation_epoch());
+        let new = readback::read_daily_admission_receipt(&f.admitter, cycle.receipt_id())
+            .await?
+            .ok_or("missing new epoch")?;
+        assert!(new.matches_current_cycle());
+        assert_eq!(new.outcome(), &readback::RecordedAdmissionOutcome::Started);
+        cycle
+            .finish_failure(AdmissionPollFailure::InputPending)
+            .await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_admitter_receipt_rejects_corrupt_verified_binding() {
+    run("readback_invalid_binding", |f| async move {
+        f.ready().await?;
+        let (id,_)=readback_existing(&f).await?;
+        // Release-authority fault injection; the admitter has no table UPDATE.
+        sqlx::query("UPDATE owner_beta_daily_poll_receipts SET completion_binding_sha256=$2 WHERE receipt_id=$1")
+            .bind(id).bind(readback_hash('e').as_str()).execute(&f.db.pool).await?;
+        assert!(matches!(readback::read_daily_admission_receipt(&f.admitter,id).await,
+            Err(DailyRuntimeError::DatabaseIntegrity)));
+        Ok(())
+    }).await;
+}
+
+#[tokio::test]
+async fn daily_admitter_readback_retains_blocked_event_identity() {
+    run("readback_blocked_event", |f| async move {
+        f.control(false).await?;
+        let cycle=readback_cycle(&f).await?;
+        let id=cycle.receipt_id();
+        let event=serde_json::json!({
+            "source_kind":"BAR","range_start":"2026-08-29","range_end":"2026-08-29",
+            "code":"SEALED_SOURCE_CHANGED","evidence_sha256":readback_hash('e'),
+        });
+        // Synthetic SQL transport only, not a source observation or file proof.
+        let result:(String,Option<String>,String,String)=sqlx::query_as(
+            "SELECT disposition,admission_sha256,reason_code,event_sha256 FROM block_owner_beta_daily_input($1,$2)")
+            .bind(id).bind(event).fetch_one(&f.admitter).await?;
+        assert_eq!(result.0,"BLOCKED");
+        assert!(result.1.is_none());
+        assert_eq!(result.2,"SEALED_SOURCE_CHANGED");
+        let expected_event=domain::ContentHash::parse(&result.3)?;
+        let receipt=readback::read_daily_admission_receipt(&f.admitter,id).await?.ok_or("missing blocked receipt")?;
+        assert_eq!(receipt.outcome(),&readback::RecordedAdmissionOutcome::Failed {
+            failure:AdmissionPollFailure::InputBlocked,source_frontier:Some(readback_hash('e')),
+            event:Some((market_data::daily_price_only::observation::DailyBlockCode::SealedSourceChanged,expected_event)),
+        });
+        drop(cycle);
+        readback_next(&f).await?;
+        let mut cycle=readback_cycle(&f).await?;
+        assert!(cycle.context().await?.source_blocked());
+        cycle.finish_failure(AdmissionPollFailure::InputBlocked).await?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test]
+async fn daily_admitter_exact_input_absence_and_revocation_are_explicit() {
+    run("readback_exact_input", |f| async move {
+        f.ready().await?;
+        let (_, hash) = readback_existing(&f).await?;
+        assert!(
+            readback::read_committed_daily_input(&f.admitter, &readback_hash('e'))
+                .await?
+                .is_none()
+        );
+        assert!(
+            readback::read_daily_admission_receipt(&f.admitter, Uuid::new_v4())
+                .await?
+                .is_none()
+        );
+        assert!(matches!(
+            readback::read_daily_admission_receipt(&f.admitter, Uuid::nil()).await,
+            Err(DailyRuntimeError::InvalidInput)
+        ));
+        let error = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM read_owner_beta_daily_admitted_input('bad')",
+        )
+        .fetch_one(&f.admitter)
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.as_database_error().and_then(|e| e.code()).as_deref(),
+            Some("23514")
+        );
+        let prior = readback::read_committed_daily_input(&f.admitter, &hash)
+            .await?
+            .ok_or("missing input")?;
+        assert!(prior.unblocked_at_read());
+        sqlx::query("SELECT revoke_owner_beta_daily_input($1,$2)")
+            .bind(hash.as_str())
+            .bind(readback_hash('e').as_str())
+            .execute(&f.db.pool)
+            .await?;
+        let blocked = readback::read_committed_daily_input(&f.admitter, &hash)
+            .await?
+            .ok_or("missing retained input")?;
+        assert!(!blocked.unblocked_at_read());
+        assert_eq!(blocked.pins(), prior.pins());
+        assert_eq!(
+            blocked.source_frontier_sha256(),
+            prior.source_frontier_sha256()
+        );
+        readback_next(&f).await?;
+        let mut cycle = readback_cycle(&f).await?;
+        assert!(cycle.context().await?.source_blocked());
+        cycle
+            .finish_failure(AdmissionPollFailure::InputBlocked)
+            .await?;
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_admitter_readback_security_settings_are_fixed() {
+    run("readback_security", |f| async move {
+        for signature in [
+            "public.read_owner_beta_daily_admission_context(uuid)",
+            "public.read_owner_beta_daily_admitted_input(text)",
+            "public.read_owner_beta_daily_admission_receipt(uuid)",
+        ] {
+            let (definer,owner,settings):(bool,String,bool)=sqlx::query_as(
+                "SELECT p.prosecdef,r.rolname::text,p.proconfig @> ARRAY[\
+                 'search_path=pg_catalog, pg_temp','lock_timeout=5s','statement_timeout=30s'] \
+                 FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.oid=$1::text::regprocedure")
+                .bind(signature).fetch_one(&f.db.pool).await?;
+            assert!(definer);
+            assert_eq!(owner,"migration_owner");
+            assert!(settings);
+            for role in ["app","worker","admin","audit_writer","research_writer","daily_input_admitter"] {
+                let allowed:bool=sqlx::query_scalar("SELECT has_function_privilege($1,$2,'EXECUTE')")
+                    .bind(role).bind(signature).fetch_one(&f.db.pool).await?;
+                assert_eq!(allowed,role=="daily_input_admitter");
+            }
+            let public_grant:bool=sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM pg_proc p,aclexplode(p.proacl) a \
+                 WHERE p.oid=$1::text::regprocedure AND a.grantee=0 AND a.privilege_type='EXECUTE')")
+                .bind(signature).fetch_one(&f.db.pool).await?;
+            assert!(!public_grant);
+        }
+        Ok(())
+    }).await;
+}
+
+#[tokio::test]
+async fn daily_admitter_readback_down_preserves_existing_daily_evidence() {
+    run("readback_additive_down", |f| async move {
+        f.ready().await?;
+        let (id,hash)=readback_existing(&f).await?;
+        let before=readback_snapshot(&f).await?;
+        let mut transaction=f.db.pool.begin().await?;
+        sqlx::raw_sql(include_str!("../../../migrations/0062_owner_beta_daily_admitter_readback.down.sql"))
+            .execute(&mut *transaction).await?;
+        let absent:bool=sqlx::query_scalar(
+            "SELECT to_regprocedure('public.read_owner_beta_daily_admission_context(uuid)') IS NULL \
+             AND to_regprocedure('public.read_owner_beta_daily_admitted_input(text)') IS NULL \
+             AND to_regprocedure('public.read_owner_beta_daily_admission_receipt(uuid)') IS NULL \
+             AND to_regprocedure('public.admit_owner_beta_daily_input(uuid,jsonb)') IS NOT NULL \
+             AND to_regprocedure('public.cancel_superseded_owner_beta_daily_claim(uuid,uuid,uuid,integer,text)') IS NOT NULL")
+            .fetch_one(&mut *transaction).await?;
+        assert!(absent);
+        transaction.commit().await?;
+        assert_eq!(readback_snapshot(&f).await?,before);
+        let mut transaction=f.db.pool.begin().await?;
+        sqlx::raw_sql(include_str!("../../../migrations/0062_owner_beta_daily_admitter_readback.up.sql"))
+            .execute(&mut *transaction).await?;
+        transaction.commit().await?;
+        assert!(readback::read_daily_admission_receipt(&f.admitter,id).await?.is_some());
+        assert!(readback::read_committed_daily_input(&f.admitter,&hash).await?.is_some());
+        assert_eq!(readback_snapshot(&f).await?,before);
         Ok(())
     }).await;
 }

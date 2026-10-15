@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave59 35b64fe/CI38792738853 전체 성공·584pins/19새 테스트 수용. Wave60 승인 상태/영수증 조회5파일·18개 구현; 이후 producer/admitter 연결과 I5–I7·운영·Owner·3거래일·최종 C_R2. |
+| 다음 착수 항목 | Wave60 승인 상태·영수증 조회5파일/18개 검토·603pins 고정. 기존 실행0·원격 대조 후 정확한 후보 CI 한 번 검증. 이후 전체 producer/admitter와 I5–I7·운영·Owner·3거래일·최종 C_R2 계속. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -821,3 +821,19 @@ remain unchanged. Source/static work only until direct review, new pins/inventor
 and one exact-candidate hosted CI. No new worker, local project/SQL execution or
 activation. Full producer/admitter wiring, real approved input, I5-I7, runtime/Owner/
 three trading days/final C_R2 remain open. R2-04/09 DOING; Ralph continues.
+
+### Wave60 source frozen — 2026-10-16 KST
+
+R2-04/09 WP-4/I4g2: five-file narrow direct-admitter context/input/receipt readback.
+0062 additive UP/DOWN; no new table grant or activation. Existing0060/0061 and prior
+Rust boundary/test bodies preserved.18WRITTEN_UNEXECUTED definitions=14actualDB+4pure;
+dedicated schedule/readback28names, full-release62UP, staged0060 remains60.
+Direct coordinator source review (not independent); scopedrustfmt2024/whitespace pass.
+Source report96lines/SHA3296f32b126c73590710de211aa950a7a057a47adca752003ec62aa87db56ed5.
+Frozen wave60-I4g2 inputs2483lines/SHAfe288aed5018cc0ebf7a26f32dd87d607d3328013c773b4cef87b2e3b568cc36,
+603pins; inventory4380lines/SHAf85982d9ca18041ec0b19ce13472df9f6b92843e7ab719c0394590d185421902.
+581 unchanged prior pins and original function regions preserved. No source/compiler/
+SQL/test acceptance yet. One exact-candidate hosted CI only after existing-run0 and
+remote/pin/blob checks. Real transport loss/approved filesystem integration, full
+producer/admitter state+CLI, I5-I7/runtime/Owner/three trading days/finalC_R2 remain open.
+No local project/SQL execution or delegation. Ralph continues.

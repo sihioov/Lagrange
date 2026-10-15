@@ -302,3 +302,475 @@ impl DailyAdmissionCycle {
         self.session.release().await
     }
 }
+
+/// A current DB navigation snapshot for one still-pending poll. It is not a
+/// filesystem capability, source refresh, reservation or publication authorization.
+pub struct DailyAdmitterContext {
+    owner: Uuid,
+    policy: ContentHash,
+    activation_epoch: i64,
+    enabled: bool,
+    entitlement_reference: String,
+    entitlement_hash: ContentHash,
+    first_auto_session: chrono::NaiveDate,
+    observed_at: chrono::DateTime<chrono::Utc>,
+    latest_admission: Option<ContentHash>,
+    source_blocked: bool,
+}
+impl DailyAdmitterContext {
+    pub fn owner(&self) -> Uuid {
+        self.owner
+    }
+    pub fn policy_sha256(&self) -> &ContentHash {
+        &self.policy
+    }
+    pub fn activation_epoch(&self) -> i64 {
+        self.activation_epoch
+    }
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+    pub fn entitlement_reference(&self) -> &str {
+        &self.entitlement_reference
+    }
+    pub fn entitlement_sha256(&self) -> &ContentHash {
+        &self.entitlement_hash
+    }
+    pub fn first_auto_session(&self) -> chrono::NaiveDate {
+        self.first_auto_session
+    }
+    pub fn observed_at(&self) -> chrono::DateTime<chrono::Utc> {
+        self.observed_at
+    }
+    pub fn latest_admission_sha256(&self) -> Option<&ContentHash> {
+        self.latest_admission.as_ref()
+    }
+    pub fn source_blocked(&self) -> bool {
+        self.source_blocked
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ContextRow {
+    owner_user_id: Uuid,
+    policy_sha256: String,
+    activation_epoch: i64,
+    enabled: bool,
+    entitlement_reference: String,
+    entitlement_sha256: String,
+    first_auto_session: chrono::NaiveDate,
+    observed_at: chrono::DateTime<chrono::Utc>,
+    latest_admission_sha256: Option<String>,
+    source_blocked: bool,
+}
+fn readback_hash(value: String) -> Result<ContentHash, DailyRuntimeError> {
+    let hash = ContentHash::parse(&value).map_err(|_| DailyRuntimeError::DatabaseIntegrity)?;
+    if hash.as_str() != value {
+        return Err(DailyRuntimeError::DatabaseIntegrity);
+    }
+    Ok(hash)
+}
+impl DailyAdmissionCycle {
+    pub async fn context(&mut self) -> Result<DailyAdmitterContext, DailyRuntimeError> {
+        if self.completed {
+            return Err(DailyRuntimeError::InvalidInput);
+        }
+        let row: ContextRow = sqlx::query_as(
+            "SELECT owner_user_id,policy_sha256,activation_epoch,enabled,entitlement_reference,\
+             entitlement_sha256,first_auto_session,observed_at,latest_admission_sha256,source_blocked \
+             FROM public.read_owner_beta_daily_admission_context($1)")
+            .bind(self.receipt).fetch_one(self.session.connection()).await.map_err(database_error)?;
+        if row.owner_user_id.is_nil()
+            || row.activation_epoch < 0
+            || row.entitlement_reference.is_empty()
+            || row.entitlement_reference.chars().count() > 512
+            || row.entitlement_reference.chars().any(char::is_control)
+            || row.first_auto_session
+                <= chrono::NaiveDate::from_ymd_opt(2026, 8, 28).expect("fixed date")
+        {
+            return Err(DailyRuntimeError::DatabaseIntegrity);
+        }
+        Ok(DailyAdmitterContext {
+            owner: row.owner_user_id,
+            policy: readback_hash(row.policy_sha256)?,
+            activation_epoch: row.activation_epoch,
+            enabled: row.enabled,
+            entitlement_reference: row.entitlement_reference,
+            entitlement_hash: readback_hash(row.entitlement_sha256)?,
+            first_auto_session: row.first_auto_session,
+            observed_at: row.observed_at,
+            latest_admission: row.latest_admission_sha256.map(readback_hash).transpose()?,
+            source_blocked: row.source_blocked,
+        })
+    }
+}
+
+/// Exact committed SQL metadata. Reopen its files, compare every pin and refresh
+/// sources independently before use; unblocked_at_read() excludes freshness and activation.
+pub struct DailyCommittedInput {
+    owner: Uuid,
+    pins: market_data::daily_price_only::DailyPricePinsV1Wire,
+    parent: Option<ContentHash>,
+    frontier: ContentHash,
+    range_start: chrono::NaiveDate,
+    range_end: chrono::NaiveDate,
+    session_count: u32,
+    usable: bool,
+}
+impl DailyCommittedInput {
+    pub fn owner(&self) -> Uuid {
+        self.owner
+    }
+    pub fn pins(&self) -> &market_data::daily_price_only::DailyPricePinsV1Wire {
+        &self.pins
+    }
+    pub fn parent_admission_sha256(&self) -> Option<&ContentHash> {
+        self.parent.as_ref()
+    }
+    pub fn source_frontier_sha256(&self) -> &ContentHash {
+        &self.frontier
+    }
+    pub fn range_start(&self) -> chrono::NaiveDate {
+        self.range_start
+    }
+    pub fn range_end(&self) -> chrono::NaiveDate {
+        self.range_end
+    }
+    pub fn session_count(&self) -> u32 {
+        self.session_count
+    }
+    pub fn unblocked_at_read(&self) -> bool {
+        self.usable
+    }
+}
+#[derive(sqlx::FromRow)]
+struct CommittedInputRow {
+    owner_user_id: Uuid,
+    policy_sha256: String,
+    content_sha256: String,
+    manifest_sha256: String,
+    admission_sha256: String,
+    parent_admission_sha256: Option<String>,
+    source_frontier_sha256: String,
+    range_start: chrono::NaiveDate,
+    range_end: chrono::NaiveDate,
+    session_count: i32,
+    bar_count: i32,
+    usable: bool,
+}
+
+/// Read-only exact-hash reconciliation, including a lost admission commit reply.
+/// Unknown/foreign rows return None. This grants no new current execution input.
+pub async fn read_committed_daily_input(
+    pool: &PgPool,
+    expected: &ContentHash,
+) -> Result<Option<DailyCommittedInput>, DailyRuntimeError> {
+    let row: Option<CommittedInputRow> = sqlx::query_as(
+        "SELECT owner_user_id,policy_sha256,content_sha256,manifest_sha256,admission_sha256,\
+         parent_admission_sha256,source_frontier_sha256,range_start,range_end,session_count,\
+         bar_count,usable FROM public.read_owner_beta_daily_admitted_input($1)",
+    )
+    .bind(expected.as_str())
+    .fetch_optional(pool)
+    .await
+    .map_err(database_error)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if row.owner_user_id.is_nil()
+        || row.admission_sha256 != expected.as_str()
+        || !(2453..=20000).contains(&row.session_count)
+        || row.bar_count != row.session_count * 11
+        || row.parent_admission_sha256.is_none() != (row.session_count == 2453)
+        || row.range_start != chrono::NaiveDate::from_ymd_opt(2016, 8, 29).expect("fixed date")
+        || row.range_end <= chrono::NaiveDate::from_ymd_opt(2026, 8, 28).expect("fixed date")
+    {
+        return Err(DailyRuntimeError::DatabaseIntegrity);
+    }
+    Ok(Some(DailyCommittedInput {
+        owner: row.owner_user_id,
+        pins: market_data::daily_price_only::DailyPricePinsV1Wire {
+            content_sha256: readback_hash(row.content_sha256)?,
+            manifest_sha256: readback_hash(row.manifest_sha256)?,
+            admission_sha256: readback_hash(row.admission_sha256)?,
+            policy_sha256: readback_hash(row.policy_sha256)?,
+        },
+        parent: row.parent_admission_sha256.map(readback_hash).transpose()?,
+        frontier: readback_hash(row.source_frontier_sha256)?,
+        range_start: row.range_start,
+        range_end: row.range_end,
+        session_count: row.session_count as u32,
+        usable: row.usable,
+    }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordedAdmissionOutcome {
+    Started,
+    Verified {
+        admission: ContentHash,
+        source_frontier: ContentHash,
+    },
+    Failed {
+        failure: AdmissionPollFailure,
+        source_frontier: Option<ContentHash>,
+        event: Option<(DailyBlockCode, ContentHash)>,
+    },
+}
+/// An exact completion record, never a source/file capability. In particular,
+/// matches_current_cycle() compares only the latest receipt ID and activation epoch.
+/// It does not assert freshness, source validity, input usability or activation.
+pub struct RecordedAdmissionReceipt {
+    receipt: Uuid,
+    owner: Uuid,
+    policy: ContentHash,
+    activation_epoch: i64,
+    started_at: chrono::DateTime<chrono::Utc>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    current: bool,
+    outcome: RecordedAdmissionOutcome,
+}
+impl RecordedAdmissionReceipt {
+    pub fn receipt_id(&self) -> Uuid {
+        self.receipt
+    }
+    pub fn owner(&self) -> Uuid {
+        self.owner
+    }
+    pub fn policy_sha256(&self) -> &ContentHash {
+        &self.policy
+    }
+    pub fn activation_epoch(&self) -> i64 {
+        self.activation_epoch
+    }
+    pub fn started_at(&self) -> chrono::DateTime<chrono::Utc> {
+        self.started_at
+    }
+    pub fn completed_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.completed_at
+    }
+    pub fn matches_current_cycle(&self) -> bool {
+        self.current
+    }
+    pub fn outcome(&self) -> &RecordedAdmissionOutcome {
+        &self.outcome
+    }
+}
+#[derive(sqlx::FromRow)]
+struct ReceiptRow {
+    receipt_id: Uuid,
+    owner_user_id: Uuid,
+    policy_sha256: String,
+    activation_epoch: i64,
+    started_at: chrono::DateTime<chrono::Utc>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    result_code: Option<String>,
+    source_frontier_sha256: Option<String>,
+    admission_sha256: Option<String>,
+    event_sha256: Option<String>,
+    event_code: Option<String>,
+    matches_current_cycle: bool,
+}
+fn decode_receipt(
+    row: ReceiptRow,
+    expected: Uuid,
+) -> Result<RecordedAdmissionReceipt, DailyRuntimeError> {
+    if row.receipt_id != expected
+        || row.receipt_id.is_nil()
+        || row.owner_user_id.is_nil()
+        || row.activation_epoch < 0
+        || row
+            .completed_at
+            .is_some_and(|finished| finished < row.started_at)
+        || row.completed_at.is_some() != row.result_code.is_some()
+        || row.event_sha256.is_some() != row.event_code.is_some()
+    {
+        return Err(DailyRuntimeError::DatabaseIntegrity);
+    }
+    let frontier = row.source_frontier_sha256.map(readback_hash).transpose()?;
+    let admission = row.admission_sha256.map(readback_hash).transpose()?;
+    let outcome = match row.result_code.as_deref() {
+        None if frontier.is_none() && admission.is_none() && row.event_sha256.is_none() => {
+            RecordedAdmissionOutcome::Started
+        }
+        Some("VERIFIED") if row.event_sha256.is_none() => RecordedAdmissionOutcome::Verified {
+            admission: admission.ok_or(DailyRuntimeError::DatabaseIntegrity)?,
+            source_frontier: frontier.ok_or(DailyRuntimeError::DatabaseIntegrity)?,
+        },
+        Some(code @ ("INPUT_PENDING" | "INPUT_BLOCKED" | "IO_FAILED")) if admission.is_none() => {
+            let failure = match code {
+                "INPUT_PENDING" => AdmissionPollFailure::InputPending,
+                "INPUT_BLOCKED" => AdmissionPollFailure::InputBlocked,
+                _ => AdmissionPollFailure::IoFailed,
+            };
+            let event = if let Some(hash) = row.event_sha256 {
+                if failure != AdmissionPollFailure::InputBlocked || frontier.is_none() {
+                    return Err(DailyRuntimeError::DatabaseIntegrity);
+                }
+                let result = SqlOutcome {
+                    disposition: "BLOCKED".into(),
+                    identity: None,
+                    reason_code: row.event_code,
+                    event_sha256: Some(hash.clone()),
+                };
+                Some((block_code(&result)?, readback_hash(hash)?))
+            } else {
+                None
+            };
+            RecordedAdmissionOutcome::Failed {
+                failure,
+                source_frontier: frontier,
+                event,
+            }
+        }
+        _ => return Err(DailyRuntimeError::DatabaseIntegrity),
+    };
+    Ok(RecordedAdmissionReceipt {
+        receipt: row.receipt_id,
+        owner: row.owner_user_id,
+        policy: readback_hash(row.policy_sha256)?,
+        activation_epoch: row.activation_epoch,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        current: row.matches_current_cycle,
+        outcome,
+    })
+}
+/// No slot is taken or completed by readback. A missing result or interrupted
+/// receipt remains unknown; it never becomes successful merely after a restart.
+pub async fn read_daily_admission_receipt(
+    pool: &PgPool,
+    expected: Uuid,
+) -> Result<Option<RecordedAdmissionReceipt>, DailyRuntimeError> {
+    if expected.is_nil() {
+        return Err(DailyRuntimeError::InvalidInput);
+    }
+    let row: Option<ReceiptRow> = sqlx::query_as(
+        "SELECT receipt_id,owner_user_id,policy_sha256,activation_epoch,started_at,completed_at,\
+         result_code,source_frontier_sha256,admission_sha256,event_sha256,event_code,matches_current_cycle \
+         FROM public.read_owner_beta_daily_admission_receipt($1)")
+        .bind(expected).fetch_optional(pool).await.map_err(database_error)?;
+    row.map(|row| decode_receipt(row, expected)).transpose()
+}
+
+#[cfg(test)]
+mod readback_tests {
+    use super::*;
+
+    fn receipt_row() -> ReceiptRow {
+        ReceiptRow {
+            receipt_id: Uuid::from_u128(1),
+            owner_user_id: Uuid::from_u128(2),
+            policy_sha256: format!("sha256:{}", "a".repeat(64)),
+            activation_epoch: 1,
+            started_at: "2026-10-15T00:00:00Z".parse().unwrap(),
+            completed_at: None,
+            result_code: None,
+            source_frontier_sha256: None,
+            admission_sha256: None,
+            event_sha256: None,
+            event_code: None,
+            matches_current_cycle: true,
+        }
+    }
+
+    #[test]
+    fn daily_receipt_decoder_rejects_partial_or_foreign_identity() {
+        for change in 0..6 {
+            let mut row = receipt_row();
+            match change {
+                0 => row.receipt_id = Uuid::from_u128(3),
+                1 => row.owner_user_id = Uuid::nil(),
+                2 => row.activation_epoch = -1,
+                3 => row.completed_at = Some(row.started_at),
+                4 => row.result_code = Some("INPUT_PENDING".into()),
+                _ => {
+                    row.completed_at = Some(row.started_at - chrono::Duration::seconds(1));
+                    row.result_code = Some("IO_FAILED".into());
+                }
+            }
+            assert!(matches!(
+                decode_receipt(row, Uuid::from_u128(1)),
+                Err(DailyRuntimeError::DatabaseIntegrity)
+            ));
+        }
+    }
+
+    #[test]
+    fn daily_receipt_decoder_rejects_malformed_hash_and_result_shape() {
+        for change in 0..6 {
+            let mut row = receipt_row();
+            row.completed_at = Some(row.started_at);
+            row.result_code = Some("VERIFIED".into());
+            row.source_frontier_sha256 = Some(format!("sha256:{}", "b".repeat(64)));
+            row.admission_sha256 = Some(format!("sha256:{}", "c".repeat(64)));
+            match change {
+                0 => row.policy_sha256 = "not-a-hash".into(),
+                1 => row.source_frontier_sha256 = None,
+                2 => row.admission_sha256 = None,
+                3 => row.result_code = Some("CHECKED".into()),
+                4 => row.result_code = Some("INPUT_PENDING".into()),
+                _ => {
+                    row.event_sha256 = Some(format!("sha256:{}", "d".repeat(64)));
+                    row.event_code = Some("SOURCE_CONFLICT".into());
+                }
+            }
+            assert!(matches!(
+                decode_receipt(row, Uuid::from_u128(1)),
+                Err(DailyRuntimeError::DatabaseIntegrity)
+            ));
+        }
+    }
+
+    #[test]
+    fn daily_receipt_decoder_preserves_started_vs_noncurrent_completed() {
+        let started = decode_receipt(receipt_row(), Uuid::from_u128(1)).unwrap();
+        assert_eq!(started.outcome(), &RecordedAdmissionOutcome::Started);
+        assert!(started.completed_at().is_none());
+        let mut row = receipt_row();
+        row.completed_at = Some(row.started_at);
+        row.result_code = Some("VERIFIED".into());
+        row.source_frontier_sha256 = Some(format!("sha256:{}", "b".repeat(64)));
+        row.admission_sha256 = Some(format!("sha256:{}", "c".repeat(64)));
+        row.matches_current_cycle = false;
+        let recorded = decode_receipt(row, Uuid::from_u128(1)).unwrap();
+        assert!(!recorded.matches_current_cycle());
+        assert!(matches!(
+            recorded.outcome(),
+            RecordedAdmissionOutcome::Verified { .. }
+        ));
+        assert!(recorded.completed_at().is_some());
+    }
+
+    #[test]
+    fn daily_receipt_decoder_only_pairs_blocked_event_with_evidence() {
+        for change in 0..5 {
+            let mut row = receipt_row();
+            row.completed_at = Some(row.started_at);
+            row.result_code = Some("INPUT_BLOCKED".into());
+            row.source_frontier_sha256 = Some(format!("sha256:{}", "b".repeat(64)));
+            row.event_sha256 = Some(format!("sha256:{}", "d".repeat(64)));
+            row.event_code = Some("SOURCE_CONFLICT".into());
+            match change {
+                0 => (),
+                1 => row.event_code = None,
+                2 => row.source_frontier_sha256 = None,
+                3 => row.event_code = Some("unrecognized".into()),
+                _ => row.result_code = Some("IO_FAILED".into()),
+            }
+            let result = decode_receipt(row, Uuid::from_u128(1));
+            if change == 0 {
+                assert!(matches!(
+                    result.unwrap().outcome(),
+                    RecordedAdmissionOutcome::Failed {
+                        failure: AdmissionPollFailure::InputBlocked,
+                        event: Some((DailyBlockCode::SourceConflict, _)),
+                        ..
+                    }
+                ));
+            } else {
+                assert!(matches!(result, Err(DailyRuntimeError::DatabaseIntegrity)));
+            }
+        }
+    }
+}

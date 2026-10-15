@@ -1414,7 +1414,7 @@ run_full_release_lane() {
   fi
   record_log "$full_migrate_raw" full-migrate-first.log
   run_full_ledger_report full_compose first
-  [ "$full_count:$full_latest" = "61:61" ] || fail '0061 full-release ledger must contain 61 rows'
+  [ "$full_count:$full_latest" = "62:62" ] || fail '0062 full-release ledger must contain 62 rows'
   full_migration_count_first=$full_count
   full_latest_migration_first=$full_latest
   full_migration_checksums_first=$full_checksums
@@ -1572,12 +1572,26 @@ run_db_test() {
       daily_schedule_missing_fresh_input_commits_checked_without_job_or_fallback \
       daily_schedule_capacity_includes_manual_jobs_without_reserving_on_deferral \
       daily_schedule_rechecks_optin_and_uses_the_current_config_epoch \
-      daily_schedule_latest_failed_admission_cannot_fall_back_to_previous_verified_scan; do
+      daily_schedule_latest_failed_admission_cannot_fall_back_to_previous_verified_scan \
+      daily_admitter_context_is_pending_scoped_and_default_off \
+      daily_admitter_context_returns_exact_committed_tip \
+      daily_admitter_context_rejects_completed_and_superseded_receipts \
+      daily_admitter_readback_requires_direct_principal_and_no_table_grants \
+      daily_admitter_readback_rechecks_owner_and_exact_rights \
+      daily_admitter_readback_filters_foreign_owner_policy_and_stage \
+      daily_admitter_receipt_recovery_distinguishes_started_and_completed_failure \
+      daily_admitter_receipt_recovery_matches_verified_commit_without_mutation \
+      daily_admitter_receipt_keeps_old_epoch_results_historical \
+      daily_admitter_receipt_rejects_corrupt_verified_binding \
+      daily_admitter_readback_retains_blocked_event_identity \
+      daily_admitter_exact_input_absence_and_revocation_are_explicit \
+      daily_admitter_readback_security_settings_are_fixed \
+      daily_admitter_readback_down_preserves_existing_daily_evidence; do
       actual=0
       for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
       [ "$actual" -eq 1 ] || fail "daily schedule unique test row missing: $expected"
     done
-    [ "${#replay_rows[@]}" -eq 14 ] || fail 'daily schedule result inventory changed'
+    [ "${#replay_rows[@]}" -eq 28 ] || fail 'daily schedule result inventory changed'
   fi
   if [ "$label" = jobqueue-owner-beta-daily-publish ]; then
     for expected in \
