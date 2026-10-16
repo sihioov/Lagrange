@@ -6,9 +6,9 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave78 후보977e356/CI38858383219 attempt1은 전체 실패로 회수했다. 8개 job/log·7개 checkout·1036pins/478blobs를 대조했고 새85개는 70PASS/9FAIL/6미실행이다. 기존 Owner 종목 복구 보정은 통과했다. DB 실효 RLS 판정과 Python fixture 두 오류를 보정하고 독립 CI 단계 결과를 끝까지 회수하도록 했다. 후보61f9c7f의 CI38861769625 attempt1을 한 번 시작했고 결과 대기 중이며 전체 흐름·독립 리뷰·G4·운영·Owner·3거래일·C_R2는 미완료다. [실패 회수](reviews/2026-10-16-r2-daily-backup-ci.md), [보정 범위](reviews/2026-10-16-r2-daily-backup-correction.md).
+현재: 후보61f9c7f/CI38861769625 attempt1은 전체 실패로 회수했다. Rust3346·PG19target·strict lint/format/Python은 통과했으나 DB fixture 초기화2곳·Web1개는 실패했다. [I6B3-C02 준비·진단 보정](reviews/2026-10-16-r2-fixture-readiness-correction.md)은 실제 인증 SQL 준비, 안전한 오류코드, backup12개 named-row를 5파일에 반영했다. 기존1036pin 불변·새1046pin을 고정했으며 새88개와 모든 기존 gate는 후속 단일 후보에서 검증한다. 전체 흐름·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료이고 관측은 시작되지 않았다.
 
-Wave79 부분 회수: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
+과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
@@ -32,7 +32,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | I6B3-C01 통합 보정 후보의 단일 hosted 검증 후 승인 입력 전체 흐름·PUML/PNG·독립 리뷰·구체적 G3/G4·운영·Owner·3거래일·C_R2. |
+| 다음 단계 | I6B3-C02 준비·진단 보정 후보의 단일 hosted 검증 후 승인 입력 전체 흐름·PUML/PNG·독립 리뷰·구체적 G3/G4·운영·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

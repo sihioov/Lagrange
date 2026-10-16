@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -62,10 +63,47 @@ class DailyBackupDockerTests(unittest.TestCase):
         return result
 
     @classmethod
-    def sql(cls, text, *, role="postgres", timeout=120):
+    def sql(cls, text, *, role="postgres", timeout=120, stage="statement"):
+        if stage not in {"roles", "identity", "migration", "ledger", "seed", "audit", "statement"}:
+            raise RuntimeError("DAILY_BACKUP_FIXTURE_STAGE")
+        result = cls.command(["exec", "--interactive", "--user", "999:999", cls.server,
+            "psql", "-X", "-q", "-A", "-t", "-U", role, "-d", "lagrange",
+            "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate"],
+            text.encode(), timeout=timeout, allow_failure=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"DAILY_BACKUP_FIXTURE_SQL:{stage}:{result.returncode}:{cls.sqlstate(result)}")
+        return result.stdout
+
+    @staticmethod
+    def sqlstate(result):
+        # Never include raw stderr, SQL, mounted secret or database contents.
+        match = re.search(rb"(?:ERROR|FATAL):\s+([0-9A-Z]{5})(?:\s|$)", result.stderr)
+        return match[1].decode("ascii") if match else "UNKNOWN"
+
+    @classmethod
+    def database_probe(cls, database="lagrange", *, timeout=5):
         return cls.command(["exec", "--interactive", "--user", "999:999", cls.server,
-            "psql", "-X", "-q", "-A", "-t", "-U", role, "-d", "lagrange", "-v", "ON_ERROR_STOP=1"],
-            text.encode(), timeout=timeout).stdout
+            "sh", "-c", 'set -eu; PGPASSWORD="$(cat /run/test-secret)"; '
+            'export PGPASSWORD PGCONNECT_TIMEOUT=2; '
+            'exec psql -X -w -qAt -h 127.0.0.1 -U postgres -d "$1" '
+            '-v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate', "fixture-db-probe", database],
+            b"SELECT current_database()||':'||current_user||':'||session_user||':'||"
+            b"(inet_server_addr() IS NOT NULL)::text;\n", timeout=timeout, allow_failure=True)
+
+    @classmethod
+    def wait_for_database(cls):
+        deadline = time.monotonic() + 90
+        diagnostic = "UNKNOWN"
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                result = cls.database_probe(timeout=min(5, remaining))
+                if result.returncode == 0 and result.stdout.strip() == b"lagrange:postgres:postgres:true":
+                    return
+                diagnostic = cls.sqlstate(result) if result.returncode else "IDENTITY"
+            except subprocess.TimeoutExpired:
+                diagnostic = "TIMEOUT"
+            time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        raise RuntimeError("DAILY_BACKUP_FIXTURE_DATABASE:" + diagnostic)
 
     @classmethod
     def setUpClass(cls):
@@ -94,28 +132,21 @@ class DailyBackupDockerTests(unittest.TestCase):
             "--env", "POSTGRES_DB=lagrange", "--env", "POSTGRES_PASSWORD_FILE=/run/test-secret",
             "--mount", "type=bind,src=" + str(secret) + ",dst=/run/test-secret,readonly", backup.POSTGRES
         ]).stdout.decode().strip()
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            if cls.command(["exec", cls.server, "pg_isready", "-U", "postgres", "-d", "lagrange"],
-                           allow_failure=True).returncode == 0:
-                break
-            time.sleep(0.25)
-        else:
-            raise RuntimeError("DAILY_BACKUP_FIXTURE_DATABASE")
+        cls.wait_for_database()
         roles = ("migration_owner", "app", "worker", "admin", "research_writer", "audit_writer", "daily_input_admitter")
         cls.sql("".join("CREATE ROLE " + role + " LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE "
                         "NOREPLICATION NOBYPASSRLS;\n" for role in roles) +
                 "GRANT CONNECT ON DATABASE lagrange TO " + ",".join(roles) + ";\n"
                 "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n"
-                "GRANT USAGE ON SCHEMA public TO " + ",".join(roles[1:]) + ";\n")
+                "GRANT USAGE ON SCHEMA public TO " + ",".join(roles[1:]) + ";\n", stage="roles")
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
         if len(migrations) != 62:
             raise RuntimeError("DAILY_BACKUP_FIXTURE_MIGRATION_INVENTORY")
-        identity = cls.sql("SELECT current_user||':'||session_user;", role="migration_owner").strip()
+        identity = cls.sql("SELECT current_user||':'||session_user;", role="migration_owner", stage="identity").strip()
         if identity != b"migration_owner:migration_owner":
             raise RuntimeError("DAILY_BACKUP_FIXTURE_ROLE")
         for path in migrations:
-            cls.sql("BEGIN;\n" + path.read_text() + "\nCOMMIT;", role="migration_owner")
+            cls.sql("BEGIN;\n" + path.read_text() + "\nCOMMIT;", role="migration_owner", stage="migration")
         # The normal SQLx metadata shape is included in the dump. Checksums are
         # the real embedded migration bytes; the dedicated lane tests SQLx itself.
         cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
@@ -124,7 +155,7 @@ class DailyBackupDockerTests(unittest.TestCase):
                     "INSERT INTO public._sqlx_migrations(version,description,success,checksum,execution_time) "
                     "VALUES(" + str(int(path.name[:4])) + ",'fixture',true,decode('" +
                     hashlib.sha384(path.read_bytes()).hexdigest() + "','hex'),0);" for path in migrations),
-                role="migration_owner")
+                role="migration_owner", stage="ledger")
         cls.policy = (ROOT / "configs/evidence/owner-beta-daily-price-policy-v1.json").read_bytes()
         cls.policy_hash = "sha256:" + hashlib.sha256(cls.policy).hexdigest()
         policy_sql = cls.policy.decode().replace("'", "''")
@@ -133,8 +164,8 @@ class DailyBackupDockerTests(unittest.TestCase):
             "INSERT INTO owner_beta_daily_control(owner_user_id,policy_sha256,policy_json,"
             "entitlement_reference,entitlement_sha256,first_auto_session,max_jobs_per_owner,lease_seconds,backoff_seconds)"
             " VALUES('" + OWNER + "','" + cls.policy_hash + "','" + policy_sql +
-            "','backup-fixture','sha256:" + "b" * 64 + "','2026-08-29',4,60,1);")
-        cls.audit = json.loads(cls.sql((ROOT / "deploy/db/owner-beta-daily-backup-audit.sql").read_text()))
+            "','backup-fixture','sha256:" + "b" * 64 + "','2026-08-29',4,60,1);", stage="seed")
+        cls.audit = json.loads(cls.sql((ROOT / "deploy/db/owner-beta-daily-backup-audit.sql").read_text(), stage="audit"))
 
     @classmethod
     def cleanup(cls):
@@ -195,6 +226,18 @@ class DailyBackupDockerTests(unittest.TestCase):
     def assert_no_verifier(self):
         self.assertEqual(self.command(["ps", "--all", "--quiet", "--filter",
             "label=io.lagrange.daily-backup-project=" + self.binding.project]).stdout.strip(), b"")
+
+    def test_actual_database_probe_requires_target_sql_and_keeps_errors_closed(self):
+        missing = "fixture_database_that_does_not_exist"
+        accepting = self.command(["exec", self.server, "pg_isready", "-h", "127.0.0.1",
+            "-U", "postgres", "-d", missing], allow_failure=True, timeout=5)
+        self.assertEqual(accepting.returncode, 0)
+        self.assertNotEqual(self.database_probe(missing).returncode, 0)
+        ready = self.database_probe()
+        self.assertEqual(ready.returncode, 0)
+        self.assertEqual(ready.stdout.strip(), b"lagrange:postgres:postgres:true")
+        with self.assertRaisesRegex(RuntimeError, r"^DAILY_BACKUP_FIXTURE_SQL:statement:3:42P01$"):
+            self.sql('SELECT * FROM "fixture_private_sql_diagnostic";')
 
     def test_actual_full_schema_encrypted_files_and_networkless_database_restore(self):
         final = self.capture()

@@ -1825,6 +1825,30 @@ while True: time.sleep(0.05)
         self.assertNotIn("PRIVATE_ERROR", json.dumps(projected))
         self.assertNotIn("PRIVATE_STACK", json.dumps(projected))
 
+        for message, expected in [
+            ("Error: apiRequestContext.post: read ECONNRESET", "CONNECTION_RESET"),
+            ("apiRequestContext.get: connect ECONNREFUSED", "CONNECTION_REFUSED"),
+            ("apiRequestContext.post: write EPIPE", "BROKEN_PIPE"),
+            ("apiRequestContext.fetch: connect ETIMEDOUT", "NETWORK_TIMEOUT"),
+            ("apiRequestContext.post: socket hang up", "SOCKET_CLOSED"),
+            ("apiRequestContext.post: Timeout 30000ms exceeded.", "REQUEST_TIMEOUT"),
+            ("apiRequestContext.post: PRIVATE_SENTINEL", "OTHER_REQUEST_FAILURE"),
+        ]:
+            with self.subTest(category=expected):
+                case = runner.Case(
+                    runner.CaseKey("chromium", "tests/e2e/candidates.spec.ts", 17, "fixture", "id"),
+                    (), "unexpected", "passed", ({"status": "failed", "retry": 0,
+                    "error": {"message": message + "\nPRIVATE_SENTINEL", "stack": "PRIVATE_SENTINEL"}},), ())
+                projected = runner.hosted_lane_evidence(runner.LaneOutcome(
+                    "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[case]))
+                self.assertEqual(projected["cases"][0]["attempts"], [{
+                    "status": "failed", "retry": 0, "request_error": expected,
+                }])
+                self.assertEqual((projected["state"], projected["exit_code"], projected["passed"]),
+                                 ("command_failed", 1, 0))
+                self.assertEqual(projected["retry_attempts"], 0)
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(projected))
+
     def test_hosted_lane_evidence_excludes_untrusted_text_and_token_fields(self) -> None:
         sentinel = "PRIVATE_SENTINEL_DO_NOT_EMIT"
         case = runner.Case(runner.CaseKey(sentinel, sentinel, -1, sentinel, sentinel),
@@ -1843,6 +1867,20 @@ while True: time.sleep(0.05)
         self.assertNotIn("annotations", row["cases"][0])
         self.assertNotIn("title", row["cases"][0])
         self.assertFalse(row["cleanup_ok"])
+        for error, status, source in [
+            (sentinel, "failed", runner.STOCK_BETA_FILE),
+            ({"message": [sentinel]}, "failed", runner.STOCK_BETA_FILE),
+            ({"message": "PRIVATE_ECONNRESET " + sentinel}, "failed", runner.STOCK_BETA_FILE),
+            ({"message": "apiRequestContext.post: socket hang up"}, "passed", runner.STOCK_BETA_FILE),
+            ({"message": "apiRequestContext.post: socket hang up"}, "failed", sentinel),
+        ]:
+            case = runner.Case(runner.CaseKey("chromium", source, 42, "fixture", "id"),
+                               (), "unexpected", "passed", ({"status": status, "retry": 0,
+                               "error": error},), ())
+            projected = runner.hosted_lane_evidence(runner.LaneOutcome(
+                "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[case]))
+            self.assertNotIn("request_error", projected["cases"][0]["attempts"][0])
+            self.assertNotIn(sentinel, json.dumps(projected))
         for location in [
             {"file": sentinel, "line": 1, "column": 1},
             {"file": runner.STOCK_BETA_FILE, "line": True, "column": 1},

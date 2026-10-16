@@ -1537,7 +1537,7 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([a-z_][a-z0-9_]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
@@ -1658,6 +1658,26 @@ run_db_test() {
       [ "$actual" -eq 1 ] || fail "daily recovery unique test row missing: $expected"
     done
     [ "${#replay_rows[@]}" -eq 6 ] || fail 'daily recovery result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-backup ]; then
+    for expected in \
+      daily_backup_audit_checks_real_history_without_mutation_or_rls_blindness \
+      daily_backup_audit_rejects_missing_control_and_enabled_capture \
+      daily_backup_audit_detects_poll_state_change_without_reading_provider_bodies \
+      daily_backup_restore_recovers_original_reservation_once_without_new_job \
+      daily_backup_maintenance_rejects_serving_roles_and_impersonated_login \
+      daily_backup_restore_requires_disabled_control_and_keeps_empty_history_empty \
+      daily_backup_restore_never_reseals_old_config_or_activation_epochs \
+      daily_backup_restore_rejects_replacement_key_without_inserting_reservation \
+      daily_backup_restore_rejects_conflicting_existing_date_without_overwrite \
+      daily_backup_restore_rolls_back_earlier_repair_when_later_run_is_invalid \
+      daily_backup_orphan_job_is_blocked_without_replacement_run \
+      daily_backup_identity_visibility_rejects_effective_rls_without_policy_bypass; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily backup unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 12 ] || fail 'daily backup result inventory changed'
   fi
   if [ "$label" = migration-contract ]; then
     for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do

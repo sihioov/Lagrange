@@ -1484,6 +1484,30 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
             "status": safe_enum(row.get("status"), attempt_statuses),
             "retry": count(row.get("retry", 0)),
         }
+        if result["status"] in {"failed", "timedOut", "interrupted"} and case_file in files:
+            error = row.get("error")
+            message = error.get("message") if isinstance(error, dict) else None
+            if isinstance(message, str):
+                # Classify only Playwright's API request prefix. Emit a fixed
+                # category, never the message, URL, call log, stack or body.
+                request_error = re.match(
+                    r"^(?:Error: )?apiRequestContext\.(?:get|post|put|patch|delete|head|fetch): ([^\r\n]*)",
+                    message[:4096],
+                )
+                if request_error is not None:
+                    first_line = request_error[1]
+                    result["request_error"] = "OTHER_REQUEST_FAILURE"
+                    for pattern, category in (
+                        (r"\bECONNRESET\b", "CONNECTION_RESET"),
+                        (r"\bECONNREFUSED\b", "CONNECTION_REFUSED"),
+                        (r"\bEPIPE\b", "BROKEN_PIPE"),
+                        (r"\bETIMEDOUT\b", "NETWORK_TIMEOUT"),
+                        (r"\bsocket hang up\b", "SOCKET_CLOSED"),
+                        (r"\bTimeout [0-9]+ms exceeded\b", "REQUEST_TIMEOUT"),
+                    ):
+                        if re.search(pattern, first_line):
+                            result["request_error"] = category
+                            break
         location = row.get("errorLocation")
         if result["status"] in {"failed", "timedOut", "interrupted"} and isinstance(location, dict):
             source = location.get("file")

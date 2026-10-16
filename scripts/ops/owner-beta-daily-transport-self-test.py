@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,39 @@ class DailyTransportTests(unittest.TestCase):
         if not allow_failure and result.returncode != 0:
             raise RuntimeError("DAILY_TRANSPORT_FIXTURE_COMMAND")
         return result
+
+    @staticmethod
+    def sqlstate(result):
+        # VERBOSITY=sqlstate limits server errors; never emit stderr, SQL or keys.
+        match = re.search(rb"(?:ERROR|FATAL):\s+([0-9A-Z]{5})(?:\s|$)", result.stderr)
+        return match[1].decode("ascii") if match else "UNKNOWN"
+
+    @classmethod
+    def database_probe(cls, database="lagrange", *, timeout=5):
+        # The image's initialization server accepts Unix sockets before the
+        # target database exists. Require the final TCP listener AND actual SQL.
+        return cls.command(["exec", "--interactive", "--user", "999:999", cls.server,
+            "sh", "-c", 'set -eu; PGPASSWORD="$(cat /run/secrets/db_migration_owner_password)"; '
+            'export PGPASSWORD PGCONNECT_TIMEOUT=2; '
+            'exec psql -X -w -qAt -h 127.0.0.1 -U postgres -d "$1" '
+            '-v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate', "fixture-db-probe", database],
+            b"SELECT current_database()||':'||current_user||':'||session_user||':'||"
+            b"(inet_server_addr() IS NOT NULL)::text;\n", timeout=timeout, allow_failure=True)
+
+    @classmethod
+    def wait_for_database(cls):
+        deadline = time.monotonic() + 90
+        diagnostic = "UNKNOWN"
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                result = cls.database_probe(timeout=min(5, remaining))
+                if result.returncode == 0 and result.stdout.strip() == b"lagrange:postgres:postgres:true":
+                    return
+                diagnostic = cls.sqlstate(result) if result.returncode else "IDENTITY"
+            except subprocess.TimeoutExpired:
+                diagnostic = "TIMEOUT"
+            time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        raise RuntimeError("DAILY_TRANSPORT_FIXTURE_DATABASE:" + diagnostic)
 
     @classmethod
     def setUpClass(cls):
@@ -106,25 +140,22 @@ class DailyTransportTests(unittest.TestCase):
             "--mount", "type=bind,src=" + str(cls.secret) +
             ",dst=/run/secrets/db_migration_owner_password,readonly", POSTGRES
         ]).stdout.decode().strip()
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            ready = cls.command(["exec", cls.server, "pg_isready", "-U", "postgres", "-d", "lagrange"],
-                                allow_failure=True)
-            if ready.returncode == 0:
-                break
-            time.sleep(0.25)
-        else:
-            raise RuntimeError("DAILY_TRANSPORT_FIXTURE_DATABASE")
+        cls.wait_for_database()
         # Input travels over stdin; no password appears in Docker argv or output.
         cls.sql("CREATE ROLE migration_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
                 "PASSWORD '" + cls.password + "';\n"
                 "GRANT CONNECT ON DATABASE lagrange TO migration_owner;\n"
-                "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n")
+                "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n", stage="roles")
 
     @classmethod
-    def sql(cls, text):
-        cls.command(["exec", "--interactive", cls.server, "psql", "-X", "-q", "-U", "postgres",
-                     "-d", "lagrange", "-v", "ON_ERROR_STOP=1"], text.encode(), timeout=30)
+    def sql(cls, text, *, stage="statement"):
+        if stage not in {"roles", "statement"}:
+            raise RuntimeError("DAILY_TRANSPORT_FIXTURE_STAGE")
+        result = cls.command(["exec", "--interactive", cls.server, "psql", "-X", "-q", "-U", "postgres",
+            "-d", "lagrange", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate"],
+            text.encode(), timeout=30, allow_failure=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"DAILY_TRANSPORT_FIXTURE_SQL:{stage}:{result.returncode}:{cls.sqlstate(result)}")
 
     @classmethod
     def cleanup(cls):
@@ -170,6 +201,18 @@ class DailyTransportTests(unittest.TestCase):
         result = self.command(["ps", "--all", "--quiet", "--no-trunc", "--filter",
                                "label=io.lagrange.daily-control-project=" + self.project])
         self.assertEqual(result.stdout, b"")
+
+    def test_actual_database_probe_requires_target_sql_and_keeps_errors_closed(self):
+        missing = "fixture_database_that_does_not_exist"
+        accepting = self.command(["exec", self.server, "pg_isready", "-h", "127.0.0.1",
+            "-U", "postgres", "-d", missing], allow_failure=True, timeout=5)
+        self.assertEqual(accepting.returncode, 0)
+        self.assertNotEqual(self.database_probe(missing).returncode, 0)
+        ready = self.database_probe()
+        self.assertEqual(ready.returncode, 0)
+        self.assertEqual(ready.stdout.strip(), b"lagrange:postgres:postgres:true")
+        with self.assertRaisesRegex(RuntimeError, r"^DAILY_TRANSPORT_FIXTURE_SQL:statement:3:42P01$"):
+            self.sql('SELECT * FROM "fixture_private_sql_diagnostic";')
 
     def test_actual_transport_distinguishes_four_bootstrap_states(self):
         self.assertEqual(self.database.status(self.values), "ABSENT_SCHEMA")
