@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: 후보61f9c7f/CI38861769625 attempt1은 전체 실패로 회수했다. Rust3346·PG19target·strict lint/format/Python은 통과했으나 DB fixture 초기화2곳·Web1개는 실패했다. [I6B3-C02 준비·진단 보정](reviews/2026-10-16-r2-fixture-readiness-correction.md)은 실제 인증 SQL 준비, 안전한 오류코드, backup12개 named-row를 5파일에 반영했다. 기존1036pin 불변·새1046pin을 고정했으며 새88개와 모든 기존 gate는 후속 단일 후보에서 검증한다. 전체 흐름·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료이고 관측은 시작되지 않았다.
+현재: 후보61f9c7f/CI38861769625 attempt1은 전체 실패로 회수했다. Rust3346·PG19target·strict lint/format/Python은 통과했으나 DB fixture 초기화2곳·Web1개는 실패했다. [I6B3-C02 준비·진단 보정](reviews/2026-10-16-r2-fixture-readiness-correction.md)은 실제 인증 SQL 준비, 안전한 오류코드, backup12개 named-row를 5파일에 반영했다. 기존1036pin 불변·새1046pin을 고정했으며 후보4336fbe의 [CI38866283743 attempt1](reviews/2026-10-16-r2-fixture-readiness-ci.md)을 한 번 시작해 새88개와 모든 기존 gate 결과를 회수 중이다. 전체 흐름·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료이고 관측은 시작되지 않았다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

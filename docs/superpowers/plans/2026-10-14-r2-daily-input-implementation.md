@@ -5857,3 +5857,5 @@ only after exact-head all-event query0 and remote verification. Old runs remain.
 Whole-flow/PUML+PNG/independent review/concreteG3G4/Owner/three days remain open.
 
 [Source scope and limitations](../../reviews/2026-10-16-r2-fixture-readiness-correction.md).
+
+Wave80 single candidate:4336fbe/run38866283743 attempt1,07:17:33UTC;bound08:47:33UTC. Both all-event exact-head queries0/remote match;1046pins/483blobs verified. Exactly one dispatch; new88 and carried gates pending. No production/Owner/three-day acceptance.
