@@ -6015,3 +6015,5 @@ Coordinator direct static review and whitespace/text inventory checks only.
 No local project imports/parsers/tests/builds, Docker, DB or provider operations.
 Freeze the candidate, query all exact-head runs, verify remote SHA and dispatch
 once only if absent. Old runs must not be rerun, cancelled or duplicated.
+
+2026-10-16, Wave84 single CI launch: candidate6572bff9d8e75057d15ecb969f287cec8771374f,run38896226384 attempt1,created11:48:32UTC,90-minute reporting bound13:18:32UTC. Pre/post-push all-event/all-workflow exact-head queries0 and remoteSHA matched; dispatchCount1.1114pins/504blobs,1091unchanged prior pins,2changed files,98definitions including3 new fixture-preparation regressions. Keep sources frozen and recover all jobs/full logs/named outcomes; old2db7e48 failure and all limits remain preserved. No local project execution/delegation/production action or acceptance.
