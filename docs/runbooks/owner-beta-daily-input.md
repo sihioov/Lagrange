@@ -124,4 +124,37 @@ the tested disable/recovery procedure. Existing KIS approvals remain bounded to
 the adopted read-only surfaces; no new account, order, KIND automation or
 provider permission follows from this installation work.
 
+## Release database control boundary
+
+The fixed `deploy/db/owner-beta-daily-control.sql` template is rendered only
+after verifying the installed root-owned config, exact commit and canonical
+policy. `render-control` emits SQL; it opens no connection and starts no service.
+It is an internal building block for the official immutable release wrapper,
+not a separate operational activation path. Runtime wiring and G4 remain open.
+
+The transaction accepts only a direct `migration_owner` session. `prepare`
+creates a disabled epoch-zero row only when absent. Existing Owner, policy,
+entitlement, first session, trigger and declared capacity/lease/backoff must
+match exactly. Preparation never repairs or replaces an existing binding.
+The future runtime caller must derive capacity from the same protected
+`MAX_JOBS_PER_OWNER` value used by the actual API process.
+
+`enable` rechecks current Owner role and exact entitlement. `disable` keeps
+the stored capacity/lease/backoff and works after Owner-role or entitlement
+revocation. It still verifies the installed identity/policy binding. Both
+transitions use the existing epoch trigger; an identical repeat changes no
+epoch or timestamp. No admission, reservation, job or historical row is deleted.
+`check` and `check-disabled` neither insert nor update a control row.
+
+The renderer encodes config/policy as hex data, rejects open-ended actions and
+numeric text, and accepts no capacity arguments for disable. The fixed SQL
+has bounded lock/statement timeouts and one atomic transaction. A downstream
+caller must require successful final process exit as well as the exact fixed
+result; seeing a result line alone cannot prove commit.
+
+Wave74 adds six isolated root renderer tests and eleven real PostgreSQL role,
+atomicity, concurrency, revocation, literal-data and lock-timeout cases to the
+existing 32 schedule definitions. These are hosted-only checks. No operational
+control change, process drain or backup consistency is claimed by this source.
+
 Final R2 still requires actual Owner use and three observed trading days.

@@ -4173,3 +4173,33 @@ Web gates. No I6B1 executable acceptance yet. Later documentation HEAD does not
 change the candidate. I6B2 actual Compose/DB/drain/backup/diagrams, approved-base
 whole flow, independent review,G4,Owner,three actual trading days/final C_R2
 remain open. Ralph continues.
+
+### Wave73 acceptance; Wave74 release DB control — 2026-10-16 KST
+
+89ff855/CI38836892120 attempt1 fully recovered:8 terminal/full logs,
+7 checkouts,924 pins/439 candidate blobs; all required gates passed.
+Installer12/filesystem16/legacy fixture,31 Rust groups/chart6,18 DB targets/
+123 named rows and all prior Web/PG gates passed. Bounded I6B1 acceptance only.
+
+Wave74 I6B2a owns7 files: closed SQL template/renderer,6 root render cases,
+11 actual-role DB cases appended to the existing32 schedule cases, exact
+43-name no-SKIP harness, policy CI step and runbook. No new grant/role/schema,
+Compose start, process drain, provider or production action. Direct coordinator,
+no worker; source review then one exact-candidate hosted verification.
+
+DB authority is tested before connecting the runtime switch. I6B2b must still
+connect actual Compose/mode/capacity and graceful drain. Consistent daily
+backup/restore reconciliation and diagrams, approved-base threeUID whole flow,
+independent integrated review,G4,Owner,three trading days/finalC_R2 remain open.
+
+Wave74 I6B2a frozen:7 owned paths;11 real-role DB definitions plus6 root renderer
+definitions, all WRITTEN_UNEXECUTED. All32 old schedule definitions/helpers
+byte-identical; dedicated no-SKIP lane requires43 exact names. Existing28 root
+filesystem/installer cases and all old gates preserved.
+945 pins/919 prior unchanged.
+Inputs 3859/a1dbdb71, inventory 5810/aaf0d5f7,
+report 64/b07cae4b.
+Static/whitespace and scoped standalone rustfmt2024 only locally. No DB/runtime
+activation or executable acceptance. I6B2b runtime/drain, backup/reconciliation,
+diagrams, approved-base whole flow, independent review,G4,Owner,three actual
+trading days/final C_R2 remain open.

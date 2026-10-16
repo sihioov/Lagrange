@@ -1613,12 +1613,23 @@ run_db_test() {
       daily_typed_source_event_commits_exact_identity_and_failure_receipt \
       daily_typed_source_event_foreign_identity_rolls_back_before_completion \
       daily_typed_source_event_cannot_use_the_operator_revocation_boundary \
-      daily_typed_source_event_restart_keeps_one_event_and_distinct_receipts; do
+      daily_typed_source_event_restart_keeps_one_event_and_distinct_receipts \
+      daily_release_control_prepare_is_disabled_and_idempotent \
+      daily_release_control_transitions_preserve_identity_and_increment_once \
+      daily_release_control_absent_rows_are_not_created_by_other_actions \
+      daily_release_control_rejects_serving_and_impersonated_sessions \
+      daily_release_control_mismatched_bindings_roll_back_without_repair \
+      daily_release_control_failed_authority_leaves_no_initial_row \
+      daily_release_control_revocation_cannot_block_disable \
+      daily_release_control_disable_preserves_changed_capacity_and_history \
+      daily_release_control_concurrent_prepare_and_transition_serialize \
+      daily_release_control_hex_values_remain_data \
+      daily_release_control_table_lock_timeout_is_atomic; do
       actual=0
       for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
       [ "$actual" -eq 1 ] || fail "daily schedule unique test row missing: $expected"
     done
-    [ "${#replay_rows[@]}" -eq 32 ] || fail 'daily schedule result inventory changed'
+    [ "${#replay_rows[@]}" -eq 43 ] || fail 'daily schedule result inventory changed'
   fi
   if [ "$label" = jobqueue-owner-beta-daily-publish ]; then
     for expected in \

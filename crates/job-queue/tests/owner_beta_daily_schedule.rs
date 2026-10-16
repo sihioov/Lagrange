@@ -1081,3 +1081,425 @@ async fn daily_typed_source_event_restart_keeps_one_event_and_distinct_receipts(
         Ok(())
     }).await;
 }
+
+// The release-control template is the shipped SQL, not a reimplemented test
+// procedure. Every value replacement below is closed grammar or UTF-8 hex.
+const DRC_TEMPLATE: &str = include_str!("../../../deploy/db/owner-beta-daily-control.sql");
+const DRC_POLICY: &str =
+    include_str!("../../../configs/evidence/owner-beta-daily-price-policy-v1.json");
+
+fn drc_config(f: &owner_beta_daily_support::DailyFixture) -> serde_json::Value {
+    let mut value: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/owner-beta-daily-install/config.json"
+    ))
+    .unwrap();
+    value["owner"] = f.owner_id.to_string().into();
+    value["entitlement_reference"] = "daily-fixture".into();
+    value["entitlement_sha256"] = format!("sha256:{}", "a".repeat(64)).into();
+    value
+}
+
+fn drc_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 15)]));
+    }
+    encoded
+}
+
+fn drc_sql(action: &str, config: &serde_json::Value) -> String {
+    assert!(["prepare", "check", "check-disabled", "enable", "disable"].contains(&action));
+    let mut sql = DRC_TEMPLATE.to_owned();
+    let encoded_config = drc_hex(&serde_json::to_vec(config).unwrap());
+    let policy = drc_hex(DRC_POLICY.as_bytes());
+    let commit = "a".repeat(40);
+    for (token, value) in [
+        ("__ACTION__", action),
+        ("__CONFIG_HEX__", encoded_config.as_str()),
+        ("__POLICY_HEX__", policy.as_str()),
+        ("__COMMIT__", commit.as_str()),
+        (
+            "__CAPACITY__",
+            if action == "disable" { "NULL" } else { "10" },
+        ),
+        ("__LEASE__", if action == "disable" { "NULL" } else { "60" }),
+        (
+            "__BACKOFF__",
+            if action == "disable" { "NULL" } else { "30" },
+        ),
+    ] {
+        assert_eq!(sql.matches(token).count(), 1);
+        sql = sql.replace(token, value);
+    }
+    sql
+}
+
+async fn drc_execute(
+    f: &owner_beta_daily_support::DailyFixture,
+    sql: &str,
+    role: &str,
+    impersonate: bool,
+) -> Result<(), sqlx::Error> {
+    use sqlx::Connection;
+    let options: PgConnectOptions = f.db.role_url(role).parse()?;
+    let mut connection =
+        sqlx::PgConnection::connect_with(&options.disable_statement_logging()).await?;
+    let result = async {
+        let identity: (String, String) = sqlx::query_as("SELECT current_user,session_user")
+            .fetch_one(&mut connection)
+            .await?;
+        assert_eq!(identity, (role.to_owned(), role.to_owned()));
+        if impersonate {
+            sqlx::raw_sql("SET ROLE migration_owner")
+                .execute(&mut connection)
+                .await?;
+        }
+        // Dynamic text consists only of the embedded template and the bounded
+        // replacements above. Intentional negative tokens are fixture-only.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_owned()))
+            .execute(&mut connection)
+            .await
+            .map(|_| ())
+    }
+    .await;
+    // Close even an aborted transaction before checking the result.
+    let closed = connection.close().await;
+    result.and(closed)
+}
+
+async fn drc_apply(
+    f: &owner_beta_daily_support::DailyFixture,
+    action: &str,
+) -> Result<(), sqlx::Error> {
+    drc_execute(
+        f,
+        &drc_sql(action, &drc_config(f)),
+        "migration_owner",
+        false,
+    )
+    .await
+}
+
+fn drc_expect_error(result: Result<(), sqlx::Error>, state: &str) {
+    let error = result.expect_err("release control unexpectedly succeeded");
+    assert_eq!(
+        error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some(state),
+        "release control SQLSTATE differs"
+    );
+}
+
+async fn drc_state(
+    f: &owner_beta_daily_support::DailyFixture,
+) -> Result<Option<serde_json::Value>, sqlx::Error> {
+    sqlx::query_scalar("SELECT to_jsonb(c) FROM public.owner_beta_daily_control c WHERE id='etf11'")
+        .fetch_optional(&f.db.pool)
+        .await
+}
+
+#[tokio::test]
+async fn daily_release_control_prepare_is_disabled_and_idempotent() {
+    run("release_prepare_idempotent", |f| async move {
+        drc_apply(&f, "prepare").await?;
+        let first = drc_state(&f).await?.ok_or("control absent")?;
+        assert_eq!(first["enabled"], false);
+        assert_eq!(first["activation_epoch"], 0);
+        assert_eq!(first["max_jobs_per_owner"], 10);
+        assert_eq!(first["owner_user_id"], f.owner_id.to_string());
+        assert_eq!(
+            first["policy_json"],
+            serde_json::from_str::<serde_json::Value>(DRC_POLICY)?
+        );
+        drc_apply(&f, "prepare").await?;
+        drc_apply(&f, "check").await?;
+        drc_apply(&f, "check-disabled").await?;
+        assert_eq!(drc_state(&f).await?, Some(first));
+        let counts: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM jobs), \
+             (SELECT count(*) FROM recommendation_runs), \
+             (SELECT count(*) FROM owner_beta_daily_reservations)",
+        )
+        .fetch_one(&f.db.pool)
+        .await?;
+        assert_eq!(counts, (0, 0, 0));
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_transitions_preserve_identity_and_increment_once() {
+    run("release_control_epochs", |f| async move {
+        drc_apply(&f, "prepare").await?;
+        drc_apply(&f, "enable").await?;
+        let enabled = drc_state(&f).await?.ok_or("control absent")?;
+        assert_eq!(enabled["enabled"], true);
+        assert_eq!(enabled["activation_epoch"], 1);
+        drc_apply(&f, "enable").await?;
+        drc_apply(&f, "check").await?;
+        assert_eq!(drc_state(&f).await?, Some(enabled.clone()));
+        drc_expect_error(drc_apply(&f, "prepare").await, "23514");
+        drc_expect_error(drc_apply(&f, "check-disabled").await, "23514");
+        assert_eq!(drc_state(&f).await?, Some(enabled.clone()));
+        drc_apply(&f, "disable").await?;
+        let disabled = drc_state(&f).await?.ok_or("control absent")?;
+        assert_eq!(disabled["enabled"], false);
+        assert_eq!(disabled["activation_epoch"], 2);
+        let mut identity = enabled;
+        identity["enabled"] = false.into();
+        identity["activation_epoch"] = 2.into();
+        identity["updated_at"] = disabled["updated_at"].clone();
+        assert_eq!(identity, disabled);
+        drc_apply(&f, "disable").await?;
+        assert_eq!(drc_state(&f).await?, Some(disabled));
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_absent_rows_are_not_created_by_other_actions() {
+    run("release_control_absent", |f| async move {
+        for action in ["check", "check-disabled", "enable", "disable"] {
+            drc_expect_error(drc_apply(&f, action).await, "23514");
+            assert_eq!(drc_state(&f).await?, None);
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_rejects_serving_and_impersonated_sessions() {
+    run("release_control_roles", |f| async move {
+        let sql = drc_sql("prepare", &drc_config(&f));
+        for role in ["app", "worker", "daily_input_admitter", "postgres"] {
+            drc_expect_error(drc_execute(&f, &sql, role, false).await, "42501");
+            assert_eq!(drc_state(&f).await?, None);
+        }
+        drc_expect_error(drc_execute(&f, &sql, "postgres", true).await, "42501");
+        assert_eq!(drc_state(&f).await?, None);
+        drc_apply(&f, "prepare").await?;
+        let before = drc_state(&f).await?;
+        for role in ["app", "worker", "daily_input_admitter"] {
+            drc_expect_error(
+                drc_execute(&f, &drc_sql("enable", &drc_config(&f)), role, false).await,
+                "42501",
+            );
+            assert_eq!(drc_state(&f).await?, before);
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_mismatched_bindings_roll_back_without_repair() {
+    run("release_control_bindings", |f| async move {
+        drc_apply(&f, "prepare").await?;
+        let before = drc_state(&f).await?;
+        let config = drc_config(&f);
+        for (field, value) in [
+            ("owner", Uuid::new_v4().to_string()),
+            ("policy_sha256", format!("sha256:{}", "b".repeat(64))),
+            ("entitlement_reference", "unrelated".to_owned()),
+            ("entitlement_sha256", format!("sha256:{}", "b".repeat(64))),
+            ("first_auto_session", "2026-09-01".to_owned()),
+            ("code_commit", "b".repeat(40)),
+            ("schema", "unsupported".to_owned()),
+        ] {
+            let mut wrong = config.clone();
+            wrong[field] = value.into();
+            drc_expect_error(
+                drc_execute(&f, &drc_sql("enable", &wrong), "migration_owner", false).await,
+                "23514",
+            );
+            assert_eq!(drc_state(&f).await?, before);
+        }
+        for (from, to) in [
+            ("', 10, 60, 30", "', 9, 60, 30"),
+            ("', 10, 60, 30", "', 10, 61, 30"),
+            ("', 10, 60, 30", "', 10, 60, 31"),
+            ("', 10, 60, 30", "', 0, 60, 30"),
+            ("'enable',\n", "'unknown',\n"),
+        ] {
+            let original = drc_sql("enable", &config);
+            assert_eq!(original.matches(from).count(), 1);
+            let wrong = original.replace(from, to);
+            drc_expect_error(
+                drc_execute(&f, &wrong, "migration_owner", false).await,
+                "23514",
+            );
+            assert_eq!(drc_state(&f).await?, before);
+        }
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_failed_authority_leaves_no_initial_row() {
+    run("release_control_prepare_atomic", |f| async move {
+        sqlx::query("UPDATE data_entitlements SET status='REVOKED'")
+            .execute(&f.db.pool)
+            .await?;
+        drc_expect_error(drc_apply(&f, "prepare").await, "42501");
+        assert_eq!(drc_state(&f).await?, None);
+        sqlx::query("UPDATE data_entitlements SET status='ACTIVE'")
+            .execute(&f.db.pool)
+            .await?;
+        sqlx::query("DELETE FROM user_roles WHERE user_id=$1 AND role_id='owner'")
+            .bind(f.owner_id)
+            .execute(&f.db.pool)
+            .await?;
+        drc_expect_error(drc_apply(&f, "prepare").await, "42501");
+        assert_eq!(drc_state(&f).await?, None);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_revocation_cannot_block_disable() {
+    run("release_control_revocation", |f| async move {
+        drc_apply(&f, "prepare").await?;
+        drc_apply(&f, "enable").await?;
+        sqlx::query("UPDATE data_entitlements SET status='REVOKED'")
+            .execute(&f.db.pool)
+            .await?;
+        drc_expect_error(drc_apply(&f, "enable").await, "42501");
+        drc_apply(&f, "disable").await?;
+        assert_eq!(
+            drc_state(&f).await?.ok_or("control absent")?["activation_epoch"],
+            2
+        );
+        drc_expect_error(drc_apply(&f, "enable").await, "42501");
+        sqlx::query("UPDATE data_entitlements SET status='ACTIVE'")
+            .execute(&f.db.pool)
+            .await?;
+        drc_apply(&f, "enable").await?;
+        sqlx::query("DELETE FROM user_roles WHERE user_id=$1 AND role_id='owner'")
+            .bind(f.owner_id)
+            .execute(&f.db.pool)
+            .await?;
+        drc_expect_error(drc_apply(&f, "enable").await, "42501");
+        drc_apply(&f, "disable").await?;
+        let end = drc_state(&f).await?.ok_or("control absent")?;
+        assert_eq!(end["enabled"], false);
+        assert_eq!(end["activation_epoch"], 4);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_disable_preserves_changed_capacity_and_history() {
+    run("release_control_disable_capacity", |f| async move {
+        drc_apply(&f, "prepare").await?;
+        drc_apply(&f, "enable").await?;
+        let receipt: Uuid = sqlx::query_scalar(
+            "SELECT receipt_id FROM public.take_owner_beta_daily_admission_poll_slot()")
+            .fetch_one(&f.admitter).await?;
+        let old_receipt: serde_json::Value = sqlx::query_scalar(
+            "SELECT to_jsonb(r) FROM public.owner_beta_daily_poll_receipts r WHERE receipt_id=$1")
+            .bind(receipt).fetch_one(&f.db.pool).await?;
+        sqlx::query("UPDATE owner_beta_daily_control SET max_jobs_per_owner=9,lease_seconds=61,backoff_seconds=31")
+            .execute(&f.db.pool).await?;
+        drc_expect_error(drc_apply(&f, "check").await, "23514");
+        let before = drc_state(&f).await?.ok_or("control absent")?;
+        drc_apply(&f, "disable").await?;
+        let after = drc_state(&f).await?.ok_or("control absent")?;
+        assert_eq!(after["enabled"], false);
+        assert_eq!(after["activation_epoch"], 3);
+        for field in ["max_jobs_per_owner", "lease_seconds", "backoff_seconds", "policy_sha256"] {
+            assert_eq!(after[field], before[field]);
+        }
+        let same_receipt: serde_json::Value = sqlx::query_scalar(
+            "SELECT to_jsonb(r) FROM public.owner_beta_daily_poll_receipts r WHERE receipt_id=$1")
+            .bind(receipt).fetch_one(&f.db.pool).await?;
+        assert_eq!(same_receipt, old_receipt);
+        drc_apply(&f, "disable").await?;
+        assert_eq!(drc_state(&f).await?, Some(after));
+        Ok(())
+    }).await;
+}
+
+#[tokio::test]
+async fn daily_release_control_concurrent_prepare_and_transition_serialize() {
+    run("release_control_concurrency", |f| async move {
+        let (a, b) = tokio::join!(drc_apply(&f, "prepare"), drc_apply(&f, "prepare"));
+        a?;
+        b?;
+        assert_eq!(
+            drc_state(&f).await?.ok_or("control absent")?["activation_epoch"],
+            0
+        );
+        let (a, b) = tokio::join!(drc_apply(&f, "enable"), drc_apply(&f, "disable"));
+        a?;
+        b?;
+        let row = drc_state(&f).await?.ok_or("control absent")?;
+        assert!(
+            (row["enabled"] == true && row["activation_epoch"] == 1)
+                || (row["enabled"] == false && row["activation_epoch"] == 2)
+        );
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM owner_beta_daily_control")
+            .fetch_one(&f.db.pool)
+            .await?;
+        assert_eq!(count, 1);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_hex_values_remain_data() {
+    run("release_control_hex", |f| async move {
+        let reference = "quote' ; DROP TABLE sentinel; -- 한국어";
+        sqlx::query("UPDATE data_entitlements SET contract_reference=$1")
+            .bind(reference)
+            .execute(&f.db.pool)
+            .await?;
+        let mut config = drc_config(&f);
+        config["entitlement_reference"] = reference.into();
+        let sql = drc_sql("prepare", &config);
+        assert!(!sql.contains(reference));
+        drc_execute(&f, &sql, "migration_owner", false).await?;
+        let row = drc_state(&f).await?.ok_or("control absent")?;
+        assert_eq!(row["entitlement_reference"], reference);
+        let tables: bool = sqlx::query_scalar(
+            "SELECT to_regclass('public.jobs') IS NOT NULL AND \
+             to_regclass('public.owner_beta_daily_reservations') IS NOT NULL",
+        )
+        .fetch_one(&f.db.pool)
+        .await?;
+        assert!(tables);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn daily_release_control_table_lock_timeout_is_atomic() {
+    run("release_control_lock_timeout", |f| async move {
+        let mut holder = f.db.pool.begin().await?;
+        sqlx::query("LOCK TABLE owner_beta_daily_control IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *holder)
+            .await?;
+        let result = drc_apply(&f, "prepare").await;
+        holder.rollback().await?;
+        drc_expect_error(result, "55P03");
+        assert_eq!(drc_state(&f).await?, None);
+        drc_apply(&f, "prepare").await?;
+        assert_eq!(
+            drc_state(&f).await?.ok_or("control absent")?["activation_epoch"],
+            0
+        );
+        Ok(())
+    })
+    .await;
+}

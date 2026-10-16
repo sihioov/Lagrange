@@ -539,6 +539,49 @@ def reader_guard(install_root, target_release, mode, reserve=True):
             create_file(parent, FLOOR_NAME, FLOOR_BYTES, 0, 0, 0o600)
         return "DAILY_READER_REQUIRED"
 
+
+def control_number(value, maximum):
+    if (not isinstance(value, str) or len(value) > 19
+            or re.fullmatch(r"[1-9][0-9]*", value) is None
+            or int(value) > maximum):
+        reject("DAILY_CONTROL_INPUT")
+    return value
+
+
+def render_control(release, commit, action, capacity=None, lease=None, backoff=None):
+    # The official runtime caller owns DB execution and checks its final exit.
+    # This helper only emits fixed SQL; it cannot connect, grant or start work.
+    require_root()
+    if action not in ("prepare", "check", "check-disabled", "enable", "disable"):
+        reject("DAILY_CONTROL_INPUT")
+    if action == "disable":
+        if any(value is not None for value in (capacity, lease, backoff)):
+            reject("DAILY_CONTROL_INPUT")
+        capacity = lease = backoff = "NULL"
+    else:
+        capacity = control_number(capacity, 2**31 - 1)
+        lease = control_number(lease, 2**31 - 1)
+        backoff = control_number(backoff, 2**63 - 1)
+    config, _ = verify_config(release, commit)
+    policy = read_root_file(release + "/" + CONFIG_DIRECTORY + "/policy.json",
+                           gid=READER_GROUP, mode=0o440, maximum=POLICY_LIMIT)
+    validate_policy(policy)
+    template = read_root_file(release + "/deploy/db/owner-beta-daily-control.sql",
+                              maximum=64 * 1024).decode("ascii")
+    replacements = {
+        "__ACTION__": action, "__CONFIG_HEX__": canonical(config).hex(),
+        "__POLICY_HEX__": policy.hex(), "__COMMIT__": commit,
+        "__CAPACITY__": capacity, "__LEASE__": lease, "__BACKOFF__": backoff,
+    }
+    for token, value in replacements.items():
+        if template.count(token) != 1:
+            reject("DAILY_CONTROL_TEMPLATE")
+        template = template.replace(token, value)
+    if re.search(r"__[A-Z_]+__", template):
+        reject("DAILY_CONTROL_TEMPLATE")
+    return template
+
+
 class ClosedArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         # argparse's default error would echo untrusted argument values.
@@ -548,6 +591,14 @@ class ClosedArgumentParser(argparse.ArgumentParser):
 def main(argv=None):
     parser = ClosedArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
+    control = commands.add_parser("render-control")
+    control.add_argument("--release", required=True)
+    control.add_argument("--commit", required=True)
+    control.add_argument("--control-action", required=True,
+                         choices=("prepare", "check", "check-disabled", "enable", "disable"))
+    control.add_argument("--capacity")
+    control.add_argument("--lease")
+    control.add_argument("--backoff")
     prepare = commands.add_parser("stage")
     prepare.add_argument("--stage", required=True)
     prepare.add_argument("--source", required=True)
@@ -567,7 +618,10 @@ def main(argv=None):
     try:
         args = parser.parse_args(argv)
         require_root()
-        if args.action == "stage":
+        if args.action == "render-control":
+            sys.stdout.write(render_control(args.release, args.commit, args.control_action,
+                                            args.capacity, args.lease, args.backoff))
+        elif args.action == "stage":
             stage_config(args.stage, args.source, args.policy_source, args.commit)
             print("DAILY_INSTALL_STAGE: PASS")
         elif args.action in ("reader-guard", "reader-check"):

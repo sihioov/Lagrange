@@ -63,6 +63,8 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-release-self-test.py
       - name: Verify immutable daily release installation boundaries
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-integration-self-test.py
+      - name: Verify daily release database control rendering
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-control-self-test.py
       - name: Verify legacy production operations fixtures
         run: sudo bash scripts/ops/production-ops-self-test.sh
 
