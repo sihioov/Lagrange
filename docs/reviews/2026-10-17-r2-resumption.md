@@ -64,3 +64,28 @@ dispatched. Close review disposition, recheck exact remote/candidate/workflow
 state, then run this missing verification once if the candidate remains valid.
 Root access must be restored for actual image/host steps. This is an access
 request; the Owner's resumption instruction has already resolved scope consent.
+
+
+## Fresh service health and remaining image admission
+
+A current-user read-only supplement used the existing Docker group to inspect
+only the prepared Compose project and fixed fields. All ten running production
+containers, including Owner V2, were healthy, exit0, restart0 and OOM false.
+The eleventh, research-worker, was exited2/unhealthy, restart7935 and OOM false;
+this agrees with the preserved R1/R2 baseline and is not attributed to this R2
+candidate. No lifecycle action was taken. The selected release remains fce9b90.
+Protected manifest/state metadata was ACCESS_DENIED; /opt/lagrange/releases and
+/opt/lagrange/bin were observed root:root0755. The kernel query returned1 with
+zero matching lines, so complete OOM visibility remains unverified. The private
+receipt is `host-admission-f215665/unprivileged-health-2026-10-17.json`, SHA256
+`99b3c8e348b97c8a940754625c4bdf807049295869ddef02ff3a381f76b2a75a`.
+
+The official image gate's ordinary health condition cannot admit the stopped
+research worker. Its documented drained-reader route additionally requires a
+normally stopped Owner V2, current task/lease settlement and a new candidate-
+bound observation with a separately bounded lifetime. The old C3 observation
+and12-hour permission are consumed historical evidence. Root restoration alone
+therefore does not authorize or satisfy image admission. After independent
+review and the missing exact-candidate functional smoke, complete the concrete
+Owner V2 stop/resume and recovery command packet before any lifecycle decision.
+Keep research stopped and all currently serving containers unchanged meanwhile.

@@ -6078,3 +6078,17 @@ so that field is not falsely rewritten. Owner-directed work is resumed with a
 fresh blocking audit. Private receipts live in wp-7/f215665 and
 host-admission-f215665/resumption-2026-10-17.json. Frozen preparation receipts
 remain historical; no source/frozen-input mutation or duplicate CI occurred.
+
+
+Wave86 preparation follow-up: both frozen PUML drafts and unclipped locally
+rendered PNGs were integrated in docs-only7271fdf; official candidate image
+plan/preflight returned0 without apply. Exact-head all-workflow query found
+CI38901117928 success and zero research-smoke runs. The adopted separate
+functional-smoke gate remains open; dispatch only once after review disposition
+and fresh existing-run/remote checks. Current-user fixed-field Docker reads show
+ten running healthy containers and the historically exited2 research worker.
+Protected manifest/state access was denied; kernel completeness is unknown.
+The ordinary image health predicate therefore remains unsatisfied, and the
+new candidate's bounded Owner V2 drain/resume packet is still needed. No prior
+attestation/outage authority was reused, no lifecycle action or new CI occurred.
+See docs/reviews/2026-10-17-r2-resumption.md for exact receipts and limits.
