@@ -385,7 +385,24 @@ test("daily configuration switch isolates dates and late client observations", a
       "R2_DAILY_SWITCH_VERIFY",
       async () => {
         await expect(panel).toContainText("Automatic updates off");
-        await expect(panel).not.toContainText("Oct 15, 2026");
+        // Observation time is not a recommendation date. The second config
+        // has no session, coverage, publication or due date, but was observed.
+        for (const label of [
+          "Expected trading session",
+          "Daily input coverage ends",
+          "Latest daily result as-of",
+          "Published at (KST)",
+          "Update due (KST)",
+        ]) {
+          const value = panel.getByText(label, { exact: true }).locator("..").locator("dd");
+          await expect(value).toHaveText("Not reported");
+        }
+        const observed = panel
+          .getByText("Observed at (KST)", { exact: true })
+          .locator("..")
+          .locator("dd");
+        await expect(observed).toContainText("Oct 15, 2026");
+        await expect(observed).toContainText("5:01 PM KST");
         await expect(page.getByRole("switch")).toHaveAttribute("aria-checked", "false");
         await expect(
           page.getByRole("region", { name: "Owner-only recommendation", exact: true }),

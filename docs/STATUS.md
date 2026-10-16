@@ -4037,3 +4037,29 @@ Later documentation HEAD is separate from candidate. All18UI/8newbrowser/
 11Owner/129OFF/14stream/34supervisor and existing Rust/PG gates remain required.
 No new executable acceptance. I6/approved-base threeUID/integrated review/
 G4/Owner/three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave70 full failure recovery; Wave71 I7-C04 — 2026-10-16 KST
+
+f1f55ac/CI38829047490 fully recovered:8terminal/full logs,7checkouts,853pins/
+419candidateblobs. Six execution jobs passed;Web/required failed. All31Rust
+groups/chart6/18DBtargets/PG gates passed. Web18UI/6carried/34supervisor passed;
+OFF128/129 andstream14/14 passed,no skip/retry/flaky,cleanup/reservation passed.
+Only config-switch failed at fixed VERIFY phase384:5; earlier phases completed.
+Second config legitimately retains observed_at Oct15 while five config-specific
+date fields are null. Whole-panel negative Oct15 assertion contradicts that.
+Inner assertion location UNKNOWN; source contradiction independently established.
+
+Wave71I7-C04 owns only Owner browser spec: exact five empty values plus positive
+observation-time assertions. Existing OFF/preference/report/late-response/
+navigation/bounds remain. No product/fixture/runner changes,local execution,
+worker or CI yet. I6/integrated review/G4/Owner/3tradingdays/finalC_R2 open.
+
+Wave71 I7-C04 frozen:1 exact browser spec. Five config-specific date values
+must be Not reported; legitimate observation timestamp separately required.
+All18UI/8newbrowser/11Owner/34supervisor names retained;129OFF/14stream required.
+Other10Owner bodies, fixture/application/runner bytes and all bounds unchanged.
+872pins/852prior unchanged.
+Inputs3519/3f743383, inventory5321/2401d8eb,
+report27/f8bee667.
+Direct source review only; no local project execution or new acceptance.
+I6/approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.
