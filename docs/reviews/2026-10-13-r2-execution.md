@@ -3956,3 +3956,23 @@ execution or production action. Frozen inputs and candidate remain unchanged.
 첫 운영 전환의 남은 의존성을 소스로 대조했다: schema59용 일관된 소유권/ACL 복원 증거, 기존 백업6파일의 명시적 버전 전환, 실제 승인 V3 기반3UID 전체 흐름 fixture가 필요하다. 기존 설치기의 no-clobber와 승인 registry는 유지한다. 아직 실행 준비/권한 요청 완료가 아니며 운영 동작은 없다.
 Source assessment: docs/reviews/2026-10-16-r2-first-rollout-readiness.md.
 Wave81 frozen candidate/inputs unchanged; no new CI, worker or local project execution.
+
+### Wave81 full recovery and scoped acceptance — 2026-10-16 KST
+
+Wave81 후보70401cf/CI38869717878 attempt1이17:06KST에 전체8job SUCCESS로 종료했다.8개 로그·7checkout·1053pin/485blob과 백업88개·기존 필수 named gates를 대조해 I6B3 범위의 hosted 검증을 인수했다. 운영 적용·Owner 확인·3거래일 관찰은 미시작이다.
+
+All88 definitions and required current/carried groups PASS; 8 full log hashes,
+7 actual checkout SHAs,1053 pins/485 blobs matched. The source-bound named-row
+supplement corrects one interleaved binary header and adds one complete result;
+a separate noncanonical `okok` row and unprinted nested helpers remain UNKNOWN.
+Original receipts and all failed runs are preserved. Source/compiler/test
+acceptance is limited to the I6B3 package and carried hosted gates, not independent
+review, production, Owner or final C_R2. The owned ledger and launch record are
+terminal; no new CI, worker or local project/production action occurred.
+
+Next is the coherent first-rollout preparation already defined in
+`docs/reviews/2026-10-16-r2-first-rollout-readiness.md`: consistent pre-upgrade
+recovery, exact installed-backup transition and approved-base three-UID whole
+flow; then diagrams/independent review and the concrete operational packet.
+Historical 72-hour host authority remains expired. Three trading days have not
+started. Ralph remains active; current run success does not close R2.
