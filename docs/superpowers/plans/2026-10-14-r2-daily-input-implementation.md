@@ -68,9 +68,10 @@ execution restrictions remain in force; no further worker delegation.
   I6A filesystem, I6B1 immutable installation and I6B2a DB authority are accepted
   in their fixture scopes. I6B2b606d3f6/run38842068730 (Wave75) adds19 runtime
   failures and5 actual Docker cases. Wave76 controlled activation6614dda/
-  run38847051561 is in recovery after the existing four-mode static guard failed;
-  its29 operation and8 actual DB transport cases were not executed. Source is
-  frozen until full recovery. Backup/reconciliation and diagrams follow.
+  run38847051561 failed the existing four-mode static guard; full results were
+  recovered and its29 operation/8 DB transport cases were NOT_EXECUTED. Wave77
+  one-checker correction719a2e2/run38849276458 is now frozen and running.
+  Backup/reconciliation and diagrams follow after actual verification.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -5697,3 +5698,21 @@ source report 35/b2af11ba.
 Direct source/whitespace review only. Fresh exact-candidate CI required.
 Backup/reconciliation/diagrams,approved-base whole flow,independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open.
+
+### Wave77 daily-mode static contract correction: single candidate CI — 2026-10-16 KST
+
+Candidate 719a2e2820837c96af4b183b87659de6f58740f7;1016 pins/462 candidate blobs.
+All-event exact-head query0 at 2026-10-16T04:10:28.255272+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T04:10:52.486194+00:00;
+one dispatch 2026-10-16T04:10:54.380913+00:00. CI38849276458 attempt1 identified
+2026-10-16T04:11:00.920705+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T05:40:54+00:00; direct coordinator, no new worker.
+
+Require29 operation/root and8 actual PostgreSQL transport definitions, all prior58 root
+cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
+Rust/PG/Web gates. No operational activation or full-flow acceptance yet. Later documentation HEAD
+does not change the candidate. Consistent
+backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
