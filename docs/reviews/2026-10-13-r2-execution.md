@@ -3703,3 +3703,21 @@ report 69/280aa44e.
 Static/source/whitespace only locally. No supported activation CLI yet.
 I6B2c release/DB wiring, backup/reconciliation/diagrams, approved-base whole flow,
 independent review,G4,Owner,three actual trading days/finalC_R2 remain open.
+
+### Wave75 runtime boundaries: single candidate CI — 2026-10-16 KST
+
+Candidate 606d3f6602c7e0c0ba3e7b28ded73905a311daa1;969 pins/450 candidate blobs.
+All-event exact-head query0 at 2026-10-16T02:43:53.800038+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T02:45:33.882383+00:00;
+one dispatch 2026-10-16T02:45:35.584230+00:00. CI38842068730 attempt1 identified
+2026-10-16T02:45:49.921463+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T04:15:35+00:00; direct coordinator, no new worker.
+
+Require19 injected-failure and5 actual Docker definitions, all previous34 root
+cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
+Rust/PG/Web gates. No runtime boundary acceptance yet. Later documentation HEAD
+does not change the candidate. I6B2c official wrapper/DB transport, consistent
+backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.

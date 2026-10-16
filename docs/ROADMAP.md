@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave74 570e277/CI38839505678 전체 성공 회수. Wave75 I6B2b 실제 컨테이너 격리·종료 경계 구현, 이어서 I6B2c 공식 릴리스 연결·백업·복원·다이어그램. 승인 입력 전체 통합/운영·Owner·3거래일·C_R2 미완료. |
+| 다음 착수 항목 | Wave75 I6B2b 606d3f6/CI38842068730 전체 회수. 이어서 I6B2c 공식 릴리스 연결·DB transport, 백업·복원·다이어그램 및 승인 입력 전체 통합. 운영·Owner·3거래일·C_R2 미완료. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -1420,3 +1420,21 @@ report 69/280aa44e.
 Static/source/whitespace only locally. No supported activation CLI yet.
 I6B2c release/DB wiring, backup/reconciliation/diagrams, approved-base whole flow,
 independent review,G4,Owner,three actual trading days/finalC_R2 remain open.
+
+### Wave75 runtime boundaries: single candidate CI — 2026-10-16 KST
+
+Candidate 606d3f6602c7e0c0ba3e7b28ded73905a311daa1;969 pins/450 candidate blobs.
+All-event exact-head query0 at 2026-10-16T02:43:53.800038+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T02:45:33.882383+00:00;
+one dispatch 2026-10-16T02:45:35.584230+00:00. CI38842068730 attempt1 identified
+2026-10-16T02:45:49.921463+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T04:15:35+00:00; direct coordinator, no new worker.
+
+Require19 injected-failure and5 actual Docker definitions, all previous34 root
+cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
+Rust/PG/Web gates. No runtime boundary acceptance yet. Later documentation HEAD
+does not change the candidate. I6B2c official wrapper/DB transport, consistent
+backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
