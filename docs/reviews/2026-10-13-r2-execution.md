@@ -3754,3 +3754,21 @@ report 106/3ea01747.
 Direct source/whitespace review only; actual runtime activation remains unaccepted.
 Backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave76 controlled activation: single candidate CI — 2026-10-16 KST
+
+Candidate 6614dda99cd0613c5199c617ef253b3bb7a48b3c;996 pins/460 candidate blobs.
+All-event exact-head query0 at 2026-10-16T03:44:44.060918+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T03:44:53.071767+00:00;
+one dispatch 2026-10-16T03:44:54.912468+00:00. CI38847051561 attempt1 identified
+2026-10-16T03:45:11.912794+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T05:14:54+00:00; direct coordinator, no new worker.
+
+Require29 operation/root and8 actual PostgreSQL transport definitions, all prior58 root
+cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
+Rust/PG/Web gates. No operational activation or full-flow acceptance yet. Later documentation HEAD
+does not change the candidate. Consistent
+backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
