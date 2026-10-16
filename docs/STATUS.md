@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave82 첫 운영 준비 전체 묶음을 후보 `c6265dd`로 고정하고 [CI38888547029 attempt1](reviews/2026-10-16-r2-first-rollout-ci.md)을19:38KST에 한 번 시작했다.1074pin/502blob·새95개 정의를 대조했으며 전체 개별 결과를 회수하기 전 인수하지 않는다. 기존70401cf 성공은 범위별로 보존한다. 실제 이미지/승인 입력 호스트 검증·다이어그램·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
+현재: Wave82 후보 `c6265dd`의 [CI38888547029 attempt1](reviews/2026-10-16-r2-first-rollout-ci.md)을 회수 중이다. 새 Python91개 중87PASS/4ERROR이며 native cold 복구4개가 부모 권한 guard에서 멈췄다. 실제 복원 assertion은 도달 전이다. format·Clippy·Python job은 성공했고 새 Rust4개·잔여 job은 대기 중이다. 전체 회수 전 소스/CI는 변경하지 않는다. 기존 성공/실패를 보존하며 실제 이미지/호스트 검증·다이어그램·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

@@ -2,6 +2,22 @@
 
 Roadmap R2-04/R2-09; Wave82. Status: RUNNING, recorded 2026-10-16.
 
+Partial recovery at 10:43UTC: policy failed at the pre-upgrade schema59
+isolated recovery step. All four new native cases stopped in `Snapshot` /
+`open_root` with the fixed code `PREUPGRADE_VOLUME_PARENT`, before their
+restored-cluster assertions. The exact parent metadata was not printed and
+is UNKNOWN. Of 91 new Python definitions, 87 have one PASS row and four have
+ERROR rows. The 19 whole-flow fixture tests passed after that failed step;
+they still do not establish actual approved-base execution. The four new
+Rust definitions remain pending collection.
+
+Format, Clippy and Python jobs are terminal SUCCESS by metadata; their full
+log digests and checkout SHAs were recovered along with policy. Python reports
+487 passed, 10 existing skipped and 7 warnings. Workspace, dedicated PostgreSQL
+and Web jobs are still running. The required aggregate has not completed.
+All frozen executable inputs remain unchanged. No correction or redispatch
+will occur before full run recovery.
+
 Candidate `c6265ddffc51a034c760fc48cf0f9d6fe387decd` is running in
 [CI 38888547029, attempt 1](https://github.com/sihioov/Lagrange/actions/runs/38888547029).
 The run was created at 2026-10-16T10:38:21Z, using `workflow_dispatch`, branch
