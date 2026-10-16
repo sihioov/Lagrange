@@ -4123,3 +4123,35 @@ and all prior18UI/129OFF/14stream/34supervisor/Rust/PG gates required.
 No I6A executable acceptance yet. I6B Compose/installer/manifest/diagrams,
 approved-base whole-flow/independentreview/G4/Owner/three actual trading days/
 finalC_R2 remain open. Ralph continues.
+
+### Wave72 foundation acceptance; Wave73 immutable installer binding — 2026-10-16 KST
+
+d462ea8/CI38834438912 attempt1 fully recovered: eight terminal jobs/full log
+hashes, seven checkouts,898 pins/430 candidate blobs. All31 Rust groups plus
+chart6, new16 real-UID filesystem cases, three parity cases and previous
+Web/PG gates passed. Accept only I6A foundation/source and hosted scope.
+
+Wave73 I6B1 owns10 files: mode library/helper, immutable installer, validator,
+canonical image manifest library, new12-case integration suite, legacy fixture,
+static check, existing policy workflow and daily installation runbook.
+Direct coordinator, no workers. Source review precedes one exact-candidate CI.
+No local project executable checks. The canonical12 build inventory stays fixed.
+A compatible OFF rollback preserves the reader floor/history; changing current
+alone does not stop processes or update database control.
+
+I6B2 must connect actual Compose activation, verified graceful process drain,
+DB control, coordinated daily backup/restore and evidence-bound diagrams.
+Actual approved-base threeUID first/multiday flow, independent integrated review,
+G4, real Owner use, three actual trading days and final C_R2 remain open.
+Prior successes/failures and unknown nested helper rows are preserved.
+
+Wave73 I6B1 frozen:10 owned paths,12 new real-root installer definitions,
+16 unchanged filesystem/UID and3 Rust parity cases, plus legacy ops fixture.
+All new definitions WRITTEN_UNEXECUTED; source review is direct coordinator.
+924 pins/895 prior unchanged.
+Inputs 3757/6f9b4748,
+inventory 5582/bd34c1c4,
+report 72/dca1e3a9.
+Canonical12 image records and all Rust bytes preserved. Static/whitespace only
+locally. Actual Compose/DB/drain/backup/diagrams, approved-base whole flow,
+independent review,G4,Owner,three actual trading days/final C_R2 remain open.

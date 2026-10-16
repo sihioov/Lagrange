@@ -12,6 +12,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/release-image-manifest.sh"
 source "$script_dir/lib/dotenv.sh"
+source "$script_dir/lib/owner-beta-daily-release.sh"
 
 mode=dry-run
 mode_seen=0
@@ -21,12 +22,17 @@ install_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
 release_manifest=${LAGRANGE_RELEASE_MANIFEST:-}
 env_source_seen=0
 release_manifest_seen=0
+daily_config_source=
+daily_config_source_seen=0
+daily_mode=disabled
+release_lock_fd=
 
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/deploy-production-release.sh [--dry-run|--check|--apply|--rollback]
        --commit EXACT_40_HEX [--install-root DIR]
        [--env-source PATH --release-manifest ABSOLUTE_PATH]
+       [--daily-config-source ABSOLUTE_PATH]
 
 --dry-run  Print the immutable-release plan without reading protected inputs.
 --check    Root-only read-only validation of current and its installed trusted
@@ -41,6 +47,14 @@ The manifest must be a regular non-symlink root:root 0600 file below a
 root-owned, non-group/other-writable path. Apply validates it before copying it
 once into root-owned staging, then validates the installed copy before atomic
 activation. Legacy releases without that installed manifest are blocked.
+
+Daily mode defaults OFF. ON apply requires a separate root:root 0600 JSON
+--daily-config-source. Explicit OFF preparation may supply it too; neither
+mode invents Owner, entitlement, first session or budgets. Installed config
+is immutable root:10001 0440 and bound to the exact release and canonical
+policy. State provision is a separate reviewed operation. Once daily readers
+are required, rollback must retain schema 60/61/62 and daily input compatibility
+even in OFF mode. A current-link switch does not stop running processes.
 
 The release is /opt/lagrange/releases/<commit>; current is one relative atomic
 symlink. Git archive excludes untracked files, .git, host Raw/Curated, and the
@@ -80,6 +94,13 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || die '--release-manifest needs a path'
       release_manifest=$2
       release_manifest_seen=1
+      shift 2
+      ;;
+    --daily-config-source)
+      [ "$#" -ge 2 ] && [ "$daily_config_source_seen" -eq 0 ] ||
+        die '--daily-config-source needs one protected absolute input'
+      daily_config_source=$2
+      daily_config_source_seen=1
       shift 2
       ;;
     -h|--help) usage; exit 0 ;;
@@ -137,6 +158,8 @@ fi
 # expectations; source .env is irrelevant after immutable release creation.
 if [ "$mode" != apply ]; then
   [ "$env_source_seen" -eq 0 ] || die '--env-source is allowed only with --apply'
+  [ "$daily_config_source_seen" -eq 0 ] ||
+    die '--daily-config-source is allowed only with --apply'
   [ "$release_manifest_seen" -eq 0 ] && [ -z "$release_manifest" ] ||
     die '--release-manifest is allowed only with --apply; check/rollback use the installed trusted manifest'
 fi
@@ -157,6 +180,29 @@ check_root_parent() {
 }
 
 check_root_parent "$install_root" install-root
+
+acquire_release_lock() {
+  local lock before after
+  lock=$install_root/.lagrange-release.lock
+  if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+    (umask 077; set -o noclobber; : >"$lock") ||
+      die 'cannot create exclusive release lock'
+  fi
+  release_image_manifest_trusted_file "$lock" release-lock ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  [ "$(stat -c '%h:%s' -- "$lock")" = 1:0 ] ||
+    die 'release lock must be empty and single-link'
+  before=$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "$lock") ||
+    die 'cannot inspect release lock'
+  exec {release_lock_fd}<>"$lock" || die 'cannot open release lock'
+  after=$(stat -Lc '%d:%i:%u:%g:%a:%h:%s' -- "/proc/$$/fd/$release_lock_fd") ||
+    die 'cannot inspect opened release lock'
+  [ "$before" = "$after" ] || die 'release lock identity changed'
+  flock --exclusive --nonblock "$release_lock_fd" ||
+    die 'another release installation is active'
+  [ "$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "$lock")" = "$before" ] ||
+    die 'release lock identity changed'
+}
 
 validate_external_manifest() {
   local path=$1
@@ -179,6 +225,8 @@ validate_release_env_commit() {
     die "$label LAGRANGE_CODE_COMMIT is invalid"
   [ "$env_commit" = "$release_commit" ] ||
     die "$label LAGRANGE_CODE_COMMIT does not match requested release commit"
+  daily_release_parse_mode || die "$DAILY_RELEASE_ERROR"
+  daily_mode=$DAILY_RELEASE_MODE
 }
 
 validate_installed_manifest() {
@@ -189,6 +237,33 @@ validate_installed_manifest() {
   if ! release_image_manifest_load "$path" "$release_commit"; then
     die "$RELEASE_IMAGE_MANIFEST_ERROR"
   fi
+}
+
+daily_reader_preflight() {
+  local target=$1 action=$2 output
+  if [ "$daily_mode" = owner_only ] ||
+     [ -e "$install_root/.owner-beta-daily-reader-floor" ] ||
+     [ -L "$install_root/.owner-beta-daily-reader-floor" ]; then
+    output=$(/usr/bin/python3 "$script_dir/lib/owner-beta-daily-release.py" "$action" \
+      --install-root "$install_root" --target-release "$target" --mode "$daily_mode") ||
+      die 'daily reader compatibility check failed'
+    [ "$output" = 'DAILY_INSTALL_READER: DAILY_READER_REQUIRED' ] ||
+      die 'daily reader compatibility result is invalid'
+  fi
+}
+
+validate_daily_release_config() {
+  local target=$1 digest
+  if [ -e "$target/.owner-beta-daily" ] || [ -L "$target/.owner-beta-daily" ]; then
+    digest=$(/usr/bin/python3 "$script_dir/lib/owner-beta-daily-release.py" verify \
+      --release "$target" --commit "$release_commit") ||
+      die 'daily installed configuration failed validation'
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+      die 'daily installed configuration digest is invalid'
+  elif [ "$daily_mode" = owner_only ]; then
+    die 'daily ON release requires its installed protected config'
+  fi
+  daily_reader_preflight "$target" reader-check
 }
 
 validate_release() {
@@ -214,6 +289,7 @@ validate_release() {
     die 'legacy manifest-less release is blocked'
   validate_installed_manifest "$manifest" installed-release-manifest
   validate_release_env_commit "$target/deploy/compose/.env" release-compose-env
+  validate_daily_release_config "$target"
 }
 
 validate_current() {
@@ -233,6 +309,9 @@ atomic_activate() {
     [[ "$existing" =~ ^releases/[0-9a-f]{40}$ ]] ||
       die 'current has a foreign link target'
   fi
+  # Reserve compatibility before changing the link; failed later operations
+  # keep the conservative floor rather than enabling an old-reader rollback.
+  daily_reader_preflight "$release_dir" reader-guard
   temporary=$install_root/.current.$release_commit.$$
   [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || die 'temporary current link already exists'
   ln -s -- "releases/$release_commit" "$temporary" || die 'cannot stage current link'
@@ -270,6 +349,7 @@ if [ "$mode" = check ]; then
 fi
 
 if [ "$mode" = rollback ]; then
+  acquire_release_lock
   validate_release "$release_dir" "$release_commit"
   ensure_compatibility_links
   atomic_activate
@@ -287,6 +367,12 @@ if ! release_image_manifest_trusted_file "$env_source" env-source; then
   die "$RELEASE_IMAGE_MANIFEST_ERROR"
 fi
 validate_release_env_commit "$env_source" env-source
+if [ "$daily_config_source_seen" -eq 1 ]; then
+  safe_absolute "$daily_config_source" daily-config-source
+  [ -n "$daily_config_source" ] || die 'daily config source is empty'
+elif [ "$daily_mode" = owner_only ]; then
+  die 'daily ON apply requires --daily-config-source'
+fi
 validate_external_manifest "$release_manifest"
 
 # Apply provenance: sudo against a user-owned checkout must not trip Git's
@@ -311,6 +397,9 @@ if git -c safe.directory="$repo_root" -C "$repo_root" \
 fi
 
 install -d -o 0 -g 0 -m 0755 -- "$install_root" "$install_root/releases"
+acquire_release_lock
+[ ! -e "$release_dir" ] && [ ! -L "$release_dir" ] ||
+  die 'refusing to overwrite existing release directory'
 stage=$(mktemp -d -- "$install_root/releases/.staging.$release_commit.XXXXXX") ||
   die 'cannot create release staging directory'
 cleanup_stage() { [ -z "${stage:-}" ] || [ ! -d "$stage" ] || rm -rf -- "$stage"; }
@@ -334,6 +423,13 @@ validate_installed_manifest "$stage/.lagrange-release-manifest" staged-release-m
 printf '%s\n' "$release_commit" >"$stage/.lagrange-release"
 chown -R 0:0 -- "$stage"
 chmod 0600 -- "$stage/.lagrange-release"
+if [ "$daily_config_source_seen" -eq 1 ]; then
+  /usr/bin/python3 "$script_dir/lib/owner-beta-daily-release.py" stage \
+    --stage "$stage" --source "$daily_config_source" \
+    --policy-source "$stage/configs/evidence/owner-beta-daily-price-policy-v1.json" \
+    --commit "$release_commit" >/dev/null ||
+    die 'daily protected input staging failed'
+fi
 validate_release "$stage" "$release_commit"
 mv -T -- "$stage" "$release_dir" || die 'cannot publish release directory'
 stage=

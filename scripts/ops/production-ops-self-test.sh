@@ -70,7 +70,7 @@ esac
 mode=755
 case "$target" in
   "${FAKE_UNTRUSTED_MANIFEST:-/not-a-fixture-path}") mode=644 ;;
-  */.lagrange-release|*/.lagrange-release-manifest|*/.env|*/production*.env|*/image-manifest-*|*/.release-image-override.*)
+  */.lagrange-release|*/.lagrange-release-manifest|*/.lagrange-release.lock|*/.env|*/production*.env|*/image-manifest-*|*/.release-image-override.*)
     mode=600
     ;;
 esac
@@ -118,6 +118,7 @@ cp "$ops/deploy-production-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/compose-release.sh" "$release_fixture/repo/scripts/ops/"
 cp "$ops/lib/release-image-manifest.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
+cp "$ops/lib/owner-beta-daily-release.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
 cat >"$release_fixture/repo/scripts/ops/lib/service-status-policy.py" <<'PY'
 import sys

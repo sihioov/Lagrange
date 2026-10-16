@@ -58,6 +58,23 @@ release_image_manifest_service_is_allowed() {
   return 1
 }
 
+# Runtime aliases are fixed and share one canonical build/manifest entry.
+release_image_manifest_canonical_service() {
+  local service=$1
+  case "$service" in
+    owner-beta-daily-producer|owner-beta-daily-admitter)
+      printf '%s' owner-beta-runner
+      ;;
+    *)
+      release_image_manifest_service_is_allowed "$service" || {
+        release_image_manifest_fail 'runtime service has no canonical image'
+        return 1
+      }
+      printf '%s' "$service"
+      ;;
+  esac
+}
+
 release_image_manifest_ref_for() {
   local service=$1 commit=$2
   release_image_manifest_service_is_allowed "$service" || return 1
@@ -321,7 +338,15 @@ release_image_manifest_write() {
 # Values are only the fixed whitelist and parser-validated SHA-256 image IDs,
 # so the generated YAML cannot be influenced by a service/name/value injection.
 release_image_manifest_write_compose_override() {
-  local path=$1 service image_id revision
+  local path=$1 daily_mode=${2:-disabled} service canonical image_id revision
+  local -a runtime_services=("${RELEASE_IMAGE_SERVICES[@]}")
+  case "$daily_mode" in
+    disabled) ;;
+    owner_only)
+      runtime_services+=(owner-beta-daily-producer owner-beta-daily-admitter)
+      ;;
+    *) release_image_manifest_fail 'daily Compose mode is invalid'; return 1 ;;
+  esac
   for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
     image_id=${RELEASE_IMAGE_MANIFEST_IDS[$service]:-}
     revision=${RELEASE_IMAGE_MANIFEST_REVISIONS[$service]:-}
@@ -336,9 +361,10 @@ release_image_manifest_write_compose_override() {
   done
   {
     printf 'services:\n'
-    for service in "${RELEASE_IMAGE_SERVICES[@]}"; do
+    for service in "${runtime_services[@]}"; do
+      canonical=$(release_image_manifest_canonical_service "$service") || return 1
       printf '  %s:\n' "$service"
-      printf '    image: %s\n' "${RELEASE_IMAGE_MANIFEST_IDS[$service]}"
+      printf '    image: %s\n' "${RELEASE_IMAGE_MANIFEST_IDS[$canonical]}"
       # Docker Compose's documented !reset tag removes the source build map.
       # `up --no-build` and the absence of the opt-in `run --build` add defense
       # in depth; Compose v5 no longer exposes `run --no-build`.

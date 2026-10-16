@@ -517,7 +517,7 @@ def provision_state(data_root, config):
         return "CREATED"
 
 
-def reader_guard(install_root, target_release, mode):
+def reader_guard(install_root, target_release, mode, reserve=True):
     require_root()
     if mode not in ("disabled", "owner_only"):
         reject("DAILY_INSTALL_MODE")
@@ -533,7 +533,7 @@ def reader_guard(install_root, target_release, mode):
         reader = read_root_file(target_release + "/configs/evidence/owner-beta-daily-reader-v1.json")
         if reader != READER_BYTES:
             reject("DAILY_INSTALL_READER")
-        if floor is None:
+        if floor is None and reserve:
             # A durable conservative floor may remain after a later activation
             # failure. It is never removed just to permit an old-reader rollback.
             create_file(parent, FLOOR_NAME, FLOOR_BYTES, 0, 0, 0o600)
@@ -559,21 +559,23 @@ def main(argv=None):
         command.add_argument("--commit", required=True)
         if name != "verify":
             command.add_argument("--data-root", required=True)
-    guard = commands.add_parser("reader-guard")
-    guard.add_argument("--install-root", required=True)
-    guard.add_argument("--target-release", required=True)
-    guard.add_argument("--mode", choices=("disabled", "owner_only"), required=True)
+    for action in ("reader-guard", "reader-check"):
+        guard = commands.add_parser(action)
+        guard.add_argument("--install-root", required=True)
+        guard.add_argument("--target-release", required=True)
+        guard.add_argument("--mode", choices=("disabled", "owner_only"), required=True)
     try:
         args = parser.parse_args(argv)
         require_root()
         if args.action == "stage":
             stage_config(args.stage, args.source, args.policy_source, args.commit)
             print("DAILY_INSTALL_STAGE: PASS")
-        elif args.action == "reader-guard":
+        elif args.action in ("reader-guard", "reader-check"):
             # Caller validates manifest/commit and config before this pre-switch
             # guard. This command never changes the current release symlink.
             print("DAILY_INSTALL_READER: " + reader_guard(
-                args.install_root, args.target_release, args.mode))
+                args.install_root, args.target_release, args.mode,
+                reserve=args.action == "reader-guard"))
         else:
             config, digest = verify_config(args.release, args.commit)
             if args.action == "verify":

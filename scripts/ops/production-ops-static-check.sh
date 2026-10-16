@@ -12,6 +12,7 @@ compose_release=$ops/compose-release.sh
 production_config=$ops/validate-production-config.sh
 artifact_wrapper=$ops/kis-historical-price-beta-artifact.sh
 manifest_lib=$ops/lib/release-image-manifest.sh
+daily_lib=$ops/lib/owner-beta-daily-release.sh
 layout_helper=$ops/lib/release-build-layout.sh
 layout_config=$root/deploy/build/release-build-layout.json
 backup=$ops/run-production-backup.sh
@@ -22,7 +23,7 @@ ops_readme=$ops/README.md
 die() { echo "production-ops-static: $*" >&2; exit 1; }
 
 for script in "$release" "$build" "$compose_release" "$production_config" "$artifact_wrapper" \
-  "$manifest_lib" "$layout_helper" "$backup" "$installer"; do
+  "$manifest_lib" "$daily_lib" "$layout_helper" "$backup" "$installer"; do
   [ -f "$script" ] || die "required script missing: $script"
   bash -n "$script" || die "shell syntax failure: $script"
 done
@@ -322,6 +323,21 @@ grep -Fq 'validate_release "$stage" "$release_commit"' "$release" ||
   die 'staged release env must be revalidated before publication'
 grep -Fq 'validate_release "$release_dir" "$release_commit"' "$release" ||
   die 'installed manifest must be validated before atomic activation'
+for token in '--daily-config-source' 'daily_release_parse_mode' \
+  'validate_daily_release_config' 'reader-check' 'reader-guard' \
+  'acquire_release_lock' 'flock --exclusive --nonblock'; do
+  grep -Fq -- "$token" "$release" ||
+    die 'immutable daily installation or rollback gate missing'
+done
+grep -Fq 'daily_release_parse_mode' "$production_config" ||
+  die 'production config must share the closed daily mode grammar'
+for token in 'OWNER_BETA_DAILY_MODE_FILE' 'LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256' \
+  'owner_beta_daily_requires_sealed_price' 'owner_beta_daily_requires_paper_disabled'; do
+  grep -Fq "$token" "$daily_lib" ||
+    die 'daily protected input boundary missing'
+done
+grep -Fq 'owner-beta-daily-producer|owner-beta-daily-admitter)' "$manifest_lib" ||
+  die 'daily runtime alias canonical image resolver missing'
 if grep -Eiq 'docker[[:space:]]' "$release"; then
   die 'installer must not perform Docker/image/container work'
 fi

@@ -32,6 +32,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
 source "$script_dir/lib/kis-read-compose.sh"
+source "$script_dir/lib/owner-beta-daily-release.sh"
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
 source_dir=$root/deploy/secrets
 runtime_dir=
@@ -132,6 +133,15 @@ if ! dotenv_validate_shell_overrides; then
 fi
 
 get() { dotenv_get "$1"; }
+
+# Parse the daily mode with the same closed library as the immutable installer.
+# These internal paths/hashes may be derived only by the controlled runtime
+# wrapper; a protected env input must never bypass that verification.
+if ! daily_release_parse_mode; then
+  invalid+=("$DAILY_RELEASE_ERROR")
+elif [ "$DAILY_RELEASE_MODE" = owner_only ] && [ "$scope" != release ]; then
+  invalid+=("owner_beta_daily_requires_release_scope")
+fi
 
 # These keys are this release's local coordination/session contract and must be guarded
 # even when an operator supplies a shell-only value for a key absent from the
