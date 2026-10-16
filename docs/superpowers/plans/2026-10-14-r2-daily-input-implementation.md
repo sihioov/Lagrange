@@ -5834,3 +5834,5 @@ PUML/PNG, independent review, concrete G3/G4, Owner and three trading days remai
 Wave79 I6B3-C01: candidate61f9c7f/run38861769625 attempt1 started06:32:16UTC,
 bound08:02:16UTC;1041pins/481blobs. Single dispatch after exact-head query0 and
 remote match. New86 definitions and all carried gates pending; no acceptance.
+
+Wave79 부분 회수: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.

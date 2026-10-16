@@ -8,6 +8,8 @@
 
 현재: Wave78 후보977e356/CI38858383219 attempt1은 전체 실패로 회수했다. 8개 job/log·7개 checkout·1036pins/478blobs를 대조했고 새85개는 70PASS/9FAIL/6미실행이다. 기존 Owner 종목 복구 보정은 통과했다. DB 실효 RLS 판정과 Python fixture 두 오류를 보정하고 독립 CI 단계 결과를 끝까지 회수하도록 했다. 후보61f9c7f의 CI38861769625 attempt1을 한 번 시작했고 결과 대기 중이며 전체 흐름·독립 리뷰·G4·운영·Owner·3거래일·C_R2는 미완료다. [실패 회수](reviews/2026-10-16-r2-daily-backup-ci.md), [보정 범위](reviews/2026-10-16-r2-daily-backup-correction.md).
 
+Wave79 부분 회수: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
+
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.

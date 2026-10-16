@@ -4,7 +4,7 @@ Candidate `61f9c7f85acee5dcbacbd04c138786ce1a068cdc`,
 [run 38861769625 attempt 1](https://github.com/sihioov/Lagrange/actions/runs/38861769625),
 created 2026-10-16T06:32:16Z, reporting bound 08:02:16Z.
 Workflow `ci.yml`, `workflow_dispatch`, branch `excited-dolphin`.
-**RUNNING: no executable or source acceptance.**
+**RUNNING, with terminal policy failure already recovered; no acceptance.**
 
 [Correction scope](2026-10-16-r2-daily-backup-correction.md) follows full recovery
 of [failed run 38858383219](2026-10-16-r2-daily-backup-ci.md). Both all-event
@@ -28,3 +28,19 @@ migration checksums and cleanup. Raw logs stay in memory; only fixed sanitized
 fields/named rows persist. No rerun/cancel/duplicate, local project execution,
 new worker or production action. Independent integrated review, approved-base
 whole flow, PUML/PNG, concrete G3/G4, Owner and three trading days remain open.
+
+## Partial recovery — 2026-10-16
+
+Format, strict Clippy and Python jobs passed. All 64 backup file/controller
+definitions passed by exact names. Policy failed in two class setup methods:
+actual PostgreSQL transport and isolated full-schema backup restore. Both failed
+at the first role-creation SQL after local-socket pg_isready reported ready.
+The fixture kept only fixed command-failure codes, so the underlying SQLSTATE
+and cause are UNKNOWN; no flaky or readiness-race conclusion is claimed.
+Those class test bodies were not executed. Remaining jobs are still running.
+
+Full policy-log SHA256:
+`41f75ca02fed807c72c5f6807abf2fa7e29282ce3f726244dea30857c41795e4`.
+Private `ci/61f9c7f/policy-partial.json` and `policy-failure-details.json` preserve
+exact source frames and named rows. Frozen source/inputs remain unchanged.
+No source correction or additional CI until complete run recovery.
