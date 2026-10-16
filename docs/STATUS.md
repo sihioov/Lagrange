@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave84 전체 실패 회수 후 소유권·native 실패 단계 보정을 후보 `f215665`로 묶었다. [Wave85 CI38901117928 attempt1](reviews/2026-10-16-r2-preupgrade-ownership-ci.md)을 기존 실행0·원격 일치 확인 뒤 한 번 시작했다(12:31:30UTC).1137 pins/506 blobs/100개 정의를 고정했으며 결과는 미인수다. 이전 native 소유권 오류와 음성3개의 검증 한계를 보존한다. 실제 이미지/호스트·다이어그램/독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료다.
+현재: 후보 `f215665`의 [Wave85 CI38901117928 attempt1](reviews/2026-10-16-r2-preupgrade-ownership-ci.md)이 12:55:45UTC 전체 성공으로 종료했다. 8개 job/전체 로그 hash, 7 checkout, 1137 pins/506 blobs, 새 100개 개별 PASS와 기존 필수 결과를 대조해 hosted 범위를 인수했다. 실제 native 복구 4개와 source/restored 999:0/0700도 확인했다. [독립 통합 검토안](reviews/2026-10-16-r2-integrated-review-packet.md) 및 [호스트 점검안](reviews/2026-10-16-r2-host-admission-packet.md)을 준비했다. 추가 위임 금지의 검토 1회 예외와 남은 특권 읽기 범위는 Owner 응답을 기다린다. 실제 이미지/호스트 전체 흐름·다이어그램·G3/G4·운영·Owner·3거래일·C_R2는 미완료다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -32,7 +32,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave84 후보6572bff의 단일 hosted CI 전체 회수. 이후 실제 이미지/승인 입력 호스트 검증·PUML/PNG·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2. |
+| 다음 단계 | 준비된 독립 통합 리뷰/특권 읽기 범위 판단 후 실제 이미지·승인 입력 호스트 검증·다이어그램/독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -4483,3 +4483,10 @@ filesystem/path definitions are WRITTEN_UNEXECUTED (Wave82 total76); scoped
 Rust2024 formatting/whitespace only. Full evidence and remaining whole-flow work
 are in [first-rollout readiness](reviews/2026-10-16-r2-first-rollout-readiness.md).
 No new CI, worker, local project execution or production action.
+
+
+### Wave85 full hosted recovery and bounded release preparation — 2026-10-16
+
+Candidate `f215665012d1f4f1b81289dd94606bceb0cb8c46`, CI38901117928 attempt1, completed12:55:45UTC with all8 jobs SUCCESS. All8 full log hashes,7 actual checkout SHAs,1137 pins/506 blobs and100 named first-rollout PASS rows were reconciled. All carried required groups matched; actual native recovery ownership is999:0/0700 in8 source/restored observations. Strict lint/format, PG146 rows/19 targets/62 checksums twice/0060/0039/bootstrap/cleanup, Web129+14 and Python487 passed. Rust has3351 complete workspace PASS rows,6 ignored and6 separate chart PASS rows;2 fragmented non-required outcomes and nested helper independent results remain UNKNOWN. Earlier failures/exclusions remain intact. Accept only the hosted package scope; no new executable correction or CI dispatch is needed from this success.
+
+Prepared303 diagram citation ranges against this candidate in the isolated draft, a clean detached image checkout with2115 tracked files and an inert private interpolation input, and an independent review packet for202 changed non-documentation paths. Neither PNG rendering, reviewer launch nor image/whole-flow execution occurred. Unprivileged host observations at13:01:28UTC still select old releasefce9b90, show no listed build processes and active Docker/containerd units; root/protected paths/container health/kernel OOM remain unqueried. Exact bounded privileged-read and one-reviewer exception decisions were requested; no response is assumed. G3/G4, actual deployment/Owner/three trading days and final C_R2 remain open.
