@@ -106,8 +106,29 @@ grep -Fq 'OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}' "$compose_f
   die 'Compose owner-beta Paper policy injection missing'
 grep -Fq 'OWNER_BETA_EQUITY_SIGNALS_MODE: ${OWNER_BETA_EQUITY_SIGNALS_MODE:-disabled}' "$compose_file" ||
   die 'Compose fixed-equity owner-beta policy injection missing'
-[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 4 ] ||
-  die 'Compose must expose exactly the four approved owner-beta policy modes'
+[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 5 ] ||
+  die 'Compose must expose the four approved modes and the controlled daily mode only'
+[ "$(grep -Ec '^      OWNER_BETA_DAILY_MODE: disabled$' <<<"$api_block")" -eq 1 ] ||
+  die 'base api-server daily mode must be literal disabled'
+daily_worker_block=$(awk '
+  /^  owner-beta-runner:/ { in_worker = 1; next }
+  in_worker && /^  [[:alnum:]_-]+:/ { exit }
+  in_worker { print }
+' "$compose_file")
+[ "$(grep -Ec '^      PRICE_BETA_DAILY_MODE: disabled$' <<<"$daily_worker_block")" -eq 1 ] ||
+  die 'base owner-beta-runner daily mode must be literal disabled'
+[ "$(grep -Ec '^[[:space:]]+PRICE_BETA_DAILY_MODE:' "$compose_file")" -eq 1 ] ||
+  die 'base daily worker mode must reach only owner-beta-runner'
+for token in '--daily-prepare|--daily-enable|--daily-disable)' \
+  'lib/owner-beta-daily-operations.py'; do
+  grep -Fq -- "$token" "$compose_release" ||
+    die 'controlled daily operation entrypoint missing'
+done
+for guard_call in 'acquire_daily_release_lock' \
+  'daily_release_guard guard-processes' 'daily_release_guard guard'; do
+  grep -Eq "^[[:space:]]*$guard_call$" "$compose_release" ||
+    die 'controlled daily full-release quiescence call missing'
+done
 [ "$(awk '
   /^  api-server:/ { in_api = 1; next }
   in_api && /^  [[:alnum:]_-]+:/ { exit }

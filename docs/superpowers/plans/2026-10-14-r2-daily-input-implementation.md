@@ -62,8 +62,15 @@ execution restrictions remain in force; no further worker delegation.
   run38804040503 attempt1 SUCCESS,642pins/346blobs/7checkout,23new definitions PASS.
   [Bounded hosted acceptance](../../reviews/2026-10-16-r2-daily-runtime-connection-ci.md).
   I5 API/config/read accepted at7704749/run38818261699 with25Rust/15PG/6Web and
-  all required evidence. Wave67 I7 source is frozen for new hosted verification;
-  I6 controlled release integration follows.
+  all required evidence. I7 bounded hosted UI/browser verification is accepted at
+  eb3a938/run38831683987 (Wave71):18 UI markers,6 contracts,34 supervisors,
+  129 OFF/14 stream cases and8 daily browser cases, with prior failures preserved.
+  I6A filesystem, I6B1 immutable installation and I6B2a DB authority are accepted
+  in their fixture scopes. I6B2b606d3f6/run38842068730 (Wave75) adds19 runtime
+  failures and5 actual Docker cases. Wave76 controlled activation6614dda/
+  run38847051561 is in recovery after the existing four-mode static guard failed;
+  its29 operation and8 actual DB transport cases were not executed. Source is
+  frozen until full recovery. Backup/reconciliation and diagrams follow.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
 ## Initial classification
@@ -5664,3 +5671,29 @@ Rust/PG/Web gates. No operational activation or full-flow acceptance yet. Later 
 does not change the candidate. Consistent
 backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave76 failure recovered; Wave77 I6B2c-C01 — 2026-10-16 KST
+
+6614dda/CI38847051561 attempt1 fully recovered:8 terminal/full logs,7 checkouts,
+996 pins/460 blobs. Workspace32 groups/chart6, strict lint,format,
+PG18 targets/134 rows and all prior Web gates passed. Policy and required failed
+on obsolete exactly-four owner-beta mode assertion. New29 operations+8 transport
+and previous58 root/runtime/Docker cases plus legacy operations were NOT_EXECUTED.
+See [activation CI failure](../../reviews/2026-10-16-r2-daily-activation-ci.md).
+
+Wave77 owns only production-ops-static-check.sh. Preserve all four old guards,
+add literal-OFF API/worker daily assertions and controlled-wrapper guard checks.
+Runtime/SQL/Compose/workflow/test bytes remain frozen. Direct coordinator; no
+delegation/local execution. Source closure then one fresh exact-candidate CI,
+never rerun/cancel/duplicate. No I6B2c/runtime acceptance. Backup/reconciliation,
+diagrams,approved-base whole flow,independent review,G4,Owner,three actual trading
+days/finalC_R2 remain open. Ralph continues.
+
+Wave77 I6B2c-C01 frozen:one changed checker;all runtime/test/workflow bytes unchanged.
+All95 root/runtime/transport definitions retained;new29+8 still WRITTEN_UNEXECUTED.
+1016 pins/995 prior unchanged.
+Inputs 4096/59b3544f,inventory 6306/d2e6630f,
+source report 35/b2af11ba.
+Direct source/whitespace review only. Fresh exact-candidate CI required.
+Backup/reconciliation/diagrams,approved-base whole flow,independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open.
