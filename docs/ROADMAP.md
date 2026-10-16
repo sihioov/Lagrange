@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행 목표(Owner 2026-10-15 지시); 2026-10-17 Owner 재개 지시로 독립 리뷰·배포 준비 진행. 실제 root 접근은 복구 필요. 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **R2 통합 소스 리뷰 종료 → 새 후보 CI/functional smoke → 실제 이미지/호스트 단계.** 독립 통합 검토의 필수 변경 범위 F119/D83/P0/U0가 완료되고 이전 결함4건·D01이 소스 수준에서 해결됐다. 남은 D02 증거 양식은 실제19개 실행 목록과 순서까지 대조해 보정했다. 새 회귀10개는 미실행이며 기존94개 이름을 보존했다. 다음은 동일 후보의 CI와 별도 functional smoke다. root 접근 복구·구체적 중단/복귀/G4·Owner·3거래일은 남는다. [종결 범위](reviews/2026-10-17-r2-integrated-review-closure.md). |
+| 다음 착수 항목 | **R2 동일 후보 CI/functional smoke 결과 회수 → 실제 이미지/호스트 단계.** 새 후보 `492cbae`의 CI38955175446과 별도 functional smoke38955182520 attempt1을 각각 한 번 시작했다(04:28 KST). 필수 변경 범위 F119/D83/P0/U0와 이전4개 결함·D01은 독립 소스 검토 종결, D02는 실제19개 실행 목록에 맞춰 문서 보정했다. 입력1149pin/511blob 일치, 신규110개 중 보정10개를 포함한 실행 결과 회수 중이다. root 접근·G3/G4·Owner·3거래일은 남는다. [실행 기록](reviews/2026-10-17-r2-integrated-candidate-ci.md). |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -266,7 +266,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  현재 DOING — 2026-10-17, Wave88: 독립 통합 검토의 필수 변경 범위 F119/D83/P0/U0가 완료되고 이전 결함4건·D01이 소스 수준에서 해결됐다. 남은 D02 증거 양식은 실제19개 실행 목록과 순서까지 대조해 보정했다. 새 회귀10개는 미실행이며 기존94개 이름을 보존했다. 다음은 동일 후보의 CI와 별도 functional smoke다. [검토 종결과 한계](reviews/2026-10-17-r2-integrated-review-closure.md). 실제 운영·Owner 인수는 미완료다.
+  현재 DOING — 2026-10-17, Wave88: 새 후보 `492cbae`의 CI38955175446과 별도 functional smoke38955182520 attempt1을 각각 한 번 시작했다(04:28 KST). 필수 변경 범위 F119/D83/P0/U0와 이전4개 결함·D01은 독립 소스 검토 종결, D02는 실제19개 실행 목록에 맞춰 문서 보정했다. 입력1149pin/511blob 일치, 신규110개 중 보정10개를 포함한 실행 결과 회수 중이다. [현재 실행](reviews/2026-10-17-r2-integrated-candidate-ci.md). 운영·Owner·최종 인수는 미완료다.
   진행 — 2026-10-16, [첫 백업 설치 전환](runbooks/r2-first-backup-transition.md): 첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다.
   이전 소스 checkpoint — 2026-10-16, Wave82 [사전 일관 복구](runbooks/r2-preupgrade-recovery.md): cold PG18 전체 클러스터·파일 복원/audit 비교와21개 회귀 정의 작성. 앞선 설치 전환22개를 포함한43개는 모두 WRITTEN_UNEXECUTED. 운영 maintenance 진입점·완전한 writer fence·archive 발행·실제 승인 입력 전체 흐름·통합 검증은 진행 중이다.
   이전 소스 준비 — 2026-10-16, Wave82: [승인 입력 전체 흐름 driver](runbooks/r2-approved-base-wholeflow.md)와19개 합성/모의 경계 정의를 작성했다. 실제 승인 V3/운영 바이너리/역할/HTTP·재시작·복구 identity를 연결하되 실제 호스트 실행과 hosted fixture 검증을 분리한다. 전체95개 정의는 WRITTEN_UNEXECUTED. source review/후속 정확 후보 CI 및 실제 이미지/호스트 검증이 필요하며 운영·Owner·3거래일은 시작하지 않았다.
@@ -301,7 +301,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   하루라도 실패하면 원인 수정 후 연속 관찰을 다시 시작한다.
 - [ ] **R2-09 — 첫 베타 릴리스 인수.** exact revision·manifest·모드, 운영 적용, health·백업/복구
   근거와 정상 Owner 사용 결과를 묶는다. 운영 확인 결과를 후속 문서 커밋으로 남긴다.
-  현재 DOING — 2026-10-17, Wave88: 독립 통합 검토의 필수 변경 범위 F119/D83/P0/U0가 완료되고 이전 결함4건·D01이 소스 수준에서 해결됐다. 남은 D02 증거 양식은 실제19개 실행 목록과 순서까지 대조해 보정했다. 새 회귀10개는 미실행이며 기존94개 이름을 보존했다. 다음은 동일 후보의 CI와 별도 functional smoke다. [검토 종결과 한계](reviews/2026-10-17-r2-integrated-review-closure.md). 실제 운영·Owner 인수는 미완료다.
+  현재 DOING — 2026-10-17, Wave88: 새 후보 `492cbae`의 CI38955175446과 별도 functional smoke38955182520 attempt1을 각각 한 번 시작했다(04:28 KST). 필수 변경 범위 F119/D83/P0/U0와 이전4개 결함·D01은 독립 소스 검토 종결, D02는 실제19개 실행 목록에 맞춰 문서 보정했다. 입력1149pin/511blob 일치, 신규110개 중 보정10개를 포함한 실행 결과 회수 중이다. [현재 실행](reviews/2026-10-17-r2-integrated-candidate-ci.md). 운영·Owner·최종 인수는 미완료다.
   진행 — 2026-10-16, [첫 백업 설치 전환](runbooks/r2-first-backup-transition.md): 첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다.
   이전 소스 checkpoint — 2026-10-16, Wave82 [사전 일관 복구](runbooks/r2-preupgrade-recovery.md): cold PG18 전체 클러스터·파일 복원/audit 비교와21개 회귀 정의 작성. 앞선 설치 전환22개를 포함한43개는 모두 WRITTEN_UNEXECUTED. 운영 maintenance 진입점·완전한 writer fence·archive 발행·실제 승인 입력 전체 흐름·통합 검증은 진행 중이다.
   이전 소스 준비 — 2026-10-16, Wave82: [승인 입력 전체 흐름 driver](runbooks/r2-approved-base-wholeflow.md)와19개 합성/모의 경계 정의를 작성했다. 실제 승인 V3/운영 바이너리/역할/HTTP·재시작·복구 identity를 연결하되 실제 호스트 실행과 hosted fixture 검증을 분리한다. 전체95개 정의는 WRITTEN_UNEXECUTED. source review/후속 정확 후보 CI 및 실제 이미지/호스트 검증이 필요하며 운영·Owner·3거래일은 시작하지 않았다.
@@ -1673,3 +1673,5 @@ The same unanswered privileged-read/reviewer-exception decisions persisted acros
 - 2026-10-17, Wave87 후속: `692f57f`의 224 pins를 고정하고 같은 WP-7 리뷰어의 실제 running/pending0을 확인했다(03:48:42 KST 시작,05:18:42 보고 경계). 새 모니터6d7fee0a와 전체 결과 회수 조건을 등록했다. 독립 이미지 checkout2121파일과 비활성 보간 입력만 준비했으며 새 CI·빌드·운영 실행은 없다. [재개·회수 기록](reviews/2026-10-17-r2-resumption.md).
 
 - 2026-10-17 — R2-04/09 Wave88: 실제 reviewer idle/pending0와 전체 결과를 회수하고601줄/224pin/202blob/255link·F119/D83/P0/U0를 대조했다. 이전4개 결함·D01은 독립 소스 검토 종결, D02의7개 누락 증거 항목과12→19 표기를 실행 목록과 정확히 맞췄다. 새 실행 증거는 아직 없으며 동일 후보 CI와 별도 smoke를 준비한다. [종결 범위](reviews/2026-10-17-r2-integrated-review-closure.md).
+
+- 2026-10-17 04:28KST — R2-04/09 Wave88: 소스 리뷰와 D02 문서 종결 뒤 exact-head 전체 이벤트/워크플로 조회0·원격 SHA 일치 확인 후492cbae에 CI38955175446/functional smoke38955182520을 각각 한 번 시작했다.1149pin/511blob 및 기존/신규 이름 inventory를 고정했다. 실행 중이며 결과·운영 인수 전이다. [회수 기록](reviews/2026-10-17-r2-integrated-candidate-ci.md).

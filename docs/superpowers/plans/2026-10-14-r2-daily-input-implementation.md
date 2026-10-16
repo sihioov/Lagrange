@@ -6157,3 +6157,15 @@ rerun/cancel/duplicate. Recover every job/log/checkout, named case and cleanup;
 unknown nested exits stay UNKNOWN. Ten new regressions are still unexecuted.
 Actual images/host/G3/G4/Owner/three trading days/C_R2 remain open. No local
 compiler/project test/parser/helper/SQL/provider/root/Docker/lifecycle action.
+
+Wave88 hosted verification launched: candidate492cbae5618f695c3e27126e4ccf490a1ffda981,
+CI38955175446 attempt1 at2026-10-16T19:28:29Z and separate functional
+research-smoke38955182520 attempt1 at19:28:33Z. Exact-head all-event/workflow
+query0 and remote SHA verified; each dispatched once, no duplicate/cancellation.
+1149pins/511candidateblobs and110required new definitions, including10 review
+corrections. Both active; no executable acceptance. Heartbeatf50af5d3 covers
+only these runs, reporting bounds21:13:29/33UTC, expiry21:29:11.870UTC. All
+logs/checkouts/qualified outcomes/cleanup must be recovered; missing nested
+exits remainUNKNOWN. Later documentation HEAD does not change pinned candidate.
+See docs/reviews/2026-10-17-r2-integrated-candidate-ci.md. No local project or
+production action; actual root/images/host/Owner/three-day/final gates remain.
