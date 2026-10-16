@@ -65,6 +65,10 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-integration-self-test.py
       - name: Verify daily release database control rendering
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-control-self-test.py
+      - name: Verify daily runtime policy and drain failures
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-runtime-self-test.py
+      - name: Verify daily actual Docker isolation and drain
+        run: sudo "$(command -v python)" scripts/ops/owner-beta-daily-docker-self-test.py
       - name: Verify legacy production operations fixtures
         run: sudo bash scripts/ops/production-ops-self-test.sh
 

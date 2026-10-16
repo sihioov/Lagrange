@@ -158,3 +158,41 @@ existing 32 schedule definitions. These are hosted-only checks. No operational
 control change, process drain or backup consistency is claimed by this source.
 
 Final R2 still requires actual Owner use and three observed trading days.
+
+## Container observation and graceful drain primitives
+
+The inactive `compose.owner-beta-daily.yml` describes the three separate runtime
+identities. Producer UID10002 has no network or credential; admitter UID10003 has
+only its restricted DB secret/internal DB network; worker UID10001 has read-only
+admitted inputs. All retain read-only root filesystems, dropped capabilities,
+no-new-privileges, bounded CPU/memory/logs and exact immutable config mounts.
+The aliases continue sharing the one canonical owner-beta-runner image.
+
+`owner-beta-daily-runtime.py` is an internal primitive, not an activation CLI.
+Its caller must supply a verified installed manifest/config/project binding and
+hold the release operation lock. It inspects the explicit local Docker socket;
+ambient Docker host/context variables cannot redirect its observations.
+
+Ownership and runtime policy are separate checks. A wrong image/project/revision
+or ambiguous container set fails before mutation. A container demonstrably owned
+by that release may still be drained when its UID/mount/network policy is wrong.
+Capture binds each ID, creation/start time and restart count. Drain rechecks the
+whole cohort, disables every restart policy, sends SIGTERM to all running members
+and waits once under a 3670-second ceiling. It never sends SIGKILL or silently
+restores restart policies. Replacement, restart, pause, OOM, failed exit or timeout
+is not a successful stop. Already absent or cleanly stopped cohorts are checked
+without inventing a running-process observation.
+
+The supported release wrapper and DB transport are the mandatory I6B2c follow-up.
+Until that is connected, this overlay is not a supported activation route.
+DB disabled alone does not stop admission polling. The caller must attempt DB
+disable and drain the already verified owned cohort even if the DB is unavailable,
+then report failure rather than claim a disabled/backup-safe state. Preparation
+checks that take private poll locks belong after actual drain and before startup.
+
+Hosted tests use both injected failure cases and an actual disposable Docker
+fixture. The fixture selects the checked-in overlay and actual worker stanza,
+uses a trapped shell process under the pinned Alpine base and verifies UID,
+capabilities, mount write denial, internal/no-network routing and real SIGTERM
+exit/restart behavior. It does not run the Rust producer/admitter computation or
+prove the approved historical-base whole flow, production isolation or G4.

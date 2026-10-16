@@ -4222,3 +4222,16 @@ No I6B2a executable acceptance yet. Later documentation HEAD does not
 change the candidate. I6B2b actual Compose/control transport/drain, consistent backup/diagrams, approved-base
 whole flow, independent review,G4,Owner,three actual trading days/final C_R2
 remain open. Ralph continues.
+
+### 2026-10-16 — I6B2a accepted; actual runtime boundary implementation
+
+570e277/CI38839505678 attempt1 fully recovered and bounded DB control accepted:8 jobs,7 checkouts,945pins/443blobs,11new DB/6root cases plus all prior gates. Wave75 directly implements inactive overlay and actual Docker policy/drain fixtures; I6B2c release activation wiring and all operational/Owner/C_R2 gates remain open. No worker or local execution.
+
+Wave75 I6B2b frozen:6 owned paths;19 injected-failure and5 actual Docker fixture
+definitions, all WRITTEN_UNEXECUTED. All prior definition sources unchanged.
+969 pins/943 prior unchanged.
+Inputs 3923/130be69f, inventory 6006/c56caafb,
+report 69/280aa44e.
+Static/source/whitespace only locally. No supported activation CLI yet.
+I6B2c release/DB wiring, backup/reconciliation/diagrams, approved-base whole flow,
+independent review,G4,Owner,three actual trading days/finalC_R2 remain open.

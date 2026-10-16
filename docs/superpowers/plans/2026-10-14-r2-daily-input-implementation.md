@@ -5565,3 +5565,33 @@ No I6B2a executable acceptance yet. Later documentation HEAD does not
 change the candidate. I6B2b actual Compose/control transport/drain, consistent backup/diagrams, approved-base
 whole flow, independent review,G4,Owner,three actual trading days/final C_R2
 remain open. Ralph continues.
+
+### Wave74 accepted; Wave75 I6B2b actual container boundaries — 2026-10-16 KST
+
+570e277/CI38839505678 attempt1 fully recovered: eight successful terminal jobs,
+seven checkouts,945 pins/443 blobs,11 new DB cases (43 schedule names),6 root
+render cases and all prior gates passed. See the release control CI report.
+
+Wave75 owns six files: inactive daily Compose overlay, internal runtime guard,
+19 fake-failure definitions, actual Docker fixture harness, CI step and runbook.
+The guard separates image/project ownership from strict UID/command/mount/network
+policy, allowing safe drain of demonstrably owned but invalid-policy containers.
+Every restart is disabled before any SIGTERM; all are signalled before one bounded
+wait. No SIGKILL, automatic restart/reset, foreign container mutation or DB call.
+Only the explicit local Docker daemon is used. No supported activation entrypoint
+is added yet: I6B2c must wire the sole official release path and DB transport.
+
+Hosted fixture image uses a small trapped shell process and explicit synthetic
+inputs: it proves actual Docker boundaries/drain, never the Rust approved-base
+whole flow. Source remains static-only locally; one exact-candidate hosted CI
+after source closure. No delegation. Backup/reconciliation/diagrams, integrated
+independent review,G4,Owner/three trading days/final C_R2 remain open.
+
+Wave75 I6B2b frozen:6 owned paths;19 injected-failure and5 actual Docker fixture
+definitions, all WRITTEN_UNEXECUTED. All prior definition sources unchanged.
+969 pins/943 prior unchanged.
+Inputs 3923/130be69f, inventory 6006/c56caafb,
+report 69/280aa44e.
+Static/source/whitespace only locally. No supported activation CLI yet.
+I6B2c release/DB wiring, backup/reconciliation/diagrams, approved-base whole flow,
+independent review,G4,Owner,three actual trading days/finalC_R2 remain open.

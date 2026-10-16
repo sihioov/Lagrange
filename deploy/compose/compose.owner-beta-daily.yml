@@ -1,0 +1,228 @@
+# Selected only by the controlled release helper after exact config verification.
+services:
+  api-server:
+    environment:
+      OWNER_BETA_DAILY_MODE: owner_only
+  owner-beta-runner:
+    environment:
+      PRICE_BETA_DAILY_MODE: owner_only
+      PRICE_BETA_DAILY_CONFIG_FILE: /run/owner-beta-daily/config.json
+      PRICE_BETA_DAILY_CONFIG_SHA256: ${LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256:?controlled release verification required}
+      PRICE_BETA_HEALTH_MAX_AGE_SECS: "180"
+      PRICE_BETA_POLL_SECS: "2"
+      PRICE_BETA_RECOVERY_SECS: "30"
+      PRICE_BETA_HEARTBEAT_SECS: "10"
+      PRICE_BETA_COMPUTE_TIMEOUT_SECS: "300"
+    volumes:
+      - type: bind
+        source: ../../.owner-beta-daily/config.json
+        target: /run/owner-beta-daily/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../../.owner-beta-daily/policy.json
+        target: /run/owner-beta-daily/policy.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/admitted
+        target: /data/owner-beta-daily/admitted
+        read_only: true
+        bind:
+          create_host_path: false
+
+  owner-beta-daily-producer:
+    profiles: ["owner-beta-daily"]
+    image: lagrange-station-owner-beta-runner:${LAGRANGE_CODE_COMMIT:?exact release commit required}
+    user: "10002:10002"
+    group_add: ["10001"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 61m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /run/owner-beta-health:uid=10002,gid=10002,mode=0750
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "{{.Name}}"
+    entrypoint: ["/usr/local/bin/owner-beta-runner"]
+    command: ["daily-producer"]
+    cpus: "1"
+    mem_limit: 1g
+    environment:
+      APP_ENV: production
+      PRICE_BETA_DAILY_MODE: owner_only
+      PRICE_BETA_DAILY_CONFIG_FILE: /run/owner-beta-daily/config.json
+      PRICE_BETA_DAILY_CONFIG_SHA256: ${LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256:?controlled release verification required}
+      PRICE_BETA_HEALTH_STATE_PATH: /run/owner-beta-health/health.json
+      PRICE_BETA_HEALTH_MAX_AGE_SECS: "180"
+    volumes:
+      - type: bind
+        source: ../../.owner-beta-daily/config.json
+        target: /run/owner-beta-daily/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../../.owner-beta-daily/policy.json
+        target: /run/owner-beta-daily/policy.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_ARTIFACTS_DIR:?}/historical-price-beta-root
+        target: /data/owner-beta-artifacts
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/raw
+        target: /data/raw
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/candidates
+        target: /data/owner-beta-daily/candidates
+        read_only: false
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/admitted
+        target: /data/owner-beta-daily/admitted
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/frontiers
+        target: /data/owner-beta-daily/frontiers
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/producer-state
+        target: /data/owner-beta-daily/producer-state
+        read_only: false
+        bind:
+          create_host_path: false
+    network_mode: none
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/owner-beta-runner", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  owner-beta-daily-admitter:
+    profiles: ["owner-beta-daily"]
+    image: lagrange-station-owner-beta-runner:${LAGRANGE_CODE_COMMIT:?exact release commit required}
+    user: "10003:10003"
+    group_add: ["10001"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 61m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /run/owner-beta-health:uid=10003,gid=10003,mode=0750
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "{{.Name}}"
+    entrypoint: ["/usr/local/bin/owner-beta-runner"]
+    command: ["daily-admitter"]
+    cpus: "1"
+    mem_limit: 1g
+    environment:
+      APP_ENV: production
+      PRICE_BETA_DAILY_MODE: owner_only
+      PRICE_BETA_DAILY_CONFIG_FILE: /run/owner-beta-daily/config.json
+      PRICE_BETA_DAILY_CONFIG_SHA256: ${LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256:?controlled release verification required}
+      PRICE_BETA_HEALTH_STATE_PATH: /run/owner-beta-health/health.json
+      PRICE_BETA_HEALTH_MAX_AGE_SECS: "180"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-lagrange}
+      DB_USER: daily_input_admitter
+      DB_PASSWORD_FILE: /run/secrets/db_daily_input_admitter_password
+    secrets:
+      - source: owner_beta_daily_admitter_password
+        target: db_daily_input_admitter_password
+        uid: "10003"
+        gid: "10003"
+        mode: 0440
+    volumes:
+      - type: bind
+        source: ../../.owner-beta-daily/config.json
+        target: /run/owner-beta-daily/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../../.owner-beta-daily/policy.json
+        target: /run/owner-beta-daily/policy.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_ARTIFACTS_DIR:?}/historical-price-beta-root
+        target: /data/owner-beta-artifacts
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/raw
+        target: /data/raw
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/candidates
+        target: /data/owner-beta-daily/candidates
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/admitted
+        target: /data/owner-beta-daily/admitted
+        read_only: false
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/frontiers
+        target: /data/owner-beta-daily/frontiers
+        read_only: false
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LAGRANGE_DATA_DIR:?}/owner-beta-daily/admitter-state
+        target: /data/owner-beta-daily/admitter-state
+        read_only: false
+        bind:
+          create_host_path: false
+    networks: [owner-beta-db]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/owner-beta-runner", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+
+secrets:
+  owner_beta_daily_admitter_password:
+    file: ${LAGRANGE_RUNTIME_SECRET_DIR:?}/owner-beta-daily-admitter/db_daily_input_admitter_password
