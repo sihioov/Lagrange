@@ -5450,3 +5450,19 @@ report69/465cf96b.
 Direct source review/scoped rustfmt2024/whitespace only; no local execution.
 I6B connections/diagrams and actual approved-base threeUID integration,independent
 review,G4,Owner,three actual trading days/finalC_R2 remain open.
+
+### Wave72 I6A single candidate CI — 2026-10-16 KST
+
+Candidate d462ea85a1347a2accea716e6cde3a00e261de58;898pins/430candidateblobs.
+All-event exact-head query0 at2026-10-16T01:18:15.970521+00:00; remote prior candidate matched.
+After onepush, all-eventquery0/remotematch2026-10-16T01:18:56.010586+00:00;
+one dispatch2026-10-16T01:18:57.748549+00:00. CI38834438912attempt1 identified
+2026-10-16T01:19:06.146209+00:00,workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs immutable until8terminal/
+full-log hashes/7checkouts/named-results recovery. Reporting bound2026-10-16T02:48:57+00:00.
+Direct coordinator,no newworker,no daemon-outage guarantee.
+Later docsHEAD is separate from candidate. New3Rust/16realUIDfilesystem
+and all prior18UI/129OFF/14stream/34supervisor/Rust/PG gates required.
+No I6A executable acceptance yet. I6B Compose/installer/manifest/diagrams,
+approved-base whole-flow/independentreview/G4/Owner/three actual trading days/
+finalC_R2 remain open. Ralph continues.
