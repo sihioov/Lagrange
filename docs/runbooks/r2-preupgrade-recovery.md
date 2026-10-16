@@ -2,12 +2,13 @@
 
 Status: **source in progress; not execution-ready**. This is the pre-upgrade
 part of Wave82/R2-04/R2-09, alongside the [six-file backup transition](r2-first-backup-transition.md)
-and the pending approved-base whole-flow fixture. The18 filesystem/contract,
-28 maintenance definitions passed on `2db7e48`; its four actual-Docker recovery
-definitions were NOT_EXECUTED because class setup failed. Three additional
-private-directory preparation regressions are written and unexecuted. See the
-[failed candidate's full recovery](../reviews/2026-10-16-r2-first-rollout-correction-ci.md).
-The corrected candidate requires fresh verification. No production stop,
+and the pending approved-base whole-flow fixture. The latest
+[full failure](../reviews/2026-10-16-r2-first-rollout-metadata-ci.md) is `6572bff`:
+the18 filesystem/contract,28 maintenance and3 preparation cases passed; the
+native positive errored at PGDATA ownership and the other3 native printed PASS
+rows did not establish their intended failure stages. Wave85 adds2 filesystem
+definitions and tightens those3 native assertions. Fresh verification is still
+required. No production stop,
 capture, restore, database query or operational acceptance has occurred.
 
 ## Recovery method and its operating cost
@@ -78,6 +79,27 @@ It requires the PG18 whole-volume layout, retained WAL/control files, no
 postmaster/recovery markers and no external tablespaces. Absence of a pid file
 alone is explicitly insufficient evidence of shutdown.
 
+The PGDATA directory accepts only uid/gid/mode tuples999/999/0700,
+999/999/0750 and999/0/0700. The last retains owner-only access while supporting
+a root-created directory whose user alone was changed to PostgreSQL. The
+[official entrypoint](https://github.com/docker-library/postgres/blob/4f9ced003ba58a854656ba150d146243d27ae3ac/docker-entrypoint.sh)
+creates and protects PGDATA before changing its user; the
+[PG18 image definition](https://github.com/docker-library/postgres/blob/e00e1bd34ec5c8a8e7ad89b273b3d42efaf6d5bc/18/bookworm/Dockerfile)
+places it beneath the volume. These sources support the compatibility case;
+they do not identify the previous runner's unprinted metadata or establish a
+digest-to-source mapping. Root-group0750, other owners/groups and world access
+remain rejected. No owner/group/mode normalization occurs during restore.
+PG_VERSION/control-file ownership, full manifest equality, ACL checks and the
+private volume-parent boundary remain unchanged.
+
+Native negative assertions require their exact intended error. Catalog mismatch
+requires the post-audit comparison code; lost-create-response requires an
+actually returned container identity before injecting that error. Corrupt
+control-file rejection requires the owned clone's reserved exit73 from the
+native control/shutdown-state check. Generic command failures, timeouts and
+Docker errors do not establish that boundary. Only finite source/restored
+uid/gid/mode observations are printed after complete named test-result rows.
+
 `ColdStorage.verify_cluster` accepts a newly restored private staging tree.
 It first compares every restored file hash/owner/group/mode with the archive
 manifest. It boots only the PostgreSQL copy in a new pinned-image container:
@@ -117,9 +139,11 @@ SQLx upgrade-lane evidence. A lost-create-response case recovers only the exact
 nonce/name/labels/image it created, removes that container, and still reports
 the original operation as failed. The failed `2db7e48` run passed46 filesystem
 and maintenance definitions but stopped before all four native methods. Its
-unprinted changed metadata field remains UNKNOWN. The successor has53 recovery
-definitions, including the three new preparation regressions; fresh results
-are required. CI wiring retains independent hard exits.
+unprinted changed metadata field remains UNKNOWN. On `6572bff`, all three
+preparation cases passed, the native positive errored and the three native
+negative PASS rows did not prove their intended stages. Wave85 has55 recovery
+definitions:20 filesystem,28 maintenance,3 preparation and4 native. Fresh
+results are required. CI wiring retains independent hard exits.
 
 ## Bounded maintenance entry point (written, unexecuted)
 

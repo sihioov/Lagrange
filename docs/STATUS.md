@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: 복구 fixture 메타데이터 보정 후보 `6572bff`의 [CI38896226384 attempt1](reviews/2026-10-16-r2-first-rollout-metadata-ci.md)은 policy가 실패했고 나머지 전체 결과를 회수 중이다. 새 준비 회귀3개·format·strict Clippy·Python은 통과했다. native 양성 복원은 `PREUPGRADE_CLUSTER_OWNER`로 실패했다. 음성3개는 로그상 PASS지만 어떤 RuntimeErrorCode든 허용해 의도한 단계 도달을 입증하지 못하므로 복구 요구사항을 닫지 않는다. 실제 거절된 PGDATA uid/gid/mode는 UNKNOWN이다.1114pin/504blob·98개 정의와 현재 후보를 유지하며, 전체 회수 뒤 소유권 호환성과 음성 검증을 함께 보정한다. 실제 이미지/호스트 검증·PNG/독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
+현재: 후보 `6572bff`의 [Wave84 CI 전체 실패](reviews/2026-10-16-r2-first-rollout-metadata-ci.md)를 회수했다.6개 실행 job은 통과했고 policy/required가 실패했다.98개 정의 중97개는 로그상 PASS,1개는 ERROR였으며 native 음성3개의 의도한 단계 검증은 성립하지 않았다. 이후 [Wave85 보정](reviews/2026-10-16-r2-preupgrade-ownership-correction.md)으로 소유자 전용 PGDATA 조합·native 오류 단계 검증을 함께 수정하고2개 회귀를 추가했다.100개 정의는 새 후보 검증 전이다. 실제 이미지/호스트·다이어그램/독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

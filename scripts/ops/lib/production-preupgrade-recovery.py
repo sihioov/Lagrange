@@ -53,8 +53,13 @@ def cluster_manifest(manifest, version):
             "PREUPGRADE_CLUSTER_VERSION")
     for path in ("postgres", "postgres/18", PGROOT, *(PGROOT + "/" + d for d in REQUIRED_DIRECTORIES)):
         require(path in entries and entries[path]["kind"] == "directory", "PREUPGRADE_CLUSTER_LAYOUT")
+    # The official root-started entrypoint can create PGDATA as root:root,
+    # then chown only its user to postgres. With mode0700 its root group has
+    # no access. Preserve that exact private layout without changing owners;
+    # group access still requires the existing postgres:postgres0750 layout.
     require((entries[PGROOT]["uid"], entries[PGROOT]["gid"], entries[PGROOT]["mode"]) in
-            {(999, 999, 0o700), (999, 999, 0o750)}, "PREUPGRADE_CLUSTER_OWNER")
+            {(999, 999, 0o700), (999, 999, 0o750), (999, 0, 0o700)},
+            "PREUPGRADE_CLUSTER_OWNER")
     for path in (VERSION, PGROOT + "/global/pg_control"):
         require(path in entries and entries[path]["kind"] == "file" and
                 (entries[path]["uid"], entries[path]["gid"]) == (999, 999) and
@@ -263,8 +268,21 @@ class ColdStorage(backup.Storage):
                 tmpfs={"/tmp": "rw,nosuid,nodev,size=32m,uid=999,gid=999,mode=0700",
                        "/var/lib/postgresql": "rw,nosuid,nodev,noexec,size=4k,mode=000"})
             target = restored.parent / "restored-audit.json"
-            self.command_file(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock",
-                               "start", "--attach", identity], target, seconds=300)
+            try:
+                self.command_file(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock",
+                                   "start", "--attach", identity], target, seconds=300)
+            except runtime.RuntimeErrorCode as error:
+                # Only this exact owned clone's reserved script exit proves
+                # native pg_controldata rejection. Never infer the stage from
+                # an arbitrary command failure, timeout, or Docker error.
+                if error.args == ("DAILY_BACKUP_PROCESS",):
+                    state = observe()
+                    result = state.get("State", {})
+                    if (result.get("Running") is False and result.get("OOMKilled") is False
+                            and not result.get("Error") and type(result.get("ExitCode")) is int
+                            and result["ExitCode"] == 73 and state.get("RestartCount") == 0):
+                        raise runtime.RuntimeErrorCode("PREUPGRADE_VERIFY_CONTROL") from None
+                raise
             value = observe()
             require(not value["State"].get("Running") and not value["State"].get("OOMKilled") and
                     not value["State"].get("Error") and value["State"].get("ExitCode") == 0 and

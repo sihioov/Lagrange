@@ -52,6 +52,7 @@ class PreupgradeDockerTests(unittest.TestCase):
         cls.directory = Path(tempfile.mkdtemp(prefix="lagrange-preupgrade-docker-", dir="/var/lib"))
         cls.project = "preupgrade-" + uuid.uuid4().hex[:16]
         cls.server = cls.volume = None
+        cls.cluster_observations = []
         cls.addClassCleanup(cls.cleanup)
         cls.docker = backup.runtime.Docker()
         cls.release = cls.directory / "release"
@@ -177,6 +178,11 @@ class PreupgradeDockerTests(unittest.TestCase):
 
     @classmethod
     def cleanup(cls):
+        # Print finite metadata after the named unittest rows, so diagnostics
+        # cannot interrupt their individual result lines.
+        for case, stage, uid, gid, mode in cls.cluster_observations:
+            print(f"PREUPGRADE_FIXTURE_CLUSTER:case={case}:stage={stage}:uid={uid}:gid={gid}:mode={mode:04o}",
+                  flush=True)
         failures = []
         # Every name/ID here was freshly created by this fixture. Recheck its
         # ownership label before removal; a foreign replacement is an error.
@@ -253,6 +259,9 @@ class PreupgradeDockerTests(unittest.TestCase):
             with os.fdopen(fd, "wb") as stream:
                 snapshot.write(stream)
             manifest = backup.install.json_bytes(snapshot.manifest(), maximum=self.storage.limits.manifest_bytes)
+            entry = next(e for e in manifest["entries"] if e["path"] == recovery.PGROOT)
+            type(self).cluster_observations.append((self._testMethodName, "source",
+                                                   entry["uid"], entry["gid"], entry["mode"]))
             self.storage.crypt(plain, cipher)
             self.check_stopped()
         self.storage.crypt(cipher, decrypted, decrypt=True)
@@ -261,6 +270,9 @@ class PreupgradeDockerTests(unittest.TestCase):
         with decrypted.open("rb") as stream:
             self.assertEqual(files.restore_archive(stream, self.storage.limits, str(restored),
                              self.storage.reserve, profile="preupgrade"), manifest)
+        observed = (restored / recovery.PGROOT).stat(follow_symlinks=False)
+        type(self).cluster_observations.append((self._testMethodName, "restored",
+            observed.st_uid, observed.st_gid, stat.S_IMODE(observed.st_mode)))
         return restored, {"files": manifest, "database": copy.deepcopy(self.audit)}
 
     def assert_no_verifier(self):
@@ -285,7 +297,8 @@ class PreupgradeDockerTests(unittest.TestCase):
         with self.storage.temporary(".preupgrade-") as stage:
             restored, expected = self.restore_files(stage)
             expected["database"]["catalog_sha256"] = "sha256:" + "0" * 64
-            with self.assertRaises(recovery.runtime.RuntimeErrorCode):
+            with self.assertRaisesRegex(recovery.runtime.RuntimeErrorCode,
+                                        "^PREUPGRADE_RESTORE_AUDIT_MISMATCH$"):
                 self.storage.verify_cluster(restored, expected)
             self.assert_no_verifier()
 
@@ -293,14 +306,19 @@ class PreupgradeDockerTests(unittest.TestCase):
         with self.storage.temporary(".preupgrade-") as stage:
             restored, expected = self.restore_files(stage)
             original = self.docker.call
+            created = []
             def lost_response(args, timeout=15):
                 result = original(args, timeout)
                 if args[0] == "create":
+                    self.assertRegex(result.strip(), "^[0-9a-f]{64}$")
+                    created.append(result.strip())
                     raise recovery.runtime.RuntimeErrorCode("SIMULATED_LOST_CREATE_RESPONSE")
                 return result
             with mock.patch.object(self.docker, "call", side_effect=lost_response), \
-                    self.assertRaises(recovery.runtime.RuntimeErrorCode):
+                    self.assertRaisesRegex(recovery.runtime.RuntimeErrorCode,
+                                           "^SIMULATED_LOST_CREATE_RESPONSE$"):
                 self.storage.verify_cluster(restored, expected)
+            self.assertEqual(len(created), 1)
             self.assert_no_verifier()
 
     def test_corrupt_control_with_valid_archive_hash_fails_native_cluster_validation(self):
@@ -315,7 +333,8 @@ class PreupgradeDockerTests(unittest.TestCase):
                 roots.append(files.Root(name, str(path), info.st_uid, info.st_gid, info.st_mode & 0o7777))
             with files.Snapshot(roots, self.storage.limits, profile="preupgrade") as snapshot:
                 expected["files"] = backup.install.json_bytes(snapshot.manifest(), maximum=self.storage.limits.manifest_bytes)
-            with self.assertRaises(recovery.runtime.RuntimeErrorCode):
+            with self.assertRaisesRegex(recovery.runtime.RuntimeErrorCode,
+                                        "^PREUPGRADE_VERIFY_CONTROL$"):
                 self.storage.verify_cluster(restored, expected)
             self.assert_no_verifier()
 

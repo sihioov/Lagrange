@@ -1,7 +1,9 @@
 # R2 recovery fixture metadata correction: hosted verification
 
-Roadmap R2-04/R2-09; Wave84. Status: POLICY FAILED; other CI jobs still
-running at2026-10-16T11:57:54UTC. Full recovery and disposition remain pending.
+Roadmap R2-04/R2-09; Wave84. Status: FAILED, FULL RESULT RECOVERED.
+The run completed at2026-10-16T12:08:31UTC. All8 jobs and full log hashes,
+7 actual candidate checkouts,1114 pins and504 committed blobs were recovered
+and compared before any successor executable edit.
 
 Candidate `6572bff9d8e75057d15ecb969f287cec8771374f` is in
 [CI38896226384, attempt1](https://github.com/sihioov/Lagrange/actions/runs/38896226384).
@@ -53,8 +55,8 @@ Inventory SHA256:
 Frozen inputs/inventory and the launch receipt are under
 `target/r2-daily-beta/wp-4-integration/wave84-first-rollout-metadata-*`.
 
-Keep executable inputs frozen until the exact run is terminal and its full
-result is recovered. Missing or unprinted nested outcomes remain UNKNOWN.
+Executable inputs remained frozen until the exact run was terminal and its full
+result was recovered. Missing or unprinted nested outcomes remain UNKNOWN.
 At the reporting bound, reconcile the actual run; time elapsed does not prove
 termination and does not authorize a duplicate run.
 
@@ -62,7 +64,7 @@ Actual candidate images, approved-base host integration, diagram PNGs and
 integration, independent review, G3/G4 operations, Owner use and three
 consecutive trading days remain open. R2/final C_R2 are not complete.
 
-## Partial recovery and newly exposed test limitation
+## Earlier partial recovery and newly exposed test limitation
 
 The policy job completed with failure at11:50:55UTC. Its full log digest is
 `f1968cb01dc32fec5508440b458681216313cd3c8e08f58667ac663bd088fafc`.
@@ -96,3 +98,33 @@ and restored metadata; do not infer it from an upstream image's current source.
 No new dispatch, local project execution, worker or operational action occurred
 during this recovery. Remaining operations and the three-day observation have
 not started.
+
+## Final disposition
+
+Format, strict Clippy, Python, Web, workspace Rust and PostgreSQL jobs passed.
+Policy and the required aggregate failed. All98 first-rollout definitions have
+named outcomes:97 printed PASS and1 ERROR. Three of those PASS rows have the
+coverage defect described above; this candidate is not accepted.
+
+All carried required named groups matched current results. PostgreSQL has19
+exit0/no-SKIP targets,146 named rows, both sets of62 migration SHA384 values,
+0060's32 named/73 subcases,83 bootstrap cases,0039/catalog checks and cleanup.
+Web has129+14 complete browser cases, zero skip/flaky/retry, cleanup,24 daily
+markers and34 supervisor rows. Python has487 pass/10 existing skip/7 warnings.
+
+The first workspace extraction associated some rows with a later Cargo header
+printed early on stderr. A same-log-hash supplement binds headers to complete
+stdout test-block boundaries instead:231 Cargo blocks,203 corrected enclosing
+binary associations and one recovered complete `should panic` row. It retains
+3363 complete printed rows (3357 ok/6 ignored) as printed evidence, not unique
+test coverage. Two fragmented results and independent nested-helper attribution
+remain UNKNOWN; totals do not supply missing named evidence. The original
+extraction is preserved. No required named row remains UNKNOWN.
+
+Full sanitized evidence and disposition are in
+`target/r2-daily-beta/ci/6572bff/`; the aggregate SHA256 is
+`97581db12fad97b3a7d72f4f0afc6aa7036f391d302a4f2d363445c909885218`.
+Raw logs were held only in memory. No run was rerun, cancelled or duplicated.
+The next bounded correction addresses owner-private PGDATA compatibility and
+the three native assertion gaps together. Runtime/Owner/three-day/final R2
+acceptance remains open.

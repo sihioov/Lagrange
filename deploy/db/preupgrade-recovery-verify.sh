@@ -11,15 +11,17 @@ export PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null PGCONNECT_TIMEOUT=10 LC_ALL=
 for name in postmaster.pid backup_label tablespace_map standby.signal recovery.signal; do
   [[ ! -e "$PGDATA/$name" && ! -L "$PGDATA/$name" ]] || exit 1
 done
-control=$(pg_controldata "$PGDATA")
+# Exit73 is reserved for this native control-file/shutdown-state boundary.
+# The caller binds it to the exact owned clone; no free-form stderr is retained.
+control=$(pg_controldata "$PGDATA" 2>/dev/null) || exit 73
 cluster_state=
 while IFS= read -r line; do
   if [[ "$line" =~ ^Database\ cluster\ state:[[:space:]]+(.*)$ ]]; then
-    [[ -z "$cluster_state" ]] || exit 1
+    [[ -z "$cluster_state" ]] || exit 73
     cluster_state=${BASH_REMATCH[1]}
   fi
 done <<<"$control"
-[[ "$cluster_state" == 'shut down' ]] || exit 1
+[[ "$cluster_state" == 'shut down' ]] || exit 73
 unset control line cluster_state
 printf '%s\n' 'local all all trust' > /tmp/verify-hba.conf
 : > /tmp/verify-ident.conf

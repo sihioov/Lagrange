@@ -116,6 +116,41 @@ class PreupgradeRecoveryTests(unittest.TestCase):
         self.assertEqual((wal.stat().st_uid, wal.stat().st_gid, wal.stat().st_mode & 0o777),
                          (999, 999, 0o600))
 
+    def test_cluster_owner_accepts_and_preserves_exact_private_ownership_variants(self):
+        pgroot = self.directory / recovery.PGROOT
+        for index, (uid, gid, mode) in enumerate(((999, 0, 0o700), (999, 999, 0o700), (999, 999, 0o750))):
+            with self.subTest(uid=uid, gid=gid, mode=mode):
+                os.chown(pgroot, uid, gid)
+                pgroot.chmod(mode)
+                data = self.archive()
+                manifest = self.inspect(data)
+                restored = self.directory / ("restored-" + str(index))
+                restored.mkdir(mode=0o700)
+                self.assertEqual(files.restore_archive(io.BytesIO(data), self.limits, str(restored),
+                                 profile="preupgrade"), manifest)
+                observed = (restored / recovery.PGROOT).stat(follow_symlinks=False)
+                self.assertEqual((observed.st_uid, observed.st_gid, observed.st_mode & 0o7777),
+                                 (uid, gid, mode))
+                roots = [files.Root(name, str(restored / name), entry["uid"], entry["gid"], entry["mode"])
+                         for name in files.PREUPGRADE_CLASSES
+                         for entry in manifest["entries"] if entry["path"] == name]
+                with files.Snapshot(roots, self.limits, profile="preupgrade") as snapshot:
+                    self.assertEqual(snapshot.manifest(), files.canonical(manifest))
+                version = (restored / recovery.VERSION).read_bytes()
+                recovery.cluster_manifest(manifest, version)
+
+    def test_cluster_owner_rejects_other_principals_or_shared_root_group(self):
+        pgroot = self.directory / recovery.PGROOT
+        for uid, gid, mode in ((0, 0, 0o700), (0, 999, 0o700), (10001, 0, 0o700),
+                              (999, 10001, 0o700), (999, 10002, 0o700), (999, 10003, 0o700),
+                              (999, 0, 0o750), (999, 0, 0o755), (999, 999, 0o755)):
+            with self.subTest(uid=uid, gid=gid, mode=mode):
+                os.chown(pgroot, uid, gid)
+                pgroot.chmod(mode)
+                with self.assertRaisesRegex(recovery.runtime.RuntimeErrorCode,
+                                            "^PREUPGRADE_CLUSTER_OWNER$"):
+                    self.inspect()
+
     def test_daily_reader_and_writer_reject_cold_profile_without_opt_in(self):
         with self.assertRaises(files.SnapshotError):
             files.Snapshot(self.roots, self.limits)
