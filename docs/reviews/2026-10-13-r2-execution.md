@@ -4242,3 +4242,12 @@ publication. Its fixture creates six roles but omits required daily_input_admitt
 Actual catalog not printed; no production defect inferred. Suppressed cleanup
 statuses remainUNKNOWN. CI workspace/Web/PG still running; no source mutation
 until full terminal recovery. No rerun/cancel/duplicate, monitorf50af5d3 retained.
+
+Wave88 Web/PG recovery at19:45UTC: six execution jobs successful; workspace
+Cargo step remains active and required aggregate not yet created. Seven full
+logs and actual checkout SHAs recovered including failed smoke. Web34supervisor/
+6contract/18UI and129+14browser identities allPASS with cleanup/reservation;
+PG19zero-exit/noSKIP processes/146names/0060 32+73/83bootstrap/62sourcechecksums
+twice/0039/cleanup matched. Raw logs only in memory. Smoke0060fixture failure and
+cleanupUNKNOWN remain; no source edits/new dispatch. Monitorf50af5d3 unchanged,
+source frozen until full terminal recovery. See integrated-candidate-ci report.

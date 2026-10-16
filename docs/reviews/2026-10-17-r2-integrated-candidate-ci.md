@@ -8,9 +8,9 @@ Candidate: `492cbae5618f695c3e27126e4ccf490a1ffda981`.
 Reviewed executable candidate: `692f57f792e5090e267a8dd533bea4c3328c985c`.
 The intervening changes are documentation, including the D02 evidence template.
 
-| Required run | Exact run / attempt | Created UTC | Initial observed state |
+| Required run | Exact run / attempt | Created UTC | Latest recovered state |
 | --- | --- | --- | --- |
-| Required CI | [38955175446 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955175446) | 2026-10-16 19:28:29 | 19:35UTC: format/policy/Clippy/Python success; workspace/Web/PG running; aggregate not yet created |
+| Required CI | [38955175446 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955175446) | 2026-10-16 19:28:29 | 19:44UTC: format/policy/Clippy/Python/Web/PG success; workspace running; aggregate not yet created |
 | Functional research-worker smoke | [38955182520 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955182520) | 2026-10-16 19:28:33 | FAILED before functional image/publication stages; details below |
 
 Both are `workflow_dispatch` on `excited-dolphin` at the exact candidate SHA.
@@ -34,7 +34,7 @@ Frozen inputs:
 
 Launch receipts are `ci-launch.json` and `research-smoke-launch.json` beside
 the inputs. Sanitized current metadata is in
-`target/r2-daily-beta/ci/492cbae/`. Raw logs are not persisted. Five terminal job logs and actual checkout SHAs are recovered below; remaining
+`target/r2-daily-beta/ci/492cbae/`. Raw logs are not persisted. Seven terminal job logs and actual checkout SHAs are recovered below; remaining
 job logs, qualified outcomes and cleanup are not yet fully recovered; aggregate counts alone cannot establish named-test acceptance.
 Unprinted nested independent rows and exits remain UNKNOWN.
 
@@ -79,3 +79,34 @@ preserved and will not be rerun or cancelled. The required CI is still running;
 source/frozen inputs remain untouched. Only after terminal complete recovery
 will the coordinator make the bounded fixture correction and bind successor
 verification. No new worker, local execution or production operation occurred.
+
+## 2026-10-16 19:40–19:45 UTC Web and PostgreSQL recovery
+
+Six of seven execution jobs are now successful. The workspace Cargo test step
+is still running (started19:32:37UTC); the required aggregate is not yet created.
+No new source changes or workflow dispatch occurred. Current receipts include
+seven complete log hashes and seven actual checkout SHAs, counting the failed
+separate smoke. Each checkout matches492cbae. All1,149 frozen input pins still match.
+
+Web log SHA256 is
+`463e007bc40b75b37d51520e9ee6c6c319ad6f38f12505832345be5963e69e86`.
+All34 supervisor names,6 daily-contract names and18 UI names match their
+expected sets and PASS. The two hosted browser lanes contain129 and14 unique
+case identities, all passed once with no skips/retries/flaky cases. Both record
+cleanup and reservation success. These overlapping scopes are not summed as
+unique tests.
+
+PostgreSQL log SHA256 is
+`31bac55c584a1ae6ab56c0e6224f3eaf460fd09edf387ad38ac3dc0246642467`.
+All19 explicit process exits are0 with no SKIP;146 qualified named rows match
+the required sets and PASS. Migration0060 has32 named results and73 subcases;
+all83 bootstrap cases match. First install and no-op rerun each report62 current
+migration checksums, independently matched to local source SHA384 values.
+The0039 guard, role-login checks and cleanup PASS_NO_OWNED_CONTAINERS are
+recorded in the current run. Unprinted nested helper independent outcomes
+remain UNKNOWN.
+
+`target/r2-daily-beta/ci/492cbae/web-pg-reconciliation.json` binds this partial
+disposition to both complete log hashes and named results. The failed functional
+smoke and its unknown cleanup are separate and preserved. Required CI completion,
+full candidate disposition and all host/final-release gates remain open.
