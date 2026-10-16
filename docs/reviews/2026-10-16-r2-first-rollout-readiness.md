@@ -46,7 +46,7 @@ Concrete source:
 [V2 full dump](../../scripts/ops/lib/owner-beta-daily-backup.py#L313),
 [daily-table audit](../../deploy/db/owner-beta-daily-backup-audit.sql#L19).
 
-Before any upgrade, the remaining bounded preparation is a maintenance recovery
+Before any upgrade, the required bounded preparation is a maintenance recovery
 procedure for the actual pre-upgrade schema. It must capture complete database
 state and all referenced Raw/Curated/approved-base files while every relevant
 writer is stopped or fenced, and verify them in a disposable isolated restore.
@@ -110,8 +110,28 @@ The next integrated test must use the actual compiled V3 approval pins and
 unaltered approval API. `produce_daily_once` opens the approved historical root
 before constructing the protected prefix; the admitter repeats approval
 independently. Neither a dummy base nor a replacement test registry closes this
-gate. See [producer](../../crates/job-queue/src/owner_beta/runner/daily_ingest.rs#L500)
-and [admitter](../../crates/job-queue/src/owner_beta/runner/daily_ingest.rs#L790).
+gate. See [producer](../../crates/job-queue/src/owner_beta/runner/daily_ingest.rs#L513)
+and [admitter](../../crates/job-queue/src/owner_beta/runner/daily_ingest.rs#L803).
+
+Source tracing found C04, an actual path-contract mismatch before execution:
+the [installed config](../../scripts/ops/lib/owner-beta-daily-release.py#L32)
+and [read-only mount](../../deploy/compose/compose.owner-beta-daily.yml#L86)
+both name `/data/raw`, while the
+[evidence reader](../../crates/market-data/src/daily_price_only/source.rs#L1180)
+adds its own `raw` child. Passing the configured leaf unchanged therefore
+selected `/data/raw/raw`. The
+[ingest boundary](../../crates/job-queue/src/owner_beta/runner/daily_ingest.rs#L231)
+now requires the terminal component `raw` and passes only its parent to that
+existing reader. Mounts, the policy/approval registry and the reader's held-FD,
+no-follow, ownership and shared-lock checks remain unchanged.
+
+Four new regression definitions use the actual reader on private filesystem
+fixtures: correct outer scope despite malformed nested decoys, no fallback to
+valid nested controls when the selected scope is absent, a symlink refusal and
+explicit path-name validation. Three require Linux. They are WRITTEN_UNEXECUTED;
+edition2024 rustfmt and whitespace checks are not compiler/runtime acceptance.
+The earlier Wave81 hosted success remains scoped evidence and did not prove
+this installed path. C04 stays in the same Wave82 candidate, without separate CI.
 
 Prepare a disposable host-local test using read-only approved-base input,
 explicitly isolated fixture Raw, an empty schema62 database and unique test

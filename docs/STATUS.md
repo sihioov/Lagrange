@@ -4475,3 +4475,11 @@ See `docs/runbooks/r2-preupgrade-recovery.md` and private checkpoint
 Next: actual approved-base whole flow, coherent review and one hosted candidate;
 then diagrams/independent review/G3-G4/operations/Owner/three trading days.
 Existing read-only/EOD approvals remain; no new operational authority claimed.
+
+2026-10-16, Wave82 C04: whole-flow source tracing found the installed `/data/raw`
+leaf was passed to a reader that adds `raw`, selecting `/data/raw/raw`. The
+ingest adapter now validates the leaf and passes its parent. Four new direct
+filesystem/path definitions are WRITTEN_UNEXECUTED (Wave82 total76); scoped
+Rust2024 formatting/whitespace only. Full evidence and remaining whole-flow work
+are in [first-rollout readiness](reviews/2026-10-16-r2-first-rollout-readiness.md).
+No new CI, worker, local project execution or production action.

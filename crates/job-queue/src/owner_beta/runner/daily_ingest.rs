@@ -223,6 +223,18 @@ fn canonical_absolute(path: &Path) -> bool {
             .skip(1)
             .all(|part| matches!(part, Component::Normal(_)))
 }
+
+/// The installed setting names the mounted Raw leaf. The evidence reader takes
+/// its data-directory parent and opens the fixed `raw` child itself. Never pass
+/// the mounted leaf as a data directory or silently accept a differently named
+/// leaf: either would select a different source tree.
+fn raw_data_root(raw_root: &Path) -> Result<&Path, IngestError> {
+    if !canonical_absolute(raw_root) || raw_root.file_name().is_none_or(|name| name != "raw") {
+        return Err(IngestError::Configuration);
+    }
+    raw_root.parent().ok_or(IngestError::Configuration)
+}
+
 fn validate_settings(
     settings: &Settings,
 ) -> Result<(DailyArtifactNameLimits, DailyReplayLimits), IngestError> {
@@ -251,6 +263,7 @@ fn validate_settings(
     {
         return Err(IngestError::Configuration);
     }
+    raw_data_root(&settings.raw_root)?;
     ScanLimits::new(settings.scan.values()).map_err(|_| IngestError::Configuration)?;
     let names = DailyArtifactNameLimits::new(settings.max_artifact_entries)
         .map_err(|_| IngestError::Configuration)?;
@@ -384,7 +397,7 @@ fn capture_raw(
     config: &DailyIngestConfig,
     clock: &CycleClock<'_>,
 ) -> Result<[CommittedRawSnapshot; 2], IngestError> {
-    let reader = CommittedRawReader::new(&config.settings.raw_root);
+    let reader = CommittedRawReader::new(raw_data_root(&config.settings.raw_root)?);
     let capture = |provider| {
         clock.check()?;
         let scope = ApprovedRawScope::new(provider, "kr", config.settings.raw_owner_uid)
@@ -1114,6 +1127,7 @@ mod tests {
             ("raw_root", json!("/")),
             ("raw_root", json!("/raw/../other")),
             ("raw_root", json!("/raw//data")),
+            ("raw_root", json!("/data/not-raw")),
             ("candidate_root", json!("/artifacts/admitted/child")),
             ("frontier_root", json!("/artifacts/admitted")),
             ("code_commit", json!("abcdef0")),
@@ -1140,6 +1154,123 @@ mod tests {
         zero["scan"]["max_manifest_records"] = json!(0);
         assert!(validate_settings(&serde_json::from_value(zero).unwrap()).is_err());
     }
+
+    #[cfg(target_os = "linux")]
+    fn raw_controls(raw: &Path, manifest: &[u8]) {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(raw).unwrap();
+        fs::set_permissions(raw, fs::Permissions::from_mode(0o750)).unwrap();
+        for provider in ["kis", "kis-calendar"] {
+            let mut path = raw.to_path_buf();
+            for part in [
+                "manifests".to_owned(),
+                format!("provider={provider}"),
+                "market=kr".to_owned(),
+            ] {
+                path.push(part);
+                fs::create_dir_all(&path).unwrap();
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
+            }
+            for (name, bytes) in [("commit.lock", &b""[..]), ("manifest.jsonl", manifest)] {
+                let leaf = path.join(name);
+                fs::write(&leaf, bytes).unwrap();
+                fs::set_permissions(leaf, fs::Permissions::from_mode(0o640)).unwrap();
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn raw_capture_fixture() -> (tempfile::TempDir, DailyIngestConfig) {
+        use std::os::unix::fs::MetadataExt;
+        let temp = tempfile::tempdir().unwrap();
+        let mut value = config();
+        value.settings.raw_root = temp.path().join("data/raw");
+        value.settings.raw_owner_uid = temp.path().metadata().unwrap().uid();
+        // This fixture exercises only the actual Raw reader boundary. It does
+        // not approve a historical artifact or claim an admitted daily input.
+        (temp, value)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn daily_ingest_reads_mounted_raw_leaf_once_and_never_nested_decoy() {
+        let (_temp, config) = raw_capture_fixture();
+        raw_controls(&config.settings.raw_root, b"");
+        raw_controls(
+            &config.settings.raw_root.join("raw"),
+            b"invalid-nested-manifest\n",
+        );
+        let stop = AtomicBool::new(false);
+        let clock = CycleClock::new(&config, &stop);
+        let snapshots = capture_raw(&config, &clock).unwrap();
+        for (snapshot, provider) in snapshots.iter().zip(["kis", "kis-calendar"]) {
+            assert_eq!(snapshot.scope().provider(), provider);
+            assert!(snapshot.manifest_bytes().is_empty());
+            assert!(snapshot.batches().is_empty());
+        }
+        assert_eq!(
+            raw_data_root(Path::new("/data/raw")).unwrap(),
+            Path::new("/data")
+        );
+        assert_eq!(raw_data_root(Path::new("/raw")).unwrap(), Path::new("/"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn daily_ingest_missing_raw_controls_cannot_fall_back_to_nested_tree() {
+        let (_temp, config) = raw_capture_fixture();
+        raw_controls(&config.settings.raw_root.join("raw"), b"");
+        let stop = AtomicBool::new(false);
+        assert!(matches!(
+            capture_raw(&config, &CycleClock::new(&config, &stop)),
+            Err(IngestError::InputBlocked)
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn daily_ingest_raw_leaf_symlink_keeps_reader_no_follow_boundary() {
+        use std::{fs, os::unix::fs::symlink};
+        let (_temp, config) = raw_capture_fixture();
+        let parent = config.settings.raw_root.parent().unwrap();
+        let target = parent.join("different-source");
+        raw_controls(&target, b"");
+        symlink(&target, &config.settings.raw_root).unwrap();
+        let stop = AtomicBool::new(false);
+        assert!(matches!(
+            capture_raw(&config, &CycleClock::new(&config, &stop)),
+            Err(IngestError::InputBlocked)
+        ));
+        assert!(
+            fs::symlink_metadata(&config.settings.raw_root)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read(target.join("manifests/provider=kis/market=kr/manifest.jsonl")).unwrap(),
+            b""
+        );
+    }
+
+    #[test]
+    fn daily_ingest_raw_leaf_name_is_explicit_without_filesystem_resolution() {
+        for invalid in [
+            "/data",
+            "/data/renamed",
+            "/data/Raw",
+            "/data/raw/",
+            "relative/raw",
+            "/data/../raw",
+        ] {
+            assert!(matches!(
+                raw_data_root(Path::new(invalid)),
+                Err(IngestError::Configuration)
+            ));
+        }
+    }
+
     #[tokio::test]
     async fn daily_ingest_disabled_and_interrupted_cycles_never_open_protected_inputs_or_database()
     {

@@ -4022,3 +4022,10 @@ See `docs/runbooks/r2-preupgrade-recovery.md` and private checkpoint
 Next: actual approved-base whole flow, coherent review and one hosted candidate;
 then diagrams/independent review/G3-G4/operations/Owner/three trading days.
 Existing read-only/EOD approvals remain; no new operational authority claimed.
+
+2026-10-16, Wave82 C04: installed Raw leaf/data-root mismatch is concretely
+dispositioned in [first-rollout readiness](2026-10-16-r2-first-rollout-readiness.md).
+Only `daily_ingest.rs` changes executable bytes; four new regressions are
+WRITTEN_UNEXECUTED, including nested-decoy/no-fallback and symlink boundaries.
+Wave82 total76. Scoped Rust2024 formatting/whitespace only; same coherent
+candidate, no separate CI or acceptance. Native whole flow remains next.

@@ -5957,3 +5957,12 @@ See `docs/runbooks/r2-preupgrade-recovery.md` and private checkpoint
 Next: actual approved-base whole flow, coherent review and one hosted candidate;
 then diagrams/independent review/G3-G4/operations/Owner/three trading days.
 Existing read-only/EOD approvals remain; no new operational authority claimed.
+
+2026-10-16, Wave82 C04: correct the proven installed `/data/raw` versus reader
+data-root mismatch at the ingest adapter only. Preserve installer, read-only
+mounts, approval policy and the frozen reader contract. Four new regression
+definitions (three Linux filesystem cases, one path validation) are unexecuted;
+Wave82 total76. The source tracing is recorded in
+`docs/reviews/2026-10-16-r2-first-rollout-readiness.md`. Complete the host-local
+approved-base process/DB/API/recovery harness before one coherent hosted
+candidate; this source checkpoint is neither whole-flow nor R2 completion.
