@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: 후보 `6572bff`의 [Wave84 CI 전체 실패](reviews/2026-10-16-r2-first-rollout-metadata-ci.md)를 회수했다.6개 실행 job은 통과했고 policy/required가 실패했다.98개 정의 중97개는 로그상 PASS,1개는 ERROR였으며 native 음성3개의 의도한 단계 검증은 성립하지 않았다. 이후 [Wave85 보정](reviews/2026-10-16-r2-preupgrade-ownership-correction.md)으로 소유자 전용 PGDATA 조합·native 오류 단계 검증을 함께 수정하고2개 회귀를 추가했다.100개 정의는 새 후보 검증 전이다. 실제 이미지/호스트·다이어그램/독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료다.
+현재: Wave84 전체 실패 회수 후 소유권·native 실패 단계 보정을 후보 `f215665`로 묶었다. [Wave85 CI38901117928 attempt1](reviews/2026-10-16-r2-preupgrade-ownership-ci.md)을 기존 실행0·원격 일치 확인 뒤 한 번 시작했다(12:31:30UTC).1137 pins/506 blobs/100개 정의를 고정했으며 결과는 미인수다. 이전 native 소유권 오류와 음성3개의 검증 한계를 보존한다. 실제 이미지/호스트·다이어그램/독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
