@@ -1806,6 +1806,25 @@ while True: time.sleep(0.05)
             runner.emit_hosted_lane_evidence(outcome)
         self.assertEqual(json.loads(output.getvalue().split(":", 1)[1]), row)
 
+        # A step timeout can lack a stack/errorLocation in Playwright's JSON.
+        # Only the fixed phase identifier may leave the private report.
+        switched = runner.Case(
+            runner.CaseKey("chromium", "tests/e2e/owner-beta-recommendations.spec.ts", 273,
+                           "fixture", "id3"), (), "unexpected", "passed",
+            ({"status": "failed", "retry": 0, "steps": [
+                {"title": "R2_DAILY_SWITCH_SETUP"},
+                {"title": "R2_DAILY_SWITCH_SELECT", "error": {"message": "PRIVATE_ERROR"}},
+                {"title": "R2_DAILY_SWITCH_SELECT", "error": {"stack": "PRIVATE_STACK"}},
+                {"title": "R2_DAILY_SWITCH_CLEANUP"},
+            ]},), ())
+        projected = runner.hosted_lane_evidence(runner.LaneOutcome(
+            "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[switched]))
+        self.assertEqual(projected["cases"][0]["attempts"], [{
+            "status": "failed", "retry": 0, "failed_steps": ["R2_DAILY_SWITCH_SELECT"],
+        }])
+        self.assertNotIn("PRIVATE_ERROR", json.dumps(projected))
+        self.assertNotIn("PRIVATE_STACK", json.dumps(projected))
+
     def test_hosted_lane_evidence_excludes_untrusted_text_and_token_fields(self) -> None:
         sentinel = "PRIVATE_SENTINEL_DO_NOT_EMIT"
         case = runner.Case(runner.CaseKey(sentinel, sentinel, -1, sentinel, sentinel),
@@ -1841,6 +1860,35 @@ while True: time.sleep(0.05)
                 "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[failed]))
             self.assertNotIn("error_location", rejected["cases"][0]["attempts"][0])
             self.assertNotIn(sentinel, json.dumps(rejected))
+
+        for steps in [
+            sentinel, None, {},
+            [sentinel, None, [], {"title": sentinel, "error": {"message": sentinel}}],
+            [{"title": "R2_DAILY_SWITCH_SELECT", "error": sentinel}],
+            [{"title": "R2_DAILY_SWITCH_SELECT"}],
+            [{"title": ["R2_DAILY_SWITCH_SELECT"], "error": {}}],
+            [{"title": "R2_DAILY_SWITCH_SELECT", "steps": [
+                {"title": sentinel, "error": {"message": sentinel}},
+            ]}],
+        ]:
+            failed = runner.Case(
+                runner.CaseKey("chromium", "tests/e2e/owner-beta-recommendations.spec.ts", 273,
+                               "fixture", "id"), (), "unexpected", "passed",
+                ({"status": "timedOut", "retry": 0, "steps": steps},), ())
+            projected = runner.hosted_lane_evidence(runner.LaneOutcome(
+                "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[failed]))
+            self.assertNotIn("failed_steps", projected["cases"][0]["attempts"][0])
+            self.assertNotIn(sentinel, json.dumps(projected))
+        for source, status in [
+            (runner.STOCK_BETA_FILE, "failed"),
+            ("tests/e2e/owner-beta-recommendations.spec.ts", "passed"),
+        ]:
+            case = runner.Case(runner.CaseKey("chromium", source, 273, "fixture", "id"),
+                               (), "unexpected", "passed", ({"status": status, "retry": 0,
+                               "steps": [{"title": "R2_DAILY_SWITCH_SELECT", "error": {}}]},), ())
+            projected = runner.hosted_lane_evidence(runner.LaneOutcome(
+                "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[case]))
+            self.assertNotIn("failed_steps", projected["cases"][0]["attempts"][0])
 
 
 if __name__ == "__main__":

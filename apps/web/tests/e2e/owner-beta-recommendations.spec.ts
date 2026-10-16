@@ -274,16 +274,23 @@ test("daily configuration switch isolates dates and late client observations", a
   page,
   request,
 }) => {
-  await setScenario(request, {
-    ...OWNER_DAILY,
-    dailyConfigs: "two",
-    dailyEnabled: "true",
-    dailyRuntime: "enabled",
-    dailyState: "current",
-  });
-  await page.goto("/recommendations");
+  const stepOptions = { timeout: 5_000 };
   const panel = page.getByRole("region", { name: "Daily recommendation status" });
-  await expect(panel).toContainText("Expected session published");
+  await test.step(
+    "R2_DAILY_SWITCH_SETUP",
+    async () => {
+      await setScenario(request, {
+        ...OWNER_DAILY,
+        dailyConfigs: "two",
+        dailyEnabled: "true",
+        dailyRuntime: "enabled",
+        dailyState: "current",
+      });
+      await page.goto("/recommendations", { timeout: 5_000 });
+      await expect(panel).toContainText("Expected session published");
+    },
+    stepOptions,
+  );
   let release: (() => void) | undefined;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -311,43 +318,90 @@ test("daily configuration switch isolates dates and late client observations", a
       delivered = true;
     }
   };
-  await page.route(matchDaily, holdDaily, { times: 1 });
   try {
-    await panel.getByRole("button", { name: "Refresh daily status" }).click({ noWaitAfter: true });
-    await expect
-      .poll(() => intercepted, {
-        message: "old configuration response intercepted",
-        timeout: 5_000,
-      })
-      .toBe(true);
-    await page
-      .getByLabel("Select a strategy configuration.", { exact: true })
-      .selectOption(SECOND_DAILY_CONFIG_ID);
-    await page
-      .getByRole("button", { name: "View this configuration" })
-      .click({ noWaitAfter: true });
-    await expect(page).toHaveURL(new RegExp(`daily_config_id=${SECOND_DAILY_CONFIG_ID}`));
-    release?.();
-    await expect
-      .poll(() => delivered, { message: "old configuration response completed", timeout: 5_000 })
-      .toBe(true);
-    if (deliveryRejected) {
-      await expect
-        .poll(() => oldRequest !== undefined && oldRequest.failure() !== null, {
-          message: "navigation canceled the old configuration request",
+    await test.step(
+      "R2_DAILY_SWITCH_HOLD",
+      async () => {
+        await page.route(matchDaily, holdDaily, { times: 1 });
+        await panel.getByRole("button", { name: "Refresh daily status" }).click({
+          noWaitAfter: true,
           timeout: 5_000,
-        })
-        .toBe(true);
-    }
-    await expect(panel).toContainText("Automatic updates off");
-    await expect(panel).not.toContainText("Oct 15, 2026");
-    await expect(page.getByRole("switch")).toHaveAttribute("aria-checked", "false");
-    await expect(
-      page.getByRole("region", { name: "Owner-only recommendation", exact: true }),
-    ).toHaveCount(0);
+        });
+        await expect
+          .poll(() => intercepted, {
+            message: "old configuration response intercepted",
+            timeout: 5_000,
+          })
+          .toBe(true);
+      },
+      stepOptions,
+    );
+    await test.step(
+      "R2_DAILY_SWITCH_SELECT",
+      async () => {
+        // The wrapping label also contains the option text. Match its fixed
+        // prompt, then require the exact form control before changing its value.
+        const selector = page.getByLabel(/^Select a strategy configuration\./);
+        await expect(selector).toHaveAttribute("id", "daily-config-id");
+        await expect(selector).toHaveAttribute("name", "daily_config_id");
+        await selector.selectOption(SECOND_DAILY_CONFIG_ID, { timeout: 5_000 });
+        await expect(selector).toHaveValue(SECOND_DAILY_CONFIG_ID);
+      },
+      stepOptions,
+    );
+    await test.step(
+      "R2_DAILY_SWITCH_NAVIGATE",
+      async () => {
+        await page.getByRole("button", { name: "View this configuration" }).click({
+          noWaitAfter: true,
+          timeout: 5_000,
+        });
+        await expect(page).toHaveURL(new RegExp(`daily_config_id=${SECOND_DAILY_CONFIG_ID}`));
+      },
+      stepOptions,
+    );
+    await test.step(
+      "R2_DAILY_SWITCH_RELEASE",
+      async () => {
+        release?.();
+        await expect
+          .poll(() => delivered, {
+            message: "old configuration response completed",
+            timeout: 5_000,
+          })
+          .toBe(true);
+        if (deliveryRejected) {
+          await expect
+            .poll(() => oldRequest !== undefined && oldRequest.failure() !== null, {
+              message: "navigation canceled the old configuration request",
+              timeout: 5_000,
+            })
+            .toBe(true);
+        }
+      },
+      stepOptions,
+    );
+    await test.step(
+      "R2_DAILY_SWITCH_VERIFY",
+      async () => {
+        await expect(panel).toContainText("Automatic updates off");
+        await expect(panel).not.toContainText("Oct 15, 2026");
+        await expect(page.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+        await expect(
+          page.getByRole("region", { name: "Owner-only recommendation", exact: true }),
+        ).toHaveCount(0);
+      },
+      stepOptions,
+    );
   } finally {
     release?.();
-    await page.unroute(matchDaily, holdDaily);
+    await test.step(
+      "R2_DAILY_SWITCH_CLEANUP",
+      async () => {
+        await page.unroute(matchDaily, holdDaily);
+      },
+      stepOptions,
+    );
   }
 });
 

@@ -1498,6 +1498,24 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
                 and column is not None and column > 0
             ):
                 result["error_location"] = {"file": case_file, "line": line, "column": column}
+        if (
+            result["status"] in {"failed", "timedOut", "interrupted"}
+            and case_file == "tests/e2e/owner-beta-recommendations.spec.ts"
+            and isinstance(row.get("steps"), list)
+        ):
+            known_steps = {
+                "R2_DAILY_SWITCH_SETUP", "R2_DAILY_SWITCH_HOLD",
+                "R2_DAILY_SWITCH_SELECT", "R2_DAILY_SWITCH_NAVIGATE",
+                "R2_DAILY_SWITCH_RELEASE", "R2_DAILY_SWITCH_VERIFY",
+                "R2_DAILY_SWITCH_CLEANUP",
+            }
+            failed_steps = [
+                step["title"] for step in row["steps"][:32]
+                if isinstance(step, dict) and isinstance(step.get("title"), str)
+                and step["title"] in known_steps and isinstance(step.get("error"), dict)
+            ]
+            if failed_steps:
+                result["failed_steps"] = list(dict.fromkeys(failed_steps))
         return result
 
     cases = []

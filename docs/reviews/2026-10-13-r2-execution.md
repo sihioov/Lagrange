@@ -3463,3 +3463,30 @@ is separate from pinned candidate; no daemon-outage guarantee.
 Expected18UI/8newbrowser/11Owner,129OFF/14stream,34supervisor and6carriedWeb;
 all existing Rust/PG gates remain required. No new executable acceptance yet.
 I6/integrated review/approved-base threeUID/G4/Owner/3tradingdays/C_R2 remainopen.
+
+### Wave69 full failure recovery; Wave70 I7-C03 — 2026-10-16 KST
+
+f9a64db/CI38826611025 attempt1 fully recovered:8terminal/full logs,7checkouts,
+834pins/417candidateblobs. Six execution jobs passed; Web/required failed.
+All31 required Rust groups/chart6/18DB targets and PG checksum/cleanup gates
+passed. All18UI/6carriedWeb/34supervisor passed;129OFF128passed/1timedOut,
+14stream passed, no skip/retry/flaky. C02 strict FAILED fixture now passes.
+The configuration-switch blocking line remains UNKNOWN. Pinned source review
+establishes the prompt-only exact label cannot match wrapping option text.
+[Full recovery](reviews/2026-10-16-r2-daily-web-c02-ci.md) retains evidence.
+
+Wave70 I7-C03 owns the Owner browser spec and runner/supervisor-test pair only.
+Correct the label locator with exact control/value assertions; seven bounded
+steps and fixed failed-step identifiers preserve private output boundaries.
+No product/backend change, weakened guards, local execution, new worker or CI.
+I6/approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 stay open.
+
+Wave70 I7-C03 frozen:3 exact test/diagnostic paths. Prompt-prefix locator with
+exact control/value assertions; seven bounded steps; fixed failure identifiers.
+All18UI/8newbrowser/11Owner/34supervisor names retained;129OFF/14stream required.
+Other10Owner/first32supervisor bodies and runner execution code unchanged.
+853pins/831prior unchanged.
+Inputs3465/286c30d9, inventory5321/c4f8e273,
+report44/8a68065c.
+Direct source review only; no local project execution or new acceptance.
+I6/approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.
