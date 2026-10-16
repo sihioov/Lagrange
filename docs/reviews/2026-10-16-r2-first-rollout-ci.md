@@ -1,35 +1,39 @@
 # R2 first-rollout package: exact-candidate hosted verification
 
-Roadmap R2-04/R2-09; Wave82. Status: RUNNING, recorded 2026-10-16.
+Roadmap R2-04/R2-09; Wave82. Status: FAILED, full result recovered 2026-10-16.
 
-Partial recovery at 10:43UTC: policy failed at the pre-upgrade schema59
-isolated recovery step. All four new native cases stopped in `Snapshot` /
-`open_root` with the fixed code `PREUPGRADE_VOLUME_PARENT`, before their
-restored-cluster assertions. The exact parent metadata was not printed and
-is UNKNOWN. Of 91 new Python definitions, 87 have one PASS row and four have
-ERROR rows. The 19 whole-flow fixture tests passed after that failed step;
-they still do not establish actual approved-base execution. The four new
-Rust definitions remain pending collection.
+[CI38888547029, attempt1](https://github.com/sihioov/Lagrange/actions/runs/38888547029)
+completed at11:02:19UTC for candidate
+`c6265ddffc51a034c760fc48cf0f9d6fe387decd`. All8 jobs, step outcomes and full
+log hashes were recovered; actual checkout SHAs match in all7 execution jobs.
+The required aggregate failed because policy failed. Workspace Rust, strict
+Clippy, format, Web, Python and dedicated PostgreSQL jobs passed.
 
-Subsequent recovery: Web and dedicated PostgreSQL also completed SUCCESS.
-Six terminal full-job log digests and actual checkout SHAs now match the
-candidate. Strict workspace/all-targets/all-features Clippy with `-D warnings`
-and workspace formatting commands were observed. Python reports 487 passed,
-10 existing skipped and 7 warnings. Web browser lanes passed 129/129 and14/14,
-with no skips, flakes or retries and successful cleanup. PostgreSQL has19
-successful no-SKIP targets,146 printed named rows,62 current migration
-checksums matched on both installs,32 migration0060 cases/73 subcases,
-83 bootstrap-negative cases,0039 rollback protection and owned-container cleanup.
-Unprinted nested helper rows remain UNKNOWN. Workspace Rust tests are still
-running; the required aggregate has not completed.
-All frozen executable inputs remain unchanged. No correction or redispatch
-will occur before full run recovery.
+Of95 new definitions,91 passed and4 native pre-upgrade cases returned ERROR.
+Those four stopped in `Snapshot/open_root` at `PREUPGRADE_VOLUME_PARENT`, before
+clone assertions. Actual parent metadata was not printed and remains UNKNOWN.
+The four new Rust C04 regressions and19 synthetic whole-flow fixture definitions
+passed. The latter do not establish actual approved-base execution.
 
-Candidate `c6265ddffc51a034c760fc48cf0f9d6fe387decd` is running in
-[CI 38888547029, attempt 1](https://github.com/sihioov/Lagrange/actions/runs/38888547029).
+All current/carried required named groups matched PASS or explicit platform
+exclusion. Canonical Rust result extraction recovered3351 workspace rows and6
+separate chart rows; six explicitly ignored vendor/soak/helper definitions are
+recorded separately. Counts alone are not unique test evidence; each required
+case has a qualified result and executable target. Unprinted nested helper
+rows/exits remain UNKNOWN.
+
+Strict workspace/all-targets/all-features Clippy with `-D warnings` and workspace
+format commands were observed. Python reports487 passed,10 existing skipped and
+7 warnings. Browser lanes passed129/129 and14/14 with no skips/flakes/retries and
+successful cleanup. Dedicated PostgreSQL passed19 no-SKIP targets and146 printed
+named rows,62 current migration checksums on both installs,32 migration0060
+cases/73 subcases,83 bootstrap-negative cases,0039 protection and cleanup.
+All1074 frozen pins and502 candidate blobs matched. No package acceptance or
+operational success is claimed from this failed candidate.
+
 The run was created at 2026-10-16T10:38:21Z, using `workflow_dispatch`, branch
 `excited-dolphin` and `.github/workflows/ci.yml`. The reporting bound is
-2026-10-16T12:08:21Z. No result or acceptance is inferred from launch.
+2026-10-16T12:08:21Z. The completed result above supersedes the original launch wait.
 
 The exact-head query across all events/workflows returned zero before push and
 again after push. The remote SHA matched the candidate before the single
@@ -49,7 +53,7 @@ the pinned executable candidate.
   it does not run the private approved-base host sequence.
 
 These are 95 new written definitions. Their individual outcomes and all
-carried Rust/PG/Web/policy gates require collection from this exact run.
+carried Rust/PG/Web/policy gates were collected from this exact run.
 Group lengths will not be summed as unique executed cases. Nested helper
 results that are not printed remain UNKNOWN.
 
@@ -69,8 +73,9 @@ Private receipts under `target/r2-daily-beta/wp-4-integration/`:
 
 ## Remaining evidence
 
-Recover every job/step, full log digest, actual checkout SHA and named result;
-retain only sanitized evidence. No compiler/test acceptance is claimed yet.
+Every job/step, full log digest, actual checkout SHA and required named result
+is now recovered as sanitized evidence. The package remains failed until the
+bounded fixture correction receives fresh verification.
 The [previous Wave81 success](2026-10-16-r2-backup-migration-mode-ci.md) and all
 earlier failures remain preserved within their original scopes.
 
@@ -83,8 +88,8 @@ provider request or production action occurred in this launch.
 ## Bounded follow-up disposition and diagram preparation
 
 The native fixture creates its own labelled Docker volume but does not establish
-the already-required private immediate parent before capture. After full run
-recovery, correct only that fixture setup: verify the exact owned fresh volume,
+the already-required private immediate parent before capture. Full run
+recovery is now complete. Correct only that fixture setup: verify the exact owned fresh volume,
 stopped generation and descriptor/name identity, then tighten its own parent
 to root:root0700. Preserve the production guard and its positive/negative
 regression. Actual failed parent mode remains UNKNOWN. No production permission
