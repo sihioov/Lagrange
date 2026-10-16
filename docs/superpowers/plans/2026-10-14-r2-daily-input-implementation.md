@@ -5996,3 +5996,22 @@ independent integrated review, G3/G4, Owner and three trading days stay open.
 2026-10-16, Wave83 single correction CI launched: candidate2db7e48f1e17f85e37c075e5f986022fc5a9d5bd,run38892070778 attempt1,created2026-10-16T11:10:53Z,bound2026-10-16T12:40:53+00:00. Both all-event/all-workflow exact-head queries0 and remoteSHA matched; dispatchCount1,initial empty propagation did not trigger redispatch.1093pins/503blobs,1072unchanged prior pins,2changed files,95retained definitions. Preserve completed c6265dd failure and frozen inputs. No local project execution,worker or operational action. Full recovery/acceptance pending; see docs/reviews/2026-10-16-r2-first-rollout-correction-ci.md.
 
 2026-10-16, Wave83 partial recovery: format/strict Clippy/Python succeeded; policy failed at native recovery class setup, line153 PREUPGRADE_FIXTURE_VOLUME_CHANGED. Four native definitions NOT_EXECUTED, changed metadata field UNKNOWN. Four full log digests and actual checkout SHAs recovered; Rust/PG/Web still running. Static Moby source shows CreatedAt derives from the parent ctime, so equality across fixture fchmod is not a general identity invariant; exact runner cause remains unproven. Preserve guards and frozen executable inputs until full recovery. No new dispatch/local execution/production action; Owner and three trading days remain unstarted.
+
+### Wave84 fixture metadata correction — 2026-10-16
+
+2026-10-16, Wave83 full recovery: 2db7e48/run38892070778 attempt1 completed11:34:55UTC. All8 logs/jobs,7 checkout SHAs,1093pins/503blobs and current/carried named gates recovered;95 definitions=91PASS/4native NOT_EXECUTED due class setup. All six other execution jobs passed; policy/required failed. Wave84 corrects only fixture CreatedAt equality across chmod, retains the parent FD through all observations and adds3 private-directory regressions: derived time, six stable metadata fields and directory replacement. Production/workflow bytes and four native test bodies are unchanged.98 definitions require fresh candidate verification; no local execution, independent-review or operational acceptance.
+
+The previous failing metadata field and runner engine version remain UNKNOWN.
+Moby source establishes that CreatedAt is derived from parent ctime, so it is
+not an invariant across the fixture chmod. All six stable volume fields still
+require equality; the parent descriptor remains open through Docker and stopped
+generation checks, followed by final inode/name/access verification. Diagnostics
+contain only finite field names/modes. Three new root/private-filesystem cases
+use controlled Docker observations; the four existing native cases remain real
+Docker/PG requirements. Production guards, existing native assertion bodies
+and the workflow are unchanged.
+
+Coordinator direct static review and whitespace/text inventory checks only.
+No local project imports/parsers/tests/builds, Docker, DB or provider operations.
+Freeze the candidate, query all exact-head runs, verify remote SHA and dispatch
+once only if absent. Old runs must not be rerun, cancelled or duplicated.

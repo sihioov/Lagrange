@@ -1,6 +1,6 @@
 # R2 first-rollout fixture correction: hosted verification
 
-Roadmap R2-04/R2-09; Wave83. Status: RUNNING WITH POLICY FAILURE,2026-10-16.
+Roadmap R2-04/R2-09; Wave83. Status: FAILURE, FULLY RECOVERED,2026-10-16.
 
 Candidate `2db7e48f1e17f85e37c075e5f986022fc5a9d5bd` is in
 [CI38892070778, attempt1](https://github.com/sihioov/Lagrange/actions/runs/38892070778).
@@ -69,7 +69,7 @@ aggregate had not started. These are partial results, not candidate acceptance.
 
 Policy printed268 passing unittest rows and a class-setup error at
 `PreupgradeDockerTests.setUpClass`. The failing call reaches
-[the volume metadata comparison](../../scripts/ops/production-preupgrade-recovery-docker-self-test.py:150)
+[the candidate's volume metadata comparison](https://github.com/sihioov/Lagrange/blob/2db7e48f1e17f85e37c075e5f986022fc5a9d5bd/scripts/ops/production-preupgrade-recovery-docker-self-test.py#L150-L153)
 and raises `PREUPGRADE_FIXTURE_VOLUME_CHANGED` at line153. Earlier descriptor,
 ownership, ACL, mode and inode checks completed. All four native recovery
 definitions are NOT_EXECUTED because class setup failed; they are not four
@@ -95,3 +95,41 @@ the policy full-log SHA256 is
 Raw logs remain memory-only. Frozen executable inputs are unchanged. Finish
 recovery of this exact run before source correction; no rerun, cancellation,
 duplicate dispatch, local project execution or production action occurred.
+
+## Full terminal recovery — 2026-10-16T11:40:33Z
+
+The run completed at11:34:55UTC. All8 jobs and full log digests are recovered;
+all7 execution-job checkout SHAs match `2db7e48`. Six execution jobs passed.
+Policy and the required aggregate failed. All1093 pins and503 committed blobs
+matched before correction. The95 first-rollout definitions have91 PASS and
+4 NOT_EXECUTED, proved by the native class-setup error. The exact changed
+Docker field and original parent mode remain UNKNOWN.
+
+All current and carried required named Rust, policy and web rows were matched
+to their concrete binaries/classes; platform exclusions remain explicit.
+The canonical Rust transcript contains3356 passing rows and6 explicit ignored
+rows, including6 separate chart passes. These are transcript counts, not proof
+of unique coverage. Nested helper rows/exits that were not printed remain
+UNKNOWN. Workspace format and the full strict Clippy command passed. Python
+reported487 passed/10 existing skips/7 warnings. Browser lanes passed129+14
+cases with no skips, flakes or retries, and confirmed cleanup;24 daily web
+markers and34 supervisor rows passed.
+
+PostgreSQL passed19 targets with explicit exit0/no-SKIP evidence and146 named
+rows. Both installs matched all62 migration SHA384 values. The0060 suite
+reported32 named rows/73 subcases;83 bootstrap negative cases,0039 guard,
+catalog checks and owned-container cleanup passed.
+
+Two extraction issues were resolved without changing or rerunning CI: repeated
+Python method suffixes were normalized, and printed Rust `src/bin` paths were
+retained. One prior empty expected-target entry was bound to the pinned
+`crates/result-model/tests/robustness_harness.rs` and its actual printed binary.
+Original receipts and first-extraction aggregates are preserved alongside the
+supplements. The final aggregate has no missing required named rows; its
+SHA256 is `ef85bcc6a6aab0b054e468ee1629ecc898437d818e03ac8e21afa58d2501c05a`.
+
+The native preparation failure prevents candidate acceptance. Its bounded
+successor may correct the derived-time comparison and retain the held directory
+through all observations, with direct regressions. Actual approved-base host
+integration, images, independent review, operations, Owner use and three
+consecutive trading days remain outstanding.

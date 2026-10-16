@@ -3,8 +3,12 @@
 Status: **source in progress; not execution-ready**. This is the pre-upgrade
 part of Wave82/R2-04/R2-09, alongside the [six-file backup transition](r2-first-backup-transition.md)
 and the pending approved-base whole-flow fixture. The18 filesystem/contract,
-28 maintenance and four actual-Docker fixture definitions are WRITTEN_UNEXECUTED. No production
-stop, capture, restore, database query or source acceptance has occurred.
+28 maintenance definitions passed on `2db7e48`; its four actual-Docker recovery
+definitions were NOT_EXECUTED because class setup failed. Three additional
+private-directory preparation regressions are written and unexecuted. See the
+[failed candidate's full recovery](../reviews/2026-10-16-r2-first-rollout-correction-ci.md).
+The corrected candidate requires fresh verification. No production stop,
+capture, restore, database query or operational acceptance has occurred.
 
 ## Recovery method and its operating cost
 
@@ -50,11 +54,23 @@ It first binds its freshly created labelled local volume and stopped database
 generation, holds the protected shared ancestor, and changes only that volume's
 own parent through an open descriptor. It checks root ownership, no writable
 group/other access or ACL, and unchanged inode/name binding before and after
-setting0700; it rechecks the volume and stopped generation afterward. The
+setting0700; it keeps the child descriptor open through volume and stopped
+generation rechecks, then verifies the final name/inode and access metadata. The
 shared Docker directory and production capture guard remain unchanged.
 This fixture setup does not authorize changing a production volume's permissions.
 Live parent metadata still needs fresh observation and, if incompatible, a
 separately authorized exact protection step before capture can proceed.
+
+The examined [Moby local-volume driver](https://github.com/moby/moby/blob/v28.5.1/volume/local/local_unix.go#L214-L220)
+derives `CreatedAt` from the volume parent's ctime. The fixture therefore does
+not require this derived timestamp to remain equal across its own permission
+change. Name, driver, scope, options, labels and mountpoint must remain equal;
+directory identity, ownership, ACL and access-mode checks remain mandatory.
+Diagnostics contain only a closed list of changed field names and finite mode
+values. Regressions distinguish timestamp-only change, changes to each of the
+six stable fields, and replacement of the directory during Docker observation.
+Those three tests use real private directories with controlled Docker metadata;
+the four existing native cases still require actual Docker and PostgreSQL.
 
 The [recovery library](../../scripts/ops/lib/production-preupgrade-recovery.py)
 checks the exact stopped container, pinned image, generation and local volume.
@@ -99,8 +115,11 @@ Cleanup must remove only fixture-owned resources and fail on leftovers.
 The manually constructed fixture ledger is not a replacement for the existing
 SQLx upgrade-lane evidence. A lost-create-response case recovers only the exact
 nonce/name/labels/image it created, removes that container, and still reports
-the original operation as failed. All50 recovery cases remain unexecuted. CI wiring is
-written with independent hard exits; no candidate has been dispatched.
+the original operation as failed. The failed `2db7e48` run passed46 filesystem
+and maintenance definitions but stopped before all four native methods. Its
+unprinted changed metadata field remains UNKNOWN. The successor has53 recovery
+definitions, including the three new preparation regressions; fresh results
+are required. CI wiring retains independent hard exits.
 
 ## Bounded maintenance entry point (written, unexecuted)
 

@@ -145,13 +145,28 @@ class PreupgradeDockerTests(unittest.TestCase):
                         or (named.st_dev, named.st_ino) != (protected.st_dev, protected.st_ino)
                         or stat.S_IMODE(protected.st_mode) != 0o700):
                     raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_CHANGED")
+                after = recovery.volume_info(cls.docker, cls.volume)
+                changed = tuple(key for key in
+                    ("Name", "Driver", "Scope", "Options", "Labels", "Mountpoint", "CreatedAt")
+                    if after.get(key) != before.get(key))
+                # Docker's local driver derives CreatedAt from this parent's
+                # ctime. Our fchmod can change it without replacing the volume.
+                # Report only closed field names, never inspected values.
+                print("PREUPGRADE_FIXTURE_VOLUME_FIELDS:" + (",".join(changed) or "none"), flush=True)
+                if any(key != "CreatedAt" for key in changed):
+                    raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_CHANGED")
+                cls.check_stopped()
+                # Keep the owner descriptor through Docker/generation checks;
+                # the name must still resolve to that same protected directory.
+                final = files.checked(fd, directory=True, owners={0}, groups={0})
+                named = os.stat(cls.volume, dir_fd=ancestor, follow_symlinks=False)
+                if ((final.st_dev, final.st_ino, final.st_uid, final.st_gid, final.st_mode) !=
+                        (protected.st_dev, protected.st_ino, protected.st_uid,
+                         protected.st_gid, protected.st_mode)
+                        or (named.st_dev, named.st_ino) != (final.st_dev, final.st_ino)):
+                    raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_CHANGED")
             finally:
                 os.close(fd)
-        after = recovery.volume_info(cls.docker, cls.volume)
-        if any(after.get(key) != before.get(key) for key in
-               ("Name", "Driver", "Scope", "Options", "Labels", "Mountpoint", "CreatedAt")):
-            raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_CHANGED")
-        cls.check_stopped()
         print(f"PREUPGRADE_FIXTURE_PARENT:uid=0:gid=0:before={stat.S_IMODE(original.st_mode):04o}:after=0700",
               flush=True)
 
@@ -303,6 +318,74 @@ class PreupgradeDockerTests(unittest.TestCase):
             with self.assertRaises(recovery.runtime.RuntimeErrorCode):
                 self.storage.verify_cluster(restored, expected)
             self.assert_no_verifier()
+
+
+class PreupgradeFixturePreparationTests(unittest.TestCase):
+    """Real private directory boundaries with controlled Docker observations."""
+
+    def setUp(self):
+        if os.geteuid() != 0 or sys.platform != "linux":
+            self.fail("actual root Linux fixture required")
+        self.directory = Path(tempfile.mkdtemp(prefix="lagrange-preupgrade-parent-", dir="/var/lib"))
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.parent = self.directory / "fixture-volume"
+        self.parent.mkdir(mode=0o711)
+        self.mountpoint = self.parent / "_data"
+        self.mountpoint.mkdir(mode=0o700)
+        self.before = {"Name": "fixture-volume", "Driver": "local", "Scope": "local",
+            "Options": None, "Labels": {"io.lagrange.preupgrade-fixture": "fixture-project"},
+            "Mountpoint": str(self.mountpoint), "CreatedAt": "before-permission-change"}
+        self.fixture = types.SimpleNamespace(docker=object(), volume="fixture-volume",
+            project="fixture-project", mountpoint=str(self.mountpoint), check_stopped=mock.Mock())
+
+    def test_parent_preparation_accepts_derived_creation_time_change_only(self):
+        original, ancestor = self.parent.stat(), self.directory.stat()
+        after = copy.deepcopy(self.before)
+        after["CreatedAt"] = "after-permission-change"
+        with mock.patch.object(recovery, "volume_info", side_effect=[self.before, after]), \
+                mock.patch("builtins.print") as output:
+            PreupgradeDockerTests.protect_fixture_volume_parent.__func__(self.fixture)
+        final = self.parent.stat()
+        self.assertEqual((final.st_dev, final.st_ino), (original.st_dev, original.st_ino))
+        self.assertEqual((final.st_uid, final.st_gid, stat.S_IMODE(final.st_mode)), (0, 0, 0o700))
+        self.assertEqual(self.directory.stat().st_mode, ancestor.st_mode)
+        self.assertEqual(self.fixture.check_stopped.call_count, 2)
+        output.assert_any_call("PREUPGRADE_FIXTURE_VOLUME_FIELDS:CreatedAt", flush=True)
+
+    def test_parent_preparation_rejects_changed_stable_volume_fields(self):
+        changes = {"Name": "different-volume", "Driver": "different-driver", "Scope": "global",
+            "Options": {"device": "different-device"}, "Labels": {"owner": "different-owner"},
+            "Mountpoint": "/different-mountpoint"}
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                self.parent.chmod(0o711)
+                after = copy.deepcopy(self.before)
+                after[field] = value
+                with mock.patch.object(recovery, "volume_info", side_effect=[self.before, after]), \
+                        mock.patch("builtins.print") as output, \
+                        self.assertRaisesRegex(RuntimeError, "^PREUPGRADE_FIXTURE_VOLUME_CHANGED$"):
+                    PreupgradeDockerTests.protect_fixture_volume_parent.__func__(self.fixture)
+                output.assert_called_once_with("PREUPGRADE_FIXTURE_VOLUME_FIELDS:" + field, flush=True)
+
+    def test_parent_preparation_rejects_replacement_during_volume_observation(self):
+        observations = 0
+        def observe(docker, volume):
+            nonlocal observations
+            self.assertIs(docker, self.fixture.docker)
+            self.assertEqual(volume, self.fixture.volume)
+            observations += 1
+            if observations == 2:
+                self.parent.rename(self.directory / "original-volume")
+                self.parent.mkdir(mode=0o700)
+                self.mountpoint.mkdir(mode=0o700)
+            return copy.deepcopy(self.before)
+        with mock.patch.object(recovery, "volume_info", side_effect=observe), \
+                mock.patch("builtins.print"), \
+                self.assertRaisesRegex(RuntimeError, "^PREUPGRADE_FIXTURE_VOLUME_CHANGED$"):
+            PreupgradeDockerTests.protect_fixture_volume_parent.__func__(self.fixture)
+        self.assertEqual(observations, 2)
+        self.assertNotEqual(self.parent.stat().st_ino,
+                            (self.directory / "original-volume").stat().st_ino)
 
 
 if __name__ == "__main__":
