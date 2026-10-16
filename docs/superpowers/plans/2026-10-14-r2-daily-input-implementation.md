@@ -70,7 +70,9 @@ execution restrictions remain in force; no further worker delegation.
   failures and5 actual Docker cases. Wave76 controlled activation6614dda/
   run38847051561 failed the existing four-mode static guard; full results were
   recovered and its29 operation/8 DB transport cases were NOT_EXECUTED. Wave77
-  one-checker correction719a2e2/run38849276458 is now frozen and running.
+  one-checker correction719a2e2/run38849276458 is fully recovered with failure.
+  New29+8 and all required daily groups passed; one existing Owner-equity DB
+  workspace test failed. Full-candidate acceptance is withheld pending diagnosis.
   Backup/reconciliation and diagrams follow after actual verification.
   Runtime, Owner, three-trading-day observation and final C_R2 remain separate.
 
@@ -5716,3 +5718,52 @@ Rust/PG/Web gates. No operational activation or full-flow acceptance yet. Later 
 does not change the candidate. Consistent
 backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### I6B3 isolated coordinator draft while Wave77 verifies — 2026-10-16 KST
+
+R2-04/09. Direct coordinator, no new worker. Detached source draft at
+`/data/worktrees/3puw275b/r2-backup-draft-719a2e2`, baseline719a2e2.
+Current Wave77 candidate/input bytes remain frozen in the primary worktree.
+Draft ownership is recorded in the private I6B3-draft-ownership receipt and
+ledger coordinatorDraft. Transfer requires full Wave77 recovery and disposition.
+No local project execution or draft CI is authorized by this preparation alone.
+
+The adopted I6 contract requires daily evidence and DB histories in the same
+verified encrypted backup. Existing V1 postgres/raw/curated sets remain historical;
+they do not cover daily config/policy, reader floor, private state, admitted leaves,
+source frontiers and the approved historical base. The daily path must use the
+sole installed official wrapper, shared release lock, actual DB disable/drain,
+private poll locks, bounded exact file inventories and isolated restore audit.
+Resume is allowed only for the exact previously healthy ON cohort after complete
+verification and current authority checks. Keep API/market-stream untouched;
+initially OFF, partial, unknown or failed capture remains OFF. Retain systemd
+read-only release/data paths; do not depend on generic start_target's writable
+image-override file. Runtime tests must cover the separate identical-cohort resume.
+
+Restore audit blocks missing DB-referenced leaves and conflicting dates. Existing
+independent daily-admitter --once can reverify an extra leaf and retain identity
+while DB control stays disabled; actual post-state must be checked because a
+successful exit can mean BUSY/NOT_DUE/PENDING. A fixed migration-owned transaction
+may repair only an original surviving run/job reservation tuple under existing
+constraints and actor scope; no replacement queueing, history deletion, new
+schema/grant or privilege bypass. Backup/restore failures remain visible.
+
+Registered source paths: new backup/files helpers, backup audit/reservation repair
+SQL, two backup test files; existing operations/runtime helpers, compose-release,
+run/install-production-backup, production static/self-test, ci.yml, both production
+backup service units and owner-beta-daily runbook (17 exact ledger paths).
+All implementation, root/Docker/real-schema verification and acceptance remain
+pending. Diagrams, approved-base first/multiday flow, independent integrated review,
+G4,Owner,three actual trading days/final C_R2 remain open.
+
+### Owner elapsed-time audit and completion grouping — 2026-10-16 KST
+
+See [progress audit](../../reviews/2026-10-16-r2-ralph-progress-audit.md).
+36 distinct candidate runs:15SUCCESS/21FAILURE; CI elapsed intervals total43,205s,
+nonoverlapping, median21.5min. Ralph approximately18h17m at13:33KST.
+Wave77 eight jobs/logs/seven checkout/1016pins/462blobs fully recovered; new37
+pass, existing Owner-equity workspace assertion fails. No acceptance or rerun.
+Next: diagnose concrete failure; batch coherent backup/reconciliation work;
+then whole-flow/diagrams/review; then concreteG4/Owner/actual3tradingdays.
+No new helper-by-helper full CI or worker. Restrictions and final gates persist.
+Two isolated backup draft files exist with25 written/unexecuted tests.

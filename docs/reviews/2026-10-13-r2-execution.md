@@ -3816,3 +3816,19 @@ Rust/PG/Web gates. No operational activation or full-flow acceptance yet. Later 
 does not change the candidate. Consistent
 backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+I6B3 backup/reconciliation draft is registered in an isolated coordinator worktree
+from719a2e2 while Wave77 CI38849276458 continues. No additional worker or local
+project execution. Frozen primary candidate remains unchanged; draft transfer
+requires full Wave77 recovery and disposition. No backup/runtime acceptance.
+
+### R2 elapsed-time audit — 2026-10-16 13:33 KST
+
+Ralph approximately18h17m;36 distinct candidate CI runs,15SUCCESS/21FAILURE,
+nonoverlapping CI intervals43,205s. Latest719a2e2/run38849276458 fully recovered
+with one existing Owner-equity workspace test failure; all new29+8 pass.
+Candidate acceptance withheld. Source corrections/full CI granularity and
+repeated bookkeeping caused avoidable delay; completion groups are now fixed
+to known failures+backup/reconciliation, whole-flow/diagrams/review, then
+G4/Owner/actual3tradingdays. No new implementation/CI/production during audit.
+Details: docs/reviews/2026-10-16-r2-ralph-progress-audit.md.
