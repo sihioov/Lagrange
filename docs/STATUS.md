@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: [Wave80 후보4336fbe/CI38866283743](reviews/2026-10-16-r2-fixture-readiness-ci.md)의8job/log/7checkout·1046pin/483blob 전체 결과를 회수했다. Rust3346·chart6·PG19target/backup12·Web·strict lint/format/Python은 통과했고, 백업 fixture 준비의 SQLSTATE25001로7개 본문은 미실행이다(새88개 중81PASS). [I6B3-C03](reviews/2026-10-16-r2-backup-migration-mode-correction.md)는 테스트 한 파일의7개 no-transaction 실행과 실제 index/62checksum 확인을 보정했다. 나머지1045pin 불변·새1053pin 및88개 정의를 고정했고 정확 후보 검증을 준비한다. 전체 흐름·PUML/PNG·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료이며 관측은 미시작이다.
+현재: Wave81: 후보70401cf/CI38869717878 attempt1을 exact-head all-event/all-workflow 조회0·원격 SHA 대조 후07:50:07UTC에 한 번 시작했다.1053pin/485blob 일치.07:56UTC까지 백업 실제 격리복원7개·policy·format·strictClippy·Python은 통과했고 Rust전체·PG·Web은 진행 중이다. 전체8job 결과 회수 전 후보 인수는 보류한다. 운영·Owner·3거래일 관측은 미시작이다. [정확 후보 회수](reviews/2026-10-16-r2-backup-migration-mode-ci.md). 전체 승인 입력 흐름·PUML/PNG·독립 리뷰·G3/G4·최종C_R2는 계속 미완료다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -4395,3 +4395,10 @@ candidate. All whole-flow/independent-review/G4/Owner/three-day gates stay open.
 Wave79 15:54KST 후속: PG 전용19target exit0/noSKIP·62checksum두lane·0060/0039/cleanup 통과. 별도 policy DB준비2곳과 Web OFF129중1개는 실패했고 원인은 미확정이다. Rust 전체 테스트와 required 집계/전체 회수는 진행 중. 기존1030+추가/보정 총1041pin 불변; 새 CI나 소스 수정 없음. 이후 실제 TCP/SQL 준비 확인·안전한 오류코드·backup named-row 누락을 한 보정 범위로 다룬다. 운영/Owner/3거래일은 미시작.
 
 Wave79 전체 회수: 61f9c7f/38861769625 attempt1은 FAILURE.8job/8full-log hash/7checkout/1041pin/481blob 확인. Rust3346+chart6·PG19target·62checksum·lint/format/Python 통과. 새86정의는78PASS/8NOT_EXECUTED; policy DB준비2곳·Web OFF1개 실패의 원인은 UNKNOWN. 64backup·10CI계약·11Owner브라우저는 통과했다. 다음은 준비 확인·안전한 오류코드·backup named-row를 묶은 제한 보정이며 운영/Owner/3거래일 인수는 계속 미완료.
+
+
+### Wave81 single candidate CI — 2026-10-16 KST
+
+Wave81: 후보70401cf/CI38869717878 attempt1을 exact-head all-event/all-workflow 조회0·원격 SHA 대조 후07:50:07UTC에 한 번 시작했다.1053pin/485blob 일치.07:56UTC까지 백업 실제 격리복원7개·policy·format·strictClippy·Python은 통과했고 Rust전체·PG·Web은 진행 중이다. 전체8job 결과 회수 전 후보 인수는 보류한다. 운영·Owner·3거래일 관측은 미시작이다.
+Reporting bound09:20:07UTC; no rerun/cancel/duplicate, new worker, local project
+execution or production action. Frozen inputs and candidate remain unchanged.
