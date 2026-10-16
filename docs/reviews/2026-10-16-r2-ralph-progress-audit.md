@@ -35,7 +35,7 @@ Web and dedicated PostgreSQL verification passed. Workspace tests and the
 required aggregate failed. The one named workspace failure was
 `owner_equity_v2_repository_queue_and_publication_are_atomic_and_actor_scoped`,
 at the recovered publication assertion in
-[owner_equity_v2_db.rs](../../crates/api-server/tests/owner_equity_v2_db.rs#L969).
+[the frozen test](https://github.com/sihioov/Lagrange/blob/719a2e2820837c96af4b183b87659de6f58740f7/crates/api-server/tests/owner_equity_v2_db.rs#L969).
 Its underlying cause has not been established; it is not dismissed as flaky.
 All 29 new activation and eight transport tests passed, together with prior
 required daily groups, but full-candidate acceptance remains withheld.
@@ -67,3 +67,28 @@ waived. Diagnose the current failure before choosing the next candidate.
 The audit does not provide a reliable coding finish time. Three trading days
 are an additional operational observation period after successful activation,
 not a promise that waiting three calendar days from now completes R2.
+
+
+## Follow-up diagnosis and bounded fixture correction
+
+A read-only extraction from the same workspace job `116806660574` recovered
+`publish recovered: STALE_CLAIM`; full-log SHA256 matched the recovered receipt:
+`41ff6f697437242eaf03c79ecf8af7b7263434bce1291e532b1c226bfeeccd07`.
+Only the fixed assertion/code, digest and identity were persisted in the private
+`owner-equity-recovery-code.json` supplement; raw logs remained in memory.
+
+The test used a 25ms lease to force a crashed attempt to expire, then reused that
+same queue for legitimate recovered publication through multiple real database
+checkpoints. The queue heartbeat rejects an expired lease; the worker maps that
+result to `STALE_CLAIM`. The correction uses the test's existing normal 5s queue
+only to claim and process the recovered attempt. The 25ms crash, expiry/sweep,
+orphan result, zero prior admissions and exactly-one final admission remain.
+Additional assertions require a new attempt ID, the next attempt number, and
+rejection of the old worker even after recovery is claimed with the normal lease.
+Production queue/worker behavior, lease settings and database contracts are unchanged.
+
+The same exact test change is present in the primary worktree and the registered
+isolated backup draft. Direct source review, scoped edition-2024 rustfmt and
+whitespace checks passed. Compilation and execution of the changed test remain
+UNEXECUTED. No fresh CI was dispatched; verification is grouped with the coherent
+backup/reconciliation candidate. The original failed run remains failed.

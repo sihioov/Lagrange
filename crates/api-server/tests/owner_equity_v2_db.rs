@@ -957,14 +957,25 @@ async fn owner_equity_v2_repository_queue_and_publication_are_atomic_and_actor_s
         0
     );
     tokio::time::sleep(Duration::from_millis(5)).await;
-    let recovered = crash_queue
+    // The 25ms queue above forces the crashed attempt to expire. Recovery uses
+    // the ordinary lease so real database checkpoints do not race that fixture.
+    let recovered = queue
         .claim_next_for("oev2-recovered", OWNER_EQUITY_V2_JOB_TYPE)
         .await
         .expect("claim recovered")
         .expect("recovered job available");
     assert_eq!(recovered.job.id, crash_add.job_id);
+    assert_ne!(recovered.attempt.id, stale_claim.attempt.id);
     assert_eq!(
-        process_owner_equity_claim(&worker_pool, &crash_queue, &recovered, &adapter)
+        recovered.attempt.attempt_no,
+        stale_claim.attempt.attempt_no + 1
+    );
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &stale_claim, &adapter).await,
+        Err(OwnerEquityWorkerError::StaleClaim)
+    );
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &recovered, &adapter)
             .await
             .expect("publish recovered"),
         OwnerEquityRunOutcome::Published

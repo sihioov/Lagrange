@@ -4364,3 +4364,15 @@ repeated bookkeeping caused avoidable delay; completion groups are now fixed
 to known failures+backup/reconciliation, whole-flow/diagrams/review, then
 G4/Owner/actual3tradingdays. No new implementation/CI/production during audit.
 Details: docs/reviews/2026-10-16-r2-ralph-progress-audit.md.
+
+
+### Wave77 recovery fixture diagnosis — 2026-10-16 KST
+
+Same-job log digest verified; fixed diagnostic is `publish recovered: STALE_CLAIM`.
+The crash fixture reused its 25ms expiry queue for successful recovery. Only the
+recovery claim/process now use the existing normal 5s test queue; crash/sweep,
+orphan/no-admission/one-publication assertions remain, with new-attempt identity
+and old-worker rejection after re-claim added. Source/rustfmt/whitespace pass;
+changed test UNEXECUTED. Registered exact test-file extension in the I6B3 draft.
+No production change or new CI. Batch with coherent backup/reconciliation work;
+previous failed run remains failed and all final R2 gates remain open.

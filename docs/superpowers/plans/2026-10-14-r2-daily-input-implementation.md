@@ -5767,3 +5767,15 @@ Next: diagnose concrete failure; batch coherent backup/reconciliation work;
 then whole-flow/diagrams/review; then concreteG4/Owner/actual3tradingdays.
 No new helper-by-helper full CI or worker. Restrictions and final gates persist.
 Two isolated backup draft files exist with25 written/unexecuted tests.
+
+
+### Wave77 recovery fixture diagnosis — 2026-10-16 KST
+
+Same-job log digest verified; fixed diagnostic is `publish recovered: STALE_CLAIM`.
+The crash fixture reused its 25ms expiry queue for successful recovery. Only the
+recovery claim/process now use the existing normal 5s test queue; crash/sweep,
+orphan/no-admission/one-publication assertions remain, with new-attempt identity
+and old-worker rejection after re-claim added. Source/rustfmt/whitespace pass;
+changed test UNEXECUTED. Registered exact test-file extension in the I6B3 draft.
+No production change or new CI. Batch with coherent backup/reconciliation work;
+previous failed run remains failed and all final R2 gates remain open.
