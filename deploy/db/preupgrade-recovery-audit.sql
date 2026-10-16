@@ -15,6 +15,13 @@ BEGIN
        OR current_setting('server_version_num')::integer NOT BETWEEN 180000 AND 189999 THEN
         RAISE EXCEPTION 'PREUPGRADE_DATABASE_IDENTITY' USING ERRCODE='42501';
     END IF;
+    -- Other clients (including idle connections or other databases) invalidate
+    -- the pre-stop fence. Prepared transactions can commit after a restart.
+    IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE backend_type = 'client backend'
+               AND pid <> pg_backend_pid())
+       OR EXISTS (SELECT 1 FROM pg_prepared_xacts) THEN
+        RAISE EXCEPTION 'PREUPGRADE_DATABASE_WRITERS' USING ERRCODE='55006';
+    END IF;
     IF (SELECT count(*) FROM public._sqlx_migrations) NOT BETWEEN 1 AND 59
        OR EXISTS (SELECT 1 FROM public._sqlx_migrations WHERE NOT success OR version < 1 OR version > 59
                   OR octet_length(checksum) <> 48) THEN

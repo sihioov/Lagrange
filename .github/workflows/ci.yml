@@ -87,6 +87,9 @@ jobs:
       - name: Verify pre-upgrade cold archive boundaries
         if: ${{ !cancelled() }}
         run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-recovery-self-test.py
+      - name: Verify pre-upgrade maintenance failure boundaries
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-maintenance-self-test.py
       - name: Verify pre-upgrade schema59 isolated recovery
         if: ${{ !cancelled() }}
         run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-recovery-docker-self-test.py

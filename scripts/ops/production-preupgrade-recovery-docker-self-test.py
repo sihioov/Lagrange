@@ -18,6 +18,7 @@ import tempfile
 import types
 import unittest
 import uuid
+from unittest import mock
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
@@ -211,6 +212,8 @@ class PreupgradeDockerTests(unittest.TestCase):
         self.assertEqual(self.command(["ps", "--all", "--quiet", "--filter",
             "label=io.lagrange.preupgrade-project=" + self.project]).stdout.strip(), b"")
         self.check_stopped()
+        self.assertFalse(any(p.name.startswith("preupgrade-verifier-")
+                             for p in Path(self.storage.root).iterdir()))
 
     def test_real_schema59_encrypted_cluster_catalog_and_files_round_trip(self):
         with self.storage.temporary(".preupgrade-") as stage:
@@ -228,6 +231,20 @@ class PreupgradeDockerTests(unittest.TestCase):
             restored, expected = self.restore_files(stage)
             expected["database"]["catalog_sha256"] = "sha256:" + "0" * 64
             with self.assertRaises(recovery.runtime.RuntimeErrorCode):
+                self.storage.verify_cluster(restored, expected)
+            self.assert_no_verifier()
+
+    def test_lost_create_response_recovers_only_owned_container_and_reports_failure(self):
+        with self.storage.temporary(".preupgrade-") as stage:
+            restored, expected = self.restore_files(stage)
+            original = self.docker.call
+            def lost_response(args, timeout=15):
+                result = original(args, timeout)
+                if args[0] == "create":
+                    raise recovery.runtime.RuntimeErrorCode("SIMULATED_LOST_CREATE_RESPONSE")
+                return result
+            with mock.patch.object(self.docker, "call", side_effect=lost_response), \
+                    self.assertRaises(recovery.runtime.RuntimeErrorCode):
                 self.storage.verify_cluster(restored, expected)
             self.assert_no_verifier()
 

@@ -4004,3 +4004,21 @@ Next: bounded maintenance entry point/writer fences/no-clobber publication and
 actual approved-base whole flow, then coherent candidate review/verification.
 The historical sudo-expiry timestamp is not current root access evidence;
 existing read-only/EOD approvals remain in force. No authority expansion.
+
+### Wave82 maintenance command source checkpoint — 2026-10-16 KST
+
+Bounded pre-upgrade audit/capture/verify is written in a separate protected
+maintenance payload, preserving the old current release until recovery exists.
+The command binds fresh clock/boot/revisions/old migration bytes, existing
+release/backup/Raw locks, stopped writer observations, encrypted file capture,
+networkless cloned verification and no-replace publication. Ambiguous verifier
+creation/cleanup retains an owned intent/copied mount and blocks later calls.
+
+New28 filesystem/OpenSSL/observation-fake definitions and one actual-Docker
+lost-response definition bring Wave82 to72 WRITTEN_UNEXECUTED cases. Static
+source/text checks only; no source/compiler/runtime acceptance or new CI.
+See `docs/runbooks/r2-preupgrade-recovery.md` and private checkpoint
+`target/r2-daily-beta/wp-4-integration/wave82-maintenance-source-checkpoint.json`.
+Next: actual approved-base whole flow, coherent review and one hosted candidate;
+then diagrams/independent review/G3-G4/operations/Owner/three trading days.
+Existing read-only/EOD approvals remain; no new operational authority claimed.

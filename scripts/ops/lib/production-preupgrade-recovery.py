@@ -8,12 +8,15 @@ cluster is booted only in a new networkless, disposable container.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
+import tempfile
 import uuid
 
 sys.dont_write_bytecode = True
@@ -132,6 +135,27 @@ def checked_audit(data, *, database, system_identifier, migrations):
 class ColdStorage(backup.Storage):
     """Reuse private staging/encryption; never route through daily DB tables."""
 
+    @contextlib.contextmanager
+    def temporary(self, prefix):
+        self.reserve()
+        require(prefix.startswith(".preupgrade-"), "PREUPGRADE_STAGING")
+        with install.root_directory(self.root) as parent:
+            name = tempfile.mkdtemp(prefix=prefix, dir=self.root)
+            os.chmod(name, 0o700)
+            try:
+                yield Path(name)
+            finally:
+                # A failed/ambiguous Docker cleanup retains the copied mount
+                # and its durable owned-resource intent for bounded recovery.
+                keep = False
+                for leaf in backup.bounded_names(parent, 10000):
+                    if re.fullmatch(r"preupgrade-verifier-[0-9a-f]{32}\.json", leaf):
+                        intent = install.json_bytes(install.read_file(parent, leaf, 0, 0, 0o600))
+                        if intent.get("staging") == name:
+                            keep = True
+                if not keep:
+                    shutil.rmtree(name)
+
     def verify_cluster(self, restored, expected):
         """Verify a newly restored private tree and boot only its PostgreSQL copy.
 
@@ -192,19 +216,38 @@ class ColdStorage(backup.Storage):
         for key, value in labels.items():
             args += ["--label", key + "=" + value]
         require(re.fullmatch(r"[a-z][a-z0-9_]{0,62}", self.binding.database), "PREUPGRADE_DATABASE")
-        identity = self.docker.call([*args, backup.POSTGRES, "/verify.sh", self.binding.database]).strip()
-        require(runtime.CONTAINER.fullmatch(identity), "PREUPGRADE_VERIFY_OWNER")
+        name = "lagrange-preupgrade-verify-" + nonce
+        intent_name = "preupgrade-verifier-" + nonce + ".json"
+        intent = files.canonical({"schema": "lagrange-preupgrade-verifier-v1", "name": name,
+            "labels": labels, "image_id": image["Id"], "image": backup.POSTGRES,
+            "staging": str(restored.parent)})
+        with install.root_directory(self.root) as parent:
+            install.create_file(parent, intent_name, intent, 0, 0, 0o600)
+        identity = None
         created = None
+
+        def owned_ids():
+            result = self.docker.call(["ps", "--all", "--quiet", "--no-trunc", "--filter",
+                "label=io.lagrange.preupgrade-verify=" + nonce, "--filter",
+                "label=io.lagrange.preupgrade-project=" + self.binding.project,
+                "--filter", "name=^/" + name + "$"]).splitlines()
+            require(len(result) <= 1 and all(runtime.CONTAINER.fullmatch(i) for i in result),
+                    "PREUPGRADE_VERIFY_OWNER")
+            return result
 
         def observe():
             value = self.docker.object("container", identity)
             require(value.get("Id") == identity and value.get("Image") == image["Id"] and
+                    value.get("Name") == "/" + name and
                     value["Config"].get("Image") == backup.POSTGRES and
                     all((value["Config"].get("Labels") or {}).get(k) == v for k, v in labels.items()) and
                     (created is None or value.get("Created") == created), "PREUPGRADE_VERIFY_OWNER")
             return value
 
         try:
+            result = self.docker.call([*args, backup.POSTGRES, "/verify.sh", self.binding.database]).strip()
+            require(runtime.CONTAINER.fullmatch(result), "PREUPGRADE_VERIFY_OWNER")
+            identity = result
             value = observe()
             created = value["Created"]
             host = value["HostConfig"]
@@ -235,9 +278,22 @@ class ColdStorage(backup.Storage):
             require(actual == source_audit, "PREUPGRADE_RESTORE_AUDIT_MISMATCH")
             return actual
         finally:
-            value = observe()
-            if value["State"].get("Running"):
-                self.docker.call(["kill", "--signal=TERM", identity])
-                self.docker.call(["wait", identity], timeout=40)
-            observe()
-            self.docker.call(["rm", "--volumes", identity])
+            if identity is None:
+                recovered = owned_ids()
+                identity = recovered[0] if recovered else None
+            if identity is not None:
+                value = observe()
+                if value["State"].get("Running"):
+                    self.docker.call(["kill", "--signal=TERM", identity])
+                    self.docker.call(["wait", identity], timeout=40)
+                observe()
+                self.docker.call(["rm", "--volumes", identity])
+                require(not owned_ids(), "PREUPGRADE_VERIFY_CLEANUP")
+                with install.root_directory(self.root) as parent:
+                    require(install.read_file(parent, intent_name, 0, 0, 0o600) == intent,
+                            "PREUPGRADE_VERIFY_OWNER")
+                    os.unlink(intent_name, dir_fd=parent)
+                    os.fsync(parent)
+            # No response and no observed container is still ambiguous: the
+            # daemon may finish creation later. Retain intent, fail and block
+            # another invocation rather than assuming cleanup succeeded.

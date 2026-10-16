@@ -2,8 +2,8 @@
 
 Status: **source in progress; not execution-ready**. This is the pre-upgrade
 part of Wave82/R2-04/R2-09, alongside the [six-file backup transition](r2-first-backup-transition.md)
-and the pending approved-base whole-flow fixture. The18 filesystem/contract and
-three actual-Docker fixture definitions are WRITTEN_UNEXECUTED. No production
+and the pending approved-base whole-flow fixture. The18 filesystem/contract,
+28 maintenance and four actual-Docker fixture definitions are WRITTEN_UNEXECUTED. No production
 stop, capture, restore, database query or source acceptance has occurred.
 
 ## Recovery method and its operating cost
@@ -86,23 +86,85 @@ networkless clone/audit equality. Negative cases cover a mismatched catalog
 commitment and corrupt control bytes whose archive hash is otherwise valid.
 Cleanup must remove only fixture-owned resources and fail on leftovers.
 The manually constructed fixture ledger is not a replacement for the existing
-SQLx upgrade-lane evidence. All21 new cases remain unexecuted. CI wiring is
+SQLx upgrade-lane evidence. A lost-create-response case recovers only the exact
+nonce/name/labels/image it created, removes that container, and still reports
+the original operation as failed. All50 recovery cases remain unexecuted. CI wiring is
 written with independent hard exits; no candidate has been dispatched.
 
-## Remaining work before a usable operating command
+## Bounded maintenance entry point (written, unexecuted)
 
-1. Implement the bounded maintenance entry point: fresh protected contract,
-   exact old/tool revisions, image/volume generations, boot/time bounds, release
-   and backup locks, complete writer enumeration/fences, pre-stop audit binding,
-   cold capture, encryption, isolated restore, and no-clobber publication.
-2. Bind the old release's actual migration checksums and actual Raw/Curated/base
-   identities, protected configuration and separate secret-recovery references.
-   Do not invent host paths or treat the synthetic base in these tests as the
-   approved real base. Keep the decryption key outside the archive.
-3. Add entry-point interruption, expiry and publication failure cases; finish
-   the approved-base whole-flow fixture. Review and verify this coherent
-   candidate once, following the existing-run check. No per-file CI dispatch.
-4. Complete the concrete G3/G4 packet and obtain only missing operating
+[prepare-production-recovery.py](../../scripts/ops/prepare-production-recovery.py)
+has four closed modes. The default `plan` makes no host observations. The other
+modes require root, a protected root:root0600 JSON contract and an independently
+prepared, protected `/opt/lagrange/maintenance/<tool-commit>` payload. Its eleven
+Python/SQL/shell dependency files must match the reviewed contract pins.
+This staging path is necessary because the release installer changes `current`;
+installing/activating the new release first would defeat a pre-upgrade backup.
+The tool does not stage itself or activate a release. The old release remains
+`/opt/lagrange/current` throughout audit and capture.
+
+| Mode | Required state and result |
+|---|---|
+| `audit` | Relevant non-DB writers are already stopped. Read the fixed audit from the exact still-running PostgreSQL container and publish a new private audit receipt without overwriting one. Other DB client connections or prepared transactions cause refusal. |
+| `capture` | Operator has cleanly stopped that same PostgreSQL generation; other writers remain stopped. Require the fresh same-boot audit, archive all five roots, encrypt, decrypt and verify a private clone, recheck source/writer identities, then publish a new set. |
+| `verify` | Verify the already published recovery ID into a new isolated clone. A fresh bounded clock/boot envelope is allowed, but its original recovery bindings cannot change. This does not claim that the old live release remains current. |
+
+The future command shape is `/usr/bin/python3
+/opt/lagrange/maintenance/<tool-commit>/scripts/ops/prepare-production-recovery.py
+--mode <audit|capture|verify> --contract <protected-json-path>`. These placeholders
+are not an execution-ready command or host observations. G4 must bind actual
+values and the separate operator stop/resumption commands first.
+
+The closed contract binds old/tool revisions, recovery ID, database/project,
+container/image/volume generations, five exact roots/owners/modes, ordered old
+migration checksums, base inventory hash, protected source/config pins, writer
+and systemd observations, byte/free-space limits, a secret-recovery **reference**,
+boot ID, and an at-most30-minute window. Old migration SHA384 values must match
+the actual installed `.up.sql` bytes, not just a declared schema count. The
+base inventory hash binds bytes; it does not independently establish approval.
+The `config` class retains the protected old release, including its configuration
+and installed manifest. Secret values are never contract references or diagnostics.
+
+The command holds the existing release/backup exclusive locks and existing Raw
+publication shared locks. It rechecks all `lagrange-*` systemd units and every
+container in the project, sharing a source mount or DB network, or using host
+networking. Every selected container must be stopped with unchanged generation
+and policy; new/missing/restarted writers fail. This is not a global proof that
+no unmanaged host process or external client exists. G4 must inventory and fence
+those sources, deny new external access, and bind the actual outage/resumption
+plan. No arbitrary shell command or automatic stop/start is accepted by the tool.
+
+Sets are private root:root0700 directories named `preupgrade-<recovery-id>` below
+`/srv/backups/lagrange`, with only two0600 encrypted members, sanitized metadata
+and a completion marker. The existing64-hex protected key remains outside the
+archive and is held/rechecked by file identity. Atomic no-replace publication
+does not alter daily backup retention/latest pointers. A failure after publish
+retains the set for inspection and returns failure; the marker alone is not
+operational acceptance.
+
+Before Docker creation, the verifier writes a private nonce-bound intent. If
+creation or cleanup is ambiguous, it retains the intent and copied mount and
+blocks subsequent CLI calls. Operators must reconcile that exact resource under
+bounded authority; there is no broad cleanup or automatic retry. Normal cleanup
+and the lost-response fixture require confirmed removal of only owned resources.
+
+[Maintenance regressions](../../scripts/ops/production-preupgrade-maintenance-self-test.py)
+use real private filesystem locks, no-replace publication and OpenSSL encryption,
+with fake Docker/systemd observations and a fake clone result. They cover stale
+contracts/audits, migration/base mismatch, writer/source/key changes, expiry,
+cipher damage, missing/extra members, failed clone, publication races and
+ambiguous creation. They do not substitute for the separate native Docker suite
+or an actual production fence. All28 are WRITTEN_UNEXECUTED.
+
+## Remaining work before operating use
+
+1. Complete the actual approved-base whole-flow fixture and source review, then
+   verify the coherent Wave82 candidate once after the existing-run query.
+   No per-file CI dispatch; all72 Wave82 definitions are still unexecuted.
+2. Bind the fresh actual host roots, complete writer inventory, old configuration,
+   approved base, secret-recovery reference and reviewed maintenance payload.
+   Do not substitute synthetic fixture data or guess paths/owners/volume modes.
+3. Complete the concrete G3/G4 command packet and obtain only missing operating
    authority. Fresh host observations, actual recovery success and restoration
    compatibility must precede role bootstrap, migration or release-link change.
 

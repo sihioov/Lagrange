@@ -158,6 +158,7 @@ class WorkflowContractTests(unittest.TestCase):
             "Verify daily encrypted full-schema isolated restore",
             "Verify installed backup version transition and recovery",
             "Verify pre-upgrade cold archive boundaries",
+            "Verify pre-upgrade maintenance failure boundaries",
             "Verify pre-upgrade schema59 isolated recovery",
             "Verify legacy production operations fixtures",
         }
@@ -178,6 +179,7 @@ class WorkflowContractTests(unittest.TestCase):
         )
         for name, script in (
             ("Verify pre-upgrade cold archive boundaries", "production-preupgrade-recovery-self-test.py"),
+            ("Verify pre-upgrade maintenance failure boundaries", "production-preupgrade-maintenance-self-test.py"),
             ("Verify pre-upgrade schema59 isolated recovery", "production-preupgrade-recovery-docker-self-test.py"),
         ):
             self.assertEqual(

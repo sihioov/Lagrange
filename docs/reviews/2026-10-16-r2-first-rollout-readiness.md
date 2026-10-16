@@ -56,11 +56,12 @@ images, schema checksums, roles, data/artifact hashes, writer identities and
 restore results must be bound to the same recovery point. No new daily table or
 control row may be invented to make the V2 controller accept schema59.
 
-The [cold-cluster recovery primitives and21 regression definitions](../runbooks/r2-preupgrade-recovery.md)
+The [cold-cluster recovery command and50 regression definitions](../runbooks/r2-preupgrade-recovery.md)
 are now written but unexecuted. Whole-cluster recovery preserves roles and
 access policy without requiring new daily tables; its additional database
 outage belongs in the explicit G4 packet. The bounded maintenance entry point,
-writer fencing and no-clobber archive publication are still being implemented.
+writer observations/locks and no-clobber archive publication are now written.
+Unmanaged host/external writer fencing still requires a complete G4 inventory.
 It requires the fresh host inventory and a reviewed command set. It must
 complete before role bootstrap, migration or the first release-link mutation.
 The current daily backup controller is retained for post-upgrade operations.
