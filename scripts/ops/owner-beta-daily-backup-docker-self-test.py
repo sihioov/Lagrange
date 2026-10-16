@@ -146,7 +146,13 @@ class DailyBackupDockerTests(unittest.TestCase):
         if identity != b"migration_owner:migration_owner":
             raise RuntimeError("DAILY_BACKUP_FIXTURE_ROLE")
         for path in migrations:
-            cls.sql("BEGIN;\n" + path.read_text() + "\nCOMMIT;", role="migration_owner", stage="migration")
+            script = path.read_text()
+            # Match the migration's existing SQLx execution contract. Concurrent
+            # indexes must be the sole statement outside a transaction; normal
+            # migrations still need their transaction and SET LOCAL semantics.
+            if not script.startswith("-- no-transaction\n"):
+                script = "BEGIN;\n" + script + "\nCOMMIT;"
+            cls.sql(script, role="migration_owner", stage="migration")
         # The normal SQLx metadata shape is included in the dump. Checksums are
         # the real embedded migration bytes; the dedicated lane tests SQLx itself.
         cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
@@ -240,6 +246,36 @@ class DailyBackupDockerTests(unittest.TestCase):
             self.sql('SELECT * FROM "fixture_private_sql_diagnostic";')
 
     def test_actual_full_schema_encrypted_files_and_networkless_database_restore(self):
+        migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
+        self.assertEqual(len(migrations), 62)
+        ledger = self.sql("SELECT version::text||':'||encode(checksum,'hex')||':'||success::text "
+                          "FROM public._sqlx_migrations ORDER BY version;", role="migration_owner")
+        self.assertEqual(ledger.decode("ascii").splitlines(), [
+            str(int(path.name[:4])) + ":" + hashlib.sha384(path.read_bytes()).hexdigest() + ":true"
+            for path in migrations])
+        expected_indexes = {
+            "data_batches_source_file_uq": ("data_batches", "true"),
+            "trading_calendar_versions_source_lookup_idx": ("trading_calendar_versions", "false"),
+            "recommendation_runs_job_id_uq": ("recommendation_runs", "true"),
+            "recommendation_runs_scheduled_identity_uq": ("recommendation_runs", "true"),
+            "recommendation_items_run_instrument_key": ("recommendation_items", "true"),
+            "target_portfolios_one_per_run": ("target_portfolios", "true"),
+            "jobs_typed_claim_idx": ("jobs", "false"),
+        }
+        # Observe the real catalog after every migration, including 0030's
+        # constraint attachment. A skipped or invalid concurrent build cannot
+        # be hidden by writing a synthetic SQLx ledger row.
+        names = ",".join("'" + name + "'" for name in expected_indexes)
+        indexes = self.sql("SELECT i.relname||':'||t.relname||':'||pg_get_userbyid(i.relowner)||':'||"
+            "x.indisvalid::text||':'||x.indisready::text||':'||x.indislive::text||':'||x.indisunique::text "
+            "FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid=x.indexrelid "
+            "JOIN pg_catalog.pg_class t ON t.oid=x.indrelid "
+            "JOIN pg_catalog.pg_namespace n ON n.oid=i.relnamespace "
+            "WHERE n.nspname='public' AND i.relname IN (" + names + ") ORDER BY i.relname;",
+            role="migration_owner")
+        self.assertEqual(indexes.decode("ascii").splitlines(), [
+            name + ":" + table + ":migration_owner:true:true:true:" + unique
+            for name, (table, unique) in sorted(expected_indexes.items())])
         final = self.capture()
         self.assertEqual(self.storage.verify(final), {"extra_admissions": [], "extra_frontiers": []})
         self.assertEqual({p.name for p in final.iterdir()}, {*backup.MEMBERS, "metadata.json", "COMPLETE"})

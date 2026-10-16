@@ -5859,3 +5859,21 @@ Whole-flow/PUML+PNG/independent review/concreteG3G4/Owner/three days remain open
 [Source scope and limitations](../../reviews/2026-10-16-r2-fixture-readiness-correction.md).
 
 Wave80 single candidate:4336fbe/run38866283743 attempt1,07:17:33UTC;bound08:47:33UTC. Both all-event exact-head queries0/remote match;1046pins/483blobs verified. Exactly one dispatch; new88 and carried gates pending. No production/Owner/three-day acceptance.
+
+### Wave80 full recovery; Wave81 I6B3-C03 — 2026-10-16 KST
+
+4336fbe/run38866283743 attempt1 completed FAILURE07:41:51UTC. All8 jobs/log
+hashes,7 checkout SHAs,1046pins/483blobs match. Rust3346+chart6,PG19targets and
+12 named backup cases,Web129+14,strict lint/format/Python pass. Package88 resolves
+81PASS/7NOT_EXECUTED: backup class setup reports migration SQLSTATE25001.
+The unconditional transaction around seven declared concurrent-index migrations
+is a concrete fixture defect; the old log does not identify the exact migration.
+
+After complete recovery, direct coordinator C03 changes only the native backup
+fixture: honor exact no-transaction markers, retain normal transaction/SET LOCAL
+semantics, and extend the existing restore case with actual62checksum/7index
+catalog checks. Still88 package definitions and7 native backup definitions.
+1045 prior pins unchanged; successor1053pins and7825-line inventory frozen.
+No local execution, worker, production action, retry or acceptance relaxation.
+A coherent exact-candidate run follows all-event existing-run and remote checks.
+Whole-flow,PUML/PNG,independent review,concreteG3/G4,Owner,three days remain open.

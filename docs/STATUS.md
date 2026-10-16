@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: 후보61f9c7f/CI38861769625 attempt1은 전체 실패로 회수했다. Rust3346·PG19target·strict lint/format/Python은 통과했으나 DB fixture 초기화2곳·Web1개는 실패했다. [I6B3-C02 준비·진단 보정](reviews/2026-10-16-r2-fixture-readiness-correction.md)은 실제 인증 SQL 준비, 안전한 오류코드, backup12개 named-row를 5파일에 반영했다. 기존1036pin 불변·새1046pin을 고정했으며 후보4336fbe의 [CI38866283743 attempt1](reviews/2026-10-16-r2-fixture-readiness-ci.md)을 한 번 시작해 새88개와 모든 기존 gate 결과를 회수 중이다. 전체 흐름·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료이고 관측은 시작되지 않았다.
+현재: [Wave80 후보4336fbe/CI38866283743](reviews/2026-10-16-r2-fixture-readiness-ci.md)의8job/log/7checkout·1046pin/483blob 전체 결과를 회수했다. Rust3346·chart6·PG19target/backup12·Web·strict lint/format/Python은 통과했고, 백업 fixture 준비의 SQLSTATE25001로7개 본문은 미실행이다(새88개 중81PASS). [I6B3-C03](reviews/2026-10-16-r2-backup-migration-mode-correction.md)는 테스트 한 파일의7개 no-transaction 실행과 실제 index/62checksum 확인을 보정했다. 나머지1045pin 불변·새1053pin 및88개 정의를 고정했고 정확 후보 검증을 준비한다. 전체 흐름·PUML/PNG·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 미완료이며 관측은 미시작이다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -32,7 +32,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | I6B3-C02 준비·진단 보정 후보의 단일 hosted 검증 후 승인 입력 전체 흐름·PUML/PNG·독립 리뷰·구체적 G3/G4·운영·Owner·3거래일·C_R2. |
+| 다음 단계 | I6B3-C03 migration 실행 보정 후보의 단일 hosted 검증 후 승인 입력 전체 흐름·PUML/PNG·독립 리뷰·구체적 G3/G4·운영·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
