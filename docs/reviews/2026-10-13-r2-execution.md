@@ -3671,3 +3671,22 @@ Static/whitespace and scoped standalone rustfmt2024 only locally. No DB/runtime
 activation or executable acceptance. I6B2b runtime/drain, backup/reconciliation,
 diagrams, approved-base whole flow, independent review,G4,Owner,three actual
 trading days/final C_R2 remain open.
+
+### Wave74 release database control: single candidate CI — 2026-10-16 KST
+
+Candidate 570e277fed776371d526ef56d11c6a580746210e;945 pins/443 candidate blobs.
+All-event exact-head query0 at 2026-10-16T02:14:32.994198+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T02:15:37.028609+00:00;
+one dispatch 2026-10-16T02:15:38.768641+00:00. CI38839505678 attempt1 identified
+2026-10-16T02:16:06.623549+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T03:45:38+00:00; direct coordinator, no new worker.
+
+Require11 new actual-role DB cases (43 exact schedule names),6 root renderer
+cases,16 previous filesystem/12 installer cases,three Rust parity cases,
+legacy production-ops fixture and all prior Rust/PG/Web gates.
+No I6B2a executable acceptance yet. Later documentation HEAD does not
+change the candidate. I6B2b actual Compose/control transport/drain, consistent backup/diagrams, approved-base
+whole flow, independent review,G4,Owner,three actual trading days/final C_R2
+remain open. Ralph continues.
