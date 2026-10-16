@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave82 후보 `c6265dd`의 [CI38888547029 attempt1](reviews/2026-10-16-r2-first-rollout-ci.md)을 회수 중이다. 새 Python91개 중87PASS/4ERROR이며 native cold 복구4개가 부모 권한 guard에서 멈췄다. 실제 복원 assertion은 도달 전이다. format·Clippy·Python job은 성공했고 새 Rust4개·잔여 job은 대기 중이다. 전체 회수 전 소스/CI는 변경하지 않는다. 기존 성공/실패를 보존하며 실제 이미지/호스트 검증·다이어그램·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
+현재: Wave82 후보 `c6265dd`의 [CI38888547029 attempt1](reviews/2026-10-16-r2-first-rollout-ci.md)을 회수 중이다. 새 Python91개 중87PASS/4ERROR이며 native cold 복구4개는 부모 권한 guard에서 clone assertion 전에 멈췄다. Web·PostgreSQL·format·strict Clippy·Python job은 성공했고 Rust 전체 테스트가 진행 중이다.6개 전체 로그/checkout, PG19target·62checksum두차례·0060/0039/cleanup, 브라우저129+14를 회수했다. 전체 종료 후 fixture 자체의 부모 보호 설정만 보정한다. 격리 다이어그램303개 근거 범위는 확인했으나 PNG/통합은 미완료다. 실제 이미지/승인 입력 호스트 검증·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

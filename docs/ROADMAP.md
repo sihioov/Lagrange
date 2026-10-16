@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave82 후보 `c6265dd`의 [CI38888547029 attempt1](reviews/2026-10-16-r2-first-rollout-ci.md) 전체 회수 중. Python 새91개는87PASS/4ERROR이며 네 native 복구 case가 모두 볼륨 상위 권한 guard에서 멈췄다. 새 Rust4개·잔여 job은 회수 대기다. 전체 종료 전 소스/CI는 변경하지 않는다. 실제 이미지/승인 입력 호스트 검증·PUML/PNG·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 남아 있다. |
+| 다음 착수 항목 | Wave82 후보 `c6265dd`의 [CI38888547029 attempt1](reviews/2026-10-16-r2-first-rollout-ci.md) 전체 회수 중. Web·PostgreSQL·format·strict Clippy·Python 성공, Rust 전체 테스트 진행 중이다. 새 Python87PASS/4ERROR는 native fixture의 부모 보호 설정 누락이며 전체 종료 후 국소 보정한다. 실제 이미지/승인 입력 호스트 검증·PNG/통합·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 남아 있다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -1617,3 +1617,5 @@ Wave79 부분 회수: 파일/컨트롤러64개·format·strictClippy·Python은 
 - 2026-10-16 — R2-04/09 Wave82: 후보 `c6265dd`·1074pin/502blob·새95개 정의로 전체 묶음을 고정하고 기존 exact-head 실행0·원격SHA 일치 후 [CI38888547029 attempt1](reviews/2026-10-16-r2-first-rollout-ci.md)을19:38KST에 한 번 시작했다. 결과 회수·컴파일/테스트 인수는 대기 중. 실제 승인 입력 호스트 실행·운영·Owner·3거래일은 미시작이며 기존 성공/실패 증거를 보존한다.
 
 - 2026-10-16 — Wave82 부분 회수19:43KST: 새 Python87PASS/4ERROR. native cold 복구4개가 PREUPGRADE_VOLUME_PARENT에서 실패해 실제 clone assertion 전 종료; 부모 metadata는 미출력/UNKNOWN. format·Clippy·Python job 성공, 나머지는 진행 중.4개 로그 digest/checkout 회수. 전체 회수 전 보정/중복 dispatch 없음. [증거](reviews/2026-10-16-r2-first-rollout-ci.md).
+
+- 2026-10-16 — R2-04/09 Wave82: Web/PG 추가 성공 회수,6개 전체 로그·checkout 및 PG19target/62checksum두차례/0060/0039/cleanup·브라우저129+14 대조. Rust 전체 테스트 진행 중, 새 Python87PASS/4ERROR 유지. 전체 종료 후 fresh fixture 부모 보호만 보정하며 운영 guard는 유지한다. 격리 I6C 다이어그램303개 근거 범위 확인; PNG/통합·독립 리뷰는 미완료. [현재 증거와 한계](reviews/2026-10-16-r2-first-rollout-ci.md).

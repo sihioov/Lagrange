@@ -11,10 +11,17 @@ ERROR rows. The 19 whole-flow fixture tests passed after that failed step;
 they still do not establish actual approved-base execution. The four new
 Rust definitions remain pending collection.
 
-Format, Clippy and Python jobs are terminal SUCCESS by metadata; their full
-log digests and checkout SHAs were recovered along with policy. Python reports
-487 passed, 10 existing skipped and 7 warnings. Workspace, dedicated PostgreSQL
-and Web jobs are still running. The required aggregate has not completed.
+Subsequent recovery: Web and dedicated PostgreSQL also completed SUCCESS.
+Six terminal full-job log digests and actual checkout SHAs now match the
+candidate. Strict workspace/all-targets/all-features Clippy with `-D warnings`
+and workspace formatting commands were observed. Python reports 487 passed,
+10 existing skipped and 7 warnings. Web browser lanes passed 129/129 and14/14,
+with no skips, flakes or retries and successful cleanup. PostgreSQL has19
+successful no-SKIP targets,146 printed named rows,62 current migration
+checksums matched on both installs,32 migration0060 cases/73 subcases,
+83 bootstrap-negative cases,0039 rollback protection and owned-container cleanup.
+Unprinted nested helper rows remain UNKNOWN. Workspace Rust tests are still
+running; the required aggregate has not completed.
 All frozen executable inputs remain unchanged. No correction or redispatch
 will occur before full run recovery.
 
@@ -72,3 +79,20 @@ and integration, independent integrated review, concrete G3/G4 operations,
 real Owner use and three consecutive trading days remain outstanding. R2 and
 final `C_R2` remain incomplete. No local project execution, new worker,
 provider request or production action occurred in this launch.
+
+## Bounded follow-up disposition and diagram preparation
+
+The native fixture creates its own labelled Docker volume but does not establish
+the already-required private immediate parent before capture. After full run
+recovery, correct only that fixture setup: verify the exact owned fresh volume,
+stopped generation and descriptor/name identity, then tighten its own parent
+to root:root0700. Preserve the production guard and its positive/negative
+regression. Actual failed parent mode remains UNKNOWN. No production permission
+change is authorized or inferred from this fixture correction.
+
+The isolated I6C diagram draft now covers the maintenance/cold recovery/backup
+transition components and refreshes C04 citations.303 citation ranges resolve
+against the current source; this is only a text/source checkpoint. PUML files
+remain outside this candidate. PNG rendering, integration and independent review
+remain open. The private checkpoint is
+`target/r2-daily-beta/wp-4-integration/I6C-static-checkpoint-c6265dd.json`.
