@@ -6169,3 +6169,13 @@ logs/checkouts/qualified outcomes/cleanup must be recovered; missing nested
 exits remainUNKNOWN. Later documentation HEAD does not change pinned candidate.
 See docs/reviews/2026-10-17-r2-integrated-candidate-ci.md. No local project or
 production action; actual root/images/host/Owner/three-day/final gates remain.
+
+Wave88 partial recovery at19:35UTC: format/policy/strictClippy/Python successful;
+five complete job-log hashes and actual checkout SHAs recovered including the
+failed smoke. Ten correction tests and104 affected-module names PASS;106/110
+new names PASS, four Rust names await workspace. Smoke staticPASS then0060
+`daily role preflight denied`, failure at migration step before image/build/
+publication. Its fixture creates six roles but omits required daily_input_admitter.
+Actual catalog not printed; no production defect inferred. Suppressed cleanup
+statuses remainUNKNOWN. CI workspace/Web/PG still running; no source mutation
+until full terminal recovery. No rerun/cancel/duplicate, monitorf50af5d3 retained.

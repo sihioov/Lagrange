@@ -1,7 +1,7 @@
 # R2 integrated candidate hosted verification
 
-Status: **both exact-candidate runs are in progress; no executable or release
-acceptance yet.** Required source review is closed as described in the
+Status: **required CI is in progress; separate functional smoke failed at
+migration0060. No complete executable or release acceptance.** Required source review is closed as described in the
 [coordinator disposition](2026-10-17-r2-integrated-review-closure.md).
 
 Candidate: `492cbae5618f695c3e27126e4ccf490a1ffda981`.
@@ -10,8 +10,8 @@ The intervening changes are documentation, including the D02 evidence template.
 
 | Required run | Exact run / attempt | Created UTC | Initial observed state |
 | --- | --- | --- | --- |
-| Required CI | [38955175446 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955175446) | 2026-10-16 19:28:29 | In progress; format job metadata success, six execution jobs running; aggregate not yet created |
-| Functional research-worker smoke | [38955182520 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955182520) | 2026-10-16 19:28:33 | One execution job running |
+| Required CI | [38955175446 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955175446) | 2026-10-16 19:28:29 | 19:35UTC: format/policy/Clippy/Python success; workspace/Web/PG running; aggregate not yet created |
+| Functional research-worker smoke | [38955182520 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955182520) | 2026-10-16 19:28:33 | FAILED before functional image/publication stages; details below |
 
 Both are `workflow_dispatch` on `excited-dolphin` at the exact candidate SHA.
 The all-event/all-workflow exact-head query returned zero before push. Remote
@@ -34,9 +34,8 @@ Frozen inputs:
 
 Launch receipts are `ci-launch.json` and `research-smoke-launch.json` beside
 the inputs. Sanitized current metadata is in
-`target/r2-daily-beta/ci/492cbae/`. Raw logs are not persisted. Full job logs,
-hashes, actual checkout SHAs, qualified test rows and cleanup are not yet
-recovered; aggregate counts alone cannot establish named-test acceptance.
+`target/r2-daily-beta/ci/492cbae/`. Raw logs are not persisted. Five terminal job logs and actual checkout SHAs are recovered below; remaining
+job logs, qualified outcomes and cleanup are not yet fully recovered; aggregate counts alone cannot establish named-test acceptance.
 Unprinted nested independent rows and exits remain UNKNOWN.
 
 Monitoring: heartbeat `f50af5d3`, every five minutes, expires at
@@ -50,3 +49,33 @@ No local compiler/test/build/project-helper, SQL/DB, provider, root/Docker or
 production action occurred. No worker was added. Actual images, approved-base
 host flow, root access, G3/G4, Owner use, three consecutive trading days and
 final C_R2 remain open. Later documentation HEAD does not alter this candidate.
+
+
+## 2026-10-16 19:35–19:39 UTC partial recovery
+
+All five completed job logs were fetched in memory, hashed in full and reduced
+to sanitized evidence under `target/r2-daily-beta/ci/492cbae/`. Each actual
+`git log -1 --format=%H` returned the exact candidate. Format and strict Clippy
+command flags were observed. Policy emitted287 qualified Python PASS rows,
+including all ten correction cases and all104 definitions in the four changed
+modules. The required110-case new-definition inventory has106 named PASS from
+policy; four Rust daily-ingest cases await the workspace log. Python suite
+summary is487 passed/10 skipped/7 warnings, not a per-case acceptance list.
+
+The functional smoke's complete449-line log has SHA256
+`9737c7e9eafd84b09a5ce8d4965a46af131a21be2aebbcbbd5056447cf48d206`.
+Its actual checkout matches492cbae. Static phase passed at log151; log430 reports
+`daily role preflight denied`, log432 identifies
+`0060_owner_beta_daily_inputs.up.sql`, and log433 records exit1. Source comparison
+finds the disposable fixture at `scripts/qa/research-worker-smoke.sh:665-679`
+creates six roles and omits `daily_input_admitter`, which migration0060 requires
+at lines8–25. This explains the fixture prerequisite gap; the actual pg_roles
+catalog was not printed and no production-role deficiency is inferred.
+
+Full migration endpoint, the two functional Rust image builds and publication
+checks were not reached. The EXIT trap suppresses cleanup command output and
+exit statuses, so actual cleanup remains UNKNOWN. The failed workflow is
+preserved and will not be rerun or cancelled. The required CI is still running;
+source/frozen inputs remain untouched. Only after terminal complete recovery
+will the coordinator make the bounded fixture correction and bind successor
+verification. No new worker, local execution or production operation occurred.

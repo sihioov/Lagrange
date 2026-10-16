@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-17 (Asia/Seoul)
 
-현재: **R2 통합 소스 리뷰 종료; CI와 별도 기능 검증 실행 중.** 새 후보 `492cbae`의 CI38955175446과 별도 functional smoke38955182520 attempt1을 각각 한 번 시작했다(04:28 KST). 필수 변경 범위 F119/D83/P0/U0와 이전4개 결함·D01은 독립 소스 검토 종결, D02는 실제19개 실행 목록에 맞춰 문서 보정했다. 입력1149pin/511blob 일치, 신규110개 중 보정10개를 포함한 실행 결과 회수 중이다. root 접근·실제 이미지/호스트·G3/G4·Owner·연속3거래일·C_R2는 미완료다. [현재 실행](reviews/2026-10-17-r2-integrated-candidate-ci.md).
+현재: **R2 필수 CI 진행 중, 별도 smoke 실패 원인 확인.** 04:35 KST 회수: format·strictClippy·policy·Python 성공, 보정10개와 영향4모듈104개 모두 이름별 PASS. 신규110개 중106PASS/4Rust 결과 대기. 별도 smoke는0060 daily role preflight denied로 실패했으며, 기능 검증 fixture의 필수 역할 누락을 소스로 확인했다. 나머지 CI 종료·전체 회수 전 소스는 고정한다. root 접근·실제 이미지/호스트·G3/G4·Owner·연속3거래일·C_R2는 미완료다. [현재 증거](reviews/2026-10-17-r2-integrated-candidate-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
