@@ -273,6 +273,36 @@ class DailyTransportTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
         self.assertEqual(result.stderr, b"DAILY_CONTROL_DATABASE: FAILED\n")
 
+    def test_actual_backup_audit_transport_accepts_bounded_json_beyond_control_limit(self):
+        # Fixed SQL semantics are covered against all migrations by the Rust
+        # backup tests. Here the real psql/container path exercises response
+        # size, exact login, JSON decoding and cleanup, using synthetic output.
+        sql = "SELECT jsonb_build_object('schema','lagrange-daily-backup-db-v1'," \
+              "'login',current_user,'session',session_user,'fixture',repeat('x',5000))::text;"
+        with mock.patch.object(ops.install, "read_root_file", return_value=sql.encode("ascii")):
+            result = self.database.backup_audit(self.values)
+        self.assertEqual(result["login"], "migration_owner")
+        self.assertEqual(result["session"], "migration_owner")
+        self.assertEqual(len(result["fixture"]), 5000)
+        # A large arbitrary response still cannot use the ordinary control API.
+        with self.assertRaises(ops.runtime.RuntimeErrorCode):
+            self.database.execute(self.values, sql, {"DAILY_CONTROL: DISABLED"})
+        self.assert_no_oneshot()
+
+    def test_actual_backup_audit_rejects_unpinned_sql_duplicate_json_and_extra_rows(self):
+        fixed = "SELECT '{\"schema\":\"lagrange-daily-backup-db-v1\"}';"
+        with mock.patch.object(ops.install, "read_root_file", return_value=fixed.encode("ascii")):
+            with self.assertRaises(ops.runtime.RuntimeErrorCode):
+                self.database.execute(self.values, "SELECT 1;", None, backup_audit=True)
+        for sql in (fixed + fixed,
+                    "SELECT '{\"schema\":\"lagrange-daily-backup-db-v1\",\"schema\":\"wrong\"}';",
+                    "SELECT '{\"schema\":\"wrong\"}';"):
+            with self.subTest(case="closed response"), \
+                    mock.patch.object(ops.install, "read_root_file", return_value=sql.encode("ascii")):
+                with self.assertRaises((ops.runtime.RuntimeErrorCode, ops.install.DailyInstallError)):
+                    self.database.backup_audit(self.values)
+        self.assert_no_oneshot()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

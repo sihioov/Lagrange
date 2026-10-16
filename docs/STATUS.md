@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave75 실제 Docker 격리·종료 검증을 [범위별 인수](reviews/2026-10-16-r2-daily-runtime-ci.md)했다. 후보606d3f6/CI38842068730의 전체8작업·969pins·450blobs·7checkout 및 새24개 이름별 결과와 기존 회귀가 통과했다. Wave76은 공식 릴리스 활성화·중지와 DB transport 연결이다. 백업/복원·전체 흐름·운영·Owner·3거래일·C_R2는 미완료다.
+현재: Wave77 후보719a2e2/CI38849276458 전체 실패를 회수했다. 새37개는 통과했으나 기존 Owner 종목 DB 복구 테스트의 25ms 임대 재사용이 확인돼 3c100be에서 보정했다(실행 미검증). 백업/복원 기반과 새55개 테스트를 작성했고 공식 명령·암호화·격리 복원 연결을 진행한다. 새 CI는 통합 후보에 묶으며, 전체 흐름·독립 리뷰·운영·Owner·3거래일·C_R2는 미완료다. [장시간 진행 감사](reviews/2026-10-16-r2-ralph-progress-audit.md).
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
@@ -4376,3 +4376,16 @@ and old-worker rejection after re-claim added. Source/rustfmt/whitespace pass;
 changed test UNEXECUTED. Registered exact test-file extension in the I6B3 draft.
 No production change or new CI. Batch with coherent backup/reconciliation work;
 previous failed run remains failed and all final R2 gates remain open.
+
+
+### I6B3 backup foundation — 2026-10-16 KST
+
+After full Wave77 recovery and committed fixture correction 3c100be, transferred
+eight bounded source/test files from the registered coordinator draft. Complete
+file inventory/reference checks, fixed DB audit/original-reservation repair, and
+exact prior-cohort resume primitives are written. New55 definitions (34 file,
+8 resume,11 SQL,2 transport) remain WRITTEN_UNEXECUTED. Direct source/whitespace
+and scoped Rustfmt checks only; no compiler, Python, SQL, Docker or new CI run.
+Next: encrypted capture/isolated restore, native same-identity reconciliation,
+controller cleanup and official command/installer/CI wiring as one coherent
+candidate. All whole-flow/independent-review/G4/Owner/three-day gates stay open.

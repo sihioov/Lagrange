@@ -5779,3 +5779,16 @@ and old-worker rejection after re-claim added. Source/rustfmt/whitespace pass;
 changed test UNEXECUTED. Registered exact test-file extension in the I6B3 draft.
 No production change or new CI. Batch with coherent backup/reconciliation work;
 previous failed run remains failed and all final R2 gates remain open.
+
+
+### I6B3 backup foundation — 2026-10-16 KST
+
+After full Wave77 recovery and committed fixture correction 3c100be, transferred
+eight bounded source/test files from the registered coordinator draft. Complete
+file inventory/reference checks, fixed DB audit/original-reservation repair, and
+exact prior-cohort resume primitives are written. New55 definitions (34 file,
+8 resume,11 SQL,2 transport) remain WRITTEN_UNEXECUTED. Direct source/whitespace
+and scoped Rustfmt checks only; no compiler, Python, SQL, Docker or new CI run.
+Next: encrypted capture/isolated restore, native same-identity reconciliation,
+controller cleanup and official command/installer/CI wiring as one coherent
+candidate. All whole-flow/independent-review/G4/Owner/three-day gates stay open.

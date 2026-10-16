@@ -113,9 +113,20 @@ Before G4, complete controlled Compose selection and old-process drain, DB
 control synchronization, daily-file/policy/DB backup and restore reconciliation,
 actual three-UID approved-base-to-continuation flow, independent integrated
 review, architecture source/PNG updates and exact-candidate verification.
-Current backup code covers PostgreSQL, Raw and Curated; it does not yet archive
-the new daily sibling state or immutable policy. Production use must wait for
-that gap to close.
+The callable backup path still covers only PostgreSQL, Raw and Curated. New
+internal source now defines a complete six-class file inventory, a fourteen-table
+daily/history audit, and guarded restoration of original reservation keys. The
+archive/reference checks prove byte consistency; they do not independently admit
+extra leaves. Only the existing native admitter may reverify those same identities.
+The resume primitive accepts only the original healthy three-container cohort
+after a successful drain, with unchanged ownership/mounts and no API restart.
+
+All 55 new tests are WRITTEN_UNEXECUTED (34 file/reference, eight resume, eleven
+actual-role SQL and two transport). No backup command or CI gate invokes this
+new complete path yet. Encrypted capture, isolated PostgreSQL restore/audit,
+independent extra-leaf reconciliation, controller cleanup and official command/
+installer/CI wiring remain required before production use. The prior failed
+whole-candidate CI remains failed; this source checkpoint is not acceptance.
 
 G4 must enumerate exact immutable revision/manifest, policy and approved-base
 pins, verified available evidence/catch-up scope, Owner/entitlement/first-session

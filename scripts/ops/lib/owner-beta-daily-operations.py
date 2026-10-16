@@ -218,10 +218,20 @@ class Database:
     def __init__(self, docker, project, commit, image):
         self.docker, self.project, self.commit, self.image = docker, project, commit, image
 
-    def execute(self, values, sql, expected):
+    def execute(self, values, sql, expected, *, backup_audit=False):
         docker = self.docker
         require(isinstance(sql, str) and 0 < len(sql.encode("utf-8")) <= 128 * 1024,
                 "DAILY_OPERATION_SQL")
+        require(type(backup_audit) is bool, "DAILY_OPERATION_SQL")
+        if backup_audit:
+            # Only this fixed, bounded inventory may use a larger response.
+            # Ordinary controls retain their exact one-line 4KiB/45s contract.
+            fixed = install.read_root_file(
+                ROOT + "/deploy/db/owner-beta-daily-backup-audit.sql",
+                maximum=64 * 1024).decode("ascii")
+            require(sql == fixed and expected is None, "DAILY_OPERATION_SQL")
+        maximum = 64 * 1024**2 if backup_audit else 4096
+        deadline = 180 if backup_audit else 45
         runtime.image_owned(docker, Ownership(self.project, self.commit, self.image))
         network = internal_network(docker, self.project)
         secret = migration_secret(values["LAGRANGE_RUNTIME_SECRET_DIR"])
@@ -289,12 +299,12 @@ class Database:
                 ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock",
                  "start", "--attach", "--interactive", identity],
                 input=sql.encode("utf-8"), env=ENVIRONMENT, capture_output=True,
-                timeout=45, check=False)
+                timeout=deadline, check=False)
             value = observation()
             endpoints = value.get("NetworkSettings", {}).get("Networks", {})
             require(len(endpoints) == 1 and next(iter(endpoints.values())).get("NetworkID") ==
                     network["Id"], "DAILY_OPERATION_DATABASE_POLICY")
-            require(result.returncode == 0 and len(result.stdout) <= 4096 and
+            require(result.returncode == 0 and len(result.stdout) <= maximum and
                     not value["State"].get("Running") and
                     value["State"].get("Status") == "exited" and
                     not value["State"].get("OOMKilled") and
@@ -302,6 +312,13 @@ class Database:
                     value.get("RestartCount") == 0,
                     "DAILY_OPERATION_DATABASE")
             rows = result.stdout.decode("ascii", errors="strict").splitlines()
+            if backup_audit:
+                require(len(rows) == 1, "DAILY_OPERATION_DATABASE_RESULT")
+                value = install.json_bytes(rows[0].encode("ascii"), maximum=maximum)
+                require(isinstance(value, dict) and
+                        value.get("schema") == "lagrange-daily-backup-db-v1",
+                        "DAILY_OPERATION_DATABASE_RESULT")
+                return value
             require(len(rows) == 1 and rows[0] in expected, "DAILY_OPERATION_DATABASE_RESULT")
             return rows[0]
         finally:
@@ -323,6 +340,20 @@ class Database:
         values_allowed = {"ABSENT_SCHEMA", "ABSENT_CONTROL", "DISABLED", "ENABLED"}
         result = self.execute(values, sql, {prefix + v for v in values_allowed})
         return result[len(prefix):]
+
+    def backup_audit(self, values):
+        sql = install.read_root_file(
+            ROOT + "/deploy/db/owner-beta-daily-backup-audit.sql",
+            maximum=64 * 1024).decode("ascii")
+        return self.execute(values, sql, None, backup_audit=True)
+
+    def restore_reservations(self, values):
+        sql = install.read_root_file(
+            ROOT + "/deploy/db/owner-beta-daily-reservation-restore.sql",
+            maximum=64 * 1024).decode("ascii")
+        # Repair is transactional; its larger statement limit does not relax
+        # the existing transport timeout. A timeout is failure, never success.
+        return self.execute(values, sql, {"DAILY_BACKUP_RESERVATIONS: VERIFIED"})
 
     def control(self, release, commit, values, action):
         numbers = () if action == "disable" else (

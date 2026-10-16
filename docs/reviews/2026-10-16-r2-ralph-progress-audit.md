@@ -92,3 +92,20 @@ isolated backup draft. Direct source review, scoped edition-2024 rustfmt and
 whitespace checks passed. Compilation and execution of the changed test remain
 UNEXECUTED. No fresh CI was dispatched; verification is grouped with the coherent
 backup/reconciliation candidate. The original failed run remains failed.
+
+
+## Backup foundation source checkpoint
+
+The registered draft has now advanced beyond the two-file snapshot described
+at the original audit time. Eight source/test files were transferred only after
+Wave77 was fully recovered and its exact fixture correction committed. New
+55 definitions (34 file/reference,8 resume,11 actual-role SQL,2 transport) are
+WRITTEN_UNEXECUTED. File byte/reference verification is separate from native
+admission; original reservations are restored without new jobs or history
+rewrites. Resume requires the exact previous healthy cohort and complete drain.
+
+No official backup CLI is connected yet. Encryption, isolated restore/audit,
+native extra-leaf reconciliation, failure cleanup, installer/CI wiring and the
+whole candidate verification remain. No new CI, provider or production action.
+The separate DOC-02 Archify files/roadmap edits were preserved, not included in
+this source checkpoint; they do not close the two required PUML/PNG changes.

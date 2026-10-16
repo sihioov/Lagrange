@@ -2,7 +2,8 @@
 """Internal Docker observation/drain primitives for the controlled daily release.
 
 The caller supplies an already verified installed manifest/config binding.
-This module never starts a container, changes DB state or contacts a provider.
+Only backup recovery may restart the exact prior healthy daily containers.
+This module never creates containers, changes DB state or contacts a provider.
 Inspect bodies stay in memory; exceptions contain fixed diagnostic codes only.
 """
 from __future__ import annotations
@@ -188,7 +189,7 @@ def environment(value):
     return result
 
 
-def verify_policy(docker, binding, service, value):
+def verify_policy(docker, binding, service, value, *, stopped_for_backup=False):
     identity = value.get("Id", "")
     owned(value, binding, service, identity)
     config, host, state = value["Config"], value["HostConfig"], value["State"]
@@ -199,9 +200,15 @@ def verify_policy(docker, binding, service, value):
     require(config.get("User") == f"{uid}:{uid}" and
             config.get("Entrypoint") == [BINARY] and config.get("Cmd") == command,
             "DAILY_RUNTIME_COMMAND")
-    require(state.get("Running") is True and not state.get("Restarting") and
-            not state.get("Paused") and not state.get("OOMKilled") and
-            state.get("Health", {}).get("Status") == "healthy", "DAILY_RUNTIME_STATE")
+    if stopped_for_backup:
+        require(state.get("Running") is False and state.get("Status") == "exited" and
+                state.get("ExitCode") == 0 and not state.get("Error") and
+                not state.get("Restarting") and not state.get("Paused") and
+                not state.get("OOMKilled"), "DAILY_RUNTIME_STATE")
+    else:
+        require(state.get("Running") is True and not state.get("Restarting") and
+                not state.get("Paused") and not state.get("OOMKilled") and
+                state.get("Health", {}).get("Status") == "healthy", "DAILY_RUNTIME_STATE")
     require(host.get("ReadonlyRootfs") is True and host.get("Init") is True and
             host.get("Privileged") is False and host.get("CapDrop") == ["ALL"] and
             not host.get("CapAdd") and
@@ -215,7 +222,8 @@ def verify_policy(docker, binding, service, value):
             host.get("IpcMode") == "private" and not config.get("ExposedPorts"),
             "DAILY_RUNTIME_PRIVILEGES")
     require(host.get("Memory") == 1024**3 and host.get("NanoCpus") == 10**9 and
-            host.get("RestartPolicy", {}).get("Name") == "unless-stopped",
+            host.get("RestartPolicy", {}).get("Name") ==
+            ("no" if stopped_for_backup else "unless-stopped"),
             "DAILY_RUNTIME_LIMITS")
     require(host.get("Tmpfs") == {
         "/run/owner-beta-health": f"uid={uid},gid={uid},mode=0750"},
@@ -288,6 +296,71 @@ def unchanged(docker, binding, service, entry, timeout):
     require(owned(value, binding, service, identity) == entry["generation"],
             "DAILY_RUNTIME_GENERATION")
     return value
+
+
+def resume_after_backup(docker, binding, before, timeout=180):
+    """Resume the exact previously healthy cohort; the DB remains disabled.
+
+    Caller holds the release lock, has finished verification, and releases
+    snapshot/private-state locks before entering. No API/market-stream/Compose
+    mutation or new container is allowed. On failure the caller must disable
+    and drain its current owned cohort; restart policy is never a success proof.
+    """
+    require(set(before) == set(SERVICES) and 0 < timeout <= 180,
+            "DAILY_BACKUP_RESUME_COHORT")
+    deadline = time.monotonic() + timeout
+
+    def remaining():
+        left = deadline - time.monotonic()
+        require(left > 0, "DAILY_BACKUP_RESUME_DEADLINE")
+        return min(15, left)
+
+    image_owned(docker, binding)
+    # Validate all originals before the first restart-policy mutation. A
+    # partial, unhealthy or originally OFF installation must remain disabled.
+    for service in SERVICES:
+        entry = before[service]
+        verify_policy(docker, binding, service, entry["value"])
+        require(docker.service_ids(binding.project, service, remaining()) ==
+                [entry["generation"][0]], "DAILY_RUNTIME_GENERATION")
+        current = unchanged(docker, binding, service, entry, remaining())
+        verify_policy(docker, binding, service, current, stopped_for_backup=True)
+    for service in SERVICES:
+        identity = before[service]["generation"][0]
+        docker.call(["update", "--restart=unless-stopped", identity], remaining())
+        current = unchanged(docker, binding, service, before[service], remaining())
+        require(current["State"].get("Running") is False and
+                current["HostConfig"].get("RestartPolicy", {}).get("Name") == "unless-stopped",
+                "DAILY_BACKUP_RESUME_STATE")
+    for service in SERVICES:
+        docker.call(["start", before[service]["generation"][0]], remaining())
+    started = {}
+    while True:
+        healthy = True
+        for service in SERVICES:
+            previous = before[service]["generation"]
+            require(docker.service_ids(binding.project, service, remaining()) == [previous[0]],
+                    "DAILY_RUNTIME_GENERATION")
+            value = docker.object("container", previous[0], remaining())
+            generation = owned(value, binding, service, previous[0])
+            require(generation[:2] == previous[:2] and generation[3] == previous[3] and
+                    generation[2] != previous[2] and
+                    (service not in started or generation == started[service]),
+                    "DAILY_RUNTIME_GENERATION")
+            started[service] = generation
+            state = value["State"]
+            require(state.get("Running") is True and not state.get("Restarting") and
+                    not state.get("Paused") and not state.get("OOMKilled") and
+                    not state.get("Error"), "DAILY_BACKUP_RESUME_STATE")
+            status = state.get("Health", {}).get("Status")
+            require(status in {"starting", "healthy"}, "DAILY_BACKUP_RESUME_HEALTH")
+            healthy = healthy and status == "healthy"
+        if healthy:
+            result = verify_running(docker, binding)
+            require(all(result[s]["generation"] == started[s] for s in SERVICES),
+                    "DAILY_RUNTIME_GENERATION")
+            return result
+        time.sleep(min(0.25, remaining()))
 
 
 def drain(docker, binding, snapshot, timeout=3670):
