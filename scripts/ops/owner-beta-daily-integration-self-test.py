@@ -300,5 +300,118 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual(destination.read_bytes(), before)
 
 
+class DailySupplierConfigTests(unittest.TestCase):
+    """Real validator at both supplier boundaries; stop before any DB/provider use."""
+    def setUp(self):
+        if sys.platform != "linux" or os.geteuid() != 0:
+            raise RuntimeError("DAILY_SUPPLIER_ACTUAL_ROOT_REQUIRED")
+        self.directory = Path(tempfile.mkdtemp(prefix="lagrange-daily-supplier-", dir="/var/lib"))
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.ops = self.directory / "repo/scripts/ops"
+        self.ops.mkdir(parents=True)
+        for name in ("validate-production-config.sh", "kis-daily-production.sh", "backfill-production.sh",
+                     "lib/dotenv.sh", "lib/db.sh", "lib/kis-read-compose.sh", "lib/owner-beta-daily-release.sh"):
+            target = self.ops / name
+            target.parent.mkdir(exist_ok=True)
+            shutil.copyfile(ROOT / "scripts/ops" / name, target)
+        self.source = self.directory / "source"
+        self.runtime = self.directory / "runtime"
+        self.source.mkdir()
+        db = ("postgres_password", "db_migration_owner_password", "db_app_password", "db_worker_password",
+              "db_audit_password", "db_research_password", "db_admin_password", "db_daily_input_admitter_password")
+        for name in (*db, "kis_app_key", "kis_app_secret"):
+            path = self.source / name
+            path.write_text("synthetic-distinct-" + name)
+            path.chmod(0o400)
+        specs = [("db-role-bootstrap", name, 999, 0o400) for name in db]
+        specs += [("db-migrate", "db_migration_owner_password", 999, 0o400),
+                  ("postgres", "postgres_password", 999, 0o440),
+                  ("research-schema-check", "postgres_password", 999, 0o440)]
+        specs += [("research-worker", name, 10001, 0o440)
+                  for name in ("db_research_password", "kis_app_key", "kis_app_secret")]
+        for service, name, uid, mode in specs:
+            path = self.runtime / service / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.source / name, path)
+            os.chown(path, uid, uid)
+            path.chmod(mode)
+        self.values = {
+            "LAGRANGE_CODE_COMMIT": "a" * 40, "LAGRANGE_DATA_DIR": str(self.directory / "data"),
+            "LAGRANGE_SECRET_SOURCE_DIR": str(self.source), "LAGRANGE_RUNTIME_SECRET_DIR": str(self.runtime),
+            "POSTGRES_USER": "postgres", "POSTGRES_DB": "lagrange", "RESEARCH_APP_ENV": "production",
+            "RESEARCH_FETCH_MODE": "credentialed", "RESEARCH_ENTITLEMENT_REFERENCE": "synthetic-owned-fixture",
+            "RESEARCH_CANDIDATE_ENABLED": "false", "OWNER_BETA_ACCESS_MODE": "owner_only",
+            "OWNER_BETA_PRICE_INPUT_MODE": "sealed_v1", "OWNER_BETA_PAPER_MODE": "disabled",
+            "OWNER_BETA_DAILY_MODE": "owner_only",
+        }
+        self.env = self.directory / "production.env"
+        self.environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C",
+            "LAGRANGE_ENV_FILE": str(self.env), "LAGRANGE_XKRX_CALENDAR_DIR": str(self.directory / "calendar"),
+            "KIS_DAILY_STATE_DIR": str(self.directory / "state"),
+            "KIS_DAILY_LOCK_FILE": str(self.directory / "state/daily.lock"),
+            "BACKFILL_CONFIRM_EXTERNAL": "I_UNDERSTAND_READ_ONLY_KIS_CALLS"}
+        self.write_env()
+
+    def write_env(self):
+        self.env.write_text("".join(key + "=" + value + "\n" for key, value in self.values.items()))
+        self.env.chmod(0o600)
+
+    def command(self, name, *args, extra=None):
+        return subprocess.run(["bash", str(self.ops / name), *args],
+            env={**self.environment, **(extra or {})}, capture_output=True, timeout=20)
+
+    def test_on_environment_passes_real_supplier_validation(self):
+        result = self.command("validate-production-config.sh", "--scope", "backfill")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(b"PRODUCTION_CONFIG: PASS (scope=backfill", result.stdout)
+        del self.values["OWNER_BETA_DAILY_MODE"]
+        self.write_env()
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "backfill").returncode, 0)
+
+    def test_daily_and_backfill_reach_real_validator_with_on_environment(self):
+        # Keep the real validator and its arguments. Exit only AFTER its success
+        # to prove composition without invoking the subsequent DB/provider path.
+        real = self.ops / "validate-production-config.real.sh"
+        (self.ops / "validate-production-config.sh").rename(real)
+        (self.ops / "validate-production-config.sh").write_text(
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'bash "$(dirname "${BASH_SOURCE[0]}")/validate-production-config.real.sh" "$@"\n'
+            'printf "SUPPLIER_REAL_VALIDATOR_REACHED\\n"\nexit 73\n')
+        metadata = {"schema": "xkrx-historical-session-selection-v1",
+            "requested_range": {"start": "2026-08-31", "end": "2026-08-31"},
+            "artifact_range": {"start": "2026-08-31", "end": "2026-08-31"},
+            "calendar_id": "synthetic-calendar-v1", "artifact_sha256": "sha256:" + "a" * 64,
+            "artifact_size_bytes": 1, "session_count": 1, "skipped_non_session_count": 0}
+        (self.ops / "xkrx-calendar-bootstrap.py").write_text(
+            "import sys\nprint('2026-08-31')\nprint(" + repr(json.dumps(metadata)) + ",file=sys.stderr)\n")
+        for name, args in (("kis-daily-production.sh", ["--check"]),
+                           ("kis-daily-production.sh", ["--execute"]),
+                           ("backfill-production.sh", ["--start", "2026-08-31", "--end", "2026-08-31", "--execute"])):
+            with self.subTest(helper=name, mode=args[-1]):
+                result = self.command(name, *args)
+                self.assertEqual(result.returncode, 73)
+                self.assertIn(b"PRODUCTION_CONFIG: PASS (scope=backfill", result.stdout)
+                self.assertIn(b"SUPPLIER_REAL_VALIDATOR_REACHED", result.stdout)
+
+    def test_on_supplier_keeps_mode_override_and_activation_guards(self):
+        for key, value in (("OWNER_BETA_ACCESS_MODE", "disabled"),
+                           ("OWNER_BETA_PRICE_INPUT_MODE", "disabled"),
+                           ("OWNER_BETA_PAPER_MODE", "enabled"),
+                           ("PRICE_BETA_DAILY_CONFIG_SHA256", "sha256:" + "b" * 64)):
+            with self.subTest(key=key):
+                old = self.values.get(key)
+                self.values[key] = value
+                self.write_env()
+                self.assertEqual(self.command("validate-production-config.sh", "--scope", "backfill").returncode, 1)
+                if old is None:
+                    del self.values[key]
+                else:
+                    self.values[key] = old
+        self.write_env()
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "backfill",
+            extra={"OWNER_BETA_DAILY_MODE": "disabled"}).returncode, 1)
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "infrastructure").returncode, 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

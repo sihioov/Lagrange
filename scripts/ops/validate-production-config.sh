@@ -139,9 +139,14 @@ get() { dotenv_get "$1"; }
 # wrapper; a protected env input must never bypass that verification.
 if ! daily_release_parse_mode; then
   invalid+=("$DAILY_RELEASE_ERROR")
-elif [ "$DAILY_RELEASE_MODE" = owner_only ] && [ "$scope" != release ]; then
-  invalid+=("owner_beta_daily_requires_release_scope")
+elif [ "$DAILY_RELEASE_MODE" = owner_only ] &&
+     [ "$scope" != release ] && [ "$scope" != backfill ]; then
+  invalid+=("owner_beta_daily_requires_release_or_supplier_scope")
 fi
+# The official daily/backfill suppliers validate their read-only inputs with
+# backfill scope, including when the installed daily recommendation mode is ON.
+# This permits supply only; daily activation still requires the immutable
+# release wrapper's verified config, reader floor and runtime binding.
 
 # These keys are this release's local coordination/session contract and must be guarded
 # even when an operator supplies a shell-only value for a key absent from the

@@ -260,17 +260,38 @@ class Storage:
         require(size >= 0 and shutil.disk_usage(self.root).free >=
                 self.values["MIN_FREE_BYTES"] + size, "DAILY_BACKUP_SPACE")
 
+    def require_no_verifier(self):
+        # A create response or cleanup observation can be lost. Only bounded
+        # reconciliation of the recorded resource may clear that uncertainty.
+        with install.root_directory(self.root) as parent:
+            require(not any(name.startswith("daily-verifier-")
+                            for name in bounded_names(parent, 10000)),
+                    "DAILY_BACKUP_VERIFY_PENDING")
+
     @contextlib.contextmanager
     def temporary(self, prefix):
+        self.require_no_verifier()
         self.reserve()
-        with install.root_directory(self.root):
+        with install.root_directory(self.root) as parent:
             name = tempfile.mkdtemp(prefix=prefix, dir=self.root)
             os.chmod(name, 0o700)
             try:
                 yield Path(name)
             finally:
-                # Only this freshly created, privately owned staging tree.
-                shutil.rmtree(name)
+                # Never remove a mounted copy while its owned verifier's
+                # creation/removal remains uncertain. A malformed or unreadable
+                # intent also raises before deletion rather than guessing.
+                retained = False
+                for leaf in bounded_names(parent, 10000):
+                    if leaf.startswith("daily-verifier-"):
+                        require(re.fullmatch(r"daily-verifier-[0-9a-f]{32}\.json", leaf),
+                                "DAILY_BACKUP_VERIFY_OWNER")
+                        intent = install.json_bytes(install.read_file(parent, leaf, 0, 0, 0o600))
+                        require(isinstance(intent, dict) and isinstance(intent.get("staging"), str),
+                                "DAILY_BACKUP_VERIFY_OWNER")
+                        retained = retained or intent["staging"] == name
+                if not retained:
+                    shutil.rmtree(name)
 
     def command_file(self, args, target, source=None, seconds=900):
         """Capture no diagnostics. Bound duration, output size and free space."""
@@ -338,6 +359,12 @@ class Storage:
     def restore_database(self, dump, directory):
         # Mount only this freshly decrypted dump, fixed scripts and a disposable
         # data directory. This container cannot reach the live DB/network/secret.
+        self.require_no_verifier()
+        require(directory.parent == Path(self.root) and dump.parent == directory,
+                "DAILY_BACKUP_VERIFY_PATH")
+        with install.root_directory(self.root) as parent:
+            with install.child_directory(parent, directory.name, 0, 0, 0o700):
+                pass
         image = self.docker.object("image", POSTGRES)
         require(POSTGRES in image.get("RepoDigests", []) and
                 runtime.DIGEST.fullmatch(image.get("Id", "")), "DAILY_BACKUP_VERIFY_IMAGE")
@@ -361,19 +388,38 @@ class Storage:
             "--entrypoint=/bin/bash"]
         for key, value in labels.items():
             args += ["--label", key + "=" + value]
-        identity = self.docker.call([*args, POSTGRES, "/verify.sh"]).strip()
-        require(runtime.CONTAINER.fullmatch(identity), "DAILY_BACKUP_VERIFY_OWNER")
+        name = "lagrange-backup-verify-" + nonce
+        intent_name = "daily-verifier-" + nonce + ".json"
+        intent = files.canonical({"schema": "lagrange-daily-verifier-v1", "name": name,
+            "labels": labels, "image_id": image["Id"], "image": POSTGRES,
+            "staging": str(directory)})
+        with install.root_directory(self.root) as parent:
+            install.create_file(parent, intent_name, intent, 0, 0, 0o600)
+        identity = None
         created = None
+
+        def owned_ids():
+            result = self.docker.call(["ps", "--all", "--quiet", "--no-trunc", "--filter",
+                "label=io.lagrange.daily-backup-verify=" + nonce, "--filter",
+                "label=io.lagrange.daily-backup-project=" + self.binding.project,
+                "--filter", "name=^/" + name + "$"]).splitlines()
+            require(len(result) <= 1 and all(runtime.CONTAINER.fullmatch(i) for i in result),
+                    "DAILY_BACKUP_VERIFY_OWNER")
+            return result
 
         def observe():
             value = self.docker.object("container", identity)
             require(value.get("Id") == identity and value.get("Image") == image["Id"] and
+                    value.get("Name") == "/" + name and
                     value["Config"].get("Image") == POSTGRES and
                     all((value["Config"].get("Labels") or {}).get(k) == v for k, v in labels.items()) and
                     (created is None or value.get("Created") == created), "DAILY_BACKUP_VERIFY_OWNER")
             return value
 
         try:
+            result = self.docker.call([*args, POSTGRES, "/verify.sh"]).strip()
+            require(runtime.CONTAINER.fullmatch(result), "DAILY_BACKUP_VERIFY_OWNER")
+            identity = result
             value = observe()
             created = value["Created"]
             host = value["HostConfig"]
@@ -400,13 +446,25 @@ class Storage:
             require(len(data.splitlines()) == 1, "DAILY_BACKUP_VERIFY_RESULT")
             return install.json_bytes(data, maximum=64 * 1024**2)
         finally:
-            value = observe()
-            if value["State"].get("Running"):
-                self.docker.call(["kill", "--signal=TERM", identity])
-                self.docker.call(["wait", identity], timeout=90)
+            if identity is None:
+                recovered = owned_ids()
+                identity = recovered[0] if recovered else None
+            if identity is not None:
                 value = observe()
-            require(not value["State"].get("Running"), "DAILY_BACKUP_VERIFY_CLEANUP")
-            self.docker.call(["rm", identity])
+                if value["State"].get("Running"):
+                    self.docker.call(["kill", "--signal=TERM", identity])
+                    self.docker.call(["wait", identity], timeout=90)
+                    value = observe()
+                require(value["State"].get("Running") is False, "DAILY_BACKUP_VERIFY_CLEANUP")
+                self.docker.call(["rm", "--volumes", identity])
+                require(not owned_ids(), "DAILY_BACKUP_VERIFY_CLEANUP")
+                with install.root_directory(self.root) as parent:
+                    require(install.read_file(parent, intent_name, 0, 0, 0o600) == intent,
+                            "DAILY_BACKUP_VERIFY_OWNER")
+                    os.unlink(intent_name, dir_fd=parent)
+                    os.fsync(parent)
+            # An empty query after a lost create reply does not prove that the
+            # daemon cannot finish creation later. Keep intent and staging.
 
     @contextlib.contextmanager
     def capture(self, snapshot, database):
@@ -642,7 +700,7 @@ def reverify_once(docker, binding, config):
     network = ops.internal_network(docker, binding.project)
     with install.root_directory(binding.secret_root) as parent:
         with install.child_directory(parent, "owner-beta-daily-admitter", 10003, 10003, 0o750) as service:
-            secret = install.read_file(service, "db_daily_input_admitter_password", 10003, 10003, 0o400, 8192)
+            secret = install.read_file(service, "db_daily_input_admitter_password", 10003, 10003, 0o440, 8192)
             require(secret and not any(c in secret for c in (b"\0", b"\r", b"\n")), "DAILY_BACKUP_RECONCILE_SECRET")
     nonce = uuid.uuid4().hex
     labels = {"io.lagrange.daily-backup-reconcile": nonce,
@@ -878,6 +936,7 @@ def main(argv=None):
             operations = ops.Operations(docker, database, context, context, binding,
                                         args.install_root, research_mode)
             storage = Storage(backup, docker, context, binding)
+            storage.require_no_verifier()
             controller = Controller(operations, binding, config, storage, args.install_root)
             if args.operation == "verify":
                 sets = [s for s in storage.sets() if s["daily"]]

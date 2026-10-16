@@ -37,14 +37,14 @@ BEGIN
         END IF;
     END LOOP;
     -- Runs use actor-scoped migration-owner RLS, unlike the ten daily tables.
-    -- Enumerate the existing non-RLS identity table and preserve each policy;
+    -- Enumerate identities only when this direct owner is effectively unfiltered;
     -- a NULL actor must never be mistaken for an empty history.
     IF NOT control_present AND to_regclass('public.owner_beta_recommendation_runs') IS NOT NULL THEN
         IF EXISTS (SELECT 1 FROM pg_attribute
                    WHERE attrelid='public.owner_beta_recommendation_runs'::regclass
                      AND attname='input_kind' AND NOT attisdropped) THEN
             IF to_regclass('public.users') IS NULL OR
-               (SELECT relrowsecurity FROM pg_class WHERE oid='public.users'::regclass) THEN
+               pg_catalog.row_security_active(to_regclass('public.users')) THEN
                 RAISE EXCEPTION 'DAILY_CONTROL_IDENTITY_VISIBILITY' USING ERRCODE='23514';
             END IF;
             FOR actor IN SELECT id FROM public.users ORDER BY id LIMIT 10001 LOOP

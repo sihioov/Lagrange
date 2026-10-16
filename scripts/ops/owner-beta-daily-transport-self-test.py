@@ -246,6 +246,7 @@ class DailyTransportTests(unittest.TestCase):
     def test_actual_actor_rls_surviving_run_is_not_empty_history(self):
         self.sql("CREATE TABLE public.users(id uuid PRIMARY KEY); "
                  "ALTER TABLE public.users OWNER TO migration_owner; "
+                 "ALTER TABLE public.users ENABLE ROW LEVEL SECURITY; "
                  "CREATE TABLE public.owner_beta_recommendation_runs(owner_user_id uuid,input_kind text); "
                  "ALTER TABLE public.owner_beta_recommendation_runs OWNER TO migration_owner; "
                  "ALTER TABLE public.owner_beta_recommendation_runs ENABLE ROW LEVEL SECURITY; "
@@ -258,6 +259,23 @@ class DailyTransportTests(unittest.TestCase):
         self.assertEqual(self.database.status(self.values), "ABSENT_SCHEMA")
         self.sql("UPDATE public.owner_beta_recommendation_runs "
                  "SET input_kind='owner_beta_daily_etf11_price_only_v1';\n")
+        with self.assertRaises(ops.runtime.RuntimeErrorCode):
+            self.database.status(self.values)
+        self.assert_no_oneshot()
+
+    def test_effective_users_filtering_and_missing_identities_are_rejected(self):
+        self.sql("CREATE TABLE public.users(id uuid PRIMARY KEY); "
+                 "ALTER TABLE public.users OWNER TO migration_owner; "
+                 "ALTER TABLE public.users ENABLE ROW LEVEL SECURITY; "
+                 "CREATE TABLE public.owner_beta_recommendation_runs(input_kind text); "
+                 "ALTER TABLE public.owner_beta_recommendation_runs OWNER TO migration_owner;")
+        self.assertEqual(self.database.status(self.values), "ABSENT_SCHEMA")
+        self.sql("ALTER TABLE public.users FORCE ROW LEVEL SECURITY;")
+        with self.assertRaises(ops.runtime.RuntimeErrorCode):
+            self.database.status(self.values)
+        self.sql("ALTER TABLE public.users NO FORCE ROW LEVEL SECURITY;")
+        self.assertEqual(self.database.status(self.values), "ABSENT_SCHEMA")
+        self.sql("DROP TABLE public.users;")
         with self.assertRaises(ops.runtime.RuntimeErrorCode):
             self.database.status(self.values)
         self.assert_no_oneshot()

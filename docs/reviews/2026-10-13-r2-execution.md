@@ -4155,3 +4155,27 @@ The ordinary image health predicate therefore remains unsatisfied, and the
 new candidate's bounded Owner V2 drain/resume packet is still needed. No prior
 attestation/outage authority was reused, no lifecycle action or new CI occurred.
 See docs/reviews/2026-10-17-r2-resumption.md for exact receipts and limits.
+
+
+### Wave87 integrated-review recovery and bounded corrections — 2026-10-17 KST
+
+The same owned reviewer became idle/activeTurn null/pending0 at18:21:56.529UTC.
+Recovered the full substantive final at18:22:18UTC; the later memory-only callback
+was not its result. Preserved the602-line original report (SHA1efc10bf), checked
+211 frozen pins/202 candidate blobs/231 report links and exact F65/D56/P26/U55
+coverage. Old heartbeat57e90e28 was deleted after persisted recovery. Four
+concrete findings (2P1/2P2) are confirmed; integrated coverage stays INCOMPLETE.
+
+Coordinator-only bounded source corrections now permit valid ON backfill
+validation, use effective users RLS visibility, align the admitter secret0440
+contract and preserve owned restore-verifier intent/copy on uncertain cleanup.
+Ten new regression definitions are WRITTEN_UNEXECUTED,94 existing names retained.
+D01 full-release counts become62/62 and six backup diagram citations are
+refreshed with local PNG regeneration. No local project test/compiler/SQL,
+provider, actual image build or production action occurred. No extra worker or
+CI dispatch. Freeze this coherent candidate and continue the same WP-7 reviewer
+for corrections and original residual scope; never replace independent closure
+with coordinator implementation review. Existing hosted success stays historical;
+new CI/functional smoke requires review closure and exact-run/remote checks.
+Root access, actual image/host, G3/G4, Owner,three trading days and C_R2 stay open.
+See docs/reviews/2026-10-17-r2-integrated-review-corrections.md.

@@ -115,7 +115,8 @@ class DailyBackupDockerTests(unittest.TestCase):
         cls.addClassCleanup(cls.cleanup)
         cls.release = cls.directory / "releases" / COMMIT
         (cls.release / "deploy/db").mkdir(parents=True)
-        for name in ("daily-backup-verify.sh", "owner-beta-daily-backup-audit.sql"):
+        for name in ("daily-backup-verify.sh", "owner-beta-daily-backup-audit.sql",
+                     "owner-beta-daily-control.sql", "owner-beta-daily-control-status.sql"):
             shutil.copyfile(ROOT / "deploy/db" / name, cls.release / "deploy/db" / name)
         cls.network = cls.command(["network", "create", "--internal", "--label",
             "com.docker.compose.project=" + cls.project, "--label",
@@ -145,6 +146,7 @@ class DailyBackupDockerTests(unittest.TestCase):
         identity = cls.sql("SELECT current_user||':'||session_user;", role="migration_owner", stage="identity").strip()
         if identity != b"migration_owner:migration_owner":
             raise RuntimeError("DAILY_BACKUP_FIXTURE_ROLE")
+        cls.status_sql = (ROOT / "deploy/db/owner-beta-daily-control-status.sql").read_text()
         for path in migrations:
             script = path.read_text()
             # Match the migration's existing SQLx execution contract. Concurrent
@@ -153,6 +155,8 @@ class DailyBackupDockerTests(unittest.TestCase):
             if not script.startswith("-- no-transaction\n"):
                 script = "BEGIN;\n" + script + "\nCOMMIT;"
             cls.sql(script, role="migration_owner", stage="migration")
+            if int(path.name[:4]) == 59:
+                cls.status_schema59 = cls.sql(cls.status_sql, role="migration_owner").strip()
         # The normal SQLx metadata shape is included in the dump. Checksums are
         # the real embedded migration bytes; the dedicated lane tests SQLx itself.
         cls.sql("CREATE TABLE public._sqlx_migrations(version bigint PRIMARY KEY,description text NOT NULL,"
@@ -164,13 +168,25 @@ class DailyBackupDockerTests(unittest.TestCase):
                 role="migration_owner", stage="ledger")
         cls.policy = (ROOT / "configs/evidence/owner-beta-daily-price-policy-v1.json").read_bytes()
         cls.policy_hash = "sha256:" + hashlib.sha256(cls.policy).hexdigest()
-        policy_sql = cls.policy.decode().replace("'", "''")
+        cls.status_schema62 = cls.sql(cls.status_sql, role="migration_owner").strip()
         cls.sql("INSERT INTO users(id,issuer,subject,email) VALUES('" + OWNER +
             "','backup-fixture','backup-fixture','backup-fixture@example.invalid');"
-            "INSERT INTO owner_beta_daily_control(owner_user_id,policy_sha256,policy_json,"
-            "entitlement_reference,entitlement_sha256,first_auto_session,max_jobs_per_owner,lease_seconds,backoff_seconds)"
-            " VALUES('" + OWNER + "','" + cls.policy_hash + "','" + policy_sql +
-            "','backup-fixture','sha256:" + "b" * 64 + "','2026-08-29',4,60,1);", stage="seed")
+            "INSERT INTO roles(id) VALUES('owner') ON CONFLICT DO NOTHING;"
+            "INSERT INTO user_roles(user_id,role_id) VALUES('" + OWNER + "','owner');"
+            "INSERT INTO data_entitlements(contract_document_sha256,contract_reference,status,"
+            "covered_datasets,covered_uses,effective_from,effective_until,managed_by) VALUES('" + "e" * 64 +
+            "','fixture-only-not-an-activation','ACTIVE','[\"krx_eod_bars\"]','[\"recommendation\"]',"
+            "'2016-08-29','2099-12-31','" + OWNER + "');", stage="seed")
+        config_source = cls.directory / "daily-config.json"
+        config_source.write_bytes((ROOT / "tests/fixtures/owner-beta-daily-install/config.json").read_bytes())
+        config_source.chmod(0o600)
+        policy_source = cls.directory / "daily-policy.json"
+        policy_source.write_bytes(cls.policy)
+        policy_source.chmod(0o644)
+        backup.install.stage_config(str(cls.release), str(config_source), str(policy_source), COMMIT)
+        prepare = backup.install.render_control(str(cls.release), COMMIT, "prepare", "4", "60", "1")
+        cls.first_prepare = cls.sql(prepare, role="migration_owner").strip()
+        cls.status_prepared = cls.sql(cls.status_sql, role="migration_owner").strip()
         cls.audit = json.loads(cls.sql((ROOT / "deploy/db/owner-beta-daily-backup-audit.sql").read_text(), stage="audit"))
 
     @classmethod
@@ -244,6 +260,16 @@ class DailyBackupDockerTests(unittest.TestCase):
         self.assertEqual(ready.stdout.strip(), b"lagrange:postgres:postgres:true")
         with self.assertRaisesRegex(RuntimeError, r"^DAILY_BACKUP_FIXTURE_SQL:statement:3:42P01$"):
             self.sql('SELECT * FROM "fixture_private_sql_diagnostic";')
+
+    def test_actual_schema59_and_62_bootstrap_status_and_first_prepare(self):
+        self.assertEqual(self.status_schema59, b"DAILY_CONTROL_STATUS: ABSENT_SCHEMA")
+        self.assertEqual(self.status_schema62, b"DAILY_CONTROL_STATUS: ABSENT_CONTROL")
+        self.assertEqual(self.first_prepare, b"DAILY_CONTROL: DISABLED")
+        self.assertEqual(self.status_prepared, b"DAILY_CONTROL_STATUS: DISABLED")
+        observed = self.sql("SELECT relrowsecurity::text||':'||relforcerowsecurity::text||':'||"
+            "pg_get_userbyid(relowner)||':'||pg_catalog.row_security_active(oid)::text "
+            "FROM pg_class WHERE oid='public.users'::regclass;", role="migration_owner")
+        self.assertEqual(observed.strip(), b"true:false:migration_owner:false")
 
     def test_actual_full_schema_encrypted_files_and_networkless_database_restore(self):
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
@@ -327,6 +353,104 @@ class DailyBackupDockerTests(unittest.TestCase):
             dump.chmod(0o600)
             with self.assertRaises(backup.runtime.RuntimeErrorCode):
                 self.storage.restore_database(dump, temporary)
+        self.assert_no_verifier()
+
+    def test_lost_create_reply_recovers_only_the_recorded_owned_verifier(self):
+        original = self.docker.call
+        created = []
+        def lose_reply(args, timeout=15):
+            if args[0] == "create":
+                intents = list(self.backups.glob("daily-verifier-*.json"))
+                self.assertEqual(len(intents), 1)
+                intent = json.loads(intents[0].read_bytes())
+                self.assertEqual(args[args.index("--name") + 1], intent["name"])
+                self.assertTrue(Path(intent["staging"]).is_dir())
+                identity = original(args, timeout).strip()
+                self.assertRegex(identity, r"^[0-9a-f]{64}$")
+                created.append(identity)
+                raise backup.runtime.RuntimeErrorCode("TEST_CREATE_REPLY_LOST")
+            return original(args, timeout)
+        try:
+            with mock.patch.object(self.docker, "call", side_effect=lose_reply):
+                with self.assertRaisesRegex(backup.runtime.RuntimeErrorCode, "^TEST_CREATE_REPLY_LOST$"):
+                    with self.storage.temporary(".daily-verify-") as stage:
+                        dump = stage / "postgres.dump"
+                        dump.write_bytes(b"invalid archive; verifier must never start")
+                        self.storage.restore_database(dump, stage)
+            self.assertEqual(len(created), 1)
+            self.assertEqual(list(self.backups.iterdir()), [])
+            self.assert_no_verifier()
+        finally:
+            for identity in created:
+                remaining = self.command(["ps", "--all", "--quiet", "--no-trunc",
+                    "--filter", "id=" + identity]).stdout.decode().splitlines()
+                self.assertIn(remaining, ([], [identity]))
+                if remaining:
+                    self.command(["rm", "--force", "--volumes", identity])
+
+    def test_unobservable_lost_create_retains_intent_copy_and_blocks_new_clone(self):
+        original = self.docker.call
+        created = []
+        def lose_reply_and_hide(args, timeout=15):
+            if args[0] == "create":
+                identity = original(args, timeout).strip()
+                self.assertRegex(identity, r"^[0-9a-f]{64}$")
+                created.append(identity)
+                raise backup.runtime.RuntimeErrorCode("TEST_CREATE_REPLY_LOST")
+            if args[0] == "ps" and any(arg.startswith("label=io.lagrange.daily-backup-verify=") for arg in args):
+                return ""  # Simulate the daemon not yet exposing its accepted create.
+            return original(args, timeout)
+        try:
+            with mock.patch.object(self.docker, "call", side_effect=lose_reply_and_hide):
+                with self.assertRaisesRegex(backup.runtime.RuntimeErrorCode, "^TEST_CREATE_REPLY_LOST$"):
+                    with self.storage.temporary(".daily-verify-") as stage:
+                        dump = stage / "postgres.dump"
+                        dump.write_bytes(b"retained synthetic dump")
+                        self.storage.restore_database(dump, stage)
+                self.assertEqual(dump.read_bytes(), b"retained synthetic dump")
+                intents = list(self.backups.glob("daily-verifier-*.json"))
+                self.assertEqual(len(intents), 1)
+                self.assertEqual(json.loads(intents[0].read_bytes())["staging"], str(stage))
+                with self.assertRaisesRegex(backup.runtime.RuntimeErrorCode, "^DAILY_BACKUP_VERIFY_PENDING$"):
+                    self.storage.restore_database(dump, stage)
+                with self.assertRaisesRegex(backup.runtime.RuntimeErrorCode, "^DAILY_BACKUP_VERIFY_PENDING$"):
+                    with self.storage.temporary(".daily-verify-"):
+                        self.fail("pending verifier admitted another staging tree")
+                self.assertEqual(len(created), 1)
+        finally:
+            # Test-owned disposable clone only. Remove before fixture teardown
+            # can delete the retained copy; production never force-removes it.
+            for identity in created:
+                self.command(["rm", "--force", "--volumes", identity])
+        self.assert_no_verifier()
+
+    def test_cleanup_inspection_failure_preserves_staging_and_blocks_retry(self):
+        original = self.docker.object
+        observed = []
+        def lose_cleanup(kind, identity, timeout=15):
+            if kind == "container":
+                observed.append(identity)
+                if len(observed) > 1:
+                    raise backup.runtime.RuntimeErrorCode("TEST_CLEANUP_OBSERVATION_LOST")
+            return original(kind, identity, timeout)
+        try:
+            with mock.patch.object(self.docker, "object", side_effect=lose_cleanup):
+                with self.assertRaisesRegex(backup.runtime.RuntimeErrorCode, "^TEST_CLEANUP_OBSERVATION_LOST$"):
+                    with self.storage.temporary(".daily-verify-") as stage:
+                        dump = stage / "postgres.dump"
+                        dump.write_bytes(b"invalid synthetic PostgreSQL archive")
+                        self.storage.restore_database(dump, stage)
+            self.assertEqual(len(set(observed)), 1)
+            self.assertTrue(dump.exists())
+            self.assertTrue((stage / "postgres").is_dir())
+            intents = list(self.backups.glob("daily-verifier-*.json"))
+            self.assertEqual(len(intents), 1)
+            self.assertEqual(json.loads(intents[0].read_bytes())["staging"], str(stage))
+            with self.assertRaisesRegex(backup.runtime.RuntimeErrorCode, "^DAILY_BACKUP_VERIFY_PENDING$"):
+                self.storage.restore_database(dump, stage)
+        finally:
+            for identity in set(observed):
+                self.command(["rm", "--force", "--volumes", identity])
         self.assert_no_verifier()
 
     def test_disk_floor_failure_stops_before_dump_or_container_creation(self):

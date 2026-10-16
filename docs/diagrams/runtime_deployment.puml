@@ -143,11 +143,11 @@ daily_admitter --> daily_state : own admitter state only
 daily_admitter --> pg : daily_input_admitter restricted\ncalendar/poll/admission functions
 ' evidence: crates/api-server/src/http/owner_beta_daily.rs:55-61; crates/api-server/src/repos/owner_beta/daily.rs:321-326,354-399
 api --> pg : Owner daily metadata projection;\nno admission or provider activity
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:337-354; scripts/ops/lib/owner-beta-daily-backup.py:737-750
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:337-354; scripts/ops/lib/owner-beta-daily-backup.py:790-808
 daily_ops --> pg : fixed migration-owner control/audit/repair;\nno replacement job or clock reset
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:318-339,418-451,761-784
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:334-357,470-509,813-842
 daily_ops --> daily_backups : complete PG + Raw/Curated/daily/config/\nreader-floor/historical-base capture; encrypt
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:343-414,480-495; deploy/db/daily-backup-verify.sh:26-41
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:359-468,537-559; deploy/db/daily-backup-verify.sh:26-41
 daily_ops --> daily_restore : decrypt into private temporary tree;\nrestore and compare audit before COMPLETE
 
 note right of daily_ops

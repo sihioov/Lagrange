@@ -866,5 +866,68 @@ class DailyBackupRetentionTests(unittest.TestCase):
         self.assertTrue(old.exists())
 
 
+class ReconcileSecretTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "daily_reconcile_secret_tested", ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        cls.backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.backup
+        spec.loader.exec_module(cls.backup)
+
+    def setUp(self):
+        if os.geteuid() != 0 or sys.platform != "linux":
+            self.fail("actual root Linux fixture required")
+        self.root = Path(tempfile.mkdtemp(prefix="lagrange-daily-secret-", dir="/var/lib"))
+        self.addCleanup(shutil.rmtree, self.root)
+        service = self.root / "owner-beta-daily-admitter"
+        service.mkdir(mode=0o750)
+        os.chown(service, 10003, 10003)
+        self.secret = service / "db_daily_input_admitter_password"
+        self.secret.write_bytes(b"synthetic-reconcile-secret")
+        os.chown(self.secret, 10003, 10003)
+        self.secret.chmod(0o440)
+        self.binding = types.SimpleNamespace(secret_root=str(self.root), project="synthetic-reconcile",
+            image_id="sha256:" + "a" * 64, commit="b" * 40,
+            mounts=mock.Mock(side_effect=RuntimeError("TEST_NATIVE_BOUNDARY")))
+        self.docker = mock.Mock()
+        self.docker.object.return_value = {"Config": {"Env": []}}
+        self.docker.call.return_value = ""
+
+    def preflight(self):
+        # Only Docker discovery is replaced. The production directory/file
+        # reader and its real UID/GID/mode/link/ACL checks are unmodified.
+        with mock.patch.object(self.backup.runtime, "image_owned"), \
+                mock.patch.object(self.backup.ops, "internal_network", return_value={"Id": "c" * 64}):
+            self.backup.reverify_once(self.docker, self.binding, {})
+
+    def test_canonical_0440_serving_secret_passes_unmocked_preflight(self):
+        with self.assertRaisesRegex(RuntimeError, "^TEST_NATIVE_BOUNDARY$"):
+            self.preflight()
+        self.binding.mounts.assert_called_once()
+        self.assertTrue(all(call.args[0][0] == "ps" for call in self.docker.call.call_args_list))
+
+    def test_secret_owner_mode_and_links_remain_rejected(self):
+        for uid, gid, mode in ((10003, 10003, 0o400), (10003, 10003, 0o640),
+                               (0, 10003, 0o440), (10003, 0, 0o440)):
+            with self.subTest(uid=uid, gid=gid, mode=mode):
+                os.chown(self.secret, uid, gid)
+                self.secret.chmod(mode)
+                with self.assertRaises(self.backup.install.DailyInstallError):
+                    self.preflight()
+                self.binding.mounts.assert_not_called()
+        os.chown(self.secret, 10003, 10003)
+        self.secret.chmod(0o440)
+        other = self.root / "other"
+        os.link(self.secret, other)
+        with self.assertRaises(self.backup.install.DailyInstallError):
+            self.preflight()
+        self.secret.unlink()
+        self.secret.symlink_to(other)
+        with self.assertRaises(OSError):
+            self.preflight()
+        self.binding.mounts.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

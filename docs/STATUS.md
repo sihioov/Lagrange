@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-17 (Asia/Seoul)
 
-현재: **R2 독립 통합 리뷰 진행 중; 다이어그램 2종 소스·PNG 반영과 이미지 plan/preflight 통과.** 후보 `f215665`의 CI 8개 성공을 보존한다. 별도 필수 `research-smoke`는 exact-candidate 실행0으로 미완료이며 리뷰 처분 후 한 번 검증한다. 리뷰 보고 경계는 10월17일03:31 KST. 실제 root probe exit1과 protected manifest 접근 거부를 확인했다. 운영 중10개 컨테이너는 healthy, 기존 research-worker는 exited2로 유지돼 이미지 gate의 별도 중단·복귀 범위도 구체화해야 한다. [재개 기록](reviews/2026-10-17-r2-resumption.md). 실제 이미지/호스트 전체 흐름·리뷰 수용·운영·Owner·3거래일·C_R2는 미완료다.
+현재: **R2 통합 리뷰 결함 네 건 보정 작성; 독립 범위 종료와 실행 검증 대기.** 독립 리뷰 P1 두 건/P2 두 건을 소스로 확인해 한 묶음으로 보정하고 새 회귀10개를 작성했다. 모두 미실행이며 기존94개 이름을 보존했다. 리뷰 범위 F65/D56/P26/U55는 여전히 INCOMPLETE다. 기존 CI38901117928 성공은 이전 후보 근거로 보존한다. 실제 root 접근 실패, 이미지/호스트 흐름·G3/G4·Owner·연속3거래일·C_R2는 미완료다. [현재 범위](reviews/2026-10-17-r2-integrated-review-corrections.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -32,7 +32,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | 진행 중 독립 리뷰 처분 → 누락된 exact-candidate research-smoke → root/이미지 health gate와 구체적 중단·복귀 범위 → 실제 이미지·승인 입력 호스트 검증·G4 운영·Owner·3거래일·C_R2. |
+| 다음 단계 | 보정 후보 고정 → 동일 WP-7 독립 검토의 보정·잔여 범위 → 새 정확 후보 CI와 별도 functional smoke → root/이미지/호스트/G4·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

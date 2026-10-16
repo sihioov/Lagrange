@@ -256,13 +256,13 @@ factor_engine --> market_data
 daily_wrapper --> daily_ops : protected prepare / enable / disable
 ' evidence: scripts/ops/compose-release.sh:227-232
 daily_wrapper --> daily_backup : backup / verify / reconcile
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:32-44,737-750,777-784
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:32-44,790-808,831-842
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:43,761-768,797-813
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:43,819-826,854-871
 daily_backup --> daily_files : source and restored byte/reference audit
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:337-354; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:360,389; deploy/db/daily-backup-verify.sh:39-41
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:387,435; deploy/db/daily-backup-verify.sh:39-41
 daily_backup --> daily_sql : same audit inside isolated restored database
 
 ' evidence: scripts/ops/prepare-production-recovery.py:39,356,409,464-501

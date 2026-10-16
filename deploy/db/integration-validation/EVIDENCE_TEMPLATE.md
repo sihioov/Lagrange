@@ -78,8 +78,8 @@ tests:
   skip_markers: none (yes|no)
 
 full_release:
-  first_count_and_latest: 60 / 60
-  second_count_and_latest: 60 / 60
+  first_count_and_latest: 62 / 62
+  second_count_and_latest: 62 / 62
   all_checksum_rows_equal: PASS|FAIL
   no_seeded_daily_control_or_optin: PASS|FAIL
   cleanup_no_owned_containers: PASS|FAIL
