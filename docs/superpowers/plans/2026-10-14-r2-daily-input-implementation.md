@@ -5365,3 +5365,18 @@ Inputs3465/286c30d9, inventory5321/c4f8e273,
 report44/8a68065c.
 Direct source review only; no local project execution or new acceptance.
 I6/approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.
+
+### Wave70 I7-C03 single candidate CI — 2026-10-16 KST
+
+Candidate f1f55ac9cc268f7531bcf08f409e7770767b62d5;853pins/419candidateblobs.
+All-event exact-head query0 at2026-10-16T00:21:26.754890+00:00; remote baseline matched.
+After onepush, all-eventquery0/remotematch2026-10-16T00:21:43.242606+00:00;
+one dispatch2026-10-16T00:21:45.086231+00:00. CI38829047490 attempt1 identified
+2026-10-16T00:22:06.590200+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. Source and frozen inputs immutable until all8terminal
+jobs/full-log hashes/7actualcheckouts/named-results recovery. Reporting bound
+2026-10-16T01:51:44+00:00; direct coordinator, no new worker; no daemon-outage guarantee.
+Later documentation HEAD is separate from candidate. All18UI/8newbrowser/
+11Owner/129OFF/14stream/34supervisor and existing Rust/PG gates remain required.
+No new executable acceptance. I6/approved-base threeUID/integrated review/
+G4/Owner/three actual trading days/finalC_R2 remain open. Ralph continues.
