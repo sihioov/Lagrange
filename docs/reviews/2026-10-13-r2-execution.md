@@ -4198,3 +4198,25 @@ target/r2-daily-beta/image-preparation-692f57f/preparation.json. Official
 plan/preflight/apply were not run for this candidate. Protected output absence,
 root access, complete host health, actual images and G3/G4 remain unresolved.
 No fresh CI/functional smoke was dispatched and no production action occurred.
+
+## Wave88 — integrated review closure and exact-candidate verification
+
+Recovered the actual idle/pending0/full substantive Wave87 final at19:18:41UTC.
+The immutable601-line report SHA605a2b0c has F119/D83/P0/U0 for202 targets.
+Coordinator matched224 pins/202 candidate blobs/255 local links. Four prior
+source findings and D01 are independently closed at source-review level.
+Heartbeat6d7fee0a was deleted after persisted recovery. D02 is a bounded
+non-executable template correction: add seven missing process fields,12→19,
+exact order/set comparison against nineteen run_db_test calls; keep62/62,
+0060, actual exit/no-SKIP and historical receipts. Coordinator disposition is
+explicit; no additional worker or independent review is claimed for this
+mechanical documentation edit. Full integrated source review is now complete
+within the stated unchanged-body limits. See the closure report.
+
+Freeze the commit containing D02, retain all reviewed executable bytes, then
+query existing exact-head runs across all events/workflows and verify remote
+SHA before one required CI and one separate functional research-smoke. No
+rerun/cancel/duplicate. Recover every job/log/checkout, named case and cleanup;
+unknown nested exits stay UNKNOWN. Ten new regressions are still unexecuted.
+Actual images/host/G3/G4/Owner/three trading days/C_R2 remain open. No local
+compiler/project test/parser/helper/SQL/provider/root/Docker/lifecycle action.

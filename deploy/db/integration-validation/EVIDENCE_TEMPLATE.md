@@ -61,6 +61,8 @@ hazards:
 
 tests:
   migration_contract: PASS|FAIL|BLOCKED_EXTERNAL
+  auth_audit_readiness: PASS|FAIL|BLOCKED_EXTERNAL
+  auth_router: PASS|FAIL|BLOCKED_EXTERNAL
   api_tenancy_rls: PASS|FAIL|BLOCKED_EXTERNAL
   api_paper_execution: PASS|FAIL|BLOCKED_EXTERNAL
   api_paper_notifications: PASS|FAIL|BLOCKED_EXTERNAL
@@ -68,11 +70,16 @@ tests:
   api_paper_runner: PASS|FAIL|BLOCKED_EXTERNAL
   jobqueue_contract: PASS|FAIL|BLOCKED_EXTERNAL
   jobqueue_paper_preview: PASS|FAIL|BLOCKED_EXTERNAL
-  auth_audit_readiness: PASS|FAIL|BLOCKED_EXTERNAL
-  auth_router: PASS|FAIL|BLOCKED_EXTERNAL
   jobqueue_daily_admitter_pool: PASS|FAIL|BLOCKED_EXTERNAL
+  jobqueue_owner_beta_publish: PASS|FAIL|BLOCKED_EXTERNAL
+  jobqueue_owner_beta_daily_schedule: PASS|FAIL|BLOCKED_EXTERNAL
+  jobqueue_owner_beta_daily_publish: PASS|FAIL|BLOCKED_EXTERNAL
+  jobqueue_owner_beta_daily_recovery: PASS|FAIL|BLOCKED_EXTERNAL
+  jobqueue_owner_beta_daily_backup: PASS|FAIL|BLOCKED_EXTERNAL
+  jobqueue_owner_beta_daily_runner: PASS|FAIL|BLOCKED_EXTERNAL
   api_daily_admitter_pool: PASS|FAIL|BLOCKED_EXTERNAL
-  process_exit_rows: 12 labels, each actual exit_code and skip_markers
+  api_owner_beta_daily: PASS|FAIL|BLOCKED_EXTERNAL
+  process_exit_rows: 19 labels, each actual exit_code and skip_markers
   daily_0060_named_rows: 32 unique exact names with actual libtest outcome
   daily_0060_subcase_rows: 73 unique fixed labels with actual PASS
   skip_markers: none (yes|no)
