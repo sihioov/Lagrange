@@ -5838,3 +5838,5 @@ remote match. New86 definitions and all carried gates pending; no acceptance.
 Wave79 부분 회수: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Wave79 15:54KST 후속: PG 전용19target exit0/noSKIP·62checksum두lane·0060/0039/cleanup 통과. 별도 policy DB준비2곳과 Web OFF129중1개는 실패했고 원인은 미확정이다. Rust 전체 테스트와 required 집계/전체 회수는 진행 중. 기존1030+추가/보정 총1041pin 불변; 새 CI나 소스 수정 없음. 이후 실제 TCP/SQL 준비 확인·안전한 오류코드·backup named-row 누락을 한 보정 범위로 다룬다. 운영/Owner/3거래일은 미시작.
+
+Wave79 전체 회수: 61f9c7f/38861769625 attempt1은 FAILURE.8job/8full-log hash/7checkout/1041pin/481blob 확인. Rust3346+chart6·PG19target·62checksum·lint/format/Python 통과. 새86정의는78PASS/8NOT_EXECUTED; policy DB준비2곳·Web OFF1개 실패의 원인은 UNKNOWN. 64backup·10CI계약·11Owner브라우저는 통과했다. 다음은 준비 확인·안전한 오류코드·backup named-row를 묶은 제한 보정이며 운영/Owner/3거래일 인수는 계속 미완료.

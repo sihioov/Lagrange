@@ -4,13 +4,13 @@ Candidate `61f9c7f85acee5dcbacbd04c138786ce1a068cdc`,
 [run 38861769625 attempt 1](https://github.com/sihioov/Lagrange/actions/runs/38861769625),
 created 2026-10-16T06:32:16Z, reporting bound 08:02:16Z.
 Workflow `ci.yml`, `workflow_dispatch`, branch `excited-dolphin`.
-**RUNNING, with terminal policy and Web failures recovered; no acceptance.**
+**FAILURE, all eight jobs and full evidence recovered; no acceptance.**
 
 [Correction scope](2026-10-16-r2-daily-backup-correction.md) follows full recovery
 of [failed run 38858383219](2026-10-16-r2-daily-backup-ci.md). Both all-event
 exact-head queries returned zero; remote SHA matched before one dispatch.
-1,041 pins and 481 committed blobs matched. All 86 package definitions and the
-ten affected CI-contract definitions await exact named results; no counts are
+1,041 pins and 481 committed blobs matched. At launch, all 86 package definitions and the
+ten affected CI-contract definitions awaited exact named results; no counts are
 substitutes for qualified rows or dedicated PG target exits/no-SKIP evidence.
 
 Private preparation: `wave79-I6B3-C01-source-inputs.json` (4,264 lines,
@@ -80,3 +80,43 @@ the final required aggregate and full recovery are pending. After recovery,
 one bounded correction scope must address authenticated database readiness,
 safe SQLSTATE/request-error diagnostics and the backup named-row omission.
 Do not mask failures with retries or expand operational authority.
+
+## Terminal recovery — 2026-10-16
+
+All eight jobs terminated. Workspace tests, dedicated PostgreSQL, format,
+strict Clippy and Python passed; policy, Web and the required aggregate failed.
+Eight full-log hashes and seven actual execution checkout SHAs matched this
+one candidate. All 1,041 pins and 481 committed blobs were independently
+rechecked; no new run, source correction or production action was performed.
+
+- Workspace: 3,346 qualified Rust rows and six separate chart rows passed.
+  All 33 carried required groups passed, including the prior Owner Equity
+  recovery case and all 12 backup/audit SQL cases in the workspace lane.
+  Counts across overlapping groups are not added as unique test counts.
+- New package: 78 of 86 exact definitions passed. Eight were NOT_EXECUTED
+  because class setup failed: six backup Docker bodies and two new transport
+  bodies. The whole transport class's ten definitions were NOT_EXECUTED.
+  All 64 file/controller definitions, ten CI-contract definitions and the
+  independent legacy operations fixture passed.
+- PostgreSQL: all 19 target exits/no-SKIP checks, both 62-checksum lanes,
+  0060 cases/subcases, catalog and cleanup passed. Its successful backup
+  target's individual names remain UNKNOWN; workspace rows are separate proof.
+- Web: 18 daily UI markers, six API-contract markers, 34 supervisor tests
+  and all 11 Owner recommendation browser cases passed. One unrelated
+  candidate-page setup request failed; OFF is 128/129, stream is 14/14,
+  both with zero retries/skips/flaky results and successful cleanup.
+- Python: 487 passed, ten skipped, seven warnings. Unprinted nested helper
+  rows and exits remain UNKNOWN.
+
+Private full receipt: `target/r2-daily-beta/ci/61f9c7f/ci-evidence.json`,
+26,683 lines, SHA256
+`c944ac5c2e01911149985dedb529d362b67fb93c9639cb318618618e9469bf8c`.
+Initial bookkeeping mismatches for the runner binary, Python module prefix
+and one old inferred log-binary label were resolved against concrete source
+and current named rows; the receipt records this and old evidence is preserved.
+
+Next source scope is the bounded fixture-readiness/diagnostic correction
+described above, with exact backup-row emission. Neither the database setup
+failure nor Web request failure has a proven underlying cause. This candidate
+remains failed. No acceptance gate is waived; whole-flow, diagrams, independent
+review, G3/G4, real Owner use and three trading days remain outstanding.
