@@ -120,7 +120,8 @@ daily_worker_block=$(awk '
 [ "$(grep -Ec '^[[:space:]]+PRICE_BETA_DAILY_MODE:' "$compose_file")" -eq 1 ] ||
   die 'base daily worker mode must reach only owner-beta-runner'
 for token in '--daily-prepare|--daily-enable|--daily-disable)' \
-  'lib/owner-beta-daily-operations.py'; do
+  'lib/owner-beta-daily-operations.py' '--daily-backup|--daily-backup-verify|--daily-reconcile)' \
+  'lib/owner-beta-daily-backup.py'; do
   grep -Fq -- "$token" "$compose_release" ||
     die 'controlled daily operation entrypoint missing'
 done

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import errno
 import hashlib
 import importlib.util
@@ -11,8 +12,10 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -128,6 +131,21 @@ class DailyBackupFilesTests(unittest.TestCase):
         manifest, retained = files.verify_archive(io.BytesIO(archive), self.limits, names)
         self.assertEqual(manifest["classes"], list(files.CLASSES))
         self.assertEqual(retained, {name: (self.directory / name).read_bytes() for name in names})
+
+    def test_provisioned_service_owned_artifact_parent_is_bound_without_chown(self):
+        parent = self.directory / "service-artifacts"
+        parent.mkdir(mode=0o750)
+        os.chown(parent, 14567, 10001)
+        (self.directory / "base").rename(parent / "historical-price-beta-root")
+        self.roots[-1] = files.Root("base", str(parent / "historical-price-beta-root"),
+                                   10001, 10001, 0o750, parent=(14567, 10001, 0o750))
+        with files.Snapshot(self.roots, self.limits) as snapshot:
+            output = io.BytesIO()
+            snapshot.write(output)
+        self.assertEqual(parent.stat().st_uid, 14567)
+        with self.assertRaises(files.SnapshotError):
+            with files.Snapshot(self.roots, self.limits):
+                os.chown(parent, 14568, 10001)
         admission = next(e for e in manifest["entries"] if e["path"].endswith("hash/manifest.json"))
         self.assertEqual((admission["uid"], admission["gid"], admission["mode"]),
                          (10003, 10001, 0o640))
@@ -138,6 +156,33 @@ class DailyBackupFilesTests(unittest.TestCase):
         self.assertNotIn(str(self.directory).encode(), archive)
         self.assertNotIn(b"NOT_FOR_BACKUP", archive)
         files.verify_archive(io.BytesIO(archive), self.limits)
+
+    def test_isolated_restore_recreates_all_bytes_and_metadata_before_reinventory(self):
+        restored = self.directory / "restored"
+        restored.mkdir(mode=0o700)
+        manifest = files.restore_archive(io.BytesIO(self.archive()), self.limits, str(restored))
+        roots = [files.Root(name, str(restored / name),
+                            next(e["uid"] for e in manifest["entries"] if e["path"] == name),
+                            10001, 0o750) for name in files.CLASSES]
+        with files.Snapshot(roots, self.limits) as snapshot:
+            self.assertEqual(files.canonical(manifest), snapshot.manifest())
+        self.assertEqual((restored / "raw/source/manifest.jsonl").read_bytes(), b'{"fixture":1}\n')
+        self.assertEqual((restored / "raw/source/empty").stat().st_size, 0)
+        self.assertFalse((restored / "floor/not-selected-secret").exists())
+
+    def test_restore_rejects_existing_destination_and_corruption_without_overwrite(self):
+        restored = self.directory / "restored"
+        restored.mkdir(mode=0o700)
+        sentinel = restored / "keep"
+        sentinel.write_bytes(b"existing")
+        with self.assertRaises(files.SnapshotError):
+            files.restore_archive(io.BytesIO(self.archive()), self.limits, str(restored))
+        self.assertEqual(sentinel.read_bytes(), b"existing")
+        sentinel.unlink()
+        corrupt = bytearray(self.archive())
+        corrupt[-1] ^= 1
+        with self.assertRaises(files.SnapshotError):
+            files.restore_archive(io.BytesIO(corrupt), self.limits, str(restored))
 
     def test_leaf_symlink_is_rejected_without_reading_target(self):
         outside = self.put("floor/not-selected-secret", b"SENTINEL_SECRET")
@@ -504,6 +549,320 @@ class BackupResumeTests(unittest.TestCase):
             with self.assertRaises(self.runtime.RuntimeErrorCode):
                 self.runtime.resume_after_backup(self.docker, self.context, self.before, timeout=1)
         self.assertLessEqual(clock[0], 1)
+
+
+class BackupControllerOrderingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "daily_backup_controller_tested", ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        cls.backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.backup
+        spec.loader.exec_module(cls.backup)
+
+    def setUp(self):
+        self.events, self.failure = [], None
+        self.pending = {"extra_admissions": [], "extra_frontiers": []}
+        self.database = {"admissions": []}
+        self.operation = mock.Mock()
+        self.storage = mock.Mock()
+        self.controller = self.backup.Controller(self.operation, mock.Mock(), {}, self.storage, "/unused")
+        self.controller.quiesce = mock.Mock(side_effect=lambda: self.event("quiesce", ({}, True, "api")))
+        self.controller.fail_off = mock.Mock(side_effect=lambda: self.event("off"))
+        self.controller.audit = mock.Mock(side_effect=lambda: self.event("audit", self.database))
+        self.operation.database.restore_reservations.side_effect = lambda *a: self.event("repair")
+        self.operation.database.control.side_effect = lambda *a: self.event("db:" + a[-1])
+        self.storage.publish.side_effect = lambda *a: self.event("publish")
+        self.storage.prune.side_effect = lambda: self.event("prune", (1, 10))
+        self.storage.metrics.side_effect = lambda *a: self.event("metrics")
+
+        @contextlib.contextmanager
+        def fence(*args):
+            self.event("fence")
+            yield
+            self.event("fence-close")
+
+        @contextlib.contextmanager
+        def inventory():
+            self.event("snapshot")
+            yield types.SimpleNamespace(manifest=lambda: b"{}")
+            self.event("snapshot-final")
+
+        @contextlib.contextmanager
+        def capture(*args):
+            self.event("isolated-verify")
+            try:
+                yield ("private", "final", "name")
+            finally:
+                self.event("staging-close")
+
+        self.controller.inventory = inventory
+        self.storage.capture = capture
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch.object(self.backup, "publication_fence", side_effect=fence))
+        stack.enter_context(mock.patch.object(self.backup.files, "database_references",
+                                             side_effect=lambda *a: copy.deepcopy(self.pending)))
+        stack.enter_context(mock.patch.object(self.backup.ops, "verify_api", return_value="api"))
+        stack.enter_context(mock.patch.object(self.backup.ops, "snapshot_equal", return_value=True))
+        stack.enter_context(mock.patch.object(self.backup.runtime, "resume_after_backup",
+                                             side_effect=lambda *a: self.event("resume", {})))
+        stack.enter_context(mock.patch.object(self.backup.runtime, "verify_running", return_value={}))
+        self.native = stack.enter_context(mock.patch.object(self.backup, "reverify_once"))
+
+    def event(self, name, result=None):
+        self.events.append(name)
+        if name == self.failure:
+            raise RuntimeError("INJECTED_BACKUP_FAILURE")
+        return copy.deepcopy(result)
+
+    def test_verified_snapshot_publishes_only_after_final_source_checks_then_enables_last(self):
+        self.assertEqual(self.controller.backup(), "VERIFIED_AND_RESUMED")
+        self.assertEqual(self.events, ["quiesce", "fence", "snapshot", "audit", "isolated-verify",
+            "audit", "snapshot-final", "fence-close", "publish", "prune", "staging-close",
+            "resume", "db:enable", "metrics"])
+
+    def test_initially_disabled_backup_does_not_start_any_process(self):
+        self.controller.quiesce.return_value = ({}, False, None)
+        self.controller.quiesce.side_effect = None
+        self.assertEqual(self.controller.backup(), "VERIFIED_DISABLED")
+        self.assertNotIn("resume", self.events)
+        self.assertNotIn("db:enable", self.events)
+
+    def test_orphan_snapshot_can_be_backed_up_but_cannot_resume(self):
+        for key in self.pending:
+            with self.subTest(key=key):
+                self.pending = {"extra_admissions": [], "extra_frontiers": []}
+                self.pending[key] = ["sha256:" + "a" * 64]
+                self.events.clear()
+                self.assertEqual(self.controller.backup(), "VERIFIED_DISABLED")
+                self.assertIn("publish", self.events)
+                self.assertNotIn("resume", self.events)
+
+    def test_capture_and_source_final_failures_never_publish_or_resume(self):
+        for stage in ("quiesce", "audit", "isolated-verify", "snapshot-final", "fence-close"):
+            with self.subTest(stage=stage):
+                self.failure, self.events = stage, []
+                with self.assertRaises(RuntimeError):
+                    self.controller.backup()
+                self.assertEqual(self.events[-1], "off")
+                self.assertNotIn("publish", self.events)
+                self.assertNotIn("resume", self.events)
+
+    def test_database_change_between_capture_and_final_audit_keeps_off(self):
+        self.controller.audit.side_effect = [{"admissions": []}, {"admissions": [], "changed": True}]
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.controller.backup()
+        self.assertEqual(self.events[-1], "off")
+        self.assertNotIn("publish", self.events)
+
+    def test_retention_resume_enable_or_metrics_failure_never_leaves_an_accepted_on_state(self):
+        for stage in ("prune", "resume", "db:enable", "metrics"):
+            with self.subTest(stage=stage):
+                self.failure, self.events = stage, []
+                with self.assertRaises(RuntimeError):
+                    self.controller.backup()
+                self.assertEqual(self.events[-1], "off")
+
+    def test_original_reservation_repair_and_two_snapshots_do_not_enable(self):
+        self.assertEqual(self.controller.reconcile(), "RECONCILED_DISABLED")
+        self.assertLess(self.events.index("repair"), self.events.index("audit"))
+        self.assertEqual(self.events.count("snapshot-final"), 2)
+        self.native.assert_not_called()
+        self.assertNotIn("resume", self.events)
+        self.assertNotIn("db:enable", self.events)
+
+    def test_native_success_without_actual_reconciliation_remains_pending(self):
+        self.pending["extra_admissions"] = ["sha256:" + "a" * 64]
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.controller.reconcile()
+        self.native.assert_called_once()
+        self.assertEqual(self.events[-1], "off")
+
+    def test_original_orphan_identity_must_match_the_native_post_state(self):
+        key = "sha256:" + "a" * 64
+        self.pending["extra_admissions"] = [key]
+        def native(*args):
+            self.pending["extra_admissions"] = []
+            self.database = {"admissions": [{"admission_sha256": key}]}
+        self.native.side_effect = native
+        self.assertEqual(self.controller.reconcile(), "RECONCILED_DISABLED")
+        self.assertNotIn("db:enable", self.events)
+
+    def test_native_cannot_substitute_a_new_identity(self):
+        self.pending["extra_admissions"] = ["sha256:" + "a" * 64]
+        def native(*args):
+            self.pending["extra_admissions"] = []
+            self.database = {"admissions": [{"admission_sha256": "sha256:" + "b" * 64}]}
+        self.native.side_effect = native
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.controller.reconcile()
+        self.assertEqual(self.events[-1], "off")
+
+    def test_frontier_only_residue_cannot_trigger_a_new_candidate_admission(self):
+        self.pending["extra_frontiers"] = ["sha256:" + "a" * 64]
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.controller.reconcile()
+        self.native.assert_not_called()
+        self.assertEqual(self.events[-1], "off")
+
+
+class DailyBackupRoutingTests(unittest.TestCase):
+    def setUp(self):
+        if os.geteuid() != 0 or sys.platform != "linux":
+            self.fail("actual root Linux fixture required")
+        self.directory = Path(tempfile.mkdtemp(prefix="lagrange-backup-routing-", dir="/var/lib"))
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.commit = "a" * 40
+        self.install = self.directory / "install"
+        self.release = self.install / "releases" / self.commit
+        self.lib = self.release / "scripts/ops/lib"
+        self.lib.mkdir(parents=True)
+        shutil.copyfile(ROOT / "scripts/ops/compose-release.sh", self.lib.parent / "compose-release.sh")
+        (self.lib.parent / "compose-release.sh").chmod(0o755)
+        for name in ("dotenv.sh", "kis-read-compose.sh"):
+            shutil.copyfile(ROOT / "scripts/ops/lib" / name, self.lib / name)
+        (self.lib / "owner-beta-daily-backup.py").write_text(
+            "import sys\nprint('FIXTURE_BACKUP_ARGS:' + '|'.join(sys.argv[1:]))\n")
+        (self.install / "current").symlink_to("releases/" + self.commit)
+        self.data = self.directory / "data"
+        (self.data / "owner-beta-daily").mkdir(parents=True)
+        self.config = self.directory / "backup.conf"
+        values = {"BACKUP_ROOT": str(self.directory / "backups"), "DATA_ROOT": str(self.data),
+                  "COMPOSE_FILE": str(self.release / "deploy/compose/compose.yml"),
+                  "COMPOSE_ENV_FILE": str(self.release / "deploy/compose/.env"),
+                  "COMPOSE_PROJECT": "fixture", "LAGRANGE_CODE_COMMIT": self.commit,
+                  "KEY_FILE": str(self.directory / "key"), "LOCK_FILE": str(self.directory / "lock"),
+                  "METRICS_FILE": str(self.directory / "metrics"), "MAX_TOTAL_BYTES": "1000000",
+                  "MIN_FREE_BYTES": "1000", "RETENTION_DAYS": "7", "MIN_KEEP": "1",
+                  "POSTGRES_SERVICE": "postgres", "POSTGRES_IMAGE": "fixture-controller-validates"}
+        self.config.write_text("".join(key + "=" + value + "\n" for key, value in values.items()))
+        self.config.chmod(0o600)
+        self.environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8",
+                            "PYTHONDONTWRITEBYTECODE": "1", "LAGRANGE_RELEASE_ROOT": str(self.install)}
+
+    def invoke(self, path, *arguments):
+        return subprocess.run(["/bin/bash", "--noprofile", "--norc", str(path), *arguments],
+            env=self.environment, capture_output=True, timeout=10, check=False)
+
+    def test_existing_timer_modes_route_to_current_release_without_legacy_fallback(self):
+        for flag, operation, mode in (("--check", "backup", "preflight"),
+                                      ("--run", "backup", "apply"),
+                                      ("--verify-latest", "verify", "apply")):
+            with self.subTest(flag=flag):
+                result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh", flag,
+                                     "--config-file", str(self.config))
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout.decode().strip(), "FIXTURE_BACKUP_ARGS:" +
+                    "|".join(("--operation", operation, "--mode", mode, "--install-root", str(self.install),
+                              "--config-file", str(self.config))))
+                self.assertEqual(result.stderr, b"")
+
+    def test_stale_config_or_missing_daily_helper_cannot_enter_legacy_backup(self):
+        for failure in ("stale", "helper"):
+            with self.subTest(failure=failure):
+                if failure == "stale":
+                    original = self.config.read_bytes()
+                    self.config.write_bytes(original.replace(self.commit.encode(), b"b" * 40))
+                else:
+                    (self.lib / "owner-beta-daily-backup.py").unlink()
+                result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh", "--run",
+                                     "--config-file", str(self.config))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(b"PRODUCTION_BACKUP_CHECK: PASS", result.stdout)
+                if failure == "stale":
+                    self.config.write_bytes(original)
+
+    def test_reader_floor_prevents_legacy_fallback_even_without_daily_directory(self):
+        (self.data / "owner-beta-daily").rmdir()
+        (self.install / ".owner-beta-daily-reader-floor").touch(mode=0o600)
+        result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh", "--check",
+                             "--config-file", str(self.config))
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(b"FIXTURE_BACKUP_ARGS", result.stdout)
+
+    def test_daily_backup_rejects_other_scope_from_commit_and_mixed_operation(self):
+        wrapper = self.lib.parent / "compose-release.sh"
+        for arguments in (("--scope", "backfill", "--daily-backup"),
+                          ("--daily-backup", "--daily-from-commit", self.commit),
+                          ("--daily-backup", "--daily-enable"),
+                          ("--backup-config", str(self.config)),
+                          ("--daily-reconcile", "--refresh-intraday")):
+            with self.subTest(arguments=arguments):
+                result = self.invoke(wrapper, *arguments)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(b"FIXTURE_BACKUP_ARGS", result.stdout)
+
+
+class DailyBackupRetentionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Import the controller without invoking any production entrypoint.
+        BackupControllerOrderingTests.setUpClass()
+        cls.backup = BackupControllerOrderingTests.backup
+
+    def setUp(self):
+        if os.geteuid() != 0 or sys.platform != "linux":
+            self.fail("actual root Linux fixture required")
+        self.directory = Path(tempfile.mkdtemp(prefix="lagrange-backup-retention-", dir="/var/lib"))
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.values = {"BACKUP_ROOT": str(self.directory), "MAX_TOTAL_BYTES": 1048576,
+                       "MIN_FREE_BYTES": 1024, "MIN_KEEP": 1, "RETENTION_DAYS": 1}
+        self.storage = self.backup.Storage(self.values, mock.Mock(),
+                                          types.SimpleNamespace(commit="a" * 40), mock.Mock())
+
+    def make_set(self, day, *, daily):
+        name = "backup-" + ("daily-" if daily else "") + f"200001{day:02d}T000000Z-" + "a" * 40
+        path = self.directory / name
+        path.mkdir(mode=0o700)
+        names = {*self.backup.MEMBERS, "metadata.json", "COMPLETE"} if daily else {
+            "postgres.dump.enc", "raw.tar.enc", "curated.tar.enc", "manifest.sha256",
+            "metadata", "VERIFIED", "COMPLETE"}
+        for name in names:
+            (path / name).write_bytes(b"fixture-only")
+            (path / name).chmod(0o600)
+        (path / "COMPLETE").write_bytes((self.backup.FORMAT if daily else
+            "LAGRANGE_PRODUCTION_BACKUP_V1").encode() + b"\n")
+        if not daily:
+            (path / "VERIFIED").write_bytes(b"2000-01-01T00:00:00Z\n")
+        return path
+
+    def test_retention_keeps_newest_verified_set_across_both_formats(self):
+        old = self.make_set(1, daily=False)
+        new = self.make_set(2, daily=True)
+        (self.directory / "latest").symlink_to(new.name)
+        count, total = self.storage.prune()
+        self.assertEqual(count, 1)
+        self.assertGreater(total, 0)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists())
+        self.assertEqual((self.directory / "latest").resolve(), new)
+
+    def test_minimum_keep_over_disk_cap_fails_without_deleting_retained_set(self):
+        path = self.make_set(1, daily=True)
+        self.values["MAX_TOTAL_BYTES"] = 1
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.storage.prune()
+        self.assertTrue(path.exists())
+
+    def test_unexpected_or_linked_members_are_never_pruned_recursively(self):
+        old = self.make_set(1, daily=False)
+        newest = self.make_set(2, daily=True)
+        external = self.directory / "external-sentinel"
+        external.write_bytes(b"keep")
+        (old / "unexpected").symlink_to(external)
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.storage.prune()
+        self.assertTrue(old.exists() and newest.exists())
+        self.assertEqual(external.read_bytes(), b"keep")
+
+    def test_unverified_legacy_set_blocks_deletion_and_is_preserved(self):
+        old = self.make_set(1, daily=False)
+        self.make_set(2, daily=True)
+        (old / "VERIFIED").unlink()
+        with self.assertRaises(self.backup.runtime.RuntimeErrorCode):
+            self.storage.prune()
+        self.assertTrue(old.exists())
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Bounded, descriptor-relative file snapshots for the daily backup controller.
 
-This internal module neither activates services nor extracts an archive. The
+This internal module never activates services. Extraction requires a new empty,
+protected root directory; no existing destination is overwritten. The
 controller must hold the release, private-state and Raw publication locks. A
 snapshot records every included directory/file, then requires identical bytes
 and identities through capture. Concurrent ordinary-data changes fail closed.
@@ -102,6 +103,7 @@ class Root:
     gid: int
     mode: int
     leaf: str | None = None
+    parent: tuple[int, int, int] | None = None
 
     def __post_init__(self):
         require(self.name in CLASSES and isinstance(self.path, str) and
@@ -112,6 +114,11 @@ class Root:
         safe_parts(self.path[1:])
         if self.leaf is not None:
             require(len(safe_parts(self.leaf)) == 1)
+        if self.parent is not None:
+            require(self.name == "base" and len(self.parent) == 3 and
+                    all(type(value) is int for value in self.parent) and
+                    0 <= self.parent[0] < 2**32 - 1 and
+                    self.parent[1:] == (10001, 0o750))
 
 
 @contextlib.contextmanager
@@ -125,7 +132,11 @@ def open_root(root):
         for index, name in enumerate(names):
             fds.append(os.open(name, DIRECTORY, dir_fd=fds[-1]))
             last = index == len(names) - 1
-            info = checked(fds[-1], directory=True, owners={root.uid} if last else {0})
+            boundary = root.parent if index == len(names) - 2 else None
+            info = checked(fds[-1], directory=True,
+                           owners={root.uid} if last else {boundary[0]} if boundary else {0})
+            if boundary:
+                require((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == boundary)
             if last:
                 require(info.st_gid == root.gid and stat.S_IMODE(info.st_mode) == root.mode)
             before.append(info)
@@ -133,7 +144,9 @@ def open_root(root):
         # Ancestor child lists may change independently; their identity, access
         # policy and binding may not. Included root contents are checked below.
         for index, fd in enumerate(fds):
-            info = checked(fd, directory=True, owners={root.uid} if index == len(names) else {0})
+            boundary = root.parent if index == len(names) - 1 else None
+            info = checked(fd, directory=True,
+                           owners={root.uid} if index == len(names) else {boundary[0]} if boundary else {0})
             original = before[index]
             require((info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode) ==
                     (original.st_dev, original.st_ino, original.st_uid,
@@ -368,6 +381,77 @@ def verify_archive(source, limits, retain=()):
     require(set(result) == requested, "DAILY_BACKUP_FILES_MISSING")
     require(source.read(1) == b"", "DAILY_BACKUP_FILES_TRAILING")
     return manifest, result
+
+
+def restore_archive(source, limits, destination, reserve=lambda _: None):
+    """Restore into an empty root-owned 0700 staging directory only.
+
+    The controller supplies a disposable staging path, never a live data root.
+    Parents are descriptor-relative and remain private until all hashes and EOF
+    pass. On failure the caller discards this incomplete isolated staging tree.
+    """
+    require(exact(source, len(MAGIC)) == MAGIC)
+    length = struct.unpack(">Q", exact(source, 8))[0]
+    require(0 < length <= limits.manifest_bytes, "DAILY_BACKUP_FILES_LIMIT")
+    manifest = validate_manifest(exact(source, length), limits)
+    with open_root(Root("floor", destination, 0, 0, 0o700)) as root:
+        require(not os.listdir(root), "DAILY_BACKUP_RESTORE_NOT_EMPTY")
+
+        @contextlib.contextmanager
+        def parent(parts):
+            with contextlib.ExitStack() as stack:
+                current = root
+                for part in parts:
+                    fd = os.open(part, DIRECTORY, dir_fd=current)
+                    stack.callback(os.close, fd)
+                    checked(fd, directory=True, owners={0})
+                    current = fd
+                yield current
+
+        directories = []
+        for entry in manifest["entries"]:
+            parts = safe_parts(entry["path"])
+            with parent(parts[:-1]) as directory:
+                if entry["kind"] == "directory":
+                    os.mkdir(parts[-1], mode=0o700, dir_fd=directory)
+                    directories.append(entry)
+                    continue
+                fd = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                             os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory)
+                try:
+                    digest, remaining = hashlib.sha256(), entry["size"]
+                    while remaining:
+                        chunk = exact(source, min(CHUNK, remaining))
+                        reserve(len(chunk))
+                        view = memoryview(chunk)
+                        while view:
+                            written = os.write(fd, view)
+                            require(written > 0, "DAILY_BACKUP_FILES_WRITE")
+                            view = view[written:]
+                        digest.update(chunk)
+                        remaining -= len(chunk)
+                    require("sha256:" + digest.hexdigest() == entry["sha256"],
+                            "DAILY_BACKUP_FILES_DIGEST")
+                    os.fchown(fd, entry["uid"], entry["gid"])
+                    os.fchmod(fd, entry["mode"])
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+        require(source.read(1) == b"", "DAILY_BACKUP_FILES_TRAILING")
+        # Bottom-up metadata restoration keeps every traversed parent private
+        # and root-owned until there are no further children to create beneath it.
+        for entry in reversed(directories):
+            parts = safe_parts(entry["path"])
+            with parent(parts[:-1]) as directory:
+                fd = os.open(parts[-1], DIRECTORY, dir_fd=directory)
+                try:
+                    os.fchown(fd, entry["uid"], entry["gid"])
+                    os.fchmod(fd, entry["mode"])
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+        os.fsync(root)
+    return manifest
 
 
 def database_references(manifest, database):

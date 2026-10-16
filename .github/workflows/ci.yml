@@ -21,7 +21,7 @@ env:
 jobs:
   policy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,6 +73,10 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-operations-self-test.py
       - name: Verify daily actual PostgreSQL control transport
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-transport-self-test.py
+      - name: Verify daily backup files and failure ordering
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-backup-self-test.py
+      - name: Verify daily encrypted full-schema isolated restore
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-backup-docker-self-test.py
       - name: Verify legacy production operations fixtures
         run: sudo bash scripts/ops/production-ops-self-test.sh
 

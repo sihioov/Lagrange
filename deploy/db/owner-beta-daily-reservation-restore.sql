@@ -1,5 +1,6 @@
 -- Fixed maintenance transaction, invoked only after installed-release binding,
--- DB disable, owned-process drain and filesystem reconciliation. No enqueue,
+-- DB disable and owned-process drain, inside a complete filesystem snapshot.
+-- File/DB reconciliation must pass afterwards before enable. No enqueue,
 -- reseal, history deletion, trigger bypass or grants. Caller uses ON_ERROR_STOP.
 BEGIN;
 SET LOCAL lock_timeout = '5s';

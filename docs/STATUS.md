@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave77 후보719a2e2/CI38849276458 전체 실패를 회수했다. 새37개는 통과했으나 기존 Owner 종목 DB 복구 테스트의 25ms 임대 재사용이 확인돼 3c100be에서 보정했다(실행 미검증). 백업/복원 기반과 새55개 테스트를 작성했고 공식 명령·암호화·격리 복원 연결을 진행한다. 새 CI는 통합 후보에 묶으며, 전체 흐름·독립 리뷰·운영·Owner·3거래일·C_R2는 미완료다. [장시간 진행 감사](reviews/2026-10-16-r2-ralph-progress-audit.md).
+현재: Wave77 전체 실패를 보존하고 3c100be의 Owner 종목 복구 fixture 보정과 I6B3 백업·복구 전체 후보를 묶었다. 6종 파일·전체 DB 암호화/실제 격리 복원, 원래 예약/admission 대조, 공식 명령·타이머·동일 컨테이너 재개·enable gate를 연결했다. 새85개 정의는 WRITTEN_UNEXECUTED이며 한 번의 exact-candidate hosted CI를 준비한다. 전체 흐름·독립 리뷰·운영·Owner·3거래일·C_R2는 미완료다. [소스 범위](reviews/2026-10-16-r2-daily-backup-source.md), [지연 감사](reviews/2026-10-16-r2-ralph-progress-audit.md).
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
@@ -30,7 +30,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave69 I7-C02 후속 후보 검증, 이어서I6. 운영·Owner·3거래일·C_R2 미완료. |
+| 다음 단계 | Wave78 백업·복구 통합 후보의 한 번의 hosted 검증. 이후 전체 흐름·다이어그램·독립 리뷰·구체적 G4·운영·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

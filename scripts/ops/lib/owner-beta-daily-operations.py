@@ -513,7 +513,7 @@ class Operations:
         reject_ambient(target.values)
         validate_activation_inputs(target)
         # Exact already-running activation is idempotent: no restart or epoch reset.
-        if self.source.commit == target.commit:
+        if self.source.commit == target.commit and self.database.status(target.values) == "ENABLED":
             try:
                 current = runtime.verify_running(self.docker, binding)
                 api = verify_api(self.docker, binding, target.images["api-server"])
@@ -547,6 +547,8 @@ class Operations:
         self.disable(snapshot)
         install.check_state(binding.data_root, config)
         self.database.control(target.release, target.commit, target.values, "check-disabled")
+        backup = load_local("daily_backup_enable_gate", "owner-beta-daily-backup.py")
+        backup.verify_disabled_state(self, binding, config)
         remove_stopped(self.docker, self.ownership, snapshot)
         try:
             start_target(self.docker, target, binding, self.install_root, self.research_mode)

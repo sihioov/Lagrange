@@ -60,7 +60,7 @@ class DailyOperationsTests(unittest.TestCase):
                                         self.own, str(self.directory), "absent")
 
     @contextlib.contextmanager
-    def activation(self, *, start_failure=False, observations=None):
+    def activation(self, *, start_failure=False, observations=None, reconcile_failure=False):
         def event(name, result=None, failure=False):
             def invoke(*args, **kwargs):
                 self.events.append(name)
@@ -78,6 +78,8 @@ class DailyOperationsTests(unittest.TestCase):
                                                   side_effect=event("drain")))
             stack.enter_context(mock.patch.object(ops.install, "check_state",
                                                   side_effect=event("state")))
+            stack.enter_context(mock.patch.object(ops, "load_local", return_value=types.SimpleNamespace(
+                verify_disabled_state=event("reconcile", failure=reconcile_failure))))
             stack.enter_context(mock.patch.object(ops, "remove_stopped",
                                                   side_effect=event("remove")))
             stack.enter_context(mock.patch.object(ops, "start_target",
@@ -126,7 +128,7 @@ class DailyOperationsTests(unittest.TestCase):
         with self.activation():
             self.assertEqual(self.operation.enable(SNAPSHOT), "ENABLED")
         self.assertEqual(self.events, ["validate", "db:disable", "drain", "state",
-                                      "db:check-disabled", "remove", "start", "runtime", "api",
+                                      "db:check-disabled", "reconcile", "remove", "start", "runtime", "api",
                                       "db:enable", "runtime", "api"])
 
     def test_partial_start_failure_disables_and_drains_target(self):
@@ -163,12 +165,14 @@ class DailyOperationsTests(unittest.TestCase):
 
     def test_exact_running_enable_is_idempotent_without_restart(self):
         self.source.commit = COMMIT
+        self.db.status.return_value = "ENABLED"
         with self.activation():
             self.assertEqual(self.operation.enable(SNAPSHOT), "ALREADY_ENABLED")
         self.assertEqual(self.events, ["validate", "runtime", "api", "db:enable", "runtime", "api"])
 
     def test_repeated_enable_revocation_attempts_disable_and_drain(self):
         self.source.commit = COMMIT
+        self.db.status.return_value = "ENABLED"
         def control(release, commit, values, action):
             self.events.append("db:" + action)
             if action == "enable":
@@ -178,6 +182,21 @@ class DailyOperationsTests(unittest.TestCase):
             with self.assertRaises(ops.runtime.RuntimeErrorCode):
                 self.operation.enable(SNAPSHOT)
         self.assertEqual(self.events[-3:], ["db:disable", "capture", "drain"])
+
+    def test_unreconciled_restore_cannot_replace_or_start_containers(self):
+        with self.activation(reconcile_failure=True):
+            with self.assertRaises(ops.runtime.RuntimeErrorCode):
+                self.operation.enable(SNAPSHOT)
+        self.assertEqual(self.events, ["validate", "db:disable", "drain", "state",
+                                      "db:check-disabled", "reconcile"])
+
+    def test_running_containers_with_disabled_db_cannot_bypass_restore_gate(self):
+        self.source.commit = COMMIT
+        with self.activation(reconcile_failure=True):
+            with self.assertRaises(ops.runtime.RuntimeErrorCode):
+                self.operation.enable(SNAPSHOT)
+        self.assertIn("reconcile", self.events)
+        self.assertNotIn("db:enable", self.events)
 
     def test_changed_data_binding_fails_before_stop(self):
         self.source.values["LAGRANGE_DATA_DIR"] = "/var/lib/foreign"

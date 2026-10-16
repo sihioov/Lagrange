@@ -273,3 +273,43 @@ and actor RLS. Full migrated authority tests remain a separate existing PG lane.
 Neither fixture proves the Rust approved-base whole flow or operational G4.
 Consistent backup/restore reconciliation, diagrams, full-flow verification and
 independent integrated review remain mandatory before operational acceptance.
+
+## Daily backup and restored-state reconciliation
+
+Source is written; hosted and operational acceptance are still pending. Use only
+the installed current release's `compose-release.sh --scope release` entrypoint.
+`--daily-backup --plan`, `--daily-backup-verify --plan`, and
+`--daily-reconcile --plan` describe the operation without reading protected inputs.
+`--preflight` checks protected local inputs, with no Docker/DB execution.
+`--apply` is an operational action requiring the applicable approved maintenance
+scope. `--backup-config` selects the root:root0600 configuration, defaulting to
+`/etc/lagrange/production-backup.conf`; its exact release and image pins must match.
+No `--daily-from-commit`, other scope, or refresh operation can be combined.
+
+Backup disables/drains daily, captures PostgreSQL plus all six file classes,
+encrypts them and actually restores both into disposable isolated resources.
+The historical base's service-owned parent is retained unchanged. Only a verified
+previous healthy ON cohort may resume by the same container IDs, with DB enable
+last. Any unresolved orphan, failure, originally OFF or incomplete cohort remains
+OFF. The API and market-stream are not restarted. A `VERIFIED_DISABLED` result
+proves backup verification only, not that daily scheduling resumed.
+
+Restored files must first be restored under a separately reviewed concrete
+maintenance plan; these commands never extract over live paths. Afterwards
+`--daily-reconcile --apply` checks exact DB-referenced artifacts and repairs only
+the original surviving run/job reservation. One native admitter cycle may recover
+captured orphan admissions without changing identity. Remaining orphans, Busy,
+NotDue or a frontier-only residue remains pending/OFF; do not reset clocks,
+delete evidence or substitute a new job. The next ordinary `--daily-enable`
+independently checks reconciliation again. Reconciliation itself never enables.
+
+V1 sets remain historical PostgreSQL/Raw/Curated evidence. V2 COMPLETE sets add
+daily evidence and are restored using their matching installed source/config.
+The existing timer helper routes daily/floor-present installations to the current
+controller and refuses legacy fallback. Validate installed helper/unit/config
+versions before activation; the installer does not overwrite existing targets.
+The service sandbox retains read-only release/data trees and exposes only the
+existing `.lagrange-release.lock` file as writable in addition to backup storage.
+
+[Source scope and validation limits](../reviews/2026-10-16-r2-daily-backup-source.md)
+are part of the eventual exact-candidate acceptance, not operational evidence.

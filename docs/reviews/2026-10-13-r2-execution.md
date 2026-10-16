@@ -3857,3 +3857,22 @@ and scoped Rustfmt checks only; no compiler, Python, SQL, Docker or new CI run.
 Next: encrypted capture/isolated restore, native same-identity reconciliation,
 controller cleanup and official command/installer/CI wiring as one coherent
 candidate. All whole-flow/independent-review/G4/Owner/three-day gates stay open.
+
+
+### Wave78 I6B3 coherent backup/reconciliation candidate — 2026-10-16 KST
+
+The directly owned backup source now connects encrypted complete PostgreSQL and
+six-class files, actual networkless restored-database/file audit, original-key
+reconciliation, exact prior-cohort resume and official command/timer/enable gates.
+The source includes foundation645e4a2 and Owner-equity fixture correction3c100be;
+Wave77 remains failed. See [source scope](2026-10-16-r2-daily-backup-source.md).
+New85 definitions (64 file/controller/routing/retention/resume,6 actual Docker,
+11 actual-role SQL,2 transport,2 enable) are WRITTEN_UNEXECUTED. Direct source
+review is not independent review or execution acceptance. The policy lane keeps
+all existing checks and gets a 20-minute budget; dedicated PG has19 targets.
+One coherent exact-candidate CI follows all-event existing-run and remote-SHA
+checks. No rerun/cancel/duplicate of old CI, worker, local project execution or
+production action. Prior 72-hour host authority expired, not renewed by this work.
+Whole-flow/PUML+PNG/independent review/G4/Owner/three trading days/finalC_R2 remain
+open. Runtime installation still needs a concrete versioned helper/unit/config
+transition because the existing backup installer refuses overwrites.

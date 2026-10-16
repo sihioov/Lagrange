@@ -28,6 +28,7 @@ calendar_source_batch_id=
 calendar_reuse_existing_source=0
 daily_operation=
 daily_from_commit=
+daily_backup_config=
 release_lock_fd=
 release_override=
 release_commit=
@@ -75,6 +76,7 @@ Usage: scripts/ops/compose-release.sh
        [--plan|--preflight|--apply] [--refresh-intraday|--refresh-market-stream]
        [--refresh-from-commit COMMIT]
        [--daily-prepare|--daily-enable|--daily-disable] [--daily-from-commit COMMIT]
+       [--daily-backup|--daily-backup-verify|--daily-reconcile] [--backup-config PATH]
        [--bootstrap-intraday-calendar
         (--calendar-source-batch-id UUID|--reuse-existing-source)]
 
@@ -102,6 +104,11 @@ Usage: scripts/ops/compose-release.sh
   --daily-from-commit COMMIT
                     Explicit installed owner of the previous daily processes.
                     Also used by the full release apply quiescence guard.
+  --daily-backup|--daily-backup-verify|--daily-reconcile
+                    Verified encrypted capture, isolated verification, or original
+                    identity reconciliation. Reconciliation always leaves daily OFF.
+  --backup-config PATH
+                    Protected backup config for these three operations only.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
@@ -139,6 +146,12 @@ while [ "$#" -gt 0 ]; do
     --daily-prepare|--daily-enable|--daily-disable)
       [ -z "$daily_operation" ] || die 'select one daily operation'
       daily_operation=${1#--daily-}; shift ;;
+    --daily-backup|--daily-backup-verify|--daily-reconcile)
+      [ -z "$daily_operation" ] || die 'select one daily operation'
+      daily_operation=${1#--daily-}; shift ;;
+    --backup-config)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_backup_config" ] || die 'backup config needs one path'
+      daily_backup_config=$2; shift 2 ;;
     --daily-from-commit)
       [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_from_commit" ] || die 'daily source needs one commit'
       daily_from_commit=$2; shift 2 ;;
@@ -199,6 +212,11 @@ if [ -n "$daily_from_commit" ]; then
     [ "$daily_from_commit" != 0000000000000000000000000000000000000000 ] ||
     die 'daily source must be one exact installed nonzero commit'
 fi
+case "$daily_operation" in
+  backup|backup-verify|reconcile)
+    [ -z "$daily_from_commit" ] || die 'backup operations use only the current installed release' ;;
+  *) [ -z "$daily_backup_config" ] || die 'backup config requires a backup operation' ;;
+esac
 if [ -n "$daily_operation" ]; then
   [ "$scope" = release ] && [ "$refresh_intraday" -eq 0 ] &&
     [ "$refresh_market_stream" -eq 0 ] && [ "$bootstrap_intraday_calendar" -eq 0 ] &&
@@ -206,6 +224,13 @@ if [ -n "$daily_operation" ]; then
   [ "$compose_file" = "$default_compose_file" ] && [ "$env_file" = "$default_env_file" ] ||
     die 'daily operation requires the installed protected inputs'
   daily_args=(--operation "$daily_operation" --mode "$mode" --install-root "$release_root")
+  case "$daily_operation" in
+    backup|backup-verify|reconcile)
+      [ "$daily_operation" != backup-verify ] || daily_args[1]=verify
+      [ -z "$daily_backup_config" ] || daily_args+=(--config-file "$daily_backup_config")
+      PYTHONDONTWRITEBYTECODE=1 exec /usr/bin/python3 \
+        "$script_dir/lib/owner-beta-daily-backup.py" "${daily_args[@]}" ;;
+  esac
   [ -z "$daily_from_commit" ] || daily_args+=(--from-commit "$daily_from_commit")
   # Shutdown bypasses unrelated Auth0/provider activation validators. The closed
   # controller still verifies installed manifests, ownership and its DB transport.

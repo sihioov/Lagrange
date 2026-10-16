@@ -136,6 +136,13 @@ if [ "$systemd_dir" = /etc/systemd/system ] && [ "$config_target" = /etc/lagrang
   [ "$configured_key_file" = /etc/lagrange/secrets/backup_encryption_key ] || die 'production unit requires the canonical backup key path'
   [ "$configured_lock_file" = /var/lib/lagrange/backup-state/production-backup.lock ] || die 'production unit requires the canonical lock path'
   [ "$configured_metrics_file" = /var/lib/lagrange/backup-state/production-backup.prom ] || die 'production unit requires the canonical metrics path'
+  if [ -e "$configured_data_root/owner-beta-daily" ] || [ -L "$configured_data_root/owner-beta-daily" ]; then
+    # systemd exposes only this existing file as writable, never the release
+    # tree. The immutable release installer must already have created it.
+    [ -f /opt/lagrange/.lagrange-release.lock ] && [ ! -L /opt/lagrange/.lagrange-release.lock ] &&
+      [ "$(stat -c '%u:%g:%a:%s:%h' /opt/lagrange/.lagrange-release.lock)" = 0:0:600:0:1 ] ||
+      die 'daily backup requires the protected installed release lock'
+  fi
 fi
 for target in "$helper_target" "$config_target"; do
   [ ! -e "$target" ] && [ ! -L "$target" ] || die "refusing to overwrite existing target: $target"
