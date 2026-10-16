@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave82 `c6265dd`/[CI38888547029](reviews/2026-10-16-r2-first-rollout-ci.md) 전체 실패를 회수하고 Wave83 fixture 보정을 작성했다. 새95개91PASS/4nativeERROR의 원인이었던 테스트 소유 볼륨 부모 보호 설정을 추가했다. 운영 guard·긍정/부정 회귀는 동일하며95개 이름을 보존했다. 로컬 실행 없이 소스 대조만 완료했고 새 exact-candidate CI는 아직 시작하지 않았다. 실제 이미지/승인 입력 호스트 검증·PNG/통합·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
+현재: 복구 fixture 부모 보호 보정 후보 `2db7e48`의 [CI38892070778 attempt1](reviews/2026-10-16-r2-first-rollout-correction-ci.md)을 한 번 시작했다. 이전 c6265dd의95개91PASS/4nativeERROR 및 전체8job 결과는 보존한다. 새 후보는1093pin/503blob,95개 정의를 고정했고 전체 결과 회수 대기다. 운영 guard는 동일하며 실행/배포 인수는 아니다. 실제 이미지/승인 입력 호스트 검증·PNG/통합·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
