@@ -5811,3 +5811,12 @@ production action. Prior 72-hour host authority expired, not renewed by this wor
 Whole-flow/PUML+PNG/independent review/G4/Owner/three trading days/finalC_R2 remain
 open. Runtime installation still needs a concrete versioned helper/unit/config
 transition because the existing backup installer refuses overwrites.
+
+### Wave78 single coherent candidate CI — 2026-10-16 KST
+
+Candidate977e356/run38858383219 attempt1 started05:56:01UTC after exact-head
+all-event queries0 and remote-SHA verification. 1036pins/478blobs match;
+new85 definitions and every carried gate await execution. Recovery bound07:26:01UTC.
+No rerun/duplicate/local project execution/production action. Direct coordinator
+source review is not independent review or runtime acceptance. See
+[CI recovery](../../reviews/2026-10-16-r2-daily-backup-ci.md).
