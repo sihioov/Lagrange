@@ -13,6 +13,7 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tempfile
 import types
@@ -114,6 +115,45 @@ class PreupgradeDockerTests(unittest.TestCase):
         cls.generation = (info["Created"], info["State"]["StartedAt"], info["State"]["FinishedAt"], info["RestartCount"])
         cls.image_id = info["Image"]
         cls.check_stopped()
+        cls.protect_fixture_volume_parent()
+
+    @classmethod
+    def protect_fixture_volume_parent(cls):
+        """Establish the cold snapshot contract on this fixture's own volume."""
+        before = recovery.volume_info(cls.docker, cls.volume)
+        mountpoint = Path(cls.mountpoint)
+        if (before["Mountpoint"] != cls.mountpoint or mountpoint.name != "_data"
+                or mountpoint.parent.name != cls.volume
+                or (before.get("Labels") or {}).get("io.lagrange.preupgrade-fixture") != cls.project):
+            raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_OWNER")
+        cls.check_stopped()
+        # Hold the protected shared ancestor but change only the fresh labelled
+        # volume's own parent, never Docker's shared volumes directory.
+        shared = mountpoint.parent.parent
+        shared_mode = stat.S_IMODE(shared.stat(follow_symlinks=False).st_mode)
+        with files.open_root(files.Root("config", str(shared), 0, 0, shared_mode)) as ancestor:
+            fd = os.open(cls.volume, files.DIRECTORY, dir_fd=ancestor)
+            try:
+                original = files.checked(fd, directory=True, owners={0}, groups={0})
+                named = os.stat(cls.volume, dir_fd=ancestor, follow_symlinks=False)
+                if (named.st_dev, named.st_ino) != (original.st_dev, original.st_ino):
+                    raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_CHANGED")
+                os.fchmod(fd, 0o700)
+                protected = files.checked(fd, directory=True, owners={0}, groups={0})
+                named = os.stat(cls.volume, dir_fd=ancestor, follow_symlinks=False)
+                if ((protected.st_dev, protected.st_ino) != (original.st_dev, original.st_ino)
+                        or (named.st_dev, named.st_ino) != (protected.st_dev, protected.st_ino)
+                        or stat.S_IMODE(protected.st_mode) != 0o700):
+                    raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_CHANGED")
+            finally:
+                os.close(fd)
+        after = recovery.volume_info(cls.docker, cls.volume)
+        if any(after.get(key) != before.get(key) for key in
+               ("Name", "Driver", "Scope", "Options", "Labels", "Mountpoint", "CreatedAt")):
+            raise RuntimeError("PREUPGRADE_FIXTURE_VOLUME_CHANGED")
+        cls.check_stopped()
+        print(f"PREUPGRADE_FIXTURE_PARENT:uid=0:gid=0:before={stat.S_IMODE(original.st_mode):04o}:after=0700",
+              flush=True)
 
     @classmethod
     def check_stopped(cls):

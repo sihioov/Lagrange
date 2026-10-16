@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave82 후보 `c6265dd`의 [CI38888547029 attempt1 전체 결과](reviews/2026-10-16-r2-first-rollout-ci.md)를 회수했다. Rust·Web·PostgreSQL·format·strict Clippy·Python 성공, policy와 종합 판정 실패다. 새95개 중91PASS/4nativeERROR이며 네 오류는 복구 테스트의 볼륨 부모 보호 설정 누락이다.8개 전체 로그·7checkout·1074pin/502blob 및 기존 필수 named gates를 대조했다. 다음은 이 fixture 준비만 보정한 새 후보 검증이다. 실제 이미지/승인 입력 호스트 검증·PNG/통합·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
+현재: Wave82 `c6265dd`/[CI38888547029](reviews/2026-10-16-r2-first-rollout-ci.md) 전체 실패를 회수하고 Wave83 fixture 보정을 작성했다. 새95개91PASS/4nativeERROR의 원인이었던 테스트 소유 볼륨 부모 보호 설정을 추가했다. 운영 guard·긍정/부정 회귀는 동일하며95개 이름을 보존했다. 로컬 실행 없이 소스 대조만 완료했고 새 exact-candidate CI는 아직 시작하지 않았다. 실제 이미지/승인 입력 호스트 검증·PNG/통합·독립 리뷰·G3/G4·운영·Owner·3거래일·최종 R2는 남아 있다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

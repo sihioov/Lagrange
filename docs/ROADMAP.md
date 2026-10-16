@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave82 `c6265dd`/[CI38888547029](reviews/2026-10-16-r2-first-rollout-ci.md) 전체 회수 완료: 새95개91PASS/4nativeERROR, 나머지 job 성공. 복구 fixture의 부모 보호 설정만 보정해 새 후보를 검증한다. 기존 run 재실행 없음. 실제 이미지/승인 입력 호스트 검증·PNG/통합·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 남아 있다. |
+| 다음 착수 항목 | Wave83: [이전 전체 실패](reviews/2026-10-16-r2-first-rollout-ci.md) 회수 후 복구 fixture 소유 볼륨 부모 보호만 보정했다. 운영 guard/95개 정의를 보존하고 새 exact-candidate 조회·단일 CI 검증으로 진행한다. 실제 이미지/승인 입력 호스트 검증·PNG/통합·독립 리뷰·G3/G4·운영·Owner·3거래일·C_R2는 남아 있다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -1621,3 +1621,5 @@ Wave79 부분 회수: 파일/컨트롤러64개·format·strictClippy·Python은 
 - 2026-10-16 — R2-04/09 Wave82: Web/PG 추가 성공 회수,6개 전체 로그·checkout 및 PG19target/62checksum두차례/0060/0039/cleanup·브라우저129+14 대조. Rust 전체 테스트 진행 중, 새 Python87PASS/4ERROR 유지. 전체 종료 후 fresh fixture 부모 보호만 보정하며 운영 guard는 유지한다. 격리 I6C 다이어그램303개 근거 범위 확인; PNG/통합·독립 리뷰는 미완료. [현재 증거와 한계](reviews/2026-10-16-r2-first-rollout-ci.md).
 
 - 2026-10-16 — R2-04/09 Wave82 전체 실패 회수:8job/log·7checkout·1074pin/502blob·기존 필수 named gates 대조. 새95개91PASS/4nativeERROR, 나머지 실행 job 성공. 실제 부모 metadata는 UNKNOWN이며 fixture 자체의 보호 설정만 보정한다. 이전 실행/실패 보존, 운영·Owner·3거래일 미시작. [완료 결과와 다음 보정](reviews/2026-10-16-r2-first-rollout-ci.md).
+
+- 2026-10-16 — R2-04/09 Wave83 bounded correction: native fixture가 새로 만든 볼륨만 소유 label·정지 generation·inode/name/ACL/UID/GID 확인 뒤 부모0700으로 보호한다. 운영 guard/긍정·부정 회귀 동일,95개 이름 보존. 정적 검토만 완료; 새 CI/운영 미실행. [경계](runbooks/r2-preupgrade-recovery.md).

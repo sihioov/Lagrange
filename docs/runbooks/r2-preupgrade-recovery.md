@@ -45,6 +45,17 @@ parent, held by descriptor and rechecked. No descendant, other class or daily
 archive inherits it. Actual pinned-image metadata still requires observation.
 [Official Docker PostgreSQL18 definition](https://github.com/docker-library/postgres/blob/master/18/bookworm/Dockerfile).
 
+The disposable native fixture establishes this parent protection explicitly.
+It first binds its freshly created labelled local volume and stopped database
+generation, holds the protected shared ancestor, and changes only that volume's
+own parent through an open descriptor. It checks root ownership, no writable
+group/other access or ACL, and unchanged inode/name binding before and after
+setting0700; it rechecks the volume and stopped generation afterward. The
+shared Docker directory and production capture guard remain unchanged.
+This fixture setup does not authorize changing a production volume's permissions.
+Live parent metadata still needs fresh observation and, if incompatible, a
+separately authorized exact protection step before capture can proceed.
+
 The [recovery library](../../scripts/ops/lib/production-preupgrade-recovery.py)
 checks the exact stopped container, pinned image, generation and local volume.
 It requires the PG18 whole-volume layout, retained WAL/control files, no

@@ -4039,3 +4039,19 @@ candidate, no separate CI or acceptance. Native whole flow remains next.
 2026-10-16, Wave82 follow-up recovery: six terminal full-job logs/actual checkouts recovered. Web129+14 cases, strict Clippy/workspace formatting, and PostgreSQL19 no-SKIP targets/146 named rows/62 migration checksums twice/0060 32+73/bootstrap83/0039/cleanup passed. Workspace Rust remains running; required aggregate pending. New Python87PASS/4ERROR is unchanged. After full terminal recovery, correct only the fresh owned native fixture volume parent's missing protection; production guard/negative tests stay unchanged and actual failed mode stays UNKNOWN. I6C isolated draft now has303 source citation ranges, including first-rollout components/C04 refresh; no PNG, integration or independent-review claim. No executable edits, repeated CI, local project execution, worker or production action.
 
 2026-10-16, Wave82 final recovery: c6265dd/38888547029 attempt1 completed11:02:19UTC, FAILURE from policy and required only. All8 jobs/logs,7 checkout SHAs,1074 pins/502 blobs and current/carried named gates recovered. New95=91PASS/4nativeERROR; C04 Rust4 and wholeflow synthetic19PASS. Four native errors remain PREUPGRADE_VOLUME_PARENT before clone assertions; actual failed metadata UNKNOWN. All other jobs passed. The production guard/negative regression remain valid; next is the exact owned fixture-parent preparation correction, not an old-run rerun. No runtime/Owner/three-day/final C_R2 acceptance.
+
+### Wave83 bounded first-rollout fixture correction — 2026-10-16
+
+After full terminal Wave82 recovery, corrected only the native fixture's own
+volume-parent preparation. The fresh labelled local volume and stopped source
+generation are checked; a protected shared ancestor is held while the exact
+child is opened without symlink following, verified root-owned/non-writable/no
+ACL, tightened to0700 and rechecked by inode/name and Docker generation. The
+production snapshot guard and existing positive/negative regression are byte
+identical. All95 first-rollout definition names remain; four anchors moved.
+
+Direct source review and whitespace/inventory checks only. No local project
+execution or operational permission change. Freeze the coherent correction
+candidate, query all exact-head runs, then dispatch once only if absent. Prior
+c6265dd failure remains preserved. Actual approved-base/images, diagrams/PNG,
+independent integrated review, G3/G4, Owner and three trading days stay open.
