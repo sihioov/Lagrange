@@ -22,12 +22,16 @@ import stat
 import struct
 
 CLASSES = ("raw", "curated", "daily", "config", "floor", "base")
+# An explicitly selected, distinct format for a stopped pre-upgrade cluster.
+# The daily caller never accepts this format or the postgres UID implicitly.
+PREUPGRADE_CLASSES = ("raw", "curated", "base", "config", "postgres")
 DAILY_TABLES = tuple("owner_beta_daily_" + suffix for suffix in (
     "control", "admissions", "admission_events", "calendar_sources", "calendar_days",
     "source_events", "poll_receipts", "poll_state", "reservations", "publication_claims"))
 AUDIT_TABLES = (*DAILY_TABLES, "jobs", "job_attempts", "owner_beta_recommendation_runs",
                 "owner_beta_recommendation_items")
 MAGIC = b"LAGRANGE_DAILY_FILES_V1\n"
+PREUPGRADE_MAGIC = b"LAGRANGE_PREUPGRADE_FILES_V1\n"
 OWNERS = frozenset((0, 10001, 10002, 10003))
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 REGULAR = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -41,6 +45,18 @@ class SnapshotError(Exception):
 def require(condition, code="DAILY_BACKUP_FILES_INVALID"):
     if not condition:
         raise SnapshotError(code)
+
+
+def profile_values(profile):
+    require(profile in {"daily", "preupgrade"}, "BACKUP_FILES_PROFILE")
+    if profile == "preupgrade":
+        return PREUPGRADE_CLASSES, PREUPGRADE_MAGIC, "lagrange-preupgrade-files-v1"
+    return CLASSES, MAGIC, "lagrange-daily-files-v1"
+
+
+def profile_owners(profile, name):
+    profile_values(profile)
+    return OWNERS | {999} if profile == "preupgrade" and name == "postgres" else OWNERS
 
 
 def canonical(value):
@@ -72,11 +88,17 @@ def safe_parts(path):
     return parts
 
 
-def checked(fd, *, directory, owners=OWNERS):
+def checked(fd, *, directory, owners=OWNERS, groups=OWNERS, sticky_volume=False):
     value = os.fstat(fd)
+    # The official PG18 volume root can be postgres:postgres1777. Only the
+    # cold profile's exact root may carry that mode; open_root additionally
+    # requires its host parent to be root:root0700. No descendant or daily
+    # root inherits this exception.
+    private_pg_volume = (sticky_volume and directory and
+                         (value.st_uid, value.st_gid, stat.S_IMODE(value.st_mode)) == (999, 999, 0o1777))
     require((stat.S_ISDIR(value.st_mode) if directory else stat.S_ISREG(value.st_mode))
-            and value.st_uid in owners and value.st_gid in OWNERS and
-            not value.st_mode & 0o7022 and (directory or value.st_nlink == 1),
+            and value.st_uid in owners and value.st_gid in groups and
+            (not value.st_mode & 0o7022 or private_pg_volume) and (directory or value.st_nlink == 1),
             "DAILY_BACKUP_FILES_TYPE_OR_MODE")
     no_acl(fd)
     return value
@@ -106,11 +128,13 @@ class Root:
     parent: tuple[int, int, int] | None = None
 
     def __post_init__(self):
-        require(self.name in CLASSES and isinstance(self.path, str) and
-                self.path.startswith("/") and type(self.uid) is int and self.uid in OWNERS and
-                type(self.gid) is int and self.gid in OWNERS
-                and type(self.mode) is int and 0 < self.mode <= 0o777 and
-                not self.mode & 0o022)
+        owners = OWNERS | {999} if self.name == "postgres" else OWNERS
+        private_pg_volume = self.name == "postgres" and (self.uid, self.gid, self.mode) == (999, 999, 0o1777)
+        require(self.name in {*CLASSES, *PREUPGRADE_CLASSES} and isinstance(self.path, str) and
+                self.path.startswith("/") and type(self.uid) is int and self.uid in owners and
+                type(self.gid) is int and self.gid in owners
+                and type(self.mode) is int and
+                ((0 < self.mode <= 0o777 and not self.mode & 0o022) or private_pg_volume))
         safe_parts(self.path[1:])
         if self.leaf is not None:
             require(len(safe_parts(self.leaf)) == 1)
@@ -126,6 +150,7 @@ def open_root(root):
     """Keep the complete protected parent chain until final name verification."""
     names = safe_parts(root.path[1:])
     fds, before = [], []
+    groups = OWNERS | {999} if root.name == "postgres" else OWNERS
     try:
         fds.append(os.open("/", DIRECTORY))
         before.append(checked(fds[0], directory=True, owners={0}))
@@ -134,7 +159,13 @@ def open_root(root):
             last = index == len(names) - 1
             boundary = root.parent if index == len(names) - 2 else None
             info = checked(fds[-1], directory=True,
-                           owners={root.uid} if last else {boundary[0]} if boundary else {0})
+                           owners={root.uid} if last else {boundary[0]} if boundary else {0},
+                           groups=groups if last else OWNERS,
+                           sticky_volume=last and root.name == "postgres")
+            if last and root.mode == 0o1777:
+                parent = before[-1]
+                require((parent.st_uid, parent.st_gid, stat.S_IMODE(parent.st_mode)) == (0, 0, 0o700),
+                        "PREUPGRADE_VOLUME_PARENT")
             if boundary:
                 require((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == boundary)
             if last:
@@ -146,7 +177,9 @@ def open_root(root):
         for index, fd in enumerate(fds):
             boundary = root.parent if index == len(names) - 1 else None
             info = checked(fd, directory=True,
-                           owners={root.uid} if index == len(names) else {boundary[0]} if boundary else {0})
+                           owners={root.uid} if index == len(names) else {boundary[0]} if boundary else {0},
+                           groups=groups if index == len(names) else OWNERS,
+                           sticky_volume=index == len(names) and root.name == "postgres")
             original = before[index]
             require((info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode) ==
                     (original.st_dev, original.st_ino, original.st_uid,
@@ -182,9 +215,14 @@ def write_all(stream, value):
 
 
 class Snapshot:
-    def __init__(self, roots, limits):
-        require(tuple(r.name for r in roots) == CLASSES)
-        require(len({r.path for r in roots}) == len(CLASSES))
+    def __init__(self, roots, limits, *, profile="daily"):
+        self.classes, self.magic, self.schema = profile_values(profile)
+        self.profile = profile
+        require(tuple(r.name for r in roots) == self.classes)
+        require(len({r.path for r in roots}) == len(self.classes))
+        if profile == "preupgrade":
+            require(not any(a.path.startswith(b.path + "/") for a in roots for b in roots if a is not b),
+                    "PREUPGRADE_ROOT_OVERLAP")
         self.roots, self.limits = tuple(roots), limits
         self.stack = None
         self.descriptors = {}
@@ -220,7 +258,9 @@ class Snapshot:
             nonlocal total, metadata
             require(len(records) < self.limits.entries and len(safe_parts(path)) <= 64,
                     "DAILY_BACKUP_FILES_LIMIT")
-            before = checked(fd, directory=directory)
+            owners = profile_owners(self.profile, path.split("/", 1)[0])
+            sticky_volume = self.profile == "preupgrade" and path == "postgres"
+            before = checked(fd, directory=directory, owners=owners, groups=owners, sticky_volume=sticky_volume)
             record = {"path": path, "kind": "directory" if directory else "file",
                       "uid": before.st_uid, "gid": before.st_gid,
                       "mode": stat.S_IMODE(before.st_mode),
@@ -262,7 +302,7 @@ class Snapshot:
                 digest = hashlib.sha256()
                 read_chunks(fd, before.st_size, digest, destination)
                 record["sha256"] = "sha256:" + digest.hexdigest()
-            after = checked(fd, directory=directory)
+            after = checked(fd, directory=directory, owners=owners, groups=owners, sticky_volume=sticky_volume)
             require(identity(before) == identity(after), "DAILY_BACKUP_FILES_CHANGED")
             if parent is not None:
                 require(identity(after) == identity(os.stat(name, dir_fd=parent, follow_symlinks=False)),
@@ -278,7 +318,7 @@ class Snapshot:
 
     def manifest(self):
         require(self.records is not None)
-        value = {"schema": "lagrange-daily-files-v1", "classes": list(CLASSES),
+        value = {"schema": self.schema, "classes": list(self.classes),
                  "entries": self.records}
         data = canonical(value)
         require(len(data) <= self.limits.manifest_bytes, "DAILY_BACKUP_FILES_LIMIT")
@@ -286,7 +326,7 @@ class Snapshot:
 
     def write(self, destination):
         data = self.manifest()
-        write_all(destination, MAGIC + struct.pack(">Q", len(data)) + data)
+        write_all(destination, self.magic + struct.pack(">Q", len(data)) + data)
         records, identities = self.scan(destination, self.records)
         require(identities == self.identities and records == self.records,
                 "DAILY_BACKUP_FILES_CHANGED")
@@ -307,26 +347,32 @@ def exact(stream, size):
     return bytes(value)
 
 
-def validate_manifest(data, limits):
+def validate_manifest(data, limits, *, profile="daily"):
+    classes, _, schema = profile_values(profile)
     try:
         value = json.loads(data)
         require(canonical(value) == data and set(value) == {"schema", "classes", "entries"}
-                and value["schema"] == "lagrange-daily-files-v1" and value["classes"] == list(CLASSES))
+                and value["schema"] == schema and value["classes"] == list(classes))
         entries = value["entries"]
-        require(isinstance(entries, list) and 6 <= len(entries) <= limits.entries)
+        require(isinstance(entries, list) and len(classes) <= len(entries) <= limits.entries)
         seen, total, previous = {}, 0, None
         for record in entries:
             require(isinstance(record, dict) and set(record) ==
                     {"path", "kind", "uid", "gid", "mode", "size", "sha256"})
             parts = safe_parts(record["path"])
-            require(parts[0] in CLASSES and record["path"] not in seen)
-            order = (CLASSES.index(parts[0]), tuple(parts[1:]))
+            require(parts[0] in classes and record["path"] not in seen)
+            order = (classes.index(parts[0]), tuple(parts[1:]))
             require(previous is None or previous < order)
             previous = order
-            require(type(record["uid"]) is int and record["uid"] in OWNERS and
-                    type(record["gid"]) is int and record["gid"] in OWNERS and
-                    type(record["mode"]) is int and 0 <= record["mode"] <= 0o777 and
-                    not record["mode"] & 0o022 and type(record["size"]) is int and
+            owners = profile_owners(profile, parts[0])
+            private_pg_volume = (profile == "preupgrade" and record["path"] == "postgres" and
+                record["kind"] == "directory" and (record["uid"], record["gid"], record["mode"]) ==
+                (999, 999, 0o1777))
+            require(type(record["uid"]) is int and record["uid"] in owners and
+                    type(record["gid"]) is int and record["gid"] in owners and
+                    type(record["mode"]) is int and
+                    ((0 <= record["mode"] <= 0o777 and not record["mode"] & 0o022) or private_pg_volume) and
+                    type(record["size"]) is int and
                     record["size"] >= 0 and record["kind"] in {"file", "directory"})
             if len(parts) > 1:
                 require(seen.get("/".join(parts[:-1])) == "directory")
@@ -340,22 +386,23 @@ def validate_manifest(data, limits):
                 total += record["size"]
                 require(total <= limits.total_bytes, "DAILY_BACKUP_FILES_LIMIT")
             seen[record["path"]] = record["kind"]
-        require(all(seen.get(name) == "directory" for name in CLASSES))
+        require(all(seen.get(name) == "directory" for name in classes))
         return value
     except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         raise SnapshotError("DAILY_BACKUP_FILES_MANIFEST") from None
 
 
-def verify_archive(source, limits, retain=()):
+def verify_archive(source, limits, retain=(), *, profile="daily"):
     """Verify every byte; retain only explicitly requested small evidence files.
 
     No archive path is ever sent to an extraction API or opened on the host.
     Retained evidence is bounded in aggregate by the manifest-size allowance.
     """
-    require(exact(source, len(MAGIC)) == MAGIC)
+    _, magic, _ = profile_values(profile)
+    require(exact(source, len(magic)) == magic)
     size = struct.unpack(">Q", exact(source, 8))[0]
     require(0 < size <= limits.manifest_bytes, "DAILY_BACKUP_FILES_LIMIT")
-    manifest = validate_manifest(exact(source, size), limits)
+    manifest = validate_manifest(exact(source, size), limits, profile=profile)
     requested = set(retain)
     require(len(requested) == len(retain) and len(requested) <= limits.entries)
     for path in requested:
@@ -383,17 +430,18 @@ def verify_archive(source, limits, retain=()):
     return manifest, result
 
 
-def restore_archive(source, limits, destination, reserve=lambda _: None):
+def restore_archive(source, limits, destination, reserve=lambda _: None, *, profile="daily"):
     """Restore into an empty root-owned 0700 staging directory only.
 
     The controller supplies a disposable staging path, never a live data root.
     Parents are descriptor-relative and remain private until all hashes and EOF
     pass. On failure the caller discards this incomplete isolated staging tree.
     """
-    require(exact(source, len(MAGIC)) == MAGIC)
+    _, magic, _ = profile_values(profile)
+    require(exact(source, len(magic)) == magic)
     length = struct.unpack(">Q", exact(source, 8))[0]
     require(0 < length <= limits.manifest_bytes, "DAILY_BACKUP_FILES_LIMIT")
-    manifest = validate_manifest(exact(source, length), limits)
+    manifest = validate_manifest(exact(source, length), limits, profile=profile)
     with open_root(Root("floor", destination, 0, 0, 0o700)) as root:
         require(not os.listdir(root), "DAILY_BACKUP_RESTORE_NOT_EMPTY")
 

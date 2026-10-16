@@ -1,7 +1,7 @@
 # R2 first daily rollout: remaining execution dependencies
 
 Roadmap R2-04/R2-09; coordinator source inspection on 2026-10-16.
-Source candidate `70401cf421c90105f7c5d54703a0ec68c3fa25aa` is undergoing
+Source candidate `70401cf421c90105f7c5d54703a0ec68c3fa25aa` passed
 [Wave81 verification](2026-10-16-r2-backup-migration-mode-ci.md). It is not yet
 the final `C_R2`. This document prepares the remaining work; no operation below
 has been executed or approved by writing it.
@@ -10,8 +10,9 @@ The earlier [operations draft](../runbooks/r2-daily-beta-operations.md) remains
 dated evidence from before U2 adoption. U2 was subsequently adopted and its
 daily path implemented. Its old “awaits adoption/no producer” statements must
 not be used as current blockers. Existing read-only KIS and Owner V2 approvals
-remain in force. The historical 72-hour host authorization has expired; it is
-not renewed by Ralph or by a successful hosted run.
+remain in force. The historical sudo-expiry timestamp is not current root-access
+evidence; Ralph or hosted success does not renew it. This does not revoke the
+existing read-only/EOD approvals or turn them into new approval requests.
 
 ## What the current hosted evidence can establish
 
@@ -46,8 +47,8 @@ Concrete source:
 [daily-table audit](../../deploy/db/owner-beta-daily-backup-audit.sql#L19).
 
 Before any upgrade, the remaining bounded preparation is a maintenance recovery
-procedure for the actual pre-upgrade schema. It must capture a full ownership/ACL
-dump and all referenced Raw/Curated/approved-base files while every relevant
+procedure for the actual pre-upgrade schema. It must capture complete database
+state and all referenced Raw/Curated/approved-base files while every relevant
 writer is stopped or fenced, and verify them in a disposable isolated restore.
 The protected configuration and secret-recovery references are separate inputs;
 secret values must not enter public evidence or logs. The exact old release,
@@ -55,8 +56,12 @@ images, schema checksums, roles, data/artifact hashes, writer identities and
 restore results must be bound to the same recovery point. No new daily table or
 control row may be invented to make the V2 controller accept schema59.
 
-This procedure is not implemented or execution-ready yet. It requires the
-fresh host inventory and a bounded, reviewed maintenance command set. It must
+The [cold-cluster recovery primitives and21 regression definitions](../runbooks/r2-preupgrade-recovery.md)
+are now written but unexecuted. Whole-cluster recovery preserves roles and
+access policy without requiring new daily tables; its additional database
+outage belongs in the explicit G4 packet. The bounded maintenance entry point,
+writer fencing and no-clobber archive publication are still being implemented.
+It requires the fresh host inventory and a reviewed command set. It must
 complete before role bootstrap, migration or the first release-link mutation.
 The current daily backup controller is retained for post-upgrade operations.
 

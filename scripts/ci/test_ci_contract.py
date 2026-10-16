@@ -157,6 +157,8 @@ class WorkflowContractTests(unittest.TestCase):
             "Verify daily backup files and failure ordering",
             "Verify daily encrypted full-schema isolated restore",
             "Verify installed backup version transition and recovery",
+            "Verify pre-upgrade cold archive boundaries",
+            "Verify pre-upgrade schema59 isolated recovery",
             "Verify legacy production operations fixtures",
         }
         fixture_steps = [
@@ -174,6 +176,14 @@ class WorkflowContractTests(unittest.TestCase):
             transition_step["run"],
             "sudo /usr/bin/python3 scripts/ops/production-backup-transition-self-test.py",
         )
+        for name, script in (
+            ("Verify pre-upgrade cold archive boundaries", "production-preupgrade-recovery-self-test.py"),
+            ("Verify pre-upgrade schema59 isolated recovery", "production-preupgrade-recovery-docker-self-test.py"),
+        ):
+            self.assertEqual(
+                next(step["run"] for step in fixture_steps if step["name"] == name),
+                "sudo /usr/bin/python3 scripts/ops/" + script,
+            )
         setup_node = next(
             step
             for step in policy_steps

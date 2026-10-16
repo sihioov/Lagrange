@@ -4444,3 +4444,16 @@ provider, worker or new CI operation. Private checkpoint is
 Follow `docs/runbooks/r2-first-backup-transition.md`; no execution-ready or
 independent-review claim. Pre-upgrade consistent recovery and approved-base
 whole flow remain the next source work within this same coherent package.
+
+### Wave82 pre-upgrade recovery source checkpoint — 2026-10-16 KST
+
+Cold PG18 whole-cluster/file archive and isolated clone verification primitives
+are written, with18 filesystem/contract and3 native-Docker definitions, all
+WRITTEN_UNEXECUTED. Combined with the prior22 transition definitions, Wave82 has43
+written cases. Daily format remains distinct; no runtime/source acceptance or
+new CI. See `docs/runbooks/r2-preupgrade-recovery.md` and private checkpoint
+`target/r2-daily-beta/wp-4-integration/wave82-preupgrade-recovery-source-checkpoint.json`.
+Next: bounded maintenance entry point/writer fences/no-clobber publication and
+actual approved-base whole flow, then coherent candidate review/verification.
+The historical sudo-expiry timestamp is not current root access evidence;
+existing read-only/EOD approvals remain in force. No authority expansion.

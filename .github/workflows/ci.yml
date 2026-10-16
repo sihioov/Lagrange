@@ -84,6 +84,12 @@ jobs:
       - name: Verify installed backup version transition and recovery
         if: ${{ !cancelled() }}
         run: sudo /usr/bin/python3 scripts/ops/production-backup-transition-self-test.py
+      - name: Verify pre-upgrade cold archive boundaries
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-recovery-self-test.py
+      - name: Verify pre-upgrade schema59 isolated recovery
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-recovery-docker-self-test.py
       - name: Verify legacy production operations fixtures
         if: ${{ !cancelled() }}
         run: sudo bash scripts/ops/production-ops-self-test.sh
