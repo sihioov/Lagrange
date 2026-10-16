@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave81 후보70401cf/CI38869717878 attempt1이17:06KST에 전체8job SUCCESS로 종료했다.8개 로그·7checkout·1053pin/485blob과 백업88개·기존 필수 named gates를 대조해 I6B3 범위의 hosted 검증을 인수했다. 운영 적용·Owner 확인·3거래일 관찰은 미시작이다. [전체 결과와 남은 작업](reviews/2026-10-16-r2-backup-migration-mode-ci.md). 실제 승인 입력 전체 통합·사전 복구/설치 전환·PUML/PNG·독립 리뷰·G3/G4·C_R2는 미완료다.
+현재: 첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다. 이전 후보70401cf/CI38869717878 전체 성공과 I6B3 범위 인수는 보존한다. [현재 준비](runbooks/r2-first-backup-transition.md). 최종 R2/운영·Owner·3거래일은 미완료다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -4429,3 +4429,18 @@ recovery, exact installed-backup transition and approved-base three-UID whole
 flow; then diagrams/independent review and the concrete operational packet.
 Historical 72-hour host authority remains expired. Three trading days have not
 started. Ralph remains active; current run success does not close R2.
+
+### Wave82 first-rollout source checkpoint — 2026-10-16 KST
+
+첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다.
+
+Four executable/test/workflow paths: new bounded six-file transition tool,22
+actual-root filesystem definitions, hard policy CI step and its existing contract
+test assertion. Direct static review only. Fresh installer and backup runner
+bytes unchanged. No project import/parser/test, root, systemd, Docker, DB,
+provider, worker or new CI operation. Private checkpoint is
+`target/r2-daily-beta/wp-4-integration/wave82-first-rollout-source-checkpoint.json`.
+
+Follow `docs/runbooks/r2-first-backup-transition.md`; no execution-ready or
+independent-review claim. Pre-upgrade consistent recovery and approved-base
+whole flow remain the next source work within this same coherent package.

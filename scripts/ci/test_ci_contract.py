@@ -156,6 +156,7 @@ class WorkflowContractTests(unittest.TestCase):
         independent_fixtures = {
             "Verify daily backup files and failure ordering",
             "Verify daily encrypted full-schema isolated restore",
+            "Verify installed backup version transition and recovery",
             "Verify legacy production operations fixtures",
         }
         fixture_steps = [
@@ -165,6 +166,14 @@ class WorkflowContractTests(unittest.TestCase):
         for step in fixture_steps:
             self.assertEqual(step.get("if"), "${{ !cancelled() }}")
             self.assertNotIn("continue-on-error", step)
+        transition_step = next(
+            step for step in fixture_steps
+            if step["name"] == "Verify installed backup version transition and recovery"
+        )
+        self.assertEqual(
+            transition_step["run"],
+            "sudo /usr/bin/python3 scripts/ops/production-backup-transition-self-test.py",
+        )
         setup_node = next(
             step
             for step in policy_steps

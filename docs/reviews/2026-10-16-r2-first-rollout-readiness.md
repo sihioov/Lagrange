@@ -93,8 +93,10 @@ guard. Its reviewable execution ledger must specify:
    requires schema/release compatibility; restoring old helper bytes after
    schema62/daily state exists is not permission to resume V1 backup.
 
-The transition code/fixture and exact old-byte bindings remain unwritten. No
-live installation was inspected or changed during this source-only assessment.
+Follow-up source preparation: the [bounded transition and recovery tool](../runbooks/r2-first-backup-transition.md)
+and 22 filesystem fixtures are now written, with CI wiring. They are unexecuted
+and not independently reviewed. Exact old-byte bindings and the actual unit
+observations remain missing. No live installation was inspected or changed.
 
 ## Approved-base whole-flow verification
 
@@ -128,7 +130,9 @@ hosted tests remain useful evidence, but do not close this integration gap.
 
 ## Ordered closeout and the eventual approval packet
 
-1. Recover the entire Wave81 candidate. Batch any further executable changes
+1. Wave81 full recovery now accepts its hosted package scope; the
+   [final receipt](2026-10-16-r2-backup-migration-mode-ci.md) preserves all limits.
+   Batch further executable changes
    for the two maintenance gaps and whole-flow fixture into one coherent
    candidate; preserve earlier failed runs and avoid per-file CI dispatches.
 2. Integrate the prepared PUML source/evidence and render both PNGs through the

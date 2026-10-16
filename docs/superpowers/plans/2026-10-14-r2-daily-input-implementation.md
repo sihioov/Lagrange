@@ -5911,3 +5911,18 @@ recovery, exact installed-backup transition and approved-base three-UID whole
 flow; then diagrams/independent review and the concrete operational packet.
 Historical 72-hour host authority remains expired. Three trading days have not
 started. Ralph remains active; current run success does not close R2.
+
+### Wave82 first-rollout source checkpoint — 2026-10-16 KST
+
+첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다.
+
+Four executable/test/workflow paths: new bounded six-file transition tool,22
+actual-root filesystem definitions, hard policy CI step and its existing contract
+test assertion. Direct static review only. Fresh installer and backup runner
+bytes unchanged. No project import/parser/test, root, systemd, Docker, DB,
+provider, worker or new CI operation. Private checkpoint is
+`target/r2-daily-beta/wp-4-integration/wave82-first-rollout-source-checkpoint.json`.
+
+Follow `docs/runbooks/r2-first-backup-transition.md`; no execution-ready or
+independent-review claim. Pre-upgrade consistent recovery and approved-base
+whole flow remain the next source work within this same coherent package.

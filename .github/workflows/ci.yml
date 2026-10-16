@@ -81,6 +81,9 @@ jobs:
       - name: Verify daily encrypted full-schema isolated restore
         if: ${{ !cancelled() }}
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-backup-docker-self-test.py
+      - name: Verify installed backup version transition and recovery
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-backup-transition-self-test.py
       - name: Verify legacy production operations fixtures
         if: ${{ !cancelled() }}
         run: sudo bash scripts/ops/production-ops-self-test.sh
