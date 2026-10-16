@@ -6,13 +6,13 @@
 
 | 관리 항목 | 현재 값 |
 | --- | --- |
-| 최종 갱신일 | 2026-10-16 (Asia/Seoul) |
+| 최종 갱신일 | 2026-10-17 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행 목표(Owner 2026-10-15 지시); 현재 범위 결정 대기로 BLOCKED. 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
+| 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행 목표(Owner 2026-10-15 지시); 2026-10-17 Owner 재개 지시로 독립 리뷰·배포 준비 진행. 실제 root 접근은 복구 필요. 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **BLOCKED — Owner 범위 결정 대기.** [5분 특권 읽기 점검](reviews/2026-10-16-r2-host-admission-packet.md)과 [독립 리뷰 1회 예외](reviews/2026-10-16-r2-integrated-review-packet.md)의 응답 후 해당 범위에서 재개한다. 후보 `f215665`의 Wave85 전체 CI 성공은 보존한다. 실제 이미지·호스트 전체 흐름·G3/G4·운영·Owner·3거래일·C_R2는 미완료. |
+| 다음 착수 항목 | **R2 재개 — 독립 통합 리뷰 진행, root 접근 복구 필요.** Owner의 “남은조건 마저 진행해”로 준비된 읽기 점검/리뷰 1회 범위를 진행한다. 실제 sudo probe는 exit1; 비특권 준비와 리뷰를 계속하고 실제 이미지·호스트 실행 전 접근을 복구한다. 후보 `f215665`의 CI 성공은 보존. [재개 기록](reviews/2026-10-17-r2-resumption.md). |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -1661,3 +1661,7 @@ Prepared303 diagram citation ranges against this candidate in the isolated draft
 ### R2 scope-decision block — 2026-10-16
 
 The same unanswered privileged-read/reviewer-exception decisions persisted across three consecutive goal turns, including the original preparation turn. All independent authorized preparation is complete; no live CI/reviewer is being awaited. The native Ralph goal was set to BLOCKED after this audit. R2-01~09/final C_R2 remain the full objective, not completed or narrowed. Resume only within the explicit response to the prepared host-admission and integrated-review packets. No duplicate CI, new worker, root/Docker action or operational mutation was performed.
+
+- 2026-10-17 — R2-04/09: Owner가 남은 조건 진행을 지시해 준비된 호스트 읽기·독립 리뷰 1회 범위를 재개했다. 211개 입력 pin 일치, 실제 reviewer02:31KST 시작/03:31 보고 경계. sudo 비대화형 접근 exit1로 나머지 특권 점검을 중단; 리뷰와 비특권 준비 진행. 승인 대기와 실제 접근 실패를 구분하며 이미지·배포·Owner·3거래일 인수는 미완료다. [재개/한계](reviews/2026-10-17-r2-resumption.md).
+
+- 2026-10-17 — R2-04/09 배포 준비: 고정한 PUML 두 개와 로컬 PNG를 함께 통합했다. 4096px 잘림은 같은 소스의 렌더 한도 확대로 해소했고 두 결과를 확인했다. 후보 f215665 공식 builder plan/preflight는 각각 exit0. 별도 필수 research-smoke는 정확 후보 조회에서 실행0으로 확인되어 미완료로 유지한다. 실제 이미지/호스트 실행은 root 접근·리뷰 결과 이후다. [준비 결과](reviews/2026-10-17-r2-resumption.md).

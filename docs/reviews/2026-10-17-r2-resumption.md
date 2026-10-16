@@ -1,0 +1,66 @@
+# R2 remaining release conditions: resumption
+
+### Wave86 R2 remaining-gate resumption — 2026-10-17 KST
+
+Owner explicitly instructed “남은조건 마저 진행해” after the remaining release
+conditions and the two prepared scopes were described. This resolves the prior
+scope-decision wait for the five-minute read-only host observations and exactly
+one independent integrated reviewer. It is not a waiver of actual review,
+image, recovery, operational, Owner-use or three-trading-day evidence.
+
+Candidate f215665012d1f4f1b81289dd94606bceb0cb8c46 and successful CI38901117928
+remain fixed. Rechecked all202 changed source pins,2 diagram drafts and7 fixed
+evidence files (211 total). Prior C02 reviewer was actually idle/activeTurn null/
+pending0 with its complete final recovered before reuse. The one WP-7 reviewer
+is a4b5c1b9-3354-400b-be82-b8dec4f87278, codex/gpt-6.1-sol/high, actual startup
+2026-10-16T17:31:05.523Z and reporting bound18:31:05.523Z. It writes only
+`docs/reviews/2026-10-16-r2-integrated-release-review.md`, with exact inspected/
+uninspected scope required. Parent/workspace/model/effort/running/pending0 were
+verified and notifyOnFinish is true. Monitor57e90e28 expires19:01:55.689Z; it
+must be reconciled before expiry and removed only after actual idle/pending0/
+full substantive result recovery or an explicit bounded handoff. No other
+worker is authorized. Same-daemon monitoring cannot protect daemon outage.
+
+The prepared `sudo -n /usr/bin/id -u` probe returned1, UID unavailable. No
+password was requested; its precise denial reason was not retained and must
+not be inferred. Remaining privileged reads stopped. This is now an actual
+access limitation, not an unanswered scope question. Fresh unprivileged reads
+at17:31:29UTC still select fce9b90, observe5,553,143,808 available memory bytes,
+2,432,704,512 swap bytes used, no listed build processes and active Docker/
+containerd. Full container health/protected paths/OOM admission remains open.
+Nonprivileged preparation proceeds while the reviewer runs. No actual image
+build, production operation, deployment, Owner use or observation was started.
+Native goal was still returned as blocked; its API cannot be used to resume it,
+so that field is not falsely rewritten. Owner-directed work is resumed with a
+fresh blocking audit. Private receipts live in wp-7/f215665 and
+host-admission-f215665/resumption-2026-10-17.json. Frozen preparation receipts
+remain historical; no source/frozen-input mutation or duplicate CI occurred.
+
+## Preparation results after resumption
+
+Both frozen PUML drafts were rendered locally using the already cached PlantUML
+image, network disabled,768MiB memory/zero swap,one CPU and reduced CPU weight.
+The first exit0 render hit PlantUML's4096px image-width limit and visibly cropped
+the diagrams; it was not accepted. With the same unchanged PUML bytes and
+`-DPLANTUML_LIMIT_SIZE=16384`, both renderings passed and were visually inspected
+with right-hand nodes and legends present. The component image is5147x1610 and
+runtime11967x2103; dense existing edge-label layout remains. The two PUML sources
+and both PNGs were integrated together. This changes documentation only; it
+does not change the executable candidate or claim an independent review result.
+
+The clean candidate's official image builder `--plan` and `--preflight` both
+returned0 at2026-10-16T17:35:44UTC. Only the private inactive zero-hash build
+interpolation file was used; no operational environment was copied. No
+`--apply`,image build,root operation or application lifecycle action occurred.
+The original source-only preparation receipt remains frozen; fresh results are
+in `image-preparation-f215665/plan-preflight-2026-10-17.json`.
+
+A read-only all-event/all-workflow exact-candidate query at17:36:28UTC recovered
+all pages: one existing CI run38901117928 attempt1 SUCCESS, and zero
+`research-smoke.yml` runs. The adopted WP-6 separate functional-smoke requirement
+therefore remains open. The earlier “all8 CI jobs passed” assertion remains
+true, but does not satisfy that separate workflow. No new workflow was
+dispatched. Close review disposition, recheck exact remote/candidate/workflow
+state, then run this missing verification once if the candidate remains valid.
+Root access must be restored for actual image/host steps. This is an access
+request; the Owner's resumption instruction has already resolved scope consent.
