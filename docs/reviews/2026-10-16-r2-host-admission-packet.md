@@ -1,5 +1,19 @@
 # R2 fresh host admission packet
 
+2026-10-17 successor preparation: source corrections are pinned to
+`692f57f792e5090e267a8dd533bea4c3328c985c`, under continuing independent review.
+The clean detached checkout is `/data/worktrees/3puw275b/r2-release-692f57f`
+(2121 tracked-file pins). Its private inactive env and preparation receipt are
+under `target/r2-daily-beta/image-preparation-692f57f/`. Proposed output is
+`/etc/lagrange/release-manifests/692f57f792e5090e267a8dd533bea4c3328c985c.manifest`
+and proposed unit is `lagrange-r2-build-692f57f.service`. Neither output absence
+nor full host admission is known. No plan/preflight/apply, CI, functional smoke
+or production operation has run for this new candidate. The historical f215665
+observations and commands below remain preserved; do not execute their old
+candidate bindings for the successor. Root access currently fails, and new
+candidate findings/CI, settled work, maintenance/recovery and actual image
+identities must be resolved before the complete G3/G4 command packet is actionable.
+
 Prepared 2026-10-16 for R2-04/R2-09 and G3. **Unprivileged observations only;
 full host admission is incomplete.** The source candidate is
 `f215665012d1f4f1b81289dd94606bceb0cb8c46`; its exact hosted verification is

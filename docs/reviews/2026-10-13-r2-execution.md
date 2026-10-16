@@ -4179,3 +4179,22 @@ with coordinator implementation review. Existing hosted success stays historical
 new CI/functional smoke requires review closure and exact-run/remote checks.
 Root access, actual image/host, G3/G4, Owner,three trading days and C_R2 stay open.
 See docs/reviews/2026-10-17-r2-integrated-review-corrections.md.
+
+
+Wave87 continuation startup: correction candidate
+`692f57f792e5090e267a8dd533bea4c3328c985c` is committed. The same owned WP-7
+reviewer actually started at2026-10-16T18:48:42.099Z (03:48:42 KST), with expected
+workspace/parent/model/high and pending0 verified. Its90-minute reporting bound
+is20:18:42.099Z (05:18:42 KST). Frozen wave87/review-inputs.json has224 pins
+(202 targets,20 references,2 committed diffs),2375 lines/SHA2b00fd16. Output is
+only docs/reviews/2026-10-17-r2-integrated-release-continuation-review.md. New
+heartbeat6d7fee0a expires20:49:13.769Z; actual idle/activeTurn null/pending0/full
+substantive result recovery is required before closure or correction. No extra
+reviewer was created. Same-daemon monitoring does not protect daemon outage.
+
+Prepared clean detached image source /data/worktrees/3puw275b/r2-release-692f57f
+with2121 tracked-file pins and a private inert interpolation input. Receipt:
+target/r2-daily-beta/image-preparation-692f57f/preparation.json. Official
+plan/preflight/apply were not run for this candidate. Protected output absence,
+root access, complete host health, actual images and G3/G4 remain unresolved.
+No fresh CI/functional smoke was dispatched and no production action occurred.
