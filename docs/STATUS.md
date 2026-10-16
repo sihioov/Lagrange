@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-17 (Asia/Seoul)
 
-현재: **R2 필수 CI 진행 중, 별도 smoke 실패 원인 확인.** 04:44 KST 확인: 필수 CI의7개 실행 작업 중6개 성공, Rust 워크스페이스와 최종 집계 대기. Web129+14개와 PG19개 실행/146개 이름·62체크섬 두 차례·정리 성공을 새 로그로 대조했다. 보정10개·영향4모듈104개 PASS, 신규110개 중106PASS/4Rust 대기. 별도 smoke의0060 필수 역할 fixture 누락 실패와 cleanup UNKNOWN을 보존하며, 전체 CI 회수 전 소스는 고정한다. root 접근·실제 이미지/호스트·G3/G4·Owner·연속3거래일·C_R2는 미완료다. [현재 증거](reviews/2026-10-17-r2-integrated-candidate-ci.md).
+현재: **R2 필수 CI 전체 성공 회수; 별도 기능 검증 보정 필요.** 04:58 KST 전체 회수: 필수 CI8개 작업 모두 성공, 신규110개·보정10개·영향4모듈104개 이름별 PASS. Rust3351+별도chart6, Web129+14, PG19실행/146이름/62체크섬 두 차례·정리와1149pin/511blob을 대조했다. 별도 기능 검증은0060 필수 역할 fixture 누락으로 실패했고 cleanup UNKNOWN이다. 다음은 해당 준비 코드의 제한된 보정과 새 정확 후보 검증이며, R2 최종 인수는 미완료다. root 접근·실제 이미지/호스트·G3/G4·Owner·연속3거래일·C_R2는 미완료다. [현재 증거](reviews/2026-10-17-r2-integrated-candidate-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -32,7 +32,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave88 Rust전체/required 결과와 전체 증거 회수 → 실패한 기능 검증 fixture의 제한된 역할 준비 보정 → 새 정확 후보 검증 → root/이미지/호스트/G4·Owner·3거래일·C_R2. |
+| 다음 단계 | Wave88 전체 결과 회수 완료 → 실패한 기능 검증 fixture의 제한된 역할 준비 보정 → 새 정확 후보 검증 → root/이미지/호스트/G4·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

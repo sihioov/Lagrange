@@ -1,7 +1,8 @@
 # R2 integrated candidate hosted verification
 
-Status: **required CI is in progress; separate functional smoke failed at
-migration0060. No complete executable or release acceptance.** Required source review is closed as described in the
+Status: **required CI succeeded and its full evidence is recovered; separate
+functional smoke failed at migration0060. No complete candidate or release
+acceptance.** Required source review is closed as described in the
 [coordinator disposition](2026-10-17-r2-integrated-review-closure.md).
 
 Candidate: `492cbae5618f695c3e27126e4ccf490a1ffda981`.
@@ -10,7 +11,7 @@ The intervening changes are documentation, including the D02 evidence template.
 
 | Required run | Exact run / attempt | Created UTC | Latest recovered state |
 | --- | --- | --- | --- |
-| Required CI | [38955175446 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955175446) | 2026-10-16 19:28:29 | 19:44UTC: format/policy/Clippy/Python/Web/PG success; workspace running; aggregate not yet created |
+| Required CI | [38955175446 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955175446) | 2026-10-16 19:28:29 | SUCCESS: all8 jobs terminal; run updated19:52:58UTC; full recovery19:58:54UTC |
 | Functional research-worker smoke | [38955182520 / 1](https://github.com/sihioov/Lagrange/actions/runs/38955182520) | 2026-10-16 19:28:33 | FAILED before functional image/publication stages; details below |
 
 Both are `workflow_dispatch` on `excited-dolphin` at the exact candidate SHA.
@@ -34,16 +35,20 @@ Frozen inputs:
 
 Launch receipts are `ci-launch.json` and `research-smoke-launch.json` beside
 the inputs. Sanitized current metadata is in
-`target/r2-daily-beta/ci/492cbae/`. Raw logs are not persisted. Seven terminal job logs and actual checkout SHAs are recovered below; remaining
-job logs, qualified outcomes and cleanup are not yet fully recovered; aggregate counts alone cannot establish named-test acceptance.
+`target/r2-daily-beta/ci/492cbae/`. Raw logs are not persisted. All eight CI logs plus the separate smoke log are recovered and hashed in full.
+Seven actual CI checkout SHAs and the smoke checkout match the candidate.
+Named outcomes are reconciled below; aggregate counts do not replace named evidence.
 Unprinted nested independent rows and exits remain UNKNOWN.
 
-Monitoring: heartbeat `f50af5d3`, every five minutes, expires at
+Recovery monitor: heartbeat `f50af5d3` covered these exact runs every five minutes,
+with original expiry at
 `2026-10-16T21:29:11.870Z`. Reporting bounds are21:13:29/33UTC for CI/smoke.
 Before that bound recover complete and missing evidence and renew or explicitly
 hand off the remaining scope. Same-daemon monitoring cannot protect an outage.
-No source/frozen-input mutation while the runs remain active; delete monitoring
-only after terminal full recovery or an explicit bounded handoff.
+Both runs are now terminal and complete result recovery is persisted. The
+completed recovery monitor was deleted at20:00:33UTC with tool success. A
+successor scope requires its own bounded handoff.
+Frozen candidate evidence and original failures remain immutable.
 
 No local compiler/test/build/project-helper, SQL/DB, provider, root/Docker or
 production action occurred. No worker was added. Actual images, approved-base
@@ -110,3 +115,59 @@ remain UNKNOWN.
 disposition to both complete log hashes and named results. The failed functional
 smoke and its unknown cleanup are separate and preserved. Required CI completion,
 full candidate disposition and all host/final-release gates remain open.
+
+## 2026-10-16 19:58:54 UTC terminal disposition
+
+Required CI38955175446 attempt1 completed with all8 jobs successful; the last
+job completed19:52:57UTC and run metadata updated19:52:58UTC. Every job page,
+step and complete log is recovered. All1,149 frozen file pins and511 committed
+candidate blobs match. All110 required new definitions pass, including the ten
+review corrections and four previously pending daily-ingest Rust cases. All104
+definitions in the four changed modules pass. These overlapping sets are not
+added together as unique tests.
+
+Cargo has3,351 complete workspace PASS rows and6 ignored rows, plus6 separate
+chart PASS rows. Thirty-six named workspace groups and33 carried groups match
+exact name/phase/binary expectations;10 policy groups also match. The source
+platform exclusions remain unchanged. Two non-required root/nested outcomes
+cannot be individually recovered from interleaved output. Nested helper
+independent rows/exits remain UNKNOWN; a passing aggregate does not supply them.
+All eight current native recovery ownership observations show999:0/0700.
+
+Earlier sections contain the fresh Web/PG details. Strict Clippy's exact flags
+and workspace formatting are confirmed. Python reports487 passed/10 skipped/
+7warnings as a suite summary. This accepts the required hosted CI scope only.
+
+The separate functional smoke38955182520 attempt1 is terminal FAILURE. Its
+complete log and exact checkout are recovered. StaticPASS and the0060 failure
+are preserved, with full migrations/functional Rust image builds/publication
+NOT_REACHED and actual cleanup UNKNOWN. It is not a functional pass and does
+not qualify the candidate for release. No source correction, new dispatch,
+local project execution, worker delegation or production action occurred in
+this recovery scope.
+
+The final private receipt is
+`target/r2-daily-beta/ci/492cbae/ci-evidence.json`, SHA256
+`d37d82e46c1089273697b2e6e5d9bdb6496d54ab18778fa51d4dffd30003f4b5`.
+It binds8CI job log hashes,7CI checkouts, the separate smoke log/checkout,
+individual required results, all recorded steps and remaining limitations.
+
+## Bounded successor handoff
+
+The confirmed next correction is in the disposable Linux research-smoke fixture
+at `scripts/qa/research-worker-smoke.sh:665-679`: create the missing
+`daily_input_admitter` with LOGIN, NOINHERIT, NOSUPERUSER, NOCREATEDB,
+NOCREATEROLE, NOREPLICATION and NOBYPASSRLS, and the required database CONNECT/
+public-schema USAGE. Do not grant database/schema CREATE or role memberships.
+Use the existing fixture's private password handling. The canonical source is
+`deploy/db/bootstrap-roles.sh:190-225`;0060preflight remains unchanged. This is
+an implementation handoff, not a completed source change or new authorization
+for production/bootstrap execution. A subsequent static review must check the
+actual fixture before binding a successor candidate and querying existing runs.
+
+The next verification must be a new exact-candidate run after source closure
+and existing-run/remote-SHA checks, never a rerun of either historical run.
+Functional evidence must reach complete migrations, the two image builds,
+publication and observable cleanup; staticPASS alone is insufficient. Root
+access, actual R2 release images, approved-base host flow, G3/G4, Owner use,
+three consecutive trading days and final C_R2 remain open.

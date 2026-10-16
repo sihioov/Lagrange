@@ -6188,3 +6188,16 @@ PG19zero-exit/noSKIP processes/146names/0060 32+73/83bootstrap/62sourcechecksums
 twice/0039/cleanup matched. Raw logs only in memory. Smoke0060fixture failure and
 cleanupUNKNOWN remain; no source edits/new dispatch. Monitorf50af5d3 unchanged,
 source frozen until full terminal recovery. See integrated-candidate-ci report.
+
+Wave88 terminal recovery at19:58:54UTC: CI38955175446 attempt1 all8jobsSUCCESS,
+8fullCIlogs/7actualcheckouts/1149pins/511blobs matched;110newnamedPASS,
+10correctionPASS/104affected-modulePASS and all carried named groups. Rust3351
+workspacePASS/6ignored plus6separatechart; two non-required interleaved outcomes
+and nested independent exits remainUNKNOWN. Native metadata8times999:0/0700.
+Separate smoke38955182520 attempt1 FAILURE fully recovered;0060fixture role
+missing, full migration/image/publicationNOT_REACHED, cleanupUNKNOWN. Required
+hosted CI scope accepted only; complete candidate/release rejected pending
+bounded fixture correction and fresh verification. No source changes/new runs/
+local execution/delegation/production action in this recovery. Preserve frozen
+candidate evidence and delete completed monitor only after this persistence.
+See integrated-candidate-ci report for exact next-scope handoff.
