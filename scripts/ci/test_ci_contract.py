@@ -153,6 +153,18 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertEqual(playwright_step.get("working-directory"), "apps/web")
         policy_steps = ci["jobs"]["policy"]["steps"]
+        independent_fixtures = {
+            "Verify daily backup files and failure ordering",
+            "Verify daily encrypted full-schema isolated restore",
+            "Verify legacy production operations fixtures",
+        }
+        fixture_steps = [
+            step for step in policy_steps if step.get("name") in independent_fixtures
+        ]
+        self.assertEqual({step["name"] for step in fixture_steps}, independent_fixtures)
+        for step in fixture_steps:
+            self.assertEqual(step.get("if"), "${{ !cancelled() }}")
+            self.assertNotIn("continue-on-error", step)
         setup_node = next(
             step
             for step in policy_steps

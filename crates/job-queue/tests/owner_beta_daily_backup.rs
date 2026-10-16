@@ -145,6 +145,62 @@ async fn daily_backup_audit_checks_real_history_without_mutation_or_rls_blindnes
 }
 
 #[tokio::test]
+async fn daily_backup_identity_visibility_rejects_effective_rls_without_policy_bypass() {
+    run("backup_identity_visibility", |f| async move {
+        seeded(&f, false).await?;
+        let before = history(&f).await?;
+        let saved = reservations(&f, false).await?;
+        let options: PgConnectOptions = f.db.role_url("migration_owner").parse()?;
+        let mut connection =
+            sqlx::PgConnection::connect_with(&options.disable_statement_logging()).await?;
+        let identity: (String, String) = sqlx::query_as("SELECT current_user,session_user")
+            .fetch_one(&mut connection)
+            .await?;
+        assert_eq!(identity, ("migration_owner".to_owned(), "migration_owner".to_owned()));
+        let catalog: (bool, bool, String) = sqlx::query_as(
+            "SELECT relrowsecurity,relforcerowsecurity,pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='public.users'::regclass",
+        ).fetch_one(&mut connection).await?;
+        assert_eq!(catalog, (true, false, "migration_owner".to_owned()));
+        let filtering: bool = sqlx::query_scalar(
+            "SELECT pg_catalog.row_security_active('public.users'::regclass)",
+        ).fetch_one(&mut connection).await?;
+        assert!(!filtering);
+        assert_eq!(audit(&f, "migration_owner").await?["run_count"], 1);
+        repair(&f).await?;
+
+        // Disposable schema fault: FORCE RLS makes this actual login unable
+        // to enumerate identities. Neither maintenance path may hide that
+        // loss or turn it into a successful empty-history audit/repair.
+        sqlx::raw_sql("ALTER TABLE public.users FORCE ROW LEVEL SECURITY")
+            .execute(&f.db.pool)
+            .await?;
+        let filtering: bool = sqlx::query_scalar(
+            "SELECT pg_catalog.row_security_active('public.users'::regclass)",
+        ).fetch_one(&mut connection).await?;
+        assert!(filtering);
+        let visible: i64 = sqlx::query_scalar("SELECT count(*) FROM public.users")
+            .fetch_one(&mut connection)
+            .await?;
+        assert_eq!(visible, 0);
+        connection.close().await?;
+        for (sql, code) in [
+            (AUDIT, "DAILY_BACKUP_IDENTITY_VISIBILITY"),
+            (REPAIR, "DAILY_RESTORE_IDENTITY_VISIBILITY"),
+        ] {
+            let error = execute(&f, sql, "migration_owner", false)
+                .await
+                .expect_err("filtered identities must reject maintenance");
+            let database = error.as_database_error().ok_or("expected database error")?;
+            assert_eq!(database.code().as_deref(), Some("23514"));
+            assert!(database.message() == code, "wrong fixed visibility rejection");
+        }
+        assert_eq!(history(&f).await?, before);
+        assert_eq!(reservations(&f, false).await?, saved);
+        Ok(())
+    }).await;
+}
+
+#[tokio::test]
 async fn daily_backup_audit_rejects_missing_control_and_enabled_capture() {
     run("backup_audit_control", |f| async move {
         denied(execute(&f, AUDIT, "migration_owner", false).await, "23514");

@@ -74,10 +74,15 @@ jobs:
       - name: Verify daily actual PostgreSQL control transport
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-transport-self-test.py
       - name: Verify daily backup files and failure ordering
+        # These fixtures own separate disposable resources. Run all three even
+        # after an independent failure; keep each exit status a hard job failure.
+        if: ${{ !cancelled() }}
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-backup-self-test.py
       - name: Verify daily encrypted full-schema isolated restore
+        if: ${{ !cancelled() }}
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-backup-docker-self-test.py
       - name: Verify legacy production operations fixtures
+        if: ${{ !cancelled() }}
         run: sudo bash scripts/ops/production-ops-self-test.sh
 
   format:

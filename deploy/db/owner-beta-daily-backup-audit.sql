@@ -52,7 +52,10 @@ BEGIN
     IF control.enabled THEN
         RAISE EXCEPTION 'DAILY_BACKUP_ENABLED' USING ERRCODE='23514';
     END IF;
-    IF (SELECT relrowsecurity FROM pg_class WHERE oid='public.users'::regclass) THEN
+    -- users has RLS enabled but not forced (0010). Its actual table owner
+    -- sees every identity; reject effective filtering for this caller, not
+    -- the catalog flag that also protects normal serving-role reads.
+    IF pg_catalog.row_security_active('public.users'::regclass) THEN
         RAISE EXCEPTION 'DAILY_BACKUP_IDENTITY_VISIBILITY' USING ERRCODE='23514';
     END IF;
     -- This literal identifier list is never populated from caller input. Hash

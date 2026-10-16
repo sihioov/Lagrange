@@ -3885,3 +3885,13 @@ new85 definitions and every carried gate await execution. Recovery bound07:26:01
 No rerun/duplicate/local project execution/production action. Direct coordinator
 source review is not independent review or runtime acceptance. See
 [CI recovery](2026-10-16-r2-daily-backup-ci.md).
+
+### Wave78 failure recovery / I6B3-C01 — 2026-10-16 KST
+
+All eight terminal jobs/logs, seven checkout SHAs, 1036pins/478blobs recovered.
+New85 definitions:70PASS/9FAIL/6NOT_EXECUTED. Effective users-RLS visibility and
+two Python fixture defects are corrected; existing Owner recovery now passes.
+New86 definitions await a single coherent candidate CI. Independent hosted
+fixtures retain hard failure and now run after earlier fixture failures.
+No local project execution, worker, production or final acceptance. Whole-flow,
+PUML/PNG, independent review, concrete G3/G4, Owner and three trading days remain.

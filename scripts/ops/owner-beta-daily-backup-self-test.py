@@ -131,6 +131,9 @@ class DailyBackupFilesTests(unittest.TestCase):
         manifest, retained = files.verify_archive(io.BytesIO(archive), self.limits, names)
         self.assertEqual(manifest["classes"], list(files.CLASSES))
         self.assertEqual(retained, {name: (self.directory / name).read_bytes() for name in names})
+        admission = next(e for e in manifest["entries"] if e["path"].endswith("hash/manifest.json"))
+        self.assertEqual((admission["uid"], admission["gid"], admission["mode"]),
+                         (10003, 10001, 0o640))
 
     def test_provisioned_service_owned_artifact_parent_is_bound_without_chown(self):
         parent = self.directory / "service-artifacts"
@@ -146,9 +149,6 @@ class DailyBackupFilesTests(unittest.TestCase):
         with self.assertRaises(files.SnapshotError):
             with files.Snapshot(self.roots, self.limits):
                 os.chown(parent, 14568, 10001)
-        admission = next(e for e in manifest["entries"] if e["path"].endswith("hash/manifest.json"))
-        self.assertEqual((admission["uid"], admission["gid"], admission["mode"]),
-                         (10003, 10001, 0o640))
 
     def test_host_paths_and_unselected_floor_sibling_are_absent(self):
         self.put("floor/not-selected-secret", b"NOT_FOR_BACKUP")
@@ -565,6 +565,7 @@ class BackupControllerOrderingTests(unittest.TestCase):
         self.pending = {"extra_admissions": [], "extra_frontiers": []}
         self.database = {"admissions": []}
         self.operation = mock.Mock()
+        self.operation.target.images = {"api-server": "sha256:" + "a" * 64}
         self.storage = mock.Mock()
         self.controller = self.backup.Controller(self.operation, mock.Mock(), {}, self.storage, "/unused")
         self.controller.quiesce = mock.Mock(side_effect=lambda: self.event("quiesce", ({}, True, "api")))

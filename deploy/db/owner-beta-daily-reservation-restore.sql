@@ -54,7 +54,10 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'DAILY_RESTORE_DISABLED_OWNER' USING ERRCODE='23514';
     END IF;
-    IF (SELECT relrowsecurity FROM pg_class WHERE oid='public.users'::regclass) THEN
+    -- users has RLS enabled but not forced (0010). Require this actual
+    -- migration_owner session to see the complete identity set without
+    -- changing policy, role attributes or row_security configuration.
+    IF pg_catalog.row_security_active('public.users'::regclass) THEN
         RAISE EXCEPTION 'DAILY_RESTORE_IDENTITY_VISIBILITY' USING ERRCODE='23514';
     END IF;
     FOR actor IN SELECT id FROM public.users ORDER BY id LIMIT 10001 LOOP

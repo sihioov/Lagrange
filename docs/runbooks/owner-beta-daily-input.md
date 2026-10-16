@@ -113,20 +113,15 @@ Before G4, complete controlled Compose selection and old-process drain, DB
 control synchronization, daily-file/policy/DB backup and restore reconciliation,
 actual three-UID approved-base-to-continuation flow, independent integrated
 review, architecture source/PNG updates and exact-candidate verification.
-The callable backup path still covers only PostgreSQL, Raw and Curated. New
-internal source now defines a complete six-class file inventory, a fourteen-table
-daily/history audit, and guarded restoration of original reservation keys. The
-archive/reference checks prove byte consistency; they do not independently admit
-extra leaves. Only the existing native admitter may reverify those same identities.
-The resume primitive accepts only the original healthy three-container cohort
-after a successful drain, with unchanged ownership/mounts and no API restart.
-
-All 55 new tests are WRITTEN_UNEXECUTED (34 file/reference, eight resume, eleven
-actual-role SQL and two transport). No backup command or CI gate invokes this
-new complete path yet. Encrypted capture, isolated PostgreSQL restore/audit,
-independent extra-leaf reconciliation, controller cleanup and official command/
-installer/CI wiring remain required before production use. The prior failed
-whole-candidate CI remains failed; this source checkpoint is not acceptance.
+The connected daily backup and restored-state path is described in
+[Daily backup and restored-state reconciliation](#daily-backup-and-restored-state-reconciliation).
+Its first whole candidate failed hosted verification; the effective identity
+visibility and fixture corrections are documented in the
+[I6B3-C01 report](../reviews/2026-10-16-r2-daily-backup-correction.md).
+The corrected candidate has no executable or operational acceptance yet. Its
+archive/reference checks prove byte consistency, while only the existing native
+admitter may independently reverify extra leaves. Resume permits only the
+original healthy three-container cohort after complete drain, with DB enable last.
 
 G4 must enumerate exact immutable revision/manifest, policy and approved-base
 pins, verified available evidence/catch-up scope, Owner/entitlement/first-session
