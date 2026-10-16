@@ -1,6 +1,7 @@
 # R2 recovery fixture metadata correction: hosted verification
 
-Roadmap R2-04/R2-09; Wave84. Status: CI IN PROGRESS,2026-10-16.
+Roadmap R2-04/R2-09; Wave84. Status: POLICY FAILED; other CI jobs still
+running at2026-10-16T11:57:54UTC. Full recovery and disposition remain pending.
 
 Candidate `6572bff9d8e75057d15ecb969f287cec8771374f` is in
 [CI38896226384, attempt1](https://github.com/sihioov/Lagrange/actions/runs/38896226384).
@@ -60,3 +61,38 @@ termination and does not authorize a duplicate run.
 Actual candidate images, approved-base host integration, diagram PNGs and
 integration, independent review, G3/G4 operations, Owner use and three
 consecutive trading days remain open. R2/final C_R2 are not complete.
+
+## Partial recovery and newly exposed test limitation
+
+The policy job completed with failure at11:50:55UTC. Its full log digest is
+`f1968cb01dc32fec5508440b458681216313cd3c8e08f58667ac663bd088fafc`.
+The three new preparation tests passed. Finite native diagnostics now actually
+show `CreatedAt` changing and the owned volume parent moving from0701 to0700
+with uid/gid0. This does not retroactively fill the previous run's missing
+metadata. Format, strict Clippy and Python jobs passed; their full digests and
+actual candidate checkout SHAs were recovered. Python reported487 passed,
+10 existing skips and7 warnings. Workspace Rust, PostgreSQL and Web results
+are not yet accepted for this candidate.
+
+All four native recovery methods ran. The positive round-trip errored with
+`PREUPGRADE_CLUSTER_OWNER` at the recovery library's line56, reached through
+`verify_cluster` line188 and the test line276. This is before verifier-container
+creation. The actual rejected PGDATA uid/gid/mode tuple was not printed and
+remains UNKNOWN; no ownership normalization or guard relaxation is accepted.
+
+The other three native methods printed `ok`, but source review exposes a
+shared evidence defect: each accepts any `RuntimeErrorCode`. None asserts its
+intended error code or proves the intended clone/create/native-validation stage
+was reached. The same early owner rejection can satisfy these assertions.
+Their logged outcomes are retained as PASS, while their claimed catalog,
+lost-create-response and corrupt-control coverage is **NOT ESTABLISHED**.
+They cannot close those recovery requirements.
+
+Keep the current candidate frozen until all jobs and evidence are recovered.
+Then correct the ownership compatibility issue and these stage-specific
+assertions together, retaining a positive native round-trip and all ownership,
+identity, ACL, private-parent and cleanup guarantees. First bind finite source
+and restored metadata; do not infer it from an upstream image's current source.
+No new dispatch, local project execution, worker or operational action occurred
+during this recovery. Remaining operations and the three-day observation have
+not started.
