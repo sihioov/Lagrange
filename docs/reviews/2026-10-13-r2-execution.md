@@ -3623,3 +3623,21 @@ report 72/dca1e3a9.
 Canonical12 image records and all Rust bytes preserved. Static/whitespace only
 locally. Actual Compose/DB/drain/backup/diagrams, approved-base whole flow,
 independent review,G4,Owner,three actual trading days/final C_R2 remain open.
+
+### Wave73 immutable installation binding: single candidate CI — 2026-10-16 KST
+
+Candidate 89ff855a4b27cfd1240ed368946cb1a8c9a0437a;924 pins/439 candidate blobs.
+All-event exact-head query0 at 2026-10-16T01:45:10.515082+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T01:46:09.701945+00:00;
+one dispatch 2026-10-16T01:46:11.340730+00:00. CI38836892120 attempt1 identified
+2026-10-16T01:46:23.629463+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T03:16:10+00:00; direct coordinator, no new worker.
+
+Require12 new actual-root installer tests,16 previous filesystem cases,
+three Rust parity cases, legacy production-ops fixture and all prior Rust/PG/
+Web gates. No I6B1 executable acceptance yet. Later documentation HEAD does not
+change the candidate. I6B2 actual Compose/DB/drain/backup/diagrams, approved-base
+whole flow, independent review,G4,Owner,three actual trading days/final C_R2
+remain open. Ralph continues.
