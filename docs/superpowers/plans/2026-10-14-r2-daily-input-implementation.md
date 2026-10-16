@@ -5613,3 +5613,36 @@ Rust/PG/Web gates. No runtime boundary acceptance yet. Later documentation HEAD
 does not change the candidate. I6B2c official wrapper/DB transport, consistent
 backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave75 accepted; Wave76 I6B2c controlled activation — 2026-10-16 KST
+
+606d3f6/CI38842068730 attempt1 fully recovered: eight successful jobs/full logs,
+seven checkouts,969 pins/450 candidate blobs. All19 failure tests and5 actual
+Docker fixtures plus previous34 root cases,32 Rust groups/chart6,PG18 targets/
+134 named rows and Web gates passed. Bounded runtime-policy/drain acceptance
+only; see the daily runtime CI report.
+
+Wave76 owns13 files for the sole official release prepare/enable/disable path,
+fixed migration-image psql transport and readonly bootstrap status, protected
+context, full-release quiescence guard, failure-order/root tests and disposable
+actual Docker PostgreSQL transport tests. Preserve existing canonical12 images,
+DB grants/schema and authority checks; bind both old and new installed commits.
+Disable must attempt owned process drain even after DB/render failure. New
+activation keeps DB disabled until the actual target API and three-process
+cohort pass; failure returns to disabled/drained without history reset.
+
+Direct coordinator only; no delegation. Static source/hash/definition checks
+locally; new executable claims require one new exact-candidate hosted CI after
+source review and all-event existing-run query. Backup/reconciliation/diagrams,
+approved-base whole flow, independent integrated review,G4,Owner,three actual
+trading days/final C_R2 remain open. Ralph continues.
+
+Wave76 I6B2c frozen:12 changed owned paths; prior228-line daily overlay unchanged.
+29 operation/root/failure definitions and8 actual PostgreSQL transport definitions,
+all WRITTEN_UNEXECUTED. Prior root58 and all other definition sources preserved.
+996 pins/965 prior unchanged.
+Inputs 4057/7850d159, inventory 6306/b36c65a8,
+report 106/3ea01747.
+Direct source/whitespace review only; actual runtime activation remains unaccepted.
+Backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.

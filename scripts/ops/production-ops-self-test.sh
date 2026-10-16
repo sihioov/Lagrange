@@ -120,6 +120,17 @@ cp "$ops/lib/release-image-manifest.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/dotenv.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/owner-beta-daily-release.sh" "$release_fixture/repo/scripts/ops/lib/"
 cp "$ops/lib/kis-read-compose.sh" "$release_fixture/repo/scripts/ops/lib/"
+# Legacy fake-Docker lane has no daily history; new daily behavior has dedicated
+# actual-root, failure-order and actual Docker transport tests in CI.
+cat >"$release_fixture/repo/scripts/ops/lib/owner-beta-daily-operations.py" <<'PY'
+import os, sys
+args = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+if args.get("--operation") not in ("guard", "guard-processes"):
+    raise SystemExit(2)
+if args.get("--mode") != "apply" or os.fstat(int(args["--lock-fd"])).st_size != 0:
+    raise SystemExit(2)
+print("DAILY_OPERATION: LEGACY_OFF")
+PY
 cat >"$release_fixture/repo/scripts/ops/lib/service-status-policy.py" <<'PY'
 import sys
 if sys.argv[1] != "startup":
@@ -443,6 +454,8 @@ mkdir -p "$compose_bin"
 cat >"$compose_bin/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+[ "${1:-}" = --host ] && [ "${2:-}" = unix:///var/run/docker.sock ] || exit 96
+shift 2
 printf '%s\n' "$*" >>"${COMPOSE_FAKE_LOG:?}"
 image_id_for_service() {
   case "$1" in

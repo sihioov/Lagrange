@@ -12,7 +12,7 @@
 | 현재 실행 우선순위 | R1 완료 → R2 완료까지 Ralph 지속 실행(Owner 2026-10-15 지시). 작은 패키지 완료 후에도 다음 의존 작업을 이어가며 R3로 우선순위를 전환하지 않는다. 실제 Owner 확인·연속 3거래일은 증거가 있어야 완료로 판정 |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | Wave75 I6B2b 606d3f6/CI38842068730 전체 회수. 이어서 I6B2c 공식 릴리스 연결·DB transport, 백업·복원·다이어그램 및 승인 입력 전체 통합. 운영·Owner·3거래일·C_R2 미완료. |
+| 다음 착수 항목 | Wave75 실제 Docker 격리·종료 범위 인수 완료(606d3f6/CI38842068730). Wave76 I6B2c 공식 활성화·중지·DB transport 연결 중. 이후 백업·복원·다이어그램·승인 입력 전체 흐름, 운영·Owner·3거래일·C_R2가 남음. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -1437,4 +1437,37 @@ cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
 Rust/PG/Web gates. No runtime boundary acceptance yet. Later documentation HEAD
 does not change the candidate. I6B2c official wrapper/DB transport, consistent
 backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave75 accepted; Wave76 I6B2c controlled activation — 2026-10-16 KST
+
+606d3f6/CI38842068730 attempt1 fully recovered: eight successful jobs/full logs,
+seven checkouts,969 pins/450 candidate blobs. All19 failure tests and5 actual
+Docker fixtures plus previous34 root cases,32 Rust groups/chart6,PG18 targets/
+134 named rows and Web gates passed. Bounded runtime-policy/drain acceptance
+only; see the daily runtime CI report.
+
+Wave76 owns13 files for the sole official release prepare/enable/disable path,
+fixed migration-image psql transport and readonly bootstrap status, protected
+context, full-release quiescence guard, failure-order/root tests and disposable
+actual Docker PostgreSQL transport tests. Preserve existing canonical12 images,
+DB grants/schema and authority checks; bind both old and new installed commits.
+Disable must attempt owned process drain even after DB/render failure. New
+activation keeps DB disabled until the actual target API and three-process
+cohort pass; failure returns to disabled/drained without history reset.
+
+Direct coordinator only; no delegation. Static source/hash/definition checks
+locally; new executable claims require one new exact-candidate hosted CI after
+source review and all-event existing-run query. Backup/reconciliation/diagrams,
+approved-base whole flow, independent integrated review,G4,Owner,three actual
+trading days/final C_R2 remain open. Ralph continues.
+
+Wave76 I6B2c frozen:12 changed owned paths; prior228-line daily overlay unchanged.
+29 operation/root/failure definitions and8 actual PostgreSQL transport definitions,
+all WRITTEN_UNEXECUTED. Prior root58 and all other definition sources preserved.
+996 pins/965 prior unchanged.
+Inputs 4057/7850d159, inventory 6306/b36c65a8,
+report 106/3ea01747.
+Direct source/whitespace review only; actual runtime activation remains unaccepted.
+Backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open. Ralph continues.

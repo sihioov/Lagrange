@@ -56,7 +56,7 @@ not be placed below a service-writable artifact directory.
 | admitter-state | 10003:10003 | 0700 | admitter checkpoint and lock |
 | checkpoint.json, poll.lock | stage UID:GID | 0600 | private stage state |
 
-UID10001 receives no daily write root. Future Compose bindings must preserve
+UID10001 receives no daily write root. The daily Compose bindings preserve
 read-only access for worker inputs, network-free/no-secret producer isolation
 and only the dedicated restricted DB credential for the admitter.
 
@@ -86,7 +86,7 @@ installer is not a supported downgrade route.
 An OFF link selection preserves history and changes which release is selected.
 Operational OFF also requires the shared DB control change and verified graceful
 drain of producer, admitter and daily worker processes. Those controlled runtime
-steps belong to the next integration package and are not implemented by this
+steps use the controlled Compose release operation below, separately from this
 installer. Existing processes are never silently counted as stopped.
 
 ## Image aliases
@@ -183,8 +183,9 @@ restores restart policies. Replacement, restart, pause, OOM, failed exit or time
 is not a successful stop. Already absent or cleanly stopped cohorts are checked
 without inventing a running-process observation.
 
-The supported release wrapper and DB transport are the mandatory I6B2c follow-up.
-Until that is connected, this overlay is not a supported activation route.
+The I6B2c wrapper connects this overlay through the controlled operations below.
+Its new executable verification is pending in Wave76; no production activation
+is accepted from source review alone.
 DB disabled alone does not stop admission polling. The caller must attempt DB
 disable and drain the already verified owned cohort even if the DB is unavailable,
 then report failure rather than claim a disabled/backup-safe state. Preparation
@@ -196,3 +197,68 @@ uses a trapped shell process under the pinned Alpine base and verifies UID,
 capabilities, mount write denial, internal/no-network routing and real SIGTERM
 exit/restart behavior. It does not run the Rust producer/admitter computation or
 prove the approved historical-base whole flow, production isolation or G4.
+
+
+## Controlled prepare, enable and disable (Wave76 verification pending)
+
+Only the installed current release's `compose-release.sh` is the supported operator
+entrypoint. New operations are `--daily-prepare`, `--daily-enable` and
+`--daily-disable`, with the existing `--plan|--preflight|--apply` modes.
+They cannot be combined with infrastructure, backfill, calendar or quote refresh.
+`--daily-from-commit <exact installed old commit>` explicitly identifies an
+old cohort; no old manifest or project is inferred from a mutable tag. The
+protected service-status policy supplies the project, or the original literal
+`lagrange-station` when no policy exists. Cross-project daily services fail closed.
+
+Prepare/enable require the installed ON config and explicit protected
+`MAX_JOBS_PER_OWNER`, `PRICE_BETA_LEASE_SECS` and `PRICE_BETA_BACKOFF_SECS`.
+Data, artifact and secret roots must also be explicit absolute protected values.
+Prepare provisions/reuses state without resetting checkpoints and creates only
+a disabled control row. It refuses an enabled control. Missing control is a
+fresh bootstrap only if the fixed DB history observation and filesystem
+checkpoints/publication directories are pristine; missing rows are not repaired
+by deleting history. Actor-scoped existing recommendation history is observed
+under its existing migration-owner RLS for bounded existing identities.
+
+Enable first validates the protected configuration and approved historical base.
+An exact healthy API/cohort may recheck authority idempotently. Otherwise it
+disables DB scheduling, drains the verified old three-process cohort, validates
+private state and removes only the exact stopped old containers without force
+or volume deletion. It starts pinned target API/producer/admitter/worker images
+with no build and the existing fixed KIS/service-status overlay selections.
+Actual API mode/capacity and strict process/image/UID/mount/network policies must
+pass before DB enable. Final generation checks follow enable. Any partial start
+or changed generation attempts DB disable and owned target drain. No history,
+reservation, artifact or checkpoint reset is a recovery action.
+
+Disable verifies ownership before depending on runtime config. It attempts DB
+disable first and still attempts actual owned drain if config rendering or DB
+connection fails. An error in either part means failure, even if some processes
+stopped. It does not depend on unrelated Auth0 or revoked activation rights.
+A successful disabled receipt requires both actual DB result and complete
+graceful exit; it is not yet a consistent-backup receipt.
+
+The DB transport uses the pinned current migration image, UID999, one read-only
+migration credential, bounded CPU/memory, read-only root, dropped capabilities
+and only the verified internal project DB network. PostgreSQL identity/alias and
+the local Docker socket are checked. Only fixed rendered transactions and a
+fixed read-only status statement are sent over stdin. Password bytes, raw
+inspection and diagnostics are never printed/persisted. A one-shot needs a clean
+exit and one exact closed result; timeout/error cannot become OFF. Cleanup
+re-inspects its unique ownership and removes only a stopped one-shot.
+
+All runtime operations share the installer's nonblocking release lock. Full
+release apply retains that lock across process guard, PostgreSQL startup, DB
+guard, migrations and serving startup. A fresh legacy OFF installation can
+bootstrap; existing daily processes must already be stopped and scheduling
+disabled. Normal release Compose has literal daily-OFF API/worker defaults;
+it never activates daily work from an ambient mode. Existing refresh paths
+also require quiescence before replacing the API.
+
+Hosted tests distinguish injected ordering failures and real root file/lock
+checks from a disposable actual Docker/psql transport fixture. The latter uses
+the real entrypoint and fixed status SQL against synthetic tables, credentials
+and actor RLS. Full migrated authority tests remain a separate existing PG lane.
+Neither fixture proves the Rust approved-base whole flow or operational G4.
+Consistent backup/restore reconciliation, diagrams, full-flow verification and
+independent integrated review remain mandatory before operational acceptance.

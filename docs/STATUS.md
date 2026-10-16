@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-16 (Asia/Seoul)
 
-현재: Wave68 I7-C01의 전체 실패 결과를 [회수](reviews/2026-10-16-r2-daily-web-c01-ci.md)했다. Rust·DB·strict lint/UI18 통과와 브라우저2실패를 구분하고, Wave69 C02의 fixture/대기/진단4파일을 보정한다. 이후I6·운영·Owner·3거래일·C_R2는 미완료다.
+현재: Wave75 실제 Docker 격리·종료 검증을 [범위별 인수](reviews/2026-10-16-r2-daily-runtime-ci.md)했다. 후보606d3f6/CI38842068730의 전체8작업·969pins·450blobs·7checkout 및 새24개 이름별 결과와 기존 회귀가 통과했다. Wave76은 공식 릴리스 활성화·중지와 DB transport 연결이다. 백업/복원·전체 흐름·운영·Owner·3거래일·C_R2는 미완료다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
 활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
@@ -4252,4 +4252,37 @@ cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
 Rust/PG/Web gates. No runtime boundary acceptance yet. Later documentation HEAD
 does not change the candidate. I6B2c official wrapper/DB transport, consistent
 backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave75 accepted; Wave76 I6B2c controlled activation — 2026-10-16 KST
+
+606d3f6/CI38842068730 attempt1 fully recovered: eight successful jobs/full logs,
+seven checkouts,969 pins/450 candidate blobs. All19 failure tests and5 actual
+Docker fixtures plus previous34 root cases,32 Rust groups/chart6,PG18 targets/
+134 named rows and Web gates passed. Bounded runtime-policy/drain acceptance
+only; see the daily runtime CI report.
+
+Wave76 owns13 files for the sole official release prepare/enable/disable path,
+fixed migration-image psql transport and readonly bootstrap status, protected
+context, full-release quiescence guard, failure-order/root tests and disposable
+actual Docker PostgreSQL transport tests. Preserve existing canonical12 images,
+DB grants/schema and authority checks; bind both old and new installed commits.
+Disable must attempt owned process drain even after DB/render failure. New
+activation keeps DB disabled until the actual target API and three-process
+cohort pass; failure returns to disabled/drained without history reset.
+
+Direct coordinator only; no delegation. Static source/hash/definition checks
+locally; new executable claims require one new exact-candidate hosted CI after
+source review and all-event existing-run query. Backup/reconciliation/diagrams,
+approved-base whole flow, independent integrated review,G4,Owner,three actual
+trading days/final C_R2 remain open. Ralph continues.
+
+Wave76 I6B2c frozen:12 changed owned paths; prior228-line daily overlay unchanged.
+29 operation/root/failure definitions and8 actual PostgreSQL transport definitions,
+all WRITTEN_UNEXECUTED. Prior root58 and all other definition sources preserved.
+996 pins/965 prior unchanged.
+Inputs 4057/7850d159, inventory 6306/b36c65a8,
+report 106/3ea01747.
+Direct source/whitespace review only; actual runtime activation remains unaccepted.
+Backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
 Owner,three actual trading days/finalC_R2 remain open. Ralph continues.

@@ -204,6 +204,9 @@ services:
       OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}
       OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}
       OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}
+      # Daily activation is selected only by the verified official wrapper.
+      OWNER_BETA_DAILY_MODE: disabled
+      MAX_JOBS_PER_OWNER: ${MAX_JOBS_PER_OWNER:-10}
       # Independent fixed-equity price/volume research beta. The mode is
       # owner-only and the artifact location is a fixed in-container path,
       # never an operator-selected host path.
@@ -1063,6 +1066,7 @@ services:
     cpus: "1"
     mem_limit: 1g
     environment:
+      PRICE_BETA_DAILY_MODE: disabled
       APP_ENV: production
       DB_HOST: postgres
       DB_PORT: "5432"
