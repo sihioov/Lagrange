@@ -151,8 +151,13 @@ every process and preserve cleanup evidence. Exit0, healthy processes or a
 diagnostics are documented by
 [the real entrypoint](../../crates/job-queue/src/bin/owner-beta-runner/daily.rs#L221).
 
-This host-local fixture is still to be implemented and reviewed. Source and
-hosted tests remain useful evidence, but do not close this integration gap.
+The [host-local driver and fixture](../runbooks/r2-approved-base-wholeflow.md)
+are now written with19 synthetic/mocked boundary definitions. They connect
+actual production executables, bootstrap/migration entrypoints, approved-base
+checks, real HTTP publication, restart and captured-state recovery. They have
+not been executed or independently reviewed. Hosted fixture checks do not close
+the private approved-base integration gap. Wave82 now has95 new written
+definitions across the coherent package, all WRITTEN_UNEXECUTED.
 
 ## Ordered closeout and the eventual approval packet
 

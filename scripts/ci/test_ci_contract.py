@@ -160,6 +160,7 @@ class WorkflowContractTests(unittest.TestCase):
             "Verify pre-upgrade cold archive boundaries",
             "Verify pre-upgrade maintenance failure boundaries",
             "Verify pre-upgrade schema59 isolated recovery",
+            "Verify whole-flow fixture and driver boundaries",
             "Verify legacy production operations fixtures",
         }
         fixture_steps = [
@@ -177,6 +178,9 @@ class WorkflowContractTests(unittest.TestCase):
             transition_step["run"],
             "sudo /usr/bin/python3 scripts/ops/production-backup-transition-self-test.py",
         )
+        wholeflow = next(step for step in fixture_steps
+                         if step["name"] == "Verify whole-flow fixture and driver boundaries")
+        self.assertEqual(wholeflow["run"], "python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py")
         for name, script in (
             ("Verify pre-upgrade cold archive boundaries", "production-preupgrade-recovery-self-test.py"),
             ("Verify pre-upgrade maintenance failure boundaries", "production-preupgrade-maintenance-self-test.py"),

@@ -4029,3 +4029,5 @@ Only `daily_ingest.rs` changes executable bytes; four new regressions are
 WRITTEN_UNEXECUTED, including nested-decoy/no-fallback and symlink boundaries.
 Wave82 total76. Scoped Rust2024 formatting/whitespace only; same coherent
 candidate, no separate CI or acceptance. Native whole flow remains next.
+
+2026-10-16, Wave82 whole-flow source: real-image producer/admitter/worker/API orchestration, unchanged V3 approval/policy, sixty synthetic source files in three committed batches, two actual-clock sessions, SQLx/bootstrap, HTTP publication, restart and captured-state recovery are now written. Nineteen pure/mocked boundary definitions bring the coherent package to95 WRITTEN_UNEXECUTED. No actual host/Docker/DB/base execution, new worker, provider, deployment or CI dispatch. See `docs/runbooks/r2-approved-base-wholeflow.md`; hosted fixture checks cannot close private approved-base integration. Next: source closure, one exact-candidate hosted verification, then real images/host integration and remaining G3/G4/Owner/three-day gates.
