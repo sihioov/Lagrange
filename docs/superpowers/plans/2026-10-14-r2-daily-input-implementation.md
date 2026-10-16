@@ -5421,3 +5421,32 @@ Later docsHEAD is separate from candidate. All18UI/8newbrowser/11Owner,
 129OFF/14stream/34supervisor and existing Rust/PG gates remain required.
 No I7 acceptance yet. I6/approved-base threeUID/integratedreview/G4/Owner/
 three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave71 acceptance; Wave72 I6A foundation — 2026-10-16 KST
+
+eb3a938/CI38831683987attempt1 fully recovered:8terminal/full logs,7checkouts,
+872pins/421candidateblobs;all30Rust groups/chart6/18DBtargets and PG gates passed.
+Web18UI/6carried/34supervisor/129OFF/14stream passed,no skip/retry/flaky and
+cleanup/reservation passed. All11Owner and8newdaily cases matched.
+Bounded I7 source/synthetic-hosted acceptance only; prior failures preserved.
+
+Wave72 I6A owns11 files: closed Python helper/root filesystem tests, canonical
+policy/reader and3 synthetic fixture files,3 Rust parity-test targets and
+one added policy CI step. Explicit D5/I6 helper/test/fixture scope extension.
+16 isolated real filesystem/UID cases plus3 Rust canonical parity definitions.
+No live config values inferred; fixture Owner/commit/entitlement are synthetic.
+Existing installer/Compose/build manifest canonical12,source/data/DB/provider,
+runtime/diagrams remain untouched. No local executable checks/newworker.
+After foundation, I6B controlled integration/diagrams and actual approved-base
+threeUID whole-flow/multiday, independent review,G4,Owner,three actual trading
+days and finalC_R2 remain open. Ralph continues.
+
+Wave72 I6A frozen:11 owned paths,3 Rust byte/schema parity definitions and16
+real filesystem/UID hosted-only cases, allWRITTEN_UNEXECUTED. Canonical policy
+e9149ef5; protected config/state and monotonic60/61/62 reader floor.
+898pins/868prior unchanged.
+Inputs3664/9ec7d40e,inventory5477/5fb89e4e,
+report69/465cf96b.
+Direct source review/scoped rustfmt2024/whitespace only; no local execution.
+I6B connections/diagrams and actual approved-base threeUID integration,independent
+review,G4,Owner,three actual trading days/finalC_R2 remain open.

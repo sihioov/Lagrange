@@ -2383,3 +2383,53 @@ fn verifier_commit_only_changes_admission_hash_and_stale_links_fail() {
         Err(DailyWireErrorV1::InconsistentFields)
     );
 }
+
+#[test]
+fn i6_installer_policy_matches_canonical_contract_and_approved_base() {
+    let bytes = include_bytes!("../../../configs/evidence/owner-beta-daily-price-policy-v1.json");
+    let registry_bytes = include_bytes!(
+        "../../../configs/evidence/kis-historical-price-only-v3-approved-artifacts.json"
+    );
+    let parsed = parse_daily_price_policy_v1(bytes).unwrap();
+    assert_eq!(
+        encode_daily_price_policy_v1(&parsed).unwrap().as_slice(),
+        bytes.as_slice()
+    );
+    assert_eq!(
+        hash_daily_price_policy_v1(&parsed).unwrap(),
+        ContentHash::from_bytes(bytes)
+    );
+    assert_eq!(
+        ContentHash::from_bytes(bytes).as_str(),
+        "sha256:e9149ef56170877e5e9646f1fff1c370b3a34bf2c8b8ee8272bc30bd5fa8779c"
+    );
+    assert_eq!(
+        parsed.base.pins.approval_registry_sha256,
+        ContentHash::from_bytes(registry_bytes)
+    );
+    let registry: serde_json::Value = serde_json::from_slice(registry_bytes).unwrap();
+    assert_eq!(registry["approved_artifacts"].as_array().unwrap().len(), 1);
+    let approved = &registry["approved_artifacts"][0];
+    for (key, expected) in [
+        (
+            "candidate_content_sha256",
+            &parsed.base.pins.candidate_content_sha256,
+        ),
+        (
+            "artifact_manifest_sha256",
+            &parsed.base.pins.artifact_manifest_sha256,
+        ),
+        (
+            "stage5_manifest_sha256",
+            &parsed.base.pins.stage5_manifest_sha256,
+        ),
+        (
+            "action_manifest_sha256",
+            &parsed.base.pins.action_manifest_sha256,
+        ),
+    ] {
+        assert_eq!(approved[key].as_str(), Some(expected.as_str()));
+    }
+    assert_eq!(parsed.instruments, ids());
+    assert_eq!(parsed.limits, policy().limits);
+}

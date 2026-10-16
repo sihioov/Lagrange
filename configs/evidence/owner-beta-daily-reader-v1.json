@@ -1,0 +1,1 @@
+{"schema":"owner-beta-daily-reader-v1","input_kind":"owner_beta_daily_etf11_price_only_v1","required_migration_versions":[60,61,62],"historical_v2_v3":true,"preserve_daily_history":true}

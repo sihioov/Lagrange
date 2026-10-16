@@ -59,6 +59,8 @@ jobs:
       - run: bash scripts/ops/production-ops-static-check.sh
       - run: bash scripts/ops/build-production-images-static-check.sh
       - run: python -m unittest scripts.ci.test_ci_contract -v
+      - name: Verify daily release filesystem and principal boundaries
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-release-self-test.py
 
   format:
     runs-on: ubuntu-latest

@@ -1227,4 +1227,35 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o660)).unwrap();
         assert!(pinned_bytes(&path, &hash, 64).is_err());
     }
+
+    #[test]
+    fn i6_installer_shared_config_and_reader_match_runtime_contracts() {
+        let bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner-beta-daily-install/config.json"
+        ));
+        let settings: Settings = serde_json::from_slice(bytes).unwrap();
+        assert!(validate_settings(&settings).is_ok());
+        let policy = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../configs/evidence/owner-beta-daily-price-policy-v1.json"
+        ));
+        assert_eq!(settings.policy_sha256, ContentHash::from_bytes(policy));
+        assert!(PinnedDailyPolicy::from_pinned_bytes(policy, &settings.policy_sha256).is_ok());
+        let reader: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../configs/evidence/owner-beta-daily-reader-v1.json"
+        )))
+        .unwrap();
+        assert_eq!(
+            reader,
+            json!({
+                "schema": "owner-beta-daily-reader-v1",
+                "input_kind": factor_engine::daily_price_only::DAILY_PRICE_ONLY_INPUT_KIND,
+                "required_migration_versions": [60, 61, 62],
+                "historical_v2_v3": true,
+                "preserve_daily_history": true
+            })
+        );
+    }
 }

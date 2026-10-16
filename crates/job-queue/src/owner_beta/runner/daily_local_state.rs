@@ -954,4 +954,52 @@ mod tests {
         assert!(state.set_pending(candidate()).is_ok());
         assert_eq!(before, f.bytes());
     }
+
+    #[test]
+    fn i6_installer_initial_checkpoints_match_runtime_canonical_bytes() {
+        let config: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner-beta-daily-install/config.json"
+        )))
+        .unwrap();
+        let owner = Uuid::parse_str(config["owner"].as_str().unwrap()).unwrap();
+        let policy = ContentHash::parse(config["policy_sha256"].as_str().unwrap()).unwrap();
+        for (stage, bytes) in [
+            (
+                Stage::Producer,
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../tests/fixtures/owner-beta-daily-install/producer-checkpoint.json"
+                ))
+                .as_slice(),
+            ),
+            (
+                Stage::Admitter,
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../tests/fixtures/owner-beta-daily-install/admitter-checkpoint.json"
+                ))
+                .as_slice(),
+            ),
+        ] {
+            let decoded = Checkpoint::decode(bytes, stage, owner, &policy).unwrap();
+            assert_eq!(decoded.generation, 0);
+            assert!(decoded.last_started_unix_millis.is_none());
+            assert!(decoded.pending.is_none());
+            assert_eq!(decoded.bytes().unwrap().as_slice(), bytes);
+            let wrong_stage = match stage {
+                Stage::Producer => Stage::Admitter,
+                Stage::Admitter => Stage::Producer,
+            };
+            assert!(Checkpoint::decode(bytes, wrong_stage, owner, &policy).is_err());
+            assert!(Checkpoint::decode(bytes, stage, Uuid::nil(), &policy).is_err());
+            assert!(
+                Checkpoint::decode(bytes, stage, owner, &ContentHash::from_bytes(b"other"))
+                    .is_err()
+            );
+            let mut noncanonical = bytes.to_vec();
+            noncanonical.push(b'\n');
+            assert!(Checkpoint::decode(&noncanonical, stage, owner, &policy).is_err());
+        }
+    }
 }
