@@ -4429,3 +4429,56 @@ confirmed. Native Ralph remains blocked/no resumeAPI; this is same-agent
 continuation, no delegation. Same-daemon heartbeat cannot protect an outage.
 See docs/reviews/2026-10-18-r2-image-maintenance-packet.md. Preserve unrelated
 ROADMAP32lines and.archify; no product or frozen CI/source changes.
+
+
+## Wave92 — approved attempt failed before build; same-container recovery verified
+
+Owner explicitly approved the concrete Wave91 one-attempt12-hour packet.
+Authorization was recorded at2026-10-17T17:21:32UTC. All2125 source pins,
+11 controls/inverse bindings, inert env and hosted receipt matched. Fresh host,
+READ ONLY work settlement and official plan/preflight passed. Actual source
+input SHA454cad1f9cb8f12ddafca6729897acc9ef2eccd5947adf40942020b1e9a1cf76.
+No queued/running jobs, running attempts or unexpired producer/pending stream
+operations were observed. Historical terminal failures were preserved.
+
+Independent recovery was active before launch. Shared root window started
+17:24:41.662284UTC and bound05:24:41.662284UTC next day. The build unit was
+submitted exactly once at17:25:09.491359UTC. Docker recorded SIGTERM15 followed
+by actual container exit1. The required normal-exit0 check failed with
+reader-drain-state-invalid; ExecStartPre exit1, image builder never started,
+no candidate build state/attestation/manifest and no images built.
+
+ExecStopPost exit0 restored the same pinned Owner V2 container/image to healthy
+at17:25:16.269605UTC. Independent recovery confirmed it at17:25:21.752239UTC
+and deactivated successfully. All11 fixed container observations matched;
+nine other serving containers stayed healthy, research remained stopped2.
+Post-restoration READ ONLY work/stream settlement passed. Preserve failed
+main unit, root control evidence and all prior source/hosted results.
+Closure target/r2-daily-beta/wp-8/maintenance-ab48a79/attempt-closure.json SHA
+60f05c04b8b0d0ac63d27af5851751d7fa60ab7a28f12fb180e276e2b2515680 pins12receipts.
+
+Application-internal reason for exit1 remains UNKNOWN: bounded retained logs
+have no matching fixed failure marker. Installed-release source can retain a
+prior quote-task failure until shutdown, but this is only a possible path.
+No guard or product source was weakened; no repeat stop/build was attempted.
+The accepted scope was one attempt, not unlimited attempts during12hours.
+
+Prepared separate attempt2 under target/r2-daily-beta/wp-8/maintenance-ab48a79-a2:
+11 mechanically rebound files, three runtime/probe/SQL files byte-identical;
+all inverse substitutions and exact systemd argv checked. New rootaux
+/etc/lagrange/release-manifests/.r2-maintenance-ab48a79-a2-20261018 and units
+lagrange-r2-build-ab48a79-a2.service / lagrange-r2-recovery-ab48a79-a2.service.
+PreparationSHAb1fcfa9ab3599a87330e2f68b9ca62778d452b2f5ee9c2d6fb7ed9d66417e9f3;
+commandledgerSHAd747d101d87f678b5b39cdf0383096fe2584bd66e785d69c996d0005ff7f5bc8.
+Fresh guards/exit0/same-ID recovery/serial policy and12h bounds unchanged.
+This proposal is PREPARED_NOT_AUTHORIZED_NOT_EXECUTED pending a new explicit
+Owner decision. No fresh independent review or control test execution claimed.
+Actual images/approved-base host/G4/deployment/Owner/three trading days/C_R2
+remain open. See docs/reviews/2026-10-18-r2-image-maintenance-attempt.md.
+
+
+After full first-attempt terminal/recovery evidence was persisted, successor
+heartbeata84ee487 was created2026-10-17T17:33:15.653Z; expiry2026-10-18T05:33:15.650Z,
+renew/handoff by04:50UTC and before47thtick. Handoff was recorded before
+confirmed deletion of50f3f2ad. It awaits the already-sent second-attempt
+decision and preserves full R2 tracking; it is not an active build or worker.

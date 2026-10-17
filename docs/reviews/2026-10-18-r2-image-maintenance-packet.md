@@ -1,7 +1,10 @@
 # R2 ab48a79: host access restored and proposed image-maintenance attempt
 
-R2-04/09, Wave91. **Access is restored; image maintenance is prepared but
-not authorized or executed.** Candidate
+R2-04/09, Wave91 historical preparation. The Owner subsequently approved this
+one-attempt scope. Wave92 executed it once; the normal-stop check failed on
+container exit1, and the same container was restored. The image builder never
+started. See the [attempt and recovery record](2026-10-18-r2-image-maintenance-attempt.md).
+The preparation text below is preserved as the exact approved scope. Candidate
 `ab48a7953dd07fc479407cf80a58f37e2c0c6a83` remains accepted for hosted CI and
 functional smoke only. No product source, installed release, application
 container, database or provider state was changed by this reconciliation.
