@@ -6,12 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-17 (Asia/Seoul)
 
-현재: **R2 필수 CI 전체 성공 회수; 별도 기능 검증 보정 필요.** 04:58 KST 전체 회수: 필수 CI8개 작업 모두 성공, 신규110개·보정10개·영향4모듈104개 이름별 PASS. Rust3351+별도chart6, Web129+14, PG19실행/146이름/62체크섬 두 차례·정리와1149pin/511blob을 대조했다. 별도 기능 검증은0060 필수 역할 fixture 누락으로 실패했고 cleanup UNKNOWN이다. 다음은 해당 준비 코드의 제한된 보정과 새 정확 후보 검증이며, R2 최종 인수는 미완료다. root 접근·실제 이미지/호스트·G3/G4·Owner·연속3거래일·C_R2는 미완료다. [현재 증거](reviews/2026-10-17-r2-integrated-candidate-ci.md).
+현재: **R2 Wave89 기능 검증 fixture 보정·정확 후보 검증 준비.** Wave89: 기능 smoke의 누락된 daily_input_admitter fixture와 정리 결과 기록을 보정하고 회귀7개를 작성했다. 이전 필수CI 성공/별도smoke 실패는 보존한다. 새 후보 hosted 검증 뒤 실제 이미지·호스트 준비를 이어가며 root 접근·G3/G4·Owner·연속3거래일·C_R2는 미완료다. [소스 보정/실행 상태](reviews/2026-10-17-r2-smoke-fixture-correction.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
-Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따라 R2 전체를 지속 실행 목표로
-활성화했다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
+2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
+현재 대화 heartbeat0257875e로 실제 후속 작업을 이어간다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과

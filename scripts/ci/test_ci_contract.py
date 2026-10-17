@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -558,6 +561,97 @@ class WorkflowContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?", compose)
+
+
+class ResearchSmokeCleanupTests(unittest.TestCase):
+    def run_cleanup(
+        self, original_exit: int = 0, failure: str = "", probe: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        source = (ROOT / "scripts/qa/research-worker-smoke.sh").read_text("utf-8")
+        functions = source.split("cleanup_command() {", 1)[1].split(
+            "trap cleanup EXIT", 1
+        )[0]
+        functions = "cleanup_command() {" + functions
+        if probe:
+            functions += "probe_cleanup() {" + source.split(
+                "probe_cleanup() {", 1
+            )[1].split("  trap probe_cleanup EXIT", 1)[0]
+        stubs = r'''
+rc() {
+  printf '%s\n' 'PRIVATE_DIAGNOSTIC_SENTINEL' >&2
+  if [ "$1" = "$FAILURE" ]; then return 17; fi
+}
+dkr() {
+  printf '%s\n' 'PRIVATE_DIAGNOSTIC_SENTINEL' >&2
+  if [ "$1 $2" = 'ps -aq' ]; then
+    if [ "$FAILURE" = query ]; then return 19; fi
+    if [ "$FAILURE" = remaining ]; then printf '%s\n' 'PRIVATE_RESOURCE_SENTINEL'; fi
+  fi
+  if [ "$1 $2" = 'volume rm' ] && [ "$FAILURE" = probe ]; then return 23; fi
+  return 0
+}
+created=1
+context_audit_created=1
+project=isolated-cleanup-test
+context_audit_tag=isolated-cleanup-test-context
+raw_volume=a curated_volume=b outside_volume=c binary_volume=d cargo_home_volume=e cargo_target_volume=f
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            script = "set -euo pipefail\n" + functions + stubs
+            script += f"trap {'probe_cleanup' if probe else 'cleanup'} EXIT\nexit {original_exit}\n"
+            return subprocess.run(
+                ["bash", "-c", script],
+                env={"PATH": os.defpath, "FAILURE": failure, "temp_root": directory},
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+    def test_success_records_absence_and_every_cleanup_stage(self) -> None:
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for step in (
+            "stop-research", "empty-fixture-data", "compose-down",
+            "project-containers", "project-volumes", "project-networks",
+            "context-image", "context-image-absence", "temporary-directory",
+        ):
+            self.assertIn(f"cleanup step={step} exit=0", result.stdout)
+        self.assertIn("original_exit=0 cleanup_exit=0", result.stdout)
+        self.assertNotIn("PRIVATE_", result.stdout + result.stderr)
+
+    def test_cleanup_failure_fails_an_otherwise_successful_smoke(self) -> None:
+        result = self.run_cleanup(failure="down")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=compose-down exit=17", result.stdout)
+        self.assertIn("step=temporary-directory exit=0", result.stdout)
+
+    def test_cleanup_failure_preserves_the_original_failure(self) -> None:
+        result = self.run_cleanup(original_exit=7, failure="down")
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("original_exit=7 cleanup_exit=1", result.stdout)
+
+    def test_failed_absence_query_is_unknown_and_fails_closed(self) -> None:
+        result = self.run_cleanup(failure="query")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=project-containers exit=19 remaining=UNKNOWN", result.stdout)
+        self.assertNotIn("PRIVATE_", result.stdout + result.stderr)
+
+    def test_leftover_resources_fail_without_printing_names(self) -> None:
+        result = self.run_cleanup(failure="remaining")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=project-containers exit=0 remaining=PRESENT", result.stdout)
+        self.assertNotIn("PRIVATE_", result.stdout + result.stderr)
+
+    def test_probe_removal_failure_fails_an_otherwise_successful_probe(self) -> None:
+        result = self.run_cleanup(failure="probe", probe=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=raw-probe-volumes exit=23", result.stdout)
+
+    def test_probe_removal_failure_preserves_the_original_failure(self) -> None:
+        result = self.run_cleanup(original_exit=7, failure="probe", probe=True)
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("raw-probe cleanup original_exit=7 cleanup_exit=1", result.stdout)
 
 
 if __name__ == "__main__":

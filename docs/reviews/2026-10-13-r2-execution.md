@@ -4264,3 +4264,30 @@ bounded fixture correction and fresh verification. No source changes/new runs/
 local execution/delegation/production action in this recovery. Preserve frozen
 candidate evidence and delete completed monitor only after this persistence.
 See integrated-candidate-ci report for exact next-scope handoff.
+
+
+## Wave89 — functional smoke fixture and continuation correction
+
+Owner renewed the final-R2 continuation instruction on2026-10-17KST. Wave88
+full recovery was complete, but the next authorized bounded fixture correction
+was not started. Coordinator resumes it now, preserving the old CI success and
+separate smoke failure. Native goal remains blocked with no resume tool; the
+self-heartbeat0257875e actually exists, five-minute cadence, expiry17:40:44UTC.
+Renew before expiry and continue the next dependency after each recovery. This
+does not promise daemon-outage protection or completion of external gates.
+
+Two-file correction: research-worker-smoke.sh supplies the seventh disposable
+least-privilege role required by0060 and records actual cleanup exits/owned
+resource absence. test_ci_contract.py adds seven behavioral cleanup tests.
+All1147 other prior pins match. Coordinator inspected the complete delta; no
+new independent reviewer and no local tests/compiler/helper/parser/SQL/Docker/
+provider or production execution. Seven definitions remain WRITTEN_UNEXECUTED.
+Production bootstrap, migrations, workflows and the prior reviewed product
+sources are unchanged. No diagram structure changed.
+
+Freeze exact candidate and carried inventories; query all exact-head runs and
+remote SHA before one required CI and one functional smoke. Recover all jobs,
+full-log hashes, checkouts, named cases and cleanup. Then continue actual image/
+host preparation within authority. Root access, actual release images/approved
+base host flow, G3/G4, Owner use, three trading days and C_R2 remain open.
+See docs/reviews/2026-10-17-r2-smoke-fixture-correction.md.
