@@ -38,9 +38,32 @@ active. Full candidate acceptance remains pending. A static PASS alone cannot
 close functional smoke, and its functional PASS also requires successful
 cleanup and terminal job success.
 
-Self-heartbeat0257875e continues the remaining R2 dependencies after recovery;
+Successor heartbeat14825895 continues the remaining R2 dependencies after recovery;
 it is not deleted merely because a package ends. Renew or replace it before
-expiry17:40:44UTC with an explicit bounded handoff. Native Ralph still reports
+expiry17:54:00UTC with an explicit bounded handoff. Native Ralph still reports
 blocked; no active-state claim is made. The [current host packet](2026-10-17-r2-current-host-handoff.md)
 records the fresh access failure and prepared next steps. No local project
 execution, actual image build, production change or new worker occurred.
+
+At13:54UTC the candidate-specific successor heartbeat14825895 was confirmed
+active before0257875e was deleted through an explicit bounded handoff. The
+current report/ledger carries actual run identities and the continued R2 scope.
+Four execution jobs (format, policy, strictClippy, Python) have succeeded;
+four full log hashes and four actual checkouts match. All7 cleanup regressions
+passed,113/117 required new definitions passed,4 Rust results pending. All181
+carried policy names and8 native source/restored999:0/0700 observations matched.
+Python summary494passed/10skipped/7warnings is an aggregate, not unique named
+evidence. Web/PG/workspace/functional smoke and complete acceptance are pending.
+
+
+Wave89 progress checkpoint at13:57UTC: five execution jobs (format,policy,
+strictClippy,Python,Web) succeeded. Five full logs and actual checkout SHAs
+match;113/117 required new definitions,all7 cleanup corrections,181 carried
+policy names,34 Web supervisor/6 contract/18 UI plus129+14 browser identities
+passed. Native source/restored ownership8 observations matched999:0/0700.
+Workspace/PG/functional smoke remain active; required aggregate not yet final.
+The earlier source and native review are preserved; complete candidate, actual
+image/host and final C_R2 acceptance remain pending. No local project execution
+or production action. Root restoration response remains pending. Successor
+heartbeat14825895 is active through17:54:00UTC after recorded bounded handoff
+and confirmed deletion of0257875e; it continues after this package recovery.
