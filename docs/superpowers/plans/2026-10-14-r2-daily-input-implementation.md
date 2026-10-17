@@ -6315,3 +6315,54 @@ Actual12images/approved-base host whole-flow/G3/G4/deployment/Owner use/three
 consecutive trading days/finalC_R2 remain open. No new worker, rerun/cancel/
 duplicate CI, local compiler/test/project execution, root probe or production
 mutation occurred. See docs/reviews/2026-10-17-r2-current-host-handoff.md.
+
+
+## Wave91 — actual access restored; image-maintenance decision prepared
+
+At2026-10-17T17:02:48.649962Z, after the Owner directly renewed the reviewed
+72-hour sudo grant, the exact agent probe returned exit0/UID0. The timer is
+enabled/active/waiting, Persistent=yes, scheduled expiry2026-10-20T17:00:57Z.
+Preserve prior13:46/16:56 failures; do not request access restoration again.
+The approved fixed-field packet finished within0.31seconds: ten running healthy
+containers and research exited2/restarts7935, old selected releasefce9b90, safe
+root-owned parents, candidate manifest absent/build unit notfound,7.694GB
+available memory/4.605GB used swap, no listed compiler and zero30-minute OOM
+grep rows(exit1,no stderr). Raw journal output was not persisted. Receipt
+target/r2-daily-beta/wp-7/wave90/host-admission-after-lease-renewal.json SHA256
+d8e024e5fccf8210609649cafdd1c16de81caa9909d44ae160004a1da430184a.
+
+Root restoration closes only the access blocker. Ordinary eleven-healthy
+admission still fails. Prepared a new one-attempt G3 packet for ab48a79: bounded
+runtime/read-only aggregate work checks; one exact Owner V2 normal stop; official
+12-image serial build; independent same-container recovery. Proposed shared
+window12h, shutdown first1h, build10h, watchdog termination10.5h, attestation
+expiry11h; actual deadline/failed restoration remains explicit. No C3 approval
+reuse, research start, deployment, migration or new provider scope.
+
+Eleven private drafts under target/r2-daily-beta/wp-8/maintenance-ab48a79 are
+finite reversible binding substitutions from the final reviewed R1 controls;
+three runtime/probe/SQL files are identical. Preparation SHA256
+f2a9f3b0ef1eeaaf823229c797cb31a99e7cfbb64d16df90fa2d1dc1d4e24839; exact command
+ledger7ad7ecfae9aa74384e9561df12acff2d5dd8d5a6e7b534deda3077f128fd38f6.
+Old C3-only prelaunch/raw-output launcher were not copied. New official R2
+plan/preflight/source hash and fresh full safety predicates are required after
+Owner acceptance, before any stop. At17:10UTC all2125 checkout pins, clean
+detached candidate, unchanged inert env and11 prepared file bindings matched.
+No local parser/import/test/project helper, SQL, root installation or lifecycle
+action occurred. Historical24/16 control tests were not rerun; no new independent
+review or executable acceptance is claimed.
+
+Status PREPARED_NOT_AUTHORIZED_NOT_EXECUTED. Present the concrete new12-hour
+image-maintenance scope for an Owner decision, because the current permission
+is bounded read-only and renewed sudo alone does not authorize interruption.
+Do not repeat questions or host probes while the decision is unchanged. The
+remaining R2 objective continues through actual images/approved-base host flow/
+G4/deployment/Owner/three trading days/finalC_R2, all still open.
+
+Successor self-heartbeatc105aa23 created17:09:06UTC,15-minute cadence/max48,
+expires2026-10-18T05:09:06UTC; renew/handoff by04:30UTC and before47thtick.
+Its actual creation and handoff were persisted before b9bb7ac0 deletion was
+confirmed. Native Ralph remains blocked/no resumeAPI; this is same-agent
+continuation, no delegation. Same-daemon heartbeat cannot protect an outage.
+See docs/reviews/2026-10-18-r2-image-maintenance-packet.md. Preserve unrelated
+ROADMAP32lines and.archify; no product or frozen CI/source changes.

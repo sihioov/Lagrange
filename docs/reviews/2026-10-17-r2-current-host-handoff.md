@@ -5,6 +5,14 @@ This is a prepared successor to the historical
 [host admission packet](2026-10-16-r2-host-admission-packet.md).
 No production state has changed.
 
+**Superseded access status, 2026-10-18 02:02KST:** the Owner renewed the temporary
+sudo grant, and agent access plus the approved bounded host observation now
+succeeded. The old access-blocked observations below remain historical. The next
+step is the [Wave91 candidate image-maintenance decision](2026-10-18-r2-image-maintenance-packet.md),
+not another authentication request. No new service interruption is authorized.
+Successor heartbeatc105aa23 replaced b9bb7ac0 after persisted handoff; renewal
+is due2026-10-18T04:30UTC, before its05:09UTC expiry.
+
 Current Wave90 disposition — 2026-10-17 14:46UTC: exact-candidate required CI
 and separate functional smoke are now fully recovered and accepted for hosted
 verification. Publication/repeated-run assertions and actual cleanup passed;
