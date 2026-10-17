@@ -6,13 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-17 (Asia/Seoul)
 
-현재: **R2 Wave89 hosted CI·기능 검증 실행 중.** Wave89 후보ab48a79의 CI39037896827·기능 smoke39037899130을22:45KST에 각각 한 번 시작했다. 1155pin/513blob·새 cleanup7개와 기존110개 필수 이름을 고정했다. root 읽기 probe는 다시exit1이며, 후보 전용2125파일 checkout·비활성 입력과 후속 호스트 실행안을 준비했다. 전체 결과·실제 이미지/호스트·G3/G4·Owner·3거래일·C_R2는 미완료다. [진행 기록](reviews/2026-10-17-r2-smoke-fixture-ci.md).
+현재: **R2 Wave89 필수 CI 통과, 별도 기능 스모크 회수 중.** Wave89 후보ab48a79의 CI39037896827 attempt1은8작업 모두 SUCCESS로 종료했다.8개 전체 로그·7checkout·1155pin/513blob,필수117개·기존보정10개·영향4모듈104개와 기존 필수 Rust/Web/PG 결과를 대조했다. 별도 기능 smoke39037899130과 실제 정리 결과는 진행 중이다. root 접근 복구 응답을 기다리며 이미지/호스트·G3/G4·Owner·3거래일·C_R2는 미완료로 유지한다. [진행 기록](reviews/2026-10-17-r2-smoke-fixture-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
 2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
-현재 대화 heartbeat0257875e로 실제 후속 작업을 이어간다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+현재 대화 heartbeat14825895로 실제 후속 작업을 이어간다. 이전0257875e는22:54KST에 bounded handoff 후 삭제했다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave88 전체 결과 회수 완료 → 실패한 기능 검증 fixture의 제한된 역할 준비 보정 → 새 정확 후보 검증 → root/이미지/호스트/G4·Owner·3거래일·C_R2. |
+| 다음 단계 | Wave89 별도 기능 smoke39037899130의 발행·실제 정리 결과 회수 → 접근 복구 후 승인된 호스트 관측/이미지 준비 → G3/G4·운영·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

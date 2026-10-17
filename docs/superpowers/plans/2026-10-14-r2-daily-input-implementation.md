@@ -6256,3 +6256,24 @@ image/host and final C_R2 acceptance remain pending. No local project execution
 or production action. Root restoration response remains pending. Successor
 heartbeat14825895 is active through17:54:00UTC after recorded bounded handoff
 and confirmed deletion of0257875e; it continues after this package recovery.
+
+
+Wave89 required CI recovery at14:08UTC: candidateab48a79/run39037896827
+attempt1 finished with all8jobs SUCCESS. All8 full log hashes,7 actual checkout
+SHAs,1155 frozen pins and513 committed blobs matched. All117 new required
+definitions (including7 cleanup corrections),10 original correction cases and
+104 affected-module definitions passed. The36 workspace and33 carried named
+groups,181 policy names,3351 complete workspace PASS/6ignored plus6 separate
+chart rows,34 Web supervisor/6 contract/18 UI and129+14 browser identities
+matched. DedicatedPG19 actual process exits/noSKIP,146 named rows,0060
+32named/73subcases,83bootstrap,62 source SHA384 checksums in both runs,
+0039 guard and actual owned-container cleanup passed. Eight native fixture
+source/restored999:0/0700 observations remain verified.
+Only required CI is accepted. Separate functional smoke39037899130 is still
+active; actual functional publication and cleanup remain pending. Unprinted
+nested helper independent rows/exits and two non-required interleaved outcomes
+remain UNKNOWN. No local project execution, source change or production action.
+Heartbeat14825895 continues full R2 through17:54UTC and must be renewed or
+handed off before expiry. Root access restoration is pending; no repeat probe
+or permission question. Actual images/approved-base host/G3/G4/Owner/three
+trading days/finalC_R2 remain open.
