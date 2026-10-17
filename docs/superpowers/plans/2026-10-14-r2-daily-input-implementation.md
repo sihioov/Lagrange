@@ -6228,3 +6228,18 @@ full-log hashes, checkouts, named cases and cleanup. Then continue actual image/
 host preparation within authority. Root access, actual release images/approved
 base host flow, G3/G4, Owner use, three trading days and C_R2 remain open.
 See docs/reviews/2026-10-17-r2-smoke-fixture-correction.md.
+
+
+Wave89 exact candidate ab48a7953dd07fc479407cf80a58f37e2c0c6a83 launched
+CI39037896827 attempt1 at13:45:46UTC and functional smoke39037899130 attempt1
+at13:45:48UTC after exact-head all-event queries and remote SHA checks. One
+dispatch each, no rerun/cancel/duplicate. Frozen1155pins/513blobs,117required
+new definitions (110prior+7cleanup). Full recovery bound15:30:46/48UTC. No
+source/frozen mutation while active. Format success recovered, others pending.
+Fresh root probe13:46:16UTC exit1; no privileged followup. Current-user fixed
+health reads show ten healthy running containers and historical research exit2.
+Prepared clean candidate image checkout2125files and inactive private env;
+no build/helper/lifecycle action. Access restoration requested, not renewed
+consent for the already-approved readonly scope. Monitor0257875e continues the
+next authorized dependency after recovery, expires17:40:44UTC. See current
+CI and host-handoff reports; later documentation HEAD does not change candidate.
