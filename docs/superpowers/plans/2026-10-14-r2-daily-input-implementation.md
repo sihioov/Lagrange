@@ -6277,3 +6277,41 @@ Heartbeat14825895 continues full R2 through17:54UTC and must be renewed or
 handed off before expiry. Root access restoration is pending; no repeat probe
 or permission question. Actual images/approved-base host/G3/G4/Owner/three
 trading days/finalC_R2 remain open.
+
+## Wave90 — complete hosted acceptance and actual host dependency
+
+At2026-10-17 14:46UTC the exact ab48a79 required CI39037896827 and separate
+functional smoke39037899130 are fully recovered, both attempt1 SUCCESS.
+The smoke job ended14:36:33UTC. Nine full-log hashes/eight actual checkouts,
+1155pins/513blobs,117new required names and all carried required gates matched.
+Actual publication/source/lineage and repeated-run assertions passed. Ten
+cleanup outcomes exit0; owned containers/volumes/networks/context image are
+absent; raw-probe and outer original_exit0/cleanup_exit0 are explicit.
+Combined receipt target/r2-daily-beta/ci/ab48a79/ci-evidence.json SHA256
+3cebc24d1ba1bb974bc523d65e14e1ea8faf12e377b602cf8dc3483186c967f0.
+Accept hosted verification only, preserving prior required-only receipt,
+Wave88 failed smoke, platform exclusions and unknown nested outcomes.
+
+Next work remains R2-04/09 actual host admission and release gates. The clean
+image checkout2125pins and unchanged inert0600env/0700parent were statically
+reconfirmed; no image/helper/production action occurred. Last actual root
+probe13:46:16UTC exited1. The previously requested access restoration has no
+new signal. This is an access blocker, not an unanswered question about the
+already-authorized read-only scope. Do not repeat probe or permission question
+until an actual restoration signal. Then run the prepared five-minute bounded
+read-only admission packet; stop on error. Fresh drain/maintenance/G3/G4 must
+be concrete before any lifecycle action; no consumed C3 permission reuse.
+
+Successor self-heartbeatb9bb7ac0 was actually created14:45:54UTC,15-minute
+cadence,max48,expiry2026-10-18T02:45:54UTC; renew/handoff by02:15UTC. Full recovery
+and bounded handoff were persisted before deleting14825895. Native Ralph is
+still blocked with no resume API. The successor continues the overall R2
+dependencies, not a new worker. With no access signal or independent authorized
+work, record only bounded no-change reconciliation instead of repeated probes,
+CI retrieval or documentation commits. Same-daemon monitoring cannot protect
+daemon outage. Preserve32 unrelated ROADMAP additions and.archify.
+
+Actual12images/approved-base host whole-flow/G3/G4/deployment/Owner use/three
+consecutive trading days/finalC_R2 remain open. No new worker, rerun/cancel/
+duplicate CI, local compiler/test/project execution, root probe or production
+mutation occurred. See docs/reviews/2026-10-17-r2-current-host-handoff.md.

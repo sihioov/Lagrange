@@ -1,8 +1,10 @@
 # R2 Wave89 exact candidate verification
 
-Current at14:08UTC: **required CI passed; separate functional smoke is still running.**
-All117 required new definitions have fresh named PASS evidence. Actual host
-and final R2 acceptance remain open.
+Current at14:46UTC: **required CI and separate functional smoke both passed.**
+All117 required new definitions have fresh named PASS evidence. Functional
+publication, repeat-run assertions and actual fixture cleanup also passed.
+Actual host and final R2 acceptance remain open. Earlier progress paragraphs
+below preserve their original observation times.
 
 Candidate `ab48a7953dd07fc479407cf80a58f37e2c0c6a83` contains the bounded
 [smoke prerequisite and cleanup correction](2026-10-17-r2-smoke-fixture-correction.md).
@@ -94,3 +96,40 @@ trading days/finalC_R2 remain open.
 
 Private required-CI receipt: `target/r2-daily-beta/ci/ab48a79/required-ci-evidence.json`.
 SHA256 `0798eb48075fb2a3fe737224bcecef52e59c463c00a3faad3da651e4528d3f50`.
+
+Wave89 complete hosted recovery — 2026-10-17 14:46UTC:
+research-smoke39037899130 attempt1/job117411318255 completed SUCCESS at
+14:36:33UTC. Its actual checkout is the exact candidate. The full log has
+141,908bytes/1,765lines, SHA256
+`f9a025d123730278d5532de8ee271e0d04b66c917543abdf31a24216cffdb352`.
+The static marker is at log line151 and functional PASS at1739. The latter
+follows the source's publication/source/lineage and repeated-run comparisons:
+calendar history/projection60/60, source publication1/datasets6,
+universe2/members12, published feeds2/items10 match the fixed fixture.
+
+All ten cleanup outcomes have actual exit0. Independent absence observations
+report no owned project containers, volumes, networks or context image.
+Both raw-probe and outer cleanup report original_exit0/cleanup_exit0;
+the job and run are terminal success. The later structured functional evidence
+resolves markers not recognized by the generic diagnostic extractor; diagnostic
+hashes alone were never treated as failures or success evidence.
+
+The coordinator accepts the exact candidate's required CI and hosted functional
+verification: nine full-log hashes, eight actual checkouts,1155 frozen pins,
+513 committed blobs and all117 required names. Earlier required-only evidence,
+Wave88 failure and all excluded/unknown nested outcomes remain preserved.
+No local project execution, new dispatch, source repair, actual image build
+or production action was performed during recovery.
+
+Combined private receipt: `target/r2-daily-beta/ci/ab48a79/ci-evidence.json`,
+SHA256 `3cebc24d1ba1bb974bc523d65e14e1ea8faf12e377b602cf8dc3483186c967f0`.
+This acceptance does not cover actual R2 release images, approved-base host
+flow, deployment, Owner use, three trading days or final C_R2.
+
+Wave90 continues the [actual host dependency](2026-10-17-r2-current-host-handoff.md).
+Successor heartbeatb9bb7ac0 was confirmed active at14:45:54UTC with a15-minute
+cadence, expiry2026-10-18T02:45:54UTC and renewal bound02:15UTC. After full
+recovery and persisted bounded handoff, heartbeat14825895 was deleted.
+Native Ralph remains blocked; the self-heartbeat tracks continuation without
+claiming a native resume or daemon-outage protection. No repeated root probe
+or permission question is made while the access-restoration signal is absent.
