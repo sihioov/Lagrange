@@ -4763,3 +4763,13 @@ preserved. Nested unprinted independent exits remainUNKNOWN. Existing same-agent
 heartbeat8cd8622c retains exact remaining scope through06:33:25/26UTC bounds;
 renewby15:45UTC,expires16:49:14.305UTC. No source/frozen-input mutation or new
 host action; overallR2 and nativeRalph status are not marked complete/active.
+
+
+Wave97 CI terminal recovery2026-10-18T05:15:15UTC: 후보899f259의 CI39098366992 attempt1이05:12:42UTC 8개 job 모두 SUCCESS로 종료했다. 전체 로그8개·실제checkout7개·1192pin/521blob과 필수122개·이미지 결과15개·기존 정책/Rust/PG/Web 그룹 및 정리를 대조해 CI 범위의 회수를 마쳤다. 05:15:15UTC 기능 smoke39098368916은 실행 중이며 실제 발행·반복·10정리 결과와 마지막 전체 로그/checkout은 아직 미회수다. 전체 후보 인수와 소스 변경은 smoke 종료·전체 증거 회수까지 보류한다.06:33:25/26UTC 회수 기한·추적8cd8622c를 유지한다. 새 후보 이미지/승인 입력 호스트 전체 흐름·G4·Owner·3거래일·C_R2는 미완료다.
+
+Required CI receipt SHA9b209ddaae8c31b9af71d679e8962ed97c210b77d7e571d724e138367958a71c
+is target/r2-daily-beta/ci/899f259/required-ci-evidence.json. Workspace36groups/
+33carried groups and actual cleanup are recovered;3non-Linux exclusions,
+6ignored rows and1fragmented helper UNKNOWN remain explicit. Functional smoke
+full log/actual checkout/publication/repeat/10cleanup remain pending. Bounded
+handoff34640333 keeps existing8cd8622c; no source/frozen-input/host mutation.

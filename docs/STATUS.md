@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 Wave97 후보899f259 hosted 부분 회수.** 05:07:50UTC 대조에서 후보899f259의 format·strict Clippy·Python·policy·PostgreSQL·Web 6개 job이 성공했고 전체 로그6개·실제checkout6개를 회수했다. 필수122정의 중118개, 실제 root Git 소유권 회귀4개, wholeflow fixture23개, 이미지 결과15개와 기존 정책181개를 이름별로 확인했다. PG19프로세스/146명명 결과·0060 32+73·83bootstrap·62checksum 두 번과 Web E2E129+14·정리를 대조했다. workspace-tests의 Rust4개·나머지 기존 결과, required 집계, 기능 smoke의 실제 발행/반복/10정리는 아직 미회수다.1192pin/521blob은 일치하고 원본은 고정한다. 전체 회수 기한06:33:25/26UTC와 후속 추적8cd8622c를 유지한다. 새 후보 이미지/호스트 검증·G4·Owner·3거래일·C_R2는 미완료다. [근거](reviews/2026-10-18-r2-wholeflow-git-ci.md).
+현재: **R2 Wave97 CI 전체 성공·기능 smoke 실행 중.** 후보899f259의 CI39098366992 attempt1이05:12:42UTC 8개 job 모두 SUCCESS로 종료했다. 전체 로그8개·실제checkout7개·1192pin/521blob과 필수122개·이미지 결과15개·기존 정책/Rust/PG/Web 그룹 및 정리를 대조해 CI 범위의 회수를 마쳤다. 05:15:15UTC 기능 smoke39098368916은 실행 중이며 실제 발행·반복·10정리 결과와 마지막 전체 로그/checkout은 아직 미회수다. 전체 후보 인수와 소스 변경은 smoke 종료·전체 증거 회수까지 보류한다.06:33:25/26UTC 회수 기한·추적8cd8622c를 유지한다. 새 후보 이미지/승인 입력 호스트 전체 흐름·G4·Owner·3거래일·C_R2는 미완료다. [근거](reviews/2026-10-18-r2-wholeflow-git-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

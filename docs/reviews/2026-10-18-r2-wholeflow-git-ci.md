@@ -1,7 +1,8 @@
 # R2 wholeflow Git correction hosted verification
 
 R2-04/R2-09, Wave97. Candidate `899f259f9c8872fb61f0c95745904f552c8750e9`.
-Status: **RUNNING_NOT_ACCEPTED** as observed2026-10-18T05:07:50UTC.
+Status: **CI_SCOPE_RECOVERED_SMOKE_RUNNING** as observed2026-10-18T05:15:15UTC.
+Whole-candidate hosted acceptance remains false until separate functional smoke recovery.
 The [source correction and failed host attempt](2026-10-18-r2-wholeflow-source-git-correction.md)
 remain separate from this new hosted verification.
 
@@ -100,3 +101,41 @@ target/r2-daily-beta/wp-8/wave97/bounded-recovery-20261018T050750Z.json
 SHA0df939177d74021d52c38c0059d7355bba342702cd049d0151719a1f5857428a
 keeps heartbeat8cd8622c and the overall R2 dependencies intact. No additional
 host reads, lifecycle operation, project helper or local test was executed.
+
+
+## CI terminal recovery — 2026-10-18T05:15:15UTC
+
+CI39098366992 attempt1 completed SUCCESS at05:12:42UTC, all8jobs. Full
+logs8/actual checkouts7,122required definitions and15image outcomes now match.
+The required aggregator prints all seven dependency outcomes as success.
+The separate research smoke39098368916 attempt1 is still in progress; its
+actual functional outcome, full log/checkout and cleanup remain pending.
+
+Workspace recovery binds actual Cargo headers to231outer test blocks.
+It recovered6chart named passes and3350workspace named passes, retaining
+6ignored workspace rows and3non-Linux platform exclusions. Every expected
+target in36workspace groups and33carried groups matches freshly observed
+named results. These groups overlap and must not be summed as unique tests.
+The4pending daily_ingest names now pass in the actual job_queue test binary.
+
+One fragmented KIS helper name remains UNKNOWN, as do unprinted independent
+nested rows/exits. The parent summary does not fill those gaps. Successful
+workspace cleanup steps and actual QA container/network removal were observed;
+no extra unprinted resource-absence query is claimed.
+
+Required CI receipt:
+target/r2-daily-beta/ci/899f259/required-ci-evidence.json
+SHA9b209ddaae8c31b9af71d679e8962ed97c210b77d7e571d724e138367958a71c.
+It preserves prior partial evidence and pins every current log/reconciliation.
+All1192input pins/521committed blobs remain unchanged. CI scope is recovered;
+full hosted/image/host/finalR2 acceptance remains false.
+
+Remaining scope is the actual functional smoke terminal result, publication,
+idempotence,10cleanup outcomes and owned-resource absence. Reporting bounds
+stay06:33:25/26UTC; bounded handoff
+target/r2-daily-beta/wp-8/wave97/bounded-recovery-20261018T051515Z.json
+SHA346403330b39550eed47a325e6bfa7368935c9899d06b3e45380c0a54b5d86ee.
+Heartbeat8cd8622c remains in place, renewby15:45UTC/before47thtick. Source and
+frozen inputs remain immutable while smoke is active. After its complete
+recovery, prepare exact candidate image/host dependencies and a concrete next
+Owner scope. No host/root/project-helper/test action was added in this recovery.
