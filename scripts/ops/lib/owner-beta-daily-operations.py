@@ -32,6 +32,7 @@ def load_local(name, filename):
 sys.dont_write_bytecode = True
 
 install = load_local("daily_install_operations", "owner-beta-daily-release.py")
+base = load_local("daily_base_operations", "owner-beta-daily-base.py")
 runtime = load_local("daily_runtime_operations", "owner-beta-daily-runtime.py")
 policy = load_local("daily_status_operations", "service-status-policy.py")
 ROOT = str(Path(__file__).absolute().parents[3])
@@ -504,6 +505,8 @@ class Operations:
             pristine_state(binding.data_root, config)
         install.reader_guard(self.install_root, target.release, "owner_only")
         install.provision_state(binding.data_root, config)
+        base.provision(binding.artifact_root + "/historical-price-beta-root",
+                       binding.data_root + "/owner-beta-daily")
         self.database.control(target.release, target.commit, target.values, "prepare")
 
     def enable(self, snapshot):
@@ -512,6 +515,7 @@ class Operations:
             target.release, target.commit, self.ownership.project, target.images, target.values)
         reject_ambient(target.values)
         validate_activation_inputs(target)
+        base.verify(binding.data_root + "/owner-beta-daily")
         # Exact already-running activation is idempotent: no restart or epoch reset.
         if self.source.commit == target.commit and self.database.status(target.values) == "ENABLED":
             try:
@@ -779,6 +783,7 @@ def main(argv=None):
                         database.status(target.values)
                         if args.operation == "enable":
                             validate_activation_inputs(target)
+                            base.verify(target.values["LAGRANGE_DATA_DIR"] + "/owner-beta-daily")
                         outcome = "PREFLIGHT"
                     elif args.operation == "prepare":
                         operation.prepare(snapshot)

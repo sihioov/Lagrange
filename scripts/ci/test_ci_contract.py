@@ -38,6 +38,15 @@ def action_uses(workflow: dict) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_fixed_base_copy_principals_are_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [step for step in ci["jobs"]["policy"]["steps"]
+                 if step.get("name") == "Verify fixed historical base copies and real reader principals"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["run"], "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-base-self-test.py")
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+
     def test_wholeflow_docker_fixture_is_a_required_policy_step(self) -> None:
         _, ci = load_workflow("ci.yml")
         steps = [

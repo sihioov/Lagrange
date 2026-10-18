@@ -74,6 +74,7 @@ class DailyOperationsTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(ops, "reject_ambient"))
             stack.enter_context(mock.patch.object(ops, "validate_activation_inputs",
                                                   side_effect=event("validate")))
+            stack.enter_context(mock.patch.object(ops.base, "verify"))
             stack.enter_context(mock.patch.object(ops.runtime, "drain",
                                                   side_effect=event("drain")))
             stack.enter_context(mock.patch.object(ops.install, "check_state",
@@ -130,6 +131,34 @@ class DailyOperationsTests(unittest.TestCase):
         self.assertEqual(self.events, ["validate", "db:disable", "drain", "state",
                                       "db:check-disabled", "reconcile", "remove", "start", "runtime", "api",
                                       "db:enable", "runtime", "api"])
+
+    def test_invalid_base_views_fail_before_start_or_database_enable(self):
+        with self.activation(), mock.patch.object(ops.base, "verify", side_effect=ValueError("FIXTURE")):
+            with self.assertRaises(ValueError):
+                self.operation.enable(SNAPSHOT)
+        self.assertNotIn("start", self.events)
+        self.assertNotIn("db:enable", self.events)
+
+    def test_prepare_publishes_base_views_before_database_control(self):
+        with mock.patch.object(ops, "stopped"), \
+                mock.patch.object(ops, "activation_binding", return_value=(self.binding, {})), \
+                mock.patch.object(ops.install, "reader_guard"), \
+                mock.patch.object(ops.install, "provision_state"), \
+                mock.patch.object(ops.base, "provision", side_effect=lambda *args: self.events.append("base")) as provision:
+            self.operation.prepare(SNAPSHOT)
+        provision.assert_called_once_with(self.binding.artifact_root + "/historical-price-beta-root",
+                                          self.binding.data_root + "/owner-beta-daily")
+        self.assertEqual(self.events, ["base", "db:prepare"])
+
+    def test_base_copy_failure_does_not_prepare_database(self):
+        with mock.patch.object(ops, "stopped"), \
+                mock.patch.object(ops, "activation_binding", return_value=(self.binding, {})), \
+                mock.patch.object(ops.install, "reader_guard"), \
+                mock.patch.object(ops.install, "provision_state"), \
+                mock.patch.object(ops.base, "provision", side_effect=ValueError("FIXTURE")):
+            with self.assertRaises(ValueError):
+                self.operation.prepare(SNAPSHOT)
+        self.db.control.assert_not_called()
 
     def test_partial_start_failure_disables_and_drains_target(self):
         with self.activation(start_failure=True):

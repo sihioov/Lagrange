@@ -113,6 +113,7 @@ def load(name, relative):
 fixture = load("wholeflow_fixture", "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py")
 files = load("wholeflow_files", "scripts/ops/lib/owner-beta-daily-backup-files.py")
 release = load("wholeflow_release", "scripts/ops/lib/owner-beta-daily-release.py")
+base_views = load("wholeflow_base_views", "scripts/ops/lib/owner-beta-daily-base.py")
 require = fixture.require
 
 
@@ -137,7 +138,8 @@ def verify_source(candidate):
     for relative in ("configs/evidence/owner-beta-daily-price-policy-v1.json",
                      "deploy/db/owner-beta-daily-control.sql", "scripts/ops/verify-owner-beta-daily-wholeflow.py",
                      "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
-                     "scripts/ops/lib/owner-beta-daily-release.py", "scripts/ops/lib/owner-beta-daily-backup-files.py"):
+                     "scripts/ops/lib/owner-beta-daily-release.py", "scripts/ops/lib/owner-beta-daily-backup-files.py",
+                     "scripts/ops/lib/owner-beta-daily-base.py"):
         pinned = source_git("show", head + ":" + relative)
         require(pinned == (ROOT / relative).read_bytes(), "WHOLEFLOW_SOURCE_CHANGED")
 
@@ -368,6 +370,7 @@ class WholeFlow:
         private_file(self.config_root / "policy.json", self.policy, 0, 10001, 0o440)
         release.provision_state(str(self.current), self.config)
         self.daily = self.current / "owner-beta-daily"
+        self.prepare_base_views()
         self.curated = directory(self.current / "curated", 10001, 10001, 0o750)
         self.floor = directory(self.current / "floor")
         private_file(self.floor / ".owner-beta-daily-reader-floor", release.FLOOR_BYTES, 0, 0, 0o440)
@@ -388,6 +391,18 @@ class WholeFlow:
         self.receipt["sessions"] = self.plan["sessions"]
         self.receipt["images"] = self.images
         self.phase("PREPARED_SYNTHETIC_EXTENSION")
+
+    def prepare_base_views(self):
+        try:
+            base_views.provision(self.base, self.daily)
+        except Exception:
+            raise fixture.FixtureError("WHOLEFLOW_BASE_COPY_REJECTED") from None
+
+    def verify_base_views(self):
+        try:
+            base_views.verify(self.daily)
+        except Exception:
+            raise fixture.FixtureError("WHOLEFLOW_BASE_COPY_VERIFY_REJECTED") from None
 
     def roots(self):
         return (files.Root("raw", str(self.raw), 10001, 10001, 0o750),
@@ -495,9 +510,10 @@ class WholeFlow:
     def daily_once(self, stage, expected):
         require(stage in ("producer", "admitter", "worker"), "WHOLEFLOW_STAGE")
         uid = {"producer": 10002, "admitter": 10003, "worker": 10001}[stage]
+        base = self.base if stage == "worker" else self.daily / base_views.DIRECTORY / stage
         mounts = [self.mount(self.config_root / "config.json", "/run/owner-beta-daily/config.json"),
                   self.mount(self.config_root / "policy.json", "/run/owner-beta-daily/policy.json"),
-                  self.mount(self.base, "/data/owner-beta-artifacts"),
+                  self.mount(base, "/data/owner-beta-artifacts"),
                   self.mount(self.daily / "admitted", "/data/owner-beta-daily/admitted", stage != "admitter")]
         env = {"APP_ENV": "production", "PRICE_BETA_DAILY_MODE": "owner_only",
                "PRICE_BETA_DAILY_CONFIG_FILE": "/run/owner-beta-daily/config.json",
@@ -632,7 +648,12 @@ class WholeFlow:
                                                                 "factor_snapshot_sha256", "target_snapshot_sha256")}
 
     def verify_sources(self):
+        self.verify_base_views()
         current = self.inventory()
+        prefix = "daily/" + base_views.DIRECTORY
+        copied = lambda entry: entry["path"] == prefix or entry["path"].startswith(prefix + "/")
+        require([e for e in self.original if copied(e)] == [e for e in current if copied(e)],
+                "WHOLEFLOW_BASE_COPY_CHANGED")
         for name in ("raw", "base", "config", "curated", "floor"):
             before = [entry for entry in self.original if entry["path"].split("/")[0] == name]
             after = [entry for entry in current if entry["path"].split("/")[0] == name]
@@ -689,6 +710,7 @@ class WholeFlow:
         self.raw, self.curated, self.daily = restored / "raw", restored / "curated", restored / "daily"
         self.config_root, self.floor, self.base = restored / "config", restored / "floor", restored / "base"
         self.base_root = files.Root("base", str(self.base), 10001, 10001, 0o750)
+        self.verify_base_views()
         require(self.inventory() == captured_records, "WHOLEFLOW_RESTORED_FILE_IDENTITY")
         self.database("recovered", migrate=False)
         # Restore owners/ACLs, without --no-owner/--no-acl and without seeding

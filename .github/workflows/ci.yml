@@ -67,6 +67,9 @@ jobs:
       - run: python -m unittest scripts.ci.test_ci_contract -v
       - name: Verify daily release filesystem and principal boundaries
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-release-self-test.py
+      - name: Verify fixed historical base copies and real reader principals
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-base-self-test.py
       - name: Verify immutable daily release installation boundaries
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-integration-self-test.py
       - name: Verify daily release database control rendering

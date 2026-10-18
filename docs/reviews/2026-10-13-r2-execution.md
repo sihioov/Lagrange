@@ -5135,3 +5135,13 @@ Owner 승인으로 a7825fa의 일곱 번째 이미지 빌드를1회 완료했다
 - Successor heartbeat4fbc67c0 confirmed23:31:28UTC, handoff persisted before9fb748db deletion.
   Renew by2026-10-19T10:30UTC/before tick47; expires11:31:28UTC. Same-agent bounded
   continuation, native Ralph blocked/no resume API, no delegation or outage protection.
+
+
+## Wave105 — fixed V3 role-owned copies (2026-10-19 KST)
+
+Wave105는 UID10002/10003 일일 reader와 UID10001 기존 base의 소유권 계약 불일치를 정적으로 확인하고 고정 V3 바이트를 역할별 비공개 복사본으로 준비하는 소스를 작성했다. 원본·Rust 승인/권한 검증을 유지하며 전체 복사본 배타적 공개·각자 RO마운트·기존 daily 백업/복원을 연결한다. 새20개와 이전150개 필수 정의·15이미지 결과·wholeflow44개를 고정해 새 후보 CI/기능 smoke 전체 회수를 진행한다. 아직 새 검증·이미지·통합 인수 없음. a7825fa 이미지 인수와 네 번째 실제 통합 INVALID_ARTIFACT 실패/정리 증거는 보존하며 두 승인은 모두 소진됐다. 정확한 런타임 거부 지점·기존512 원인 UNKNOWN,0120정리 INCOMPLETE. G4·배포·Owner·3거래일·C_R2 미완료.
+
+Source report: `docs/reviews/2026-10-19-r2-historical-base-role-views.md`. No delegation; no new host authorization.
+Next: freeze exact committed source and named tests, one CI and functional smoke,
+recover every required result before preparing any new host decision.
+Tracking4fbc67c0 renewby2026-10-19T10:30UTC/before47thtick; native Ralph blocked/no resume API.

@@ -419,9 +419,18 @@ def state_lock(parent, uid):
 
 def check_state_fd(parent, config):
     directory_info(parent, 0, READER_GROUP, 0o750)
-    if set(os.listdir(parent)) != set(STAGES) | set(SHARED):
+    members = set(os.listdir(parent))
+    if members not in (set(STAGES) | set(SHARED), set(STAGES) | set(SHARED) | {"historical-base"}):
         reject("DAILY_INSTALL_STATE")
     with contextlib.ExitStack() as stack:
+        if "historical-base" in members:
+            # Byte/pin verification belongs to the base-view gate before enable.
+            # Preserve this immutable subtree during state checks and backup.
+            views = stack.enter_context(child_directory(parent, "historical-base", 0, READER_GROUP, 0o750))
+            if set(os.listdir(views)) != {"producer", "admitter"}:
+                reject("DAILY_INSTALL_STATE")
+            for name, uid in (("producer", 10002), ("admitter", 10003)):
+                stack.enter_context(child_directory(views, name, uid, uid, 0o750))
         for name, uid in SHARED.items():
             stack.enter_context(child_directory(parent, name, uid, READER_GROUP, 0o750))
         for name, (stage, uid) in STAGES.items():

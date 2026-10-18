@@ -342,8 +342,38 @@ class WholeflowFixtureTests(unittest.TestCase):
         self.assertEqual((args[2], args[3]), (10002, "none"))
         self.assertFalse(any("SECRET" in key or key.startswith("DB") for key in args[5]))
         db.assert_not_called()
-        self.assertIn("type=bind,src=/fixture/base,dst=/data/owner-beta-artifacts,readonly", args[4])
+        self.assertIn("type=bind,src=/fixture/daily/historical-base/producer,dst=/data/owner-beta-artifacts,readonly", args[4])
+        self.assertNotIn("type=bind,src=/fixture/base,dst=/data/owner-beta-artifacts,readonly", args[4])
         self.assertIn("type=bind,src=/fixture/raw,dst=/data/raw,readonly", args[4])
+
+    def test_base_copy_failure_exposes_only_fixed_code_and_does_not_retry(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        test.base, test.daily = Path("/fixture/base"), Path("/fixture/daily")
+        with mock.patch.object(driver.base_views, "provision", side_effect=OSError("PRIVATE_BODY")) as provision:
+            with self.assertRaisesRegex(driver.fixture.FixtureError, "^WHOLEFLOW_BASE_COPY_REJECTED$"):
+                test.prepare_base_views()
+        provision.assert_called_once_with(test.base, test.daily)
+
+    def test_restored_base_copy_failure_exposes_only_fixed_code(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        test.daily = Path("/fixture/restored/daily")
+        with mock.patch.object(driver.base_views, "verify", side_effect=ValueError("PRIVATE_BODY")) as verify:
+            with self.assertRaisesRegex(driver.fixture.FixtureError, "^WHOLEFLOW_BASE_COPY_VERIFY_REJECTED$"):
+                test.verify_base_views()
+        verify.assert_called_once_with(test.daily)
+
+    def test_source_invariant_includes_both_immutable_role_copies(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        test.original = [{"path": "daily/historical-base/producer/fixed", "sha256": "a" * 64},
+                         {"path": "daily/historical-base/admitter/fixed", "sha256": "a" * 64}]
+        for index in (0, 1):
+            changed = [dict(e) for e in test.original]
+            changed[index]["sha256"] = "b" * 64
+            with self.subTest(index=index), mock.patch.object(test, "verify_base_views") as verify, \
+                    mock.patch.object(test, "inventory", return_value=changed):
+                with self.assertRaisesRegex(driver.fixture.FixtureError, "^WHOLEFLOW_BASE_COPY_CHANGED$"):
+                    test.verify_sources()
+            verify.assert_called_once_with()
 
     def test_replay_waits_actual_poll_and_rejects_a_replaced_run(self):
         test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
@@ -472,6 +502,7 @@ class WholeflowGitSourceTests(unittest.TestCase):
             "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
             "scripts/ops/lib/owner-beta-daily-release.py",
             "scripts/ops/lib/owner-beta-daily-backup-files.py",
+            "scripts/ops/lib/owner-beta-daily-base.py",
         )
         self.git("init", "--quiet")
         for relative in self.paths:

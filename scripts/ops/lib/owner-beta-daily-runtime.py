@@ -82,6 +82,8 @@ class Binding:
             "/data/owner-beta-daily/admitted": (shared + "admitted", False),
         }
         if service != "owner-beta-runner":
+            role = "producer" if service == SERVICES[0] else "admitter"
+            result["/data/owner-beta-artifacts"] = (shared + "historical-base/" + role, False)
             result.update({
                 "/data/raw": (self.data_root + "/raw", False),
                 "/data/owner-beta-daily/candidates":

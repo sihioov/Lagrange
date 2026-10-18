@@ -122,6 +122,16 @@ class DailyDockerTests(unittest.TestCase):
         shared = self.data / "owner-beta-daily"
         shared.mkdir(mode=0o750)
         os.chown(shared, 0, 10001)
+        for role in ("producer", "admitter"):
+            view = shared / "historical-base" / role
+            view.mkdir(parents=True, mode=0o755)
+            uid = 10002 if role == "producer" else 10003
+            os.chown(view, uid, uid)
+            view.chmod(0o750)
+            probe = view / "fixed-synthetic-base"
+            probe.write_bytes(b"same-fixed-synthetic-bytes\n")
+            os.chown(probe, uid, uid)
+            probe.chmod(0o600)
         for name, uid, gid, mode in [
             ("candidates", 10002, 10001, 0o750), ("admitted", 10003, 10001, 0o750),
             ("frontiers", 10003, 10001, 0o750), ("producer-state", 10002, 10002, 0o700),
@@ -244,6 +254,15 @@ class DailyDockerTests(unittest.TestCase):
             "printf overwrite >/data/owner-beta-daily/admitted/probe").returncode, 0)
         self.assertEqual((self.data / "owner-beta-daily/candidates/probe").stat().st_uid, 10002)
         self.assertEqual((self.data / "owner-beta-daily/admitted/probe").stat().st_uid, 10003)
+
+    def test_actual_role_owned_base_mounts_allow_reads_and_deny_writes(self):
+        self.start()
+        runtime.verify_running(self.engine, self.binding)
+        for service in runtime.SERVICES[:2]:
+            read = self.shell(service, "cat /data/owner-beta-artifacts/fixed-synthetic-base")
+            self.assertEqual((read.returncode, read.stdout), (0, b"same-fixed-synthetic-bytes\n"))
+            denied = self.shell(service, "printf change >/data/owner-beta-artifacts/fixed-synthetic-base")
+            self.assertNotEqual(denied.returncode, 0)
 
     def test_actual_sigterm_drain_preserves_generations_and_disables_restart(self):
         self.start()

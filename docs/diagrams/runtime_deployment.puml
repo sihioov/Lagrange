@@ -102,6 +102,7 @@ package "R2 DAILY OVERLAY — DEFAULT OFF\ncompose.owner-beta-daily.yml\nSOURCE 
   folder "daily/admitted\nsealed immutable evidence\nadmitter writes" as daily_admitted
   folder "daily/frontiers\nsealed source observations\nadmitter writes" as daily_frontiers
   folder "private producer/admitter state\nseparate UID-owned directories\nfull-cycle locks + durable poll gates" as daily_state
+  folder "daily/historical-base/{producer,admitter}\nfixed V3 byte-identical private copies\nUID10002 / UID10003; files0600\npart of the daily backup class" as daily_base_views
   node "Installed daily operations\nshared release lock; exact revision\nDB disable + owned cohort drain\nbackup / reconcile / guarded enable" as daily_ops
   folder "Verified encrypted backup set\nfull PG + six file classes\nCOMPLETE only after restore audit" as daily_backups
   node "Disposable PG18 restore\nUID999; network none; read-only root\nno live secret or DB connection" as daily_restore
@@ -113,10 +114,14 @@ daily_config --> daily_producer : read-only config/policy
 daily_config --> daily_admitter : read-only config/policy
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:16-27
 daily_config --> obr : read-only config/policy;\noptional mixed historical/daily worker
-' evidence: deploy/compose/compose.owner-beta-daily.yml:80-91; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:513-515
-artifacts --> daily_producer : approved historical base only (read-only)
-' evidence: deploy/compose/compose.owner-beta-daily.yml:178-189; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:803-805
-artifacts --> daily_admitter : independent approved-base verification (read-only)
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:508-509; scripts/ops/lib/owner-beta-daily-base.py:87-111
+artifacts --> daily_ops : read fixed V3 only; preserve original bytes/permissions
+' evidence: scripts/ops/lib/owner-beta-daily-base.py:130-183
+daily_ops --> daily_base_views : exclusive complete pair; no overwrite/repair
+' evidence: deploy/compose/compose.owner-beta-daily.yml:79-84; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:513-515
+daily_base_views --> daily_producer : own copy only (read-only); original approval gates
+' evidence: deploy/compose/compose.owner-beta-daily.yml:177-182; crates/job-queue/src/owner_beta/runner/daily_ingest.rs:803-805
+daily_base_views --> daily_admitter : own copy only (read-only); independent verification
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:86-91
 raw --> daily_producer : committed Raw snapshot (read-only)
 ' evidence: deploy/compose/compose.owner-beta-daily.yml:184-189
@@ -143,7 +148,7 @@ daily_admitter --> daily_state : own admitter state only
 daily_admitter --> pg : daily_input_admitter restricted\ncalendar/poll/admission functions
 ' evidence: crates/api-server/src/http/owner_beta_daily.rs:55-61; crates/api-server/src/repos/owner_beta/daily.rs:321-326,354-399
 api --> pg : Owner daily metadata projection;\nno admission or provider activity
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:337-354; scripts/ops/lib/owner-beta-daily-backup.py:790-808
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; scripts/ops/lib/owner-beta-daily-backup.py:790-808
 daily_ops --> pg : fixed migration-owner control/audit/repair;\nno replacement job or clock reset
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:334-357,470-509,813-842
 daily_ops --> daily_backups : complete PG + Raw/Curated/daily/config/\nreader-floor/historical-base capture; encrypt

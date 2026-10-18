@@ -20,7 +20,8 @@
 ' Wave85 candidate f215665: first-rollout recovery and six-file transition source.
 ' This draft describes source contracts; integrated/production acceptance is open.
 ' Whole-flow fixture topology is deliberately folded: synthetic-only QA, not production.
-' evidence: scripts/ops/verify-owner-beta-daily-wholeflow.py:625-646
+' evidence: scripts/ops/verify-owner-beta-daily-wholeflow.py:390-408,651-663
+' 2026-10-19: fixed V3 role-owned base copies; original approval guards unchanged.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -142,6 +143,7 @@ package "Operator tools (Node)" #F2F2F2 {
 package "R2 installed operations (shell / Python / fixed SQL)" #EDF3E1 {
   component "compose-release.sh\n(protected installed release\n+ explicit daily operation)" as daily_wrapper
   component "owner-beta-daily-operations.py\n(installer/runtime policy,\nprepare / enable / disable)" as daily_ops
+  component "owner-beta-daily-base.py\n(fixed V3 byte pins; two private\nrole-owned copies; exclusive publication)" as daily_base
   component "owner-beta-daily-backup.py\n(quiesce, full encrypted capture,\nisolated restore, reconcile, resume)" as daily_backup
   component "owner-beta-daily-backup-files.py\n(descriptor-bound six-class snapshot\n+ file/DB reference agreement)" as daily_files
   component "Fixed maintenance SQL\n(control, full daily audit,\noriginal reservation repair)" as daily_sql
@@ -260,7 +262,7 @@ daily_wrapper --> daily_backup : backup / verify / reconcile
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:43,819-826,854-871
 daily_backup --> daily_files : source and restored byte/reference audit
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:337-354; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:338-355; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:387,435; deploy/db/daily-backup-verify.sh:39-41
 daily_backup --> daily_sql : same audit inside isolated restored database
@@ -275,6 +277,12 @@ preupgrade_storage --> daily_files : explicit five-class preupgrade profile
 backup_transition --> release_files : protected reads, staging and owned replacement
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:34
 daily_ops --> release_files : protected installed-file operations
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:35,508-509,518
+daily_ops --> daily_base : prepare copies; verify before enable
+' evidence: scripts/ops/lib/owner-beta-daily-base.py:30,96-110,130-180
+daily_base --> release_files : protected reads and exclusive publish
+' evidence: scripts/ops/lib/owner-beta-daily-base.py:31,90-93,98-111
+daily_base --> daily_files : held original root; unchanged byte identity
 
 ' evidence: crates/selector/src/publish.rs:32 (use market_data::{DataUse, InstrumentMaster,..})
 selector --> market_data
