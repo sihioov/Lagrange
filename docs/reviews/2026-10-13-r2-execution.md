@@ -4724,3 +4724,21 @@ After this next package continue concrete G4 recovery/backuptransition/deploymen
 actual Owner use, three consecutive trading days and final C_R2.
 
 See docs/reviews/2026-10-18-r2-approved-base-wholeflow-packet.md and the dated image execution report.
+
+
+## Wave96 terminal recovery and Wave97 Git ownership correction — 2026-10-18
+
+Owner가 승인한 Wave96 통합 검증을04:39:37UTC 한 번 실행했으나 첫 기능 단계 전에 종료1로 실패했다. 실제 root Git 조회에서 사용자 소유 체크아웃 거부128을 재현했고, 임시 자원 부재·프로세스 종료·운영11개 상태와 기존 release 보존을 확인했다. 후보2a165fe의12이미지 인수는 보존한다. Wave97은 Git 조회를 정확한 체크아웃에 한정하고 후보/6소스 바이트 검증을 유지하는4파일 보정과 실제 소유권 회귀4개다. 새 후보의 필수122개·기존15이미지 결과·전체CI/기능 smoke를 검증한다. 호스트 재실행·운영 배포·Owner 사용·연속3거래일·C_R2는 미완료다.
+
+Closure SHAabac9cfad626d6aecf46fc11d99997fc69f342a47599b5bc7c67d99e1d49ac39
+pins14receipts; exact driver exit1/no functional phases/no private resources,
+production11unchanged. Reproduced root Git exit128/dubious ownership is a concrete
+blocker; original exception text was not printed. Four-file correction preserves
+all candidate/byte/product/cleanup guards and adds four real Git ownership cases.
+All122required definitions and15image outcomes plus every carried gate must be
+freshly recovered. No local project execution or new independent review claimed.
+One host permission consumed; no retry/stop/build authorized. Continue next exact
+candidate dependencies after hosted recovery. Native Ralph remains blocked;
+coordinator owns continuation without further delegation.
+
+See docs/reviews/2026-10-18-r2-wholeflow-source-git-correction.md.

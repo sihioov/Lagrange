@@ -101,7 +101,7 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-recovery-docker-self-test.py
       - name: Verify whole-flow fixture and driver boundaries
         if: ${{ !cancelled() }}
-        run: python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py
       - name: Verify legacy production operations fixtures
         if: ${{ !cancelled() }}
         run: sudo bash scripts/ops/production-ops-self-test.sh

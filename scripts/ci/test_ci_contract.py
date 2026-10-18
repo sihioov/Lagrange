@@ -199,7 +199,7 @@ class WorkflowContractTests(unittest.TestCase):
         )
         wholeflow = next(step for step in fixture_steps
                          if step["name"] == "Verify whole-flow fixture and driver boundaries")
-        self.assertEqual(wholeflow["run"], "python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py")
+        self.assertEqual(wholeflow["run"], "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py")
         for name, script in (
             ("Verify pre-upgrade cold archive boundaries", "production-preupgrade-recovery-self-test.py"),
             ("Verify pre-upgrade maintenance failure boundaries", "production-preupgrade-maintenance-self-test.py"),

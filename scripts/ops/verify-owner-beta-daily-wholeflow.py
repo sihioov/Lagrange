@@ -52,6 +52,32 @@ release = load("wholeflow_release", "scripts/ops/lib/owner-beta-daily-release.py
 require = fixture.require
 
 
+def source_git(*args):
+    # This root driver is explicitly launched from the reviewed checkout,
+    # which can belong to its non-root operator. Trust only that exact path
+    # for this command, as the official image builder does; never alter Git
+    # configuration or inherit a wildcard safe.directory from the caller.
+    try:
+        result = subprocess.run(
+            ["git", "-c", "safe.directory=" + str(ROOT), "-C", str(ROOT), *args],
+            env=ENV, capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise fixture.FixtureError("WHOLEFLOW_SOURCE_GIT_FAILED") from None
+    require(result.returncode == 0, "WHOLEFLOW_SOURCE_GIT_FAILED")
+    return result.stdout
+
+
+def verify_source(candidate):
+    head = source_git("rev-parse", "HEAD").decode("ascii").strip()
+    require(head == candidate, "WHOLEFLOW_SOURCE_REVISION")
+    for relative in ("configs/evidence/owner-beta-daily-price-policy-v1.json",
+                     "deploy/db/owner-beta-daily-control.sql", "scripts/ops/verify-owner-beta-daily-wholeflow.py",
+                     "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
+                     "scripts/ops/lib/owner-beta-daily-release.py", "scripts/ops/lib/owner-beta-daily-backup-files.py"):
+        pinned = source_git("show", head + ":" + relative)
+        require(pinned == (ROOT / relative).read_bytes(), "WHOLEFLOW_SOURCE_CHANGED")
+
+
 def private_file(path, data, uid=0, gid=0, mode=0o600):
     with open(path, "xb") as stream:
         os.fchown(stream.fileno(), uid, gid)
@@ -225,16 +251,7 @@ class WholeFlow:
         self.pg_image = pg["Id"]
         # A reviewed checkout is pinned before loading its SQL/policy fixtures;
         # source modifications cannot silently ride on a prior image candidate.
-        head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], env=ENV,
-                              capture_output=True, timeout=10, check=True).stdout.decode().strip()
-        require(head == self.args.candidate, "WHOLEFLOW_SOURCE_REVISION")
-        for relative in ("configs/evidence/owner-beta-daily-price-policy-v1.json",
-                         "deploy/db/owner-beta-daily-control.sql", "scripts/ops/verify-owner-beta-daily-wholeflow.py",
-                         "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
-                         "scripts/ops/lib/owner-beta-daily-release.py", "scripts/ops/lib/owner-beta-daily-backup-files.py"):
-            pinned = subprocess.run(["git", "-C", str(ROOT), "show", head + ":" + relative], env=ENV,
-                                    capture_output=True, timeout=10, check=True).stdout
-            require(pinned == (ROOT / relative).read_bytes(), "WHOLEFLOW_SOURCE_CHANGED")
+        verify_source(self.args.candidate)
         self.policy = (ROOT / "configs/evidence/owner-beta-daily-price-policy-v1.json").read_bytes()
         release.validate_policy(self.policy)
         self.plan = fixture.plan(dt.datetime.now(dt.timezone.utc), str(uuid.uuid4()), self.args.candidate)

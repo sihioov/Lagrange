@@ -1,15 +1,18 @@
 # R2 approved-base host integration packet
 
 R2-04/R2-09, Wave96. Candidate `2a165fe577e833529134627e980a129b9717ae6f`.
-Status: **PREPARED_NOT_AUTHORIZED_NOT_EXECUTED**. The third image attempt is
+Status: **AUTHORIZED_ONCE_EXECUTED_FAILED_TERMINAL_PRODUCTION_UNCHANGED**.
+Owner approved this packet on2026-10-18; its one attempt is consumed. The
+prepared scope below is preserved as the historical authorization boundary.
+[Actual failure/recovery and source correction](2026-10-18-r2-wholeflow-source-git-correction.md). The third image attempt is
 [accepted and recovered](2026-10-18-r2-third-image-maintenance-attempt.md).
 This next packet is one host-local integration attempt using those exact images.
 
 The previous Owner approval covered one image-maintenance interruption and its
 restoration. Its [scope](2026-10-18-r2-third-image-maintenance-packet.md#requested-single-attempt-and-service-impact)
 does not authorize this new private DB/container execution. The latest Owner
-continuation also limits host operations to that approved attempt. A new decision
-therefore covers the fresh bounded admission and this integration run together;
+continuation also limits host operations to that approved attempt. The new explicit decision
+covered the fresh bounded admission and this integration run together;
 the earlier image approval and root-access grant are not requested again.
 
 ## Concrete scope and bindings
@@ -46,7 +49,7 @@ source receipt is referenced. No new helper execution, protected read, test,
 installation or lifecycle action occurred during preparation. This is coordinator
 static preparation, not a new independent review or host acceptance.
 
-## Ordered one-attempt execution after approval
+## Historical authorized one-attempt sequence
 
 1. Within a five-minute admission, compare the full clean source, accepted
    manifest/twelve image IDs and OCI revisions, local PostgreSQL digest, and

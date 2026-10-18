@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 후보2a165fe 실제12이미지 검증·원래 서비스 복귀 완료.** 후보2a165fe의 실제 이미지12개·704개 파일 검증·49개 점검·7개 bundle/18개 바이너리·2132소스pin을 대조하고 V2 manifest를 인수했다. 04:08:43UTC 원래 Owner 컨테이너 복귀와 빌드 정상 종료,04:08:47UTC 독립 복구 정상 종료,사후 READ ONLY 정산·11개 고정 상태를 확인했다. 현재 운영 release는fce9b90이다. 다음은 운영 서비스를 유지하는 승인 기준데이터 기반20분 격리 통합 검증이다. 후보·명령·자원·정리 범위를 준비했고 새 실행 결정1건을 요청했다. 물리적 기준데이터 경로는 승인 후 고정 컨테이너의 읽기 전용 mount에서만 확정하며 추정하지 않는다. 운영 배포·Owner 사용·연속3거래일·최종C_R2는 미완료다. [이미지·복구](reviews/2026-10-18-r2-third-image-maintenance-attempt.md) · [다음 실행안](reviews/2026-10-18-r2-approved-base-wholeflow-packet.md).
+현재: **R2 호스트 통합1회 실패 회수·Wave97 Git 경계 보정 검증 준비.** Owner가 승인한 Wave96 통합 검증을04:39:37UTC 한 번 실행했으나 첫 기능 단계 전에 종료1로 실패했다. 실제 root Git 조회에서 사용자 소유 체크아웃 거부128을 재현했고, 임시 자원 부재·프로세스 종료·운영11개 상태와 기존 release 보존을 확인했다. 후보2a165fe의12이미지 인수는 보존한다. Wave97은 Git 조회를 정확한 체크아웃에 한정하고 후보/6소스 바이트 검증을 유지하는4파일 보정과 실제 소유권 회귀4개다. 새 후보의 필수122개·기존15이미지 결과·전체CI/기능 smoke를 검증한다. 호스트 재실행·운영 배포·Owner 사용·연속3거래일·C_R2는 미완료다. [근거](reviews/2026-10-18-r2-wholeflow-source-git-correction.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave96 승인 기준데이터 격리 통합 검증1회 결정 → 실제host흐름 → G4복구/배포 → Owner·연속3거래일·C_R2. |
+| 다음 단계 | Wave97 새 후보 hosted 검증 → 새 후보 실제 이미지/호스트 의존성 준비 → G4복구/배포 → Owner·연속3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

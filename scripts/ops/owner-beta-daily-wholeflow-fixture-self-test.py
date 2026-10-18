@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Synthetic fixture/driver boundary tests; never approved-base execution.
 
-Hosted CI may run this file without private base data, Docker or credentials.
+Hosted CI runs this file as root, without private base data, Docker or credentials.
+The Git ownership cases use real Git only in newly created disposable repositories.
 Mocked driver tests establish ordering/failure behavior only. They do not prove
 Rust compilation, SQL admission, real HTTP publication or actual recovery.
 """
@@ -268,6 +269,83 @@ class WholeflowFixtureTests(unittest.TestCase):
                 test.create_network("initial")
         self.assertEqual(events, ["intent", "create"])
         self.assertEqual(test.uncertain_creations, {("network", test.nonce + "-initial")})
+
+
+class WholeflowGitSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.assertEqual(os.geteuid(), 0, "Git ownership fixtures require root; do not skip them")
+        temporary = tempfile.TemporaryDirectory(prefix="wholeflow-git-fixture-")
+        self.addCleanup(temporary.cleanup)
+        self.repo = Path(temporary.name) / "operator-checkout"
+        self.repo.mkdir()
+        self.env = dict(driver.ENV, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+        # Independent fixtures for every protected source path. No real
+        # approved base, production repository or database is opened here.
+        self.paths = (
+            "configs/evidence/owner-beta-daily-price-policy-v1.json",
+            "deploy/db/owner-beta-daily-control.sql",
+            "scripts/ops/verify-owner-beta-daily-wholeflow.py",
+            "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
+            "scripts/ops/lib/owner-beta-daily-release.py",
+            "scripts/ops/lib/owner-beta-daily-backup-files.py",
+        )
+        self.git("init", "--quiet")
+        for relative in self.paths:
+            path = self.repo / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((relative + "\n").encode())
+        self.git("add", "--all")
+        self.git("-c", "user.name=Wholeflow fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+                 "commit", "--quiet", "-m", "source fixture")
+        self.commit = self.git("rev-parse", "HEAD").stdout.decode().strip()
+        self.config_before = (self.repo / ".git/config").read_bytes()
+        for path in [self.repo, *self.repo.rglob("*")]:
+            os.chown(path, 10001, 10001)
+        root_patch = mock.patch.object(driver, "ROOT", self.repo)
+        env_patch = mock.patch.object(driver, "ENV", self.env)
+        root_patch.start()
+        env_patch.start()
+        self.addCleanup(root_patch.stop)
+        self.addCleanup(env_patch.stop)
+
+    def git(self, *args, check=True):
+        return subprocess.run(["git", "-C", str(self.repo), *args], env=self.env,
+                              capture_output=True, timeout=10, check=check)
+
+    def test_root_reads_operator_checkout_without_persistent_git_trust(self):
+        before = self.git("rev-parse", "HEAD", check=False)
+        self.assertNotEqual(before.returncode, 0)
+        self.assertIn(b"detected dubious ownership", before.stderr)
+        driver.verify_source(self.commit)
+        after = self.git("rev-parse", "HEAD", check=False)
+        self.assertNotEqual(after.returncode, 0)
+        self.assertIn(b"detected dubious ownership", after.stderr)
+        self.assertEqual((self.repo / ".git/config").read_bytes(), self.config_before)
+        self.assertEqual(self.repo.stat().st_uid, 10001)
+
+    def test_root_source_check_rejects_different_candidate(self):
+        wrong = "0" * 40 if self.commit != "0" * 40 else "1" * 40
+        with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_REVISION"):
+            driver.verify_source(wrong)
+
+    def test_root_source_check_rejects_each_modified_protected_file(self):
+        for relative in self.paths:
+            path = self.repo / relative
+            original = path.read_bytes()
+            try:
+                path.write_bytes(original + b"uncommitted change\n")
+                with self.subTest(path=relative), self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_CHANGED"):
+                    driver.verify_source(self.commit)
+            finally:
+                path.write_bytes(original)
+
+    def test_root_git_failure_has_only_a_finite_diagnostic(self):
+        (self.repo / ".git/HEAD").unlink()
+        with self.assertRaises(f.FixtureError) as raised:
+            driver.verify_source(self.commit)
+        self.assertEqual(str(raised.exception), "WHOLEFLOW_SOURCE_GIT_FAILED")
+        self.assertNotIn(str(self.repo), str(raised.exception))
 
 
 if __name__ == "__main__":
