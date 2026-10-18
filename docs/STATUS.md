@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 두 번째 정상종료 성공·이미지 검증 실패 후 복귀, 보정 후보 검증 중.** Wave93에서 새로 승인한 두 번째 유지보수를1회 실행했다. 정상종료0·작업 정산·run-start gate는 통과했지만, 첫 DB 이미지 검증이 product-image-mode-contract-drift로 실패했다. 동일 컨테이너 복귀·독립복구 종료·사후 정산·11개 상태 복원을 확인했다. 이미지1개 생성/검증0개, manifest 없음. daily-control의 누락된 payload·0755 계약과 CI 실행 범위를6파일로 보정한 0d407f8 후보의 CI39084560317·기능 smoke39084562837을 각각1회 실행했다. 새 전체 이미지 fixture는 실패했고 나머지 실행의 전체 근거를 회수 중이다. 추가 중단은 아직 승인되지 않았다. [2차 복귀·이미지 계약 보정](reviews/2026-10-18-r2-image-mode-correction.md), [진행 중 검증](reviews/2026-10-18-r2-image-mode-ci.md).
+현재: **R2 두 번째 정상종료 성공·이미지 검증 실패 후 복귀, 보정 후보 검증 중.** Wave93에서 새로 승인한 두 번째 유지보수를1회 실행했다. 정상종료0·작업 정산·run-start gate는 통과했지만, 첫 DB 이미지 검증이 product-image-mode-contract-drift로 실패했다. 동일 컨테이너 복귀·독립복구 종료·사후 정산·11개 상태 복원을 확인했다. 이미지1개 생성/검증0개, manifest 없음. daily-control의 누락된 payload·0755 계약과 CI 실행 범위를6파일로 보정한 0d407f8 후보의 CI39084560317·기능 smoke39084562837을 각각1회 실행했다. CI는 policy 이미지 fixture 실패로 종료했고, 8개 전체 로그·7checkout·106필수PASS/12미실행·기존 Rust/PG/Web 근거를 회수했다. 별도 기능 smoke는 실행 중이다. 추가 중단은 아직 승인되지 않았다. [2차 복귀·이미지 계약 보정](reviews/2026-10-18-r2-image-mode-correction.md), [진행 중 검증](reviews/2026-10-18-r2-image-mode-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

@@ -3,9 +3,10 @@
 R2-04/09, Wave93. Candidate `0d407f8ba613d75d99c1cbc8e974a72073b9d5bb`
 contains the six-file correction described in the frozen
 [source and recovery report](2026-10-18-r2-image-mode-correction.md).
-It has **not been accepted**. At 2026-10-18 01:02 UTC, CI and functional
-smoke are still running; the newly required full image-builder fixture has
-already failed. Sources and frozen review inputs remain unchanged.
+It has **not been accepted**. At 2026-10-18 01:20 UTC, CI had terminated
+with failure; its eight jobs and complete logs have now been recovered. The
+separate functional smoke remains running. Sources and frozen inputs remain
+unchanged until both executions have terminal full recovery.
 
 ## Exact dispatch and recovery scope
 
@@ -27,7 +28,35 @@ The current inventory SHA256 is
 flags saying no dispatch are historical; the two launch receipts record the
 actual executions. Earlier unlaunched inventories are preserved.
 
-## Partial results; no acceptance
+## Complete CI failure recovery; functional smoke pending
+
+The CI execution jobs ended with six successes and one failure; the required
+aggregate consequently failed. The only failing execution job is policy, at
+the new full synthetic image-builder fixture. All eight full log hashes and
+seven actual checkout SHAs were recovered. All 1,166 current input pins and
+517 candidate blob contents still match. The immutable CI-only recovery
+receipt SHA256 is
+`be3a23b91f70db0ec4ffe6e1b332ff3619f9b67ab3fcfc8844828d2a46cc7bc9` at
+`target/r2-daily-beta/ci/0d407f8/required-ci-evidence.json`.
+
+| Evidence scope | Actual result |
+| --- | --- |
+| 118 required definitions | 106 named PASS; 12 NOT_EXECUTED at explicitly skipped policy steps |
+| Full image fixture | Six required markers PASS; three UNKNOWN; step exit1 with no failing assertion printed |
+| Workspace Rust | 3,350 complete named PASS rows and six ignored; all applicable carried required groups match their qualified binary/phase; six chart cases separately PASS |
+| Policy carried groups | 71 named PASS; 110 entries NOT_EXECUTED at skipped steps; inventories overlap and are not unique-count totals |
+| Original ten correction cases | Six PASS; four NOT_EXECUTED; affected four-module inventory77 PASS /27 NOT_EXECUTED |
+| Web | 34 supervisor, six contract and18 UI named cases; browser129+14 identities/outcomes and both cleanup/reservation gates pass |
+| PostgreSQL | 19 direct processes exit0/no SKIP;146 named rows;0060 names32/subcases73;83 bootstrap cases;62 source migration checksums match twice;0039 guard and owned cleanup pass |
+| Native recovery fixture | Eight actual source/restored ownership observations999:0/0700 match; no production-state claim |
+| Format/lint/Python | Workspace format and strict all-target/all-feature Clippy pass; Python495 passed/10 skipped/7 warnings is aggregate-only evidence |
+
+A fragmented nonrequired Rust name and unprinted nested helper rows/exits
+remain UNKNOWN. Three source-verified non-Linux exclusions remain excluded.
+The earlier receipt's empty-target PASS label for one exclusion is not carried
+forward as execution evidence. Functional smoke has not yet been accepted.
+
+## Historical partial recovery at 01:02 UTC
 
 Four complete logs and their actual checkout SHAs have been recovered.
 Format, strict Clippy and Python jobs passed. The Python summary is

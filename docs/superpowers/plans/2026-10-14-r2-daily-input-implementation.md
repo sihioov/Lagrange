@@ -6474,3 +6474,22 @@ Successor e9dd6173 confirmed active, handoff persisted, then bab15aae deleted.
 Renew by12:05UTC before47thtick/12:56:26.726expiry. Native Ralph remains blocked.
 See docs/reviews/2026-10-18-r2-image-mode-ci.md and private wave93 launch/handoff
 receipts. Third maintenance and finalR2 remain open.
+
+
+### Wave93 complete CI recovery; smoke pending — 2026-10-18
+
+CI39084560317 attempt1 ended FAILURE: six execution jobs succeeded, policy's
+full synthetic image fixture failed, and required aggregate failed. Eight full
+logs/seven actual checkouts recovered;1166pins/517 committed blob bytes match.
+Required definitions106PASS/12NOT_EXECUTED; six image markers PASS/three UNKNOWN.
+All applicable carried Rust groups match current binary/phase rows; three
+non-Linux exclusions are excluded, not accepted from empty target lists.
+Policy carried groups71PASS/110NOT_EXECUTED; original corrections6PASS/4NOT_EXECUTED.
+Web34supervisor/6contract/18UI/129+14browser and cleanup pass; PG19 exit0/noSKIP,
+146names/0060 32+73/83bootstrap/62checksumstwice/0039/cleanup pass. Eight native
+metadata observations matched. CI-only receipt SHA
+be3a23b91f70db0ec4ffe6e1b332ff3619f9b67ab3fcfc8844828d2a46cc7bc9.
+Functional smoke39084562837 is still active. No source/frozen-input mutation,
+extra production action or new dispatch; e9dd6173 continuation remains active.
+Recover smoke's exact terminal publication/idempotence/cleanup evidence before
+bounded fixture diagnosis/correction. Full R2 and third maintenance remain open.
