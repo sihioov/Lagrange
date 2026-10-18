@@ -1,7 +1,7 @@
 # R2 host ancestor contract hosted verification
 
 R2-04/R2-09, Wave99. Candidate
-`0120b0ea6d54198e030545c08276d257fd0da17d`. Status: REQUIRED_CI_ACCEPTED_FUNCTIONAL_SMOKE_PENDING.
+`0120b0ea6d54198e030545c08276d257fd0da17d`. Status: HOSTED_ACCEPTED_ONLY.
 [Source correction and preceding host evidence](2026-10-18-r2-host-ancestor-contract-correction.md).
 
 ## Exact candidate and one dispatch per workflow
@@ -92,13 +92,53 @@ That authorization does not transfer to0120b0e. No new root/production reads,
 SQL, Docker lifecycle, local project tests/compiler/parser/checker/helper,
 provider action or additional delegation occurred in this correction phase.
 
-Heartbeatbf7d2b09 is confirmed, with exact run IDs/bounds and remaining scope in
+At the previous partial checkpoint, heartbeatbf7d2b09 was confirmed, with exact run IDs/bounds and remaining scope in
 `wp-8/wave99/ci-complete-smoke-pending-handoff.json` SHA256
 `b97a96c503d2f3ac2bbb59c9405bb78b9d1e6ed48fc8a77838257abab2b12110`.
 The prior running handoff remains preserved.
-Renew before18:50UTC,19:48:45.805UTC expiry or47thtick. Native Ralph remains
+That historical monitor had an18:50UTC renewal bound and19:48:45.805UTC expiry. Native Ralph remains
 blocked; same-agent heartbeat does not protect daemon outage. After terminal
 recovery continue concrete new-candidate image/approved-base host preparation,
 then the appropriate Owner decision, G4/recovery/backup transition/deployment,
 Owner use,three consecutive trading days and finalC_R2. CI completion alone is
 not overallR2 completion.
+
+
+## Full hosted recovery, 08:45:16UTC terminal observation
+
+Functional smoke39109372364 attempt1 completed SUCCESS at08:30:55UTC. Its full
+log and actual checkout bring the total to9 logs/8 matching checkout SHAs.
+Both runs, all jobs/steps/pages and current1204 pins/523 committed blobs match.
+The entire hosted scope is accepted, including131 required definitions,15 image
+outcomes,23 wholeflow fixtures and every carried group described above. The
+required-only receipt and earlier partial observations remain historical.
+
+The functional test executed actual publication and repeated runs. Its exact
+aggregate count/source/lineage marker matches the committed script and observed
+comparison guards. Raw-probe and full-flow original_exit/cleanup_exit are0.
+All10 cleanup outcomes passed: raw-probe volumes, research stop, empty fixture
+data, Compose down, project containers/volumes/networks, context image removal,
+context image absence and temporary directory. Owned resources were absent.
+The full functional branch does not print the separate raw-init-only branch's
+marker; actual branch behavior and outcomes were used instead. A same-hash RAM
+log re-read recovered lowercase identifiers initially excluded by the generic
+collector. No workflow rerun or source change was needed. Raw logs were not saved.
+
+Full terminal receipt `target/r2-daily-beta/ci/0120b0e/hosted-terminal-evidence.json`
+SHA256 `760384f837d279a8691882f6148695187966f38ef431cb38149a7bd2a9e7b73b`.
+Functional receipt `ci/0120b0e/functional-smoke-evidence.json` SHA256
+`f1a4ac0e44be124a4ce484f72dab65c4b514bc13291a2734d8105c105a502ece`;
+its complete log hash is
+`f3576ccfe3a53ce7b6e699141f771484f6613637dc7808f8536d1d70b4f0499b`.
+
+The three platform exclusions, six ignored workspace cases, ten Python skips,
+one fragmented helper and unprinted independent nested rows/exits retain their
+stated limits. Hosted acceptance does not accept actual successor images,
+approved-base host execution, deployment, Owner use or finalC_R2.
+
+The [Wave100 concrete host packet](2026-10-18-r2-0120b0e-host-sequence-packet.md)
+is prepared with2140 source pins/11 image controls and no host execution. The
+prior899 authorization remains candidate-specific. Successor heartbeat81b4d3b6
+was confirmed08:56:43.844UTC and its bounded handoff persisted beforebf7d2b09
+was deleted. Renew20:00UTC/before20:56:43.841UTC expiry or47thtick. Native Ralph
+remains blocked; no new delegation or daemon-outage protection is claimed.
