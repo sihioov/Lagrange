@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 Wave99 hosted 실행·전체 회수 진행.** 후보0120b0e의 상위 경로 계약 보정과9개 회귀를 커밋하고1204pin/523blob·필수131개/15이미지결과/23wholeflow를 고정했다. remote SHA·전체 exact-head 실행0건 확인 뒤 CI39109370627과 기능smoke39109372364를 각각1회 시작했다.07:57:39UTC 형식·strictClippy·Python 성공의 전체로그3개/checkout3개를 회수했다. 나머지 전체 증거는 회수 중이며 후보 미인수다. 이전899의 실제12이미지·복귀는 인수했고 조건부통합은 사전점검 차단으로dispatch0이다. 새 후보 호스트·G4·배포·Owner·3거래일·C_R2는 미완료다. [근거](reviews/2026-10-18-r2-host-ancestor-contract-ci.md).
+현재: **R2 Wave99 필수 CI 인수·기능 smoke 회수 대기.** 후보0120b0e의 CI39109370627 attempt1이08:18:52UTC 8개 작업 모두 성공했다. 전체로그8개/실제checkout7개와 필수131항목(새 상위경로9개 포함)·이미지15결과·wholeflow23개·기존 Rust/PG/Web gate를 대조했다.1204pin/523blob은 일치한다. 기능smoke39109372364 attempt1은08:28:23UTC 실행 중이므로 전체 후보 인수는 보류한다. 이전899의 실제12이미지·복귀와 조건부통합dispatch0 이력을 보존한다. 새 후보 호스트·G4·배포·Owner·3거래일·C_R2는 미완료다. [근거](reviews/2026-10-18-r2-host-ancestor-contract-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
