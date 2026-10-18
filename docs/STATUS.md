@@ -6,13 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 Wave101 CI 전체증거 회수.** Wave101 후보512625a의 CI8작업이10:24:43UTC 성공 종료했다. 전체로그8개·실제checkout7개·1252pin/525blob과 필수141개·새 회귀10개(실제Docker5개)·wholeflow32개·이미지15결과 및 기존Rust/PG/Web 범위를 대조했다. 기능smoke는10:30UTC 진행 중으로 실제 게시·반복 실행·정리 전체증거가 남았다. 전체후보·새호스트는 미인수이며 익명볼륨1개 보존·G4·배포·Owner·3거래일·C_R2 미완료다. [CI 회수](reviews/2026-10-18-r2-wholeflow-inherited-volume-ci.md).
+현재: **R2 Wave102 실행안 결정.** 후보512625a의 CI8작업과 기능smoke가 모두 SUCCESS로 종료했다. 전체9로그/8checkout·1252pin/525blob·필수141개/이미지15결과/wholeflow32개와 실제 게시·반복·정리10개를 대조해 hosted 범위를 인수했다. Wave102는 새2144소스pin/11제어파일로 이미지 유지보수1회와 완전한 복귀 뒤 격리 통합검증1회를 준비했다. 새 호스트 실행은 미승인·미실행이며 기존 익명볼륨은 보존한다. G4·배포·Owner·3거래일·C_R2는 미완료다. [실행안](reviews/2026-10-18-r2-512625a-host-sequence-packet.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
 2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
-현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. Wave97 전체 hosted 회수 뒤05:48:59UTC에 Wave98 실행안 결정 추적fc826f21을 확인·인계 저장하고8cd8622c 삭제를 확인했다. 새 Owner 승인 후07:11:51UTC 실행 추적5f3cfda2를 확인·인계 저장하고fc826f21 삭제를 확인했다. 이미지 인수·통합 사전점검 차단 뒤07:48:45UTC 후속bf7d2b09의 인계를 저장하고5f3cfda2 삭제를 확인했다. Wave99 전체 hosted 회수와 Wave100 실행안 준비 뒤08:56:43UTC 후속81b4d3b6을 확인·인계 저장하고bf7d2b09 삭제를 확인했다. 새 승인·실제 이미지 시작 뒤09:32:51UTC 후속179ec5a7 인계를 저장하고81b4d3b6 삭제를 확인했다. 이미지 인수·통합 실패 회수 뒤09:50:03UTC 후속04318894 인계를 저장하고179ec5a7 삭제를 확인했다. 후보512625a CI·smoke 시작 후10:01:08UTC 후속44965a67 인계를 저장하고04318894 삭제를 확인했다. 현재 후속은20:45UTC 이전 갱신,22:01:08.201UTC 만료다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. Wave97 전체 hosted 회수 뒤05:48:59UTC에 Wave98 실행안 결정 추적fc826f21을 확인·인계 저장하고8cd8622c 삭제를 확인했다. 새 Owner 승인 후07:11:51UTC 실행 추적5f3cfda2를 확인·인계 저장하고fc826f21 삭제를 확인했다. 이미지 인수·통합 사전점검 차단 뒤07:48:45UTC 후속bf7d2b09의 인계를 저장하고5f3cfda2 삭제를 확인했다. Wave99 전체 hosted 회수와 Wave100 실행안 준비 뒤08:56:43UTC 후속81b4d3b6을 확인·인계 저장하고bf7d2b09 삭제를 확인했다. 새 승인·실제 이미지 시작 뒤09:32:51UTC 후속179ec5a7 인계를 저장하고81b4d3b6 삭제를 확인했다. 이미지 인수·통합 실패 회수 뒤09:50:03UTC 후속04318894 인계를 저장하고179ec5a7 삭제를 확인했다. 후보512625a CI·smoke 시작 후10:01:08UTC 후속44965a67 인계를 저장하고04318894 삭제를 확인했다. 후속33c0cd33을11:10:07.401UTC에 확인하고 인계718e3b6b를 저장한 뒤44965a67 삭제를 확인했다.22:00UTC 전/47번째 tick 전 갱신하며23:10:07.395UTC 만료다. 같은 에이전트의 제한된 후속 추적이며 native Ralph는 blocked이고 daemon 중단을 보호하지 않는다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 |512625a의 전체 hosted 증거 회수 → 구체적인 새 이미지/격리 통합 및 잔여볼륨 결정 → G4복구/배포 → Owner·3거래일·C_R2. |
+| 다음 단계 | Wave102 새 이미지/조건부 격리 통합 결정 → 실제 이미지·통합 → G4복구/배포 → Owner·3거래일·C_R2. 기존 익명볼륨 보존·과거 정리 INCOMPLETE 유지. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -4496,3 +4496,9 @@ Prepared303 diagram citation ranges against this candidate in the isolated draft
 ### R2 scope-decision block — 2026-10-16
 
 The same unanswered privileged-read/reviewer-exception decisions persisted across three consecutive goal turns, including the original preparation turn. All independent authorized preparation is complete; no live CI/reviewer is being awaited. The native Ralph goal was set to BLOCKED after this audit. R2-01~09/final C_R2 remain the full objective, not completed or narrowed. Resume only within the explicit response to the prepared host-admission and integrated-review packets. No duplicate CI, new worker, root/Docker action or operational mutation was performed.
+
+## 2026-10-18 Wave101 full hosted acceptance and Wave102 preparation
+
+후보512625a의 CI8작업과 기능smoke가 모두 SUCCESS로 종료했다. 전체9로그/8checkout·1252pin/525blob·필수141개/이미지15결과/wholeflow32개와 실제 게시·반복·정리10개를 대조해 hosted 범위를 인수했다. Wave102는 새2144소스pin/11제어파일로 이미지 유지보수1회와 완전한 복귀 뒤 격리 통합검증1회를 준비했다. 새 호스트 실행은 미승인·미실행이며 기존 익명볼륨은 보존한다. G4·배포·Owner·3거래일·C_R2는 미완료다.
+
+후속33c0cd33을11:10:07.401UTC에 확인하고 인계718e3b6b를 저장한 뒤44965a67 삭제를 확인했다.22:00UTC 전/47번째 tick 전 갱신하며23:10:07.395UTC 만료다. 같은 에이전트의 제한된 후속 추적이며 native Ralph는 blocked이고 daemon 중단을 보호하지 않는다.

@@ -1,10 +1,11 @@
 # R2 inherited-volume correction — hosted evidence
 
 R2-04/R2-09, Wave101. Candidate `512625a31fdb59d284cbd13fa6f2334a4737cc13`.
-CI full evidence is accepted; separate functional smoke remains IN PROGRESS.
-The candidate is not yet hosted-accepted. Source and frozen
-inputs remain immutable while the two runs execute. Later documentation HEAD
-does not change the selected candidate.
+Both exact runs and their full evidence are accepted for hosted scope only.
+CI completed10:24:43UTC and functional smoke completed10:55:08UTC; full terminal
+recovery observed both at11:00:09UTC. Source and frozen inputs remain immutable.
+Later documentation HEAD does not change the selected candidate. Actual candidate
+images and approved-base host integration remain unexecuted/unaccepted.
 
 [Source scope and prior host failure](2026-10-18-r2-wholeflow-inherited-volume-correction.md).
 The five-source-file correction has no local project execution or independent
@@ -133,3 +134,37 @@ The separate functional smoke was still in progress at10:30:09UTC. Its actual
 publication/repeat/10 cleanup outcomes and resource absence remain pending.
 The9-log/8-checkout full terminal receipt and successor host packet follow only
 after recovery. No new host execution, volume deletion or acceptance is claimed.
+
+
+## Full hosted acceptance — 11:00 UTC
+
+CI39117542904 and functional smoke39117544844 attempt1 are SUCCESS. All8 CI jobs
+plus the smoke job, every step/page,9 full log hashes and8 actual checkout SHAs
+were recovered. All1252 frozen pins and525 committed blobs matched. Required141
+names,15 image outcomes,32 wholeflow definitions and all carried Rust/strict
+Clippy/format/PG/Web groups passed. The five actual Docker create/inspect cases
+and four mocked mount/cleanup boundaries passed; they do not prove private
+approved-base integration. Explicit exclusions and unprinted independent nested
+rows/exits remain UNKNOWN as recorded above.
+
+The functional run actually published2 universes/12 members/6 datasets/
+1 source publication/2 feeds/10 items and60 calendar/history/projected rows.
+Repeated execution preserved expected counts and lineage. All10 cleanup outcomes
+were0 and the owned-resource absence check passed. The exact success marker was
+matched against the pinned script and complete log; the general diagnostic
+extractor omitted lowercase fixture identities, so its output alone was not used.
+A raw-init-only marker is not printed in this full functional branch and remains
+NOT_PRINTED. No workflow rerun, source change or extra production probe occurred.
+
+Full terminal `target/r2-daily-beta/ci/512625a/hosted-terminal-evidence.json`
+SHA256 `4d99e5a7b07e20049a26afff264d0f20c9ee494426c1cf51cc1a79a9f2c06170`;
+functional receipt `functional-smoke-evidence.json`
+SHA256 `fda7c05b58f6d8c7620c8e48c312f43c838692e0f11528fe348178a8b5f65e7e`.
+Required-only0ef41cff and all partial receipts remain historical. Raw logs stayed
+in RAM; only finite structured evidence/hashes were persisted.
+
+Continue with the [Wave102 packet](2026-10-18-r2-512625a-host-sequence-packet.md):
+new2144-pin checkout,11 image/recovery controls and a conditional integration
+packet with explicit retention of the old anonymous volume. It is prepared,
+not authorized or executed. Prior Wave100 approval is consumed. Actual images,
+private integration, G4/deployment/Owner/three trading days/finalC_R2 stay open.
