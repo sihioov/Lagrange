@@ -1,7 +1,13 @@
 # R2 image and conditional approved-base integration packet
 
 R2-04/R2-09, Wave98. Candidate899f259f9c8872fb61f0c95745904f552c8750e9.
-Status: **PREPARED_NOT_AUTHORIZED_NOT_EXECUTED**.
+Status: **AUTHORIZED_IMAGE_ATTEMPT_RUNNING; CONDITIONAL_WHOLEFLOW_AUTHORIZED_NOT_YET_EXECUTED**.
+
+Owner answered “이어서 진행해” after this concrete two-phase decision request.
+Authorization was recorded2026-10-18T07:10:56.169455UTC. Both phases are approved
+within this packet; do not ask again between accepted image restoration and
+the conditional isolated wholeflow attempt. Earlier preparation flags below
+are historical, not the current authorization state.
 
 The candidate has complete [hosted acceptance](2026-10-18-r2-wholeflow-git-ci.md):
 CI39098366992 and functional smoke39098368916 attempt1 SUCCESS;9full log
@@ -10,15 +16,15 @@ outcomes and the actual publication/repeat/ten cleanup outcomes were recovered.
 Terminal evidence SHA256:
 c87097708cf803ce69ec0e6d63bfe2d4242e20c1d084e489e6da67c8fbd0d31b.
 
-## One proposed decision covering two ordered attempts
+## One approved decision covering two ordered attempts
 
-Approve one new image-maintenance attempt for this exact candidate, including
+Owner approved one new image-maintenance attempt for this exact candidate, including
 fresh bounded host/read-only work admission,official plan/preflight,independent
 recovery installation,one normal SIGTERM of the original Owner V2 container,
 the official serial twelve-image build and same-container restoration.
 
 Only if all image evidence and restoration are accepted, the same decision
-would also authorize one new isolated approved-base host integration attempt.
+also authorizes one new isolated approved-base host integration attempt.
 It uses the real approved historical base plus two explicitly synthetic
 sessions and a private database. It does not interrupt production services.
 No further permission question is needed between these two explicitly approved
@@ -57,8 +63,10 @@ same original Owner V2,are healthy and post-restoration work settles.
 | Approved-base selector | owner-beta-runner container1b8bec839b8592918a4f5785233e64bb73a6ab601ad0309f1f24b5941a3824a5,one read-only bind at /data/owner-beta-artifacts |
 | Isolated PostgreSQL | local postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a;no pull |
 
-Current image IDs,manifest hash,protected output/unit absence,current host
-health and work settlement remain UNKNOWN. A new actual image closure must
+At preparation, image IDs,manifest hash,protected output/unit absence,host
+health and work settlement were UNKNOWN. The fresh admission below now supplies
+protected output/unit absence,host health and work settlement; final image IDs
+and manifest remain pending. A new actual image closure must
 bind all twelve IDs/revisions/saved bytes/layout and the immutable manifest.
 Old2a165fe images or manifest are not substituted. The base physical path is
 bound only from the fresh exact selector observation; the historical path is
@@ -137,7 +145,57 @@ Native Ralph is blocked with no agent resume API; bounded same-agent
 continuation remains responsible for the overall task,without delegation.
 
 
-Continuation: same-agent heartbeatfc826f21 confirmed2026-10-18T05:48:59.095Z.
-The persisted successor handoff preceded confirmed8cd8622c deletion. Renew by
-16:45UTC,before17:48:59.092UTC expiry and47thtick. Until a new decision,perform
-only bounded no-change reconciliation;do not repeat the question or host probes.
+Continuation: same-agent heartbeat5f3cfda2 confirmed2026-10-18T07:11:51.874Z.
+The persisted authorized successor handoff preceded confirmedfc826f21 deletion.
+Renew by18:10UTC,before19:11:51.871UTC expiry and47thtick. Native Ralph remains
+blocked; this heartbeat does not protect daemon outage. The actual independent
+root recovery service protects this admitted image attempt.
+
+
+## Actual authorization and first build observation — 2026-10-18
+
+Owner의 새 “이어서 진행해” 지시로 Wave98 두 단계 각1회를 승인했다. 후보899f259의2137소스pin·11제어파일·fresh 호스트/READ ONLY 정산·공식 plan/preflight를 대조하고 독립 복구를 가동한 뒤07:18:07.982728UTC 이미지 빌드를 정확히 한 번 시작했다.07:19:15UTC Owner V2 정상종료0·작업 정리·DB 이미지2개 성공과 API 이미지 진행을 관측했다. 전체12이미지/manifest·같은 컨테이너 복귀·복구 정상 종료는 회수 중이며, 모두 인수한 뒤 이미 승인된 격리 통합 검증1회를 이어간다. G4·운영 배포·Owner·연속3거래일·C_R2는 미완료다.
+
+Fresh root read-only admission07:15:58UTC found the exact eleven identities:
+ten serving containers healthy/restart0/no OOM, research stopped2/restarts7935.
+No actual compiler/build or producer unit execution was observed. Historical
+active-exited units had zero PIDs/cgroup processes and were not reset. Available
+memory11171700KiB,swapfree824552KiB,PSI some/full0.0;the readable preceding
+30-minute kernel range contained zero rows/OOM. This is not full-history proof.
+Current remained releases/fce9b90542cf9b1a911d46e4c4d3530db7efba4c.
+READ ONLY runtime/aggregate settlement passed with zero running jobs/attempts.
+Official plan bound all12services and freshly observed source-input SHA
+454cad1f9cb8f12ddafca6729897acc9ef2eccd5947adf40942020b1e9a1cf76;preflight passed.
+
+The shared root window is07:17:15.544164–19:17:15.544164UTC. Normal stop must
+start by08:17:15.544164;watchdog17:47:15.544164;attestation18:17:15.544164.
+No renewal. Wholeflow can dispatch only after accepted closure and no later
+than19:17:15.544164;full recovery within60minutes and by20:17:15.544164UTC.
+Independent recovery was actually active with its startup receipt before the
+single build dispatch07:18:07.982728UTC. The normal stop exited0 and the
+post-stop work probe passed. At07:19:15UTC build/recovery were active/running,
+DB-role-bootstrap and DB-migrate emitted success and api-server had started.
+Manifest was absent. These markers do not establish full image acceptance.
+
+Private receipts under target/r2-daily-beta/wp-8:
+
+| Receipt | SHA256 |
+| --- | --- |
+| wave98/owner-authorization.json | acca88680165af54c38fdd775d51c0b3e10fd80974151ba06c23e11369c84145 |
+| maintenance-899f259-a4/authorized-static-reconciliation.json | 4aa30c3403a83ab934921ea98018fd04a71a1943a93171c36692152cea16ed37 |
+| maintenance-899f259-a4/authorized-host-admission.json | 0a314abd888b0717a2fa9095dd54e086d99d9fae2e6e7059b5bfa9e9951ebed6 |
+| maintenance-899f259-a4/authorized-prelaunch-settlement.json | 91955a77f83c0f7b4b4a7221be7f844696e278ea071e9918cbdd31c12188f498 |
+| maintenance-899f259-a4/official-prelaunch-evidence.json | e1ccd63789f85bcf7c6afc11713f403800ca44d687399fd8fde19e6f9b9e807f |
+| maintenance-899f259-a4/control-installation.json | 9fbcabd58134110062ba8e400704e6faddd02262f7495bae3555926a209d46ae |
+| maintenance-899f259-a4/recovery-launch.json | f09bc8834a9432f30866c6c35b62a7a916614463e99aea088136643bab4b192a |
+| maintenance-899f259-a4/recovery-ready.json | f92d995c8327d8317c2f395e4d849ac29363a9d917790739cf955f6f1f472562 |
+| maintenance-899f259-a4/build-launch.json | d1c65116875fbd94cf5309356f30db5965cb27bdd1cc30b2ff093510a00bedea |
+| maintenance-899f259-a4/initial-build-observation.json | 82ed9da816867568654a4cc08074406e7aba8fc11cd26139a0572d2c76628fd3 |
+
+Full twelve-image saved-byte/layout/OCI/manifest recovery, same-ID restoration,
+actual successful build/recovery terminal and postrestore settlement remain
+required. Then execute the already-authorized conditional wholeflow once.
+Source and accepted hosted evidence remain unchanged. No new local test or
+independent-review result is claimed; approved official host commands are
+recorded above. Production deployment/G4/Owner/three trading days/finalC_R2
+remain open and outside this packet.
