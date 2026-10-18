@@ -7002,3 +7002,21 @@ Same-agent continuation is not a worker or daemon-outage protection. Independent
 root recovery protects this maintenance attempt. Retained anonymous volume and
 all prior failed/accepted evidence remain unchanged. G4/deployment/Owner use/three
 trading days/finalC_R2 remain open and outside this image+isolated integration scope.
+
+## Wave103 — actual producer failure: finite diagnostics (2026-10-18)
+
+Wave102 both approved phases are consumed.512625a twelve images and same-ID
+restoration are accepted (closure6566857a); isolated wholeflow dispatched once,
+actual producer exited1 and driver failed (closure4d3770a7). Inner cause UNKNOWN.
+New-run owned resources are absent; old unproven volume and prior cleanup
+INCOMPLETE are preserved. No new host retry is authorized.
+
+Coordinator directly writes bounded diagnostic evidence in the driver plus nine
+mocked regressions, with existing exit/OOM/state/volume guards unchanged. No local
+project execution or new independent review. Freeze150 required names,15 image
+outcomes and41 wholeflow cases, then one justified new exact-head CI/smoke pair.
+Recover full terminal named evidence before acceptance or another correction;
+105-minute reporting bounds start at actual workflow creation. Prepare any new
+host scope only after hosted recovery. G4/deployment/Owner/3 trading days/final
+C_R2 remain open. Heartbeatf7c37450 handoff persisted and cad36e21 deleted;
+renew before2026-10-19T00:00UTC/tick47; same-agent continuation is not a worker.

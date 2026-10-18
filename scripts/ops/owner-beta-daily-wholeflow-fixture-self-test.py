@@ -194,6 +194,127 @@ class WholeflowFixtureTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(f.FixtureError):
                 driver.fixed_outcome(data, "owner_beta_daily_cycle", "ADMITTED")
 
+    def test_failed_daily_command_preserves_finite_stderr_code_without_retry(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        stdout = b"PRIVATE_PAYLOAD_SENTINEL"
+        stderr = b'{"event":"owner_beta_daily_startup","code":"CONFIGURATION_INVALID"}\n'
+        result = subprocess.CompletedProcess([], 1, stdout, stderr)
+        with mock.patch.object(subprocess, "run", return_value=result) as run:
+            with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_DOCKER_FAILED"):
+                test.command(["start", "--attach", "--interactive", "private-id"], failure_service="producer")
+        run.assert_called_once()
+        row = test.receipt["command_failures"][0]
+        self.assertEqual(row["docker_exit_code"], 1)
+        self.assertEqual(row["diagnostics"], [{"stream": "stderr", "event": "owner_beta_daily_startup",
+                                              "code": "CONFIGURATION_INVALID"}])
+        self.assertEqual(row["streams"]["stdout"], {"bytes": len(stdout), "sha256": f.digest(stdout).removeprefix("sha256:")})
+        self.assertNotIn("PRIVATE_PAYLOAD_SENTINEL", json.dumps(test.receipt))
+        self.assertNotIn("private-id", json.dumps(test.receipt))
+
+    def test_failure_diagnostics_reject_unknown_extra_duplicate_and_malformed_fields(self):
+        invalid = [b'{"event":"owner_beta_daily_cycle","code":"SECRET_SENTINEL"}',
+                   b'{"event":"owner_beta_daily_cycle","code":"STATE","message":"SECRET_SENTINEL"}',
+                   b'{"event":"owner_beta_daily_cycle","code":"SECRET_SENTINEL","code":"STATE"}',
+                   b'{"event":"owner_beta_daily_cycle","code":["STATE"]}',
+                   b'{"event":"owner_beta_daily_cycle","code":{"STATE":"SECRET_SENTINEL"}}',
+                   b'{"event":"owner_beta_run","outcome":"SUCCEEDED"}', b'null', b'[]', b'\xff', b'not json']
+        for data in invalid:
+            with self.subTest(data=data):
+                row = driver.command_failure("producer", subprocess.CompletedProcess([], 1, b"", data))
+                self.assertEqual(row["diagnostics"], [])
+                self.assertEqual(row["diagnostic_status"], "UNKNOWN")
+                self.assertNotIn("SECRET_SENTINEL", json.dumps(row))
+
+    def test_failure_diagnostics_select_both_streams_only_for_daily_services(self):
+        stdout = b'{"event":"owner_beta_daily_cycle","outcome":"BLOCKED"}\n'
+        stderr = b'{"event":"owner_beta_daily_cycle","code":"STATE"}\n'
+        for service in ("producer", "admitter", "worker", "bootstrap", "migrate", "control"):
+            with self.subTest(service=service):
+                row = driver.command_failure(service, subprocess.CompletedProcess([], 1, stdout, stderr))
+                self.assertEqual(row["streams"]["stderr"]["sha256"], f.digest(stderr).removeprefix("sha256:"))
+                if service in ("producer", "admitter"):
+                    self.assertEqual(row["diagnostics"], [
+                        {"stream": "stdout", "event": "owner_beta_daily_cycle", "outcome": "BLOCKED"},
+                        {"stream": "stderr", "event": "owner_beta_daily_cycle", "code": "STATE"}])
+                else:
+                    self.assertEqual(row["diagnostic_status"], "UNKNOWN")
+                    self.assertEqual(row["diagnostics"], [])
+
+    def test_failure_diagnostics_bound_total_bytes_line_bytes_and_row_count(self):
+        valid = b'{"event":"owner_beta_daily_cycle","code":"STATE"}'
+        for data in (b"x" * 65537 + b"\n" + valid, b" " * 513 + valid,
+                     (valid + b"\n") * 17, b"[" * 510):
+            with self.subTest(size=len(data)):
+                row = driver.command_failure("producer", subprocess.CompletedProcess([], 1, data, b""))
+                self.assertEqual(row["diagnostic_status"], "UNKNOWN")
+                self.assertEqual(row["diagnostics"], [])
+                self.assertEqual(row["streams"]["stdout"]["bytes"], len(data))
+
+    def test_nonzero_once_with_success_outcome_still_fails_before_state_acceptance(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        output = b'{"event":"owner_beta_daily_cycle","outcome":"CANDIDATE_READY"}'
+        with mock.patch.object(test, "create", return_value="created") as create, \
+             mock.patch.object(test, "inspect") as inspect, \
+             mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"", output)) as run:
+            with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_DOCKER_FAILED"):
+                test.once("producer", include_stderr=True)
+        create.assert_called_once()
+        run.assert_called_once()
+        inspect.assert_not_called()
+        row = test.receipt["command_failures"][0]
+        self.assertEqual(row["service"], "producer")
+        self.assertEqual(row["docker_exit_code"], 1)
+        self.assertEqual(row["diagnostics"][0]["outcome"], "CANDIDATE_READY")
+
+    def test_zero_once_keeps_exit_oom_and_running_state_guards(self):
+        for state in ({"Running": True, "ExitCode": 0, "OOMKilled": False},
+                      {"Running": False, "ExitCode": 1, "OOMKilled": False},
+                      {"Running": False, "ExitCode": 0, "OOMKilled": True},
+                      {"Running": False, "ExitCode": 0, "OOMKilled": False}):
+            test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+            with self.subTest(state=state), mock.patch.object(test, "create", return_value="created"), \
+                 mock.patch.object(test, "inspect", return_value={"State": state}), \
+                 mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"out", b"err")) as run:
+                if state == {"Running": False, "ExitCode": 0, "OOMKilled": False}:
+                    self.assertEqual(test.once("producer", include_stderr=True), b"outerr")
+                else:
+                    with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_PROCESS_FAILED"):
+                        test.once("producer", include_stderr=True)
+                run.assert_called_once()
+                self.assertNotIn("command_failures", test.receipt)
+
+    def test_uncertain_command_does_not_invent_terminal_diagnostics(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        error = subprocess.TimeoutExpired("PRIVATE_ARG_SENTINEL", 1, output=b"PRIVATE_BODY_SENTINEL")
+        with mock.patch.object(subprocess, "run", side_effect=error) as run:
+            with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_DOCKER_UNCERTAIN"):
+                test.command(["start", "--attach", "--interactive", "private-id"], failure_service="producer")
+        run.assert_called_once()
+        self.assertNotIn("command_failures", test.receipt)
+        self.assertNotIn("PRIVATE_", json.dumps(test.receipt))
+
+    def test_diagnostic_scope_rejects_sql_cleanup_redirect_and_unknown_service_before_execution(self):
+        cases = [(["exec", "db", "psql"], {"failure_service": "producer"}),
+                 (["start", "--attach", "--interactive", "id"], {"failure_service": "unknown"}),
+                 (["start", "--attach", "--interactive", "id"], {"failure_service": "producer", "cleanup": True}),
+                 (["start", "--attach", "--interactive", "id"], {"failure_service": "producer", "output": object()})]
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        with mock.patch.object(subprocess, "run") as run:
+            for args, kwargs in cases:
+                with self.subTest(kwargs=kwargs), self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_DIAGNOSTIC_SCOPE"):
+                    test.command(args, **kwargs)
+            run.assert_not_called()
+
+    def test_unscoped_sql_failure_never_persists_payload_or_output(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        result = subprocess.CompletedProcess([], 1, b"PRIVATE_ROW_SENTINEL", b"PRIVATE_ERROR_SENTINEL")
+        with mock.patch.object(subprocess, "run", return_value=result) as run:
+            with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_DOCKER_FAILED"):
+                test.command(["exec", "db", "psql"], payload=b"PRIVATE_QUERY_SENTINEL")
+        run.assert_called_once()
+        self.assertNotIn("command_failures", test.receipt)
+        self.assertNotIn("PRIVATE_", json.dumps(test.receipt))
+
     def test_http_publication_requires_bound_current_run_and_exact_asof(self):
         state = {"enabled": True, "runtime_enabled": True, "state": "CURRENT", "reason_code": None,
                  "expected_session": "2026-10-16", "data_support_end": "2026-10-16",

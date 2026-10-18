@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-18 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R1 완료 → R2 최종 완료까지 지속 추적.512625a 승인된 Wave102 이미지 빌드·복귀 → 조건부 격리 통합검증. 정리 불확실성·G4·배포·Owner·3거래일·C_R2 미완료. |
+| 현재 실행 우선순위 | R1 완료 → R2 최종 완료까지 지속 추적. Wave103 실제 producer 실패의 유한 진단 보정·새 hosted 검증. G4·배포·Owner·3거래일·C_R2 미완료. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **Wave102 승인된 이미지 빌드·복귀 회수.** Owner의 “이어서 진행해”로 준비된 두 순서 단계가 각1회 승인됐다. 후보512625a/2144소스pin·11제어파일·새 호스트/READ ONLY 정산·공식 plan/preflight 대조 후13:01:51UTC 이미지 빌드를 정확히1회 시작했다. 독립 복구가 먼저 가동됐고 Owner V2 정상exit0/작업 정산을 확인했다. 전체12이미지·복귀 종결 인수 뒤 이미 승인된 격리 통합검증1회를 이어간다. 기존 익명볼륨은 보존하며 과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 미완료다. [실행안](reviews/2026-10-18-r2-512625a-host-sequence-packet.md);cad36e21 추적/23:30UTC 전 갱신. |
+| 다음 착수 항목 | **Wave103 producer 실패 진단 보정 검증.** 512625a 실제12이미지·동일ID복귀·독립복구종결/READ ONLY정산을 인수했다. 이어 승인된 통합검증1회는 실제producer exit1로 실패했고 내부 오류 코드는 UNKNOWN이다. 이번7컨테이너·network·stage 부재 및 운영11상태불변을 확인했다. 원문 없이 고정 오류 코드/출력 해시를 남기는 두 소스 보정과9회귀를 작성했으며 새 hosted 검증 전이다. 두 단계 승인은 소진됐고 기존 익명볼륨/과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 남아 있다. [증거·보정](reviews/2026-10-18-r2-wholeflow-producer-diagnostics.md);f7c37450 추적/10월19일00:00UTC 전 갱신. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. 실제 catch-up 범위·예산과 G4 운영 적용 조건을 구체화해야 함. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -266,7 +266,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   입력 기준일과 추천 `as_of`가 기대 거래일에 일치하는지 대조한다. 봉인된 역사 artifact의 지원
   기준일 이후를 제공할 수 없다면 새 입력의 승인·갱신 경로를 먼저 확정하고 그동안 이 항목을
   `BLOCKED`로 남긴다. 역사 price-only artifact를 generic READY로 간주하거나 과거 추천을 최신으로 표시하지 않는다.
-  현재 DOING — 2026-10-18, Wave102: Owner의 “이어서 진행해”로 준비된 두 순서 단계가 각1회 승인됐다. 후보512625a/2144소스pin·11제어파일·새 호스트/READ ONLY 정산·공식 plan/preflight 대조 후13:01:51UTC 이미지 빌드를 정확히1회 시작했다. 독립 복구가 먼저 가동됐고 Owner V2 정상exit0/작업 정산을 확인했다. 전체12이미지·복귀 종결 인수 뒤 이미 승인된 격리 통합검증1회를 이어간다. 기존 익명볼륨은 보존하며 과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 미완료다. 담당: 코디네이터. [실행안](reviews/2026-10-18-r2-512625a-host-sequence-packet.md).
+  현재 DOING — 2026-10-18, Wave103: 512625a 실제12이미지·동일ID복귀·독립복구종결/READ ONLY정산을 인수했다. 이어 승인된 통합검증1회는 실제producer exit1로 실패했고 내부 오류 코드는 UNKNOWN이다. 이번7컨테이너·network·stage 부재 및 운영11상태불변을 확인했다. 원문 없이 고정 오류 코드/출력 해시를 남기는 두 소스 보정과9회귀를 작성했으며 새 hosted 검증 전이다. 두 단계 승인은 소진됐고 기존 익명볼륨/과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 남아 있다. 담당: 코디네이터. [증거·보정](reviews/2026-10-18-r2-wholeflow-producer-diagnostics.md).
   이전 차단 — 2026-10-17, Wave90 실제 호스트 접근: 후보 ab48a79의 필수 CI39037896827과 별도 기능 smoke39037899130 attempt1이 모두 SUCCESS로 종료됐다. 전체 로그9개·실제 checkout8개·1155pin/513blob·필수117개를 대조했고 실제 fixture 발행·반복 실행·정리 종료0과 잔여 자원 없음까지 확인했다. hosted 검증은 인수했다. 실제 호스트 단계는 root 접근 실패로 BLOCKED이며 복구 신호를 기다린다. 이미지12개·승인 입력 호스트 전체 흐름·G3/G4·운영·Owner·3거래일·C_R2는 미완료다. 담당: 코디네이터. 접근 복구 신호 후 이미 승인된 제한적 읽기 점검부터 재개하며, 그 전에는 같은 probe/질문을 반복하지 않는다. [회수/한계](reviews/2026-10-17-r2-smoke-fixture-ci.md) · [구체적 후속](reviews/2026-10-17-r2-current-host-handoff.md).
   진행 — 2026-10-16, [첫 백업 설치 전환](runbooks/r2-first-backup-transition.md): 첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다.
   이전 소스 checkpoint — 2026-10-16, Wave82 [사전 일관 복구](runbooks/r2-preupgrade-recovery.md): cold PG18 전체 클러스터·파일 복원/audit 비교와21개 회귀 정의 작성. 앞선 설치 전환22개를 포함한43개는 모두 WRITTEN_UNEXECUTED. 운영 maintenance 진입점·완전한 writer fence·archive 발행·실제 승인 입력 전체 흐름·통합 검증은 진행 중이다.
@@ -302,7 +302,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
   하루라도 실패하면 원인 수정 후 연속 관찰을 다시 시작한다.
 - [ ] **R2-09 — 첫 베타 릴리스 인수.** exact revision·manifest·모드, 운영 적용, health·백업/복구
   근거와 정상 Owner 사용 결과를 묶는다. 운영 확인 결과를 후속 문서 커밋으로 남긴다.
-  현재 DOING — 2026-10-18, Wave102: Owner의 “이어서 진행해”로 준비된 두 순서 단계가 각1회 승인됐다. 후보512625a/2144소스pin·11제어파일·새 호스트/READ ONLY 정산·공식 plan/preflight 대조 후13:01:51UTC 이미지 빌드를 정확히1회 시작했다. 독립 복구가 먼저 가동됐고 Owner V2 정상exit0/작업 정산을 확인했다. 전체12이미지·복귀 종결 인수 뒤 이미 승인된 격리 통합검증1회를 이어간다. 기존 익명볼륨은 보존하며 과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 미완료다. 담당: 코디네이터. [실행안](reviews/2026-10-18-r2-512625a-host-sequence-packet.md).
+  현재 DOING — 2026-10-18, Wave103: 512625a 실제12이미지·동일ID복귀·독립복구종결/READ ONLY정산을 인수했다. 이어 승인된 통합검증1회는 실제producer exit1로 실패했고 내부 오류 코드는 UNKNOWN이다. 이번7컨테이너·network·stage 부재 및 운영11상태불변을 확인했다. 원문 없이 고정 오류 코드/출력 해시를 남기는 두 소스 보정과9회귀를 작성했으며 새 hosted 검증 전이다. 두 단계 승인은 소진됐고 기존 익명볼륨/과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 남아 있다. 담당: 코디네이터. [증거·보정](reviews/2026-10-18-r2-wholeflow-producer-diagnostics.md).
   이전 차단 — 2026-10-17, Wave90 실제 호스트 접근: 후보 ab48a79의 필수 CI39037896827과 별도 기능 smoke39037899130 attempt1이 모두 SUCCESS로 종료됐다. 전체 로그9개·실제 checkout8개·1155pin/513blob·필수117개를 대조했고 실제 fixture 발행·반복 실행·정리 종료0과 잔여 자원 없음까지 확인했다. hosted 검증은 인수했다. 실제 호스트 단계는 root 접근 실패로 BLOCKED이며 복구 신호를 기다린다. 이미지12개·승인 입력 호스트 전체 흐름·G3/G4·운영·Owner·3거래일·C_R2는 미완료다. 담당: 코디네이터. 접근 복구 신호 후 이미 승인된 제한적 읽기 점검부터 재개하며, 그 전에는 같은 probe/질문을 반복하지 않는다. [회수/한계](reviews/2026-10-17-r2-smoke-fixture-ci.md) · [구체적 후속](reviews/2026-10-17-r2-current-host-handoff.md).
   진행 — 2026-10-16, [첫 백업 설치 전환](runbooks/r2-first-backup-transition.md): 첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다.
   이전 소스 checkpoint — 2026-10-16, Wave82 [사전 일관 복구](runbooks/r2-preupgrade-recovery.md): cold PG18 전체 클러스터·파일 복원/audit 비교와21개 회귀 정의 작성. 앞선 설치 전환22개를 포함한43개는 모두 WRITTEN_UNEXECUTED. 운영 maintenance 진입점·완전한 writer fence·archive 발행·실제 승인 입력 전체 흐름·통합 검증은 진행 중이다.
@@ -1751,3 +1751,5 @@ The same unanswered privileged-read/reviewer-exception decisions persisted acros
 | 2026-10-18 | R2-04/09 | Wave101 전체 hosted 인수·Wave102 실행안 준비 | 9로그/8checkout·141필수/15이미지/32wholeflow·실제게시반복/10정리 통과;2144소스pin/11제어파일 준비 | [검증](reviews/2026-10-18-r2-wholeflow-inherited-volume-ci.md) · [실행안](reviews/2026-10-18-r2-512625a-host-sequence-packet.md);terminal4d99e5a7/sequence35c7efae,33c0cd33 인계 후44965a67 삭제. 새호스트 미승인·익명볼륨 보존·최종R2 미완료 |
 
 | 2026-10-18 | R2-04/09 | Wave102 두 순서 단계 승인·여섯 번째 이미지1회 시작 | 새2144소스/11제어·호스트·정산·plan/preflight 통과; 독립복구 선행·Owner exit0·13:01:51UTC 단일 dispatch | [실행 기록](reviews/2026-10-18-r2-512625a-host-sequence-packet.md);auth9c10f665/buildb5b1f6b1/cad36e21 인계 후33c0cd33 삭제. 이미지/통합 인수·최종R2 미완료 |
+
+| 2026-10-18 | R2-04/09 | Wave102 이미지·복귀 인수 및 실제producer 실패 종결·Wave103 진단 보정 | 12이미지/704검사/49gate·운영복귀 인수; 통합producer exit1/내부원인UNKNOWN,이번자원부재·기존익명볼륨보존. 두소스/9회귀 작성 | [증거·보정](reviews/2026-10-18-r2-wholeflow-producer-diagnostics.md);image6566857a/wholeflow4d3770a7, 새 hosted 검증 전·호스트 추가승인없음·최종R2미완료 |

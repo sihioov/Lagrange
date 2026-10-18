@@ -41,6 +41,65 @@ DB_CLIENTS = {
     "migrate": ("db-migrate", "/usr/local/bin/lagrange-migrate"),
     "control": ("db-migrate", "/usr/local/bin/lagrange-daily-control"),
 }
+# Exact finite diagnostics emitted by owner-beta-runner/daily.rs. These are
+# evidence only: a reported outcome never substitutes for exit/state guards.
+DAILY_DIAGNOSTICS = {
+    ("owner_beta_daily_startup", "code"): (
+        "ARGUMENTS_INVALID", "MODE_INVALID", "IDENTITY_INVALID", "CREDENTIAL_BOUNDARY",
+        "ENVIRONMENT_INVALID", "CONFIGURATION_INVALID", "HEALTH_CONFIGURATION_INVALID",
+        "DATABASE_CONFIG_INVALID", "DATABASE_UNAVAILABLE", "HEALTH_WRITER_UNAVAILABLE"),
+    ("owner_beta_daily_cycle", "code"): (
+        "CONFIGURATION", "STATE", "INTERRUPTED", "INPUT_PENDING", "INPUT_BLOCKED",
+        "INVALID_ARTIFACT", "CONFLICT", "DATABASE", "COMMIT_UNKNOWN"),
+    ("owner_beta_daily_cycle", "outcome"): (
+        "DISABLED", "BUSY", "NOT_DUE", "PENDING", "CANDIDATE_READY", "ADMITTED", "REPLAY", "BLOCKED"),
+}
+
+
+def unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate diagnostic key")
+        value[key] = item
+    return value
+
+
+def command_failure(service, result):
+    """Discard all raw bytes after bounded, exact daily-event selection.
+
+    The exit code belongs to the attached Docker command, not an independent
+    container-state observation. Unknown output remains unknown, never echoed.
+    DB clients and worker output receive hashes only; their output contracts
+    are not the daily producer/admitter diagnostic contract.
+    """
+    streams = {"stdout": result.stdout or b"", "stderr": result.stderr or b""}
+    evidence = {"service": service, "docker_exit_code": result.returncode,
+                "streams": {name: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                            for name, data in streams.items()},
+                "diagnostic_status": "UNKNOWN", "diagnostics": []}
+    if service not in ("producer", "admitter") or sum(map(len, streams.values())) > 65536:
+        return evidence
+    for name, data in streams.items():
+        for line in data.splitlines():
+            if len(line) > 512:
+                continue
+            try:
+                value = json.loads(line, object_pairs_hook=unique_object)
+            except (ValueError, UnicodeError, RecursionError):
+                continue
+            if not isinstance(value, dict):
+                continue
+            for (event, field), labels in DAILY_DIAGNOSTICS.items():
+                if (set(value) == {"event", field} and value["event"] == event
+                        and isinstance(value[field], str) and value[field] in labels):
+                    evidence["diagnostics"].append({"stream": name, "event": event, field: value[field]})
+            if len(evidence["diagnostics"]) > 16:
+                evidence["diagnostics"] = []
+                return evidence
+    if evidence["diagnostics"]:
+        evidence["diagnostic_status"] = "OBSERVED_ALLOWLISTED"
+    return evidence
 
 
 def load(name, relative):
@@ -138,13 +197,19 @@ class WholeFlow:
         require(remaining > 0, "WHOLEFLOW_DEADLINE")
         return min(limit, remaining)
 
-    def command(self, args, payload=None, *, limit=60, output=None, cleanup=False, include_stderr=False):
+    def command(self, args, payload=None, *, limit=60, output=None, cleanup=False, include_stderr=False,
+                failure_service=None):
+        require(failure_service is None or (failure_service in (*DB_CLIENTS, "producer", "admitter", "worker")
+                and len(args) == 4 and args[:3] == ["start", "--attach", "--interactive"]
+                and output is None and not cleanup), "WHOLEFLOW_DIAGNOSTIC_SCOPE")
         try:
             result = subprocess.run(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock", *args],
                 env=ENV, input=payload, stdout=output or subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=30 if cleanup else self.remaining(limit), check=False)
         except (OSError, subprocess.TimeoutExpired):
             raise fixture.FixtureError("WHOLEFLOW_DOCKER_UNCERTAIN") from None
+        if result.returncode != 0 and failure_service is not None:
+            self.receipt.setdefault("command_failures", []).append(command_failure(failure_service, result))
         require(result.returncode == 0, "WHOLEFLOW_DOCKER_FAILED")
         return (result.stdout or b"") + (result.stderr if include_stderr else b"")
 
@@ -240,7 +305,7 @@ class WholeFlow:
     def once(self, *args, payload=None, include_stderr=False, **kwargs):
         container = self.create(*args, **kwargs)
         output = self.command(["start", "--attach", "--interactive", container], payload, limit=360,
-                              include_stderr=include_stderr)
+                              include_stderr=include_stderr, failure_service=args[0])
         value = self.inspect("container", container)
         require(value["State"]["Running"] is False and value["State"]["ExitCode"] == 0
                 and not value["State"]["OOMKilled"], "WHOLEFLOW_PROCESS_FAILED")

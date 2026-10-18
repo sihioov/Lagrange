@@ -1,9 +1,12 @@
 # R2 candidate 512625a image and conditional integration packet
 
-R2-04/R2-09, Wave102. **AUTHORIZED_IMAGE_ACTIVE; CONDITIONAL_WHOLEFLOW_NOT_YET_DISPATCHED.**
-Owner “이어서 진행해” approved both ordered phases once; the sixth image attempt
-was dispatched once13:01:51UTC. No repeated decision between these phases.
-The preparation statements below are historical and remain preserved.
+R2-04/R2-09, Wave102. **BOTH_AUTHORIZED_PHASES_CONSUMED.**
+Candidate512625a images/restoration are accepted; the conditional isolated
+integration ran once and failed at actual producer exit1. Its inner cause is
+UNKNOWN. Current-run resources are absent; the prior anonymous volume remains
+preserved and prior cleanup INCOMPLETE. No retry is authorized.
+See [terminal evidence and Wave103 correction](2026-10-18-r2-wholeflow-producer-diagnostics.md).
+The preparation and launch statements below are historical and remain preserved.
 
 ### Historical preparation before this authorization
 Candidate `512625a31fdb59d284cbd13fa6f2334a4737cc13` is hosted-accepted only.
