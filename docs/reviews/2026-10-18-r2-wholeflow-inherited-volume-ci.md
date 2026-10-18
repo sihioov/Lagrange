@@ -57,3 +57,53 @@ open. Same-agent heartbeat44965a67 confirmed; handoff SHA256
 `8c42e24e34c495fb0cac23eff11e9a64d3e8b133de34628c3c274f0f04d7e48c`;
 predecessor04318894 deletion confirmed. Renew by20:45UTC/before47th tick or expiry.
 Native Ralph remains blocked; this heartbeat is not a worker or outage protection.
+
+
+## Policy and Web reconciliation — 10:15–10:18 UTC
+
+Policy completed10:08:03UTC with the new required actual-Docker step successful.
+All five actual create/inspect tests and four new mocked boundary tests plus the
+workflow contract ran and passed. Wholeflow32 named cases,137 of141 required
+definitions, all15 image outcomes,113 affected-module cases and carried policy
+named groups were matched. Four required Rust definitions await workspace logs.
+Web's129-case off lane and14-case market-stream lane matched every carried case
+identity/outcome, with no skip/retry/flaky cases and cleanup/reservation success.
+All24 explicit Web/UI markers and34 supervisor cases matched. Five full job logs
+and five actual checkout SHAs are now recovered;1252 input pins remain unchanged.
+
+Receipt `ci/512625a/policy-web-reconciliation.json` SHA256
+`ca8dc4eaf5cc86b02afe706d1c901d558dcc9a1647868ea1cf34e9a079332735`;
+partial `ci/512625a/policy-web-partial-evidence.json` SHA256
+`03710405b17d4867bfcbd96af6c880ce84b7e5c48d8eed710a89fddb2a9385ad`.
+Paths are relative to `target/r2-daily-beta/`.
+
+The coordinator's first observation extractor recognized only bare PASS and
+missed four suite markers with explanatory suffixes; its Web matcher also
+incorrectly required a space after the first colon. Exact source marker forms
+and identical-hash complete logs resolved both. A quoting typo in coordinator
+reconciliation preparation was corrected before writing evidence. Original
+observations remain preserved; no product source change, rerun or test claim
+was substituted for the actual named rows.
+
+PostgreSQL, workspace, required gate and functional smoke full evidence remain
+pending. This is partial evidence, not hosted candidate or new host acceptance.
+Source/input freeze, existing reporting bounds and heartbeat44965a67 continue.
+
+
+## PostgreSQL reconciliation — 10:18–10:20 UTC
+
+The dedicated PostgreSQL job also completed successfully, bringing full logs and
+actual checkout matches to6. All19 direct processes exited0 without skips;146
+named rows,0060's32 names/73 subcases and83 bootstrap outcomes matched. Both
+full-release runs had62 migration SHA-384 checksums equal to the pinned source;
+0039 rollback protection, catalog checks and cleanup remained successful.
+Parallel0060 row arrays were compared by exact name/outcome multiplicity, while
+the direct process order stayed exact; no incidental emission order requirement
+was substituted for the real contract.
+
+Combined policy/PG/Web receipt SHA256
+`eb518d5d17c16e5da649a6439dceecd3b01bc331d8b58b125406e240b9942fef`;
+`ci/512625a/partial-ci-evidence.json` SHA256 `083d7bfa483a12d2fa4832513181369e401fb134990352934991173ebcba7d76`.
+The earlier five-log partial receipt remains historical. Required137/141 passed;
+workspace's four Rust definitions, the required gate job and full functional
+smoke evidence remain pending. Source/input pins and authorization remain unchanged.

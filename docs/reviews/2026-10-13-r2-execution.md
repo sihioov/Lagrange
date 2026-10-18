@@ -4944,3 +4944,12 @@ successful deletion. Renew by20:15UTC. No new worker; native Ralph stays blocked
 Wave101 후보512625a를 커밋·push하고 원격SHA와 전체 이벤트/워크플로 exact-head0을 확인한 뒤 CI39117542904·기능smoke39117544844를 각각1회 실행했다.1252pin/525blob·141필수/15이미지결과/32wholeflow를 고정했다.10:04:29UTC 형식·strictClippy·Python 성공의 전체로그/실제checkout3개를 회수했고 나머지 전체증거는 진행 중이다.0120b0e 실제이미지·복귀 인수와 통합실패/익명볼륨 보존을 유지한다. 새후보 호스트 실행은 미승인;G4·배포·Owner·연속3거래일·C_R2는 미완료다.
 
 CI10:00:25UTC/smoke10:00:27UTC;전체 회수 기한11:45:25/27UTC. 후속44965a67 확인·인계 저장 후04318894 삭제 확인. 입력과 후보는 변경하지 않고 정확한 실행의 읽기 전용 회수만 이어간다.
+
+
+### Wave101 policy/Web named evidence recovered
+
+Wave101 후보512625a의 완료된5작업 전체로그와 실제checkout5개를 회수했다. 필수137/141개·새 회귀10개(실제Docker5개 포함)·wholeflow32개·이미지15결과·Web129+14사례가 통과했다.1252pin/525blob 고정을 유지하며 남은Rust4개·workspace·PG·required·기능smoke 전체증거를 회수한다. 전체후보·새호스트는 미인수이며 이전 통합 실패의 익명볼륨1개는 보존 중이다. G4·배포·Owner·3거래일·C_R2는 미완료다.
+
+private partial03710405・policy/webca8dc4ea. 기존 로그 추출의 PASS 설명접미사/Web 콜론 공백 가정을 동일 해시 원문·소스로 바로잡았으며 원 관측은 보존했다. 제품/워크플로 재실행 없음.
+
+PG 완료 후6로그/checkout·19프로세스/146이름·0060 32+73/83bootstrap·62checksum2회까지 대조했다. partial083d7bfa483a12d2fa4832513181369e401fb134990352934991173ebcba7d76;후속workspace/required/기능smoke 회수를44965a67가 계속 추적한다.
