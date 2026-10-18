@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 hosted 회수 완료·D4 이미지 fixture 보정 준비.** Wave93 후보0d407f8의 CI 실패와 기능 smoke 성공을 모두 회수했다. 전체9로그·8checkout·1166pins/517blob, 실제 fixture 발행·반복 결과와 정리10개 종료0을 확인했다. 전체 이미지 fixture의 fake producer가 D4 필수 feature를 빈 배열로 기록하는 정적 불일치를 발견해 self-test1파일을 보정하고 양성2·음성4개를 추가했다. 실행 검증은 아직 하지 않았으며 새 후보 CI·smoke가 필요하다. 실제 이미지 검증0/12·manifest없음, 제3차 중단 미승인·운영/Owner/3거래일/C_R2 미완료다. [회수](reviews/2026-10-18-r2-image-mode-ci.md), [보정](reviews/2026-10-18-r2-image-fixture-feature-correction.md).
+현재: **R2 hosted 회수 완료·D4 이미지 fixture 후보2a165fe 검증 중.** Wave93 후보0d407f8의 CI 실패와 기능 smoke 성공을 모두 회수했다. 전체9로그·8checkout·1166pins/517blob, 실제 fixture 발행·반복 결과와 정리10개 종료0을 확인했다. 전체 이미지 fixture의 fake producer가 D4 필수 feature를 빈 배열로 기록하는 정적 불일치를 발견해 self-test1파일을 보정하고 양성2·음성4개를 추가했다. 후보2a165fe의 CI39088097930·기능 smoke39088099684를 기존 exact-head0·원격 일치 확인 후 각각1회 실행했다. 형식·Python의 전체 로그2개와 실제 checkout을 회수했고 나머지는 실행 중이다. 실제 이미지 검증0/12·manifest없음, 제3차 중단 미승인·운영/Owner/3거래일/C_R2 미완료다. [회수](reviews/2026-10-18-r2-image-mode-ci.md), [보정](reviews/2026-10-18-r2-image-fixture-feature-correction.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

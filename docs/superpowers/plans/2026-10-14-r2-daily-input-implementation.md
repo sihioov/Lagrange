@@ -6522,3 +6522,23 @@ Third maintenance remains unauthorized; no root/SQL/Docker/provider/deployment
 actions. Continue R2 actual images/approved-base/G4/Owner/three trading days/C_R2.
 Replace the same-agent monitor on candidate/scope change after persisted handoff;
 native Ralph stays blocked. See docs/reviews/2026-10-18-r2-image-fixture-feature-correction.md.
+
+
+### Wave94 exact dispatch and continuation handoff — 2026-10-18 01:55 UTC
+
+Candidate2a165fe577e833529134627e980a129b9717ae6f was committed/pushed. Remote
+SHA matched and all-event/all-workflow exact-head query returned0 before one
+CI39088097930 attempt1 at01:53:23UTC and one functional smoke39088099684 attempt1
+at01:53:25UTC, each dispatchCount1/exit0. Both actual in_progress. Recovery
+reporting bounds03:38:23/25UTC. Inputs1174pins/519blobs SHA
+e8c4a45635e189c5fcedf8e0bf4ee9827c2076c02b023d5b344867be331d11d4;
+inventory118definitions/9old image markers+6qualified D4 outcomes SHA
+31fa3e45602e8d9fc96a84af3728fc2d231d6194358c857a460683a1e03ace8c.
+Source and inputs frozen; prior1165pins unchanged,one source changed.
+
+Format/Python full logs and actual checkouts recovered; other jobs/smoke
+pending. No aggregate-only or partial acceptance. c4f4db00 same-agent successor
+confirmed active and handoff persisted before e9dd6173 deletion confirmed.
+Expires13:54:17.607UTC,renewby13:00UTC/before47thtick. Continue full R2 after
+this package; third maintenance unauthorized, native Ralph blocked. No new
+production action. See docs/reviews/2026-10-18-r2-d4-fixture-ci.md.
