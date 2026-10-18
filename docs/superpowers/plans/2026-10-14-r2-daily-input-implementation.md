@@ -7105,3 +7105,15 @@ Source report: `docs/reviews/2026-10-19-r2-historical-base-role-views.md`. No de
 Next: freeze exact committed source and named tests, one CI and functional smoke,
 recover every required result before preparing any new host decision.
 Tracking4fbc67c0 renewby2026-10-19T10:30UTC/before47thtick; native Ralph blocked/no resume API.
+
+
+### Wave105 exact-candidate dispatch — 2026-10-19 KST
+
+후보 b6b2ddbd7a5d63f482f1a0fa43a02cb704a70e93를 고정하고 CI39178523729·기능 smoke39178525169 attempt1을23:55:45/46UTC 각각 한 번 실행했다.1370pin/534blob/2152tree·필수170개(기존150+새20)·15이미지 결과·wholeflow44개를 대조하며 전체 로그·checkout·명명된 결과와 실제 기능/반복/정리를10월19일01:40:45/46UTC까지 회수한다. 아직 새 hosted·이미지·통합 인수 없음. 기존 a7825fa 이미지 인수와 네 번째 실제 통합 실패/정리, UNKNOWN·과거0120 INCOMPLETE를 보존한다. 새 호스트 실행·G4·배포·Owner·3거래일·C_R2는 미승인/미완료다.
+
+Input SHA `0bea81bfa3b52a7cfa953f57b970497111bbe983b935951861615a33621901cb`;
+inventory `9a1c220356a1d3107c6a7f3399b0dcae6005e8877322d4e5e64e2c2209c75834`.
+Successor heartbeat f208d6f4 confirmed23:56:28UTC; persisted handoff
+`29fd1002f1ad0ec301594a0046a53db1b2d57e7f3b5c2937ed73d32e0dd958b1`
+before confirmed4fbc67c0 deletion. Renewby2026-10-19T10:55UTC, expiry11:56:28UTC.
+Read-only hosted result recovery; no source mutation, rerun, cancellation or new host action.
