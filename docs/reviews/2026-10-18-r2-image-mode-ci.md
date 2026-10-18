@@ -3,10 +3,12 @@
 R2-04/09, Wave93. Candidate `0d407f8ba613d75d99c1cbc8e974a72073b9d5bb`
 contains the six-file correction described in the frozen
 [source and recovery report](2026-10-18-r2-image-mode-correction.md).
-It has **not been accepted**. At 2026-10-18 01:20 UTC, CI had terminated
-with failure; its eight jobs and complete logs have now been recovered. The
-separate functional smoke remains running. Sources and frozen inputs remain
-unchanged until both executions have terminal full recovery.
+It has **not been accepted**. CI terminated with failure and the separate
+functional smoke succeeded. Both executions were fully recovered at
+2026-10-18 01:47:13 UTC. Nine full logs, eight actual checkout SHAs, 1,166
+input pins and 517 candidate blob contents were reconciled before releasing
+the source freeze for the next correction. Frozen inputs and terminal
+receipts remain immutable.
 
 ## Exact dispatch and recovery scope
 
@@ -28,7 +30,7 @@ The current inventory SHA256 is
 flags saying no dispatch are historical; the two launch receipts record the
 actual executions. Earlier unlaunched inventories are preserved.
 
-## Complete CI failure recovery; functional smoke pending
+## Complete CI failure recovery
 
 The CI execution jobs ended with six successes and one failure; the required
 aggregate consequently failed. The only failing execution job is policy, at
@@ -54,7 +56,27 @@ receipt SHA256 is
 A fragmented nonrequired Rust name and unprinted nested helper rows/exits
 remain UNKNOWN. Three source-verified non-Linux exclusions remain excluded.
 The earlier receipt's empty-target PASS label for one exclusion is not carried
-forward as execution evidence. Functional smoke has not yet been accepted.
+forward as execution evidence.
+
+## Terminal functional smoke recovery — 01:47 UTC
+
+The exact smoke run and its sole job completed successfully at 01:32:38 UTC.
+Its full log is 139,314 bytes / 1,742 lines, SHA256
+`29e3356b44d1a7aeee6c879c9e2da879cc67199a2fb97b89e8df9576f37f7c0d`.
+The actual checkout at log line118 matches the candidate. The functional
+marker at line1716 proves fixture publication/source lineage and unchanged
+repeat results: calendar60/60, source publication1/datasets6, universes2/
+members12 and published feeds2/items10. All ten cleanup outcomes exit0;
+owned containers, volumes, networks and context image are absent. Both
+original_exit and cleanup_exit are0, including the earlier Raw probe cleanup.
+
+The complete terminal receipt is
+`target/r2-daily-beta/ci/0d407f8/hosted-terminal-evidence.json`, SHA256
+`cbf3619ecf603d7b88142e8a69763ba1a7fc3c2a17fa7736f0330b7ac8b3be2d`.
+The earlier CI-only snapshot remains unchanged. Functional smoke is accepted
+for this hosted fixture scope; the candidate remains rejected because the
+required CI and full image fixture failed. No actual image or production
+acceptance follows from these results.
 
 ## Historical partial recovery at 01:02 UTC
 
@@ -95,7 +117,7 @@ renew by 12:05 UTC and before its 47th tick. This tracks full R2 continuation,
 not only this CI package. Native Ralph remains blocked; the heartbeat does
 not protect against daemon outage.
 
-Finish complete recovery before changing the candidate. A third maintenance
+Complete recovery preceded the [bounded D4 fixture correction](2026-10-18-r2-image-fixture-feature-correction.md). A third maintenance
 interruption has not been authorized; prepare its concrete candidate packet
 only after resolving hosted verification. Actual images, approved-base host
 flow, G4 deployment, Owner use, three consecutive trading days and final

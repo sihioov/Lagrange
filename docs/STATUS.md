@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 두 번째 정상종료 성공·이미지 검증 실패 후 복귀, 보정 후보 검증 중.** Wave93에서 새로 승인한 두 번째 유지보수를1회 실행했다. 정상종료0·작업 정산·run-start gate는 통과했지만, 첫 DB 이미지 검증이 product-image-mode-contract-drift로 실패했다. 동일 컨테이너 복귀·독립복구 종료·사후 정산·11개 상태 복원을 확인했다. 이미지1개 생성/검증0개, manifest 없음. daily-control의 누락된 payload·0755 계약과 CI 실행 범위를6파일로 보정한 0d407f8 후보의 CI39084560317·기능 smoke39084562837을 각각1회 실행했다. CI는 policy 이미지 fixture 실패로 종료했고, 8개 전체 로그·7checkout·106필수PASS/12미실행·기존 Rust/PG/Web 근거를 회수했다. 별도 기능 smoke는 실행 중이다. 추가 중단은 아직 승인되지 않았다. [2차 복귀·이미지 계약 보정](reviews/2026-10-18-r2-image-mode-correction.md), [진행 중 검증](reviews/2026-10-18-r2-image-mode-ci.md).
+현재: **R2 hosted 회수 완료·D4 이미지 fixture 보정 준비.** Wave93 후보0d407f8의 CI 실패와 기능 smoke 성공을 모두 회수했다. 전체9로그·8checkout·1166pins/517blob, 실제 fixture 발행·반복 결과와 정리10개 종료0을 확인했다. 전체 이미지 fixture의 fake producer가 D4 필수 feature를 빈 배열로 기록하는 정적 불일치를 발견해 self-test1파일을 보정하고 양성2·음성4개를 추가했다. 실행 검증은 아직 하지 않았으며 새 후보 CI·smoke가 필요하다. 실제 이미지 검증0/12·manifest없음, 제3차 중단 미승인·운영/Owner/3거래일/C_R2 미완료다. [회수](reviews/2026-10-18-r2-image-mode-ci.md), [보정](reviews/2026-10-18-r2-image-fixture-feature-correction.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave93 이미지 계약 보정·새 후보 hosted 검증 → 구체적인 다음 이미지 유지보수 결정·실제12개검증 → 승인 입력 호스트 흐름·G4·운영 → Owner·연속3거래일·C_R2. |
+| 다음 단계 | Wave94 D4 fixture 보정·새 후보 hosted 검증 → 구체적인 다음 이미지 유지보수 결정·실제12개검증 → 승인 입력 호스트 흐름·G4·운영 → Owner·연속3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

@@ -6493,3 +6493,32 @@ Functional smoke39084562837 is still active. No source/frozen-input mutation,
 extra production action or new dispatch; e9dd6173 continuation remains active.
 Recover smoke's exact terminal publication/idempotence/cleanup evidence before
 bounded fixture diagnosis/correction. Full R2 and third maintenance remain open.
+
+
+## Wave94 — terminal Wave93 recovery and D4 fake-producer feature correction
+
+Both Wave93 executions are terminal and fully recovered at2026-10-18T01:47:13UTC.
+CI39084560317 attempt1FAILURE and smoke39084562837 attempt1SUCCESS are preserved.
+Nine full logs/eight actual checkouts,1166pins/517blob bytes match; smoke publication,
+repeat invariance and ten cleanup outcomes0/resource absence passed. Immutable
+terminal receipt SHA cbf3619ecf603d7b88142e8a69763ba1a7fc3c2a17fa7736f0330b7ac8b3be2d.
+Only then was the source freeze released; frozen input and terminal receipts stay immutable.
+
+Static analysis found the fake producer always emitted empty features although D4
+requires market-stream-provisioning for its two binaries. Paper-mode rejection
+traverses D4 before paper; the old log did not print the exact failed assertion.
+Only build-production-images-self-test.sh changes: independently model D4 features,
+reject inconsistent requests, add two positive/four missing-or-extra feature tests
+through the real validator with rehashed COMPLETE, and print finite line/exit
+diagnostics. No product guard change, local test/parser/helper/compiler or new
+independent review. Coordinator reviewed the entire delta; whitespace passed.
+
+Freeze a successor, retain118 definitions/nine image markers plus six new qualified
+D4 outcomes and all carried groups/platform exclusions. Verify remote SHA and
+all-event/all-workflow exact-head absence before one CI plus one functional smoke.
+Recover terminal metadata/all jobs/steps, full hashes/checkouts/named cases and
+cleanup before acceptance or another correction. Never rerun/cancel/duplicate old runs.
+Third maintenance remains unauthorized; no root/SQL/Docker/provider/deployment
+actions. Continue R2 actual images/approved-base/G4/Owner/three trading days/C_R2.
+Replace the same-agent monitor on candidate/scope change after persisted handoff;
+native Ralph stays blocked. See docs/reviews/2026-10-18-r2-image-fixture-feature-correction.md.
