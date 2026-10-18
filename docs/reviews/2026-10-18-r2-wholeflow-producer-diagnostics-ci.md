@@ -4,6 +4,11 @@ Candidate `a7825fa8f22835ced72f342837ea0e81aff812ff` contains the two-source
 [finite failure-evidence correction](2026-10-18-r2-wholeflow-producer-diagnostics.md).
 It does not establish the original512625a producer's inner cause or host success.
 
+**HOSTED_ACCEPTED_ONLY**, full terminal recovery14:15:29UTC. Both exact runs
+finished SUCCESS; historical partial-recovery sections below remain preserved.
+Next: [Wave104 concrete packet](2026-10-18-r2-a7825fa-host-sequence-packet.md),
+one new Owner decision pending; no new host execution authorized.
+
 Remote excited-dolphin SHA and the all-event/all-workflow exact-head absence
 query were checked before dispatch. Exactly one run of each workflow was created:
 
@@ -16,9 +21,8 @@ Each dispatch returned0 and has an immutable intent/launch receipt. Never rerun,
 cancel or duplicate these runs. CI completed successfully13:51:09UTC with all
 8 jobs. Eight full logs/seven actual checkout SHAs and all150 required definitions
 were reconciled, including9 new finite-diagnostic tests,41 wholeflow cases and15
-image outcomes. Dedicated PG and carried workspace/Web scope passed. Functional
-smoke was still in progress14:00:15UTC. CI-only acceptance is complete; overall
-hosted acceptance awaits actual functional publication/repeat/cleanup evidence.
+image outcomes. Dedicated PG and carried workspace/Web scope passed. At14:00:15UTC functional smoke was still in progress. It subsequently completed
+SUCCESS14:14:35UTC; the full terminal receipt below establishes hosted acceptance.
 
 Frozen inputs `target/r2-daily-beta/wp-8/wave103/ci-inputs.json` SHA256
 `71fead287892e6da012358f857d933455b2caa1b2ace414e3cddaaeb68e4ec4c`
@@ -40,7 +44,8 @@ and a bounded continuation instead of inventing acceptance.
 
 Coordinator retrieval/reconciliation drafts underwave103 import no project code
 and cannot rerun workflows. The observation, policy/PG/Web, workspace and CI-only assemblers have run against
-actual completed evidence; the functional terminal assembler remains unexecuted.
+actual completed evidence; the functional terminal assembler completed at14:15:29UTC using the exact supplied
+run and full log in RAM. No project or host program was executed.
 No local project test/parser/helper/compiler or new independent review is claimed.
 
 The prior512625a image closure6566857a and failed wholeflow closure4d3770a7 stay
@@ -93,3 +98,24 @@ receipts remain immutable. Functional smoke39131946761 is the remaining full log
 keep source/frozen inputs fixed and recover its real publication/repeat and10
 cleanup outcomes by15:16:50UTC under the existing heartbeat. No new host decision
 is requested before complete hosted recovery and a concrete prepared packet.
+
+## Full hosted recovery at14:15UTC and Wave104 handoff
+
+Functional smoke39131946761 attempt1 completed SUCCESS14:14:35UTC. Full terminal
+receipt `target/r2-daily-beta/ci/a7825fa/hosted-terminal-evidence.json` SHA256
+`a700c5eb3d139f0d14c47720e47695da2729afa5331b111526ccd3ae36c70784`
+reconciles9 full logs/8 actual checkouts/1302 frozen pins/526 committed blobs,
+150 required names/15 image outcomes/41 wholeflow cases and all carried groups.
+Functional receipt SHA256
+`8960e4a1d2819aeaf28a52fca658b0a132ec3652df281a27228ae8e62353a675`
+contains actual publication, repeat/idempotence,10 cleanup exits0 and owned-resource
+absence. Exclusions/ignored rows and unprinted independent nested UNKNOWN remain
+explicit. Source, earlier partial/CI-only receipts and both completed runs are
+unchanged. No rerun/cancel/duplicate. Original512 producer inner cause UNKNOWN.
+
+Wave104 concrete packet and static source/control/argv reconciliation are ready;
+new images and actual approved-base host acceptance remain open. One new decision
+question was issued after preparation; no host probe or execution occurred.
+Heartbeat64149a8c confirmed14:23:59UTC, handoff7c817362 persisted, then6df07fcf
+successfully deleted. Renewal by2026-10-19T01:00UTC/tick47; expiry02:23:59UTC.
+This remains same-agent bounded continuation, not native Ralph or outage protection.

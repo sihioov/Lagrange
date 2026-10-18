@@ -5068,3 +5068,33 @@ and all-workflow/all-event absence checked; one dispatch each/exit0.1302pins/
 full log/checkout recovered. Reporting bounds15:16:49/50UTC. No acceptance yet.
 6df07fcf confirmed and handoffa115051c persisted beforef7c37450 deletion;
 renew before2026-10-19T00:00UTC/tick47. Source fixed; no new host authorization.
+
+## Wave104 — a7825fa hosted accepted; next host packet (2026-10-18)
+
+CI39131944940 attempt1 SUCCESS13:51:09UTC and functional smoke39131946761
+attempt1 SUCCESS14:14:35UTC fully recovered14:15:29UTC. Receipt a700c5eb records
+9logs/8actualcheckouts/1302pins526blobs/150required/15image/41wholeflow, allcarried
+Rust/PG/Web and actual publication/repeat/10cleanup0/owned-resource absence.
+Original512 producer cause UNKNOWN; diagnostic loss fixed/tested only.
+
+[Wave104 packet](2026-10-18-r2-a7825fa-host-sequence-packet.md)
+prepares one seventh image-maintenance and conditional fourth actual wholeflow
+(fifth prepared packet).2147sourcepins/11controls/11criticalpins/inert0600env,
+finite inversebytes/exactargv/frozen1302pins reconciled; sourceprep95437077,
+sequence511aab1a/finalstaticf666ac7b. Initial2145 coordinator count assumption
+corrected from actualtree2147, originaldraft retained; checkout only before failure.
+No new host/root/project/test/parser/compiler/control execution or independent
+review. Current images/manifest/health/outputs UNKNOWN. Retained old volume and
+prior0120 cleanup INCOMPLETE preserved. One async question issued after concrete
+packet completion; new decision pending, no repeated questions or probes.
+
+If approved: fresh exact source/control/env/host/READONLYwork/officialplan gates;
+independent recovery active before one stop/exit0, shared12h/no retry, single-service
+Compose1/Cargo2/fourbatches3. Full image/same-IDrestore/actual independent successful
+terminal/no processes/settlement before fresh5min conditional private wholeflow.
+Dispatch byhour12/fullrecoverywithin60min/byhour13. Preserve finite diagnostics and
+actual cleanup; no guessed acceptance. G4/deployment/Owner/3tradingdays/finalC_R2 open.
+
+Confirmed64149a8c14:23:59UTC; handoff7c817362 persisted before6df07fcf deletion.
+Renew by2026-10-19T01:00UTC/tick47; expires02:23:59UTC. Same-agent continuation,
+not worker/outage protection; native Ralph blocked/no resume API. No delegation.
