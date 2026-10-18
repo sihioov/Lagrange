@@ -13,9 +13,13 @@ query were checked before dispatch. Exactly one run of each workflow was created
 | [Functional smoke39131946761](https://github.com/sihioov/Lagrange/actions/runs/39131946761) | 1 | 13:31:50 | 15:16:50UTC |
 
 Each dispatch returned0 and has an immutable intent/launch receipt. Never rerun,
-cancel or duplicate these runs. Both were actually in progress13:33:36UTC.
-Format completed successfully, with its full log hash and actual candidate
-checkout recovered. Remaining jobs and functional smoke are not accepted yet.
+cancel or duplicate these runs. Both were actually in progress13:45:15UTC.
+Policy, Web, strict Clippy, format and Python completed successfully. All five
+full log hashes and actual candidate checkout SHAs were recovered. Exact policy
+names confirm146/150 required definitions, all nine new finite-diagnostic cases,
+41 wholeflow cases and15 image outcomes PASS. The remaining four required Rust
+names belong to workspace evidence. PostgreSQL, workspace, required aggregate
+job and functional smoke full evidence are still pending. No overall acceptance.
 
 Frozen inputs `target/r2-daily-beta/wp-8/wave103/ci-inputs.json` SHA256
 `71fead287892e6da012358f857d933455b2caa1b2ace414e3cddaaeb68e4ec4c`
@@ -52,3 +56,17 @@ f7c37450 deletion. It tracks exact already-dispatched runs and overall R2, with
 renewal before2026-10-19T00:00UTC/tick47 and expiry01:33:10UTC. This is same-agent
 bounded continuation, not a worker or daemon-outage protection; native Ralph
 remains blocked with no available resume API.
+
+## Partial recovery at13:45UTC
+
+`target/r2-daily-beta/ci/a7825fa/partial-policy-web-evidence.json` SHA256
+`2c99049c22f37303a5e9321399e91449b41eb1aadd30d993338a1c0eaa04ff01`
+pins the five completed logs, observed jobs/steps/pages and scoped reconciliation.
+`policy-web-reconciliation.json` SHA256
+`c292b7ff13d4563b4c604ec9ebb8911da05adc34f2fdd105d6a9b204fc507660`
+compares qualified tests, carried policy groups, actual root/Docker fixture steps,
+image outcomes, full Web lane/case scope and strict flags. All1302 input pins and
+526 candidate blobs were rechecked. No source mutation, workflow rerun, production
+probe or local project execution occurred. The original producer cause remains
+UNKNOWN; these regressions prove diagnostic handling only. Continue exact supplied
+run recovery under heartbeat6df07fcf; reporting bounds and authorization unchanged.

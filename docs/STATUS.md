@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 Wave103 a7825fa hosted 검증 회수.** 후보a7825fa의 CI39131944940·기능smoke39131946761 attempt1을13:31:49/50UTC 각각1회 시작했다.1302pins/526blobs·150필수/15이미지/41wholeflow를 고정했고 format 전체로그/실제checkout1개를 회수했다. 둘 다 진행 중이며 전체 named evidence 회수 전 후보는 미인수다.512625a 실제12이미지·복귀는 인수했으나 통합producer exit1의 내부원인은 UNKNOWN이다. 두 운영 단계 승인은 소진됐고 기존 익명볼륨/과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 남아 있다. [회수](reviews/2026-10-18-r2-wholeflow-producer-diagnostics-ci.md).
+현재: **R2 Wave103 부분 검증 회수.** 후보a7825fa의 CI39131944940·기능smoke39131946761은13:45:15UTC 실행 중이다. 정책·Web·형식·strictClippy·Python의 전체로그5개/실제checkout5개를 회수했다. 새 진단9개 포함 필수146/150·wholeflow41·이미지결과15가 통과했고1302pin/526blob이 일치했다. 나머지Rust4/workspace·PG·required·기능smoke 증거 회수 전 후보는 미인수다. 기존512625a 통합producer 내부원인은 UNKNOWN이고 추가 호스트 실행은 미승인이다. 익명볼륨/과거 정리 INCOMPLETE·G4·배포·Owner·3거래일·C_R2는 남아 있다. [회수](reviews/2026-10-18-r2-wholeflow-producer-diagnostics-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
