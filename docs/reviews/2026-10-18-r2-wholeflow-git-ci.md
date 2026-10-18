@@ -1,7 +1,7 @@
 # R2 wholeflow Git correction hosted verification
 
 R2-04/R2-09, Wave97. Candidate `899f259f9c8872fb61f0c95745904f552c8750e9`.
-Status: **RUNNING_NOT_ACCEPTED** as observed2026-10-18T04:50:09UTC.
+Status: **RUNNING_NOT_ACCEPTED** as observed2026-10-18T05:07:50UTC.
 The [source correction and failed host attempt](2026-10-18-r2-wholeflow-source-git-correction.md)
 remain separate from this new hosted verification.
 
@@ -52,3 +52,51 @@ host dependencies and concrete next Owner scope. Actual wholeflow,G4preupgrade
 recovery/backuptransition/deployment,Owner use,three trading days and finalC_R2
 remain open. No local tests/compiler/helper or new production action in this CI
 recovery. No new independent review is claimed.
+
+
+## Partial full-log recovery — 2026-10-18T05:07:50UTC
+
+Six jobs have completed successfully: format, strict Clippy, Python, policy,
+PostgreSQL integration and Web. All six complete logs and actual checkout SHAs
+match candidate899f259. Both workflows still run; workspace-tests remains in
+the full Cargo test step, the required aggregator has not appeared, and the
+separate research smoke is still executing. This is not whole-candidate acceptance.
+
+The policy log proves118/122 required definitions, including all four new
+real-root Git ownership cases and19retained wholeflow cases (23total). Every
+15required image outcome,181carried policy names,104affected module cases,
+10original corrections,7cleanup corrections and8native metadata observations
+matches the recorded inventory. All37carried shell markers also match with
+their original multiplicity. The only four pending required definitions are
+the qualified daily_ingest Rust cases in workspace-tests. Overlapping groups
+are not added together as unique tests.
+
+Dedicated PostgreSQL evidence contains19actual process exits0/noSKIP,
+146named results,32daily0060 names and73subcases,83bootstrap cases,
+62source-matching migration checksums on each of two full installs,
+0039guard and owned-container cleanup. The19process labels and order match
+the19actualrun_db_test calls. Parallel named-row ordering varied; exact
+multisets, outcomes and multiplicity match. Web recovered34supervisor names,
+24daily markers and129off+14market-stream E2E identities, all passed with
+cleanup/reservation true, exits0, no skipped/flaky/truncated cases.
+
+The Python aggregate remains495passed/10skipped under its carried platform
+exclusions. The conditional PostgreSQL failure-log step is skipped because
+the required verification succeeded; no required PG process was skipped.
+Independent nested rows/exits not printed remainUNKNOWN.
+
+Private partial receipt:
+target/r2-daily-beta/ci/899f259/partial-evidence-20261018T050750Z.json
+SHA60b5456277baac6f83f256a8230a1ac057030339827e14075d47a5937e714db2.
+It pins the six log receipts, complete policy and PG/Web reconciliation.
+All1192input pins/521committed blobs still match; earlier partial receipts and
+intermediate extraction corrections are preserved. Raw logs were not saved.
+
+Remaining full logs: workspace-tests, required, research-smoke. Recover all
+workspace named groups/exclusions/cleanup, four pending Rust definitions and
+actual functional publication/idempotence/ten cleanup outcomes before
+acceptance. Reporting bounds remain06:33:25/26UTC. Bounded handoff
+target/r2-daily-beta/wp-8/wave97/bounded-recovery-20261018T050750Z.json
+SHA0df939177d74021d52c38c0059d7355bba342702cd049d0151719a1f5857428a
+keeps heartbeat8cd8622c and the overall R2 dependencies intact. No additional
+host reads, lifecycle operation, project helper or local test was executed.

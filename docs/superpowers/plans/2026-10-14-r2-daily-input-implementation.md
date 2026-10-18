@@ -6708,3 +6708,15 @@ inventorySHA692d478229beaca7a9de421cbf65aae2bc776c55f9312aa18b952dde32cc70d4.
 Heartbeat8cd8622c persisted/active before c1c3697f deletion confirmed; renew15:45UTC,
 expires16:49:14.305UTC. Later documentation HEAD is not the candidate.
 See docs/reviews/2026-10-18-r2-wholeflow-git-ci.md.
+
+
+Wave97 partial recovery2026-10-18T05:07:50UTC: 05:07:50UTC 대조에서 후보899f259의 format·strict Clippy·Python·policy·PostgreSQL·Web 6개 job이 성공했고 전체 로그6개·실제checkout6개를 회수했다. 필수122정의 중118개, 실제 root Git 소유권 회귀4개, wholeflow fixture23개, 이미지 결과15개와 기존 정책181개를 이름별로 확인했다. PG19프로세스/146명명 결과·0060 32+73·83bootstrap·62checksum 두 번과 Web E2E129+14·정리를 대조했다. workspace-tests의 Rust4개·나머지 기존 결과, required 집계, 기능 smoke의 실제 발행/반복/10정리는 아직 미회수다.1192pin/521blob은 일치하고 원본은 고정한다. 전체 회수 기한06:33:25/26UTC와 후속 추적8cd8622c를 유지한다. 새 후보 이미지/호스트 검증·G4·Owner·3거래일·C_R2는 미완료다.
+
+Six full logs/actual checkouts are recovered. Private partial receipt
+target/r2-daily-beta/ci/899f259/partial-evidence-20261018T050750Z.json
+SHA60b5456277baac6f83f256a8230a1ac057030339827e14075d47a5937e714db2.
+All37carried shell markers and the earlier Python platform exclusions are
+preserved. Nested unprinted independent exits remainUNKNOWN. Existing same-agent
+heartbeat8cd8622c retains exact remaining scope through06:33:25/26UTC bounds;
+renewby15:45UTC,expires16:49:14.305UTC. No source/frozen-input mutation or new
+host action; overallR2 and nativeRalph status are not marked complete/active.

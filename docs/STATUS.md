@@ -6,13 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 Wave97 후보899f259 CI·기능 smoke 검증 중.** 후보899f259의 CI39098366992·기능 smoke39098368916 attempt1을 기존 실행0·원격SHA 일치 확인 후 각각 한 번 실행했다.1192pin/521blob·필수122정의·15이미지 결과를 고정했고 format 전체 로그와 실제checkout을 회수했다. 나머지 전체job·명명된 결과·실제기능/정리 증거를06:33:25/26UTC까지 회수한다. Wave96 호스트 실패는 종료·임시자원 부재·운영11상태 보존으로 닫았으며 승인1회는 소비됐다. 새 호스트 실행·G4·Owner·3거래일·C_R2는 미완료다. [근거](reviews/2026-10-18-r2-wholeflow-git-ci.md).
+현재: **R2 Wave97 후보899f259 hosted 부분 회수.** 05:07:50UTC 대조에서 후보899f259의 format·strict Clippy·Python·policy·PostgreSQL·Web 6개 job이 성공했고 전체 로그6개·실제checkout6개를 회수했다. 필수122정의 중118개, 실제 root Git 소유권 회귀4개, wholeflow fixture23개, 이미지 결과15개와 기존 정책181개를 이름별로 확인했다. PG19프로세스/146명명 결과·0060 32+73·83bootstrap·62checksum 두 번과 Web E2E129+14·정리를 대조했다. workspace-tests의 Rust4개·나머지 기존 결과, required 집계, 기능 smoke의 실제 발행/반복/10정리는 아직 미회수다.1192pin/521blob은 일치하고 원본은 고정한다. 전체 회수 기한06:33:25/26UTC와 후속 추적8cd8622c를 유지한다. 새 후보 이미지/호스트 검증·G4·Owner·3거래일·C_R2는 미완료다. [근거](reviews/2026-10-18-r2-wholeflow-git-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
 2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
-현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 현재 후속은15:30UTC 이전 갱신,16:28UTC 만료다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. 현재 후속은15:45UTC 이전 갱신,16:49:14.305UTC 만료다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
