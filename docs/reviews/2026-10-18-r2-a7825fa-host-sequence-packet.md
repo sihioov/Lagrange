@@ -1,6 +1,44 @@
 # R2 candidate a7825fa image and conditional integration packet
 
-R2-04/R2-09, Wave104. **PREPARED_NOT_AUTHORIZED_NOT_EXECUTED.**
+R2-04/R2-09, Wave104. **IMAGE_ACCEPTED_WHOLEFLOW_FAILED_CLOSED; BOTH_DISPATCHES_CONSUMED.**
+
+2026-10-19 KST: Owner explicitly answered “승인하니 이어서 진행해”.
+Authorization `34e176a9` binds this prepared packet to one seventh image attempt
+and, only after full image/recovery closure, one fourth actual isolated wholeflow.
+Independent recovery started23:09:36UTC; image dispatch1/exit0 and normal Owner
+exit0 observed. Shared image window ends2026-10-19T11:09:36.633139Z;
+conditional full recovery must complete within60min of its dispatch and by12:09:36Z.
+No additional question occurred between phases. Both dispatches have now been used;
+image acceptance and failed wholeflow closure are recorded below. No retry is authorized.
+
+
+### Wave104 terminal recovery — 2026-10-19 KST
+
+Owner 승인으로 a7825fa의 일곱 번째 이미지 빌드를1회 완료했다.12이미지·704파일·49게이트·7번들·18바이너리·2147소스pin을 인수했고23:26:51UTC 같은 Owner 컨테이너 복귀,23:26:52UTC 독립 복구 성공종료·무프로세스·READONLY 정산을 확인했다. 이후 네 번째 실제 격리통합을23:29:50UTC1회 실행했으나 producer exit1/INVALID_ARTIFACT로23:29:57UTC 실패했다. 최초승인·게시·재시작·복원 단계는 미도달이다.23:30:55UTC 임시7컨테이너·네트워크·작업디렉터리 부재와 운영11상태·현재릴리스·보존볼륨 불변을 회수했다. 두 실행 승인은 모두 소진됐으며 자동재시도 없이 소스 검증 경로를 추적한다. 이번 세부원인·기존512 내부원인·base최종비교·미출력62행은 UNKNOWN, 과거0120정리는 INCOMPLETE다. G4·배포·Owner·3거래일·C_R2 미완료.
+
+- Image closure `1048f7858e2d941d182551b304091be96d407fde61c1badda3cb23b03ad5bd64`;
+  manifest `6e27840a52d0e54e5001a697ca51a0e42a7f7be82d035ab1fa0defa430d02bf5`.
+  Owner restored23:26:51.673989UTC; build terminal23:26:51.681727;
+  independent recovery terminal23:26:52.683327. Both actual units inactive/dead,
+  MainPID/ControlPID/cgroup0; normal Owner exit0, kernelOOM0.
+- Fourth actual wholeflow / fifth prepared packet dispatched23:29:50.260147UTC,
+  driver exit1 terminal23:29:57.188534. Only PREPARED_SYNTHETIC_EXTENSION.
+  Finite producer diagnostic owner_beta_daily_cycle/INVALID_ARTIFACT, Docker exit1,
+  stderr61bytes SHA `daeeae4490b9f694f8cfe4894302a798cd1e6663d416ce8bc095547b780e340d`;
+  stdout0bytes. No raw output retained. Precise rejected predicate remains UNKNOWN.
+- Wholeflow closure `889ad46afa1c8d72e25e650ac3042700f578299ff8fcf1d7ab51dd7db46c874a`,
+ 16pins/full recovery23:30:55.755666UTC. Seven containers and exact network destroyed;
+ namespace/stage absent, driver/PIDs/cgroup0. PG/API137 occurred during private cleanup,
+ kernelOOM0. Currentfce9b90/exact11states/retainedvolume unchanged. Failed unit and result preserved.
+- Both approved dispatches consumed; no automatic retry/new host authorization.
+  Follow up the exact InvalidArtifact call path in source, preserve guards, establish
+  a meaningful regression and a new immutable candidate before another host packet.
+  Static analysis or CI cannot substitute for actual later phases or Owner acceptance.
+- Successor heartbeat4fbc67c0 confirmed23:31:28UTC, handoff persisted before9fb748db deletion.
+  Renew by2026-10-19T10:30UTC/before tick47; expires11:31:28UTC. Same-agent bounded
+  continuation, native Ralph blocked/no resume API, no delegation or outage protection.
+
+The following preparation record describes the scope presented before approval.
 Candidate `a7825fa8f22835ced72f342837ea0e81aff812ff` has complete hosted acceptance.
 The proposed next scope is one seventh image-maintenance attempt, then only after
 complete image acceptance and restoration, one fourth actual isolated wholeflow
