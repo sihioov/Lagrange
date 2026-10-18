@@ -1403,9 +1403,10 @@ for rel in (
 PY
 # Model this host's clean executable source modes explicitly inside the
 # private fixture.  The final image recipe independently normalizes only the
-# three wrapper destinations below to 0755; source inventory must retain 0775.
+# four wrapper destinations below to 0755; source inventory must retain 0775.
 chmod 0775 -- "$repo_dir/deploy/db/migrate.sh" \
   "$repo_dir/deploy/db/bootstrap-roles.sh" \
+  "$repo_dir/deploy/db/daily-control.sh" \
   "$repo_dir/deploy/runtime/paper-runner-entrypoint" \
   "$repo_dir/nt/backtest-worker/runtime/backtest-worker-entrypoint"
 chmod 0664 -- "$repo_dir/migrations/0001_identity.down.sql"
@@ -1500,6 +1501,7 @@ commit = os.environ.get("LAGRANGE_CODE_COMMIT", "missing")
 runtime_image_modes = {
     "usr/local/bin/lagrange-migrate": 0o755,
     "usr/local/bin/lagrange-bootstrap-roles": 0o755,
+    "usr/local/bin/lagrange-daily-control": 0o755,
     "usr/local/bin/paper-runner": 0o755,
 }
 
@@ -2098,6 +2100,12 @@ PY
 expect_runtime_mode_reject db-role-bootstrap db-role-bootstrap \
   usr/local/bin/lagrange-bootstrap-roles
 expect_runtime_mode_reject db-migrate db-migrate usr/local/bin/lagrange-migrate
+expect_runtime_mode_reject daily-control-bootstrap db-role-bootstrap \
+  usr/local/bin/lagrange-daily-control
+echo 'PRODUCTION_DAILY_CONTROL_BOOTSTRAP_MODE_REJECTION: PASS'
+expect_runtime_mode_reject daily-control-migrate db-migrate \
+  usr/local/bin/lagrange-daily-control
+echo 'PRODUCTION_DAILY_CONTROL_MIGRATE_MODE_REJECTION: PASS'
 expect_runtime_mode_reject paper-wrapper paper-scheduler usr/local/bin/paper-runner
 [ "$before_env" = "$(sha256sum "$env_file")" ]
 : >"$docker_log"
@@ -2223,8 +2231,10 @@ verification=pathlib.Path(sys.argv[3])
 transforms={
     ("db-role-bootstrap","database","deploy/db/migrate.sh","usr/local/bin/lagrange-migrate"),
     ("db-role-bootstrap","database","deploy/db/bootstrap-roles.sh","usr/local/bin/lagrange-bootstrap-roles"),
+    ("db-role-bootstrap","database","deploy/db/daily-control.sh","usr/local/bin/lagrange-daily-control"),
     ("db-migrate","database","deploy/db/migrate.sh","usr/local/bin/lagrange-migrate"),
     ("db-migrate","database","deploy/db/bootstrap-roles.sh","usr/local/bin/lagrange-bootstrap-roles"),
+    ("db-migrate","database","deploy/db/daily-control.sh","usr/local/bin/lagrange-daily-control"),
     ("paper-scheduler","paper","deploy/runtime/paper-runner-entrypoint","usr/local/bin/paper-runner"),
 }
 
@@ -2278,6 +2288,7 @@ def source_mode(group,source,path):
 
 assert source_mode("database","deploy/db/migrate.sh","deploy/db/migrate.sh")=="0775"
 assert source_mode("database","deploy/db/bootstrap-roles.sh","deploy/db/bootstrap-roles.sh")=="0775"
+assert source_mode("database","deploy/db/daily-control.sh","deploy/db/daily-control.sh")=="0775"
 assert source_mode("paper","deploy/runtime/paper-runner-entrypoint","deploy/runtime/paper-runner-entrypoint")=="0775"
 assert source_mode("database","migrations","migrations/0001_identity.down.sql")=="0664"
 assert source_mode("backtest","nt","nt/backtest-worker/runtime/backtest-worker-entrypoint")=="0775"
@@ -2290,6 +2301,7 @@ assert paper_selected["usr/local/bin/paper-runner-bin"]["executable"] is True
 assert paper_selected["usr/local/bin/paper-runner-bin"]["elf"] is True
 assert paper_expected["files"]["usr/local/bin/paper-runner-bin"]["mode"]=="0755"
 assert paper_result["files"]["usr/local/bin/paper-runner-bin"]["mode"]=="0755"
+print("PRODUCTION_DAILY_CONTROL_PAYLOAD_BYTES_AND_MODE: PASS")
 PY
 
 # The narrow mode table is valid only while the two recipe instructions stay
@@ -2333,8 +2345,12 @@ PY
   [ -z "$(git -C "$repo_dir" status --porcelain=v1 --untracked-files=all)" ]
 }
 expect_mode_contract_drift database "$repo_dir/deploy/db/Dockerfile" db-role-bootstrap \
-  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles' \
-  'RUN chmod 0750 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles'
+  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control' \
+  'RUN chmod 0750 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control'
+expect_mode_contract_drift daily-control-omitted "$repo_dir/deploy/db/Dockerfile" db-role-bootstrap \
+  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control' \
+  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles'
+echo 'PRODUCTION_DAILY_CONTROL_RECIPE_OMISSION_REJECTION: PASS'
 expect_mode_contract_drift paper "$repo_dir/deploy/runtime/Dockerfile.paper-runner" paper-scheduler \
   'RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin' \
   'RUN chmod 0750 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin'

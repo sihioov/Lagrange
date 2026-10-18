@@ -38,6 +38,22 @@ def action_uses(workflow: dict) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_image_builder_fixture_is_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [
+            step for step in ci["jobs"]["policy"]["steps"]
+            if step.get("name") == "Verify complete image builder with synthetic Docker images"
+        ]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(
+            steps[0]["run"],
+            "sudo env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory "
+            'GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" '
+            "bash scripts/ops/build-production-images-self-test.sh",
+        )
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+
     def test_all_shell_scripts_are_checked_out_with_lf(self) -> None:
         attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
         self.assertIn("*.sh text eol=lf", attributes)

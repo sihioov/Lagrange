@@ -4482,3 +4482,37 @@ heartbeata84ee487 was created2026-10-17T17:33:15.653Z; expiry2026-10-18T05:33:15
 renew/handoff by04:50UTC and before47thtick. Handoff was recorded before
 confirmed deletion of50f3f2ad. It awaits the already-sent second-attempt
 decision and preserves full R2 tracking; it is not an active build or worker.
+
+
+## Wave93 — second attempt recovered; daily-control image contract correction
+
+Owner explicitly resumed the prepared second one-attempt scope with “이어서 다시 진행해”.
+Fresh2125pins/11controls and READ ONLY settlement/official plan/preflight passed.
+The initial broad active-unit check was reconciled to seven historical successful
+RemainAfterExit units with no process; no host policy or unit was changed.
+Independent recovery was ready before one dispatch2026-10-18T00:43:20.244943UTC.
+Owner V2 exited0, work settled and run-start gate passed. Main started but first
+DB image verification failed product-image-mode-contract-drift before archive
+byte validation. One unaccepted image exists, verified0/12, no manifest; eleven
+remaining images not started. Same-ID/image healthy00:43:31.247624; independent
+recovery00:43:40.938161 and actual successful deactivation; all11 fixed states
+restored and postrestore READ ONLY settlement passed. First attempt preserved.
+Second closure SHA7f5227c44d30b3b3b464f0d2b87f8fdb651819d6e873a0f1f81f1b651f71c5a6
+pins18receipts in target/r2-daily-beta/wp-8/maintenance-ab48a79-a2/.
+
+Coordinator source disposition identifies missing daily-control runtime payload
+and stale exact two-wrapper chmod contract. Six-file correction binds the third
+wrapper bytes/0755 in both DB services, canonicalizes the existing Dockerfile
+instruction, adds four named fixture outcomes and one required CI-step test,
+and wires the full synthetic-Docker image suite into policy. No validator or
+production guard is weakened. No new independent review, local test/compiler/
+project-helper/parser or additional production execution; original detached
+accepted checkout and historical evidence remain immutable.
+
+Freeze successor with all carried named requirements, then exact-head all-event/
+all-workflow query and remote SHA check before one hosted CI and one separate
+functional smoke. Recover full logs/checkouts/named rows and new fixture outcomes.
+Third maintenance/deployment is not authorized: prepare a concrete new candidate
+packet after hosted verification before another interruption decision. Continue
+full R2 tracking; do not mark images/host/G4/Owner/three days/C_R2 complete.
+See docs/reviews/2026-10-18-r2-image-mode-correction.md.

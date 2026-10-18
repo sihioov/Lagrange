@@ -102,3 +102,12 @@ heartbeata84ee487 was created2026-10-17T17:33:15.653Z; expiry2026-10-18T05:33:15
 renew/handoff by04:50UTC and before47thtick. Handoff was recorded before
 confirmed deletion of50f3f2ad. It awaits the already-sent second-attempt
 decision and preserves full R2 tracking; it is not an active build or worker.
+
+
+## Subsequent decision and second attempt
+
+Owner subsequently authorized the prepared second attempt with “이어서 다시 진행해”.
+Its normal shutdown succeeded, but image verification failed; same-container
+restoration and independent recovery were verified. The original report above
+is retained as first-attempt history. See [second-attempt recovery and source
+correction](2026-10-18-r2-image-mode-correction.md) for the current disposition.

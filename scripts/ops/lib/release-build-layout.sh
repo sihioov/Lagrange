@@ -4055,15 +4055,17 @@ directories=set()
 runtime_mode_transforms={
     ("db-role-bootstrap","database","deploy/db/migrate.sh","/usr/local/bin/lagrange-migrate"):0o755,
     ("db-role-bootstrap","database","deploy/db/bootstrap-roles.sh","/usr/local/bin/lagrange-bootstrap-roles"):0o755,
+    ("db-role-bootstrap","database","deploy/db/daily-control.sh","/usr/local/bin/lagrange-daily-control"):0o755,
     ("db-migrate","database","deploy/db/migrate.sh","/usr/local/bin/lagrange-migrate"):0o755,
     ("db-migrate","database","deploy/db/bootstrap-roles.sh","/usr/local/bin/lagrange-bootstrap-roles"):0o755,
+    ("db-migrate","database","deploy/db/daily-control.sh","/usr/local/bin/lagrange-daily-control"):0o755,
     ("paper-scheduler","paper","deploy/runtime/paper-runner-entrypoint","/usr/local/bin/paper-runner"):0o755,
 }
 runtime_mode_contracts={
     "database":{
         "dockerfile":"deploy/db/Dockerfile",
-        "instruction":"RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles",
-        "destinations":("/usr/local/bin/lagrange-migrate","/usr/local/bin/lagrange-bootstrap-roles"),
+        "instruction":"RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control",
+        "destinations":("/usr/local/bin/lagrange-migrate","/usr/local/bin/lagrange-bootstrap-roles","/usr/local/bin/lagrange-daily-control"),
     },
     "paper":{
         "dockerfile":"deploy/runtime/Dockerfile.paper-runner",

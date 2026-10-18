@@ -58,6 +58,12 @@ jobs:
       - run: bash scripts/ops/static-check.sh
       - run: bash scripts/ops/production-ops-static-check.sh
       - run: bash scripts/ops/build-production-images-static-check.sh
+      - name: Verify complete image builder with synthetic Docker images
+        if: ${{ !cancelled() }}
+        run: >-
+          sudo env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory
+          GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE"
+          bash scripts/ops/build-production-images-self-test.sh
       - run: python -m unittest scripts.ci.test_ci_contract -v
       - name: Verify daily release filesystem and principal boundaries
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-release-self-test.py
