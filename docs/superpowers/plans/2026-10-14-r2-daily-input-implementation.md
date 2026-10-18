@@ -6699,3 +6699,12 @@ candidate dependencies after hosted recovery. Native Ralph remains blocked;
 coordinator owns continuation without further delegation.
 
 See docs/reviews/2026-10-18-r2-wholeflow-source-git-correction.md.
+
+
+Wave97 launched2026-10-18T04:48:25/26UTC: 후보899f259의 CI39098366992·기능 smoke39098368916 attempt1을 기존 실행0·원격SHA 일치 확인 후 각각 한 번 실행했다.1192pin/521blob·필수122정의·15이미지 결과를 고정했고 format 전체 로그와 실제checkout을 회수했다. 나머지 전체job·명명된 결과·실제기능/정리 증거를06:33:25/26UTC까지 회수한다. Wave96 호스트 실패는 종료·임시자원 부재·운영11상태 보존으로 닫았으며 승인1회는 소비됐다. 새 호스트 실행·G4·Owner·3거래일·C_R2는 미완료다.
+
+InputsSHAebec0dffa402daf99ff68f0cb03d1b8d1e4151d3a119eddc16369cf8e8c54f4e;
+inventorySHA692d478229beaca7a9de421cbf65aae2bc776c55f9312aa18b952dde32cc70d4.
+Heartbeat8cd8622c persisted/active before c1c3697f deletion confirmed; renew15:45UTC,
+expires16:49:14.305UTC. Later documentation HEAD is not the candidate.
+See docs/reviews/2026-10-18-r2-wholeflow-git-ci.md.
