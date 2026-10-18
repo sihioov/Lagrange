@@ -13,13 +13,12 @@ query were checked before dispatch. Exactly one run of each workflow was created
 | [Functional smoke39131946761](https://github.com/sihioov/Lagrange/actions/runs/39131946761) | 1 | 13:31:50 | 15:16:50UTC |
 
 Each dispatch returned0 and has an immutable intent/launch receipt. Never rerun,
-cancel or duplicate these runs. Both were actually in progress13:45:15UTC.
-Policy, Web, strict Clippy, format and Python completed successfully. All five
-full log hashes and actual candidate checkout SHAs were recovered. Exact policy
-names confirm146/150 required definitions, all nine new finite-diagnostic cases,
-41 wholeflow cases and15 image outcomes PASS. The remaining four required Rust
-names belong to workspace evidence. PostgreSQL, workspace, required aggregate
-job and functional smoke full evidence are still pending. No overall acceptance.
+cancel or duplicate these runs. CI completed successfully13:51:09UTC with all
+8 jobs. Eight full logs/seven actual checkout SHAs and all150 required definitions
+were reconciled, including9 new finite-diagnostic tests,41 wholeflow cases and15
+image outcomes. Dedicated PG and carried workspace/Web scope passed. Functional
+smoke was still in progress14:00:15UTC. CI-only acceptance is complete; overall
+hosted acceptance awaits actual functional publication/repeat/cleanup evidence.
 
 Frozen inputs `target/r2-daily-beta/wp-8/wave103/ci-inputs.json` SHA256
 `71fead287892e6da012358f857d933455b2caa1b2ace414e3cddaaeb68e4ec4c`
@@ -40,8 +39,8 @@ pinned candidate. At the reporting bound, record exact completed/missing scope
 and a bounded continuation instead of inventing acceptance.
 
 Coordinator retrieval/reconciliation drafts underwave103 import no project code
-and cannot rerun workflows. Only the read-only observation retriever has run;
-success assemblers remain unexecuted until their actual dependencies exist.
+and cannot rerun workflows. The observation, policy/PG/Web, workspace and CI-only assemblers have run against
+actual completed evidence; the functional terminal assembler remains unexecuted.
 No local project test/parser/helper/compiler or new independent review is claimed.
 
 The prior512625a image closure6566857a and failed wholeflow closure4d3770a7 stay
@@ -70,3 +69,27 @@ image outcomes, full Web lane/case scope and strict flags. All1302 input pins an
 probe or local project execution occurred. The original producer cause remains
 UNKNOWN; these regressions prove diagnostic handling only. Continue exact supplied
 run recovery under heartbeat6df07fcf; reporting bounds and authorization unchanged.
+
+## Required CI full recovery at14:00UTC
+
+`target/r2-daily-beta/ci/a7825fa/required-ci-evidence.json` SHA256
+`23afdc9b65b1b20ed2512c2df1981052d2435373390a141c31dd6d125848bae3`
+records all8 jobs/steps/pages,8 full log hashes,7 actual checkout SHAs and150
+required names PASS. All1302 input pins and526 candidate blob identities matched.
+Policy/PG/Web reconciliation31d6a1ce verifies19 actual PG process exits0,
+146 named results,0060/83 bootstrap cases and62 committed migration checksums
+twice. Workspace reconciliation142c687a recovers3363 actual named rows/231 root
+blocks, all36 workspace and33 carried groups, seven required gates and actual
+cleanup steps/resource removals. Strict Clippy/format and Web case scope match.
+Three non-Linux exclusions, six ignored rows and ten existing Python skips remain
+explicit. The actually fragmented nested test name and unprinted independent
+nested rows/exits remain UNKNOWN; no parent aggregate supplies their outcomes.
+
+The coordinator drafts were reconciled before execution: they now reference the
+actual earlier five-log partial receipt, describe the496/10 Python total as a
+carried scope, and name the current fragment without copying a prior KIS label.
+No workflow/source change or project execution occurred. Original partial
+receipts remain immutable. Functional smoke39131946761 is the remaining full log;
+keep source/frozen inputs fixed and recover its real publication/repeat and10
+cleanup outcomes by15:16:50UTC under the existing heartbeat. No new host decision
+is requested before complete hosted recovery and a concrete prepared packet.
