@@ -1,7 +1,10 @@
 # R2 third image-maintenance execution
 
 R2-04/09, Wave95. Candidate `2a165fe577e833529134627e980a129b9717ae6f`.
-Status at2026-10-18T03:21:43UTC: **BUILD_ACTIVE; RECOVERY_ACTIVE**.
+Current status at2026-10-18T04:25:05UTC: **TWELVE_IMAGES_ACCEPTED; SAME_CONTAINER_RECOVERY_COMPLETE**.
+The initial execution account below is retained as dated history; final evidence follows.
+
+Initial status at2026-10-18T03:21:43UTC: **BUILD_ACTIVE; RECOVERY_ACTIVE**.
 Owner answered “진행해” to the [prepared single-attempt packet](2026-10-18-r2-third-image-maintenance-packet.md).
 Exactly one dispatch occurred at03:21:22.119955UTC; systemd-run returned0.
 The existing Owner V2 container exited normally with0 and work settled before
@@ -172,3 +175,88 @@ Observation`build-observation-20261018T040049Z.json` SHA256
 Complete retrieved build journal39506bytes/500rows SHA256
 `0fc10fb4f785cd7a8e0d26a99bed838abb77ce982e5beff9a3345c42bfb24147`.
 Raw bytes stayed in memory; no additional dispatch, lifecycle or source change.
+
+
+## Full image acceptance and recovered terminal outcome — 2026-10-18 04:25 UTC
+
+Exactly one authorized third dispatch produced all twelve candidate images.
+The official builder emitted its final PASS at04:08:37.684364UTC. Its service
+successfully deactivated at04:08:43.905472UTC. ExecStopPost recorded the original
+Owner V2 container/image healthy at04:08:43.896215UTC with SERVICE_RESULT=success.
+Independent recovery recorded completion at04:08:47.766414UTC and actually
+successfully deactivated at04:08:47.774608UTC. Full unit journal hashes and
+systemd success events, zero remaining unit/cgroup processes, and zero compiler
+processes establish terminal recovery; this is not inferred from missing units.
+
+All49 official gates passed with previous_exit0, including the four batch gates,
+D6 ten producers and3/6/8/10 checkpoints, and final-bytes. The complete service
+start/success sequence contains24 ordered events for twelve serial services.
+Each actual Docker image ID/OCI revision/linux-amd64 platform matches the
+manifest and saved-image result. All twelve saved archives were rehashed:
+2,024,614,400 bytes match the saved-byte verifier receipts. The704 file records
+match their exact required sets, hashes/modes where specified and nonempty
+folder requirements. Eighteen producer binary hashes match actual saved-image
+paths; the Paper wrapper and paper-runner-bin remain distinct. Seven completed
+bundle tree commitments, source-input/layout/helper pins,2132 clean detached
+source pins, eleven controls and the inert0600env all match.
+
+An initial coordinator bookkeeping comparison incorrectly treated each bundle's
+complete marker as the hash of bundle.json. The source defines a sorted entire
+bundle tree commitment. The original seven mismatch observations are preserved;
+`bundle-tree-commitments.json` records all seven correct tree matches. No product
+or guard changed and no builder retry occurred.
+
+| Service | Verified image ID |
+| --- | --- |
+| db-role-bootstrap | `sha256:ae362c8a9c43fab3bc16f37811005f08a8fbc84e9f9571dff4792411b62a217c` |
+| db-migrate | `sha256:cbf02569cc2a657636b10b1908712fb5ad6da97f2c2938bb3da39bae5fb6b8af` |
+| api-server | `sha256:d0777f5f96bebdc5cc45e0a24361449fe256cb99ba621cf2e8bdbaae0e6bb626` |
+| web | `sha256:f550e332e684f2e2ebc5bf5a61065d037125f6a0bb17ec9fa981fef7b9cb3fb8` |
+| research-worker | `sha256:180192ae2ad795e6c770bf55bac469b1ac1971d6df4756a5cff34c716b9ae18f` |
+| recommendation-runner | `sha256:20a4eea1f2ba7ecde41caed99ef0fea4f4e4dc8e015d8c92268d16c8af457c7f` |
+| candidate-runner | `sha256:394039fc37f651b992c733b53d8827f7e858b1d50a4bfca92e415358a33bc87d` |
+| owner-beta-runner | `sha256:c99f1931180a6013d4afd7ec8f0fe2bae482cca07c8d4b3ad794b9d72c11736d` |
+| owner-equity-v2-runner | `sha256:3c73a37f8f0e5b359d3346ae4afab64e86a5541c18c6d8b4207be9f2df6d0856` |
+| nt-backtest-worker-1 | `sha256:56d238b36e4cf87ba91ac454457e45bd3be9f968b1c207a2d251ee19e411248c` |
+| nt-backtest-worker-2 | `sha256:9a8276d219553333427a9f6b8c94674fde5dab4e62ded6cfc4ed9966d46fc19d` |
+| paper-scheduler | `sha256:dae610a6297dd5e3976b804dbd23fd63dedf701a4c065805a83c57738eee1b88` |
+
+The root-owned0600 V2 manifest is
+`/etc/lagrange/release-manifests/2a165fe577e833529134627e980a129b9717ae6f.manifest`,
+2597bytes, SHA256 `2712ec998a126d53a052e342a9e2c771b8f1a727655606112eb03086f8e2ce49`.
+The original production release link still selects fce9b90. All eleven container
+identities and required states match: ten running/healthy, research remains
+stopped2/restart7935. Owner's expected start/finish timestamps changed for this
+approved interruption; its exact ID/image are unchanged. The post-restoration
+READ ONLY/repeatable-read aggregate at04:19:20UTC returned0/OK with operator-wide
+visibility and no running/inconsistent jobs or attempts. No OOM was observed in
+the readable03:19:50–04:21:27UTC kernel range; this does not assert all-history
+absence. The accepted source and earlier hosted evidence remain immutable.
+
+| Recovery evidence | SHA256 |
+| --- | --- |
+| attempt-closure.json (24 pinned receipts) | `261e0ee2f5ec8d6d0316923a3ab6e164ca958f6753d3bbaa3f04ecaed3dfcb79` |
+| image-set-evidence.json | `0f14ef59cf512cfb258a6c6e0eef0562258eefcbf9c51d971d5c0e135fa60869` |
+| terminal-lifecycle-evidence.json | `77caa9ee4e5d03856ebbb127732666e43435e40fb025c7f8d4fa92da2c99f22d` |
+| final-host-and-layout-evidence.json | `5be6d7debe6b20468da22f7d315a50568e0f3a08c17f20a1fe29ca35d416cd93` |
+| bundle-tree-commitments.json | `6d46b398f10416cca7f23894e1e91a837813091c714be9db73fe57ecad5b1d25` |
+| postrestore-work-settlement.json | `8e8916b2efac61435c84431915459cef3806a9c7e3f7211c1e73dd31e5db394c` |
+| postbuild-source-reconciliation.json | `5ec602ce1f2cba22e7a4b225b23aa39d9cd11fd59fa274232658a2f715f2c388` |
+
+The third image permission is consumed and successfully closed. No fourth
+attempt is authorized. Earlier failed units/controls/state/unaccepted image and
+both closure receipts are preserved. No deployment, production migration,
+research start, new provider request or actual Owner-use acceptance occurred.
+
+Continue with the [Wave96 approved-base integration packet](2026-10-18-r2-approved-base-wholeflow-packet.md).
+It is concretely prepared, with one new decision pending for fresh admission
+and a20-minute private host integration run. The actual base path is deliberately
+not guessed: after permission it must bind only to the fixed existing read-only
+Owner-beta mount. G4 deployment/recovery, Owner use, three consecutive trading
+days and final C_R2 remain open. Native Ralph remains blocked; no claim of
+native active/completed status is made.
+
+Same-agent successor heartbeat c1c3697f was confirmed active04:28:03UTC and its
+handoff persisted before276c42d8 deletion was confirmed. Expiry16:28:03.122UTC;
+renew by15:30UTC and before47th tick. It continues the overall R2 goal, not a new
+worker, and does not protect against daemon/host outage.

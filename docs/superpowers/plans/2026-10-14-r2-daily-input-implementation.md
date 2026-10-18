@@ -6647,3 +6647,37 @@ Wave95 B1 progress: At2026-10-18T03:45:36UTC, four exact-candidate image verific
 
 
 Wave95 D6 progress: At2026-10-18T04:00:49UTC, five exact-candidate image verification receipts include research-worker (699seconds,23file checks). All24 official gates passed, including10D6producer checks and3/6/8/10 collector checkpoints. Recommendation-runner image is still in progress after its D2producer gate. Build/recovery active; nine other serving healthy, Owner stopped0/research stopped2, OOM0/fullPSI0. Seven image verifications/finalmanifest/same-ID restoration/independent terminal remain open; no new launch or source change.
+
+
+## Wave95 complete image recovery and Wave96 next dependency — 2026-10-18
+
+후보2a165fe의 실제 이미지12개·704개 파일 검증·49개 점검·7개 bundle/18개 바이너리·2132소스pin을 대조하고 V2 manifest를 인수했다. 04:08:43UTC 원래 Owner 컨테이너 복귀와 빌드 정상 종료,04:08:47UTC 독립 복구 정상 종료,사후 READ ONLY 정산·11개 고정 상태를 확인했다. 현재 운영 release는fce9b90이다. 다음은 운영 서비스를 유지하는 승인 기준데이터 기반20분 격리 통합 검증이다. 후보·명령·자원·정리 범위를 준비했고 새 실행 결정1건을 요청했다. 물리적 기준데이터 경로는 승인 후 고정 컨테이너의 읽기 전용 mount에서만 확정하며 추정하지 않는다. 운영 배포·Owner 사용·연속3거래일·최종C_R2는 미완료다.
+
+Image closure SHA261e0ee2f5ec8d6d0316923a3ab6e164ca958f6753d3bbaa3f04ecaed3dfcb79
+pins24receipts. Manifest SHA2712ec998a126d53a052e342a9e2c771b8f1a727655606112eb03086f8e2ce49.
+All twelve archives (2024614400bytes) rehash correctly. Build PASS04:08:37.684364;
+Owner restored04:08:43.896215, build successful deactivation04:08:43.905472;
+independent complete04:08:47.766414 and successful deactivation04:08:47.774608.
+Actual cgroup/process absence and full journals establish terminal state;
+postrestore READ ONLY aggregate passes and old release staysfce9b90. Coordinator
+bundle-complete bookkeeping correction is preserved separately; all seven
+correct tree commitments match. No source/guard change or retry occurred.
+
+Wave96 has one prepared host integration attempt, no execution yet. Exact
+candidate and image evidence, deterministic fixed read-only base-mount selector,
+fresh5min admission,20min private driver, nonce-owned cleanup and60min full
+recovery reporting bound are recorded in the new packet. Physical base path
+remains UNKNOWN until newly authorized read; no guessed fallback. Commandledger
+SHA51bea6e93aecb2e1f209447d51a2e827f15fd798b673def1e61d13bf6132bac7,
+preparationSHA6c4d9cafcf9b523174694866489f4235a8204309f4f743956ce3a9aae132bd04.
+One async Owner question sent; do not repeat it or use consumed image permission.
+No new protected reads, DB, helper, test, provider or lifecycle action in this
+preparation. Existing compiled V3 approval and product guards remain intact.
+
+Same-agent heartbeatc1c3697f confirmed04:28:03UTC; handoff persisted before
+276c42d8 deletion confirmed. Renewby15:30UTC, expires16:28:03.122UTC, before47th
+tick. Native Ralph blocked, no new worker, no daemon-outage protection claim.
+After this next package continue concrete G4 recovery/backuptransition/deployment,
+actual Owner use, three consecutive trading days and final C_R2.
+
+See docs/reviews/2026-10-18-r2-approved-base-wholeflow-packet.md and the dated image execution report.

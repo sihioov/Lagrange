@@ -1,7 +1,7 @@
 # R2 third image-maintenance proposal for 2a165fe
 
 R2-04/09, Wave95. Preparation below is historical. Owner subsequently answered
-“진행해”; the third one-attempt packet is **AUTHORIZED_AND_EXECUTING**.
+“진행해”; the third one-attempt packet is **AUTHORIZED_ATTEMPT_CLOSED_SUCCESSFULLY**.
 See [actual execution and recovery](2026-10-18-r2-third-image-maintenance-attempt.md).
 Candidate `2a165fe577e833529134627e980a129b9717ae6f` has complete
 [hosted acceptance](2026-10-18-r2-d4-fixture-ci.md): CI39088097930 and separate

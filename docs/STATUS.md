@@ -6,13 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 후보2a165fe 세 번째 이미지 빌드·독립 복구 실행 중.** Owner의 “진행해”로 세 번째1회 유지보수를 승인받아 03:21:22UTC에 정확히 한 번 시작했다. 새 호스트·2132소스pin·11제어파일·READ ONLY 작업 정산·공식 plan/preflight가 통과했고, 독립 복구 실제 실행 후 Owner V2 정상 종료0과 정산을 확인했다. 04:00:49UTC에 DB2개·API·웹·research-worker 이미지 검증 증거5개와24개 gate PASS를 회수했다. D6 바이너리10개와3+3+2+2 점검을 통과했고 현재 B2의 recommendation-runner 이미지 빌드가 진행 중이다. 나머지7개 이미지·전체manifest와 동일 컨테이너 복귀/독립 복구 종료를 회수해야 한다. 최대 유지보수 기한은15:21:04UTC이며 연장하지 않는다. 후보2a165fe의 hosted 전체 인수는 유지하고 실제 승인 입력 흐름·G4운영·Owner·3거래일·C_R2는 미완료다. [진행·복구 기록](reviews/2026-10-18-r2-third-image-maintenance-attempt.md).
+현재: **R2 후보2a165fe 실제12이미지 검증·원래 서비스 복귀 완료.** 후보2a165fe의 실제 이미지12개·704개 파일 검증·49개 점검·7개 bundle/18개 바이너리·2132소스pin을 대조하고 V2 manifest를 인수했다. 04:08:43UTC 원래 Owner 컨테이너 복귀와 빌드 정상 종료,04:08:47UTC 독립 복구 정상 종료,사후 READ ONLY 정산·11개 고정 상태를 확인했다. 현재 운영 release는fce9b90이다. 다음은 운영 서비스를 유지하는 승인 기준데이터 기반20분 격리 통합 검증이다. 후보·명령·자원·정리 범위를 준비했고 새 실행 결정1건을 요청했다. 물리적 기준데이터 경로는 승인 후 고정 컨테이너의 읽기 전용 mount에서만 확정하며 추정하지 않는다. 운영 배포·Owner 사용·연속3거래일·최종C_R2는 미완료다. [이미지·복구](reviews/2026-10-18-r2-third-image-maintenance-attempt.md) · [다음 실행안](reviews/2026-10-18-r2-approved-base-wholeflow-packet.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
 2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
-현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 후속은14:00UTC 이전 갱신,15:22UTC 만료다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 현재 후속은15:30UTC 이전 갱신,16:28UTC 만료다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave95 승인된 세 번째 빌드·동일ID복귀 회수 → 실제12개 이미지 검증 → 승인 입력 호스트 흐름·G4·운영 → Owner·연속3거래일·C_R2. |
+| 다음 단계 | Wave96 승인 기준데이터 격리 통합 검증1회 결정 → 실제host흐름 → G4복구/배포 → Owner·연속3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
