@@ -1,8 +1,10 @@
 # R2 wholeflow Git correction hosted verification
 
 R2-04/R2-09, Wave97. Candidate `899f259f9c8872fb61f0c95745904f552c8750e9`.
-Status: **CI_SCOPE_RECOVERED_SMOKE_RUNNING** as observed2026-10-18T05:15:15UTC.
-Whole-candidate hosted acceptance remains false until separate functional smoke recovery.
+Status: **HOSTED_ACCEPTED_ONLY**; complete evidence recovered2026-10-18.
+CI completed05:12:42UTC and separate functional smoke completed05:40:59UTC.
+The earlier partial observations below are historical. New-candidate host images,
+approved-base integration, deployment and final R2 acceptance remain open.
 The [source correction and failed host attempt](2026-10-18-r2-wholeflow-source-git-correction.md)
 remain separate from this new hosted verification.
 
@@ -139,3 +141,41 @@ Heartbeat8cd8622c remains in place, renewby15:45UTC/before47thtick. Source and
 frozen inputs remain immutable while smoke is active. After its complete
 recovery, prepare exact candidate image/host dependencies and a concrete next
 Owner scope. No host/root/project-helper/test action was added in this recovery.
+
+## Complete hosted recovery and next dependency — 2026-10-18
+
+Both exact-candidate workflows completed SUCCESS on attempt1. All9jobs/steps
+and pages,9full logs,8actual checkouts,1192input pins/521committed blobs,
+122required definitions,15image outcomes and all carried required groups were
+recovered. The complete terminal receipt is
+target/r2-daily-beta/ci/899f259/hosted-terminal-evidence.json,
+SHA256 c87097708cf803ce69ec0e6d63bfe2d4242e20c1d084e489e6da67c8fbd0d31b.
+The CI-only receipt and every earlier partial observation remain unchanged.
+
+The smoke full log has141281bytes/1759lines and SHA256
+04035f6086bed8adef54ef5f38bab6f95e4be2faca01c0df7fe7dd90ab7bde38.
+Actual publication source/lineage,60calendar history/projection rows,one source
+publication/six datasets/two universes/twelve members and two published feeds/
+ten items match the fixed fixture. Repeated producer/candidate runs preserve
+these identities and counts. All ten cleanup outcomes exit0; original_exit0/
+cleanup_exit0,raw-probe cleanup0/0, and actual absence of owned containers,
+volumes,networks and context image were observed.
+
+The first coordinator assembly mistakenly required a marker emitted only by
+the raw-init-only branch during the full functional workflow. That assertion
+stopped acceptance. An identical-hash full-log re-read and committed-source
+inspection resolved its applicability; no test was rerun or source changed.
+The separate smoke-marker-reconciliation.json preserves this correction.
+The actual raw-probe cleanup and full functional outcomes are retained.
+
+The earlier one fragmented helper name/unprinted nested exits remainUNKNOWN;
+three non-Linux exclusions,six ignored workspace rows and ten Python skips
+remain explicit. Hosted acceptance does not fill these observation gaps or
+establish production deployment,Owner use or three trading days.
+
+After full recovery, a clean detached899f259 checkout with2137pins, an inert
+0600env and eleven mechanically rebound image/recovery controls were prepared.
+The original2a165fe checkout/images and failed wholeflow evidence are preserved.
+No new host read,helper,test,SQL,installation or lifecycle action ran.
+Continue with the [Wave98 image and conditional host packet](2026-10-18-r2-899f259-host-sequence-packet.md).
+No fourth image attempt or second wholeflow run is authorized by this recovery.
