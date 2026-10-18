@@ -4937,3 +4937,10 @@ successful deletion. Renew by20:15UTC. No new worker; native Ralph stays blocked
 0120b0e의12이미지·704파일검사·49gate·저장archive/manifest를 인수했고 동일 Owner ID복귀와 빌드·독립복구 실제 정상종료를 확인했다. 승인된 통합검증은09:45:41UTC 단일 실행 후 WHOLEFLOW_MOUNTS로 종료됐다. 임시 PG만 시작됐고 bootstrap은 생성 뒤 시작되지 않았다. 운영11상태와fce9b90은 유지됐다. 익명 볼륨1개의 소유 연결은 회수하지 못해 보존하며 정리는 INCOMPLETE다. 상속 VOLUME을 DB client의 제한된 읽기 전용 tmpfs로 덮고 생성 전 검사·정리 증거 보존을 보정한다. 기존131필수정의에10개를 더한 hosted CI를 준비하며 새 호스트 실행은 미승인이다. G4·배포·Owner·연속3거래일·C_R2는 미완료다.
 
 [증거·수정 범위](2026-10-18-r2-wholeflow-inherited-volume-correction.md). 이미지 closureff247181, 통합 closure861396af.04318894 인계 저장 후179ec5a7 삭제 확인.
+
+
+### Wave101 actual hosted dispatch and bounded continuation
+
+Wave101 후보512625a를 커밋·push하고 원격SHA와 전체 이벤트/워크플로 exact-head0을 확인한 뒤 CI39117542904·기능smoke39117544844를 각각1회 실행했다.1252pin/525blob·141필수/15이미지결과/32wholeflow를 고정했다.10:04:29UTC 형식·strictClippy·Python 성공의 전체로그/실제checkout3개를 회수했고 나머지 전체증거는 진행 중이다.0120b0e 실제이미지·복귀 인수와 통합실패/익명볼륨 보존을 유지한다. 새후보 호스트 실행은 미승인;G4·배포·Owner·연속3거래일·C_R2는 미완료다.
+
+CI10:00:25UTC/smoke10:00:27UTC;전체 회수 기한11:45:25/27UTC. 후속44965a67 확인·인계 저장 후04318894 삭제 확인. 입력과 후보는 변경하지 않고 정확한 실행의 읽기 전용 회수만 이어간다.
