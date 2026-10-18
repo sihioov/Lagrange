@@ -1,6 +1,8 @@
 # R2 third image-maintenance proposal for 2a165fe
 
-R2-04/09, Wave95. Status: **PREPARED_NOT_AUTHORIZED_NOT_EXECUTED**.
+R2-04/09, Wave95. Preparation below is historical. Owner subsequently answered
+“진행해”; the third one-attempt packet is **AUTHORIZED_AND_EXECUTING**.
+See [actual execution and recovery](2026-10-18-r2-third-image-maintenance-attempt.md).
 Candidate `2a165fe577e833529134627e980a129b9717ae6f` has complete
 [hosted acceptance](2026-10-18-r2-d4-fixture-ci.md): CI39088097930 and separate
 functional smoke39088099684, attempt1, both SUCCESS. Nine full log hashes,
@@ -134,3 +136,8 @@ Continuation handoff: same-agent heartbeat `cad91dfe` was confirmed active at
 `c4f4db00` deletion was confirmed. Renew by2026-10-18T14:00:00Z, before its
 15:08:43.217Z expiry and47th tick. If the Owner has not answered, preserve the
 single pending decision and perform only bounded no-change reconciliation.
+
+
+Owner approval and execution supersede the pending-decision state above. The
+prepared control/command receipts remain immutable historical preparation.
+The new execution monitor276c42d8 was persisted before cad91dfe deletion.

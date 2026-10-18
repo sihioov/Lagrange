@@ -6614,3 +6614,30 @@ prepared decision and remaining R2 gates; renewby14:00UTC,expires15:08:43.217UTC
 before47thtick. Native Ralph stays blocked; no new worker or daemon-outage
 protection. Actual images/approved-base wholeflow/G4deployment/Owner use/three
 consecutive trading days/finalC_R2 remain open.
+
+
+### Wave95 authorized third attempt — 2026-10-18 03:21 UTC
+
+Owner answered “진행해” to the prepared third-attempt packet. One new attempt
+is authorized and dispatched, not a renewed permission for further retries.
+Fresh2132 source pins/11 controls/inert0600env, exact eleven container states,
+root-owned parents/output absence, memory/PSI/OOM/compiler/producer checks and
+READ ONLY work settlement passed. Historical active/exited build units have no
+main/control/cgroup processes and were preserved. Official plan/preflight
+passed; actual freshly observed source-input SHA is454cad1f9cb8f12ddafca6729897acc9ef2eccd5947adf40942020b1e9a1cf76.
+
+Independent recovery was actually active with its startup receipt before
+stop intent. Shared window03:21:04.258525Z–15:21:04.258525Z, no extension.
+Exactly one build dispatch03:21:22.119955Z, systemd-run exit0. Owner V2 exited0,
+post-stop work settled, candidate-bound attestation created. The original nine
+other serving containers remain healthy at drain; research stays exited2.
+At03:21:43 both units were active/running; first two DB images completed and
+api-server started. Final twelve-image/manifest acceptance and same-ID
+restoration with independent terminal recovery remain open. Source and hosted
+receipts stay pinned; no additional test/CI/deployment/provider operation.
+
+Same-agent heartbeat276c42d8 was confirmed active03:22:24Z, handoff persisted,
+then cad91dfe deletion confirmed. Renewby14:00UTC before expiry15:22:24.009Z
+and47th tick. Root independent recovery is separate from daemon heartbeat.
+See docs/reviews/2026-10-18-r2-third-image-maintenance-attempt.md. Continue
+approved-base wholeflow/G4/Owner/three trading days/finalC_R2 after this package.
