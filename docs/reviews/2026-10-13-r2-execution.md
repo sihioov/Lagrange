@@ -4636,3 +4636,44 @@ Functional smoke39088099684 remains active at02:20:03UTC; keep source/input
 freeze until its terminal full publication/idempotence/cleanup recovery.
 Existing c4f4db00 tracks the same candidate/scope within its bounds. No new run,
 production action, third-maintenance or hosted/final-R2 acceptance.
+
+## Wave95 — complete hosted acceptance and prepared third image attempt
+
+At2026-10-18T03:02:39UTC, candidate2a165fe577e833529134627e980a129b9717ae6f
+has complete terminal hosted acceptance. CI39088097930 attempt1 SUCCESS across
+8jobs and functional smoke39088099684 attempt1 SUCCESS (last job02:47:29UTC).
+Nine full log hashes/eight actual checkouts,1174pins/519 committed blob bytes,
+118 required definitions/15 image outcomes and every applicable carried group
+match. Actual fixture publication/repeat invariance and ten cleanup outcomes0,
+owned resources absent,original_exit0/cleanup_exit0 are verified. Terminal
+receipt SHA f352936ddfe5b0952f9acf0757817455731f70e5a238d5a5c0667e4f601631cf.
+CI-only and prior0d failure/functional success receipts remain immutable.
+No rerun/cancel/duplicate. Frozen inputs and accepted candidate stay unchanged.
+
+Continue R2-04/09 with exact-candidate image preparation. New detached checkout
+/data/worktrees/3puw275b/r2-release-2a165fe has2132 tracked pins/objects/modes
+matched; oldab48 checkout2125pins unchanged. New inert0600env is byte-identical
+to its prior inert input. Eleven maintenance controls are mechanically rebound
+under target/r2-daily-beta/wp-8/maintenance-2a165fe-a3. Inverse bytes match,
+three runtime/probe/SQL files are identical, expanded argv/service/config agree.
+Preparation SHA744d4edbd1a86b35505929f8655b1fc67ddaee55cdfaebd499b0337ffe6266d1;
+command ledger SHA62c77df8b1a4e09c2ccfa9b5442abea45050b87cac123140ebf410073d6b1d74.
+Coordinator static review only; no new independent review/local execution.
+
+Third interruption is PREPARED_NOT_AUTHORIZED_NOT_EXECUTED. The prior two
+one-attempt permissions were consumed; the latest Owner instruction explicitly
+requires a new decision. Prepared scope: fresh bounded runtime/READ ONLY
+settlement and official plan/preflight, new root controls/units, independent
+recovery ready before one exact OwnerV2 normal SIGTERM,exit0 required, official
+serial12images and same-ID restoration. Shared12h/stopfirst1h/build10h/watchdog
+10.5h/attestation11h/no renewal; Compose1/Cargo2, fourbatches3, all gates retained.
+Current host/work/output absence/source-input hash remain UNKNOWN until approval.
+No new production probe,root/SQL/Docker/helper/build/provider/lifecycle action.
+See docs/reviews/2026-10-18-r2-third-image-maintenance-packet.md.
+
+Successor same-agent heartbeat cad91dfe was confirmed active03:08:43UTC and its
+handoff persisted before c4f4db00 deletion was confirmed. It tracks the new
+prepared decision and remaining R2 gates; renewby14:00UTC,expires15:08:43.217UTC,
+before47thtick. Native Ralph stays blocked; no new worker or daemon-outage
+protection. Actual images/approved-base wholeflow/G4deployment/Owner use/three
+consecutive trading days/finalC_R2 remain open.

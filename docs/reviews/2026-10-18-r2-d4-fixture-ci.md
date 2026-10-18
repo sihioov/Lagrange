@@ -3,9 +3,10 @@
 R2-04/09, Wave94. Candidate
 `2a165fe577e833529134627e980a129b9717ae6f` contains the single self-test
 [correction](2026-10-18-r2-image-fixture-feature-correction.md). Its required
-CI scope is accepted after full recovery at02:23:58 UTC. The separate functional
-smoke is still running, so hosted acceptance remains open. The old candidate's
-CI failure and separate functional success remain preserved.
+CI scope was accepted after full recovery at02:23:58 UTC. The separate functional
+smoke finished successfully at02:47:29 UTC; full terminal evidence was recovered
+at03:02:39 UTC. **Both hosted scopes are accepted for this exact candidate.**
+The old candidate's CI failure and separate functional success remain preserved.
 
 ## Exact executions
 
@@ -20,8 +21,8 @@ Both runs were observed in progress at01:53:41 UTC on2026-10-18:
 
 Both use `workflow_dispatch`, branch `excited-dolphin`, and the exact candidate.
 No old run was rerun, cancelled or duplicated. Later documentation commits do
-not change this revision. Source and frozen inputs remain fixed until both
-executions have terminal full recovery.
+not change this revision. Source and frozen inputs remained fixed through both
+executions' terminal full recovery. Frozen inputs and terminal receipts stay immutable.
 
 ## Evidence requirements and partial recovery
 
@@ -67,21 +68,36 @@ all passed with cleanup/reservation checks, no skip, retry or truncation.
 Strict Clippy included all-targets/all-features/locked and `-D warnings`;
 workspace format passed. Python's495 passed/10 skipped remain aggregate-only.
 
-Functional smoke39088099684 attempt1 was still active at02:20:03 UTC. Recover
-its complete log/hash, actual checkout, publication and repeat invariance,
-and all ten cleanup outcomes before hosted acceptance. Source and frozen
-inputs remain fixed. No production-image or final-R2 acceptance follows from
-these hosted synthetic fixtures. Raw logs remain in memory only.
+Functional smoke39088099684 attempt1 was still active at02:20:03 UTC and
+completed successfully at02:47:29 UTC. Its complete143818-byte/1778-line log
+SHA256 is `437f450a0f67b2240012efa35140193336fb3719180bada7660003f54d654a7c`.
+The actual checkout at line118 equals the candidate. Line1752 proves exact
+fixture publication/lineage and repeat invariance for research publication,
+candidate sources and both candidate feeds. Calendar history/projection60/60,
+six source datasets, two universes/twelve members and two feeds/ten items match.
+All ten cleanup steps returned0; owned containers, volumes, networks and context
+image were absent. Original/cleanup exits were both0, including the raw probe.
+
+Both runs/all jobs/steps were recovered; nine complete hashes/eight actual
+checkouts and all1174 pins/519 committed blobs matched again. The immutable
+terminal receipt is `target/r2-daily-beta/ci/2a165fe/hosted-terminal-evidence.json`,
+SHA256 `f352936ddfe5b0952f9acf0757817455731f70e5a238d5a5c0667e4f601631cf`.
+The earlier CI-only receipt is unchanged. No production-image or final-R2
+acceptance follows from these hosted fixtures. Raw logs stayed in memory only.
 
 ## Continuation
 
-Heartbeat `c4f4db00` was confirmed active for the same coordinator and persisted
-before predecessor `e9dd6173` was deleted. It expires13:54:17.607 UTC; renew
-by13:00 UTC and before the47th tick. This tracks the remaining R2 work after
-this package. Native Ralph remains blocked; the heartbeat does not protect
-against daemon outage.
+During CI recovery, heartbeat `c4f4db00` tracked the same coordinator. After
+complete terminal recovery, successor `cad91dfe` was confirmed active at
+03:08:43UTC and its handoff was persisted before deletion of `c4f4db00` was
+confirmed. The successor tracks the prepared third maintenance decision and
+remaining R2 gates, expires15:08:43.217UTC, and must be renewed by14:00UTC/before
+its47th tick. Native Ralph remains blocked; this same-agent heartbeat does not
+protect against daemon outage. No additional worker was created.
 
-The third production interruption remains unauthorized. No new production
-probe, SQL, build or lifecycle action occurred. Actual twelve verified images,
-approved-base host whole flow, G4 deployment, Owner use, three consecutive
-trading days and final C_R2 remain open.
+Wave95 prepares the [third image-maintenance packet](2026-10-18-r2-third-image-maintenance-packet.md)
+after full recovery: clean2132-file candidate checkout, inert0600 env, eleven
+mechanically rebound controls and exact argv. The third production interruption
+remains unauthorized. No new production probe, SQL, build or lifecycle action
+occurred. Actual twelve verified images, approved-base host whole flow, G4
+deployment, Owner use, three consecutive trading days and final C_R2 remain open.
