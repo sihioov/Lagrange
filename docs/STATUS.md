@@ -6,13 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 두 번째 정상종료 성공·이미지 검증 실패 후 복귀, 계약 보정 중.** Wave93에서 새로 승인한 두 번째 유지보수를1회 실행했다. 정상종료0·작업 정산·run-start gate는 통과했지만, 첫 DB 이미지 검증이 product-image-mode-contract-drift로 실패했다. 동일 컨테이너 복귀·독립복구 종료·사후 정산·11개 상태 복원을 확인했다. 이미지1개 생성/검증0개, manifest 없음. daily-control의 누락된 payload·0755 계약과 CI 실행 범위를6파일로 보정했으며 새 후보 검증을 준비한다. 추가 중단은 아직 승인되지 않았다. [2차 복귀·이미지 계약 보정](reviews/2026-10-18-r2-image-mode-correction.md).
+현재: **R2 두 번째 정상종료 성공·이미지 검증 실패 후 복귀, 보정 후보 검증 중.** Wave93에서 새로 승인한 두 번째 유지보수를1회 실행했다. 정상종료0·작업 정산·run-start gate는 통과했지만, 첫 DB 이미지 검증이 product-image-mode-contract-drift로 실패했다. 동일 컨테이너 복귀·독립복구 종료·사후 정산·11개 상태 복원을 확인했다. 이미지1개 생성/검증0개, manifest 없음. daily-control의 누락된 payload·0755 계약과 CI 실행 범위를6파일로 보정한 0d407f8 후보의 CI39084560317·기능 smoke39084562837을 각각1회 실행했다. 새 전체 이미지 fixture는 실패했고 나머지 실행의 전체 근거를 회수 중이다. 추가 중단은 아직 승인되지 않았다. [2차 복귀·이미지 계약 보정](reviews/2026-10-18-r2-image-mode-correction.md), [진행 중 검증](reviews/2026-10-18-r2-image-mode-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
 2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
-현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후에는 새 후보 검증 범위로 다시 인계한다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과

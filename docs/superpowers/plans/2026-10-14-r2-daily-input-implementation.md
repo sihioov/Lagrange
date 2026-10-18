@@ -6453,3 +6453,24 @@ Third maintenance/deployment is not authorized: prepare a concrete new candidate
 packet after hosted verification before another interruption decision. Continue
 full R2 tracking; do not mark images/host/G4/Owner/three days/C_R2 complete.
 See docs/reviews/2026-10-18-r2-image-mode-correction.md.
+
+
+### Wave93 hosted dispatch and partial recovery — 2026-10-18 01:02 UTC
+
+Candidate 0d407f8ba613d75d99c1cbc8e974a72073b9d5bb was pushed and its remote SHA
+verified; all-event/all-workflow exact-head query0 at00:55:10.407883UTC.
+Exactly one CI39084560317 attempt1 (00:55:26) and one functional smoke39084562837
+attempt1 (00:55:28) were launched. Reporting bounds02:40:26/28UTC. Frozen current
+inputs1166pins/517blobs, SHA8e9b3a690b3e410b943b396f7d91665d4a9f78a2287ccba46ff2c82529273baa;
+inventory118definitions+9image-suite markers,
+SHA143594332c5dd83e4f3ccccf0abedeb6f534a9dbd1b9ddaea42eece6f6ec0716.
+Four full logs/checkouts recovered: format/strictClippy/Python success, policy
+failure at the newly required complete synthetic image suite. Six markers PASS,
+three UNKNOWN; log lacks failing assertion/cause. Twelve required cases
+NOT_EXECUTED after explicit skipped steps; 102 named PASS and four Rust UNKNOWN.
+Other jobs and functional smoke remain active; no acceptance or source correction
+until terminal full recovery. No extra production reads/execution.
+Successor e9dd6173 confirmed active, handoff persisted, then bab15aae deleted.
+Renew by12:05UTC before47thtick/12:56:26.726expiry. Native Ralph remains blocked.
+See docs/reviews/2026-10-18-r2-image-mode-ci.md and private wave93 launch/handoff
+receipts. Third maintenance and finalR2 remain open.
