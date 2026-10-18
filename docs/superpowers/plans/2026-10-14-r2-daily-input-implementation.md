@@ -6776,3 +6776,19 @@ Successor5f3cfda2 confirmed and persisted beforefc826f21 deletion;renew18:10UTC,
 expires19:11:51.871UTC/before47thtick. Native Ralph remains blocked. Full images,
 restoration and conditional wholeflow still require actual evidence; no retry.
 See docs/reviews/2026-10-18-r2-899f259-host-sequence-packet.md.
+
+
+## Wave99 protected host ancestor contract — 2026-10-18
+
+후보899f259의 실제12이미지·704파일·49gate·manifest와 동일 Owner V2 복귀·독립복구 정상종료를 인수했다. 조건부 통합검증은 fresh 읽기 점검에서 root:982/0750 상위 경로의 그룹 제한에 걸려 시작하지 않았다(dispatch0). 공식 설치의 root:서비스그룹0750 계약에 맞춰 상위 경로 검사를 분리하고9개 실제root 회귀를 작성했다. 새 후보의131필수·15이미지·23wholeflow 및 기존 전체 CI/기능 smoke 검증을 준비한다. 새 후보 호스트 실행·G4·배포·Owner·연속3거래일·C_R2는 미완료다.
+
+Image closure d4ef8fa0; unlaunched wholeflow closure ee15d94e. Two source files
+separate root-owned host ancestors from fixed archived identities, preserving
+ACL/mode/descriptor/name/GID-race and exact root/service-parent checks. Nine new
+actual-root private fixtures are written, not locally executed. Freeze the
+coherent candidate and131 required names,15 image outcomes,23 wholeflow cases;
+new exact-head CI+smoke only after absence/remote verification, full recovery
+before acceptance. No changed-candidate host permission or additional delegation.
+Heartbeat bf7d2b09 confirmed/persisted before5f3cfda2 deletion;renew18:50UTC,
+expires19:48:45.805UTC, before47thtick. Native Ralph remains blocked.
+See docs/reviews/2026-10-18-r2-host-ancestor-contract-correction.md.

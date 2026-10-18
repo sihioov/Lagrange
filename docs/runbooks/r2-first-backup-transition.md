@@ -1,8 +1,12 @@
 # R2 first backup installation transition
 
-Status: source written, **not execution-ready**. The 22 real-root filesystem
-fixtures are WRITTEN_UNEXECUTED. Systemd responses are substituted in those
-fixtures; actual installed units require a fresh operational check. This is one
+Status: **hosted fixtures accepted; production transition not executed**.
+Candidate899f259f9c8872fb61f0c95745904f552c8750e9 passed all22 named
+real-root filesystem cases in CI39098366992 attempt1. The complete
+[hosted recovery](../reviews/2026-10-18-r2-wholeflow-git-ci.md) binds each result;
+terminal receipt SHA256c87097708cf803ce69ec0e6d63bfe2d4242e20c1d084e489e6da67c8fbd0d31b.
+Systemd responses are substituted in those fixtures; actual installed units
+still require a fresh operational check. This is one
 part of [first-rollout preparation](../reviews/2026-10-16-r2-first-rollout-readiness.md),
 not permission to perform a production change.
 
@@ -92,13 +96,15 @@ observations. It does not restore the database, select an old release, or permit
 an old V1 helper to run after daily schema/state exists. Schema compatibility,
 operational restore and timer resumption require their own approved disposition.
 
-## Verification still required
+## Verification evidence and operating work still required
 
 [Written fixtures](../../scripts/ops/production-backup-transition-self-test.py)
 cover all six replacements, partial failures, actual locks/metadata/ACLs,
 two bounded child-process termination boundaries, foreign replacement, corrupt
 recovery copies and the official check arguments. The CI policy step has a hard
-exit gate and runs despite unrelated earlier fixture failures. None has been run
-locally or accepted from source inspection. Batch hosted verification with the
-remaining pre-upgrade recovery and approved-base whole-flow preparation; do not
-dispatch a CI run solely for this source checkpoint.
+exit gate and runs despite unrelated earlier fixture failures. All22 named
+cases passed in the hosted run above; none was run locally in this continuation.
+That result does not establish installed-unit observations, a consistent
+production recovery point, an actual six-file transition or timer resumption.
+Bind those operating facts and the missing G4 authority before execution.
+Preserve the completed run; do not redispatch CI for this documentation update.

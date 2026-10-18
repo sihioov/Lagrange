@@ -104,6 +104,21 @@ def checked(fd, *, directory, owners=OWNERS, groups=OWNERS, sticky_volume=False)
     return value
 
 
+def checked_parent(fd):
+    """Bind protected host ancestry independently of archived data identities.
+
+    provision-linux.sh creates root:service-group0750 host parents. That group
+    can be allocated by the host, unlike the fixed identities inside a data
+    root. Root ownership, no group/other writes, no special bits and no ACL are
+    still mandatory. open_root retains and rechecks the exact observed GID.
+    """
+    value = os.fstat(fd)
+    require(stat.S_ISDIR(value.st_mode) and value.st_uid == 0 and
+            not value.st_mode & 0o7022, "DAILY_BACKUP_FILES_TYPE_OR_MODE")
+    no_acl(fd)
+    return value
+
+
 @dataclasses.dataclass(frozen=True)
 class Limits:
     total_bytes: int
@@ -153,15 +168,16 @@ def open_root(root):
     groups = OWNERS | {999} if root.name == "postgres" else OWNERS
     try:
         fds.append(os.open("/", DIRECTORY))
-        before.append(checked(fds[0], directory=True, owners={0}))
+        before.append(checked_parent(fds[0]))
         for index, name in enumerate(names):
             fds.append(os.open(name, DIRECTORY, dir_fd=fds[-1]))
             last = index == len(names) - 1
             boundary = root.parent if index == len(names) - 2 else None
-            info = checked(fds[-1], directory=True,
-                           owners={root.uid} if last else {boundary[0]} if boundary else {0},
-                           groups=groups if last else OWNERS,
-                           sticky_volume=last and root.name == "postgres")
+            info = (checked_parent(fds[-1]) if not last and boundary is None else
+                    checked(fds[-1], directory=True,
+                            owners={root.uid} if last else {boundary[0]},
+                            groups=groups if last else OWNERS,
+                            sticky_volume=last and root.name == "postgres"))
             if last and root.mode == 0o1777:
                 parent = before[-1]
                 require((parent.st_uid, parent.st_gid, stat.S_IMODE(parent.st_mode)) == (0, 0, 0o700),
@@ -176,10 +192,12 @@ def open_root(root):
         # policy and binding may not. Included root contents are checked below.
         for index, fd in enumerate(fds):
             boundary = root.parent if index == len(names) - 1 else None
-            info = checked(fd, directory=True,
-                           owners={root.uid} if index == len(names) else {boundary[0]} if boundary else {0},
-                           groups=groups if index == len(names) else OWNERS,
-                           sticky_volume=index == len(names) and root.name == "postgres")
+            last = index == len(names)
+            info = (checked_parent(fd) if not last and boundary is None else
+                    checked(fd, directory=True,
+                            owners={root.uid} if last else {boundary[0]},
+                            groups=groups if last else OWNERS,
+                            sticky_volume=last and root.name == "postgres"))
             original = before[index]
             require((info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode) ==
                     (original.st_dev, original.st_ino, original.st_uid,

@@ -150,6 +150,106 @@ class DailyBackupFilesTests(unittest.TestCase):
             with files.Snapshot(self.roots, self.limits):
                 os.chown(parent, 14568, 10001)
 
+    def test_root_service_group_ancestor_round_trip_preserves_host_metadata(self):
+        os.chown(self.directory, 0, 14567)
+        os.chmod(self.directory, 0o750)
+        before = self.directory.stat()
+        archive = self.archive()
+        _, retained = files.verify_archive(io.BytesIO(archive), self.limits, ("base/base.data",))
+        self.assertEqual(retained, {"base/base.data": b"approved-base-fixture"})
+        after = self.directory.stat()
+        self.assertEqual((before.st_ino, before.st_uid, before.st_gid, before.st_mode),
+                         (after.st_ino, after.st_uid, after.st_gid, after.st_mode))
+        self.assertNotIn(str(self.directory).encode(), archive)
+
+    def test_service_group_ancestor_and_exact_artifact_parent_are_separate_boundaries(self):
+        os.chown(self.directory, 0, 14567)
+        os.chmod(self.directory, 0o750)
+        parent = self.directory / "service-artifacts"
+        parent.mkdir(mode=0o750)
+        os.chown(parent, 14568, 10001)
+        (self.directory / "base").rename(parent / "historical-price-beta-root")
+        self.roots[-1] = files.Root("base", str(parent / "historical-price-beta-root"),
+                                   10001, 10001, 0o750, parent=(14568, 10001, 0o750))
+        files.verify_archive(io.BytesIO(self.archive()), self.limits)
+        os.chown(parent, 14569, 10001)
+        with self.assertRaises(files.SnapshotError):
+            self.archive()
+
+    def test_service_group_ancestor_requires_root_owner(self):
+        os.chown(self.directory, 14567, 14567)
+        with self.assertRaises(files.SnapshotError):
+            self.archive()
+
+    def test_service_group_ancestor_rejects_write_and_special_permission_bits(self):
+        os.chown(self.directory, 0, 14567)
+        for mode in (0o770, 0o752, 0o1750, 0o2750, 0o4750):
+            with self.subTest(mode=oct(mode)):
+                os.chmod(self.directory, mode)
+                with self.assertRaises(files.SnapshotError):
+                    self.archive()
+        os.chmod(self.directory, 0o750)
+
+    def test_service_group_ancestor_rejects_access_and_default_acls(self):
+        os.chown(self.directory, 0, 14567)
+        os.chmod(self.directory, 0o750)
+        acl = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", tag, permission, uid)
+            for tag, permission, uid in ((1, 7, 0xFFFFFFFF), (2, 5, 14568),
+                                         (4, 5, 0xFFFFFFFF), (16, 5, 0xFFFFFFFF),
+                                         (32, 0, 0xFFFFFFFF)))
+        for name in ("system.posix_acl_access", "system.posix_acl_default"):
+            with self.subTest(acl=name):
+                os.setxattr(self.directory, name, acl)
+                with self.assertRaises(files.SnapshotError):
+                    self.archive()
+                os.removexattr(self.directory, name)
+
+    def test_service_group_ancestor_rejects_symlink_traversal(self):
+        os.chown(self.directory, 0, 14567)
+        saved = self.directory.with_name(self.directory.name + "-saved")
+        self.directory.rename(saved)
+        try:
+            self.directory.symlink_to(saved, target_is_directory=True)
+            with self.assertRaises((files.SnapshotError, OSError)):
+                self.archive()
+        finally:
+            self.directory.unlink()
+            saved.rename(self.directory)
+
+    def test_service_group_ancestor_gid_change_is_rejected_at_scope_exit(self):
+        os.chown(self.directory, 0, 14567)
+        with self.assertRaises(files.SnapshotError):
+            with files.Snapshot(self.roots, self.limits) as snapshot:
+                snapshot.write(io.BytesIO())
+                os.chown(self.directory, 0, 14568)
+
+    def test_service_group_ancestor_does_not_admit_unknown_data_root_or_file_groups(self):
+        os.chown(self.directory, 0, 14567)
+        for path in (self.directory / "raw", self.directory / "raw/source/manifest.jsonl"):
+            before = path.stat()
+            with self.subTest(path=path.name):
+                try:
+                    os.chown(path, before.st_uid, 14567)
+                    with self.assertRaises(files.SnapshotError):
+                        self.archive()
+                finally:
+                    os.chown(path, before.st_uid, before.st_gid)
+
+    def test_service_group_ancestor_name_replacement_is_rejected(self):
+        os.chown(self.directory, 0, 14567)
+        saved = self.directory.with_name(self.directory.name + "-saved")
+        try:
+            with self.assertRaises(files.SnapshotError):
+                with files.Snapshot(self.roots, self.limits) as snapshot:
+                    snapshot.write(io.BytesIO())
+                    self.directory.rename(saved)
+                    self.directory.mkdir(mode=0o700)
+                    os.chown(self.directory, 0, 14567)
+        finally:
+            if saved.exists():
+                self.directory.rmdir()
+                saved.rename(self.directory)
+
     def test_host_paths_and_unselected_floor_sibling_are_absent(self):
         self.put("floor/not-selected-secret", b"NOT_FOR_BACKUP")
         archive = self.archive()

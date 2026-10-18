@@ -1,7 +1,7 @@
 # R2 image and conditional approved-base integration packet
 
 R2-04/R2-09, Wave98. Candidate899f259f9c8872fb61f0c95745904f552c8750e9.
-Status: **AUTHORIZED_IMAGE_ATTEMPT_RUNNING; CONDITIONAL_WHOLEFLOW_AUTHORIZED_NOT_YET_EXECUTED**.
+Status: **IMAGE_ACCEPTED_AND_RESTORED; CONDITIONAL_WHOLEFLOW_UNLAUNCHED_ADMISSION_BLOCKED**.
 
 Owner answered “이어서 진행해” after this concrete two-phase decision request.
 Authorization was recorded2026-10-18T07:10:56.169455UTC. Both phases are approved
@@ -199,3 +199,18 @@ Source and accepted hosted evidence remain unchanged. No new local test or
 independent-review result is claimed; approved official host commands are
 recorded above. Production deployment/G4/Owner/three trading days/finalC_R2
 remain open and outside this packet.
+
+
+## Actual image closure and unlaunched integration admission — 2026-10-18
+
+후보899f259의 실제12이미지·704파일·49gate·manifest와 동일 Owner V2 복귀·독립복구 정상종료를 인수했다. 조건부 통합검증은 fresh 읽기 점검에서 root:982/0750 상위 경로의 그룹 제한에 걸려 시작하지 않았다(dispatch0). 공식 설치의 root:서비스그룹0750 계약에 맞춰 상위 경로 검사를 분리하고9개 실제root 회귀를 작성했다. 새 후보의131필수·15이미지·23wholeflow 및 기존 전체 CI/기능 smoke 검증을 준비한다. 새 후보 호스트 실행·G4·배포·Owner·연속3거래일·C_R2는 미완료다.
+
+Build successful terminal07:35:11.233314UTC and independent recovery successful
+terminal07:35:11.508795 followed same-ID healthy restoration07:35:11.227797.
+Image closure d4ef8fa035e9189c364491f3e11845218dd81aa492be3213068fa8aecb05640a;
+manifest1414f4e845a9358bedd72e8ae36a68dff68bc4c5f9704124933ad3866b350d86.
+Fresh wholeflow admission failed only the host ancestor group predicate;
+dispatch0, no driver/unit/output creation. Admission closure
+ee15d94e829bfc9ba6f04c9d5747c8a423862b4437f43829597b886bb2cf720e.
+The899 approval remains tied to899 and does not authorize successor host work.
+[Full evidence and Wave99 correction](2026-10-18-r2-host-ancestor-contract-correction.md).

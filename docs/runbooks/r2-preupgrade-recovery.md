@@ -1,15 +1,21 @@
 # R2 pre-upgrade consistent recovery preparation
 
-Status: **source in progress; not execution-ready**. This is the pre-upgrade
-part of Wave82/R2-04/R2-09, alongside the [six-file backup transition](r2-first-backup-transition.md)
-and the pending approved-base whole-flow fixture. The latest
-[full failure](../reviews/2026-10-16-r2-first-rollout-metadata-ci.md) is `6572bff`:
+Status: **hosted recovery fixtures accepted; production recovery not executed**.
+Candidate899f259f9c8872fb61f0c95745904f552c8750e9 passed20 filesystem/contract,
+28 maintenance,3 preparation and4 actual Docker/PostgreSQL cases in
+CI39098366992 attempt1. The complete
+[hosted recovery](../reviews/2026-10-18-r2-wholeflow-git-ci.md) binds each named result;
+terminal receipt SHA256c87097708cf803ce69ec0e6d63bfe2d4242e20c1d084e489e6da67c8fbd0d31b.
+This is the pre-upgrade part of R2-04/R2-09, alongside the
+[six-file backup transition](r2-first-backup-transition.md) and actual
+approved-base host integration. Historical
+[full failure](../reviews/2026-10-16-r2-first-rollout-metadata-ci.md) `6572bff` remains preserved:
 the18 filesystem/contract,28 maintenance and3 preparation cases passed; the
 native positive errored at PGDATA ownership and the other3 native printed PASS
 rows did not establish their intended failure stages. Wave85 adds2 filesystem
-definitions and tightens those3 native assertions. Fresh verification is still
-required. No production stop,
-capture, restore, database query or operational acceptance has occurred.
+definitions and tightened those3 native assertions; the accepted hosted run
+above now supplies their fresh results. No production pre-upgrade fence,
+capture, clone proof or operating acceptance is established by those fixtures.
 
 ## Recovery method and its operating cost
 
@@ -141,11 +147,14 @@ the original operation as failed. The failed `2db7e48` run passed46 filesystem
 and maintenance definitions but stopped before all four native methods. Its
 unprinted changed metadata field remains UNKNOWN. On `6572bff`, all three
 preparation cases passed, the native positive errored and the three native
-negative PASS rows did not prove their intended stages. Wave85 has55 recovery
-definitions:20 filesystem,28 maintenance,3 preparation and4 native. Fresh
-results are required. CI wiring retains independent hard exits.
+negative PASS rows did not prove their intended stages. Wave85 established55
+recovery definitions:20 filesystem,28 maintenance,3 preparation and4 native.
+All55 named definitions passed for899f259 in the hosted evidence above,
+including actual source/restored PGDATA metadata for the four native cases.
+CI wiring retains independent hard exits; unprinted nested independent
+process rows remain UNKNOWN rather than being inferred from parent success.
 
-## Bounded maintenance entry point (written, unexecuted)
+## Bounded maintenance entry point (hosted-tested, not used on production)
 
 [prepare-production-recovery.py](../../scripts/ops/prepare-production-recovery.py)
 has four closed modes. The default `plan` makes no host observations. The other
@@ -208,13 +217,15 @@ with fake Docker/systemd observations and a fake clone result. They cover stale
 contracts/audits, migration/base mismatch, writer/source/key changes, expiry,
 cipher damage, missing/extra members, failed clone, publication races and
 ambiguous creation. They do not substitute for the separate native Docker suite
-or an actual production fence. All28 are WRITTEN_UNEXECUTED.
+or an actual production fence. All28 named regressions passed in the hosted
+run above; production writer fencing and recovery remain unexecuted.
 
 ## Remaining work before operating use
 
-1. Complete the actual approved-base whole-flow fixture and source review, then
-   verify the coherent Wave82 candidate once after the existing-run query.
-   No per-file CI dispatch; all72 Wave82 definitions are still unexecuted.
+1. Complete actual approved-base host integration for the accepted candidate.
+   Hosted wholeflow has23 passing named fixtures, including four actual-root
+   Git ownership cases; synthetic fixture results do not establish host
+   integration or a production recovery point. Do not rerun the completed CI.
 2. Bind the fresh actual host roots, complete writer inventory, old configuration,
    approved base, secret-recovery reference and reviewed maintenance payload.
    Do not substitute synthetic fixture data or guess paths/owners/volume modes.
