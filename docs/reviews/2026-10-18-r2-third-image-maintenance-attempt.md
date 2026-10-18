@@ -146,3 +146,29 @@ Complete retrieved build journal SHA256
 31581bytes/396rows; raw bytes were not persisted by the coordinator.
 Same heartbeat276c42d8 and original12-hour bounds continue. No new launch,
 stop, retry, source change, test or production action was performed by this tick.
+
+
+## Research image complete; recommendation image in progress — 04:00:49UTC
+
+Five exact-candidate image verification receipts now exist. Research-worker
+completed in699seconds with23 file checks; its actual image ID is
+`sha256:180192ae2ad795e6c770bf55bac469b1ac1971d6df4756a5cff34c716b9ae18f`,
+archive SHA256`6ab612bc7454befa942643c65b32e4eec474d3f74a530c5f4bc420ae2e0451fc`,
+verification receipt SHA256`61dfdaa909f235bccf21a7e215a139b8f58be70799d03e52ec8c056056ad3d83`.
+All24 official gates passed with previous_exit0, including ten D6 producer
+checks and collector checkpoints3/6/8/10. Recommendation-runner image is in
+progress; its D2 producer gate passed, but image completion is not yet recorded.
+These are build results; no research container or provider operation was started.
+
+Build and independent recovery remain active/running. Nine serving containers
+are healthy; original Owner is stopped0/research stopped2. One Cargo/one rustc
+process is active. MemAvailable10020728KiB, SwapFree1437748KiB, PSI avg10 both0;
+kernel scan since03:19:50UTC returned364rows and zero OOM observations.
+Seven image verifications, final manifest and actual restoration/independent
+terminal acceptance remain open under the original bounds and heartbeat.
+
+Observation`build-observation-20261018T040049Z.json` SHA256
+`d6ee311ac58bb48746bf43bb37d596a409685e1763b14b531a5bbd6e13c57035`.
+Complete retrieved build journal39506bytes/500rows SHA256
+`0fc10fb4f785cd7a8e0d26a99bed838abb77ce982e5beff9a3345c42bfb24147`.
+Raw bytes stayed in memory; no additional dispatch, lifecycle or source change.
