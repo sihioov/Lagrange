@@ -4953,3 +4953,9 @@ Wave101 후보512625a의 완료된5작업 전체로그와 실제checkout5개를 
 private partial03710405・policy/webca8dc4ea. 기존 로그 추출의 PASS 설명접미사/Web 콜론 공백 가정을 동일 해시 원문·소스로 바로잡았으며 원 관측은 보존했다. 제품/워크플로 재실행 없음.
 
 PG 완료 후6로그/checkout·19프로세스/146이름·0060 32+73/83bootstrap·62checksum2회까지 대조했다. partial083d7bfa483a12d2fa4832513181369e401fb134990352934991173ebcba7d76;후속workspace/required/기능smoke 회수를44965a67가 계속 추적한다.
+
+
+### Wave101 full required CI evidence recovered
+
+Wave101 후보512625a의 CI8작업이10:24:43UTC 성공 종료했다. 전체로그8개·실제checkout7개·1252pin/525blob과 필수141개·새 회귀10개(실제Docker5개)·wholeflow32개·이미지15결과 및 기존Rust/PG/Web 범위를 대조했다. 기능smoke는10:30UTC 진행 중으로 실제 게시·반복 실행·정리 전체증거가 남았다. 전체후보·새호스트는 미인수이며 익명볼륨1개 보존·G4·배포·Owner·3거래일·C_R2 미완료다.
+Required-CI receipt0ef41cff;workspace d9ace462. Raw logs stayed in RAM, source remained frozen, and unprinted nested outcomes remain UNKNOWN.

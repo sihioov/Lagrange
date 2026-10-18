@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 Wave101 정책·Web·PG 추가 증거 회수.** Wave101 후보512625a의 완료된6작업 전체로그와 실제checkout6개를 회수했다. 필수137/141개·새 회귀10개(실제Docker5개)·wholeflow32개·이미지15결과·Web129+14사례와 PG19프로세스/146이름·0060 32+73·bootstrap83·62checksum두차례가 통과했다.1252pin/525blob 고정을 유지하며 남은Rust4개·workspace·required·기능smoke 전체증거를 회수한다. 전체후보·새호스트는 미인수이며 익명볼륨1개 보존·G4·배포·Owner·3거래일·C_R2 미완료다. [CI 회수](reviews/2026-10-18-r2-wholeflow-inherited-volume-ci.md).
+현재: **R2 Wave101 CI 전체증거 회수.** Wave101 후보512625a의 CI8작업이10:24:43UTC 성공 종료했다. 전체로그8개·실제checkout7개·1252pin/525blob과 필수141개·새 회귀10개(실제Docker5개)·wholeflow32개·이미지15결과 및 기존Rust/PG/Web 범위를 대조했다. 기능smoke는10:30UTC 진행 중으로 실제 게시·반복 실행·정리 전체증거가 남았다. 전체후보·새호스트는 미인수이며 익명볼륨1개 보존·G4·배포·Owner·3거래일·C_R2 미완료다. [CI 회수](reviews/2026-10-18-r2-wholeflow-inherited-volume-ci.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 

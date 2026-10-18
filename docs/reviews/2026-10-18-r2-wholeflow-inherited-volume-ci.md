@@ -1,7 +1,8 @@
 # R2 inherited-volume correction — hosted evidence
 
 R2-04/R2-09, Wave101. Candidate `512625a31fdb59d284cbd13fa6f2334a4737cc13`.
-Hosted verification is IN PROGRESS; candidate not accepted. Source and frozen
+CI full evidence is accepted; separate functional smoke remains IN PROGRESS.
+The candidate is not yet hosted-accepted. Source and frozen
 inputs remain immutable while the two runs execute. Later documentation HEAD
 does not change the selected candidate.
 
@@ -107,3 +108,28 @@ Combined policy/PG/Web receipt SHA256
 The earlier five-log partial receipt remains historical. Required137/141 passed;
 workspace's four Rust definitions, the required gate job and full functional
 smoke evidence remain pending. Source/input pins and authorization remain unchanged.
+
+
+## Full required CI recovery — 10:30–10:35 UTC
+
+CI39117542904 attempt1 completed successfully at10:24:43UTC. All8 jobs, every
+step/page,8 complete log hashes and7 actual checkout SHAs were recovered.
+All141 required definitions,15 image outcomes,32 wholeflow definitions and
+carried Rust/PG/Web groups passed. Workspace reconciliation records3363 named
+rows and231 root blocks; the fragmented KIS helper name and unprinted nested
+independent rows/exits remain UNKNOWN. Three non-Linux exclusions, six ignored
+workspace rows and ten existing Python skips remain explicit.
+
+Workspace receipt SHA256
+`d9ace462daecb23662d3cc52cd2177d27c2c437847fa864acda55ad6472fc561`;
+`ci/512625a/required-ci-evidence.json` SHA256
+`0ef41cff9c95c33603c5243e18756fe17969ace59d5736679aaedb679daeaf5d`.
+All1252 file pins and525 committed blobs were rechecked. The coordinator first
+compared the Python aggregate to the previous495 count; the committed new
+workflow-contract test and identical-hash log establish496 passed/10 skipped.
+This was an evidence comparison correction, not a test failure or rerun.
+
+The separate functional smoke was still in progress at10:30:09UTC. Its actual
+publication/repeat/10 cleanup outcomes and resource absence remain pending.
+The9-log/8-checkout full terminal receipt and successor host packet follow only
+after recovery. No new host execution, volume deletion or acceptance is claimed.
