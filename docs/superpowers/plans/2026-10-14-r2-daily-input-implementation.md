@@ -6641,3 +6641,6 @@ then cad91dfe deletion confirmed. Renewby14:00UTC before expiry15:22:24.009Z
 and47th tick. Root independent recovery is separate from daemon heartbeat.
 See docs/reviews/2026-10-18-r2-third-image-maintenance-attempt.md. Continue
 approved-base wholeflow/G4/Owner/three trading days/finalC_R2 after this package.
+
+
+Wave95 B1 progress: At2026-10-18T03:45:36UTC, four exact-candidate image verification receipts (DB2/API/web), seven gates PASS including batch:B1, and B2 research-worker native:D6 compilation were recovered. Both build/recovery units active; nine other serving containers healthy; original Owner stopped0/research stopped2; oneCargo/twoRustc; fullPSI0 and OOM0 in the admission-to-current kernel range. Eight remaining image verifications, final manifest and actual restoration/independent terminal remain open. Same heartbeat276c42d8 and original bounds; no new dispatch or source change.

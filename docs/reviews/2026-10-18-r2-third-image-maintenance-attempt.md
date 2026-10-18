@@ -114,3 +114,35 @@ serving containers are healthy; Owner remains stopped0/research stopped2.
 MemAvailable8065152KiB, SwapFree2253580KiB, PSI some/full avg10 zero. This is
 in-progress evidence, not terminal or restoration acceptance. The bounded
 continuation owns recovery of all remaining images and same-container health.
+
+
+## B1 complete and B2 in progress — 03:45:36UTC
+
+Four exact-candidate saved-byte verification receipts now exist: the two DB
+images, API and web. API completed in947seconds; web in26seconds. Seven official
+gates passed with previous_exit0, including producer:D1:api-server and batch:B1.
+The current service is research-worker and its native:D6 gate passed before
+compilation. This is image construction; the production research container
+remains stopped2. The remaining eight image verifications and final manifest
+are pending, with no terminal or restoration acceptance yet.
+
+New verified image identities: API
+`sha256:d0777f5f96bebdc5cc45e0a24361449fe256cb99ba621cf2e8bdbaae0e6bb626`,
+web `sha256:f550e332e684f2e2ebc5bf5a61065d037125f6a0bb17ec9fa981fef7b9cb3fb8`.
+Their saved archive SHA256 values are respectively
+`81a4fe4b3cfc5c65deb87e7485fc6aebada8dd8c225644969282001458c56d4d`
+and `402fda315fd049699a662c40311746045a5f5bbf569ef6df1b8a4bbed39189d0`.
+
+Both build/recovery units are actually active/running with their expected
+main PIDs and nonempty process groups. Nine other serving containers remain
+healthy; original Owner is stopped0. One Cargo/two rustc processes are active.
+MemAvailable10021800KiB, SwapFree1433672KiB and both PSI avg10 values0.
+Kernel scan03:19:50–03:45:36UTC recovered182rows and zero OOM observations.
+
+Private observation `build-observation-20261018T034536Z.json` SHA256
+`a238acf1841173fd560ed72c1dc56fba555053eac2f87e448a57434919af29d8`.
+Complete retrieved build journal SHA256
+`dbd56f9e581ffaa096a22968cfbbfc6828cd768b16cc0664b3f220e853f79fc8`,
+31581bytes/396rows; raw bytes were not persisted by the coordinator.
+Same heartbeat276c42d8 and original12-hour bounds continue. No new launch,
+stop, retry, source change, test or production action was performed by this tick.

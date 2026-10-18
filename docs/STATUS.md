@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 후보2a165fe 세 번째 이미지 빌드·독립 복구 실행 중.** Owner의 “진행해”로 세 번째1회 유지보수를 승인받아 03:21:22UTC에 정확히 한 번 시작했다. 새 호스트·2132소스pin·11제어파일·READ ONLY 작업 정산·공식 plan/preflight가 통과했고, 독립 복구 실제 실행 후 Owner V2 정상 종료0과 정산을 확인했다. DB 이미지2개 성공 뒤 API 이미지가 진행 중이며, 전체12개 이미지·manifest와 동일 컨테이너 복귀/독립 복구 종료를 회수해야 한다. 최대 유지보수 기한은15:21:04UTC이며 연장하지 않는다. 후보2a165fe의 hosted 전체 인수는 유지하고 실제 승인 입력 흐름·G4운영·Owner·3거래일·C_R2는 미완료다. [진행·복구 기록](reviews/2026-10-18-r2-third-image-maintenance-attempt.md).
+현재: **R2 후보2a165fe 세 번째 이미지 빌드·독립 복구 실행 중.** Owner의 “진행해”로 세 번째1회 유지보수를 승인받아 03:21:22UTC에 정확히 한 번 시작했다. 새 호스트·2132소스pin·11제어파일·READ ONLY 작업 정산·공식 plan/preflight가 통과했고, 독립 복구 실제 실행 후 Owner V2 정상 종료0과 정산을 확인했다. 03:45:36UTC에 DB2개·API·웹의 이미지 검증 증거4개와 B1 종료를 포함한7개 gate PASS를 회수했다. 현재 B2의 research-worker 이미지 빌드가 진행 중이며, 나머지8개 이미지·전체manifest와 동일 컨테이너 복귀/독립 복구 종료를 회수해야 한다. 최대 유지보수 기한은15:21:04UTC이며 연장하지 않는다. 후보2a165fe의 hosted 전체 인수는 유지하고 실제 승인 입력 흐름·G4운영·Owner·3거래일·C_R2는 미완료다. [진행·복구 기록](reviews/2026-10-18-r2-third-image-maintenance-attempt.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
