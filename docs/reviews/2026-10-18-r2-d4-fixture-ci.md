@@ -2,9 +2,10 @@
 
 R2-04/09, Wave94. Candidate
 `2a165fe577e833529134627e980a129b9717ae6f` contains the single self-test
-[correction](2026-10-18-r2-image-fixture-feature-correction.md). It is not
-accepted. The old candidate's CI failure and separate functional success
-were fully recovered before this source change.
+[correction](2026-10-18-r2-image-fixture-feature-correction.md). Its required
+CI scope is accepted after full recovery at02:23:58 UTC. The separate functional
+smoke is still running, so hosted acceptance remains open. The old candidate's
+CI failure and separate functional success remain preserved.
 
 ## Exact executions
 
@@ -34,25 +35,43 @@ The118 prior definitions, nine image-suite markers and six new qualified D4
 outcomes are required. All carried Rust/PG/Web/policy groups and platform
 exclusions remain required; old results are not successor evidence.
 
-At02:00:20 UTC, format, Python and strict Clippy jobs had succeeded. Their
-three full logs and actual checkout SHAs were recovered by02:03:39 UTC. The
-Clippy log confirms the complete workspace/all-targets/all-features/locked
-command with `-D warnings`; its SHA256 is
-`df53bb192b07a8e58aca6a3f870c6ba7babaace8e12d36f8bf5bf8c163c64bd4`.
-The complete synthetic image-builder step finished successfully at01:58:42 UTC
-according to job metadata. Policy itself was still running; its complete log
-and the15 qualified image outcomes remain pending. PostgreSQL, workspace, Web
-and functional smoke were also still running. Python totals are aggregate-only
-evidence. All118 definitions and15 image outcomes remain UNKNOWN pending
-direct named recovery. Sanitized partial evidence is in
-`target/r2-daily-beta/ci/2a165fe/ci-evidence.json`.
+At02:20:03 UTC, all eight CI jobs were terminal SUCCESS: policy, format,
+strict Clippy, workspace, PostgreSQL, Web, Python and the required aggregate.
+Eight complete log hashes and seven actual checkout SHAs were recovered.
+All1,174 frozen file pins and519 exact-candidate committed blob bytes matched.
+The immutable CI-only receipt is
+`target/r2-daily-beta/ci/2a165fe/required-ci-evidence.json`, SHA256
+`8ec43bc2497c7ab36c4415ad0889c2a022ba36a91bdf012c62b1d4fcbf4cd362`.
 
-Full recovery must include eight CI jobs and one smoke job, all steps/pages,
-nine complete log hashes, eight actual checkout SHAs, direct qualified rows,
-strict Clippy/workspace format, PG19 process exits/146 names/0060 32+73/
-83 bootstrap cases/62 checksums twice/0039/cleanup, and actual functional
-publication/idempotence plus ten cleanup outcomes. Unprinted nested helper
-rows/exits stay UNKNOWN. Raw logs remain in memory only.
+The118 required definitions and all15 image outcomes passed by direct named
+rows. This includes the two D4 producer receipts and four missing/unexpected
+feature rejections through the real validator. The four changed modules retain
+all104 cases, the ten original correction cases and seven cleanup cases pass,
+and all181 carried policy entries match. These groups overlap; their counts
+must not be added as unique tests. Native restore fixtures printed eight exact
+source/restored metadata observations of UID999/GID0/mode0700.
+
+The36 workspace groups and33 carried groups matched qualified target/phase
+rows. Workspace printed3,350 complete PASS rows and six ignored rows; the chart
+lane separately printed six PASS rows. One fragmented non-required synthetic
+anchor name and nested helper independent attribution remain UNKNOWN. Three
+non-Linux source cases remain EXCLUDED_LINUX, never inferred successful from
+an empty target set. All231 Cargo headers/root blocks closed.
+
+PostgreSQL verified19 direct process exits0 without SKIP,146 named rows,
+0060's32 names and73 subcases, nine harness rows,83 bootstrap cases, and both
+sets of62 migration SHA384 checksums against the source. The0039 guard,
+catalog boundaries, rerun and owned-resource cleanup passed. Web matched
+34 supervisor cases, six contract and18 UI markers, and129+14 browser identities;
+all passed with cleanup/reservation checks, no skip, retry or truncation.
+Strict Clippy included all-targets/all-features/locked and `-D warnings`;
+workspace format passed. Python's495 passed/10 skipped remain aggregate-only.
+
+Functional smoke39088099684 attempt1 was still active at02:20:03 UTC. Recover
+its complete log/hash, actual checkout, publication and repeat invariance,
+and all ten cleanup outcomes before hosted acceptance. Source and frozen
+inputs remain fixed. No production-image or final-R2 acceptance follows from
+these hosted synthetic fixtures. Raw logs remain in memory only.
 
 ## Continuation
 
