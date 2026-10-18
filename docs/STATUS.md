@@ -6,13 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-18 (Asia/Seoul)
 
-현재: **R2 Wave100 hosted 검증 인수·새 호스트 실행안 결정 대기.** 후보0120b0e의 CI39109370627·기능 smoke39109372364 attempt1이 모두 SUCCESS로 종료했다. 전체9로그/8실제checkout·1204pin/523blob·필수131개/이미지15결과/wholeflow23개·기존 필수 그룹과 실제 게시·반복·정리10개 및 잔여 자원 부재를 대조해 hosted 범위만 인수했다. Wave100은 새2140pin 체크아웃·11제어파일로 제5차 이미지 유지보수1회와 완전한 이미지 인수·동일ID복귀 뒤 격리 통합검증1회를 묶어 준비했다. 새 후보 호스트 실행은 미승인·미실행이며 G4·배포·Owner·연속3거래일·C_R2는 미완료다. [검증](reviews/2026-10-18-r2-host-ancestor-contract-ci.md) · [실행안](reviews/2026-10-18-r2-0120b0e-host-sequence-packet.md).
+현재: **R2 Wave100 승인된 이미지 빌드 진행.** Owner의 “승인하니 이어서 작업 진행해”로 Wave100의 두 순차 단계가 승인됐다. 제5차 이미지 빌드를09:25:19UTC 정확히1회 dispatch했고, 독립 복구를 먼저 가동한 뒤 Owner V2 정상 exit0·읽기 전용 정산을 확인했다.09:33:36UTC 빌드와 복구가 실행 중이며 서비스5개 성공 기록·여섯 번째 recommendation-runner 진행을 관측했다. 전체12이미지·저장 바이트·manifest·동일ID복귀·복구 실제 종료를 인수한 뒤 이미 승인된 격리 통합검증1회를 진행한다. G4·배포·Owner·연속3거래일·C_R2는 미완료다. [기록](reviews/2026-10-18-r2-0120b0e-host-sequence-packet.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
 2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
-현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. Wave97 전체 hosted 회수 뒤05:48:59UTC에 Wave98 실행안 결정 추적fc826f21을 확인·인계 저장하고8cd8622c 삭제를 확인했다. 새 Owner 승인 후07:11:51UTC 실행 추적5f3cfda2를 확인·인계 저장하고fc826f21 삭제를 확인했다. 이미지 인수·통합 사전점검 차단 뒤07:48:45UTC 후속bf7d2b09의 인계를 저장하고5f3cfda2 삭제를 확인했다. Wave99 전체 hosted 회수와 Wave100 실행안 준비 뒤08:56:43UTC 후속81b4d3b6을 확인·인계 저장하고bf7d2b09 삭제를 확인했다. 현재 후속은20:00UTC 이전 갱신,20:56:43.841UTC 만료다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. Wave97 전체 hosted 회수 뒤05:48:59UTC에 Wave98 실행안 결정 추적fc826f21을 확인·인계 저장하고8cd8622c 삭제를 확인했다. 새 Owner 승인 후07:11:51UTC 실행 추적5f3cfda2를 확인·인계 저장하고fc826f21 삭제를 확인했다. 이미지 인수·통합 사전점검 차단 뒤07:48:45UTC 후속bf7d2b09의 인계를 저장하고5f3cfda2 삭제를 확인했다. Wave99 전체 hosted 회수와 Wave100 실행안 준비 뒤08:56:43UTC 후속81b4d3b6을 확인·인계 저장하고bf7d2b09 삭제를 확인했다. 새 승인·실제 이미지 시작 뒤09:32:51UTC 후속179ec5a7 인계를 저장하고81b4d3b6 삭제를 확인했다. 현재 후속은20:15UTC 이전 갱신,21:32:51.704UTC 만료다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave98 구체적 이미지·조건부 통합검증 결정 → 승인된 정확한 후보 검증/복귀 → G4복구/배포 → Owner·연속3거래일·C_R2. |
+| 다음 단계 | Wave100 승인된0120b0e 이미지 검증/복귀 → 승인된 격리 통합검증 → G4복구/배포 → Owner·연속3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),

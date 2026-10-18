@@ -2,9 +2,11 @@
 
 R2-04/R2-09, Wave100. Candidate
 `0120b0ea6d54198e030545c08276d257fd0da17d` is HOSTED_ACCEPTED_ONLY.
-This host packet is **PREPARED_NOT_AUTHORIZED_NOT_EXECUTED**. The requested
-decision covers one fifth image-maintenance attempt and, only after complete
-image acceptance and restoration, one isolated approved-base wholeflow run.
+Owner explicitly approved this packet with “승인하니 이어서 작업 진행해”.
+The fifth image-maintenance attempt was dispatched exactly once at09:25:19UTC
+and is running. After complete image acceptance and restoration, the same
+approval covers one isolated approved-base wholeflow run. The frozen preparation
+receipts retain their historical PREPARED_NOT_AUTHORIZED_NOT_EXECUTED status.
 There is one production interruption, no automatic retry or window renewal.
 
 ## Owner impact and decision boundary
@@ -25,10 +27,10 @@ packet covers both ordered phases without another permission question between
 them. Either failure closes this attempt without an automatic retry.
 
 The preceding Wave98 approval covered candidate899f259. Its image attempt was
-completed, and its conditional integration was closed before dispatch. The
-latest Owner handoff explicitly says “NO successor production authorization.”
-That is why this different candidate requires one new host decision. Root access
-alone does not grant it. Deployment, production migration, new provider calls,
+completed, and its conditional integration was closed before dispatch. At preparation time, the
+Owner handoff said “NO successor production authorization.” The new explicit
+answer now supplies the required decision for this candidate. Root access alone
+did not grant it. Deployment, production migration, new provider calls,
 research-worker activation, trading, G4 backup transition and Owner acceptance
 remain outside this packet.
 
@@ -160,3 +162,26 @@ This packet does not complete R2. Actual current-candidate images and approved
 base wholeflow, G4 consistent pre-upgrade recovery/backup transition, deployment,
 Owner use, three consecutive trading days and finalC_R2 remain open. Continue
 tracking them after this package rather than ending the overall objective.
+
+## Wave100 explicit approval and fifth image dispatch — 2026-10-18
+
+Owner의 “승인하니 이어서 작업 진행해”로 Wave100의 두 순차 단계가 승인됐다. 제5차 이미지 빌드를09:25:19UTC 정확히1회 dispatch했고, 독립 복구를 먼저 가동한 뒤 Owner V2 정상 exit0·읽기 전용 정산을 확인했다.09:33:36UTC 빌드와 복구가 실행 중이며 서비스5개 성공 기록·여섯 번째 recommendation-runner 진행을 관측했다. 전체12이미지·저장 바이트·manifest·동일ID복귀·복구 실제 종료를 인수한 뒤 이미 승인된 격리 통합검증1회를 진행한다. G4·배포·Owner·연속3거래일·C_R2는 미완료다.
+
+Authorization receipt `wp-8/wave100/owner-authorization.json` SHA256
+`3e9789ce509182313eda81243e0a0735eb6eef6c8f502679411b9b311e24696c` covers
+both phases once; no repeat approval between them, no automatic retry.
+Exact shared image window09:24:53.914836–21:24:53.914836UTC, independent recovery
+active before stop. Build launch receipt `c765dcc8…`; corrected fresh admission
+`ba91d079…`, READ ONLY work settlement `b652d3a5…`, official plan/preflight
+`1d05ed9c…`. All2140 source and11 control pins matched. First coordinator-only
+admission failure `18240649…` is preserved: normal waiting backup timers were
+misclassified, while paired services had no processes. Only that coordinator
+classification was corrected; no timer configuration or product guard changed.
+
+Observation `build-observation-20261018T093336Z.json` SHA256
+`69834339df3ecad0ed729405cb5efd88d1ef1091e289c17fe0450116b8756b2e`
+shows active build/recovery, five success markers and recommendation-runner in
+progress. These markers are not complete image acceptance. Manifest, all saved
+bytes and actual restoration/recovery terminal outcomes remain pending.
+Heartbeat179ec5a7 confirmed; handoff459bb290 persisted before predecessor81b4d3b6
+successful deletion. Renew by20:15UTC. No new worker; native Ralph stays blocked.
