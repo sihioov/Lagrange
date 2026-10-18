@@ -4605,3 +4605,15 @@ confirmed active and handoff persisted before e9dd6173 deletion confirmed.
 Expires13:54:17.607UTC,renewby13:00UTC/before47thtick. Continue full R2 after
 this package; third maintenance unauthorized, native Ralph blocked. No new
 production action. See docs/reviews/2026-10-18-r2-d4-fixture-ci.md.
+
+
+### Wave94 partial recovery — 2026-10-18 02:03 UTC
+
+Exact supplied runs remained in progress at02:00:20UTC. Format/Python/strict
+Clippy succeeded; three full logs/actual checkouts recovered by02:03:39UTC.
+The full image-builder fixture step metadata is SUCCESS at01:58:42UTC,
+but policy's complete log and15 qualified image outcomes remain pending.
+All118 required definitions remain UNKNOWN until direct named recovery.
+PG/workspace/Web and functional smoke were still active. Inputs/source stay
+frozen; c4f4db00 continuation remains within its reporting/renewal bounds.
+No new run, production action or candidate/host/final-R2 acceptance.

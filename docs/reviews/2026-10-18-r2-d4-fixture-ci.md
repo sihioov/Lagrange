@@ -34,11 +34,18 @@ The118 prior definitions, nine image-suite markers and six new qualified D4
 outcomes are required. All carried Rust/PG/Web/policy groups and platform
 exclusions remain required; old results are not successor evidence.
 
-Format and Python jobs have succeeded; their two full logs and actual checkout
-SHAs were recovered. The other execution jobs and functional smoke were still
-running at the latest partial observation. The Python total is aggregate-only
-evidence. No118-definition or15-image-outcome acceptance is claimed. Sanitized
-partial evidence is in `target/r2-daily-beta/ci/2a165fe/ci-evidence.json`.
+At02:00:20 UTC, format, Python and strict Clippy jobs had succeeded. Their
+three full logs and actual checkout SHAs were recovered by02:03:39 UTC. The
+Clippy log confirms the complete workspace/all-targets/all-features/locked
+command with `-D warnings`; its SHA256 is
+`df53bb192b07a8e58aca6a3f870c6ba7babaace8e12d36f8bf5bf8c163c64bd4`.
+The complete synthetic image-builder step finished successfully at01:58:42 UTC
+according to job metadata. Policy itself was still running; its complete log
+and the15 qualified image outcomes remain pending. PostgreSQL, workspace, Web
+and functional smoke were also still running. Python totals are aggregate-only
+evidence. All118 definitions and15 image outcomes remain UNKNOWN pending
+direct named recovery. Sanitized partial evidence is in
+`target/r2-daily-beta/ci/2a165fe/ci-evidence.json`.
 
 Full recovery must include eight CI jobs and one smoke job, all steps/pages,
 nine complete log hashes, eight actual checkout SHAs, direct qualified rows,
