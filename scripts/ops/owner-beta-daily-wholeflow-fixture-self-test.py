@@ -270,6 +270,69 @@ class WholeflowFixtureTests(unittest.TestCase):
         self.assertEqual(events, ["intent", "create"])
         self.assertEqual(test.uncertain_creations, {("network", test.nonce + "-initial")})
 
+    def test_db_client_tmpfs_requires_exact_image_uid_and_entrypoint(self):
+        for service, (image_service, entry) in driver.DB_CLIENTS.items():
+            for uid, image, selected_entry in ((10001, "pinned", entry),
+                    (999, "different", entry), (999, "pinned", "/unexpected")):
+                test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+                test.images = {image_service: "pinned"}
+                with self.subTest(service=service, uid=uid, image=image, entry=selected_entry), \
+                     mock.patch.object(test, "command") as command, mock.patch.object(test, "intent") as intent:
+                    with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_DB_CLIENT_BOUNDARY"):
+                        test.create(service, image, uid, "none", [], {}, selected_entry)
+                    command.assert_not_called()
+                    intent.assert_not_called()
+
+    def test_uncovered_image_volume_fails_before_container_intent_or_create(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        with mock.patch.object(test, "inspect", return_value={"Config": {"Volumes": {"/uncovered": {}}}}), \
+             mock.patch.object(test, "command") as command, mock.patch.object(test, "intent") as intent:
+            with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_IMAGE_VOLUMES"):
+                test.create("api", "pinned", 10001, "none", [], {}, "/api")
+            command.assert_not_called()
+            intent.assert_not_called()
+            self.assertFalse(test.uncertain_creations)
+
+    def test_unexpected_volume_cleanup_retains_container_and_intent_stage(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+        with tempfile.TemporaryDirectory() as temp:
+            test.root = Path(temp)
+            name = test.nonce + "-bootstrap-1"
+            test.intents = [{"kind": "container", "name": name}]
+            value = {"Config": {"Labels": {driver.LABEL: test.nonce}}, "Id": "owned", "Name": "/" + name,
+                     "Mounts": [{"Type": "volume", "Name": "unproven-volume"}]}
+            with mock.patch.object(test, "command", return_value=b"owned\n") as command, \
+                 mock.patch.object(test, "inspect", return_value=value), mock.patch.object(driver.shutil, "rmtree") as remove:
+                with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_CLEANUP_VOLUME"):
+                    test.cleanup()
+                self.assertEqual(command.call_count, 1)
+                remove.assert_not_called()
+            self.assertTrue(test.root.is_dir())
+            self.assertNotIn("cleanup", test.receipt)
+
+    def test_postcreate_bind_tmpfs_and_no_volume_guards_remain_required(self):
+        for defect in ("bind", "tmpfs", "volume"):
+            test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=COMMIT))
+            tmpfs = {"/tmp": "rw,nosuid,nodev,noexec,size=64m,mode=1777",
+                     "/run/owner-beta-health": "uid=10001,gid=10001,mode=0750,size=1m"}
+            value = {"Id": "owned", "Image": "pinned", "Config": {"User": "10001:10001",
+                "Labels": {driver.LABEL: test.nonce}}, "HostConfig": {"ReadonlyRootfs": True,
+                "Privileged": False, "NetworkMode": "none", "CapDrop": ["ALL"], "PortBindings": {},
+                "LogConfig": {"Type": "none"}, "Tmpfs": tmpfs},
+                "Mounts": [{"Type": "bind", "Destination": "/input", "Source": "/source", "RW": False}]}
+            if defect == "bind":
+                value["Mounts"][0]["RW"] = True
+            elif defect == "tmpfs":
+                value["HostConfig"]["Tmpfs"]["/extra"] = "rw"
+            else:
+                value["Mounts"].append({"Type": "volume", "Destination": "/extra"})
+            with self.subTest(defect=defect), \
+                 mock.patch.object(test, "inspect", side_effect=[{"Config": {"Volumes": None}}, value]), \
+                 mock.patch.object(test, "command", return_value=b"owned"), mock.patch.object(test, "intent"):
+                with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_MOUNTS"):
+                    test.create("api", "pinned", 10001, "none", [test.mount("/source", "/input")], {}, "/api")
+                self.assertEqual(test.uncertain_creations, {("container", test.nonce + "-api-1")})
+
 
 class WholeflowGitSourceTests(unittest.TestCase):
     def setUp(self):

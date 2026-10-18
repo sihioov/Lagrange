@@ -1,13 +1,13 @@
 # R2 candidate 0120b0e image and conditional integration packet
 
 R2-04/R2-09, Wave100. Candidate
-`0120b0ea6d54198e030545c08276d257fd0da17d` is HOSTED_ACCEPTED_ONLY.
-Owner explicitly approved this packet with “승인하니 이어서 작업 진행해”.
-The fifth image-maintenance attempt was dispatched exactly once at09:25:19UTC
-and is running. After complete image acceptance and restoration, the same
-approval covers one isolated approved-base wholeflow run. The frozen preparation
-receipts retain their historical PREPARED_NOT_AUTHORIZED_NOT_EXECUTED status.
-There is one production interruption, no automatic retry or window renewal.
+`0120b0ea6d54198e030545c08276d257fd0da17d` has accepted hosted evidence and
+all12 actual images with verified same-ID restoration. Owner explicitly approved
+this packet with “승인하니 이어서 작업 진행해”. Both one-attempt phases are now
+consumed: image/recovery passed; isolated wholeflow failed at WHOLEFLOW_MOUNTS.
+An unlabelled anonymous volume remains, so full cleanup is INCOMPLETE.
+The frozen preparation receipts retain their historical preparation status.
+No retry, successor host run or deployment is authorized by this packet.
 
 ## Owner impact and decision boundary
 
@@ -185,3 +185,31 @@ progress. These markers are not complete image acceptance. Manifest, all saved
 bytes and actual restoration/recovery terminal outcomes remain pending.
 Heartbeat179ec5a7 confirmed; handoff459bb290 persisted before predecessor81b4d3b6
 successful deletion. Renew by20:15UTC. No new worker; native Ralph stays blocked.
+
+## Actual closure — 2026-10-18 UTC
+
+Image dispatch09:25:19.868537; same-ID healthy09:42:36.582437;
+build successful terminal09:42:36.589173; independent recovery successful
+terminal09:42:44.892753. All12 images/704 checks/49 gates/7 bundles/18 binaries,
+2140 source pins/11 controls and saved archives matched. Read-only work settled,
+all11 production states matched and selected release remained fce9b90.
+Image closure `wp-8/maintenance-0120b0e-a5/attempt-closure.json` SHA256
+`ff2471813c6ea56cac4d6ddfc77287e6346d56c0fd7318824fd0fbc40ecd7294`;
+manifest SHA256 `577508377e1f1f2ded01d8cc85b690d56fc5565d3a3729fc1c30d4f0f3886076`.
+
+Fresh wholeflow admission passed09:44:58.093538. Single dispatch09:45:41.714097;
+actual driver exit1 and failed terminal09:45:44.434177, WHOLEFLOW_MOUNTS,
+phases only PREPARED_SYNTHETIC_EXTENSION. Temporary PostgreSQL started and became
+ready; bootstrap was created but never started. Labelled containers/networks and
+private staging were absent afterward; production identities/states and release
+were unchanged. Bounded kernel observations had no OOM, not full-history proof.
+
+One anonymous volume created alongside bootstrap remains unreferenced and lacks
+the wholeflow nonce label. The removed container's full Mounts association was
+not retained, so ownership is not independently proven and the volume is kept.
+Closure `wp-8/wholeflow-0120b0e-a3/attempt-closure.json` SHA256
+`861396afb7f86e11292c225ba18ed6a12fa3538e745682879c531f67ab7dd133`
+records WHOLEFLOW_FAILED_TERMINAL_CLEANUP_INCOMPLETE_UNLABELLED_VOLUME_RETAINED.
+No later integration phase passed. Failed unit/root result, earlier evidence and
+immutable images remain. [Wave101 source correction](2026-10-18-r2-wholeflow-inherited-volume-correction.md)
+continues with hosted verification only; another host attempt needs a new decision.

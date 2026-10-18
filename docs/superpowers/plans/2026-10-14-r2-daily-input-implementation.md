@@ -6887,3 +6887,28 @@ progress. These markers are not complete image acceptance. Manifest, all saved
 bytes and actual restoration/recovery terminal outcomes remain pending.
 Heartbeat179ec5a7 confirmed; handoff459bb290 persisted before predecessor81b4d3b6
 successful deletion. Renew by20:15UTC. No new worker; native Ralph stays blocked.
+
+
+## Wave101 — inherited Docker volume contract, source and hosted evidence
+
+R2-04/R2-09. Wave100 images/restoration accepted; isolated wholeflow failed before
+bootstrap start, cleanup incomplete due to retained unlabelled volume. Both host
+permissions consumed. See [correction and limits](../../reviews/2026-10-18-r2-wholeflow-inherited-volume-correction.md).
+
+1. Preserve image closureff247181, wholeflow closure861396af, failed unit and volume.
+2. Write exact DB-client read-only tmpfs/pre-create coverage and preserve unexpected
+   volume association during cleanup; keep all original guards.
+3. Carry131 required/15 image/23 wholeflow outcomes and add10 required definitions,
+   including5 actual hosted Docker create/inspect cases. No local project execution.
+4. Freeze all inherited pins/blobs/current lines, commit and push one coherent
+   candidate; remoteSHA and all-event/all-workflow exact-head absence before one CI
+   and one functional smoke. Never rerun/cancel/duplicate.105-minute reporting bound.
+5. Recover every job/step/page,9 full log hashes/8 checkout SHAs,141 required names,
+   15 image outcomes/32 wholeflow cases, carried groups and actual publication/repeat/
+   cleanup. Unprinted nested results remain UNKNOWN.
+6. Only then prepare a new exact host packet with retained-volume disposition for
+   one Owner decision; no successor host approval exists. Continue G4/deployment/
+   Owner/3 trading days/final C_R2 after their actual prerequisites.
+
+Same-agent heartbeat04318894 confirmed/persisted; predecessor179ec5a7 deletion
+confirmed. Renew20:30UTC/before expiry/47 ticks; no delegation/native Ralph resume.

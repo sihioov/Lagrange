@@ -36,6 +36,11 @@ LABEL = "io.lagrange.daily-wholeflow"
 ROLES = {"migration_owner": "migration_owner", "app": "app", "worker": "worker",
          "audit_writer": "audit", "research_writer": "research", "admin": "admin",
          "daily_input_admitter": "daily_input_admitter"}
+DB_CLIENTS = {
+    "bootstrap": ("db-role-bootstrap", "/usr/local/bin/lagrange-bootstrap-roles"),
+    "migrate": ("db-migrate", "/usr/local/bin/lagrange-migrate"),
+    "control": ("db-migrate", "/usr/local/bin/lagrange-daily-control"),
+}
 
 
 def load(name, relative):
@@ -173,20 +178,40 @@ class WholeFlow:
     def create(self, service, image, uid, network, mounts, env, entry, args=(), *, alias=None):
         self.sequence += 1
         name = f"{self.nonce}-{service}-{self.sequence}"
-        self.intent("container", name)
+        tmpfs = {"/tmp": "rw,nosuid,nodev,noexec,size=64m,mode=1777",
+                 "/run/owner-beta-health": f"uid={uid},gid={uid},mode=0750,size=1m"}
+        if service == "postgres":
+            tmpfs["/var/run/postgresql"] = "uid=999,gid=999,mode=3775,size=4m"
+        if service in DB_CLIENTS:
+            image_service, expected_entry = DB_CLIENTS[service]
+            require(uid == 999 and image == self.images[image_service] and entry == expected_entry,
+                    "WHOLEFLOW_DB_CLIENT_BOUNDARY")
+            # The fixed DB client image inherits PostgreSQL's VOLUME. These
+            # one-shot clients never own a database directory: explicitly cover
+            # the declaration with bounded read-only memory, not an anonymous
+            # persistent volume. Keep the exact bind/no-volume guard below.
+            tmpfs["/var/lib/postgresql"] = "ro,nosuid,nodev,noexec,size=1m,uid=999,gid=999,mode=0700"
+        expected = {}
+        for item in mounts:
+            parts = dict(piece.split("=", 1) for piece in item.split(",") if "=" in piece)
+            require(parts.get("type") == "bind" and parts["dst"] not in expected
+                    and parts["dst"] not in tmpfs, "WHOLEFLOW_MOUNT_TARGETS")
+            expected[parts["dst"]] = (parts["src"], not item.endswith(",readonly"))
+        declared = self.inspect("image", image)["Config"].get("Volumes")
+        declared = {} if declared is None else declared
+        require(isinstance(declared, dict) and all(isinstance(k, str) and v == {} for k, v in declared.items())
+                and set(declared) <= set(expected) | set(tmpfs), "WHOLEFLOW_IMAGE_VOLUMES")
         command = ["create", "--name", name, "--label", LABEL + "=" + self.nonce,
                    "--label", "io.lagrange.daily-wholeflow-service=" + service,
                    "--network", network, "--user", f"{uid}:{uid}", "--read-only",
                    "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
                    "--pids-limit", "256", "--memory", "1g", "--cpus", "1",
                    "--log-driver", "none", "--interactive", "--pull", "never",
-                   "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777",
-                   "--tmpfs", f"/run/owner-beta-health:uid={uid},gid={uid},mode=0750,size=1m",
                    "--entrypoint", entry]
+        for target, options in tmpfs.items():
+            command += ["--tmpfs", target + ":" + options]
         if uid in (10001, 10002, 10003):
             command += ["--group-add", "10001"]
-        if service == "postgres":
-            command += ["--tmpfs", "/var/run/postgresql:uid=999,gid=999,mode=3775,size=4m"]
         if alias:
             command += ["--network-alias", alias]
         for mount in mounts:
@@ -194,6 +219,7 @@ class WholeFlow:
         for key, value in sorted(env.items()):
             command += ["--env", key + "=" + str(value)]
         command += [image, *args]
+        self.intent("container", name)
         self.uncertain_creations.add(("container", name))
         self.command(command)
         value = self.inspect("container", name)
@@ -205,11 +231,8 @@ class WholeFlow:
                 and not host.get("PortBindings") and host["LogConfig"]["Type"] == "none",
                 "WHOLEFLOW_CONTAINER_BOUNDARY")
         observed = {m["Destination"]: (m["Source"], m["RW"]) for m in value["Mounts"] if m["Type"] == "bind"}
-        expected = {}
-        for item in mounts:
-            parts = dict(piece.split("=", 1) for piece in item.split(",") if "=" in piece)
-            expected[parts["dst"]] = (parts["src"], not item.endswith(",readonly"))
-        require(observed == expected and all(m["Type"] in ("bind", "tmpfs") for m in value["Mounts"]),
+        require(observed == expected and host.get("Tmpfs") == tmpfs
+                and all(m["Type"] in ("bind", "tmpfs") for m in value["Mounts"]),
                 "WHOLEFLOW_MOUNTS")
         self.uncertain_creations.discard(("container", name))
         return value["Id"]
@@ -664,6 +687,11 @@ class WholeFlow:
                 name = value["Name"].lstrip("/")
                 require(labels.get(LABEL) == self.nonce and {"kind": kind, "name": name} in self.intents,
                         "WHOLEFLOW_CLEANUP_FOREIGN")
+                # Never erase the association to an unexpected persistent
+                # volume and then claim complete cleanup. Keep the labelled
+                # container and private intent evidence for bounded recovery.
+                require(kind != "container" or not any(m["Type"] == "volume" for m in value["Mounts"]),
+                        "WHOLEFLOW_CLEANUP_VOLUME")
                 self.command([kind, "rm", "--force", value["Id"]] if kind == "container" else
                              ["network", "rm", value["Id"]], cleanup=True)
                 self.uncertain_creations.discard((kind, name))

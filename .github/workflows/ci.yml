@@ -102,6 +102,9 @@ jobs:
       - name: Verify whole-flow fixture and driver boundaries
         if: ${{ !cancelled() }}
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py
+      - name: Verify whole-flow actual Docker inherited volume boundaries
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-docker-self-test.py
       - name: Verify legacy production operations fixtures
         if: ${{ !cancelled() }}
         run: sudo bash scripts/ops/production-ops-self-test.sh

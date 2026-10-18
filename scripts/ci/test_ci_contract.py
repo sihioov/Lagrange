@@ -38,6 +38,20 @@ def action_uses(workflow: dict) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_wholeflow_docker_fixture_is_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [
+            step for step in ci["jobs"]["policy"]["steps"]
+            if step.get("name") == "Verify whole-flow actual Docker inherited volume boundaries"
+        ]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(
+            steps[0]["run"],
+            "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-docker-self-test.py",
+        )
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+
     def test_image_builder_fixture_is_a_required_policy_step(self) -> None:
         _, ci = load_workflow("ci.yml")
         steps = [
@@ -180,6 +194,7 @@ class WorkflowContractTests(unittest.TestCase):
             "Verify pre-upgrade maintenance failure boundaries",
             "Verify pre-upgrade schema59 isolated recovery",
             "Verify whole-flow fixture and driver boundaries",
+            "Verify whole-flow actual Docker inherited volume boundaries",
             "Verify legacy production operations fixtures",
         }
         fixture_steps = [

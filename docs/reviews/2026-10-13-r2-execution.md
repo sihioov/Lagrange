@@ -4930,3 +4930,10 @@ progress. These markers are not complete image acceptance. Manifest, all saved
 bytes and actual restoration/recovery terminal outcomes remain pending.
 Heartbeat179ec5a7 confirmed; handoff459bb290 persisted before predecessor81b4d3b6
 successful deletion. Renew by20:15UTC. No new worker; native Ralph stays blocked.
+
+
+## 2026-10-18 Wave100 closure and Wave101 source correction
+
+0120b0e의12이미지·704파일검사·49gate·저장archive/manifest를 인수했고 동일 Owner ID복귀와 빌드·독립복구 실제 정상종료를 확인했다. 승인된 통합검증은09:45:41UTC 단일 실행 후 WHOLEFLOW_MOUNTS로 종료됐다. 임시 PG만 시작됐고 bootstrap은 생성 뒤 시작되지 않았다. 운영11상태와fce9b90은 유지됐다. 익명 볼륨1개의 소유 연결은 회수하지 못해 보존하며 정리는 INCOMPLETE다. 상속 VOLUME을 DB client의 제한된 읽기 전용 tmpfs로 덮고 생성 전 검사·정리 증거 보존을 보정한다. 기존131필수정의에10개를 더한 hosted CI를 준비하며 새 호스트 실행은 미승인이다. G4·배포·Owner·연속3거래일·C_R2는 미완료다.
+
+[증거·수정 범위](2026-10-18-r2-wholeflow-inherited-volume-correction.md). 이미지 closureff247181, 통합 closure861396af.04318894 인계 저장 후179ec5a7 삭제 확인.
