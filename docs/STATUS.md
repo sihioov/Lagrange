@@ -6,9 +6,9 @@
 
 ## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
 
-현재: **e639169 실제 격리통합·3de6420 도구 CI 인수; Wave110 운영 조회 실행안 준비.** 복구 도구3de6420의 CI39195322025 attempt1 8작업이03:53:57UTC 성공했고04:00:50UTC 전체8로그/7실제checkout·1447pin/540blob·187필수/41maintenance(새13)/15이미지결과/44wholeflow를 회수했다. 앱 e639169의12이미지·실제 격리통합6단계 인수는 별도 보존한다. Wave110은 서비스 중단 없는300초 한도의 운영 metadata 조회1회 실행안이다. 이전 failed persistent KIS unit과 실제 PG부모/전체 writer정보를 추정하지 않으며 기록 reset/delete/filter를 하지 않는다. 새 명시 결정 전 호스트 조회·G4 중단/백업·배포는 미실행이다. Owner 사용·연속 실제3거래일·최종 C_R2는 미완료다.
+현재: **Wave110 읽기 전용 조회 실패 종결; Wave111 경로 보정안 준비.** Wave110 승인에 따른 운영 metadata 조회1회는04:10:17UTC G4_PG_PATH/exit1로 종결됐다. 일반 Docker root를 고정한 조회 코드 조건에서 중단됐으며 실제 경로와 앞선 부분 관측은 미출력 UNKNOWN이다. 서비스·데이터·SQL·provider 동작은 없었고 해당1회 승인은 소진됐다. Wave111은 정확한 기존 PG mount/volume 경로 결합과 필터링된 부분 결과 보존을 보완한300초 읽기 전용 조회안이다. 새 결정 전 추가 호스트 조회는 하지 않는다. e639169 앱·이미지·실제 통합과3de6420 도구 CI 인수는 보존하며 G4·배포·Owner·연속 실제3거래일·C_R2는 미완료다.
 
-현재 추적: 추적2a41527f를04:05:19UTC active로 확인하고 인계d40b4751와 owned-workers를 저장한 뒤 이전2ba3df30 삭제를 확인했다.15:00UTC 전/47번째 tick 전 갱신,16:05:19UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.
+현재 추적: 추적bd7f2569를04:15:31UTC active로 확인하고 인계d091160b/registry를 저장한 뒤2a41527f 삭제를 확인했다.15:10UTC 전/47번째 tick 전 갱신,16:15:31UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -35,7 +35,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave110 읽기 전용 운영 조회 결정 → 구체적 G4 백업/복귀 실행안 → 배포·Owner·3실제거래일·C_R2. |
+| 다음 단계 | Wave111 보정된 운영 metadata 조회 결정 → 실제 상태에 근거한 G4 백업/복귀 실행안 → 배포·Owner·3실제거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -4567,3 +4567,14 @@ Tool hosted receipt `a2a0e307ff8a52bcc6f7c38d787ff9af145d3c18a0395beb255b7488bc9
 Wave110 prepared survey `881323f47165786c28120b95b261c76ddd0850a1141ac3c21df02c939ad59567`,31pins; final static `21fb7cd081b469095de234c2ab402e33605c830d9ea95102082fa9645c4fa3ea`. [운영 조회 실행안](reviews/2026-10-19-r2-g4-operating-inventory-packet.md)은 새 결정에 한 번만 연결하며 재시도/운영 중단 권한을 포함하지 않는다. Wave108 두 실행 승인 소진과 successorHostExecutionAuthorized=false가 새 결정의 근거다. 과거0120 볼륨정리 INCOMPLETE와 모든 accepted evidence를 유지한다.
 
 추적2a41527f를04:05:19UTC active로 확인하고 인계d40b4751와 owned-workers를 저장한 뒤 이전2ba3df30 삭제를 확인했다.15:00UTC 전/47번째 tick 전 갱신,16:05:19UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.
+
+
+## Wave110 survey terminal / Wave111 path correction — 2026-10-19 04:10 UTC
+
+Wave110 승인에 따른 운영 metadata 조회1회는04:10:17UTC G4_PG_PATH/exit1로 종결됐다. 일반 Docker root를 고정한 조회 코드 조건에서 중단됐으며 실제 경로와 앞선 부분 관측은 미출력 UNKNOWN이다. 서비스·데이터·SQL·provider 동작은 없었고 해당1회 승인은 소진됐다. Wave111은 정확한 기존 PG mount/volume 경로 결합과 필터링된 부분 결과 보존을 보완한300초 읽기 전용 조회안이다. 새 결정 전 추가 호스트 조회는 하지 않는다. e639169 앱·이미지·실제 통합과3de6420 도구 CI 인수는 보존하며 G4·배포·Owner·연속 실제3거래일·C_R2는 미완료다.
+
+First authorization babc9cb1; exact root-command exit1/finite G4_PG_PATH, stderr0; terminal f6899e8d/closure112ad940. Raw logs were never persisted. The first script lost earlier filtered observations on failure, so they remain UNKNOWN rather than reconstructed from parent completion. No automatic retry. Original packet/controls/intent/evidence remain immutable.
+
+The corrected private survey binds the same fixed PG container mount to the exact named local volume Name/Source/Mountpoint, checks a canonical absolute volumes/name/_data suffix without assuming Docker root, preserves nofollow directory reads and retained-volume exclusion, and emits only already-filtered partial metadata plus finite stage labels on failure. No added child command, production source change, local parser/helper/test execution or independent review. Hosted41maintenance cases do not validate this survey. [Concrete packet](reviews/2026-10-19-r2-g4-inventory-path-correction-packet.md); prepared0b00872e/39pins, finalstaticdb031ed8. A new explicit one-shot decision is needed because the previous single execution is consumed. No outage/backup/deploy authority.
+
+추적bd7f2569를04:15:31UTC active로 확인하고 인계d091160b/registry를 저장한 뒤2a41527f 삭제를 확인했다.15:10UTC 전/47번째 tick 전 갱신,16:15:31UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
