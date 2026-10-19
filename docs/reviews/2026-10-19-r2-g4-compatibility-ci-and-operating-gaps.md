@@ -48,6 +48,37 @@ Restoration compares stable container identity, image, Config, HostConfig, Mount
 
 ## Pending inputs and remaining work
 
+### Static control components — 2026-10-19
+
+Three private draft files were added under `target/r2-daily-beta/wp-8/wave114/`:
+`g4-control-protocol.py`, `g4-journal-storage.py` and `g4-readiness-protocol.json`.
+They define the main/conditional restoration decisions, exclusive bounded action records,
+and the proposed actual-readiness exchange. The decision draft contains22 main actions
+and17 restoration/watchdog actions. It has no host entrypoint; the storage draft requires
+a future authorized adapter and already held private directory. No draft was imported,
+parsed as Python, compiled, tested or executed, and no new independent review occurred.
+
+The direct source review separated capture admission from restoration gates so lack of
+space for another capture does not itself prevent restoration. The watchdog's normal
+termination request cannot depend on the lock held by the main process. An existing action
+intent cannot dispatch again; unresolved Docker stop effects and main/watchdog termination
+must be observed before restart. Journal append locks are short-lived and separate from
+mutation ownership, avoiding an append-lock deadlock during watchdog termination.
+
+The preparation receipt `g4-control-preparation.json` has SHA256
+`136e5cc1b553ce386b6a24fa42df9a0bfac5e102a30b957f7f22b490bc94c11f`.
+Literal comparison matched the nine stop-container IDs and five timer names against the
+existing draft ledger. Three accepted maintenance source files remained byte-identical to
+790f1ea. The prior readiness, ledger and pending-question receipts were unchanged.
+These comparisons do not establish executable correctness or a current host admission.
+
+The draft remains **NOT_READY / NOT_AUTHORIZED / NOT_EXECUTED**. Fresh observation and
+dispatch adapters, actual readiness server/client, complete recovery/final observer,
+partial-journal crash reconciliation and clock-drift recovery are still missing. Partial
+records must remain intact without replay; a safe recovery path for that case must be
+completed before this can become an operating packet. Readiness booleans in the pure
+decision model are obligations for those adapters, not observed production facts.
+
 The existing asynchronous information request remains pending for an off-server encryption-key custody identifier, without key values, and external/manual writers beyond known containers and schedules. The observed439 processes/4336 descriptors do not prove a global future writer fence. No answer is assumed and the question is not repeated.
 
 The exact admission/main/recovery programs and readiness handshake still need completion against those operating facts before a final concrete packet and one operating decision. No new host approval question is pending. The consumed survey approval is not transferred to an outage. Existing read-only KIS and Owner V2 permissions remain preserved; they are not asked again merely because the roadmap stage changes.
