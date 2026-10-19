@@ -267,7 +267,7 @@ daily_ops --> daily_sql : fixed migration-owner maintenance transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:387,435; deploy/db/daily-backup-verify.sh:39-41
 daily_backup --> daily_sql : same audit inside isolated restored database
 
-' evidence: scripts/ops/prepare-production-recovery.py:39,356,409,464-501
+' evidence: scripts/ops/prepare-production-recovery.py:40-42,515-566,621-661,689-713
 preupgrade_cli --> preupgrade_storage : bounded cold capture and verification
 ' evidence: scripts/ops/lib/production-preupgrade-recovery.py:23-31,140
 preupgrade_storage --> daily_backup : reuse private staging and encryption

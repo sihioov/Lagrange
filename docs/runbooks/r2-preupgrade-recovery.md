@@ -1,6 +1,6 @@
 # R2 pre-upgrade consistent recovery preparation
 
-Status: **hosted recovery fixtures accepted; production recovery not executed**.
+Status: **prior hosted recovery fixtures accepted; Wave109 maintenance-v2 source awaiting hosted validation; production recovery not executed**.
 Candidate899f259f9c8872fb61f0c95745904f552c8750e9 passed20 filesystem/contract,
 28 maintenance,3 preparation and4 actual Docker/PostgreSQL cases in
 CI39098366992 attempt1. The complete
@@ -159,8 +159,8 @@ process rows remain UNKNOWN rather than being inferred from parent success.
 [prepare-production-recovery.py](../../scripts/ops/prepare-production-recovery.py)
 has four closed modes. The default `plan` makes no host observations. The other
 modes require root, a protected root:root0600 JSON contract and an independently
-prepared, protected `/opt/lagrange/maintenance/<tool-commit>` payload. Its eleven
-Python/SQL/shell dependency files must match the reviewed contract pins.
+prepared, protected `/opt/lagrange/maintenance/<tool-commit>` payload. Its twelve
+Python/SQL/shell dependency files (including the imported fixed-base helper) must match the reviewed contract pins.
 This staging path is necessary because the release installer changes `current`;
 installing/activating the new release first would defeat a pre-upgrade backup.
 The tool does not stage itself or activate a release. The old release remains
@@ -222,10 +222,12 @@ run above; production writer fencing and recovery remain unexecuted.
 
 ## Remaining work before operating use
 
-1. Complete actual approved-base host integration for the accepted candidate.
-   Hosted wholeflow has23 passing named fixtures, including four actual-root
-   Git ownership cases; synthetic fixture results do not establish host
-   integration or a production recovery point. Do not rerun the completed CI.
+1. Preserve the completed e639169 actual approved-base isolated wholeflow:
+   both admissions, HTTP publication, restart, capture/restore and restored
+   publication passed on2026-10-19 ([acceptance](../reviews/2026-10-19-r2-e639169-host-acceptance.md)).
+   Its synthetic sessions do not establish actual market receipt or a
+   production recovery point. Validate the distinct Wave109 maintenance tool
+   candidate before preparing a fresh G4 operating packet.
 2. Bind the fresh actual host roots, complete writer inventory, old configuration,
    approved base, secret-recovery reference and reviewed maintenance payload.
    Do not substitute synthetic fixture data or guess paths/owners/volume modes.
@@ -237,3 +239,57 @@ This tool does not perform automatic production restore, destructive migration
 DOWN or service resumption. A failure preserves the old release/data and is not
 permission to restart writers. The later schema62 daily-backup path remains a
 separate operation. R2, actual Owner use and the three-trading-day gate stay open.
+
+
+## Wave109 exact unit inventory and staged payload (source only)
+
+The maintenance contract is now `lagrange-preupgrade-maintenance-v2`. It adds
+explicit unit categories and complete per-kind observations. Old v1 contracts
+are refused by this tool; immutable prior tools/receipts are retained. The
+archive member layout and encrypted format remain unchanged. No v2 production
+capture has occurred.
+
+Every `lagrange-*` name from the union of `list-unit-files` and `list-units`
+must occur in the bounded contract (4–128 names). The tool does not filter,
+reset, delete or restart historical units. Normal persistent units remain
+`inactive/dead` with canonical `/etc/systemd/system/<name>` fragments. A
+separately declared `retained-terminal` category permits only transient services
+under `/run/systemd/transient/<name>`, in `active/exited`, `failed/failed` or
+`inactive/dead`, with `Restart=no`, zero MainPID/ControlPID, no pending Job,
+nonempty invocation ID, completed main-process timestamps and no activation
+edges. Mandatory backup units cannot use this category. All fragment bytes
+remain mandatory protected pins; drop-ins, daemon reload needs, alternate
+slices/paths and missing or duplicate fields refuse.
+
+For all units, outgoing/incoming OnSuccess/OnFailure activation is refused.
+Timer/socket/path trigger links must be reciprocal, entirely inside the exact
+inventory, and join stopped units. Service-specific process properties are
+not incorrectly required from timers. Unit generations and inventory are read
+again around read-only cgroup checks. Each default system.slice service group
+is checked even when ControlGroup is empty: absent groups or recursively empty
+v2 groups only, no symlinks/ACLs/unprotected paths, at most128groups/depth16,
+256entries per group and4096bytes per control read. cgroup.procs and
+cgroup.threads must be empty and cgroup.events must report populated0/frozen0.
+Unreadability, replacement, added descendants, live tasks or expiry refuses.
+This remains a bounded observed fence, not protection against arbitrary root
+mutation or unmanaged writers; the operating packet must separately fence them.
+
+The property grammar follows the [systemd Unit/Service interfaces](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html).
+No-job formatting is the empty `Job=` value in
+[systemctl's property printer](https://github.com/systemd/systemd/blob/main/src/systemctl/systemctl-show.c);
+byte-array invocation IDs are hex in the
+[shared printer](https://github.com/systemd/systemd/blob/main/src/shared/bus-print-properties.c).
+The recursive populated flag is specified by the
+[kernel cgroup-v2 documentation](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+These are source references, not observations of the current host. Missing or
+unsupported current-host properties block admission instead of being guessed.
+
+Thirteen new named regressions cover isolated exact-payload subprocess import,
+missing base dependency, complete retained-terminal inventory/pins, active/job/
+restart refusal, persistent trigger guards, reciprocal activation, inventory
+and generation drift, actual private recursive cgroup files, live tasks,
+symlink/mode/missing-file refusal, bounds/expiry and replacement during reads.
+All28 prior maintenance definitions remain. These41 definitions are
+WRITTEN_UNEXECUTED for Wave109 until hosted recovery; local project execution
+and new production probes were not performed. The systemd observations in
+these fixtures are mocks; they do not claim an actual production writer fence.

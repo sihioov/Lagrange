@@ -13,7 +13,9 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -36,6 +38,20 @@ files = maintenance.files
 ERROR = maintenance.runtime.RuntimeErrorCode
 
 
+def unit_value(name):
+    unit = {"category": "stopped", "LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead",
+        "FragmentPath": "/etc/systemd/system/" + name, "DropInPaths": "", "NeedDaemonReload": "no",
+        "UnitFileState": "disabled", "ActiveEnterTimestampMonotonic": "0",
+        "InactiveEnterTimestampMonotonic": "1", "InvocationID": "", "Transient": "no", "Job": "",
+        "Triggers": "", "TriggeredBy": "", "OnFailure": "", "OnSuccess": "",
+        "OnFailureOf": "", "OnSuccessOf": ""}
+    if name.endswith(".service"):
+        unit.update(ExecMainStartTimestampMonotonic="0", ExecMainExitTimestampMonotonic="0",
+                    MainPID="0", ControlPID="0", Restart="no", NRestarts="0", ControlGroup="",
+                    Slice="system.slice")
+    return unit
+
+
 def value():
     now = maintenance.utc().replace(microsecond=0)
     old, tool = "a" * 40, "b" * 40
@@ -46,11 +62,7 @@ def value():
             ("base", "/var/lib/lagrange/artifacts/historical-price-beta-root", 10001),
             ("config", "/opt/lagrange/releases/" + old, 0),
             ("postgres", "/var/lib/docker/volumes/fixture/_data", 999))]
-    units = {name: {"LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead",
-        "FragmentPath": "/etc/systemd/system/" + name, "DropInPaths": "", "NeedDaemonReload": "no",
-        "UnitFileState": "disabled", "ActiveEnterTimestampMonotonic": "0",
-        "InactiveEnterTimestampMonotonic": "1", "ExecMainStartTimestampMonotonic": "0"}
-        for name in maintenance.transition.UNITS}
+    units = {name: unit_value(name) for name in maintenance.transition.UNITS}
     old_root, tool_root = roots[3]["path"], "/opt/lagrange/maintenance/" + tool
     paths = [tool_root + "/" + p for p in maintenance.PAYLOAD] + [old_root + p for p in
         ("/.lagrange-release", "/.lagrange-release-manifest", "/deploy/compose/.env", "/deploy/compose/compose.yml")]
@@ -132,9 +144,10 @@ class MaintenanceTests(unittest.TestCase):
         unknown = value()
         unknown["shell_command"] = "fixture"
         cases.append(unknown)
-        missing = value()
-        del missing["pins"]["/opt/lagrange/maintenance/" + missing["tool_commit"] + "/" + maintenance.PAYLOAD[0]]
-        cases.append(missing)
+        for relative in maintenance.PAYLOAD:
+            missing = value()
+            del missing["pins"]["/opt/lagrange/maintenance/" + missing["tool_commit"] + "/" + relative]
+            cases.append(missing)
         for candidate in cases:
             with self.subTest(candidate=list(candidate)), self.assertRaises(ERROR):
                 maintenance.contract(files.canonical(candidate))
@@ -441,8 +454,8 @@ class MaintenanceTests(unittest.TestCase):
         def observe(args):
             if args[1] in {"list-unit-files", "list-units"}:
                 return "\n".join(name + " inactive" for name in candidate["units"]).encode()
-            unit = dict(candidate["units"][args[-1]])
-            unit["ExecMainStartTimestampMonotonic"] = "999"
+            unit = {k: v for k, v in candidate["units"][args[-1]].items() if k != "category"}
+            unit["ActiveEnterTimestampMonotonic"] = "999"
             return "\n".join(k + "=" + v for k, v in unit.items()).encode()
         native.call = observe
         with self.assertRaises(ERROR):
@@ -455,6 +468,250 @@ class MaintenanceTests(unittest.TestCase):
             self.assertEqual(maintenance.main(["--mode", "plan"]), 0)
         docker.assert_not_called()
         run.assert_not_called()
+
+
+class StagedPayloadTests(unittest.TestCase):
+    def staged(self, missing=None):
+        with tempfile.TemporaryDirectory(prefix="preupgrade-payload-") as directory:
+            root = Path(directory)
+            stage, outside = root / "stage", root / "outside"
+            outside.mkdir()
+            for relative in maintenance.PAYLOAD:
+                if relative == missing:
+                    continue
+                target = stage / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / relative).read_bytes())
+            before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            result = subprocess.run(["/usr/bin/python3", "-I", "-B",
+                str(stage / "scripts/ops/prepare-production-recovery.py"), "--mode", "plan"],
+                cwd=outside, env={"PATH": "/usr/bin:/bin", "HOME": str(outside), "LC_ALL": "C"},
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=20, check=False)
+            self.assertEqual(before, {str(p.relative_to(root)): p.read_bytes()
+                                     for p in root.rglob("*") if p.is_file()})
+            self.assertEqual(list(outside.iterdir()), [])
+            return result
+
+    def test_exact_staged_payload_plans_without_checkout_imports_or_writes(self):
+        result = self.staged()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        self.assertEqual(result.stdout, b"PREUPGRADE: PLAN fresh host contract; inactive writers; "
+                         b"explicit DB stop; isolated clone; no restart\n")
+
+    def test_missing_staged_base_dependency_cannot_plan(self):
+        result = self.staged("scripts/ops/lib/owner-beta-daily-base.py")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(b"PREUPGRADE: PLAN", result.stdout)
+        self.assertIn(b"owner-beta-daily-base.py", result.stderr)
+
+
+class UnitInventoryTests(unittest.TestCase):
+    history = "lagrange-retained-fixture.service"
+
+    def candidate(self, state=("active", "exited")):
+        candidate = value()
+        unit = unit_value(self.history)
+        unit.update(category="retained-terminal", Transient="yes", UnitFileState="transient",
+                    FragmentPath="/run/systemd/transient/" + self.history, ActiveState=state[0],
+                    SubState=state[1], InvocationID="a" * 32, ExecMainStartTimestampMonotonic="10",
+                    ExecMainExitTimestampMonotonic="20")
+        candidate["units"][self.history] = unit
+        candidate["pins"][unit["FragmentPath"]] = "sha256:" + "2" * 64
+        return candidate
+
+    def native(self, candidate):
+        native = maintenance.Native(candidate, None, maintenance.Window(candidate))
+        def call(args):
+            if args[1] in {"list-unit-files", "list-units"}:
+                # Retained transient services can occur in only list-units.
+                names = candidate["units"] if args[1] == "list-units" else maintenance.transition.UNITS
+                return "\n".join(name + " inactive" for name in names).encode()
+            return "\n".join(k + "=" + v for k, v in candidate["units"][args[-1]].items()
+                             if k != "category").encode()
+        native.call = mock.Mock(side_effect=call)
+        return native
+
+    def test_retained_terminal_states_require_complete_pins_and_preserve_inventory(self):
+        for state in (("active", "exited"), ("failed", "failed"), ("inactive", "dead")):
+            candidate = self.candidate(state)
+            self.assertEqual(maintenance.contract(files.canonical(candidate)), candidate)
+            native = self.native(candidate)
+            with mock.patch.object(maintenance, "empty_cgroup") as empty:
+                native.units()
+            self.assertIn(mock.call(self.history, native.window), empty.call_args_list)
+            self.assertTrue(all(c.args[0][1] in {"show", "list-units", "list-unit-files"}
+                                for c in native.call.call_args_list))
+            del candidate["pins"][candidate["units"][self.history]["FragmentPath"]]
+            with self.assertRaises(ERROR):
+                maintenance.contract(files.canonical(candidate))
+
+    def test_retained_live_restarting_queued_or_unbound_service_is_refused(self):
+        changes = ({"ActiveState": "active", "SubState": "running"}, {"SubState": "auto-restart"},
+                   {"MainPID": "1"}, {"ControlPID": "1"}, {"Job": "123"}, {"Restart": "always"},
+                   {"Transient": "no"}, {"FragmentPath": "/etc/systemd/system/" + self.history},
+                   {"DropInPaths": "/run/systemd/transient/extra.conf"}, {"NeedDaemonReload": "yes"},
+                   {"InvocationID": ""}, {"ExecMainStartTimestampMonotonic": "21"},
+                   {"ControlGroup": "/other.slice/fixture"}, {"Slice": "other.slice"})
+        for change in changes:
+            with self.subTest(change=change):
+                candidate = self.candidate()
+                candidate["units"][self.history].update(change)
+                with self.assertRaises(ERROR):
+                    maintenance.contract(files.canonical(candidate))
+
+    def test_stopped_timer_socket_path_and_writer_guards_are_not_relaxed(self):
+        for suffix in ("timer", "socket", "path", "service"):
+            name = "lagrange-activation." + suffix
+            candidate = self.candidate()
+            candidate["units"][name] = unit_value(name)
+            candidate["pins"][candidate["units"][name]["FragmentPath"]] = "sha256:" + "3" * 64
+            for change in ({"ActiveState": "active"}, {"Job": "123"}, {"category": "retained-terminal"}):
+                bad = copy.deepcopy(candidate)
+                bad["units"][name].update(change)
+                with self.subTest(name=name, change=change), self.assertRaises(ERROR):
+                    maintenance.contract(files.canonical(bad))
+
+    def test_trigger_edges_require_stopped_internal_reciprocal_units(self):
+        candidate = self.candidate()
+        timer = "lagrange-fixture.timer"
+        service = "lagrange-fixture.service"
+        for name in (timer, service):
+            candidate["units"][name] = unit_value(name)
+            candidate["pins"][candidate["units"][name]["FragmentPath"]] = "sha256:" + "3" * 64
+        candidate["units"][timer]["Triggers"] = service
+        candidate["units"][service]["TriggeredBy"] = timer
+        maintenance.contract(files.canonical(candidate))
+        for name, key, changed in ((timer, "Triggers", self.history), (service, "TriggeredBy", ""),
+                                  (service, "TriggeredBy", "outside.timer"),
+                                  (timer, "Triggers", service + " " + service),
+                                  (self.history, "OnSuccess", service),
+                                  (self.history, "OnFailure", service),
+                                  (self.history, "OnFailureOf", "outside.service"),
+                                  (self.history, "OnSuccessOf", "outside.service")):
+            bad = copy.deepcopy(candidate)
+            bad["units"][name][key] = changed
+            with self.subTest(key=key, changed=changed), self.assertRaises(ERROR):
+                maintenance.contract(files.canonical(bad))
+
+    def test_missing_extra_and_mid_observation_inventory_changes_are_refused(self):
+        for change in ("missing", "extra", "late"):
+            native = self.native(self.candidate())
+            original = native.call.side_effect
+            counts = {"lists": 0}
+            def observe(args):
+                result = original(args)
+                if args[1] in {"list-unit-files", "list-units"}:
+                    counts["lists"] += 1
+                    if change == "missing":
+                        return b""
+                    if change == "extra" or (change == "late" and counts["lists"] > 2):
+                        return result + b"\nlagrange-unexpected.service inactive"
+                return result
+            native.call.side_effect = observe
+            with self.subTest(change=change), mock.patch.object(maintenance, "empty_cgroup"), \
+                    self.assertRaises(ERROR):
+                native.units()
+
+    def test_generation_changes_and_duplicate_properties_are_refused(self):
+        for key in ("InvocationID", "ExecMainStartTimestampMonotonic", "NRestarts", "duplicate"):
+            native = self.native(self.candidate())
+            original = native.call.side_effect
+            counts = {"history": 0}
+            def observe(args):
+                result = original(args)
+                if args[1] == "show" and args[-1] == self.history:
+                    counts["history"] += 1
+                    if counts["history"] == 2:
+                        if key == "duplicate":
+                            return result + b"\nMainPID=0"
+                        return b"\n".join((key + "=999").encode() if row.startswith((key + "=").encode())
+                                          else row for row in result.splitlines())
+                return result
+            native.call.side_effect = observe
+            with self.subTest(key=key), mock.patch.object(maintenance, "empty_cgroup"), self.assertRaises(ERROR):
+                native.units()
+
+
+class CgroupTests(unittest.TestCase):
+    name = "lagrange-retained-fixture.service"
+
+    def setUp(self):
+        if os.geteuid() != 0 or sys.platform != "linux":
+            self.fail("actual root Linux fixture required")
+        self.temporary = tempfile.TemporaryDirectory(prefix="preupgrade-cgroup-", dir="/var/lib")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / "system.slice").mkdir()
+        self.window = maintenance.Window(value())
+
+    def group(self, path):
+        path.mkdir()
+        for name, data in (("cgroup.procs", b""), ("cgroup.threads", b""),
+                           ("cgroup.events", b"populated 0\nfrozen 0\n")):
+            (path / name).write_bytes(data)
+        return path
+
+    def check(self):
+        maintenance.empty_cgroup(self.name, self.window, str(self.root))
+
+    def test_absent_and_recursively_empty_cgroups_are_read_only(self):
+        self.check()
+        group = self.group(self.root / "system.slice" / self.name)
+        self.group(group / "child")
+        before = {str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        self.check()
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+
+    def test_nested_process_thread_and_populated_state_are_refused(self):
+        group = self.group(self.root / "system.slice" / self.name)
+        child = self.group(group / "child")
+        for filename, data in (("cgroup.procs", b"123\n"), ("cgroup.threads", b"456\n"),
+                               ("cgroup.events", b"populated 1\nfrozen 0\n")):
+            path = child / filename
+            original = path.read_bytes()
+            path.write_bytes(data)
+            with self.subTest(filename=filename), self.assertRaises(ERROR):
+                self.check()
+            path.write_bytes(original)
+
+    def test_symlink_missing_event_and_unprotected_cgroup_refuse(self):
+        group = self.group(self.root / "system.slice" / self.name)
+        (group / "escape").symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises((ERROR, OSError)):
+            self.check()
+        (group / "escape").unlink()
+        group.chmod(0o777)
+        with self.assertRaises(ERROR):
+            self.check()
+        group.chmod(0o755)
+        (group / "cgroup.events").unlink()
+        with self.assertRaises(OSError):
+            self.check()
+
+    def test_cgroup_depth_and_deadline_are_bounded(self):
+        group = self.group(self.root / "system.slice" / self.name)
+        for _ in range(17):
+            group = self.group(group / "child")
+        with self.assertRaises(ERROR):
+            self.check()
+        with mock.patch.object(self.window, "remaining", side_effect=ERROR("PREUPGRADE_EXPIRED")), \
+                self.assertRaises(ERROR):
+            self.check()
+
+    def test_cgroup_generation_replacement_during_read_refuses(self):
+        group = self.group(self.root / "system.slice" / self.name)
+        original = maintenance.os.read
+        replaced = []
+        def read(fd, limit):
+            data = original(fd, limit)
+            if not replaced:
+                replaced.append(True)
+                group.rename(group.with_name("old"))
+                self.group(group)
+            return data
+        with mock.patch.object(maintenance.os, "read", side_effect=read), self.assertRaises(ERROR):
+            self.check()
 
 
 if __name__ == "__main__":

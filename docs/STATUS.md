@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
 
-현재: **e639169 이미지·격리통합 전체 인수, Wave109 G4 소스 준비.** Wave108 승인 cea1e033의 두 실행을 모두 성공 종결했다. e639169 아홉 번째 이미지12개·704파일/49게이트·2155소스pin을 인수했고03:12:26UTC 동일 Owner 정상 복귀,03:12:30UTC 독립 복구 실제 성공종료·무프로세스·READONLY 정산을 회수했다. 여섯 번째 실제 격리통합은03:13:15UTC 한 번 시작해03:16:56UTC exit0,03:17:18UTC 전체 회수를 완료했다. 최초/후속 승인·HTTP 게시·재시작·capture/restore·복원 프로세스 게시 유지의6단계가 모두 통과했고 임시21컨테이너/2네트워크를 모두 정리했다. 운영11상태·current·기존 base/보존볼륨은 유지됐다. 합성 세션 결과이며 실제 시장 수신·배포·Owner 로그인·3거래일 관찰은 아니다. 두 승인은 소진됐다. 과거 거부 내부원인 UNKNOWN/0120 정리 INCOMPLETE를 보존한다. Wave109 G4 도구 소스 준비: 별도 maintenance payload의 base helper 누락과 보존해야 할 역사적 terminal unit의 정확한 inventory 계약을 보완한다. 로컬 프로젝트 실행·새 호스트 조회/동작 없이 소스 검토와 새 hosted 검증을 준비한다. 기존 앱 e639169/이미지/manifest/실행 근거는 불변이다. G4·백업 전환·배포·Owner·3연속 실제거래일·최종 C_R2는 미완료다.
+현재: **e639169 호스트 인수 완료; Wave109 G4 도구 소스 검증 준비.** Wave109 G4 도구 소스2파일을 보완했다. 별도 payload12개에 base helper를 포함했고 v2계약에서 종료된 transient 기록과 중지된 writer를 구분하면서 전체 inventory/fragment pin/실행대기열/PID/재귀 cgroup/활성화 연결을 대조한다. 기존28개와 새13개(총41) maintenance 회귀는 작성·직접 검토만 했으며 새 후보 hosted CI 전이다. 앱 e639169의 이미지·실제 격리통합 인수는 그대로 보존한다. 새 호스트 조회·G4실행·배포·Owner·3거래일·C_R2 인수는 아니다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -4547,3 +4547,10 @@ Wave108 승인 cea1e033의 두 실행을 모두 성공 종결했다. e639169 아
 Wave109 G4 도구 소스 준비: 별도 maintenance payload의 base helper 누락과 보존해야 할 역사적 terminal unit의 정확한 inventory 계약을 보완한다. 로컬 프로젝트 실행·새 호스트 조회/동작 없이 소스 검토와 새 hosted 검증을 준비한다. 기존 앱 e639169/이미지/manifest/실행 근거는 불변이다. G4·백업 전환·배포·Owner·3연속 실제거래일·최종 C_R2는 미완료다.
 
 Image closure `0e2892c1984f783080796e8a6408c7413598028e0ce88931d2dc64dc5769926d`; manifest `e18b3aa714106db4a737caa35a8f18c151e5173528db3b118d134e8ac0dfeda2`; wholeflow closure `7f2465e63d919464cf2478d5dd1e0d78fe5496996cdc4fdbaab7cac693885d6a` (63 pins). Tracking `910f3b16`, handoff `76ffabde`, predecessor `d212c6ce` deletion confirmed. No pending question/new host authority.
+
+
+## Wave109 maintenance-v2 source ready; hosted execution pending
+
+Wave109 G4 도구 소스2파일을 보완했다. 별도 payload12개에 base helper를 포함했고 v2계약에서 종료된 transient 기록과 중지된 writer를 구분하면서 전체 inventory/fragment pin/실행대기열/PID/재귀 cgroup/활성화 연결을 대조한다. 기존28개와 새13개(총41) maintenance 회귀는 작성·직접 검토만 했으며 새 후보 hosted CI 전이다. 앱 e639169의 이미지·실제 격리통합 인수는 그대로 보존한다. 새 호스트 조회·G4실행·배포·Owner·3거래일·C_R2 인수는 아니다.
+
+Full8job CI once for a distinct tool candidate; no functional-smoke or host retry of the accepted e639169 application. Exact private definition inventory retains all174previous required names plus13new maintenance cases.

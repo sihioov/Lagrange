@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -40,18 +41,23 @@ recovery = load("preupgrade_maintenance_recovery", "scripts/ops/lib/production-p
 transition = load("preupgrade_maintenance_locks", "scripts/ops/transition-production-backup.py")
 files, install, runtime = recovery.files, recovery.install, recovery.runtime
 require = runtime.require
-SCHEMA = "lagrange-preupgrade-maintenance-v1"
+SCHEMA = "lagrange-preupgrade-maintenance-v2"
 FORMAT = "LAGRANGE_PREUPGRADE_RECOVERY_V1"
 LIMIT = 2 * 1024 * 1024
 MEMBERS = {"files.bundle.enc", "state.json.enc", "metadata.json", "COMPLETE"}
 PROPERTIES = ("LoadState", "ActiveState", "SubState", "FragmentPath", "DropInPaths",
               "NeedDaemonReload", "UnitFileState", "ActiveEnterTimestampMonotonic",
-              "InactiveEnterTimestampMonotonic", "ExecMainStartTimestampMonotonic")
+              "InactiveEnterTimestampMonotonic", "InvocationID", "Transient", "Job",
+              "Triggers", "TriggeredBy", "OnFailure", "OnSuccess", "OnFailureOf", "OnSuccessOf")
+SERVICE_PROPERTIES = ("ExecMainStartTimestampMonotonic", "ExecMainExitTimestampMonotonic",
+                      "MainPID", "ControlPID", "Restart", "NRestarts", "ControlGroup", "Slice")
+UNIT_NAME = re.compile(r"lagrange-[a-zA-Z0-9_.@-]+\.(service|timer|socket|path)")
 PAYLOAD = (
     "scripts/ops/prepare-production-recovery.py", "scripts/ops/transition-production-backup.py",
     "scripts/ops/lib/production-preupgrade-recovery.py", "scripts/ops/lib/owner-beta-daily-backup.py",
     "scripts/ops/lib/owner-beta-daily-backup-files.py", "scripts/ops/lib/owner-beta-daily-operations.py",
     "scripts/ops/lib/owner-beta-daily-runtime.py", "scripts/ops/lib/owner-beta-daily-release.py",
+    "scripts/ops/lib/owner-beta-daily-base.py",
     "scripts/ops/lib/service-status-policy.py",
     "deploy/db/preupgrade-recovery-verify.sh", "deploy/db/preupgrade-recovery-audit.sql")
 
@@ -78,6 +84,69 @@ def binding(value):
     # A later verify may have a fresh clock/boot bound, but cannot revise the
     # recovery point, bytes, old/tool revisions, owners or scope.
     return {k: v for k, v in value.items() if k not in {"issued_at", "expires_at", "boot_id"}}
+
+
+def unit_properties(name):
+    return PROPERTIES + (SERVICE_PROPERTIES if name.endswith(".service") else ())
+
+
+def checked_units(units):
+    require(isinstance(units, dict) and 4 <= len(units) <= 128 and
+            set(transition.UNITS) <= set(units), "PREUPGRADE_UNITS")
+    edges = {}
+    for name, unit in units.items():
+        require(UNIT_NAME.fullmatch(name) and isinstance(unit, dict) and
+                set(unit) == {"category", *unit_properties(name)} and
+                all(isinstance(v, str) and len(v) <= 16384 for v in unit.values()), "PREUPGRADE_UNITS")
+        require(unit["LoadState"] == "loaded" and unit["DropInPaths"] == "" and
+                unit["NeedDaemonReload"] == "no" and unit["Job"] == "" and
+                unit["OnFailure"] == unit["OnSuccess"] == unit["OnFailureOf"] == unit["OnSuccessOf"] == "" and
+                re.fullmatch(r"(?:[0-9a-f]{32})?", unit["InvocationID"]) and
+                all(re.fullmatch(r"[0-9]{1,20}", unit[k]) for k in
+                    ("ActiveEnterTimestampMonotonic", "InactiveEnterTimestampMonotonic")),
+                "PREUPGRADE_UNITS")
+        if unit["category"] == "stopped":
+            require((unit["ActiveState"], unit["SubState"]) == ("inactive", "dead") and
+                    unit["Transient"] == "no" and
+                    unit["UnitFileState"] in {"enabled", "disabled", "static"} and
+                    unit["FragmentPath"] == "/etc/systemd/system/" + name, "PREUPGRADE_UNITS")
+        else:
+            require(unit["category"] == "retained-terminal" and name.endswith(".service") and
+                    name not in transition.UNITS and unit["Transient"] == "yes" and
+                    unit["UnitFileState"] == "transient" and
+                    unit["FragmentPath"] == "/run/systemd/transient/" + name and
+                    (unit["ActiveState"], unit["SubState"]) in
+                    {("active", "exited"), ("failed", "failed"), ("inactive", "dead")} and
+                    unit["Restart"] == "no" and unit["Triggers"] == unit["TriggeredBy"] == "" and
+                    re.fullmatch(r"[0-9a-f]{32}", unit["InvocationID"]), "PREUPGRADE_UNITS")
+        if name.endswith(".service"):
+            require(unit["MainPID"] == unit["ControlPID"] == "0" and
+                    unit["Restart"] in {"no", "always", "on-success", "on-failure", "on-abnormal",
+                                         "on-abort", "on-watchdog"} and
+                    unit["Slice"] == "system.slice" and
+                    unit["ControlGroup"] in {"", "/system.slice/" + name} and
+                    all(re.fullmatch(r"[0-9]{1,20}", unit[k]) for k in
+                        ("ExecMainStartTimestampMonotonic", "ExecMainExitTimestampMonotonic", "NRestarts")),
+                    "PREUPGRADE_UNITS")
+            if unit["category"] == "retained-terminal":
+                require(0 < int(unit["ExecMainStartTimestampMonotonic"]) <=
+                        int(unit["ExecMainExitTimestampMonotonic"]), "PREUPGRADE_UNITS")
+        edges[name] = {}
+        for key in ("Triggers", "TriggeredBy"):
+            names = unit[key].split()
+            require(len(names) <= 128 and len(names) == len(set(names)) and
+                    all(n in units and n != name for n in names), "PREUPGRADE_UNIT_TRIGGER")
+            edges[name][key] = set(names)
+    # Never omit a timer/socket/path just because the service is terminal.
+    # Every activation edge must join two stopped, inventoried units and have
+    # its reverse observation. OnSuccess/OnFailure activation is refused.
+    for name, links in edges.items():
+        for target in links["Triggers"]:
+            require(not name.endswith(".service") and target.endswith(".service") and
+                    units[name]["category"] == units[target]["category"] == "stopped" and
+                    name in edges[target]["TriggeredBy"], "PREUPGRADE_UNIT_TRIGGER")
+        for source in links["TriggeredBy"]:
+            require(name in edges[source]["Triggers"], "PREUPGRADE_UNIT_TRIGGER")
 
 
 def contract(data, now=None):
@@ -133,16 +202,7 @@ def contract(data, now=None):
             all(set(w) == {"id", "created", "started_at", "finished_at", "restart_count", "policy_sha256"}
                 and runtime.CONTAINER.fullmatch(w["id"]) and install.is_hash(w["policy_sha256"])
                 and w["id"] != pg["id"] for w in value["writers"]), "PREUPGRADE_WRITERS")
-    require(isinstance(value["units"], dict) and 4 <= len(value["units"]) <= 128 and
-            set(transition.UNITS) <= set(value["units"]), "PREUPGRADE_UNITS")
-    for name, unit in value["units"].items():
-        require(re.fullmatch(r"lagrange-[a-zA-Z0-9_.@-]+\.(service|timer|socket|path)", name) and
-                set(unit) == set(PROPERTIES) and unit["LoadState"] == "loaded" and
-                unit["ActiveState"] == "inactive" and unit["SubState"] == "dead" and
-                unit["DropInPaths"] == "" and unit["NeedDaemonReload"] == "no" and
-                unit["UnitFileState"] in {"enabled", "disabled", "static"} and
-                unit["FragmentPath"] == "/etc/systemd/system/" + name and
-                all(re.fullmatch(r"[0-9]+", unit[k]) for k in PROPERTIES[-3:]), "PREUPGRADE_UNITS")
+    checked_units(value["units"])
     tool = "/opt/lagrange/maintenance/" + value["tool_commit"]
     old = roots[3]["path"]
     mandatory = {tool + "/" + p for p in PAYLOAD} | {
@@ -191,6 +251,85 @@ def stopped_writer(value):
                 ("Image", "Config", "HostConfig", "Mounts", "NetworkSettings")}))}
 
 
+def empty_cgroup(name, window, root="/sys/fs/cgroup"):
+    """Read a bounded, no-symlink system.slice subtree without changing it.
+
+    Even an empty ControlGroup property does not skip the canonical path.
+    Missing unit groups are allowed; missing parents or unreadable/changed
+    descendants are not. The caller brackets this with exact unit generations.
+    """
+    require(UNIT_NAME.fullmatch(name) and name.endswith(".service"), "PREUPGRADE_CGROUP")
+    count = 0
+
+    def identity(info):
+        require(info.st_uid == 0 and info.st_gid == 0 and not info.st_mode & 0o022,
+                "PREUPGRADE_CGROUP")
+        return info.st_dev, info.st_ino, info.st_mode
+
+    def read(fd, filename):
+        child = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+        try:
+            before = os.fstat(child)
+            require(stat.S_ISREG(before.st_mode), "PREUPGRADE_CGROUP")
+            install.no_acl(child)
+            stamp = identity(before)
+            data = os.read(child, 4097)
+            require(len(data) <= 4096 and stamp == identity(os.fstat(child)) and
+                    stamp == identity(os.stat(filename, dir_fd=fd, follow_symlinks=False)),
+                    "PREUPGRADE_CGROUP")
+            return data
+        finally:
+            os.close(child)
+
+    def scan(fd, depth):
+        nonlocal count
+        window.remaining()
+        count += 1
+        require(count <= 128 and depth <= 16, "PREUPGRADE_CGROUP_LIMIT")
+        install.no_acl(fd)
+        stamp = identity(os.fstat(fd))
+        names = sorted(recovery.backup.bounded_names(fd, 256))
+        require(read(fd, "cgroup.procs") == read(fd, "cgroup.threads") == b"",
+                "PREUPGRADE_CGROUP_ACTIVE")
+        events = read(fd, "cgroup.events").splitlines()
+        require(len(events) == 2 and set(events) == {b"populated 0", b"frozen 0"},
+                "PREUPGRADE_CGROUP_ACTIVE")
+        for child_name in names:
+            window.remaining()
+            info = os.stat(child_name, dir_fd=fd, follow_symlinks=False)
+            require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode), "PREUPGRADE_CGROUP")
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(child_name, files.DIRECTORY, dir_fd=fd)
+                try:
+                    expected = identity(info)
+                    require(identity(os.fstat(child)) == expected, "PREUPGRADE_CGROUP")
+                    scan(child, depth + 1)
+                    require(identity(os.stat(child_name, dir_fd=fd, follow_symlinks=False)) == expected,
+                            "PREUPGRADE_CGROUP")
+                finally:
+                    os.close(child)
+        require(names == sorted(recovery.backup.bounded_names(fd, 256)) and
+                stamp == identity(os.fstat(fd)) and read(fd, "cgroup.procs") == b"" and
+                read(fd, "cgroup.threads") == b"" and read(fd, "cgroup.events").splitlines() == events,
+                "PREUPGRADE_CGROUP_CHANGED")
+
+    with install.root_directory(root + "/system.slice") as parent:
+        window.remaining()
+        try:
+            fd = os.open(name, files.DIRECTORY, dir_fd=parent)
+        except FileNotFoundError:
+            # A dangling symlink is not an absent group.
+            require(name not in recovery.backup.bounded_names(parent, 4096), "PREUPGRADE_CGROUP")
+            return
+        try:
+            expected = identity(os.fstat(fd))
+            scan(fd, 0)
+            require(expected == identity(os.stat(name, dir_fd=parent, follow_symlinks=False)),
+                    "PREUPGRADE_CGROUP_CHANGED")
+        finally:
+            os.close(fd)
+
+
 class Native:
     def __init__(self, value, docker, window):
         self.value, self.docker, self.window = value, docker, window
@@ -201,25 +340,43 @@ class Native:
         require(result.returncode == 0 and len(result.stdout) <= LIMIT, "PREUPGRADE_OBSERVATION")
         return result.stdout
 
-    def units(self):
+    def unit_names(self):
         names = set()
         for verb in ("list-unit-files", "list-units"):
             rows = self.call(["/usr/bin/systemctl", verb, "--all", "--plain", "--no-legend",
                               "--no-pager", "lagrange-*"]).decode().splitlines()
             require(len(rows) <= 128, "PREUPGRADE_UNITS")
+            listed = set()
             for row in rows:
-                require(row.split(), "PREUPGRADE_UNITS")
+                require(row.split() and UNIT_NAME.fullmatch(row.split()[0]), "PREUPGRADE_UNITS")
+                require(row.split()[0] not in listed, "PREUPGRADE_UNITS")
+                listed.add(row.split()[0])
                 names.add(row.split()[0])
         require(names == set(self.value["units"]), "PREUPGRADE_UNITS_CHANGED")
+        return names
+
+    def unit(self, name):
+        properties = unit_properties(name)
+        lines = self.call(["/usr/bin/systemctl", "show", "--all", "--no-pager",
+            "--property=" + ",".join(properties), name]).decode().splitlines()
+        actual = {}
+        for line in lines:
+            key, sep, val = line.partition("=")
+            require(sep and key in properties and key not in actual, "PREUPGRADE_UNITS")
+            actual[key] = val
+        require(actual == {k: v for k, v in self.value["units"][name].items() if k != "category"},
+                "PREUPGRADE_UNITS_CHANGED")
+
+    def units(self):
+        checked_units(self.value["units"])
+        names = self.unit_names()
         for name in sorted(names):
-            lines = self.call(["/usr/bin/systemctl", "show", "--no-pager",
-                "--property=" + ",".join(PROPERTIES), name]).decode().splitlines()
-            actual = {}
-            for line in lines:
-                key, sep, val = line.partition("=")
-                require(sep and key in PROPERTIES and key not in actual, "PREUPGRADE_UNITS")
-                actual[key] = val
-            require(actual == self.value["units"][name], "PREUPGRADE_UNITS_CHANGED")
+            self.window.remaining()
+            self.unit(name)
+            if name.endswith(".service"):
+                empty_cgroup(name, self.window)
+            self.unit(name)
+        require(self.unit_names() == names, "PREUPGRADE_UNITS_CHANGED")
 
     def postgres(self, stopped):
         pg = self.value["postgres"]

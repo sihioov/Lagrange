@@ -175,21 +175,21 @@ package "FIRST DAILY ROLLOUT — SOURCE PREPARATION ONLY\nrequires exact G3/G4 h
   folder "Installed backup helper + config\nservice/timer pairs (six files)" as backup_install_files
 }
 
-' evidence: scripts/ops/prepare-production-recovery.py:433-453
+' evidence: scripts/ops/prepare-production-recovery.py:590-610
 cold_preparation --> pg : read-only local socket audit before shutdown
-' evidence: scripts/ops/prepare-production-recovery.py:167,471-499; scripts/ops/lib/production-preupgrade-recovery.py:79-102
+' evidence: scripts/ops/prepare-production-recovery.py:379-414,621-661; scripts/ops/lib/production-preupgrade-recovery.py:79-102
 pg --> cold_preparation : full stopped cluster filesystem;\nexact container/volume/generation fence
-' evidence: scripts/ops/prepare-production-recovery.py:103-118,167,473-484
+' evidence: scripts/ops/prepare-production-recovery.py:178-189,434-462,621-641
 raw --> cold_preparation : read-only bounded snapshot under writer locks
-' evidence: scripts/ops/prepare-production-recovery.py:103-118,167,473-484
+' evidence: scripts/ops/prepare-production-recovery.py:178-189,434-462,621-641
 curated --> cold_preparation : exact pre-upgrade file snapshot
-' evidence: scripts/ops/prepare-production-recovery.py:473-476
+' evidence: scripts/ops/prepare-production-recovery.py:630-633
 artifacts --> cold_preparation : approved-base bytes and manifest binding
-' evidence: scripts/ops/prepare-production-recovery.py:103-118,167,473-484
+' evidence: scripts/ops/prepare-production-recovery.py:178-189,434-462,621-641
 cold_config --> cold_preparation : protected configuration snapshot
-' evidence: scripts/ops/prepare-production-recovery.py:487-501
+' evidence: scripts/ops/prepare-production-recovery.py:642-661
 cold_preparation --> cold_set : encrypted capture; verify before no-clobber COMPLETE
-' evidence: scripts/ops/prepare-production-recovery.py:373-409; scripts/ops/lib/production-preupgrade-recovery.py:164-228,252-305
+' evidence: scripts/ops/prepare-production-recovery.py:530-566; scripts/ops/lib/production-preupgrade-recovery.py:164-228,252-305
 cold_preparation --> cold_verifier : decrypt into fresh private tree;\nboot only copied cluster, compare audit
 ' evidence: scripts/ops/transition-production-backup.py:36-38,64-77,315-365
 backup_install_transition --> backup_install_files : replace only pinned owned files;\nreload/check with timers still inactive
