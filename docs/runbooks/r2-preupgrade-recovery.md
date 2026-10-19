@@ -1,6 +1,6 @@
 # R2 pre-upgrade consistent recovery preparation
 
-Status: **Wave109 maintenance-v2 hosted CI accepted at3de6420; production recovery not executed**.
+Status: **Wave114 maintenance-v3 source written; new hosted validation pending. Wave109 v2 remains accepted at3de6420; production recovery not executed**.
 Candidate899f259f9c8872fb61f0c95745904f552c8750e9 passed20 filesystem/contract,
 28 maintenance,3 preparation and4 actual Docker/PostgreSQL cases in
 CI39098366992 attempt1. The complete
@@ -242,9 +242,9 @@ permission to restart writers. The later schema62 daily-backup path remains a
 separate operation. R2, actual Owner use and the three-trading-day gate stay open.
 
 
-## Wave109 exact unit inventory and staged payload (source only)
+## Wave109 exact unit inventory and staged payload (historical v2 acceptance)
 
-The maintenance contract is now `lagrange-preupgrade-maintenance-v2`. It adds
+The Wave109 maintenance contract is `lagrange-preupgrade-maintenance-v2`. It adds
 explicit unit categories and complete per-kind observations. Old v1 contracts
 are refused by this tool; immutable prior tools/receipts are retained. The
 archive member layout and encrypted format remain unchanged. No v2 production
@@ -295,3 +295,14 @@ CI39195322025 attempt1 for3de6420, with full recovery at2026-10-19T04:00:50UTC
 ([evidence](../reviews/2026-10-19-r2-g4-maintenance-inventory-source.md#hosted-acceptance--2026-10-19-0400-utc)).
 Local project execution and new production probes were not performed. The systemd observations in
 these fixtures are mocks; they do not claim an actual production writer fence.
+
+
+## Wave114 explicit observed graph and pinned source ancestry (validation pending)
+
+The new `lagrange-preupgrade-maintenance-v3` contract requires `unit_graph` and a complete `postgres_ancestry` list of device/inode/uid/gid/mode identities. A PostgreSQL source below `/data/docker/volumes/` can explicitly trust its pinned1000:1000/0755 `/data` ancestor. Every other ancestor keeps the protected root-owned/noACL/no writable group-or-other policy. All descriptors remain held with no-follow traversal and exact final identity/name checks. The exact local named volume must match the source mount. Daily and restored private roots keep the old strict defaults. This expresses explicit owner trust and does not replace the operating writer fence.
+
+`reciprocal` keeps v2 activation requirements. Explicit `quiescent-observed` preserves both actual property sets independently; every reported edge must join stopped inventoried endpoints, without jobs or hooks. The `retained-disabled-failure` category permits only an exact disabled persistent failed service with pinned fragment/generation, Restart=no, zero PIDs and empty recursive cgroups. Every reported activation source for that service must also be disabled. Mandatory backup units are excluded. No reverse property is synthesized and no history is reset, deleted, filtered or relaunched.
+
+The actual PG parent was root:root0701, while its999:999/1777 child still requires a root:root0700 parent for cold capture. The tool does not alter permissions. A later separately approved operating ledger must provide independent recovery before protecting that exact same parent and restoring0701. All source ancestry pins used by audit and capture must reflect the protected state. Archive format, locks, fixed SQL, clone isolation, no-clobber publication and cleanup guards remain unchanged.
+
+Fourteen new maintenance definitions join the prior41. Filesystem cases exercise actual UID/ACL/inode/path behavior in private chroots; unit observations are mocks. They are written and directly reviewed, not yet executed for this candidate. Full required hosted CI, including the existing actual Docker cold-restore tests, is required. The [survey closure and source review](../reviews/2026-10-19-r2-g4-host-compatibility-source.md) preserve the one absent release lock, current host limitations and remaining custody/writer information. No new production action is authorized.

@@ -7286,3 +7286,12 @@ Wave112 a3는04:44:27UTC 한 번 실행됐으나 내부 조회기에 남은 Wave
 종료b065beb9, 종결9e538ad5, 새prepared96d7013f/59pins, static3f6e7c8d, bindingbb73d173. 기존 executionLimit1/automaticRetryAuthorizedfalse 때문에 새 실행 결정 전 중단한다. 이전 a1/a2/a3와 모든 인수된 소스/근거는 보존한다. [상세 실행안](../../reviews/2026-10-19-r2-g4-authorization-binding-correction.md).
 
 추적d54eea44를04:52:06UTC active로 확인하고 인계e555f380/registry 저장 뒤d17c7730 삭제를 확인했다.15:45UTC 전/47번째 tick 전 갱신,16:52:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+
+
+## Wave113 terminal recovery / Wave114 compatibility source — 2026-10-19
+
+Wave113 승인 조회 a4는2026-10-19 05:06:05UTC 한 번 실행해12단계와 최종 상태 대조까지 회수했다. 종료는exit2/METADATA_RECOVERED_WITH_GAPS이며 유일한 gap은release lock의 실제 부재다. 잠금 파일을 만들지 않았고56유닛 두 번의 metadata가 같았다. 키metadata·자원·제한된 열린FD/maps 관측도 회수했으나 전역/미래/외부 writer 차단 증명은 아니다. 승인0543fefc는 소진됐고 추가 조회는 하지 않는다. Wave114는 실제 PG ancestry와 disabled persistent failed 유닛, 비대칭 관측된 activation 속성을 보존하는 maintenance-v3 소스를 준비했다. 기존41개와 신규14개(총55개) maintenance 회귀는 작성·직접 검토 단계이며 새 후보 hosted CI 전이다. 인수된 앱e639169/12이미지/실제 통합과 도구3de6420/기존 근거는 불변이다. G4 중단·일관 백업·복구·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[소스·실행 경계](../../reviews/2026-10-19-r2-g4-host-compatibility-source.md). 키의 외부 보관 식별명과 외부/수동 writer 유무는 한 번 질문했으며 답변 대기 중이다. 새로운 운영 실행 승인을 요청한 상태가 아니다.
+
+추적729c2a81을05:18:32UTC active로 확인하고 인계63f45651/registry 저장 후d54eea44 삭제를 확인했다.16:30UTC 전/47번째 tick 전 갱신,17:18:32UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이다.

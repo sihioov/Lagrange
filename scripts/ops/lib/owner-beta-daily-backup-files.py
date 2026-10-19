@@ -141,9 +141,13 @@ class Root:
     mode: int
     leaf: str | None = None
     parent: tuple[int, int, int] | None = None
+    # Explicit cold-source identities: / through the selected PostgreSQL root.
+    # Restored/private trees and daily callers leave this empty.
+    ancestry: tuple[tuple[int, int, int, int, int], ...] = ()
 
     def __post_init__(self):
         owners = OWNERS | {999} if self.name == "postgres" else OWNERS
+        require(isinstance(self.ancestry, tuple), "PREUPGRADE_SOURCE_ANCESTRY")
         private_pg_volume = self.name == "postgres" and (self.uid, self.gid, self.mode) == (999, 999, 0o1777)
         require(self.name in {*CLASSES, *PREUPGRADE_CLASSES} and isinstance(self.path, str) and
                 self.path.startswith("/") and type(self.uid) is int and self.uid in owners and
@@ -158,6 +162,51 @@ class Root:
                     all(type(value) is int for value in self.parent) and
                     0 <= self.parent[0] < 2**32 - 1 and
                     self.parent[1:] == (10001, 0o750))
+        if self.ancestry:
+            require(self.name == "postgres" and self.leaf is None and self.parent is None and
+                    isinstance(self.ancestry, tuple) and
+                    len(self.ancestry) == len(safe_parts(self.path[1:])) + 1,
+                    "PREUPGRADE_SOURCE_ANCESTRY")
+            for index, entry in enumerate(self.ancestry):
+                require(isinstance(entry, tuple) and len(entry) == 5 and
+                        all(type(v) is int for v in entry) and
+                        0 <= entry[0] < 2**64 and 0 < entry[1] < 2**64 and
+                        all(0 <= v < 2**32 - 1 for v in entry[2:4]) and
+                        0 < entry[4] <= 0o7777, "PREUPGRADE_SOURCE_ANCESTRY")
+                if index < len(self.ancestry) - 1:
+                    # This is an explicit trust in the fixed host's data-root
+                    # owner, not a general permission for user-owned parents.
+                    trusted_data = (index == 1 and self.path.startswith("/data/docker/volumes/") and
+                                    entry[2:] == (1000, 1000, 0o755))
+                    require((entry[2] == 0 and not entry[4] & 0o7022) or trusted_data,
+                            "PREUPGRADE_SOURCE_ANCESTRY")
+            require(self.ancestry[-1][2:] == (self.uid, self.gid, self.mode),
+                    "PREUPGRADE_SOURCE_ANCESTRY")
+
+
+def ancestor_identity(info):
+    return (info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))
+
+
+def root_component(root, fd, index, count):
+    last = index == count
+    boundary = root.parent if index == count - 1 else None
+    trusted_data = (bool(root.ancestry) and index == 1 and
+                    root.path.startswith("/data/docker/volumes/") and
+                    root.ancestry[index][2:] == (1000, 1000, 0o755))
+    if trusted_data:
+        info = os.fstat(fd)
+        require(stat.S_ISDIR(info.st_mode), "PREUPGRADE_SOURCE_ANCESTRY")
+        no_acl(fd)
+    else:
+        groups = OWNERS | {999} if root.name == "postgres" else OWNERS
+        info = (checked_parent(fd) if not last and boundary is None else
+                checked(fd, directory=True, owners={root.uid} if last else {boundary[0]},
+                        groups=groups if last else OWNERS,
+                        sticky_volume=last and root.name == "postgres"))
+    if root.ancestry:
+        require(ancestor_identity(info) == root.ancestry[index], "PREUPGRADE_SOURCE_ANCESTRY")
+    return info
 
 
 @contextlib.contextmanager
@@ -165,19 +214,14 @@ def open_root(root):
     """Keep the complete protected parent chain until final name verification."""
     names = safe_parts(root.path[1:])
     fds, before = [], []
-    groups = OWNERS | {999} if root.name == "postgres" else OWNERS
     try:
         fds.append(os.open("/", DIRECTORY))
-        before.append(checked_parent(fds[0]))
+        before.append(root_component(root, fds[0], 0, len(names)))
         for index, name in enumerate(names):
             fds.append(os.open(name, DIRECTORY, dir_fd=fds[-1]))
             last = index == len(names) - 1
             boundary = root.parent if index == len(names) - 2 else None
-            info = (checked_parent(fds[-1]) if not last and boundary is None else
-                    checked(fds[-1], directory=True,
-                            owners={root.uid} if last else {boundary[0]},
-                            groups=groups if last else OWNERS,
-                            sticky_volume=last and root.name == "postgres"))
+            info = root_component(root, fds[-1], index + 1, len(names))
             if last and root.mode == 0o1777:
                 parent = before[-1]
                 require((parent.st_uid, parent.st_gid, stat.S_IMODE(parent.st_mode)) == (0, 0, 0o700),
@@ -191,13 +235,7 @@ def open_root(root):
         # Ancestor child lists may change independently; their identity, access
         # policy and binding may not. Included root contents are checked below.
         for index, fd in enumerate(fds):
-            boundary = root.parent if index == len(names) - 1 else None
-            last = index == len(names)
-            info = (checked_parent(fd) if not last and boundary is None else
-                    checked(fd, directory=True,
-                            owners={root.uid} if last else {boundary[0]},
-                            groups=groups if last else OWNERS,
-                            sticky_volume=last and root.name == "postgres"))
+            info = root_component(root, fd, index, len(names))
             original = before[index]
             require((info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode) ==
                     (original.st_dev, original.st_ino, original.st_uid,

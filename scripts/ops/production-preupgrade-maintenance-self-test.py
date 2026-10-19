@@ -13,6 +13,8 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -52,6 +54,15 @@ def unit_value(name):
     return unit
 
 
+def ancestry_value(path, *, actual=False, mode=0o750):
+    paths = [Path("/"), *reversed(Path(path).parents[:-1]), Path(path)]
+    if actual:
+        return [list(files.ancestor_identity(p.stat())) for p in paths]
+    return [[1, i + 1, 999 if i == len(paths) - 1 else 0,
+             999 if i == len(paths) - 1 else 0,
+             mode if i == len(paths) - 1 else 0o755] for i in range(len(paths))]
+
+
 def value():
     now = maintenance.utc().replace(microsecond=0)
     old, tool = "a" * 40, "b" * 40
@@ -75,7 +86,9 @@ def value():
         "postgres": {"id": "d" * 64, "image_id": "sha256:" + "e" * 64,
             "created": "2026-10-01T00:00:00Z", "started_at": "2026-10-01T00:01:00Z", "restart_count": 0,
             "volume": "fixture", "mountpoint": roots[4]["path"], "volume_created_at": "2026-10-01T00:00:00Z",
-            "networks": {"lagrange_backend": "f" * 64}}, "roots": roots, "writers": [], "units": units,
+            "networks": {"lagrange_backend": "f" * 64}},
+        "postgres_ancestry": ancestry_value(roots[4]["path"]),
+        "unit_graph": "reciprocal", "roots": roots, "writers": [], "units": units,
         "pins": {p: "sha256:" + "0" * 64 for p in paths},
         "migrations": fixture.PreupgradeRecoveryTests.audit()["migrations"],
         "base_manifest_sha256": "sha256:" + "1" * 64, "secret_recovery_ref": "fixture-recovery-reference",
@@ -102,6 +115,7 @@ class MaintenanceTests(unittest.TestCase):
         self.value = value()
         self.value["roots"] = [{"name": r.name, "path": r.path, "uid": r.uid, "gid": r.gid,
                                 "mode": r.mode, "parent": None} for r in self.roots]
+        self.value["postgres_ancestry"] = ancestry_value(self.roots[-1].path, actual=True)
         with files.Snapshot(maintenance.root_values(self.value), self.limits, profile="preupgrade") as snapshot:
             self.value["base_manifest_sha256"] = maintenance.digest(files.canonical(
                 [r for r in snapshot.records if r["path"] == "base" or r["path"].startswith("base/")]))
@@ -631,6 +645,239 @@ class UnitInventoryTests(unittest.TestCase):
             native.call.side_effect = observe
             with self.subTest(key=key), mock.patch.object(maintenance, "empty_cgroup"), self.assertRaises(ERROR):
                 native.units()
+    def persistent_failure(self):
+        candidate = self.candidate(("failed", "failed"))
+        candidate["unit_graph"] = "quiescent-observed"
+        unit = candidate["units"][self.history]
+        del candidate["pins"][unit["FragmentPath"]]
+        unit.update(category="retained-disabled-failure", Transient="no", UnitFileState="disabled",
+                    FragmentPath="/etc/systemd/system/" + self.history,
+                    InactiveEnterTimestampMonotonic="30")
+        candidate["pins"][unit["FragmentPath"]] = "sha256:" + "4" * 64
+        timer = "lagrange-retained-fixture.timer"
+        candidate["units"][timer] = unit_value(timer)
+        candidate["units"][timer]["Triggers"] = self.history
+        candidate["pins"][candidate["units"][timer]["FragmentPath"]] = "sha256:" + "5" * 64
+        return candidate
+
+    def test_disabled_persistent_failure_preserves_exact_one_way_observation_and_cgroup_gate(self):
+        candidate = self.persistent_failure()
+        original = copy.deepcopy(candidate)
+        self.assertEqual(maintenance.contract(files.canonical(candidate)), original)
+        native = self.native(candidate)
+        with mock.patch.object(maintenance, "empty_cgroup") as empty:
+            native.units()
+        self.assertIn(mock.call(self.history, native.window), empty.call_args_list)
+        self.assertEqual(candidate, original)
+        self.assertEqual(candidate["units"][self.history]["TriggeredBy"], "")
+        self.assertTrue(all(c.args[0][1] in {"show", "list-units", "list-unit-files"}
+                            for c in native.call.call_args_list))
+
+    def test_disabled_failure_rejects_live_enabled_hooked_or_unbound_history(self):
+        for change in ({"UnitFileState": "enabled"}, {"Transient": "yes"}, {"Restart": "always"},
+                       {"MainPID": "1"}, {"ControlPID": "1"}, {"Job": "10"},
+                       {"ActiveState": "active", "SubState": "running"}, {"OnFailure": "x.service"},
+                       {"DropInPaths": "/etc/systemd/system/extra.conf"}, {"NeedDaemonReload": "yes"},
+                       {"InvocationID": ""}, {"InactiveEnterTimestampMonotonic": "19"},
+                       {"ExecMainStartTimestampMonotonic": "0"}, {"category": "stopped"}):
+            candidate = self.persistent_failure()
+            candidate["units"][self.history].update(change)
+            with self.subTest(change=change), self.assertRaises(ERROR):
+                maintenance.contract(files.canonical(candidate))
+        candidate = self.persistent_failure()
+        del candidate["pins"][candidate["units"][self.history]["FragmentPath"]]
+        with self.assertRaises(ERROR):
+            maintenance.contract(files.canonical(candidate))
+
+    def test_quiescent_graph_accepts_reported_directions_without_synthesizing_links(self):
+        timer, service = "lagrange-direction.timer", "lagrange-direction.service"
+        for direction in ("forward", "reverse", "both"):
+            candidate = value()
+            candidate["unit_graph"] = "quiescent-observed"
+            for name in (timer, service):
+                candidate["units"][name] = unit_value(name)
+                candidate["pins"][candidate["units"][name]["FragmentPath"]] = "sha256:" + "6" * 64
+            if direction in {"forward", "both"}:
+                candidate["units"][timer]["Triggers"] = service
+            if direction in {"reverse", "both"}:
+                candidate["units"][service]["TriggeredBy"] = timer
+            original = copy.deepcopy(candidate)
+            self.assertEqual(maintenance.contract(files.canonical(candidate)), original)
+            self.assertEqual(candidate, original)
+            if direction != "both":
+                candidate["unit_graph"] = "reciprocal"
+                with self.assertRaises(ERROR):
+                    maintenance.contract(files.canonical(candidate))
+
+    def test_quiescent_graph_rejects_armed_external_or_enabled_failed_activation(self):
+        timer = "lagrange-retained-fixture.timer"
+        for name, key, changed in ((timer, "ActiveState", "active"), (timer, "SubState", "waiting"),
+                                  (timer, "Job", "12"), (timer, "UnitFileState", "enabled"),
+                                  (timer, "Triggers", "outside.service"),
+                                  (self.history, "TriggeredBy", "outside.timer"),
+                                  (self.history, "Triggers", timer)):
+            candidate = self.persistent_failure()
+            candidate["units"][name][key] = changed
+            with self.subTest(key=key, changed=changed), self.assertRaises(ERROR):
+                maintenance.contract(files.canonical(candidate))
+        candidate = self.persistent_failure()
+        candidate["unit_graph"] = "anything"
+        with self.assertRaises(ERROR):
+            maintenance.contract(files.canonical(candidate))
+
+    def test_retained_failure_cgroup_and_reported_graph_drift_remain_hard_failures(self):
+        native = self.native(self.persistent_failure())
+        with mock.patch.object(maintenance, "empty_cgroup", side_effect=ERROR("PREUPGRADE_CGROUP")), \
+                self.assertRaises(ERROR):
+            native.units()
+        original = native.call.side_effect
+        def drift(args):
+            data = original(args)
+            if args[1] == "show" and args[-1] == self.history:
+                return data.replace(b"TriggeredBy=\n", b"TriggeredBy=lagrange-retained-fixture.timer\n")
+            return data
+        native.call.side_effect = drift
+        with mock.patch.object(maintenance, "empty_cgroup"), self.assertRaises(ERROR):
+            native.units()
+
+
+class SourceAncestryTests(unittest.TestCase):
+    pgpath = Path("/data/docker/volumes/fixture/_data")
+
+    def pinned(self):
+        return files.Root("postgres", str(self.pgpath), 999, 999, 0o1777,
+                          ancestry=tuple(tuple(row) for row in ancestry_value(self.pgpath, actual=True)))
+
+    def isolated(self, exercise):
+        """All real UID/ACL/path operations occur below a disposable chroot."""
+        if os.geteuid() != 0 or sys.platform != "linux":
+            self.fail("actual root Linux fixture required")
+        with tempfile.TemporaryDirectory(prefix="preupgrade-source-", dir="/var/lib") as directory:
+            stage = Path(directory)
+            target = stage / str(self.pgpath)[1:]
+            target.mkdir(parents=True, mode=0o700)
+            os.chown(stage / "data", 1000, 1000)
+            (stage / "data").chmod(0o755)
+            target.parent.chmod(0o700)
+            os.chown(target, 999, 999)
+            target.chmod(0o1777)
+            reader, writer = os.pipe()
+            pid = os.fork()
+            if pid == 0:
+                os.close(reader)
+                signal.alarm(10)
+                try:
+                    os.chroot(stage)
+                    os.chdir("/")
+                    exercise()
+                except BaseException as error:
+                    os.write(writer, (type(error).__name__ + ": " + str(error)).encode()[:2048])
+                    os._exit(1)
+                os._exit(0)
+            os.close(writer)
+            try:
+                _, status = os.waitpid(pid, 0)
+                error = os.read(reader, 4096).decode()
+                self.assertEqual(status, 0, error)
+            finally:
+                os.close(reader)
+
+    def test_explicit_source_ancestry_contract_is_complete_and_bound_to_named_volume(self):
+        candidate = value()
+        candidate["roots"][-1].update(path=str(self.pgpath), mode=0o1777)
+        candidate["postgres"]["mountpoint"] = str(self.pgpath)
+        candidate["postgres_ancestry"] = ancestry_value(self.pgpath, mode=0o1777)
+        candidate["postgres_ancestry"][1][2:] = [1000, 1000, 0o755]
+        candidate["postgres_ancestry"][-2][4] = 0o700
+        self.assertEqual(maintenance.contract(files.canonical(candidate)), candidate)
+        for changed in ([], candidate["postgres_ancestry"][:-1],
+                        [*candidate["postgres_ancestry"], candidate["postgres_ancestry"][-1]]):
+            bad = copy.deepcopy(candidate)
+            bad["postgres_ancestry"] = changed
+            with self.assertRaises((ERROR, files.SnapshotError)):
+                maintenance.contract(files.canonical(bad))
+        for index, field, changed in ((1, 2, 1001), (1, 3, 1001), (1, 4, 0o775),
+                                      (2, 2, 1000), (0, 0, True), (-1, 1, 0)):
+            bad = copy.deepcopy(candidate)
+            bad["postgres_ancestry"][index][field] = changed
+            with self.subTest(index=index, field=field), self.assertRaises(files.SnapshotError):
+                maintenance.contract(files.canonical(bad))
+        bad = copy.deepcopy(candidate)
+        bad["postgres"]["volume"] = "different"
+        with self.assertRaises(ERROR):
+            maintenance.contract(files.canonical(bad))
+
+    def test_actual_pinned_user_owned_data_ancestor_is_read_only(self):
+        def exercise():
+            root = self.pinned()
+            before = ancestry_value(self.pgpath, actual=True)
+            with files.open_root(root) as fd:
+                self.assertEqual(files.ancestor_identity(os.fstat(fd)), root.ancestry[-1])
+            self.assertEqual(ancestry_value(self.pgpath, actual=True), before)
+        self.isolated(exercise)
+
+    def test_actual_user_owned_ancestor_without_explicit_pins_is_refused(self):
+        def exercise():
+            root = files.Root("postgres", str(self.pgpath), 999, 999, 0o1777)
+            with self.assertRaises(files.SnapshotError), files.open_root(root):
+                self.fail("unpinned source opened")
+        self.isolated(exercise)
+
+    def test_actual_source_inode_mismatch_is_refused_before_yield(self):
+        def exercise():
+            original = self.pinned()
+            for index in range(len(original.ancestry)):
+                pins = [list(row) for row in original.ancestry]
+                pins[index][1] += 1
+                root = files.Root("postgres", str(self.pgpath), 999, 999, 0o1777,
+                                  ancestry=tuple(tuple(row) for row in pins))
+                with self.assertRaises(files.SnapshotError), files.open_root(root):
+                    self.fail("changed inode opened")
+        self.isolated(exercise)
+
+    def test_actual_source_parent_replacement_is_refused_at_exit(self):
+        def exercise():
+            with self.assertRaises(files.SnapshotError), files.open_root(self.pinned()):
+                os.rename("/data/docker", "/data/old-docker")
+                os.mkdir("/data/docker", 0o700)
+        self.isolated(exercise)
+
+    def test_actual_source_ancestor_mode_or_owner_drift_is_refused(self):
+        for mutation in (lambda: os.chmod("/data", 0o777), lambda: os.chown("/data", 1001, 1000)):
+            def exercise():
+                with self.assertRaises(files.SnapshotError), files.open_root(self.pinned()):
+                    mutation()
+            self.isolated(exercise)
+
+    def test_actual_source_ancestor_acl_is_refused(self):
+        def exercise():
+            root = self.pinned()
+            acl = files.struct.pack("<I", 2) + b"".join(files.struct.pack("<HHI", *entry) for entry in (
+                (1, 7, 0xffffffff), (2, 5, 1001), (4, 5, 0xffffffff),
+                (16, 5, 0xffffffff), (32, 5, 0xffffffff)))
+            os.setxattr("/data", "system.posix_acl_access", acl)
+            with self.assertRaises(files.SnapshotError), files.open_root(root):
+                self.fail("ACL source opened")
+        self.isolated(exercise)
+
+    def test_actual_sticky_source_parent_stays_private_and_is_never_repaired(self):
+        def exercise():
+            self.pgpath.parent.chmod(0o701)
+            with self.assertRaises(files.SnapshotError), files.open_root(self.pinned()):
+                self.fail("shared sticky-volume parent opened")
+            self.assertEqual(stat.S_IMODE(self.pgpath.parent.stat().st_mode), 0o701)
+        self.isolated(exercise)
+
+    def test_source_ancestry_cannot_be_applied_to_daily_or_other_roots(self):
+        def exercise():
+            root = self.pinned()
+            for name in files.CLASSES:
+                with self.assertRaises(files.SnapshotError):
+                    files.Root(name, root.path, 10001, 10001, 0o750, ancestry=root.ancestry)
+            with self.assertRaises(files.SnapshotError):
+                files.Snapshot([root], files.Limits(1024**2), profile="daily")
+            self.assertEqual(files.Root("postgres", "/var/lib/private", 999, 999, 0o700).ancestry, ())
+        self.isolated(exercise)
 
 
 class CgroupTests(unittest.TestCase):

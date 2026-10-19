@@ -41,7 +41,7 @@ recovery = load("preupgrade_maintenance_recovery", "scripts/ops/lib/production-p
 transition = load("preupgrade_maintenance_locks", "scripts/ops/transition-production-backup.py")
 files, install, runtime = recovery.files, recovery.install, recovery.runtime
 require = runtime.require
-SCHEMA = "lagrange-preupgrade-maintenance-v2"
+SCHEMA = "lagrange-preupgrade-maintenance-v3"
 FORMAT = "LAGRANGE_PREUPGRADE_RECOVERY_V1"
 LIMIT = 2 * 1024 * 1024
 MEMBERS = {"files.bundle.enc", "state.json.enc", "metadata.json", "COMPLETE"}
@@ -90,7 +90,8 @@ def unit_properties(name):
     return PROPERTIES + (SERVICE_PROPERTIES if name.endswith(".service") else ())
 
 
-def checked_units(units):
+def checked_units(units, graph="reciprocal"):
+    require(graph in {"reciprocal", "quiescent-observed"}, "PREUPGRADE_UNIT_GRAPH")
     require(isinstance(units, dict) and 4 <= len(units) <= 128 and
             set(transition.UNITS) <= set(units), "PREUPGRADE_UNITS")
     edges = {}
@@ -110,6 +111,14 @@ def checked_units(units):
                     unit["Transient"] == "no" and
                     unit["UnitFileState"] in {"enabled", "disabled", "static"} and
                     unit["FragmentPath"] == "/etc/systemd/system/" + name, "PREUPGRADE_UNITS")
+        elif unit["category"] == "retained-disabled-failure":
+            require(graph == "quiescent-observed" and name.endswith(".service") and
+                    name not in transition.UNITS and unit["Transient"] == "no" and
+                    unit["UnitFileState"] == "disabled" and
+                    unit["FragmentPath"] == "/etc/systemd/system/" + name and
+                    (unit["ActiveState"], unit["SubState"]) == ("failed", "failed") and
+                    unit["Restart"] == "no" and unit["Triggers"] == "" and
+                    re.fullmatch(r"[0-9a-f]{32}", unit["InvocationID"]), "PREUPGRADE_UNITS")
         else:
             require(unit["category"] == "retained-terminal" and name.endswith(".service") and
                     name not in transition.UNITS and unit["Transient"] == "yes" and
@@ -128,32 +137,49 @@ def checked_units(units):
                     all(re.fullmatch(r"[0-9]{1,20}", unit[k]) for k in
                         ("ExecMainStartTimestampMonotonic", "ExecMainExitTimestampMonotonic", "NRestarts")),
                     "PREUPGRADE_UNITS")
-            if unit["category"] == "retained-terminal":
+            if unit["category"] in {"retained-terminal", "retained-disabled-failure"}:
                 require(0 < int(unit["ExecMainStartTimestampMonotonic"]) <=
                         int(unit["ExecMainExitTimestampMonotonic"]), "PREUPGRADE_UNITS")
+            if unit["category"] == "retained-disabled-failure":
+                require(int(unit["ExecMainExitTimestampMonotonic"]) <=
+                        int(unit["InactiveEnterTimestampMonotonic"]), "PREUPGRADE_UNITS")
         edges[name] = {}
         for key in ("Triggers", "TriggeredBy"):
             names = unit[key].split()
             require(len(names) <= 128 and len(names) == len(set(names)) and
                     all(n in units and n != name for n in names), "PREUPGRADE_UNIT_TRIGGER")
             edges[name][key] = set(names)
-    # Never omit a timer/socket/path just because the service is terminal.
-    # Every activation edge must join two stopped, inventoried units and have
-    # its reverse observation. OnSuccess/OnFailure activation is refused.
+    # Preserve both actual property sets. The explicit quiescent mode checks
+    # every reported edge without inventing a reverse observation. Its source
+    # must still be inactive/dead with no job, and its destination has no PIDs
+    # or populated cgroup. A retained persistent failure additionally requires
+    # disabled activation sources. Hooks and references outside the full
+    # inventory remain forbidden; retained transient histories stay detached.
+    def edge(source, target):
+        require(not source.endswith(".service") and target.endswith(".service") and
+                units[source]["category"] == "stopped", "PREUPGRADE_UNIT_TRIGGER")
+        if units[target]["category"] == "retained-disabled-failure":
+            require(graph == "quiescent-observed" and
+                    units[source]["UnitFileState"] == "disabled", "PREUPGRADE_UNIT_TRIGGER")
+        else:
+            require(units[target]["category"] == "stopped", "PREUPGRADE_UNIT_TRIGGER")
     for name, links in edges.items():
         for target in links["Triggers"]:
-            require(not name.endswith(".service") and target.endswith(".service") and
-                    units[name]["category"] == units[target]["category"] == "stopped" and
-                    name in edges[target]["TriggeredBy"], "PREUPGRADE_UNIT_TRIGGER")
+            edge(name, target)
+            if graph == "reciprocal":
+                require(name in edges[target]["TriggeredBy"], "PREUPGRADE_UNIT_TRIGGER")
         for source in links["TriggeredBy"]:
-            require(name in edges[source]["Triggers"], "PREUPGRADE_UNIT_TRIGGER")
+            edge(source, name)
+            if graph == "reciprocal":
+                require(name in edges[source]["Triggers"], "PREUPGRADE_UNIT_TRIGGER")
 
 
 def contract(data, now=None):
     value = install.json_bytes(data, LIMIT)
     require(isinstance(value, dict) and set(value) == {
         "schema", "recovery_id", "tool_commit", "old_commit", "issued_at", "expires_at", "boot_id",
-        "project", "database", "postgres", "roots", "writers", "units", "pins", "migrations",
+        "project", "database", "postgres", "postgres_ancestry", "roots", "writers", "units",
+        "unit_graph", "pins", "migrations",
         "base_manifest_sha256", "secret_recovery_ref", "max_total_bytes", "min_free_bytes"},
         "PREUPGRADE_CONTRACT")
     require(value["schema"] == SCHEMA and all(install.is_commit(value[k]) for k in
@@ -173,6 +199,8 @@ def contract(data, now=None):
     roots = value["roots"]
     require(isinstance(roots, list) and len(roots) == 5 and all(isinstance(r, dict) and set(r) ==
             {"name", "path", "uid", "gid", "mode", "parent"} for r in roots), "PREUPGRADE_ROOTS")
+    require(isinstance(value["postgres_ancestry"], list) and value["postgres_ancestry"] and
+            all(isinstance(row, list) for row in value["postgres_ancestry"]), "PREUPGRADE_SOURCE_ANCESTRY")
     resolved = root_values(value)
     require(tuple(r.name for r in resolved) == files.PREUPGRADE_CLASSES and
             not any(overlaps(a.path, b.path) for i, a in enumerate(resolved) for b in resolved[i + 1:]),
@@ -197,12 +225,14 @@ def contract(data, now=None):
             isinstance(pg["networks"], dict) and 1 <= len(pg["networks"]) <= 16 and
             all(isinstance(n, str) and runtime.CONTAINER.fullmatch(i) for n, i in pg["networks"].items()),
             "PREUPGRADE_POSTGRES")
+    require(Path(pg["mountpoint"]).parts[-3:] == ("volumes", pg["volume"], "_data"),
+            "PREUPGRADE_POSTGRES")
     require(isinstance(value["writers"], list) and len(value["writers"]) <= 256 and
             len({w["id"] for w in value["writers"]}) == len(value["writers"]) and
             all(set(w) == {"id", "created", "started_at", "finished_at", "restart_count", "policy_sha256"}
                 and runtime.CONTAINER.fullmatch(w["id"]) and install.is_hash(w["policy_sha256"])
                 and w["id"] != pg["id"] for w in value["writers"]), "PREUPGRADE_WRITERS")
-    checked_units(value["units"])
+    checked_units(value["units"], value["unit_graph"])
     tool = "/opt/lagrange/maintenance/" + value["tool_commit"]
     old = roots[3]["path"]
     mandatory = {tool + "/" + p for p in PAYLOAD} | {
@@ -224,7 +254,9 @@ def contract(data, now=None):
 
 def root_values(value):
     return [files.Root(r["name"], r["path"], r["uid"], r["gid"], r["mode"],
-                       parent=None if r["parent"] is None else tuple(r["parent"])) for r in value["roots"]]
+                       parent=None if r["parent"] is None else tuple(r["parent"]),
+                       ancestry=tuple(tuple(row) for row in value["postgres_ancestry"])
+                       if r["name"] == "postgres" else ()) for r in value["roots"]]
 
 
 class Window:
@@ -368,7 +400,7 @@ class Native:
                 "PREUPGRADE_UNITS_CHANGED")
 
     def units(self):
-        checked_units(self.value["units"])
+        checked_units(self.value["units"], self.value["unit_graph"])
         names = self.unit_names()
         for name in sorted(names):
             self.window.remaining()
@@ -458,6 +490,10 @@ class Native:
             require(actual == self.value["migrations"], "PREUPGRADE_MIGRATION_BYTES")
         self.units()
         self.writers()
+        # Pin the complete source directory chain for audit as well as capture.
+        # No directory is created, chowned or chmodded by this read-only check.
+        with files.open_root(root_values(self.value)[4]):
+            pass
         finished = self.postgres(stopped)
         self.window.remaining()
         return finished
