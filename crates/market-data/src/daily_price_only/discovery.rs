@@ -12,7 +12,7 @@ use uuid::Uuid;
 use super::calendar::{
     VerifiedCalendarProjection, eligible_calendar_date, project_calendar, prove_calendar_range,
 };
-use super::contract::{fixed_limits, validate_file_request_for_symbol};
+use super::contract::{canonicalize_session, fixed_limits, validate_file_request_for_symbol};
 use super::observation::{CanonicalSourceObservation, canonical_source_observation};
 use super::reconstruct::{
     VerifiedActionDocument, VerifiedPriceDocuments, reconstruct_actions, reconstruct_prices,
@@ -309,6 +309,10 @@ pub fn discover_session_sources<'snapshot>(
         normalized_documents: documents.iter().map(|doc| doc.descriptor.clone()).collect(),
     };
     session.instruments.sort_by_key(InstrumentId::as_str);
+    // A refreshed discovery is compared structurally with the sealed manifest.
+    // Use the same wire order here: reconstruction's action enum order is not
+    // the canonical literal order used when the first admission was sealed.
+    canonicalize_session(&mut session).map_err(|_| Error::InvalidEvidence)?;
     let evidence_preimage = daily_price_evidence_preimage_v1(std::slice::from_ref(&session))
         .map_err(|_| Error::InvalidEvidence)?;
     let files: Vec<_> = session

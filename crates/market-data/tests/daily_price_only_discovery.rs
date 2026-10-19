@@ -14,7 +14,9 @@ mod linux_tests {
     use market_data::daily_price_only::verify::{
         DailyVerificationError as E, RawEvidenceSnapshots,
     };
-    use market_data::daily_price_only::{DailySessionTypeV1, daily_price_evidence_preimage_v1};
+    use market_data::daily_price_only::{
+        DailySessionEvidenceV1Wire, DailySessionTypeV1, daily_price_evidence_preimage_v1,
+    };
     use market_data::providers::kis::KR_ETF_CORE_SYMBOLS;
     use market_data::storage::{FileEntry, ManifestEntry};
     use serde_json::{Value, json};
@@ -396,6 +398,171 @@ mod linux_tests {
         let f = Fixture::new(batches);
         let snapshot = f.scan();
         discover(&snapshot).err().unwrap()
+    }
+
+    fn committed_session(result: &DiscoveredSessionSources<'_>) -> DailySessionEvidenceV1Wire {
+        let value: Value = serde_json::from_slice(result.evidence_preimage()).unwrap();
+        serde_json::from_value(value["daily_sources"][0].clone()).unwrap()
+    }
+
+    #[test]
+    fn daily_discovery_session_matches_canonical_commitment_order() {
+        let f = Fixture::new(&ready());
+        let snapshot = f.scan();
+        let result = discover(&snapshot).unwrap();
+        let committed = committed_session(&result);
+        // Before the fix, the same seven verified chains compared unequal:
+        // PaidinSubscription was first in discovery, BonusIssue in the wire.
+        assert_eq!(result.session(), &committed);
+        let labels: Vec<_> = result
+            .session()
+            .actions
+            .iter()
+            .map(|action| serde_json::to_value(action.logical_class).unwrap())
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                json!("bonus-issue"),
+                json!("capital-decrease"),
+                json!("dividend"),
+                json!("merger-split"),
+                json!("paidin-record"),
+                json!("paidin-subscription"),
+                json!("reverse-split"),
+            ]
+        );
+        // Canonicalization does not alter reconstructed document commitments.
+        let descriptors = &committed.normalized_documents;
+        for document in result.documents() {
+            assert!(descriptors.contains(document.descriptor()));
+            assert_eq!(
+                ContentHash::from_bytes(document.bytes()),
+                document.descriptor().sha256
+            );
+        }
+    }
+
+    #[test]
+    fn daily_discovery_later_observation_matches_committed_session_without_rewrite() {
+        let f = Fixture::new(&ready());
+        let before = f.fingerprint();
+        let snapshot = f.scan();
+        let original = discover(&snapshot).unwrap();
+        let committed = committed_session(&original);
+        let later_at = time("2026-10-13T08:31:00Z");
+        let later = RawEvidenceSnapshots::new(&[&snapshot], ENTITLEMENT, later_at).unwrap();
+        let refreshed = discover_session_sources(&later, &request()).unwrap();
+        assert_eq!(refreshed.session(), &committed);
+        assert_eq!(refreshed.evidence_preimage(), original.evidence_preimage());
+        let observed_files = refreshed.observation().files();
+        assert_eq!(observed_files, original.observation().files());
+        assert_eq!(f.fingerprint(), before);
+    }
+
+    #[test]
+    fn daily_discovery_canonical_order_keeps_changed_source_distinct() {
+        let f = Fixture::new(&ready());
+        let snapshot = f.scan();
+        let original = discover(&snapshot).unwrap();
+        let committed = committed_session(&original);
+        let mut changed = ready();
+        changed[0].edit_body("bar-069500.json", |body| {
+            body["output2"][0]["stck_clpr"] = json!("111");
+            body["output2"][0]["acml_tr_pbmn"] = json!("22200");
+        });
+        let changed = Fixture::new(&changed);
+        let snapshot = changed.scan();
+        let refreshed = discover(&snapshot).unwrap();
+        assert_eq!(refreshed.session(), &committed_session(&refreshed));
+        assert_ne!(refreshed.session(), &committed);
+        assert_ne!(refreshed.evidence_preimage(), original.evidence_preimage());
+        let observed_hash = refreshed.observation().sha256();
+        assert_ne!(observed_hash, original.observation().sha256());
+    }
+
+    #[test]
+    fn daily_wholeflow_fixture_both_sessions_roundtrip_through_rust_discovery() {
+        // Execute only the pure synthetic planner in hosted CI. These exact Raw
+        // bytes exercise the Rust reader/discovery boundary, not V3 approval,
+        // filesystem admission, SQL or the actual host whole-flow path.
+        let planner = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py");
+        let output = std::process::Command::new("python3")
+            .args([
+                "-B",
+                "-c",
+                "import datetime,json,runpy,sys; f=runpy.run_path(sys.argv[1]); p=f['plan'](datetime.datetime(2026,10,19,1,24,tzinfo=datetime.timezone.utc),'00000000-0000-4000-8000-000000000001','a'*40); print(json.dumps({k:v.decode('ascii') for k,v in p['raw_files'].items()}))",
+            ])
+            .arg(planner)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "synthetic planner failed");
+        assert!(output.stderr.is_empty());
+        let raw: BTreeMap<String, String> = serde_json::from_slice(&output.stdout).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("data");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
+        let mut files = Vec::new();
+        for (name, bytes) in raw {
+            let path = root.join("raw").join(name);
+            private_dir(&root, path.parent().unwrap());
+            fs::write(&path, bytes).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            files.push(path);
+        }
+        let uid = fs::metadata(root.join("raw")).unwrap().uid();
+        let f = Fixture {
+            _temp: temp,
+            root,
+            files,
+            uid,
+        };
+        let before = f.fingerprint();
+        let kis = f.scan();
+        let calendar = f.scan_provider("kis-calendar");
+        let snapshots = RawEvidenceSnapshots::new(
+            &[&kis, &calendar],
+            "fixture-only:synthetic-wholeflow-extension-not-market-receipt",
+            time("2026-10-19T01:24:01Z"),
+        )
+        .unwrap();
+        let owner = Uuid::parse_str("00000000-0000-4000-8000-000000000001").unwrap();
+        let policy = ContentHash::from_bytes(include_bytes!(
+            "../../../configs/evidence/owner-beta-daily-price-policy-v1.json"
+        ));
+        let mut previous = "2026-08-28";
+        let mut committed = Vec::new();
+        for target in ["2026-08-31", "2026-10-18"] {
+            let request = SessionSourceRequest {
+                owner,
+                policy_sha256: policy.clone(),
+                previous_frontier: date(previous),
+                session_date: date(target),
+            };
+            let found = discover_session_sources(&snapshots, &request).unwrap();
+            assert_eq!(found.session(), &committed_session(&found));
+            assert_eq!(found.session().actions.len(), 7);
+            assert_eq!(found.session().bars.len(), 11);
+            committed.push(committed_session(&found));
+            previous = target;
+        }
+        assert_eq!(committed[1].previous_frontier, committed[0].session_date);
+        assert_ne!(committed[0], committed[1]);
+        // A second poll must reconstruct exactly the stored first session.
+        let refreshed = discover_session_sources(
+            &snapshots,
+            &SessionSourceRequest {
+                owner,
+                policy_sha256: policy,
+                previous_frontier: date("2026-08-28"),
+                session_date: date("2026-08-31"),
+            },
+        )
+        .unwrap();
+        assert_eq!(refreshed.session(), &committed[0]);
+        assert_eq!(f.fingerprint(), before);
     }
 
     #[test]

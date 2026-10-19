@@ -1600,7 +1600,9 @@ pub(super) fn canonicalize_action(
     Ok(())
 }
 
-fn canonicalize_session(session: &mut DailySessionEvidenceV1Wire) -> Result<(), DailyWireErrorV1> {
+pub(super) fn canonicalize_session(
+    session: &mut DailySessionEvidenceV1Wire,
+) -> Result<(), DailyWireErrorV1> {
     preflight_session(session)?;
     session.instruments.sort_by(|left, right| {
         left.to_string()
