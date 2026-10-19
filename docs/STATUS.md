@@ -6,9 +6,9 @@
 
 ## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
 
-현재: **Wave111 부분 조회 종결; Wave112 남은 metadata 조회안 준비.** Wave111 승인 조회1회는04:22:01UTC exit1/FileNotFoundError로 종결됐지만56유닛·13컨테이너·실제PG경로·5root metadata·보호파일7개를 회수했다. 다음 고정 시도는release lock이며 정확한 누락 구성요소는UNKNOWN이다. /data1000:1000/0755, PG부모0701/볼륨1777, disabled persistent failed유닛은 현G4도구와 맞지 않아 별도명시설계가 필요하다. 키metadata·자원·writer·최종재대조는 미회수다. Wave112는 부재와 변화도 명시적으로 기록하며 독립 metadata를 끝까지 수집하는300초 읽기전용1회안을50pin으로 준비했다. 새 결정 전 호스트실행없음; 운영파일·서비스·SQL·provider 변경없음. 앱e639169 이미지·실제통합 및도구3de6420 CI 인수는 유지한다. G4·배포·Owner·연속실제3거래일·C_R2는 미완료다.
+현재: **Wave112 승인 경로 오류 종결; Wave113 보정 조회 준비.** Wave112 a3는04:44:27UTC 한 번 실행됐으나 내부 조회기에 남은 Wave111 승인 경로 때문에 첫 운영 관측 전 G4_NEW_AUTHORIZATION_REQUIRED/exit1로 종료됐다. 코디네이터 준비 오류이며 root 프로세스 실행과 승인 소진을 기록했다. 운영 변경은 없고50pin 불변이다. Wave113 a4는 조회기·실행기 각각3리터럴만 보정하고 별도 경로/scope/argv 대조 및59pin 정적 검증을 완료했다. 미실행이며 새 결정이 필요하다. 앱e639169 이미지·실제통합/도구3de6420 CI 인수는 유지한다. 남은 metadata·G4·배포·Owner·연속실제3거래일·C_R2는 미완료다.
 
-현재 추적: 추적d17c7730을04:33:06UTC active로 확인하고 인계45d9d519/registry 저장 뒤bd7f2569 삭제를 확인했다.15:30UTC 전/47번째 tick 전 갱신,16:33:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+현재 추적: 추적d54eea44를04:52:06UTC active로 확인하고 인계e555f380/registry 저장 뒤d17c7730 삭제를 확인했다.15:45UTC 전/47번째 tick 전 갱신,16:52:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -35,7 +35,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave112 metadata 조회 결정 → 호스트에 맞는 G4 소스·중단/복구 실행안 → 배포·Owner·3실제거래일·C_R2. |
+| 다음 단계 | Wave113 보정 조회 결정 → G4 소스·중단/복구 실행안 → 배포·Owner·3실제거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -4587,3 +4587,14 @@ Wave111 승인 조회1회는04:22:01UTC exit1/FileNotFoundError로 종결됐지�
 추적d17c7730을04:33:06UTC active로 확인하고 인계45d9d519/registry 저장 뒤bd7f2569 삭제를 확인했다.15:30UTC 전/47번째 tick 전 갱신,16:33:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
 
 종료 a7695e49, 종결 f2efca1e, readiness13fd35c6. 새 prepared4766af8c/50pins, staticb453b55f; 운영설계8024a4ae는 UNIMPLEMENTED이며 권한이 아니다. 반복 조회·실패 unit reset·공유/data 소유권 변경·PG 권한 변경은 실행하지 않았다. [상세 실행안](reviews/2026-10-19-r2-g4-partial-inventory-and-completion.md).
+
+
+## Wave112 authorization binding failure / Wave113 correction — 2026-10-19 04:44 UTC
+
+Wave112 a3는04:44:27UTC 한 번 실행됐으나 내부 조회기에 남은 Wave111 승인 경로 때문에 첫 운영 관측 전 G4_NEW_AUTHORIZATION_REQUIRED/exit1로 종료됐다. 코디네이터 준비 오류이며 root 프로세스 실행과 승인 소진을 기록했다. 운영 변경은 없고50pin 불변이다. Wave113 a4는 조회기·실행기 각각3리터럴만 보정하고 별도 경로/scope/argv 대조 및59pin 정적 검증을 완료했다. 미실행이며 새 결정이 필요하다. 앱e639169 이미지·실제통합/도구3de6420 CI 인수는 유지한다. 남은 metadata·G4·배포·Owner·연속실제3거래일·C_R2는 미완료다.
+
+실제 실패 원인: wrapper=Wave112/V3, reader=Wave111/V2 receipt를 읽고V3를 요구.50봉인 입력이 같아도 파일 간 정합성이 맞지 않았다. 새 사본은 BASEa4/승인Wave113/scopeV4만 각각3리터럴 변경하며 역변환 및 서로 다른 파일의 바인딩을 대조했다. 동작·guard·대상은 동일하다. 제어 실행·project parser/helper/test/compiler·새 독립 리뷰는 하지 않았다.
+
+종료b065beb9, 종결9e538ad5, 새prepared96d7013f/59pins, static3f6e7c8d, bindingbb73d173. 기존 executionLimit1/automaticRetryAuthorizedfalse 때문에 새 실행 결정 전 중단한다. 이전 a1/a2/a3와 모든 인수된 소스/근거는 보존한다. [상세 실행안](reviews/2026-10-19-r2-g4-authorization-binding-correction.md).
+
+추적d54eea44를04:52:06UTC active로 확인하고 인계e555f380/registry 저장 뒤d17c7730 삭제를 확인했다.15:45UTC 전/47번째 tick 전 갱신,16:52:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
