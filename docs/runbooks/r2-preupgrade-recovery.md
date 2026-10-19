@@ -1,6 +1,6 @@
 # R2 pre-upgrade consistent recovery preparation
 
-Status: **prior hosted recovery fixtures accepted; Wave109 maintenance-v2 source awaiting hosted validation; production recovery not executed**.
+Status: **Wave109 maintenance-v2 hosted CI accepted at3de6420; production recovery not executed**.
 Candidate899f259f9c8872fb61f0c95745904f552c8750e9 passed20 filesystem/contract,
 28 maintenance,3 preparation and4 actual Docker/PostgreSQL cases in
 CI39098366992 attempt1. The complete
@@ -226,8 +226,9 @@ run above; production writer fencing and recovery remain unexecuted.
    both admissions, HTTP publication, restart, capture/restore and restored
    publication passed on2026-10-19 ([acceptance](../reviews/2026-10-19-r2-e639169-host-acceptance.md)).
    Its synthetic sessions do not establish actual market receipt or a
-   production recovery point. Validate the distinct Wave109 maintenance tool
-   candidate before preparing a fresh G4 operating packet.
+   production recovery point. The distinct Wave109 maintenance tool candidate
+   3de6420 passed required CI; prepare the fresh G4 operating packet using
+   the [bounded inventory survey](../reviews/2026-10-19-r2-g4-operating-inventory-packet.md).
 2. Bind the fresh actual host roots, complete writer inventory, old configuration,
    approved base, secret-recovery reference and reviewed maintenance payload.
    Do not substitute synthetic fixture data or guess paths/owners/volume modes.
@@ -289,7 +290,8 @@ missing base dependency, complete retained-terminal inventory/pins, active/job/
 restart refusal, persistent trigger guards, reciprocal activation, inventory
 and generation drift, actual private recursive cgroup files, live tasks,
 symlink/mode/missing-file refusal, bounds/expiry and replacement during reads.
-All28 prior maintenance definitions remain. These41 definitions are
-WRITTEN_UNEXECUTED for Wave109 until hosted recovery; local project execution
-and new production probes were not performed. The systemd observations in
+All28 prior maintenance definitions remain. All41 definitions passed in
+CI39195322025 attempt1 for3de6420, with full recovery at2026-10-19T04:00:50UTC
+([evidence](../reviews/2026-10-19-r2-g4-maintenance-inventory-source.md#hosted-acceptance--2026-10-19-0400-utc)).
+Local project execution and new production probes were not performed. The systemd observations in
 these fixtures are mocks; they do not claim an actual production writer fence.
