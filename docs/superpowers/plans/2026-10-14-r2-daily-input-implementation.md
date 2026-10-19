@@ -7295,3 +7295,12 @@ Wave113 승인 조회 a4는2026-10-19 05:06:05UTC 한 번 실행해12단계와 �
 [소스·실행 경계](../../reviews/2026-10-19-r2-g4-host-compatibility-source.md). 키의 외부 보관 식별명과 외부/수동 writer 유무는 한 번 질문했으며 답변 대기 중이다. 새로운 운영 실행 승인을 요청한 상태가 아니다.
 
 추적729c2a81을05:18:32UTC active로 확인하고 인계63f45651/registry 저장 후d54eea44 삭제를 확인했다.16:30UTC 전/47번째 tick 전 갱신,17:18:32UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이다.
+
+
+## Wave114 compatibility CI acceptance and operating inputs — 2026-10-19 05:46 UTC
+
+Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+Hostedb2cc36c2 / required-aeb5b328 / workspacef5687777 / policyPGe32f8a88. 입력·원본·미출력 UNKNOWN과 기존 예외를 보존한다. 운영 실행안은 아직 완성되지 않았고 새 운영 권한은 없다. [상세 인수와 다음 조건](../../reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md).
+
+후속 추적e3e092a9를05:48:08UTC 별도 active ID로 확인하고 인계0613d80d/registry 저장 후4786839b 삭제를 확인했다.17:00UTC 전/47번째 tick 전 갱신,17:48:08UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.

@@ -6,9 +6,9 @@
 
 ## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
 
-현재: **Wave112 승인 경로 오류 종결; Wave113 보정 조회 준비.** Wave112 a3는04:44:27UTC 한 번 실행됐으나 내부 조회기에 남은 Wave111 승인 경로 때문에 첫 운영 관측 전 G4_NEW_AUTHORIZATION_REQUIRED/exit1로 종료됐다. 코디네이터 준비 오류이며 root 프로세스 실행과 승인 소진을 기록했다. 운영 변경은 없고50pin 불변이다. Wave113 a4는 조회기·실행기 각각3리터럴만 보정하고 별도 경로/scope/argv 대조 및59pin 정적 검증을 완료했다. 미실행이며 새 결정이 필요하다. 앱e639169 이미지·실제통합/도구3de6420 CI 인수는 유지한다. 남은 metadata·G4·배포·Owner·연속실제3거래일·C_R2는 미완료다.
+현재: **Wave114 도구790f1ea 전체 CI 인수; G4 운영 정보·실행안 준비.** Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
 
-현재 추적: 추적d54eea44를04:52:06UTC active로 확인하고 인계e555f380/registry 저장 뒤d17c7730 삭제를 확인했다.15:45UTC 전/47번째 tick 전 갱신,16:52:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+현재 추적: 후속 추적e3e092a9를05:48:08UTC 별도 active ID로 확인하고 인계0613d80d/registry 저장 후4786839b 삭제를 확인했다.17:00UTC 전/47번째 tick 전 갱신,17:48:08UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -4607,3 +4607,12 @@ Wave113 승인 조회 a4는2026-10-19 05:06:05UTC 한 번 실행해12단계와 �
 [소스·실행 경계](reviews/2026-10-19-r2-g4-host-compatibility-source.md). 키의 외부 보관 식별명과 외부/수동 writer 유무는 한 번 질문했으며 답변 대기 중이다. 새로운 운영 실행 승인을 요청한 상태가 아니다.
 
 추적729c2a81을05:18:32UTC active로 확인하고 인계63f45651/registry 저장 후d54eea44 삭제를 확인했다.16:30UTC 전/47번째 tick 전 갱신,17:18:32UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이다.
+
+
+## Wave114 compatibility CI acceptance — 2026-10-19 05:46 UTC
+
+Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[범위와 미완료 조건](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md).
+
+후속 추적e3e092a9를05:48:08UTC 별도 active ID로 확인하고 인계0613d80d/registry 저장 후4786839b 삭제를 확인했다.17:00UTC 전/47번째 tick 전 갱신,17:48:08UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.

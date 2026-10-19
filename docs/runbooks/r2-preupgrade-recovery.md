@@ -1,6 +1,6 @@
 # R2 pre-upgrade consistent recovery preparation
 
-Status: **Wave114 maintenance-v3 source written; new hosted validation pending. Wave109 v2 remains accepted at3de6420; production recovery not executed**.
+Status: **Wave114 maintenance-v3 accepted as tool-only at790f1ea; production G4 recovery not executed. Operating information and concrete controls remain incomplete.**
 Candidate899f259f9c8872fb61f0c95745904f552c8750e9 passed20 filesystem/contract,
 28 maintenance,3 preparation and4 actual Docker/PostgreSQL cases in
 CI39098366992 attempt1. The complete
@@ -306,3 +306,10 @@ The new `lagrange-preupgrade-maintenance-v3` contract requires `unit_graph` and 
 The actual PG parent was root:root0701, while its999:999/1777 child still requires a root:root0700 parent for cold capture. The tool does not alter permissions. A later separately approved operating ledger must provide independent recovery before protecting that exact same parent and restoring0701. All source ancestry pins used by audit and capture must reflect the protected state. Archive format, locks, fixed SQL, clone isolation, no-clobber publication and cleanup guards remain unchanged.
 
 Fourteen new maintenance definitions join the prior41. Filesystem cases exercise actual UID/ACL/inode/path behavior in private chroots; unit observations are mocks. They are written and directly reviewed, not yet executed for this candidate. Full required hosted CI, including the existing actual Docker cold-restore tests, is required. The [survey closure and source review](../reviews/2026-10-19-r2-g4-host-compatibility-source.md) preserve the one absent release lock, current host limitations and remaining custody/writer information. No new production action is authorized.
+
+
+## Wave114 hosted acceptance and operating boundary
+
+Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[Exact CI evidence and operating gaps](../reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md). The source-stage section above is historical; its55 maintenance cases, including14 new definitions, and the4 actual Docker cold-cluster cases are now accepted on790f1ea. This does not authorize downtime, key handling, parent permission changes or capture. The original v2 acceptance remains preserved.
