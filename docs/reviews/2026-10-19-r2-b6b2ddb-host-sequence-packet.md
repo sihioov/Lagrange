@@ -1,6 +1,6 @@
 # R2 b6b2ddb image and conditional integration packet
 
-R2-04/R2-09, Wave106. **PREPARED_NOT_AUTHORIZED_NOT_EXECUTED.**
+R2-04/R2-09, Wave106. **APPROVED_IMAGE_RUNNING; conditional wholeflow authorized after full image/recovery closure.**
 Candidate `b6b2ddbd7a5d63f482f1a0fa43a02cb704a70e93` has
 [complete hosted acceptance](2026-10-19-r2-b6b2ddb-hosted-acceptance.md).
 One proposed new Owner decision covers an eighth image-maintenance attempt once,
@@ -158,3 +158,9 @@ persist handoff, then delete predecessor; renew before12h expiry/tick47.
 Tracking: successorcb45b5b6 confirmed2026-10-19T00:57:46.997Z; handoff7fb0ad62
 persisted before successful f208d6f4 deletion. Renew by11:45UTC/beforetick47;
 expires12:57:46.992UTC. One new decision is required; no host action authorized.
+
+## Authorized execution — 2026-10-19 01:06 UTC
+
+Wave106 새 Owner 승인79bbfcb7에 따라 b6b2ddb 여덟 번째 이미지 실행을01:06UTC 한 번 시작했다.2152소스/11제어/12핵심pin·새 호스트11상태·READ ONLY 작업 정리·공식 plan/preflight를 통과했고, 독립 복구 실제 active 확인 후 Owner V2가 정상 exit0로 종료됐다. 이미지 빌드/동일 ID 복귀의 전체 성공을 확인한 뒤 승인된 다섯 번째 실제 격리통합을 추가 질문 없이 한 번 실행한다. 현재 빌드 중이며 새 이미지·통합 인수는 아직 아니다. 기존 UNKNOWN/0120 정리 INCOMPLETE와 G4·배포·Owner·3거래일·C_R2 미완료를 보존한다.
+
+Owner “승인하니 이어서 진행해” binds authorization `79bbfcb7fd01ec56407f7399575a2c6585f6d81f2655e9179157a909e0b57e67` to prepared sequence `ca11cb5d`. The historical preparation and decision text above is preserved; it does not describe current authorization. Fresh observed source-input hash `454cad1f9cb8f12ddafca6729897acc9ef2eccd5947adf40942020b1e9a1cf76` came from this attempt’s official plan. Successor247ea746 was confirmed and handoff persisted before cb45b5b6 deletion. Renew by12:00UTC; expiry13:06:14.723UTC.
