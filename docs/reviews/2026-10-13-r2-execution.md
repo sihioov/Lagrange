@@ -5184,3 +5184,36 @@ Read-only hosted result recovery; no source mutation, rerun, cancellation or new
 - Frozen1370 pins/534 candidate blobs match. Functional run39178525169 remains
   active; no publication/repeat/cleanup success inferred from CI. Heartbeat
   f208d6f4 remains the same hosted-recovery phase, renewby10:55UTC, expiry11:56UTC.
+
+## Wave106 — b6b2ddb hosted accepted; concrete host sequence (2026-10-19)
+
+후보 b6b2ddb의 CI39178523729 attempt1(00:20:13UTC)·기능 smoke39178525169 attempt1(00:49:53UTC)이 모두 성공했다.00:52UTC 전체9로그/8실제checkout·1370pin/534blob·170필수/15이미지결과/44wholeflow와 실제게시·반복·10정리0를 회수해 hosted만 인수했다. Wave106은2152소스pin/11제어/12핵심pin을 고정한 여덟 번째 이미지1회와 완전 복귀 후 조건부 다섯 번째 실제 격리통합1회 실행안이다. 역할별 고정 V3 복사본을 포함하며 원본 leaf/file 소유권·권한을 새로 확인한 뒤에만 복사한다. 새 결정 전 미실행이며 Wave104 두 승인은 소진됐다. 정확한 이전 거부 지점·원본512 원인·미출력 nested UNKNOWN과 과거0120 정리 INCOMPLETE는 보존한다. 새이미지·실제통합·G4·배포·Owner·3거래일·C_R2는 미완료다.
+
+[Hosted recovery](2026-10-19-r2-b6b2ddb-hosted-acceptance.md) and
+[concrete packet](2026-10-19-r2-b6b2ddb-host-sequence-packet.md).
+Full hosted receipt4f4f8767 / functionala5eb9a62 / CI627404c8; no workflow retry.
+Sourceprep8264ed99; sequenceca11cb5d/finalstatice95f108a. All2152sourcepins,
+11imagecontrols/inversebytes/expandedargv,12wholecriticalpins and1370frozeninputs
+match. Fresh fixedV3leaf/file metadata gate is a static coordinator addition;
+removing its exact block and reversing finite rebindings matches prior admission.
+Observer inverse bytes and finite diagnostics match; no local project/control/parser/
+helper/test/compiler execution, new root/production reads or independent review.
+
+One new decision covers eighth image maintenance, then only after full12images,
+manifest/sameIDrestore/actualsuccessful independent recovery/no processes/READONLY
+settlement, fifth actual wholeflow (sixth prepared). Fresh2152/11controls/env/host/
+no-clobber/officialplan and sourceinput, active recovery beforeONE normal stop/exit0,
+shared12h/Compose1Cargo2/fourbatches3/nineotherhealthy/researchstopped2.
+Conditional fresh5minadmission includes originalfixedV3leaf10001:10001/0700 and
+exactfiles0600 before private rolecopies,12criticalpins/PG/fixedbase/11states/volume.
+Driver20min/2GiB/private nonceDBnetwork/no providerAuth0productionSQL;dispatchbefore
+hour12/fullrecoverywithin60min/byhour13;no renewalretry. Recoveractual publication,
+restart/capture-restore62checksums/rolecopies/originalbase/newcleanup; no inferredpass.
+
+Wave104 two dispatches consumed; no new host execution authorization. Retain prior
+volume159b052f and all historical accepted/failure evidence; original0120 cleanup
+INCOMPLETE. New images/manifest/hoststate/sourceleafmetadata UNKNOWN until freshgates.
+G4/deployment/Owner use/three actual trading days/finalC_R2 remain open.
+Confirmed successorcb45b5b6 at00:57:46UTC, persisted handoff7fb0ad62 then deleted
+f208d6f4. Renew by11:45UTC/beforetick47; expires12:57:46UTC. No delegation; native
+Ralph blocked/noresumeAPI; same-agent bounded continuation, not outage protection.
