@@ -1,6 +1,7 @@
 # R2 daily discovery canonical order — Wave107
 
-R2-04/R2-09. Source correction prepared; hosted verification not yet run.
+R2-04/R2-09. Candidate e639169 HOSTED_ACCEPTED_ONLY; full recovery02:21:48UTC.
+New host sequence remains prepared/unapproved; see the Wave108 packet below.
 
 ## Recovered Wave106 outcome
 
@@ -66,9 +67,9 @@ Docker or provider. These tests do not manufacture a sealed approval or claim ac
 second admission. Existing tests and exclusions remain required.
 
 No local project parser/helper/compiler/tests or new independent review have run.
-Only source/byte review was used. A new frozen candidate must receive its own full CI
-and functional smoke once, with full logs, named outcomes, checkouts and cleanup
-recovered before a new concrete host packet/one Owner decision can be prepared.
+At source preparation only source/byte review was used. The frozen candidate needed
+its own full CI and functional smoke once, with full logs, named outcomes, checkouts
+and cleanup recovered before a new concrete host packet/one Owner decision.
 
 Separate G4 readiness gaps are recorded in wave106/g4-static-readiness-gaps.json:
 the standalone cold-recovery payload omits its newly imported base helper; the strict
@@ -79,6 +80,48 @@ days and final C_R2 remain open. Preserve all previous accepted/failure evidence
 retained volume159b052fed63a476fba2c51c8f15f532a837096e4bdd453bb753789672034f07;
 no mount/content/delete/prune.
 
-Tracking: successor dda1a840 confirmed01:30:27.983UTC; persisted handoff before
-1d3e4474 deletion. Renew by12:20UTC/before47th tick/12-hour expiry. No delegation;
+Historical source-stage tracking: successor dda1a840 confirmed01:30:27.983UTC;
+persisted handoff before1d3e4474 deletion. Its renewal bound was12:20UTC. No delegation;
 native Ralph blocked/no resume API, same-agent bounded heartbeat only.
+
+
+## Full hosted acceptance — 2026-10-19 02:21 UTC
+
+Candidate `e639169018519fd6636c5579d1957e323e2c7802` was frozen before one
+[CI39186174905](https://github.com/sihioov/Lagrange/actions/runs/39186174905)
+and one [functional39186177169](https://github.com/sihioov/Lagrange/actions/runs/39186177169),
+both attempt1. All8 CI jobs succeeded02:03:23UTC; functional succeeded02:20:59UTC.
+Full logs recovered02:21:48.111212UTC:9 logs/8 actual checkouts,1437 frozen pins,
+537 candidate blobs/2155 tree entries,174 required definitions,15 image outcomes,
+44 wholeflow definitions. New named Linux Rust outcomes all PASS:
+
+- `daily_discovery_session_matches_canonical_commitment_order`
+- `daily_discovery_later_observation_matches_committed_session_without_rewrite`
+- `daily_discovery_canonical_order_keeps_changed_source_distinct`
+- `daily_wholeflow_fixture_both_sessions_roundtrip_through_rust_discovery`
+
+Carried Rust groups remain intact:3367 named rows/231 root blocks/36 workspace
+and33 carried groups; only discovery integration17→21 increased. Strict Clippy,
+format, Python497 passed/10 existing skips, PG19 process exits0/146 named cases,
+0060 32+73/83 bootstrap/62 migration checksums twice/0039 cleanup and Web143 passed.
+Functional evidence contains actual publication/source lineage and unchanged repeat,
+10 cleanup exits0, owned resource absence, raw-probe/global original+cleanup exits0.
+No separate unprinted raw-init marker is invented. Three non-Linux exclusions,
+six ignored Rust cases,10 Python skips and independent nested/unprinted UNKNOWN
+remain. No rerun/cancel/duplicate or accepted source/evidence alteration.
+
+Private receipts under `target/r2-daily-beta/ci/e639169/`:
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `required-ci-evidence.json` | `006273fc662daf091e597f47e9e21d6c39526a9d643d5d41eaffe7921bf1cb6b` |
+| `functional-smoke-evidence.json` | `2cd651b96fe22caafd763cf32a276f0e287afd5ef401470f40105f53d79fb983` |
+| `hosted-terminal-evidence.json` | `f44b66b1b1ce613fa0836385475cc165d8d021bd16cfd93c63fad2307a9c9314` |
+
+This accepts hosted verification only. Exact previous runtime predicate remains
+UNKNOWN. Actual image/host integration/G4/deployment/Owner/three trading days/final
+C_R2 are not accepted. [Wave108 concrete packet](2026-10-19-r2-e639169-host-sequence-packet.md)
+proposes one ninth image attempt plus conditional sixth actual isolated wholeflow.
+No new host decision exists yet. Current tracking68a23346 confirmed02:32:49UTC,
+handoffcfb61e58 persisted; renew13:00UTC, expiry14:32:49UTC. The packet records the
+corrected heartbeat path and same-ID replacement error; no host action occurred.

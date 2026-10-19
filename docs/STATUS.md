@@ -6,13 +6,13 @@
 
 ## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
 
-현재: **R2 Wave105 전체 hosted 인수·Wave106 새 실행 결정 대기.** 후보 b6b2ddb의 CI39178523729 attempt1(00:20:13UTC)·기능 smoke39178525169 attempt1(00:49:53UTC)이 모두 성공했다.00:52UTC 전체9로그/8실제checkout·1370pin/534blob·170필수/15이미지결과/44wholeflow와 실제게시·반복·10정리0를 회수해 hosted만 인수했다. Wave106은2152소스pin/11제어/12핵심pin을 고정한 여덟 번째 이미지1회와 완전 복귀 후 조건부 다섯 번째 실제 격리통합1회 실행안이다. 역할별 고정 V3 복사본을 포함하며 원본 leaf/file 소유권·권한을 새로 확인한 뒤에만 복사한다. 새 결정 전 미실행이며 Wave104 두 승인은 소진됐다. 정확한 이전 거부 지점·원본512 원인·미출력 nested UNKNOWN과 과거0120 정리 INCOMPLETE는 보존한다. 새이미지·실제통합·G4·배포·Owner·3거래일·C_R2는 미완료다. [hosted 회수](reviews/2026-10-19-r2-b6b2ddb-hosted-acceptance.md) · [실행안](reviews/2026-10-19-r2-b6b2ddb-host-sequence-packet.md).
+현재: **R2 Wave107 전체 hosted 인수·Wave108 새 실행 결정 대기.** 후보 e639169의 CI39186174905 attempt1(02:03:23UTC)·기능 smoke39186177169 attempt1(02:20:59UTC)이 성공했고02:21:48UTC 전체9로그/8실제checkout·1437pin/537blob·174필수(새 Rust4 포함)/15이미지결과/44wholeflow 및 실제 게시·반복·10정리0를 회수했다. Wave108은2155소스/11제어/12핵심pin의 아홉 번째 이미지1회, 완전 복귀·독립 복구 성공 후 조건부 여섯 번째 실제 격리통합1회 실행안이다. 기존 Wave106 두 승인은 소진됐고 새 결정 전 미실행이다. 정확한 과거 런타임 거부 지점·미출력 UNKNOWN/0120 정리 INCOMPLETE를 보존한다. 새 이미지·호스트 통합·G4·배포·Owner·3연속 실제거래일·C_R2는 미완료다. [실행안](reviews/2026-10-19-r2-e639169-host-sequence-packet.md).
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
 Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
 2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
-현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. Wave97 전체 hosted 회수 뒤05:48:59UTC에 Wave98 실행안 결정 추적fc826f21을 확인·인계 저장하고8cd8622c 삭제를 확인했다. 새 Owner 승인 후07:11:51UTC 실행 추적5f3cfda2를 확인·인계 저장하고fc826f21 삭제를 확인했다. 이미지 인수·통합 사전점검 차단 뒤07:48:45UTC 후속bf7d2b09의 인계를 저장하고5f3cfda2 삭제를 확인했다. Wave99 전체 hosted 회수와 Wave100 실행안 준비 뒤08:56:43UTC 후속81b4d3b6을 확인·인계 저장하고bf7d2b09 삭제를 확인했다. 새 승인·실제 이미지 시작 뒤09:32:51UTC 후속179ec5a7 인계를 저장하고81b4d3b6 삭제를 확인했다. 이미지 인수·통합 실패 회수 뒤09:50:03UTC 후속04318894 인계를 저장하고179ec5a7 삭제를 확인했다. 후보512625a CI·smoke 시작 후10:01:08UTC 후속44965a67 인계를 저장하고04318894 삭제를 확인했다. 후속33c0cd33을11:10:07.401UTC에 확인하고 인계718e3b6b를 저장한 뒤44965a67 삭제를 확인했다.새 승인·단일 빌드 시작 뒤13:04:02UTC cad36e21 인계c086fcde를 저장하고33c0cd33 삭제를 확인했다.두 단계 종결 후13:24:06UTC f7c37450 인계1f0959ca를 저장하고cad36e21 삭제를 확인했다.정확한 새 후보 검증 시작 후13:33:10UTC6df07fcf 인계a115051c를 저장하고f7c37450 삭제를 확인했다.전체 hosted 회수·새 실행안 준비 후14:23:59UTC64149a8c 인계7c817362를 저장하고6df07fcf 삭제를 확인했다.새 승인 뒤23:08:11UTC9fb748db 인계를 저장하고64149a8c 삭제를 확인했다.두 시도 종결 뒤23:31:28UTC4fbc67c0 인계를 저장하고9fb748db 삭제를 확인했다. 새 후보 CI dispatch 뒤23:56:28UTC f208d6f4 인계를 저장하고4fbc67c0 삭제를 확인했다.전체 hosted 회수·Wave106 실행안 준비 후00:57:46UTC cb45b5b6을 확인하고 인계7fb0ad62를 저장한 뒤 f208d6f4 삭제를 확인했다.10월19일11:45UTC 전/47번째 tick 전 갱신하며12:57:46UTC 만료다. 같은 에이전트의 제한된 후속 추적이며 native Ralph는 blocked이고 daemon 중단을 보호하지 않는다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. Wave97 전체 hosted 회수 뒤05:48:59UTC에 Wave98 실행안 결정 추적fc826f21을 확인·인계 저장하고8cd8622c 삭제를 확인했다. 새 Owner 승인 후07:11:51UTC 실행 추적5f3cfda2를 확인·인계 저장하고fc826f21 삭제를 확인했다. 이미지 인수·통합 사전점검 차단 뒤07:48:45UTC 후속bf7d2b09의 인계를 저장하고5f3cfda2 삭제를 확인했다. Wave99 전체 hosted 회수와 Wave100 실행안 준비 뒤08:56:43UTC 후속81b4d3b6을 확인·인계 저장하고bf7d2b09 삭제를 확인했다. 새 승인·실제 이미지 시작 뒤09:32:51UTC 후속179ec5a7 인계를 저장하고81b4d3b6 삭제를 확인했다. 이미지 인수·통합 실패 회수 뒤09:50:03UTC 후속04318894 인계를 저장하고179ec5a7 삭제를 확인했다. 후보512625a CI·smoke 시작 후10:01:08UTC 후속44965a67 인계를 저장하고04318894 삭제를 확인했다. 후속33c0cd33을11:10:07.401UTC에 확인하고 인계718e3b6b를 저장한 뒤44965a67 삭제를 확인했다.새 승인·단일 빌드 시작 뒤13:04:02UTC cad36e21 인계c086fcde를 저장하고33c0cd33 삭제를 확인했다.두 단계 종결 후13:24:06UTC f7c37450 인계1f0959ca를 저장하고cad36e21 삭제를 확인했다.정확한 새 후보 검증 시작 후13:33:10UTC6df07fcf 인계a115051c를 저장하고f7c37450 삭제를 확인했다.전체 hosted 회수·새 실행안 준비 후14:23:59UTC64149a8c 인계7c817362를 저장하고6df07fcf 삭제를 확인했다.새 승인 뒤23:08:11UTC9fb748db 인계를 저장하고64149a8c 삭제를 확인했다.두 시도 종결 뒤23:31:28UTC4fbc67c0 인계를 저장하고9fb748db 삭제를 확인했다. 새 후보 CI dispatch 뒤23:56:28UTC f208d6f4 인계를 저장하고4fbc67c0 삭제를 확인했다.전체 hosted 회수·Wave106 실행안 준비 후00:57:46UTC cb45b5b6을 확인하고 인계7fb0ad62를 저장한 뒤 f208d6f4 삭제를 확인했다.이후 승인된 b6 실행·복귀·실패 회수를 마치고 e639169 검증 추적9408eb38로 인계했다. 현재 추적68a23346을02:32:49.330UTC에 확인하고 인계cfb61e58을 저장했다.13:00UTC 전/47번째 tick 전 갱신,14:32:49UTC 만료. 직전 요약의 결과 경로를 명령원장과 일치시켰다. 같은 이름의 heartbeat 생성이 동일 ID를 반환했는데 이를 이전 ID로 잘못 삭제해 약22초 추적 공백이 발생했고, 다른 이름의 새 ID로 즉시 복구했다. 호스트 동작은 없었으며 앞으로 후속 ID가 다른지 확인한 뒤에만 이전 ID를 삭제한다. native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 중단 보호나 새 worker가 아니다. 같은 에이전트의 제한된 후속 추적이며 native Ralph는 blocked이고 daemon 중단을 보호하지 않는다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
 확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
 
 S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave106 이미지·완전 복귀 후 조건부 격리통합 실행안의 새 결정 → G4·배포·Owner·3거래일·C_R2. |
+| 다음 단계 | Wave108 새 이미지·조건부 실제 통합 실행안의 결정 → G4·배포·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -4516,3 +4516,18 @@ Wave106 새 Owner 승인79bbfcb7에 따라 b6b2ddb 여덟 번째 이미지 실�
 b6b2ddb 여덟 번째 이미지12개와 동일 Owner 복귀를 인수했다(closure a285575b). 승인된 다섯 번째 실제 통합은 첫 생산·승인0 이후 두 번째 생산 INPUT_BLOCKED로 실패했다.01:27UTC 전체 회수/9컨테이너·네트워크 정리/운영11상태·current·보존볼륨 불변을 확인했다(closure ec848470). 두 승인은 소진됐으며 자동 재시도 없음. Wave107은 재구성 enum 순서와 저장 wire 순서의 구조 비교 불일치를 기존 canonicalizer 재사용으로 수정하고 회귀4개를 작성했다. 아직 새 hosted 검증 전이며 정확한 런타임 거부 지점·기존 UNKNOWN/0120 INCOMPLETE, G4·배포·Owner·3거래일·C_R2 미완료를 보존한다.
 
 [Full recovery and source correction](reviews/2026-10-19-r2-daily-discovery-canonical-order.md). No new host execution. Tracking dda1a840, renew12:20UTC.
+
+
+## Wave108 — e639169 hosted accepted; new concrete host sequence (2026-10-19)
+
+후보 e639169의 CI39186174905 attempt1(02:03:23UTC)·기능 smoke39186177169 attempt1(02:20:59UTC)이 성공했고02:21:48UTC 전체9로그/8실제checkout·1437pin/537blob·174필수(새 Rust4 포함)/15이미지결과/44wholeflow 및 실제 게시·반복·10정리0를 회수했다. Wave108은2155소스/11제어/12핵심pin의 아홉 번째 이미지1회, 완전 복귀·독립 복구 성공 후 조건부 여섯 번째 실제 격리통합1회 실행안이다. 기존 Wave106 두 승인은 소진됐고 새 결정 전 미실행이다. 정확한 과거 런타임 거부 지점·미출력 UNKNOWN/0120 정리 INCOMPLETE를 보존한다. 새 이미지·호스트 통합·G4·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[Full hosted/source evidence](reviews/2026-10-19-r2-daily-discovery-canonical-order.md) · [Concrete packet](reviews/2026-10-19-r2-e639169-host-sequence-packet.md).
+
+hosted f44b66b1 / functional2cd651b9 / requiredCI006273fc; sequence361f94a8 /
+finalstatic46b77078.2155 source pins/11 finite inverse controls/12 unchanged critical
+pins/1437 frozen hosted inputs match. Admission metadata block/observer diagnostics
+unchanged; no local project/control execution, new host reads or independent review.
+New images/manifest/host state UNKNOWN until new decision and fresh gates.
+
+현재 추적68a23346을02:32:49.330UTC에 확인하고 인계cfb61e58을 저장했다.13:00UTC 전/47번째 tick 전 갱신,14:32:49UTC 만료. 직전 요약의 결과 경로를 명령원장과 일치시켰다. 같은 이름의 heartbeat 생성이 동일 ID를 반환했는데 이를 이전 ID로 잘못 삭제해 약22초 추적 공백이 발생했고, 다른 이름의 새 ID로 즉시 복구했다. 호스트 동작은 없었으며 앞으로 후속 ID가 다른지 확인한 뒤에만 이전 ID를 삭제한다. native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 중단 보호나 새 worker가 아니다.

@@ -5231,3 +5231,18 @@ Wave106 새 Owner 승인79bbfcb7에 따라 b6b2ddb 여덟 번째 이미지 실�
 b6b2ddb 여덟 번째 이미지12개와 동일 Owner 복귀를 인수했다(closure a285575b). 승인된 다섯 번째 실제 통합은 첫 생산·승인0 이후 두 번째 생산 INPUT_BLOCKED로 실패했다.01:27UTC 전체 회수/9컨테이너·네트워크 정리/운영11상태·current·보존볼륨 불변을 확인했다(closure ec848470). 두 승인은 소진됐으며 자동 재시도 없음. Wave107은 재구성 enum 순서와 저장 wire 순서의 구조 비교 불일치를 기존 canonicalizer 재사용으로 수정하고 회귀4개를 작성했다. 아직 새 hosted 검증 전이며 정확한 런타임 거부 지점·기존 UNKNOWN/0120 INCOMPLETE, G4·배포·Owner·3거래일·C_R2 미완료를 보존한다.
 
 [Full recovery and source correction](2026-10-19-r2-daily-discovery-canonical-order.md). No new host execution. Tracking dda1a840, renew12:20UTC.
+
+
+## Wave108 — e639169 hosted accepted; new concrete host sequence (2026-10-19)
+
+후보 e639169의 CI39186174905 attempt1(02:03:23UTC)·기능 smoke39186177169 attempt1(02:20:59UTC)이 성공했고02:21:48UTC 전체9로그/8실제checkout·1437pin/537blob·174필수(새 Rust4 포함)/15이미지결과/44wholeflow 및 실제 게시·반복·10정리0를 회수했다. Wave108은2155소스/11제어/12핵심pin의 아홉 번째 이미지1회, 완전 복귀·독립 복구 성공 후 조건부 여섯 번째 실제 격리통합1회 실행안이다. 기존 Wave106 두 승인은 소진됐고 새 결정 전 미실행이다. 정확한 과거 런타임 거부 지점·미출력 UNKNOWN/0120 정리 INCOMPLETE를 보존한다. 새 이미지·호스트 통합·G4·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[Full hosted/source evidence](2026-10-19-r2-daily-discovery-canonical-order.md) · [Concrete packet](2026-10-19-r2-e639169-host-sequence-packet.md).
+
+hosted f44b66b1 / functional2cd651b9 / requiredCI006273fc; sequence361f94a8 /
+finalstatic46b77078.2155 source pins/11 finite inverse controls/12 unchanged critical
+pins/1437 frozen hosted inputs match. Admission metadata block/observer diagnostics
+unchanged; no local project/control execution, new host reads or independent review.
+New images/manifest/host state UNKNOWN until new decision and fresh gates.
+
+현재 추적68a23346을02:32:49.330UTC에 확인하고 인계cfb61e58을 저장했다.13:00UTC 전/47번째 tick 전 갱신,14:32:49UTC 만료. 직전 요약의 결과 경로를 명령원장과 일치시켰다. 같은 이름의 heartbeat 생성이 동일 ID를 반환했는데 이를 이전 ID로 잘못 삭제해 약22초 추적 공백이 발생했고, 다른 이름의 새 ID로 즉시 복구했다. 호스트 동작은 없었으며 앞으로 후속 ID가 다른지 확인한 뒤에만 이전 ID를 삭제한다. native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 중단 보호나 새 worker가 아니다.
