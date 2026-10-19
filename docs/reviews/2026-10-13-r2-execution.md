@@ -5291,3 +5291,12 @@ First authorization babc9cb1; exact root-command exit1/finite G4_PG_PATH, stderr
 The corrected private survey binds the same fixed PG container mount to the exact named local volume Name/Source/Mountpoint, checks a canonical absolute volumes/name/_data suffix without assuming Docker root, preserves nofollow directory reads and retained-volume exclusion, and emits only already-filtered partial metadata plus finite stage labels on failure. No added child command, production source change, local parser/helper/test execution or independent review. Hosted41maintenance cases do not validate this survey. [Concrete packet](2026-10-19-r2-g4-inventory-path-correction-packet.md); prepared0b00872e/39pins, finalstaticdb031ed8. A new explicit one-shot decision is needed because the previous single execution is consumed. No outage/backup/deploy authority.
 
 추적bd7f2569를04:15:31UTC active로 확인하고 인계d091160b/registry를 저장한 뒤2a41527f 삭제를 확인했다.15:10UTC 전/47번째 tick 전 갱신,16:15:31UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+
+
+## Wave111 partial survey terminal / Wave112 metadata completion — 2026-10-19 04:22 UTC
+
+Wave111 승인 조회1회는04:22:01UTC exit1/FileNotFoundError로 종결됐지만56유닛·13컨테이너·실제PG경로·5root metadata·보호파일7개를 회수했다. 다음 고정 시도는release lock이며 정확한 누락 구성요소는UNKNOWN이다. /data1000:1000/0755, PG부모0701/볼륨1777, disabled persistent failed유닛은 현G4도구와 맞지 않아 별도명시설계가 필요하다. 키metadata·자원·writer·최종재대조는 미회수다. Wave112는 부재와 변화도 명시적으로 기록하며 독립 metadata를 끝까지 수집하는300초 읽기전용1회안을50pin으로 준비했다. 새 결정 전 호스트실행없음; 운영파일·서비스·SQL·provider 변경없음. 앱e639169 이미지·실제통합 및도구3de6420 CI 인수는 유지한다. G4·배포·Owner·연속실제3거래일·C_R2는 미완료다.
+
+추적d17c7730을04:33:06UTC active로 확인하고 인계45d9d519/registry 저장 뒤bd7f2569 삭제를 확인했다.15:30UTC 전/47번째 tick 전 갱신,16:33:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+
+종료 a7695e49, 종결 f2efca1e, readiness13fd35c6. 새 prepared4766af8c/50pins, staticb453b55f; 운영설계8024a4ae는 UNIMPLEMENTED이며 권한이 아니다. 반복 조회·실패 unit reset·공유/data 소유권 변경·PG 권한 변경은 실행하지 않았다. [상세 실행안](2026-10-19-r2-g4-partial-inventory-and-completion.md).
