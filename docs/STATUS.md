@@ -6,7 +6,7 @@
 
 ## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
 
-현재: **R2 Wave108 승인·이미지 빌드 실행 중.** Wave108 새 Owner 승인 cea1e033에 따라 e639169 아홉 번째 이미지 빌드를02:55UTC 한 번 시작했다. 새2155소스/11제어/12핵심pin·호스트11상태·READ ONLY 정산·공식 plan/preflight가 통과했다. 독립 복구 실제 active를 먼저 확인했고 Owner V2는02:55:06UTC 정상 exit0로 종료됐다. 전체12이미지·동일 ID 복귀·독립 복구 성공종료·무프로세스·정산을 인수한 뒤 승인된 여섯 번째 실제 격리통합을 추가 질문 없이 한 번 실행한다. 현재 이미지 빌드 중이며 호스트 통합은 미실행이다. 자동재시도 없음; 기존 UNKNOWN/0120 정리 INCOMPLETE와 G4·배포·Owner·3연속 실제거래일·C_R2 미완료를 보존한다.
+현재: **e639169 이미지·격리통합 전체 인수, Wave109 G4 소스 준비.** Wave108 승인 cea1e033의 두 실행을 모두 성공 종결했다. e639169 아홉 번째 이미지12개·704파일/49게이트·2155소스pin을 인수했고03:12:26UTC 동일 Owner 정상 복귀,03:12:30UTC 독립 복구 실제 성공종료·무프로세스·READONLY 정산을 회수했다. 여섯 번째 실제 격리통합은03:13:15UTC 한 번 시작해03:16:56UTC exit0,03:17:18UTC 전체 회수를 완료했다. 최초/후속 승인·HTTP 게시·재시작·capture/restore·복원 프로세스 게시 유지의6단계가 모두 통과했고 임시21컨테이너/2네트워크를 모두 정리했다. 운영11상태·current·기존 base/보존볼륨은 유지됐다. 합성 세션 결과이며 실제 시장 수신·배포·Owner 로그인·3거래일 관찰은 아니다. 두 승인은 소진됐다. 과거 거부 내부원인 UNKNOWN/0120 정리 INCOMPLETE를 보존한다. Wave109 G4 도구 소스 준비: 별도 maintenance payload의 base helper 누락과 보존해야 할 역사적 terminal unit의 정확한 inventory 계약을 보완한다. 로컬 프로젝트 실행·새 호스트 조회/동작 없이 소스 검토와 새 hosted 검증을 준비한다. 기존 앱 e639169/이미지/manifest/실행 근거는 불변이다. G4·백업 전환·배포·Owner·3연속 실제거래일·최종 C_R2는 미완료다.
 
 과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
 
@@ -33,7 +33,7 @@ Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
 | main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
 | R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
-| 다음 단계 | Wave108 새 이미지·조건부 실제 통합 실행안의 결정 → G4·배포·Owner·3거래일·C_R2. |
+| 다음 단계 | Wave109 G4 도구 소스/hosted 검증 → 구체적 G4 실행안 → 배포·Owner·3거래일·C_R2. |
 | 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
@@ -4538,3 +4538,12 @@ New images/manifest/host state UNKNOWN until new decision and fresh gates.
 Wave108 새 Owner 승인 cea1e033에 따라 e639169 아홉 번째 이미지 빌드를02:55UTC 한 번 시작했다. 새2155소스/11제어/12핵심pin·호스트11상태·READ ONLY 정산·공식 plan/preflight가 통과했다. 독립 복구 실제 active를 먼저 확인했고 Owner V2는02:55:06UTC 정상 exit0로 종료됐다. 전체12이미지·동일 ID 복귀·독립 복구 성공종료·무프로세스·정산을 인수한 뒤 승인된 여섯 번째 실제 격리통합을 추가 질문 없이 한 번 실행한다. 현재 이미지 빌드 중이며 호스트 통합은 미실행이다. 자동재시도 없음; 기존 UNKNOWN/0120 정리 INCOMPLETE와 G4·배포·Owner·3연속 실제거래일·C_R2 미완료를 보존한다.
 
 추적 efe29fa6, 인계40fcee35를 저장하고 이전68a23346을 삭제했다.13:50UTC 전/47번째 tick 전 갱신;14:55:32UTC 만료. 독립 복구 서비스가 호스트 복귀를 담당하며 heartbeat는 같은 에이전트의 제한된 후속 추적이다.
+
+
+## Wave108 terminal acceptance / Wave109 G4 source readiness — 2026-10-19 03:17 UTC
+
+Wave108 승인 cea1e033의 두 실행을 모두 성공 종결했다. e639169 아홉 번째 이미지12개·704파일/49게이트·2155소스pin을 인수했고03:12:26UTC 동일 Owner 정상 복귀,03:12:30UTC 독립 복구 실제 성공종료·무프로세스·READONLY 정산을 회수했다. 여섯 번째 실제 격리통합은03:13:15UTC 한 번 시작해03:16:56UTC exit0,03:17:18UTC 전체 회수를 완료했다. 최초/후속 승인·HTTP 게시·재시작·capture/restore·복원 프로세스 게시 유지의6단계가 모두 통과했고 임시21컨테이너/2네트워크를 모두 정리했다. 운영11상태·current·기존 base/보존볼륨은 유지됐다. 합성 세션 결과이며 실제 시장 수신·배포·Owner 로그인·3거래일 관찰은 아니다. 두 승인은 소진됐다. 과거 거부 내부원인 UNKNOWN/0120 정리 INCOMPLETE를 보존한다.
+
+Wave109 G4 도구 소스 준비: 별도 maintenance payload의 base helper 누락과 보존해야 할 역사적 terminal unit의 정확한 inventory 계약을 보완한다. 로컬 프로젝트 실행·새 호스트 조회/동작 없이 소스 검토와 새 hosted 검증을 준비한다. 기존 앱 e639169/이미지/manifest/실행 근거는 불변이다. G4·백업 전환·배포·Owner·3연속 실제거래일·최종 C_R2는 미완료다.
+
+Image closure `0e2892c1984f783080796e8a6408c7413598028e0ce88931d2dc64dc5769926d`; manifest `e18b3aa714106db4a737caa35a8f18c151e5173528db3b118d134e8ac0dfeda2`; wholeflow closure `7f2465e63d919464cf2478d5dd1e0d78fe5496996cdc4fdbaab7cac693885d6a` (63 pins). Tracking `910f3b16`, handoff `76ffabde`, predecessor `d212c6ce` deletion confirmed. No pending question/new host authority.
