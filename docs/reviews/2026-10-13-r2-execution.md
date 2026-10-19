@@ -5157,3 +5157,30 @@ Successor heartbeat f208d6f4 confirmed23:56:28UTC; persisted handoff
 `29fd1002f1ad0ec301594a0046a53db1b2d57e7f3b5c2937ed73d32e0dd958b1`
 before confirmed4fbc67c0 deletion. Renewby2026-10-19T10:55UTC, expiry11:56:28UTC.
 Read-only hosted result recovery; no source mutation, rerun, cancellation or new host action.
+
+
+### Wave105 CI accepted; functional smoke pending — 2026-10-19 KST
+
+후보 b6b2ddbd7a5d63f482f1a0fa43a02cb704a70e93의 CI39178523729 attempt1이 00:20:13UTC에 8개 작업 모두 성공했다. 전체 로그 8개와 실제 checkout 7개, 필수170개·15이미지 결과·wholeflow44개, Rust·strict Clippy·format·PostgreSQL·Web 및1370pin/534blob 일치를 회수하여 CI만 인수했다. 기능 smoke39178525169 attempt1은 진행 중이며 10월19일01:40:46UTC까지 실제 기능·반복·정리 증거를 회수한다. 아직 전체 hosted·새 이미지·실제 통합 인수는 아니다. 원본512 원인·미출력 nested 결과 UNKNOWN과 과거0120 정리 INCOMPLETE를 보존한다. 재실행·새 호스트 실행은 하지 않으며 G4·배포·Owner·3거래일·C_R2는 미완료다.
+
+- Required CI evidence SHA `627404c86471d71d6f8562eb7902d95fb91994eabf28578eda68630c4444d889`; workspace reconciliation
+  `e98e74e7464055d6f59142dcbcfadf82155a3a1d1af77e5460e52209562f438d`;
+  policy/PG/Web `3e6a48ba970c90037906b7a7a5fb8127d8a1e5c96dbc4904a599a3e2dfec05ae`.
+- Actual workspace3,363 named rows/231 root blocks; all170 required definitions
+  PASS. Three Linux exclusions, six ignored rows and the actually fragmented
+  `synthetic_anchors_keep_exact_mode_under_restrictive_umask` name/unprinted
+  independent nested rows and exits remain explicit UNKNOWN.
+- Current Python full log prints497 passes/10 existing skips. The recovery reader
+  initially assumed the prior496 total; exactly one new definition occurs in the
+  sole changed default-pytest-discoverable CI contract module. Per-case pytest
+  rows are unprinted; its explicit qualified-name PASS is independently in policy.
+  Original reader and failed assumption retained; correction receipt
+  `e0d7cad36a3404cb4316dd9445d02e723e476f65fa08583fc5f3b80db40c05f2`.
+  No project source, workflow or accepted evidence changed, no test rerun.
+- PostgreSQL19 actual process exits0/146 names,0060 32 names and73 subcases,
+  83 bootstrap checks,62 migration checksums twice and0039 cleanup recovered.
+  Web129 off-lane plus14 market-stream cases, all selected/pass, no retries,
+  skips or flaky outcomes; reservations and cleanup passed.
+- Frozen1370 pins/534 candidate blobs match. Functional run39178525169 remains
+  active; no publication/repeat/cleanup success inferred from CI. Heartbeat
+  f208d6f4 remains the same hosted-recovery phase, renewby10:55UTC, expiry11:56UTC.
