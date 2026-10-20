@@ -8475,3 +8475,43 @@ build/backup attempt was replayed and no provider request was made in this
 correction phase. All retained failures, unknown causes and0120cleanup
 INCOMPLETE remain. Source changes add no crate dependency, Compose service,
 network/mount or DB-role/table boundary; architecture diagrams are unchanged.
+
+
+## Wave134 paid-in subscription query-date correction — 2026-10-21 KST
+
+R2-04/R2-09 remain DOING. The pushed source candidate1cbe487 is undergoing its
+single CI39447903390 attempt1; it is not a deployment or full hosted acceptance.
+The current actual runtime remains e639169, dailyOFF. Owner authority and the
+first-real-trading-day rule remain valid without new questions.
+
+At15:31:42UTC a bounded read-only inventory of Aug29..Oct20 found8civil days of
+valid action evidence,40missing and5INVALID_ACTIONS. Calendar rows are absent
+Sep24..Oct6, so expected-session derivation correctly remains CALENDAR_COVERAGE_GAP.
+The inventory's end is not an assertion that Oct20 is eligible. At15:35:03UTC a
+body-free diagnostic localized all5errors to the record-date range check.
+Held-descriptor/hash-checked classification at15:35:51UTC found exactly8rows in
+paidin-subscription pages, all outside ETF11; each sub_term_ft is eight digits
+inside its requested range while record_date is outside. Raw and errors remain.
+
+The current official KIS sample2077773a69a428daf63e148182511f068cc45de3 documents
+GB1=1 as subscription-date selection and GB1=2 as record-date selection. Its
+response mapping names sub_term_ft/sub_term as subscription period. This confirms
+the defect in D5 A1's blanket record_date interpretation. Narrow owned scope:
+reconstruct.rs, its focused reconstruction fixtures, and the D5/contract/runbook
+explanation. Only PaidinSubscription uses strictly parsed sub_term_ft as its
+query coverage/cell date. All normal record/right/rate field checks still run;
+no field is rewritten and no subscription date becomes available_at. The separate
+PaidinRecord class and all other classes retain record_date. A target ETF
+subscription event in the extension blocks as NonCashAction even if its record
+date is older. Missing/malformed/out-of-range subscription dates and malformed
+non-ETF rows fail. WholeMarket7/FixedEtf11 completeness, original lineage,
+pagination, overlap comparison, cash handling and legacy normalizer remain intact.
+
+Verify positive historical-record/non-ETF delivery, target-ETF noncash rejection,
+subscription date missing/invalid/outside bounds, malformed record fields and
+PaidinRecord isolation. Then run the affected reconstruction suite and Clippy,
+followed by one changed read-only actual-source inventory. Do not rerun old
+provider/G4/CI attempts. Recurring supplier wiring, measured catchup, matched
+immutable release and daily activation remain subsequent work, not acceptance.
+
+Wave134 validation: all37reconstruction tests (4new) and market-data all-target Clippy pass. At15:40:01UTC the changed read-only verifier resolved all5actual errors without Raw edits or network calls:13civil days verified,40stillmissing; calendar Sep24..Oct6 stillmissing. Actual input admission, supplier wiring and activation remain OPEN.

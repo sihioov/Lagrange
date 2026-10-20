@@ -679,7 +679,27 @@ fn reconstruct_chain(
             let parsed =
                 validate_kis_action_row_fields(&file.request.endpoint, &file.file_name, row)
                     .map_err(|_| Error::InvalidActions)?;
-            if parsed.record_date < wire.range_start || parsed.record_date > wire.range_end {
+            // KIS GB1=1 selects the subscription date, while GB1=2 selects
+            // record_date. Preserve both sources; never reinterpret the
+            // subscription delivery as record-date coverage. The full matrix
+            // separately requires the PaidinRecord chain.
+            let coverage_date = if wire.logical_class == Class::PaidinSubscription {
+                let text = row
+                    .get("sub_term_ft")
+                    .and_then(Value::as_str)
+                    .filter(|text| text.len() == 8 && text.bytes().all(|b| b.is_ascii_digit()))
+                    .ok_or(Error::InvalidActions)?;
+                parse_kis_date(
+                    ResponseKind::CorporateActions,
+                    &file.file_name,
+                    "sub_term_ft",
+                    text,
+                )
+                .map_err(|_| Error::InvalidActions)?
+            } else {
+                parsed.record_date
+            };
+            if coverage_date < wire.range_start || coverage_date > wire.range_end {
                 return Err(Error::InvalidActions);
             }
             if let Some(expected) = &wire.symbol {
@@ -710,13 +730,13 @@ fn reconstruct_chain(
                 return Err(Error::SourceConflict);
             }
             if !KR_ETF_CORE_SYMBOLS.contains(&parsed.symbol.as_str())
-                || parsed.record_date <= previous_frontier
-                || parsed.record_date > session
+                || coverage_date <= previous_frontier
+                || coverage_date > session
             {
                 continue;
             }
             cells
-                .entry((parsed.record_date, parsed.symbol.clone()))
+                .entry((coverage_date, parsed.symbol.clone()))
                 .or_default()
                 .push(canonical);
             let Some(dividend) = parsed.dividend else {

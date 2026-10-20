@@ -899,11 +899,107 @@ mod linux_tests {
     }
 
     #[test]
+    fn subscription_query_uses_subscription_date_without_rewriting_record_date() {
+        let mut batch = action_batch(1, DAY, DAY, false);
+        put_rows(
+            &mut batch,
+            ACTIONS[0].label,
+            None,
+            json!([{"sht_cd":"11138K","record_date":"20260901",
+                "right_dt":"20260831","fix_rate":"1","sub_term_ft":"20261012",
+                "sub_term":"2026/10/12 ~ 2026/10/13"}]),
+        );
+        let fixture = Fixture::new(&[batch]);
+        let snapshot = fixture.scan();
+        let result = actions(&snapshot, "2026-10-11").unwrap();
+        assert!(result.document().rows().is_empty());
+        assert_eq!(result.witnesses().len(), 7);
+        assert_eq!(result.selections().len(), 77);
+        assert!(
+            result
+                .witnesses()
+                .iter()
+                .any(|w| w.logical_class == Class::PaidinRecord)
+        );
+    }
+
+    #[test]
+    fn subscription_in_extension_blocks_etf_even_with_historical_record_date() {
+        for fixed in [false, true] {
+            let mut batch = action_batch(1, DAY, DAY, fixed);
+            put_rows(
+                &mut batch,
+                ACTIONS[0].label,
+                fixed.then_some("069500"),
+                json!([{"sht_cd":"069500","record_date":"20260901",
+                    "right_dt":"20260831","fix_rate":"1","sub_term_ft":"20261012"}]),
+            );
+            assert_eq!(action_failure(&[batch], "2026-10-11"), E::NonCashAction);
+        }
+    }
+
+    #[test]
+    fn subscription_invalid_dates_fail_before_non_etf_filter() {
+        for value in [
+            Value::Null,
+            json!(""),
+            json!("2026-10-12"),
+            json!("２０２６１０１２"),
+            json!("20260230"),
+            json!("00000000"),
+            json!("20261011"),
+            json!("20261013"),
+        ] {
+            let mut row = json!({"sht_cd":"11138K","record_date":"20260901",
+                "right_dt":"20260831","fix_rate":"1"});
+            if !value.is_null() {
+                row["sub_term_ft"] = value;
+            }
+            let mut batch = action_batch(1, DAY, DAY, false);
+            put_rows(&mut batch, ACTIONS[0].label, None, json!([row]));
+            assert_eq!(action_failure(&[batch], "2026-10-11"), E::InvalidActions);
+        }
+        // The subscription-date rule cannot hide malformed original fields.
+        let mut batch = action_batch(1, DAY, DAY, false);
+        put_rows(
+            &mut batch,
+            ACTIONS[0].label,
+            None,
+            json!([{
+                "sht_cd":"11138K","record_date":"bad","right_dt":"20260831",
+                "fix_rate":"1","sub_term_ft":"20261012"
+            }]),
+        );
+        assert_eq!(action_failure(&[batch], "2026-10-11"), E::InvalidActions);
+    }
+
+    #[test]
+    fn paidin_record_keeps_record_date_and_cannot_be_replaced_by_subscription() {
+        let mut batch = action_batch(1, DAY, DAY, false);
+        put_rows(
+            &mut batch,
+            ACTIONS[1].label,
+            None,
+            json!([{
+                "sht_cd":"11138K","record_date":"20260901","right_dt":"20260831",
+                "fix_rate":"1","sub_term_ft":"20261012"
+            }]),
+        );
+        assert_eq!(action_failure(&[batch], "2026-10-11"), E::InvalidActions);
+        let mut batch = action_batch(1, DAY, DAY, false);
+        batch
+            .entry
+            .files
+            .retain(|f| !f.file_name.contains("paidin-record"));
+        assert_eq!(action_failure(&[batch], "2026-10-11"), E::SourceCoverageGap);
+    }
+
+    #[test]
     fn s4_every_noncash_class_blocks_target_etf_and_non_etf_is_validated() {
         for (index, ActionFixtureSpec { label, .. }) in ACTIONS.iter().enumerate() {
             let row = match index {
                 0..=2 => {
-                    json!({"sht_cd":"069500","record_date":"20261012","right_dt":"20261013","fix_rate":"1"})
+                    json!({"sht_cd":"069500","record_date":"20261012","right_dt":"20261013","fix_rate":"1","sub_term_ft":"20261012"})
                 }
                 3 => {
                     let mut row = cash_row("069500", DAY);

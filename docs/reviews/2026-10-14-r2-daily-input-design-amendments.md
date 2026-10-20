@@ -738,3 +738,27 @@ needed: none beyond binding D4's completed wire contract and D2's Web brief.
    owns roadmap/status/plan/execution, CI sequencing and acceptance. Preserve distinct
    source, isolated-check, runtime and Owner observation evidence. G4 actual operational
    approval is the final boundary; source review or passing fixtures does not replace it.
+
+
+### Wave134 query-date clarification — 2026-10-21 KST
+
+For PaidinSubscription only, the query/cell date is the strictly parsed
+`sub_term_ft` (eight ASCII digits, valid date). GB1=1 is subscription-date
+selection; the independent GB1=2 PaidinRecord chain remains mandatory and uses
+record_date. Other classes keep record_date. Every original row still passes
+record/right/rate/symbol validation before the universe filter. A target ETF
+subscription in the extension is NonCashAction even when its record date is
+older. No date is rewritten, no source is dropped to hide a conflict, and no
+subscription date becomes an availability timestamp. This corrects the blanket
+record_date statement above; complete seven-class coverage remains mandatory.
+
+Primary source: [official KIS paid-in query contract](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/ksdinfo_paidin_capin/ksdinfo_paidin_capin.py)
+and [response field mapping](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/ksdinfo_paidin_capin/chk_ksdinfo_paidin_capin.py).
+The official sources were read only, never executed. Eight actual non-ETF rows
+across Sep3/7/9/10/11 match this distinction. A changed read-only reconstruction
+at15:40:01UTC verifies all five dates; the unchanged Raw manifest hashes remain
+2009b5ea…/d85be240…. The Aug29..Oct20 inventory now has13verified civil days and
+40missing. Calendar coverage Sep24..Oct6 remains absent; no eligibility or
+admission is asserted. Four new regression functions plus33existing cases and
+market-data all-target Clippy pass. The two diagnostic copy include-path build
+failures and corrected build are retained; production sources were not involved.

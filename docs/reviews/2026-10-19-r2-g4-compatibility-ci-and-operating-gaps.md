@@ -2086,3 +2086,5 @@ build/backup attempt was replayed and no provider request was made in this
 correction phase. All retained failures, unknown causes and0120cleanup
 INCOMPLETE remain. Source changes add no crate dependency, Compose service,
 network/mount or DB-role/table boundary; architecture diagrams are unchanged.
+
+Wave134 validation: all37reconstruction tests (4new) and market-data all-target Clippy pass. At15:40:01UTC the changed read-only verifier resolved all5actual errors without Raw edits or network calls:13civil days verified,40stillmissing; calendar Sep24..Oct6 stillmissing. Actual input admission, supplier wiring and activation remain OPEN.
