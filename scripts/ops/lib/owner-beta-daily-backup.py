@@ -367,6 +367,7 @@ class Storage:
     def restore_database(self, dump, directory):
         # Mount only this freshly decrypted dump, fixed scripts and a disposable
         # data directory. This container cannot reach the live DB/network/secret.
+        verifier_root = self.verifier_root or self.context.release
         self.require_no_verifier()
         require(directory.parent == Path(self.root) and dump.parent == directory,
                 "DAILY_BACKUP_VERIFY_PATH")
@@ -391,8 +392,8 @@ class Storage:
             "--tmpfs", "/var/lib/postgresql:rw,nosuid,nodev,noexec,size=4k,mode=000",
             "--mount", "type=bind,src=" + str(dump) + ",dst=/verify.dump,readonly",
             "--mount", "type=bind,src=" + str(data) + ",dst=/restore",
-            "--mount", "type=bind,src=" + (self.verifier_root or self.context.release) + "/deploy/db/daily-backup-verify.sh,dst=/verify.sh,readonly",
-            "--mount", "type=bind,src=" + (self.verifier_root or self.context.release) + "/deploy/db/owner-beta-daily-backup-audit.sql,dst=/verify.sql,readonly",
+            "--mount", "type=bind,src=" + verifier_root + "/deploy/db/daily-backup-verify.sh,dst=/verify.sh,readonly",
+            "--mount", "type=bind,src=" + verifier_root + "/deploy/db/owner-beta-daily-backup-audit.sql,dst=/verify.sql,readonly",
             "--entrypoint=/bin/bash"]
         for key, value in labels.items():
             args += ["--label", key + "=" + value]
@@ -439,8 +440,8 @@ class Storage:
                     "DAILY_BACKUP_VERIFY_POLICY")
             isolated_policy(value, memory=512 * 1024**2, environment=image_environment,
                 mounts={"/verify.dump": (str(dump), False), "/restore": (str(data), True),
-                        "/verify.sh": (self.context.release + "/deploy/db/daily-backup-verify.sh", False),
-                        "/verify.sql": (self.context.release + "/deploy/db/owner-beta-daily-backup-audit.sql", False)},
+                        "/verify.sh": (verifier_root + "/deploy/db/daily-backup-verify.sh", False),
+                        "/verify.sql": (verifier_root + "/deploy/db/owner-beta-daily-backup-audit.sql", False)},
                 tmpfs={"/tmp": "rw,nosuid,nodev,size=32m,uid=999,gid=999,mode=0700",
                        "/var/lib/postgresql": "rw,nosuid,nodev,noexec,size=4k,mode=000"})
             audit = directory / "restored-audit.json"
