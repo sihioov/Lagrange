@@ -140,6 +140,32 @@ def checked_audit(data, *, database, system_identifier, migrations):
 class ColdStorage(backup.Storage):
     """Reuse private staging/encryption; never route through daily DB tables."""
 
+    def verifier_scripts(self, directory):
+        """Copy only pinned verifier code into the private disposable staging.
+
+        Installed maintenance sources can be root0600. Their bind mounts retain
+        that ownership/mode, so the uid999 verifier cannot read them directly.
+        Keep those sources protected; expose byte-identical, read-only copies
+        through two file mounts inside the otherwise networkless verifier.
+        """
+        directory = Path(directory)
+        require(directory.parent == Path(self.root) and
+                directory.name.startswith(".preupgrade-"), "PREUPGRADE_RESTORE_SCOPE")
+        sources = (
+            ("preupgrade-recovery-verify.sh", "verify.sh"),
+            ("preupgrade-recovery-audit.sql", "verify.sql"),
+        )
+        with install.root_directory(str(directory)) as parent:
+            install.directory_info(parent, uid=0, gid=0, mode=0o700)
+            payloads = [(target, install.read_root_file(
+                self.context.release + "/deploy/db/" + source, gid=0, maximum=65536))
+                for source, target in sources]
+            for target, payload in payloads:
+                install.create_file(parent, target, payload, 0, 0, 0o444)
+                require(install.read_file(parent, target, 0, 0, 0o444, maximum=65536) == payload,
+                        "PREUPGRADE_VERIFY_RESULT")
+        return tuple(str(directory / target) for _, target in sources)
+
     @contextlib.contextmanager
     def temporary(self, prefix):
         self.reserve()
@@ -207,8 +233,7 @@ class ColdStorage(backup.Storage):
         labels = {"io.lagrange.preupgrade-verify": nonce,
                   "io.lagrange.preupgrade-project": self.binding.project}
         data = str(restored / "postgres")
-        script = self.context.release + "/deploy/db/preupgrade-recovery-verify.sh"
-        audit_script = self.context.release + "/deploy/db/preupgrade-recovery-audit.sql"
+        script, audit_script = self.verifier_scripts(restored.parent)
         args = ["create", "--name", "lagrange-preupgrade-verify-" + nonce, "--init",
                 "--restart=no", "--network=none", "--read-only", "--user=999:999",
                 "--cap-drop=ALL", "--security-opt=no-new-privileges:true", "--memory=512m", "--cpus=1",

@@ -61,7 +61,13 @@ class PreupgradeDockerTests(unittest.TestCase):
         cls.release = cls.directory / "release"
         (cls.release / "deploy/db").mkdir(parents=True)
         for name in ("preupgrade-recovery-verify.sh", "preupgrade-recovery-audit.sql"):
-            shutil.copyfile(ROOT / "deploy/db" / name, cls.release / "deploy/db" / name)
+            target = cls.release / "deploy/db" / name
+            shutil.copyfile(ROOT / "deploy/db" / name, target)
+            target.chmod(0o600)
+        cls.protected_scripts = {
+            path.name: (path.read_bytes(), backup.install.file_identity(path.stat()))
+            for path in (cls.release / "deploy/db").iterdir()
+        }
         cls.volume = cls.command(["volume", "create", "--label",
             "io.lagrange.preupgrade-fixture=" + cls.project, cls.project + "-data"]).stdout.decode().strip()
         secret = cls.directory / "secret"
@@ -319,6 +325,14 @@ class PreupgradeDockerTests(unittest.TestCase):
             actual = self.storage.verify_cluster(restored, expected)
             self.assertEqual(actual, self.audit)
             self.assertEqual(actual["migrations"], self.migrations)
+            for name, copied in (("preupgrade-recovery-verify.sh", "verify.sh"),
+                                 ("preupgrade-recovery-audit.sql", "verify.sql")):
+                source = self.release / "deploy/db" / name
+                self.assertEqual((source.read_bytes(), backup.install.file_identity(source.stat())),
+                                 self.protected_scripts[name])
+                self.assertEqual(stat.S_IMODE(source.stat().st_mode), 0o600)
+                self.assertEqual((stage / copied).read_bytes(), source.read_bytes())
+                self.assertEqual(stat.S_IMODE((stage / copied).stat().st_mode), 0o444)
             for name in ("raw", "curated", "base", "config"):
                 self.assertEqual((restored / name / "fixture").read_bytes(), ("synthetic-" + name).encode())
             self.assert_no_verifier()
@@ -331,6 +345,27 @@ class PreupgradeDockerTests(unittest.TestCase):
             with self.assertRaisesRegex(recovery.runtime.RuntimeErrorCode,
                                         "^PREUPGRADE_RESTORE_AUDIT_MISMATCH$"):
                 self.storage.verify_cluster(restored, expected)
+            self.assert_no_verifier()
+
+    def test_root_only_installed_script_mount_is_unreadable_to_clone(self):
+        states = []
+        original = self.docker.object
+        def observe(kind, identity):
+            value = original(kind, identity)
+            if kind == "container" and (value["Config"].get("Labels") or {}).get(
+                    "io.lagrange.preupgrade-project") == self.project:
+                states.append(copy.deepcopy(value["State"]))
+            return value
+        with self.storage.temporary(".preupgrade-") as stage:
+            restored, expected = self.restore_files(stage)
+            direct_mounts = tuple(str(self.release / "deploy/db" / name) for name in
+                ("preupgrade-recovery-verify.sh", "preupgrade-recovery-audit.sql"))
+            with mock.patch.object(self.storage, "verifier_scripts", return_value=direct_mounts), \
+                    mock.patch.object(self.docker, "object", side_effect=observe), \
+                    self.assertRaisesRegex(recovery.runtime.RuntimeErrorCode, "^DAILY_BACKUP_PROCESS$"):
+                self.storage.verify_cluster(restored, expected)
+            self.assertTrue(any(s["Status"] == "exited" and s["ExitCode"] == 126
+                                and not s["Running"] and not s["OOMKilled"] for s in states))
             self.assert_no_verifier()
 
     def test_lost_create_response_recovers_only_owned_container_and_reports_failure(self):

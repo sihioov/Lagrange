@@ -140,6 +140,73 @@ class MaintenanceTests(unittest.TestCase):
     def assert_no_staging(self):
         self.assertFalse(any(p.name.startswith(".preupgrade-") for p in Path(self.storage.root).iterdir()))
 
+    def protected_verifier_sources(self):
+        release = self.directory / "maintenance"
+        directory = release / "deploy/db"
+        directory.mkdir(parents=True, mode=0o700)
+        for name in ("preupgrade-recovery-verify.sh", "preupgrade-recovery-audit.sql"):
+            path = directory / name
+            path.write_bytes((ROOT / "deploy/db" / name).read_bytes())
+            path.chmod(0o600)
+        self.storage.context = types.SimpleNamespace(release=str(release))
+        return directory
+
+    def test_private_verifier_copies_preserve_root_only_installed_sources(self):
+        source = self.protected_verifier_sources()
+        before = {p.name: (p.read_bytes(), maintenance.install.file_identity(p.stat()))
+                  for p in source.iterdir()}
+        with self.storage.temporary(".preupgrade-scripts-") as stage:
+            paths = self.storage.verifier_scripts(stage)
+            for name, path in zip(("preupgrade-recovery-verify.sh", "preupgrade-recovery-audit.sql"), paths):
+                copied = Path(path)
+                self.assertEqual(copied.parent, stage)
+                self.assertEqual(copied.read_bytes(), before[name][0])
+                self.assertEqual((copied.stat().st_uid, copied.stat().st_gid,
+                                  stat.S_IMODE(copied.stat().st_mode)), (0, 0, 0o444))
+                self.assertNotEqual(copied.stat().st_ino, (source / name).stat().st_ino)
+            self.assertEqual(stat.S_IMODE(stage.stat().st_mode), 0o700)
+        self.assertEqual(before, {p.name: (p.read_bytes(), maintenance.install.file_identity(p.stat()))
+                                  for p in source.iterdir()})
+        self.assert_no_staging()
+
+    def test_private_verifier_copies_refuse_existing_destination(self):
+        self.protected_verifier_sources()
+        with self.storage.temporary(".preupgrade-scripts-") as stage:
+            existing = stage / "verify.sh"
+            existing.write_bytes(b"retained")
+            with self.assertRaises(FileExistsError):
+                self.storage.verifier_scripts(stage)
+            self.assertEqual(existing.read_bytes(), b"retained")
+            self.assertFalse((stage / "verify.sql").exists())
+
+    def test_private_verifier_copies_refuse_source_symlink_and_writable_source(self):
+        source = self.protected_verifier_sources()
+        script = source / "preupgrade-recovery-verify.sh"
+        saved = script.read_bytes()
+        script.unlink()
+        script.symlink_to(source / "preupgrade-recovery-audit.sql")
+        with self.storage.temporary(".preupgrade-scripts-") as stage:
+            with self.assertRaises(OSError):
+                self.storage.verifier_scripts(stage)
+            self.assertEqual(list(stage.iterdir()), [])
+        script.unlink()
+        script.write_bytes(saved)
+        script.chmod(0o666)
+        with self.storage.temporary(".preupgrade-scripts-") as stage:
+            with self.assertRaises(maintenance.install.DailyInstallError):
+                self.storage.verifier_scripts(stage)
+            self.assertEqual(list(stage.iterdir()), [])
+
+    def test_private_verifier_copies_refuse_outside_or_shared_staging(self):
+        self.protected_verifier_sources()
+        with self.assertRaises(ERROR):
+            self.storage.verifier_scripts(self.directory)
+        with self.storage.temporary(".preupgrade-scripts-") as stage:
+            stage.chmod(0o755)
+            with self.assertRaises(maintenance.install.DailyInstallError):
+                self.storage.verifier_scripts(stage)
+            self.assertEqual(list(stage.iterdir()), [])
+
     def test_valid_contract_and_renewed_verify_keep_same_recovery_binding(self):
         original = value()
         self.assertEqual(maintenance.contract(files.canonical(original)), original)
@@ -291,6 +358,7 @@ class MaintenanceTests(unittest.TestCase):
         self.assert_no_staging()
 
     def test_ambiguous_create_retains_owned_intent_and_copied_mount_for_recovery(self):
+        self.protected_verifier_sources()
         def docker_call(args, timeout=15):
             if args[0] == "create":
                 raise ERROR("SIMULATED_CREATE_TIMEOUT")
