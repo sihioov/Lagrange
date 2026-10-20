@@ -54,6 +54,8 @@ class RecordingDocker(backup.runtime.Docker):
 
 
 class DailyBackupDockerTests(unittest.TestCase):
+    admin_role = "postgres"
+
     @classmethod
     def command(cls, args, payload=None, *, timeout=120, allow_failure=False):
         result = subprocess.run(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock", *args],
@@ -63,7 +65,8 @@ class DailyBackupDockerTests(unittest.TestCase):
         return result
 
     @classmethod
-    def sql(cls, text, *, role="postgres", timeout=120, stage="statement"):
+    def sql(cls, text, *, role=None, timeout=120, stage="statement"):
+        role = cls.admin_role if role is None else role
         if stage not in {"roles", "identity", "migration", "ledger", "seed", "audit", "statement"}:
             raise RuntimeError("DAILY_BACKUP_FIXTURE_STAGE")
         result = cls.command(["exec", "--interactive", "--user", "999:999", cls.server,
@@ -85,8 +88,8 @@ class DailyBackupDockerTests(unittest.TestCase):
         return cls.command(["exec", "--interactive", "--user", "999:999", cls.server,
             "sh", "-c", 'set -eu; PGPASSWORD="$(cat /run/test-secret)"; '
             'export PGPASSWORD PGCONNECT_TIMEOUT=2; '
-            'exec psql -X -w -qAt -h 127.0.0.1 -U postgres -d "$1" '
-            '-v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate', "fixture-db-probe", database],
+            'exec psql -X -w -qAt -h 127.0.0.1 -U "$2" -d "$1" '
+            '-v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate', "fixture-db-probe", database, cls.admin_role],
             b"SELECT current_database()||':'||current_user||':'||session_user||':'||"
             b"(inet_server_addr() IS NOT NULL)::text;\n", timeout=timeout, allow_failure=True)
 
@@ -97,7 +100,8 @@ class DailyBackupDockerTests(unittest.TestCase):
         while (remaining := deadline - time.monotonic()) > 0:
             try:
                 result = cls.database_probe(timeout=min(5, remaining))
-                if result.returncode == 0 and result.stdout.strip() == b"lagrange:postgres:postgres:true":
+                expected = ("lagrange:" + cls.admin_role + ":" + cls.admin_role + ":true").encode()
+                if result.returncode == 0 and result.stdout.strip() == expected:
                     return
                 diagnostic = cls.sqlstate(result) if result.returncode else "IDENTITY"
             except subprocess.TimeoutExpired:

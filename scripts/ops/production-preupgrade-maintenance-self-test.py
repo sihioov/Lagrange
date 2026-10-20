@@ -222,6 +222,8 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(self.audit_path.read_bytes(), original)
         self.assertEqual(self.native.observations, [False, False, False, False])
         self.assertIn(self.value["postgres"]["id"], calls[0][0])
+        self.assertIn("PGUSER=lagrange", calls[0][0])
+        self.assertNotIn("PGUSER=postgres", calls[0][0])
         self.assertIn("PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=5000",
                       calls[0][0])
         self.assertEqual(calls[0][1], (ROOT / "deploy/db/preupgrade-recovery-audit.sql").read_bytes())

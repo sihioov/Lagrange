@@ -125,6 +125,13 @@ are omitted from the catalog comparison; the physical archive still preserves
 the original bytes. Full audit equality with the pre-stop observation is
 required. The original server/volume is not mounted into the verifier.
 
+The installed cluster uses the existing `lagrange` database administrator. Both
+the live audit and the physical clone connect as that role; OS uid999 is the
+PostgreSQL process owner and does not imply a database role named `postgres`.
+The fixed audit checks the exact login and superuser status without creating
+roles or changing privileges. The disposable recovery fixture uses the same
+bootstrap role and exercises the exact live audit command.
+
 ## Written verification and limits
 
 [Filesystem tests](../../scripts/ops/production-preupgrade-recovery-self-test.py)

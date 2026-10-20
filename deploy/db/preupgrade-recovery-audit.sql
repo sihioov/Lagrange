@@ -11,7 +11,8 @@ SET LOCAL DateStyle = 'ISO, YMD';
 
 DO $guard$
 BEGIN
-    IF current_user <> 'postgres' OR session_user <> 'postgres'
+    IF current_user <> 'lagrange' OR session_user <> 'lagrange'
+       OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper)
        OR current_setting('server_version_num')::integer NOT BETWEEN 180000 AND 189999 THEN
         RAISE EXCEPTION 'PREUPGRADE_DATABASE_IDENTITY' USING ERRCODE='42501';
     END IF;

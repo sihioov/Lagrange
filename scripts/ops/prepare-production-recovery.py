@@ -700,19 +700,24 @@ def checked_receipt(receipt, value, *, fresh):
     return receipt
 
 
+def audit_command(value):
+    # The installed cluster was initialized with POSTGRES_USER=lagrange.
+    # OS uid999 owns PostgreSQL; it does not imply a database role named postgres.
+    return ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "exec", "-i",
+        "--user", "999:999", value["postgres"]["id"], "/usr/bin/env", "-i",
+        "PATH=/usr/lib/postgresql/18/bin:/usr/bin:/bin", "PGHOST=/var/run/postgresql", "PGUSER=lagrange",
+        "PGCONNECT_TIMEOUT=10", "PGPASSFILE=/dev/null", "PGSERVICEFILE=/dev/null",
+        "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=5000",
+        "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "150s",
+        "psql", "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "--dbname=" + value["database"]]
+
+
 def audit(value, storage, native):
     native.guard(False)
     with storage.temporary(".preupgrade-audit-") as stage:
         script = ROOT / "deploy/db/preupgrade-recovery-audit.sql"
         with script.open("rb") as source:
-            storage.command_file(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "exec", "-i",
-                "--user", "999:999", value["postgres"]["id"], "/usr/bin/env", "-i",
-                "PATH=/usr/lib/postgresql/18/bin:/usr/bin:/bin", "PGHOST=/var/run/postgresql", "PGUSER=postgres",
-                "PGCONNECT_TIMEOUT=10", "PGPASSFILE=/dev/null", "PGSERVICEFILE=/dev/null",
-                "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=5000",
-                "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "150s",
-                "psql", "-X", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "--dbname=" + value["database"]],
-                stage / "audit.json", source, seconds=160)
+            storage.command_file(audit_command(value), stage / "audit.json", source, seconds=160)
         payload = install.read_root_file(str(stage / "audit.json"), gid=0, mode=0o600, maximum=LIMIT)
         require(len(payload.splitlines()) == 1, "PREUPGRADE_AUDIT_RESULT")
         receipt = {"schema": SCHEMA, "binding_sha256": digest(files.canonical(binding(value))),

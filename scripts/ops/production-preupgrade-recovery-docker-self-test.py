@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import types
@@ -35,10 +36,12 @@ def load(name, path):
 
 recovery = load("preupgrade_docker_tested", ROOT / "scripts/ops/lib/production-preupgrade-recovery.py")
 helpers = load("preupgrade_docker_helpers", ROOT / "scripts/ops/owner-beta-daily-backup-docker-self-test.py")
+maintenance = load("preupgrade_docker_maintenance", ROOT / "scripts/ops/prepare-production-recovery.py")
 backup, files = recovery.backup, recovery.files
 
 
 class PreupgradeDockerTests(unittest.TestCase):
+    admin_role = "lagrange"
     command = classmethod(helpers.DailyBackupDockerTests.command.__func__)
     sql = classmethod(helpers.DailyBackupDockerTests.sql.__func__)
     sqlstate = staticmethod(helpers.DailyBackupDockerTests.sqlstate)
@@ -67,11 +70,19 @@ class PreupgradeDockerTests(unittest.TestCase):
         os.chown(secret, 999, 999)
         cls.server = cls.command(["run", "--detach", "--name", cls.project + "-source", "--network=none",
             "--label", "io.lagrange.preupgrade-fixture=" + cls.project,
-            "--env", "POSTGRES_DB=lagrange", "--env", "POSTGRES_PASSWORD_FILE=/run/test-secret",
+            "--env", "POSTGRES_USER=lagrange", "--env", "POSTGRES_DB=lagrange",
+            "--env", "POSTGRES_PASSWORD_FILE=/run/test-secret",
             "--mount", "type=volume,src=" + cls.volume + ",dst=/var/lib/postgresql",
             "--mount", "type=bind,src=" + str(secret) + ",dst=/run/test-secret,readonly", backup.POSTGRES
         ]).stdout.decode().strip()
         cls.wait_for_database()
+        cls.admin_identity = cls.sql(
+            "SELECT current_user||':'||session_user||':'||"
+            "(SELECT rolsuper::text FROM pg_roles WHERE rolname=current_user)||':'||"
+            "(NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='postgres'))::text;",
+            stage="identity").strip()
+        if cls.admin_identity != b"lagrange:lagrange:true:true":
+            raise RuntimeError("PREUPGRADE_FIXTURE_ADMIN_IDENTITY")
         roles = ("migration_owner", "app", "worker", "admin", "research_writer", "audit_writer")
         cls.sql("".join("CREATE ROLE " + role + " LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE "
                 "NOREPLICATION NOBYPASSRLS;\n" for role in roles) +
@@ -103,8 +114,21 @@ class PreupgradeDockerTests(unittest.TestCase):
                 "ALTER TABLE public.cold_fixture_rows FORCE ROW LEVEL SECURITY;"
                 "CREATE POLICY cold_reader ON public.cold_fixture_rows TO cold_fixture_reader USING(id=1);"
                 "GRANT SELECT ON public.cold_fixture_rows TO cold_fixture_reader;", stage="seed")
-        cls.audit = backup.install.json_bytes(cls.sql((ROOT / "deploy/db/preupgrade-recovery-audit.sql").read_text(),
-                                                       stage="audit"), maximum=1024 * 1024)
+        audit_sql = (ROOT / "deploy/db/preupgrade-recovery-audit.sql").read_bytes()
+        # Exercise the exact live audit command against the disposable source.
+        result = subprocess.run(maintenance.audit_command(
+            {"postgres": {"id": cls.server}, "database": "lagrange"}),
+            input=audit_sql, env=backup.ops.ENVIRONMENT, capture_output=True, timeout=160, check=False)
+        if result.returncode != 0:
+            raise RuntimeError("PREUPGRADE_FIXTURE_FIXED_AUDIT:" + cls.sqlstate(result))
+        cls.audit = backup.install.json_bytes(result.stdout, maximum=1024 * 1024)
+        wrong_role = cls.command(["exec", "--interactive", "--user", "999:999", cls.server,
+            "psql", "-X", "-q", "-A", "-t", "-U", "migration_owner", "-d", "lagrange",
+            "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate"],
+            audit_sql, allow_failure=True)
+        cls.wrong_role_audit = (wrong_role.returncode, cls.sqlstate(wrong_role))
+        if cls.wrong_role_audit != (3, "42501"):
+            raise RuntimeError("PREUPGRADE_FIXTURE_ADMIN_GUARD")
         recovery.checked_audit(cls.audit, database="lagrange", system_identifier=cls.audit["system_identifier"],
                                migrations=cls.migrations)
         cls.command(["stop", "--time", "30", cls.server], timeout=40)
@@ -117,6 +141,13 @@ class PreupgradeDockerTests(unittest.TestCase):
         cls.image_id = info["Image"]
         cls.check_stopped()
         cls.protect_fixture_volume_parent()
+
+    def test_fixed_audit_uses_existing_admin_without_postgres_role(self):
+        self.assertEqual(self.admin_identity, b"lagrange:lagrange:true:true")
+        self.assertEqual(self.audit["database"], "lagrange")
+
+    def test_fixed_audit_rejects_a_different_database_login(self):
+        self.assertEqual(self.wrong_role_audit, (3, "42501"))
 
     @classmethod
     def protect_fixture_volume_parent(cls):

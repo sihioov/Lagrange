@@ -5,7 +5,7 @@ set -euo pipefail
 umask 077
 [[ "$#" -eq 1 && "$1" =~ ^[a-z][a-z0-9_]{0,62}$ && "$(id -u)" -eq 999 ]] || exit 1
 for name in "${!PG@}"; do unset "$name"; done
-export PGDATA=/restore/18/docker PGHOST=/tmp PGPORT=5432 PGUSER=postgres PGDATABASE="$1"
+export PGDATA=/restore/18/docker PGHOST=/tmp PGPORT=5432 PGUSER=lagrange PGDATABASE="$1"
 export PGPASSFILE=/dev/null PGSERVICEFILE=/dev/null PGCONNECT_TIMEOUT=10 LC_ALL=C
 [[ -f /verify.sql && -f "$PGDATA/PG_VERSION" && "$(cat "$PGDATA/PG_VERSION")" == 18 ]] || exit 1
 for name in postmaster.pid backup_label tablespace_map standby.signal recovery.signal; do
