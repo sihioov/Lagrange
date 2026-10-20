@@ -630,6 +630,61 @@ def write_json(directory, name, value):
         install.create_file(parent, name, files.canonical(value), 0, 0, 0o600)
 
 
+FAILURE_CODES = frozenset({
+    "PREUPGRADE_BOOT_CHANGED", "PREUPGRADE_RELEASE_CHANGED", "PREUPGRADE_PIN_CHANGED",
+    "PREUPGRADE_MIGRATION_BYTES", "PREUPGRADE_UNITS", "PREUPGRADE_UNITS_CHANGED",
+    "PREUPGRADE_CGROUP", "PREUPGRADE_CGROUP_CHANGED", "PREUPGRADE_WRITER_ACTIVE",
+    "PREUPGRADE_WRITER_INVENTORY", "PREUPGRADE_WRITERS_CHANGED",
+    "PREUPGRADE_SOURCE_ANCESTRY", "PREUPGRADE_VOLUME_PARENT", "PREUPGRADE_VOLUME_CHANGED",
+    "PREUPGRADE_DATABASE_CHANGED", "PREUPGRADE_DATABASE_NOT_RUNNING",
+    "PREUPGRADE_KEY", "PREUPGRADE_KEY_CHANGED", "PREUPGRADE_RAW",
+    "PREUPGRADE_RAW_CHANGED", "PREUPGRADE_PENDING_CLEANUP", "PREUPGRADE_OBSERVATION",
+    "PREUPGRADE_AUDIT_RESULT", "PREUPGRADE_AUDIT_RECEIPT", "PREUPGRADE_AUDIT_EXPIRED",
+    "PREUPGRADE_DATABASE_AUDIT", "PREUPGRADE_MIGRATIONS", "PREUPGRADE_INTERRUPTED",
+    "DAILY_RUNTIME_INVALID", "DAILY_BACKUP_SPACE", "DAILY_BACKUP_PROCESS",
+    "DAILY_BACKUP_PROCESS_LIMIT", "DAILY_BACKUP_VERIFY_PENDING",
+    "DAILY_BACKUP_FILES_TYPE_OR_MODE", "DAILY_BACKUP_FILES_ACL",
+})
+
+
+def failure_details(error):
+    """Fixed codes and source locations only; never exception text or locals."""
+    code = "UNKNOWN"
+    if type(error) in {runtime.RuntimeErrorCode, files.SnapshotError,
+                       install.DailyInstallError, RuntimeError}:
+        if len(error.args) == 1 and type(error.args[0]) is str and error.args[0] in FAILURE_CODES:
+            code = error.args[0]
+    elif isinstance(error, OSError) and type(error.errno) is int and error.errno in {
+            1, 2, 5, 9, 11, 13, 17, 20, 21, 28, 30, 40}:
+        code = "OS_ERROR_" + str(error.errno)
+    locations = []
+    allowed = {str(ROOT / relative): relative for relative in PAYLOAD if relative.endswith(".py")}
+    trace = error.__traceback__
+    while trace is not None:
+        relative = allowed.get(trace.tb_frame.f_code.co_filename)
+        if relative is not None:
+            locations.append({"source": relative, "line": trace.tb_lineno})
+        trace = trace.tb_next
+    return {"code": code, "locations": locations[-4:], "locationsTruncated": len(locations) > 4}
+
+
+def record_failure(value, mode, error):
+    """Best-effort exclusive diagnostic; failure never delays owed restoration."""
+    if value is None:
+        return
+    try:
+        receipt = {"schema": "lagrange-preupgrade-failure-v1", "mode": mode,
+            "recovery_id": value["recovery_id"],
+            "binding_sha256": digest(files.canonical(binding(value))),
+            "observed_at": utc().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "error": failure_details(error), "recoveryAccepted": False}
+        write_json(Path("/srv/backups/lagrange"),
+                   "preupgrade-failure-" + value["recovery_id"] + "-" + mode + ".json", receipt)
+    except Exception:
+        # Retain any existing/partial receipt; no overwrite, repair or retry.
+        pass
+
+
 def checked_receipt(receipt, value, *, fresh):
     require(isinstance(receipt, dict) and set(receipt) ==
             {"schema", "binding_sha256", "boot_id", "observed_at", "database"} and
@@ -728,6 +783,7 @@ def main(argv=None):
     parser = Arguments(description=__doc__)
     parser.add_argument("--mode", choices=("plan", "audit", "capture", "verify"), default="plan")
     parser.add_argument("--contract")
+    value = None
     try:
         args = parser.parse_args(argv)
         if args.mode == "plan":
@@ -768,8 +824,10 @@ def main(argv=None):
         print("PREUPGRADE: " + {"audit": "AUDIT_WRITERS_REMAIN_STOPPED", "capture":
               "CAPTURE_VERIFIED_WRITERS_REMAIN_STOPPED", "verify": "EXISTING_POINT_VERIFIED"}[args.mode])
         return 0
-    except Exception:
+    except Exception as error:
         signal.setitimer(signal.ITIMER_REAL, 0)
+        if value is not None:
+            record_failure(value, args.mode, error)
         print("PREUPGRADE: FAILED_WRITERS_MUST_REMAIN_STOPPED_INSPECT_OWNED_RESOURCES", file=sys.stderr)
         return 1
 

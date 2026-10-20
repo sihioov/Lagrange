@@ -486,6 +486,83 @@ class MaintenanceTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class FailureEvidenceTests(unittest.TestCase):
+    def test_only_known_codes_are_returned_without_exception_text(self):
+        sentinel = "secret-sentinel-never-record"
+        for error_type in (ERROR, files.SnapshotError, maintenance.install.DailyInstallError, RuntimeError):
+            self.assertEqual(maintenance.failure_details(error_type("PREUPGRADE_UNITS_CHANGED"))["code"],
+                             "PREUPGRADE_UNITS_CHANGED")
+            for message in (sentinel, "PREUPGRADE_" + sentinel, "PREUPGRADE_UNITS_CHANGED\n" + sentinel):
+                result = maintenance.failure_details(error_type(message))
+                self.assertEqual(result["code"], "UNKNOWN")
+                self.assertNotIn(sentinel, str(result))
+        error = PermissionError(13, sentinel, "/private/" + sentinel)
+        self.assertEqual(maintenance.failure_details(error)["code"], "OS_ERROR_13")
+        self.assertNotIn(sentinel, str(maintenance.failure_details(error)))
+        self.assertEqual(maintenance.failure_details(OSError(999, sentinel))["code"], "UNKNOWN")
+
+    def test_locations_contain_only_owned_source_lines_and_never_locals(self):
+        try:
+            maintenance.checked_units({}, "reciprocal")
+        except ERROR as error:
+            result = maintenance.failure_details(error)
+        self.assertEqual(result["code"], "PREUPGRADE_UNITS")
+        self.assertTrue(result["locations"])
+        self.assertLessEqual(len(result["locations"]), 4)
+        for location in result["locations"]:
+            self.assertEqual(set(location), {"source", "line"})
+            self.assertIn(location["source"], maintenance.PAYLOAD)
+            self.assertIs(type(location["line"]), int)
+            self.assertGreater(location["line"], 0)
+
+    def test_receipt_is_exclusive_and_preserves_first_failure(self):
+        with tempfile.TemporaryDirectory(prefix="preupgrade-failure-", dir="/var/lib") as directory:
+            real_write = maintenance.write_json
+            def private_write(root, name, receipt):
+                self.assertEqual(root, Path("/srv/backups/lagrange"))
+                real_write(Path(directory), name, receipt)
+            candidate = value()
+            with mock.patch.object(maintenance, "write_json", side_effect=private_write):
+                maintenance.record_failure(candidate, "audit", ERROR("PREUPGRADE_UNITS_CHANGED"))
+                path = Path(directory) / ("preupgrade-failure-" + candidate["recovery_id"] + "-audit.json")
+                before = path.read_bytes()
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                receipt = maintenance.install.json_bytes(before)
+                self.assertFalse(receipt["recoveryAccepted"])
+                self.assertEqual(receipt["binding_sha256"],
+                                 maintenance.digest(files.canonical(maintenance.binding(candidate))))
+                self.assertEqual(receipt["error"]["code"], "PREUPGRADE_UNITS_CHANGED")
+                maintenance.record_failure(candidate, "audit", ERROR("PREUPGRADE_VOLUME_CHANGED"))
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(len(list(Path(directory).iterdir())), 1)
+
+    def test_receipt_capacity_failure_is_not_retried_and_unparsed_contract_writes_nothing(self):
+        with mock.patch.object(maintenance, "write_json", side_effect=OSError(28, "private")) as write:
+            maintenance.record_failure(None, "audit", ERROR("PREUPGRADE_UNITS"))
+            write.assert_not_called()
+            maintenance.record_failure(value(), "audit", ERROR("PREUPGRADE_UNITS"))
+            write.assert_called_once()
+
+    def test_main_failure_retains_failure_exit_and_emits_no_exception_body(self):
+        candidate = value()
+        error = ERROR("PREUPGRADE_UNITS_CHANGED")
+        output = io.StringIO()
+        with mock.patch.object(maintenance.install, "require_root"), \
+                mock.patch.object(maintenance.os, "umask"), \
+                mock.patch.object(maintenance.install, "read_root_file", return_value=b"fixture"), \
+                mock.patch.object(maintenance, "contract", return_value=candidate), \
+                mock.patch.object(maintenance, "ROOT",
+                                  Path("/opt/lagrange/maintenance") / candidate["tool_commit"]), \
+                mock.patch.object(maintenance, "Window", side_effect=error), \
+                mock.patch.object(maintenance, "record_failure") as record, \
+                mock.patch.object(maintenance.signal, "setitimer"), \
+                mock.patch.object(sys, "stderr", output):
+            self.assertEqual(maintenance.main(["--mode", "audit", "--contract", "/fixture"]), 1)
+        record.assert_called_once_with(candidate, "audit", error)
+        self.assertEqual(output.getvalue(),
+                         "PREUPGRADE: FAILED_WRITERS_MUST_REMAIN_STOPPED_INSPECT_OWNED_RESOURCES\n")
+
+
 class StagedPayloadTests(unittest.TestCase):
     def staged(self, missing=None):
         with tempfile.TemporaryDirectory(prefix="preupgrade-payload-") as directory:
