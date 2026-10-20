@@ -11,6 +11,7 @@ import datetime
 import fcntl
 import importlib.util
 import io
+import itertools
 import os
 from pathlib import Path
 import signal
@@ -434,7 +435,8 @@ class MaintenanceTests(unittest.TestCase):
         base["HostConfig"] = {"NetworkMode": "none"}
         base["Mounts"] = []
         base["Config"]["Labels"] = {}
-        for change in (lambda c: c["Mounts"].append({"Source": self.value["roots"][0]["path"]}),
+        for change in (lambda c: c["Mounts"].append(
+                           {"Source": self.value["roots"][0]["path"], "Destination": "/data/raw"}),
                        lambda c: c["NetworkSettings"]["Networks"].update(shared={"NetworkID": "f" * 64}),
                        lambda c: c["HostConfig"].update(NetworkMode="host")):
             observed = copy.deepcopy(base)
@@ -959,6 +961,75 @@ class CgroupTests(unittest.TestCase):
             return data
         with mock.patch.object(maintenance.os, "read", side_effect=read), self.assertRaises(ERROR):
             self.check()
+
+
+class WriterPolicyTests(unittest.TestCase):
+    """Pure metadata regression: no native commands, secrets or service changes."""
+
+    def container(self):
+        value = fixture.PreupgradeRecoveryTests.container()
+        value["HostConfig"] = {"Binds": ["first", "second"], "ReadonlyRootfs": True}
+        value["NetworkSettings"] = {"Networks": {"fixture": {"NetworkID": "f" * 64}}}
+        value["Mounts"] = [
+            {"Type": "bind", "Source": "/fixture/" + name, "Destination": "/data/" + name,
+             "Mode": "ro", "RW": False, "Propagation": "rprivate"}
+            for name in ("curated", "catalog", "artifacts", "key")
+        ]
+        return value
+
+    def test_writer_policy_all_mount_permutations_match_without_mutating_input(self):
+        value = self.container()
+        original = copy.deepcopy(value)
+        expected = maintenance.stopped_writer(value)
+        for permutation in itertools.permutations(value["Mounts"]):
+            observed = copy.deepcopy(value)
+            observed["Mounts"] = list(permutation)
+            self.assertEqual(maintenance.stopped_writer(observed), expected)
+        self.assertEqual(value, original)
+
+    def test_writer_policy_mount_field_changes_remain_visible(self):
+        value = self.container()
+        expected = maintenance.stopped_writer(value)
+        for key, replacement in (("Source", "/changed"), ("Destination", "/other"),
+                                 ("RW", True), ("Mode", "rw"), ("Propagation", "shared"),
+                                 ("Type", "volume"), ("Name", "added-field")):
+            with self.subTest(field=key):
+                observed = copy.deepcopy(value)
+                observed["Mounts"][0][key] = replacement
+                self.assertNotEqual(maintenance.stopped_writer(observed), expected)
+
+    def test_writer_policy_other_arrays_and_network_fields_keep_their_meaning(self):
+        value = self.container()
+        expected = maintenance.stopped_writer(value)
+        for change in (
+            lambda v: v["HostConfig"]["Binds"].reverse(),
+            lambda v: v["Config"].update(Env=["changed"]),
+            lambda v: v["NetworkSettings"]["Networks"]["fixture"].update(NetworkID="e" * 64),
+        ):
+            observed = copy.deepcopy(value)
+            change(observed)
+            self.assertNotEqual(maintenance.stopped_writer(observed), expected)
+
+    def test_writer_policy_rejects_ambiguous_or_malformed_mounts(self):
+        value = self.container()
+        for mounts in (None, {}, [value["Mounts"][0]] * 2, [{}],
+                       [{"Destination": "/data/../curated"}],
+                       [{"Destination": "/data//curated"}],
+                       [{"Destination": "/data/\ncurated"}],
+                       [{"Destination": "/data/" + str(i)} for i in range(65)]):
+            with self.subTest(mounts=mounts):
+                observed = copy.deepcopy(value)
+                observed["Mounts"] = mounts
+                with self.assertRaises(ERROR):
+                    maintenance.stopped_writer(observed)
+
+    def test_writer_policy_still_requires_a_stopped_generation(self):
+        value = self.container()
+        for patch in ({"Running": True}, {"Pid": 1}, {"Paused": True}, {"OOMKilled": True}):
+            observed = copy.deepcopy(value)
+            observed["State"].update(patch)
+            with self.assertRaises(ERROR):
+                maintenance.stopped_writer(observed)
 
 
 if __name__ == "__main__":

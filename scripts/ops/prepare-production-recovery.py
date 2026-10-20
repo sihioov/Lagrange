@@ -270,6 +270,17 @@ class Window:
         return remaining
 
 
+def canonical_mounts(value):
+    """Compare mount mappings by destination while retaining every field."""
+    require(type(value) is list and len(value) <= 64 and
+            all(type(m) is dict and type(m.get("Destination")) is str and
+                runtime.absolute(m["Destination"]) for m in value),
+            "PREUPGRADE_WRITER_MOUNTS")
+    destinations = [m["Destination"] for m in value]
+    require(len(destinations) == len(set(destinations)), "PREUPGRADE_WRITER_MOUNTS")
+    return sorted(value, key=lambda m: m["Destination"])
+
+
 def stopped_writer(value):
     state = value.get("State", {})
     require(state.get("Status") == "exited" and state.get("Running") is False and
@@ -277,10 +288,11 @@ def stopped_writer(value):
             state.get("Dead") is False and type(state.get("Pid")) is int and state.get("Pid") == 0 and
             type(value.get("RestartCount")) is int and value["RestartCount"] >= 0 and
             not state.get("OOMKilled") and not state.get("Error"), "PREUPGRADE_WRITER_ACTIVE")
+    policy = {k: value.get(k) for k in ("Image", "Config", "HostConfig", "Mounts", "NetworkSettings")}
+    policy["Mounts"] = canonical_mounts(policy["Mounts"])
     return {"id": value["Id"], "created": value["Created"], "started_at": state["StartedAt"],
             "finished_at": state["FinishedAt"], "restart_count": value["RestartCount"],
-            "policy_sha256": digest(files.canonical({k: value.get(k) for k in
-                ("Image", "Config", "HostConfig", "Mounts", "NetworkSettings")}))}
+            "policy_sha256": digest(files.canonical(policy))}
 
 
 def empty_cgroup(name, window, root="/sys/fs/cgroup"):

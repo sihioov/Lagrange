@@ -7311,4 +7311,529 @@ Hostedb2cc36c2 / required-aeb5b328 / workspacef5687777 / policyPGe32f8a88. 입�
 복구 처리와 최종 argv/unit packet은 미완료다. 키 외부 보관·외부 writer 질문은 그대로
 미응답이며 이 초안은 운영 권한이나 실행 준비 완료를 뜻하지 않는다.
 
+07:00UTC 후속 정적 검토: receipt `g4-static-recovery-audit.json`/a9f6cbc5에
+부분 record로 인한 복구 조회 차단, 시계 변동 시 복구 예외, 효과 없는 stop의 잘못된
+복구 의무, capture admission과 복구 완료의 혼합을 네 OPEN finding으로 기록했다.
+12개 시나리오는 소스에서 도출했으며 실행·수정 완료가 아니다. 새 제어의 실제 검증과
+WP-7 독립 리뷰 근거는 아직 없고, 현재 동일 에이전트 검토로 이를 대체하지 않는다.
+위임·운영 실행·질문 반복 없이 기존 인수 근거와 초안 원본을 보존한다.
+
+07:23UTC 후속 작성: 새 private V2 모형에 시계·stop 효과·복구/백업 판정의 세 소스
+보정 초안을 반영했다(receipt63ab1228). V1 저장부와 호환되지 않으며 원본은 유지한다.
+V2 시나리오16개와 저장부 fault 조건12개는 미실행이다. 부분 기록 저장 방식·실제
+adapter·실행 검증·독립 리뷰는 남아 있어 네 finding을 닫지 않는다. 운영 실행 없음.
+
 후속 추적e3e092a9를05:48:08UTC 별도 active ID로 확인하고 인계0613d80d/registry 저장 후4786839b 삭제를 확인했다.17:00UTC 전/47번째 tick 전 갱신,17:48:08UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.
+
+07:43UTC 저장부 후속 작성: 새 V2 저장 초안341d6046/준비 receipted5adf10에
+완성 record의 no-replace 공개와 양쪽 directory fsync, 실패 slot 영구 보존·정상 sequence 분리,
+전체 orphan snapshot을 결합했다. 새 복구 기록에는 미구현 독립 효과 validator가 필요하다.
+장애 조건16개는 미실행이며 실제 연결부·검증·독립 리뷰 없이 네 finding을 닫지 않는다.
+운영·프로젝트/초안 실행·새 질문·기존 인수 변경은 없다.32개 무관 ROADMAP 추가를 보존했다.
+
+08:14UTC 기록 연결부: bridgeac96517a/준비 ab17dc05에 실제 V2 Record/Journal 변환과
+snapshot·승인·intent·종료 효과 receipt 결합을 구현한 소스를 작성했다.17개 회귀 소스는
+미실행이다. 실제 관측/효과 검증·orphan 해소·readiness/dispatch/recovery/final observer가
+남아 있어 운영 완료 조건 추가 통과0, 네 finding OPEN이다. 반복 승인 질문·운영 실행은 없다.
+
+### Wave114 observation and readiness transport source — 2026-10-19 08:38 UTC
+
+R2-04/R2-09 preparation `1481c3f7` adds a protected loader, live observation
+functions and bounded Unix peer transport source. Source checks retain the original
+monotonic window, immutable controls and explicit no-retry behavior; a stopped
+snapshot or READY message is not accepted as daemon completion or actual recovery
+readiness. Twenty-two regression definitions were written but not executed.
+No parser/import/compiler/test, host observation or lifecycle action was run.
+
+Next: complete full admission/restore-plan verification and actual readiness
+prerequisites, command completion/orphan reconciliation and durable main-failure
+handling; integrate main/recovery/final observation, then obtain the required
+validation and independent review before one complete operating decision. The
+existing custody/external-writer information question remains pending, without
+repeating it. All four findings remain OPEN and no actual G4 completion condition
+was newly passed. R2 final still requires G4, transition/deployment, actual Owner
+use and three consecutive actual trading days.
+
+### Wave114 continued: recovery resources (2026-10-19 UTC)
+
+- R2-04/R2-09: `g4-recovery-resources-v2-preparation.json` (`ebcac376`) pins the
+  unexecuted singleton/PG-parent/original-plan/one-shot monotonic timer monitor,
+  static scope and 19 unexecuted fault-test definitions. It connects the existing
+  V2 journal and transport resources without emitting READY or dispatch authority.
+- Acyclic original-plan/admission/binding hashes; own-fd FLOCK plus independent-open
+  conflict; deadline priority; no rearm, lock repair, host lifecycle or PG mode
+  changes. Source-only review found and addressed own-lock attribution and
+  deadline/cleanup edge cases, not runtime reproductions.
+- Full admission, verified loader, READY response, actual stop/wait/effect/orphan
+  handling, durable failed-main state, integrated restoration/final observer and
+  fault/independent validation remain. Four findings OPEN; operating completion
+  conditions newly passed: zero. Keep the existing custody/external-writer question
+  pending, preserve all prior accepted controls/evidence, and continue statically.
+
+### Wave114 priority correction: smallest operating path
+
+Owner asked whether to move on instead of continuing preparation. Stop expanding
+the separate private controller. Reconcile the smallest concrete operating path
+around accepted maintenance790f1ea and application e639169. The G4 gate specifies
+results and exact operations, not this particular controller implementation.
+Preserve consistent backup, actual isolated restore, independent recovery ready
+before outage/permission changes, fixed identities, bounded terminal recovery and
+the pending custody/external-writer information. Existing private drafts/findings
+remain unaccepted; no operating authorization or waived gate is inferred. Compare
+reuse of the accepted prior recovery mechanism before implementing anything new.
+
+
+### Wave114 existing-tool path and rollout bindings
+
+Static source comparison now binds12 accepted maintenance payloads/305106bytes and
+17 accepted application deployment sources. Old59 UP migration bytes are preserved;
+only0060–0062 are added (62target SHA256/SHA384 pins). Private records
+`existing-tools-minimal-sequence.json` (1ff0729e) and
+`deployment-e639169-source-plan.json` (b04aa370) enumerate34 G4 actions and10 official
+rollout command entries with unfilled production inputs and explicit prerequisites.
+No helper/test/host execution occurred. Existing Owner-only recovery cannot simply
+cover the larger G4 set; do not relaunch its unit or transfer consumed authority.
+Keep separate framework expansion deferred; implement only the missing bounded
+admission/resumption connection. No independent recovery is ready yet. Existing
+four findings and custody/writer answers remain open. See the Wave114 review's
+existing-tool-path section; no new build, CI, approval request or deployment.
+
+
+### Wave114 Owner-wide R2 authorization and execution validation
+
+Owner explicitly approved remaining R2 implementation, required verification, G4
+backup/restoration and deployment. Persisted authorizationda47fce9 supersedes
+authorization-pending status; do not re-ask the same permission. Missing custody
+and external/manual-writer facts remain pending, not inferred from approval.
+
+Existing58 component tests now PASS. The minimal fixed-command runner and21 tests
+(including4 actual private Python children) PASS; receipts15ae6a2b/b3f306c2. It
+retains original pending stop clients across deadlines, disallows replay, hashes
+output and requires successful original response plus fresh exact stop observation.
+The deadline-after-intent path is classified as not dispatched and revokes main.
+No production command ran. Complete the remaining actual admission/ready/local
+operation/restoration adapter connection and integrated fault validation; preserve
+all accepted sources/evidence and four OPEN full-controller findings. No framework
+expansion, CI/image rerun or repeated question. Native Ralph has no exposed resume
+API; use honest same-agent bounded tracking while actual R2 acceptance stays open.
+
+
+### Wave114 fixed sequence and persistent-recording-failure integration
+
+Additional42 tests PASS:16 finite sequence/mock-native cases,16 actual private
+filesystem cases and10 combined real-private-storage/mock-daemon cases. The fixed
+sequence preserves pending original stop clients, restores only witnessed targets
+and separates original-service restoration from backup acceptance. Held-FD local
+operations restore the actual parent mode after partial chmod and preserve failed
+exclusive record writes. A pre-outage set of15 contingent restore intents prevents
+persistent record-write capacity failure from blocking a verified original restore;
+per-dispatch durability loss rejects capture, while integrity drift still blocks.
+Receipts6d942da4/47417537/7ed3274e and full limitations are in the Wave114 review.
+
+Next implement only native admission, actual independent readiness/requester drain,
+protected official contract/result binding and final closure around these tested
+pieces. No production entrypoint or host operation exists yet; no full-controller
+finding is closed by the fixture tests. Required custody/writer facts remain pending;
+blanket authorization stands and no further permission question is needed for the
+covered R2 work. Keep heartbeat1b9f4608 and old evidence/source intact.
+
+
+### Wave114 native restoration and official receipt adapters
+
+Native restore gates now observe exact requester/recovery generations, recursive
+cgroups, original stop responses, preserved inventory and healthy original
+services before timer resumption. Official-result recovery binds successful child
+responses to accepted contract/audit validation, COMPLETE and encrypted-file
+hashes without repeating the accepted private PG restore. New23+11 cases PASS;
+receipts7fceabd2/55f40715. Earlier fixture failures remain recorded. Tests use
+actual private files and explicit simulated root/cgroup/daemon evidence, not
+production admission. The12 accepted tool payload pins remain unchanged.
+
+Remaining connection: fresh host admission and protected loader, actual independent
+READY/requester release, fresh complete maintenance contract and external recovery
+terminal collection. Keep the34-action/32-command inventory and existing accepted official
+capture; do not add another verifier/framework. Operating execution remains0;
+full-controller findings remainOPEN. Existing blanket approval stands. Custody and
+external/manual writer facts remain unknown pending the original information
+question. Heartbeat1b9f4608 continues the same phase; no replacement was needed.
+
+
+### Wave114 independent READY and requester terminal
+
+The requester now has one fixed READY/ACK/normal-exit exchange. Recovery verifies
+actual resource adapters before READY and the requester's exact successful terminal
+before any outage; recovery owns all32 command clients throughout the34 actions.
+New11 tests PASS, including2 real unprivileged private requester processes and
+AF_UNIX peer credentials, with explicit simulated root/systemd/cgroup evidence.
+Receipt73a245c8; prior155 tests were not repeated, host execution remains0.
+
+Finish protected admission/loading, fresh official contract and actual operating
+entrypoint plus external recovery-terminal recovery. Do not call the NEW-only
+full READY snapshot check after stopping resources: the subsequent main gate must
+check the witnessed step state. Preserve original deadlines/stop clients/conditional
+restore intents and reuse accepted790f1ea audit/capture. No new framework, repeated
+CI, repeated approval or factual question. Four full-controller findings remainOPEN.
+The current same-agent heartbeat1b9f4608 remains in the same phase.
+
+
+### Wave114 official contract and operating adapter composition
+
+The fixed connection now composes READY/requester release, recovery-owned commands,
+held local changes, witnessed-stop restoration and accepted official result recovery.
+The post-stop contract builder preserves actual unit edges, container generations,
+post-chmod volume metadata and the original clock window. It limits file pins to
+the required paths plus12 exact accepted tool hashes and reuses the accepted base
+scanner; no new verifier or accepted-source modification.
+
+New18 tests PASS (5c8a9261); initial pin-drift fixture failure e0cb6f54 is retained.
+Tests use accepted pure validators/scanner and private base files with explicit
+simulated root/host inputs. No real Docker/systemd/SQL/root/production execution.
+Prior166 tests were not repeated. The callable connection has no protected host
+bootstrap yet. Finish fresh admission/loading, real information bindings and
+external recovery-terminal collection, then validate the assembled path including
+query budget under slow health/persistent recording failure and retention of any
+unresolved owned command after a deadline. Preserve the45-minute original window;
+no lifecycle renewal/retry or false process-absence claim. Four findings remainOPEN.
+Heartbeat1b9f4608 continues the same phase; blanket authority remains in force.
+
+
+### Wave114 composed sequence and runner-v2 correction
+
+- Composed connection/sequence/runner/native restoration/journal/READY resources/
+  contract builder:11 explicit-host-fixture cases PASS, a4 SHA
+  `66cb74be3ecb68ce807e244067efb6baebc0e7484026a37d80a53c33d777097d`.
+- Storage-failure integration exposed consumed restore intent with no terminal
+  before Popen. Preserve v1; v2 records NOT_DISPATCHED only during intent
+  publication and removes it before launch. Ambiguous launch stays unresolved.
+- Existing21 runner cases rechecked against v2, including four actual private
+  children all reaped, receipt3fb5d302. Distinct total195; repeated21 not added.
+- Query estimates3346 normal/3946 with600 extra health reads approach4096.
+  Resolve admission reserve/slow-health bounds and duplicate gates without
+  assuming these fixture counts prove a host upper bound. No bound increased.
+- Protected bootstrap/admission and external terminal collection remain open.
+  An unresolved stop at shared deadline retains its client/owner and stays
+  INCOMPLETE; no exit/kill/replay/renewal is authorized by the test result.
+- Four full-controller findings remain OPEN. No production execution, accepted
+  app/tool change, repeated approval or repeated factual question.
+
+
+### Wave114 recovery query reserve and external terminal collector
+
+- Use fixed contract/native/connection v2 with the already corrected runner-v2.
+  Preserve v1. Read all56 unit property records in two exact bounded show calls;
+  reject missing/duplicate/extra fields. READY<=512, MAIN step allowance256,
+  restore reserve2300 within4096; shared health waits<=900 at3seconds, no renewal.
+- Query-bound26 cases PASS (15new/11repeated), receipt e310ad39. The combined
+  maximum READY/storage-loss/900-wait fixture uses3627 reads and restores15targets.
+  This is fixture evidence, not a host upper bound or operating admission.
+- External collector23 cases PASS, receipt a1e88ae9. Actual module checks both
+  original successful process terminals/empty cgroups,64 command records, exact
+  publication pins and original restored state. Tests simulate protected host IO
+  and process observations; accepted pure official audit validation is real code.
+  No new lifecycle/SQL/backup/private-child operation occurred.
+- Distinct233 =195+15+23. Prior25/20-case receipts remain preserved. No old CI
+  or accepted source/image/evidence changed; no approval or information repeat.
+- Finish protected fresh admission/loading, actual bootstrap and recovery-owner
+  retention for unresolved stop clients. Missing actual custody/writer facts stay
+  missing. No operating execution or overall admission yet; four findings OPEN.
+  Then original G4/backup transition/deployment/Owner/3real tradingdays/C_R2.
+
+
+### Wave114 protected source and operating-input binding
+
+- Current loader `g4-fixed-source-input-loader.py`/7898b34a preserves source-only
+  e591e68b. Verify14 fixed controls+12 accepted payloads before exact-byte RAM
+  import; protected root0600/no-follow/single-link/ACL/mount/name checks and
+  post-import reread. Accepted source remains unchanged.
+- Source-only18 cases PASS(bcf1ebe6); preserve initial fixture-permission failure.
+  Extended loader40 PASS(d3eea499):18 repeated source cases plus22 new input
+  cases. Distinct273 =233+18+22. Real private files/imports, simulated root/host
+  observations; no child, production, daemon, SQL, provider or backup operation.
+- Read seven exact protected inputs, keep blanket approval distinct from an
+  actual custody/external-writer reply, bind original boot/window and60-second
+  original observations. Reobserve13 containers/56 units/fragments/cgroups,
+  current/retained/PG parent, then reread inputs. Short cap120seconds/query128;
+  preserve the same observer/counter and ORIGINAL shared deadline for later gates.
+- The function returns admissionSatisfied=false and operatingEntryInvoked=false.
+  Finish full fresh admission/fencing, exact unit bootstrap, unresolved stop-client
+  ownership and final protected composition. Four findings remain OPEN; no
+  executable operating CLI or actual host attempt yet. Do not synthesize the two
+  missing facts or repeat their existing information question/blanket approval.
+- Existing fixed runner-v2/contract-v2/native-v2/connection-v2/collector and query
+  reserve remain current. G4/backup transition/deployment/Owner/3real days/C_R2 open.
+
+
+### Wave114 retained original client and cancellation integration
+
+- Fixed runner/connection v3 retain any pending original command in run_once and
+  finally, including partial pipe setup and cancelled MAIN. Same handles only;
+  after INCOMPLETE no new dispatch/query/write/kill/retry or renewed lifecycle
+  authority. EOF+actual reap produces an explicitly unaccepted late RAM record.
+  A lost pipe remains unresolved. Normal SIGINT/SIGTERM revoke MAIN, drain the
+  same stop response, then restore only within the original shared window.
+- Validation61 PASS (efd8c046):14 new +47 prior. Four composed signal/setup cases
+  PASS (067962fa). Current loader-v2 pins runner/connection v3;40 loader/input
+  regressions PASS (dbd2cd01). Distinct291=273+18;87 repeated cases not recounted.
+  Actual private child cases3 new/4 repeated;14 executions including the preserved
+  initial fixture-only failure run. No root/host/daemon/SQL/provider/backup call.
+- Preserve all v1/v2 controls and initial failed receipt/test source. New source
+  imports still use14 controls+12 accepted payload and seven fixed inputs. Actual
+  full admission/fence and requester/recovery/collector startup/terminal path
+  remain unfinished; no operating CLI or host execution. Four findings OPEN.
+  Pending factual answers stay pending; remaining R2 authority already granted.
+  G4/backup transition/deployment/Owner/3actual tradingdays/C_R2 remain open.
+
+
+### Wave114 fixed file preflight integration
+
+- Current protected loader v3 adds mandatory preflight before any host observer.
+  Reuses accepted contract/file/root readers; validates fixed pin scope, official
+  custody-reference syntax,59 old migration bytes, five roots and original PG
+  parent0701, key metadata only and minimum backup free space. No chmod/key read.
+  Same14 controls/12 payloads/seven inputs; prior source and receipts preserved.
+- Validation58 PASS (`7d73605d`):18 new (16 private files +2 connection) and40
+  source/input regressions. Actual file bytes/readers; root/host/mount/capacity
+  are fixtures. Initial dir_fd audit-harness error preserved (`ae889b1d`); only
+  the harness was corrected and its16 exact private temporary folders cleaned.
+  Runtime source unchanged between runs; distinct309. No actual new children,
+  production/daemon/SQL/provider/backup operation or key-content access.
+- Remaining: complete historical/runtime/capacity/fence admission and exact
+  requester/recovery/collector startup/terminal integration. No full operating
+  entrypoint/admission yet. Pending custody/external-writer facts remain pending;
+  blanket authorization remains granted and no repeated question is needed.
+  Four findings/G4/deployment/Owner/3actual tradingdays/C_R2 remain OPEN.
+
+
+### Wave114 requester/recovery process body integration
+
+- Protected loader v4 binds its exact loaded input object once to requester or
+  recovery and original clock/query/PID generations. Requester performs READY
+  then returns for exit; recovery owns held resources and the existing connection
+  through original-client retention. Resources close only after that retention.
+- Strict body result: success requires published bytes plus complete accepted
+  capture/restoration/evidence. Failed capture or publication remains exit2 even
+  after original service restoration. Existing source/input/file/45min guards
+  remain; no new command, retry, host staging or operating entrypoint.
+-56 body/cache/source tests PASS (`758d09f7`),2 actual existing-controller
+  composition cases PASS (`61118b70`);18 new/40 repeated, distinct327. Three actual
+  private children reaped exit0/0/2; actual private FD/file lifetime checked.
+  Host/root/READY/daemon facts are fixtures. Initial missing postgresParent fixture
+  errors preserved (`8e186ee9`); only fixture corrected. Runtime unchanged.
+- Full native admission, unit startup/policy and external terminal composition
+  remain incomplete. Four findings OPEN; Owner factual answer remains pending
+  without repeat. Authority granted. G4 execution0; accepted app/tool unchanged.
+  Continue fixed official-tool connection, then actual G4/deployment/Owner use/
+  three real tradingdays/C_R2; no broader framework or repeated passed suites.
+
+
+### Wave114 external collector body integration
+
+- Loader v5 keeps the original input-owner PID/object, observer/query count and
+  shared2700-second end. External body binds protected READY generations and
+  original snapshot, calls existing collector, then rereads READY/seven inputs.
+  Actual independent success terminals are required; no self-terminal or durable
+  success-publication claim is made by a Python return. No new audit/lifecycle.
+- Validation10 PASS (`868e7f00`):9 new +1 source import regression, distinct336.
+  Existing collector and official pure validator execute; host/root/files/READY/
+  publication are fixtures. Original MAIN expiry does not renew shared time.
+  Failed terminal/self-generation/changed READY or input/shared expiry reject.
+  Initial two harness module collisions retained (`2138cb28`); only import order
+  corrected. No new child, root, production, provider or SQL operation.
+- Complete native admission, actual unit startup/launcher and durable external
+  result delivery remain. Original external input-owner loss has no resume path
+  here. Four findings/G4/deployment/Owner use/3actual days/C_R2 OPEN. No new
+  permission request; the same factual question remains pending.
+
+
+### Wave114 actual unit lifecycle and retained terminal proof — 2026-10-20 KST
+
+Actual unprivileged runtime observation recovered Python3.14.4/Linux64 public
+binary/library pins and a private monotonic timer. Two distinct USER-manager
+fixtures each ran once through complete private cleanup. The first exposed
+transient successful-unit garbage collection; the second retained the exact
+InvocationID and normal exit0/PID0/absent-cgroup proof before its own cleanup.
+They do not prove root G4 or Docker behavior.
+
+Current loader v7 binds observer v4 plus ready/collector v2: owned two units use
+RemainAfterExit=yes, mixed main-only normal signal, no forced kill/restart/hooks;
+actual success requires retained active/exited plus normal code0, ordered exit
+timestamps, both PIDs0, no job and recursive cgroup proof. Historical56 schemas,
+query count,23 other source pins and12 official payloads are unchanged.
+Ten new focused policy/terminal cases and two distinct actual user-unit cases
+bring distinct validation cases to348; source-import repetitions do not add cases.
+No G4 host dispatch/staging occurred. Full admission/runtime future-import pins,
+Owner facts/fence, actual launcher and durable external result delivery remain.
+Cooperative cancellation must signal the exact main process, not stop recovery's
+unit before its evidence is collected. All four controller findings remain OPEN.
+Receipts and source inverse are in wave114/native-policy-source-reconciliation.json
+(c93eb8aba4c39105e0d2be8066bbe468970a3b2a47c8af758be4b1113ee640cf).
+Blanket approval persists; do not repeat the pending information question.
+
+
+### Wave114 historical baseline admission binding — 2026-10-20 KST
+
+Loader v8 uses the exact preserved a4 receipt as its eighth protected input.
+Historical56 units/13 containers, static configuration, PG ancestry and five
+root/key identities cannot be replaced by two matching new records. Four already
+used periodic services may have fresh completed generations; untouched historical
+units and the never-run revocation service keep their exact generations. Old
+unprinted fields remain unknown. Legacy whole-network container hashes are
+recomputed from fresh inspect bytes before outage only; restart semantics stay
+unchanged. External collector rereads the historical bytes with the other inputs.
+
+New25 cases plus one source-import regression PASS, distinct373. The missing-old-Id
+schema correction and collector-fixture ordering failure are retained. All26
+source pins/14 roles/12 accepted payloads are unchanged; no production action,
+root staging, child or daemon query occurred. Actual runtime/capacity/fence
+admission, launcher and durable external delivery remain incomplete. No new
+permission question; custody/external-writer facts remain pending. G4 execution0,
+all four findings, deployment/Owner use/three real tradingdays/C_R2 OPEN.
+Source/validation pins: wave114/historical-baseline-source-reconciliation.json
+`fa20ad06598c6326bc528f141080c385f423e7930a252a51a2377592457ff551`.
+
+
+### Wave114 external collection publication — 2026-10-20 KST
+
+Loader v9 calls the existing collector and exclusively saves its successful
+result using the existing held-parent writer. File+directory fsync/readback,
+0600/single-link/name checks and the original2700-second deadline apply; failed
+bytes remain, no retry is permitted, and the collector's own actual terminal
+must still be recovered separately. Prior loader functions and26 source pins
+are unchanged.9 new actual private-file cases PASS;1 source-import regression
+PASS in the separately preserved initial receipt; fixture failures retained.
+Distinct382, operating execution0. Full admission, actual process launcher and
+independent receipt/collector-terminal recovery remain incomplete; no new
+permission question or custody/writer facts were invented. See source
+reconciliation `51d78e9ccbbb5e8e345d94fb0178037b942a13d75de553919d00975702da077c` and the Wave114 review.
+
+
+### Wave114 — peer startup integration continuation (2026-10-20 KST)
+
+R2-04/R2-09: current loader-v10/observer-v5 can observe a sequentially starting
+peer before entering the existing READY path. Exact two-unit read-only list
+queries distinguish empty successful absence from query failure. Loaded policy,
+actual PID/invocation checks, original60second waiting cap/16observations,
+128query budget and original25/45minute windows remain mandatory. Changed or
+failed peers are rejected without lifecycle retry. Accepted12payloads and all
+restoration/collector functions remain unchanged; old controls are preserved.
+19 new fixture cases +1 source import regression PASS (peer-start-validation-a1);
+401distinct overall. No actual system-manager startup, root staging or G4 action.
+Remaining: complete admission/fixed launcher/actual external collector terminal,
+unanswered custody/external-writer facts, then G4 closure/backup transition/deploy/
+Owner use/three actual consecutive tradingdays/finalC_R2. Existing blanket
+approval remains valid; do not request it again or repeat the information question.
+
+
+### Wave114 — mandatory pre-outage writer check (2026-10-20 KST)
+
+R2-04/R2-09 current loader-v11/observer-v6 connect fixed PG volume/network
+metadata and accepted-tool writer selection before outage. Nine live writers
+must be planned; preserved selected writers must be stopped, without changing
+research exit2 or historical units. PG published ports/new network members and
+unplanned active writers fail before the operating body. Empty endpoint IDs are
+configured disconnected attachments, not live memberships. Official12payloads,
+post-stop guards, sequence/restoration and prior startup wait are unchanged.
+18new+1import regression PASS across retained a1/a2 receipts; only3 typed-error
+test expectations changed, source unchanged.419distinct, actual G4/root staging0.
+No global/future/manual-writer absence is claimed. Full runtime/capacity admission,
+fixed launcher and external collector-process terminal still need integration;
+pending Owner facts are not inferred from blanket authorization.
+
+
+### Wave114 — runtime and fixed entry (2026-10-20 KST)
+
+R2-04/R2-09: g4-fixed-source-input-loader-v12.py adds runtime/capacity and exact
+entry-byte/argv binding; g4-runtime-admission.py reuses the prior public reader;
+g4-operating-entry.py provides fixed coordinate/requester/recovery modes with
+one-shot system-manager submissions and terminal delivery. Failure after a
+submission still retains the original client and attempts finite terminal/record
+recovery; missing evidence stays INCOMPLETE. Startup resource checks do not gate
+owed restoration. Same original1500/2700sec window, no renewal/replay/forced kill.
+
+40 new cases PASS +4 necessary changed-entry regressions; total459. Root/proc/
+manager facts are simulated, bootstrap additionally exercises actual private
+filesystem/hash/import. No actual root service, staging, Docker, SQL or outage.
+Source package/reconciliation are runtime-entry-source-package.json and
+runtime-entry-source-reconciliation.json under wp-8/wave114. Exact current
+27 dependencies plus loader/entry are pinned; accepted12 payloads unchanged.
+
+Full operating packet remains incomplete pending exclusive protected staging/
+fresh8 inputs and full integrated controller validation. The single Owner
+information question remains pending, blanket authority valid, no repeated
+permission request. Actual external coordinator exit and exact durable collection
+must both be recovered; saved bytes are not closure. Four findings, G4,
+backup transition/deployment, Owner use, real3 consecutive tradingdays and C_R2
+remain OPEN. Preserve all historical evidence and unrelated ROADMAP/.archify.
+
+
+### Wave114 fixed staging and input construction continuation (2026-10-20 KST)
+
+- R2-04/R2-09: fixed34-file staging and existing entry `prepare` source complete;
+  both remain unexecuted on the host. Two destination roots must be absent;
+  exclusive held-FD creation, full final hashes, partial retention/no repair.
+- Fresh8-input construction requires the actual Owner-information receipt before
+  any probe/intent. Existing guards precede original/contract publication; the
+  operating envelope is last. The same original45-minute window begins during
+  preparation. Source59 migration checks are not the actual database audit.
+- New22 distinct cases PASS, total481; root/host gates are fixtures. Initial
+  installer fixture umask failure and corrected11-case pass are retained.
+  Final bundle34-member private install/readback and changed main regression
+  PASS; unchanged suites/accepted CI/builds not rerun.
+- Evidence: fixed-stage-input-source-reconciliation.json,
+  fixed-stage-input-package.json, fixed-stage-invocation.json and their validation
+  receipts in target/r2-daily-beta/wp-8/wave114. Existing loader v12/27 dependencies
+  and accepted app/tool are unchanged. Actual root staging/preparation/G4 remain0.
+- Next: full fixed-entry integration validation of four OPEN findings; bind the
+  actual custody/external-writer answer; execute the authorized single G4 and
+  recover actual original coordinator exit plus exact collection. No repeated
+  permission request or fabricated facts. Backup transition/deployment/Owner use/
+  actual3 consecutive tradingdays/final C_R2 remain OPEN.
+
+
+#### Wave114 fixed-entry integration — 2026-10-20 KST
+
+R2-04/R2-09: current prepare→admit, entry→recovery failure, and entry→collector
+seams add9 passing distinct cases (490 total), plus one corrected information
+negative-case regression. Actual private final receipt IO is exercised; native
+host/root/manager/READY/backup observations are fixtures. The initial missing
+validator/Mock-map fixture failures and exact corrections are retained. All29
+operating sources and34 installation members are unchanged. Source mitigation
+for G4-DRAFT-01..04 is now traced through the current entry; actual root runtime
+closure stays open. Do not repeat these passing checks or extend the controls.
+Next: actual answer to the existing custody/external-writer information question,
+then bind the concrete input packet, fresh admission, actual independent READY,
+one authorized G4 execution and original process/file terminal recovery. No
+repeat approval; no invented facts, startup, backup, deployment or trading days.
+Evidence: `target/r2-daily-beta/wp-8/wave114/entry-integration-disposition.json`.
+
+
+#### Wave114 beta key custody scope — 2026-10-20 KST
+
+R2-04/R2-09: the Owner accepts temporary server-local backup-key storage for
+pre-service beta. Reuse the official root:root 0600 KEY_FILE; no key copy,
+rotation, source change or off-server custody claim. Defer off-server custody to
+formal-service readiness. The remaining factual input is external/manual writer
+presence, still unanswered; never infer none. Actual native admission/READY/G4
+and deployment remain pending. Current registry/handoff and
+`owner-beta-local-key-policy.json` supersede earlier custody-wait instructions.
+
+
+### Wave115 — actual prepare failure; narrow mount-order correction (2026-10-20)
+
+R2-04/R2-09: actual Owner “따로 없으니 이어서 진행하라니까?” resolves external
+writer information; adopted beta-local key reference remains. Do not ask either
+question again. Sealed34 root files and protected actual information were created
+once and each process exited0. Prepare once exited2; preserve the root intent and
+all partials. No original/contract/envelope, READY, outage or G4 was produced.
+
+Read-only diagnostics reproduced a mount-list-order-only historical policy hash
+mismatch. Preserve the original missing traceback as UNKNOWN. Correct official
+stopped-writer hashing and successor private observer/historical binding; retain
+all mapping fields, full old hash proof, state and network guards. New12 focused
+cases pass; official60 unique maintenance cases pass across32 initial passes plus
+28 corrected-umask fixture passes. Initial errors remain. Accepted app/tool and
+installed34 source bytes remain unchanged; the new source is not yet an accepted
+or sealed execution package. Next: successor hosted validation and explicit
+corrected package, preserving no automatic replay/repair/window renewal. Authority
+is valid, information wait is closed; actual G4/deployment/Owner/3actual trading
+days/final C_R2 remain open. See the Wave115 section of the compatibility review.
