@@ -1739,3 +1739,67 @@ Candidate d56be05 CI39406284330 attempt1 exposed one actual Docker failure in Da
 The correction computes one verifier_root and uses it for both create arguments and inspected mount expectations. Exact mount equality, readonly flags, image/user/network/resource isolation and cleanup checks remain mandatory. No accepted application or installed source is changed. Local actual-root Docker suite13cases passed at10:23:45UTC, process3174381exit0, stderra309f9b45425b7a5b19f612b0d7ef8a5704a3e49b37c88a6959939fe55cc1991, including the original failing case, source-admin/no-role-creation check and full encrypted schema restore. The existing failing case is the regression; no duplicate test is added.
 
 R2-04/R2-09 remain DOING. Actual G4 b4f8543 remains accepted; correction requires a new exact candidate CI before separate tool installation. Previous prepared d56be05 bootstrap is retained and must not execute. Application deployment, official backup transition, Owner use, three actual consecutive trading days and C_R2 remain open. A bounded read of current protected environment confirmed that new daily first-session/budget inputs are not present there; no synthetic values are adopted. Authority and the earlier custody/external-writer answer remain resolved.
+
+
+## Wave130 accepted backup tool installed and deployment bindings — 2026-10-20 11:03 UTC
+
+R2-04/R2-09 remain DOING. Corrected tool `e5638de80731a7d0fe6b4b89823f1ae660d19505`
+completed [CI39407989346 attempt1](https://github.com/sihioov/Lagrange/actions/runs/39407989346)
+with all eight jobs successful at11:01:18UTC. Full eight logs and seven exact checkouts were
+recovered at11:03:15UTC;237required results,1467input pins,549Git blobs and2165source-tree
+entries matched. Policy410named cases, actual logical Docker13cases,73maintenance cases,
+15tool-package cases and44wholeflow cases passed. Existing skips, ignored cases, non-Linux
+exclusions and the unprinted outcome of one fragmented nested helper remain explicit.
+Hosted evidence `ci/e5638de/hosted-terminal-evidence.json` has SHA256
+`b1f6377c8fb17a117f5464cca8187a4c2c62bbb8020b5ebb0e5adc073ab1d2b2`.
+The earlier d56be05 run finished FAILURE; all eight logs/seven checkouts were recovered in
+`wave129/prior-failed-ci-closure.json` (88feaafd). Its uninstalled package must never execute.
+Neither workflow was rerun, cancelled or duplicated.
+
+After acceptance, the exact sealed bootstrap de136845 executed once as root Python -I -S -B,
+cwd/, umask0077, with both new roots absent. Original root process3258314 (sudo3258312)
+exited0 at11:03:46.822863UTC. The tool was installed at
+`/opt/lagrange/maintenance/e5638de80731a7d0fe6b4b89823f1ae660d19505`;
+172members contain3,245,685bytes. The27,072byte manifest hash is
+`13437dc81098c8849d3fa5e8f4e109db1a6b9a83567d22cf4f488532f4441ec4`.
+The exclusive installation terminal `wave129/actual-tool-install-terminal.json` has SHA256
+`bf2c1fa468647269b86bc6ec850fce3a917d9d24f6222a2caa40e01153fea3b1`.
+A separate read at11:03:49UTC verified all172files, permissions, manifest identity, exact
+installation receipt and original process identity. Current still names fce9b905.
+Installation did not change application files, units, database, current or secrets, and
+did not call Docker or a provider. This is tool installation, not application deployment
+or backup transition; the original installer is consumed and must not be rerun.
+
+The focused review of G4-DRAFT-01..04 is complete for the consumed b4f8543 G4 execution.
+`wave129/controller-focused-review.json`, SHA256
+`3337026ce26873a409d80fef517de97215eb51104dddca9b9eb049584360e3b8`,
+binds executed source hashes, AST deltas, existing integrated failure receipts and actual
+b775 failure/restoration plus b4 success. It confirms terminal retention before persistence,
+restoration under the original monotonic deadline after wall-clock rejection, original stop
+response/cgroup drain before starts, and restoration independent of capture acceptance or
+capacity. Changes since the earlier failure tests were reviewed explicitly. No new tests or
+production fault injection ran in this review. This is not hard-crash protection: ambiguous
+daemon responses, prior cleanup uncertainty and lost-host recovery remain unproven. Earlier
+failed attempts, unknown inner causes and0120 cleanup INCOMPLETE remain preserved.
+
+A bounded protected-environment/two-container read at10:53:33UTC and one READ ONLY database
+query at10:55:12UTC confirmed the existing sole Owner UUID, entitlement reference/hash,
+lease60/backoff30 and the existing owner_only/market_ws/shared_required branch. The API
+omits an explicit MAX_JOBS_PER_OWNER; its exact old source supplies effective10, which is
+recorded as a derived default rather than explicit configuration. No credentials or provider
+bodies were emitted. The first inventory read failed; its receipt is preserved and its
+exact original cause remains UNKNOWN. Reconciliation
+`wave129/deployment-binding-reconciliation.json` has SHA256
+`acfa59c4dedcc2e2c85b23f5367af20a7f55ed1ae2ec3b6eb7539e65a0eb80db`.
+
+The existing blanket authority, beta local-key decision and none-declared external writers
+remain resolved. One new asynchronous question requests the automatic recommendation start
+basis: first actual trading day after deployment verification with measured budgets, or an
+Owner-specified historical catch-up scope. No answer has arrived; no date, budget or runtime
+configuration was invented. This is a configuration selection, not renewed permission or
+the old custody/writer question. After that selection, bind measured data limits and preserve
+existing approved runtime grants/modes, install accepted application e639169, prepare its
+schema/disabled runtime, then use the official version2 backup transition. Normal KIS apply
+still requires the before16:30KST window; later install-disabled does not bypass activation.
+Application deployment, actual Owner use, three consecutive actual trading days and C_R2
+remain OPEN. The four current review findings are closed only in the scope stated above.
