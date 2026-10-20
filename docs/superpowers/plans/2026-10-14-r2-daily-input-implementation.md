@@ -8577,3 +8577,37 @@ and activation. Owner use, three real consecutive trading days and C_R2 remain O
 Wave135 final local checks: the normalized source snapshot passes the full ops static
 contract, and workspace formatting passes. Source structure is unchanged, so
 architecture diagrams are untouched. No old CI/G4/backup operation was replayed.
+
+
+### Wave136 — build gate after an actual daily-OFF deployment (2026-10-21 KST)
+
+R2-04/09 remain DOING. Read-only host observation at16:19:03UTC found
+the deployed beta runner normally exited0, historical research exited2, and
+the other9project services healthy. No service or provider action was made.
+The original official build gate could admit only the research/OwnerV2 drained
+pair, so it would reject the legitimate disabled beta service before a build.
+No failed real build was submitted to rediscover this source-level mismatch.
+
+Keep v1 unchanged. Explicit v2 includes exactly beta, OwnerV2, research, sorted,
+with normal0 for both Owner runners and historical2 only for research. Bind the
+root publisher's retained actual daily-OFF/zero-running-jobs observation, owner,
+policy, activation epoch and installed source release. The helper validates this
+operator attestation, not an independently queried DB result. Every checkpoint
+still observes all11containers and binds all stopped lifecycle/identity fields.
+Running/stopped drift, exit143, omitted/extra identities or changed binding fail.
+The helper neither drains a service nor authorizes activation. Actual execution
+still needs fresh admission, normal OwnerV2 drain and independent restoration.
+
+Ten focused tests pass through the real protected reader/checkpoint functions.
+The existing shared gate suite and the official full fake-Docker image suite
+pass; the latter now exercises the v2 triple through actual helper initialization
+and all build checkpoints. Full normalized ops static checks pass. Initial patch
+context mismatch changed no test bytes and is not reported as a test failure.
+No source dependency, Compose structure or DB boundary changes; diagrams unchanged.
+
+Candidate18372ab CI39454506091 attempt1 remains independently recoverable; do not
+rerun/cancel it or treat its results as covering this subsequent build correction.
+Next: freeze the new source, one new exact-candidate CI, matched immutable images
+with jobs2/one service per Compose and existing independent recovery, then bounded
+actual input recovery/admission. Oct21 auto start remains conditional on validation
+before09:00KST, never retroactive. Owner use/three actual days/C_R2 remain OPEN.

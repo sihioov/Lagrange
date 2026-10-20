@@ -17,6 +17,7 @@ source_root=$(cd "$script_dir/../.." && pwd)
 source_helper=$script_dir/build-production-images.sh
 source_manifest_lib=$script_dir/lib/release-image-manifest.sh
 source_layout_helper=$script_dir/lib/release-build-layout.sh
+python3 "$script_dir/build-disabled-daily-self-test.py"
 
 # Exercise the product gate functions without a live journal or Docker daemon.
 # Query bounds must preserve the same microseconds that the parser validates.
@@ -1444,6 +1445,11 @@ path=os.environ["IMAGE_BUILD_DRAINED_ATTESTATION"]
 now=int(time.time())
 value={
     "containers":[
+        {"container_id":"7"*64,"container_name":"lagrange-station-owner-beta-runner-1",
+         "dead":False,"exit_code":0,"finished_at_utc":"2026-09-18T12:00:00.000000000Z",
+         "health_status":"unhealthy","image_id":"sha256:"+"8"*64,"oom_killed":False,
+         "paused":False,"restarting":False,"restart_count":0,"running":False,
+         "started_at_utc":"2026-09-18T00:00:00.000000000Z","status":"exited"},
         {"container_id":"3"*64,"container_name":"lagrange-station-owner-equity-v2-runner-1",
          "dead":False,"exit_code":0,"finished_at_utc":"2026-09-18T12:00:00.000000000Z",
          "health_status":"unhealthy","image_id":"sha256:"+"4"*64,"oom_killed":False,
@@ -1456,7 +1462,11 @@ value={
          "started_at_utc":"2026-09-18T00:00:00.000000000Z","status":"exited"},
     ],
     "expires_at_utc":datetime.datetime.fromtimestamp(now+7200,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "format":"lagrange-build-drained-readers-attestation-v1",
+    "format":"lagrange-build-drained-readers-attestation-v2",
+    "disabled_daily":{"enabled":False,"running_jobs":0,"activation_epoch":0,
+                      "owner_user_id":"11111111-1111-4111-8111-111111111111",
+                      "policy_sha256":"b"*64,"source_release":"c"*40,
+                      "control_observation_sha256":"d"*64},
     "observed_at_utc":datetime.datetime.fromtimestamp(now-5,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "project":"lagrange-station",
     "scope":"image-build-only",
@@ -1897,9 +1907,12 @@ if args[0:2] == ["image", "save"]:
 if args[0] == "inspect":
     # The gate accepts a tightly bounded container-health projection only.
     name = args[-1]
-    if name in ("lagrange-station-research-worker-1", "lagrange-station-owner-equity-v2-runner-1"):
+    if name in ("lagrange-station-research-worker-1", "lagrange-station-owner-equity-v2-runner-1",
+                "lagrange-station-owner-beta-runner-1"):
         if name == "lagrange-station-research-worker-1":
             ident, image, exit_code, restarts = "1" * 64, "sha256:" + "2" * 64, "2", "7"
+        elif name == "lagrange-station-owner-beta-runner-1":
+            ident, image, exit_code, restarts = "7" * 64, "sha256:" + "8" * 64, "0", "0"
         else:
             ident, image, exit_code, restarts = "3" * 64, "sha256:" + "4" * 64, "0", "0"
         running, restarting, oom, health = "false", "false", "false", "unhealthy"

@@ -184,6 +184,31 @@ submit the next batch or retry an all-image parallel command; after correction,
 resume only the same one-service route so the helper can revalidate and reuse
 safe cache/bundle state.
 
+When the already deployed R2 daily service is OFF, its `owner-beta-runner` may
+have completed normally with exit0 and `restart=no`. It must remain in the
+eleven-container health inventory. The original two-reader attestation v1
+continues to require a running, healthy beta container. The explicit
+`lagrange-build-drained-readers-attestation-v2` adds only the exact stopped
+`lagrange-station-owner-beta-runner-1` to the original two drained readers.
+Both Owner runners require exit0; the historical research worker remains exit2.
+
+Before publishing this root-owned mode0600 v2 attestation, observe the installed
+source release's daily control OFF and zero running daily jobs, retain that
+nonsecret observation in a protected receipt, and bind its SHA256. Its
+`disabled_daily` object contains `enabled:false`, `running_jobs:0`,
+`activation_epoch`, `owner_user_id`, `policy_sha256`, `source_release`, and
+`control_observation_sha256` (hashes have no prefix). This is the operator's
+bounded observation, not a DB query performed by the build helper. Preserve
+the original maximum twelve-hour expiry and freeze the attestation before
+initializing the build. Every checkpoint still inspects all eleven containers
+and requires the exact stopped IDs, images, exit codes, health statuses,
+restart counts and start/finish timestamps. Any changed generation, unhealthy
+ordinary service, missing reader or changed observation binding fails.
+Do not start a disabled beta service merely to satisfy a build check. This
+image-only allowance neither enables daily recommendations nor accepts runtime
+deployment; the running Owner V2 reader still needs the original normal drain
+and independently owed restoration.
+
 The seven Dockerfile source fallbacks remain for existing callers that build
 without a named context. They retain B's source-compilation, OCI-revision, and
 compile-ENV provenance contracts. The stronger content-addressed transport and
