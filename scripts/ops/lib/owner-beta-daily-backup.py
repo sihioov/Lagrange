@@ -50,6 +50,7 @@ CONFIG_KEYS = frozenset(("BACKUP_ROOT", "DATA_ROOT", "COMPOSE_FILE", "COMPOSE_EN
     "COMPOSE_PROJECT", "LAGRANGE_CODE_COMMIT", "KEY_FILE", "LOCK_FILE", "METRICS_FILE",
     "MAX_TOTAL_BYTES", "MIN_FREE_BYTES", "RETENTION_DAYS", "MIN_KEEP",
     "POSTGRES_SERVICE", "POSTGRES_IMAGE"))
+TOOL_KEYS = frozenset(("DAILY_BACKUP_TOOL_COMMIT", "DAILY_BACKUP_TOOL_MANIFEST"))
 SET_NAME = re.compile(r"backup-daily-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
 MEMBERS = ("postgres.dump.enc", "files.bundle.enc", "state.json.enc")
 
@@ -69,17 +70,21 @@ def config_file(path, context, project, *, check_only=False):
         if not line or line.startswith("#"):
             continue
         key, sep, value = line.partition("=")
-        require(sep and key in CONFIG_KEYS and key not in values and value and
+        require(sep and key in CONFIG_KEYS | TOOL_KEYS and key not in values and value and
                 not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value),
                 "DAILY_BACKUP_CONFIG")
         values[key] = value
-    require(set(values) == CONFIG_KEYS and values["COMPOSE_PROJECT"] == project and
+    require(set(values) in (CONFIG_KEYS, CONFIG_KEYS | TOOL_KEYS) and
+            values["COMPOSE_PROJECT"] == project and
             values["LAGRANGE_CODE_COMMIT"] == context.commit and
             values["DATA_ROOT"] == context.values["LAGRANGE_DATA_DIR"] and
             values["COMPOSE_FILE"] == context.release + "/deploy/compose/compose.yml" and
             values["COMPOSE_ENV_FILE"] == context.release + "/deploy/compose/.env" and
             values["POSTGRES_SERVICE"] == "postgres" and values["POSTGRES_IMAGE"] == POSTGRES,
             "DAILY_BACKUP_BINDING")
+    if TOOL_KEYS <= values.keys():
+        require(install.is_commit(values["DAILY_BACKUP_TOOL_COMMIT"]) and
+                install.is_hash(values["DAILY_BACKUP_TOOL_MANIFEST"]), "DAILY_BACKUP_TOOL")
     for key in ("BACKUP_ROOT", "DATA_ROOT", "COMPOSE_FILE", "COMPOSE_ENV_FILE",
                 "KEY_FILE", "LOCK_FILE", "METRICS_FILE"):
         require(runtime.absolute(values[key]) and "," not in values[key], "DAILY_BACKUP_PATH")
@@ -251,8 +256,9 @@ def publication_fence(binding, config):
 
 class Storage:
     """Private staging, bounded encrypted sets and actual isolated restore."""
-    def __init__(self, values, docker, context, binding):
+    def __init__(self, values, docker, context, binding, *, verifier_root=None):
         self.values, self.docker, self.context, self.binding = values, docker, context, binding
+        self.verifier_root = verifier_root
         self.root = values["BACKUP_ROOT"]
         self.limits = files.Limits(values["MAX_TOTAL_BYTES"])
 
@@ -342,11 +348,13 @@ class Storage:
         generation = (server["Created"], server["State"]["StartedAt"], server["RestartCount"])
         require(runtime.CONTAINER.fullmatch(identity) and server["State"].get("Running") is True,
                 "DAILY_BACKUP_DATABASE")
-        # The pinned server's local socket is the existing backup authority.
+        # The installed cluster uses the existing lagrange administrator. OS
+        # uid999 does not imply a database role named postgres. The pinned
+        # server's local socket is the existing backup authority.
         # Both the server-side command and local client have finite deadlines.
         self.command_file(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock", "exec",
             "--user", "999:999", identity, "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/bin:/bin",
-            "PGHOST=/var/run/postgresql", "PGUSER=postgres", "PGCONNECT_TIMEOUT=10",
+            "PGHOST=/var/run/postgresql", "PGUSER=lagrange", "PGCONNECT_TIMEOUT=10",
             "PGPASSFILE=/dev/null", "PGSERVICEFILE=/dev/null",
             "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=300000 -c lock_timeout=5000",
             "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "900s",
@@ -383,8 +391,8 @@ class Storage:
             "--tmpfs", "/var/lib/postgresql:rw,nosuid,nodev,noexec,size=4k,mode=000",
             "--mount", "type=bind,src=" + str(dump) + ",dst=/verify.dump,readonly",
             "--mount", "type=bind,src=" + str(data) + ",dst=/restore",
-            "--mount", "type=bind,src=" + self.context.release + "/deploy/db/daily-backup-verify.sh,dst=/verify.sh,readonly",
-            "--mount", "type=bind,src=" + self.context.release + "/deploy/db/owner-beta-daily-backup-audit.sql,dst=/verify.sql,readonly",
+            "--mount", "type=bind,src=" + (self.verifier_root or self.context.release) + "/deploy/db/daily-backup-verify.sh,dst=/verify.sh,readonly",
+            "--mount", "type=bind,src=" + (self.verifier_root or self.context.release) + "/deploy/db/owner-beta-daily-backup-audit.sql,dst=/verify.sql,readonly",
             "--entrypoint=/bin/bash"]
         for key, value in labels.items():
             args += ["--label", key + "=" + value]
@@ -899,6 +907,7 @@ def main(argv=None):
     parser.add_argument("--operation", choices=("backup", "verify", "reconcile"), required=True)
     parser.add_argument("--mode", choices=("plan", "preflight", "apply"), required=True)
     parser.add_argument("--install-root", required=True)
+    parser.add_argument("--application-release")
     parser.add_argument("--config-file", default="/etc/lagrange/production-backup.conf")
     previous = {}
     try:
@@ -909,16 +918,24 @@ def main(argv=None):
             return 0
         install.require_root()
         os.umask(0o077)
-        commit = Path(ROOT).name
+        release = args.application_release or ROOT
+        commit = Path(release).name
         require(install.is_commit(commit) and runtime.absolute(args.install_root), "DAILY_BACKUP_RELEASE")
-        ops.policy.validate_current_release(args.install_root, ROOT, commit)
-        images = ops.read_manifest(ROOT, commit)
+        ops.policy.validate_current_release(args.install_root, release, commit)
+        tool_hash = None
+        if args.application_release:
+            tool = local("daily_backup_tool", "production-backup-tool.py")
+            tool_hash = tool.read_manifest(ROOT, commit, install_root=Path(args.install_root))
+        images = ops.read_manifest(release, commit)
         project, research_mode = ops.project_binding(commit, commit)
-        values, overlays = ops.read_context(ROOT, commit, "enable")
-        context = ops.Context(ROOT, commit, images, values, overlays)
-        binding, config = ops.activation_binding(ROOT, commit, project, images, values)
+        values, overlays = ops.read_context(release, commit, "enable")
+        context = ops.Context(release, commit, images, values, overlays)
+        binding, config = ops.activation_binding(release, commit, project, images, values)
         ops.reject_ambient(values)
         backup = config_file(args.config_file, context, project, check_only=args.mode == "preflight")
+        require((tool_hash is None and not (TOOL_KEYS & backup.keys())) or
+                (tool_hash is not None and backup.get("DAILY_BACKUP_TOOL_COMMIT") == Path(ROOT).name
+                 and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
         require(config["raw_owner_uid"] == 10001, "DAILY_BACKUP_RAW_OWNER")
         roots(binding, args.install_root)
         if args.mode == "preflight":
@@ -930,12 +947,16 @@ def main(argv=None):
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous[signum] = signal.signal(signum, terminated)
         with ops.release_lock(args.install_root), backup_lock(backup["LOCK_FILE"]):
-            ops.policy.validate_current_release(args.install_root, ROOT, commit)
+            ops.policy.validate_current_release(args.install_root, release, commit)
+            if tool_hash is not None:
+                tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),
+                                   expected_hash=tool_hash)
             docker = runtime.Docker()
             database = ops.Database(docker, project, commit, images["db-migrate"])
             operations = ops.Operations(docker, database, context, context, binding,
                                         args.install_root, research_mode)
-            storage = Storage(backup, docker, context, binding)
+            storage = Storage(backup, docker, context, binding,
+                              verifier_root=ROOT if tool_hash is not None else None)
             storage.require_no_verifier()
             controller = Controller(operations, binding, config, storage, args.install_root)
             if args.operation == "verify":
@@ -948,7 +969,10 @@ def main(argv=None):
             else:
                 ops.validate_activation_inputs(context)
                 result = controller.reconcile()
-            ops.policy.validate_current_release(args.install_root, ROOT, commit)
+            ops.policy.validate_current_release(args.install_root, release, commit)
+            if tool_hash is not None:
+                tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),
+                                   expected_hash=tool_hash)
         print("DAILY_BACKUP: " + result)
         return 0
     except Exception:

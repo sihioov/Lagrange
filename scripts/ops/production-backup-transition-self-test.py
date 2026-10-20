@@ -132,6 +132,72 @@ class BackupTransitionTests(unittest.TestCase):
     def journal(self, path=None):
         return json.loads(((path or self.recovery) / "journal.json").read_bytes())
 
+    def use_tool(self):
+        tool = transition.load_tool()
+        tool_commit = "c" * 40
+        members = {name: (b"fixed tool fixture", 0o644) for name in tool.REQUIRED}
+        members["scripts/ops/run-production-backup.sh"] = (self.new["helper"], 0o755)
+        for name in transition.UNITS:
+            members["deploy/systemd/" + name] = (self.new[name], 0o644)
+        pin = tool.publish(members, tool_commit, COMMIT, install_root=self.layout.install)
+        self.new["config"] += (
+            "DAILY_BACKUP_TOOL_COMMIT=" + tool_commit + "\n"
+            "DAILY_BACKUP_TOOL_MANIFEST=" + pin + "\n").encode()
+        self.source_config.write_bytes(self.new["config"])
+        self.value.update(schema=transition.TOOL_SCHEMA, tool_commit=tool_commit,
+                          tool_manifest_sha256=pin)
+        self.value["new"]["config"] = transition.digest(self.new["config"])
+        self.layout = transition.Layout(self.release, self.source_config, self.root,
+            tool=self.layout.install / "maintenance" / tool_commit)
+        self.operation = self.operation_at(self.recovery)
+
+    def test_tool_transition_preserves_application_and_recovers_exact_six_files(self):
+        before = {p.relative_to(self.release).as_posix(): p.read_bytes()
+                  for p in self.release.rglob("*") if p.is_file()}
+        self.use_tool()
+        self.assertEqual(transition.contract(transition.files.canonical(self.value)), self.value)
+        transition.Native(self.layout, self.value).current()
+        self.operation.apply()
+        self.assert_bytes(self.new)
+        self.assertEqual(self.journal()["schema"], transition.TOOL_SCHEMA)
+        self.operation.recover()
+        self.assert_bytes(self.old)
+        self.assertEqual({p.relative_to(self.release).as_posix(): p.read_bytes()
+                         for p in self.release.rglob("*") if p.is_file()}, before)
+        self.assertEqual(os.readlink(self.layout.install / "current"), "releases/" + COMMIT)
+
+    def test_tool_transition_rejects_changed_tool_and_wrong_current_application(self):
+        self.use_tool()
+        native = transition.Native(self.layout, self.value)
+        native.current()
+        self.value["tool_manifest_sha256"] = "sha256:" + "0" * 64
+        with self.assertRaises(ValueError):
+            native.current()
+        (self.layout.install / "current").unlink()
+        (self.layout.install / "current").symlink_to("releases/" + "d" * 40)
+        with self.assertRaises(transition.Refused):
+            native.current()
+        self.assert_bytes(self.old)
+
+    def test_tool_transition_refuses_config_mismatch_before_replacement(self):
+        self.use_tool()
+        self.new["config"] = self.new["config"].replace(b"DAILY_BACKUP_TOOL_COMMIT=" + b"c" * 40,
+                                                       b"DAILY_BACKUP_TOOL_COMMIT=" + b"d" * 40)
+        self.source_config.write_bytes(self.new["config"])
+        self.value["new"]["config"] = transition.digest(self.new["config"])
+        with self.assertRaises(transition.Refused):
+            self.operation.apply()
+        self.assert_bytes(self.old)
+        self.assertFalse(self.recovery.exists())
+
+    def test_tool_transition_failed_installed_check_restores_original_files(self):
+        self.use_tool()
+        self.native.fail_check = True
+        with self.assertRaises(transition.Refused):
+            self.operation.apply()
+        self.assert_bytes(self.old)
+        self.assertEqual(self.journal()["state"], "RECOVERED_FILES_TIMERS_INACTIVE")
+
     def test_preflight_checks_without_writes_or_service_mutations(self):
         self.operation.preflight()
         self.assert_bytes(self.old)

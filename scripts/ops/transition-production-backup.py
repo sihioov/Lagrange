@@ -37,6 +37,7 @@ UNITS = ("lagrange-production-backup.service", "lagrange-production-backup.timer
          "lagrange-production-backup-verify.service", "lagrange-production-backup-verify.timer")
 NAMES = ("helper", "config", *UNITS)
 SCHEMA = "production-backup-transition-v1"
+TOOL_SCHEMA = "production-backup-transition-v2"
 LIMIT = 131072
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C",
        "SYSTEMD_PAGER": "cat", "SYSTEMD_COLORS": "0"}
@@ -63,16 +64,17 @@ def identity(info):
 
 class Layout:
     """CLI uses only canonical production targets; tests supply an isolated root."""
-    def __init__(self, release, config, prefix=Path("/")):
+    def __init__(self, release, config, prefix=Path("/"), *, tool=None):
         self.release, self.config = Path(release), Path(config)
+        self.tool = Path(tool) if tool is not None else self.release
         self.prefix = prefix
         self.install = prefix / "opt/lagrange"
         self.targets = {"helper": prefix / "opt/lagrange/bin/run-production-backup.sh",
                         "config": prefix / "etc/lagrange/production-backup.conf",
                         **{n: prefix / "etc/systemd/system" / n for n in UNITS}}
-        self.sources = {"helper": self.release / "scripts/ops/run-production-backup.sh",
+        self.sources = {"helper": self.tool / "scripts/ops/run-production-backup.sh",
                         "config": self.config,
-                        **{n: self.release / "deploy/systemd" / n for n in UNITS}}
+                        **{n: self.tool / "deploy/systemd" / n for n in UNITS}}
         self.locks = (self.install / ".lagrange-release.lock",
                       prefix / "var/lib/lagrange/backup-state/production-backup.lock")
 
@@ -83,10 +85,17 @@ class Layout:
 
 def contract(data, now=None):
     value = files.json_bytes(data, LIMIT)
-    require(isinstance(value, dict) and set(value) == {
+    keys = {
         "schema", "new_commit", "config_source", "issued_at", "expires_at",
-        "old", "new", "unit_file_states"})
-    require(value["schema"] == SCHEMA and files.is_commit(value["new_commit"]))
+        "old", "new", "unit_file_states"}
+    require(isinstance(value, dict))
+    if value.get("schema") == TOOL_SCHEMA:
+        keys |= {"tool_commit", "tool_manifest_sha256"}
+        require(files.is_commit(value.get("tool_commit"))
+                and files.is_hash(value.get("tool_manifest_sha256")))
+    else:
+        require(value.get("schema") == SCHEMA)
+    require(set(value) == keys and files.is_commit(value["new_commit"]))
     files.path_parts(value["config_source"])
     for key in ("old", "new"):
         require(isinstance(value[key], dict) and set(value[key]) == set(NAMES) and
@@ -162,6 +171,14 @@ class Native:
         with files.root_directory(str(self.layout.install)) as parent:
             require(os.readlink("current", dir_fd=parent) == "releases/" + self.value["new_commit"])
         require(self.layout.release == self.layout.install / "releases" / self.value["new_commit"])
+        if self.value["schema"] == TOOL_SCHEMA:
+            tool = load_tool()
+            tool.read_manifest(self.layout.tool, self.value["new_commit"],
+                               install_root=self.layout.install,
+                               expected_hash=self.value["tool_manifest_sha256"])
+            require(self.layout.tool.name == self.value["tool_commit"])
+        else:
+            require(self.layout.tool == self.layout.release)
 
     def inactive(self, allow_reload=False):
         properties = ("LoadState", "ActiveState", "SubState", "FragmentPath",
@@ -186,7 +203,7 @@ class Native:
     def check(self, installed):
         if installed:
             args = ["/bin/bash", "--noprofile", "--norc",
-                    str(self.layout.release / "scripts/ops/install-production-backup.sh"),
+                    str(self.layout.tool / "scripts/ops/install-production-backup.sh"),
                     "--check", "--config-source", str(self.layout.config)]
         else:
             args = ["/bin/bash", "--noprofile", "--norc", str(self.layout.sources["helper"]),
@@ -239,6 +256,11 @@ class Transition:
             "LOCK_FILE": str(self.layout.locks[1]),
             "METRICS_FILE": str(self.layout.prefix / "var/lib/lagrange/backup-state/production-backup.prom"),
         }
+        if self.value["schema"] == TOOL_SCHEMA:
+            expected.update(DAILY_BACKUP_TOOL_COMMIT=self.value["tool_commit"],
+                            DAILY_BACKUP_TOOL_MANIFEST=self.value["tool_manifest_sha256"])
+        else:
+            require(not ({"DAILY_BACKUP_TOOL_COMMIT", "DAILY_BACKUP_TOOL_MANIFEST"} & config.keys()))
         require(all(config.get(k) == v for k, v in expected.items()) and
                 self.layout.config not in self.layout.targets.values())
         return result
@@ -322,7 +344,7 @@ class Transition:
                 files.directory_info(recovery_fd, 0, 0, 0o700)
                 for index, name in enumerate(NAMES):
                     files.create_file(recovery_fd, f"old-{index}", old[name], 0, 0, 0o600)
-                journal = {"schema": SCHEMA, "binding": binding(self.value), "nonce": uuid.uuid4().hex,
+                journal = {"schema": self.value["schema"], "binding": binding(self.value), "nonce": uuid.uuid4().hex,
                            "state": "STAGING", "entries": {n: {"old_identity": identities[n]}
                                                               for n in NAMES}}
                 save(recovery_fd, journal)
@@ -378,7 +400,7 @@ class Transition:
             with files.root_directory(str(self.recovery)) as recovery_fd:
                 files.directory_info(recovery_fd, 0, 0, 0o700)
                 journal = files.json_bytes(files.read_file(recovery_fd, "journal.json", 0, 0, 0o600, LIMIT), LIMIT)
-                require(journal.get("schema") == SCHEMA and journal.get("state") in {
+                require(journal.get("schema") == self.value["schema"] and journal.get("state") in {
                     "STAGING", "PREPARED", "APPLIED_TIMERS_INACTIVE", "RECOVERED_FILES_TIMERS_INACTIVE"})
                 self.restore(parents, recovery_fd, journal)
 
@@ -386,6 +408,15 @@ class Transition:
 class Arguments(argparse.ArgumentParser):
     def error(self, message):
         raise Refused("BACKUP_TRANSITION_ARGUMENTS")
+
+
+def load_tool():
+    spec = importlib.util.spec_from_file_location(
+        "transition_backup_tool", ROOT / "scripts/ops/lib/production-backup-tool.py")
+    require(spec and spec.loader)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def main(argv=None):
@@ -406,8 +437,15 @@ def main(argv=None):
         signal.signal(signal.SIGINT, terminated)
         require(args.contract and args.recovery_dir)
         value = contract(files.read_root_file(args.contract, gid=0, mode=0o600, maximum=LIMIT))
-        layout = Layout(ROOT, value["config_source"])
-        require(ROOT == Path("/opt/lagrange/releases") / value["new_commit"])
+        release = Path("/opt/lagrange/releases") / value["new_commit"]
+        if value["schema"] == TOOL_SCHEMA:
+            require(ROOT == Path("/opt/lagrange/maintenance") / value["tool_commit"])
+            load_tool().read_manifest(ROOT, value["new_commit"],
+                                      expected_hash=value["tool_manifest_sha256"])
+            layout = Layout(release, value["config_source"], tool=ROOT)
+        else:
+            require(ROOT == release)
+            layout = Layout(ROOT, value["config_source"])
         transition = Transition(layout, value, args.recovery_dir, Native(layout, value))
         getattr(transition, args.mode)()
         print("BACKUP_TRANSITION: " + {"preflight": "PREFLIGHT", "apply": "APPLIED_TIMERS_INACTIVE",

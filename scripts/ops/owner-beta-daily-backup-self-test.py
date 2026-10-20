@@ -846,6 +846,43 @@ class DailyBackupRoutingTests(unittest.TestCase):
         return subprocess.run(["/bin/bash", "--noprofile", "--norc", str(path), *arguments],
             env=self.environment, capture_output=True, timeout=10, check=False)
 
+    def test_explicit_tool_dispatch_preserves_current_application_and_operation(self):
+        commit = "b" * 40
+        helper = self.install / "maintenance" / commit / "scripts/ops/lib/owner-beta-daily-backup.py"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("import sys\nprint('FIXTURE_TOOL_ARGS:' + '|'.join(sys.argv[1:]))\n")
+        helper.chmod(0o644)
+        with self.config.open("a") as stream:
+            stream.write("DAILY_BACKUP_TOOL_COMMIT=" + commit + "\n"
+                         "DAILY_BACKUP_TOOL_MANIFEST=sha256:" + "c" * 64 + "\n")
+        for flag, operation, mode in (("--check", "backup", "preflight"),
+                                     ("--run", "backup", "apply"),
+                                     ("--verify-latest", "verify", "apply")):
+            result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh",
+                                 flag, "--config-file", str(self.config))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.decode().strip(), "FIXTURE_TOOL_ARGS:" + "|".join((
+                "--operation", operation, "--mode", mode, "--install-root", str(self.install),
+                "--application-release", str(self.release), "--config-file", str(self.config))))
+        helper.chmod(0o666)
+        result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh",
+                             "--run", "--config-file", str(self.config))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(b"FIXTURE_", result.stdout)
+
+    def test_partial_tool_configuration_cannot_fall_back_to_old_controller(self):
+        with self.config.open("a") as stream:
+            stream.write("DAILY_BACKUP_TOOL_COMMIT=" + "b" * 40 + "\n")
+        result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh",
+                             "--run", "--config-file", str(self.config))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(b"FIXTURE_", result.stdout)
+        shutil.rmtree(self.data / "owner-beta-daily")
+        result = self.invoke(ROOT / "scripts/ops/run-production-backup.sh",
+                             "--run", "--config-file", str(self.config))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"cannot enter the legacy backup path", result.stderr)
+
     def test_existing_timer_modes_route_to_current_release_without_legacy_fallback(self):
         for flag, operation, mode in (("--check", "backup", "preflight"),
                                       ("--run", "backup", "apply"),
@@ -1027,6 +1064,161 @@ class ReconcileSecretTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.preflight()
         self.binding.mounts.assert_not_called()
+
+
+class BackupToolPackageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "backup_tool_tested", ROOT / "scripts/ops/lib/production-backup-tool.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.tool)
+
+    def setUp(self):
+        self.tool.files.require_root()
+        self.directory = Path(tempfile.mkdtemp(prefix="lagrange-backup-tool-", dir="/var/lib"))
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.commit, self.app = "a" * 40, "b" * 40
+        self.members = {name: (b"fixed fixture " + name.encode(), 0o644)
+                        for name in self.tool.REQUIRED}
+        self.package = self.directory / "maintenance" / self.commit
+
+    def publish(self):
+        return self.tool.publish(self.members, self.commit, self.app, install_root=self.directory)
+
+    def test_tool_publishes_separately_without_changing_application_or_current(self):
+        release = self.directory / "releases" / self.app
+        release.mkdir(parents=True)
+        sentinel = release / "accepted"
+        sentinel.write_bytes(b"accepted immutable application")
+        (self.directory / "current").symlink_to("releases/" + self.app)
+        before = (sentinel.read_bytes(), sentinel.stat().st_ino)
+        pin = self.publish()
+        self.assertEqual(self.tool.read_manifest(self.package, self.app,
+            install_root=self.directory, expected_hash=pin), pin)
+        self.assertEqual((sentinel.read_bytes(), sentinel.stat().st_ino), before)
+        self.assertEqual(os.readlink(self.directory / "current"), "releases/" + self.app)
+
+    def test_tool_refuses_existing_and_partial_destination_without_repair(self):
+        pin = self.publish()
+        with self.assertRaises(FileExistsError):
+            self.publish()
+        self.assertEqual(self.tool.read_manifest(self.package, self.app,
+            install_root=self.directory), pin)
+        manifest = self.package / self.tool.MANIFEST
+        manifest.unlink()
+        with self.assertRaises(FileExistsError):
+            self.publish()
+        self.assertFalse(manifest.exists())
+        self.assertTrue((self.package / next(iter(self.members))).exists())
+
+    def test_tool_rejects_wrong_application_commit_manifest_and_source_bytes(self):
+        pin = self.publish()
+        for app, expected in ((self.commit, pin), (self.app, "sha256:" + "0" * 64)):
+            with self.subTest(app=app, expected=expected), self.assertRaises(ValueError):
+                self.tool.read_manifest(self.package, app, install_root=self.directory,
+                                        expected_hash=expected)
+        (self.package / "deploy/db/daily-backup-verify.sh").write_bytes(b"changed")
+        with self.assertRaises(ValueError):
+            self.tool.read_manifest(self.package, self.app, install_root=self.directory)
+
+    def test_tool_rejects_symlink_hardlink_writable_source_and_missing_dependency(self):
+        self.publish()
+        target = self.package / "deploy/db/daily-backup-verify.sh"
+        original = target.read_bytes()
+        target.chmod(0o666)
+        with self.assertRaises(self.tool.files.DailyInstallError):
+            self.tool.read_manifest(self.package, self.app, install_root=self.directory)
+        target.chmod(0o644)
+        other = self.directory / "other"
+        os.link(target, other)
+        with self.assertRaises(self.tool.files.DailyInstallError):
+            self.tool.read_manifest(self.package, self.app, install_root=self.directory)
+        target.unlink()
+        target.symlink_to(other)
+        with self.assertRaises(OSError):
+            self.tool.read_manifest(self.package, self.app, install_root=self.directory)
+        target.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.tool.read_manifest(self.package, self.app, install_root=self.directory)
+        self.assertEqual(other.read_bytes(), original)
+
+    def test_tool_rejects_path_escape_and_incomplete_package_before_any_write(self):
+        for member in ("../outside", "/absolute", "scripts/ops/../escape", "deploy/compose/.env"):
+            with self.subTest(member=member), self.assertRaises(ValueError):
+                self.tool.publish({**self.members, member: (b"unsafe", 0o644)},
+                                  self.commit, self.app, install_root=self.directory)
+            self.assertFalse(self.package.exists())
+        self.members.pop("scripts/ops/lib/owner-beta-daily-backup.py")
+        with self.assertRaises(ValueError):
+            self.publish()
+        self.assertFalse(self.package.exists())
+
+    def test_tool_preflight_binds_application_and_config_without_docker(self):
+        pin = self.publish()
+        spec = importlib.util.spec_from_file_location(
+            "tool_controller_tested", ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
+        backup = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(backup)
+        release = str(self.directory / "releases" / self.app)
+        binding = types.SimpleNamespace(data_root=str(self.directory / "data"))
+        arguments = ["--operation", "backup", "--mode", "preflight",
+                     "--install-root", str(self.directory), "--application-release", release]
+        for config_pin, expected in ((pin, 0), ("sha256:" + "0" * 64, 1)):
+            with self.subTest(config_pin=config_pin), contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(backup, "ROOT", str(self.package)))
+                # Only application/read-only context dependencies are substituted.
+                # Tool ancestry, member bytes and manifest validation remain real.
+                current = stack.enter_context(mock.patch.object(backup.ops.policy, "validate_current_release"))
+                manifest = stack.enter_context(mock.patch.object(backup.ops, "read_manifest", return_value={}))
+                stack.enter_context(mock.patch.object(backup.ops, "project_binding", return_value=("fixture", "absent")))
+                stack.enter_context(mock.patch.object(backup.ops, "read_context", return_value=({}, [])))
+                stack.enter_context(mock.patch.object(backup.ops, "activation_binding",
+                    return_value=(binding, {"raw_owner_uid": 10001})))
+                stack.enter_context(mock.patch.object(backup.ops, "reject_ambient"))
+                stack.enter_context(mock.patch.object(backup, "config_file", return_value={
+                    "DAILY_BACKUP_TOOL_COMMIT": self.commit, "DAILY_BACKUP_TOOL_MANIFEST": config_pin}))
+                stack.enter_context(mock.patch.object(backup, "roots"))
+                check = stack.enter_context(mock.patch.object(backup.install, "check_state"))
+                docker = stack.enter_context(mock.patch.object(backup.runtime, "Docker"))
+                stack.enter_context(mock.patch.object(backup.os, "umask"))
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                self.assertEqual(backup.main(arguments), expected)
+                current.assert_called_once_with(str(self.directory), release, self.app)
+                manifest.assert_called_once_with(release, self.app)
+                self.assertEqual(check.call_count, 1 if expected == 0 else 0)
+                docker.assert_not_called()
+
+    def test_git_package_reads_exact_commit_and_rejects_tracked_symlinks(self):
+        repository = self.directory / "git"
+        repository.mkdir()
+        def git(*args):
+            return subprocess.check_output(["/usr/bin/git", "-C", str(repository),
+                "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+                stderr=subprocess.DEVNULL)
+        git("init", "-q")
+        for name, (data, mode) in self.members.items():
+            path = repository / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(mode)
+        (repository / "configs").mkdir()
+        (repository / "configs/fixture.json").write_bytes(b"{}")
+        git("add", ".")
+        git("commit", "-qm", "fixed fixture")
+        commit = git("rev-parse", "HEAD").decode().strip()
+        path = repository / "deploy/db/daily-backup-verify.sh"
+        path.write_bytes(b"uncommitted bytes must not enter installed package")
+        captured = self.tool.read_git_package(repository, commit)
+        self.assertEqual(captured[path.relative_to(repository).as_posix()],
+                         self.members[path.relative_to(repository).as_posix()])
+        path.unlink()
+        path.symlink_to("/not-read-by-fixture")
+        git("add", ".")
+        git("commit", "-qm", "unsafe fixture")
+        with self.assertRaises(ValueError):
+            self.tool.read_git_package(repository, git("rev-parse", "HEAD").decode().strip())
 
 
 if __name__ == "__main__":

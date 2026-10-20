@@ -84,7 +84,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in ''|\#*) continue ;; *=*) ;; *) die 'config contains malformed line' ;; esac
   key=${line%%=*}; value=${line#*=}
   case "$key" in
-    BACKUP_ROOT|DATA_ROOT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMPOSE_PROJECT|LAGRANGE_CODE_COMMIT|KEY_FILE|LOCK_FILE|METRICS_FILE|MAX_TOTAL_BYTES|MIN_FREE_BYTES|RETENTION_DAYS|MIN_KEEP|POSTGRES_SERVICE|POSTGRES_IMAGE) ;;
+    BACKUP_ROOT|DATA_ROOT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMPOSE_PROJECT|LAGRANGE_CODE_COMMIT|KEY_FILE|LOCK_FILE|METRICS_FILE|MAX_TOTAL_BYTES|MIN_FREE_BYTES|RETENTION_DAYS|MIN_KEEP|POSTGRES_SERVICE|POSTGRES_IMAGE|DAILY_BACKUP_TOOL_COMMIT|DAILY_BACKUP_TOOL_MANIFEST) ;;
     *) die "config contains unsupported key: $key" ;;
   esac
   [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die 'config key shape is invalid'
@@ -116,8 +116,9 @@ postgres_service=${cfg[POSTGRES_SERVICE]}
 postgres_image=${cfg[POSTGRES_IMAGE]}
 
 # Daily history must never silently enter the legacy three-class path. The
-# only executable target is the current protected immutable release. The
-# controller independently binds every config value and the reader floor.
+# application target is the current protected immutable release. An explicit,
+# hash-bound maintenance package may supply corrected backup code independently.
+# The controller still binds that exact application manifest and reader floor.
 daily_install_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
 safe_path "$daily_install_root" release-root
 case "$daily_install_root" in */|*//*|*/./*|*/.) die 'release-root must be canonical' ;; esac
@@ -135,6 +136,26 @@ if [ -e "$data_root/owner-beta-daily" ] || [ -L "$data_root/owner-beta-daily" ] 
   daily_release=$daily_install_root/$daily_target
   safe_path "$daily_release" daily-release
   [ "$daily_target" = "releases/$code_commit" ] || die 'backup config is stale for the current release'
+  if [ -n "${cfg[DAILY_BACKUP_TOOL_COMMIT]+set}" ] || [ -n "${cfg[DAILY_BACKUP_TOOL_MANIFEST]+set}" ]; then
+    tool_commit=${cfg[DAILY_BACKUP_TOOL_COMMIT]:-}
+    [[ "$tool_commit" =~ ^[0-9a-f]{40}$ ]] && [ "$tool_commit" != 0000000000000000000000000000000000000000 ] ||
+      die 'daily backup tool needs an exact commit'
+    [[ "${cfg[DAILY_BACKUP_TOOL_MANIFEST]:-}" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+      die 'daily backup tool needs its manifest hash'
+    tool=$daily_install_root/maintenance/$tool_commit/scripts/ops/lib/owner-beta-daily-backup.py
+    safe_path "$tool" daily-tool
+    probe=$(dirname -- "$tool")
+    while [ "$probe" != / ]; do
+      check_secure_parent "$probe" daily-tool
+      probe=${probe%/*}; [ -n "$probe" ] || probe=/
+    done
+    [ -f "$tool" ] && [ "$(stat -c '%u:%g:%a:%h' -- "$tool")" = 0:0:644:1 ] ||
+      die 'daily backup tool is not a protected installed source'
+    operation=backup; tool_mode=apply
+    case "$mode" in check) tool_mode=preflight ;; verify-latest) operation=verify ;; esac
+    exec /usr/bin/python3 -I -S -B "$tool" --operation "$operation" --mode "$tool_mode" \
+      --install-root "$daily_install_root" --application-release "$daily_release" --config-file "$config_file"
+  fi
   daily_wrapper=$daily_release/scripts/ops/compose-release.sh
   safe_path "$daily_wrapper" daily-wrapper
   probe=$(dirname -- "$daily_wrapper")
@@ -153,6 +174,8 @@ if [ -e "$data_root/owner-beta-daily" ] || [ -L "$data_root/owner-beta-daily" ] 
   esac
   exec /bin/bash --noprofile --norc "$daily_wrapper" "${daily_args[@]}"
 fi
+[ -z "${cfg[DAILY_BACKUP_TOOL_COMMIT]+set}${cfg[DAILY_BACKUP_TOOL_MANIFEST]+set}" ] ||
+  die 'daily backup tool cannot enter the legacy backup path'
 
 for pair in "$backup_root:BACKUP_ROOT" "$data_root:DATA_ROOT" "$compose_file:COMPOSE_FILE" \
   "$compose_env:COMPOSE_ENV_FILE" "$key_file:KEY_FILE" "$lock_file:LOCK_FILE" \

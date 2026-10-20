@@ -54,7 +54,7 @@ class RecordingDocker(backup.runtime.Docker):
 
 
 class DailyBackupDockerTests(unittest.TestCase):
-    admin_role = "postgres"
+    admin_role = "lagrange"
 
     @classmethod
     def command(cls, args, payload=None, *, timeout=120, allow_failure=False):
@@ -134,7 +134,8 @@ class DailyBackupDockerTests(unittest.TestCase):
         cls.server = cls.command(["run", "--detach", "--name", cls.project + "-postgres",
             "--network", cls.network, "--network-alias", "postgres", "--label",
             "com.docker.compose.project=" + cls.project, "--label", "com.docker.compose.service=postgres",
-            "--env", "POSTGRES_DB=lagrange", "--env", "POSTGRES_PASSWORD_FILE=/run/test-secret",
+            "--env", "POSTGRES_USER=lagrange", "--env", "POSTGRES_DB=lagrange",
+            "--env", "POSTGRES_PASSWORD_FILE=/run/test-secret",
             "--mount", "type=bind,src=" + str(secret) + ",dst=/run/test-secret,readonly", backup.POSTGRES
         ]).stdout.decode().strip()
         cls.wait_for_database()
@@ -191,7 +192,7 @@ class DailyBackupDockerTests(unittest.TestCase):
         prepare = backup.install.render_control(str(cls.release), COMMIT, "prepare", "4", "60", "1")
         cls.first_prepare = cls.sql(prepare, role="migration_owner").strip()
         cls.status_prepared = cls.sql(cls.status_sql, role="migration_owner").strip()
-        cls.audit = json.loads(cls.sql((ROOT / "deploy/db/owner-beta-daily-backup-audit.sql").read_text(), stage="audit"))
+        cls.audit = json.loads(cls.sql((ROOT / "deploy/db/owner-beta-daily-backup-audit.sql").read_text(), role="migration_owner", stage="audit"))
 
     @classmethod
     def cleanup(cls):
@@ -261,7 +262,7 @@ class DailyBackupDockerTests(unittest.TestCase):
         self.assertNotEqual(self.database_probe(missing).returncode, 0)
         ready = self.database_probe()
         self.assertEqual(ready.returncode, 0)
-        self.assertEqual(ready.stdout.strip(), b"lagrange:postgres:postgres:true")
+        self.assertEqual(ready.stdout.strip(), b"lagrange:lagrange:lagrange:true")
         with self.assertRaisesRegex(RuntimeError, r"^DAILY_BACKUP_FIXTURE_SQL:statement:3:42P01$"):
             self.sql('SELECT * FROM "fixture_private_sql_diagnostic";')
 
@@ -274,6 +275,41 @@ class DailyBackupDockerTests(unittest.TestCase):
             "pg_get_userbyid(relowner)||':'||pg_catalog.row_security_active(oid)::text "
             "FROM pg_class WHERE oid='public.users'::regclass;", role="migration_owner")
         self.assertEqual(observed.strip(), b"true:false:migration_owner:false")
+
+    def test_live_dump_uses_existing_admin_without_creating_postgres_role(self):
+        self.assertEqual(self.sql("SELECT current_user||':'||session_user||':'||"
+            "(NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='postgres'))::text;"),
+            b"lagrange:lagrange:true\n")
+        before = self.sql("SELECT rolname||':'||rolsuper::text||':'||rolcanlogin::text "
+                          "FROM pg_roles ORDER BY rolname;")
+        with self.storage.temporary(".daily-verify-") as stage:
+            target = stage / "live.dump"
+            self.storage.dump(target)
+            self.assertTrue(target.read_bytes().startswith(b"PGDMP"))
+        self.assertEqual(self.sql("SELECT rolname||':'||rolsuper::text||':'||rolcanlogin::text "
+                                 "FROM pg_roles ORDER BY rolname;"), before)
+        self.assert_no_verifier()
+
+    def test_separate_tool_verifier_restores_without_editing_application(self):
+        application = type(self).release / "deploy/db"
+        originals = {name: ((application / name).read_bytes(), (application / name).stat().st_ino)
+                     for name in ("daily-backup-verify.sh", "owner-beta-daily-backup-audit.sql")}
+        tool = self.directory / "tool"
+        (tool / "deploy/db").mkdir(parents=True)
+        for name, (data, _) in originals.items():
+            (tool / "deploy/db" / name).write_bytes(data)
+            (tool / "deploy/db" / name).chmod(0o644)
+        self.storage.verifier_root = str(tool)
+        final = self.capture()
+        self.assertEqual(self.storage.verify(final), {"extra_admissions": [], "extra_frontiers": []})
+        for name, original in originals.items():
+            self.assertEqual(((application / name).read_bytes(), (application / name).stat().st_ino),
+                             original)
+        for value in self.docker.verified:
+            mounts = {mount["Destination"]: mount["Source"] for mount in value["Mounts"]}
+            self.assertEqual(mounts["/verify.sh"], str(tool / "deploy/db/daily-backup-verify.sh"))
+            self.assertEqual(mounts["/verify.sql"], str(tool / "deploy/db/owner-beta-daily-backup-audit.sql"))
+        self.assert_no_verifier()
 
     def test_actual_full_schema_encrypted_files_and_networkless_database_restore(self):
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))

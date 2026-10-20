@@ -108,3 +108,32 @@ That result does not establish installed-unit observations, a consistent
 production recovery point, an actual six-file transition or timer resumption.
 Bind those operating facts and the missing G4 authority before execution.
 Preserve the completed run; do not redispatch CI for this documentation update.
+
+
+## Separately accepted backup tool for an unchanged application
+
+A backup-only correction does not require rebuilding or replacing application images.
+After the exact tool revision passes its own CI, install its tracked sources with
+`python3 -I -S -B scripts/ops/lib/production-backup-tool.py --apply --commit TOOL_COMMIT --application-commit APP_COMMIT`.
+Run from the reviewed exact source with root authority, cwd `/`, umask077 and a
+verified bootstrap; use an absolute script path in the actual packet. The command
+creates only a new `/opt/lagrange/maintenance/TOOL_COMMIT`. Existing roots, including
+partials, are refused and retained. The emitted manifest hash and every installed
+member must match the prepared exact Git package before transition.
+
+For this path, keep `LAGRANGE_CODE_COMMIT`, `COMPOSE_FILE` and `COMPOSE_ENV_FILE`
+bound to the current installed application. Add both `DAILY_BACKUP_TOOL_COMMIT`
+and `DAILY_BACKUP_TOOL_MANIFEST` (the complete `sha256:` hash) to the protected
+backup config. Neither field is a credential. Use `production-backup-transition-v2`
+with `tool_commit` and `tool_manifest_sha256`, retaining every v1 field and its
+original six old/new hashes. Invoke the transition from the installed tool root.
+Its preflight validates the current application and complete tool package before
+any six-file change. Its recovery preserves the same tool/config/application
+binding, original file identities and inactive timers.
+
+No tool field means the original installed-application route. One missing field,
+a stale application, wrong tool hash or modified installed code fails closed;
+there is no fallback. The new path retains the reader-floor, image-manifest and
+disabled-capture gates. Actual post-install preflight, transition, disabled daily
+backup/isolated restore and subsequent activation still need their own evidence.
+The source tests are not evidence that these operations have run on the host.
