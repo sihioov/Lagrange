@@ -7921,3 +7921,33 @@ generations, actual restored timer IDs and exact read-only retained lock, and
 preserves bounded typed failure details.26 focused+4 connected+17 regression cases
 pass; one fixture assertion failure/correction retained. Fresh prepare/admit/READY
 then G4 remains next; all subsequent acceptance conditions stay OPEN.
+
+
+## Wave121 active timer observation / a6 restoration — 2026-10-20
+
+R2-04/R2-09 remain DOING. Actual a6 preparation/READY/requester exit0 succeeded;
+three timer stops and their three restorations all exited normally0. Sequence
+RESTORED has originalServicesRestored/evidenceComplete true, captureAccepted false.
+Recovery/coordinator exit2. Original main error CONNECTION_DISPATCH_TARGET_CHANGED
+is now retained at the fourth timer pre-dispatch gate; the differing property was
+not captured and remains UNKNOWN. Running-to-waiting is a reproduced source race,
+not a claim of the unrecorded actual value. Collector's nonzero-recovery rejection
+is subsequent. No container stop, PG chmod, schema audit or capture occurred.
+Closure11d34d88 contains42 independent read queries at06:11:03UTC:13 original
+containers exact,5 timers active/waiting,56-unit union/fragments, samePGparent0701,
+owned cgroups absent, exact retained a5 release-lock inode. The initial result
+reader32768 bound error is retained; only its read bound changed to262144.
+
+Wave121 package63f98544/seal23cca6cd adds bounded read-only observation of only
+an original active/waiting timer's SubState running→waiting. All other fields,
+generation, timestamps, jobs, policy and edges stay exact; errors fail immediately.
+The bound remains5seconds/11observations within the original deadline. The real
+pre-dispatch gate uses this helper and still requires exact waiting before its
+single intent. Three restored baselines bind the actual a6 closure.13 focused
+cases (including real dispatch gate success/rejection)+17 prepare/admit/bootstrap
+regressions pass. Prior30 periodic cases and post-ACK/typed-array/runtime evidence
+are retained; no official payload/application/hosted evidence change. Distinct a7
+stage/preparation/admission/actual independent READY precede any G4 operations;
+a6 units/windows are consumed, not retried. No Owner information/approval wait.
+G4 acceptance, backup transition/deployment, Owner use,3 actual trading days and
+C_R2 remain OPEN. Same-agent tracking is not recovery protection.
