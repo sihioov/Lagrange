@@ -8261,3 +8261,99 @@ before16:30KST; later install-disabled is allowed, with no timer-start bypass.
 Application installation/deployment, official backup transition, Owner use,
 three consecutive actual trading days and final C_R2 remain OPEN. All older
 failures, unknown causes, retained artifacts and0120cleanup INCOMPLETE remain.
+
+
+## Wave132 actual deployment, daily backup and legacy floor correction — 2026-10-20
+
+R2-04/R2-09 remain DOING. Owner authority, external-writer declaration, local
+beta key choice and the actual first-session/operating-limit decision remain
+resolved. No new approval or information question was opened.
+
+New daily DB source/runtime credential files were provisioned at13:07UTC;
+existing seven DB credentials were unchanged. The initial static validation
+rejected the stale operational-session date. A manual official KRX regular-hours
+review and a separate protected same-day window resolved that input; the denied
+holiday-page retrieval was not accepted as holiday evidence. Config validation
+then passed, with all12existing cached app image identities exact. The protected
+backup configuration preserves the20GiB/30GiB/14day/minimum3 limits and binds the
+already accepted independent tool e5638de.
+
+The official app installer and six-file backup transition completed at
+13:18:11UTC: original root3507971 exit0, result10764bytes SHA256
+eb7cc58f4490099a7c7bda0e714046e81f799fb068a9ec7c8b05b21cc9c346af.
+The first rollout failed before any stop or apply because an unordered Docker
+Mounts comparison was too strict. Its failure/unit remain intact. The corrected
+full-policy canonicalization passed three focused new cases, retaining six
+earlier controller cases; there was no accepted app/image change.
+
+Distinct rollout a2 stopped three remaining periodic timers and ten original
+containers, fully resolved all original clients/drains, retired only the exact
+normal-stopped superseded owner-beta container without force or volume removal,
+then used the official pinned-image release apply and disabled daily preparation.
+Its19mutating commands all exited0. Original root3534564 exited0 at13:31:58UTC.
+Exact result52808bytes SHA256
+ef384697dcfd7c46e4e5dfa6b06860e0cbe9b9770813d4e14b104e7de47880ae
+and the original systemd terminal were independently recovered. The initial
+collector failure is retained; access-time sensitivity is an inference from its
+code, not a proven recorded difference. The successful collector excludes atime
+from identity stability. Migrations0060–62 were applied; a separate read-only DB
+observation confirms62successful migrations, zero active jobs/running attempts
+and daily control OFF/epoch0/first_auto_session2026-10-21. Current and the reader
+floor are e639169. A link-only rollback cannot undo this schema/floor change.
+New app container identities and actual restart times are retained. PostgreSQL
+kept its original identity; the historical research worker remains exited2.
+
+The corrected installed daily-backup helper ran once,13:34:43–13:35:46UTC.
+Original root3546284 and child3546287 exited0, with VERIFIED_DISABLED.
+The actual set is
+`/srv/backups/lagrange/backup-daily-20261020T133448Z-e639169018519fd6636c5579d1957e323e2c7802`.
+Encrypted DB/files/state and the official isolated networkless restore verified;
+the exact terminal, COMPLETE/latest metadata and owned-verifier cleanup were
+independently recovered (observationf44a351d). No additional restore was run.
+Nine other app services are healthy; owner-beta is intentionally stopped with
+exit0/restart=no under the OFF backup contract. The two backup timers resumed
+at13:37:32UTC, completing restoration of all five original timers.
+
+The first installed KIS coverage check omitted the process-level release commit.
+The shared DB helper substituted compose-config-disabled, causing a denied image
+pull and a build attempt that failed at its exact-commit check before any Rust
+compile. This failure is preserved, not described as “no build attempted.”
+The corrected pinned-image read-only check passed and measured33missing EOD
+sessions between2026-08-18 and2026-10-20. Despite its “No Docker” display text,
+the check actually used one db-migrate query container. The explicit missing list
+is data-only maintenance, not historical automatic recommendations.
+
+Manual missing-EOD a1 ended at13:40:00UTC: original root3558473/child3558502
+exit1, permanent DATABASE_UNAVAILABLE, before the first date completed. The
+bounded PG error is “candidate instrument conflicts with canonical instrument
+master” (the function uses SQLSTATE23514). Source order places this error in the
+initial price recovery before the date loop and before lazy provider issuance;
+this is code-backed attribution, not a packet capture. Its unit/state remain.
+
+Read-only comparison at13:48:54UTC validated all eleven stored normalized
+reference files and all eleven DB instruments. Only listed_at differed:
+legacy platform floor2020-01-31 versus the already approved2016-08-29 used by
+the accepted worker. Historical review and the current catalog explicitly say
+this column is a platform coverage floor, not an exchange listing date.
+No reference body or instrument name was copied into diagnostics.
+
+A standalone exact-row SQL correction passed six real isolated PostgreSQL cases:
+eleven-only success/unrelated-row preservation, replay rejection, name drift,
+missing row, differing floor and an extra same-symbol row. Failed cases leave
+all rows unchanged. The owned networkless fixture exited0 and was removed.
+At13:52:01UTC, under the retained release lock and shared Raw lock, one
+serializable transaction compared every original row SHA256 and changed exactly
+eleven floor values. All other fields remain identical. Original root3582475 and
+client3582511 exited0; root receipt4228bytes SHA256
+854b8b7243cbc7715ef135bb792f66d0fd4165aa28f8e2f0dd5f649530e2c69f.
+There is no SQL-function/schema/accepted-release modification or listing-date
+claim. The earlier encrypted backup and per-row before/after hashes retain the
+original state. A distinct a2 data attempt checked all eleven committed hashes
+and started at13:52:32UTC; original a1 is not reset or automatically resumed.
+
+Daily recommendations remain OFF. New KIS units remain installed disabled;
+normal apply is limited to before16:30KST, without a direct timer-start bypass.
+The first2026-10-21 candidate still requires the actual deployment/input gate
+before00:00UTC and actual trading-day evidence. Owner use, three consecutive
+actual trading days and final C_R2 remain OPEN. Every older failed attempt,
+unknown cause, retained unproven volume and0120cleanup INCOMPLETE is preserved.
