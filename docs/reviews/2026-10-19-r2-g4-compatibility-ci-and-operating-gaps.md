@@ -1460,3 +1460,35 @@ The first local assembler used the previous WAVE path and failed before writes;
 corrected assembly succeeded with that failure preserved. Official b6 hosted and
 application acceptance are unchanged. Actual independent READY/G4, backup transition,
 deployment, Owner use, three actual consecutive trading days and C_R2 remain OPEN.
+
+## Wave119 actual READY and post-ACK exit transition — 2026-10-20 05:48 UTC
+
+R2-04/R2-09: a4 prepared58 queries successfully at05:41:44UTC. Actual independent
+READY7eafc3dd was published; exact requester invocation d57d1cf8 exited normally0.
+Recovery5c19aea3 and original coordinator exited2. Failure recovery contains both
+actual terminals and no coordinator terminal gaps. No64 command records, operating
+result/collection or maintenance contract existed. Closurec9df7052 observes both
+recursive cgroups absent, all13 original filtered container snapshots unchanged,
+PG-parent same ancestry/inode0701 and official release lock still absent. Preserve
+READY, contingent restore intents, socket, failed/exited units and consumed window.
+No outage/backup/restore/deploy success. Original caught exception remains UNKNOWN.
+
+A separately reproduced source defect explains a possible post-ACK failure: a
+running unit observation can precede the requester's required normal exit, so a
+second live-generation query can reject that expected exit. The prior exact loop
+fails with OBS_COORDINATOR_NOT_RUNNING in a deterministic real-child interleaving.
+This does not retroactively identify a4's missing exception. The new loop binds each
+running snapshot to the original full property digest/PID/invocation, then requires
+the existing exact normal-exit0/PID0/job-empty/recursive-cgroup terminal verification.
+Query errors, replacement, nonzero/signal exit, policy drift and residual children
+still reject. No retry/reconnect or renewed deadline. Three actual private child
+executions are included in17 focused tests;17 entry/input/import regressions pass.
+
+The entry also retains bounded typed failure code/type/source-frame metadata through
+its existing exclusive writer after body cleanup, without exception prose, locals,
+keys or provider data. Publication failure preserves the original exception and
+cannot grant success or retry. Initial local package c7c57e13 emitted a regex escape
+SyntaxWarning and was preserved unexecuted; corrected package9ad5262b passes with
+warnings-as-errors. Seal3726d951 selects distinct a5 AUX, same canonical official12
+read-only files and actual Owner information. Original a4 READY is consumed; fresh
+admission/independent READY remain mandatory for a5. All later R2 gates remain OPEN.

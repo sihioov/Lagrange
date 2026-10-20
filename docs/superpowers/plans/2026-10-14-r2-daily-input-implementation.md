@@ -7895,3 +7895,16 @@ total budget.22 focused+17 connection tests PASS,8 actual failed-unit read queri
 PASS; no actual a4 startup admission claim. Package d22808d4/seal cce3c53b; preserve
 a3 failed units/old windows, canonical12 official source and accepted app/CI.
 Next: distinct sealed a4 prepare/admit/independent READY/G4. All later R2 gates OPEN.
+
+### Wave119 actual READY / post-ACK exit correction — 2026-10-20
+
+R2-04/R2-09: a4 prepare succeeded; actual independent READY and requester normal
+exit0 occurred. Recovery/coordinator exit2, no command intents/outage;13 original
+containers unchanged, PG parent0701, release lock absent, cgroups absent. Closure
+c9df7052 preserves everything; original exception UNKNOWN. Reproduce a source
+post-ACK exit race with actual private children; bind running property snapshot
+and require original exact normal terminal rather than a second live /proc read.
+17 focused cases (3 actual children)+17 connection regressions PASS. Add bounded
+redacted failure metadata using existing exclusive writer. Initial regex-warning
+package retained unexecuted; corrected9ad5262b/seal3726d951 selects a5 fresh
+prepare/admit/READY/G4. Past READY/windows not reusable; remaining R2 gates OPEN.
