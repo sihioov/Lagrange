@@ -1428,3 +1428,35 @@ connection mocked file preflight and did not cover the actual path mismatch;
 the new connection runs the real constructor. Package7e67a92a and seal23bfbae0
 bind these results, Owner facts, prior closure and exact existing-tool publication.
 Actual a3 preparation/admission/independent READY/G4 and later R2 gates remain OPEN.
+
+## Wave118 actual preparation and typed empty Exec arrays — 2026-10-20 05:40 UTC
+
+R2-04/R2-09: a3 stage/information and preparation exited0. Preparation at05:28:54UTC
+published original625f0251, contract00b23ca0, envelopeedeafc4a after58 queries.
+Coordinate at05:29:00UTC exited2; both exact launcher clients exited0 and were reaped.
+Both retained actual root units normally exited2 with MainPID/ControlPID0, no Job,
+and recursive cgroup paths absent twice. READY/result/collection/contract and all64
+command intent/terminal files were absent. No outage or daemon stop was submitted.
+Closure2b320c6a preserves original failure, partials and failed units. Original caught
+exception remains UNKNOWN. Later read-only checks reproduce OBS_UNIT_PROPERTIES:
+systemctl omits six empty Exec arrays even with --all. D-Bus independently returned
+six exact a(sasbttttuii) empty arrays for each unit. Initial diagnostic asserted the
+old property set and failed; that failure is retained, not counted as success.
+
+New private observer-v8 accepts only missing members of those six fields and only
+after all six exact typed-empty manager values are recovered through its bounded,
+reaped, read-only argv allowlist. Other missing/unknown values and nonempty hooks
+still fail. busctl joins the executable hash/metadata inventory. Coordinator polls
+at6 seconds, retaining its original45-minute window,2048 wait budget and4096 total
+query cap; worst-case near-deadline fixture consumes1928 including128 admission.
+Historical56 unit property schema and policies remain unchanged. No lifecycle retry.
+
+22 focused cases and17 changed-package entry/input regressions pass. The corrected
+reader also recovered both actual failed a3 terminals with8 real read-only queries,
+all children reaped, and rejected them as successful terminals. This adapter binds
+only the two prior names; it is not a4 startup or G4 admission. Package d22808d4 and
+seal cce3c53b select distinct a4 AUX with unchanged canonical12-tool read-only reuse.
+The first local assembler used the previous WAVE path and failed before writes;
+corrected assembly succeeded with that failure preserved. Official b6 hosted and
+application acceptance are unchanged. Actual independent READY/G4, backup transition,
+deployment, Owner use, three actual consecutive trading days and C_R2 remain OPEN.

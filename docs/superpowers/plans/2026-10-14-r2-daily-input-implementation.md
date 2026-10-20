@@ -7882,3 +7882,16 @@ Runtime allows only the two observed exact empty package paths with all metadata
 checks retained. New16 focused and17 necessary connection tests PASS. Package
 7e67a92a/seal23bfbae0; official CI/app unchanged. Actual new preparation, READY/G4,
 backup transition/deploy/Owner/3actualdays/C_R2 OPEN; no Owner information wait.
+
+### Wave118 actual prepare success / typed Exec-array correction — 2026-10-20
+
+R2-04/R2-09: a3 prepare exit0, coordinate and both actual root units exit2 before
+READY/outage. Exact terminals, absent recursive cgroups and68 absent operating
+records are retained in closure2b320c6a. Original exception UNKNOWN; later actual
+manager queries prove six empty Exec arrays omitted by systemctl. Observer-v8
+requires independent typed-empty evidence before filling those missing fields;
+all other policy/host checks remain.6s polling retains original45min/2048 wait/4096
+total budget.22 focused+17 connection tests PASS,8 actual failed-unit read queries
+PASS; no actual a4 startup admission claim. Package d22808d4/seal cce3c53b; preserve
+a3 failed units/old windows, canonical12 official source and accepted app/CI.
+Next: distinct sealed a4 prepare/admit/independent READY/G4. All later R2 gates OPEN.
