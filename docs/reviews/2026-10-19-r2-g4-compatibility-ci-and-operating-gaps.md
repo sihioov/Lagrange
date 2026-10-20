@@ -1,6 +1,6 @@
 # R2 G4 compatibility CI acceptance and operating gaps
 
-Status: **790f1ea HOSTED_ACCEPTED_TOOL_ONLY preserved; Owner information resolved; root staging/publication succeeded; first prepare exit2 INCOMPLETE; Wave115 mount-order correction validated locally, successor hosted acceptance pending.**
+Status: **790f1ea HOSTED_ACCEPTED_TOOL_ONLY preserved; Owner information resolved; root staging/publication succeeded; first prepare exit2 INCOMPLETE; Wave115 b6e409a HOSTED_ACCEPTED_TOOL_ONLY; distinct fixed package28 connection regressions PASS, successor actual preparation pending.**
 Roadmap: R2-04/R2-09. Application e639169 remains separately accepted through its images and actual isolated wholeflow, and is not deployed.
 
 2026-10-20 Owner의 외부/수동 writer 없음 답변과 베타 로컬 키 방침을 실제 메시지에 바인딩했다. 정보·승인 대기는 없다. 04:24UTC root34항목 설치와 보호된 정보 저장은 exit0, 04:25UTC prepare는 exit2 INCOMPLETE였다. 실제 READY·중단·백업·배포는 미실행이다. 아래 Wave115 기록에서 제한된 진단으로 재현한 Mounts 순서 의존 오류와 보정 검증을 구분한다. 기존 앱e639169/12이미지/실제통합 및 도구790f1ea의 hosted 인수는 보존한다. G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 OPEN이다.
@@ -1318,3 +1318,43 @@ CI rerun of accepted candidates, application rebuild, provider call or deploymen
 is included. Next is successor tool hosted validation and the concrete corrected
 execution package under existing Owner authority. The four full-controller runtime
 findings, G4, deployment, Owner use, three actual trading days and C_R2 remain OPEN.
+
+
+### Wave115 hosted acceptance and distinct sealed successor — 2026-10-20 05:06 UTC
+
+R2-04/R2-09: `b6e409af4baf0f5af7a0539bda92c9ce3ad62335` completed
+[CI39370737972](https://github.com/sihioov/Lagrange/actions/runs/39370737972)
+at05:04:57UTC, attempt1, all8 jobs successful. Full8 logs/7 actual checkout SHAs
+were recovered by05:06:32UTC. All206 required definitions,60 maintenance cases
+(including five new mount-order cases),3367 Rust named rows/231 root blocks,
+19 dedicated PG exits/146 names and web143 cases reconciled. Existing skips,
+ignored/platform exclusions and independent fragmented nested outcomes remain
+explicit; parent success does not fill UNKNOWN.
+
+All1464 byte pins and548 tracked candidate blobs match. The initial assembler
+retained the prior tree count2163, but the actual candidate has2164, with this
+compatibility review as the sole added path since790f1ea. Original manifest and
+failed assembler receipt remain. `ci-input-tree-count-correction.json` pins the
+actual Git listing and added blob; no source/workflow change or CI rerun.
+Hosted receipt `f7ba48e367b985fcabe28daedd3829415bc0c7b917e20b95992314862d2b43c6`
+is maintenance-tool-only acceptance. App e639169/12images/actual isolated
+wholeflow and prior790 evidence remain separate and immutable.
+
+The distinct34-member package binds corrected observer-v7/loader-v13 and the
+new tool with27 dependency pins/12 payload pins. New roots are
+`/var/lib/lagrange-r2-g4-evidence/b6e409a-a1-20261020` and
+`/opt/lagrange/maintenance/b6e409af4baf0f5af7a0539bda92c9ce3ad62335`.
+Both must be absent before writes. Original790 roots, failed prepare and its
+window remain consumed/retained. Original blanket authority bytes stay exact;
+their accepted790 field is historical context, while new source/hosted acceptance
+are explicitly pinned. Actual Owner information stays bound to the real message
+and original question. No additional approval or answer is pending.
+
+Twenty-eight selected isolated regressions pass:34-file staging/readback,
+no overwrite/partial reuse, pinned import/bootstrap, prepare and prepare-to-admit
+connection. Root/host observations are fixtures; actual admission/READY/G4 remain
+open. Source package4e834b7b and execution seal136c0f1e are in private Wave115.
+Next: exact sealed installer/entry preparation, actual independent recovery READY,
+single bounded G4 and original-process/exact-collection closure. No automatic
+retry, old-attempt replay, repair or window renewal. Backup transition/deployment,
+Owner use, three consecutive actual tradingdays and C_R2 remain OPEN.
