@@ -60,6 +60,48 @@ The2026-10-20 `stock_kind` wire correction also requires the matched newly
 verified producer/admitter/runtime release. Do not modify an installed release
 or mix its older ASCII-only readers with newly admitted Hangul labels.
 
+### Bounded recurring civil-day action acquisition
+
+The explicit `install-kis-daily.sh --raw-source --action-supply` choice pins both
+modes in the immutable unit. After the current session's EOD Raw check/capture,
+the wrapper invokes `research-worker --r2-action-supply`; an already present EOD
+source does not skip this separate coverage check. Closed days and before16:30
+remain no-ops. `--check` propagates a provider-free, reservation-free check.
+
+The root-owned literal dotenv supplies `RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX`:
+lowercase hex of at most4096bytes of nonsecret JSON. This encoding preserves the
+existing dotenv ban on quotes/interpolation; it is not secret encryption. The
+schema is `r2-action-supply-v1`, with explicit `enabled`, `release_commit`,
+`owner`, `policy_sha256`, `activation_date`, `base_candidate_sha256`,
+`initial_civil_frontier`, `entitlement_reference_sha256`, `raw_owner_uid` and
+`timeout_seconds`. The base hash/frontier must match the compiled sole approved
+V3 registry, and timeout is positive and at most300seconds. Missing/disabled
+configuration constructs no provider and reads no Raw. Never use fixture values
+as an operational configuration or treat hex as a place for credentials.
+
+Each run independently verifies committed calendar/action evidence under the
+configured entitlement. Source scans retain the measured128batch/8192file/64MiB
+ceilings. The contiguous civil frontier is reconstructed from the approved base;
+gaps over14days fail without automatic chunking. Only WholeMarket7 is supplied.
+Before provider construction, the worker exclusively creates and fsyncs one
+0600 claim per KST date below `<RESEARCH_RAW_ROOT>/raw/.r2-action-supply` (0700).
+The held namespace/lock and claim reject links, replacement and malformed state.
+The complete conservative280wire-GET allowance (7classes×10pages×4attempts) is
+reserved, not reported as actual request consumption. A failed/uncertain
+same-day attempt cannot be replayed. Independent revalidation must recover all
+seven exact reserved batch/range chains; another successful batch cannot satisfy
+that claim. No receipt alone advances coverage.
+
+Existing EOD adds at most372wire GETs, giving a combined652 upper bound, still
+subject to existing shared token reuse and one-request/second channel limits.
+The supplier subtracts planning/provider-construction time from its request
+deadline, retains the reservation on timeout and never shortens broker backoff.
+Synchronous source checks are bounded by scan limits and elapsed-time admission
+checks; they are not claimed to be preempted at an exact wall-clock instant.
+Source verification releases its snapshot locks before Raw commit. Raw capture
+is not DB publication, input admission, daily activation or proof of three
+actual trading days.
+
 ## Immutable input installation
 
 The production release installer accepts one optional

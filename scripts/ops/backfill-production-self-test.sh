@@ -238,6 +238,12 @@ if [ "$has_worker" -eq 1 ]; then
   session_csv=
   raw_mode=0
   for ((index=0; index<${#args[@]}; index++)); do
+    if [ "${args[index]}" = --r2-action-supply ]; then
+      [ "${RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX:-}" = '7b2266697874757265223a747275657d' ] || exit 95
+      printf 'ACTION_SUPPLY_FIXTURE: %s\n' "${args[*]}"
+      [ "${FIXTURE_WORKER_MODE:-}" != supply-failure ] || exit 2
+      exit 0
+    fi
     if [ "${args[index]}" = --eod-raw-check-session-dates ]; then
       target=${args[index+1]}
       present=false
@@ -695,4 +701,53 @@ invoke_daily "$CASE_DIR" execute --raw-source
 [ "$LAST_RC" -eq 0 ] || fail 'closed-day Raw run did not skip'
 [ ! -s "$CASE_DIR/docker.log" ] || fail 'closed-day Raw run invoked Docker'
 
-echo 'BACKFILL_SELF_TEST: PASS (legacy selection/resume plus seven Raw source integration cases; fake host only)'
+new_case supply-requires-raw
+invoke_daily "$CASE_DIR" execute --action-supply
+[ "$LAST_RC" -ne 0 ] || fail 'supplier accepted legacy mode'
+[ ! -s "$CASE_DIR/docker.log" ] || fail 'invalid supplier mode invoked Docker'
+
+new_case supply-missing-config
+invoke_daily "$CASE_DIR" execute --raw-source --action-supply
+[ "$LAST_RC" -eq 2 ] || fail 'supplier accepted missing protected configuration'
+[ ! -s "$CASE_DIR/docker.log" ] || fail 'missing supplier configuration invoked Docker'
+
+new_case supply-check
+printf '%s\n' 'RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=7b2266697874757265223a747275657d' >>"$CASE_DIR/production.env"
+invoke_daily "$CASE_DIR" check --raw-source --action-supply
+[ "$LAST_RC" -eq 0 ] || fail 'supplier check failed'
+grep -q -- '--r2-action-supply --check' "$CASE_DIR/docker.log" || fail 'supplier check mode missing'
+[ ! -s "$CASE_DIR/worker-argv.log" ] || fail 'supplier check invoked source capture'
+
+new_case supply-after-capture
+printf '%s\n' 'RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=7b2266697874757265223a747275657d' >>"$CASE_DIR/production.env"
+invoke_daily "$CASE_DIR" execute --raw-source --action-supply
+[ "$LAST_RC" -eq 0 ] || fail 'supplier after Raw capture failed'
+python3 - "$CASE_DIR/docker.log" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+assert text.index("--eod-raw-session-dates") < text.index("--r2-action-supply")
+assert "--r2-action-supply --check" not in text
+PY
+
+new_case supply-after-existing-raw
+printf '%s\n' 'RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=7b2266697874757265223a747275657d' >>"$CASE_DIR/production.env"
+FIXTURE_WORKER_MODE=raw-existing
+invoke_daily "$CASE_DIR" execute --raw-source --action-supply
+[ "$LAST_RC" -eq 0 ] || fail 'existing Raw suppressed supplier'
+grep -q -- '--r2-action-supply' "$CASE_DIR/docker.log" || fail 'existing Raw skipped supplier'
+[ ! -s "$CASE_DIR/worker-argv.log" ] || fail 'existing Raw recaptured source'
+
+new_case supply-source-failure
+printf '%s\n' 'RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=7b2266697874757265223a747275657d' >>"$CASE_DIR/production.env"
+FIXTURE_WORKER_MODE=permanent
+invoke_daily "$CASE_DIR" execute --raw-source --action-supply
+[ "$LAST_RC" -ne 0 ] || fail 'failed Raw source was accepted'
+! grep -q -- '--r2-action-supply' "$CASE_DIR/docker.log" || fail 'supplier ran after source failure'
+
+new_case supply-failure-propagated
+printf '%s\n' 'RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=7b2266697874757265223a747275657d' >>"$CASE_DIR/production.env"
+FIXTURE_WORKER_MODE=supply-failure
+invoke_daily "$CASE_DIR" check --raw-source --action-supply
+[ "$LAST_RC" -eq 2 ] || fail 'supplier failure was swallowed'
+
+echo 'BACKFILL_SELF_TEST: PASS (legacy selection/resume, seven Raw source and seven supplier integration cases; fake host only)'

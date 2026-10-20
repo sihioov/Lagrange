@@ -1,5 +1,6 @@
 //! Pure D5 supplier proposal. No request, timer, transport, budget reservation or
-//! operational approval is created here. G4 must authorize the actual delta.
+//! operational approval is created here. The collectors runtime separately
+//! binds protected configuration, source evidence and durable reservations.
 
 use chrono::{FixedOffset, Timelike};
 use domain::{ContentHash, TradingDate, UtcTimestamp};
@@ -25,7 +26,7 @@ pub enum SupplyProposalConfig {
     },
 }
 
-/// Caller claims for pure planning only. The future supplier must recover durable
+/// Caller claims for pure planning only. The runtime supplier must recover durable
 /// reservation/consumption receipts; calling this function cannot reset that state.
 pub struct SupplyDayStateClaim {
     pub kst_date: TradingDate,

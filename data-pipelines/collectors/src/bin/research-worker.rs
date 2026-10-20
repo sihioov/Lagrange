@@ -23,6 +23,7 @@ research-worker --calendar-once --date YYYY-MM-DD (--source-batch-id UUID|--reus
 research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
 research-worker --eod-raw-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
 research-worker --eod-raw-check-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
+research-worker --r2-action-supply [--check]
 research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD [--existing-source-batch-id UUID]
 research-worker healthcheck
 research-worker --help
@@ -42,6 +43,9 @@ enum Command {
     BackfillSessionDates(Vec<TradingDate>),
     EodRawSessionDates(Vec<TradingDate>),
     EodRawCheckSessionDates(Vec<TradingDate>),
+    ActionSupply {
+        check: bool,
+    },
     DailyRangeRaw {
         start: TradingDate,
         end: TradingDate,
@@ -203,6 +207,27 @@ async fn main() -> ExitCode {
     let target_date = command_target_date(&command);
     let range_raw = matches!(&command, Command::DailyRangeRaw { .. });
     let values = environment_map();
+    if let Command::ActionSupply { check } = command {
+        return match collectors::action_supply::run(&values, check).await {
+            Ok(result) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&result).expect("finite supply result")
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "outcome": "BLOCKED", "error_code": error.to_string(),
+                        "raw_only": true, "admitted": false
+                    })
+                );
+                ExitCode::from(2)
+            }
+        };
+    }
     if let Command::EodRawSessionDates(dates) | Command::EodRawCheckSessionDates(dates) = &command {
         let stdout = std::io::stdout();
         let mut writer = stdout.lock();
@@ -272,7 +297,9 @@ async fn main() -> ExitCode {
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
         Command::Help => unreachable!("help returned before worker setup"),
         Command::CalendarOnce(_, _) => unreachable!("calendar bootstrap returned before EOD setup"),
-        Command::EodRawSessionDates(_) | Command::EodRawCheckSessionDates(_) => {
+        Command::EodRawSessionDates(_)
+        | Command::EodRawCheckSessionDates(_)
+        | Command::ActionSupply { .. } => {
             unreachable!("Raw command returned before DB setup")
         }
     };
@@ -301,6 +328,7 @@ fn command_target_date(command: &Command) -> Option<TradingDate> {
         | Command::BackfillSessionDates(_)
         | Command::EodRawSessionDates(_)
         | Command::EodRawCheckSessionDates(_)
+        | Command::ActionSupply { .. }
         | Command::Healthcheck
         | Command::Help
         | Command::InternalRecover(_) => None,
@@ -313,6 +341,10 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         [] => Ok(Command::Daemon),
         [flag] if flag == "--help" || flag == "-h" => Ok(Command::Help),
         [command] if command == "healthcheck" => Ok(Command::Healthcheck),
+        [command] if command == "--r2-action-supply" => Ok(Command::ActionSupply { check: false }),
+        [command, flag] if command == "--r2-action-supply" && flag == "--check" => {
+            Ok(Command::ActionSupply { check: true })
+        }
         [mode, date_flag, date, batch_flag, batch_id]
             if mode == "--calendar-once"
                 && date_flag == "--date"
@@ -975,6 +1007,21 @@ mod tests {
                 assert!(dates[0] < dates[1] && dates[1] < dates[2]);
             }
             _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn action_supplier_cli_is_explicit_and_has_read_only_check_mode() {
+        assert!(matches!(
+            parse_args(&["--r2-action-supply".into()]).unwrap(),
+            Command::ActionSupply { check: false }
+        ));
+        assert!(matches!(
+            parse_args(&["--r2-action-supply".into(), "--check".into()]).unwrap(),
+            Command::ActionSupply { check: true }
+        ));
+        for extra in ["--once", "--date", "--backfill-session-dates", "--execute"] {
+            assert!(parse_args(&["--r2-action-supply".into(), extra.into()]).is_err());
         }
     }
 

@@ -86,7 +86,19 @@ committed prefix and scan appended complete lines before claiming verification. 
 configured scan limit returns `SOURCE_SCAN_LIMIT`, never a truncated success. Inventory
 absence does not block implementing or fixture-testing these rules.
 
-### Concrete recurring supplier SOURCE proposal — G4 has not activated it
+### Concrete recurring supplier SOURCE proposal — original D5 boundary
+
+2026-10-21 update: the original source-only boundary below records D5's scope.
+Owner's later blanket R2 authority and explicit evidence-measured budget decision
+authorize the separate Wave135 runtime connection. Official KIS sample commit
+2077773a69a428daf63e148182511f068cc45de3 was checked for the same six range GETs
+and GB1 date distinction; no endpoint, method or pagination policy changed.
+The bounded runtime now exists in `collectors::action_supply`, with durable
+same-day reservations and source-derived frontier. The nonsecret protected hex
+configuration and explicit immutable installer flags are documented in
+[the installation runbook](../runbooks/owner-beta-daily-input.md).
+This source update does not claim that the new supplier is deployed or active;
+matching candidate CI/images, historical gap closure and actual input gates remain.
 
 Keep the existing EOD bundle unchanged. Propose one additional **Raw-only**, WholeMarket7
 range capture per eligible KST run, through the existing range capability; no calendar,

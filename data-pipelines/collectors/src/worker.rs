@@ -97,6 +97,7 @@ pub const WORKER_ENV_KEYS: &[&str] = &[
     "RESEARCH_RAW_ROOT",
     "RESEARCH_CURATED_ROOT",
     "RESEARCH_ENTITLEMENT_REFERENCE",
+    "RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX",
     "RESEARCH_SYNTHETIC_BUNDLE",
     "RESEARCH_CANDIDATE_ENABLED",
     "RESEARCH_CANDIDATE_RAW_ROOT",
@@ -913,7 +914,7 @@ pub(crate) fn build_production_kis_provider(
 /// historical Raw-only command. Credential values remain in
 /// `SystemCredentialSource` and are read by the token issuer/client only when
 /// the first request is made.
-fn build_production_kis_provider_from_files(
+pub(crate) fn build_production_kis_provider_from_files(
     app_key_path: &Path,
     app_secret_path: &Path,
 ) -> Result<LiveKisProvider, WorkerError> {

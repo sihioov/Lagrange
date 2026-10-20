@@ -159,6 +159,12 @@ grep -Fq "WorkingDirectory=$release" "$test_root/install-plan.out"
 grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --execute" "$test_root/install-plan.out"
 bash "$installer" "${installer_args[@]}" --raw-source --dry-run >"$test_root/raw-install-plan.out"
 grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --raw-source --execute" "$test_root/raw-install-plan.out"
+bash "$installer" "${installer_args[@]}" --action-supply --raw-source --dry-run >"$test_root/supply-install-plan.out"
+grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --raw-source --action-supply --execute" "$test_root/supply-install-plan.out"
+if bash "$installer" "${installer_args[@]}" --action-supply --dry-run >"$test_root/invalid-supply.out" 2>&1; then
+  echo 'action supplier accepted legacy mode' >&2
+  exit 1
+fi
 grep -Fq 'apply-window=closed (at/after 16:30:00 Asia/Seoul; --apply is refused)' "$test_root/install-plan.out"
 
 bash "$installer" --preflight "${installer_args[@]}" >"$test_root/install-preflight.out"

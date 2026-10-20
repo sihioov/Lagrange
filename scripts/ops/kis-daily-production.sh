@@ -20,6 +20,7 @@ state_dir=${KIS_DAILY_STATE_DIR:-/var/lib/lagrange/state/backfill}
 lock_file=${KIS_DAILY_LOCK_FILE:-/var/lib/lagrange/state/backfill/kis-daily.lock}
 mode=plan
 raw_source=0
+action_supply=0
 raw_check_file=
 max_sessions=10000
 today=
@@ -40,7 +41,7 @@ run_identity=
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ops/kis-daily-production.sh [--raw-source] [--plan|--check|--execute]
+Usage: scripts/ops/kis-daily-production.sh [--raw-source [--action-supply]] [--plan|--check|--execute]
 
 The default --plan validates only the literal production dotenv contract and
 the protected operational XKRX calendar artifact. It makes no DB, Docker, or
@@ -63,6 +64,11 @@ source in one provider-free worker; execute captures it only if absent. Closed
 days are no-ops. Historical source recovery is an explicit bounded
 backfill-production.sh --raw-source operation, not an inferred range. Raw
 completion never claims R2 admission, civil-day action coverage, or readiness.
+--action-supply additionally checks/captures one bounded civil-day action range
+after EOD Raw is available. It requires --raw-source and protected explicit
+RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX (lowercase hex of nonsecret JSON, compatible
+with literal dotenv parsing). Its own durable daily reservation prevents
+replay after failure. Check mode makes no reservation or provider call.
 EOF
 }
 
@@ -80,10 +86,13 @@ while [ "$#" -gt 0 ]; do
     --check) mode=check; shift ;;
     --execute) mode=execute; shift ;;
     --raw-source) raw_source=1; shift ;;
+    --action-supply) action_supply=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
+[ "$action_supply" -eq 0 ] || [ "$raw_source" -eq 1 ] ||
+  die '--action-supply requires --raw-source'
 
 cleanup() {
   rm -f -- "$calendar_selection_file" "$calendar_metadata_file" \
@@ -473,6 +482,7 @@ KIS_DAILY_RAW_PLAN: current-session ETF11 Raw source collection
   calendar=$calendar_id $calendar_artifact_sha256
   state=EOD_RAW_STATE_V1; no legacy publication-state reuse
   history=explicit bounded recovery; no inferred automatic catchup
+  action_supply=$action_supply (explicit protected configuration; one reserved range/day)
   publication=false curated=false db=false ready=false
 PLAN_ONLY: no DB, Docker, provider, secret-value, or state operation made
 EOF
@@ -514,9 +524,29 @@ if [ "$raw_source" -eq 1 ]; then
     exit 0
   fi
   kis_read_compose_configure "$root" || blocked "$KIS_READ_COMPOSE_ERROR"
+  if [ "$action_supply" -eq 1 ]; then
+    # This nonsecret configuration comes only from the validated dotenv, never
+    # an ambient shell override. The worker validates the complete bound schema.
+    RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX=$(dotenv_get RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX)
+    [ -n "$RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX" ] &&
+      [ "${#RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX}" -le 8192 ] ||
+      blocked 'explicit action-supply configuration is missing or oversized'
+    export RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX
+    if [ "$mode" = execute ]; then
+      [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
+        blocked 'execution is disabled until BACKFILL_CONFIRM_EXTERNAL is explicitly set'
+    fi
+  fi
   export RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled}
   compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
   compose+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
+  run_action_supply() {
+    [ "$action_supply" -eq 1 ] || return 0
+    local args=(--r2-action-supply)
+    [ "$mode" != check ] || args+=(--check)
+    "${compose[@]}" run --rm --no-deps -e RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX \
+      research-worker "${args[@]}"
+  }
   raw_check_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-eod-raw-check.XXXXXX") ||
     die 'cannot stage Raw source observation'
   if ! "${compose[@]}" run --rm --no-deps research-worker \
@@ -563,6 +593,7 @@ PY
   fi
   echo "KIS_DAILY_RAW_CHECK: date=$today source_present=$raw_present publication=false ready=false"
   if [ "$mode" = check ] || [ "$raw_present" = yes ]; then
+    run_action_supply
     exit 0
   fi
   [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
@@ -573,7 +604,8 @@ PY
     LAGRANGE_BACKFILL_STATE="$state_file" \
     bash "$script_dir/backfill-production.sh" --raw-source \
       --start "$today" --end "$today" --session-dates "$today" --auto-resume --execute
-  exit $?
+  run_action_supply
+  exit 0
 fi
 
 snapshot_database

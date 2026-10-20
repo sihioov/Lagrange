@@ -21,6 +21,8 @@ lock_file=/var/lib/lagrange/state/backfill/kis-daily.lock
 systemd_dir=/etc/systemd/system
 replace_existing=0
 runner_args=--execute
+raw_source=0
+action_supply=0
 service_temp=
 timer_temp=
 
@@ -39,7 +41,7 @@ Usage: scripts/ops/install-kis-daily.sh [--dry-run|--preflight|--check|--apply|-
        [--calendar-dir /var/lib/lagrange/state/kis-daily/calendar]
        [--state-dir /var/lib/lagrange/state/backfill]
        [--lock-file /var/lib/lagrange/state/backfill/kis-daily.lock]
-       [--systemd-dir /etc/systemd/system] [--replace-existing] [--raw-source]
+       [--systemd-dir /etc/systemd/system] [--replace-existing] [--raw-source [--action-supply]]
 
 The service and timer names are suffixed with the first seven characters of
 the exact release commit. The service executes the release-local
@@ -54,6 +56,8 @@ systemd and verifies both units are loaded, inactive, and disabled; it never
 changes unit activation state and can install after 16:30 Asia/Seoul.
 --raw-source pins the explicit R2 current-session source mode in ExecStart.
 It does not activate daily recommendations or infer a historical catchup range.
+--action-supply requires --raw-source and pins the bounded recurring action
+supplier in the same ExecStart. Its protected configuration remains in dotenv.
 EOF
 }
 
@@ -107,7 +111,11 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --raw-source)
-      runner_args='--raw-source --execute'
+      raw_source=1
+      shift
+      ;;
+    --action-supply)
+      action_supply=1
       shift
       ;;
     -h|--help)
@@ -119,6 +127,12 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+[ "$action_supply" -eq 0 ] || [ "$raw_source" -eq 1 ] ||
+  die '--action-supply requires --raw-source'
+if [ "$raw_source" -eq 1 ]; then
+  runner_args='--raw-source --execute'
+  [ "$action_supply" -eq 0 ] || runner_args='--raw-source --action-supply --execute'
+fi
 
 if [ "$mode" = install-disabled ] && [ "$replace_existing" -eq 1 ]; then
   die '--replace-existing is not allowed with --install-disabled'

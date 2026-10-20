@@ -8515,3 +8515,65 @@ provider/G4/CI attempts. Recurring supplier wiring, measured catchup, matched
 immutable release and daily activation remain subsequent work, not acceptance.
 
 Wave134 validation: all37reconstruction tests (4new) and market-data all-target Clippy pass. At15:40:01UTC the changed read-only verifier resolved all5actual errors without Raw edits or network calls:13civil days verified,40stillmissing; calendar Sep24..Oct6 stillmissing. Actual input admission, supplier wiring and activation remain OPEN.
+
+
+## Wave135 bounded recurring action supplier — 2026-10-21 KST
+
+R2-04/09 next owned scope is collectors action_supply.rs, its tests, the existing
+research-worker command/environment seam and KIS daily wrapper/installer tests.
+Use the existing research-worker container, Raw mount, shared credential/rate
+coordinator and fixed six KSD endpoint/TR pairs. No DB, new provider, service,
+account or order path. Protected root dotenv carries explicit nonsecret supplier
+configuration as lowercase hex-encoded JSON (the literal dotenv contract rejects quotes); default absent/disabled performs no source read or transport.
+An explicit --action-supply mode is valid only with --raw-source and is pinned by
+the immutable installer. Execute it after current-day EOD Raw, including when
+that Raw is already present. Before16:30/current-date mismatch/closed-day wrapper
+noops remain. Check mode cannot acquire/consume reservations or fetch.
+
+Configuration binds owner/policy, exact release, activation KST date, approved
+V3 base candidate/initial civil frontier, entitlement hash, Raw UID and at most
+the existing300-second daily processing ceiling. Initial frontier must match
+the compiled sole approved V3 registry's range_end, not a fabricated job result.
+Use the previously measured128batch/8192file/64MiB scan ceilings. Independently
+project the complete calendar and reconstruct action coverage from Raw on every
+run. Invalid/conflicting evidence blocks; a missing interval longer than14days
+requires separate bounded catchup and cannot be automatically chunked.
+
+One whole-market range/day,7classes*10pages*4existing read attempts =280reserved
+wire-GET allowance. Reserve that full conservative ceiling durably before any
+provider construction/dispatch; it is not an assertion of actual consumption.
+Together with the existing EOD bound (22price/reference+70action+1calendar pages,
+4attempts each), the maximum is652GETs, with unchanged shared per-channel limits.
+Use held-directory nofollow exclusive claims, mode0600, fsync and one locked state
+namespace. An uncertain/failed same-day claim is never replayed. Successful capture
+must be independently reconstructed from its exact committed batch before reporting
+coverage; no local counter or receipt alone advances the frontier. All read snapshot
+locks must be dropped before committing Raw. Timeout/cancellation keeps the claim.
+Test disabled/early gates, bounds/config, durable restart and tamper/no-clobber,
+source-derived gap/conflict/frontier, complete capture/revalidation and wrapper
+current-source-reuse integration. This is source work until hosted and runtime gates.
+
+
+Wave135 source validation (2026-10-21 KST): the recurring supplier is now wired
+through the explicit Raw-mode installer/wrapper and research-worker, with no new
+Compose service/mount, crate dependency or DB boundary. Eleven supplier tests (including next-day frontier/independent reservation) and
+nine CLI tests pass; all-target collectors Clippy passes. Seven new fake-host
+supplier cases and two installer-mode checks pass along with existing relevant
+shell fixtures. Calendar/gap/identity/timeout/claim tamper failures and existing
+Raw reuse are covered. The first compile's missing iterator/fixture error variant,
+Clippy item-order failure and literal-dotenv JSON rejection remain preserved.
+The corrected nonsecret lowercase-hex configuration keeps the parser unchanged.
+No provider call, actual new capture or runtime activation occurred in this work.
+
+Candidate1cbe487 CI39447903390 attempt1 is completed success for all8jobs; full
+logs and exact7checkouts were recovered15:52:39UTC. This observation is separate
+from image/runtime acceptance and does not cover the subsequent c8483a4 or Wave135
+source. Actual app e639169 remains deployed, dailyOFF. Source gaps from the last
+15:40:01UTC read-only observation remain13verified/40missing civil days, with
+Sep24..Oct6 calendar absent. The new combined candidate still needs hosted gates,
+matched immutable images/runtime, evidence-derived catchup, actual input admission
+and activation. Owner use, three real consecutive trading days and C_R2 remain OPEN.
+
+Wave135 final local checks: the normalized source snapshot passes the full ops static
+contract, and workspace formatting passes. Source structure is unchanged, so
+architecture diagrams are untouched. No old CI/G4/backup operation was replayed.

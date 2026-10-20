@@ -1,3 +1,4 @@
+pub mod action_supply;
 pub mod calendar_bootstrap;
 mod calendar_claim;
 mod candidate_pipeline;
