@@ -7851,3 +7851,19 @@ failed prepare and original window remain consumed/retained. Source package
 Owner information, corrected source and hosted acceptance. No repeated question
 or approval. Actual successor preparation, independent READY/G4, deployment,
 Owner use, actual3 consecutive tradingdays and C_R2 remain open.
+
+
+### Wave116 private large-mount correction — 2026-10-20
+
+R2-04/R2-09: b6 actual stage/information exit0, preparation exit2 before outage.
+Original traceback remains UNKNOWN; bounded diagnosis reproduces the13-mount
+historical ordering cap. Exact immutable policy hashes recovered for13/10 mounts
+without storing raw configuration. Preserve consumed roots/intent/window and all
+34 files; two own units and four operating files absent. New private loader-v14
+binds those proven orders while retaining complete policy/state checks. New5 plus
+affected7 tests and28 distinct-package connection cases PASS; initial assembler
+count error and empty-lock diagnostic error retained with bounded corrections.
+Official b6 source/hosted acceptance and app e639 evidence unchanged. Separate
+fixed a2 roots/package5985170d/executionseal659c43d2 are prepared; actual admission,
+independent READY/G4, backup transition/deploy/Owner/3actualdays/C_R2 remain OPEN.
+No repeated Owner question, no retry of a consumed attempt or renewal of its window.

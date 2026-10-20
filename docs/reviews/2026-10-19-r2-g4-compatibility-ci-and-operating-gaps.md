@@ -1,6 +1,6 @@
 # R2 G4 compatibility CI acceptance and operating gaps
 
-Status: **790f1ea HOSTED_ACCEPTED_TOOL_ONLY preserved; Owner information resolved; root staging/publication succeeded; first prepare exit2 INCOMPLETE; Wave115 b6e409a HOSTED_ACCEPTED_TOOL_ONLY; distinct fixed package28 connection regressions PASS, successor actual preparation pending.**
+Status: **790f1ea HOSTED_ACCEPTED_TOOL_ONLY preserved; Owner information resolved; root staging/publication succeeded; first prepare exit2 INCOMPLETE; Wave115 b6e409a HOSTED_ACCEPTED_TOOL_ONLY; distinct fixed package28 connection regressions PASS, successor prepare exit2 before outage; Wave116 private large-mount correction sealed after12 focused and28 connection tests.**
 Roadmap: R2-04/R2-09. Application e639169 remains separately accepted through its images and actual isolated wholeflow, and is not deployed.
 
 2026-10-20 Owner의 외부/수동 writer 없음 답변과 베타 로컬 키 방침을 실제 메시지에 바인딩했다. 정보·승인 대기는 없다. 04:24UTC root34항목 설치와 보호된 정보 저장은 exit0, 04:25UTC prepare는 exit2 INCOMPLETE였다. 실제 READY·중단·백업·배포는 미실행이다. 아래 Wave115 기록에서 제한된 진단으로 재현한 Mounts 순서 의존 오류와 보정 검증을 구분한다. 기존 앱e639169/12이미지/실제통합 및 도구790f1ea의 hosted 인수는 보존한다. G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 OPEN이다.
@@ -1358,3 +1358,37 @@ Next: exact sealed installer/entry preparation, actual independent recovery READ
 single bounded G4 and original-process/exact-collection closure. No automatic
 retry, old-attempt replay, repair or window renewal. Backup transition/deployment,
 Owner use, three consecutive actual tradingdays and C_R2 remain OPEN.
+
+
+## Wave116 exact large-mount historical binding — 2026-10-20 05:19 UTC
+
+R2-04/R2-09: the distinct b6 installation and actual Owner-information publication
+exited0 at05:09UTC. Its preparation exited2 with the generic INCOMPLETE result;
+the original exception remains UNKNOWN. Bounded read-only diagnosis reproduced
+INPUT_HISTORY_MOUNT_ORDER_BOUND at the API container's13 mounts. The later fixed13
+container checks recovered the exact immutable full policy hashes for both the13
+and10 mount cases using one metadata read each. No key/config values were persisted.
+The original56-unit survey is not replaced and no new complete admission is claimed.
+
+The consumed attempt retains all34 installed files, its preparation intent and
+original45-minute window. Original/contract/operating/coordinator files and both
+owned units were absent. The closure reader initially rejected the intentional
+empty recovery.lock after33 successful source checks; that error remains, and a
+single separate empty-file metadata/hash check completed the34-file closure.
+No READY, outage, G4, backup or deployment occurred.
+
+Private loader-v14 fixes only those two proven historical mount orders. Every
+mount field, Config, HostConfig and NetworkSettings must still reproduce the full
+old hash. It neither searches factorial13 orders nor refreshes the baseline.
+Five new focused cases plus seven affected regressions pass;28 changed-package
+connection cases pass. The assembler's initial26-versus27 source-count assertion
+occurred before writes; its corrected accounting includes the separately pinned
+runtime module. Both receipts are retained. Official b6 payload/CI and accepted
+application evidence remain unchanged; no CI/build rerun is needed for this private
+binder correction. New fixed roots b6e409a-a2 and maintenance/b6e409a…-a2 preserve
+both earlier attempts. The suffix denotes a distinct copy, not another Git revision.
+
+Evidence under target/r2-daily-beta/wp-8/: wave115/actual-prepare-failure-closure.json
+SHA c720cac4a3c0f27eb715222c8cf8ff9422e0b185d87bbd37e5c14ecb3d11609c;
+legacy-order proof907f0cad; wave116/source package5985170d and execution seal659c43d2.
+Actual a2 preparation/admission/independent READY/G4 and all later R2 gates remain open.
