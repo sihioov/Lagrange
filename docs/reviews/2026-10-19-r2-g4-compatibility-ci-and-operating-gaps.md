@@ -1492,3 +1492,43 @@ SyntaxWarning and was preserved unexecuted; corrected package9ad5262b passes wit
 warnings-as-errors. Seal3726d951 selects distinct a5 AUX, same canonical official12
 read-only files and actual Owner information. Original a4 READY is consumed; fresh
 admission/independent READY remain mandatory for a5. All later R2 gates remain OPEN.
+
+## Wave120 actual timer restoration / periodic service correction — 2026-10-20 06:09 UTC
+
+R2-04/R2-09: a5 reached actual independent READY and normal requester exit0.
+Two backup timers stopped and restored; all four original command clients exited0.
+Recovery/coordinator exited2 with FINAL_ORIGINAL_STATE_UNVERIFIED. Actual G4 outage
+sequence began, but no application/PG container stop, PG chmod, schema audit or
+backup capture occurred. Closure a0c3c785 preserves INCOMPLETE, all actual receipts
+and original main exception UNKNOWN. Collector failure OBS_OWNED_NOT_NORMAL_TERMINAL
+is the subsequent recovery-exit2 rejection, not the original main failure.
+
+Independent42 read queries at05:52:26UTC verified all13 container snapshots exact,
+5timers active/waiting,56-unit union/fragments, PG-parent same inode0701 and both own
+recursive cgroups absent. Two timers have actual new restored generations. The
+normal service-status invocation56399755 ran at05:49:43–44UTC between timer stops
+(journal metadata99b99378). Old whole-property equality rejects that completed
+invocation; the original thrown main exception was not recorded and stays UNKNOWN.
+The official release lock now exists: root0600 empty inode826045/device64512, exact
+identity bound in the closure. It is retained, never recreated or removed.
+
+New private a6 package047dad92/sealfcbdafa5 permits only later completed normal
+invocations of previously run services belonging to the original active timers.
+All policy/edge fields, fragment bytes, full56 inventory, normal exit0 and empty
+recursive cgroups remain required. Historical failed/disabled/never-run units stay
+exact. An already-running periodic service may settle through read-only bounded
+observations for at most5seconds within the original window; query errors fail
+immediately. Its generation freezes after its timer is stopped. Actual new values
+remain in the original/maintenance/final/collector records. Two backup timer
+baselines bind exact a5 restoration; the existing release lock is verified read-only
+by exact original identity, ancestry/no ACL/no-follow/mount and empty content.
+
+26 focused tests and4 connected before-step/contract/final/collector cases pass;
+17 prepare/admit/bootstrap/import regressions pass. The initial connected fixture
+incorrectly expected no frozen services after stopping two backup timers; its
+failure is retained and only that failed case rerun after fixing the assertion.
+No operating source changed after sealing. Typed bounded main/final failure details
+now survive INCOMPLETE without secret prose or blocking owed restoration. Prior
+attempts/windows/units remain consumed and retained. Fresh actual a6 prepare,
+admission and independent READY are required; no Owner approval/information wait.
+G4 acceptance and backup transition/deployment/Owner/three actual days/C_R2 OPEN.

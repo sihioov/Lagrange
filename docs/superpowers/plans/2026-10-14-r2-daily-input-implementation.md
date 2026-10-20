@@ -7908,3 +7908,16 @@ and require original exact normal terminal rather than a second live /proc read.
 redacted failure metadata using existing exclusive writer. Initial regex-warning
 package retained unexecuted; corrected9ad5262b/seal3726d951 selects a5 fresh
 prepare/admit/READY/G4. Past READY/windows not reusable; remaining R2 gates OPEN.
+
+## Wave120 periodic service generations and retained release lock — 2026-10-20
+
+R2-04/R2-09: a5 executed four normal backup-timer stop/restore commands, then
+recovery/coordinator exit2. Closurea0c3c785 independently verifies13 unchanged
+containers/5active timers/full56 fragments/PG0701/own cgroups absent, while preserving
+G4 INCOMPLETE and original main error UNKNOWN. Journal confirms normal scheduled
+service invocation during the step boundary. The created official release lock
+is retained. New a6 package047dad92/sealfcbdafa5 binds only normal completed periodic
+generations, actual restored timer IDs and exact read-only retained lock, and
+preserves bounded typed failure details.26 focused+4 connected+17 regression cases
+pass; one fixture assertion failure/correction retained. Fresh prepare/admit/READY
+then G4 remains next; all subsequent acceptance conditions stay OPEN.
