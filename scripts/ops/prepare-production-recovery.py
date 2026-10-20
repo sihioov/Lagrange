@@ -138,8 +138,18 @@ def checked_units(units, graph="reciprocal"):
                         ("ExecMainStartTimestampMonotonic", "ExecMainExitTimestampMonotonic", "NRestarts")),
                     "PREUPGRADE_UNITS")
             if unit["category"] in {"retained-terminal", "retained-disabled-failure"}:
-                require(0 < int(unit["ExecMainStartTimestampMonotonic"]) <=
-                        int(unit["ExecMainExitTimestampMonotonic"]), "PREUPGRADE_UNITS")
+                started = int(unit["ExecMainStartTimestampMonotonic"])
+                exited = int(unit["ExecMainExitTimestampMonotonic"])
+                # A failed transient unit can have no main-process timestamps.
+                # Preserve that observation; do not reset it or invent an exit.
+                # The detached graph, exact fragment pin and empty cgroup checks
+                # still apply, including both native observations below.
+                unstarted_failure = (
+                    graph == "quiescent-observed" and unit["category"] == "retained-terminal" and
+                    (unit["ActiveState"], unit["SubState"]) == ("failed", "failed") and
+                    started == exited == 0 and unit["ActiveEnterTimestampMonotonic"] == "0" and
+                    int(unit["InactiveEnterTimestampMonotonic"]) > 0 and unit["NRestarts"] == "0")
+                require(0 < started <= exited or unstarted_failure, "PREUPGRADE_UNITS")
             if unit["category"] == "retained-disabled-failure":
                 require(int(unit["ExecMainExitTimestampMonotonic"]) <=
                         int(unit["InactiveEnterTimestampMonotonic"]), "PREUPGRADE_UNITS")

@@ -7989,3 +7989,47 @@ Distinct active heartbeat40f9f633 was created06:25:52UTC. Exact create receipt a
 renewal handoff5f06d5a0/registry were persisted before predecessor d8d89ce7 deletion.
 Expires18:25:52UTC, renew by17:20UTC and before47th tick. Latest bounded handoff
 b925273c points at Wave122; tracking is neither native Ralph nor outage protection.
+
+
+## Wave123 retained unstarted failure / a8 restoration — 2026-10-20
+
+R2-04/R2-09 remain DOING. a8 prepared06:35:39UTC with58 queries and a fresh
+independent READY.14 original stop commands exited0 (five timers/nine containers,
+including normal Owner exit0). PG parent was protected0700; contract construction
+failed PREUPGRADE_UNITS before official audit or PG stop. The retained historical
+lagrange-r2-build-ab48a79.service is failed with both main-process timestamps0,
+ActiveEnter0, positive InactiveEnter, NRestarts0, no PIDs/job/cgroup/activation edges.
+The official predicate wrongly required a positive main start for every retained
+terminal. Its actual historical failure cause remains UNKNOWN; no unit is reset,
+removed, filtered or restarted to satisfy the check.
+
+Original recovery restored PG parent0701 and issued13 normal0 starts for nine
+containers/four timers. It then failed NATIVE_TIMER_FAILED at the31st command's
+post-start observation. That exact transient state was not recorded; rejection of
+an active/running timer is a source defect reproduced separately, not an invented
+actual state. Recovery/coordinator exited2 at06:37:08UTC; G4 remains INCOMPLETE.
+A sealed restoration-only action verified all27 original command responses and
+owned process/cgroup drain, nine original service identities/health, and the
+original window. It issued only the previously unissued final timer start once.
+Process2639745 exited0 at06:40:23UTC, final start2640323 exited0; exact root result
+148035bytes SHA5ff16e9e, recordErrors empty. The initial local validation adapter
+omitted canonical newline; its failure is retained, fixture corrected,10 boundary
+cases pass without production execution. Independent process2641992 exited0 at
+06:41:06UTC:42 queries,13 stable container policies,4 untouched exact snapshots,
+actual new9 container runtime snapshots, five active/waiting timers,56 original
+units/fragments, samePGparent0701/current/retained and owned cgroups absent.
+Closure26511bytes SHAf3a42a5a binds originals, actual terminal, exact collection
+bytes and restoration. No PG stop/schema audit/capture/deployment occurred.
+
+The successor official source admits zero main timestamps only for a detached
+failed transient in quiescent-observed mode, with ActiveEnter0, positive
+InactiveEnter and NRestarts0. Full field/fragment/inventory/cgroup checks and both
+native observations remain; started failures and persistent disabled failures
+retain their existing positive-time requirements.64 maintenance tests pass,
+including4 new tests covering preservation,19 invalid mutations, graph/fragment
+requirements, native activity and changed snapshots. This is a new tool revision
+requiring its own hosted CI acceptance; accepted b6/790 and app e639 are immutable.
+Private post-start timer observation also requires correction before the next
+distinct sealed attempt. No consumed attempt/window is replayed. Owner information
+and authorization are resolved; G4, transition/deployment, Owner use,3 actual
+trading days and C_R2 remain OPEN. Heartbeat40f9f633 tracks the latest registry.

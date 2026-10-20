@@ -576,6 +576,76 @@ class UnitInventoryTests(unittest.TestCase):
                 with self.assertRaises(ERROR):
                     maintenance.contract(files.canonical(candidate))
 
+    def unstarted_failure(self):
+        candidate = self.candidate(("failed", "failed"))
+        candidate["unit_graph"] = "quiescent-observed"
+        candidate["units"][self.history].update(
+            ExecMainStartTimestampMonotonic="0", ExecMainExitTimestampMonotonic="0",
+            ActiveEnterTimestampMonotonic="0", InactiveEnterTimestampMonotonic="30", NRestarts="0")
+        return candidate
+
+    def test_unstarted_failed_transient_preserves_zero_timestamps_and_native_cgroup_checks(self):
+        candidate = self.unstarted_failure()
+        original = copy.deepcopy(candidate)
+        self.assertEqual(maintenance.contract(files.canonical(candidate)), original)
+        native = self.native(candidate)
+        with mock.patch.object(maintenance, "empty_cgroup") as empty:
+            native.units()
+        self.assertIn(mock.call(self.history, native.window), empty.call_args_list)
+        self.assertEqual(candidate, original)
+        self.assertTrue(all(c.args[0][1] in {"show", "list-units", "list-unit-files"}
+                            for c in native.call.call_args_list))
+
+    def test_unstarted_failure_rejects_active_partial_timestamp_restart_or_queued_history(self):
+        changes = (
+            {"ActiveState": "active", "SubState": "exited"},
+            {"ActiveState": "inactive", "SubState": "dead"},
+            {"ActiveEnterTimestampMonotonic": "1"}, {"InactiveEnterTimestampMonotonic": "0"},
+            {"ExecMainStartTimestampMonotonic": "1"}, {"ExecMainExitTimestampMonotonic": "1"},
+            {"NRestarts": "1"}, {"MainPID": "1"}, {"ControlPID": "1"}, {"Job": "123"},
+            {"Restart": "always"}, {"Transient": "no"}, {"UnitFileState": "disabled"},
+            {"InvocationID": ""}, {"DropInPaths": "/run/systemd/transient/extra.conf"},
+            {"OnFailure": "other.service"}, {"Triggers": "other.service"},
+            {"TriggeredBy": "other.timer"}, {"ControlGroup": "/other.slice/fixture"})
+        for change in changes:
+            candidate = self.unstarted_failure()
+            candidate["units"][self.history].update(change)
+            with self.subTest(change=change), self.assertRaises(ERROR):
+                maintenance.contract(files.canonical(candidate))
+
+    def test_unstarted_failure_requires_explicit_graph_and_complete_fragment_pin(self):
+        candidate = self.unstarted_failure()
+        candidate["unit_graph"] = "reciprocal"
+        with self.assertRaises(ERROR):
+            maintenance.contract(files.canonical(candidate))
+        candidate = self.unstarted_failure()
+        del candidate["pins"][candidate["units"][self.history]["FragmentPath"]]
+        with self.assertRaises(ERROR):
+            maintenance.contract(files.canonical(candidate))
+        candidate = self.persistent_failure()
+        candidate["units"][self.history].update(
+            ExecMainStartTimestampMonotonic="0", ExecMainExitTimestampMonotonic="0")
+        with self.assertRaises(ERROR):
+            maintenance.contract(files.canonical(candidate))
+
+    def test_unstarted_failure_cannot_bypass_native_activity_or_changed_snapshot(self):
+        candidate = self.unstarted_failure()
+        native = self.native(candidate)
+        with mock.patch.object(maintenance, "empty_cgroup",
+                               side_effect=ERROR("PREUPGRADE_TEST_POPULATED_CGROUP")), self.assertRaises(ERROR):
+            native.units()
+        native = self.native(candidate)
+        call = native.call.side_effect
+        def changed(args):
+            result = call(args)
+            if args[1] == "show" and args[-1] == self.history:
+                return result.replace(b"ExecMainStartTimestampMonotonic=0",
+                                      b"ExecMainStartTimestampMonotonic=1")
+            return result
+        native.call.side_effect = changed
+        with mock.patch.object(maintenance, "empty_cgroup"), self.assertRaises(ERROR):
+            native.units()
+
     def test_stopped_timer_socket_path_and_writer_guards_are_not_relaxed(self):
         for suffix in ("timer", "socket", "path", "service"):
             name = "lagrange-activation." + suffix
