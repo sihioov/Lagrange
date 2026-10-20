@@ -7867,3 +7867,18 @@ Official b6 source/hosted acceptance and app e639 evidence unchanged. Separate
 fixed a2 roots/package5985170d/executionseal659c43d2 are prepared; actual admission,
 independent READY/G4, backup transition/deploy/Owner/3actualdays/C_R2 remain OPEN.
 No repeated Owner question, no retry of a consumed attempt or renewal of its window.
+
+
+### Wave117 canonical tool and runtime corrections — 2026-10-20
+
+R2-04/R2-09: a2 actual prepare exit2 before outage, all34 source files retained,
+operating files and own units absent. Later diagnostics prove the suffixed TOOL
+path conflicts with official canonical commit-root guards; prospective canonical
+pins reach two empty standard-library package-marker rejections. Original
+traceback stays UNKNOWN. Preserve all consumed attempts. New fixed installer
+reuses canonical b6 payload read-only with original12 publication identities and
+hashes before/after22 new exclusive AUX writes; only new AUX absence is required.
+Runtime allows only the two observed exact empty package paths with all metadata
+checks retained. New16 focused and17 necessary connection tests PASS. Package
+7e67a92a/seal23bfbae0; official CI/app unchanged. Actual new preparation, READY/G4,
+backup transition/deploy/Owner/3actualdays/C_R2 OPEN; no Owner information wait.

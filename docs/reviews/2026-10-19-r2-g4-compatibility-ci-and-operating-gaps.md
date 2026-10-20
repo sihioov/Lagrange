@@ -1,6 +1,6 @@
 # R2 G4 compatibility CI acceptance and operating gaps
 
-Status: **790f1ea HOSTED_ACCEPTED_TOOL_ONLY preserved; Owner information resolved; root staging/publication succeeded; first prepare exit2 INCOMPLETE; Wave115 b6e409a HOSTED_ACCEPTED_TOOL_ONLY; distinct fixed package28 connection regressions PASS, successor prepare exit2 before outage; Wave116 private large-mount correction sealed after12 focused and28 connection tests.**
+Status: **790f1ea HOSTED_ACCEPTED_TOOL_ONLY preserved; Owner information resolved; root staging/publication succeeded; first prepare exit2 INCOMPLETE; Wave115 b6e409a HOSTED_ACCEPTED_TOOL_ONLY; distinct fixed package28 connection regressions PASS, successor prepare exit2 before outage; Wave116 large-mount correction passes actual historical binding; a2 prepare exit2 before outage. Wave117 canonical-tool reuse and empty-package correction sealed after16 focused and17 connection checks.**
 Roadmap: R2-04/R2-09. Application e639169 remains separately accepted through its images and actual isolated wholeflow, and is not deployed.
 
 2026-10-20 Owner의 외부/수동 writer 없음 답변과 베타 로컬 키 방침을 실제 메시지에 바인딩했다. 정보·승인 대기는 없다. 04:24UTC root34항목 설치와 보호된 정보 저장은 exit0, 04:25UTC prepare는 exit2 INCOMPLETE였다. 실제 READY·중단·백업·배포는 미실행이다. 아래 Wave115 기록에서 제한된 진단으로 재현한 Mounts 순서 의존 오류와 보정 검증을 구분한다. 기존 앱e639169/12이미지/실제통합 및 도구790f1ea의 hosted 인수는 보존한다. G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 OPEN이다.
@@ -1392,3 +1392,39 @@ Evidence under target/r2-daily-beta/wp-8/: wave115/actual-prepare-failure-closur
 SHA c720cac4a3c0f27eb715222c8cf8ff9422e0b185d87bbd37e5c14ecb3d11609c;
 legacy-order proof907f0cad; wave116/source package5985170d and execution seal659c43d2.
 Actual a2 preparation/admission/independent READY/G4 and all later R2 gates remain open.
+
+
+## Wave117 canonical tool reuse and empty package markers — 2026-10-20 05:27 UTC
+
+R2-04/R2-09: Wave116 stage/information exited0; a2 preparation once exited2 at
+05:20:10UTC, with original exception still UNKNOWN. Subsequent bounded read-only
+construction passed all13 historical container bindings and identified
+CONTRACT_FIXED_PIN_SCOPE. The suffixed TOOL copy cannot satisfy the official
+commit-derived canonical root, including PREUPGRADE_TOOL_LOCATION. Prospective
+canonical12-pin construction then passed file/historical metadata preflight and
+reached RUNTIME_FILE_METADATA: two actual root:root0644 zero-byte Python3.14
+compression package markers were being rejected. These are separate diagnostics,
+not preparation/admission and not the original missing traceback.
+
+Closure05883030 retains all34 a2 files and its original intent/window; four
+operating files and both own units were absent. No outage/READY/G4/backup/deploy
+occurred. No existing root, failed attempt or official source is repaired/replayed.
+
+The new fixed installer verifies the canonical b6 tool's12 source files against
+the exact original publication inode/full metadata and hashes before any new
+AUX write, and rechecks them after writing22 exclusive AUX files. TOOL is never
+written, removed or recreated. This supersedes the earlier two-absent-roots
+staging requirement for this distinct package: only the new AUX must be absent;
+the exact already-published canonical TOOL must exist unchanged. Official b6
+source, hosted acceptance and app e639 evidence remain immutable. No CI rerun.
+The private runtime reader permits zero bytes only for the two observed exact
+compression/__init__.py paths; ownership, mode, ACL, regular-file, ancestry,
+identity, hash and drift checks remain in effect.
+
+Sixteen focused cases pass:10 actual private filesystem reuse/failure cases,
+4 public-file/metadata cases and2 real prepare-to-PostStopContract connections.
+Seventeen changed-package entry/input/import regressions pass. The prior fixture
+connection mocked file preflight and did not cover the actual path mismatch;
+the new connection runs the real constructor. Package7e67a92a and seal23bfbae0
+bind these results, Owner facts, prior closure and exact existing-tool publication.
+Actual a3 preparation/admission/independent READY/G4 and later R2 gates remain OPEN.
