@@ -1644,3 +1644,19 @@ Private post-start timer observation also requires correction before the next
 distinct sealed attempt. No consumed attempt/window is replayed. Owner information
 and authorization are resolved; G4, transition/deployment, Owner use,3 actual
 trading days and C_R2 remain OPEN. Heartbeat40f9f633 tracks the latest registry.
+
+### Wave123 validated successor / active hosted CI — 2026-10-20 07:07 UTC
+
+New official tool `5dcfad5817382bf008cc27d0d2278436f846d80b` was dispatched exactly once as CI `39382296814` attempt1 at06:45:58UTC. Six jobs have succeeded; complete policy/PG/web evidence reconciles202 required Python results,64 maintenance definitions,19 PG processes/146 names,44 wholeflow fixture results and15 image outcomes. Workspace Rust and the final required job are still pending; this is not hosted acceptance.
+
+The separate34-file package `1149f129346f3272ae3fe3c6c6248c587d5185223ee1d6cb8e8bbac459613344` binds the actual a8 restored9container/5timer generations. After an original timer start returns0, its active/running→waiting settling may be observed for30seconds/11observations within the original deadline; invocation, timestamps, static policy and activation edges remain fixed, and no second start is issued.43 isolated timer/stop/sequence checks and28 unchanged-byte filesystem/prepare/admit/bootstrap checks passed at06:50:20UTC. These are not actual host G4 acceptance.
+
+Both `/var/lib/lagrange-r2-g4-evidence/5dcfad5-a1-20261020` and `/opt/lagrange/maintenance/5dcfad5817382bf008cc27d0d2278436f846d80b` must be absent before the sealed installer writes. No new root staging has run. Full new-tool CI acceptance precedes a fresh stage/information/prepare/coordinate sequence. Previous attempts/windows and original ab48 causeUNKNOWN remain preserved. Owner authority and actual no-external-writer declaration are resolved; G4/deployment/Owner use/three actual trading days/final C_R2 remain open.
+
+### Wave123 full hosted acceptance and execution seal — 2026-10-20
+
+CI39382296814 attempt1 completed all8jobs successfully at07:11:18UTC. Full8logs/7exactcheckouts,210required definitions,64maintenance definitions,1464input pins/548tracked blobs and2164tree entries were reconciled. Hosted tool-only acceptance `581f6ffee6980b89e17b6825217ce37e6bf5626a81593b50bd493282501beacb` preserves the separate application acceptance.
+
+The initial workspace parser rejected a zero-test result whose stderr target header arrived after its stdout summary. Its failed reconciliation is retained. The corrected evidence parser binds only an otherwise unbound explicit all-zero successful block to its exact unchanged target; all3367named Rust rows/231blocks and36current/33carried groups match. The actually fragmented nested name and unprinted independent nested results remainUNKNOWN. No CI rerun or source change occurred. Initial input-manifest line-count metadata and changed-path reporting errors are also retained with their correction.
+
+Execution seal `e20bbecdc9caf4ebe33a3cd431afe05b2a485cf578765da92095c8d821f9b172` binds the immutable34-file package,43+28private validations,64official tests and new hosted acceptance. Root stage/information/prepare/coordinate have not yet run for this successor. Both new roots must be absent; actual fresh admission/independentREADY and the one original45minute window govern execution. G4 acceptance, deployment, Owner use and three actual trading days remain open.
