@@ -7951,3 +7951,41 @@ stage/preparation/admission/actual independent READY precede any G4 operations;
 a6 units/windows are consumed, not retried. No Owner information/approval wait.
 G4 acceptance, backup transition/deployment, Owner use,3 actual trading days and
 C_R2 remain OPEN. Same-agent tracking is not recovery protection.
+
+
+## Wave122 stop acceptance and owed restoration — 2026-10-20
+
+R2-04/R2-09 remain DOING. Actual a7 preparation and independent READY succeeded;
+all seven original stop clients exited normally0 (five timers, proxy, web).
+Web actually exited143; the overly strict stop-state predicate raised
+OBS_NOT_NORMAL_STOPPED. Recovery/coordinator exited2, leaving original services
+stopped. The original failure and result remain INCOMPLETE, not G4 acceptance.
+A separate sealed restoration-only action ran once inside the original a7 window,
+verified every original stop response and owned process/cgroup drain, then restored
+web, proxy and five timers in order with seven normal0 clients. Its original
+process2587869 exited0 at06:23:20UTC. Independent process2591597 exited0 at06:23:55UTC
+with42 queries:13 stable container policies,11 untouched snapshots, actual new
+web/proxy timestamps/endpoints, five active/waiting timers,56 original units and
+fragments, samePGparent0701 and owned cgroups absent. Exact root result161880bytes
+SHAad1bd5df and closure25034bytes SHA7aca0584 preserve both failure and restoration.
+No PG/Owner stop, PG chmod, old schema audit or capture occurred.
+
+Wave122 package0d86bb60/sealcae2ad19 permits143 only for the exact observed web ID
+and full policy hash during main execution. Owner and PG still require exit0.
+Other noncritical143 can only establish that an original stop completed for owed
+restoration, never authorize further main work or capture. The original client
+must have exited0; unresolved responses/activity/cgroups still forbid starts.
+A stop acceptance failure with verified physical completion enters recovery and
+restores all prior effects; original error and nonzero workload exits are retained.
+Two container and five timer baselines bind exact actual a7 restoration, preserving
+immutable historical records and new runtime metadata.18 focused cases (15 new,
+3 sequence regressions) and17 prepare/admit/bootstrap regressions pass.
+Official b6 payload, hosted CI and accepted app/image/wholeflow remain unchanged.
+Fresh a8 stage/preparation/admission and independent READY precede G4; no consumed
+attempt/window is replayed. No Owner information/approval wait. G4 acceptance,
+backup transition/deployment, Owner use,3 actual trading days and C_R2 remain OPEN.
+
+Distinct active heartbeat40f9f633 was created06:25:52UTC. Exact create receipt and
+renewal handoff5f06d5a0/registry were persisted before predecessor d8d89ce7 deletion.
+Expires18:25:52UTC, renew by17:20UTC and before47th tick. Latest bounded handoff
+b925273c points at Wave122; tracking is neither native Ralph nor outage protection.
