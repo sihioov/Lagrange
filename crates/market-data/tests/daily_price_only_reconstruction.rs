@@ -840,6 +840,28 @@ mod linux_tests {
     }
 
     #[test]
+    fn s4_hangul_stock_type_is_preserved_but_cannot_bypass_noncash_rejection() {
+        for stock_rate in ["0", "1"] {
+            let mut batch = action_batch(1, "2026-10-10", DAY, false);
+            let mut row = cash_row("069500", DAY);
+            row["stk_kind"] = json!("주식");
+            row["stk_divi_rate"] = json!(stock_rate);
+            put_rows(&mut batch, "corporate-actions-dividend", None, json!([row]));
+            let fixture = Fixture::new(&[batch]);
+            let snapshot = fixture.scan();
+            let result = actions(&snapshot, "2026-10-09");
+            if stock_rate == "0" {
+                assert_eq!(
+                    result.unwrap().document().rows()[0]["stock_kind"],
+                    json!("주식")
+                );
+            } else {
+                assert_eq!(result.err().unwrap(), E::NonCashAction);
+            }
+        }
+    }
+
+    #[test]
     fn s4_cash_metadata_decimals_empty_codes_and_future_payment_are_preserved() {
         let mut batch = action_batch(1, "2026-10-10", DAY, false);
         put_rows(

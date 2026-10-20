@@ -323,6 +323,21 @@ fn copied_source_is_exactly_verified_and_reference_chains_are_rejected() {
         )
         .expect("exact copied source");
     assert_eq!(copied_entry.files[0].copied_from, Some(source_ref.clone()));
+    let later_date = domain::TradingDate::parse("2026-09-15").unwrap();
+    assert!(matches!(
+        store.store_batch(
+            &BatchSpec {
+                provider: PROVIDER_KRX,
+                market: MARKET_KR,
+                date: &later_date,
+                batch_id: copied.batch_id,
+                entitlement_reference: entitlement,
+                mode: FetchMode::Synthetic,
+            },
+            std::slice::from_ref(&copied),
+        ),
+        Err(StoreError::InvalidBatchMetadata { .. })
+    ));
 
     let tampered_batch = BatchId::generate();
     let tampered = RawEnvelope::new(

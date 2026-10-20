@@ -717,6 +717,115 @@ mod linux_tests {
         assert_eq!(event.code(), DailyBlockCode::SealedSourceChanged);
     }
     #[test]
+    fn legacy_unlinked_calendar_duplicate_never_becomes_a_witness() {
+        use market_data::daily_price_only::calendar::project_calendar;
+        use market_data::daily_price_only::verify::resolve_original;
+        let base = Fixture::new(&ready());
+        let base_snapshot = base.scan();
+        let expected = discover(&base_snapshot).unwrap();
+        let mut batches = ready();
+        let mut cached = batches[2].clone();
+        cached.entry.batch_id = BatchId::from_uuid(Uuid::from_u128(4));
+        cached.entry.date = date("2026-10-13");
+        cached.entry.retrieved_at = observed();
+        let cached_ref = cached.reference("calendar.json");
+        batches.push(cached);
+        let f = Fixture::new(&batches);
+        let before = f.fingerprint();
+        let snapshot = f.scan();
+        let context = RawEvidenceSnapshots::new(&[&snapshot], ENTITLEMENT, observed()).unwrap();
+        let result = discover_session_sources(&context, &request()).unwrap();
+        assert_eq!(result.evidence_preimage(), expected.evidence_preimage());
+        assert_eq!(result.calendars().len(), 1);
+        assert_eq!(result.observation().files(), expected.observation().files());
+        let cached = resolve_original(&context, &cached_ref).unwrap();
+        // Recognition of a redundant delivery is not a synthetic copy chain.
+        assert_eq!(
+            project_calendar(&cached, request().owner, &request().policy_sha256).err(),
+            Some(E::InvalidEvidence)
+        );
+        assert_eq!(f.fingerprint(), before);
+    }
+
+    #[test]
+    fn legacy_unlinked_calendar_unknown_or_conflicting_sources_still_block() {
+        for variant in 0..6 {
+            let mut batches = ready();
+            let mut cached = batches[2].clone();
+            cached.entry.batch_id = BatchId::from_uuid(Uuid::from_u128(4));
+            cached.entry.date = date("2026-10-13");
+            cached.entry.retrieved_at = observed();
+            match variant {
+                0 => {
+                    batches.pop();
+                } // No verified original.
+                1 => cached.edit_body("calendar.json", |body| {
+                    body["output"][0]["opnd_yn"] = json!("Y")
+                }),
+                2 => cached.entry.files[0].request.query[1].1 = "changed".into(),
+                3 => cached.entry.retrieved_at = time("2026-10-12T06:30:00Z"),
+                4 => cached.entry.date = date("2026-10-11"),
+                5 => {
+                    cached.entry.files[0].copied_from = Some(SourceFileReference {
+                        batch_id: BatchId::from_uuid(Uuid::from_u128(999)),
+                        ..batches[2].reference("calendar.json")
+                    })
+                }
+                _ => unreachable!(),
+            }
+            batches.push(cached);
+            let f = Fixture::new(&batches);
+            let before = f.fingerprint();
+            let snapshot = f.scan();
+            assert!(discover(&snapshot).is_err(), "variant {variant}");
+            assert_eq!(f.fingerprint(), before);
+        }
+    }
+    #[test]
+    fn discovery_entitlement_selection_never_authorizes_foreign_evidence() {
+        use market_data::daily_price_only::verify::resolve_original;
+        let expected_fixture = Fixture::new(&ready());
+        let expected_snapshot = expected_fixture.scan();
+        let expected = discover(&expected_snapshot).unwrap();
+        let mut batches = ready();
+        let mut foreign = ready();
+        for (index, batch) in foreign.iter_mut().enumerate() {
+            batch.entry.batch_id = BatchId::from_uuid(Uuid::from_u128(10 + index as u128));
+            batch.entry.entitlement_reference = Some("fixture:other-owner".into());
+        }
+        foreign[2].edit_body("calendar.json", |body| {
+            body["output"][0]["opnd_yn"] = json!("Y")
+        });
+        let foreign_ref = foreign[2].reference("calendar.json");
+        batches.extend(foreign.clone());
+        let f = Fixture::new(&batches);
+        let before = f.fingerprint();
+        let snapshot = f.scan();
+        let context = RawEvidenceSnapshots::new(&[&snapshot], ENTITLEMENT, observed()).unwrap();
+        let result = discover_session_sources(&context, &request()).unwrap();
+        assert_eq!(result.evidence_preimage(), expected.evidence_preimage());
+        assert_eq!(result.observation().files(), expected.observation().files());
+        assert_eq!(
+            resolve_original(&context, &foreign_ref).err(),
+            Some(E::EntitlementMismatch)
+        );
+        assert_eq!(f.fingerprint(), before);
+
+        // Removing the entitled evidence cannot fall back to the other owner.
+        assert_eq!(fail(&foreign), E::SourceCoverageGap);
+    }
+
+    #[test]
+    fn entitled_delivery_cannot_copy_from_another_entitlement() {
+        let mut batches = ready();
+        let mut foreign = batches[2].clone();
+        foreign.entry.batch_id = BatchId::from_uuid(Uuid::from_u128(10));
+        foreign.entry.entitlement_reference = Some("fixture:other-owner".into());
+        batches[2].entry.files[0].copied_from = Some(foreign.reference("calendar.json"));
+        batches.push(foreign);
+        assert_eq!(fail(&batches), E::EntitlementMismatch);
+    }
+    #[test]
     fn s5_cross_scope_calendar_conflict_cannot_be_hidden() {
         let mut batches = ready();
         let mut rows = calendar_rows();

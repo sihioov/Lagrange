@@ -1479,6 +1479,72 @@ fn each_cash_code_accepts_empty_and_valid_32_byte_values() {
 }
 
 #[test]
+fn stock_kind_preserves_bounded_hangul_in_preimage_and_sealed_roundtrip() {
+    for label in ["주식", "가나다라마바사아자차AB"] {
+        let mut candidate = fixture(false);
+        let row = cash_row(&candidate.draft.daily_sources[0], ["", label, ""]);
+        let preimage = daily_cash_dividend_rows_preimage_v1(std::slice::from_ref(&row)).unwrap();
+        assert!(std::str::from_utf8(&preimage).unwrap().contains(label));
+        replace_cash_row_and_rebuild(&mut candidate, row);
+        let bytes = encode_daily_price_manifest_v1(&candidate.manifest).unwrap();
+        let parsed = parse_daily_price_manifest_v1(&bytes).unwrap();
+        assert_eq!(parsed, candidate.manifest);
+        validate_daily_price_wire_bundle_v1(
+            &candidate.policy,
+            &parsed,
+            &candidate.proof,
+            &candidate.admission,
+            &candidate.pins,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn stock_kind_extension_rejects_controls_unbounded_bytes_and_other_cash_fields() {
+    let fixture = present_empty_cash_fixture();
+    let bytes = encode_daily_price_manifest_v1(&fixture.manifest).unwrap();
+    for invalid in [
+        "가".repeat(11),
+        "주 식".into(),
+        "주\u{202e}식".into(),
+        "가".into(),
+        "주\n식".into(),
+        "株".into(),
+        "🙂".into(),
+    ] {
+        let mut row = cash_row(&fixture.draft.daily_sources[0], ["", "", ""]);
+        row.stock_kind = invalid.clone();
+        assert_eq!(
+            daily_cash_dividend_rows_preimage_v1(&[row]),
+            Err(DailyWireErrorV1::InvalidLiteral)
+        );
+        assert_eq!(
+            parse_daily_price_manifest_v1(&replace_json_cash_code(
+                &bytes,
+                "stock_kind",
+                Some(&serde_json::to_string(&invalid).unwrap()),
+            )),
+            Err(DailyWireErrorV1::InvalidLiteral)
+        );
+    }
+    for field in ["dividend_kind", "high_dividend_flag"] {
+        let mut row = cash_row(&fixture.draft.daily_sources[0], ["", "", ""]);
+        set_cash_row_code(&mut row, field, "주식");
+        assert_eq!(
+            daily_cash_dividend_rows_preimage_v1(&[row]),
+            Err(DailyWireErrorV1::InvalidLiteral)
+        );
+        assert_eq!(
+            parse_daily_price_manifest_v1(
+                &replace_json_cash_code(&bytes, field, Some("\"주식\""),)
+            ),
+            Err(DailyWireErrorV1::InvalidLiteral)
+        );
+    }
+}
+
+#[test]
 fn cash_code_json_and_typed_paths_return_exact_errors_before_hash_checks() {
     let valid = present_empty_cash_fixture();
     let valid_manifest_bytes = encode_daily_price_manifest_v1(&valid.manifest).unwrap();

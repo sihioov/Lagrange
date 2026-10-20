@@ -236,8 +236,22 @@ if [ "$has_ps" -eq 1 ]; then
 fi
 if [ "$has_worker" -eq 1 ]; then
   session_csv=
+  raw_mode=0
   for ((index=0; index<${#args[@]}; index++)); do
-    if [ "${args[index]}" = --backfill-session-dates ]; then
+    if [ "${args[index]}" = --eod-raw-check-session-dates ]; then
+      target=${args[index+1]}
+      present=false
+      batch=null
+      if [ "${FIXTURE_WORKER_MODE:-}" = raw-existing ]; then
+        present=true
+        batch='"00000000-0000-4000-8000-000000000001"'
+      fi
+      printf '{"status":"event","event":"eod_source_checked","phase":"raw_check","target_date":"%s","source_present":%s,"batch_id":%s,"ready":false,"publication":false,"curated":false,"db":false}\n' "$target" "$present" "$batch"
+      printf '{"status":"ok","phase":"raw_check","outcome":"raw_checked","sessions":1,"ready":false,"publication":false,"curated":false,"db":false}\n'
+      exit 0
+    fi
+    if [ "${args[index]}" = --backfill-session-dates ] || [ "${args[index]}" = --eod-raw-session-dates ]; then
+      [ "${args[index]}" != --eod-raw-session-dates ] || raw_mode=1
       [ "$((index + 1))" -lt "${#args[@]}" ] || exit 93
       session_csv=${args[index+1]}
       break
@@ -249,7 +263,11 @@ if [ "$has_worker" -eq 1 ]; then
     success)
       IFS=, read -r -a sessions <<<"$session_csv"
       for session in "${sessions[@]}"; do
-        printf '{"status":"event","event":"published","phase":"canonical_publication","target_date":"%s","batch_id":"00000000-0000-4000-8000-000000000001"}\n' "$session"
+        if [ "$raw_mode" -eq 1 ]; then
+          printf '{"status":"event","event":"raw_committed","phase":"raw_capture","target_date":"%s","batch_id":"00000000-0000-4000-8000-000000000001","reused_existing_source":false,"ready":false,"publication":false,"curated":false,"db":false}\n' "$session"
+        else
+          printf '{"status":"event","event":"published","phase":"canonical_publication","target_date":"%s","batch_id":"00000000-0000-4000-8000-000000000001"}\n' "$session"
+        fi
       done
       ;;
     retryable)
@@ -349,9 +367,10 @@ run_fixture() {
 
 invoke_daily() {
   local fixture=$1 run_mode=$2
+  shift 2
   set +e
   run_fixture "$fixture" "$fixture/state/kis-daily-${FIXTURE_TODAY}.tsv" \
-    bash "$ops/kis-daily-production.sh" "--$run_mode" \
+    bash "$ops/kis-daily-production.sh" "--$run_mode" "$@" \
     >"$fixture/daily.out" 2>"$fixture/daily.err"
   LAST_RC=$?
   set -e
@@ -627,4 +646,53 @@ expect_worker_log '2026-10-09,2026-10-12,2026-10-13' "$CASE_DIR/worker-argv.log"
 [ "$(head -n 1 "$state_path")" = "$state_identity_before" ] ||
   fail 'session-date filter changed the full-range V4 run identity'
 
-echo 'BACKFILL_SELF_TEST: PASS (daily/backfill fake-host selection, filter validation, state and 74/75 behavior)'
+new_case raw-historical
+state_path="$CASE_DIR/state/raw.tsv"
+invoke_backfill "$CASE_DIR" "$state_path" --raw-source --start 2026-10-09 --end 2026-10-12 --execute
+[ "$LAST_RC" -eq 0 ] || fail "Raw historical capture failed rc=$LAST_RC"
+grep -q '^LAGRANGE_EOD_RAW_STATE_V1' "$state_path" || fail 'Raw state schema missing'
+[ "$(grep -c $'\tRAW_COMMITTED\t' "$state_path")" -eq 2 ] || fail 'Raw progress count mismatch'
+! grep -q PUBLISHED "$state_path" || fail 'Raw capture was labelled publication'
+grep -q -- '--eod-raw-session-dates 2026-10-09,2026-10-12' "$CASE_DIR/docker.log" || fail 'Raw mode did not reach explicit worker command'
+invoke_backfill "$CASE_DIR" "$state_path" --start 2026-10-09 --end 2026-10-12 --execute
+[ "$LAST_RC" -eq 2 ] || fail 'legacy mode accepted Raw state'
+
+new_case raw-mixed-current
+invoke_backfill "$CASE_DIR" "$CASE_DIR/persistent/raw.tsv" --raw-source --start 2026-10-09 --end 2026-10-13 --execute
+[ "$LAST_RC" -eq 2 ] || fail 'Raw mode accepted mixed current/historical dates'
+assert_no_execute_effects "$CASE_DIR" "$CASE_DIR/persistent/raw.tsv"
+
+new_case raw-daily-check
+invoke_daily "$CASE_DIR" check --raw-source
+[ "$LAST_RC" -eq 0 ] || fail "Raw daily check failed rc=$LAST_RC"
+grep -q -- '--eod-raw-check-session-dates 2026-10-13' "$CASE_DIR/docker.log" || fail 'Raw check was not invoked'
+! grep -q db-migrate "$CASE_DIR/docker.log" || fail 'Raw check used canonical DB frontier'
+[ ! -s "$CASE_DIR/worker-argv.log" ] || fail 'Raw check invoked provider worker'
+! test -f "$CASE_DIR/state/kis-daily-2026-10-13.tsv" || fail 'Raw check wrote progress'
+
+new_case raw-daily-execute
+invoke_daily "$CASE_DIR" execute --raw-source
+[ "$LAST_RC" -eq 0 ] || fail "Raw daily execute failed rc=$LAST_RC"
+expect_worker_log '2026-10-13' "$CASE_DIR/worker-argv.log"
+grep -q $'\tRAW_COMMITTED\t' "$CASE_DIR/state/kis-daily-2026-10-13.tsv" || fail 'Raw daily did not persist source progress'
+! grep -q db-migrate "$CASE_DIR/docker.log" || fail 'Raw execution used DB frontier'
+
+new_case raw-daily-existing
+FIXTURE_WORKER_MODE=raw-existing
+invoke_daily "$CASE_DIR" execute --raw-source
+[ "$LAST_RC" -eq 0 ] || fail 'existing Raw source was not reused'
+[ ! -s "$CASE_DIR/worker-argv.log" ] || fail 'existing Raw source triggered provider worker'
+
+new_case raw-daily-early
+FIXTURE_NOW_HMS=09:00:00
+invoke_daily "$CASE_DIR" execute --raw-source
+[ "$LAST_RC" -eq 0 ] || fail 'early Raw run did not defer'
+[ ! -s "$CASE_DIR/docker.log" ] || fail 'early Raw run invoked Docker'
+
+new_case raw-daily-closed
+FIXTURE_CALENDAR_DATES=2026-10-09,2026-10-12
+invoke_daily "$CASE_DIR" execute --raw-source
+[ "$LAST_RC" -eq 0 ] || fail 'closed-day Raw run did not skip'
+[ ! -s "$CASE_DIR/docker.log" ] || fail 'closed-day Raw run invoked Docker'
+
+echo 'BACKFILL_SELF_TEST: PASS (legacy selection/resume plus seven Raw source integration cases; fake host only)'

@@ -5,6 +5,61 @@ Source implementation and hosted fixtures do not establish operational readiness
 Production activation remains the reviewed G4 operation with exact release,
 inputs, impact, resource observations, backup and rollback evidence.
 
+## R2 source collection and legacy publication
+
+R2 reads verified Raw evidence independently of the legacy EOD normalizer.
+A valid cash-dividend source can therefore be useful to R2 while the legacy
+`--backfill-session-dates` pipeline correctly stops with an unsupported-action
+error. Do not relax that normalizer, reset its failed state, or label Raw
+collection as canonical DB publication.
+
+The explicit `research-worker --eod-raw-session-dates CSV` command verifies and
+reuses a unique compatible complete Raw source before considering capture. A
+conflicting, corrupt or incomplete source fails closed. Executing acquisition
+reconciles durable Raw crash residue; the separate
+`--eod-raw-check-session-dates CSV` command reads committed bytes only, requires
+an existing manifest/lock, and never constructs a provider or DB connection.
+Neither command makes the source an admitted daily input.
+
+Use the immutable release's `backfill-production.sh --raw-source` for an explicit
+historical session list derived from actual missing evidence. It keeps the
+existing protected state/lock, sequential shared token/rate coordination and
+calendar snapshot limits. Its distinct `LAGRANGE_EOD_RAW_STATE_V1` state records
+`RAW_COMMITTED`, never `PUBLISHED`; V4 state is rejected in either direction.
+Current-day capture must be a separate invocation after16:30KST, using the durable
+calendar claim. Combining it with historical dates is rejected before dispatch.
+Historical Raw captures keep one committed dedicated calendar original and
+attach exact `copied_from` references for later covered dates. Both the original
+target and each requested target must appear in the verified response before
+non-calendar requests; a missing target does not authorize another calendar
+request. Legacy same-date canonical ingestion retains its stricter contract.
+
+Discovery retains all physical Raw integrity/budget checks while selecting the
+configured entitlement. Existing unlinked cached calendars are never witnesses:
+only a byte-identical, valid earlier original under that same entitlement can
+make a redundant delivery ignorable. No Raw edits, synthesized lineage, alternate
+entitlement fallback or weakened explicit-file validation is permitted.
+
+`kis-daily-production.sh --raw-source` is the current-session source mode. It
+checks today's validated XKRX session and cutoff, verifies existing Raw in a
+provider-free worker, and captures only an absent source. It does not query the
+legacy publication frontier or infer historical catchup. Closed days and
+pre-cutoff activations make no worker/provider call. `--check` performs the
+provider-free source observation without capture or progress writes; it does
+start a one-shot Docker worker after the cutoff.
+
+Pin this choice with `install-kis-daily.sh --raw-source` in the new immutable
+release's unit. Existing default legacy units remain distinguishable. All normal
+before16:30KST apply and later install-disabled rules still apply. A source
+collection receipt is not calendar proof, civil-day action coverage, a readiness
+gate or permission for recommendation catchup. Historical recovery, recurring
+complete action-range supply, producer/admitter verification and controlled
+daily activation remain separately required.
+
+The2026-10-20 `stock_kind` wire correction also requires the matched newly
+verified producer/admitter/runtime release. Do not modify an installed release
+or mix its older ASCII-only readers with newly admitted Hangul labels.
+
 ## Immutable input installation
 
 The production release installer accepts one optional

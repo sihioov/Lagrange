@@ -136,7 +136,7 @@ for required in \
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$release/$required"
   chmod 0755 "$release/$required"
 done
-for required in scripts/ops/lib/dotenv.sh scripts/ops/lib/db.sh; do
+for required in scripts/ops/lib/dotenv.sh scripts/ops/lib/db.sh scripts/ops/lib/kis-read-compose.sh scripts/ops/lib/backfill-progress.py; do
   printf '%s\n' '# helper fixture' >"$release/$required"
   chmod 0644 "$release/$required"
 done
@@ -157,6 +157,8 @@ KIS_DAILY_TIMER_TEST_NOW=16:30:00 \
 grep -Fq "release=$release code_commit=$commit" "$test_root/install-plan.out"
 grep -Fq "WorkingDirectory=$release" "$test_root/install-plan.out"
 grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --execute" "$test_root/install-plan.out"
+bash "$installer" "${installer_args[@]}" --raw-source --dry-run >"$test_root/raw-install-plan.out"
+grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --raw-source --execute" "$test_root/raw-install-plan.out"
 grep -Fq 'apply-window=closed (at/after 16:30:00 Asia/Seoul; --apply is refused)' "$test_root/install-plan.out"
 
 bash "$installer" --preflight "${installer_args[@]}" >"$test_root/install-preflight.out"

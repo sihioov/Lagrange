@@ -1968,3 +1968,121 @@ The first2026-10-21 candidate still requires the actual deployment/input gate
 before00:00UTC and actual trading-day evidence. Owner use, three consecutive
 actual trading days and final C_R2 remain OPEN. Every older failed attempt,
 unknown cause, retained unproven volume and0120cleanup INCOMPLETE is preserved.
+
+
+## Wave133 cash-label correction and explicit EOD Raw source integration — 2026-10-20
+
+R2-04/R2-09 remain DOING. Owner authority and actual deployment-selection reply
+remain resolved: first actual trading day after verified deployment, existing
+operating ceilings retained, new file budgets based on measured data. The
+Oct21 candidate still requires verification before00:00UTC/09:00KST; no
+historical automatic recommendations or fabricated three-day acceptance.
+
+Missing-EOD a2's original root3583431/child3583494 ended normally with exit1 at
+13:58:30UTC. Eleven dates were published; Sep15 Raw was committed, then legacy
+normalization returned KIS_NORMALIZE_UNSUPPORTED_ACTION. Its state/unit and
+original failure remain consumed. Cash-only R2 handling does not justify
+weakening the legacy normalizer or resetting that failed run.
+
+Bounded hash-verified, read-only source diagnostics found one ETF cash-dividend
+row with zero stock-dividend rate and no stock/odd payment date. All complete
+range/scope checks passed. The unchanged R2 reconstruction nevertheless failed
+INVALID_ACTIONS; a diagnostic copy localized InvalidLiteral to the ASCII-only
+stock_kind rule. The actual label comprises two precomposed Hangul characters,
+six UTF-8 bytes; no provider body or label value was copied into diagnostics.
+The official KIS sample at2077773a69a428daf63e148182511f068cc45de3 identifies
+stk_kind as the stock-type field. No official sample was executed.
+
+Only that internal wire field now admits precomposed Hangul U+AC00–U+D7A3 within
+its existing32UTF-8-byte bound, alongside the old ASCII alphabet. It stays opaque;
+no translation, trimming or financial interpretation was added. Other code
+fields, numeric/date guards and noncash rejection retain their prior behavior.
+Existing empty/ASCII preimages remain exact. A newly verified matched
+producer/admitter/runtime release is required; installed e639169 is untouched.
+
+At14:36:38UTC the corrected private verifier successfully reconstructed the
+actual Sep15 evidence: seven witnesses,77selections and one cash row. Document
+SHA256 e6c9c0b0691a31d686c124243ee3028295e86ca5d14d273718659a9ca7a9d743;
+Raw manifest SHA256
+2009b5eac887c89f3bf539a1c554982e95a8b2d12e46b457b41526fcb13fd5a0.
+This was a read-only probe, not an artifact admission, DB write or deployment.
+
+The explicit research-worker --eod-raw-session-dates path now captures/reuses
+complete EOD Raw without canonical normalization, Curated publication or DB
+construction. A conflicting, partial or corrupt source fails before refetch.
+Current-day execution holds the existing durable calendar lock/claim through
+capture. Historical and current-day dates cannot share one invocation; the
+current day is rejected before16:30KST. A separate check command reads committed
+bytes only, without provider/DB construction or orphan reconciliation; it does
+not create an absent Raw scope. The executing path retains ordinary durable
+orphan reconciliation. Shared token/rate coordination and provider allowlists
+are unchanged.
+
+backfill-production.sh --raw-source binds a distinct EOD_RAW_STATE_V1 identity
+and RAW_COMMITTED status. Legacy V4 and Raw state cannot be interchanged. The
+relay validates exact date/UUID/phase and false ready/publication/curated/db
+flags; typed failure preserves prior completed dates. A body-free error is
+sent through the same stdout protocol. kis-daily-production.sh --raw-source
+performs an independent current-session source observation, without consulting
+the canonical DB frontier, and captures an absent source after cutoff. It is
+an explicit mode pinned by install-kis-daily.sh --raw-source, not a silent
+change to installed legacy units. It deliberately does not invent a historical
+catchup range. Existing late-install/normal-apply boundaries remain enforced.
+
+
+The pre-commit integration check exposed a second source issue: the historical
+in-memory calendar cache carried the first request into later batches without
+copied_from. At15:09UTC bounded committed manifest metadata confirmed13such
+calendar records among23. New historical Raw collection now captures one
+dedicated committed calendar original and retains exact copy references for
+later covered targets. Both original and requested target rows are checked
+before non-calendar calls; missing coverage or tampering fails without another
+calendar request. The canonical daily API remains same-date. The Raw store's
+cross-date exception is limited to an earlier credentialed kis-calendar original
+copied as a calendar into kis/kr; other kinds/providers retain their date rule.
+
+Complete discovery, calendar projection and sealed-frontier refresh now exclude
+an unlinked cached delivery only when a valid uncopied KIS original in the same
+snapshot has identical bytes, filename, hash/size and request/response metadata,
+with an earlier batch date and no later retrieval. The original supplies the
+witness. The redundant file remains invalid as an explicit evidence claim; no
+lineage, timestamp, Raw repair or deletion is invented. Unknown or conflicting
+sources continue to block. A six-variant negative fixture retains those failures.
+
+The first actual calendar probe at15:16:20UTC stopped with ENTITLEMENT_MISMATCH.
+A separate bounded metadata inspection found9calendar-bearing historical batches
+under a different reference. Discovery now selects only the protected configured
+entitlement while retaining full snapshot integrity/scan budgets. Foreign
+references cannot provide missing coverage or copy-chain evidence, and explicit
+references still fail. This adopts no new rights and relabels no historical data.
+At15:20:39UTC the corrected read-only probe passed:15eligible calendar candidates,
+4verified witnesses,11redundant unlinked deliveries excluded,11total batches outside
+the configured entitlement excluded (including noncalendar batches). Both exact
+manifest hashes were retained: kis2009b5ea… and kis-calendar d85be240…. This is
+calendar-source verification only, not DB projection, daily admission or activation.
+
+Local verification:28wire+33reconstruction+25discovery+22evidence,39Raw-store
++7calendar-publication,8CLI+27collector-recovery and9daily-runner tests pass
+(198distinct Rust tests,16new test functions). Seven new fake-host
+source integration cases, nine Raw progress protocol cases and the new
+installer-mode check pass, along with existing relevant shell fixtures.
+Clippy -D warnings for market-data/collectors/job-queue and all targets passes. The full ops static
+check passes in a separate source snapshot with Git-normalized modes. The
+initial missing-Debug fixture compile failure, installer-preview omission,
+workspace0775 mode rejection and two stale literal static assertions are
+retained with their corrected runs. The cross-date storage rejection, a test-only
+UUID dereference compile error and fixture directory-umask rejection were also
+preserved and corrected; the independent R2 reader now resolves both new Raw
+deliveries to their actual original in the focused collector test. This is isolated source verification,
+not an actual provider capture or new runtime acceptance.
+
+The remaining recurring civil-day action supplier is still only a pure D5
+planner: there is no production caller of plan_action_supply_proposal. Current
+EOD source collection does not close weekend/holiday action coverage. That
+runtime connection, evidence-derived catchup, new candidate hosted acceptance
+and immutable deployment, actual daily input admission/activation, Owner use,
+three consecutive actual trading days and C_R2 remain OPEN. No old G4/CI/app
+build/backup attempt was replayed and no provider request was made in this
+correction phase. All retained failures, unknown causes and0120cleanup
+INCOMPLETE remain. Source changes add no crate dependency, Compose service,
+network/mount or DB-role/table boundary; architecture diagrams are unchanged.

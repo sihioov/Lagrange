@@ -26,7 +26,9 @@ use market_data::{
             DailySourceFrontierRoot, read_daily_candidate, write_daily_candidate,
             write_daily_continuation_candidate,
         },
-        calendar::{VerifiedCalendarProjection, expected_calendar_session, project_calendar},
+        calendar::{
+            VerifiedCalendarProjection, expected_calendar_session, project_calendar_candidates,
+        },
         candidate::build_historical_daily_candidate,
         continuation::{
             SealedDailyParent, build_daily_continuation_candidate,
@@ -424,6 +426,9 @@ fn calendars<'a>(
     let mut count = 0usize;
     for scope in captured {
         for batch in scope.batches() {
+            if !snapshots.matches_entitlement(batch) {
+                continue;
+            }
             for file in batch
                 .files()
                 .filter(|file| file.kind() == ResponseKind::Calendar)
@@ -449,15 +454,16 @@ fn calendars<'a>(
                 if bytes > config.settings.scan.max_retained_bytes as u64 {
                     return Err(IngestError::InputBlocked);
                 }
-                values.push(
-                    project_calendar(&original, config.settings.owner, config.policy.sha256())
-                        .map_err(|_| IngestError::InputBlocked)?,
-                );
+                values.push(original);
             }
         }
     }
     clock.check()?;
-    Ok(values)
+    let projections =
+        project_calendar_candidates(&values, config.settings.owner, config.policy.sha256())
+            .map_err(|_| IngestError::InputBlocked)?;
+    clock.check()?;
+    Ok(projections)
 }
 fn reopen<'a>(
     roots: &Roots,

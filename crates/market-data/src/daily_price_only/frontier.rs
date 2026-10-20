@@ -650,9 +650,12 @@ fn appended_sealed_observation(
             .ok_or(Error::LimitExceeded)?;
         known.insert(bytes);
     }
-    let mut parsed_bytes = 0u64;
+    let mut calendars = Vec::new();
     for scope in snapshots.scopes() {
         for batch in scope.batches() {
+            if !snapshots.matches_entitlement(batch) {
+                continue;
+            }
             for file in batch.files() {
                 if !matches!(
                     file.kind(),
@@ -674,6 +677,10 @@ fn appended_sealed_observation(
                         retrieved_at: batch.retrieved_at(),
                     },
                 )?;
+                if source.evidence().kind == Kind::Calendar {
+                    calendars.push(source);
+                    continue;
+                }
                 if known.contains(source.canonical_evidence_bytes()) {
                     continue;
                 }
@@ -682,23 +689,7 @@ fn appended_sealed_observation(
                     Kind::Bars | Kind::Reference => {
                         price_identity_touches(evidence, sealed.range_start(), sealed.range_end())?
                     }
-                    Kind::Calendar => {
-                        parsed_bytes = parsed_bytes
-                            .checked_add(source.original_bytes().len() as u64)
-                            .ok_or(Error::LimitExceeded)?;
-                        if parsed_bytes > fixed_limits().max_bars_bytes {
-                            return Err(Error::LimitExceeded);
-                        }
-                        let projection = super::calendar::project_calendar(
-                            &source,
-                            sealed.owner(),
-                            sealed.policy_sha256(),
-                        )?;
-                        projection.days().iter().any(|day| {
-                            day.session_date() >= sealed.range_start()
-                                && day.session_date() <= sealed.range_end()
-                        })
-                    }
+                    Kind::Calendar => return Err(Error::InvalidEvidence),
                     Kind::CorporateActions => {
                         let (start, end, _) =
                             super::reconstruct::range_and_scope(&evidence.request.query)?;
@@ -724,6 +715,30 @@ fn appended_sealed_observation(
                 }
             }
         }
+    }
+    for projection in super::calendar::project_calendar_candidates(
+        &calendars,
+        sealed.owner(),
+        sealed.policy_sha256(),
+    )? {
+        if known.contains(projection.canonical_file_bytes())
+            || !projection.days().iter().any(|day| {
+                day.session_date() >= sealed.range_start()
+                    && day.session_date() <= sealed.range_end()
+            })
+        {
+            continue;
+        }
+        evidence_bytes = evidence_bytes
+            .checked_add(projection.canonical_file_bytes().len() as u64)
+            .ok_or(Error::LimitExceeded)?;
+        if files.len() as u64 >= fixed_limits().max_file_evidence_per_session
+            || evidence_bytes > fixed_limits().max_manifest_bytes
+        {
+            return Err(Error::LimitExceeded);
+        }
+        known.insert(projection.canonical_file_bytes().to_vec());
+        files.push(projection.source_file().clone());
     }
     Ok(files)
 }

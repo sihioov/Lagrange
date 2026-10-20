@@ -1563,6 +1563,146 @@ pub struct DailyRangeRawSummary {
     pub reused_existing_source: bool,
 }
 
+/// Explicit source collection for the independent R2 consumer. This never
+/// constructs a DB pool, legacy normalizer, publication sink or Curated store.
+/// Events attest only immutable Raw acquisition; admission remains separate.
+/// Inspect immutable source bytes without constructing a provider or DB pool.
+/// Missing sources are observations, not permission to refetch conflicting Raw.
+pub fn check_eod_raw_session_dates_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    dates: &[TradingDate],
+    writer: &mut W,
+) -> Result<usize, WorkerError> {
+    let now = UtcTimestamp::now();
+    let today = current_kst_date(Utc::now());
+    if dates.is_empty()
+        || dates.len() > 10_000
+        || dates.windows(2).any(|pair| pair[0] >= pair[1])
+        || dates.iter().any(|date| *date > today)
+    {
+        return Err(WorkerError::InvalidConfig {
+            key: "--eod-raw-check-session-dates",
+        });
+    }
+    let config = DailyRangeRawRecoveryConfig::from_map(values)?;
+    let expected = ExpectedRangeSessions::approved_xkrx(dates[0], *dates.last().unwrap())
+        .map_err(WorkerError::RangeNormalize)?;
+    if dates.iter().any(|date| !expected.sessions.contains(date)) {
+        return Err(WorkerError::InvalidConfig {
+            key: "--eod-raw-check-session-dates",
+        });
+    }
+    let store = RawStore::new(&config.raw_root);
+    for &date in dates {
+        let source = crate::eod_raw::existing_eod_source(
+            &store,
+            &IngestRequest::new(MARKET_KR.to_owned(), date, now),
+            &config.entitlement_reference,
+        )
+        .map_err(WorkerError::Pipeline)?;
+        serde_json::to_writer(
+            &mut *writer,
+            &serde_json::json!({
+                "status": "event", "event": "eod_source_checked", "phase": "raw_check",
+                "target_date": date.to_iso(), "source_present": source.is_some(),
+                "batch_id": source.map(|entry| entry.batch_id),
+                "ready": false, "publication": false, "curated": false, "db": false
+            }),
+        )
+        .map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })?;
+        writer
+            .write_all(b"\n")
+            .and_then(|_| writer.flush())
+            .map_err(|_| WorkerError::Io {
+                phase: WorkerPhase::Ingest,
+            })?;
+    }
+    Ok(dates.len())
+}
+
+pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    dates: &[TradingDate],
+    writer: &mut W,
+) -> Result<usize, WorkerError> {
+    let now = Utc::now();
+    let today = current_kst_date(now);
+    if dates.is_empty()
+        || dates.len() > 10_000
+        || dates.windows(2).any(|pair| pair[0] >= pair[1])
+        || dates.iter().any(|date| *date > today)
+        // Dedicated current-day evidence must not relabel a cached historical
+        // calendar snapshot. Keep current-day capture a separate invocation.
+        || (dates.contains(&today) && dates.len() != 1)
+        || (dates.contains(&today)
+            && now.with_timezone(&FixedOffset::east_opt(KST_OFFSET_SECS).unwrap()).time()
+                < CANDIDATE_CONFIRMED_CLOSE_KST)
+    {
+        return Err(WorkerError::InvalidConfig {
+            key: "--eod-raw-session-dates",
+        });
+    }
+    let config = DailyRangeRawRecoveryConfig::from_map(values)?;
+    let expected = ExpectedRangeSessions::approved_xkrx(dates[0], *dates.last().unwrap())
+        .map_err(WorkerError::RangeNormalize)?;
+    if dates.iter().any(|date| !expected.sessions.contains(date)) {
+        return Err(WorkerError::InvalidConfig {
+            key: "--eod-raw-session-dates",
+        });
+    }
+    let key = PathBuf::from(nonempty(values, "KIS_APP_KEY_FILE")?);
+    let secret = PathBuf::from(nonempty(values, "KIS_APP_SECRET_FILE")?);
+    if !key.is_absolute() || !secret.is_absolute() {
+        return Err(WorkerError::InvalidConfig {
+            key: "KIS_APP_KEY_FILE",
+        });
+    }
+    let timeout = parse_attempt_timeout(values)?;
+    let store = RawStore::new(&config.raw_root);
+    // The existing shared coordinator owns token reuse and per-channel quotas.
+    // Historical requests share one committed calendar original with explicit
+    // provenance, never an unlinked in-memory copy of a prior request.
+    let provider = build_production_kis_provider_from_files(&key, &secret)?;
+    let mut historical_calendar = None;
+    for &date in dates {
+        let (source, calendar) = tokio::time::timeout(
+            timeout,
+            crate::eod_raw::capture_eod_source_with_calendar(
+                &store,
+                &provider,
+                &IngestRequest::new(MARKET_KR.to_owned(), date, UtcTimestamp::now()),
+                &config.entitlement_reference,
+                date == today,
+                historical_calendar.as_ref(),
+            ),
+        )
+        .await
+        .map_err(|_| WorkerError::Timeout {
+            phase: WorkerPhase::Ingest,
+        })?
+        .map_err(WorkerError::Pipeline)?;
+        historical_calendar = calendar;
+        let event = serde_json::json!({
+            "status": "event", "event": "raw_committed", "phase": "raw_capture",
+            "batch_id": source.batch_id, "target_date": date.to_iso(),
+            "reused_existing_source": source.reused,
+            "ready": false, "publication": false, "curated": false, "db": false
+        });
+        serde_json::to_writer(&mut *writer, &event).map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })?;
+        writer
+            .write_all(b"\n")
+            .and_then(|_| writer.flush())
+            .map_err(|_| WorkerError::Io {
+                phase: WorkerPhase::Ingest,
+            })?;
+    }
+    Ok(dates.len())
+}
+
 pub async fn run_credentialed_daily_range_raw_stream<W: io::Write>(
     values: &HashMap<String, String>,
     start: TradingDate,

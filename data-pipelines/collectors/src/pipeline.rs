@@ -734,6 +734,18 @@ pub async fn ensure_kis_calendar_source<R: KisRead>(
                 },
             }
         })?;
+    ensure_kis_calendar_source_locked(store, provider, request, entitlement_reference, &guard).await
+}
+
+/// The Raw-only EOD command retains this same guard through source capture, so
+/// a calendar bootstrap or another source command cannot race its reuse check.
+pub(crate) async fn ensure_kis_calendar_source_locked<R: KisRead>(
+    store: &RawStore,
+    provider: &KisProvider<R>,
+    request: &IngestRequest,
+    entitlement_reference: Option<&str>,
+    guard: &CalendarDayLock,
+) -> Result<Option<ManifestEntry>, PipelineError> {
     let claim = guard.existing().map_err(|_| PipelineError::Ingest {
         source: IngestError::ResponseShape {
             detail: "KIS_CALENDAR_ATTEMPT_STATE_INVALID_OR_BUSY".to_owned(),

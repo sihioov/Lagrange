@@ -158,6 +158,76 @@ impl ReconstructedCalendarDocument {
     }
 }
 
+/// Projects a bounded, complete set of resolved calendar candidates. Historical
+/// range collectors sometimes stored an unlinked cached calendar under a later
+/// batch date. Such a delivery is never a witness: it may be excluded only when
+/// an uncopied, valid KIS original in this same snapshot has identical bytes and
+/// request/response metadata and was retrieved no later. Missing, changed or
+/// otherwise invalid evidence still fails. No copy chain is synthesized.
+pub fn project_calendar_candidates<'snapshot>(
+    originals: &[ResolvedOriginal<'snapshot>],
+    owner: Uuid,
+    policy: &ContentHash,
+) -> Result<Vec<VerifiedCalendarProjection<'snapshot>>, DailyVerificationError> {
+    if originals.len() as u64 > super::contract::fixed_limits().max_file_evidence_per_session {
+        return Err(DailyVerificationError::LimitExceeded);
+    }
+    let mut projections = Vec::new();
+    let mut verified: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut rejected = Vec::new();
+    let mut bytes = 0u64;
+    for (index, original) in originals.iter().enumerate() {
+        bytes = bytes
+            .checked_add(original.original_bytes().len() as u64)
+            .ok_or(DailyVerificationError::LimitExceeded)?;
+        if bytes > super::verify::MAX_SOURCE_BYTES {
+            return Err(DailyVerificationError::LimitExceeded);
+        }
+        match project_calendar(original, owner, policy) {
+            Ok(projection) => {
+                let source = original.evidence();
+                if source.provider == "kis" && source.copied_from.is_empty() {
+                    verified
+                        .entry(source.wire_sha256.as_str())
+                        .or_default()
+                        .push(index);
+                }
+                projections.push(projection);
+            }
+            Err(error) => rejected.push((index, error)),
+        }
+    }
+    for (index, error) in rejected {
+        let cached = &originals[index];
+        let file = cached.evidence();
+        let redundant = error == DailyVerificationError::InvalidEvidence
+            && file.provider == "kis"
+            && file.kind == DailyEvidenceKindV1::Calendar
+            && file.copied_from.is_empty()
+            && verified
+                .get(file.wire_sha256.as_str())
+                .is_some_and(|matches| {
+                    matches.iter().any(|&original_index| {
+                        let original = &originals[original_index];
+                        let source = original.evidence();
+                        source.batch_date < file.batch_date
+                            && source.retrieved_at.as_timestamp()
+                                <= file.retrieved_at.as_timestamp()
+                            && source.market == file.market
+                            && source.file_name == file.file_name
+                            && source.size_bytes == file.size_bytes
+                            && source.request == file.request
+                            && source.response_continuation == file.response_continuation
+                            && original.original_bytes() == cached.original_bytes()
+                    })
+                });
+        if !redundant {
+            return Err(error);
+        }
+    }
+    Ok(projections)
+}
+
 pub fn project_calendar<'snapshot>(
     original: &ResolvedOriginal<'snapshot>,
     owner: Uuid,

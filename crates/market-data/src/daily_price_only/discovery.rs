@@ -10,7 +10,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::calendar::{
-    VerifiedCalendarProjection, eligible_calendar_date, project_calendar, prove_calendar_range,
+    VerifiedCalendarProjection, eligible_calendar_date, project_calendar_candidates,
+    prove_calendar_range,
 };
 use super::contract::{canonicalize_session, fixed_limits, validate_file_request_for_symbol};
 use super::observation::{CanonicalSourceObservation, canonical_source_observation};
@@ -170,13 +171,16 @@ pub fn discover_session_sources<'snapshot>(
     let limits = fixed_limits();
     let mut bars = Vec::new();
     let mut reference = Vec::new();
-    let mut calendars = Vec::new();
+    let mut calendar_originals = Vec::new();
     let mut observed_bars = Vec::new();
     let mut other_originals = Vec::new();
     let mut source_count = 0u64;
     let mut parse_bytes = 0u64;
     for &snapshot in snapshots.scopes() {
         for batch in snapshot.batches() {
+            if !snapshots.matches_entitlement(batch) {
+                continue;
+            }
             for file in batch.files() {
                 let kind = match file.kind() {
                     ResponseKind::Bars => Kind::Bars,
@@ -204,14 +208,7 @@ pub fn discover_session_sources<'snapshot>(
                 }
                 match kind {
                     Kind::Calendar => {
-                        let projection =
-                            project_calendar(&source, request.owner, &request.policy_sha256)?;
-                        if projection.days().iter().any(|day| {
-                            day.session_date() >= start
-                                && day.session_date() <= request.session_date
-                        }) {
-                            calendars.push(projection);
-                        }
+                        calendar_originals.push(source);
                     }
                     Kind::Bars => {
                         observed_bars.push(inspect_bar_rows(&source)?);
@@ -227,6 +224,15 @@ pub fn discover_session_sources<'snapshot>(
             }
         }
     }
+    let mut calendars: Vec<_> =
+        project_calendar_candidates(&calendar_originals, request.owner, &request.policy_sha256)?
+            .into_iter()
+            .filter(|projection| {
+                projection.days().iter().any(|day| {
+                    day.session_date() >= start && day.session_date() <= request.session_date
+                })
+            })
+            .collect();
     // Scope/identity ambiguity is diagnosed before the exact-eleven constructor.
     for files in [&bars, &reference] {
         let mut symbols = BTreeSet::new();

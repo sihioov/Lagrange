@@ -53,6 +53,7 @@ Thus transport reordering may converge while a stored noncanonical file fails cl
 | I | One of the 11 exact instrument strings below | `domain::InstrumentId` |
 | S | One of the 11 exact six-digit symbols below | `String` |
 | code | ASCII `[A-Za-z0-9_-]{0,32}`; present empty string is valid opaque metadata, no invented interpretation | `String` |
+| stock_type_label | At most 32 UTF-8 bytes; each character is ASCII alphanumeric, `_`, `-`, or precomposed Hangul U+AC00–U+D7A3; empty allowed. Preserve exact bytes without translation, trimming or Unicode normalization | `String` |
 | decimal | String matching `(0\|[1-9][0-9]*)(\.[0-9]*[1-9])?`; max scale 28 and nonnegative i128 mantissa bound; `0.5` allowed, `0.0`/`1.00`/sign/exponent forbidden | `String`, validate with existing `FixedPoint::parse` |
 | filename | ASCII `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, no `..` anywhere; no separators/absolute path | `String` |
 
@@ -198,6 +199,25 @@ source batch UUID order to imply chronology. Missing copy evidence cannot be rep
 by setting today's retrieval instant. Recorded lexical Raw timestamps remain protected
 by batch/manifest hashes, even when the new T encoding adds zero fractional digits.
 
+Discovery compatibility for retained legacy range captures: an uncopied `kis`
+calendar whose request target belongs to an earlier batch date is never admitted
+as a witness. Discovery may omit that redundant delivery only if the same captured
+snapshot contains a valid, uncopied `kis` calendar original with the exact bytes,
+hash, size, filename and request/response metadata, and a retrieval time no later
+than the redundant delivery. The valid original supplies the witness. Missing or
+conflicting evidence still blocks discovery. This does not create a `copied_from`
+chain, alter Raw, or relax single-file/admission validation. New historical EOD
+Raw captures instead record an explicit reference to a committed `kis-calendar`
+original after verifying both its requested target and the new target's row.
+
+Complete snapshots may retain earlier deliveries carrying another entitlement
+reference. Automatic discovery and frontier refresh select batches whose
+reference exactly equals the protected configuration. Unselected batches remain
+within physical integrity checks and scan budgets; they are not relabeled or
+used as fallback evidence. An explicitly claimed file or any copy-chain hop with
+another reference still fails `ENTITLEMENT_MISMATCH`. Missing authorized coverage
+remains a gap, even if a different reference's delivery covers the date.
+
 `DailyFileKeyV1Wire` keys: `provider: String`, `market: String`, `batch_id: BatchId`,
 `file_name: String`, `wire_sha256: ContentHash`, with the same scalar rules. It identifies
 a top-level FileEvidence, not a path or an authorization token. Repeated use of one
@@ -291,7 +311,7 @@ Known exact duplicate chains are rejected; no last-writer-wins selection.
 | cash_payment_date | nullable D |
 | stock_payment_date | nullable D, exactly null for cash-only |
 | odd_lot_payment_date | nullable D, exactly null for cash-only |
-| stock_kind | code, opaque |
+| stock_kind | stock_type_label, opaque |
 | high_dividend_flag | code, opaque |
 | source_file | FileKey naming one page of this chain |
 
@@ -300,13 +320,24 @@ Recorded cash rows are claimed exclusions, not newly trusted normalization.
 Shared [field validation](../../crates/market-data/src/normalize.rs#L1396) and complete
 non-ETF row validation remain mandatory in I1b; generic action behavior is untouched.
 
-The three `code` fields (`dividend_kind`, `stock_kind`, `high_dividend_flag`) are
+The three metadata fields (`dividend_kind`, `stock_kind`, `high_dividend_flag`) are
 required strings, including a present empty string. Missing is `MissingField`;
-null or a non-string is `InvalidType`; unsupported characters or more than 32 ASCII
+null or a non-string is `InvalidType`; unsupported characters or more than 32 UTF-8
 bytes is `InvalidLiteral`. Wire parsing preserves the string exactly without trim
 or substitution. I1b maps the shared validator's trimmed string unchanged, then
 checks this bounded wire rule. Unsupported values fail with a typed rejection;
 never fabricate a code/null value or drop the cash row to make it fit.
+
+2026-10-20 internal-wire correction: `stock_kind` uses `stock_type_label`.
+The [official KIS sample](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/ksdinfo_dividend/chk_ksdinfo_dividend.py)
+labels `stk_kind` as stock type. A hash-verified actual row reached the shared
+numeric/date validator but failed the former ASCII-only downstream rule.
+Only bounded precomposed Hangul support is added; the other two code fields,
+cash classification and noncash rejection are unchanged. This is opaque metadata,
+not a new code-to-financial-semantics mapping. Existing ASCII/empty preimages
+remain identical. Older R2 readers reject the newly admitted labels, so producer,
+admitter and runtime must use the newly verified immutable release together
+before activating this correction; installed accepted releases are not edited.
 
 | `DailyCalendarBindingV1Wire` key order | Type / value |
 |---|---|
@@ -887,9 +918,11 @@ print("present_empty_cash_rows", len(C([cash_row])), H(C([cash_row])))
     KSD last-page `M` without the next page still fails. Equivalent overlapping action
     witnesses may contain two claimed cash rows and a reconstructed row_count of one;
     counts record two witness occurrences, and the selected count remains I1b's check.
-13. For each of the three cash code fields, preserve empty and valid 32-byte strings;
+13. For each of the three cash metadata fields, preserve empty and valid 32-byte strings;
     reject missing as MissingField, null/non-string as InvalidType, and 33-byte,
-    whitespace, control, non-ASCII or other unsupported characters as InvalidLiteral.
+    whitespace, control or unsupported characters as InvalidLiteral. Only `stock_kind`
+    also preserves precomposed Hangul within the same UTF-8 byte limit; combining
+    Jamo, other scripts and format controls remain unsupported.
     Assert the 515-byte present-empty cash preimage above and a resealed nonempty
     manifest/proof/admission bundle parse/encode round-trip. Do not silently trim.
 

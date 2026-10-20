@@ -333,6 +333,9 @@ pub fn reconstruct_actions<'snapshot>(
     let mut comparison_bytes = 0_u64;
     let mut evidence_bytes = 0_u64;
     for batch in snapshot.batches() {
+        if !snapshots.matches_entitlement(batch) {
+            continue;
+        }
         let files: Vec<_> = batch
             .files()
             .filter(|file| file.kind() == ResponseKind::CorporateActions)

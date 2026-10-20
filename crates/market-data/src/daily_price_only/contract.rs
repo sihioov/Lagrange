@@ -1185,6 +1185,16 @@ fn valid_code(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 
+// KIS stk_kind is a stock-type label, not an ASCII-only code. Preserve its
+// exact bytes; this descriptive field does not decide cash/noncash status.
+// Extend only this field to precomposed Hangul, retaining the 32-byte bound.
+fn valid_stock_kind(value: &str) -> bool {
+    value.len() <= 32
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '\u{AC00}'..='\u{D7A3}'))
+}
+
 fn valid_decimal(value: &str) -> bool {
     let Some((whole, fractional)) = value.split_once('.') else {
         return !value.is_empty()
@@ -1302,8 +1312,8 @@ fn validate_lexical_fields(value: &Value) -> Result<(), DailyWireErrorV1> {
         match value {
             Value::String(text) => {
                 let key = key.unwrap_or("");
-                if matches!(key, "dividend_kind" | "stock_kind" | "high_dividend_flag")
-                    && !valid_code(text)
+                if (matches!(key, "dividend_kind" | "high_dividend_flag") && !valid_code(text))
+                    || (key == "stock_kind" && !valid_stock_kind(text))
                 {
                     return Err(DailyWireErrorV1::InvalidLiteral);
                 }
@@ -1510,7 +1520,7 @@ fn validate_cash_row_scalars(row: &DailyCashDividendRowV1Wire) -> Result<(), Dai
     )?;
     invalid_if(
         !valid_code(&row.dividend_kind)
-            || !valid_code(&row.stock_kind)
+            || !valid_stock_kind(&row.stock_kind)
             || !valid_code(&row.high_dividend_flag),
         DailyWireErrorV1::InvalidLiteral,
     )?;

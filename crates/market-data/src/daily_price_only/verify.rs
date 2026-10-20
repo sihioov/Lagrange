@@ -14,7 +14,9 @@ use serde::{Deserializer, Serialize, Serializer};
 use serde_json::{Number, Value};
 
 use super::contract::{canonical_bytes_limited, canonical_file_evidence};
-use super::source::{CommittedRawFile, CommittedRawSnapshot, DailyEvidenceError};
+use super::source::{
+    CommittedRawBatch, CommittedRawFile, CommittedRawSnapshot, DailyEvidenceError,
+};
 use super::{
     DailyEvidenceKindV1, DailyFileEvidenceV1Wire, DailyFileOriginV1Wire,
     DailyRequestMetadataV1Wire, DailyWireTimestampV1,
@@ -129,6 +131,14 @@ impl<'snapshot> RawEvidenceSnapshots<'snapshot> {
 
     pub(super) fn scopes(&self) -> &[&'snapshot CommittedRawSnapshot] {
         &self.scopes
+    }
+
+    /// Discovery selects only the configured entitlement. Other retained
+    /// deliveries remain in the fully verified/budgeted snapshot but cannot
+    /// supply evidence. Explicit references and every copy hop still use the
+    /// strict entitlement check in resolve_original.
+    pub fn matches_entitlement(&self, batch: &CommittedRawBatch) -> bool {
+        batch.entry().entitlement_reference.as_deref() == Some(self.entitlement_reference)
     }
 
     pub(super) fn observed_at(&self) -> UtcTimestamp {

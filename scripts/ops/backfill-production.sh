@@ -28,12 +28,19 @@ selected_session_count=0
 universes=etf
 mode=plan
 auto_resume=0
+raw_source=0
+state_schema=4
+state_header=LAGRANGE_BACKFILL_STATE_V4
+completion_status=PUBLISHED
+source_scope='kis/kr|kis-normalized/kr|KRX/KR|etf'
+worker_flag=--backfill-session-dates
+progress_args=()
 
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/backfill-production.sh --start YYYY-MM-DD --end YYYY-MM-DD
        [--session-dates YYYY-MM-DD[,YYYY-MM-DD...]]
-       [--universe etf|candidate|all] [--plan|--execute]
+       [--universe etf|candidate|all] [--raw-source] [--plan|--execute]
 
 The plan covers the fixed 11-ETF KIS EOD dataset. Candidate universes
 (KOSPI200/KOSDAQ150) remain a separate blocked step until their credentialed
@@ -61,6 +68,14 @@ pin is produced and approved after this command, so it is never required here.
 run, an interrupted RUNNING state, RETRYABLE errors, and the exact
 KIS_CALENDAR_SNAPSHOT_MISS deferred state. It refuses every other FAILED state
 until an operator explicitly reruns without --auto-resume.
+
+--raw-source explicitly selects the independent R2 source collector. It verifies
+and reuses complete immutable EOD Raw, or captures missing Raw without invoking
+legacy normalization or DB publication. Its separate EOD_RAW_STATE_V1 identity
+records RAW_COMMITTED only; this never establishes daily-input admission or
+recommendation readiness. A V4 publication state cannot be reused in this mode.
+Historical ranges and the current day must be separate invocations; the current
+day requires its dedicated calendar claim and is forbidden before 16:30 KST.
 EOF
 }
 
@@ -93,10 +108,20 @@ while [ "$#" -gt 0 ]; do
     --plan) mode=plan; shift ;;
     --execute) mode=execute; shift ;;
     --auto-resume) auto_resume=1; shift ;;
+    --raw-source) raw_source=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
+
+if [ "$raw_source" -eq 1 ]; then
+  state_schema=eod-raw-1
+  state_header=LAGRANGE_EOD_RAW_STATE_V1
+  completion_status=RAW_COMMITTED
+  source_scope='kis/kr|raw-only|etf'
+  worker_flag=--eod-raw-session-dates
+  progress_args=(--raw-source)
+fi
 
 [ -n "$start_date" ] && [ -n "$end_date" ] || die '--start and --end are required'
 [[ "$start_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --start date'
@@ -149,7 +174,13 @@ esac
 # old /var/lib/lagrange/data/backfill location remains readable only when an
 # operator explicitly supplies LAGRANGE_BACKFILL_STATE; it is never migrated
 # or removed automatically.
-[ -n "$state_file" ] || state_file=/var/lib/lagrange/state/backfill/state.tsv
+if [ -z "$state_file" ]; then
+  if [ "$raw_source" -eq 1 ]; then
+    state_file=/var/lib/lagrange/state/backfill/eod-raw-state.tsv
+  else
+    state_file=/var/lib/lagrange/state/backfill/state.tsv
+  fi
+fi
 
 check_state_path() {
   local path=$1 label=$2 probe
@@ -451,7 +482,7 @@ cleanup_staged_files() {
 }
 
 validate_state() {
-  local expected_header=$'LAGRANGE_BACKFILL_STATE_V4\t'"$run_identity"
+  local expected_header="$state_header"$'\t'"$run_identity"
   local line number=0 state_date state_status state_id state_code
   declare -A last_status=()
   while IFS= read -r line || [ -n "$line" ]; do
@@ -475,7 +506,7 @@ validate_state() {
     [[ "$state_date" < "$start_date" || "$state_date" > "$end_date" ]] &&
       blocked "backfill state line $number is outside the requested date range"
     case "$state_status" in
-      RUNNING|PUBLISHED)
+      RUNNING|"$completion_status")
         [ "${#fields[@]}" -eq 3 ] && [ -z "$state_code" ] ||
           blocked "backfill state line $number has an unexpected error code"
         ;;
@@ -494,7 +525,7 @@ validate_state() {
       *)
         blocked "backfill state line $number has an invalid status" ;;
     esac
-    if [ "${last_status[$state_date]:-}" = PUBLISHED ] && [ "$state_status" != PUBLISHED ]; then
+    if [ "${last_status[$state_date]:-}" = "$completion_status" ] && [ "$state_status" != "$completion_status" ]; then
       blocked "backfill state line $number contradicts an already published date"
     fi
     last_status[$state_date]=$state_status
@@ -513,7 +544,7 @@ check_auto_resume_state() {
   last_status=${fields[1]:-}
   last_code=${fields[3]:-}
   case "$last_status" in
-    RUNNING|PUBLISHED|DEFERRED|RETRYABLE) ;;
+    RUNNING|"$completion_status"|DEFERRED|RETRYABLE) ;;
     FAILED)
       blocked "automatic resume is blocked by permanent/unknown failure${last_code:+ ($last_code)}; review state and rerun without --auto-resume"
       ;;
@@ -531,6 +562,21 @@ check_auto_resume_state() {
 # execute config gates or protected state writes. It never changes V4 identity.
 load_calendar_selection
 apply_session_date_filter
+
+# Refuse invalid current-day combinations before creating protected run state.
+# The worker independently enforces these same boundaries using its real clock.
+if [ "$raw_source" -eq 1 ] && [ "$selected_session_count" -gt 0 ]; then
+  raw_today=$(TZ=Asia/Seoul date +%F)
+  raw_last=$(tail -n 1 -- "$selected_session_file")
+  [[ "$raw_last" > "$raw_today" ]] && blocked 'Raw EOD cannot collect a future session'
+  if grep -Fxq "$raw_today" "$selected_session_file"; then
+    [ "$selected_session_count" -eq 1 ] ||
+      blocked 'Raw EOD current-day capture must be separate from historical recovery'
+    raw_now_hm=$(TZ=Asia/Seoul date +%H:%M)
+    [[ "$raw_now_hm" < 16:30 ]] &&
+      blocked 'Raw EOD current-day capture is deferred until 16:30 KST'
+  fi
+fi
 
 if [ "$mode" = execute ]; then
   [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
@@ -568,13 +614,13 @@ if [ "$mode" = execute ]; then
   [ -n "$entitlement_reference" ] ||
     die 'production env is missing RESEARCH_ENTITLEMENT_REFERENCE'
   identity_payload=$(cat <<EOF
-schema=4
+schema=$state_schema
 start_date=$start_date
 end_date=$end_date
 universe=$universes
 code_commit=$code_commit
 entitlement_reference=$entitlement_reference
-source_scope=kis/kr|kis-normalized/kr|KRX/KR|etf
+source_scope=$source_scope
 calendar_id=$calendar_id
 calendar_artifact_sha256=$calendar_artifact_sha256
 calendar_artifact_range=$calendar_artifact_range
@@ -583,7 +629,7 @@ EOF
   run_identity=$(printf '%s' "$identity_payload" | sha256sum | awk '{print $1}')
   [[ "$run_identity" =~ ^[0-9a-f]{64}$ ]] || die 'could not derive backfill run identity'
   if [ ! -s "$state_file" ]; then
-    printf 'LAGRANGE_BACKFILL_STATE_V4\t%s\n' "$run_identity" >>"$state_file"
+    printf '%s\t%s\n' "$state_header" "$run_identity" >>"$state_file"
   fi
   validate_state
   check_auto_resume_state
@@ -596,6 +642,19 @@ if [ "$mode" = plan ] && ! dotenv_validate_shell_overrides; then
 fi
 
 if [ "$mode" = plan ]; then
+  if [ "$raw_source" -eq 1 ]; then
+    cat <<EOF
+EOD_RAW_PLAN: KIS read-only fixed ETF11 source collection
+  civil range: $start_date..$end_date
+  selected sessions: $selected_session_count of $calendar_session_count
+  calendar: $calendar_id $calendar_artifact_sha256
+  state: $state_file ($state_header; $completion_status only)
+  verification: immutable Raw bytes/hash/schema; reuse exact sources, reject conflicts
+  publication=false curated=false db=false ready=false
+PLAN_ONLY: no provider, Docker, DB, or persistent state write
+EOF
+    exit 0
+  fi
   cat <<EOF
 BACKFILL_PLAN: KIS read-only fixed ETF EOD
   civil range: $start_date..$end_date
@@ -618,12 +677,12 @@ EOF
 fi
 
 dates=$(cat -- "$selected_session_file")
-published_suffix=$'\tPUBLISHED\t'"$run_identity"
+published_suffix=$'\t'"$completion_status"$'\t'"$run_identity"
 pending_dates=()
 while IFS= read -r date || [ -n "$date" ]; do
   [ -n "$date" ] || continue
   if grep -Fqx "$date$published_suffix" "$state_file"; then
-    echo "BACKFILL_SKIP date=$date state=PUBLISHED"
+    echo "BACKFILL_SKIP date=$date state=$completion_status"
     continue
   fi
   pending_dates+=("$date")
@@ -703,8 +762,8 @@ done
 # corresponding state append so a later date failure cannot erase progress.
 progress_rc=0
 if "${compose[@]}" run --rm --no-deps research-worker \
-  --backfill-session-dates "$session_dates_csv" | \
-  python3 "$script_dir/lib/backfill-progress.py" \
+  "$worker_flag" "$session_dates_csv" | \
+  python3 "$script_dir/lib/backfill-progress.py" "${progress_args[@]}" \
     "$state_file" "$run_identity" "$worker_start" "$worker_end" "$session_dates_csv"; then
   progress_rc=0
 else

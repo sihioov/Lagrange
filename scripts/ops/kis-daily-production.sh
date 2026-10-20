@@ -12,12 +12,15 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
 source "$script_dir/lib/db.sh"
+source "$script_dir/lib/kis-read-compose.sh"
 
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
 calendar_dir=${LAGRANGE_XKRX_CALENDAR_DIR:-${KIS_DAILY_CALENDAR_DIR:-/var/lib/lagrange/state/kis-daily/calendar}}
 state_dir=${KIS_DAILY_STATE_DIR:-/var/lib/lagrange/state/backfill}
 lock_file=${KIS_DAILY_LOCK_FILE:-/var/lib/lagrange/state/backfill/kis-daily.lock}
 mode=plan
+raw_source=0
+raw_check_file=
 max_sessions=10000
 today=
 range_start=
@@ -37,7 +40,7 @@ run_identity=
 
 usage() {
   cat <<'EOF'
-Usage: scripts/ops/kis-daily-production.sh [--plan|--check|--execute]
+Usage: scripts/ops/kis-daily-production.sh [--raw-source] [--plan|--check|--execute]
 
 The default --plan validates only the literal production dotenv contract and
 the protected operational XKRX calendar artifact. It makes no DB, Docker, or
@@ -53,6 +56,13 @@ The scheduled unit is 16:30 Asia/Seoul with Persistent=true. Execute requires
 BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS and never enables a
 live/order/account surface. State and lock paths are root-owned protected
 paths; KIS credential values are not read by this wrapper.
+
+--raw-source selects R2's current-session Raw collection, independent of the
+legacy DB publication frontier. After 16:30 KST it verifies today's immutable
+source in one provider-free worker; execute captures it only if absent. Closed
+days are no-ops. Historical source recovery is an explicit bounded
+backfill-production.sh --raw-source operation, not an inferred range. Raw
+completion never claims R2 admission, civil-day action coverage, or readiness.
 EOF
 }
 
@@ -69,6 +79,7 @@ while [ "$#" -gt 0 ]; do
     --plan) mode=plan; shift ;;
     --check) mode=check; shift ;;
     --execute) mode=execute; shift ;;
+    --raw-source) raw_source=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -76,7 +87,7 @@ done
 
 cleanup() {
   rm -f -- "$calendar_selection_file" "$calendar_metadata_file" \
-    "$db_snapshot_file" "$db_parsed_file"
+    "$db_snapshot_file" "$db_parsed_file" "$raw_check_file"
 }
 trap cleanup EXIT
 
@@ -455,6 +466,18 @@ load_literal_env
 
 if [ "$mode" = plan ]; then
   load_calendar_selection "$today" "$today"
+  if [ "$raw_source" -eq 1 ]; then
+    cat <<EOF
+KIS_DAILY_RAW_PLAN: current-session ETF11 Raw source collection
+  target=$today sessions=$calendar_session_count earliest=16:30KST
+  calendar=$calendar_id $calendar_artifact_sha256
+  state=EOD_RAW_STATE_V1; no legacy publication-state reuse
+  history=explicit bounded recovery; no inferred automatic catchup
+  publication=false curated=false db=false ready=false
+PLAN_ONLY: no DB, Docker, provider, secret-value, or state operation made
+EOF
+    exit 0
+  fi
   cat <<EOF
 KIS_DAILY_PLAN: read-only incremental ETF EOD
   schedule: one systemd activation daily at 16:30 Asia/Seoul (Persistent=true)
@@ -474,6 +497,83 @@ if [ "$mode" = execute ]; then
   run_config_validator
 else
   run_config_validator
+fi
+
+# R2 consumes source evidence directly. Do not use legacy canonical publication
+# as a proxy for it: a valid cash action may intentionally block that normalizer.
+if [ "$raw_source" -eq 1 ]; then
+  load_calendar_selection "$today" "$today"
+  if [ "$calendar_session_count" -eq 0 ]; then
+    echo "KIS_DAILY_RAW: NO_SESSION date=$today (no worker/Docker/KIS call)"
+    exit 0
+  fi
+  [ "$calendar_session_count" -eq 1 ] || blocked 'current-session selection is ambiguous'
+  raw_now_hm=$(TZ=Asia/Seoul date +%H:%M)
+  if [[ "$raw_now_hm" < 16:30 ]]; then
+    echo "KIS_DAILY_RAW: DEFERRED_TODAY date=$today earliest=16:30KST"
+    exit 0
+  fi
+  kis_read_compose_configure "$root" || blocked "$KIS_READ_COMPOSE_ERROR"
+  export RANGE_RAW_BATCH_ID=${RANGE_RAW_BATCH_ID:-compose-config-disabled}
+  compose=(docker compose --env-file "$env_file" -f "$root/deploy/compose/compose.yml")
+  compose+=("${KIS_READ_COMPOSE_FILE_ARGS[@]}")
+  raw_check_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-eod-raw-check.XXXXXX") ||
+    die 'cannot stage Raw source observation'
+  if ! "${compose[@]}" run --rm --no-deps research-worker \
+    --eod-raw-check-session-dates "$today" >"$raw_check_file"; then
+    blocked 'EOD_RAW_CHECK_FAILED; no source capture started'
+  fi
+  if ! raw_present=$(python3 - "$raw_check_file" "$today" <<'PY'
+import json, sys, uuid
+from pathlib import Path
+try:
+    lines = Path(sys.argv[1]).read_bytes()
+    if len(lines) > 8192:
+        raise ValueError()
+    records = [json.loads(line) for line in lines.splitlines()]
+    if len(records) != 2 or any(not isinstance(r, dict) for r in records):
+        raise ValueError()
+    event, terminal = records
+    if (event.get("status"), event.get("event"), event.get("phase"), event.get("target_date")) != (
+        "event", "eod_source_checked", "raw_check", sys.argv[2]
+    ):
+        raise ValueError()
+    present = event.get("source_present")
+    if not isinstance(present, bool):
+        raise ValueError()
+    if present:
+        value = event.get("batch_id")
+        parsed = uuid.UUID(value)
+        if str(parsed) != value or parsed.int == 0:
+            raise ValueError()
+    elif event.get("batch_id") is not None:
+        raise ValueError()
+    if (terminal.get("status"), terminal.get("phase"), terminal.get("outcome"), terminal.get("sessions")) != (
+        "ok", "raw_check", "raw_checked", 1
+    ):
+        raise ValueError()
+    if any(r.get(k) is not False for r in records for k in ("ready", "publication", "curated", "db")):
+        raise ValueError()
+    print("yes" if present else "no")
+except (ValueError, TypeError, AttributeError, OSError):
+    raise SystemExit("EOD_RAW_CHECK_INVALID")
+PY
+  ); then
+    blocked 'EOD_RAW_CHECK_INVALID; no source capture started'
+  fi
+  echo "KIS_DAILY_RAW_CHECK: date=$today source_present=$raw_present publication=false ready=false"
+  if [ "$mode" = check ] || [ "$raw_present" = yes ]; then
+    exit 0
+  fi
+  [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
+    blocked 'execution is disabled until BACKFILL_CONFIRM_EXTERNAL is explicitly set'
+  state_file=${KIS_DAILY_STATE_FILE:-$state_dir/kis-daily-raw-${today}.tsv}
+  validate_absolute_path "$state_file" daily-raw-state-file
+  LAGRANGE_ENV_FILE="$env_file" LAGRANGE_XKRX_CALENDAR_DIR="$calendar_dir" \
+    LAGRANGE_BACKFILL_STATE="$state_file" \
+    bash "$script_dir/backfill-production.sh" --raw-source \
+      --start "$today" --end "$today" --session-dates "$today" --auto-resume --execute
+  exit $?
 fi
 
 snapshot_database

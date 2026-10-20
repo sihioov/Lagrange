@@ -1108,7 +1108,18 @@ impl RawStore {
             else {
                 return Err(invalid("source batch is not committed"));
             };
-            if source.date != *date
+            // The independent EOD Raw path may copy a dedicated calendar
+            // original into a later date's delivery. Its original request and
+            // identity remain exact; this grants no calendar projection or
+            // scheduling authority. All other copied evidence stays same-date.
+            let historical_calendar = provider == crate::contract::PROVIDER_KIS
+                && market == crate::contract::MARKET_KR
+                && source.provider == crate::contract::PROVIDER_KIS_CALENDAR
+                && source.market == market
+                && source.mode == FetchMode::Credentialed
+                && source.date < *date
+                && envelope.kind == ResponseKind::Calendar;
+            if (source.date != *date && !historical_calendar)
                 || source.mode != mode
                 || source.entitlement_reference.as_deref() != entitlement_reference
             {
