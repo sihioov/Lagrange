@@ -1803,3 +1803,72 @@ schema/disabled runtime, then use the official version2 backup transition. Norma
 still requires the before16:30KST window; later install-disabled does not bypass activation.
 Application deployment, actual Owner use, three consecutive actual trading days and C_R2
 remain OPEN. The four current review findings are closed only in the scope stated above.
+
+
+## Wave131 actual Owner start rule and measured protected inputs — 2026-10-20 12:40 UTC
+
+R2-04/R2-09 remain DOING. The Owner answered the existing question:
+“배포 검증 후 첫 실제 거래일부터 시작. 기존 운영 한도를 유지하고 새 파일 처리 예산은 실제 데이터 규모로 산정”.
+`wave131/owner-deployment-start-decision.json` (d02d724d) binds this actual
+message without inventing a message ID. Configuration selection, the old
+custody/writer questions and operating authority are all resolved. Historical
+automatic recommendation catch-up was not selected.
+
+A bounded metadata read at12:33:37UTC held nonblocking shared Raw commit locks.
+The two scopes contain14unique batches,415source files and1,372,250retained bytes
+(manifest, batch metadata and source sizes combined). Source bodies were not read.
+Raw ownership is10001. The five initially inspected daily/artifact paths were
+absent; the actual historical artifact root was then resolved from the unchanged
+protected env as `/var/lib/lagrange/data/artifacts/historical-price-beta-root`.
+Its two entries include the fixed approved V3 base, with2,189manifest bytes and
+7,672,914bars bytes. Metadata is not a new content-approval claim.
+Measurement receipt4595a101 and binding receipt74d57146 preserve these scopes.
+
+The exact installed calendar validator777a4f31 verified the existing artifact,
+manifest and override ledger. Artifactb4caff42 covers2020-01-31..2027-12-31.
+It lists2026-10-21 as the next session after the decision day. This is calendar
+schedule evidence, not an actual trading-day receipt. The candidate first session
+is bound to actual deployment verification before2026-10-21T00:00:00Z
+(09:00KST) and actual market/input acceptance. If that bound is missed, no daily
+activation is allowed under this candidate date: use a supported new immutable
+configuration for the next valid session, never edit an installed release or
+backdate verification. `activation-gate.json` is a coordinator requirement;
+the application does not automatically consume this gate file.
+
+New scan limits derive from measured current scope sizes, the36calendar sessions
+between the approved base and the initial three candidate observation sessions,
+and twofold headroom rounded to powers of two. This capacity-planning interval
+does not authorize or dispatch historical collection or automatic recommendations.
+The resulting per-scope limits are128records/batches,256files per batch,
+8,192files,8MiB manifest,256KiB batch metadata,128KiB source file,64MiB retained
+bytes,16,384descriptors and JSON depth16. The fixed in-container data-root path
+uses5bytes/one component; this limit is pathname size, not disk usage.
+Artifact enumeration and replay each allow128entries. The300second cycle guard
+retains the existing computation ceiling; the metadata timing is not a Rust
+throughput benchmark. Existing capacity10, lease60, backoff30, computation300
+and immutable CPU/memory limits are preserved. Exact accepted app e639169's
+validator accepted the1,279byte configuration with SHA256
+`9e9dc09db87dfee3c9fa6242cbca1ee98c861f17d8b5366a1e634e835c3bea4f`.
+Derivation receipt26987e5f records formulas and limits. No passed test, app smoke,
+image build, provider call or CI run was repeated.
+
+At12:40:39UTC a single root Python -I -S -B invocation, cwd/, umask0077,
+published new root0700 input directories and root0600 files under
+`/etc/lagrange/release-inputs/e639169-20261020-wave131`.
+Only the release commit and five explicit daily/operating settings changed in
+the copied protected env; every other environment line was preserved. The old
+env hash and relative current link were rechecked unchanged. New env3499280a,
+config9e9dc09d and gate89feb0f7 were read back with exact identities; publication
+receipt336799e1 records exit0. Backup key contents were not read, copied, inserted
+into env or rotated. Existing app, current, DB and services were not changed.
+This publication is consumed; no overwrite, repair or retry.
+
+Next: bind fresh deployment admission and the exact install/disabled preparation/
+backup-transition/restoration command ledger, including new DB role/runtime
+credential prerequisites and preserved market_ws policy. Actual daily input
+completeness and resource behavior remain operational checks. Accepted G4 and
+the installed e5638de backup tool are not rerun. KIS normal activation remains
+before16:30KST; later install-disabled is allowed, with no timer-start bypass.
+Application installation/deployment, official backup transition, Owner use,
+three consecutive actual trading days and final C_R2 remain OPEN. All older
+failures, unknown causes, retained artifacts and0120cleanup INCOMPLETE remain.
