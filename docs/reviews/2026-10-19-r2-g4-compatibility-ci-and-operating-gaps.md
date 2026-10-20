@@ -2147,3 +2147,55 @@ Next: freeze the new source, one new exact-candidate CI, matched immutable image
 with jobs2/one service per Compose and existing independent recovery, then bounded
 actual input recovery/admission. Oct21 auto start remains conditional on validation
 before09:00KST, never retroactive. Owner use/three actual days/C_R2 remain OPEN.
+
+
+### Wave137 — hosted closure and bounded image-build recovery (2026-10-21 KST)
+
+Candidate fccb68354c5352f741c37764ae1d66eb3784a662 CI39457995014 attempt1
+completed all8jobs successfully. Full8logs, exact7checkout commits, frozen57Rust
+and10Python definitions, and19actual PostgreSQL processes with exit0/no skip
+were recovered at16:57:15UTC. Hosted source closure a15dcbaa... (46145bytes)
+is source acceptance only; no new images or deployment are claimed. Prior
+18372ab CI39454506091 also completed and was independently recovered, closure
+c205cf16.... Its required-log delimiter/module qualification recovery corrections
+preserve the original frozen inputs and observations. No CI was rerun or canceled.
+
+At16:44:31UTC a read-only preparation observation confirmed deployed e639169,
+13total containers/11monitored, beta normally stopped0, research historical2,
+other9healthy, dailyOFF/epoch0 and zero running beta recommendation jobs. The
+current Owner V2 identity is62d49f86.../image9e994794..., not the predeployment
+f293... identity. A narrow independent build supervisor now owns separate original
+stop/build/start units and responses, requires normal Owner0 plus original client
+termination/MainPID0/ControlPID0/empty recursive cgroups before a single start,
+and retains all receipts/partial failures. Receipt failure after a resolved stop
+still routes to restoration. Large completed build logs are streamed for hashing.
+The fixed12hour window is never renewed; deadline/uncertainty remains INCOMPLETE.
+Fourteen isolated ordering/failure cases pass. One actual USER-manager fixture
+confirms retained original process exit0, exact output and empty cgroup; it is
+not root Docker/build admission. Original fixture unit/evidence remain.
+
+Root preparation a1 ran once16:59:25UTC and failed before staging/outage: its broad
+KIS-name check mistook preserved lagrange-kis-ws-a65f208-build.service active/exited
+for live collection. Read-only diagnosis17:00:16UTC verified its original Oct7
+normal0, MainPID/ControlPID0 and empty cgroup; a1AUX was absent. The a2 correction
+admits only that exact historical unit/invocation/PID/terminal tuple and empty
+cgroup; positive and11negative boundaries pass alongside14control regressions.
+No historical unit is filtered, reset, deleted or restarted.
+
+The sealed a2 bootstrap d357d8a4... was submitted once17:01:50UTC, but sudo returned
+`interactive authentication is required` before root Python execution. It did
+not create an operating window, issue a stop or start a build. At17:03:00UTC all
+4proposed a2units were not-found with PID0; AUX metadata was UNOBSERVABLE from
+the unprivileged caller, not claimed absent. Both local launch receipts remain
+consumed; no automatic replay. Owner authority remains valid and no new approval
+or information question is pending. Resume a newly sealed attempt only after
+actual noninteractive execution authentication becomes available; do not bypass it.
+
+Heartbeat d18b4f11 was confirmed active and its exact create receipt plus handoff/
+registry persisted before predecessor40f9f633 deletion. Renew by2026-10-21T03:30Z
+before04:40:28Z expiry/47thtick. This is same-agent tracking, not native Ralph
+or outage protection. Fresh build images/runtime, measured calendar/action/EOD
+gap recovery, actual producer/admitter input acceptance and daily activation,
+Owner use, three consecutive actual trading days and C_R2 remain OPEN. Existing
+G4/app/backup acceptance, all consumed attempts/unknown causes,0120incomplete
+cleanup,32unrelated ROADMAP additions and.archify remain unchanged.
