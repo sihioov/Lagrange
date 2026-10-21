@@ -9579,3 +9579,35 @@ provider replay, input admission, date rebind, Daily activation or actual schedu
 DailyOFF/epoch0, firstSessionnull and actual consecutive days0 remain. Full off-serving
 status/rollback support still requires source-level resolution; old completed tests/CI
 were not repeated. All original failures,32 unrelated ROADMAP additions and.archify remain.
+
+
+## Wave151 — explicit OFF observer installation compatibility (2026-10-21 UTC / Oct22 KST)
+
+R3-01 source fix: Wave150 original off-serving a1 failed at the official status
+preflight before refresh because `_validate_effective_policy` required quotes
+`owner_only`. Accept only the two explicit `off`/`owner_only` values; retain
+market_ws, operational_v1, shared_required, Owner runtime/access and disabled
+paper, plus exact immutable release/manifest/daily unit and history binding.
+The v1 policy and API contract are unchanged: access/transport/research policy
+is not evidence of quote activation or reception. With OFF, existing API
+`stream_pins` returns no active binding and window evidence is missing; existing
+unknown/failure projection remains, never a fabricated healthy/disabled stream.
+
+Five new fixture tests cover both research modes, read-only preflight, apply/
+check/startup with collection disabled, unchanged config and release/unit
+rejection, and partial activation restoration. Red retained as red-result.json
+(two failures/three errors across five methods). First green run retained one
+fixture error: its CommandResult came from a different dynamically loaded module.
+Corrected only the fixture runner type; full service-status suite58 PASS,
+production-ops-static-check PASS, diff-check PASS. Exact commands/output hashes
+are in target/r2-daily-beta/wp-8/wave151/local-validation.json.
+
+Only installer/test/runbook plus progress docs change; no topology/schema/API/
+provider expansion or diagram change. New candidate hosted/image/deployment
+acceptance is pending. Existing60d serving remains unchanged; prior7d installed
+artifact and a1 failure/c1 actual state/restoration evidence remain retained.
+No old operation/test/CI replay. No new host observation; registry lastObservedAt
+remains2026-10-21T15:16:59.361229Z. R2 Sep15 dividend153130 SOURCE_CONFLICT still
+blocks input admission/rebind/activation; DailyOFFepoch0, firstSessionnull and
+actual consecutive scheduled trading days0. Normal authenticated Owner use,
+current-date proof/market reception and full OFF-serving rollback remain OPEN.

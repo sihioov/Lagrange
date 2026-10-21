@@ -160,6 +160,19 @@ with the verified release policy. The supported UI transport is `off` or
 `market_ws`; this status feature does not add a REST quote fallback. The current
 Owner policy uses `market_ws`. Do not enable the live, account, or order profile.
 
+Observer installation accepts the explicit quote modes `owner_only` and `off`.
+The `off` mode supports an immutable compatible rollback while retaining
+`market_ws`, `operational_v1`, `shared_required`, Owner-only access/runtime and
+disabled paper mode. Missing or other quote-mode values remain invalid. The v1
+receipt records access, configured transport and research mode; it does not
+attest quote activation or reception. OFF therefore does not manufacture a
+healthy stream or a current window: missing grant/window/receipt evidence keeps
+the existing unknown/failure diagnostics. Installing the observer enables only
+its status timer, never KIS collection, quote production or another profile.
+An OFF release still needs its own exact manifest, daily-unit binding and status
+receipt before serving refresh. A current-link switch alone does not validate
+that refresh or undo schema/reader-floor requirements.
+
 `owner_daily` means the bounded daily EOD one-shot and a normally stopped
 research executor between runs. `owner_daemon` means the work-driven research
 daemon. Do not run the daily timer and daemon together. Existing daily-vs-daemon

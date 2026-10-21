@@ -450,12 +450,112 @@ class InstallerPlanAndPreflightTests(InstallerFixture):
         self.assertEqual(caught.exception.code, "POLICY_MISMATCH")
 
     def test_invalid_effective_modes_are_rejected_without_shell_or_profiles(self) -> None:
-        self.env_file.write_text(self.env_file.read_text().replace("OWNER_INTRADAY_QUOTES_MODE=owner_only", "OWNER_INTRADAY_QUOTES_MODE=off"))
-        self.env_file.chmod(0o600)
+        original = self.env_file.read_text()
+        for value in ("", "OFF", "off ", "disabled", "member", "live"):
+            with self.subTest(value=value):
+                self.env_file.write_text(original.replace(
+                    "OWNER_INTRADAY_QUOTES_MODE=owner_only", "OWNER_INTRADAY_QUOTES_MODE=" + value))
+                with self.assertRaises(installer.InstallError) as caught:
+                    self.run_install()
+                self.assertEqual(caught.exception.code, "CONFIG_INVALID")
+                self.assertEqual(self.runner.calls, [])
+
+
+class OffQuotesObserverTests(InstallerFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.env_file.write_text(self.env_file.read_text().replace(
+            "OWNER_INTRADAY_QUOTES_MODE=owner_only", "OWNER_INTRADAY_QUOTES_MODE=off"))
+
+    def test_off_preflight_is_readonly_in_both_research_modes(self) -> None:
+        for mode in ("daily", "daemon"):
+            with self.subTest(mode=mode):
+                result = self.run_install(mode=mode)
+                self.assertEqual(result["policy"]["research_mode"], mode)
+                self.assertEqual(result["policy"]["schema_version"], "service-status.policy.v1")
+                self.assertEqual(result["policy"]["owner_access"], "owner_only")
+                self.assertEqual(result["policy"]["quote_transport"], "market_ws")
+                self.assertFalse(self.private_root.exists())
+                self.assertTrue(all(call[0] == "/bin/bash" or call[1] == "show"
+                                    for call in self.runner.calls))
+
+    def test_off_apply_check_and_startup_preserve_disabled_collection(self) -> None:
+        timer = f"lagrange-kis-daily-{self.commit[:7]}.timer"
+        self.runner.overrides[timer] = {
+            "ActiveState": "inactive", "UnitFileState": "disabled", "NextElapseUSecRealtime": "",
+        }
+        result = self.run_install(apply=True)
+        history = installer._verify_installed(self.paths, result["policy"], result["manifest_sha256"])
+        self.assertEqual(history, result["history"])
+        self.assertTrue(all(job["last_success_at"] is None for job in history["jobs"].values()))
+
+        def startup_runner(argv, *, deadline):
+            response = self.runner(argv)
+            startup_collector = sys.modules["service_status_startup_collector"]
+            return startup_collector.CommandResult("ok", response.stdout)
+
+        self.assertEqual(policy.validate_startup_policy(
+            self.paths.policy_file, self.paths.history_file, self.paths.install_root,
+            self.paths.release_root, self.paths.systemd_root, self.commit,
+            test_owner=self.owner, runner=startup_runner,
+        ), ("daily", "lagrange-station"))
+        mutations = [call for call in self.runner.calls
+                     if call[0] == "/usr/bin/systemctl" and call[1] != "show"]
+        self.assertEqual(mutations, [
+            ("/usr/bin/systemctl", "daemon-reload"),
+            ("/usr/bin/systemctl", "enable", "--now", "lagrange-service-status.timer"),
+        ])
+
+    def test_off_does_not_relax_other_effective_policy_guards(self) -> None:
+        original = self.env_file.read_text()
+        for key, bad in (
+            ("OWNER_INTRADAY_QUOTE_TRANSPORT", "rest"),
+            ("OWNER_INTRADAY_SESSION_WINDOWS_SOURCE", "fixture"),
+            ("KIS_READ_COORDINATION_MODE", "off"),
+            ("OWNER_EQUITY_V2_RUNTIME_MODE", "off"),
+            ("OWNER_BETA_ACCESS_MODE", "public"),
+            ("OWNER_BETA_PAPER_MODE", "enabled"),
+        ):
+            with self.subTest(key=key):
+                self.env_file.write_text("\n".join(
+                    key + "=" + bad if line.startswith(key + "=") else line
+                    for line in original.splitlines()) + "\n")
+                with self.assertRaises(installer.InstallError) as caught:
+                    self.run_install()
+                self.assertEqual(caught.exception.code, "CONFIG_INVALID")
+                self.assertEqual(self.runner.calls, [])
+
+    def test_off_still_requires_exact_release_and_daily_unit_binding(self) -> None:
+        self.write_manifest("b" * 40)
         with self.assertRaises(installer.InstallError) as caught:
             self.run_install()
-        self.assertEqual(caught.exception.code, "CONFIG_INVALID")
+        self.assertEqual(caught.exception.code, "POLICY_MISMATCH")
         self.assertEqual(self.runner.calls, [])
+        self.write_manifest()
+        timer = f"lagrange-kis-daily-{self.commit[:7]}.timer"
+        self.runner.overrides[timer] = {"DropInPaths": "/etc/systemd/system/override.conf"}
+        with self.assertRaises(installer.InstallError) as caught:
+            self.run_install()
+        self.assertEqual(caught.exception.code, "POLICY_MISMATCH")
+        self.assertFalse(self.private_root.exists())
+
+    def test_off_partial_activation_failure_restores_original_observer(self) -> None:
+        self.env_file.write_text(self.env_file.read_text().replace(
+            "OWNER_INTRADAY_QUOTES_MODE=off", "OWNER_INTRADAY_QUOTES_MODE=owner_only"))
+        self.run_install(apply=True)
+        paths = [self.private_root / name for name in ("policy.json", "history.json")]
+        paths += [self.systemd_root / name for name in
+                  ("lagrange-service-status.service", "lagrange-service-status.timer")]
+        before = {path: path.read_bytes() for path in paths}
+        self.env_file.write_text(self.env_file.read_text().replace(
+            "OWNER_INTRADAY_QUOTES_MODE=owner_only", "OWNER_INTRADAY_QUOTES_MODE=off"))
+        self.runner.fail_on = "enable_partial"
+        with self.assertRaises(installer.InstallError) as caught:
+            self.run_install(apply=True)
+        self.assertEqual(caught.exception.code, "APPLY_FAILED")
+        self.assertEqual({path: path.read_bytes() for path in paths}, before)
+        self.assertEqual(self.runner.observer_states["lagrange-service-status.timer"]["active"], "active")
+        self.assertEqual(self.runner.observer_states["lagrange-service-status.timer"]["enabled"], "enabled")
 
 
 class R2DailyRunnerBindingTests(InstallerFixture):

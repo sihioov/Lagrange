@@ -165,8 +165,13 @@ def _lease_seconds(values: dict[str, str], compose_path: str, release_root: str,
 
 
 def _validate_effective_policy(values: dict[str, str], research_mode: str) -> None:
+    # A compatible rollback release may disable quote production while keeping
+    # Owner access, the configured transport and all observer bindings intact.
+    # The v1 receipt attests those bindings, not live quote availability; the API
+    # still requires independent window, grant and receipt evidence for that.
+    if values.get("OWNER_INTRADAY_QUOTES_MODE") not in ("off", "owner_only"):
+        raise InstallError("CONFIG_INVALID")
     expected = {
-        "OWNER_INTRADAY_QUOTES_MODE": "owner_only",
         "OWNER_INTRADAY_QUOTE_TRANSPORT": "market_ws",
         "OWNER_INTRADAY_SESSION_WINDOWS_SOURCE": "operational_v1",
         "KIS_READ_COORDINATION_MODE": "shared_required",
