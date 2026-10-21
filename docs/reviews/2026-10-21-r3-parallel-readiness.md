@@ -683,3 +683,34 @@ R3-02~07의 실제수신·인증수명주기·30종목·장경계와 §10의 gra
 현행quota·전역키점유·schema/readerfloor·호환복구 현재값은 여전히 미확인이다.
 이번 범위의 소스/집중/hosted 검증 미해결은 없음. 운영/root/DB/Docker/systemd/provider/lease,
 로컬 전체테스트/build·이미지/배포는 미실행; 부모tree/registry/R2절/체크/diagrams/lock/package 불변.
+
+
+## 15. R2 service-status 보정을 보존하는 통합 후보
+
+후속 부모 검토에서228a8da에는 이후 R2 보정91324123d41c3d4e0057b2cb053fd36b03e2b7f0가
+없음이 확인됐다. 그대로 배포할 경우 daily Raw/action-supply 옵션의 service-status 인식과
+readonly checker 전달이 되돌아가므로 새 통합 후보를 준비한다. 913의 parent closure는
+읽기만 했고 SHA b117ab67b466d115a64e3c9e213cb5721e8a1993fef6169af30864f9c11ec06a가 일치했다.
+부모의 실제 운영/빌드 상태는 이 작업에서 조회하지 않았다.
+
+아래5파일만913의 정확한 blob으로 가져왔고 추가 소스 수정은 없다.
+
+- `.github/workflows/ci.yml`
+- `scripts/ci/test_ci_contract.py`
+- `scripts/ops/install-service-status.py`
+- `scripts/ops/lib/service-status-policy.py`
+- `scripts/ops/test_install_service_status.py`
+
+913 대비 전체 tracked diff를 대조한 실행소스 차이는 R3 D1 route/page-seam test2파일뿐이다.
+이2파일은 hosted 검증한228a8da와 바이트 동일하다. 문서 차이는 별도 기록했으며
+913의 R2 문서/ROADMAP을 가져오지 않았다. R3 분기 후 R2절/체크,lock/package/diagrams/.archify는
+변경하지 않았다. 복사·대조 영수증: `target/r3-integrate-913/import-verification.json`.
+이 절과5파일을 함께 커밋한 정확한 SHA를 새 통합 후보로 고정하며 뒤의 문서 HEAD와 구분한다.
+
+새 workflow는 service-status unittest discovery를 필수 policy step으로 추가한다.
+소스 AST 대조에서 기존 build-disabled10 + service-status53(install22/status31) + CI계약21 =
+**필수 Python84**를 확인했다. 이는 정의 개수이며 실행 성공이 아니다. 후보를 고정한 뒤
+8jobs/7checkout/Rust57/Python84/PG19 입력을 별도 재추출하고 정확후보 hosted CI 한 번에서
+전체 로그·각 결과·page-seam14를 회수한다. 이미 통과한 로컬 테스트는 반복하지 않았다.
+기존1ec5f16/228a8da CI와 패킷·실패/성공 증거는 보존하며 재실행/취소/추가poll하지 않는다.
+R2 a4와 Owner복원 책임은 부모에게 있고 R3 운영/빌드/배포 권한으로 확장하지 않는다.

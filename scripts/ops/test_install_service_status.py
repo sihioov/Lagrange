@@ -458,6 +458,57 @@ class InstallerPlanAndPreflightTests(InstallerFixture):
         self.assertEqual(self.runner.calls, [])
 
 
+class R2DailyRunnerBindingTests(InstallerFixture):
+    def set_runner_arguments(self, arguments: str) -> Path:
+        service = self.systemd_root / f"lagrange-kis-daily-{self.commit[:7]}.service"
+        wrapper = self.release_ops / "kis-daily-production.sh"
+        service.write_text(service.read_text().replace(
+            f"ExecStart={wrapper} --execute\n", f"ExecStart={wrapper} {arguments}\n"))
+        return service
+
+    def check_mode(self, arguments: str, expected_flags: tuple[str, ...]) -> None:
+        self.set_runner_arguments(arguments)
+        result = self.run_install()
+        checks = [call for call in self.runner.calls if call[0] == "/bin/bash"]
+        self.assertEqual(len(checks), 1)
+        for flag in ("--raw-source", "--action-supply"):
+            self.assertEqual(checks[0].count(flag), int(flag in expected_flags))
+        self.assertEqual(result["policy"]["release_commit"], self.commit)
+        self.assertEqual(result["policy"]["research_mode"], "daily")
+        self.assertFalse(self.private_root.exists())
+        self.assertFalse(any(call[0] == "/usr/bin/systemctl" and call[1] != "show"
+                             for call in self.runner.calls))
+
+    def test_legacy_runner_keeps_legacy_readonly_checker(self) -> None:
+        self.check_mode("--execute", ())
+
+    def test_raw_source_runner_passes_its_mode_to_readonly_checker(self) -> None:
+        self.check_mode("--raw-source --execute", ("--raw-source",))
+
+    def test_action_supplier_passes_both_modes_to_readonly_checker(self) -> None:
+        self.check_mode("--raw-source --action-supply --execute",
+                        ("--raw-source", "--action-supply"))
+
+    def test_unreviewed_runner_arguments_fail_before_checker(self) -> None:
+        service = self.systemd_root / f"lagrange-kis-daily-{self.commit[:7]}.service"
+        original = service.read_text()
+        for arguments in (
+            "--action-supply --execute", "--action-supply --raw-source --execute",
+            "--raw-source --execute --unknown", "--raw-source --raw-source --execute",
+            "--raw-source --action-supply", "--execute # ignored",
+            "--execute\nExecStart=/bin/true", "--execute\n ExecStart=/bin/true",
+            "--execute\nExecStart=",
+        ):
+            with self.subTest(arguments=arguments):
+                service.write_text(original)
+                self.set_runner_arguments(arguments)
+                self.runner.calls.clear()
+                with self.assertRaises(installer.InstallError) as caught:
+                    self.run_install()
+                self.assertEqual(caught.exception.code, "POLICY_MISMATCH")
+                self.assertEqual(self.runner.calls, [])
+
+
 class InstallerApplyTests(InstallerFixture):
     def test_apply_uses_fake_runners_and_writes_receipt_private_paths(self) -> None:
         result = self.run_install(apply=True)

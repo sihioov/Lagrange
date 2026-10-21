@@ -491,6 +491,21 @@ def validate_current_release(install_root: str, release_root: str, commit: str, 
     return manifest_hash
 
 
+def daily_runner_flags(service_text: str, wrapper: str) -> tuple[str, ...]:
+    """Recognize only the three commands rendered by the daily installer."""
+    starts = [line for line in service_text.splitlines()
+              if re.match(r"^\s*ExecStart\s*=", line)]
+    allowed = {
+        f"ExecStart={wrapper} --execute": (),
+        f"ExecStart={wrapper} --raw-source --execute": ("--raw-source",),
+        f"ExecStart={wrapper} --raw-source --action-supply --execute":
+            ("--raw-source", "--action-supply"),
+    }
+    if len(starts) != 1 or starts[0] not in allowed:
+        fail("POLICY_MISMATCH")
+    return allowed[starts[0]]
+
+
 def validate_daily_unit_files(
     systemd_root: str,
     release_root: str,
@@ -514,9 +529,9 @@ def validate_daily_unit_files(
     except UnicodeDecodeError:
         fail("POLICY_MISMATCH")
     wrapper = os.path.join(release_root, "scripts/ops/kis-daily-production.sh")
+    daily_runner_flags(service_text, wrapper)
     required_service = (
         f"Environment=LAGRANGE_CODE_COMMIT={commit}",
-        f"ExecStart={wrapper} --execute",
         "ConditionFileIsExecutable=" + wrapper,
     )
     if any(service_text.count(line) != 1 for line in required_service):
