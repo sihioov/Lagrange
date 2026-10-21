@@ -574,6 +574,190 @@ class MarketStreamGrantTests(unittest.TestCase):
         self.assertEqual(sql.count("COMMIT;"), 1)
 
 
+class MarketStreamGrantInspectionTests(unittest.TestCase):
+    def args(self):
+        return ["--inspect", "--expected-commit", COMMIT, "--grant-id", GRANT,
+                "--approval-input", "/protected/grant.json", "--approval-sha256",
+                hashlib.sha256(encoded_approval()).hexdigest()]
+
+    def test_inspection_cli_is_explicit_exact_and_cannot_revoke(self):
+        self.assertEqual(grant.parse_cli(self.args()).mode, "inspect")
+        for args in (self.args() + ["--revoke"], self.args() + ["--apply"],
+                     self.args()[:-2], self.args() + ["--grant-id", GRANT],
+                     ["--inspect", "--expected-commit", COMMIT, "--grant-id", GRANT]):
+            with self.subTest(args=args), self.assertRaises(grant.GrantFailure):
+                grant.parse_cli(args)
+
+    def test_inspection_main_routes_only_read_sql_and_allowlisted_metadata(self):
+        for status in sorted(grant.INSPECTION_STATUSES):
+            output = io.StringIO()
+            with (mock.patch.object(grant, "verify_installed_context", return_value=context_fixture()) as verify,
+                  mock.patch.object(grant, "read_trusted_approval_file", return_value=encoded_approval()),
+                  mock.patch.object(grant, "_read_trusted_sql", return_value=b"READ ONLY") as sql,
+                  mock.patch.object(grant, "run_db_operation", return_value=status) as operation):
+                self.assertEqual(grant.main(self.args(), output=output,
+                                           operation_id_factory=lambda: OPERATION), status)
+            self.assertTrue(verify.call_args.kwargs["require_binding"])
+            sql.assert_called_once_with(context_fixture(), "inspect")
+            self.assertEqual(operation.call_args.args[2], "inspect")
+            self.assertEqual(operation.call_args.args[4:], (GRANT, b"READ ONLY"))
+            lines = output.getvalue().splitlines()
+            if status in grant.INSPECTION_METADATA_STATUSES:
+                metadata = json.loads(lines[1].split(": ", 1)[1])
+                self.assertEqual(set(metadata), {"grant_id", "grant_revision", "credential_slot_id",
+                    "credential_generation", "owner_user_id", "entitlement_id", "effective_from",
+                    "effective_until", "state"})
+                self.assertEqual(metadata["state"], "REVOKED" if status == "INSPECT_REVOKED" else "ACTIVE")
+            else:
+                self.assertEqual(len(lines), 1)
+            self.assertNotIn('reviewed', output.getvalue())
+            self.assertNotIn('network_contract', output.getvalue())
+
+    def test_inspection_binding_mismatch_never_reaches_query(self):
+        from dataclasses import replace
+        for key, value in {"configured_grant_id": REVISION, "slot_id": REVISION,
+                           "credential_generation": "8", "contract_sha256": "c" * 64,
+                           "commit": "9" * 40}.items():
+            with (self.subTest(key=key),
+                  mock.patch.object(grant, "verify_installed_context", return_value=replace(context_fixture(), **{key:value})),
+                  mock.patch.object(grant, "read_trusted_approval_file", return_value=encoded_approval()),
+                  mock.patch.object(grant, "run_db_operation", side_effect=AssertionError) as op,
+                  mock.patch.object(grant, "_read_trusted_sql", side_effect=AssertionError)):
+                self.assertEqual(grant.main(self.args(), output=io.StringIO()), "APPROVAL_REJECTED")
+                op.assert_not_called()
+        args = self.args(); args[4] = REVISION
+        with (mock.patch.object(grant, "verify_installed_context", return_value=context_fixture()),
+              mock.patch.object(grant, "read_trusted_approval_file", return_value=encoded_approval()),
+              mock.patch.object(grant, "run_db_operation", side_effect=AssertionError)):
+            self.assertEqual(grant.main(args, output=io.StringIO()), "APPROVAL_REJECTED")
+
+    def test_inspection_preserves_original_activation_pin_across_reader_release(self):
+        payload = {**approval_fixture(), "activation_commit": "9" * 40}
+        raw = encoded_approval(payload); args = self.args(); args[-1] = hashlib.sha256(raw).hexdigest()
+        with (mock.patch.object(grant, "verify_installed_context", return_value=context_fixture()),
+              mock.patch.object(grant, "read_trusted_approval_file", return_value=raw),
+              mock.patch.object(grant, "_read_trusted_sql", return_value=b"READ ONLY"),
+              mock.patch.object(grant, "run_db_operation", return_value="INSPECT_VALID") as op):
+            self.assertEqual(grant.main(args, output=io.StringIO()), "INSPECT_VALID")
+            self.assertEqual(json.loads(op.call_args.args[3])["activation_commit"], "9" * 40)
+
+    def test_inspection_fixed_sql_has_no_mutation_or_reservation_surface(self):
+        sql = (_LIBRARY_PATH.parent / "market-stream-grant-inspect.sql").read_text()
+        self.assertIn("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;", sql)
+        self.assertIn("current_setting('transaction_read_only') <> 'on'", sql)
+        for token in ("INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP",
+                      "GRANT", "REVOKE", "CALL", "DO", "FOR SHARE", "FOR UPDATE",
+                      "pg_advisory", "set_config", "lease", "reservation"):
+            import re
+            body = "\n".join(line for line in sql.splitlines() if not line.startswith("--"))
+            self.assertIsNone(re.search(r"\b" + token + r"\b", body, re.I), token)
+        self.assertIn("statement_timeout = '30s'", sql)
+        self.assertIn("idle_in_transaction_session_timeout = '30s'", sql)
+        self.assertIn("g.id = :'grant_id'::uuid", sql)
+        self.assertIn("current_user <> 'migration_owner' OR session_user <> 'migration_owner'", sql)
+        for key in grant.APPROVAL_KEYS - {"schema_version", "scope"}:
+            self.assertIn("'" + key + "'", sql)
+        self.assertIn("owner_role.user_id = g.owner_user_id", sql)
+        self.assertIn("entitlement.status = 'ACTIVE'", sql)
+        self.assertIn("entitlement.contract_document_sha256 = g.entitlement_document_sha256", sql)
+        for status in grant.INSPECTION_STATUSES:
+            self.assertIn("'" + status + "'", sql)
+        self.assertIn("< g.effective_from THEN 'INSPECT_NOT_YET_VALID'", sql)
+        self.assertIn("> g.effective_until THEN 'INSPECT_EXPIRED'", sql)
+        self.assertIn("WHEN g.state = 'REVOKED' THEN 'INSPECT_REVOKED'", sql)
+        self.assertLess(sql.index("IS DISTINCT FROM (p"), sql.index("THEN 'INSPECT_REVOKED'"))
+        self.assertLess(sql.index("COMMIT;"), sql.index("\\echo"))
+
+    def test_inspection_process_status_parser_is_bounded_and_cleanup_is_required(self):
+        sql = (_LIBRARY_PATH.parent / "market-stream-grant-inspect.sql").read_bytes()
+        statuses = [(s.encode() + b"\n", b"", 0, s) for s in grant.INSPECTION_STATUSES]
+        statuses += [(b"INSPECT_MISSING\n", b"private failure", 1, "DB_OUTCOME_UNKNOWN"),
+                     (b"INSPECT_VALID\nsecret", b"", 0, "DB_OUTCOME_UNKNOWN"),
+                     (b"INSPECT_MISSING\n", b"error", 0, "DB_OUTCOME_UNKNOWN"),
+                     (b"APPLIED\n", b"", 0, "DB_OUTCOME_UNKNOWN"),
+                     (b"x" * 65536, b"", 0, "DB_OUTCOME_UNKNOWN"),
+                     (b"", b"", 0, "DB_OUTCOME_UNKNOWN")]
+        for stdout, stderr, rc, expected in statuses:
+            for cleanup in (True, False):
+                with self.subTest(expected=expected, cleanup=cleanup):
+                    process = mock.Mock(returncode=rc)
+                    process.communicate.return_value = (stdout, stderr)
+                    with (mock.patch.object(grant, "verify_local_image", return_value=True) as image,
+                          mock.patch.object(grant, "_write_private_override", return_value=(pathlib.Path('/tmp/fake'), pathlib.Path('/tmp/fake/override'))),
+                          mock.patch.object(grant, "_remove_private_override", return_value=True),
+                          mock.patch.object(grant, "cleanup_exact_container", return_value=cleanup) as drain):
+                        factory = mock.Mock(return_value=process)
+                        result = grant.run_db_operation(context_fixture(), OPERATION, "inspect", "{}", GRANT,
+                                                        sql, popen_factory=factory)
+                    self.assertEqual(result, expected if cleanup else "CLEANUP_FAILED")
+                    image.assert_called_once(); drain.assert_called_once(); factory.assert_called_once()
+                    process.communicate.assert_called_once_with(input=sql, timeout=90)
+                    command = factory.call_args.args[0]
+                    self.assertIn("PGOPTIONS=-c default_transaction_read_only=on", command)
+                    self.assertIn("grant_mode=inspect", command)
+                    self.assertNotIn("grant_mode=install", command)
+
+    def test_inspection_reads_only_its_separate_trusted_sql_file(self):
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            write_sql = base / "market-stream-grant.sql"
+            inspect_sql = base / "market-stream-grant-inspect.sql"
+            write_sql.write_bytes(b"MUTATION_SENTINEL")
+            inspect_sql.write_bytes(b"READ_ONLY_SENTINEL")
+            os.chmod(inspect_sql, 0o600); os.chmod(write_sql, 0o600)
+            context = replace(context_fixture(), sql_file=write_sql)
+            real_fstat = os.fstat
+            def root_stat(fd):
+                value = real_fstat(fd)
+                return types.SimpleNamespace(st_mode=value.st_mode, st_uid=0, st_gid=0,
+                    st_dev=value.st_dev, st_ino=value.st_ino, st_size=value.st_size)
+            with (mock.patch.object(grant, "_trusted_release_file", side_effect=lambda path, **kw: os.stat(path)) as trust,
+                  mock.patch.object(grant.os, "fstat", side_effect=root_stat)):
+                self.assertEqual(grant._read_trusted_sql(context, "inspect"), b"READ_ONLY_SENTINEL")
+                trust.assert_called_once_with(inspect_sql, max_bytes=grant.MAX_SQL_BYTES)
+                self.assertEqual(grant._read_trusted_sql(context), b"MUTATION_SENTINEL")
+
+    def test_inspection_timeout_drains_original_process_without_retry(self):
+        process = mock.Mock(returncode=None, pid=4242)
+        process.communicate.side_effect = subprocess.TimeoutExpired(["fake"], 90)
+        def terminate(*args, **kwargs):
+            process.returncode = -15
+            return True
+        with (mock.patch.object(grant, "verify_local_image", return_value=True),
+              mock.patch.object(grant, "_write_private_override", return_value=(pathlib.Path('/tmp/fake'), pathlib.Path('/tmp/fake/override'))),
+              mock.patch.object(grant, "_remove_private_override", return_value=True),
+              mock.patch.object(grant, "cleanup_exact_container", return_value=True) as drain,
+              mock.patch.object(grant, "_terminate_owned_process_group", side_effect=terminate) as terminate_mock):
+            factory = mock.Mock(return_value=process)
+            result = grant.run_db_operation(context_fixture(), OPERATION, "inspect", "{}", GRANT,
+                (_LIBRARY_PATH.parent / "market-stream-grant-inspect.sql").read_bytes(), popen_factory=factory)
+        self.assertEqual(result, "DB_OUTCOME_UNKNOWN")
+        factory.assert_called_once(); drain.assert_called_once(); terminate_mock.assert_called_once()
+
+    def test_inspection_malformed_pinned_evidence_is_redacted_before_query(self):
+        for raw in (b"private-token-sentinel", encoded_approval() + b"\n", b"x" * (grant.MAX_APPROVAL_BYTES + 1)):
+            output = io.StringIO()
+            with (mock.patch.object(grant, "verify_installed_context", return_value=context_fixture()),
+                  mock.patch.object(grant, "read_trusted_approval_file", return_value=raw),
+                  mock.patch.object(grant, "run_db_operation", side_effect=AssertionError)):
+                self.assertEqual(grant.main(self.args(), output=output), "APPROVAL_REJECTED")
+            self.assertNotIn("private-token", output.getvalue())
+            self.assertEqual(len(output.getvalue().splitlines()), 1)
+
+    def test_inspection_uncertain_and_unexpected_results_emit_no_metadata(self):
+        for status in ("DB_OUTCOME_UNKNOWN", "CLEANUP_FAILED", "APPLIED", "REVOKED"):
+            output = io.StringIO()
+            with (mock.patch.object(grant, "verify_installed_context", return_value=context_fixture()),
+                  mock.patch.object(grant, "read_trusted_approval_file", return_value=encoded_approval()),
+                  mock.patch.object(grant, "_read_trusted_sql", return_value=b"READ ONLY"),
+                  mock.patch.object(grant, "run_db_operation", return_value=status)):
+                result = grant.main(self.args(), output=output)
+            self.assertEqual(result, status if status in grant.FAILURES else "INTERNAL_ERROR")
+            self.assertEqual(len(output.getvalue().splitlines()), 1)
+            self.assertNotIn("INSPECT_MISSING", output.getvalue())
+
+
 def replace_stat(metadata: types.SimpleNamespace, **changes: int) -> types.SimpleNamespace:
     return types.SimpleNamespace(**{**vars(metadata), **changes})
 

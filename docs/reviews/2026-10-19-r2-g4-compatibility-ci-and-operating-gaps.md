@@ -2684,3 +2684,34 @@ accepted state. Raw29/34 and actions30/53 remain incomplete. Next is exact combi
 source acceptance, official images/deployment, actual source/input admission and
 DB-last daily activation. Preserve32 unrelated ROADMAP additions, .archify and
 all historical/protected resources. No structural diagram change.
+
+
+#### Wave145 R3 official inspect integration — 2026-10-21 09:16 UTC
+
+Parent reviewed edbe2284f9bdb5820a98d4d691eb64bbfd207273 and
+cdb0d62051147bc8ca13d900f4b3db9e8672b1d3. Five exact source/test files
+were integrated; fixed SQL uses REPEATABLE READ READ ONLY with operator-role,
+immutable grant payload, Owner role and ACTIVE entitlement comparison. Existing
+approval evidence is reused. No grant write, new role/schema or provider surface.
+The helper reports only finite states and allowlisted metadata. Existing installed
+revision and protected original approval file/hash remain mandatory.
+
+Twenty-one fake/static tests passed in the R3 workstream. Its actual network-none
+PostgreSQL fixture applied all62 migrations and passed11 distinct tests, including
+wrong roles, exact fields/types, eligibility, date boundaries, unchanged rows,
+SQLSTATE25006 write rejection and Git archive/trusted-file checks. Exact owned
+container/anonymous volumes/temp directory cleanup passed. Initial readiness and
+FK reset failures are retained. Parent verified every receipt hash and exact
+integrated source. Validation4695bytes/SHA256
+99c0768b9f4030215e962b4d8d33e607e0c6bf87a94430c3b5164bec00a09100.
+
+Parent preserved the existing first-session CI step, added separate required
+fake21 and actualPG11 steps, and passed the one changed CI contract. Integration
+evidence is target/r2-daily-beta/wp-8/wave145/r3-grant-integration-validation.json.
+At09:13:46UTC, a bounded filesystem metadata-only observation found the existing
+root:root0600 ws-approval JSON under release-manifests; no contents/credentials
+were read and no grant/state verdict follows. Raw source-gap derivation from
+recorded evidence confirms23missing civil dates across8intervals, recurring
+frontier gap53days>14; separate bounded catchup is needed, no automatic chunking.
+Next is the exact combined candidate hosted CI, fresh images/install and scoped
+actual input/grant admission. DailyOFF/epoch0/firstSessionnull/actual3days0.

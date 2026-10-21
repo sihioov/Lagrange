@@ -72,7 +72,12 @@ COMMIT40 = re.compile(r"[0-9a-f]{40}\Z")
 GENERATION = re.compile(r"[1-9][0-9]{0,19}\Z")
 ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 U64_MAX = 18446744073709551615
-SUCCESS = frozenset({"PLAN", "APPLIED", "ALREADY_APPLIED", "REVOKED", "ALREADY_REVOKED"})
+INSPECTION_STATUSES = frozenset({
+    "INSPECT_VALID", "INSPECT_MISSING", "INSPECT_MISMATCH", "INSPECT_REVOKED",
+    "INSPECT_EXPIRED", "INSPECT_NOT_YET_VALID",
+})
+INSPECTION_METADATA_STATUSES = INSPECTION_STATUSES - {"INSPECT_MISSING", "INSPECT_MISMATCH"}
+SUCCESS = frozenset({"PLAN", "APPLIED", "ALREADY_APPLIED", "REVOKED", "ALREADY_REVOKED", "INSPECT_VALID"})
 FAILURES = frozenset(
     {
         "INVALID_INPUT",
@@ -398,7 +403,7 @@ def parse_cli(argv: Sequence[str]) -> Request:
     args = list(argv)
     if not args or args == ["--plan"]:
         return Request("plan")
-    if args[0] != "--apply" or "--plan" in args:
+    if args[0] not in {"--apply", "--inspect"} or "--plan" in args:
         _fail("INVALID_INPUT")
     values: dict[str, str] = {}
     flags: set[str] = set()
@@ -425,6 +430,13 @@ def parse_cli(argv: Sequence[str]) -> Request:
     commit = values.get("--expected-commit")
     if not valid_commit(commit):
         _fail("INVALID_INPUT")
+    if args[0] == "--inspect":
+        if flags or set(values) != {
+            "--expected-commit", "--grant-id", "--approval-input", "--approval-sha256"
+        } or not valid_uuid(values["--grant-id"]) or not values["--approval-input"] or not valid_sha256(values["--approval-sha256"]):
+            _fail("INVALID_INPUT")
+        return Request("inspect", commit, values["--approval-input"],
+                       values["--approval-sha256"], values["--grant-id"])
     if "--revoke" in flags:
         if set(values) != {"--expected-commit", "--grant-id"} or not valid_uuid(values["--grant-id"]):
             _fail("INVALID_INPUT")
@@ -695,7 +707,7 @@ def build_compose_argv(
     payload_json: str,
     grant_id: str,
 ) -> tuple[list[str], str]:
-    if mode not in {"install", "revoke"} or re.fullmatch(r"[0-9a-f]{32}", operation_id) is None:
+    if mode not in {"install", "revoke", "inspect"} or re.fullmatch(r"[0-9a-f]{32}", operation_id) is None:
         _fail("INVALID_INPUT")
     if not valid_uuid(grant_id):
         _fail("INVALID_INPUT")
@@ -736,6 +748,11 @@ def build_compose_argv(
         "-v",
         "grant_id=" + grant_id,
     ]
+    if mode == "inspect":
+        # Enforce read-only from connection startup as well as in the fixed SQL.
+        argv[argv.index("db-migrate"):argv.index("db-migrate")] = [
+            "--env", "PGOPTIONS=-c default_transaction_read_only=on"
+        ]
     return argv, name
 
 
@@ -995,7 +1012,7 @@ def run_db_operation(
 ) -> str:
     if (
         re.fullmatch(r"[0-9a-f]{32}", operation_id) is None
-        or mode not in {"install", "revoke"}
+        or mode not in {"install", "revoke", "inspect"}
         or not valid_uuid(grant_id)
         or type(sql_bytes) is not bytes
         or len(sql_bytes) > MAX_SQL_BYTES
@@ -1031,10 +1048,12 @@ def run_db_operation(
         else:
             if process.returncode == 0 and stderr == b"":
                 expected_statuses = (
+                    {value.encode("ascii") + b"\n" for value in INSPECTION_STATUSES}
+                    if mode == "inspect" else
                     {b"APPLIED\n", b"ALREADY_APPLIED\n"} if mode == "install"
                     else {b"REVOKED\n", b"ALREADY_REVOKED\n"}
                 )
-                if stdout in expected_statuses:
+                if len(stdout) <= 64 and stdout in expected_statuses:
                     result = stdout.decode("ascii").strip()
     except (GrantFailure, OSError, ValueError):
         result = "DB_OUTCOME_UNKNOWN"
@@ -1056,13 +1075,17 @@ def run_db_operation(
     return result
 
 
-def _read_trusted_sql(context: InstalledContext) -> bytes:
-    metadata = _trusted_release_file(context.sql_file, max_bytes=MAX_SQL_BYTES)
+def _read_trusted_sql(context: InstalledContext, mode: str = "install") -> bytes:
+    if mode not in {"install", "revoke", "inspect"}:
+        _fail("INVALID_INPUT")
+    sql_file = (context.sql_file.with_name("market-stream-grant-inspect.sql")
+                if mode == "inspect" else context.sql_file)
+    metadata = _trusted_release_file(sql_file, max_bytes=MAX_SQL_BYTES)
     if not hasattr(os, "O_NOFOLLOW"):
         _fail("INSTALLED_CONTEXT_REJECTED")
     try:
         descriptor = os.open(
-            context.sql_file,
+            sql_file,
             os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW,
         )
     except OSError:
@@ -1114,20 +1137,32 @@ def main(
     operation_id_factory = _new_operation_id if operation_id_factory is None else operation_id_factory
     operation_id = operation_id_factory()
     status = "INTERNAL_ERROR"
+    inspection_metadata = None
     try:
         request = parse_cli(sys.argv[1:] if argv is None else argv)
         if request.mode == "plan":
             status = "PLAN"
         else:
             context = verify_installed_context(
-                __file__, request.expected_commit or "", require_binding=request.mode == "install"
+                __file__, request.expected_commit or "", require_binding=request.mode in {"install", "inspect"}
             )
-            if request.mode == "install":
+            if request.mode in {"install", "inspect"}:
                 raw = read_trusted_approval_file(
                     request.approval_path or ""
                 )
                 payload = parse_approval_bytes(raw, request.approval_sha256 or "")
-                if not approval_matches_installed(
+                if request.mode == "inspect":
+                    # Existing grants may predate the installed reader release.
+                    # Their original activation_commit stays pinned by the approval
+                    # and must match the immutable DB row; never rewrite it here.
+                    if (request.grant_id != payload["grant_id"]
+                            or payload["grant_id"] != context.configured_grant_id
+                            or payload["credential_slot_id"] != context.slot_id
+                            or payload["credential_generation"] != context.credential_generation
+                            or payload["network_contract_sha256"] != context.contract_sha256
+                            or context.commit != request.expected_commit):
+                        _fail("APPROVAL_REJECTED")
+                elif not approval_matches_installed(
                     payload, context, request.expected_commit or ""
                 ):
                     _fail("APPROVAL_REJECTED")
@@ -1136,21 +1171,34 @@ def main(
             else:
                 payload_json = "{}"
                 grant_id = request.grant_id or ""
-            sql_bytes = _read_trusted_sql(context)
+            sql_bytes = (_read_trusted_sql(context, "inspect") if request.mode == "inspect"
+                         else _read_trusted_sql(context))
             status = run_db_operation(
                 context, operation_id, request.mode, payload_json, grant_id, sql_bytes
             )
-            if status not in SUCCESS | FAILURES:
+            allowed = (INSPECTION_STATUSES if request.mode == "inspect"
+                       else SUCCESS - INSPECTION_STATUSES) | FAILURES
+            if status not in allowed:
                 status = "INTERNAL_ERROR"
+            if request.mode == "inspect" and status in INSPECTION_METADATA_STATUSES:
+                inspection_metadata = {key: payload[key] for key in (
+                    "grant_id", "grant_revision", "credential_slot_id", "credential_generation",
+                    "owner_user_id", "entitlement_id", "effective_from", "effective_until",
+                )}
+                inspection_metadata["state"] = "REVOKED" if status == "INSPECT_REVOKED" else "ACTIVE"
     except GrantFailure as failure:
         status = failure.code
     except Exception:
         status = "INTERNAL_ERROR"
-    if status not in SUCCESS | FAILURES:
+    if status not in SUCCESS | FAILURES | INSPECTION_STATUSES:
         status = "INTERNAL_ERROR"
     output.write(
         "MARKET_STREAM_GRANT: " + status + " operation_id=" + operation_id + "\n"
     )
+    if inspection_metadata is not None:
+        output.write("MARKET_STREAM_GRANT_METADATA: " + json.dumps(
+            inspection_metadata, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ) + "\n")
     output.flush()
     return status
 

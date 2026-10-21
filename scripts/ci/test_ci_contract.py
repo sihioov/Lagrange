@@ -38,6 +38,29 @@ def action_uses(workflow: dict) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_grant_inspection_postgres_is_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [step for step in ci["jobs"]["policy"]["steps"]
+                 if step.get("name") == "Verify market-stream grant inspection on isolated PostgreSQL"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["run"],
+            "sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py")
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+        helper_steps = [step for step in ci["jobs"]["policy"]["steps"]
+                        if step.get("name") == "Verify market-stream grant helper inspection boundaries"]
+        self.assertEqual(len(helper_steps), 1)
+        self.assertEqual(helper_steps[0]["run"],
+                         "python -m unittest scripts.ops.test_market_stream_grant -v")
+        self.assertNotIn("continue-on-error", helper_steps[0])
+        required = ci["jobs"]["required"]
+        self.assertIn("policy", required["needs"])
+        names = [step.get("name") for step in ci["jobs"]["policy"]["steps"]]
+        # The preceding transport fixture materializes this same pinned image;
+        # the inspection fixture deliberately never pulls on its own.
+        self.assertLess(names.index("Verify daily actual PostgreSQL control transport"),
+                        names.index("Verify market-stream grant inspection on isolated PostgreSQL"))
+
     def test_daily_runner_status_bindings_are_a_required_policy_step(self) -> None:
         _, ci = load_workflow("ci.yml")
         steps = [step for step in ci["jobs"]["policy"]["steps"]
