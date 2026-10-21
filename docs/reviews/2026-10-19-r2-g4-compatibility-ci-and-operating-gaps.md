@@ -2534,3 +2534,61 @@ no direct timer-start bypass. Owner use, three actual days0 and C_R2 remain OPEN
 R3 shared operations stay serialized while R2 source recovery owns the current
 window. All previous failures/unknowns, protected volumes/PG/backup key and32unrelated
 ROADMAP additions/.archify are preserved. No structural change or diagram update.
+
+
+### Wave143 — partial Raw recovery and preactivation first-session binding (2026-10-21)
+
+R2-04/09 remain DOING. Serving866 remains accepted; no later runtime change.
+Original six-session Raw a1 exited0 at08:01:12UTC, and original fifteen-session
+Raw a2 committed11 sessions before exiting1 at08:08:09UTC on Oct15 with
+BROKER_AUTH_FAILED. Both original supervisors/children are terminal and drained;
+no restoration is owed. Preserve all partials and consumed attempts, without replay.
+The fixed safe diagnostic exposes no subordinate cause: UNKNOWN, not evidence
+that the broker rejected credentials or that sudo is unavailable.
+
+Independent network-none, Raw-readonly verification at08:08 confirms29/34 EOD
+sessions present; Oct15,16,19,20,21 remain missing. Original calendar reconstruction
+covers Aug25..Oct30 continuously. Civil action coverage Aug29..Oct20 is30verified,
+23missing. RAW_COMMITTED and these checks are not canonical input admission.
+Evidence under target/r2-daily-beta/wp-8/wave142:
+- eod-raw-a1-progress-20261021T080115.json SHA44e2c27ecdaee405de0e24a8cae66896cf7527dd8999ee607a2b3e224bc3616e.
+- eod-raw-a2-progress-20261021T080810.json SHA84bd55364ff93a76722049470f1d36df5085ed5e24a4d94b6d1f443cf0e71dcd.
+- eod-source-check-a3-result.json SHA2283623a2ccf7d07fc94881d22b7c836aacfd326b3a1fba556a32293ab67f46c.
+- coverage-after-raw-a2.json SHA446bf67a09b8a053d2171fcc6c5258e1dc14750172f6785ea8a79257ece357c3.
+Provider writes are paused until an actual cause/change is established. No token
+refresh, credential read, inferred success, or same-attempt automatic retry.
+
+New official --daily-rebind-first-session source handles the expired preactivation
+binding through two verified immutable configurations. Only revision and future
+first-session may differ. Exact original cohort must be stopped, control OFF,
+all daily DB history empty, shared queues empty and original checkpoints pristine.
+Both poll locks span the atomic SQL transaction. Direct migration_owner, current
+Owner/entitlement, fixed policy and original capacity/lease/backoff are checked.
+The existing trigger advances epoch0 to1 once; exact repetition is idempotent.
+It never resets history/epochs, edits installed files or starts/enables workers.
+A future date still requires actual deployment/calendar evidence; no date has
+been selected and the production DB remains untouched. Prepare semantics and
+schema62 are unchanged; no structural diagram change.
+
+Local validation uses private full-schema PostgreSQL and root filesystem fixtures.
+Initial a1 exited1: accidental unittest discovery also ran13 unrelated isolated
+backup fixture cases; two new assertions omitted public qualification after the
+actual SQL changed search_path. Preserve that original failure. Fixing fixture
+discovery/assertions required no product-SQL change. Six new cases passed in a1;
+the two corrected plus two newly added ordering cases passed in focused a2,
+10distinct new cases total. Existing operation34 and CI contract21 passed.
+Exact source pins and original receipts are in wave143/local-validation.json.
+Hosted acceptance, immutable images/install and actual rebind remain pending.
+
+R3's separate bounded observation ended08:13:13UTC (report commit566e77d): exact
+installed866 tool/data blobs6/6, reader-check exit0/DAILY_READER_REQUIRED, and
+08:12:36 public snapshot OwnerV2 healthy. Parent reviewed the recorded evidence;
+this is not a fresh parent host observation. Actual grant/state/READY/generation,
+current-day operational proof and compatible recovery remain UNKNOWN. No DB,
+provider, network, lease, CI, build or deployment occurred in that R3 window.
+
+Next accept the exact new source in hosted CI, diagnose Raw authentication without
+replay, and close measured inputs before immutable installation/first-session
+binding and official daily activation DBLAST. DailyOFF/epoch0, firstSessionnull,
+actual days0, Owner use and C_R2 remain OPEN. Earlier failures, G4 acceptance,
+protected lock/volumes/PG/key,32unrelated ROADMAP additions and .archify remain.

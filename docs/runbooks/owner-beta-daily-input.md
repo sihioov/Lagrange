@@ -262,6 +262,36 @@ control change, process drain or backup consistency is claimed by this source.
 
 Final R2 still requires actual Owner use and three observed trading days.
 
+### Expired first session before activation (Wave143)
+
+The installed current release supports `--daily-rebind-first-session` with an
+explicit `--daily-from-commit <previous installed commit>` and the usual
+`--plan|--preflight|--apply` modes. This is a separate operation; `prepare`
+continues to reject mismatched existing bindings. Do not edit an installed
+configuration or issue an ad-hoc control-table update.
+
+After actual deployment validation, select the first future actual trading
+session from independently verified calendar evidence. Install a new immutable
+configuration whose only differences are `code_commit` and `first_auto_session`.
+The tool validates date ordering; it does not select a trading date or prove
+calendar coverage. Keep that evidence with the execution record. An expired
+candidate date cannot be counted retroactively as an observed session.
+
+The operation requires the exact old daily cohort stopped, the control disabled,
+unchanged Owner/policy/entitlement/capacity/lease/backoff, empty daily DB history,
+and pristine producer/admitter checkpoints and shared queues. It holds both poll
+locks through the database transaction and checks actor-scoped run history.
+Initial apply permits only epoch zero and advances it to one through the existing
+trigger. An identical repeat is idempotent; enabled, previously enabled, used or
+subsequently modified controls fail closed. This is not a general date-reset or
+history-repair facility. No rows, files or epochs are reset.
+
+Preflight checks the same prerequisites without persisting a control change.
+Apply changes only the first session plus the existing trigger-managed fields;
+it leaves daily OFF and starts no workers. Subsequent immutable cohort preparation,
+actual input admission and official enable remain separate requirements. Require
+the original command's successful terminal result, not only its output marker.
+
 ## Container observation and graceful drain primitives
 
 The inactive `compose.owner-beta-daily.yml` describes the three separate runtime

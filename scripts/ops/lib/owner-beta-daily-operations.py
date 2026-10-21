@@ -719,18 +719,24 @@ class Arguments(argparse.ArgumentParser):
 
 def main(argv=None):
     parser = Arguments(description=__doc__)
-    parser.add_argument("--operation", choices=("prepare", "enable", "disable", "guard", "guard-processes"), required=True)
+    parser.add_argument("--operation", choices=("prepare", "enable", "disable", "rebind-first-session", "guard", "guard-processes"), required=True)
     parser.add_argument("--mode", choices=("plan", "preflight", "apply"), required=True)
     parser.add_argument("--install-root", required=True)
     parser.add_argument("--from-commit")
     parser.add_argument("--lock-fd")
     try:
         args = parser.parse_args(argv)
+        require(args.operation != "rebind-first-session" or args.from_commit is not None,
+                "DAILY_OPERATION_ARGUMENTS")
         require(args.operation in ("guard", "guard-processes") or args.lock_fd is None, "DAILY_OPERATION_ARGUMENTS")
         if args.mode == "plan":
             require(args.operation not in ("guard", "guard-processes"), "DAILY_OPERATION_ARGUMENTS")
-            print("DAILY_OPERATION_PLAN: installed immutable binding; prepare disabled; "
-                  "enable after actual cohort checks; disable database and drain")
+            if args.operation == "rebind-first-session":
+                print("DAILY_OPERATION_PLAN: expired-to-future immutable first-session binding; "
+                      "pristine stopped daily cohort; database remains disabled; no history reset")
+            else:
+                print("DAILY_OPERATION_PLAN: installed immutable binding; prepare disabled; "
+                      "enable after actual cohort checks; disable database and drain")
             return 0
         install.require_root()
         require(runtime.absolute(args.install_root), "DAILY_OPERATION_ROOT")
@@ -776,10 +782,15 @@ def main(argv=None):
                         database.status(source.values)
                         outcome = "PREFLIGHT"
                 else:
-                    target.values, target.overlays = read_context(ROOT, commit, args.operation)
+                    target.values, target.overlays = read_context(
+                        ROOT, commit, "prepare" if args.operation == "rebind-first-session" else args.operation)
                     reject_ambient(target.values)
                     binding, _ = activation_binding(ROOT, commit, project, target_images, target.values)
-                    if args.mode == "preflight":
+                    if args.operation == "rebind-first-session":
+                        first_session = load_local("daily_first_session", "owner-beta-daily-first-session.py")
+                        outcome = first_session.run(sys.modules[__name__], operation, snapshot,
+                                                    apply=args.mode == "apply")
+                    elif args.mode == "preflight":
                         database.status(target.values)
                         if args.operation == "enable":
                             validate_activation_inputs(target)

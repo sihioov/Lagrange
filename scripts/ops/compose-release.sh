@@ -75,7 +75,8 @@ Usage: scripts/ops/compose-release.sh
        [--scope infrastructure|backfill|release]
        [--plan|--preflight|--apply] [--refresh-intraday|--refresh-market-stream]
        [--refresh-from-commit COMMIT]
-       [--daily-prepare|--daily-enable|--daily-disable] [--daily-from-commit COMMIT]
+       [--daily-prepare|--daily-enable|--daily-disable|--daily-rebind-first-session]
+       [--daily-from-commit COMMIT]
        [--daily-backup|--daily-backup-verify|--daily-reconcile] [--backup-config PATH]
        [--bootstrap-intraday-calendar
         (--calendar-source-batch-id UUID|--reuse-existing-source)]
@@ -104,6 +105,11 @@ Usage: scripts/ops/compose-release.sh
   --daily-from-commit COMMIT
                     Explicit installed owner of the previous daily processes.
                     Also used by the full release apply quiescence guard.
+  --daily-rebind-first-session
+                    Move an expired first session forward using two immutable
+                    configs. Requires explicit --daily-from-commit, daily OFF,
+                    no daily history, and pristine stopped producer/admitter.
+                    Leaves daily OFF; never resets epochs or edits config files.
   --daily-backup|--daily-backup-verify|--daily-reconcile
                     Verified encrypted capture, isolated verification, or original
                     identity reconciliation. Reconciliation always leaves daily OFF.
@@ -143,7 +149,7 @@ while [ "$#" -gt 0 ]; do
     --plan) mode=plan; shift ;;
     --preflight) mode=preflight; shift ;;
     --apply) mode=apply; shift ;;
-    --daily-prepare|--daily-enable|--daily-disable)
+    --daily-prepare|--daily-enable|--daily-disable|--daily-rebind-first-session)
       [ -z "$daily_operation" ] || die 'select one daily operation'
       daily_operation=${1#--daily-}; shift ;;
     --daily-backup|--daily-backup-verify|--daily-reconcile)
@@ -218,6 +224,8 @@ case "$daily_operation" in
   *) [ -z "$daily_backup_config" ] || die 'backup config requires a backup operation' ;;
 esac
 if [ -n "$daily_operation" ]; then
+  [ "$daily_operation" != rebind-first-session ] || [ -n "$daily_from_commit" ] ||
+    die 'first-session rebind requires the exact previous installed commit'
   [ "$scope" = release ] && [ "$refresh_intraday" -eq 0 ] &&
     [ "$refresh_market_stream" -eq 0 ] && [ "$bootstrap_intraday_calendar" -eq 0 ] &&
     [ -z "$refresh_from_commit" ] || die 'daily operation cannot combine with another scope'

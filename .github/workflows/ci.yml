@@ -84,6 +84,8 @@ jobs:
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-operations-self-test.py
       - name: Verify daily actual PostgreSQL control transport
         run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-transport-self-test.py
+      - name: Verify preactivation first-session forward binding
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-first-session-self-test.py
       - name: Verify daily backup files and failure ordering
         # These fixtures own separate disposable resources. Run all three even
         # after an independent failure; keep each exit status a hard job failure.
