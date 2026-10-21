@@ -9111,3 +9111,40 @@ Original0c70974 policy failure remains; recover its still-pending workspace/PG
 terminals and all logs without rerun/cancellation. This documentation commit is
 not the build candidate. Registry points to wave144/corrected-first-session-ci-running-handoff.json;
 last host observation remains only08:29:41 metadata validation, not this CI time.
+
+
+#### Wave145 finite collection diagnostics and original hosted closure — 2026-10-21 09:05 UTC
+
+R2-04/R2-09 remain DOING. Shared KIS read coordination produced finite causes,
+but EOD provider and worker diagnostics reduced them to BROKER_AUTH_FAILED.
+The new diagnostic_code returns only an exact static allowlist; unknown reasons
+remain broad and no broker prose or secret is exposed. Existing audit code, retry
+classification, quotas, token flow and network surface are unchanged. The actual
+EOD provider boundary, helper decode and serialized worker event are covered.
+
+Five distinct new tests and strict Clippy on the three affected packages PASS.
+Original two test enum-name compile failures and the first Clippy invocation
+missing the existing test-support feature are preserved with corrected results.
+Evidence: target/r2-daily-beta/wp-8/wave145/diagnostic-local-validation.json,
+8963 bytes, SHA256 a9fadbc807aa4d2b2fa87a28ca827e3fd6f8dc6c145dcbd642d7621741c1f31d.
+The old Raw authentication cause is still UNKNOWN; this source change does not
+prove historical recovery or authorize replay of the consumed original request.
+No provider/token request, secret read or production change was performed.
+
+Original0c70974 CI39569367975 attempt1 is terminal FAILURE: all8 logs and7
+checkouts recovered; policy/required failed, new first-session hosted checks
+were skipped. Rejection SHA25666aaa220654df3efaf9f1b87eb929097298ffd67750c878890d54514b7e3661f.
+Corrected83d1de3 CI39570874665 attempt1 is fully accepted:8success/8logs/7
+checkouts,89 frozen Rust and94 Python definitions,19 real PG exit0/no-skip,
+page-seam14. Closure target/r2-daily-beta/ci/83d1de3/hosted-source-closure.json
+is114332 bytes/SHA256 d554a0eb7439b2bf3f98c3fa35ef410d639f072bd18189bce26e9f4b45cdbcb4.
+This closure covers83 only, not the later diagnostic or R3 source.
+
+R3 edbe228 adds official pinned read-only grant inspection with21 fake/static
+tests; actual isolated PostgreSQL validation is separately assigned to the
+existing R3 workstream. Production operations remain serialized by the parent.
+Serving866/DailyOFF/epoch0/firstSession null/actual trading days0 remain the last
+accepted state. Raw29/34 and actions30/53 remain incomplete. Next is exact combined
+source acceptance, official images/deployment, actual source/input admission and
+DB-last daily activation. Preserve32 unrelated ROADMAP additions, .archify and
+all historical/protected resources. No structural diagram change.

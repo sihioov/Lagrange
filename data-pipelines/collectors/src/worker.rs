@@ -356,7 +356,7 @@ impl WorkerError {
     pub fn safe_diagnostic(&self) -> Option<WorkerDiagnostic<'_>> {
         match self {
             Self::KisClient(source) => Some(WorkerDiagnostic {
-                error_code: source.code(),
+                error_code: source.diagnostic_code(),
                 endpoint: kis_error_endpoint(source),
                 http_status: kis_error_http_status(source),
                 response_kind: None,
@@ -6376,6 +6376,22 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
                 phase: WorkerPhase::Ingest
             })
         ));
+    }
+
+    #[test]
+    fn coordination_diagnostic_survives_helper_boundary_without_free_form_message() {
+        let output = br#"{"status":"error","error_code":"KIS_READ_CALLBACK_START_MISSED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-10-21","phase":"ingest","class":"permanent","batch_id":null,"message":"sentinel-secret-must-not-propagate"}"#;
+        let error = decode_helper_output_with_provider(
+            output,
+            WorkerPhase::Ingest,
+            Some(domain::TradingDate::parse("2026-10-21").unwrap()),
+            "KIS-NORMALIZED",
+        )
+        .expect_err("finite helper failure");
+        let diagnostic = error.safe_diagnostic().expect("diagnostic preserved");
+        assert_eq!(diagnostic.error_code, "KIS_READ_CALLBACK_START_MISSED");
+        assert_eq!(error.failure_class(), crate::FailureClass::Permanent);
+        assert!(!format!("{error:?}").contains("sentinel"));
     }
 
     #[test]

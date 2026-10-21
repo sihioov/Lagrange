@@ -978,7 +978,7 @@ fn remote_error(kind: ResponseKind, requested_endpoint: &str, error: KisError) -
     ProviderError::Remote {
         provider: PROVIDER_KIS,
         kind,
-        code: error.code(),
+        code: error.diagnostic_code(),
         retryable: error.is_retryable(kis_client::RequestKind::Read),
         diagnostic: Some(RemoteDiagnostic {
             endpoint: requested_endpoint.to_owned(),
@@ -987,7 +987,7 @@ fn remote_error(kind: ResponseKind, requested_endpoint: &str, error: KisError) -
         // `KisError::Broker` and schema errors can carry redacted broker
         // prose. Keep that detail out of the provider error because this
         // error may cross a worker boundary or be rendered by an operator.
-        detail: error.code().to_owned(),
+        detail: error.diagnostic_code().to_owned(),
     }
 }
 
@@ -1538,6 +1538,43 @@ mod tests {
                     endpoint: path.to_owned(),
                     detail: "fixture exhausted".to_owned(),
                 })
+        }
+    }
+
+    #[test]
+    fn coordination_diagnostic_reaches_eod_provider_without_provider_text() {
+        for (reason, expected) in [
+            (
+                "KIS_READ_CALLBACK_START_MISSED",
+                "KIS_READ_CALLBACK_START_MISSED",
+            ),
+            ("KIS_TOKEN_ISSUE_FAILED", "KIS_TOKEN_ISSUE_FAILED"),
+            ("sentinel-provider-secret", "BROKER_AUTH_FAILED"),
+        ] {
+            let error = remote_error(
+                ResponseKind::Bars,
+                DAILY_BARS_PATH,
+                KisError::Auth {
+                    reason: reason.to_owned(),
+                },
+            );
+            match &error {
+                ProviderError::Remote {
+                    code,
+                    retryable,
+                    diagnostic,
+                    detail,
+                    ..
+                } => {
+                    assert_eq!(*code, expected);
+                    assert!(!retryable);
+                    assert_eq!(detail, expected);
+                    assert_eq!(diagnostic.as_ref().unwrap().endpoint, DAILY_BARS_PATH);
+                    assert_eq!(diagnostic.as_ref().unwrap().http_status, None);
+                }
+                _ => panic!("expected remote error"),
+            }
+            assert!(!format!("{error:?}").contains("sentinel"));
         }
     }
 

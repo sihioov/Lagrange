@@ -888,6 +888,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn coordination_diagnostic_event_distinguishes_local_failure_and_redacts_unknown_reason() {
+        let date = TradingDate::parse("2026-10-21").unwrap();
+        for (reason, expected) in [
+            (
+                "KIS_READ_CALLBACK_START_MISSED",
+                "KIS_READ_CALLBACK_START_MISSED",
+            ),
+            ("KIS_TOKEN_ISSUE_FAILED", "KIS_TOKEN_ISSUE_FAILED"),
+            (
+                "KIS_READ_COORDINATION_CLOCK_INVALID",
+                "KIS_READ_COORDINATION_CLOCK_INVALID",
+            ),
+            ("sentinel-token-provider-body", "BROKER_AUTH_FAILED"),
+            (
+                "KIS_TOKEN_ISSUE_FAILED sentinel-app-secret",
+                "BROKER_AUTH_FAILED",
+            ),
+        ] {
+            let error = WorkerError::Cycle {
+                target_date: date,
+                source: Box::new(WorkerError::KisClient(kis_client::KisError::Auth {
+                    reason: reason.to_owned(),
+                })),
+            };
+            let value =
+                serde_json::to_value(error_record(&error, Some(date), "KIS-NORMALIZED")).unwrap();
+            assert_eq!(value["error_code"], expected);
+            assert_eq!(value["class"], "permanent");
+            assert_eq!(
+                value["message"],
+                format!("operation failed with {expected}")
+            );
+            assert_eq!(value["target_date"], "2026-10-21");
+            assert!(!value.to_string().contains("sentinel"));
+            assert!(value.get("detail").is_none());
+            assert!(value.get("endpoint").is_none());
+        }
+    }
+
+    #[test]
     fn calendar_bootstrap_requires_explicit_date_and_attempt_identity() {
         let batch = domain::BatchId::generate();
         let args = [
