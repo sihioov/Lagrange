@@ -2199,3 +2199,56 @@ gap recovery, actual producer/admitter input acceptance and daily activation,
 Owner use, three consecutive actual trading days and C_R2 remain OPEN. Existing
 G4/app/backup acceptance, all consumed attempts/unknown causes,0120incomplete
 cleanup,32unrelated ROADMAP additions and.archify remain unchanged.
+
+
+### Wave138 — Owner authentication restored and original a3 build running (2026-10-21 KST)
+
+Owner explicitly renewed 72-hour sudo in the prepared interactive terminal.
+At2026-10-21T04:47:03UTC, `sudo -k -n /usr/bin/id -u` returned exit0/UID0,
+independent of a password timestamp. The revocation timer is enabled/active/waiting
+with Persistent=yes and deadline2026-10-24T04:46:30Z (13:46:30KST). This verifies
+current execution availability, not that future revocation has already executed.
+No password, provider credential or backup key was read or copied. The original
+reviewed sudo helper is unchanged; prior authentication failures remain recorded.
+
+Fresh preparation observed13containers/11monitored, deployed e639169/schema62,
+dailyOFF/epoch0, zero running beta/Owner jobs and settled stream work. Root-only
+Git index readability prevented the first local sealing check; the failure is
+retained and the exact clean fccb683 source was verified using read-only root Git,
+without chmod/chown. The distinct a3 controls only rename the reviewed a2 unit/
+AUX/input paths. Their syntax, exact substitutions, fresh lifecycle/work binding,
+source and hosted closure hashes were checked; passed tests/CI were not repeated.
+
+Bootstrap f4025005..., seal8ecccaf3..., was submitted once at04:51:04UTC.
+Independent root recovery1136983 published READY before the final request. The
+original Owner62d49f86... stopped normally0; original stop process1137237,
+response, MainPID/ControlPID0 and empty recursive cgroup were verified. The build
+process1137634 runs the official12-service builder, four batches of three with
+one Compose service at a time, CARGO_BUILD_JOBS=2/COMPOSE_PARALLEL_LIMIT=1,
+Nice10 and idle I/O. The original same-boot window ends16:51:04.248235UTC and
+must never be renewed. The independent supervisor owns the single owed restore;
+do not issue a competing stop/start or replay any consumed attempt.
+
+The bounded04:55:30UTC observation74b6b506... recorded db-role-bootstrap and
+db-migrate service success and api-server still building. The run-start,
+prepare:api-server and native:D1 gates passed, with no OOM in their recorded
+journal scope. Those gate timestamps precede this progress read. Available
+memory was6497600KiB and swap3724492KiB at the progress read. Build and recovery
+units were still running; no build/start terminal or restored/result receipt was
+present. A completed image set, restoration and deployment are not claimed.
+The observation's lowercase ready.json/ready-external.json absence is not a
+readiness failure: the actual control files are READY.json and
+ready-external-observation.json, and the original bootstrap receipt confirms READY.
+
+Current running handoff8d3f2c52... and owned-workers.json supersede the old sealed
+submission instruction and authentication-blocked heartbeat prompt. Heartbeat
+0f8c84f7 expires15:01:59UTC; renew by13:50UTC with exact successor receipt and
+handoff/registry before predecessor deletion. This is bounded same-agent tracking.
+R3 source preparation is separately authorized; shared production actions wait
+for original a3 terminal and restoration evidence. No new provider calls, input
+admission, daily activation or first trading session occurred here. The Oct21
+conditional deadline expired at00:00UTC; firstSession remains null until actual
+deployment validation and real calendar evidence. Owner use, three consecutive
+actual trading days and C_R2 remain OPEN. All historical failures/unknown causes,
+0120 incomplete cleanup, protected lock/volume/PG permissions,32unrelated ROADMAP
+additions and .archify are preserved. Source/architecture did not change.
