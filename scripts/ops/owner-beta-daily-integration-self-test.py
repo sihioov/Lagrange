@@ -368,6 +368,65 @@ class DailySupplierConfigTests(unittest.TestCase):
         self.write_env()
         self.assertEqual(self.command("validate-production-config.sh", "--scope", "backfill").returncode, 0)
 
+    def prepare_range_raw_secrets(self):
+        for name in ("kis_app_key", "kis_app_secret"):
+            path = self.runtime / "research-range-raw" / name
+            path.parent.mkdir(exist_ok=True)
+            shutil.copyfile(self.source / name, path)
+            os.chown(path, 10001, 10001)
+            path.chmod(0o440)
+
+    def test_on_environment_allows_database_free_manual_action_range_supplier(self):
+        self.prepare_range_raw_secrets()
+        # This operator path needs only the KIS Raw credentials. Do not require
+        # or silently grant a database role merely because Daily is configured.
+        for path in self.source.iterdir():
+            if path.name not in ("kis_app_key", "kis_app_secret"):
+                path.unlink()
+        for path in self.runtime.iterdir():
+            if path.name != "research-range-raw":
+                shutil.rmtree(path)
+        self.values.pop("POSTGRES_USER")
+        self.values.pop("POSTGRES_DB")
+        self.write_env()
+        result = self.command("validate-production-config.sh", "--scope", "range-raw")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b"PRODUCTION_CONFIG: PASS (scope=range-raw", result.stdout)
+        self.assertNotEqual(self.command("validate-production-config.sh", "--scope", "backfill").returncode, 0)
+        del self.values["OWNER_BETA_DAILY_MODE"]
+        self.write_env()
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "range-raw").returncode, 0)
+
+    def test_manual_action_range_keeps_daily_mode_and_scope_boundaries(self):
+        self.prepare_range_raw_secrets()
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "range-raw").returncode, 0)
+        for scope in ("infrastructure", "serving-prereqs", "range-raw-recovery"):
+            with self.subTest(scope=scope):
+                result = self.command("validate-production-config.sh", "--scope", scope)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(b"owner_beta_daily_requires_release_or_supplier_scope", result.stderr)
+        for key, value in (("OWNER_BETA_ACCESS_MODE", "disabled"),
+                           ("OWNER_BETA_PRICE_INPUT_MODE", "disabled"),
+                           ("OWNER_BETA_PAPER_MODE", "enabled"),
+                           ("PRICE_BETA_DAILY_CONFIG_SHA256", "sha256:" + "b" * 64)):
+            with self.subTest(key=key):
+                old = self.values.get(key)
+                self.values[key] = value
+                self.write_env()
+                self.assertEqual(self.command("validate-production-config.sh", "--scope", "range-raw").returncode, 1)
+                if old is None:
+                    del self.values[key]
+                else:
+                    self.values[key] = old
+        self.write_env()
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "range-raw",
+            extra={"OWNER_BETA_DAILY_MODE": "disabled"}).returncode, 1)
+        key = self.runtime / "research-range-raw/kis_app_key"
+        key.chmod(0o644)
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "range-raw").returncode, 1)
+        key.unlink()
+        self.assertEqual(self.command("validate-production-config.sh", "--scope", "range-raw").returncode, 2)
+
     def test_daily_and_backfill_reach_real_validator_with_on_environment(self):
         # Keep the real validator and its arguments. Exit only AFTER its success
         # to prove composition without invoking the subsequent DB/provider path.

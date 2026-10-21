@@ -140,12 +140,13 @@ get() { dotenv_get "$1"; }
 if ! daily_release_parse_mode; then
   invalid+=("$DAILY_RELEASE_ERROR")
 elif [ "$DAILY_RELEASE_MODE" = owner_only ] &&
-     [ "$scope" != release ] && [ "$scope" != backfill ]; then
+     [ "$scope" != release ] && [ "$scope" != backfill ] && [ "$scope" != range-raw ]; then
   invalid+=("owner_beta_daily_requires_release_or_supplier_scope")
 fi
-# The official daily/backfill suppliers validate their read-only inputs with
-# backfill scope, including when the installed daily recommendation mode is ON.
-# This permits supply only; daily activation still requires the immutable
+# The official daily/backfill suppliers use backfill scope; the separate manual
+# action-range Raw supplier uses its DB-free range-raw scope. Both may validate
+# inputs when the installed daily recommendation mode is ON. This permits supply
+# only, without changing recurring range limits; daily activation requires the immutable
 # release wrapper's verified config, reader floor and runtime binding.
 
 # These keys are this release's local coordination/session contract and must be guarded
