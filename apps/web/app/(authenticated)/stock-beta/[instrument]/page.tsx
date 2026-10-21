@@ -60,11 +60,11 @@ async function renderStockBetaDetailProduct(
     if (intradayEnabled) {
       try {
         const memberships = await api.getOwnerEquityV2Memberships();
-        streamMemberships = memberships.memberships;
         intradayMembership = matchReadyIntradayQuoteMembership(memberships.memberships, {
           instrument_id: detail.signal.instrument_id,
           generation: detail.signal.generation,
         });
+        streamMemberships = intradayMembership === null ? [] : [intradayMembership];
       } catch (error) {
         if (isLoginRequiredError(error)) throw error;
       }

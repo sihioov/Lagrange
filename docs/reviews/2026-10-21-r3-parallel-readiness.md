@@ -3,12 +3,12 @@
 확인일: 2026-10-21 KST. 소스 기준: `73f25931e79ff199e17358a09ec94f10f53604fb`,
 브랜치 `r3-parallel-20261021`. 담당 범위는 [병행 인계](../handoffs/2026-10-21-r3-parallel-workstream.md)의
 첫 bounded 실행이다. 이 문서를 추가한 커밋은 문서 조사 결과이며 빌드·배포 후보가 아니다.
-아래 저장소 `파일:행`은 모두 이 소스 기준이다.
+§1–7의 저장소 `파일:행`은 이 소스 기준이다. 후속 D1 수정과 검증 제한은 §8에 기록한다.
 
 **판정:** R3-01 소스·계약 대조와 R3-06 공개 자료 재확인을 진행했다. 실제 설치 재검증,
 시장 연결·수신·Owner 화면 인수는 수행하지 않았다. 상세 화면이 전체 READY 수요를 만드는
-소스 차이 1건을 확인했다. 다음 작업은 그 좁은 수정·검증과, R2 담당이 조율할 현재 운영 전제
-확인안이다. R2 완료를 기다릴 필요는 없으나 공유 운영 변경은 직렬화한다.
+소스 차이 1건을 확인했다. 후속 §8에서 좁은 수정과 회귀 작성을 완료했으나 로컬 의존성 부재로
+집중 실행은 미실시다. 다음은 해당 검사 실행과 R2 담당이 조율할 현재 운영 전제 확인안이다. R2 완료를 기다릴 필요는 없으나 공유 운영 변경은 직렬화한다.
 
 ## 1. 승인, 역사 증거, 현재 미확인을 분리
 
@@ -234,3 +234,74 @@ Approval 발급·시장 소켓·setup script·추가 agent/heartbeat 실행은 �
 현행 공식 quota·전역 동일키 점유, 실제 ACK/47필드 수신/해제/DOM·latency·장 경계·동일출처 EOD,
 현재 source에 대한 새 통합·설치 인수 및 D1의 실행 재현. 이유는 첫 실행의 문서 조사 범위와
 공개 공지 접근 한계다. R3-01/06은 DOING, R3-02~05/07과 LIVE_ACCEPTED/FINAL_ACCEPTED는 미완료다.
+
+
+## 8. D1 bounded 소스 후속 — 2026-10-21
+
+기준은 최초 대조 커밋 `d805de1687619367642dc69e94dd7fb84443bb66`다. 부모가 D1을
+독립 확인한 뒤 지정한 두 소스 파일만 수정했다. §1–7의 조사 당시 미실행/UNKNOWN은 역사
+기록으로 보존하며, 이 절은 후속 소스 변경과 아직 실행하지 못한 회귀를 구분한다.
+
+### 변경과 회귀 관측 경계
+
+- `apps/web/app/(authenticated)/stock-beta/[instrument]/page.tsx`:63–68에서 기존
+  `matchReadyIntradayQuoteMembership`의 선택 `instrument_id` + 신호 `generation` + READY
+  결과만 `streamMemberships`의 단일 배열로 전달한다. 결과가 null이면 빈 배열이다.
+  matcher·provider·controller·API·board·REST/off/Member 정책·패키지는 수정하지 않았다.
+- `apps/web/tests/stock-beta-intraday-page-seam.test.tsx`:18–43의 관측 wrapper는
+  실제 provider module을 `importOriginal`로 불러와 props를 기록하고 원래 provider를 렌더한다.
+  page, detail/workspace, matcher 및 provider 내부는 실제 구현을 사용한다. SSR은 컴포넌트
+  실행 수단일 뿐, 수요 배열의 판정은 HTML 문자열이 아닌 provider 호출 인자의 전체 배열이다.
+  이는 browser effect/lease HTTP/SSE 실행 시험이 아니며 시장 연결을 만들지 않는다.
+- 신규 6개 사례(:136–241): READY 두 종목 중 첫째/둘째 각각 선택한 단일 membership,
+  선택 generation 불일치·선택 BACKFILLING(다른 READY 존재)에서 빈 배열,
+  board의 READY 두 개 유지, 명시적 off에서 두 provider 비활성이다.
+- 기존 Member 사례는 product API 구성과 provider 호출이 모두 없음을 추가 확인한다.
+  기존 default-off 및 undefined/rest transport 사례도 provider 비활성 전달을 확인하도록
+  보강했다. off의 detail membership 조회는 0, board의 기존 서버 membership 조회는 1로
+  유지한다. board 서버 조회는 장중 lease 수요 호출이 아니다.
+
+### 실제 수행 결과와 미실행
+
+| 확인 | 결과 |
+| --- | --- |
+| `apps/web/package.json`, `vitest.config.ts`, 하위 AGENTS 및 관련 소스 읽기 | Vitest 4.1.10 선언, node 환경/기존 include·mock reset 설정 확인. 실행 도구 버전 확인은 아님 |
+| Node `createRequire`를 `apps/web/package.json` 기준으로 실행해 `vitest/package.json`, `next/package.json`, `react/package.json`, `typescript/package.json` resolve | 네 패키지 모두 `MODULE_NOT_FOUND`. 확인 스크립트 자체 exit0(예외를 분류해 출력) |
+| `node_modules`, `apps/web/node_modules`, `apps/web/node_modules/next/dist/docs` 존재 확인 | 모두 false. Next 로컬 가이드도 읽을 수 없음. 새 Next API를 도입하지 않고 기존 matcher 결과 대입만 변경 |
+| 로컬 `command -v vitest` | 미발견. Node와 pnpm 경로는 존재하지만 pnpm 설치/fetch/exec를 대체 실행하지 않음 |
+| 새 회귀 / 기존 page-seam suite / typecheck / formatter | **NOT_RUN** — 프로젝트 의존성 부재. 성공·실패 test count 또는 red→green 실행 증거 없음 |
+| 변경 차이·전달 경로 수동 검토, `git diff --check`, R2 절/checkbox 불변 대조 | PASS. 소스 정적 검토이며 테스트 통과나 브라우저 검증으로 대체하지 않음 |
+
+원래 구현에서 singleton/빈 배열 기대가 전체 두 membership과 충돌하는 것은 소스 수준으로
+확인했다. 실행된 실패는 없으므로 RED라고 기록하지 않는다. 최초 대조 `d805de1`의 route와
+이번 회귀를 결합하면 수정 전 검증 대상으로 재현할 수 있다. 패키지 설치·업데이트·network
+fetch·다른 worktree 의존성 변경/빌림·전체 빌드/테스트·CI·운영 조회/연결은 수행하지 않았다.
+
+**최소 후속 검증:** 의존성이 이미 준비된 허용된 격리 환경에서 프로젝트 로컬 Vitest의
+`--help`를 먼저 읽어 단일 worker·파일 병렬화 해제 옵션을 확인한다. `nice -n 10`으로
+`tests/stock-beta-intraday-page-seam.test.tsx` 한 suite만 순차 실행한다. 옵션은 이번에 도움말을
+읽지 못했으므로 확정된 실행 명령으로 적지 않는다. 신규 사례만 수정 전 route에서 실패함을
+확인한 뒤 같은 회귀를 수정 후 route에서 실행하고, 기존 사례를 포함한 suite 결과를 남긴다.
+추가 의존성 설치나 실행 환경 변경은 부모가 다음 범위로 조율한다. 이 변경은 아직
+`SOURCE_LOCAL_ACCEPTED`·배포·실제 수신·Owner 인수가 아니다.
+
+### 인계 조회와 남은 운영 범위
+
+이번 읽기 전용 registry 조회 시 pointer는 안내 메시지 이후 다시 전진해
+`target/r2-daily-beta/wp-8/wave137/r3-detail-demand-followup-handoff.json`이었다.
+직접 SHA-256과 registry `boundedHandoffSha256`은
+`e77555470e63caaf2509ee8aaabad3d2a0dd6f60589084b56ae886e6fac5f263`로 일치했다.
+기록 시각은 `2026-10-21T04:27:19.263146+00:00`; predecessor는 안내된
+`r3-parallel-owner-decision-handoff.json`/`46e635a9024e3afefd0261107e7645e637015fd752a66cd6b6a2e6a76d72ea45`다.
+§2의 최초 `bd5be4eb…` closure 조회를 바꾸지 않는다. 새 pointer는 후속 위임 기록이며
+운영 관측이 아니다. R2 status/후보fccb·배포0·인증 차단·`lastObservedAt` 범위는 그대로다.
+registry·부모 branch·R2 ROADMAP 절과 체크박스를 수정하지 않았다.
+
+R3-01은 D1 소스 보정/회귀 작성까지 진행했으며 집중 검증 및 실제 설치 전제는 미완료다.
+R3-02~05/07의 실제 수신·화면·30종목·장 경계·최종 인수와 R3-06 quota/동일키 점유 공백은
+그대로다. §5의 첫 소스 단계는 **집중 검증과 부모 통합**이 다음 작업이다. 이후 운영 packet의
+대상·변경·복구·예산·실행 시간을 조율한 다음에만 1종목→인증 수명주기→30종목으로 진행한다.
+이번 값 범위 변경은 구조 edge를 바꾸지 않아 PUML/PNG 수정·렌더는 없다.
+
+확인하지 못한 사실: 새 회귀와 기존 suite의 실제 실행 결과, 로컬 도구 도움말/Next 가이드,
+수정 전 실패→수정 후 성공. 이유는 의존성 부재다. §7의 운영 미확인 항목도 모두 유지한다.
