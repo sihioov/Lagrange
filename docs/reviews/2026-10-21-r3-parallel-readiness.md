@@ -532,3 +532,61 @@ manifest/registry를 변경하지 않았다. 전달받은 a3 실행·OwnerV2 복
 push·CI·이미지·build·DB/provider/lease·배포·운영 인수는 **미실행**이다.
 미확인: hosted 실행/정확 checkout/결과, 새 이미지·manifest, 설치 revision과 §10 runtime gap.
 정적 dependency inventory의 동적 완전성·branch protection 설정·전체 test 수는 주장하지 않는다.
+
+
+## 12. 단일 hosted CI — 실행 중 인계, Web 서식 실패
+
+2026-10-21 부모가 hosted CI 한 번을 승인했다. 운영 호스트의 a3와 별개인 GitHub runner만
+사용했으며 공유 운영 작업은 열지 않았다. 후보는 계속 **1ec5f1626a2db41eb0854be188292f6ad0534449**다.
+문서 HEAD1383489를 게시하지 않았다. origin은 `sihioov/Lagrange`, 정상 `gh auth status` exit0이며
+인증 출력/토큰은 저장·출력하지 않았다. 후보의 ci/research-smoke push trigger가 main 전용임을 확인했다.
+
+- 전용 ref `r3-ci-1ec5f16-20261021`의 부재를 `git ls-remote --exit-code` exit2로 확인했다.
+  `git push origin 1ec5f1626a2db41eb0854be188292f6ad0534449:refs/heads/r3-ci-1ec5f16-20261021`
+  한 번이 exit0, 후속 원격 ref도 정확한 SHA였다. force/main/PR/merge/rebase는 없다.
+- 게시 전/후 동일 ref·candidate의 ci.yml run 조회는 각각0이었다. 의도 기록 뒤
+  `gh workflow run ci.yml --ref r3-ci-1ec5f16-20261021 --repo sihioov/Lagrange`를 **한 번** 실행,
+  05:26:05.726171UTC exit0. 재시도·취소·rerun은 없다.
+- [run39549529746](https://github.com/sihioov/Lagrange/actions/runs/39549529746), attempt1,
+  event workflow_dispatch, head SHA/ref/path 모두 고정값과 일치한다. 30초 이상 간격으로 최대6회
+  관측했다. 마지막 **05:33:15.563778UTC in_progress/conclusion null**; 이후 상태는 주장하지 않는다.
+
+| 마지막 job 상태 | 확인 범위 |
+| --- | --- |
+| clippy / format / python-tests SUCCESS | 완료된 각각의 전체 로그와 후보 checkout 회수 |
+| web FAILURE | 전체82,077bytes 로그, SHA8db4fb09618e4a04ba7b56101abd8360bb2df8a1804f162d17cf7f6ce997407d |
+| policy / workspace-tests / postgres-integration-validation IN_PROGRESS | 최종 결과·전체 로그 아직 미회수 |
+| required | 아직 job 목록에 생성되지 않음; 최종 aggregate 미확인 |
+
+Web은 npm ci·Chromium 준비·openapi check 뒤 `npm run lint --workspace @lagrange/web`에서 exit1.
+`tests/stock-beta-intraday-page-seam.test.tsx`의 `importOriginal`(:33–35)와 첫 `it.each`(:136–163)
+서식이 Biome 출력과 달랐다. 294파일 검사에서1error/6warnings/69infos이며 해당 서식 오류가 실패다.
+후속 typecheck·npm test·build·candidate E2E는 API step 결과 **skipped**다. 따라서 hosted의
+focused14는 실행되지 않았고 기존 로컬 green14를 이 run의 성공으로 대체하지 않는다.
+이번 범위에서 제품/테스트 소스 보정·formatter 실행·새 후보 생성·추가 dispatch는 하지 않았다.
+
+원본 증거 디렉터리: ignored `target/r3-hosted-ci/1ec5f16/`. 아래 mutation 영수증은 선행 intent와
+실제 결과를 구분하며 원본을 덮어쓰지 않았다.
+
+| 파일(위 디렉터리 기준) | bytes | SHA-256 |
+| --- | ---: | --- |
+| `publish-intent.json` | 262 | `0a4c4757c5bc44d305015dee43a68a4d13b1698e13fc070091d30e7b762999d4` |
+| `publish-result.json` | 422 | `4ffca86daf9e2e051fa3157ef7be22ddce05b332f52dad814b47a8d7b03a37e1` |
+| `dispatch-intent.json` | 416 | `e8b4eb619474cee607c6e4d456cbcf2a6a6bd6490e6844a02671f680b086c63a` |
+| `dispatch-result.json` | 126 | `829aaa6bcd46f072898acce9c09a674a7f248fdeaccdb419400af756523856da` |
+| `receipt-manifest.json` | 10069 | `7fa7922b2164eca68512ec838b198ddae5764e63720a898b5f6ffbf89a694090` |
+| `recovery-partial.json` | 28382 | `e0d0d14c72a2e12e64180078bd5a7f8a93e107223a3ccfe3fcecbf4a33d2c4ed` |
+| `handoff.json` | 2585 | `b4df8ce9dba25d505e36a92cff54f9d19de96f8a480eebf1b880229ae4f7adbc` |
+
+R3 전용 `observe.py`/`recover.py`는 정확한 candidate/run/attempt/packet에 묶인 읽기 회수 코드다.
+wave136 recovery는 소스 참고만 했으며 실행하지 않았다. 완료 job **4개 전체 로그/checkout4개**를
+회수했고 원본 로그 SHA/bytes·job step 상태는 recovery-partial에 있다. 나머지 job 로그를
+보지 않았으므로 Rust57/Python10의 이 run 검증 수는0(실패57/10이라는 뜻 아님), PG19 exit/no-skip도
+미검증이다. 8로그/7checkout 최종 회수와 required 결론은 부모의 원래 attempt 추적에 남겼다.
+
+**판정:** HOSTED_NOT_ACCEPTED — Web FAILURE와 필수 후속 검사 skip; 전체 run은 아직 실행 중.
+다음은 부모가 원래 attempt의 terminal/남은 원본 증거를 회수하고, 서식만 고치는 별도 bounded
+후속 범위와 새 후보의 CI 순서를 정하는 것이다. 원래 attempt를 취소/재실행하지 않는다.
+사전 고정된6회 관측을 끝내고 `handoff.json`으로 인계한다. 로컬 테스트/빌드·R2 운영 조회·DB/
+Docker/systemd/sudo·provider/lease·이미지/배포는 미실행이다. R2 절/체크박스와 source/diagrams/
+lock/package는 이번 문서 변경 전후 동일하다. 후보/source·원본 packet/로그를 보존한다.
