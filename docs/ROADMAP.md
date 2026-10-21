@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-22 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave151 배포 인수: eac7197의 원래a10 12이미지/49gate·Owner 복원과 공식 API/Web/Owner OFF 배포를16:24UTC 독립 인수했다. 세 서비스 exact revision/image·healthy·HTTP와 원래 Owner 정상종료0, 감시 타이머 복원, 나머지8불변을 확인했다.16:24:52UTC 세 서비스의 실제 quotes=off를 확인했다. 복원 책임 없음. R2 Sep15 SOURCE_CONFLICT·DailyOFF/epoch0·KISdisabled·첫세션null·실제3일0은 유지한다. |
+| 현재 실행 우선순위 | Wave152:60d591d API/Web/Owner ON 전환을16:43UTC 독립 인수했고,10월22일 KST 실제 달력 수집·원본/정규화/DB 일치와 세 서비스 owner_only/market_ws를16:45UTC 확인했다. 감시 타이머 정상·KISdisabled·복원 책임 없음. 검증된 eac7197 OFF 복귀 경로를 보존한다. R2 Sep15/153130 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0, R3 정상 Owner 사용·실제 장중 수신은 미완료다. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **R2 원본 충돌의 독립 근거 확보와 R3 10월22일 실제 운영 근거·공식 ON 전환·정상 Owner/실제 장 수신 검증. 검증된 eac OFF 복귀 경로와 기존60d ON 후보를 정확한 현재 바인딩으로 사용하며, 전날 proof를 오늘 증거로 계산하지 않는다.** |
+| 다음 착수 항목 | **R2 원본 충돌을 해소할 독립 계약 근거 확보, R3 실제 장과 정상 Owner 수요에서 수신·수명주기 확인.10월22일 달력은 이미 수집했으므로 재수집하지 않는다. 근거 변화 없는 반복 실행 없이 같은 대화의 제한된 추적을 유지한다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4는 실제 완료. 시작 기준·실측 예산·실제 배포·백업 전환/복원은 완료; 누락 입력 보충·활성화/Owner 사용·실제3거래일 확인이 남음. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -137,7 +137,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 | --- | --- | --- | --- |
 | R1 | 검증 가능한 개발·배포 기준선 | DONE — 2026-10-13, C3 `862fa95` | [동일 후보 CI·이미지·manifest·복귀 근거](reviews/2026-10-13-r1-c3-images.md) 확보 |
 | R2 | 매 거래일 사용할 수 있는 일봉·신호·추천 베타 | DOING — 진단·F1/F2 검증 완료, U2 채택·설계 구현 | R1 통과. 실제 입력·운영·Owner 사용·3거래일 관찰은 별도 인수 |
-| R3 | 실제 시장 시세가 전달되는 실시간 화면 | DOING — 소스/배포 통합 및 실제 기존 state 검사 인수, pilot 미완료 | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
+| R3 | 실제 시장 시세가 전달되는 실시간 화면 | DOING — ON/OFF serving·기존 state·10월22일 달력/시간 인수, 정상 Owner·실제 수신 미완료 | R1과 유효한 당일 calendar/window·권한·READY 종목 등 운영 전제 |
 | R4 | 같은 추천 입력으로 재현 가능한 전략 성과 | BLOCKED — 구현 계약 미확정 | 결정안 작성은 즉시 가능. 구현은 R4-01의 구체적 승인, 출시에는 R1·R2 필요 |
 | R5 | 검증된 전략의 매일 모의 운용 | BLOCKED — 선행 단계 대기 | R4 인수와 전용 Paper 입력·활성화 조건 충족 |
 
@@ -382,7 +382,8 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
 변경은 R2 담당과 실행 시간을 조율한다. [담당 범위·현재 근거·첫 산출물](handoffs/2026-10-21-r3-parallel-workstream.md).
 
 - [ ] **R3-01 — 기존 승인과 설치 전제 대조.** ADR-0009 범위에서 실제 Owner·entitlement·grant·
-  최신 배포 — 2026-10-22, Wave151 배포 인수: eac7197의 원래a10 12이미지/49gate·Owner 복원과 공식 API/Web/Owner OFF 배포를16:24UTC 독립 인수했다. 세 서비스 exact revision/image·healthy·HTTP와 원래 Owner 정상종료0, 감시 타이머 복원, 나머지8불변을 확인했다.16:24:52UTC 세 서비스의 실제 quotes=off를 확인했다. 복원 책임 없음. R2 Sep15 SOURCE_CONFLICT·DailyOFF/epoch0·KISdisabled·첫세션null·실제3일0은 유지한다.
+  최신 운영 — 2026-10-22, Wave152:60d591d API/Web/Owner ON 전환을16:43UTC 독립 인수했고,10월22일 KST 실제 달력 수집·원본/정규화/DB 일치와 세 서비스 owner_only/market_ws를16:45UTC 확인했다. 감시 타이머 정상·KISdisabled·복원 책임 없음. 검증된 eac7197 OFF 복귀 경로를 보존한다. R2 Sep15/153130 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0, R3 정상 Owner 사용·실제 장중 수신은 미완료다.
+  이전 배포 — 2026-10-22, Wave151 배포 인수: eac7197의 원래a10 12이미지/49gate·Owner 복원과 공식 API/Web/Owner OFF 배포를16:24UTC 독립 인수했다. 세 서비스 exact revision/image·healthy·HTTP와 원래 Owner 정상종료0, 감시 타이머 복원, 나머지8불변을 확인했다.16:24:52UTC 세 서비스의 실제 quotes=off를 확인했다. 복원 책임 없음. R2 Sep15 SOURCE_CONFLICT·DailyOFF/epoch0·KISdisabled·첫세션null·실제3일0은 유지한다.
   최신 실행 — 2026-10-22, Wave151 원래 CI 인수·a10 실행: eac7197 CI39627593587 attempt1의8작업/8로그/7checkout·137Rust154Python·PG19·page14를16:04UTC 인수했다. 원본 stderr 헤더 혼입은 고유10정의와 완전 PASS 블록으로 별도 연결했다.16:05:03UTC 새a10을 한 번 제출했고 원래 Owner 정상stop0 뒤 독립 감독 아래 순차 빌드 중이다.16:06:39UTC2이미지/3gate PASS;12이미지49gate·원래종료/복원이 다음이다. serving60d·R2 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0 유지.
   최신 CI — 2026-10-22, Wave151 CI 후속: 보정 후보eac7197 CI39627593587 attempt1을15:39:06UTC 한 번 제출했다.15:43:43UTC 서식·Clippy·Python3작업 성공/전체 진행 중. 고정137Rust154Python 입력515587bytes/547eeb61… 및 완료3로그를 회수했다. 새a10 순차빌드/복원·OFF 배포 초안은 로컬 AST/정확한 pin만 검토했고 운영 미실행이다. serving60d·R2 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0 유지.
   최신 보정 — 2026-10-22, Wave151: 호환 OFF 릴리스의 감시 설치기에서 명시적 off/owner_only만 허용하도록 좁게 보정했다. 나머지6개 설정·불변 버전/일일 단위 검증·v1 정책/API 계약은 유지한다. 새 OFF5개 회귀의 기존 거부를 재현하고 테스트 runner 타입 보정 후 관련58개·운영 정적검사 PASS. 새 후보 CI/이미지/운영 인수는 미실행; serving60d·R2 Sep15 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0 유지.
@@ -2025,3 +2026,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-22 | R3-01 · R2-04/08 | Wave151 hosted 인수·원래a10 순차 빌드 | Wave151 원래 CI 인수·a10 실행: eac7197 CI39627593587 attempt1의8작업/8로그/7checkout·137Rust154Python·PG19·page14를16:04UTC 인수했다. 원본 stderr 헤더 혼입은 고유10정의와 완전 PASS 블록으로 별도 연결했다.16:05:03UTC 새a10을 한 번 제출했고 원래 Owner 정상stop0 뒤 독립 감독 아래 순차 빌드 중이다.16:06:39UTC2이미지/3gate PASS;12이미지49gate·원래종료/복원이 다음이다. serving60d·R2 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0 유지. 로컬 sealer 필드명 오류는 root 제출 전 발생했고 기존 봉인 bytes를 검증해 최초root만 실행했다. | ci/eac7197/hosted-source-closure.json 4bd1d563…; wave151/a10/running-handoff-20261021T1605.json c5a53bd0…; 복원 책임 유지 |
 
 | 2026-10-22 | R3-01 · R2-04/08 | Wave151 호환 OFF serving 독립 인수 | Wave151 배포 인수: eac7197의 원래a10 12이미지/49gate·Owner 복원과 공식 API/Web/Owner OFF 배포를16:24UTC 독립 인수했다. 세 서비스 exact revision/image·healthy·HTTP와 원래 Owner 정상종료0, 감시 타이머 복원, 나머지8불변을 확인했다.16:24:52UTC 세 서비스의 실제 quotes=off를 확인했다. 복원 책임 없음. R2 Sep15 SOURCE_CONFLICT·DailyOFF/epoch0·KISdisabled·첫세션null·실제3일0은 유지한다. | a10 closure8739d632…; serving closure7ef3b47f…; 실제 모드d0b50ce0…; 첫세션/실제수신 미인수 |
+
+| 2026-10-22 | R3-01/02/03 · R2-04/08 | Wave152 ON serving와 당일 달력 독립 인수 | Wave152:60d591d API/Web/Owner ON 전환을16:43UTC 독립 인수했고,10월22일 KST 실제 달력 수집·원본/정규화/DB 일치와 세 서비스 owner_only/market_ws를16:45UTC 확인했다. 감시 타이머 정상·KISdisabled·복원 책임 없음. 검증된 eac7197 OFF 복귀 경로를 보존한다. R2 Sep15/153130 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0, R3 정상 Owner 사용·실제 장중 수신은 미완료다. calendar-a1 정책 불일치와 ONa1 기존 KIS 단위 충돌은 원본 보존·복원 완료. 새a2는 기존 KIS 공식check 후 성공했다. 추적618a01bf의 active 생성 영수증·인계/registry 저장 후 이전219449b8 삭제를 확인했다. | serving e40ff985…; calendar969dbeb6…; renewal3c41f20c…; 실제3일·Owner·수신 미인수 |

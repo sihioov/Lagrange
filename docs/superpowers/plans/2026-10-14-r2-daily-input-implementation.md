@@ -9719,3 +9719,78 @@ firstSession=null and actual consecutive trading days0 remain. Next R3 work
 requires actual Oct22 KST hours/calendar proof and an official ON transition
 with the accepted eac OFF fallback; Oct21 proof cannot count as Oct22.
 The consumed a10/serving attempts and historical failures remain immutable.
+
+### Wave152 — ON serving and actual Oct22 calendar accepted; live use remains open
+
+R3-01/02/03 advanced without changing immutable product sources. At
+2026-10-21T16:43:10.521921Z the existing accepted ON candidate
+`60d591db0fb12ec3395ffe603e4da0c26d8f95c5` was independently accepted after
+official current/check, existing KIS check, status install/check and sequential
+API/Web/Owner refresh/HTTP. Original unit
+`lagrange-r3-on-serving-60d591d-a2-20261022.service`, PID2851560,
+invocation b8ab3b302a364156be1451f237e88b3b, terminated normally0 with no
+remaining PID/cgroup. Original Owner normal exit0 and other8 unchanged were
+verified. No restoration remains owed. The eac7197 OFF deployment remains the
+accepted fallback; current-link alone is not a serving rollback.
+
+Evidence: `target/r2-daily-beta/wp-8/wave152/on-a2/serving-deployment-closure-20261021T164310.json`,
+58030bytes, SHA256 `e40ff985f59a75060631669ef5401a6085606adbd92c8f0a6704157857444fd4`.
+
+The official KRX regular-hours page was retrieved at16:30:34UTC, already
+Oct22 KST; its09:00–15:30 statement was installed/checked through the official
+window helper. Public HTML3490bytes SHA256
+`c8b1bdbc2bbe1bb243c6208c742aee71fccfb965f11cd0a26e2f0b01c9b24242`.
+This regular-hours source alone did not prove a trading day. The separate
+original calendar-a2 captured the actual Oct22 source at16:44:10UTC. Its
+unit/PID2857928/invocation f5482052b1cc495db2d035e7ad3b14a5 terminated
+normally0/drained. Independent verification at16:45:24.937051UTC matched the
+original claim and source hash, canonical lineage and exact READ ONLY DB
+history/projection/data-batch identity as TRADING. All21 original containers
+were unchanged; actual allowlisted modes were owner_only/market_ws on all3
+serving services, with operational_v1 on API/Owner.
+
+Source batch `ea1a104a-5f93-4ce8-a003-4e7adaea8a7b`,2745bytes SHA256
+`e39784dee953d04cd3c1c08531a1711198daf9fd5c5af0de4daaec5de9a968c7`;
+normalized batch `cd31d68f-4d16-5ab9-8883-846d5f6f2208`,635bytes SHA256
+`d24ec16e54d2aeae6ff23864f7f8c30cffd7d6dade20c33a7580004e21d47fa3`.
+Independent closure `wave152/calendar-a2/independent-closure.json`,3998bytes,
+SHA256 `969dbeb64fb39f1099f79fe7192f5af09c30bce5e21070c8fc72b9a5442e95e6`.
+The Oct22 claim is consumed: later EOD must reuse it, not recapture it.
+
+Original failures are retained. Calendar-a1 failed DAILY_OPERATION_PROJECT
+before provider/claim because status policy eac did not match temporary60d;
+current/status were restored and all21 containers were unchanged. A command
+submission flag is not provider-call proof. ONa1 failed
+KIS_DAILY_INSTALL_DISABLED_TARGET_COLLISION before serving refresh; current
+was restored, and the owed status timer was restored independently after all
+original processes drained. Existing per-release KIS units passed official
+--check for both eac and60d. --install-disabled is create-only and must not be
+replayed against existing targets. ONa2 used those verified existing units.
+No delete/replace bypass or replay of consumed originals occurred. Local
+pre-submission pin/transcription and OFF-mode probe errors were retained;
+qualified observations, not historical ON assumptions, bound the new attempt.
+
+R2-08 remains open: EOD34/34, action coverage53/54 with Sep15/153130 dividend
+SOURCE_CONFLICT. Focused official public searches did not establish a new
+100-row cap or supersession contract. This is a bounded negative search, not
+proof no documentation exists. Both original sources remain; no F-pagination,
+source omission, newer-wins selection or provider replay was introduced.
+Daily remains OFF/epoch0, KISdisabled, firstSession=null, actual consecutive
+days0. No rebind/input admission/activation was submitted.
+
+R3 authenticated Owner use, normal demand, actual market reception and full
+lifecycle/30-symbol acceptance remain unverified. Real regular trading starts
+Oct22 00:00UTC/09KST. No authentication, consumer, lease, ACK, READY or quote
+was fabricated. Existing c1 state and grant acceptance were not repeated.
+
+Same-agent tracking was renewed early for the overnight interval. Successor
+618a01bf was confirmed active at16:50:37UTC, with exact create receipt and
+handoff/registry persisted before deleting219449b8; deletion succeeded.
+It expires Oct22 04:50:37UTC and must renew by03:40UTC/before47th tick.
+Create receipt16790bytes SHA256
+`78b312c8d19be7c178ab2222a5671f5c03f2df20262154ca72dd12b8710fac09`;
+renewal-complete handoff SHA256
+`3c41f20c020619c3532044a49a75040cfb9a459bdffa47a20762318d66267c7a`.
+This is bounded same-conversation tracking, not native Ralph or outage
+protection. Phase/source blocker and last actual host observation are unchanged
+by renewal. No new agents, CI/test/build repeat, schema or topology change.
