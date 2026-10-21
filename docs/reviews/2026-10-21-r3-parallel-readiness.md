@@ -623,3 +623,63 @@ apps/web에서 formatter 및 `biome check tests/stock-beta-intraday-page-seam.te
 후속 문서 HEAD를 후보로 치환하지 않는다. 기존1ec5f16 packet/실패는 불변이며
 R2 원래a3 완료/Owner복원은 부모 전달 사실일 뿐 이 작업에서 운영 조회하지 않았다.
 R2 배포창은 부모 담당이며 R3 이미지/배포/수신/운영 인수는 계속 미실행이다.
+
+
+## 14. 보정 후보 고정·별도 hosted CI
+
+정확한 새 후보는 **228a8dafa55c7dec1b253457888cef817b9a435a**다. 이 이후 문서 HEAD는
+후보가 아니다. 1ec5f16 대비 실행소스 차이는 page-seam 테스트 서식1파일뿐이며 D1 route는
+7b7f219와 동일하다. fccb 대비 실행소스는 여전히 D1 route/test2파일뿐이다.
+
+별도 `target/r3-ci-inputs/228a8da/ci-inputs.json`은 **817,089bytes**,
+SHA256 **b71c69045bc4291f1be93bd398765c495bf30f7ecae5587bb278e12881beb3f8**.
+후보 실제 workflow/검사 소스에서8jobs/7checkout/64명령·Rust57/Python10·PG19 프로세스
+정의를 추출했다. 187source blob·기존13receipt·보정16receipt의 bytes/hash와 결정적 재추출
+일치를 확인했다. 기존1ec5f16 packet과 모든 원래 실패/partial 기록은 그대로 보존했다.
+이 숫자는 검사 정의이며 hosted 결과를 대신하지 않는다.
+
+후보의 ci/research-smoke push가 main 전용임을 재확인했다. 전용ref
+`r3-ci-228a8da-20261021` 부재와 동일후보run0을 확인한 뒤 nonforce 게시1회(exit0),
+정확한 원격SHA 및 다시run0 확인 뒤 ci.yml workflow_dispatch1회(exit0)를 실행했다.
+[run39552229552](https://github.com/sihioov/Lagrange/actions/runs/39552229552), attempt1,
+event workflow_dispatch/head/ref 모두 고정값과 일치한다. 원래1ec5f16의 rerun/cancel은 없다.
+
+원본 `target/r3-hosted-ci/228a8da/` mutation 영수증:
+
+| 파일 | bytes | SHA-256 |
+| --- | ---: | --- |
+| publish-intent.json | 297 | 72ee0038708d80b3b727ceee0d97f003b499f0da72ba1ae876380e3c807cdc67 |
+| publish-result.json | 412 | 6a88e41eac8d24f55ba322eeefb18ebea3e18a3421f73bcf93f4fbb297ea9591 |
+| dispatch-intent.json | 335 | 17bc96c3832bb48f9fc8bd28b60c6a062942167ebe5a8f3004bb24a7f2047d1a |
+| dispatch-result.json | 423 | 25bcd5c875eecc98aa4b6c2cee99b2cfa796ea53ee4056989a166e4c6772f36f |
+
+06:19:24.026954UTC terminal SUCCESS 관측에서 **필수8jobs 모두 성공**했다.
+전체8로그와 정확candidate checkout7개를 회수했으며 Rust57/Python10 이름 결과 모두ok,
+후보 정의의 PG19 정확label/exit0/no-skip를 확인했다. Web은 lint/typecheck/test/build/E2E
+모두 성공했다. 전체 Web66파일/517테스트 통과 중 page-seam14의 실제 성공행은
+`job-119063793074-web.log:905`에 있다. 전체 Web 로그145,941bytes,
+SHA f8cf9c99f2875cc0322241cdf877353910e0ab5493f8da2566d59c20b7be8aef.
+14개 개별 이름은 고정된 로컬 JSON에 있으며 hosted 기본 reporter는 파일별14개 성공을
+출력했다. 개별 이름14개가 hosted 로그에 각각 출력됐다고 주장하지 않는다.
+
+최종 증거(같은 hosted 디렉터리):
+
+| 파일 | bytes | SHA-256 |
+| --- | ---: | --- |
+| recovery-poll-14-summary.json | 81628 | 77e6f1b152807ab1cf8ed3754d8f44bbd722116d4b2ca66f4d398e2ea1594aa7 |
+| final-verification.json | 935 | 77a5f367e8fa9432c3435876ed27672bada48d0a4ac093ca36e0b2d1dc07b8c2 |
+| receipt-manifest-final.json | 23172 | 05678152aa1f22ab5b0b8c65257b604d77efd1da35530a55d3c367327ddacbc0 |
+
+최종 대조는8개 원본로그 bytes/hash,7checkout,필수결과,후보소스·pins와 두 packet 불변을
+확인했다. 새 run은14회 관측(실제 최소간격59.904548초), dispatch1/attempt1이며
+rerun/cancel/추가CI는 없다. 원래run의 설명용 pending 문구가 남은 재사용 recovery와 별도로
+`target/r3-hosted-ci/1ec5f16/terminal-verdict.json`이 원래8로그 회수·FAILURE 종결을 명시한다.
+
+**판정: HOSTED_SOURCE_CHECKS_VERIFIED.** 부모의 통합 검토를 위한 증거이며 전체R3 FINAL,
+Owner 인수, merge, 이미지/manifest, 배포 또는 실제 수신 인수가 아니다.
+다음 단일 조율 행동은 부모가 **정확후보228a8da와 이번 hosted 증거를 통합 검토**하는 것이다.
+R2 배포창은 부모가 예약했고 R3의 공유 호스트 실행은 별도 순서 조율 전 열지 않는다.
+R3-02~07의 실제수신·인증수명주기·30종목·장경계와 §10의 grant/state/calendar/window,
+현행quota·전역키점유·schema/readerfloor·호환복구 현재값은 여전히 미확인이다.
+이번 범위의 소스/집중/hosted 검증 미해결은 없음. 운영/root/DB/Docker/systemd/provider/lease,
+로컬 전체테스트/build·이미지/배포는 미실행; 부모tree/registry/R2절/체크/diagrams/lock/package 불변.
