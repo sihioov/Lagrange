@@ -2400,3 +2400,65 @@ remain serialized; R2 frozen candidate/manifest are unchanged. The latest regist
 handoff is wave141/serving-accepted-inputs-pending-handoff.json c65585e2...
 Heartbeat0f8c84f7 renewBy13:50UTC. No structure changed; diagrams,32 unrelated
 ROADMAP additions,.archify, historical failures and all protected paths are retained.
+
+
+### Wave142 — actual Raw horizon failure corrected; R3 D1 integrated (2026-10-21 KST)
+
+R2-04/R2-09 and R3-01/03 remain DOING; no completion checkbox changes.
+Actual06:44:23UTC read-only reconstruction retained13 verified civil days,
+40 missing and0 invalid over Aug29..Oct20; calendar Sep24..Oct6 remains missing.
+The two original Raw manifests retain hashes2009b5ea... and d85be240... .
+The exact installed9132412 research image, network-none and Raw-readonly,
+then failed its source-presence check at06:46:05UTC with
+KIS_RANGE_CALENDAR_RANGE_INVALID. It made no provider/DB/write operation and
+its original process was reaped; retained container exited2/PID0. This is a
+source-check failure, not a consumed provider-recovery run or source absence.
+
+Both daily Raw entry points incorrectly used the frozen historical normalizer
+calendar ending2026-08-28. Remove only that historical upper-horizon coupling;
+retain the2016-08-29 lower floor, sorted/unique/nonempty/max10000/no-future dates,
+current-day isolation and16:30KST capture boundary. The official wrapper still
+selects the protected operational calendar. Raw capture and reuse independently
+require an exact original KIS calendar trading-day row; closed-day calendar
+evidence remains valid but cannot authorize EOD. Historical range normalization
+and the committed calendar artifact are unchanged. No endpoint/host/TR/rate,
+credentials, account/order or publication admission scope was expanded.
+
+The original behavior reproduced9 PASS/2 FAIL. Five new regression tests plus
+the existing suite now32 PASS; calendar publication7, KIS normalization30 and
+historical range14 PASS. Focused collectors/market-data all-target strict Clippy,
+format and diff checks passed. Intermediate fixture compile/umask/manifest and
+expected-error mistakes are retained, not counted as product behavior evidence.
+Local validation receipt wave142/local-validation.json is5139bytes,
+SHA256551c13390dfe80f236f9ed2a8fd36f254f88729b3dc4a3eaabf84ea22380c1ef.
+These checks do not establish a new deployed image or actual input admission.
+
+R3 candidate f966b2b9f338b4559ec1a6257393cddcf7aa91c6 CI39555456064 attempt1
+completed all8 jobs; full8logs/7exact checkouts/57Rust/84Python/19actualPG and
+page-seam14 were recovered. The parent independently verified the packet and
+qualified recovery/manifest hashes ccb0d5ee...,ee052557...,e3056ff7... .
+The original49-name extractor record is preserved; unique frozen definitions
+and complete PASS blocks qualified57 without rerunning CI. The parent reviewed
+and imported exactly the two D1 blobs: selected instrument/generation/READY
+produces one stream membership, otherwise none; board behavior is retained.
+No R3 roadmap/document tree was merged. This combines the approved UI correction
+and Raw fix in one new candidate; its exact hosted CI/build/deployment is next.
+
+Additional06:53:08UTC TLS-verified requests through the original proxy at its
+observed container address returned /login307 and unauthenticated market-stream401.
+No body/cookie persisted and this is not authenticated Owner/live reception.
+The preceding localhost443 assumption produced connection refusal and is retained;
+actual proxy8080/8443 ports were not host-published, so it is not an app failure.
+The accepted9132412 API/Web/OwnerV2 and unchanged eight other containers remain
+the installed state; all prior build/restoration obligations are resolved.
+
+Next freeze the combined source and89Rust/84Python definitions, dispatch its
+single CI, then build/install with fresh actual identities and independent
+restoration. Afterwards repeat source presence in a distinct fixed-image check,
+derive bounded missing-input recovery, independently admit inputs and resolve
+first-session binding before official daily activation DBLAST. No first session
+is asserted. DailyOFF/epoch0, actual days0 and C_R2 remain OPEN. R3 shared operations
+remain serialized; source/CI acceptance is not market/Owner acceptance.
+No architecture boundary changed; diagrams,32 unrelated ROADMAP additions and
+.archify remain untouched. All old failures, original manifests and protected
+lock/volume/PG/backup-key boundaries remain. Heartbeat0f8c84f7 renewBy13:50UTC.

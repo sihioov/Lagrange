@@ -61,6 +61,86 @@ impl KisRead for CashKisRead {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ClosedCalendarKisRead(FakeKisRead);
+
+impl KisRead for ClosedCalendarKisRead {
+    async fn get(
+        &self,
+        path: &str,
+        tr: &str,
+        query: &[(String, String)],
+        continuation: Option<&str>,
+    ) -> Result<MarketDataReply, KisError> {
+        let mut reply = self.0.get(path, tr, query, continuation).await?;
+        if path.ends_with("/chk-holiday") {
+            let mut body: Value = serde_json::from_slice(&reply.body).unwrap();
+            body["output"][0]["opnd_yn"] = json!("N");
+            reply.body = serde_json::to_vec(&body).unwrap();
+        }
+        Ok(reply)
+    }
+}
+
+#[tokio::test]
+async fn raw_eod_closed_calendar_stops_before_noncalendar_requests() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = RawStore::new(temp.path().join("data"));
+    std::fs::create_dir_all(store.root().join("raw")).unwrap();
+    let reader = FakeKisRead::new(false);
+    let provider = KisProvider::kr_etf_core(ClosedCalendarKisRead(reader.clone()));
+    assert!(
+        collectors::eod_raw::capture_eod_source(
+            &store,
+            &provider,
+            &raw_request(),
+            "fixture:licensed",
+            true
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(reader.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(reader.calendar_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        store
+            .read_committed_manifest(PROVIDER_KIS, MARKET_KR)
+            .unwrap()
+            .is_empty()
+    );
+    // A valid closed-day calendar remains useful evidence; it is not EOD authority.
+    assert_eq!(
+        store
+            .read_committed_manifest(PROVIDER_KIS_CALENDAR, MARKET_KR)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn raw_eod_check_rejects_committed_closed_day_source() {
+    let (_temp, store, _) = seed_kis_store(|files| {
+        let calendar = files
+            .iter_mut()
+            .find(|f| f.kind == ResponseKind::Calendar)
+            .unwrap();
+        let mut body: Value = serde_json::from_slice(&calendar.bytes).unwrap();
+        body["output"][0]["opnd_yn"] = json!("N");
+        calendar.bytes = serde_json::to_vec(&body).unwrap();
+    });
+    let values = empty_raw_values(store.root());
+    let manifest = store.manifest_path(PROVIDER_KIS, MARKET_KR);
+    let before = std::fs::read(&manifest).unwrap();
+    let mut output = Vec::new();
+    assert!(
+        collectors::check_eod_raw_session_dates_stream(&values, &[raw_request().date], &mut output)
+            .is_err()
+    );
+    assert!(output.is_empty());
+    assert_eq!(std::fs::read(&manifest).unwrap(), before);
+}
+
 fn raw_request() -> IngestRequest {
     IngestRequest::new(
         MARKET_KR.into(),
@@ -143,6 +223,96 @@ async fn raw_eod_check_needs_no_credentials_or_db_and_never_reconciles_orphans()
         .is_err()
     );
     assert!(!empty.exists());
+}
+
+fn empty_raw_values(root: &std::path::Path) -> HashMap<String, String> {
+    HashMap::from([
+        ("APP_ENV".into(), "production".into()),
+        ("RESEARCH_FETCH_MODE".into(), "credentialed".into()),
+        ("LAGRANGE_CODE_COMMIT".into(), "a".repeat(40)),
+        ("RESEARCH_RAW_ROOT".into(), root.to_str().unwrap().into()),
+        (
+            "RESEARCH_ENTITLEMENT_REFERENCE".into(),
+            "fixture:licensed".into(),
+        ),
+    ])
+}
+
+#[test]
+fn raw_eod_check_after_historical_horizon_is_observational_without_writes() {
+    let (_temp, store, _) = seed_kis_store(|_| {});
+    let values = empty_raw_values(store.root());
+    let manifest = store.manifest_path(PROVIDER_KIS, MARKET_KR);
+    let before = std::fs::read(&manifest).unwrap();
+    let date = TradingDate::parse("2026-08-31").unwrap();
+    // The historical normalizer remains deliberately bounded at August28.
+    assert!(
+        market_data::range_normalize::ExpectedRangeSessions::approved_xkrx(date, date).is_err()
+    );
+    let mut output = Vec::new();
+    assert_eq!(
+        collectors::check_eod_raw_session_dates_stream(&values, &[date], &mut output).unwrap(),
+        1
+    );
+    let row: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(row["source_present"], false);
+    assert_eq!(row["target_date"], "2026-08-31");
+    assert_eq!(row["ready"], false);
+    assert_eq!(row["db"], false);
+    assert_eq!(std::fs::read(&manifest).unwrap(), before);
+}
+
+#[tokio::test]
+async fn raw_eod_capture_after_historical_horizon_reaches_existing_credential_gate() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("absent");
+    let values = empty_raw_values(&root);
+    let error = collectors::run_credentialed_eod_raw_session_dates_stream(
+        &values,
+        &[TradingDate::parse("2026-08-31").unwrap()],
+        &mut Vec::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        collectors::WorkerError::MissingConfig {
+            key: "KIS_APP_KEY_FILE"
+        }
+    ));
+    assert!(!root.exists());
+}
+
+#[tokio::test]
+async fn raw_eod_rejects_invalid_sequences_before_any_io() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("absent");
+    let values = empty_raw_values(&root);
+    let day = TradingDate::parse("2026-08-31").unwrap();
+    let next = day.checked_add_days(1).unwrap();
+    let future = collectors::current_kst_date(chrono::Utc::now())
+        .checked_add_days(1)
+        .unwrap();
+    for dates in [
+        vec![],
+        vec![TradingDate::parse("2016-08-28").unwrap()],
+        vec![day, day],
+        vec![next, day],
+        vec![future],
+        vec![day; 10001],
+    ] {
+        let mut output = Vec::new();
+        assert!(
+            collectors::check_eod_raw_session_dates_stream(&values, &dates, &mut output).is_err()
+        );
+        assert!(
+            collectors::run_credentialed_eod_raw_session_dates_stream(&values, &dates, &mut output)
+                .await
+                .is_err()
+        );
+        assert!(output.is_empty());
+        assert!(!root.exists());
+    }
 }
 
 #[tokio::test]

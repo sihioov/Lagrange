@@ -342,7 +342,13 @@ pub async fn ingest_kis_raw_eod_with_calendar_source<R: KisRead>(
         &calendar_bytes.bytes,
         calendar_source.date,
     )?;
-    validate_kis_calendar_rows(&calendar_file.file_name, &calendar_bytes.bytes, req.date)?;
+    if !validate_kis_calendar_rows(&calendar_file.file_name, &calendar_bytes.bytes, req.date)? {
+        return Err(calendar_validation_error(
+            &calendar_file.file_name,
+            "KIS_CALENDAR_TARGET_CLOSED",
+            "KIS calendar marks the EOD target as closed",
+        ));
+    }
     let batch_id = BatchId::generate();
     let fetch_req = crate::provider::FetchRequest {
         market: req.market.clone(),
@@ -528,7 +534,9 @@ pub fn verified_existing_kis_eod_source(
         .iter()
         .find(|file| file.file_name == calendar.file_name)
         .expect("all files checked");
-    validate_kis_calendar_rows(&calendar.file_name, &calendar_bytes.bytes, request.date)?;
+    if !validate_kis_calendar_rows(&calendar.file_name, &calendar_bytes.bytes, request.date)? {
+        return Err(eod_source_invalid("EOD_RAW_SOURCE_TARGET_CLOSED"));
+    }
     Ok(Some(source))
 }
 
@@ -723,14 +731,14 @@ fn validate_kis_calendar_envelopes(
             }),
         },
     )?;
-    validate_kis_calendar_rows(&envelope.file_name, &envelope.bytes, req.date)
+    validate_kis_calendar_rows(&envelope.file_name, &envelope.bytes, req.date).map(|_| ())
 }
 
 fn validate_kis_calendar_rows(
     file_name: &str,
     bytes: &[u8],
     target_date: TradingDate,
-) -> Result<(), IngestError> {
+) -> Result<bool, IngestError> {
     let document: Value = serde_json::from_slice(bytes).map_err(|_| {
         calendar_validation_error(
             file_name,
@@ -805,14 +813,13 @@ fn validate_kis_calendar_rows(
             ));
         }
     }
-    if !dates.contains_key(&target_date) {
-        return Err(calendar_validation_error(
+    dates.get(&target_date).copied().ok_or_else(|| {
+        calendar_validation_error(
             file_name,
             "KIS_CALENDAR_TARGET_MISSING",
             "KIS calendar output did not contain the requested date",
-        ));
-    }
-    Ok(())
+        )
+    })
 }
 
 fn parse_kis_calendar_date(value: &str) -> Option<TradingDate> {

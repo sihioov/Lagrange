@@ -30,7 +30,8 @@ use market_data::normalize::NormalizeError;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
 use market_data::providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider};
 use market_data::range_normalize::{
-    ExpectedRangeSessions, RangeNormalizeError, normalize_kis_daily_range_batch,
+    APPROVED_EFFECTIVE_FROM, ExpectedRangeSessions, RangeNormalizeError,
+    normalize_kis_daily_range_batch,
 };
 use market_data::storage::{ManifestEntry, RawStore, StoreError};
 use market_data::{
@@ -1579,20 +1580,19 @@ pub fn check_eod_raw_session_dates_stream<W: io::Write>(
     if dates.is_empty()
         || dates.len() > 10_000
         || dates.windows(2).any(|pair| pair[0] >= pair[1])
-        || dates.iter().any(|date| *date > today)
+        || dates.iter().any(|date| {
+            *date > today
+                || *date < TradingDate::parse(APPROVED_EFFECTIVE_FROM).expect("approved floor")
+        })
     {
         return Err(WorkerError::InvalidConfig {
             key: "--eod-raw-check-session-dates",
         });
     }
     let config = DailyRangeRawRecoveryConfig::from_map(values)?;
-    let expected = ExpectedRangeSessions::approved_xkrx(dates[0], *dates.last().unwrap())
-        .map_err(WorkerError::RangeNormalize)?;
-    if dates.iter().any(|date| !expected.sessions.contains(date)) {
-        return Err(WorkerError::InvalidConfig {
-            key: "--eod-raw-check-session-dates",
-        });
-    }
+    // Presence is observational, not session admission. The operator wrapper
+    // validates its protected operational calendar before choosing dates; the
+    // historical range normalizer's embedded horizon must not cap daily Raw.
     let store = RawStore::new(&config.raw_root);
     for &date in dates {
         let source = crate::eod_raw::existing_eod_source(
@@ -1633,7 +1633,10 @@ pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
     if dates.is_empty()
         || dates.len() > 10_000
         || dates.windows(2).any(|pair| pair[0] >= pair[1])
-        || dates.iter().any(|date| *date > today)
+        || dates.iter().any(|date| {
+            *date > today
+                || *date < TradingDate::parse(APPROVED_EFFECTIVE_FROM).expect("approved floor")
+        })
         // Dedicated current-day evidence must not relabel a cached historical
         // calendar snapshot. Keep current-day capture a separate invocation.
         || (dates.contains(&today) && dates.len() != 1)
@@ -1646,13 +1649,10 @@ pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
         });
     }
     let config = DailyRangeRawRecoveryConfig::from_map(values)?;
-    let expected = ExpectedRangeSessions::approved_xkrx(dates[0], *dates.last().unwrap())
-        .map_err(WorkerError::RangeNormalize)?;
-    if dates.iter().any(|date| !expected.sessions.contains(date)) {
-        return Err(WorkerError::InvalidConfig {
-            key: "--eod-raw-session-dates",
-        });
-    }
+    // Match the existing backfill boundary: the official wrapper selects dates
+    // from its protected operational calendar. Each Raw capture independently
+    // requires an exact committed KIS trading-day row before non-calendar GETs.
+    // Keep the historical range normalizer's frozen calendar unchanged.
     let key = PathBuf::from(nonempty(values, "KIS_APP_KEY_FILE")?);
     let secret = PathBuf::from(nonempty(values, "KIS_APP_SECRET_FILE")?);
     if !key.is_absolute() || !secret.is_absolute() {
