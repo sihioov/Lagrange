@@ -717,6 +717,8 @@ def build_compose_argv(
         "--host",
         DOCKER_HOST,
         "compose",
+        "--progress",
+        "quiet",
         "--project-name",
         COMPOSE_PROJECT,
         "--env-file",
@@ -728,6 +730,7 @@ def build_compose_argv(
         "run",
         "--rm",
         "--no-deps",
+        "--quiet-build",
         "-T",
         "--pull",
         "never",
@@ -998,6 +1001,29 @@ def cleanup_exact_container(
         return False
 
 
+def inspection_stderr_is_safe(stderr: bytes) -> bool:
+    """Allow only Compose's fixed local-secret metadata warning for READ ONLY.
+
+    Bind-mounted secret ownership comes from the host file; this warning does
+    not prove that requested uid/gid/mode were applied. Never discard other
+    warnings, SQL diagnostics, extra lines or provider/credential text.
+    """
+    if stderr == b"":
+        return True
+    match = re.fullmatch(
+        rb'time="([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}'
+        rb'(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2}))" level=warning '
+        rb'msg="secrets `uid`, `gid` and `mode` are not supported, they will be ignored"\n',
+        stderr,
+    )
+    if match is None:
+        return False
+    try:
+        return dt.datetime.fromisoformat(match[1].decode("ascii")).tzinfo is not None
+    except ValueError:
+        return False
+
+
 def run_db_operation(
     context: InstalledContext,
     operation_id: str,
@@ -1046,7 +1072,8 @@ def run_db_operation(
         except subprocess.TimeoutExpired:
             process_cleanup_ok = _terminate_owned_process_group(process, killpg_fn=killpg_fn)
         else:
-            if process.returncode == 0 and stderr == b"":
+            stderr_ok = inspection_stderr_is_safe(stderr) if mode == "inspect" else stderr == b""
+            if process.returncode == 0 and stderr_ok:
                 expected_statuses = (
                     {value.encode("ascii") + b"\n" for value in INSPECTION_STATUSES}
                     if mode == "inspect" else

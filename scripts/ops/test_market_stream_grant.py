@@ -697,6 +697,42 @@ class MarketStreamGrantInspectionTests(unittest.TestCase):
                     self.assertIn("grant_mode=inspect", command)
                     self.assertNotIn("grant_mode=install", command)
 
+    def test_inspection_accepts_only_exact_local_secret_metadata_warning(self):
+        warning = (b'time="2026-10-21T20:04:31+09:00" level=warning '
+            b'msg="secrets `uid`, `gid` and `mode` are not supported, they will be ignored"\n')
+        self.assertTrue(grant.inspection_stderr_is_safe(warning))
+        self.assertTrue(grant.inspection_stderr_is_safe(b""))
+        for malformed in (warning + warning, warning + b"private error", b"private error" + warning,
+                warning.replace(b"warning", b"error"), warning.replace(b"2026-10-21", b"2026-99-99"),
+                warning.replace(b"+09:00", b""), warning.replace(b"mode", b"password"),
+                warning[:-1], b"x" * 65536):
+            self.assertFalse(grant.inspection_stderr_is_safe(malformed))
+        for mode, stdout, expected in (("inspect", b"INSPECT_VALID\n", "INSPECT_VALID"),
+                ("inspect", b"INSPECT_VALID\nprivate", "DB_OUTCOME_UNKNOWN"),
+                ("install", b"APPLIED\n", "DB_OUTCOME_UNKNOWN"),
+                ("revoke", b"REVOKED\n", "DB_OUTCOME_UNKNOWN")):
+            process = mock.Mock(returncode=0)
+            process.communicate.return_value = (stdout, warning)
+            with (self.subTest(mode=mode, stdout=stdout),
+                  mock.patch.object(grant, "verify_local_image", return_value=True),
+                  mock.patch.object(grant, "_write_private_override", return_value=(pathlib.Path('/tmp/fake'), pathlib.Path('/tmp/fake/override'))),
+                  mock.patch.object(grant, "_remove_private_override", return_value=True),
+                  mock.patch.object(grant, "cleanup_exact_container", return_value=True)):
+                self.assertEqual(grant.run_db_operation(context_fixture(), OPERATION, mode,
+                    "{}", GRANT, b"fixture", popen_factory=lambda *a, **kw: process), expected)
+
+    def test_grant_commands_suppress_only_compose_progress_for_all_modes(self):
+        for mode in ("install", "revoke", "inspect"):
+            with self.subTest(mode=mode):
+                argv, _ = grant.build_compose_argv(context_fixture(), pathlib.Path('/private/override'),
+                    OPERATION, mode, "{}", GRANT)
+                self.assertEqual(argv[argv.index("--progress") + 1], "quiet")
+                self.assertLess(argv.index("--progress"), argv.index("run"))
+                self.assertIn("--quiet-build", argv)
+                self.assertNotIn("--quiet", argv)  # SQL stdout must remain visible.
+                self.assertEqual(argv[argv.index("--pull") + 1], "never")
+                self.assertNotIn("--build", argv)
+
     def test_inspection_reads_only_its_separate_trusted_sql_file(self):
         from dataclasses import replace
         with tempfile.TemporaryDirectory() as tmp:

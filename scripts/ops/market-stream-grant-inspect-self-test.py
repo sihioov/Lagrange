@@ -265,6 +265,51 @@ class GrantInspectionPostgresTests(unittest.TestCase):
             self.assertEqual(self.database.sqlstate(result), "25006")
             self.assertNotIn(b"INSPECT_VALID", result.stdout)
 
+    def test_actual_compose_transport_separates_metadata_warning_from_sql_error(self):
+        # Real Compose transport, synthetic finite stdout, no production inputs.
+        # The PostgreSQL cases above separately verify the fixed SQL semantics.
+        directory = self.database.directory / "compose-output"
+        directory.mkdir(mode=0o700)
+        secret = directory / "public-fixture"
+        secret.write_text("public-fixture-value")
+        secret.chmod(0o444)
+        image = self.database.command(["image", "inspect", "--format", "{{.Id}}",
+            fixture.backup.POSTGRES]).stdout.decode().strip()
+        config = directory / "compose.json"
+        config.write_text(json.dumps({"secrets": {"synthetic": {"file": str(secret)}},
+            "services": {"db-migrate": {"image": image, "pull_policy": "never",
+                "network_mode": "none", "read_only": True, "user": "10001:10001",
+                "cpus": 0.5, "mem_limit": "128m", "pids_limit": 32,
+                "secrets": [{"source": "synthetic", "target": "public-fixture",
+                    "uid": "999", "gid": "999", "mode": 256}]}}}))
+        env = directory / "empty.env"
+        env.write_text("")
+        context = replace(pure.context_fixture(), compose_file=config, env_file=env,
+                          db_migrate_image_id=image)
+        for extra_error in (False, True):
+            operation = uuid.uuid4().hex
+            args, name = grant.build_compose_argv(context, config, operation,
+                "inspect", "{}", pure.GRANT)
+            args[args.index("--project-name") + 1] = "grant-fixture-" + operation
+            service = args.index("db-migrate")
+            script = "printf 'INSPECT_VALID\\n'"
+            if extra_error:
+                script += "; printf 'SYNTHETIC_SQL_ERROR\\n' >&2"
+            args[service + 1:] = ["-ec", script]
+            try:
+                result = subprocess.run(args, env=grant._docker_env(pure.COMMIT),
+                    input=b"", capture_output=True, timeout=60, check=False)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, b"INSPECT_VALID\n")
+                self.assertEqual(grant.inspection_stderr_is_safe(result.stderr), not extra_error)
+                if extra_error:
+                    self.assertIn(b"SYNTHETIC_SQL_ERROR", result.stderr)
+            finally:
+                # Only this exact operation-label/name; never touch project peers.
+                self.assertTrue(grant.cleanup_exact_container(context, operation, name))
+                self.assertFalse(self.database.command(["ps", "-aq", "--filter",
+                    "name=^/" + name + "$"]).stdout.strip())
+
     def test_actual_fixture_is_networkless_and_real_migration_owner(self):
         value = json.loads(self.database.command(["inspect", "--format", '{{json .HostConfig}}', self.database.server]).stdout)
         self.assertEqual(value["NetworkMode"], "none")
