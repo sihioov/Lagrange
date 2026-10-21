@@ -209,10 +209,20 @@ def make_policy(
 
 def _run_check_script(paths: InstallPaths, commit: str, runner: Callable[..., RunnerResult]) -> None:
     checker = os.path.join(paths.release_root, "scripts/ops/install-kis-daily.sh")
+    try:
+        service = policy_lib.read_trusted_file(
+            os.path.join(paths.systemd_root, f"lagrange-kis-daily-{commit[:7]}.service"),
+            expected_mode=0o644, max_bytes=64 * 1024, test_owner=paths.test_owner,
+        ).decode("utf-8", "strict")
+        flags = policy_lib.daily_runner_flags(
+            service, os.path.join(paths.release_root, "scripts/ops/kis-daily-production.sh")
+        )
+    except (policy_lib.PolicyError, UnicodeDecodeError):
+        raise InstallError("POLICY_MISMATCH") from None
     argv = (
         "/bin/bash", checker, "--check", "--release-root", paths.release_root,
         "--code-commit", commit, "--production-env-file", paths.env_file,
-        "--systemd-dir", paths.systemd_root,
+        "--systemd-dir", paths.systemd_root, *flags,
     )
     try:
         result = runner(argv, timeout=5.0, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

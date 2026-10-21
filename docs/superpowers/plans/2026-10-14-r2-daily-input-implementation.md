@@ -8716,3 +8716,65 @@ deployment validation and real calendar evidence. Owner use, three consecutive
 actual trading days and C_R2 remain OPEN. All historical failures/unknown causes,
 0120 incomplete cleanup, protected lock/volume/PG permissions,32unrelated ROADMAP
 additions and .archify are preserved. Source/architecture did not change.
+
+
+### Wave139 — image closure, immutable installation and daily runner binding correction (2026-10-21 KST)
+
+Original a3 completed at05:38:32UTC. Independent recovery at05:41:16UTC verified
+all12 image IDs/revisions, the2597-byte V2 manifest1d6dd39e..., all49 PASS gates,
+original stop/build/start process results and empty cgroups, and the same Owner
+container62d49f86 restored healthy with its new05:38:26 generation. Closure
+cf224e30... (857191bytes) also observed the previous e639169 runtime and daily
+OFF/epoch0/zero recommendation jobs. No original attempt was replayed.
+
+Protected deployment-only inputs were published05:36:29UTC; only the env and
+JSON release commit changed. Their expired Oct21 lower-bound binding is retained
+as historical configuration, NOT automatic activation authorization. firstSession
+remains null. At05:44:23UTC the official installer applied fccb683 and its installed
+check passed (receipt4b1fe1a6...). This installed a new immutable directory and
+switched current; it did not replace running services or change the database.
+The first runtime preflight failed operational_session_window_invalid. A fresh
+05:34:14UTC public KRX hours retrieval (HTTP200,3490bytes,c8b1bdbc...) supports
+regular09:00–15:30 hours only, not an actual trading-day/holiday assertion. The
+official current-day window apply/check passed05:45:57UTC and the second release
+preflight passed05:46:14UTC (74940d13...). No provider or calendar receipt was
+fabricated; the actual-calendar gate remains independent.
+
+Before runtime transition, source review found an integration gap: the daily
+installer emits --raw-source [--action-supply] --execute, but service-status
+validation accepted only the legacy --execute form and its --check invocation
+omitted the selected flags. This blocks the intended recurring producer setup.
+The gap was reproduced in isolated fixtures: four new test methods produced two
+positive-mode errors and nine negative subcase failures on the original source.
+The correction recognizes exactly the three installer-rendered commands, rejects
+extra/duplicate/reordered/missing options and duplicate/reset ExecStart lines,
+and forwards only the recognized installer flags to the read-only checker.
+No mode is inferred from ambient env or enabled by this correction.
+
+Changed source: service-status-policy.py, install-service-status.py and its focused
+fixture tests. CI now explicitly runs the53 status installer/collector tests,
+with a workflow-contract test requiring that step. Local status53 PASS, CI
+contract21 PASS and production-ops static PASS. The initial CI-contract command
+failed to import PyYAML in the default interpreter; its original result is retained.
+The existing /usr/bin/python3 with PyYAML then ran the21 checks successfully.
+These are local fixture/source checks, not hosted or production acceptance of the
+correction. No architecture boundary changed; diagrams remain untouched.
+
+At05:49:33UTC, the official compatible current-link rollback/check restored
+e639169 while retaining the fccb683 installed directory and all image evidence
+(receipt2b5883f2...). No runtime transition had been submitted, so there was no
+service or migration rollback and no new stop/restore obligation. Schema62 and
+the reader floor remain. Do not patch either installed immutable release. The
+next candidate must include the corrected guard, freeze/recover its exact CI,
+then use fresh deployment bindings and actual data-derived activation inputs.
+The serving runtime remains e639169; dailyOFF, Owner acceptance, actual input
+admission/automatic operation, three consecutive actual trading days and C_R2
+are still OPEN. No replacement first session is asserted.
+
+The separate R3 original CI39549529746 attempt1 reported a Web formatting failure;
+its earlier local14 PASS does not replace skipped hosted tests. The existing R3
+agent was given a bounded original-result recovery and formatting-only correction/
+new exact-candidate CI task. It has no shared production window. R2 work was not
+delegated. Preserve all previous failures, protected lock/volume/PG permissions,
+32 unrelated ROADMAP additions and.archify. The same-agent heartbeat remains
+0f8c84f7, renew by13:50UTC; it is not native Ralph or outage protection.

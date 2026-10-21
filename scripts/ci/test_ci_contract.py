@@ -38,6 +38,16 @@ def action_uses(workflow: dict) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_daily_runner_status_bindings_are_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [step for step in ci["jobs"]["policy"]["steps"]
+                 if step.get("name") == "Verify service-status binding for daily raw and action-supply modes"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["run"],
+                         "python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v")
+        self.assertNotIn("if", steps[0])
+        self.assertNotIn("continue-on-error", steps[0])
+
     def test_fixed_base_copy_principals_are_a_required_policy_step(self) -> None:
         _, ci = load_workflow("ci.yml")
         steps = [step for step in ci["jobs"]["policy"]["steps"]
