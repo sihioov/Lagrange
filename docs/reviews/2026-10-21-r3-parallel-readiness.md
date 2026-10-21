@@ -491,3 +491,44 @@ producer를 먼저 정지했거나 일부 교체로 mixed 상태가 되면 :567�
 14테스트 반복·CI/build/push/merge·운영 조회/DB/lease/provider/배포 및 agent/heartbeat는 없다.
 미해결/확인 못한 항목은 B의 UNKNOWN, 새 후보/off SHA, exact schema/grant/예산 관측 호출과
 stopped/mixed 복구 바인딩이다. 이 공백을 새 스크립트나 승인 대기로 바꾸지 않고 부모에게 인계한다.
+
+
+## 11. 독립 R3 제안 후보와 OFFLINE hosted-CI 입력 패킷
+
+2026-10-21 부모 지시에 따라 제안 후보를 **`1ec5f1626a2db41eb0854be188292f6ad0534449`**로
+고정했다. 이 절을 추가한 문서 HEAD는 후보가 아니다. §10.A의 미정 source 후보를 이 제안으로
+구체화했으며 off/activation runtime 후보·이미지·설치 인수는 여전히 미정이다.
+
+- `git merge-base --is-ancestor fccb683 1ec5f16` exit0. 사이6커밋을 패킷에 기록했다.
+  tracked 실행 소스 차이는 D1 route와 page-seam 두 파일뿐이며 `7b7f219`의 blob과 동일하다.
+- 문서 차이5개는 ROADMAP, R3 handoff/review, R2 G4 review, R2 daily-input plan이다.
+  **fccb 대비 R2 절 전체 byte 동일은 아니다**: R3 분기 전 `1c53a1a`/`73f2593`의 역사/상태 문구를
+  상속했다. fccb 대비 R2 task/checkbox는 동일하고 R3 분기점73f2593 대비 R2 절 전체가 동일하다.
+  diagrams, Cargo/npm lock과 모든 package.json은 fccb와 byte 동일하다. 예상 밖 실행 소스 변경 없음.
+- 후보 `.github/workflows/ci.yml`을 기존 설치 YAML2.9.0으로 파싱해 job/step별 행과 run/if/env/needs,
+  checkout action SHA·기본 source ref 의미, npm script 확장 및 호출 검사 소스의 해시를 기록했다.
+  **8 jobs / required 선행7 / checkout7 / run-step64**. checkout action SHA는 source SHA가 아니며
+  미래 hosted checkout이 정확히1ec5f16을 검증해야 한다. 현재 hosted run/checkout은 null이다.
+- 선택 회귀는 후보의 실제4파일에서 **Rust57/Python10**을 재추출했다. Cargo workspace 명령과
+  build-production-images-self-test→build-disabled-daily-self-test 호출을 연결했다. 과거 R2 packet은
+  파일 선택 참고일 뿐 정의를 복사하지 않았고, reconstruction의 실제 `linux_tests::` 한정명을 보존했다.
+  직접 참조 검사 파일38개·근거 blob187개·Python AST inventory463정의를 보유한다.
+  이 inventory는 동적 호출 전체나 runtime 실행 개수가 아니다. 필수 정의와 실제 성공을 구분한다.
+- 기존 npm 설치/원본·수정 route/red/green 등 **13개 원본 증거**의 bytes/hash를 다시 대조했다.
+  후보 route/test는 인수된7b7f219와 동일, 원본 route 복원과 red4fail/10skip→green14pass/0skip·exit0,
+  lock/package 원래 해시를 연결했다. 이번에는 그 테스트·설치를 반복하지 않았다.
+
+패킷은 ignored `target/r3-ci-inputs/1ec5f16/ci-inputs.json`:
+**806,091 bytes**, SHA-256 `205aa1be909028d860288eb5869cf08f5b2f55f4ee019b7b0ebc6c0bb50bb893`.
+같은 폴더의 `extract.py`/`extract-workflow.mjs`·README·`blobs/<sha256>`가 추출 근거이며,
+`nice -n 10 python3 target/r3-ci-inputs/1ec5f16/extract.py`로 재현한다. 추출기 해시도 패킷 안에 있다.
+`verification.json`은 재추출 byte 동일·187blob/13receipt 해시 대조 PASS(exit0)를 기록한다.
+첫 추출의 npm manifest 변수명 오류 `NameError`(exit1)는 a1 소스/실패 기록으로 보존하고
+해당 변수만 바로잡았다. 제품 코드·CI 정의 변경은 없었다. 패킷·원본 로그·캐시는 Git 비추적이다.
+
+다음은 부모의 패킷 검토 및 **고정 후보1ec5f16의 실제 CI 순서 결정**이다. R2 frozenfccb/build root/
+manifest/registry를 변경하지 않았다. 전달받은 a3 실행·OwnerV2 복원 책임은 부모에게 있으며
+이 오프라인 패킷은 새로운 운영 관측이나 공동창 개시 근거가 아니다. GitHub 조회/dispatch/poll/
+push·CI·이미지·build·DB/provider/lease·배포·운영 인수는 **미실행**이다.
+미확인: hosted 실행/정확 checkout/결과, 새 이미지·manifest, 설치 revision과 §10 runtime gap.
+정적 dependency inventory의 동적 완전성·branch protection 설정·전체 test 수는 주장하지 않는다.
