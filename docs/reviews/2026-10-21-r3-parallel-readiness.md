@@ -590,3 +590,36 @@ wave136 recovery는 소스 참고만 했으며 실행하지 않았다. 완료 jo
 사전 고정된6회 관측을 끝내고 `handoff.json`으로 인계한다. 로컬 테스트/빌드·R2 운영 조회·DB/
 Docker/systemd/sudo·provider/lease·이미지/배포는 미실행이다. R2 절/체크박스와 source/diagrams/
 lock/package는 이번 문서 변경 전후 동일하다. 후보/source·원본 packet/로그를 보존한다.
+
+
+## 13. 원래 CI 종결과 서식만 보정한 다음 후보
+
+2026-10-21 후속 범위에서 원래 run39549529746 attempt1을 재실행/취소 없이 회수했다.
+05:51:12.225587UTC terminal FAILURE; 성공6jobs, Web/required 실패다.
+전체8로그·정확checkout7, 후보에서 고정한 Rust57/Python10 실제 이름 결과와
+PG19 정확label/exit0/no-skip를 확인했다. Web의 hosted14는 여전히 SKIPPED이며 인수하지 않는다.
+원본 partial/intent/log는 보존했다. `target/r3-hosted-ci/1ec5f16/recovery-terminal.json`
+79,887bytes/SHA256 `c0d986b260bfad33e87060a6609866d8ec8174789f35109eb91fa420ff805589`.
+관측 재개 중30초 미만 호출1회는 로컬 guard에서 network 전 거부됐고 별도 영수증에 보존했다.
+
+허용된 테스트 파일에만 기존 locked Biome2.5.7의 `format --write`를 적용했다.
+Node24.13.1/TypeScript5.9.3/Vitest4.1.10; `nice -n 10`, NODE_OPTIONS=--max-old-space-size=2048.
+apps/web에서 formatter 및 `biome check tests/stock-beta-intraday-page-seam.test.tsx` 각각 exit0.
+타입 인자/it.each의 줄바꿈·들여쓰기·후행 쉼표만 바뀌었다. TSX parse diagnostics0,
+순서 있는 AST node kind/leaf text 동일, route·package/lock·diagrams 해시 불변이다.
+`vitest run tests/stock-beta-intraday-page-seam.test.tsx --maxWorkers=1 --no-file-parallelism
+--reporter=json --outputFile=<worktree>/target/r3-format-correction/focused.json`을 한 번 실행해
+**14PASS/0FAIL/0SKIP/exit0**. 새 의미 결함은 없고 전체 로컬 검사/build는 하지 않았다.
+
+증거는 ignored `target/r3-format-correction/`: 보정 전 blob, 명령/로그/exit,
+`semantic-result.json`(424bytes/SHA d19174c9d09fe970f70e7c1d8a8253a1ddd21c462272c3ea254ad01aad767e96),
+`focused.json`(5362bytes/SHA 53efad221ea868f22cdec8e462abc31f9a8dbf37249aec3c820bce7e670103f3),
+`integrity.json`(294bytes/SHA 0bf43b805edde045c470eeec24bc148dc180411a087e87c4397ec058466c6f63).
+첫 기록 harness는 성공한 AST 출력과 process receipt 이름이 겹쳐 FileExistsError로 끝났다.
+기존 출력/오류를 보존하고 미실행 focused만 continuation에서 실행했으며 테스트 중복은 없다.
+
+이 절과 서식 보정을 함께 커밋한 정확한 SHA를 새 immutable 후보로 고정한다.
+다음은 그 후보 자체의 별도 CI 입력 패킷 재추출·검증→별도ref nonforce 게시→CI 단1회다.
+후속 문서 HEAD를 후보로 치환하지 않는다. 기존1ec5f16 packet/실패는 불변이며
+R2 원래a3 완료/Owner복원은 부모 전달 사실일 뿐 이 작업에서 운영 조회하지 않았다.
+R2 배포창은 부모 담당이며 R3 이미지/배포/수신/운영 인수는 계속 미실행이다.

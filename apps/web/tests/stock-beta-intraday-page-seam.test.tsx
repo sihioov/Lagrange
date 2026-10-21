@@ -30,9 +30,8 @@ vi.mock("@/lib/api/server-products", () => ({ getProductApi: mocks.getProductApi
 vi.mock("@/lib/api/server-session", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("@/lib/i18n/server", () => ({ getLocale: mocks.getLocale }));
 vi.mock("@/components/stock-beta/quote/intraday-stream-provider", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/components/stock-beta/quote/intraday-stream-provider")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/components/stock-beta/quote/intraday-stream-provider")>();
   return {
     ...actual,
     IntradayStreamProvider: (props: ComponentProps<typeof actual.IntradayStreamProvider>) => {
@@ -133,34 +132,45 @@ afterEach(() => {
 describe("Stock Beta intraday page seams", () => {
   // Observe props at the real page -> detail/workspace -> provider boundary.
   // SSR drives rendering only; membership assertions do not inspect its HTML.
-  it.each([0, 1])("passes only selected READY membership %s to the detail provider", async (index) => {
-    vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
-    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
-    mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
-    const memberships = [streamMembership(0), streamMembership(1)];
-    const selected = streamMembership(index);
-    const api = apiFor();
-    api.getOwnerEquityV2Memberships.mockResolvedValue({ ...MEMBERSHIPS, memberships });
-    api.getOwnerEquityV2SignalDetail.mockResolvedValue({
-      ...DETAIL,
-      signal: { ...SIGNAL, instrument_id: selected.instrument_id, generation: selected.generation },
-    });
-    mocks.getProductApi.mockResolvedValue(api);
+  it.each([0, 1])(
+    "passes only selected READY membership %s to the detail provider",
+    async (index) => {
+      vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+      vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+      mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+      const memberships = [streamMembership(0), streamMembership(1)];
+      const selected = streamMembership(index);
+      const api = apiFor();
+      api.getOwnerEquityV2Memberships.mockResolvedValue({ ...MEMBERSHIPS, memberships });
+      api.getOwnerEquityV2SignalDetail.mockResolvedValue({
+        ...DETAIL,
+        signal: {
+          ...SIGNAL,
+          instrument_id: selected.instrument_id,
+          generation: selected.generation,
+        },
+      });
+      mocks.getProductApi.mockResolvedValue(api);
 
-    await renderAsyncPage(
-      await StockBetaDetailPage({ params: Promise.resolve({ instrument: selected.instrument_id }) }),
-    );
+      await renderAsyncPage(
+        await StockBetaDetailPage({
+          params: Promise.resolve({ instrument: selected.instrument_id }),
+        }),
+      );
 
-    expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        enabled: true,
-        sessionKey: `${OWNER_SESSION.user_id}:${OWNER_SESSION.expires_at_secs}`,
-        memberships: [selected],
-      }),
-    );
-    expect(api.getOwnerEquityV2SignalDetail).toHaveBeenCalledExactlyOnceWith(selected.instrument_id);
-    expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
-  });
+      expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          enabled: true,
+          sessionKey: `${OWNER_SESSION.user_id}:${OWNER_SESSION.expires_at_secs}`,
+          memberships: [selected],
+        }),
+      );
+      expect(api.getOwnerEquityV2SignalDetail).toHaveBeenCalledExactlyOnceWith(
+        selected.instrument_id,
+      );
+      expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(["generation mismatch", "not READY"])(
     "passes no detail demand for %s even with another READY membership",
@@ -184,12 +194,18 @@ describe("Stock Beta intraday page seams", () => {
       });
       api.getOwnerEquityV2SignalDetail.mockResolvedValue({
         ...DETAIL,
-        signal: { ...SIGNAL, instrument_id: selected.instrument_id, generation: selected.generation },
+        signal: {
+          ...SIGNAL,
+          instrument_id: selected.instrument_id,
+          generation: selected.generation,
+        },
       });
       mocks.getProductApi.mockResolvedValue(api);
 
       await renderAsyncPage(
-        await StockBetaDetailPage({ params: Promise.resolve({ instrument: selected.instrument_id }) }),
+        await StockBetaDetailPage({
+          params: Promise.resolve({ instrument: selected.instrument_id }),
+        }),
       );
 
       expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
