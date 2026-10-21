@@ -3011,3 +3011,45 @@ acceptance and DailyOFF/epoch0 remain; lastObservedAt remains the scoped13:41:12
 calendar observation, not this GitHub/local review. New images/runtime0 and no restoration
 owed. Actual Owner use/market reception and three consecutive scheduled trading days remain
 unverified/0. Historical failures,32 unrelated ROADMAP additions and.archify are preserved.
+
+## Wave149 exact off CI accepted; original a9 running (2026-10-21 14:47UTC)
+
+CI39615546307 attempt1 completed SUCCESS. All8 full logs,7 exact candidate checkouts,
+137 frozen Rust definitions,149 Python definitions,19 real PostgreSQL process exits0
+with no skip, and hosted page-seam14 were reconciled. The strict original extractor
+closed without a new attribution correction or rerun. Closure
+`ci/7d91ba0/hosted-source-closure.json` is221156bytes,
+SHA256935ccf0d1030ac62bd59fdf01209c309eed1973b8b3fdabe2a95a2e2238f6537.
+
+Fresh preparation14:45:44–45UTC verified the11 monitored container lifecycles,
+all21 Docker inventory entries, exact60d serving identities, DailyOFF/epoch0/zerojobs,
+normal work settled, new AUX/manifest/units absent, and preserved release-lock identity.
+The inventory names match the previous a8 observation; the new record reports its
+actual21-entry inventory without inheriting a historical19-entry scope count.
+The clean7d worktree and reviewed control pins matched before sealing.
+
+Original a9 launched ONCE14:46:17.672472UTC after independent recovery READY.
+RecoveryPID2582092 owns stop/build/start; original buildPID2582802. The original
+same-boot window expires2026-10-22T02:46:17.435318Z and must never be renewed.
+Original Owner7d932b14… returned normal stop0 and drained. At14:46:59.188229UTC,
+bootstrap andmigrate images had succeeded,API was building,3 retained gates werePASS,
+MemAvailable5909704KiB andSwapFree532020KiB. Build and recovery were running;
+ExecMainStatus0 is not terminal acceptance. Owner restoration is still owed.
+
+The first progress observer returned exit1/hash68ffd46a…; its exact cause isUNKNOWN
+because only the exit/hash was retained. A separate read-only observer accepts an
+absent early gate file as not-yet-observed, without accepting a build; the subsequent
+observation recovered the original live units and receipts. No build/lifecycle retry
+was made, and the original observer remains unchanged. The terminal verifier is bound
+to actual original build/recovery/stop PIDs and invocation IDs plus the original window
+and staged payload hashes. Execute it only after all4 original units are terminal0
+and recursively drained; require all12 images/49PASS gates and original Owner restored.
+
+Tracking handoff `wave149/off-7d91ba0/a9/running-handoff-20261021T1447.json`
+is227096bytes, SHA256e68cc4721ecc669b4b9324e54a5a538a073c9c91ea16d6722b0ae2f27100f1c5.
+Protected off-input publication and off/check/return runtime operations have not run.
+Installed60d is retained. R2 Sep15 dividend153130 SOURCE_CONFLICT remains unresolved;
+no source omission/replay, first-session rebind, input admission, or Daily activation.
+DailyOFF/epoch0,actualfirstSessionnull and0 actual consecutive trading days remain.
+No completed old CI/test/build was repeated; historical failures and unrelated additions
+are preserved. Next action is only original a9 observation/terminal/restoration recovery.
