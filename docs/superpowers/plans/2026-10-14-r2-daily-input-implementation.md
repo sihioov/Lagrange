@@ -9387,3 +9387,43 @@ Original a5 was submitted once13:39:22UTC. Supervisor2458446/invocation3d81258be
 R3 persistent-state metadata was observed, but full state/budget validation is NOT accepted. The installed official provisioning check requires quotes modeoff and a stopped runner; the observed config isowner_only/running. It was not invoked, bypassed, or replaced by direct-validator access. No authenticated normal Owner browser connection is exposed in the current tool set; no cookie/token extraction, fabricated lease/demand, READY promotion, quote or historical session was substituted. Actual current-market reception, authenticated screen/lifecycle,30-symbol/capacity and finalR3 acceptance remainOPEN. Next bounded work must address these concrete prerequisites using current actual evidence; do not repeat completed CI/tests/build/capture or silently loosen source/state contracts.
 
 The registry handoff `wave148/source-conflict-r3-calendar-accepted-handoff.json` is215160bytes/SHA2560a67629a133c5cbc05a6c7b03e4eea20f62626aa9f4a8819071daa069bffee25. lastObservedAt advances only to the scoped13:41:12 calendar/terminal observation. Installed60d serving acceptance remains; historical failures/UNKNOWNs/0120 and the32 unrelated ROADMAP additions/.archify are preserved. No product-source or structural change, no test/CI rerun. Same-agent heartbeat219449b8 remains tracked; renewBy21:00UTC, not an outage-protection claim.
+
+### Wave148 local contract review: incompatible historical off release (2026-10-21 14:09UTC)
+
+R3-01 now has a concrete additional prerequisite: the historical quotes-off commit
+`a68e4dd753271d15f5311e85c1de573e046b7e96` lacks
+`configs/evidence/owner-beta-daily-reader-v1.json` in its Git tree and ends at migration0057.
+The current reader guard requires that exact reader marker once the durable floor exists;
+its contract requires0060–0062 and preservation of Daily history. This is a local source
+compatibility conclusion, not a new inspection of the old installed release or database.
+Do not roll back to a68 or remove the floor. Prepare a distinct clean, compatible immutable
+off candidate with separate protected inputs and its matching V2 image set, then bind an
+actual off/return operation and independent restoration before changing services. Existing
+60d installed inputs stay immutable. No new candidate, image build, service stop or rollback
+was executed in this review.
+
+The full state validator acquires both the exclusive connection anchor and exclusive state
+anchor (`crates/kis-client/src/market_stream_state.rs:1713`). Thus the official provisioning
+wrapper's quotes-off and stopped-runner requirements are intentional isolation boundaries;
+a direct image invocation against the running producer is not an acceptable substitute.
+Normal authenticated Owner use and actual market reception remain unverified. The bounded
+procedure and its still-unbound candidate, manifest, protected inputs and lifecycle/recovery
+identities are recorded in `wave148/contract-boundaries-20261021T1415.json`
+(6261bytes, SHA256fde5cabf60077521d573d2a53c65938050c57bd36a8bfae3fa45a14b36d25767).
+
+For R2, the [pinned official dividend sample](https://github.com/koreainvestment/open-trading-api/blob/2077773a69a428daf63e148182511f068cc45de3/examples_llm/domestic_stock/ksdinfo_dividend/ksdinfo_dividend.py)
+only continues an M response with N and unchanged query. The reviewed public evidence does
+not establish a100-row completeness limit or authorize following terminal F. The historical
+workbook is described in the source-contract runbook but its untracked local file was absent;
+no fresh workbook inspection is claimed. The Sep15 positive/empty conflict remains UNKNOWN
+and blocks admission; neither original was omitted and no provider retry or activation ran.
+
+This was a local/source/public-document review: no production observation, tests, CI or
+runtime mutation. lastObservedAt remains13:41:12.635417UTC for the previously accepted calendar
+closure only. A stale legacy scope alias in the registry was preserved and reconciled to
+that existing scoped evidence; this does not establish new host health. Phase remains
+actual_input_source_conflict. Handoff `source-contract-off-compatibility-handoff-20261021T1415.json`
+(216175bytes, SHA2561b8b4a3fa543fb4ad1ef7c9abb70c286e41a2eae8b1109fa4b46c71399afb33f)
+is now the registry pointer. Heartbeat219449b8 remains tracked with21:00UTC renewal deadline.
+DailyOFF/epoch0, firstSessionnull, actual consecutive trading days0 and all prior failures
+remain; no structural change or diagram update.
