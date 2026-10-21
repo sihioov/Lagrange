@@ -2741,3 +2741,26 @@ wave146/isolation-contract-result.json. Actual fresh-store hosted execution
 remains required. Parent integration3f2 and R3 isolatedPG evidence are retained.
 No new image/root staging/stop/deployment/provider/token request. Serving866,
 DailyOFF/epoch0/firstSessionnull/actualdays0 and source gaps remain unchanged.
+
+
+#### Wave146 CI context correction — 2026-10-21 09:27 UTC
+
+First isolation source51b9bb216f2f2a7d5bd3e452cd770fc24c5c93a9 was published;
+the single workflow_dispatch returned exit1 at09:24:55UTC (stderr295bytes,
+hash retained; raw error text not retained). Read-only recovery found automatic
+push validation39576766320 attempt1/FAILURE and no check-run annotations.
+Do not claim a successful dispatch or executed tests. Both failed sources and
+all receipts remain; no retry of either original dispatch.
+
+GitHub's official context availability contract excludes runner from job.env:
+https://docs.github.com/en/actions/reference/workflows-and-actions/contexts .
+The invalid reference is removed. A first post-checkout shell step creates
+a private0700 mktemp directory under RUNNER_TEMP and writes RUSTUP_HOME to
+GITHUB_ENV for subsequent steps. The pinned compiler/components and existing
+test commands are unchanged. Two focused tests passed: workflow ordering and
+no toolchain override, plus actual shell execution with a spaced temporary path
+and fail-closed missing RUNNER_TEMP without changing the environment file.
+Receipt: wave146/isolation-contract-corrected-result.json. The earlier weak
+static-only PASS is preserved and is not evidence of hosted syntax validity.
+No production change, new images, provider/token request or old Raw replay.
+Next is a distinct fixed corrected source with one original CI invocation.

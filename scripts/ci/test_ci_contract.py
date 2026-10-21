@@ -41,10 +41,13 @@ class WorkflowContractTests(unittest.TestCase):
     def test_workspace_rustup_store_is_isolated_without_toolchain_override(self) -> None:
         _, ci = load_workflow("ci.yml")
         job = ci["jobs"]["workspace-tests"]
-        self.assertEqual(
-            job["env"]["RUSTUP_HOME"],
-            "${{ runner.temp }}/lagrange-rustup-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
-        )
+        self.assertNotIn("RUSTUP_HOME", job["env"])
+        self.assertFalse(any("runner." in value for value in job["env"].values()))
+        setup = [step for step in job["steps"]
+                 if step.get("name") == "Prepare isolated Rust toolchain store"]
+        self.assertEqual(len(setup), 1)
+        self.assertEqual(job["steps"].index(setup[0]), 1)
+        self.assertNotIn("if", setup[0])
         for env in [ci.get("env", {}), job["env"],
                     *(step.get("env", {}) for step in job["steps"])]:
             self.assertNotIn("RUSTUP_TOOLCHAIN", env)
@@ -56,6 +59,30 @@ class WorkflowContractTests(unittest.TestCase):
         for step in job["steps"]:
             self.assertNotIn("continue-on-error", step)
             self.assertNotIn("RUSTUP_HOME", step.get("env", {}))
+
+    def test_workspace_rustup_setup_creates_private_store_and_requires_runner_context(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        script = next(step["run"] for step in ci["jobs"]["workspace-tests"]["steps"]
+                      if step.get("name") == "Prepare isolated Rust toolchain store")
+        with tempfile.TemporaryDirectory(prefix="rustup CI contract ") as root:
+            env_path = Path(root) / "job-env"
+            env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": root,
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                   "GITHUB_ENV": str(env_path)}
+            result = subprocess.run(["bash", "-c", script], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            key, value = env_path.read_text().strip().split("=", 1)
+            self.assertEqual(key, "RUSTUP_HOME")
+            store = Path(value)
+            self.assertEqual(store.parent, Path(root))
+            self.assertTrue(store.name.startswith("lagrange-workspace-rustup-123-1."))
+            self.assertEqual(store.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(list(store.iterdir()), [])
+            original = env_path.read_bytes()
+            del env["RUNNER_TEMP"]
+            result = subprocess.run(["bash", "-c", script], env=env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(env_path.read_bytes(), original)
 
     def test_grant_inspection_postgres_is_a_required_policy_step(self) -> None:
         _, ci = load_workflow("ci.yml")
