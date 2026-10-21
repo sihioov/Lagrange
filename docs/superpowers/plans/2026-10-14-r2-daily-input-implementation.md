@@ -9094,3 +9094,20 @@ no provider/token request or consumed Raw replay. Serving866, DailyOFF/epoch0,
 firstSessionnull and actual days0 remain. R3 read-only window evidence was verified;
 no further R3 runtime operation is started. Preserve32unrelated ROADMAP additions,
 .archify, all partials/old failures and protected production resources.
+
+
+#### Wave144 exact corrected candidate dispatched — 2026-10-21 08:39 UTC
+
+Corrected source83d1de3fba0870c6d50acfe7e405edd9bf907212 is nonforce-published
+at r2-ci-83d1de3-20261021. CI39570874665 attempt1 was dispatched exactly once
+08:39:02UTC and observed in progress08:39:33UTC. Frozen wave144/ci-inputs.json
+contains unchanged89Rust/94Python definitions,66run commands and7checkouts;
+local source pins bind both the first-session tests and corrected static/legacy
+fixture results. Exact publish/dispatch intent/results and sole-run observation
+are retained under wave144. No acceptance is claimed before terminal evidence.
+Clean source /data/worktrees/3puw275b/r2-release-83d1de3 was created with umask022.
+No new images, install, root staging, daily control change or provider call.
+Original0c70974 policy failure remains; recover its still-pending workspace/PG
+terminals and all logs without rerun/cancellation. This documentation commit is
+not the build candidate. Registry points to wave144/corrected-first-session-ci-running-handoff.json;
+last host observation remains only08:29:41 metadata validation, not this CI time.
