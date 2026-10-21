@@ -9517,3 +9517,65 @@ no source omission/replay, first-session rebind, input admission, or Daily activ
 DailyOFF/epoch0,actualfirstSessionnull and0 actual consecutive trading days remain.
 No completed old CI/test/build was repeated; historical failures and unrelated additions
 are preserved. Next action is only original a9 observation/terminal/restoration recovery.
+
+## Wave150 existing state validated; original runtime restored (2026-10-21 15:17UTC)
+
+The original a9 completed all12 immutable images and49PASS gates. Independent recovery
+accepted all4 original units normal0/empty cgroups, original Owner restored and current60d
+at15:05:12.278692UTC. Closure `wave149/off-7d91ba0/a9/image-restoration-observation-20261021T150512.json`
+is858047bytes, SHA256f13e10ae7f23e7845b64628fe3059c48dbb141447ade9929ca3c4a0fca4c833f.
+No new CI, build replay or original-window extension occurred.
+
+Protected off inputs were published once15:05:44UTC, changing only release commit,
+quotes mode and embedded supplier release commit; budgets/generation/Owner/policy remain.
+Official off-serving a1 launched once15:05:52UTC. Immutable7d install/check and KIS
+install-disabled succeeded, but status preflight returned `SERVICE_STATUS_ERROR CONFIG_INVALID`.
+Source `install-service-status.py:169` requires quotes=owner_only. No serving-refresh intent
+was submitted. Its owned recovery returned current60d to the original status policy and
+restored the status timer; independent15:08:26UTC verification found all11 original
+containers unchanged, no restoration owed. This failure is not off-serving acceptance.
+Failure/restoration closure is51547bytes, SHA256380a557eb6800bad6e661fa6840094dbe1630f6d5dbeca8dbdb130478e0f5b39.
+
+The official provisioning contract requires current compatible off inputs and stopped
+Owner runners; it does not require API/Web re-creation (runbook `kis-market-stream-operations.md:97-118`,
+`provision-owner-market-stream.py` installed_context/check_image_and_runner). A distinct
+c1 diagnostic used this narrower supported path: normal-stop the existing60d Owner,
+fence the status timer, select the already-installed7d artifact using official rollback,
+check the immutable install, run official `--check`, return current60d using official
+rollback, single-start the same original Owner, and restore the original status timer.
+No status-policy bypass/replacement, service re-creation, state initialization, provider
+call, DB write, grant/lease manufacture, or Daily activation was submitted. This is
+existing-state validation, not a full off-serving deployment/rollback acceptance.
+
+The independent recovery was READY before its sole request15:15:04UTC; originalPID2660251,
+InvocationID01f900da60b84010a5eebd72dc5c9796. Its seven owned units all completed normal0
+and drained; original stop/start returned the same Owner7d932b14… identity. The official
+validator returned exactly `OK_VALIDATED`. Existing recovery semantics were reused with
+a bounded new transaction;13 focused failure/order checks passed. The tests include
+failed/uncertain stop, pending launcher, failed check, failed current return, receipt
+failure and daemon-owned leftover check-container prevention. A missing unchanged probe
+dependency was caught before root staging. The inherited a9 deadline remains exactly
+2026-10-22T02:46:17.435318Z/endMono5011164.358310943; it was not extended.
+
+Independent15:16:59.361229UTC closure `wave149/off-7d91ba0/state-check-a1/state-restoration-closure-20261021T151659.json`
+is66579bytes, SHA2569b3f5b516edaeca82e2ea557e067fb0020d9ac213fdabfb130de720045f93e38.
+It verifies retained source/output hashes, all7 original terminal identities/empty cgroups,
+current60d, same original Owner/image healthy, other10 monitored containers unchanged,
+full21-container inventory unchanged (temporary check cleanup proven), status timer/policy
+restored, both60d/7d KIS units disabled, DailyOFF/epoch0/zerojobs and retained release-lock
+identity. The first independent verifier failed before execution because a broad ORIGINAL
+placeholder also changed its result string; generated SyntaxError was reproduced locally.
+Original179-byte failure receipt is retained; a separate corrected verifier used distinct
+placeholders and AST validation. There was no diagnostic or lifecycle retry.
+
+Registry handoff `wave149/off-7d91ba0/state-accepted-handoff-20261021T1517.json` is239217bytes,
+SHA2562fdfc82cb293481badf28c5db4722463898544dcef694bd9e8056291d54a9061.
+lastObservedAt is the scoped15:16:59.361229UTC host observation; no restoration remains owed.
+The normal authenticated Owner screen, current trading-date proof/reception and30-symbol
+pilot remain unverified. Oct21 proof is not Oct22 proof. The official first-session
+rebind helper also requires a future KST civil date; no replacement date is invented.
+R2 Sep15 dividend153130 SOURCE_CONFLICT remains unresolved, with no source omission,
+provider replay, input admission, date rebind, Daily activation or actual scheduled day.
+DailyOFF/epoch0, firstSessionnull and actual consecutive days0 remain. Full off-serving
+status/rollback support still requires source-level resolution; old completed tests/CI
+were not repeated. All original failures,32 unrelated ROADMAP additions and.archify remain.
