@@ -2353,3 +2353,50 @@ backup/G4 acceptance and all historical failures remain. Daily activation,
 actual inputs, Owner use, three consecutive actual days and C_R2 remain OPEN;
 firstSession=null. R3 has no shared production window during this original a4.
 No structure changed; diagrams/.archify and32 unrelated ROADMAP additions remain.
+
+
+### Wave141 — immutable serving deployment accepted; actual inputs remain open (2026-10-21 KST)
+
+R2-04/R2-09 remain DOING. Exact candidate91324123d41c3d4e0057b2cb053fd36b03e2b7f0
+completed the original a4 build:12 images/49 PASS gates and original normal Owner
+restoration were independently recovered at06:30:22UTC. Closure e050dc200ea45d9761c1d64700e6cb9fb5fe3739e68036d1e7fb16e46f5dc81b
+(857169bytes); manifest a0d1d5e33cccc10f006a7efaf98686fb5d14b1adae747f66c2a09858249b5409
+(2597bytes). The official immutable installer/applicable installed check passed
+06:30:47UTC. This retains prior e639169/fccb683 releases and all original evidence.
+
+Serving a1 stopped before its runtime-transition intent: official status apply
+rejected ACTIVATION_STATE_UNAVAILABLE. Retained journal999e38a9 shows the original
+status timer ran after current changed but before its policy changed, leaving the
+service failed. No serving containers changed in a1. No source patch, repeated
+CI/test/build, reset-failed or manual status-service start was used to conceal it.
+Distinct a2 restored matching old current, observed the original timer's natural
+normal exit0, then stopped/drained only that timer across current/policy transition.
+The official installer restored the timer. All a1 failures and files remain.
+
+Original a2 submitted once06:35:35UTC. Official scoped refresh replaced API, Web
+and OwnerV2 sequentially; original Owner normal exit0 is retained. The root command
+and all original children terminated0 with MainPID/ControlPID0/empty cgroup. Direct
+API /readyz and Web /healthz checks passed. Independent06:37:20.234192UTC closure
+325ee05d9d25ace08a32e1ab7c03bafb59605599140bedd3537344a623622782 (62188bytes)
+verified all three exact9132412 image revisions and healthy lifecycle, eight other
+original containers unchanged, actual DailyOFF/epoch0/zero jobs, status timer
+restored, KIS units disabled and original release lock retained. No restoration
+obligation remains. This is scoped serving acceptance, not all-worker replacement,
+authenticated Owner use or actual daily-input admission.
+
+KIS raw-source/action-supply units were officially installed disabled; supplying
+validated configuration/inputs and normal-time activation remain separate. No
+provider call, fabricated first session or automatic-day observation occurred in
+this deployment. The expired Oct21 candidate is not revived: firstSession=null.
+Next derive actual source gaps, perform distinct bounded recovery and independent
+admission, resolve real calendar/date binding, then official daily activation DBLAST.
+Owner use, three consecutive actual trading days and C_R2 remain OPEN.
+
+The existing R3 agent's228a8da CI39552229552 all8 acceptance was independently
+checked. It lacks the five9132412 operating-guard source files, so a distinct
+combined candidate/frozen hosted CI was authorized in the separate worktree.
+No R3 production window or market connection has been granted. Shared operations
+remain serialized; R2 frozen candidate/manifest are unchanged. The latest registry
+handoff is wave141/serving-accepted-inputs-pending-handoff.json c65585e2...
+Heartbeat0f8c84f7 renewBy13:50UTC. No structure changed; diagrams,32 unrelated
+ROADMAP additions,.archify, historical failures and all protected paths are retained.
