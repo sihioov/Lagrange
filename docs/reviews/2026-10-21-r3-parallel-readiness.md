@@ -8,7 +8,7 @@
 **판정:** R3-01 소스·계약 대조와 R3-06 공개 자료 재확인을 진행했다. 실제 설치 재검증,
 시장 연결·수신·Owner 화면 인수는 수행하지 않았다. 상세 화면이 전체 READY 수요를 만드는
 소스 차이 1건을 확인했다. 후속 §8의 수정/회귀 `7b7f219`를 §9에서 검증해 수정 전 4실패,
-수정 후 해당 suite 14통과를 확인했다. 다음은 부모 통합 검토와 R2 담당이 조율할 운영 전제 확인안이다. R2 완료를 기다릴 필요는 없으나 공유 운영 변경은 직렬화한다.
+수정 후 해당 suite 14통과를 확인했다. 부모는 D1만 SOURCE_FIX_AND_FOCUSED_REGRESSION_ACCEPTED로 인수했다. 다음 공동창의 도구·전제는 §10에 구체화한다. R2 완료를 기다릴 필요는 없으나 공유 운영 변경은 직렬화한다.
 
 ## 1. 승인, 역사 증거, 현재 미확인을 분리
 
@@ -402,3 +402,92 @@ D1의 한정 소스 회귀 검증은 완료했고 다음은 부모 통합 검토
 복구·예산·시각은 다음 조율 범위이며 이번 의존성 설치는 R2 인증 복구나 운영 인수 증거가 아니다.
 확인하지 못한 사실: 전체 타입/빌드·브라우저/RSC·실제 lease/수신과 §7의 운영 항목(이번 범위 밖).
 지정된 D1 집중 회귀에서 미해결 실패는 **없음**이다.
+
+
+## 10. 부모 D1 인수 이후 — §5 실행 순서의 공식 도구 바인딩
+
+2026-10-21 부모가 `7b7f219` 소스/회귀와 `4f50f3f` 검증 문서·원본 결과를 직접 대조해
+**D1 SOURCE_FIX_AND_FOCUSED_REGRESSION_ACCEPTED**로 인수했다. 전체 R3 SOURCE_LOCAL/
+LIVE/FINAL 인수나 merge·배포가 아니다. 이 절은 §5를 구체화하며 새 실행 승인을 요청하지 않는다.
+아래 소스 행은 `4f50f3f` 기준이고 모든 명령은 **미실행 실행안**이다. 운영값은 모두 UNKNOWN이다.
+
+### A. 통합→새 immutable 후보→동일 revision 설치/실행 (§5.1·4)
+
+1. 부모가 독립 R3의 D1 `7b7f219` 및 검증 `4f50f3f`를 통합 검토한다. R2 frozen `fccb683`,
+   그 build worktree·manifest에는 합치거나 덮어쓰지 않는다. 이후 별도 clean R3 source 후보를
+   확정하며, 이미 인수된 R2 변경과 reader 호환성을 포함할 기준선은 부모가 당시 상태로 선정한다.
+   **후보 SHA는 아직 미정**; 현재 문서 HEAD를 검증된 release 후보로 간주하지 않는다.
+2. 새 후보 확정 후 `.github/workflows/ci.yml`:3–8의 PR/main 또는 workflow_dispatch 경로로
+   **그 후보** CI를 진행한다. checkout(:27–29), Web job(:133–149) 등 전체 필수 결과가
+   정확한 후보 SHA를 검사했는지 부모가 인수한다. R2 CI 성공이나 D1 14통과로 대체하지 않는다.
+3. 그 SHA의 clean build root에서 `LAGRANGE_CODE_COMMIT=<candidate>`를 바인딩해
+   `scripts/ops/build-production-images.sh --plan/--preflight/--apply --env-file <protected-path>
+   --manifest-file <new-absolute-path>` 순서다. mode는 각각 별도 호출이다.
+   builder :128–148은 HEAD/clean 일치를, :159–208은 12이미지 ID/OCI revision 및 새 V2 manifest를
+   강제한다. :323–365는 1서비스씩 B1–B4 순차 처리와 각 batch gate다. 기존 jobs2/parallel1,
+   저우선순위 background·batch별 자원/health 조건은 유지하며 R2 빌드와 직렬 조율한다.
+4. CI/이미지 인수 뒤 `deploy-production-release.sh --apply --commit <candidate>
+   --env-source <protected-path> --release-manifest <new-manifest>`로 설치한다(:32–57,218–299).
+   installer는 exact Git archive·env commit·manifest를 묶어 current를 전환할 뿐 runtime 갱신이 아니다.
+   quotes-off와 activation env를 같은 설치 commit에 덮어쓰지 않는다. 별도 activation commit이
+   필요하면 그 commit도 자체 CI·12-image manifest를 거친다(runbook market-stream :48–53,177–200).
+5. 실제 실행 변경은 아래 전제/복구가 고정된 창에서만 설치본 `compose-release.sh --scope release
+   --refresh-market-stream --refresh-from-commit <actual-running-source> --plan`, `--preflight`,
+   마지막 `--apply` 순서로 진행한다. :567–648은 running source manifest 검증 후 target current의
+   image_id로 API→Web→runner를 순차 교체/재검사한다. `--daily-from-commit`은 필요할 때 실제
+   기존 daily 소유 revision에 바인딩한다(:101–106,403–410); WS source와 무조건 같다고 하지 않는다.
+   현재와 실행본이 같을 때만 refresh-from 생략 가능. 두 기존 rollout acknowledgement는
+   runbook :190–194의 값 그대로 사용하며 새 Owner 승인으로 바꾸지 않는다.
+
+### B. 공동창 전 최소 관측/자료와 기존 진입점 (§5.2·3)
+
+`<current>`, `<running>`, `<off>`, `<date>`, 경로·UUID·grant/slot/generation·잔여 예산 모두
+**UNKNOWN**이다. 역사 e639/schema62는 보존할 호환 기준이지 현재 재관측값이 아니다.
+root 실행 인증의 실제 사용 가능 근거와 원래 작업/서비스 식별이 먼저 필요하다. 이번에는
+인증 확인도 하지 않았다. UNKNOWN은 부모의 한정 관측 항목이며 Owner 재승인/정보 질문이 아니다.
+
+| 필요한 실제 자료 | 기존 공식 command / entrypoint 및 정확한 제한 |
+| --- | --- |
+| installed commit/env/manifest와 reader floor | `deploy-production-release.sh --check --commit <current>`는 root read-only 검증(:32–57,242–299). 내부 `owner-beta-daily-release.py reader-check --install-root <root> --target-release <release> --mode <actual-mode>`는 reserve=false(:529–549,623–638). 실제 running image는 refresh plan/preflight의 `verify_refresh_source`(:567–590)로 별도 확인; current-link만으로 실행 revision을 판정하지 않음 |
+| 실제 DB schema/migration 이력 | reader marker 요구는 `[60,61,62]`(`owner-beta-daily-release.py`:26)이나 **실제 DB 증명은 아님**. 이번 대조에서 단독 schema 조회용 공식 CLI는 확인하지 못했다. 부모의 기존 schema62 설치/백업 관측 경로로 현재 migration/checksum 자료를 재바인딩할 정확한 호출은 미정; integration-validation이나 migration 실행으로 조회를 대신하지 않음 |
+| R2 daily·원래 작업/프로세스·shared lock | installed `compose-release.sh --daily-disable --preflight [--daily-from-commit <actual-owner>]`가 기존 cohort/DB를 검사하되 disable은 하지 않음(`owner-beta-daily-operations.py`:718–795). 실제 disable/drain은 나중에 `--apply`. refresh apply는 release lock(:379–400) 후 guard-processes/guard(:703–709), quiescence(:672–692)를 수행. preflight 성공이 OFF/drain/lock 독점 성공은 아니며 원래 연구·백업·타이머 상태/복귀 책임은 부모의 기존 인계·관측 자료가 필요 |
+| 당일 KIS calendar source/batch/hash와 operational window | `install-intraday-session-window.py --check --root <protected-window-root> --date <actual-KST-date>`(:713–768). calendar는 `compose-release.sh --scope release --bootstrap-intraday-calendar --reuse-existing-source --preflight`(:651–687)로 중단 전제를 검사하지만 DB proof 유효성까지 증명하지 않음. 이후 apply는 publication **쓰기**이며 기존 source 검증/재사용; 창에서만 실행. 실제 day proof 결합은 runtime `resolve_day_with_calendar`(:312–386). XKRX 파일 check는 KIS lineage 대체가 아님 |
+| WS state/domain/anchor와 slot/generation | installed `provision-owner-market-stream.py --check --expected-commit <off>`(:124–157,170–208,343–399). **quotes-off·runner 정지** 전제가 있고 network-none pinned initializer를 실행하므로 일반 online 조회가 아님. 기존 상태가 있는 경우 initialize-new 금지; state/예산/불명 기록 보존. 실제 남은 예산의 출력용 단독 CLI는 확인하지 못해 관측 경로 확정 필요 |
+| Owner/ACTIVE entitlement/grant pin | `install-owner-market-stream-grant.sh --plan`은 DB 조회가 아니다. `--apply --expected-commit <activation> --approval-input <reviewed-file> --approval-sha256 <hash>`는 grant **쓰기**이며 창에서만 필요 시 수행(`market-stream-grant.py`:399–440,1116–1148). 기존 runtime `market_stream.rs`:1562–1626이 grant·slot/generation·rights를 결합; 단독 read-only grant CLI는 확인되지 않아 기존 보호 관측 자료 필요 |
+| 정상 Owner READY/generation·선택 신호·현재 수요 | 정상 로그인 후 기존 `/api/v1/research/owner-beta/equity-universe-v2/memberships` GET 및 signal-detail GET (`http/mod.rs`:342–343,388–391; `owner_equity_v2.rs`:267–297). 보호 UI/typed metadata로 확인하며 쿠키 export·수동 READY·추가 QA lease 없음. browser가 만든 실제 lease/SSE는 :362–373 기존 경로이고 조회를 위해 별도 lease를 만들지 않음 |
+| 한 연결/30등록·G2 예외 | ADR-0009:14–36 및 §5 예산. 실제 quota·타기기 동일키 점유·잔여량은 UNKNOWN. 예외는 H0STCNT0/정상 READY/Owner 제한 pilot 허용이지 전역 독점·G2 VERIFIED가 아님. 충돌/거절/불명 시 fail closed |
+
+### C. 첫 실행·단계 전환·실패 기준 (§5.5–9)
+
+- 첫 활성 실행 범위는 **한 정상 Owner 페이지의 1종목 pilot 및 종료 관측**이다. 실제 선택
+  READY/generation·신호가 맞는 D1 detail을 쓴다. 신호가 없어 board를 쓰려면 실제 총수요가1임을
+  먼저 증명한다. 다른 탭/lease 존재가 불명이면 단일종목 성공으로 진행하지 않는다.
+- 성공은 같은 epoch의 ACK→유효47필드→DB/SSE/DOM 및 최초 표시 뒤 두 fresh receipt를 연결한
+  §5.6의 증거다. status/heartbeat만 증가, quiet/stale/미ACK는 미완료; 횟수를 채우려고 재접속하지 않는다.
+- 종료 후 native hide/restore·offline/online·새로고침·logout을 §5.7 기준으로 확인한 뒤에만
+  나머지29 정상 admission→30 ACK/표시·1탭/10탭 합집합을 §5.8로 진행한다. 각 단계는 첫 창의
+  자동 연장이 아니다. 기존 잔여 예산·창·복구 여유가 안 맞으면 그 증거에서 멈춘다.
+- 마지막 수요0의 whole-socket close≤5초는 계약상 허용이다. 개별 unsubscribe를 보내지 않았다면
+  ACK는 NOT_OBSERVED로 보존한다. 후속 장 종료·다음날 proof 공급/부재 시 closed, 같은 source EOD,
+  p95≤2초는 별도 §5.9 인수다. 실제 날짜·관측 횟수/창 총시간은 부모 packet에서 확정할 미정값이다.
+- typed 권리/proof 실패·ACK/연결 불명·혼합 image·예산 소진·종료 증명 실패 시 다음 단계 금지.
+  기존 backoff/ledger만 적용하고 발급/명령 불명을 재시도로 해소하거나 counter를 초기화하지 않는다.
+
+### D. 호환 quotes-off 복구와 다음 한 가지 조율
+
+`<off>`는 **미정**이다. schema62 및 reader floor/history를 보존하는 후보를 먼저 검증한다.
+`deploy-production-release.sh --rollback --commit <off>`는 installed manifest/reader 검사 뒤
+current만 전환한다(:43–57,242–299). a68의 나이나 quotes-off라는 이름은 호환 증거가 아니다.
+공식 rollback 뒤 off 설치본의 `--refresh-market-stream --refresh-from-commit <activation>`
+plan/preflight/apply가 정상 running source를 확인할 수 있을 때만 runtime을 교체한다.
+producer를 먼저 정지했거나 일부 교체로 mixed 상태가 되면 :567–648 guard가 거부한다.
+그 경우 exact 서비스 복구 명령/대상은 현재 증거로 **미정**이며 부모가 기존 서비스 절차로
+별도 바인딩하기 전 활성화하지 않는다. guard 우회·DB down migration·state/grant 삭제는 없다.
+
+**부모의 다음 한 가지 행동:** R2 빌드/배포/백업과 겹치지 않는 **공동 사전관측 창 하나**를
+배정하고, root 인증 사용 가능 근거·실제 source/target·호환 off 및 정지/mixed 복구 책임을
+같은 packet에 묶는다. 이 창은 B의 미확인값을 채우는 단계이며 pilot 자동 개시 허가가 아니다.
+이번에는 소스/기존 문서 읽기·문서 차이 검증만 했다. 명령 실행·추가 공식문서 네트워크 조회·
+14테스트 반복·CI/build/push/merge·운영 조회/DB/lease/provider/배포 및 agent/heartbeat는 없다.
+미해결/확인 못한 항목은 B의 UNKNOWN, 새 후보/off SHA, exact schema/grant/예산 관측 호출과
+stopped/mixed 복구 바인딩이다. 이 공백을 새 스크립트나 승인 대기로 바꾸지 않고 부모에게 인계한다.
