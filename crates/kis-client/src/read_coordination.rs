@@ -2100,6 +2100,7 @@ unsafe extern "C" {
 
 #[cfg(test)]
 mod state_io_test_hook {
+    use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Condvar, Mutex, OnceLock};
     use std::time::Duration;
@@ -2148,9 +2149,9 @@ mod state_io_test_hook {
         INSTALLED.get_or_init(|| Mutex::new(None))
     }
 
-    fn installed_persist() -> &'static Mutex<Option<Installed>> {
-        static INSTALLED: OnceLock<Mutex<Option<Installed>>> = OnceLock::new();
-        INSTALLED.get_or_init(|| Mutex::new(None))
+    fn installed_persist() -> &'static Mutex<BTreeMap<u64, Arc<Barrier>>> {
+        static INSTALLED: OnceLock<Mutex<BTreeMap<u64, Arc<Barrier>>>> = OnceLock::new();
+        INSTALLED.get_or_init(|| Mutex::new(BTreeMap::new()))
     }
 
     pub(super) fn install(directory_inode: u64, barrier: Arc<Barrier>) {
@@ -2183,10 +2184,7 @@ mod state_io_test_hook {
         let previous = installed_persist()
             .lock()
             .expect("persist I/O test hook")
-            .replace(Installed {
-                directory_inode,
-                barrier,
-            });
+            .insert(directory_inode, barrier);
         assert!(
             previous.is_none(),
             "persist I/O test hook already installed"
@@ -2194,15 +2192,10 @@ mod state_io_test_hook {
     }
 
     pub(super) fn wait_persist_once(directory_inode: u64) {
-        let mut installed = installed_persist().lock().expect("persist I/O test hook");
-        let barrier = installed
-            .as_ref()
-            .filter(|value| value.directory_inode == directory_inode)
-            .map(|value| Arc::clone(&value.barrier));
-        if barrier.is_some() {
-            installed.take();
-        }
-        drop(installed);
+        let barrier = installed_persist()
+            .lock()
+            .expect("persist I/O test hook")
+            .remove(&directory_inode);
         if let Some(barrier) = barrier {
             barrier.wait();
         }
@@ -2535,6 +2528,29 @@ mod tests {
         ));
         drop(release_on_drop);
         std::fs::remove_dir_all(&root).expect("remove test root");
+    }
+
+    #[test]
+    fn persistence_test_barriers_are_isolated_for_parallel_test_roots() {
+        let first_root = unique_test_root("barrier-first");
+        let second_root = unique_test_root("barrier-second");
+        std::fs::create_dir(&first_root).unwrap();
+        std::fs::create_dir(&second_root).unwrap();
+        let first_id = std::fs::metadata(&first_root).unwrap().ino();
+        let second_id = std::fs::metadata(&second_root).unwrap().ino();
+        let first = state_io_test_hook::Barrier::new();
+        let second = state_io_test_hook::Barrier::new();
+        state_io_test_hook::install_persist(first_id, Arc::clone(&first));
+        state_io_test_hook::install_persist(second_id, Arc::clone(&second));
+        first.release();
+        second.release();
+        state_io_test_hook::wait_persist_once(first_id);
+        assert!(first.entered());
+        assert!(!second.entered());
+        state_io_test_hook::wait_persist_once(second_id);
+        assert!(second.entered());
+        std::fs::remove_dir(first_root).unwrap();
+        std::fs::remove_dir(second_root).unwrap();
     }
 
     #[test]
