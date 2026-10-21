@@ -3177,3 +3177,46 @@ SHA256de52abf8ae3378a68e727b0c031a0faefee80b1fc2bdb681a39ca5c15b073add.
 Host lastObservedAt stays15:16:59.361229UTC, with original60d runtime restored,
 no outstanding restoration and new eac images/runtime0. R2 SOURCE_CONFLICT,
 DailyOFFepoch0, firstSessionnull and actual consecutive trading days0 remain.
+
+
+### Wave151 — hosted acceptance and original a10 build (16:05 UTC)
+
+The original eac7197 run39627593587 attempt1 completed SUCCESS: all8 jobs,
+full8 logs,7 exact checkouts,137 frozen Rust definitions,154 frozen Python
+definitions,19 real PostgreSQL exits0/no-skip and hosted page-seam14 PASS.
+The original strict attribution failed because stderr target headers preceded
+three zero-test stdout blocks and the research-worker10-test block. The
+original log/extractor failure remain unchanged. Unique definitions in the
+exact Git tree and its one complete10-PASS block establish attribution in a
+separate qualifier; no CI or test rerun. Closure ci/eac7197/hosted-source-closure.json
+is228885bytes SHA2564bd1d56349012615a537b29f5676d3374c35b29d6ae179ee356de627385c2fdb.
+
+Fresh root read-only observations at16:04:27UTC confirmed original11 container
+lifecycles/all21 inventory, current60d, DailyOFFepoch0/zerojobs, empty new
+AUX/manifest/unit names and clean exact source. The local sealer used a wrong
+registry field (`restorationOwed` instead of the two actual c1 restoration
+fields) and failed before any root submission. Its already-created local
+bootstrap/seal and failure are retained. A distinct submission wrapper checks
+the existing sealed bytes, actual owner/status restoration=false and c1
+acceptance. Original root launch occurred ONCE16:05:03UTC, result725c41fd…;
+no root retry, reused outage window or competing lifecycle action.
+
+The a10 independent supervisor PID2749885 was actually READY before request;
+build PID2750464, original Owner7d932b14… normal stop0, same boot window expires
+2026-10-22T04:05:03.150917Z and cannot renew. At16:06:39UTC db-role-bootstrap
+and db-migrate succeeded, API building,3 gates PASS, MemAvailable6409556KiB,
+SwapFree241644KiB. Original build/start/result/restored receipts were absent.
+An earlier strict observer failed; its error hash is retained, the readiness
+observer subsequently recovered actual states. No image-set/restore acceptance
+yet. Independent recovery exclusively owes original Owner restoration after
+all original client results, PID/cgroup/compiler drain. Current60d remains.
+
+Pinned independent terminal verifier was filled from these original PIDs,
+invocations and window; it requires12 images,49 gates and restoration before
+OFF input publication/serving. Prepared serving uses exact eac candidate and
+historical e639 Daily cohort; stale7d text labels were corrected before execution.
+Existing c1 state validation is retained and is not repeated. R2 Sep15
+SOURCE_CONFLICT, DailyOFFepoch0, firstSessionnull and actual scheduled days0
+remain. Oct21 proof is not Oct22 proof, and current-link alone cannot restore
+ON serving. Same-agent bounded tracking219449b8 remains, renewby21:00UTC;
+not native Ralph or outage protection.
