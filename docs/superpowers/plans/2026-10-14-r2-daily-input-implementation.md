@@ -9056,3 +9056,41 @@ replay, and close measured inputs before immutable installation/first-session
 binding and official daily activation DBLAST. DailyOFF/epoch0, firstSessionnull,
 actual days0, Owner use and C_R2 remain OPEN. Earlier failures, G4 acceptance,
 protected lock/volumes/PG/key,32unrelated ROADMAP additions and .archify remain.
+
+
+### Wave144 — first-session CLI contract and isolated legacy fixture (2026-10-21)
+
+R2-04/09 remain DOING. Candidate0c709749e139801a7a8d481ab5e412ce8347d1bc
+was published and CI39569367975 attempt1 dispatched once08:27:11UTC. Frozen
+inputs include89Rust/94Python definitions,66run steps and7checkouts. The original
+policy job failed: production-ops-static-check.sh still required the exact old
+three-option shell case. The new first-session hosted suite was skipped; local
+10case success is not hosted success. At08:37UTC workspace/PG remained running;
+retain and recover the original terminal/logs without rerun or cancellation.
+
+The static contract now includes the fourth, explicit rebind operation. Its local
+correction first encountered pre-existing0775 checkout modes on two scripts whose
+static contract requires0755; source bytes and production paths were not changed.
+A clean tracked archive extracted with umask022 passed full OPS_STATIC. The first
+local legacy fixture then discovered the real host reader-floor under default
+/opt/lagrange and failed stale-config before backup execution. The fixture now
+sets LAGRANGE_RELEASE_ROOT to its own empty temporary root for legacy backup
+calls; it cannot consult the production installation. Its fake-Docker full test
+passed. Both initial local failures are retained. No product rebind SQL/controller
+change, real backup, provider, installed release or production DB mutation.
+
+Exact originals, corrected source pins and results:
+wave143/original-ci-policy-failure.json and
+wave143/static-fixture-correction-validation.json. Root/nonroot tests used nice10;
+the corrected archive's commands were sequential and both original children reaped.
+The two source corrections require a new exact candidate CI, not a retry of0c70974.
+
+Actual08:29:41UTC installed866 backfill validator passed current config names and
+protected file metadata. Earlier wrong range-raw scope rejection is preserved.
+This does not validate token contents or establish the08:08 authentication cause.
+The deployed error mapping discards subordinate coordination/issuer reasons;
+source evidence is wave143/raw-auth-source-diagnosis.json. Cause remainsUNKNOWN,
+no provider/token request or consumed Raw replay. Serving866, DailyOFF/epoch0,
+firstSessionnull and actual days0 remain. R3 read-only window evidence was verified;
+no further R3 runtime operation is started. Preserve32unrelated ROADMAP additions,
+.archify, all partials/old failures and protected production resources.

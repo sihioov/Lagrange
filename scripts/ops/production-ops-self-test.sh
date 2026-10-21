@@ -1127,6 +1127,10 @@ exec "${REAL_TAR_BIN:?}" "$@"
 SH
 chmod 0755 "$ownership_bin/tar"
 mkdir -p "$backup_fixture"/{bin,data/raw,data/curated,backups,state,locks,compose}
+# The fixture must not discover a daily reader floor in the host's default
+# /opt/lagrange installation. Every legacy backup invocation stays in this root.
+mkdir -p "$backup_fixture/release-root"
+export LAGRANGE_RELEASE_ROOT=$backup_fixture/release-root
 chmod 0700 "$backup_fixture" "$backup_fixture/backups" "$backup_fixture/state" \
   "$backup_fixture/locks" "$backup_fixture/compose"
 printf '%s' raw-fixture-secret >"$backup_fixture/data/raw/row"

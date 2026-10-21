@@ -119,7 +119,7 @@ daily_worker_block=$(awk '
   die 'base owner-beta-runner daily mode must be literal disabled'
 [ "$(grep -Ec '^[[:space:]]+PRICE_BETA_DAILY_MODE:' "$compose_file")" -eq 1 ] ||
   die 'base daily worker mode must reach only owner-beta-runner'
-for token in '--daily-prepare|--daily-enable|--daily-disable)' \
+for token in '--daily-prepare|--daily-enable|--daily-disable|--daily-rebind-first-session)' \
   'lib/owner-beta-daily-operations.py' '--daily-backup|--daily-backup-verify|--daily-reconcile)' \
   'lib/owner-beta-daily-backup.py'; do
   grep -Fq -- "$token" "$compose_release" ||
