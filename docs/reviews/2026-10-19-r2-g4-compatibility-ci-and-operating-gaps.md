@@ -2462,3 +2462,75 @@ remain serialized; source/CI acceptance is not market/Owner acceptance.
 No architecture boundary changed; diagrams,32 unrelated ROADMAP additions and
 .archify remain untouched. All old failures, original manifests and protected
 lock/volume/PG/backup-key boundaries remain. Heartbeat0f8c84f7 renewBy13:50UTC.
+
+
+### Wave142 deployment — combined866 accepted; actual Raw recovery started (2026-10-21)
+
+R2-04/09 and R3-01/03 remain DOING. Exact combined candidate
+866d96f20d29c9b9ff3507e9f290c4729b809a21 completed CI39559138658 attempt1:
+all8jobs, full8logs/7exact checkouts,89Rust/84Python,19actualPG exit0/no-skip,
+and14hosted page-seam tests. Closure ci/866d96f/hosted-source-closure.json
+109774bytes SHA8ea35d78a15a1d0af88d05595c038cf4bc6db77ab3203155cc605099d120f7b2.
+The initial strict extraction associated85/89 Rust results because stderr from
+the next binary interleaved in one nine-test block. Its original record/logs
+are retained. Unique frozen definitions and the complete nine-PASS block were
+qualified separately (df89c1f8...); no tests or CI were rerun.
+
+The original a5 built12images sequentially in four logical batches, with
+49PASS gates. Original stop/start clients returned0 and the exact prior Owner
+was restored; independent closure at07:46:22UTC is857266bytes,
+SHAe2a67b107258f74c7443ad41321ce4b0dadd5b88126c151e5a65645ab92500b1.
+Manifest2597bytes SHA6c2fb8356b7fd807d5168a89a303ed3e71853f2d536733b4379a31e30da3234c.
+All original units are terminal with MainPID/ControlPID0 and empty recursive
+cgroups. No build/restoration obligation remains, and no repeated build is needed.
+
+Serving a1 installed and checked the immutable866 release, installed KIS disabled,
+and moved the status policy/timer through the official installer. Its refresh
+then failed before container changes: private control conflated serving source913
+with the stopped daily cohort's actual sourcee639. Preserve failed a1 and all
+successful preceding steps. Actual read-only diagnosis07:48:40UTC rejected913
+with DAILY_RUNTIME_OWNER and accepted the exact e639 cohort; diagnosis SHA
+26f5aa51a29f7bd48e1bfc700001ce0d9059a99f86934ab1169dd3b4db7b335a.
+
+A distinct sealed serving a2 used serving-from913, daily-frome639, target866;
+it did not repeat installation or status/KIS transitions. Original supervisor
+1590566/invocation52d47e1a8b9b49098dc2fe96442f8f79 and every child exited0.
+Independent07:54:23.647211UTC closure42776bytes SHA
+8bb4d61ed43bd6f53c623fe5be3618f45822e93fbcb36312903b871005c52ccf
+accepts exact API/Web/OwnerV2 images/revisions, health/HTTP, normal prior Owner
+exit0 without SIGKILL, eight unchanged containers, existing status timer restored,
+KIS disabled, DailyOFF/epoch0 and preserved release-lock identity. This accepts
+scoped serving deployment, including R3 D1. It does not accept authenticated
+Owner use, market reception, actual input admission or all worker refreshes.
+
+The deployed research image's separate network-none/Raw-readonly check succeeded:
+33historical sessions checked,12present and21missing from Sep16 through Oct20.
+No credentials, provider or DB were used. Receipt wave142/eod-source-check-result.json
+8920bytes SHA33d63b0f3f4e7ab8328d7cf651cd82656bd9f3dc833b81a8ffe876e2b8af00a0.
+This demonstrates the deployed Raw horizon correction; it is not a missing-input
+recovery result. Original source-check failures remain retained.
+
+A new source-aware recovery a1 was submitted once07:58:08UTC through the official
+backfill wrapper with --raw-source. Its six missing sessions Sep16,17,18,21,22,23
+are selected from the actual source check and existing original calendar coverage;
+no old publication attempt is replayed. Source/systemd/capsule/state identity are
+new and pinned to866. The original release lock is held shared, research remains
+historically stopped, existing per-channel/token/retry limits remain. One original
+calendar lookup and six*(22price/reference+70action pages), each up to4attempts,
+give a conservative2212 wire-GET ceiling, not a claim of actual calls. At07:58:36UTC
+root1600951/invocatione33def22bf1b493697b27819049f7cf7 was running; the official
+plan had exited0, execute had not reached terminal and no date completion was yet
+recorded. Observation SHA2cea1ecf0fcb036de096fa8ac46da64aff70ad4afc86b580e420c15e31327e79.
+Recover this original process/state, then independently reconstruct committed Raw;
+never replay a failed/uncertain invocation or count RAW_COMMITTED as admission.
+
+Next close measured EOD/calendar/action gaps, independently admit inputs and bind
+the first actual session from deployment validation plus real calendar evidence.
+The old Oct21 configuration is expired; firstSession remains null. The official
+current control tool cannot rebind an existing first_auto_session; supported
+preactivation forward-rebinding work remains before official daily activation
+DBLAST. KIS normal installation deadline has passed today: retain install-disabled,
+no direct timer-start bypass. Owner use, three actual days0 and C_R2 remain OPEN.
+R3 shared operations stay serialized while R2 source recovery owns the current
+window. All previous failures/unknowns, protected volumes/PG/backup key and32unrelated
+ROADMAP additions/.archify are preserved. No structural change or diagram update.
