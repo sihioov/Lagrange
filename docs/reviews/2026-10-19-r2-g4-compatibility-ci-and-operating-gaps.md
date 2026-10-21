@@ -3220,3 +3220,38 @@ SOURCE_CONFLICT, DailyOFFepoch0, firstSessionnull and actual scheduled days0
 remain. Oct21 proof is not Oct22 proof, and current-link alone cannot restore
 ON serving. Same-agent bounded tracking219449b8 remains, renewby21:00UTC;
 not native Ralph or outage protection.
+
+### Wave151 — accepted images, restoration, and compatible OFF serving (16:24 UTC)
+
+Candidate `eac719795f9cf355db251c4bc0c2c221cd066899` is now installed and
+serving in explicit quotes OFF mode. Original a10 completed all12 images and49
+gates, with all4 original units normal0/PID0/empty recursive cgroups and the
+original Owner restored before deployment. No build or CI replay occurred.
+Independent image/restoration closure is858065bytes, SHA256
+`8739d6324c4b03990cd9e2bf676426ec506b3ef268a7d097cbaacae4fcdad552`.
+
+The separate original serving attempt ran once at16:23:27UTC under
+`lagrange-r3-off-serving-eac7197-a1.service`, PID2810756, invocation
+`dc1acb2917514fed8d97cf2fe5c78cee`. Official immutable install/check, KIS
+install-disabled/check, status preflight/apply/check, sequential API/Web/Owner
+refresh and both HTTP checks passed. Independent closure at16:24:03UTC:
+`target/r2-daily-beta/wp-8/wave151/serving-deployment-closure-20261021T162403.json`,
+60391bytes, SHA256 `7ef3b47f84a8aae71bdf3fbcc806ad0501ec80f15c280471e6a1baf421e3dbd2`.
+
+All3 serving revisions/image IDs match the candidate manifest and are healthy;
+other8 monitored containers are unchanged. The original Owner exited normally0
+and no forced exit was observed. Status timer restoration is complete; no
+Owner or status restoration remains owed. An independent allowlisted nonsecret
+environment observation at16:24:52UTC confirms quotes=off on all3 services
+(`effective-off-runtime-modes.json`, SHA256
+`d0b50ce0c7baf94be91ef4846d7838c0a28de5623f4aff23406626de44a8f0d7`).
+This is compatible OFF serving acceptance, not normal authenticated Owner use
+or current-day market reception. The prior c1 persistent-state validation
+remains accepted without replay.
+
+R2 remains SOURCE_CONFLICT for Sep15/153130 dividend; no source is omitted and
+no rebind/admission/activation was submitted. DailyOFF/epoch0, KISdisabled,
+firstSession=null and actual consecutive trading days0 remain. Next R3 work
+requires actual Oct22 KST hours/calendar proof and an official ON transition
+with the accepted eac OFF fallback; Oct21 proof cannot count as Oct22.
+The consumed a10/serving attempts and historical failures remain immutable.
