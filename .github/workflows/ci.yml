@@ -163,6 +163,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
+      # Use a fresh toolchain store: a preinstalled partial Clippy component can
+      # conflict during rustup's automatic installation of our pinned version.
+      RUSTUP_HOME: ${{ runner.temp }}/lagrange-rustup-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       # Intraday tests require this exact disposable QA endpoint.
       DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55438/postgres
       LAGRANGE_QA_DB_PORT: '55438'

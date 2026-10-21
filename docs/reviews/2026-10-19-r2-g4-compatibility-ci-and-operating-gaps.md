@@ -2715,3 +2715,29 @@ recorded evidence confirms23missing civil dates across8intervals, recurring
 frontier gap53days>14; separate bounded catchup is needed, no automatic chunking.
 Next is the exact combined candidate hosted CI, fresh images/install and scoped
 actual input/grant admission. DailyOFF/epoch0/firstSessionnull/actual3days0.
+
+
+#### Wave146 original CI toolchain conflict — 2026-10-21 09:26 UTC
+
+Combined3f2eb414c372caca4af8e93202205858a290e72b was nonforce-published and
+CI39575826396 attempt1 dispatched once09:17:41UTC. Frozen Wave145 input
+482637bytes/SHA25607ec17428f4cc64773eb6a20f5c2d821bb907a6011f978d004def347da6b3f1b
+binds94Rust/127Python definitions and68commands. At09:21:53UTC workspace-tests
+was failed before any Rust test: rustup could not install the Clippy component
+because bin/cargo-clippy already conflicted. The pinned1.97.1 toolchain was
+automatically being prepared. The full original log hash and focused lines are
+retained in ci/3f2eb41/workspace-failure-focused.json. This is an installation
+failure, not a product assertion failure. Other original jobs remain pending;
+no cancellation, replay, or whole-run acceptance is claimed.
+
+The workspace-tests job now has a run/attempt/job-specific RUSTUP_HOME under
+runner.temp. Rustup documents that this variable selects the toolchain store;
+the unchanged rust-toolchain.toml still selects1.97.1 with rustfmt/Clippy.
+References: https://rust-lang.github.io/rustup/environment-variables.html and
+https://rust-lang.github.io/rustup/overrides.html. No toolchain-version override,
+new action, mirror, cache removal, retry, allowed-failure or weakened test gate.
+The focused new workflow contract passes1test/exit0; exact receipt is
+wave146/isolation-contract-result.json. Actual fresh-store hosted execution
+remains required. Parent integration3f2 and R3 isolatedPG evidence are retained.
+No new image/root staging/stop/deployment/provider/token request. Serving866,
+DailyOFF/epoch0/firstSessionnull/actualdays0 and source gaps remain unchanged.

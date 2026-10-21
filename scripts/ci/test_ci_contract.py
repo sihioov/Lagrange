@@ -38,6 +38,25 @@ def action_uses(workflow: dict) -> list[str]:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_workspace_rustup_store_is_isolated_without_toolchain_override(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        job = ci["jobs"]["workspace-tests"]
+        self.assertEqual(
+            job["env"]["RUSTUP_HOME"],
+            "${{ runner.temp }}/lagrange-rustup-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
+        )
+        for env in [ci.get("env", {}), job["env"],
+                    *(step.get("env", {}) for step in job["steps"])]:
+            self.assertNotIn("RUSTUP_TOOLCHAIN", env)
+            self.assertNotIn("RUSTUP_DIST_SERVER", env)
+        self.assertNotIn("continue-on-error", job)
+        commands = [step.get("run", "") for step in job["steps"]]
+        self.assertIn("cargo test --workspace --locked --no-fail-fast --features kis-client/test-support", commands)
+        self.assertIn("cargo test -p api-server --test http_owner_equity_v2_chart --locked", commands)
+        for step in job["steps"]:
+            self.assertNotIn("continue-on-error", step)
+            self.assertNotIn("RUSTUP_HOME", step.get("env", {}))
+
     def test_grant_inspection_postgres_is_a_required_policy_step(self) -> None:
         _, ci = load_workflow("ci.yml")
         steps = [step for step in ci["jobs"]["policy"]["steps"]
