@@ -3147,3 +3147,33 @@ remains2026-10-21T15:16:59.361229Z. R2 Sep15 dividend153130 SOURCE_CONFLICT stil
 blocks input admission/rebind/activation; DailyOFFepoch0, firstSessionnull and
 actual consecutive scheduled trading days0. Normal authenticated Owner use,
 current-date proof/market reception and full OFF-serving rollback remain OPEN.
+
+
+### Wave151 — exact original hosted run and prepared next execution
+
+Source candidate eac719795f9cf355db251c4bc0c2c221cd066899 was nonforce
+published as r3-off-status-ci-eac7197-20261021 and CI39627593587 attempt1
+dispatched ONCE15:39:06UTC. Separate publish/dispatch intent/result receipts
+are in wave151; no rerun/cancel/duplicate. Frozen ci-inputs.json is515587bytes,
+SHA256547eeb611e8c795082ca8aafae285bc298b922d389a30b0b0a835154950a267f,
+with137 unchanged Rust and154 exact Python definitions plus69 run commands.
+At15:43:43UTC the original CI is in progress: format/Clippy/Python succeeded,
+three complete logs/exact checkouts recovered; remaining required evidence is
+not accepted. PATH python3 lacked PyYAML; the existing /usr/bin/python3 parsed
+the frozen workflow without installing dependencies.
+
+Clean source /data/worktrees/3puw275b/r3-off-release-eac7197 is exact and clean.
+New a10 controls derive from the accepted a9 algorithm, preserve every64hex
+control pin, and change only candidate/path/unit/CI bindings. They still require
+actual full hosted acceptance, fresh exact runtime/normal-work observations,
+new AUX absence and READY recovery before any stop. No root staging occurred.
+OFF input/serving drafts are AST/pin reviewed only. They preserve old a1 failure
+and c1 state acceptance; no repeat state check. A later ON transition requires
+valid current-date evidence; Oct21 evidence/current-link alone cannot establish
+Oct22 ON serving. Inherited Oct22 Daily config remains unadmitted.
+
+Tracking handoff wave151/ci-pending-prepared-handoff.json is241901bytes,
+SHA256de52abf8ae3378a68e727b0c031a0faefee80b1fc2bdb681a39ca5c15b073add.
+Host lastObservedAt stays15:16:59.361229UTC, with original60d runtime restored,
+no outstanding restoration and new eac images/runtime0. R2 SOURCE_CONFLICT,
+DailyOFFepoch0, firstSessionnull and actual consecutive trading days0 remain.
