@@ -2314,3 +2314,42 @@ new exact-candidate CI task. It has no shared production window. R2 work was not
 delegated. Preserve all previous failures, protected lock/volume/PG permissions,
 32 unrelated ROADMAP additions and.archify. The same-agent heartbeat remains
 0f8c84f7, renew by13:50UTC; it is not native Ralph or outage protection.
+
+### Wave140 — corrected candidate hosted acceptance and original a4 build (2026-10-21 KST)
+
+R2-04/R2-09 remain DOING. Exact source91324123d41c3d4e0057b2cb053fd36b03e2b7f0
+fixes the daily raw-source/action-supply service-status binding. CI39552239217
+attempt1 was dispatched once05:54:39UTC and accepted06:12:20UTC: all8jobs and
+full8logs,7exact checkouts, frozen57Rust/84Python definitions and19actual PG
+processes exit0. Closure ci/9132412/hosted-source-closure.json is91221bytes,
+SHA256 b117ab67b466d115a64e3c9e213cb5721e8a1993fef6169af30864f9c11ec06a.
+No accepted CI/tests were repeated; prior failed probes remain retained.
+
+Fresh06:06UTC root preparation observed old e639169/current, dailyOFF/epoch0,
+settled recommendation work and exact11 monitored containers. The new a4 names,
+AUX and manifest were absent. Root Git verified the clean9132412 source. An
+unexecuted draft with an overly broad name replacement was retained separately;
+the actual package uses exact name/path substitutions and unchanged reviewed
+restoration semantics. This is a distinct candidate build, not a replay of a3.
+
+The sealed a4 was submitted once06:12:43UTC after actual independent root READY.
+Its fixed same-boot window expires18:12:43.411991UTC and is never renewed. The
+original Owner62d49f86 stop client1335165 exited0 with exact original response
+and empty cgroup. At06:17:45.984495UTC the original build1335726 and independent
+recovery1334901 remained running. db-role-bootstrap,db-migrate,api-server,web
+completed; research-worker was building. Seven gates passed, no failed gate;
+MemAvailable9367468KiB, SwapFree4009840KiB. This observation is limited to the
+original units/cgroups, retained gate/terminal records, safe progress and memory.
+It is not complete image acceptance or a new full runtime observation.
+
+Evidence: wave140/a4/actual-build-progress-20261021T061745.json123582bytes,
+SHA256 004d3db8e818453ba63bc723771953b8716889207dfd690f8a8eafa77a2da62c;
+launch receipt1b6c3e5c; bounded handoff d97f250c2269be1d84ed4f96b350b3987432400f97b115e80edc9f7254ffe761.
+The supervisor owns the single owed restoration after every original response
+and process/cgroup has drained. No competing stop/start/build is permitted.
+Next recover all12images/manifest,49gates and exact normal restoration before
+new immutable deployment. Existing e639169 and fccb683 installations, schema62,
+backup/G4 acceptance and all historical failures remain. Daily activation,
+actual inputs, Owner use, three consecutive actual days and C_R2 remain OPEN;
+firstSession=null. R3 has no shared production window during this original a4.
+No structure changed; diagrams/.archify and32 unrelated ROADMAP additions remain.
