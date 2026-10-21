@@ -9427,3 +9427,51 @@ actual_input_source_conflict. Handoff `source-contract-off-compatibility-handoff
 is now the registry pointer. Heartbeat219449b8 remains tracked with21:00UTC renewal deadline.
 DailyOFF/epoch0, firstSessionnull, actual consecutive trading days0 and all prior failures
 remain; no structural change or diagram update.
+
+### Wave149 compatible off candidate: original CI pending (2026-10-21 14:22UTC)
+
+R3-01's separate compatible off candidate is pinned to
+`7d91ba04c32da1787609b78e944433d068890cd1`, in the clean detached worktree
+`/data/worktrees/3puw275b/r3-off-release-7d91ba0`. Every Git tree entry outside
+three documentation files matches the accepted60d candidate. The current reader marker,
+0060–0062 migrations, product code, tests, workflow and package locks are unchanged.
+This source equivalence does not substitute for the new commit's exact hosted checkout,
+image labels, immutable inputs or runtime acceptance.
+
+The frozen packet is `wave149/off-7d91ba0/ci-inputs.json`,512650bytes,
+SHA256628232015c61c0298eca4b5ea07b830ced3db1d3a28a03722b23796dbf61d263.
+It rechecks137Rust/149Python definitions and the identical workflow against the candidate.
+The dedicated ref `r3-off-ci-7d91ba0-20261021` was published nonforce and
+[CI39615546307 attempt1](https://github.com/sihioov/Lagrange/actions/runs/39615546307)
+was dispatched exactly once at14:17UTC. Intent/result receipts are retained in that directory.
+At14:22:37UTC format,python-tests andclippy had succeeded; workspace-tests,policy andweb
+were in progress,postgres-integration-validation queued andrequired not yet completed.
+Three full job logs and exact checkouts were recovered. Complete8job/8log/7checkout,
+137Rust/149Python/19PG/page-seam14 acceptance remains pending. Do not rerun or duplicate CI.
+
+The a9 draft preserves the accepted a8 independent recovery algorithm, one service per
+Compose invocation, four batches of three, the normal Owner stop response and complete
+client/PID/cgroup drain before one restoration. Its source/current/Owner identities and
+operation paths are distinct. Initial unbounded operation-name substitution accidentally
+changed a policy hash substring; the complete64hex comparison rejected it locally before
+any root execution. All initial drafts are retained under `a9-draft-a1-rejected`.
+The corrected token-bounded derivation preserves every hash except explicitly selected
+Owner identity/image pins, and leaves work-state SQL/probe byte-identical. This is source
+binding validation, not actual root admission or another production test.
+
+`publish-off-inputs-once.py` is also a reviewed, syntax-checked draft only. After actual
+hosted/image/restoration acceptance it may create a new protected input directory using
+verified60d inputs, changing only code commit, quotes owner_only→off and embedded supplier
+release commit; Daily config changes only code_commit. Existing budgets, policy, Owner,
+generation and the inherited conditional date remain. No backup key is read, no installed
+env is edited and no timer/DB/provider activation is performed. Actual firstSession staysnull.
+Fresh a9 runtime/normal-work/path observations, root staging/build and off/return service
+operation bindings are all unexecuted.
+
+Registry handoff `ci-pending-preparation-handoff.json` is220319bytes,
+SHA2560824454aed57332ddaaf8efbd0b046cccc5edeaed08ad81167a3bc20750012b9. R2 still has the original Sep15 dividend153130 SOURCE_CONFLICT;
+there was no omission, capture replay, input admission or Daily activation. Installed60d
+acceptance and DailyOFF/epoch0 remain; lastObservedAt remains the scoped13:41:12.635417UTC
+calendar observation, not this GitHub/local review. New images/runtime0 and no restoration
+owed. Actual Owner use/market reception and three consecutive scheduled trading days remain
+unverified/0. Historical failures,32 unrelated ROADMAP additions and.archify are preserved.
