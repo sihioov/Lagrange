@@ -2764,3 +2764,46 @@ Receipt: wave146/isolation-contract-corrected-result.json. The earlier weak
 static-only PASS is preserved and is not evidence of hosted syntax validity.
 No production change, new images, provider/token request or old Raw replay.
 Next is a distinct fixed corrected source with one original CI invocation.
+
+
+#### Wave146 exact combined CI accepted; original a6 running — 2026-10-21 09:50 UTC
+
+Candidate5f2d4ddb422628973a20dba9d6c7d80e5bba00ff was dispatched once at
+09:27:56UTC as CI39577159289 attempt1. At09:48:34UTC all8 required jobs
+succeeded. Full8 logs,7 exact checkouts, frozen94Rust/129Python definitions,
+19 actual PostgreSQL processes exit0/no-skip and hosted page-seam14 passed.
+Closure175581bytes/SHA25666722ddfe12ad11a0ddfe87ed4190cc75b6907cf3fd5c783284409f924e8de8a.
+The original closure extractor failed because a next-target stderr header
+appeared before the last3 research-worker stdout rows. Preserve that failure
+and every original observation. A separate source-qualified recovery matched
+all10 unique frozen definitions, the complete10-PASS block and the following
+1-test block; no test/CI rerun. Correction7746bytes/SHA256
+ff8cd376ea789e5b139464a19c6f9f007cb80e4751bf1fbb6cbf1a51a4aa8ac4.
+Original3f2 CI39575826396 is terminal FAILURE with all8logs/7checkouts;
+rejection25803bytes/SHA25638f6d1a1976f0cd5a5b35c2b293d508dbb27d843164754ce4bf006ab034e1a6d.
+Invalid51b9 dispatch/push failure and original frozen inputs remain unchanged.
+
+The distinct sealed a6 was submitted once09:50:14UTC after actual independent
+root recovery READY. The original bootstrap exited0/reaped. At09:50:28UTC the
+original Owner stop client was normal0/drained and the first image was building;
+1 gate passed, MemAvailable8787348KiB and SwapFree2140740KiB. Restoration is
+still owed; no new image-set or serving acceptance. The fixed same-boot12h
+window expires21:50:13.954231UTC and cannot be renewed. Four batches of3 remain
+strictly one Compose service at a time, parallel limit1/build jobs2 and lowered
+CPU/I/O. Exact original unit PIDs/invocations are bound in the read-only terminal
+observer. No competing stop/start/replay or forced kill. Handoff:
+wave146/a6/running-handoff-20261021T0950.json,136905bytes/SHA256
+9c055125522b6a0b2a512d3665d7cd0b46faf61e87c07c7e50221f18b2386201.
+
+Previously accepted serving866 and independently reconstructed real calendar
+identify Oct22 as a conditional future configuration candidate. This is local
+planning only; actual firstSession remains null, DailyOFF/epoch0 and actual
+consecutive days0. New target deployment and actual input admission must finish
+before candidate open; official first-session rebind remains OFF and uses the
+actual historical e639 daily cohort. A draft new protected-input publisher and
+serving driver exist but have not executed. Raw29/34 and actions30/53 remain
+partial, prior authentication cause UNKNOWN. R3 inspect code/isolatedPG tests
+are included in this candidate; actual grant/pilot remain unverified. Preserve
+all original failures,32 unrelated ROADMAP additions and .archify. No structural
+diagram change. Next is original a6 terminal/image/restoration acceptance, then
+immutable install/serving validation and independently admitted daily/R3 inputs.
