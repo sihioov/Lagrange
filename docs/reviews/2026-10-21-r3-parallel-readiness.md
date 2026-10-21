@@ -3,12 +3,12 @@
 확인일: 2026-10-21 KST. 소스 기준: `73f25931e79ff199e17358a09ec94f10f53604fb`,
 브랜치 `r3-parallel-20261021`. 담당 범위는 [병행 인계](../handoffs/2026-10-21-r3-parallel-workstream.md)의
 첫 bounded 실행이다. 이 문서를 추가한 커밋은 문서 조사 결과이며 빌드·배포 후보가 아니다.
-§1–7의 저장소 `파일:행`은 이 소스 기준이다. 후속 D1 수정과 검증 제한은 §8에 기록한다.
+§1–7의 저장소 `파일:행`은 이 소스 기준이다. 후속 D1 수정과 당시 검증 제한은 §8, 실제 집중 검증은 §9에 기록한다.
 
 **판정:** R3-01 소스·계약 대조와 R3-06 공개 자료 재확인을 진행했다. 실제 설치 재검증,
 시장 연결·수신·Owner 화면 인수는 수행하지 않았다. 상세 화면이 전체 READY 수요를 만드는
-소스 차이 1건을 확인했다. 후속 §8에서 좁은 수정과 회귀 작성을 완료했으나 로컬 의존성 부재로
-집중 실행은 미실시다. 다음은 해당 검사 실행과 R2 담당이 조율할 현재 운영 전제 확인안이다. R2 완료를 기다릴 필요는 없으나 공유 운영 변경은 직렬화한다.
+소스 차이 1건을 확인했다. 후속 §8의 수정/회귀 `7b7f219`를 §9에서 검증해 수정 전 4실패,
+수정 후 해당 suite 14통과를 확인했다. 다음은 부모 통합 검토와 R2 담당이 조율할 운영 전제 확인안이다. R2 완료를 기다릴 필요는 없으나 공유 운영 변경은 직렬화한다.
 
 ## 1. 승인, 역사 증거, 현재 미확인을 분리
 
@@ -305,3 +305,100 @@ R3-02~05/07의 실제 수신·화면·30종목·장 경계·최종 인수와 R3-
 
 확인하지 못한 사실: 새 회귀와 기존 suite의 실제 실행 결과, 로컬 도구 도움말/Next 가이드,
 수정 전 실패→수정 후 성공. 이유는 의존성 부재다. §7의 운영 미확인 항목도 모두 유지한다.
+
+
+## 9. D1 집중 검증 — 고정 의존성 준비와 실제 red→green
+
+2026-10-21 부모의 후속 범위 확대에 따라 **이 R3 worktree 내부** npm lockfile 의존성 준비와
+해당 page-seam suite만 실행했다. 대상 소스는 `7b7f219720f0e5280b96d319a106adc33085a090`,
+수정 전 route는 `d805de1687619367642dc69e94dd7fb84443bb66`다. §8의 NOT_RUN은 당시
+기록으로 보존한다. 이번에는 추가 소스 보정이 없고 검증 문서만 커밋한다.
+
+### 도구와 설치
+
+- Node `v24.13.1`, npm `11.8.0`; root 요구 `>=24 <25` 충족. 로컬 `npm ci --help`에서
+  workspace/root 포함·ignore-scripts·audit/fund 옵션을 확인했다. pnpm은 사용하지 않았다.
+- 모든 설치/테스트는 순차, `nice -n 10`, `NODE_OPTIONS=--max-old-space-size=2048`로 실행했다.
+  증거와 npm 캐시는 ignored `target/r3-d1-validation/`에 보존했다. manifest/lock 변경,
+  전역 설정·다른 worktree·브라우저 다운로드·lifecycle script 실행은 없다.
+- 최초 시도는 `--userconfig=/dev/null --globalconfig=/dev/null`의 동일 설정 경로 때문에
+  npm 설정 로딩 전 `double-loading config`로 exit1(0.049초). 원본 로그/결과를 남겼다.
+  이는 패키지 충돌/다운로드 실패가 아니며, 서로 다른 worktree 내부 빈 설정 파일로만 수정했다.
+- 두 번째 명령은 아래와 같으며 exit0(6.610초), **302 packages added**다. `E`는 실행 당시
+  `/data/worktrees/3puw275b/r3-parallel-20261021/target/r3-d1-validation` 절대경로다.
+  npm이 알린 새 버전 업데이트는 실행하지 않았다. lock의 다운로드 host는 registry.npmjs.org다.
+
+```sh
+NODE_OPTIONS=--max-old-space-size=2048 nice -n 10 npm ci \
+  --workspace=@lagrange/web --include-workspace-root --include=dev \
+  --ignore-scripts --no-audit --no-fund --cache="$E/npm-cache" \
+  --userconfig="$E/npm-user-empty.conf" --globalconfig="$E/npm-global-empty.conf" \
+  --fetch-retries=0
+```
+
+설치된 Vitest `4.1.10`의 실제 `--help`에서 `--maxWorkers`와 `--no-file-parallelism`,
+`--testNamePattern`, JSON reporter/outputFile 옵션을 확인했다. Next `16.3.0`, React `19.2.8`.
+로컬 Next `dist/docs/01-app/`의 server-and-client-components, page API, testing/vitest 가이드를
+읽었다. async Server Component에 대한 일반 Vitest 지원 한계를 명시한 가이드에 따라 이번
+검사는 기존 `renderAsyncPage`로 page 결과와 provider props를 관측한 집중 회귀이며,
+Next RSC/hydration·브라우저·네트워크 종단 검증으로 확대하지 않는다.
+
+### 실행과 실패 원인
+
+두 명령 모두 `apps/web`에서 실행했다. 아래 `R`은 worktree 절대경로, `E`는 위 증거 경로다.
+
+```sh
+NODE_OPTIONS=--max-old-space-size=2048 nice -n 10 node "$R/node_modules/vitest/vitest.mjs" run \
+  tests/stock-beta-intraday-page-seam.test.tsx --maxWorkers=1 --no-file-parallelism \
+  '--testNamePattern=passes only selected READY membership|passes no detail demand' \
+  --reporter=json --outputFile="$E/red.json"
+NODE_OPTIONS=--max-old-space-size=2048 nice -n 10 node "$R/node_modules/vitest/vitest.mjs" run \
+  tests/stock-beta-intraday-page-seam.test.tsx --maxWorkers=1 --no-file-parallelism \
+  --reporter=json --outputFile="$E/green.json"
+```
+
+| 실행 | 실제 exit / 결과 | 판정 |
+| --- | --- | --- |
+| RED: d805de1 원본 route + 7b7f219 회귀 | exit1, 4 failed / 0 passed / 10 skipped, 총14; 1.216초 | 첫째/둘째 선택 모두 membership 2개가 전달돼 singleton 기대 실패. generation 불일치/미READY도 전체2개를 전달해 빈 배열 기대 실패. 네 실패 모두 provider 호출1회의 인자 불일치 |
+| GREEN: 7b7f219 route 복원 + 동일 회귀, suite 전체 | exit0, 14 passed / 0 failed / 0 skipped; 1.166초 | 신규6개 및 기존8개 통과. board2종목, off 비활성, Member API/provider 호출없음 포함 |
+
+Python 실행 wrapper는 RED 동안만 원본 blob을 route에 쓰고 `finally`에서 수정 blob을
+byte 단위로 복원했다. 결과에 `routeRestored:true`를 남기고 GREEN 전·후 재대조했다.
+원본 SHA-256은 `3b28391a5fe08563301dc86f1ea811972949820ca2e16aa656572e4b7b4be859`,
+수정본은 `8f28a049276f273d25a35a330e9d5c7b85fc6c751cae8c9d9f85fc249e0217a0`다.
+실패의 diff에서 두 membership 전달과 호출1회를 직접 확인했으며 예상 실패를 대신 기록한 것이 아니다.
+기존 커밋/원본 로그를 수정하지 않았다. source/test는 7b7f219와 byte 동일하다.
+
+### 무결성, 증거 및 남은 범위
+
+설치 전 모든 tracked package.json과 root lock의 SHA-256을 저장하고 종료 후 모두 일치함을 확인했다.
+
+| 파일 | 전후 동일 SHA-256 |
+| --- | --- |
+| `apps/api-server/package.json` | `b01a325c7a6a6d38d7149623ab107a59e229d47870f88a7528e5bcdd87681662` |
+| `apps/web/package.json` | `556dd43c173351d59b56f231a7d3393251680f309958d62d2cff11510d3fe0bf` |
+| `data-pipelines/kind-capture/package.json` | `49fa719dac556504e6789aaef772765fd41a961152fe364c2389e008edee19fc` |
+| `package-lock.json` | `1932c810e7165807f24c9aa3005063c9e8dde3292ac27d8ede9c3735da5e9e76` |
+| `package.json` | `171bf43c0afc36e500432e784f103a6881382496b3244087c5c9cbdb3bf9c338` |
+
+원본 로그·결과는 Git에 넣지 않는다. 아래 경로는 `target/r3-d1-validation/` 기준이다.
+
+| 증거 | SHA-256 |
+| --- | --- |
+| `npm-ci.log` | `250e369d730a46c4d41df37449a5c58c169b4b1d2ab546951a8bed0285805a95` |
+| `npm-ci-a2.log` | `addfb56898ea0838e3b43436156f7fb704548c4189223a0ad4f8fabd300e8862` |
+| `red.json` | `754ff3375fc3cbe711ace598819b51bd54c824f9c690642777c8d2cb3b0ddda8` |
+| `red-result.json` | `052e95ef235818e70f38c37df268b52ce95063cb1bab39eb52924d191e25f0c6` |
+| `green.json` | `d818cd860e76b4331f43c947c4440d80e63d718186e7468cbb284ef567621b69` |
+| `green-result.json` | `beef8a34360425e18a4f4c33af4ffa04b0cd3de4055f7c453b7e078d78b6e996` |
+| `final-integrity.json` | `ab59cd4d4f26826d1652ac065e82e46b80f3dbc71352fbea6792dbfe230ebc12` |
+
+`git diff --check`, R2 ROADMAP 전체 절/체크박스 불변, source/test 무변경, ignored 증거·캐시의
+비추적을 확인했다. 구조 변화가 없어 diagrams는 그대로다. 추가 테스트/formatter/full build/
+전역 typecheck/Cargo/CI·merge/push·운영 조회/수정·lease HTTP/SSE/provider/시장 연결은 미실행이다.
+
+D1의 한정 소스 회귀 검증은 완료했고 다음은 부모 통합 검토다. R3-01 설치 전제 및 R3-02~07의
+운영 수신/인수·quota 공백은 그대로다. 1종목→인증 수명주기→30종목 운영 packet의 대상·변경·
+복구·예산·시각은 다음 조율 범위이며 이번 의존성 설치는 R2 인증 복구나 운영 인수 증거가 아니다.
+확인하지 못한 사실: 전체 타입/빌드·브라우저/RSC·실제 lease/수신과 §7의 운영 항목(이번 범위 밖).
+지정된 D1 집중 회귀에서 미해결 실패는 **없음**이다.
