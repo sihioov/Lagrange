@@ -10099,3 +10099,28 @@ The specific unresolved contract is completeness/continuation for first-page
 F with100 rows on HHKDB669102C0. Existing SOURCE_CONFLICT, immutable Raw,
 DailyOFF/epoch0/firstSessionnull/actual3days0 remain. Review artifact
 wave157/r2-post-matrix-contract-review.json SHA5cf79842b5572fab762780fc6e81a17dce0d36b38c155722bd9fa2dc2731665d.
+
+### Wave157 market-close observation — no new receipt accepted
+
+The independently accepted Oct22 trading-day proof and official09:00–15:30KST
+regular window justified one distinct read-only observation after06:30UTC close.
+At06:31:23.888883UTC, the exact restored CC Owner and05:23:24 start matched;
+Postgres identity was verified. Auth, consumers, producer, subscriptions and
+quote cache aggregates equal the05:24 observation: unexpired sessions0, active
+unexpired browser consumers0, expired disconnected producer/no epoch, latest
+quote02:49:54.240UTC/version11/ordinal26. This is an actual instant observation,
+not a continuing no-demand assertion. No fresh receipt, visual/lifecycle
+acceptance, broker close ACK or30-instrument acceptance is claimed.
+The bounded500-line log tail contains no typed error; it does not establish
+full-interval error absence. The first local verifier incorrectly required zero
+scanned lines despite the500 scanned lines; that failure is retained, and only
+local verification was corrected. The original host observation was not repeated.
+Provider calls, DB writes and service mutations are0. R2 conflict, consumed
+4-GET diagnostic, DailyOFF/epoch0/firstSessionnull/actual3days0 remain unchanged.
+Next actual reception requires normal authenticated demand in a verified real
+market session with date-appropriate calendar/window evidence; no future date
+or session is assumed. Owner's pending normal-access question is not repeated.
+
+Evidence: reception-a2/observation.json6268bytes SHA035285d4457df0ce2d75a6323a2991c381449f48127b5523e95cf6a4b4554e5d;
+typed-log-observation.json296bytes SHA1764209939f14e7c0808d7f308b4b95ce091ee12053c4000694005f2d0b0bb47;
+independent-closure.json2637bytes SHAd8d7a766b5e19b5c29337a2bea21373dc9b3e0849afdd63c60379a1e8df4c84e.
