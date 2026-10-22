@@ -225,3 +225,40 @@ commit uncertainty, day/rights/generation changes, buffer and SSE bounds, write 
 latency and coalesced updates. A healthy service or periodic status event is not a new quote.
 Live acceptance additionally requires the G5 one-stock pilot, then all 30 actual ACKs and
 fresh authenticated display updates. Ordinary EOD acceptance is separate and remains required.
+
+
+## Reviewed retirement of a dead owned epoch
+
+`kis-market-stream-state retire-reviewed-epoch` is an operator incident action,
+separate from initialization, `--check`, runtime retry and broker clean-close.
+It is permitted only for an exact locally owned runner already stopped/drained
+with its original terminal outcome retained. Before invoking it, the root host
+review must bind the serving revision/image/container and start identity, old
+transport's terminal/absence evidence, the unchanged slot/generation and both
+anchor identities, exact current state SHA256, and absence of pending commands,
+handshake attempts and approval issuance ambiguity. Persist and hash that review.
+A healthy container alone does not satisfy these requirements.
+
+Use the separately verified exact operator image with no network, read-only
+root filesystem, no credentials mounted, and only the verified runtime parent
+mounted for the state transition. Root is required; preserve fixed state and
+anchor owner/mode bindings. Pass `--credential-slot-id`,
+`--credential-generation`, `--expected-state-sha256` and
+`--stopped-runner-review-sha256`; the generation must match the normal
+`KIS_READ_CREDENTIAL_GENERATION` setting. Do not use an unverified image, a
+synthetic review, a different domain, or arbitrary JSON edits.
+
+The tool acquires both existing locks and rejects any state/hash/schema/domain
+change or ambiguous operation. Before changing only `current_epoch` to null,
+it fsyncs an exclusive `retired-epoch-<original-epoch>.json` with old/new state
+hashes and the host review hash. It never copies approval material into that
+receipt or resets approval state, counters, history, backoff or ordinals.
+Any failure is uncertain: retain the intent/temporary file and original outcome;
+no replay, deletion or replacement of the intent. The tool does not assert that
+the broker acknowledged a clean close or that another host is absent.
+
+After independent exact before/after field comparison and receipt verification,
+restore only the exact owned runner through the reviewed service procedure.
+Normal authenticated demand, existing day/grant checks and persistent reconnect
+budgets still control any connection. Record new receipt independently; neither
+retirement nor a healthy restart constitutes live acceptance.

@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::market_stream_state::{
     ProvisioningOwners, StateError, initialize_provisioning_at,
-    open_production_provisioning_parent, validate_provisioning_at,
+    open_production_provisioning_parent, retire_reviewed_epoch_at, validate_provisioning_at,
 };
 
 const RUNTIME_UID: u32 = 10_001;
@@ -111,6 +111,33 @@ fn validate_input(slot: Uuid, generation: u64) -> Result<(), StateError> {
         return Err(StateError::ProvisioningInputInvalid);
     }
     Ok(())
+}
+
+/// Retires only an idle epoch after a root operator has proved that its exact
+/// owned runner is stopped and drained. The host review is hash-bound and must
+/// be persisted before this call; this function makes no broker or DB calls.
+/// Approval material, command/reconnect budgets, backoff, ordinals and anchor
+/// identities are preserved. Uncertain commands/handshakes/approval cannot use
+/// this path. An exclusive immutable intent prevents replay after any failure.
+pub fn retire_reviewed_production_epoch(
+    slot: Uuid,
+    generation: u64,
+    expected_state_sha256: &str,
+    host_review_sha256: &str,
+) -> Result<(), StateError> {
+    validate_input(slot, generation)?;
+    if !ActorIds::current().may_initialize() {
+        return Err(StateError::ProvisioningActorDenied);
+    }
+    let parent = open_production_provisioning_parent()?;
+    retire_reviewed_epoch_at(
+        &parent,
+        slot,
+        generation,
+        expected_state_sha256,
+        host_review_sha256,
+        ProvisioningOwners::production(),
+    )
 }
 
 #[cfg(all(test, feature = "market-stream-provisioning"))]

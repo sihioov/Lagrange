@@ -9990,3 +9990,54 @@ Its independently tracked original image build and owed OFF Owner restoration
 must finish before diagnostic ON installation. R3 sustained actual receipt and
 normal lifecycle remain OPEN; R2 SOURCE_CONFLICT, DailyOFF epoch0/firstSessionnull
 and actual consecutive days0 remain OPEN.
+
+
+### Wave157 — measured query discrepancy and reviewed dead-session retirement
+
+R2 diagnostic fd7677c original CI39720162660/attempt1 passed all8 jobs/full
+logs,7 exact checkouts,145 Rust/154 Python/PG19/page14. The original a1 root
+driver stopped on Git dubious ownership before the official command/claim;
+no provider request occurred. A new a2 used the same exact-checkout trust
+setting as the official wrapper, then completed04:32:23UTC, exit0/PID0/drained.
+Exactly4 wire GETs, zero retries: target single/wide returned1/2 rows with the
+same Sep15 target hash; whole-market single/wide returned54/100 rows with
+Sep15 counts54/0 and terminal E/F. Both whole-market response bodies exactly
+match the original conflicting deliveries. Four isolated Raw batches, manifest
+metadata, bodies/hashes, wire intents/terminals and unchanged original Raw
+manifest were independently verified04:35:01UTC. The first verifier's atime
+equality assumption failed on reading the new manifest; the corrected verifier
+checks identity/mode/ownership/size/mtime/ctime and preserves the original
+failure. No provider replay, pagination, input admission or Daily enable.
+The observed discrepancy depends on query scope; the provider mechanism and
+completeness contract remain UNKNOWN. Diagnostic approval is consumed.
+
+R3 normal Owner re-login04:17:19UTC and active browser demand were observed.
+At04:17:32UTC CC logs CONNECT_FAILED/PriorSessionUncertain followed by terminal
+quote-task failure; the latest received quote remains02:49:54UTC. Owner reports
+the Samsung screen does not update. No further refresh/login is requested.
+Metadata-only inspection04:27:01UTC acquired the existing connection anchor
+exclusively and verified state SHA75f6ee05f8f3cd5caefabf96e7634db309155b2f6a8a860305406758cfa864fa.
+Only current_epoch remains; pending_command/connection_attempt and approval
+ambiguity/in-flight flags are absent. The earlier inspection used incorrect
+identity field names and failed read-only; it is preserved. No state mutation
+or provider request occurred in these inspections. The original02:49 failure
+cause remains UNKNOWN; this is the later reconnect blocker.
+
+The official feature-gated operator binary now offers retire-reviewed-epoch,
+root-only with exact state hash and persisted stopped-runner review hash. It
+requires both existing locks, canonical state, matching slot/generation and
+an idle epoch. An exclusive fsynced retirement intent records the old epoch,
+state hashes and review hash before replacing only current_epoch. It preserves
+approval material, budgets/history, ordinal, backoff, has_connected and all
+anchor identities. Failed/partial intents prevent replay. No broker clean-close
+is asserted. Network-none host invocation must prove exact runner stop/drain,
+old owned transport absence and unchanged identities; restart remains a separate
+exact service action and only normal authenticated demand may reconnect.
+Six focused tests pass, plus earlier204 library/3 CLI tests before the added
+unknown-field case; strict all-target Clippy passes with the required test-support
+feature. The initial Clippy invocation omitted that existing fixture feature
+and failed to compile integration tests; its log is preserved. Hosted CI,
+tool image, actual retirement/restart and new receipt remain pending.
+No runtime topology, data rights, provider surface or live acceptance changed.
+
+Independent R2 evidence: `wave156/a2/independent-raw-a2-closure.json` SHA256 `6d23d0442509bf8ab07d0e2d53a210379d0feff798cf626692983391caabe8cd`.

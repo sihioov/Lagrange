@@ -2,16 +2,29 @@ use std::ffi::OsString;
 use std::process::ExitCode;
 
 use kis_client::market_stream_provisioning::{
-    initialize_production_market_stream_domain, validate_production_market_stream_domain,
+    initialize_production_market_stream_domain, retire_reviewed_production_epoch,
+    validate_production_market_stream_domain,
 };
 use kis_client::market_stream_state::StateError;
 use kis_client::read_coordination_config::CREDENTIAL_GENERATION_ENV;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Action {
-    Initialize { slot: Uuid, generation: u64 },
-    Validate { slot: Uuid, generation: u64 },
+    Initialize {
+        slot: Uuid,
+        generation: u64,
+    },
+    Validate {
+        slot: Uuid,
+        generation: u64,
+    },
+    Retire {
+        slot: Uuid,
+        generation: u64,
+        state_hash: String,
+        review_hash: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +50,8 @@ fn parse_args(args: &[OsString]) -> Result<Action, CliError> {
         .ok_or(CliError::Usage)?;
     let mut slot = None;
     let mut generation = None;
+    let mut state_hash = None;
+    let mut review_hash = None;
     let mut index = 1;
     while index < args.len() {
         let flag = args[index].to_str().ok_or(CliError::Usage)?;
@@ -51,6 +66,16 @@ fn parse_args(args: &[OsString]) -> Result<Action, CliError> {
             "--credential-generation" if generation.is_none() => {
                 generation = Some(canonical_generation(value).ok_or(CliError::Usage)?);
             }
+            "--expected-state-sha256"
+                if state_hash.is_none() && command == "retire-reviewed-epoch" =>
+            {
+                state_hash = Some(canonical_hash(value).ok_or(CliError::Usage)?);
+            }
+            "--stopped-runner-review-sha256"
+                if review_hash.is_none() && command == "retire-reviewed-epoch" =>
+            {
+                review_hash = Some(canonical_hash(value).ok_or(CliError::Usage)?);
+            }
             _ => return Err(CliError::Usage),
         }
         index += 2;
@@ -60,8 +85,23 @@ fn parse_args(args: &[OsString]) -> Result<Action, CliError> {
     match command {
         "initialize-new" => Ok(Action::Initialize { slot, generation }),
         "validate-existing" => Ok(Action::Validate { slot, generation }),
+        "retire-reviewed-epoch" => Ok(Action::Retire {
+            slot,
+            generation,
+            state_hash: state_hash.ok_or(CliError::Usage)?,
+            review_hash: review_hash.ok_or(CliError::Usage)?,
+        }),
         _ => Err(CliError::Usage),
     }
+}
+
+fn canonical_hash(value: &str) -> Option<String> {
+    (value.len() == 64
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        && value != "0".repeat(64))
+    .then(|| value.to_owned())
 }
 
 fn configured_generation() -> Result<u64, CliError> {
@@ -96,13 +136,27 @@ fn run(args: &[OsString]) -> ExitCode {
         Err(CliError::Configuration) => return emit_error("ERR_CONFIG", 4),
         Err(CliError::Usage) => return emit_error("ERR_CONFIG", 4),
     };
-    let generation = match action {
-        Action::Initialize { generation, .. } | Action::Validate { generation, .. } => generation,
+    let generation = match &action {
+        Action::Initialize { generation, .. }
+        | Action::Validate { generation, .. }
+        | Action::Retire { generation, .. } => *generation,
     };
     if generation != configured_generation {
         return emit_error("ERR_CONFIG", 4);
     }
     match action {
+        Action::Retire {
+            slot,
+            generation,
+            state_hash,
+            review_hash,
+        } => match retire_reviewed_production_epoch(slot, generation, &state_hash, &review_hash) {
+            Ok(()) => {
+                println!("OK_REVIEWED_EPOCH_RETIRED");
+                ExitCode::SUCCESS
+            }
+            Err(error) => emit_state_error(error, false),
+        },
         Action::Initialize { slot, generation } => {
             match initialize_production_market_stream_domain(slot, generation) {
                 Ok(_) => {
@@ -135,6 +189,42 @@ mod tests {
 
     fn args(parts: &[&str]) -> Vec<OsString> {
         parts.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn reviewed_retirement_requires_both_canonical_hashes_and_explicit_command() {
+        let slot = "62c6713e-19b7-4bd3-8be6-6a8c5fa3dd3c";
+        let state = "a".repeat(64);
+        let review = "b".repeat(64);
+        let parts = [
+            "retire-reviewed-epoch",
+            "--credential-slot-id",
+            slot,
+            "--credential-generation",
+            "17",
+            "--expected-state-sha256",
+            &state,
+            "--stopped-runner-review-sha256",
+            &review,
+        ];
+        assert!(matches!(
+            parse_args(&args(&parts)),
+            Ok(Action::Retire { .. })
+        ));
+        assert!(parse_args(&args(&parts[..7])).is_err());
+        let mut invalid = parts;
+        invalid[0] = "validate-existing";
+        assert!(parse_args(&args(&invalid)).is_err());
+        for bad in [
+            "A".repeat(64),
+            "0".repeat(64),
+            "a".repeat(63),
+            "g".repeat(64),
+        ] {
+            let mut invalid = parts;
+            invalid[6] = &bad;
+            assert!(parse_args(&args(&invalid)).is_err());
+        }
     }
 
     #[test]

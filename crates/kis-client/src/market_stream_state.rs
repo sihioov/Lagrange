@@ -27,6 +27,11 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "market-stream-provisioning")]
+mod reviewed_retirement;
+#[cfg(feature = "market-stream-provisioning")]
+pub(crate) use reviewed_retirement::retire_reviewed_epoch_at;
+
 pub const STATE_SCHEMA: &str = "kis-market-stream-state-v1";
 pub const STATE_FILE: &str = "approval-state-v1.json";
 pub const CONNECTION_LOCK_FILE: &str = "connection.lock";
@@ -1319,6 +1324,9 @@ impl ProvisioningOwners {
 #[cfg(feature = "market-stream-provisioning")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProvisioningSyncPoint {
+    RetirementIntent,
+    RetirementState,
+    RetirementInstalled,
     StateDirectory,
     ParentAfterStateDirectory,
     AnchorDirectory,

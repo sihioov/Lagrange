@@ -201,6 +201,10 @@ jobs:
             stat --format='DAILY_ARTIFACT_FIXTURE_MODE:%u:%g:%a' -- "$fixture_node"
           done
       - run: cargo test --workspace --locked --no-fail-fast --features kis-client/test-support
+      - name: Verify reviewed market-stream retirement boundaries
+        run: cargo test --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state retirement_
+      - name: Lint reviewed market-stream operator tool
+        run: cargo clippy --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state -- -D warnings
       - name: Remove empty daily artifact test parent
         if: always()
         run: |
