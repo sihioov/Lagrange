@@ -240,8 +240,10 @@ handshake attempts and approval issuance ambiguity. Persist and hash that review
 A healthy container alone does not satisfy these requirements.
 
 Use the separately verified exact operator image with no network, read-only
-root filesystem, no credentials mounted, and only the verified runtime parent
-mounted for the state transition. Root is required; preserve fixed state and
+root filesystem, no additional AppKey/AppSecret/REST-token mounts, and only
+the verified state leaf plus read-only anchor leaf mounted beneath a private
+trusted runtime parent. The existing state contains protected approval material;
+it must never be emitted or copied into diagnostics. Root is required; preserve fixed state and
 anchor owner/mode bindings. Pass `--credential-slot-id`,
 `--credential-generation`, `--expected-state-sha256` and
 `--stopped-runner-review-sha256`; the generation must match the normal

@@ -3572,3 +3572,61 @@ tool image, actual retirement/restart and new receipt remain pending.
 No runtime topology, data rights, provider surface or live acceptance changed.
 
 Independent R2 evidence: `wave156/a2/independent-raw-a2-closure.json` SHA256 `6d23d0442509bf8ab07d0e2d53a210379d0feff798cf626692983391caabe8cd`.
+
+### Wave157 follow-up — exact operator image and reviewed retirement executed
+
+Candidate daa69564d96044fc9ee2e99da4eb570dd6920ca9 original hosted run39723597887
+attempt1 succeeded all8 jobs/full8 logs,7 exact checkouts,151 Rust/154 Python,
+PG19/page14. Closure235518bytes SHAde98886288a33ce0dda62d8a74e407c3ca111daab74047646861d375e7424eb7.
+Only its operator image was built; serving remains cc622469b6a1bf0cd4f0205134d29ecc77a75693.
+Builda1 stopped at the resource gate before any build intent; original resource
+values were not persisted, so only that failed gate is claimed. Later actual
+resource evidence passed. Distincta2 reached Compose but failed interpolation
+before compilation because required nonsecret image-only settings were missing.
+Both failed originals are retained, PID0/drained, no Owner stop/provider calls.
+Distincta3 used explicit build-only placeholders, passed Compose configuration,
+then one-service serial build with CARGO_BUILD_JOBS=2 and COMPOSE_PARALLEL_LIMIT=1.
+Originala3 terminal0/drained; before/after containers/inventory unchanged, no OOM;
+exact image sha256:25f1768e99a27bb56814dfa0961719fc63e6c25d055be8ea6745b687ccca7062.
+Its isolated non-root actor probe returned ERR_ACTOR/exit3 and was removed only
+after exact terminal/PID0 verification. Image independent acceptance05:23:16UTC,
+closure1226bytes SHAb1b39f5b93151ca169499ba0d8ae20c2d7cb168cf437d7947de98335a1ee09da.
+No full-release manifest or serving-change claim is made for the operator image.
+
+Original recovery unit lagrange-r3-reviewed-recovery-daa6956-a1.service
+PID90983/invocationcab50495a4aa4723a421c972184b6186 completed normal0/drained.
+Before mutation, the exact original CC Owner was stopped without SIGKILL;
+its original quote-task failure exit1, PID0 and absent recursive cgroup were
+retained. Existing state/anchor identities and exact state hash matched; no
+other running local container mounted that domain; old owned transport was
+absent. Read-only DB review matched the old cache epoch, ACTIVE grant, expired
+no-epoch disconnected producer, no queued/running Owner jobs or pending commands.
+Root review SHA47b168ac4d2acb08884c1f7689fe4f8b6fe2769e125750d573efaa1158509251
+preceded the network-none official operator invocation. Only the state leaf and
+read-only anchor leaf were mounted under a private trusted tmpfs parent, with
+no AppKey/AppSecret/REST-token mounts. Before/after full JSON equality confirmed
+only current_epoch became null; approval material, budgets, ordinals, backoff,
+has_connected and anchors were preserved. No broker clean-close was asserted.
+State SHA75f6ee05… became095846e92632d4e4ab9d0caa25a21805e63a649af0da2bd42b86238209716d24;
+retired-epoch receipt SHA72db647bb0c7a5501da20859c3b53e7bd15dc4380b81520e794a235b90a286f0.
+The exact original CC Owner container/image was restarted05:23:24.533292318UTC;
+other10 scoped containers and all21 inventory remained unchanged. No restoration
+is owed. Recovery closure15206bytes SHA755ee171bd11c1e257f10951a5495969ae55cce0476c442b0923d69e97d49a24.
+
+Fresh read-only observation05:24:01UTC found no typed post-restart error, but
+zero unexpired unrevoked sessions and zero active unexpired browser consumers.
+The latest quote remains02:49:54.240UTC/version11. This proves neither a new
+connection nor renewed receipt; original first-failure cause remains UNKNOWN.
+Owner was asked for a normal foreground login after the actual server recovery
+because the prior session expired. No session/cookie/lease/ACK was fabricated.
+R3 actual continued receipt, UI/lifecycle and30 admissions remain OPEN.
+Observation6268bytes SHAce4ec1271a56370521a89fd2c95503ed6f856c8766674c214c6e81112da01944.
+
+R2 post-matrix official review: the exact dividend sample still follows only M
+with unchanged query and request N. Generic F/M examples for other endpoints
+are not an endpoint-specific dividend contract. No100-row-cap assumption,
+F pagination, new provider query or automatic input admission was adopted.
+The specific unresolved contract is completeness/continuation for first-page
+F with100 rows on HHKDB669102C0. Existing SOURCE_CONFLICT, immutable Raw,
+DailyOFF/epoch0/firstSessionnull/actual3days0 remain. Review artifact
+wave157/r2-post-matrix-contract-review.json SHA5cf79842b5572fab762780fc6e81a17dce0d36b38c155722bd9fa2dc2731665d.
