@@ -3469,3 +3469,31 @@ no query has been submitted and no answer is inferred. It cannot automatically
 admit data or resolve the historical conflict. DailyOFF/epoch0, firstSession
 null and actual consecutive days0 remain. Existing29c70d72 tracking is intact;
 no renewal, new agent, restoration action or original-operation replay occurred.
+
+#### Wave155 incident follow-up — compatible OFF serving accepted
+
+At2026-10-22T03:14:44.282665Z, exact eac7197 API/Web/Owner serving was
+independently accepted after official current/status selection and serial
+three-service refresh. All three actual quote modes were off (transport key
+absent), exact image IDs/revisions and health matched, HTTP passed, other8
+containers were unchanged, DailyOFF/epoch0 and KISdisabled remained, and the
+status timer was restored. Original supervisor3979949/invocation93637689ddf04098b2aa1211a013d6bb
+exited0 with empty cgroup; all original helper exits/hashes were recovered.
+The old60d Owner exited1 from the retained quote-task failure, without SIGKILL;
+this is not a normal0 retirement. No restoration remains owed. No WS reconnect,
+state initialization/reset, input admission or calendar recapture occurred.
+Closure `wave155/off-a1/serving-deployment-closure-20261022T031444.json`,60926bytes
+SHA256 `29b16690472536aaba21d0901567cb068051e1133513490e6bde5c139a50047e`.
+Two verifier assumptions were corrected locally: trailing empty Docker output
+lines are ignored, and OFF has no transport environment key. Original verifier
+failures remain recorded; the deployment was not replayed.
+
+Diagnostic source candidate is cc622469b6a1bf0cd4f0205134d29ecc77a75693, distinct
+from this documentation HEAD. CI39715346751 attempt1 was dispatched once on
+r3-first-failure-ci-cc62246-20261022; it is still in progress. Its exact frozen
+packet requires138 named Rust and154 Python cases. A new immutable build is
+prepared, not started; the official existing-state check after the actual
+failure will be read-only while OFF/stopped. Expired incident producer state
+is retained, with no active lease/pending operation permitted for the build.
+Offline checks cover state-check failure, build failure and success reaching
+the same OFF Owner restoration path once. These are not live restoration proof.

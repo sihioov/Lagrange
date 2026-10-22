@@ -9,7 +9,7 @@
 | 최종 갱신일 | 2026-10-22 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave155: Owner가 삼성전자 화면을 정상 로그인해 열었고 실제 세션·ACK·10월22일 시세 수신을 확인했다. 그러나11:49:55KST 시세 작업이 PRODUCER_UNAVAILABLE로 종료되어 지속 수신과 화면 수명주기는 미완료다. 최초 실패를 보존하고 고정된 오류 코드·위치를 남기는 보정의 로컬87테스트가 통과했다. R2 Sep15/153130 SOURCE_CONFLICT·DailyOFF/첫세션null·실제3일0은 유지한다. |
+| 현재 실행 우선순위 | Wave155: 정상 Owner 로그인·삼성전자 ACK·실제 시세 수신 뒤 PRODUCER_UNAVAILABLE 중단을 확인했다.12:14KST 공식 전환으로 eac7197 API/Web/Owner의 시세OFF·정확한 이미지·응답 정상·나머지8불변을 독립 인수했다. 원래 Owner 실패종료1/강제종료 없음·감시 타이머 복원 완료. 진단 보정cc62246 로컬87테스트 통과, CI39715346751 attempt1 진행 중. R2 SOURCE_CONFLICT·DailyOFF/첫세션null·실제3일0은 유지한다. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
 | 다음 착수 항목 | **R3 실제 수신 중단 원인을 식별하도록 진단 보정 후보의 정확한 커밋을 CI·불변 배포로 검증한다. 원래 수신/실패를 보존하며 무조건 재연결·상태 초기화를 하지 않는다. R2 제한 진단 재조회는 기존 재조회 금지의 명시적 예외 답변 전에는 실행하지 않는다. 정상 인증 사용·지속 수신·30종목·실제3일을 구분한다.** |
@@ -394,6 +394,8 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   후속 — 14:45UTC 새 호환 off 후보7d91ba0의 전체 CI를 인수하고14:46UTC 원래a9 이미지 빌드를 시작했다. 원래 Owner 정상중지와 독립 복원 책임을 추적하며 off 전환·전체 state·정상 Owner 수요/실제수신은 아직 미인수다.
   Wave149 진행 — Wave149: R3 호환 off 후보7d91ba0 고정·실행소스60d와 동일 확인. CI39615546307 attempt1을14:17UTC 한 번 제출했고14:22UTC3작업 성공·나머지 진행/대기. a9 복원/빌드와 보호 off 입력 초안은 로컬 대조만 완료·운영 미실행. 기존60d serving·R2 소스 충돌·DailyOFF/epoch0·첫세션null·실제3일0 유지. 원래 CI 전체 인수·새12이미지와 실제 off/return 검증은 미완료.
   추가 검증 — 2026-10-21 15:16:59UTC, Wave150: 호환 off7d 불변 artifact의 공식 `provision-owner-market-stream.py --check`가 실제 `OK_VALIDATED`. 원래60d Owner 정상stop0, 임시 current 전환, read-only/network-none 기존 state 검사, 공식 current60d 복귀, 동일Owner 단일start/health, 감시 타이머 복원을7개 원래 단위 정상0/빈cgroup·전체21컨테이너 불변으로 독립 인수했다. 새 state 초기화·provider·서비스 교체 없음. 앞선 off-serving a1의 CONFIG_INVALID(감시 installer quotes owner_only 제한)와 복원은 보존; 전체 off-serving/rollback·Owner 인증 화면·당일proof/실제수신·30종목은 OPEN. 근거: `wave149/off-7d91ba0/state-check-a1/state-restoration-closure-20261021T151659.json` SHA9b3f5b51…(66579bytes).
+
+  장애 후 OFF 복귀 — 2026-10-22 12:14KST, Wave155: 공식 helper로60d→eac current/status와 API/Web/Owner를 직렬 전환해 exact3 이미지·실제 mode=off·healthy·HTTP·나머지8불변을 독립 확인했다. 원래60d Owner는 시세 작업 실패가 반영된 종료1이며 정상0으로 분류하지 않았다. SIGKILL 없음, status timer 복원, 기존 KISdisabled, 복원 책임 없음. 원래 수신/실패·DB epoch/state 보존; 재연결·초기화 없음. 근거: `wave155/off-a1/serving-deployment-closure-20261022T031444.json` SHA29b16690…(60926bytes).
 
 - [ ] **R3-02 — READY 1종목 실제 수신.** 정상 Owner 수요로 구독하고 실제 ACK, 계약상 47필드,
   새 수신 시각과 해제·종료를 확인한다. 조용한 장에서 미관측한 결과를 성공으로 추정하지 않는다.
@@ -2037,3 +2039,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-22 | R2-08 · R3 추적 | Wave154 공식 문서 추가 검토·동일 대화 추적 갱신 | Wave154: 해시가 고정된 공식 XLSX 원본과 연결된 HTS0658 도움말을 검토했으나 Sep15/153130 소스 충돌을 해소할 완전성·우선순위 규칙은 확인되지 않았다. R2 입력 인수·Daily 활성화는 차단 유지. 마지막 실제 운영 관측은 Wave153의09:01KST이며 정상 Owner 사용·실제 수신·30종목·실제3일은 미완료다. 새 운영 조회 없이 동일 대화 추적29c70d72를 갱신했다. 같은 이름의 생성은 기존618a01bf 갱신으로 반환되어 별도 영수증으로 보존했다. 고유 이름의29c70d72 ACTIVE 생성 및 인계/registry 저장 후618a01bf 삭제 성공을 확인했다. | workbook7062ba60…; contract6e4fc537…; renewal f7a7e877…; 제품 변경/운영 조회/테스트/CI0 |
 
 | 2026-10-22 | R3-02/03/05 · R2-08 | Wave155 정상 Owner 최초 수신·시세 작업 실패 보존 | Wave155: Owner가 삼성전자 화면을 정상 로그인해 열었고 실제 세션·ACK·10월22일 시세 수신을 확인했다. 그러나11:49:55KST 시세 작업이 PRODUCER_UNAVAILABLE로 종료되어 지속 수신과 화면 수명주기는 미완료다. 최초 실패를 보존하고 고정된 오류 코드·위치를 남기는 보정의 로컬87테스트가 통과했다. R2 Sep15/153130 SOURCE_CONFLICT·DailyOFF/첫세션null·실제3일0은 유지한다. 새 진단 보정은 최초 오류의 정리 중 덮어쓰기를 막고 폐쇄된 enum 오류·소스 위치만 기록한다. 원문/자격증명·구독/재연결 정책 변경 없음. | actual closure bf34af4b…; source-validation.json; a3 fmt/test/diff 원래 child exit0; CI·배포·원인 확정은 후속 |
+
+| 2026-10-22 | R3-01/02/05 | Wave155 실제 실패 후 호환 OFF 복귀 인수 | Wave155: 정상 Owner 로그인·삼성전자 ACK·실제 시세 수신 뒤 PRODUCER_UNAVAILABLE 중단을 확인했다.12:14KST 공식 전환으로 eac7197 API/Web/Owner의 시세OFF·정확한 이미지·응답 정상·나머지8불변을 독립 인수했다. 원래 Owner 실패종료1/강제종료 없음·감시 타이머 복원 완료. 진단 보정cc62246 로컬87테스트 통과, CI39715346751 attempt1 진행 중. R2 SOURCE_CONFLICT·DailyOFF/첫세션null·실제3일0은 유지한다. | closure29b16690…; 원래3979949/invocation93637689… 정상0·cgroupempty; 원래 Owner exit1 별도 보존; 재조회/재연결/초기화0 |
