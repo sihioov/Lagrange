@@ -105,6 +105,7 @@ export function OwnerBetaRunStatus({ initialStatus, runId }: OwnerBetaRunStatusP
         if (cancelled) {
           return;
         }
+        setPollError(null);
         setStatus(nextStatus);
         if (nextStatus === "SUCCEEDED" || nextStatus === "FAILED" || nextStatus === "CANCELED") {
           return;

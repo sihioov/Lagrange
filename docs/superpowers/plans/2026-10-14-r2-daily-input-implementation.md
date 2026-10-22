@@ -10197,3 +10197,35 @@ SHA16baa7c59b4c1b4926e2326e3e3c4f0385bb2350894518218b7de3d97193ac85.
 apps/web/lib/i18n/dictionaries/recommendations.ts:394,455;
 apps/web/components/stock-beta/quote/current-quote-view.tsx:82,88;
 apps/web/lib/i18n/dictionaries/stock-beta.ts:552,572.
+
+### Wave159 — 상태 조회 복구 후 오류 문구 정리
+
+2026-10-23 KST, R2-07 독립 작업에서 Owner 전용 및 일반 추천 실행 화면의 조회 오류가
+정상 응답 후에도 남는 문제를 확인했다. 두 컴포넌트는 catch에서 pollError를 설정했지만
+성공 경로에서 지우지 않았다. 취소 여부를 확인한 뒤 계약에 맞는 정상 응답을 받았을 때
+setPollError(null)을 호출하도록 각 한 줄을 추가했다. 실제 실행 결과 FAILED의 표시는 유지한다.
+
+새 `scripts/qa/recommendation-poll-recovery-browser.mjs`는 실제 컴포넌트를 React/Chromium에서
+실행하고 loopback fixture 응답과 router stub만 사용한다. 다른 네트워크 접근은 차단한다.
+두 화면 각각 오류→정상 PENDING 회복과 재오류→실제 FAILED 전환을 검사했다.
+수정 전4검사 실패(exit1), 수정 후4검사 통과(exit0)를 보존했다. 최초 fixture의 SHA 접두어
+누락은 제품 회귀 근거로 인정하지 않고 실패 기록을 보존한 뒤 실제 schema 사전 검증을 추가했다.
+root 디렉터리 lint 호출은 기존 nested-root 설정으로 거부됐으며 apps/web에서 다시 실행해
+변경 TSX2개 통과를 확인했다. 설정은 수정하지 않았다. 기존 로그인 만료는 공통 browser parser와
+server-session에서 /login으로 연결되며, 이를 우회하는 새 인증 처리는 추가하지 않았다.
+
+관련 Vitest4파일25테스트 PASS: browser-response, r2-daily-ui-browser,
+owner-beta-recommendation-surface, r2-daily-ui-surface. 새 QA 스크립트 구문 검사와
+서식 검사를 수행했다. 전체 CI/이미지 빌드/운영 배포/실제 Owner 화면 검증은 수행하지 않았다.
+이번 코드는 새 소스 후보이며 기존 serving cc622469의 상태·이미지나 DAA 도구 인수를 대체하지 않는다.
+다음은 새 후보의 필수 hosted 검증과 정식 릴리스 반영이다. 완료된 이전 CI/빌드는 재실행하지 않는다.
+
+D-06 배당 완전성 조사와 D-07 장중 수신 인수는 유예를 유지한다. Daily OFF/입력 인수 미완료,
+실제3일0 및 R2/R3 FINAL 미완료를 성공으로 바꾸지 않았다. provider/운영 호출0이며
+lastObservedAt은 기존2026-10-22T14:54:59.907539Z 그대로다. 32개 무관한 ROADMAP 추가와
+.archify를 보존했다. 구조 변경이 없으므로 아키텍처 도표는 수정하지 않았다.
+
+로컬 근거: wave159/local-validation.json2046bytes
+SHA679c9b58c9466adad24dc749a5496f2a7463ba2fcd472247343f42b1884d420b.
+fixture-a1/red-a2/green-a1 artifact 크기는 각각302841/333547/329253bytes로 사전2MiB 상한 이내이며,
+/tmp 복사본에만 의존하지 않도록 wave159 아래 보존했다. QA 스크립트는 사전12KB 상한 이내다.

@@ -81,6 +81,7 @@ export function RecommendationRunStatus({
         if (cancelled) {
           return;
         }
+        setPollError(null);
         setCurrentRun(next);
         if (next.status !== "PENDING") {
           onSettled?.(next);
