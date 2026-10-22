@@ -10242,3 +10242,28 @@ r2-wave159-poll-recovery-7fa779c 분기에 게시하고 remote SHA 일치를 확
 근거는 wave159/ci-publication-intent.json, remote-branch-readback.json,
 ci-dispatch-once.claim, ci-dispatch-receipt.json, ci-run-original.json,
 ci-run-initial-api.json, ci-jobs-a1.json이다.
+
+#### Wave159 release preparation — clean checkout and official local plan
+
+2026-10-23 KST, 고정 후보7fa779cc7f0ff3cc291f1e444257beb5f7412c7c를
+/data/worktrees/3puw275b/r2-ui-recovery-release-7fa779c의 clean detached checkout으로 분리했다.
+후보의 공식 scripts/ops/build-production-images.sh --plan은 exit0이며 이미지12개를
+한 서비스씩 처리하는 기존 B1~B4 계획을 출력했다. Docker/root/운영/공급자 호출이나
+실제 빌드·설치는 없었다. 이미지용 입력은 기존의 비밀 없는 dummy entitlement 값뿐이다.
+
+원래 CI39813825738 attempt1의16:34:32UTC 관측에서 format/python-tests/clippy3개 성공,
+web/workspace-tests/policy/postgres-integration-validation4개 진행 중이며 required gate는
+아직 생성되지 않았다. 성공3개의 전체 로그 해시와 실제 checkout7fa779c를 회수했다.
+기존 DAA 후보의 필수 Rust151/Python154 정의는 새 후보의 실제 Git blob과 대조해
+동일함을 확인하고 ci-inputs.json에 다시 고정했다. 정의 일치는 새 CI 실행 증거가 아니다.
+전체8결과·8로그·7checkout 및 명명된 검증을 모두 회수하기 전에는 소스 CI 인수를 하지 않는다.
+
+다음은 원래 CI의 나머지 결과를 회수한 뒤 새 후보에 맞춘 공식 빌드·불변 릴리스 반영이다.
+과거 build/stop/start/recovery/probe를 재실행하지 않으며 실제 빌드에는 새 상태 바인딩이 필요하다.
+문서 HEAD는 후보가 아니다. D-06/D-07 유예, Daily OFF와 입력 미승인 및 기존 운영 관측 시각을
+보존한다. 무관한 ROADMAP32추가와 .archify는 이번 커밋에 포함하지 않는다.
+
+근거: wave159/release-preparation-closure.json3365bytes
+SHA06d057da202dc6769d3777bec0e69589ef06cb39f6d40f5af906606cacd0e9a8;
+ci-inputs.json533089bytes SHA5db07b0056fa74e7f7d918b0c2ec548e58ff9b59c9bc55234b070b01f48862d7.
+로컬 입력 manifest/recovery script/closure script는 사전4MiB/24KiB/16KiB 상한 이내다.
