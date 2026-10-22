@@ -3690,3 +3690,41 @@ serving or build candidate.
 Evidence: wave157/reception-a3/observation.json6269bytes SHA354570e6e7f01b430a5d4a7cb95aaa2041740603f32f88ceaa295bee338152c1;
 typed-log-observation.json297bytes SHA357452fa46ead65d728577507cc6ab272bd4b20165266774dbae17563d2735e6;
 independent-closure.json5238bytes SHA27501d77551de432286a42ff0aca89b21b38a3fc87dd520d2e2732d72021611c.
+
+### Wave158 — 비긴급 검증 유예와 독립 베타 작업
+
+2026-10-23 KST Owner는 “일단 지금 당장 확인안해도 되는 문제는 일단 기록하고 넘어가자
+처음부터 완벽하게 할 필요가 없어”라고 결정했다. 반복 조사와 시점 의존 검증을 후속 이슈로
+관리하고, 이들에 의존하지 않는 유용한 베타 작업을 계속한다. 기존 Wave157의 전체 작업을
+로컬 추적만으로 제한하던 다음 행동은 이 우선순위 결정으로 대체한다. 운영 작업은 계속 직렬이며
+새 위임/에이전트나 내부 Ralph 변경은 없다.
+
+- D-06: R2 배당 조회 완전성과 범위별 소스 충돌 원인 조사를 유예한다. 새로운 검증 가능한
+  해당 API 근거 또는 해당 입력이 필요한 출시 시점에 보존된 Raw부터 재개한다. 같은 KIS 문의,
+  문서 검색, 4조건 진단을 반복하지 않는다. 좁은 조회의 긍정 행과 넓은 조회의 누락을 모두 보존한다.
+  Owner가 전달한 역사적 100건 제한 설명은 현재 계약을 독립 검증한 증거로 승격하지 않는다.
+- D-07: R3 복구 후 새 수신·수명주기와 이후 30종목 운영 인수를 후속 검증으로 둔다. 정상 인증
+  수요와 그 날짜의 검증된 실제 시장 세션이 갖춰지면 재개한다. 야간 로그인이나 healthy 상태는
+  새 수신 증거가 아니다. 이미 답한 로그인 요청과 소모된 복구/관측을 반복하지 않는다.
+- 즉시 진행 범위: R2-07의 상태·기준일·실패·세션 만료 표시. 소스 대조에서 일일 패널은 refresh와
+  visibility 변경 시 검증 상태를 해제하며, 미확인/출처 충돌 및 서로 다른 기준일을 표시한다.
+  현재가 view도 SESSION_CLOSED와 오래된 성공 값을 구분한다. 이 범위에서 새 수정 필요성은
+  입증되지 않았다. 다음은 API 오류·세션 만료와 화면 연결을 대조하고 실제 누락만 보정하는 것이다.
+
+유예는 완료가 아니다. 해당 R2 입력 승인과 Daily 활성화, 실제 연속3거래일, R3 실제 수신·화면·
+30종목, R2/R3 FINAL은 미완료로 남는다. 기존 Daily OFF/epoch0/firstSessionnull/actual3days0은
+마지막 승인 기록을 유지한다. 기존 허용 범위의 독립 작업은 이 후속 검증을 기다리지 않는다.
+새 provider 호출·진단 재실행·F 연속조회·자동 입력 승인·인증 가장·외부 발송은 이 결정에 포함되지 않는다.
+
+이번 검토는 로컬 소스/문서에 한정했다. 테스트·CI·빌드·provider·호스트 관측·운영 변경0.
+새 전체 서비스 health 주장은 없으며 lastObservedAt은 2026-10-22T14:54:59.907539Z를 유지한다.
+Docs HEAD는 serving/build candidate가 아니다. 32개 무관한 ROADMAP 추가와 .archify를 보존한다.
+
+로컬 근거: wave158/owner-incremental-beta-decision.json2117bytes
+SHA1e9b637bf6b9eb2017e7d4a02c08c6002dbeedce3c2ebb2f85a787da3394de7d;
+wave158/r2-07-status-source-review.json1735bytes
+SHA16baa7c59b4c1b4926e2326e3e3c4f0385bb2350894518218b7de3d97193ac85.
+소스: apps/web/components/recommendations/owner-beta-daily-panel.tsx:40,109,129;
+apps/web/lib/i18n/dictionaries/recommendations.ts:394,455;
+apps/web/components/stock-beta/quote/current-quote-view.tsx:82,88;
+apps/web/lib/i18n/dictionaries/stock-beta.ts:552,572.
