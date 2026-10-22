@@ -3368,3 +3368,50 @@ Next action requires changed normal authenticated demand or independent
 source-contract evidence. With neither, retain bounded local tracking;
 do not repeat production polling solely for heartbeat or fabricate demand.
 Heartbeat618a01bf still renews by03:40UTC; no renewal was needed for this read.
+
+### Wave154 — Pinned workbook and official HTS help reviewed; conflict retained
+
+On 2026-10-22 the Owner directly requested continuation. A distinct local
+investigation located the previously unavailable workbook in the canonical
+checkout at `/data/workspace/lagrange/docs/kis_openapi_entiredocs_20260818_030007.xlsx`.
+Its 1,299,413 bytes match the previously recorded SHA256
+`993672501204722da88ebc30753d73406b33b23b83db8ac6670e4d83903fbac3`.
+The file was inspected offline and left in place. The dividend sheet confirms
+GB1=0 and blank SHT_CD select all dividends and all symbols. It supplies no
+100-row completeness cap or source-supersession rule. Its tr_cont description
+still conflicts with the separately adopted official GitHub M-to-N exception;
+that existing exception and terminal-F boundary remain unchanged.
+
+The sheet names HTS screen 0658. The [official downloads page](https://www.truefriend.com/main/customer/systemdown/_static/TF04ea000000.jsp)
+links the [HTS manual](https://new.real.download.dws.co.kr/download/efriendplus_full.pdf),
+which was retrieved once within a 128 MiB local document budget: 107,159,637 bytes,
+SHA256 `5fb473cccf563fb205cf64e36b58e787dd97dd5acb8534c42e26a5890f35928c`.
+Its HTTP Last-Modified is 2017-04-25. Pages 784–785 were extracted and visually
+reviewed. They describe date/symbol/category selection; the illustrated
+next/all controls do not define REST completeness or continuation semantics.
+Historical HTS help cannot establish a current API exception. The bounded
+review found no rule resolving the two original Sep15/153130 deliveries;
+it does not establish that no such documentation exists elsewhere.
+
+Evidence under `target/r2-daily-beta/wp-8/wave154/`:
+`workbook-contract-review.json`, 2,286 bytes SHA256
+`7062ba601d5e5f2b4274f164d95f92e626a05f3ab7cb4a37759575bf8ee1b287`;
+`contract-investigation-closure.json`, 3,106 bytes SHA256
+`6e4fc5378e5af089cfc9dc4bbb8926bcb1c8e2925960afd96646e8c66fd38847`.
+R2-08 stays blocked by SOURCE_CONFLICT; no source omission, provider replay,
+narrowed query, input admission, rebind or Daily activation followed. No
+production command, market-data request, test or CI run occurred. R3's latest
+actual scoped observation remains 09:01 KST, and current demand is unknown.
+
+Same-conversation tracking was renewed early. A same-name create returned
+existing 618a01bf with updated metadata; its exact receipt was retained and
+was not accepted as a distinct successor. A uniquely named create returned
+ACTIVE 29c70d72 at 02:35:38.122 UTC targeting the same agent. Exact create receipt
+and handoff/registry were persisted and verified before 618a01bf was deleted;
+deletion returned success. Successor expiry is 14:35:38.118 UTC and renewBy is
+13:20:38.122 UTC (22:20 KST), before 11 hours/47th tick. Create receipt 17,596 bytes SHA256
+`29eace84458b4165a8079ac662d75db5ba2a4e91dbb357a9c4a0601d22031f3d`;
+renewal-complete handoff 280,570 bytes SHA256
+`f7a7e8773a0464eb752cbc06e93a425d6ace59f36750c5e21f9e1c0a42e48141`.
+This is bounded same-agent tracking, not native Ralph or outage protection.
+No acceptance gate was closed, and lastObservedAt was not advanced.
