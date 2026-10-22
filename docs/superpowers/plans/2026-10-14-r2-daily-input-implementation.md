@@ -10229,3 +10229,16 @@ lastObservedAt은 기존2026-10-22T14:54:59.907539Z 그대로다. 32개 무관�
 SHA679c9b58c9466adad24dc749a5496f2a7463ba2fcd472247343f42b1884d420b.
 fixture-a1/red-a2/green-a1 artifact 크기는 각각302841/333547/329253bytes로 사전2MiB 상한 이내이며,
 /tmp 복사본에만 의존하지 않도록 wave159 아래 보존했다. QA 스크립트는 사전12KB 상한 이내다.
+
+#### Wave159 source candidate — original hosted run in progress
+
+고정 소스7fa779cc7f0ff3cc291f1e444257beb5f7412c7c를
+r2-wave159-poll-recovery-7fa779c 분기에 게시하고 remote SHA 일치를 확인했다.
+해당 SHA의 기존 실행0을 확인한 뒤2026-10-22T16:24:41.851091Z 원래 CI를 한 번 제출했다.
+[CI39813825738 attempt1](https://github.com/sihioov/Lagrange/actions/runs/39813825738)은
+16:26:07Z format1개 성공·나머지6개 진행 중이며 전체 인수는 아직 아니다.
+원래 실행의 전체 결과·checkout·로그 회수가 다음이다. 재실행/취소나 새 이미지/운영 변경은 없다.
+뒤따르는 문서 HEAD는 고정 소스·serving 후보를 대체하지 않는다.
+근거는 wave159/ci-publication-intent.json, remote-branch-readback.json,
+ci-dispatch-once.claim, ci-dispatch-receipt.json, ci-run-original.json,
+ci-run-initial-api.json, ci-jobs-a1.json이다.
