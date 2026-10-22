@@ -9794,3 +9794,41 @@ renewal-complete handoff SHA256
 This is bounded same-conversation tracking, not native Ralph or outage
 protection. Phase/source blocker and last actual host observation are unchanged
 by renewal. No new agents, CI/test/build repeat, schema or topology change.
+
+### Wave153 — Market-open observation found no active normal demand
+
+At 2026-10-22T00:01:28.167686Z (09:01 KST), one bounded READ ONLY
+repeatable-read transaction observed the configured grant/slot and Owner V2
+jobs after the accepted regular-market opening. Exact current Owner container,
+image and revision60d591db0fb12ec3395ffe603e4da0c26d8f95c5 were pinned;
+before/after inspection matched, remained healthy and owner_only/market_ws,
+and retained the original16:42:43UTC start time. Postgres identity was pinned.
+The existing aggregate SQL was reused byte-for-byte, SHA256
+`2188fd5c6a9e56618105ec9c69fbfbb2929f8feb0626725712e1fc92664a3ac5`.
+
+There was one ACTIVE selected grant, zero active unexpired browser consumers
+and items, zero ACK/pending subscriptions/positive desired references, and
+zero connected or unexpired producers/epochs. The historical producer row
+remained disconnected and expired. Queued/running Owner V2 jobs and running
+attempts were zero; historical failed jobs13/attempts15 were retained and their
+causes were not reclassified. This is a scoped observation at that instant,
+not proof of subsequent lack of demand or authenticated Owner acceptance.
+
+The original observer exited0 with empty stderr. Receipt
+`target/r2-daily-beta/wp-8/wave153/market-open-a1/observation.json`,6046bytes,
+SHA256 `e21a9b2297fd6777009b3505eb9c881b30f99fb055410ffa029192fa102ac22b`;
+independent local acceptance `market-open-a1/independent-closure.json`,2068bytes,
+SHA256 `17976b1c4035299afdd536aedca3da50fcfc5dc13b598e76eefff10adbe159ed`.
+Host observation finished at00:01:28.207744Z. No deployment, stop/start,
+provider request, DB write, calendar recapture, synthetic demand or auth was
+performed. API/Web/all-container health and quote cache/browser reception
+were outside this observation; earlier evidence is not relabeled as fresh.
+
+R3-02/03 and full30-symbol/lifecycle/reception acceptance remain OPEN. R2-08
+Sep15/153130 SOURCE_CONFLICT is unchanged; no new input admission, rebind or
+Daily activation occurred. Prior DailyOFF/epoch0, firstSession=null and actual
+consecutive days0 remain the accepted record, not newly measured here.
+Next action requires changed normal authenticated demand or independent
+source-contract evidence. With neither, retain bounded local tracking;
+do not repeat production polling solely for heartbeat or fabricate demand.
+Heartbeat618a01bf still renews by03:40UTC; no renewal was needed for this read.

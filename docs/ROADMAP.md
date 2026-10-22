@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-22 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave152:60d591d API/Web/Owner ON 전환을16:43UTC 독립 인수했고,10월22일 KST 실제 달력 수집·원본/정규화/DB 일치와 세 서비스 owner_only/market_ws를16:45UTC 확인했다. 감시 타이머 정상·KISdisabled·복원 책임 없음. 검증된 eac7197 OFF 복귀 경로를 보존한다. R2 Sep15/153130 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0, R3 정상 Owner 사용·실제 장중 수신은 미완료다. |
+| 현재 실행 우선순위 | Wave153:10월22일09:01KST 개장 후 단일 READ ONLY 관측에서 고정60d591d Owner의 healthy·owner_only/market_ws와 동일 시작 시각을 확인했다. 활성 소비자/항목·ACK·유효 생산자/epoch·대기/실행 Owner 작업은0이었다. 실제 인증 사용·수신·30종목은 미인수이며 R2 Sep15 SOURCE_CONFLICT와 DailyOFF/첫세션null·실제3일0 기록은 유지한다. 이번 관측은 API/Web·전체 서비스 상태나 quote cache 검사가 아니다. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **R2 원본 충돌을 해소할 독립 계약 근거 확보, R3 실제 장과 정상 Owner 수요에서 수신·수명주기 확인.10월22일 달력은 이미 수집했으므로 재수집하지 않는다. 근거 변화 없는 반복 실행 없이 같은 대화의 제한된 추적을 유지한다.** |
+| 다음 착수 항목 | **R2 충돌을 해소할 독립 계약 근거 또는 R3 정상 인증 수요의 변화가 생기면 승인된 후속 검증을 진행한다.09:01KST 무수요 관측은 이후 상태를 보장하지 않는다. 새 근거 없이 생산계 조회를 매 heartbeat마다 반복하지 않고 로컬 추적을 유지한다.10월22일 달력 재수집·인증/수요 조작은 하지 않는다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4는 실제 완료. 시작 기준·실측 예산·실제 배포·백업 전환/복원은 완료; 누락 입력 보충·활성화/Owner 사용·실제3거래일 확인이 남음. 기존 KIS 개인 이용 권리는 재확인하지 않음. R4-01 전용 백테스트의 시뮬레이션 계약은 미확정 |
 
@@ -396,6 +396,7 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
 
 - [ ] **R3-02 — READY 1종목 실제 수신.** 정상 Owner 수요로 구독하고 실제 ACK, 계약상 47필드,
   새 수신 시각과 해제·종료를 확인한다. 조용한 장에서 미관측한 결과를 성공으로 추정하지 않는다.
+  개장 관측 — 2026-10-22 09:01KST, Wave153:10월22일09:01KST 개장 후 단일 READ ONLY 관측에서 고정60d591d Owner의 healthy·owner_only/market_ws와 동일 시작 시각을 확인했다. 활성 소비자/항목·ACK·유효 생산자/epoch·대기/실행 Owner 작업은0이었다. 실제 인증 사용·수신·30종목은 미인수이며 R2 Sep15 SOURCE_CONFLICT와 DailyOFF/첫세션null·실제3일0 기록은 유지한다. 이번 관측은 API/Web·전체 서비스 상태나 quote cache 검사가 아니다. 근거: `wave153/market-open-a1/independent-closure.json` SHA17976b1c…; R3-02/03 OPEN.
 - [ ] **R3-03 — 인증된 화면과 수명주기 검증.** 수신→SSE→가격 표시, 새로고침·로그아웃·페이지 이동·
   숨김/복귀 시 구독과 화면 동작을 확인한다. 원본 브라우저 동작을 조작한 결과로 미검증 항목을 대체하지 않는다.
 - [ ] **R3-04 — 고정 30종목 인수.** 정상 membership·READY·Owner 수요를 갖춘 승인된 30종목에서
@@ -2028,3 +2029,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-22 | R3-01 · R2-04/08 | Wave151 호환 OFF serving 독립 인수 | Wave151 배포 인수: eac7197의 원래a10 12이미지/49gate·Owner 복원과 공식 API/Web/Owner OFF 배포를16:24UTC 독립 인수했다. 세 서비스 exact revision/image·healthy·HTTP와 원래 Owner 정상종료0, 감시 타이머 복원, 나머지8불변을 확인했다.16:24:52UTC 세 서비스의 실제 quotes=off를 확인했다. 복원 책임 없음. R2 Sep15 SOURCE_CONFLICT·DailyOFF/epoch0·KISdisabled·첫세션null·실제3일0은 유지한다. | a10 closure8739d632…; serving closure7ef3b47f…; 실제 모드d0b50ce0…; 첫세션/실제수신 미인수 |
 
 | 2026-10-22 | R3-01/02/03 · R2-04/08 | Wave152 ON serving와 당일 달력 독립 인수 | Wave152:60d591d API/Web/Owner ON 전환을16:43UTC 독립 인수했고,10월22일 KST 실제 달력 수집·원본/정규화/DB 일치와 세 서비스 owner_only/market_ws를16:45UTC 확인했다. 감시 타이머 정상·KISdisabled·복원 책임 없음. 검증된 eac7197 OFF 복귀 경로를 보존한다. R2 Sep15/153130 SOURCE_CONFLICT·DailyOFF/epoch0·첫세션null·실제3일0, R3 정상 Owner 사용·실제 장중 수신은 미완료다. calendar-a1 정책 불일치와 ONa1 기존 KIS 단위 충돌은 원본 보존·복원 완료. 새a2는 기존 KIS 공식check 후 성공했다. 추적618a01bf의 active 생성 영수증·인계/registry 저장 후 이전219449b8 삭제를 확인했다. | serving e40ff985…; calendar969dbeb6…; renewal3c41f20c…; 실제3일·Owner·수신 미인수 |
+
+| 2026-10-22 | R3-01/02/03 · R2-08 | Wave153 개장 후 실제 무수요 관측 | Wave153:10월22일09:01KST 개장 후 단일 READ ONLY 관측에서 고정60d591d Owner의 healthy·owner_only/market_ws와 동일 시작 시각을 확인했다. 활성 소비자/항목·ACK·유효 생산자/epoch·대기/실행 Owner 작업은0이었다. 실제 인증 사용·수신·30종목은 미인수이며 R2 Sep15 SOURCE_CONFLICT와 DailyOFF/첫세션null·실제3일0 기록은 유지한다. 이번 관측은 API/Web·전체 서비스 상태나 quote cache 검사가 아니다. 운영 변경·provider 호출·캘린더 재수집 없음. | observation e21a9b22…(6046bytes); closure17976b1c…(2068bytes); 실제수신/최종완료 아님 |
