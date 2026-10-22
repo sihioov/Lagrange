@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-23 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave159 R2-07: 상태 조회 실패 후 회복해도 오류가 남던 두 실행 화면을 수정했다. 실제 React/Chromium4검사·관련25테스트·변경 TSX2개 lint 통과. 소스 인수이며 운영 미배포. D-06/D-07 유예와 Daily 입력 차단·R2/R3 FINAL 미완료는 유지한다. |
+| 현재 실행 우선순위 | Wave159 R2-07: 상태 조회 회복 후 남던 오류 표시 보정의 소스·격리검증·전체 hosted CI 인수. 고정7fa779c 공식 이미지 빌드 진행, 운영 미배포. D-06/D-07 유예와 Daily 입력 차단·R2/R3 FINAL 미완료는 유지한다. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **고정 소스7fa779c의 원래 CI39813825738 attempt1 전체 결과·checkout/log를 회수한다.16:34UTC format/python/clippy3개 성공의 전체 로그·정확한 checkout을 확인했고 나머지4작업 진행 중이다. clean 배포용 checkout과 공식 이미지 빌더의 로컬 계획은 준비됐다. 전체 CI 인수 후 새 운영 바인딩으로 정식 빌드/반영한다. 재실행·취소 없이 문서 HEAD와 소스 후보를 구분하고 D-06/D-07 유예를 유지한다.** |
+| 다음 착수 항목 | **7fa779c 원래 CI39813825738 attempt1 전체8작업/8로그/7checkout·필수Rust151/Python154·PG19/page14 인수. 첫 이미지 준비a1은 ON에 OFF 전용 점검을 적용해 빌드 전 실패했고 같은 Owner 정상 복귀를 독립 확인했다. 불필요한 점검만 제거한 새a2의 공식 직렬 빌드가 진행 중이다. 원래 빌드 종료·12이미지/49gate·같은 Owner 복귀를 회수한 뒤 정식 설치와 API/Web/Owner3개 갱신을 수행한다. D-06/D-07 유예·DailyOFF 유지.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. D-06/D-07은 독립 개발의 선행 조건이 아니지만 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL 증거는 미완료다. R4-01 시뮬레이션 계약은 별도 미확정이다. |
 
@@ -334,6 +334,11 @@ D-06 후속 과제로 유예한다. 원본과 관측한 배당행을 보존하�
   고정 후보 — 7fa779cc7f0ff3cc291f1e444257beb5f7412c7c를 전용 분기에 게시했다.
   [CI39813825738 attempt1](https://github.com/sihioov/Lagrange/actions/runs/39813825738)은
   16:24:41UTC 단일 제출·16:26UTC 진행 중이다. 후속 문서 커밋은 빌드 후보가 아니다.
+  후속 — 2026-10-23,17:00UTC 원래 hosted8작업/8전체로그/7정확checkout과 필수Rust151·
+  Python154·PG19/page14를 독립 인수했다. 첫 준비a1의 OFF 전용 helper 오류는 빌드 전 실패로
+  보존하고17:05UTC 같은 CC Owner 정상 복귀를 독립 확인했다. 새a2는 그 불필요한 호출만
+  제거하고17:10UTC 공식 이미지 빌드를 시작했다. 기존 stop/drain·자원·복귀 검증은 유지한다.
+  원래a2 종료와 복귀 인수, 정식 운영 반영이 남아 전체 R2-07은 DOING이다.
 - [ ] **R2-08 — 연속 3거래일 무인 관찰.** 일별 예약 실행, ETF 데이터·추천 실행·발행,
   등록 Owner 종목 갱신 결과와 입력·추천·API·화면 기준일을 기록한다.
   수동 보충 성공은 해당 일의 무인 성공으로 세지 않는다.
@@ -2090,3 +2095,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-23 | R2-07 | Wave159 새 고정 후보7fa779c의 CI 단일 제출 | 이전 성공 CI 재실행 없이 변경 소스만 새로 검증; 전체 결과 미회수 | [CI39813825738 attempt1](https://github.com/sihioov/Lagrange/actions/runs/39813825738); 정확한 remote SHA·단일 dispatch 영수증;16:26UTC format 성공·6진행 |
 
 | 2026-10-23 | R2-07 | Wave159 고정 후보의 로컬 릴리스 준비 | clean checkout과 공식 이미지 계획 PASS; 원래 CI 결과 회수 계속 |7fa779c;16:34UTC 성공3개 전체 로그·checkout 확인. 빌드/배포/운영 관측0; D-06/D-07 유예 유지 |
+
+| 2026-10-23 | R2-07/09 | Wave159 전체 소스 CI 인수와 공식 이미지a2 진행 | a1 OFF 전용 점검 오적용은 빌드 전 실패·원래 Owner 복귀 인수; 불필요한 점검만 제거 |7fa779c; CI39813825738 all8/full8logs/7checkout/Rust151/Python154/PG19/page14; a2 17:10UTC 원래 빌드 진행·복귀 의무 있음; 운영 반영 미완료 |

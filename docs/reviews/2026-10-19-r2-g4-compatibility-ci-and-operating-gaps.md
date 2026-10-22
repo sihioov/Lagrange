@@ -3798,3 +3798,41 @@ web/workspace-tests/policy/postgres-integration-validation4개 진행 중이며 
 SHA06d057da202dc6769d3777bec0e69589ef06cb39f6d40f5af906606cacd0e9a8;
 ci-inputs.json533089bytes SHA5db07b0056fa74e7f7d918b0c2ec548e58ff9b59c9bc55234b070b01f48862d7.
 로컬 입력 manifest/recovery script/closure script는 사전4MiB/24KiB/16KiB 상한 이내다.
+
+#### Wave159 full hosted acceptance and image attempt correction
+
+2026-10-23 KST,17:00:16UTC 관측에서 고정7fa779cc7f0ff3cc291f1e444257beb5f7412c7c의
+원래 CI39813825738 attempt1이8작업 모두 성공했다.8개 전체 로그의 해시와 구조화된 결과,
+7개 정확한 checkout 및 필수Rust151/Python154·실제PG19·page seam14를 모두 대조했다.
+이전 후보 CI를 재실행하거나 이번 run을 재시도하지 않았다. 근거:
+`ci/7fa779c/hosted-source-closure.json`235319bytes
+SHAe5a3bbbf1fdbaf6bb1021fb82845db188f4a35c030b6fd700eeaf5a4888f511a.
+
+첫 이미지 준비a1에서는 ON으로 운영 중인 CC에 OFF 전용 `provision-owner-market-stream.py
+--check`를 적용해 ERR_CONFIG로 종료됐다. 이는 이전 OFF 진단 절차에서 가져온 불필요한
+호출을 검토에서 놓친 오류다. 공식 이미지 빌더는 아직 시작되지 않았고 이미지 manifest도
+없었다. 원래 stop/start는 각각 정상0·PID0·빈cgroup이며 같은 Owner 컨테이너/이미지가
+17:04:00.086621869UTC 시작으로 복귀했다.17:05:20UTC 독립 검증에서 정상 health,
+나머지10개 scoped 컨테이너·전체21개 inventory 불변, DailyOFF/epoch0와 lock identity를
+확인했다. 실패한 supervisor exit2와 모든 원래 영수증을 보존한다. 복귀 미수행 의무는 없다.
+근거: `wave159/build-a1/prebuild-failure-restoration-closure.json`31171bytes
+SHA5c2e20b78630a21b8354434f96d18d77265388429c0d2fca3d7f78b7d1b0b0b5.
+
+새a2는 namespace와 현재 Owner 시작값을 다시 고정하고 이미지 빌드에 불필요한 OFF 전용
+호출만 제거했다. 공식 빌더·자원 기준·정상 stop/drain·같은 Owner 복귀 절차는 변경하지
+않았다. 수송 상태 reset/provision/기존 retirement 재실행은 하지 않는다. 사전 실제 관측에서
+대기/진행 작업과 유효 consumer/item/producer/pending operation이0임을 확인했으며
+역사 ACK1/desired1·만료 producer는 그대로 보존한다.
+
+17:10:07UTC 새 원래a2 요청이 READY를 확인한 worker에 전달됐다.17:11:47UTC 관측은
+supervisor PID1344562와 build PID1345033이 실행 중이며 첫 두 이미지 성공·gate3 PASS,
+API 빌드 진행을 보여준다. 이것은 이미지 전체 성공이나 배포 인수가 아니다. 원래 빌드가
+종료하고 cgroup이 비면 같은 CC Owner를 복귀시키는 의무가 해당 worker에 남아 있다.
+고정 추적 창은17:10:06UTC부터 다음 날05:10:06UTC까지이며 native Ralph/장애 보호가 아니다.
+
+다음은 원래a2의12이미지/49gate·정상 종료/빈cgroup·독립 복귀 인수 후 새 보호 입력을
+공식 installer에 전달하고 API/Web/Owner만 순서대로 갱신하는 것이다. 기존 KIS 타깃은
+`--check`, 없는 새 타깃만 `--install-disabled`를 사용한다. 아직 생성하지 않은 배포 절차도
+로컬에서 검토했다. 조건부 Oct22 첫 세션 날짜는 미활성 역사 입력으로만 보존하며 날짜를
+새로 승인하거나 소급 실적으로 세지 않는다. D-06/D-07 유예·입력 미승인·DailyOFF 및
+R2/R3 FINAL 미완료를 유지한다. 이번 수정은 구조 변경이 없어 다이어그램은 건드리지 않았다.
