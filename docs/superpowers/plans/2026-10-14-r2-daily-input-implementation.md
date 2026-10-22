@@ -10124,3 +10124,38 @@ or session is assumed. Owner's pending normal-access question is not repeated.
 Evidence: reception-a2/observation.json6268bytes SHA035285d4457df0ce2d75a6323a2991c381449f48127b5523e95cf6a4b4554e5d;
 typed-log-observation.json296bytes SHA1764209939f14e7c0808d7f308b4b95ce091ee12053c4000694005f2d0b0bb47;
 independent-closure.json2637bytes SHAd8d7a766b5e19b5c29337a2bea21373dc9b3e0849afdd63c60379a1e8df4c84e.
+
+### Wave157 after-hours Owner-open observation — authentication confirmed, receipt open
+
+Owner reported “지금 열었어”; this supersedes the earlier browser-unavailable reply.
+The distinct reception-a3 used the already reviewed a2 read-only scripts byte-for-byte,
+with new immutable bindings/intent and the accepted Oct22 calendar and hours. At
+2026-10-22T14:54:59.869073Z (23:54:59KST), unexpired/unrevoked normal Owner sessions
+were1, latest session14:50:35Z. Browser consumer rows increased22→24 since a2;
+latest consumer update/release14:51:59.309121Z, but active unexpired consumers were0
+at the observation. Producer heartbeat advanced14:51:55.521082Z, yet the producer
+was disconnected/expired/no epoch; cache and producer status were SESSION_CLOSED.
+This after-hours snapshot does not establish a current live subscription or broker ACK.
+
+Exact restored cc622469b6a1bf0cd4f0205134d29ecc77a75693 Owner/container/image and
+05:23:24.533292318Z start were healthy before/after; pinned Postgres identity was
+verified. The original child exited0 and was reaped. The read-only repeatable-read
+aggregate left cache and subscription aggregates equal to a2: last quote02:49:54.240Z,
+version11/ordinal26, last ACK02:49:49.630Z. No new receipt after recovery is accepted.
+The saturated500-line tail contained no allowlisted typed error, not proof of full
+interval error absence. Historical failed jobs/attempts are retained without inferring
+a cause from their aggregate. No API/Web/all-container or visual observation occurred.
+Probe provider calls, DB writes and service mutations were0; no restoration is owed.
+
+R3-02/03/05 remain OPEN. Do not repeat the answered login request or the consumed
+recovery/build/diagnostic/a1/a2/a3 probes. A next real market reception check needs
+normal authenticated demand plus independently verified date-appropriate calendar
+and regular-session window; Oct22 proof is not another day's proof. The original
+11:49 failure cause remains UNKNOWN. R2 conflict and DailyOFF/epoch0/firstSessionnull/
+actual3days0 remain unchanged; this browser trigger grants no provider replay/input
+admission or external support-message authorization. Documentation HEAD is not a
+serving or build candidate.
+
+Evidence: wave157/reception-a3/observation.json6269bytes SHA354570e6e7f01b430a5d4a7cb95aaa2041740603f32f88ceaa295bee338152c1;
+typed-log-observation.json297bytes SHA357452fa46ead65d728577507cc6ab272bd4b20165266774dbae17563d2735e6;
+independent-closure.json5238bytes SHA27501d77551de432286a42ff0aca89b21b38a3fc87dd520d2e2732d72021611c.
