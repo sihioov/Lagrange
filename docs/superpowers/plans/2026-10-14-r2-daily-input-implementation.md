@@ -9961,3 +9961,32 @@ failure will be read-only while OFF/stopped. Expired incident producer state
 is retained, with no active lease/pending operation permitted for the build.
 Offline checks cover state-check failure, build failure and success reaching
 the same OFF Owner restoration path once. These are not live restoration proof.
+
+
+### Wave156 — Owner-approved one-time dividend diagnostic
+
+Owner explicitly answered “이번 한 번의 제한된 진단 조회 허용” to Wave155's
+four-query proposal. This is the single exception to the prior no-replay rule:
+153130/blank SHT_CD crossed with Sep15 only/Aug29–Oct18; dividend GET only,
+sequential, existing shared token/quota, max16 wire GET including bounded retries,
+no pagination, first failed/uncertain logical request stops the run. Original
+Raw and rejected outcomes remain immutable; diagnostic batches are excluded
+from production admission. Approval receipt `wave155/r2-conflict-probe-owner-approval.json`
+SHA256 `dc35db2a8bcb651034aec8c15914b360a106a8b47342387bfd85e0df3c86b355`.
+
+R2-08 implementation adds an exact diagnostic mode to the existing action-range
+binary/operator wrapper, an exclusive durable one-use claim, wire-level query
+and budget checks, per-query immutable diagnostic Raw and typed summary/hash
+receipts. Normalization/admission, source preference, Daily activation and
+historical source-conflict acceptance remain outside this mode. Focused
+validation passed:11 CLI tests (7 diagnostic),strict Clippy,format and four wrapper argument checks. Initial Clippy range-loop failure was corrected and retained. Local ops static check stopped on an existing unrelated0775 file mode; clean-checkout verification follows. Actual execution is pending; no diagnostic provider call yet.
+No runtime/package/network/DB topology changed.
+
+Owner reported the disabled intraday-collection message and no quote updates
+while accepted serving was eac OFF. This is OFF-screen evidence, not the cause
+of the original ON incident or acceptance of cc62246. cc62246's original CI
+39715346751 attempt1 is accepted (8 jobs/full logs,138 Rust/154 Python/PG19/page14).
+Its independently tracked original image build and owed OFF Owner restoration
+must finish before diagnostic ON installation. R3 sustained actual receipt and
+normal lifecycle remain OPEN; R2 SOURCE_CONFLICT, DailyOFF epoch0/firstSessionnull
+and actual consecutive days0 remain OPEN.

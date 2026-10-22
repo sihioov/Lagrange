@@ -1315,6 +1315,27 @@ pub(crate) struct KisResponseValidationError {
     pub(crate) reason: String,
 }
 
+/// Validate a dividend diagnostic without normalizing or admitting it.
+/// Uses the same envelope and row contract as the canonical action reader.
+pub fn validate_kis_dividend_diagnostic(bytes: &[u8]) -> Result<(), &'static str> {
+    let endpoint = "/uapi/domestic-stock/v1/ksdinfo/dividend";
+    validate_kis_response(ResponseKind::CorporateActions, endpoint, bytes)
+        .map_err(|error| error.code)?;
+    let doc: Value = serde_json::from_slice(bytes).map_err(|_| "KIS_RESPONSE_MALFORMED_JSON")?;
+    let output = &doc["output1"];
+    let rows: Vec<&Value> = match output {
+        Value::Array(rows) => rows.iter().collect(),
+        Value::Object(_) => vec![output],
+        _ => return Err("KIS_RESPONSE_SCHEMA_INVALID"),
+    };
+    for row in rows {
+        let row = row.as_object().ok_or("KIS_RESPONSE_SCHEMA_INVALID")?;
+        crate::normalize::validate_kis_action_row_fields(endpoint, "diagnostic-dividend.json", row)
+            .map_err(|_| "KIS_DIVIDEND_ROW_INVALID")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_kis_response(
     kind: ResponseKind,
     endpoint: &str,

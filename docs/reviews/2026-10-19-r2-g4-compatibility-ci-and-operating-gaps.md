@@ -3497,3 +3497,27 @@ failure will be read-only while OFF/stopped. Expired incident producer state
 is retained, with no active lease/pending operation permitted for the build.
 Offline checks cover state-check failure, build failure and success reaching
 the same OFF Owner restoration path once. These are not live restoration proof.
+
+
+### Wave156 — diagnostic ON serving and approved R2 probe implementation
+
+The original cc62246 build completed03:55:41UTC and its original OFF Owner
+restoration was independently accepted03:56:04UTC (12 images/49 PASS gates;
+all original units terminal0/drained). Image closure858854bytes SHA256
+`3a147ada31506e9635f4e9e09712de18eb3e27778b7eaef21808eccf8361f63a`.
+Diagnostic ON exact API/Web/Owner serving was independently accepted at
+03:56:52.533387UTC: original OFF Owner normal0, other8 unchanged, HTTP passed,
+status restored, KIS disabled, DailyOFF epoch0/firstSessionnull. Closure62330bytes
+SHA256 `b499586fcc7f525e6099d5ffcc5abd2fbc4770bf42ceabe7ee09bb37da3470c3`.
+No state reset, fabricated demand, calendar capture or input admission occurred.
+The first postdeployment aggregate had no new consumers/receipts or typed
+failure; retained old02:49 receipt/expired lease is not new live acceptance.
+Owner was asked for a normal refresh after reporting the earlier OFF screen.
+
+Owner approved the one-time four-query R2 dividend diagnostic, max16 wire GET,
+sequential/no pagination/no automatic admission. Source implementation and
+11 CLI tests (including7 new diagnostic cases),strict Clippy,format and4 wrapper
+argument checks passed. Original Clippy range-loop failure and local static
+check's unrelated0775 mode failure remain recorded; clean-tree static/hosted
+verification and actual one-time execution follow. No provider diagnostic call
+has been made. Historical Sep15 SOURCE_CONFLICT remains unresolved.
