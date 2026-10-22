@@ -10305,3 +10305,48 @@ API 빌드 진행을 보여준다. 이것은 이미지 전체 성공이나 배�
 로컬에서 검토했다. 조건부 Oct22 첫 세션 날짜는 미활성 역사 입력으로만 보존하며 날짜를
 새로 승인하거나 소급 실적으로 세지 않는다. D-06/D-07 유예·입력 미승인·DailyOFF 및
 R2/R3 FINAL 미완료를 유지한다. 이번 수정은 구조 변경이 없어 다이어그램은 건드리지 않았다.
+
+#### Wave159 scoped UI recovery deployment accepted
+
+2026-10-23 02:36KST(10월22일17:36:00UTC), 고정7fa779cc7f0ff3cc291f1e444257beb5f7412c7c의
+API/Web/Owner V2 갱신을 독립 인수했다. 원래 build-a2는12이미지/49gate 모두 통과하고
+stop/build/start/recovery4개 unit 정상0·PID0·빈cgroup과 같은 CC Owner 정상 복귀를
+17:27:58UTC 확인했다. 근거: `wave159/build-a2/image-restoration-observation-20261022T172758.json`
+858102bytes SHAc715cfa8e88283ec27b82e88088badb0abfba2ed020508b0855c1ead581940c7.
+소스 CI39813825738 attempt1 all8/full8logs/7checkout·필수Rust151/Python154·PG19/page14 인수는 유지하며 재실행하지 않았다.
+
+배포 준비a1은 타이머에 없는 MainPID/ControlPID를 요구해 KeyError로 중단했다.
+root 디렉터리의 두 검토 코드 파일만 작성했으며 unit/릴리스 설치·서비스 변경은 없었다.
+이 실패와 원래 파일은 보존하고 프로세스 PID 검사는 service에만 적용하도록 고쳤다.
+별도a2는 새 불변7fa 설치와 KISdisabled 등록 뒤 사전검증에서 당일 시간표 누락으로 중단됐다.
+현재 KST 날짜는23일인데 기존 운영 시간표에22일만 있어 공식 --check가 DATE_ENTRY_MISSING을
+반환했다. 원래a2는 current를 CC로 되돌리고 기존 상태 타이머를 복원했다.17:33:16UTC
+독립 검사에서 전체11컨테이너/21inventory 불변, 상태정책CC·타이머 복원, 새 KIS7fa disabled,
+DailyOFF/epoch0 및 새 serving 미제출을 확인했다. 복원 의무는 없다. 근거:
+`wave159/serving-a2-failure-restoration-closure.json`31712bytes
+SHAaae346d1be1ce475dd383c4ec06c42ec75674323b19e883ea12ca06119aeff34.
+
+실제23일의 공식 공개 KRX 정규장 문서를17:32:43UTC 직접 GET해3490bytes/
+SHA c8b1bdbc2bbe1bb243c6208c742aee71fccfb965f11cd0a26e2f0b01c9b24242를 보존했다.
+웹 도구의403과 직접 수신200을 구분하며 최신 수신 시각을 실제로 기록했다. 기존 공식
+시간표 installer --apply/--check가17:34:05UTC 통과했다. 활성 window SHA는
+bdbdb3bf3a8900d1d3969789107ce959f1c111d059ff0f8e4de5083dd28236c2이다.
+이는09:00–15:30 정규장 시간만 입증한다.23일 실제 거래일/달력·시장 수신은 입증하지 않았고
+KIS 캡처나 Daily 입력 승인/활성화는 하지 않았다.
+
+별도 serving-a3는 이미 설치된7fa를 공식 helper로 선택/check하고 기존 KIS 타깃을
+--check한 뒤 API→Web→Owner를 순차 갱신했다. 불변 디렉터리나 CREATE_ONLY 타깃을
+삭제/대체/재설치하지 않았다. 원래 unit PID1415147/Invocation2b899aefed4840b1934dc7a938566259는
+정상0·PID0·빈cgroup이다. 원래 CC Owner normal exit0, exact3 새 이미지/revision/health,
+나머지8 scoped 컨테이너 및 비대상18개 inventory 불변, 실제 HTTP ready/health와 상태
+타이머 복원, KIS7fa disabled, DailyOFF/epoch0를 대조했다. 원래 a1/a2 실패는 consumed로
+보존한다. 현재 serving Owner는 fe8548a722a00a2737fd80fa465e0c35cf6b80b19bcdeed3b12b9e571e7b3d6f,
+image sha256:5da55eb70277f88d24964071335c7efdcf00774f800caec3ef2ccd609515d0f5,
+시작17:35:18.772559636UTC이다. 근거: `wave159/serving-deployment-closure-20261022T173600.json`
+67970bytes SHA8631e5ac1f435e7f120d9dc18c6d53ae19851038e6eb80de94b457d064730a28.
+
+이 인수는 조회 회복 후 남던 오류 표시 수정의 소스/격리검증/운영 배포 범위다.
+새로운 실제 시세 수신·로그인 시각적 인수·30종목·전체 R2-07 및 R2/R3 FINAL 완료가 아니다.
+D-06/D-07 유예, 원래 Raw와 양성 배당 행, 미승인 입력·DailyOFF·첫세션null·실제3일0 기록을
+유지한다. 별도 복원 작업은 없으며 다음 관측은 새 근거가 있을 때만 한다. 무관한 ROADMAP32추가와
+.archify를 보존했다. 다이어그램 구조 변경은 없다. 문서 HEAD는 새 빌드 후보가 아니다.
