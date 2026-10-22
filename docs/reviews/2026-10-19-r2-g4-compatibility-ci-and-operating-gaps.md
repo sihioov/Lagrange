@@ -3415,3 +3415,57 @@ renewal-complete handoff 280,570 bytes SHA256
 `f7a7e8773a0464eb752cbc06e93a425d6ace59f36750c5e21f9e1c0a42e48141`.
 This is bounded same-agent tracking, not native Ralph or outage protection.
 No acceptance gate was closed, and lastObservedAt was not advanced.
+
+### Wave155 — Actual Owner pilot received quotes, then producer task failed
+
+On 2026-10-22 the Owner opened the normal authenticated Samsung detail page.
+A single bounded READ ONLY observation at02:51:13.110517UTC found a current
+unrevoked Owner session created02:49:31, actual ACK02:49:49.630, and one
+Oct22 quote-cache row with receive02:49:54.240 /commit02:49:54.302040,
+quote_version11 and receive_ordinal26. Its calendar UUID/hash matched the
+accepted Oct22 normalized source. No authentication, consumer, ACK or quote
+was synthesized. The exact original60d591d Owner container was unchanged.
+
+A bounded typed-log observation found PRODUCER_UNAVAILABLE at
+02:49:55.989800016UTC. At the SQL observation, no quote was fresh within30s;
+the CONNECTED producer row had an expired lease and no current epoch match.
+A healthy container did not prove a live quote task: the runner retains its
+EOD loop after the quote task exits. The actual first reception is accepted
+as partial evidence; sustained reception, browser rendering/lifecycle, normal
+release/close and30-symbol acceptance remain OPEN. Do not infer current lack
+of demand from this past observation. Original quote/failure evidence remains.
+
+Evidence: `wave155/owner-open-a1/observation.json`,6246bytes SHA256
+`517eae38c937cd533b71a95e69655cff6ec46b8e5d6e97a43ce60126345f2d84`;
+`owner-open-a1/independent-closure.json`,1787bytes SHA256
+`bf34af4b06d5a8ca0a8c9911cf738796aae66a039cf57cc627df29d944474b88`.
+Actual scoped host observation finished02:51:13.155787UTC. Probe provider
+calls, DB writes and service restarts were zero.
+
+This commit preserves the producer's first failure instead of replacing it
+with a cleanup failure. Production diagnostics now record closed typed error
+codes and source locations for producer/runtime failures and connection/read
+errors; no broker prose, received frames, SQL, credentials or quote prices.
+The change does not expand authentication, grant, demand, retry, provider,
+account/order or market-data permissions. It diagnoses the incident; its
+root cause is not yet established and no blind reconnect/reset is justified.
+
+Local validation a3 ran format,87 market-stream tests (including first-error
+retention through failed and successful close),and diff check; all original
+children exited0 and were reaped. Receipt `wave155/validation-a3-terminal.json`
+and exact source pins `wave155/source-validation.json` were retained. The a2
+wrapper failed before starting cargo because its systemd PATH lacked cargo;
+that original failure is retained. a3 uses the explicit cargo path. a1's87
+PASS footer is retained with its missing original service-exit limitation.
+CI and immutable deployment of this commit are pending; local success is
+not live recovery acceptance. No schema or architecture boundary changed.
+
+R2's original Sep15/153130 SOURCE_CONFLICT remains, with both Raw deliveries
+immutable. A concrete four-query read-only diagnostic proposal was prepared
+(`wave155/r2-conflict-probe-proposal.json`,3131bytes SHA256
+`14f16577251225f9fc49d65588543fb0dd7d16d7f540fb77e82a1093410a3c1c`).
+It requires an explicit exception to the existing provider-replay prohibition;
+no query has been submitted and no answer is inferred. It cannot automatically
+admit data or resolve the historical conflict. DailyOFF/epoch0, firstSession
+null and actual consecutive days0 remain. Existing29c70d72 tracking is intact;
+no renewal, new agent, restoration action or original-operation replay occurred.
