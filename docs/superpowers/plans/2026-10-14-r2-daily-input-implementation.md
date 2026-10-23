@@ -10632,3 +10632,22 @@ reload 세션 검사를 그대로 반복하지 않고 해당 비동기 경계만
 근거: `target/r2-daily-beta/wp-8/wave166/owner-priority-correction.json`.
 운영/공급자 조회·서비스변경·DB쓰기·테스트/CI는0이다. 마지막 실제 관측14:19:22KST와
 API/Web0ff579c+Owner7fa 운영 인수, DailyOFF·입력 미승인·실제3일0·FINAL OPEN을 보존한다.
+
+### Wave166 — 취소된 세션 오류의 늦은 로그인 이동 보정
+
+2026-10-23 R2-07의 실제 React/Chromium 격리 검사에서 서버 초기값 교체 뒤의
+SESSION_EXPIRED/UNKNOWN, 비활성화 뒤의 이전 세션 오류, 화면 해제 뒤의 이전 세션 오류
+네 경로가 로그인 이동을 일으킴을 재현했다. 응답 본문을 읽는 중 취소하는 단위 검사도 두 코드에서
+실패했다. workspace의 current-request guard보다 공통 응답 파서의 이동이 먼저 실행됐다.
+
+공통 파서가 응답 해석 후 요청의 AbortSignal을 확인하도록 보정했다. 취소된 요청은 로그인
+이동을 하지 않으며 원래 ApiProblem을 호출자에게 그대로 전달한다. 현재 요청의 세션 만료/
+미확인 오류는 계속 로그인으로 이동하고 INTERNAL 오류는 기존 화면 오류 경로를 유지한다.
+수정 후 격리 Chromium13개·관련 Vitest46개·타입/lint가 통과했다. 기존 CI의 같은 브라우저
+명령으로 새 여섯 경로도 실행된다. 최초 브라우저 red-a1은 잘못된 이동으로 실행 컨텍스트가
+사라져 중단됐고 red-a2에서 이동을 명시적 실패로 기록했다. 원래 실패 기록은 보존한다.
+
+근거: `target/r2-daily-beta/wp-8/wave166/local-validation.json`.
+이 변경 커밋의 소스/격리 검증 범위만 인수하며 hosted CI·이미지·운영 반영은 다음이다.
+API/Web0ff579c+Owner7fa 및14:19:22KST 실제 운영 관측은 그대로다. 생산 인증/공급자 호출0.
+배당·가격 충돌과 D-06/D-07 유예, DailyOFF·입력 미승인·실제3일0·전체 R2-07/FINAL OPEN을 유지한다.

@@ -50,7 +50,11 @@ function list(lifecycle, generation = 0) {
   };
 }
 const failure = {
-  error: { code: "INTERNAL", message: "Fixture status failure", request_id: "fixture" },
+  error: {
+    code: "INTERNAL",
+    message: "Fixture status failure",
+    request_id: "fixture",
+  },
 };
 const fixtures = {
   backfill: list("BACKFILLING"),
@@ -125,7 +129,11 @@ const unexpectedRequests = [];
 const pageErrors = [];
 let browser;
 const fulfill = (route, body, status = 200) =>
-  route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+  route.fulfill({
+    status,
+    contentType: "application/json",
+    body: JSON.stringify(body),
+  });
 async function settle(page, count) {
   await expect.poll(() => page.evaluate(() => window.completedMembershipResponses)).toBe(count);
   await page.evaluate(
@@ -146,6 +154,12 @@ try {
     return route.abort();
   });
   for (const scenario of [
+    "seed-late-session-expired",
+    "seed-late-session-unknown",
+    "disable-late-session-expired",
+    "unmount-late-session-expired",
+    "current-session-expired",
+    "current-session-unknown",
     "disable",
     "mutation-refresh-seed",
     "terminal-seed",
@@ -157,6 +171,15 @@ try {
     const page = await context.newPage();
     page.on("pageerror", (error) => pageErrors.push(error.message));
     const pending = [];
+    let loginRequests = 0;
+    await page.route(`${origin}/login`, (route) => {
+      // Observe the real location.replace using a loopback-only login destination.
+      loginRequests++;
+      return route.fulfill({
+        contentType: "text/html",
+        body: "<h1>Isolated login fixture</h1>",
+      });
+    });
     await page.route("**/api/v1/**", async (route) => {
       const url = new URL(route.request().url());
       const method = route.request().method();
@@ -192,6 +215,61 @@ try {
     await expect(card).toHaveAttribute("data-lifecycle", "BACKFILLING");
     await expect.poll(() => pending.length).toBe(1);
     const old = pending.shift();
+    if (scenario.includes("session-")) {
+      const current = scenario.startsWith("current-");
+      const unmounted = scenario.startsWith("unmount-");
+      const disabled = scenario.startsWith("disable-");
+      const expectedLifecycle = disabled ? "DISABLED" : "READY";
+      if (unmounted) {
+        await page.evaluate(() => window.unmountWorkspace());
+        await expect(card).toHaveCount(0);
+      } else if (disabled) {
+        await card.getByRole("button", { name: "Disable", exact: true }).click();
+        await card.getByRole("button", { name: "Confirm disable", exact: true }).click();
+        await expect.poll(() => pending.length).toBe(1);
+        await fulfill(pending.shift(), list("DISABLED"));
+        await expect(card).toHaveAttribute("data-lifecycle", "DISABLED");
+      } else if (!current) {
+        await page.evaluate(() => window.seedMemberships("ready"));
+        await expect(card).toHaveAttribute("data-lifecycle", "READY");
+      }
+      await fulfill(
+        old,
+        {
+          error: {
+            code: scenario.endsWith("unknown") ? "SESSION_UNKNOWN" : "SESSION_EXPIRED",
+            message: "Isolated session fixture",
+            request_id: "isolated-session-fixture",
+          },
+        },
+        401,
+      );
+      if (current) {
+        await expect(page.getByRole("heading", { name: "Isolated login fixture" })).toBeVisible();
+      } else {
+        try {
+          await settle(page, disabled ? 2 : 1);
+        } catch (error) {
+          // A stale redirect destroys the context: retain it as a failed product check.
+          if (loginRequests === 0) throw error;
+        }
+      }
+      const stateKept =
+        current ||
+        (loginRequests === 0 &&
+          (unmounted
+            ? (await card.count()) === 0
+            : (await card.getAttribute("data-lifecycle")) === expectedLifecycle));
+      checks.push({
+        scenario,
+        loginRequests,
+        stateKept,
+        passed: loginRequests === (current ? 1 : 0) && stateKept,
+      });
+      await page.screenshot({ path: join(evidence, `${scenario}.png`) });
+      await page.close();
+      continue;
+    }
     if (scenario === "unmount-aborts") {
       const aborted = page.waitForEvent("requestfailed", {
         predicate: (request) => request === old.request(),
@@ -270,10 +348,12 @@ try {
       generationKept,
       staleError,
       capacity,
+      loginRequests,
       passed:
         actualLifecycle === expectedLifecycle &&
         generationKept &&
         staleError === 0 &&
+        loginRequests === 0 &&
         capacity[0] === expectedActive,
     });
     await page.screenshot({ path: join(evidence, `${scenario}.png`) });
@@ -284,7 +364,7 @@ try {
   assert.deepEqual(pageErrors, []);
   assert(
     checks.every((check) => check.passed),
-    "Membership state must follow the latest refresh/seed",
+    "Membership state and session navigation must follow the current request",
   );
 } finally {
   await browser?.close();

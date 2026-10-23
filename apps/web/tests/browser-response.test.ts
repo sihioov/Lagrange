@@ -49,6 +49,44 @@ describe("browser API response handling", () => {
     expect(navigations).toEqual([]);
   });
 
+  it.each(["SESSION_UNKNOWN", "SESSION_EXPIRED"])(
+    "does not navigate for %s when cancelled while the response body is parsing",
+    async (code) => {
+      const navigations: string[] = [];
+      const request = new AbortController();
+      const response = errorResponse(code, 401);
+      const body = await response.json();
+      let finishBody!: (value: unknown) => void;
+      const json = vi.spyOn(response, "json").mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishBody = resolve;
+          }),
+      );
+      const parsed = parseBrowserApiResponse(response, payloadSchema, {
+        signal: request.signal,
+        navigate: (href) => navigations.push(href),
+      });
+      expect(json).toHaveBeenCalledOnce();
+      request.abort();
+      finishBody(body);
+
+      await expect(parsed).rejects.toMatchObject({ code, name: "ApiProblem", status: 401 });
+      expect(navigations).toEqual([]);
+    },
+  );
+
+  it("still navigates for a current request with an uncancelled signal", async () => {
+    const navigations: string[] = [];
+    await expect(
+      parseBrowserApiResponse(errorResponse("SESSION_EXPIRED", 401), payloadSchema, {
+        signal: new AbortController().signal,
+        navigate: (href) => navigations.push(href),
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_EXPIRED", name: "ApiProblem" });
+    expect(navigations).toEqual(["/login"]);
+  });
+
   it("uses a full browser navigation when no test seam is provided", async () => {
     const replace = vi.fn();
     vi.stubGlobal("window", { location: { replace } });
