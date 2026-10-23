@@ -194,6 +194,7 @@ export function StockBetaWorkspace({
   >(null);
   const [disableId, setDisableId] = useState<string | null>(null);
   const mutationPendingRef = useRef(false);
+  const mutationRequestRef = useRef<AbortController | null>(null);
   const membershipRequestRef = useRef<AbortController | null>(null);
   const previousMembershipsRef = useRef(initialMemberships.memberships);
   const pollAttemptRef = useRef(0);
@@ -283,7 +284,15 @@ export function StockBetaWorkspace({
     [invalidateMemberships],
   );
 
-  useEffect(() => () => invalidateMemberships(), [invalidateMemberships]);
+  useEffect(
+    () => () => {
+      invalidateMemberships();
+      // Suppress abandoned UI work; an already-dispatched POST may still commit.
+      mutationRequestRef.current?.abort();
+      mutationRequestRef.current = null;
+    },
+    [invalidateMemberships],
+  );
 
   useEffect(() => {
     invalidateMemberships();
@@ -530,6 +539,8 @@ export function StockBetaWorkspace({
       setInputError(t.invalidInstrumentCode);
       return;
     }
+    const request = new AbortController();
+    mutationRequestRef.current = request;
     mutationPendingRef.current = true;
     setMutationPending(true);
     setPendingMembershipId(null);
@@ -537,47 +548,60 @@ export function StockBetaWorkspace({
     setActionError(null);
     setActionMessage(null);
     try {
-      await addOwnerEquityV2Membership(parsed.data);
+      await addOwnerEquityV2Membership(parsed.data, { signal: request.signal });
+      if (request.signal.aborted) return;
       setInstrumentCode("");
       setActionMessage(t.addInstrumentSuccess);
       await refreshMemberships();
     } catch (error) {
-      setActionError(displayFailure(error, t));
+      if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
-      mutationPendingRef.current = false;
-      setMutationPending(false);
+      if (!request.signal.aborted) {
+        mutationRequestRef.current = null;
+        mutationPendingRef.current = false;
+        setMutationPending(false);
+      }
     }
   }
 
   async function retryMembership(membershipId: string): Promise<void> {
     if (mutationPendingRef.current) return;
+    const request = new AbortController();
+    mutationRequestRef.current = request;
     mutationPendingRef.current = true;
     setMutationPending(true);
     setPendingMembershipId(membershipId);
     setActionError(null);
     setActionMessage(null);
     try {
-      await retryOwnerEquityV2Membership(membershipId);
+      await retryOwnerEquityV2Membership(membershipId, { signal: request.signal });
+      if (request.signal.aborted) return;
       setActionMessage(t.retrySuccess);
       await refreshMemberships();
     } catch (error) {
-      setActionError(displayFailure(error, t));
+      if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
-      mutationPendingRef.current = false;
-      setMutationPending(false);
-      setPendingMembershipId(null);
+      if (!request.signal.aborted) {
+        mutationRequestRef.current = null;
+        mutationPendingRef.current = false;
+        setMutationPending(false);
+        setPendingMembershipId(null);
+      }
     }
   }
 
   async function confirmDisable(): Promise<void> {
     if (disableId === null || mutationPendingRef.current) return;
+    const request = new AbortController();
+    mutationRequestRef.current = request;
     mutationPendingRef.current = true;
     setMutationPending(true);
     setPendingMembershipId(disableId);
     setActionError(null);
     setActionMessage(null);
     try {
-      const result = await disableOwnerEquityV2Membership(disableId);
+      const result = await disableOwnerEquityV2Membership(disableId, { signal: request.signal });
+      if (request.signal.aborted) return;
       setDisableId(null);
       setActionMessage(t.disableSuccess);
       signalRefreshCoordinator.blockInstrument(result.resource.instrument_id);
@@ -587,11 +611,14 @@ export function StockBetaWorkspace({
       setSignalError(null);
       await refreshMemberships();
     } catch (error) {
-      setActionError(displayFailure(error, t));
+      if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
-      mutationPendingRef.current = false;
-      setMutationPending(false);
-      setPendingMembershipId(null);
+      if (!request.signal.aborted) {
+        mutationRequestRef.current = null;
+        mutationPendingRef.current = false;
+        setMutationPending(false);
+        setPendingMembershipId(null);
+      }
     }
   }
 

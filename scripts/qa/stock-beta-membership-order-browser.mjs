@@ -7,6 +7,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, expect } from "@playwright/test";
 import { build } from "vite";
+import { checkMutationLifetimes } from "./stock-beta-mutation-order-checks.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const evidence = resolve(process.argv[2] ?? "/");
@@ -34,6 +35,7 @@ function membership(lifecycle, generation = 0) {
       observed_sessions: 80,
     },
     ...(lifecycle === "DISABLED" ? { disabled_at: stamp } : {}),
+    ...(lifecycle === "FAILED" ? { failure: { code: "FIXTURE_FAILURE", retryable: true } } : {}),
   };
 }
 function list(lifecycle, generation = 0) {
@@ -61,6 +63,7 @@ const fixtures = {
   ready: list("READY", 2),
   materializing: list("MATERIALIZING", 1),
   disabled: list("DISABLED"),
+  failed: list("FAILED"),
 };
 await writeFile(join(fixture, "fixtures.json"), JSON.stringify(fixtures));
 await writeFile(
@@ -359,6 +362,17 @@ try {
     await page.screenshot({ path: join(evidence, `${scenario}.png`) });
     await page.close();
   }
+  await checkMutationLifetimes({
+    context,
+    origin,
+    checks,
+    pageErrors,
+    unexpectedRequests,
+    membershipPath,
+    id,
+    list,
+    membership,
+  });
   assert.deepEqual(foreignRequests, []);
   assert.deepEqual(unexpectedRequests, []);
   assert.deepEqual(pageErrors, []);

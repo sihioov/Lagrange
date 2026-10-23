@@ -40,8 +40,8 @@ async function csrfToken(options: BrowserClientOptions, signal: AbortSignal): Pr
       signal,
     },
   );
-  const parserOptions = options.navigate === undefined ? {} : { navigate: options.navigate };
-  const parsed = await parseBrowserApiResponse(response, csrfTokenSchema, parserOptions);
+  // The caller's lifetime controls UI recovery, not the dispatched mutation's transport.
+  const parsed = await parseBrowserApiResponse(response, csrfTokenSchema, options);
   return parsed.csrf_token;
 }
 

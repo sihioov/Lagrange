@@ -532,9 +532,13 @@ describe("Owner stock signal beta V2 surface", () => {
     expect(source).toContain(
       "ownerEquityV2AddBodySchema.safeParse({ instrument_code: instrumentCode })",
     );
-    expect(source).toContain("addOwnerEquityV2Membership(parsed.data)");
-    expect(source).toContain("retryOwnerEquityV2Membership(membershipId)");
-    expect(source).toContain("disableOwnerEquityV2Membership(disableId)");
+    expect(source).toContain("addOwnerEquityV2Membership(parsed.data, { signal: request.signal })");
+    expect(source).toContain(
+      "retryOwnerEquityV2Membership(membershipId, { signal: request.signal })",
+    );
+    expect(source).toContain(
+      "disableOwnerEquityV2Membership(disableId, { signal: request.signal })",
+    );
     expect(source).toContain("ownerEquityV2PollDelay");
     expect(source).toContain("getOwnerEquityV2LatestSignals");
   });
