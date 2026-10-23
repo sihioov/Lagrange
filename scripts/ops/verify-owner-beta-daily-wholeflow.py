@@ -114,6 +114,7 @@ fixture = load("wholeflow_fixture", "scripts/ops/lib/owner-beta-daily-wholeflow-
 files = load("wholeflow_files", "scripts/ops/lib/owner-beta-daily-backup-files.py")
 release = load("wholeflow_release", "scripts/ops/lib/owner-beta-daily-release.py")
 base_views = load("wholeflow_base_views", "scripts/ops/lib/owner-beta-daily-base.py")
+lifecycle = load("wholeflow_lifecycle", "scripts/ops/lib/owner-beta-daily-lifecycle.py")
 require = fixture.require
 
 
@@ -139,7 +140,8 @@ def verify_source(candidate):
                      "deploy/db/owner-beta-daily-control.sql", "scripts/ops/verify-owner-beta-daily-wholeflow.py",
                      "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
                      "scripts/ops/lib/owner-beta-daily-release.py", "scripts/ops/lib/owner-beta-daily-backup-files.py",
-                     "scripts/ops/lib/owner-beta-daily-base.py"):
+                     "scripts/ops/lib/owner-beta-daily-base.py",
+                     "scripts/ops/lib/owner-beta-daily-lifecycle.py"):
         pinned = source_git("show", head + ":" + relative)
         require(pinned == (ROOT / relative).read_bytes(), "WHOLEFLOW_SOURCE_CHANGED")
 
@@ -186,6 +188,8 @@ class WholeFlow:
         self.intents = []
         self.uncertain_creations = set()
         self.sequence = 0
+        self.events = None
+        self.event_objects = []
         self.receipt = {"schema": "lagrange-daily-wholeflow-result-v1", "candidate": args.candidate,
                         "synthetic_extension": True, "actual_owner_login": False,
                         "market_receipt": False, "three_trading_days": False, "phases": []}
@@ -201,6 +205,8 @@ class WholeFlow:
 
     def command(self, args, payload=None, *, limit=60, output=None, cleanup=False, include_stderr=False,
                 failure_service=None):
+        if self.events is not None and not cleanup:
+            self.events.check()
         require(failure_service is None or (failure_service in (*DB_CLIENTS, "producer", "admitter", "worker")
                 and len(args) == 4 and args[:3] == ["start", "--attach", "--interactive"]
                 and output is None and not cleanup), "WHOLEFLOW_DIAGNOSTIC_SCOPE")
@@ -235,6 +241,9 @@ class WholeFlow:
         require(value["Internal"] is True and value["Labels"].get(LABEL) == self.nonce,
                 "WHOLEFLOW_NETWORK")
         self.uncertain_creations.discard(("network", name))
+        if self.events is not None:
+            self.event_objects.append({"kind": "network", "id": value["Id"], "name": name})
+            self.events.wait_for("network", value["Id"], "create")
         return value["Id"]
 
     @staticmethod
@@ -302,6 +311,11 @@ class WholeFlow:
                 and all(m["Type"] in ("bind", "tmpfs") for m in value["Mounts"]),
                 "WHOLEFLOW_MOUNTS")
         self.uncertain_creations.discard(("container", name))
+        if self.events is not None:
+            self.event_objects.append({"kind": "container", "id": value["Id"], "name": name,
+                                       "role": service, "image": image})
+            # The daemon's create event is durable before any start command.
+            self.events.wait_for("container", value["Id"], "create")
         return value["Id"]
 
     def once(self, *args, payload=None, include_stderr=False, **kwargs):
@@ -734,6 +748,8 @@ class WholeFlow:
 
     def execute(self):
         self.prepare()
+        self.events = lifecycle.Recorder(self.nonce, self.args.lifecycle_fd, self.args.timeout_seconds + 300)
+        self.events.start()
         self.database("initial", migrate=True)
         self.schema_audit()
         self.seed()
@@ -802,12 +818,18 @@ def main(argv=None):
     test = WholeFlow(args)
     result = 1
     receipt_fd = None
+    lifecycle_fd = None
     try:
         require(args.receipt.is_absolute() and not args.receipt.exists(), "WHOLEFLOW_RECEIPT_EXISTS")
         with release.root_directory(str(args.receipt.parent)) as parent:
             receipt_fd = os.open(args.receipt.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                                  0o600, dir_fd=parent)
             os.fchmod(receipt_fd, 0o600)
+            lifecycle_fd = os.open(args.receipt.name + ".events.jsonl",
+                                   os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                   0o600, dir_fd=parent)
+            os.fchmod(lifecycle_fd, 0o600)
+            args.lifecycle_fd = lifecycle_fd
         require(sys.platform == "linux" and 600 <= args.timeout_seconds <= 1800, "WHOLEFLOW_DEADLINE_INPUT")
         signal.signal(signal.SIGALRM, expired)
         signal.setitimer(signal.ITIMER_REAL, args.timeout_seconds)
@@ -816,7 +838,7 @@ def main(argv=None):
         result = 0
     except BaseException as error:
         test.receipt["result"] = "FAIL"
-        code = str(error) if isinstance(error, fixture.FixtureError) else "WHOLEFLOW_UNCLASSIFIED"
+        code = str(error) if isinstance(error, (fixture.FixtureError, lifecycle.EvidenceError)) else "WHOLEFLOW_UNCLASSIFIED"
         test.receipt["code"] = code if re.fullmatch(r"WHOLEFLOW_[A-Z_]+", code) else "WHOLEFLOW_UNCLASSIFIED"
     finally:
         if sys.platform == "linux":
@@ -827,6 +849,19 @@ def main(argv=None):
             test.receipt["result"], test.receipt["cleanup"] = "FAIL", "UNCONFIRMED_STAGE_RETAINED"
             test.receipt["retained_stage"] = str(test.root) if test.root is not None else None
             result = 1
+        try:
+            if test.events is not None:
+                evidence = test.events.finish(test.event_objects)
+                test.receipt["lifecycle"] = evidence
+                require(evidence["status"] == "COMPLETE", "WHOLEFLOW_EVENTS_INCOMPLETE")
+        except BaseException:
+            test.receipt["result"] = "FAIL"
+            test.receipt["code"] = "WHOLEFLOW_EVENTS_INCOMPLETE"
+            result = 1
+        finally:
+            if lifecycle_fd is not None and (test.events is None or
+                    all(not thread.is_alive() for thread in test.events.threads)):
+                os.close(lifecycle_fd)
         # Refuse overwriting any existing result. If writing fails, exit failure
         # without dumping an exception, credential, database row or provider body.
         try:

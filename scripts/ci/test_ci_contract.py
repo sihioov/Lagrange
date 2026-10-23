@@ -311,6 +311,16 @@ class WorkflowContractTests(unittest.TestCase):
         wholeflow = next(step for step in fixture_steps
                          if step["name"] == "Verify whole-flow fixture and driver boundaries")
         self.assertEqual(wholeflow["run"], "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py")
+        lifecycle = next(step for step in policy_steps
+                         if step.get("name") == "Verify whole-flow bounded lifecycle recording")
+        self.assertEqual(lifecycle["run"], "python3 scripts/ops/owner-beta-daily-lifecycle-self-test.py")
+        self.assertEqual(lifecycle.get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", lifecycle)
+        lifecycle_docker = next(step for step in policy_steps
+                                if step.get("name") == "Verify whole-flow actual Docker lifecycle events")
+        self.assertEqual(lifecycle_docker["run"], "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-lifecycle-docker-self-test.py")
+        self.assertEqual(lifecycle_docker.get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", lifecycle_docker)
         for name, script in (
             ("Verify pre-upgrade cold archive boundaries", "production-preupgrade-recovery-self-test.py"),
             ("Verify pre-upgrade maintenance failure boundaries", "production-preupgrade-maintenance-self-test.py"),

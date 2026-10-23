@@ -20,7 +20,9 @@
 ' Wave85 candidate f215665: first-rollout recovery and six-file transition source.
 ' This draft describes source contracts; integrated/production acceptance is open.
 ' Whole-flow fixture topology is deliberately folded: synthetic-only QA, not production.
-' evidence: scripts/ops/verify-owner-beta-daily-wholeflow.py:390-408,651-663
+' evidence: scripts/ops/verify-owner-beta-daily-wholeflow.py:409-426,664-682
+' 2026-10-23: folded QA-only continuous daemon-event recorder; no production edge.
+' evidence: scripts/ops/verify-owner-beta-daily-wholeflow.py:117,749-753; scripts/ops/lib/owner-beta-daily-lifecycle.py:120-149
 ' 2026-10-19: fixed V3 role-owned base copies; original approval guards unchanged.
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:

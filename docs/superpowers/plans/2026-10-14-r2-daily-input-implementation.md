@@ -11064,3 +11064,28 @@ SHA256`45b8c903caa43543d5779fc2eed313288314727b2990d74ebc59fe47ca75182d`.
 상세 한계는 `docs/reviews/2026-10-23-r2-beta-flow-acceptance.md`.
 다음 Wave178은 시작 전 수신 확인·제한된 연속 이벤트 수집·누락 거절을 구현한다. 현재
 API/Weba6da63c+Owner7fa 유지, DailyOFF·충돌/D-06/D-07 유예·전체 FINAL OPEN이다.
+
+## Wave178 — 격리 전체흐름의 연속 수명주기 기록
+
+Wave177의 독립 기록 누락을 근거로 공식 driver에 제한된 연속 이벤트 수집을 연결했다.
+컨테이너는 정확한 nonce label, 네트워크는 정확한 두 이름으로 서로 다른 읽기 전용 스트림을
+사용한다. Docker 네트워크 이벤트에 label이 없음을 공식 구현과 대조했다. 최초 네트워크와
+각 컨테이너의 create 이벤트를 디스크에 기록한 뒤에만 후속 프로세스를 실행한다.
+원래 실행의 재연결·기록 재생은 없으며512이벤트/1MiB입력/16KiB행/고정시간 상한을 둔다.
+
+root0600/O_EXCL sibling JSONL에는 허용된 ID·이름·역할·이미지·시각·종료 코드만 남긴다.
+정리 후 실제 생성한 모든 자원의 순서/이미지/종료 기록을 대조하고 누락·중복·OOM·단절·
+상한 초과는 기능 PASS와 별개로 FAIL 처리한다. 기존 nonce 정리/볼륨 보호는 유지한다.
+수집 종료 시 자체 읽기 전용 Docker client만 종료하며 운영 서비스에는 신호를 보내지 않는다.
+
+새 실제 pipe/subprocess 기반 오프라인19검사, 기존 wholeflow fixture39, CI계약24 PASS.
+처음 테스트 설정의 candidate 누락·과대 argv와 Python 환경의 PyYAML 누락은 보존하고
+fixture 파일 전달·기존 system Python으로 보정했다. 실제 Docker `/bin/true` 기록 fixture를
+새 hosted CI에 연결했으며 실행은 아직 대기다. 이 fixture는 앱/DB/승인 입력 통합이 아니다.
+QA로 접힌 도표 근거 줄을 갱신하고 로컬 PNG를 재생성했다.
+근거: `target/r2-daily-beta/wp-8/wave178/local-validation.json`3122bytes
+SHA256`04af1b7c2ae08232a1a179a8f5c101cec4d1c0b7b93453a57faf093bfd80460d`.
+
+현재 운영 API/Weba6da63c+Owner7fa와 Wave177 기능 PASS·정리/불완전 기록을 보존한다.
+새 소스/격리 검사 인수이며 hosted/실제 새 전체흐름은 미완료다. 원래 소진 실행·기존 CI/빌드
+재시도 없음. DailyOFF·입력 미승인·충돌/D-06/D-07 유예·전체 R2-07/R2/R3 FINAL OPEN.

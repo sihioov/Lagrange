@@ -49,6 +49,30 @@ containers/networks and private paths below a fresh `/var/lib/lagrange-wholeflow
 No production release, existing Docker resource, timer, service or database is
 changed. This description does not grant execution permission.
 
+Wave178 adds continuous daemon-event recording for future distinct executions.
+Two read-only Docker clients select only the exact container nonce label and
+the two owned network names; network events do not carry the container labels.
+Each owned create event must be received and durably stored before its process
+starts. Starting an events client alone is not readiness. The collector permits
+at most512 events,1MiB wire bytes and16KiB per line, within a fixed deadline no
+longer than the execution bound plus300 seconds. It never reconnects.
+
+The sibling `RECEIPT.events.jsonl` is created exclusively, root0600 under the
+same protected directory. Only validated type, action, ID, nonce-derived name,
+role, exact image ID, event timestamp and exit code are written. Arbitrary
+labels, commands, provider output and raw errors are discarded. The result
+includes the sanitized file's size/hash and collector drain state. After owned
+cleanup, every inspected object must have its exact ordered lifecycle and
+image binding; missing/duplicate/foreign events, OOM, stream loss or overflow
+make the result FAIL even if application phases passed. The only processes the
+collector stops are its own two read-only Docker clients. Existing cleanup
+identity and volume guards remain unchanged.
+
+These source changes do not reconstruct Wave177's missing records or authorize
+replaying a consumed original. Offline pipe/subprocess fixtures and a hosted
+Docker `/bin/true` fixture test recording separately from actual approved-base
+execution. The latter has no application/database process or provider access.
+
 ## Required substantive sequence
 
 1. Inspect exact images, source/policy pins and protected base filesystem;

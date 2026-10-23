@@ -503,6 +503,7 @@ class WholeflowGitSourceTests(unittest.TestCase):
             "scripts/ops/lib/owner-beta-daily-release.py",
             "scripts/ops/lib/owner-beta-daily-backup-files.py",
             "scripts/ops/lib/owner-beta-daily-base.py",
+            "scripts/ops/lib/owner-beta-daily-lifecycle.py",
         )
         self.git("init", "--quiet")
         for relative in self.paths:
