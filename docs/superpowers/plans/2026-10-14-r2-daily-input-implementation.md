@@ -10918,3 +10918,39 @@ Wave171 일일 설정 수정도 포함한 새 후보로 CI를 진행한다. 소�
 새 CI·이미지·Web/API 배포는 미완료다. 현재0352ae2+Owner7fa, 마지막18:09:21KST
 운영 관측·DailyOFF/epoch0·KISdisabled를 유지한다. 배당/가격 충돌·D-06/D-07은 유예,
 입력 승인·실제3거래일·전체 R2-07/R2/R3 FINAL은 OPEN이다.
+
+### Wave172 — 일일 설정 응답 수명·종목 변경 준비 상태 운영 인수
+
+2026-10-23 19:46:19 KST, 후보 `9c145db512af058eefe014164bc82df92ad38560`의 Web/API 운영 반영을 독립 인수했다.
+Wave171 일일 설정 저장 응답 수명 보정과 Wave172 서버 렌더링 직후 종목 변경
+클릭 손실 보정을 함께 반영했다. 일일 설정의 늦은 CSRF/PATCH 응답 부작용을 막고,
+종목 코드 입력·추가·Retry·Disable은 이벤트 처리가 준비될 때까지 비활성화한다.
+이미 전송된 서버 변경 의미·요청 잠금·기존 READY 기준은 보존한다.
+
+Wave171 원래 CI39932963864 attempt1의 Retry→READY 통합 실패는 보존하며 직접 원인은
+UNKNOWN이다. 별도 지연 bundle 재현으로 클릭 손실을 확인했으며 원래 CI와 동일 원인이라는
+주장은 하지 않는다. 강화된 로컬 Chromium1·관련45·타입/lint와 새9c145db CI39936123785
+attempt1 전체8작업/8전체로그/7정확checkout·Rust155/Python154·PG19/page14를 인수했다.
+일일 설정28/추천 생성20/조회28/멤버십40, Web OFF/market-stream lane의 skip/flaky/retry0을
+대조했다. 초기 로컬 환경/타입 실패도 보존한다. 격리 fixture는 운영 인증·데이터 인수가 아니다.
+
+공식 사전 검사와 새로운 실제 운영 전제 확인 뒤 첫 build-a1을 실행했다. 원래12이미지49gate
+PASS, stop/build/start/recovery4유닛 정상0/PID0/빈cgroup, 같은7fa Owner 복귀와 다른10개
+상태·전체21개 inventory 불변을 독립 인수했다. 공식 설치/check·KIS disabled·상태 타이머
+복원 후 Web→API 두 개만 갱신했다. 선택 릴리스/API/Web은9c145db이며 수집기는7fa다.
+새 이미지/revision/health·HTTP, Owner container/image/start 및 다른9개 상태·19개 inventory
+불변을 대조했다. Owner의 인수된 시작은 `2026-10-23T10:44:50.603365041Z`이다. 복원 의무는 남지 않았다.
+이는 해당 시점/범위 관측이며 실제 인증·새 시세 수신·실제3거래일 인수는 아니다.
+
+- `target/r2-daily-beta/ci/9c145db/hosted-source-closure.json`: 344468bytes, SHA256 `af51862e946e00a7361a89ba4151e25df228933492f93737ae376173af133ea2`.
+- `target/r2-daily-beta/wp-8/wave172/build-a1/image-restoration-observation-20261023T104547.json`: 858050bytes, SHA256 `3d6082a148db8467c98dd8e62c33562774b62b3a3f35794b1b231c4b913794ee`.
+- `target/r2-daily-beta/wp-8/wave172/serving-deployment-closure-20261023T104619.json`: 70028bytes, SHA256 `d19dfd30c5d3d61abb7379d519e83b66c01d135bc32a56e65b56673dafc5ee2a`.
+
+전체 R2-07 및 R2/R3 FINAL은 OPEN이다. D-06/D-07와 배당·가격 충돌 조사는 유예하며 원본을 보존한다.
+DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0·입력 미승인·Owner 인수 미완료를 유지한다.
+다음 R2-07 작업은 종목 추가/재시도 POST 접수 후 첫 상태 GET만 실패하는 경우의 복구 경로다.
+현재 소스에서 두 결과가 같은 오류 처리에 묶이고 비종료 상태가 있어야 반복 조회가 시작됨을
+확인했다. 아직 브라우저 재현·제품 수정은 하지 않았으며 운영 장애로 단정하지 않는다.
+별도 격리 fixture에서 POST202→GET500→정상 GET과 중복 POST0을 확인한 뒤 수정 여부를 판단한다.
+범위는 `target/r2-daily-beta/wp-8/wave173/membership-reconciliation-scope.json`에 기록했다.
+이 문서 커밋은 빌드 후보가 아니다.

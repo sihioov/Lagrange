@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-23 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave172 R2-07 SSR 종목 변경 클릭 손실 보정 소스/격리 인수. Retry Chromium1·관련45·타입/lint PASS; Wave171 일일 설정 수정과 함께 새 후보 CI/배포 진행. 현재0352+Owner7fa·DailyOFF·충돌/D-06/D-07 유예 유지. |
+| 현재 실행 우선순위 | Wave172 R2-07 일일 설정 응답 수명·종목 변경 준비 상태 운영 인수. API/Web9c145db + 기존 Owner7fa. 다음은 종목 변경 접수 후 첫 상태 조회 실패의 격리 재현; 데이터 충돌·D-06/D-07 유예·DailyOFF·전체 FINAL 미완료 유지. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **Wave171 원래 CI 실패를 보존하고 Wave172 새 후보를 검증한다. 통과 후 새 이미지·Owner 복귀·Web/API 두 개만 독립 배포한다. 충돌·D-06/D-07·로그인은 독립 개발 조건이 아니며 입력 승인·Daily 활성화·실제3거래일·전체 FINAL은 미완료다.** |
+| 다음 착수 항목 | **Wave172의 소스·격리 검사·새 hosted CI·12이미지49gate·Web/API 배포를 인수했다. 다음 R2-07은 종목 추가/재시도 접수 후 첫 상태 조회 실패의 격리 재현이다. 재현 결과로 수정 여부를 판단하며 데이터 충돌·D-06/D-07·로그인은 독립 개발 조건이 아니다. Daily 활성화·입력 승인·실제3거래일·Owner 인수·전체 R2-07/R2/R3 FINAL은 미완료다. 현재 서비스별 기준은 API/Web9c145db와 보존된 Owner7fa다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01 시뮬레이션 계약은 별도 미확정이다. |
 
@@ -326,8 +326,8 @@ D-06은 DOING으로 재개하며 위 Wave158의 유예 결정은 역사로 보�
 - [ ] **R2-06 — 실제 Owner 사용 인수.** 정상 Auth0 로그인에서 종목 추가→상태 확인→READY→신호·차트,
   필터·상세, 재시도·비활성화, ETF 전략 설정·추천 조회를 확인한다. 사용자 세션을 추출하거나 가장하지 않는다.
 - [ ] **R2-07 — 실패·만료 표시와 복구.** 누락·노후·미래 데이터, 수집 실패, 세션 만료가 화면에
-  - 2026-10-23 Wave172: SSR Retry 클릭 손실 재현·준비 전 변경 제어 비활성화. 강화한 Chromium1·관련45·타입/lint PASS; 새 CI/배포 대기. Wave171 원래 통합 실패 원인은 UNKNOWN으로 보존. [기록](superpowers/plans/2026-10-14-r2-daily-input-implementation.md#wave172--서버-렌더링-직후-종목-변경-클릭-손실-보정).
-  - 2026-10-23 Wave171: 일일 설정 저장 중 화면 해제/설정 교체의 늦은 로그인 이동8경로 재현·보정. Chromium28·관련29·타입/lint·CI계약24 PASS; 새 hosted/운영 반영 대기. [기록](superpowers/plans/2026-10-14-r2-daily-input-implementation.md#wave171--일일-실행-설정-저장-응답-수명-보정).
+  - 2026-10-23 Wave172: SSR Retry 클릭 손실 재현·준비 전 변경 제어 비활성화. 강화한 Chromium1·관련45·타입/lint 및9c145db CI39936123785 통과; 2026-10-23 19:46:19 KST Web/API 배포 독립 인수. Wave171 원래 통합 실패 원인은 UNKNOWN으로 보존. [기록](superpowers/plans/2026-10-14-r2-daily-input-implementation.md#wave172--서버-렌더링-직후-종목-변경-클릭-손실-보정).
+  - 2026-10-23 Wave171: 일일 설정 저장 중 화면 해제/설정 교체의 늦은 로그인 이동8경로 재현·보정. Chromium28·관련29·타입/lint·CI계약24 PASS; 아래 Wave172의9c145db CI·운영 배포에서 함께 인수. [기록](superpowers/plans/2026-10-14-r2-daily-input-implementation.md#wave171--일일-실행-설정-저장-응답-수명-보정).
   정확히 표시되는지 검증한다. 재실행·재시작 시 중복 발행 방지와 복구도 확인한다.
   장애 주입은 격리 환경에서 수행하고 운영 관찰과 구분한다.
   DOING — 2026-10-23, Wave158: 일일 패널의 미확인 표시·출처 충돌·각 기준일과 현재가의 장 종료·
@@ -441,6 +441,12 @@ D-06은 DOING으로 재개하며 위 Wave158의 유예 결정은 역사로 보�
   새 이미지/health/HTTP와 Owner/other9/19 불변·상태 타이머 복원을 독립 확인했다.
   전체 R2-07/FINAL OPEN, 충돌·D-06/D-07 유예·DailyOFF 유지.
   [운영 인수 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave170--추천-생성-폼-수명-보정-운영-인수).
+  운영 인수 — 2026-10-23 19:46:19 KST, Wave172:9c145db CI39936123785 attempt1 all8/full8logs/
+  7checkout·Rust155/Python154·PG19/page14·일일 설정28/추천 생성20/조회28/멤버십40경로와12이미지49gate PASS.
+  원래 build-a1 정상 종료·같은7fa Owner 복귀 후 공식 Web→API만 갱신했다.
+  새 이미지/health/HTTP와 Owner/other9/19 불변·상태 타이머 복원을 독립 확인했다.
+  전체 R2-07/FINAL OPEN, 충돌·D-06/D-07 유예·DailyOFF 유지.
+  [운영 인수 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave172--일일-설정-응답-수명종목-변경-준비-상태-운영-인수).
 - [ ] **R2-08 — 연속 3거래일 무인 관찰.** 일별 예약 실행, ETF 데이터·추천 실행·발행,
   등록 Owner 종목 갱신 결과와 입력·추천·API·화면 기준일을 기록한다.
   수동 보충 성공은 해당 일의 무인 성공으로 세지 않는다.
@@ -2242,3 +2248,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 
 | 2026-10-23 | R2-07/09 | Wave171 일일 설정 저장 응답 수명 보정 소스/격리 인수 | 현재0352/Owner7fa 보존·충돌 유예·DailyOFF·전체FINAL OPEN | 원래28중8실패 → Chromium28·관련29·타입/lint·CI계약24 PASS; 새 CI/배포 대기 |
 | 2026-10-23 | R2-07/09 | Wave172 SSR 종목 변경 클릭 손실 재현·보정 소스/격리 인수 | Wave171 원래 CI 실패 보존·현재0352/Owner7fa·충돌 유예·DailyOFF | 지연 로딩 Retry 요청 손실 → Chromium1/관련45/타입/lint PASS; 새 CI/배포 대기 |
+
+| 2026-10-23 | R2-07/09 | Wave172 일일 설정 응답 수명·종목 변경 준비 상태 운영 인수 | Owner7fa·원본 충돌 보존, DailyOFF, 전체 FINAL OPEN |9c145db; CI39936123785 all8·일일설정28/생성20/조회28/멤버십40·12images49gates·Web/API exact2 배포 |
