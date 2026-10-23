@@ -187,6 +187,7 @@ export function StockBetaWorkspace({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pollError, setPollError] = useState(false);
+  const [membershipRefreshPending, setMembershipRefreshPending] = useState(false);
   const [mutationPending, setMutationPending] = useState(false);
   const [pendingMembershipId, setPendingMembershipId] = useState<string | null>(null);
   const [pendingSignalRemovalInstrument, setPendingSignalRemovalInstrument] = useState<
@@ -279,6 +280,7 @@ export function StockBetaWorkspace({
         setPolicy(next.policy);
         setMemberships(next.memberships);
         setPollError(false);
+        setMembershipRefreshPending(false);
         return true;
       } catch (error) {
         if (!isCurrent()) return false;
@@ -453,12 +455,15 @@ export function StockBetaWorkspace({
   const hasNonTerminalMembership = memberships.some((membership) =>
     NON_TERMINAL_LIFECYCLES.has(membership.lifecycle),
   );
+  const shouldPollMemberships = hasNonTerminalMembership || membershipRefreshPending;
 
   useEffect(() => {
-    if (!hasNonTerminalMembership) {
+    if (!shouldPollMemberships) {
       pollAttemptRef.current = 0;
       return;
     }
+    // The mutation owns its first reconciliation read; do not cancel it with a poll.
+    if (mutationPending) return;
     let cancelled = false;
     const abort = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -479,7 +484,7 @@ export function StockBetaWorkspace({
       abort.abort();
       if (timeout !== undefined) clearTimeout(timeout);
     };
-  }, [hasNonTerminalMembership, refreshMemberships]);
+  }, [mutationPending, refreshMemberships, shouldPollMemberships]);
 
   useEffect(() => {
     if (pendingSignalRemovalInstrument === null) {
@@ -538,6 +543,17 @@ export function StockBetaWorkspace({
     };
   }, [pendingSignalRemovalInstrument, router, signalRefreshCoordinator]);
 
+  async function reconcileMembershipMutation(signal: AbortSignal): Promise<void> {
+    // A committed POST still needs a current GET, even if a newer server seed
+    // invalidates this first read or the old visible membership is terminal.
+    setMembershipRefreshPending(true);
+    try {
+      await refreshMemberships();
+    } catch {
+      if (!signal.aborted) setPollError(true);
+    }
+  }
+
   async function addMembership(): Promise<void> {
     if (mutationPendingRef.current) return;
     const parsed = ownerEquityV2AddBodySchema.safeParse({ instrument_code: instrumentCode });
@@ -558,7 +574,7 @@ export function StockBetaWorkspace({
       if (request.signal.aborted) return;
       setInstrumentCode("");
       setActionMessage(t.addInstrumentSuccess);
-      await refreshMemberships();
+      await reconcileMembershipMutation(request.signal);
     } catch (error) {
       if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
@@ -583,7 +599,7 @@ export function StockBetaWorkspace({
       await retryOwnerEquityV2Membership(membershipId, { signal: request.signal });
       if (request.signal.aborted) return;
       setActionMessage(t.retrySuccess);
-      await refreshMemberships();
+      await reconcileMembershipMutation(request.signal);
     } catch (error) {
       if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
@@ -615,7 +631,7 @@ export function StockBetaWorkspace({
       setSignals(null);
       setSignalUnavailable(false);
       setSignalError(null);
-      await refreshMemberships();
+      await reconcileMembershipMutation(request.signal);
     } catch (error) {
       if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
@@ -641,8 +657,7 @@ export function StockBetaWorkspace({
         : signalError === null
           ? { kind: "not-ready" }
           : { code: signalError, kind: "error" };
-  const busy =
-    mutationPending || hasNonTerminalMembership || pendingSignalRemovalInstrument !== null;
+  const busy = mutationPending || shouldPollMemberships || pendingSignalRemovalInstrument !== null;
   const viewModel = {
     actionError,
     actionMessage,

@@ -10954,3 +10954,24 @@ DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0·입력 미승인·O
 별도 격리 fixture에서 POST202→GET500→정상 GET과 중복 POST0을 확인한 뒤 수정 여부를 판단한다.
 범위는 `target/r2-daily-beta/wp-8/wave173/membership-reconciliation-scope.json`에 기록했다.
 이 문서 커밋은 빌드 후보가 아니다.
+
+## Wave173 — 종목 변경 접수 후 상태 조회 복구
+
+R2-07에서 Add/Retry/Disable POST202 뒤 첫 상태 GET500이 발생하면 기존 목록이
+비어 있거나 종료 상태일 때 반복 조회가 시작되지 않는 문제를 격리 재현했다. 변경 요청은
+접수됐지만 화면은 변경 실패처럼 표시하며 이전 상태에 남았다. 재현6경로가 실패했고,
+화면 해제3경로는 기존대로 통과했다. 운영 장애 발생을 주장하는 근거는 아니다.
+
+접수 성공 후 현재 상태를 조회할 때까지 대기 상태를 유지한다. 첫 GET 실패는 상태 조회
+오류로 표시하고 기존 간격으로 GET만 재개한다. 서버 초기값 교체가 첫 응답을 무효화해도
+새 조회를 이어가며, 화면 해제는 중단한다. POST 자동 재전송은 하지 않는다. 기존 요청
+잠금·응답 순서·서버 변경 의미·READY 기준은 유지한다.
+
+전체 React/Chromium49(기존40+신규9), 관련 Vitest24·타입/lint PASS. 첫 green 검사에서
+Disable 시나리오가 동일 READY 초기값을 다시 넣어 교체를 재현하지 못한 테스트 설정을
+수정했으며 원래 결과도 보존했다. 근거는
+`target/r2-daily-beta/wp-8/wave173/local-validation.json`이다. 기존 CI 명령에 신규9개가
+포함된다. 소스/격리 범위 인수이며 새 후보 CI·이미지·배포는 다음이다. 구조 변경은 없다.
+
+현재 운영 API/Web9c145db+Owner7fa와 마지막19:46:19KST 관측을 유지한다. 배당·가격 충돌과
+D-06/D-07은 유예, DailyOFF/epoch0·KISdisabled·입력 미승인·실제3거래일/Owner/FINAL OPEN이다.

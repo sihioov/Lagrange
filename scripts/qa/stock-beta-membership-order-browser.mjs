@@ -8,9 +8,12 @@ import { fileURLToPath } from "node:url";
 import { chromium, expect } from "@playwright/test";
 import { build } from "vite";
 import { checkMutationLifetimes } from "./stock-beta-mutation-order-checks.mjs";
+import { checkMutationReconciliation } from "./stock-beta-mutation-reconciliation-checks.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const evidence = resolve(process.argv[2] ?? "/");
+const reconciliationOnly = process.argv[3] === "--reconciliation-only";
+assert(process.argv[3] === undefined || reconciliationOnly, "Unknown scenario selection");
 assert(evidence.startsWith("/tmp/"), "Pass a NEW absolute /tmp evidence directory");
 await mkdir(evidence, { recursive: false, mode: 0o700 });
 const fixture = join(evidence, "fixture");
@@ -64,6 +67,7 @@ const fixtures = {
   materializing: list("MATERIALIZING", 1),
   disabled: list("DISABLED"),
   failed: list("FAILED"),
+  empty: { ...list("DISABLED"), memberships: [] },
 };
 await writeFile(join(fixture, "fixtures.json"), JSON.stringify(fixtures));
 await writeFile(
@@ -170,7 +174,7 @@ try {
     "seed-late-error",
     "poll-recovery",
     "unmount-aborts",
-  ]) {
+  ].filter(() => !reconciliationOnly)) {
     const page = await context.newPage();
     page.on("pageerror", (error) => pageErrors.push(error.message));
     const pending = [];
@@ -362,7 +366,20 @@ try {
     await page.screenshot({ path: join(evidence, `${scenario}.png`) });
     await page.close();
   }
-  await checkMutationLifetimes({
+  if (!reconciliationOnly) {
+    await checkMutationLifetimes({
+      context,
+      origin,
+      checks,
+      pageErrors,
+      unexpectedRequests,
+      membershipPath,
+      id,
+      list,
+      membership,
+    });
+  }
+  await checkMutationReconciliation({
     context,
     origin,
     checks,
