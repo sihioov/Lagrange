@@ -3989,3 +3989,44 @@ CI39885216543은 취소/재실행하지 않고 이전 후보 결과로 회수한
 기대하던 assertion이다. 새 기준일 행으로 두 요소가 된 소스를 확인했고, 세대와 API 응답의
 기준일 두 줄을 모두 정확히 검증하도록 수정했다. 테스트 제외/재시도/시간 연장은 없다.
 원래 실패를 보존하고 최종 변경 후보의 최초 CI에서 이 경로를 검증한다.
+
+### Wave163 — 증분 실패 표시의 Web/API 운영 인수
+
+2026-10-23 11:35KST, 후보 `8917e601345e977f6ac406cf1286231bb52fa5a0`의 Web/API
+운영 반영을 독립 인수했다. 원래 CI39886395192 attempt1은8작업 성공·8전체로그·7정확checkout,
+필수 Rust155/Python154·실제 PG19·page-seam14 및 보존 Owner fixture를 통과했다.
+Web OFF129/market-stream14도 모두 통과했고 skip/flaky/retry0이다. 중간 후보d0960b0의
+원래 CI39885216543은 Web assertion 실패로 종결 회수해 보존했고 빌드/배포하지 않았다.
+최종 후보의 원래 build-a1은12이미지·49gate PASS, stop/build/start/recovery4유닛 정상0·
+PID0·cgroup empty로 끝났다. 같은7fa Owner container/image가11:34:46KST에 복귀했고,
+나머지10개 상태와 전체21개 inventory 불변을 독립 확인했다. 복원 의무나 재실행은 없다.
+
+공식 불변 설치·KIS disabled 준비·상태 타이머 복원 후 --preserve-owner-v2로 Web→API만
+갱신했다.11:35:57KST 독립 검증에서 두 새 이미지/revision/health와 HTTP 정상 응답,
+Owner7fa의 container/image/start 불변, 나머지9개 상태/비대상19개 inventory 불변을 확인했다.
+선택된 릴리스는8917이지만 실제 serving은 API/Web8917 + Owner7fa의 혼합 revision이다.
+다른 workers는 이 후보로 이행하지 않았다. 이후 전체 갱신/롤백은 서비스별 실제 결합부터
+새로 검토해야 하며 이전 exact3 교체 절차를 그대로 재실행하지 않는다. 해당 Owner 작업 처리·
+수집/정규화 소스는7fa와8917 사이에 동일하며 요청 schema1도 유지한다.
+
+실제 Owner는 fe8548a722a00a2737fd80fa465e0c35cf6b80b19bcdeed3b12b9e571e7b3d6f,
+image sha256:5da55eb70277f88d24964071335c7efdcf00774f800caec3ef2ccd609515d0f5,
+새 시작2026-10-23T02:34:46.305986702Z다. API 시작02:35:40.629199648Z,
+Web 시작02:35:33.997691265Z이며 정확한 새 ID/image는 배포 closure에 보존했다.
+11:36:07KST에는 배포된 정확한 membership SELECT를 운영 DB의 READ ONLY 트랜잭션으로
+실행해005930.KRX READY/generation1, data-through2026-10-06, requested-through2026-10-22,
+INCREMENTAL_OVERLAP_CHANGED와 원래 failed-at2026-10-22T17:35:20.206272Z를 확인했다.
+이는 배포된 조회의 실제 데이터 투영이며 로그인된 HTTP/브라우저나 새 시세 수신 인수는 아니다.
+조회 전후 세 서비스 identity/health는 동일했고 provider0·DB쓰기0·서비스변경0이다.
+
+근거는 target/r2-daily-beta 아래 다음 원래 영수증이다.
+- ci/8917e60/hosted-source-closure.json:303779bytes, SHA75fcb2f6830ef4787d74e256dca12b86cc9820fbb9825d29c2a4babd29b4b9dc.
+- wp-8/wave163/build-a1/image-restoration-observation-20261023T023504.json:857926bytes, SHAba1478cca320a41b78dc6b491f08a83b6a231a1c03b7bf96edcaf6997b9324f0.
+- wp-8/wave163/serving-deployment-closure-20261023T023557.json:68489bytes, SHA48b743fe0fb075024fc191114193bad1b408f7cb3c898b7ad8d5d45de499c5e7.
+- wp-8/wave163/refresh-projection-observation.json:819bytes, SHA86fded0feb6c35ed765a3027e3fdd0e51a076772537903cab5982780efcc41d7.
+
+R2-07의 이 표시 보정은 소스·격리/hosted 검증·운영 반영 범위에서 인수했다. 전체 R2-07과
+R2/R3 FINAL, 실제 Owner 사용·실제3연속 거래일은 OPEN이다. 기존/증분 종가273000/272000의
+권위·원인 미확정과 원본/원래 실패를 보존한다. DailyOFF/epoch0·KISdisabled·firstSessionnull·
+실제3일0, 입력 미승인과 D-06/D-07 유예는 유지하며 자동 재수집/입력 채택/활성화는 하지 않았다.
+이 후속 문서 커밋은 설치된8917 릴리스를 변경하지 않고 새 빌드 후보로 취급하지 않는다.

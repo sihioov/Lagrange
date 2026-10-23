@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-23 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave163 R2-07 증분 실패·기준일 표시와 기존 Owner 보존 배포 절차 검증 완료. 최종 후보의 hosted CI·이미지 인수 후 Web→API만 반영한다. Owner7fa·원본 충돌·D-06/D-07 유예·전체 FINAL 미완료 유지. |
+| 현재 실행 우선순위 | Wave163 R2-07 갱신 실패·승인 데이터 기준일 표시 운영 인수. API/Web8917 + 기존 Owner7fa 보존. 원본 가격 충돌·D-06/D-07 유예·DailyOFF·전체 FINAL 미완료 유지. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **최종 후보 전체 CI·이미지 인수 후 공식 --preserve-owner-v2 경로로 Web→API만 갱신한다. 작업 identity가 code_commit을 포함하므로 기존7fa Owner를 교체해 실패 일봉을 다시 수집하지 않는다. 새 후보 API/Web와 기존 Owner의 revision을 각각 인수한다. Owner 로그인이나 D-06/D-07 해결은 독립 개발의 선행 조건이 아니다.** |
+| 다음 착수 항목 | **R2-07의 남은 실패·만료/복구 및 독립 베타 사용성 과제를 이어간다. 이번 표시 보정은 CI·12이미지/49gate·Web/API 배포와 실제 DB 조회까지 인수했다. 원본 가격 충돌·입력 승인·실제3거래일·Owner 인수는 미완료다. D-06/D-07 또는 로그인 대기를 독립 개발의 선행 조건으로 두지 않는다. 이후 배포는 API/Web8917 + Owner7fa의 실제 서비스별 결합을 사용한다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. D-06/D-07은 독립 개발의 선행 조건이 아니지만 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL 증거는 미완료다. R4-01 시뮬레이션 계약은 별도 미확정이다. |
 
@@ -363,6 +363,13 @@ D-06 후속 과제로 유예한다. 원본과 관측한 배당행을 보존하�
   가능성을 확인하여 공식 Web→API 전용 갱신/기존 Owner 보존 옵션과 격리 검증을 추가했다.
   변경된 최종 후보의 전체 CI·이미지·운영 인수가 다음이다. 전체 R2-07은 DOING.
   [배포 범위 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave163--화면-배포에서-기존-owner-수집기-보존).
+  운영 인수 — 2026-10-23 11:35KST, Wave163:8917e60 CI39886395192 attempt1 all8/full8logs/
+  7checkout·Rust155/Python154·PG19/page14·브라우저129+14 통과. 원래 build-a1의12이미지49gate와
+  같은7fa Owner 정상 복귀를 인수하고 공식 Web→API만 교체했다. 두 새 서비스 health/HTTP와
+  Owner7fa 불변·other9/19 불변·상태 타이머 복원을 독립 대조했다.11:36KST 실제 배포 SELECT에서
+  READY005930/generation1/기준일10월6일과 원래 증분 실패/대상10월22일이 함께 확인됐다.
+  전체 R2-07/FINAL·실제 Owner 사용·3거래일은 OPEN, 원본273000/272000 충돌과 DailyOFF 유지.
+  [운영 인수 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave163--증분-실패-표시의-webapi-운영-인수).
 - [ ] **R2-08 — 연속 3거래일 무인 관찰.** 일별 예약 실행, ETF 데이터·추천 실행·발행,
   등록 Owner 종목 갱신 결과와 입력·추천·API·화면 기준일을 기록한다.
   수동 보충 성공은 해당 일의 무인 성공으로 세지 않는다.
@@ -2131,3 +2138,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-23 | R2-07 | Wave162 증분 갱신 실패·데이터 기준일 표시 소스 보정 | READY 유지·다른 소유자/세대 실패 제외·미승인 세대 제외; 새 작업/정상 승인 뒤 과거 실패 제거 | 이 소스 커밋; 격리 DB4/Web30/OpenAPI20·typecheck PASS; hosted/이미지/배포 미완료 |
 
 | 2026-10-23 | R2-07/09 | Wave163 공식 Web→API 전용 갱신·기존 Owner 보존 | 새 code_commit에 따른 실패 일봉 재수집 방지; env/identity/기존 보호 검사 유지 | 이 소스 커밋; provider-free compose fixture·CI 계약·정적 검사 PASS; 최종 후보 hosted/이미지/배포 미완료 |
+
+| 2026-10-23 | R2-07/09 | Wave163 갱신 실패·기준일 표시 Web/API 운영 인수 | Owner7fa 보존·원본 충돌 보존·DailyOFF; 전체 FINAL 미완료 |8917e60; CI39886395192 all8·12images49gates·11:35KST exact2/other9·19 불변·11:36KST 실제 DB 투영 인수 |
