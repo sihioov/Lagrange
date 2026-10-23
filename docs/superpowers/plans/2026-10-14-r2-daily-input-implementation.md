@@ -10548,3 +10548,39 @@ manifest와 Owner의 이전 manifest/보호 env를 따로 검증한다. 최신 �
 정확한 명령 목록을 추가해 계약24개 PASS; 원래 실패는 보존하며 재실행하지 않는다.
 최종 후보는 이 보완 커밋이며 새 전체 CI 한 번으로 검증한다. UI의7개 브라우저/54개 검사
 통과는 유지하지만 최종 hosted/이미지/운영 인수는 아직 미완료다. 기존 운영·DailyOFF 유지.
+
+### Wave164 — membership 응답 순서 보정과 혼합 버전 배포 인수
+
+2026-10-23 14:19:22 KST, 후보 `0ff579c874b92e73cd1a3e20fbecae7b7e4cfc99`의 Web/API 배포를 독립 인수했다.
+늦게 도착한 membership 응답이 비활성화·서버 초기값 이후의 상태/정책/오류를 덮는
+4경로를 격리 React/Chromium에서 먼저 재현했다. 최신 요청만 반영하고 서버 초기값·해제 시
+요청을 취소/무효화하도록 수정했다. 확장된 브라우저7경로와 대상 Vitest54개, 타입/lint 통과.
+첫 후보db0bb1f의 CI39901353016 attempt1은 새 workflow 단계가 정확한 명령 계약 목록에
+빠져 실패했다. 같은 원래 policy 실행의 grant PostgreSQL fixture 준비도
+DAILY_BACKUP_FIXTURE_COMMAND로 실패했으며 상세 원인은 UNKNOWN으로 보존했다.
+두 실패를 지우거나 원래 CI를 재실행하지 않았다. 목록을 보정한 최종0ff579c의 CI39901751777
+attempt1은8작업/8전체로그·7정확checkout·필수Rust155/Python154·PG19·page14 및 새
+브라우저7개를 통과했다. 기존 Web OFF/market-stream 두 lane도 성공·skip/flaky/retry0이다.
+
+현재 API/Web8917 + Owner7fa를 다음 릴리스로 전환할 때 기존 단일 source 검증이
+거절되는 문제도 수정했다. 공식 `--preserved-owner-from-commit` 옵션으로 Owner의 실제
+설치 manifest/env를 별도로 검증한다. API/Web의 이전 소스는8917로 고정하며 수집기를
+재생성하지 않는다. 가짜 Docker의 혼합 버전·잘못된 입력·누락 manifest·env/image 변경
+거부와 정확한 Web→API 두 개 교체 검사가 통과했다.
+
+원래 build-a1의12이미지/49gate PASS, stop/build/start/recovery4유닛 정상0/PID0/빈cgroup,
+같은7fa Owner container/image 정상 복귀 및 다른10개 상태·전체21개 inventory 불변을
+독립 확인했다. 그 뒤 공식 설치/check·KIS disabled·상태 타이머 복원과 Web→API만 갱신했다.
+새 두 이미지/revision/health·HTTP, Owner의 container/image/start 불변, 다른9개 상태와
+비대상19개 inventory 불변을 독립 확인했다. 선택 릴리스/API/Web은0ff579c이고 Owner는7fa다.
+Owner의 현재 인수된 시작은 `2026-10-23T05:17:37.39351919Z`이며 container/image는 기존과 같다.
+다른 worker 전체 이행이나 인증된 브라우저·새 시세 수신을 입증하는 관측은 아니다.
+
+- `target/r2-daily-beta/ci/0ff579c/hosted-source-closure.json`: 306428bytes, SHA256 `55f2b9ed677e5679796cd433820ed238bfb4d3e7c58c4a7e8cc4f81efd1fec6a`.
+- `target/r2-daily-beta/wp-8/wave164/build-a1/image-restoration-observation-20261023T051839.json`: 858041bytes, SHA256 `0c31247ba3ea14f556146ef94b599e4cfa82682fbec747df6507edee67cdd91e`.
+- `target/r2-daily-beta/wp-8/wave164/serving-deployment-closure-20261023T051922.json`: 70018bytes, SHA256 `f8aef456514c19973131dcc8f2ad46417b576bb94080433ab665a9953a461cbe`.
+
+R2-07의 이 보정은 소스·격리/hosted 검사·운영 반영 범위에서 인수했다. 전체 R2-07 및
+R2/R3 FINAL은 OPEN이다. D-06/D-07 유예, Sep15 배당 충돌과005930 종가273000/272000의
+미확정 원인·원본·실패 기록을 보존한다. DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0,
+입력 승인·Owner 인수는 미완료다. 이 문서 커밋은 설치된 불변 릴리스를 바꾸는 빌드 후보가 아니다.

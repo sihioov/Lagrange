@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-23 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave164 R2-07 membership 지연 응답 오류4경로 재현·보정, 격리 브라우저7개/대상54개·타입/lint 통과. 혼합 버전 후속 배포 검증도 보완·격리 PASS. 최종 후보 CI·배포가 다음. API/Web8917 + Owner7fa 운영 유지. |
+| 현재 실행 우선순위 | Wave164 R2-07 membership 응답 순서·혼합 버전 배포 보정 운영 인수. API/Web0ff579c + 기존 Owner7fa. 데이터 충돌·D-06/D-07 유예·DailyOFF·전체 FINAL 미완료 유지. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **Wave164 membership 보정과 혼합 버전 배포 검증을 합친 최종 후보를 한 번 CI 검증하고 기존 Owner7fa를 보존하는 별도 Web/API 운영 반영을 진행한다. 소스·격리 검사 통과이며 아직 배포 완료가 아니다. D-06/D-07·입력 충돌은 독립 개발의 선행 조건이 아니다. DailyOFF·입력 승인·실제3거래일·Owner 인수·R2/R3 FINAL은 별도 미완료.** |
+| 다음 착수 항목 | **R2-07 남은 실패·만료/복구와 독립 베타 사용성을 이어간다. Wave164 응답 순서 수정은 CI·12이미지/49gate·Web/API 배포까지 인수했다. 데이터 충돌·입력 승인·실제3거래일·Owner 인수는 미완료. D-06/D-07 또는 로그인 대기를 독립 개발의 선행 조건으로 두지 않는다. 다음 배포는 API/Web0ff579c와 Owner7fa의 서비스별 결합을 사용한다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. D-06/D-07은 독립 개발의 선행 조건이 아니지만 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL 증거는 미완료다. R4-01 시뮬레이션 계약은 별도 미확정이다. |
 
@@ -382,6 +382,12 @@ D-06 후속 과제로 유예한다. 원본과 관측한 배당행을 보존하�
   배포 경로 보완 — Wave164: 현재 API/Web8917 + Owner7fa의 서로 다른 이전 manifest를
   명시해 검증하는 공식 옵션과 격리 검사를 추가했다. 기존 단일 source 경로는 그대로 거절한다.
   첫 CI의 새 단계 명령 계약 누락을 보정해24개 PASS; 원래 실패 보존, 최종 후보 CI·배포 미완료.
+  운영 인수 — 2026-10-23 14:19:22 KST, Wave164:0ff579c CI39901751777 attempt1 all8/full8logs/
+  7checkout·Rust155/Python154·PG19/page14·새 브라우저7경로 통과. 원래 build-a1의12이미지49gate와
+  같은7fa Owner 복귀를 인수하고 공식 혼합 버전 검증으로 Web→API 두 개만 갱신했다.
+  새 두 서비스 health/HTTP·Owner container/image/start·other9/19 불변·상태 타이머 복원을 대조했다.
+  전체 R2-07/FINAL은 OPEN이며 입력 충돌·D-06/D-07 유예·DailyOFF를 유지한다.
+  [운영 인수 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave164--membership-응답-순서-보정과-혼합-버전-배포-인수).
 - [ ] **R2-08 — 연속 3거래일 무인 관찰.** 일별 예약 실행, ETF 데이터·추천 실행·발행,
   등록 Owner 종목 갱신 결과와 입력·추천·API·화면 기준일을 기록한다.
   수동 보충 성공은 해당 일의 무인 성공으로 세지 않는다.
@@ -2156,3 +2162,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-23 | R2-07 | Wave164 지연 membership 응답 오류4경로 재현·보정 | 최신 요청/서버 초기값 우선, unmount 취소; CI 회귀 연결 | 이 소스 커밋; 격리 Chromium7·Vitest54·타입/lint PASS, 운영 반영 미완료 |
 
 | 2026-10-23 | R2-07/09 | Wave164 후속 화면 배포의 별도 Owner source 검증 | 변경 전 manifest/env/image 거절·Owner 보존 격리 PASS; 첫 CI 계약 누락 보정24 PASS | 이 보완 커밋; 새 전체 CI/운영 인수 미완료 |
+
+| 2026-10-23 | R2-07/09 | Wave164 membership 응답 순서·혼합 버전 배포 검증 운영 인수 | Owner7fa·원본 충돌 보존, DailyOFF, 전체 FINAL OPEN |0ff579c; CI39901751777 all8·브라우저7·12images49gates·Web/API exact2 배포 |
