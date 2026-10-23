@@ -4144,3 +4144,22 @@ R2-05의005930 가격 충돌은 별도 원인/해소 기준으로 추적하며 D
 근거: `target/r2-daily-beta/wp-8/wave165/input-resolution-requirements.json`.
 이번에는 로컬 기록/코드 대조만 수행했다. 운영/공급자 조회·DB쓰기·서비스변경·테스트/CI는0이며,
 실제 마지막 운영 관측14:19:22KST·API/Web0ff579c+Owner7fa·DailyOFF·입력 미승인을 유지한다.
+
+### Wave166 — Owner 정정: 데이터 충돌 유예 유지와 독립 작업 계속
+
+2026-10-23 Owner가 “일단 이부분은 기억만 하고 넘어가고 다음 단계로 가자고 하지 않았나?”라고
+정정했다. Wave165에서 질문을 조사 재개·최우선 변경으로 해석한 판단을 철회한다. 배당 완전성/
+충돌(D-06)과005930 과거 종가 충돌은 원본·필요 조건을 보존한 후속 과제로 유예하며 같은 조사나
+문의를 다음 개발의 선행 조건으로 반복하지 않는다. Wave165의 사실 대조는 역사로 보존하지만
+그 재개 우선순위는 더 이상 유효하지 않다. D-07 유예도 유지한다. 유예는 입력 승인/완료가 아니다.
+
+다음 작업은 R2-07 세션 만료·오류 복구의 독립 검증이다. 소스 대조를 시작했다.
+getOwnerEquityV2Memberships는 workspace의 current-request guard보다 앞에서 공통
+parseBrowserApiResponse를 호출하고, 그 함수는 SESSION_UNKNOWN/EXPIRED에 로그인 이동을
+수행한다. 현재 공통 함수에는 요청 취소/현재성 확인이 없다. 취소된 늦은 응답이 이동을 일으키는지
+격리 재현이 다음이며 아직 확인된 제품 결함이나 새 테스트 통과로 주장하지 않는다. 기존 페이지
+reload 세션 검사를 그대로 반복하지 않고 해당 비동기 경계만 확인한다. 실제 인증을 생성하지 않는다.
+
+근거: `target/r2-daily-beta/wp-8/wave166/owner-priority-correction.json`.
+운영/공급자 조회·서비스변경·DB쓰기·테스트/CI는0이다. 마지막 실제 관측14:19:22KST와
+API/Web0ff579c+Owner7fa 운영 인수, DailyOFF·입력 미승인·실제3일0·FINAL OPEN을 보존한다.
