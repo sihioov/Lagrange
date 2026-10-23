@@ -384,29 +384,45 @@ test("daily configuration switch isolates dates and late client observations", a
     await test.step(
       "R2_DAILY_SWITCH_VERIFY",
       async () => {
-        await expect(panel).toContainText("Automatic updates off");
+        await test.step("R2_DAILY_SWITCH_VERIFY_STATUS", async () => {
+          await expect(panel).toContainText("Automatic updates off");
+        });
         // Observation time is not a recommendation date. The second config
         // has no session, coverage, publication or due date, but was observed.
-        for (const label of [
-          "Expected trading session",
-          "Daily input coverage ends",
-          "Latest daily result as-of",
-          "Published at (KST)",
-          "Update due (KST)",
-        ]) {
-          const value = panel.getByText(label, { exact: true }).locator("..").locator("dd");
-          await expect(value).toHaveText("Not reported");
+        for (const [stepTitle, label] of [
+          ["R2_DAILY_SWITCH_VERIFY_EXPECTED_SESSION", "Expected trading session"],
+          ["R2_DAILY_SWITCH_VERIFY_COVERAGE", "Daily input coverage ends"],
+          ["R2_DAILY_SWITCH_VERIFY_RESULT_DATE", "Latest daily result as-of"],
+          ["R2_DAILY_SWITCH_VERIFY_PUBLISHED_AT", "Published at (KST)"],
+          ["R2_DAILY_SWITCH_VERIFY_DUE_AT", "Update due (KST)"],
+        ] as const) {
+          await test.step(stepTitle, async () => {
+            const value = panel.getByText(label, { exact: true }).locator("..").locator("dd");
+            await expect(value).toHaveText("Not reported");
+          });
         }
-        const observed = panel
-          .getByText("Observed at (KST)", { exact: true })
-          .locator("..")
-          .locator("dd");
-        await expect(observed).toContainText("Oct 15, 2026");
-        await expect(observed).toContainText("5:01 PM KST");
-        await expect(page.getByRole("switch")).toHaveAttribute("aria-checked", "false");
-        await expect(
-          page.getByRole("region", { name: "Owner-only recommendation", exact: true }),
-        ).toHaveCount(0);
+        await test.step("R2_DAILY_SWITCH_VERIFY_OBSERVED_DATE", async () => {
+          const observed = panel
+            .getByText("Observed at (KST)", { exact: true })
+            .locator("..")
+            .locator("dd");
+          await expect(observed).toContainText("Oct 15, 2026");
+        });
+        await test.step("R2_DAILY_SWITCH_VERIFY_OBSERVED_TIME", async () => {
+          const observed = panel
+            .getByText("Observed at (KST)", { exact: true })
+            .locator("..")
+            .locator("dd");
+          await expect(observed).toContainText("5:01 PM KST");
+        });
+        await test.step("R2_DAILY_SWITCH_VERIFY_TOGGLE", async () => {
+          await expect(page.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+        });
+        await test.step("R2_DAILY_SWITCH_VERIFY_HISTORY_ABSENT", async () => {
+          await expect(
+            page.getByRole("region", { name: "Owner-only recommendation", exact: true }),
+          ).toHaveCount(0);
+        });
       },
       stepOptions,
     );

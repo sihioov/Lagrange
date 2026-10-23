@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-24 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave184 Owner 지시로 기록 저장·다음 세션 R4 인계. 제안/설명 뒤의 “진행해”를 R4 착수 결정으로 보존하고 이번 세션은 구현 없이 종료. 자동 heartbeat 종료. R2/R3 미완료·충돌/D-06/D-07 유예와 DailyOFF 유지. [인계](handoffs/2026-10-23-r2-r3-to-r4.md) |
-| 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
-| main 통합 | 2026-10-24 Owner의 명시적 merge/push 지시에 따라 `1286e73`과 R2/R3·R4 인계 `7a396d7`을 이 병합 커밋에서 통합. CI 캐시·R2/R3 필수 검증을 함께 보존하고 로컬 관련 검사 82개 통과. 원격 push 및 해당 커밋의 CI 결과는 별도 확인한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md) |
-| 다음 착수 항목 | **다른 세션에서 [인계 기록](handoffs/2026-10-23-r2-r3-to-r4.md)을 읽고 R4-02/03 전용 Rust 결과 계약·작은 원장 검증부터 시작한다. R4 v1 제안 뒤의 Owner 진행 지시를 이어받으며 같은 착수 승인을 반복하지 않는다. 이번 세션은 저장으로 종료. 실제 입력/활성화/3일/Owner/R2/R3 FINAL은 별도 OPEN.** |
+| 현재 실행 우선순위 | 2026-10-24 Owner 실행 지시에 따라 [R4 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md)의 WP-1 CI 정리·WP-2 결과 계약을 Paseo로 병렬 착수했다. R4-02 DOING, 결과 미수용. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·D-06/D-07/005930 유예·DailyOFF·과거 heartbeat 종료는 유지한다. |
+| 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
+| main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
+| 다음 착수 항목 | **WP-1의 기존 CI39976478432·smoke39976478535 결과/실패 원인과 WP-2의 Rust 계약을 회수·검증한다. 계약 수용 뒤 WP-3 작은 원장→WP-4 승인 입력/기존 신호→리뷰→동일 후보 검증으로 이어간다. 같은 R4 최초 승인을 반복하지 않는다. 현재 결과 수용·성과 공개·운영 변경은 없으며 R2/R3 FINAL은 별도 OPEN.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -593,8 +593,16 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
 - [ ] **R4-02 — 승인 입력·결과 계약 구현.** 기존 5개 pin과 `OWNER_ONLY`, `PRICE_RETURN_ONLY`,
   `vendor_snapshot=true`, `strict_pit=false`를 유지하는 전용 Rust 경로·결과 계약을 구현한다.
   generic Nautilus/등록 READY 결과를 추천 성과로 재사용하거나 표시하지 않는다.
+  **2026-10-24 계획 준비 / 구현 TODO:** [Paseo 실행 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md)의
+  WP-2/4가 담당한다. 고정 원본 계약의 길이·SHA-256, 기존 승인/계산 접점과 검증 절차를 확인했다.
+  WP-1은 기존 main CI 실패를 별도 정리하며, 새 실행·코드 구현·실제 artifact 검증은 아직 없다.
+  **2026-10-24 후속 DOING:** Owner의 `$paseo-delegate` 실행 지시로 WP-2 Luna/max를 시작했다.
+  [실행 기록](reviews/2026-10-24-r4-execution.md)에 worker와 알림/감시·소유 범위를 고정했다.
+  실제 worker running을 확인했으며 구현 결과·검증은 미수용이다.
 - [ ] **R4-03 — 첫 기준 전략 검증.** 승인된 계약으로 전략 1개와 벤치마크 1개를 먼저 구현하고
   신호·목표 비중·현금·체결·비용·평가의 작은 수작업 기준값과 대조한다.
+  **2026-10-24 계획 준비 / 구현 TODO:** 같은 계획의 WP-3/4에서 합성 원장을 먼저 검증하고
+  승인 입력을 연결한다. 실제 승인 artifact 부재 시 그 실행과 최종 인수는 OPEN으로 보존한다.
 - [ ] **R4-04 — 재현성·미래정보·무결성 검증.** 동일 입력 결과, 미래정보 차단, 분할 중복 반영,
   반올림·잔여 현금·누락, pin 변조와 사용자 격리를 검증한다.
 - [ ] **R4-05 — 전용 실행·조회 연결.** 작업 큐·저장·API·Web 결과를 전용 계약에 연결하고 실패 시
@@ -2297,3 +2305,9 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-23 — R4-01 Wave184 결정 기록 DONE, R4-02/03 다음 세션 인계: 제안/설명 뒤 Owner “진행해”, 이어 “기록 저장…다른 세션에서 작업” 지시를 그대로 보존. 이번 세션 구현0, 기존 자동 heartbeat47325660 공식 삭제 성공·후속 생성0. 원본 v1 계약/소스/운영 증거/유예/금지 사항을 [인계 문서](handoffs/2026-10-23-r2-r3-to-r4.md)에 저장. 기존 R2/R3 FINAL은 OPEN.
 
 - 2026-10-24 — R2/R3 기록 및 R4-01 인계의 main 통합: Owner가 저장 뒤 main 병합·push를 명시적으로 지시했다. `1286e73`의 개발 검증 개선과 `7a396d7`을 별도 작업 트리에서 결합하고 충돌 4파일을 정리했다. 관련 로컬 82검사와 Rust/shell 문법·포맷 확인 통과. 운영 배포·R4 구현·heartbeat 재개는 없으며 R2/R3 FINAL OPEN 및 다음 세션 R4-02/03 우선순위 유지. [병합 상세](reviews/2026-10-24-main-r2-r4-integration.md).
+
+- 2026-10-24 — R4-02/03 계획 준비, 구현 TODO 유지: Owner의 `$paseo-delegate-plan` 요청으로 [6개 WP 실행 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md)을 작성했다. 기준 `bb906d3`, 고정 R4 계약 hash 일치와 기존 승인/계산 접점 확인. main CI 실패 정리와 독립 결과 계약은 병렬 가능하며 원장→승인 입력→리뷰→동일 후보 검증은 의존 순서로 진행한다. 모델·파일 소유권·검증·재분류 기준을 명시했다. worker·구현·새 CI·운영 변경은 미착수이며 R4-05/06·R2/R3 FINAL과 유예는 보존한다. 대상은 이 계획을 추가한 변경; 문서 참조·형식·범위 검증은 구현/운영 인수가 아니다.
+
+- 2026-10-24 — R4-02 TODO→DOING: Owner의 `$paseo-delegate 작업 진행 시작해` 지시로 WP-1 CI 정리와 WP-2 Rust 결과 계약을 Codex Luna/max Paseo worker 두 명에게 위임했다. 실제 runtime 모델/effort·workspace·parent와 running을 확인했고 완료 알림 및 이 작업 전용 bounded 감시를 설정했다. 결과/검증 미수용, WP-3~6 TODO, 운영 변경과 유예 재개 없음. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-1 원래 CI 회수·진단 변경 수용: bb906d3의 CI 실패(129개 중1개 Web assertion)·smoke 성공을 구분했다. 고정 assertion ID/제한된 sanitizer와 회귀3개·AST, 4개 source/report hash 일치를 확인했다. 기존 assertion/timeout·비밀 제외를 보존하며 정확한 원인은 후속 CI에서 회수한다. WP-2 Rust 구현은 병행하고 운영/유예는 변경하지 않는다. [실행 기록](reviews/2026-10-24-r4-execution.md).

@@ -1791,6 +1791,8 @@ while True: time.sleep(0.05)
         row = runner.hosted_lane_evidence(outcome)
         self.assertEqual((row["lane"], row["state"], row["exit_code"]), ("off", "command_failed", 1))
         self.assertEqual((row["selected"], row["passed"], row["case_count"]), (2, 1, 2))
+        self.assertTrue(row["cleanup_ok"])
+        self.assertTrue(row["reservation_ok"])
         self.assertEqual([case["line"] for case in row["cases"]], [42, 56])
         self.assertEqual([case["status"] for case in row["cases"]], ["expected", "unexpected"])
         self.assertEqual(row["cases"][1]["attempts"], [{
@@ -1848,6 +1850,119 @@ while True: time.sleep(0.05)
                                  ("command_failed", 1, 0))
                 self.assertEqual(projected["retry_attempts"], 0)
                 self.assertNotIn("PRIVATE_SENTINEL", json.dumps(projected))
+
+    def test_hosted_lane_evidence_localizes_nested_owner_assertions_with_bounds(self) -> None:
+        owner_file = "tests/e2e/owner-beta-recommendations.spec.ts"
+        sensitive = {
+            "message": "MESSAGE_SENTINEL https://private.invalid/?token=TOKEN_SENTINEL",
+            "stack": "STACK_SENTINEL cookie=COOKIE_SENTINEL",
+            "expected": "EXPECTED_SENTINEL",
+            "actual": "ACTUAL_SENTINEL",
+        }
+        unknown_title = "UNKNOWN_TITLE_SENTINEL R2_DAILY_SWITCH_VERIFY_COVERAGE"
+        steps = [{
+            "title": "R2_DAILY_SWITCH_VERIFY",
+            "error": sensitive,
+            "steps": [
+                {"title": "R2_DAILY_SWITCH_VERIFY_COVERAGE", "error": sensitive},
+                {"title": unknown_title, "error": sensitive},
+                {"title": "R2_DAILY_SWITCH_VERIFY_STATUS", "error": sensitive},
+                {"title": "R2_DAILY_SWITCH_VERIFY_COVERAGE", "error": sensitive},
+            ],
+        }]
+        case = runner.Case(
+            runner.CaseKey("chromium", owner_file, 273, "fixture", "id"),
+            (), "unexpected", "passed",
+            ({"status": "failed", "retry": 0, "steps": steps},), (),
+        )
+        outcome = runner.LaneOutcome(
+            "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[case],
+        )
+        projected = runner.hosted_lane_evidence(outcome)
+        failed_steps = projected["cases"][0]["attempts"][0]["failed_steps"]
+        self.assertEqual(failed_steps, [
+            "R2_DAILY_SWITCH_VERIFY",
+            "R2_DAILY_SWITCH_VERIFY_COVERAGE",
+            "R2_DAILY_SWITCH_VERIFY_STATUS",
+        ])
+        self.assertEqual(projected, runner.hosted_lane_evidence(outcome))
+        encoded = json.dumps(projected)
+        for value in [*sensitive.values(), unknown_title, "https://private.invalid/", "COOKIE_SENTINEL"]:
+            self.assertNotIn(value, encoded)
+
+        for source, status in ((owner_file, "passed"), (runner.STOCK_BETA_FILE, "failed")):
+            ineligible = runner.Case(
+                runner.CaseKey("chromium", source, 273, "fixture", "id"),
+                (), "unexpected", "passed",
+                (({"status": status, "retry": 0, "steps": steps}),), (),
+            )
+            result = runner.hosted_lane_evidence(runner.LaneOutcome(
+                "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True,
+                cases=[ineligible],
+            ))
+            self.assertNotIn("failed_steps", result["cases"][0]["attempts"][0])
+
+        def nested_result(depth: int) -> dict[str, object]:
+            nested: dict[str, object] = {
+                "title": "R2_DAILY_SWITCH_VERIFY_DUE_AT",
+                "error": {},
+            }
+            for _ in range(depth):
+                nested = {"title": "unlisted wrapper", "steps": [nested]}
+            deeply_nested = runner.Case(
+                runner.CaseKey("chromium", owner_file, 273, "fixture", "id"),
+                (), "unexpected", "passed",
+                (({"status": "failed", "retry": 0, "steps": [nested]}),), (),
+            )
+            return runner.hosted_lane_evidence(runner.LaneOutcome(
+                "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True,
+                cases=[deeply_nested],
+            ))
+
+        depth_four = nested_result(runner.HOSTED_LANE_STEP_MAX_DEPTH)
+        self.assertEqual(
+            depth_four["cases"][0]["attempts"][0]["failed_steps"],
+            ["R2_DAILY_SWITCH_VERIFY_DUE_AT"],
+        )
+        depth_five = nested_result(runner.HOSTED_LANE_STEP_MAX_DEPTH + 1)
+        self.assertNotIn("failed_steps", depth_five["cases"][0]["attempts"][0])
+
+        phase = {
+            "title": "R2_DAILY_SWITCH_VERIFY",
+            "error": {},
+            "steps": [
+                *({"title": "unlisted"} for _ in range(runner.HOSTED_LANE_STEP_MAX_NODES - 2)),
+                {"title": "R2_DAILY_SWITCH_VERIFY_COVERAGE", "error": {}},
+                {"title": "R2_DAILY_SWITCH_VERIFY_STATUS", "error": {}},
+            ],
+        }
+        capped = runner.Case(
+            runner.CaseKey("chromium", owner_file, 273, "fixture", "id"),
+            (), "unexpected", "passed",
+            (({"status": "interrupted", "retry": 0, "steps": [phase]}),), (),
+        )
+        capped_result = runner.hosted_lane_evidence(runner.LaneOutcome(
+            "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True,
+            cases=[capped],
+        ))
+        self.assertEqual(
+            capped_result["cases"][0]["attempts"][0]["failed_steps"],
+            ["R2_DAILY_SWITCH_VERIFY", "R2_DAILY_SWITCH_VERIFY_COVERAGE"],
+        )
+
+        beyond_legacy_top_level_limit = runner.Case(
+            runner.CaseKey("chromium", owner_file, 273, "fixture", "id"),
+            (), "unexpected", "passed",
+            (({"status": "failed", "retry": 0, "steps": [
+                *({"title": "unlisted", "error": {}} for _ in range(32)),
+                {"title": "R2_DAILY_SWITCH_VERIFY", "error": {}},
+            ]}),), (),
+        )
+        legacy_limit_result = runner.hosted_lane_evidence(runner.LaneOutcome(
+            "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True,
+            cases=[beyond_legacy_top_level_limit],
+        ))
+        self.assertNotIn("failed_steps", legacy_limit_result["cases"][0]["attempts"][0])
 
     def test_hosted_lane_evidence_excludes_untrusted_text_and_token_fields(self) -> None:
         sentinel = "PRIVATE_SENTINEL_DO_NOT_EMIT"
