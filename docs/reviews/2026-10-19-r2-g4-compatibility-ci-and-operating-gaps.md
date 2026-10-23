@@ -3881,3 +3881,30 @@ image sha256:5da55eb70277f88d24964071335c7efdcf00774f800caec3ef2ccd609515d0f5,
 D-06/D-07 유예, 원래 Raw와 양성 배당 행, 미승인 입력·DailyOFF·첫세션null·실제3일0 기록을
 유지한다. 별도 복원 작업은 없으며 다음 관측은 새 근거가 있을 때만 한다. 무관한 ROADMAP32추가와
 .archify를 보존했다. 다이어그램 구조 변경은 없다. 문서 HEAD는 새 빌드 후보가 아니다.
+
+### Wave160 — Owner 요청에 따른 새 서버 조회
+
+2026-10-23 Owner의 “서버 새로 조회하면 되지 내가 해야되는 거야?” 요청에 따라
+새7fa 컨테이너에 고정한 별도 읽기 전용 관측을 수행했다.10:10:52KST에 API/Web/Owner3개가
+같은 image/revision/start·healthy·재시작0이고 API readyz/Web healthz가 성공했다.
+PG identity와 READ ONLY transaction을 확인한 집계에서 유효 로그인0·활성 browser consumer0,
+오늘 수신0, 마지막 시세는10월22일11:49:54.240KST/version11/ordinal26 그대로였다.
+Daily enabled0/epoch0, Owner 작업 queued0/running0을 확인했다. 이는 그 순간의 서버 상태이며
+23일 실제 거래일 근거나 실제 수신·Owner 시각적 사용 인수는 아니다.
+
+이전 reception-a3 집계보다 Owner 작업이16→17개, 실패가15→16개로 늘었다.
+10:12:42KST의 별도 exact-finished-at 조회에서 추가1건은10월23일02:35:20.206272KST에 끝난
+`INCREMENTAL_OVERLAP_CHANGED`로 확인했다. 소스 `crates/market-data/src/owner_equity_v2.rs`
+merge 함수는 기존/증분 일봉의 같은 날짜 행이 다르면 이 오류로 중단한다. 어떤 종목·필드가
+달라졌는지는 아직 미확인이다. 다음은 보존된 해당 입력의 차이를 제한 범위에서 대조하는 작업이며
+로그인 요청이나 D-06/D-07 해결을 이 조사 전체의 선행 조건으로 두지 않는다.
+
+근거: `wave160/server-readonly-a1/observation.json`10464bytes
+SHA7adc6a9fcc222cdba551cb2a07b5507f81ea2c5eb2f31e625c2297633405941c;
+`closure.json`2465bytes SHA f28af07af27e84d2a6bf41ed568a8b452d7eddc772958a4fa0ce362313474f48.
+최근30분 조건의 Owner500줄 로그는 포화되어 전체 구간 오류 부재를 주장하지 않는다.
+오류코드 후속조회a1/a2의 잘못된 jobs.error_retryable 열 사용과 부정확한 auth 오류분류는
+보존했고, membership 전용 열을 제거한a3 SELECT로 실제 코드를 확인했다. 운영 인증 장애로
+판정하지 않았다. 원래 관측/복구/배포를 재실행하지 않았고 provider0·DB쓰기0·서비스변경0이다.
+다른18개 컨테이너·상태/KIS 타이머는 이번 재검증 범위 밖이다. D-06/D-07 유예·R2/R3 FINAL
+미완료·미승인 입력·DailyOFF는 유지한다. 서버 조회를 Owner가 직접 해야 하는 것은 아니다.

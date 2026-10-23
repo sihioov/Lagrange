@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-23 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave159 R2-07 조회 회복 후 남는 오류 표시 보정은 운영 반영까지 인수했다. 고정7fa779c ON·API/Web/Owner3개 검증, 원래 CC Owner 정상 종료·나머지8개 유지·HTTP/상태 타이머 복원 확인. D-06/D-07는 유예이며 전체 R2-07/FINAL 완료와 구분한다. |
+| 현재 실행 우선순위 | Wave159 UI 보정7fa779c 운영 인수 유지. Wave160 Owner 요청으로10:10KST 서버를 새로 조회해 exact3 health/HTTP 정상·활성 세션/구독0·새 시세0을 확인했다. 추가 실패1건의 INCREMENTAL_OVERLAP_CHANGED 입력 차이를 제한 조사한다. D-06/D-07와 전체 FINAL은 미완료다. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **Wave159 UI 회복 보정7fa779c의 소스 CI·12이미지/49gate·정식 API/Web/Owner 갱신을 인수했다(2026-10-23 02:36KST). D-06 배당 완전성 및 D-07 실제 수신/수명주기는 유예 기록을 유지한다. 추가 근거 없이 반복 조사·운영 조회·CI/빌드를 하지 않는다. 정상 장중 사용이 생기면 새 Owner와 당일 실제 거래일/시간 근거에 맞춰 제한 검증한다. DailyOFF·입력 미승인·전체 R2/R3 FINAL 미완료는 유지한다.** |
+| 다음 착수 항목 | **Wave160에서 확인한 배포 직후 일봉 증분 실패1건의 보존된 입력·겹치는 날짜 행을 대조한다. 서버 조회는 에이전트가 수행하며 Owner 로그인 요청을 조사 전체의 선행 조건으로 두지 않는다. 새 시세 인수에는 실제 정상 수요·당일 거래일/시간 증거가 별도로 필요하다. 원래 진단/복구/수집 재실행·자동 입력 승인 없이 DailyOFF·D-06/D-07 유예·R2/R3 FINAL 미완료를 유지한다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. D-06/D-07은 독립 개발의 선행 조건이 아니지만 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL 증거는 미완료다. R4-01 시뮬레이션 계약은 별도 미확정이다. |
 
@@ -346,6 +346,10 @@ D-06 후속 과제로 유예한다. 원본과 관측한 배당행을 보존하�
   실패는 보존하고 원래 복원을 확인했다. 실제23일에 다시 받은 공식 정규장 시간표만 등록했고
   23일 거래일·실제 시세 수신은 미증명이다. D-06/D-07 유예·DailyOFF/입력 미승인과
   전체 R2-07/FINAL 미완료는 유지한다. [배포 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave159-scoped-ui-recovery-deployment-accepted).
+  새 운영 관측 — 2026-10-23, Wave160: Owner 요청으로10:10KST exact3 health/HTTP를 확인했다.
+  유효 로그인/활성 구독0·오늘 시세0·DailyOFF이며, 추가 실패1건은02:35KST의
+  `INCREMENTAL_OVERLAP_CHANGED`다. 해당 보존 입력 차이 조사가 남았다. 전체 R2-07은 DOING.
+  [관측 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave160--owner-요청에-따른-새-서버-조회).
 - [ ] **R2-08 — 연속 3거래일 무인 관찰.** 일별 예약 실행, ETF 데이터·추천 실행·발행,
   등록 Owner 종목 갱신 결과와 입력·추천·API·화면 기준일을 기록한다.
   수동 보충 성공은 해당 일의 무인 성공으로 세지 않는다.
@@ -2106,3 +2110,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-23 | R2-07/09 | Wave159 전체 소스 CI 인수와 공식 이미지a2 진행 | a1 OFF 전용 점검 오적용은 빌드 전 실패·원래 Owner 복귀 인수; 불필요한 점검만 제거 |7fa779c; CI39813825738 all8/full8logs/7checkout/Rust151/Python154/PG19/page14; a2 17:10UTC 원래 빌드 진행·복귀 의무 있음; 운영 반영 미완료 |
 
 | 2026-10-23 | R2-07/09 | Wave159 UI 회복 보정 운영 인수 | 준비a1/a2 실패 및 복원 보존; 실제 당일 시간표 확인 후 기존 불변 릴리스 선택·공식 exact3 갱신 |7fa779c; build-a2 12images/49gates/정상복귀; serving-a3 정상0·독립02:36KST 이미지/health/HTTP/원래Owner normal0·other8 불변; D-06/D-07 유예·DailyOFF |
+
+| 2026-10-23 | R2-07/09·R3-02 | Wave160 Owner 요청 서버 재조회 | exact3 health/HTTP 정상·로그인/구독0·새 시세0; 추가 일봉 실패1건 INCREMENTAL_OVERLAP_CHANGED 확인 |7fa779c;10:10/10:12KST READ ONLY 관측; provider0/DB쓰기0/서비스변경0; 입력 차이 미진단·D-06/D-07 유예 유지 |
