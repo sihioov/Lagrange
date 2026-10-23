@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-23 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | Wave167 R2-07 화면 해제 뒤 멤버십 변경 응답 처리 보정·격리 검증 인수. 새 후보 CI/배포 진행. 데이터 충돌·D-06/D-07 유예 유지. |
+| 현재 실행 우선순위 | Wave167 R2-07 멤버십 변경 응답의 화면 수명 보정 운영 인수. API/Webca0db65 + 기존 Owner7fa. 데이터 충돌·D-06/D-07 유예·DailyOFF·전체 FINAL 미완료 유지. |
 | 상세 실행 계획 | [R2 Paseo 위임 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md) — F1/F2 `f8b9296` CI·리뷰 수용. WP-4는 [U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)으로 재분해. [실행 기록](reviews/2026-10-13-r2-execution.md). [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료 |
 | main 통합 | R1 재개 기준은 `b0a2579`(C3와 문서 6개 차이). 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`로 전진. R2는 `b0a2579`에서 분기한 `excited-dolphin`에서 검증하며 그 개선 작업의 통합은 이번 범위 밖 |
-| 다음 착수 항목 | **Wave167 변경 응답 수명 보정의 hosted CI·이미지 검증 후 Web/API만 갱신한다. 기존 Owner7fa와 원본/입력은 보존한다. 데이터 충돌·D-06/D-07·로그인 대기를 독립 개발 조건으로 두지 않는다. Daily 활성화·실제3거래일·FINAL은 미완료다.** |
+| 다음 착수 항목 | **R2-07 Owner/일반 추천 실행 상태의 늦은 조회 수명 보정: 별도 작업 디렉터리의 수정과 Chromium28·관련30·타입/lint·CI계약24검사를 인수했다. 정확한5파일 패치를 통합하고 같은 변경에 roadmap을 갱신한 뒤 새 소스 커밋·hosted CI·빌드·배포를 이어간다. Wave167 변경 응답 수명 보정은 CI·12이미지49gate·Web/API 배포까지 인수했다. 데이터 충돌·D-06/D-07·로그인을 독립 개발 조건으로 두지 않는다. Daily 활성화·실제3거래일·FINAL은 미완료다. 다음 배포는 API/Webca0db65와 Owner7fa를 서비스별로 결합한다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01 시뮬레이션 계약은 별도 미확정이다. |
 
@@ -410,6 +410,12 @@ D-06은 DOING으로 재개하며 위 Wave158의 유예 결정은 역사로 보�
   Wave167 소스 인수 — 화면 해제 뒤 변경 성공의 재조회·세션 오류 이동6경로 재현·보정.
   서버 초기값 교체 뒤 진행 중 변경 잠금·성공 후 재조회는 보존한다. Chromium40·관련48검사·
   타입/lint PASS; 새 후보 hosted/이미지/운영 인수가 다음이며 전체 R2-07은 DOING.
+  운영 인수 — 2026-10-23 16:25:49 KST, Wave167:ca0db65 CI39912787557 attempt1 all8/full8logs/
+  7checkout·Rust155/Python154·PG19/page14·브라우저40경로와12이미지49gate PASS.
+  원래 build-a1 정상 종료·같은7fa Owner 복귀 후 공식 Web→API만 갱신했다.
+  새 이미지/health/HTTP와 Owner/other9/19 불변·상태 타이머 복원을 독립 확인했다.
+  전체 R2-07/FINAL OPEN, 충돌·D-06/D-07 유예·DailyOFF 유지.
+  [운영 인수 기록](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md#wave167--멤버십-변경-응답의-화면-수명-보정-운영-인수).
 - [ ] **R2-08 — 연속 3거래일 무인 관찰.** 일별 예약 실행, ETF 데이터·추천 실행·발행,
   등록 Owner 종목 갱신 결과와 입력·추천·API·화면 기준일을 기록한다.
   수동 보충 성공은 해당 일의 무인 성공으로 세지 않는다.
@@ -2196,3 +2202,5 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 | 2026-10-23 | R2-07/09 | Wave166 취소된 세션 오류의 늦은 로그인 이동 보정 운영 인수 | Owner7fa·원본 충돌 보존, DailyOFF, 전체 FINAL OPEN |282e765; CI39906663521 all8·브라우저13·12images49gates·Web/API exact2 배포 |
 
 | 2026-10-23 | R2-07 | Wave167 화면 해제 뒤 변경 응답 처리6경로 재현·보정 | 서버 변경 의미·화면 유지 중 재조회 보존, CSRF 늦은 이동2경로 보정 | 이 소스 커밋; Chromium40·관련48검사·타입/lint PASS; hosted/운영 반영 미완료 |
+
+| 2026-10-23 | R2-07/09 | Wave167 멤버십 변경 응답 수명 보정 운영 인수 | Owner7fa·원본 충돌 보존, DailyOFF, 전체 FINAL OPEN |ca0db65; CI39912787557 all8·브라우저40·12images49gates·Web/API exact2 배포 |

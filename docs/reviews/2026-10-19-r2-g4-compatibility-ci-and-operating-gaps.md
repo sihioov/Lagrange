@@ -4230,3 +4230,39 @@ CSRF 사전 조회에서도 화면 수명을 응답 파서에 전달하며, 관�
 이 변경 커밋의 소스·격리 검증 범위만 인수했다. 새 hosted CI·이미지·Web/API 운영 반영은 다음이다.
 현재 API/Web282e765+Owner7fa, 마지막 운영 관측15:26:20KST와 DailyOFF를 유지한다.
 생산 인증/공급자 호출0. 배당·가격 충돌·D-06/D-07 유예와 입력 미승인·실제3일0·전체 FINAL OPEN 유지.
+
+### Wave167 — 멤버십 변경 응답의 화면 수명 보정 운영 인수
+
+2026-10-23 16:25:49 KST, 후보 `ca0db65c06f84b318601ed8ed257a0b9fbf5653a`의 Web/API 운영 반영을 독립 인수했다.
+등록·재시도·비활성화 응답이 화면 해제 뒤 조회/로그인 이동을 일으킨6경로를 재현·보정했다.
+CSRF 사전 조회의 같은 세션 오류2경로도 보정했다. 이미 보낸 POST의 서버 적용 의미와
+화면이 열린 상태의 잠금·완료 후 재조회·로그인 복구는 유지한다. 서버 초기값 교체가 진행 중인
+변경의 완료를 뜻하지 않으므로 재조회를 막지 않는다. Chromium40·관련48검사·타입/lint 및
+CI39912787557 attempt1 all8/full8logs/7checkout·Rust155/Python154·PG19/page14·브라우저40을
+인수했다. 기존 Web OFF/market-stream lane의 skip/flaky/retry는0이다.
+
+새 build-a1 전 최초 순수 Compose 검사는 비활성 서비스용 변수 누락으로 실패했고 수집기 정지
+이전에 종료했다. 실패 원본을 보존하고 공식 빌더의 비활성값을 적용한 별도 순수 검사와
+공식 preflight를 인수한 뒤 첫 build-a1을 시작했다. 원래12이미지49gate PASS,
+stop/build/start/recovery4유닛 정상0/PID0/빈cgroup, 같은7fa Owner 복귀와 다른10개 상태·
+전체21개 inventory 불변을 독립 인수했다. 공식 설치/check·KIS disabled·상태 타이머 복원 후
+Web→API 두 개만 갱신했다. 선택 릴리스/API/Web은ca0db65이며 수집기는7fa다.
+새 이미지/revision/health·HTTP, Owner container/image/start 및 다른9개 상태·19개 inventory
+불변을 대조했다. Owner의 인수된 시작은 `2026-10-23T07:24:21.08450632Z`이다. 복원 의무는 남지 않았다.
+이는 해당 시점/범위 관측이며 실제 인증·새 시세 수신·실제3거래일 인수는 아니다.
+
+- `target/r2-daily-beta/ci/ca0db65/hosted-source-closure.json`: 313342bytes, SHA256 `d143909a5aa65033713ef52549a6c75167d74f050ee8a59a510b1de954fd5987`.
+- `target/r2-daily-beta/wp-8/wave167/build-a1/image-restoration-observation-20261023T072457.json`: 858068bytes, SHA256 `42ea8898fab988840f05128e9ed6dbca4669f6b4f68e5e57003812f8d36ed994`.
+- `target/r2-daily-beta/wp-8/wave167/serving-deployment-closure-20261023T072549.json`: 68585bytes, SHA256 `9c30287f74277f09534262c386f525b4c4709614a5de3e6af99e8d0c0adea230`.
+
+다음 독립 작업인 Owner/일반 추천 실행 상태의 늦은 조회 수명 보정은 별도 작업 디렉터리에서
+준비했다. 원래 소스의 응답 헤더/본문 지연24경로 중12개 실패를 재현했고, 수정 후 기존
+오류 복구를 포함한 Chromium28·관련30테스트·타입/lint·CI계약24검사를 인수했다.
+정리 시 GET을 취소하고 파서의 로그인 이동과 Owner 완료 refresh에 같은 수명을 적용한다.
+현재 요청의 완료·로그인 복구는 유지한다. 이 수정은 아직 소스 통합/커밋·hosted CI·빌드·배포 전이다.
+`target/r2-daily-beta/wp-8/wave168/local-validation.json` 4415bytes,
+SHA256 `0253e9d9b2ab271307095ad038fd77b1e73b197882c6f9eb3b97085334588008`.
+이는 합성 HTTP 격리 검증이며 운영·인증·시세 수신 증거가 아니다.
+전체 R2-07 및 R2/R3 FINAL은 OPEN. D-06/D-07와 배당·가격 충돌 조사는 유예하며 원본 보존,
+DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0·입력 미승인·Owner 인수 미완료를 유지한다.
+이 문서 커밋은 설치된 불변 릴리스를 바꾸는 빌드 후보가 아니다.
