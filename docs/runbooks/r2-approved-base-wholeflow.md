@@ -1,11 +1,14 @@
 # R2 approved-base whole-flow fixture
 
-Roadmap R2-04/R2-09; Wave82 source preparation, 2026-10-16. The
-[driver](../../scripts/ops/verify-owner-beta-daily-wholeflow.py) is written but
-**unexecuted**. Its nineteen
-[fixture/driver tests](../../scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py)
-are also WRITTEN_UNEXECUTED. Hosted fixture tests cannot close the actual
-approved-base integration gate.
+Roadmap R2-04/R2-07/R2-09; status updated2026-10-23. Historicale639169
+approved-base integration was accepted in Wave108. Currenta6da63c Wave177
+reported functional PASS and independently confirmed cleanup, but six of21
+temporary container lifecycles lack complete independent event evidence. Its
+full independent acceptance remains incomplete. Both original executions are
+consumed; neither may be replayed to repair evidence.
+
+See [current acceptance and limits](../reviews/2026-10-23-r2-beta-flow-acceptance.md).
+Hosted fixture tests are a separate boundary and cannot close actual integration.
 
 ## Inputs and limits
 
@@ -114,13 +117,12 @@ applicable G3/G4 authority must be fixed first. Existing read-only KIS/EOD/Owner
 approvals remain unchanged. Source preparation does not renew an expired sudo
 grant or authorize production activation.
 
-Hosted CI runs only the nineteen synthetic fixture and mocked-driver boundary
-tests. They cover commitment consistency, two-session/civil-date bounds, all
-source channels, policy/config pins, manifest grammar, substantive result
-classification, replay identity and cleanup/create uncertainty. They do not
-claim real Docker/DB/HTTP/approved-base execution.
+Hosted CI runs synthetic fixture/mocked-driver tests and a separate disposable
+Docker mount-boundary suite. Their version-specific results are recorded with
+the exact candidate CI closure. They do not establish actual approved-base
+admission, HTTP publication or recovery.
 
-Remaining: coherent source review and hosted verification, actual images and
-host-local whole flow, diagrams/rendering, independent integrated review,
-concrete G3/G4 packet and operations, actual Owner use, three consecutive trading
-days and final`C_R2`. Earlier scoped CI success is preserved.
+Remaining: complete current-candidate independent lifecycle evidence, admitted
+production inputs, actual Owner use, three consecutive scheduled trading days
+and final`C_R2`. Historical G4 acceptance remains preserved and is not repeated
+by this disposable integration. D-06/D-07 remain deferred follow-ups.

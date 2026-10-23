@@ -11040,3 +11040,27 @@ DailyOFF/epoch0·KISdisabled·입력 미승인·첫 세션null·실제3일0·Own
 근거: `target/r2-daily-beta/wp-8/wave175/validation-closure.json` — 1563bytes, SHA256 `78eaf465c233f6acda88c0ae0cb14dfcee939384fa47b6aa1f0b49e89ba633aa`.
 다음은 R2-07 종목 변경·추천 생성/조회·Daily 설정/상태별 기존 근거와 미완료 인수 범위를
 대조하는 제한된 검토다. 전체 R2-07/R2/R3 FINAL OPEN, 충돌·D-06/D-07 유예·DailyOFF 유지.
+
+## Wave176/177 — 핵심 흐름 근거 대조와 현재 후보 격리 전체흐름
+
+Wave176은 현재a6da63c의 핵심6흐름 소스/기존 검증/운영 반영 근거를 대조했다. 제한된 검토에서
+추가 확정 결함은 없었으며 전체 결함 부재를 주장하지 않는다. 기존 CI/빌드/검사는 반복하지 않았다.
+
+과거e639169 전체흐름 이후 실제 실행 경로 변경을 확인해 현재a6da63c 기존 이미지로 새로운
+격리 전체흐름1회를 실행했다. 원래 driver는21:19:38KST 기능6단계 PASS,21:21:12KST 별도
+관측은 임시21컨테이너/2네트워크/단계 경로 부재와 운영11상태/21inventory 불변을 확인했다.
+21:21:57KST 원래 cgroup 부재를 확인했으며 복원 의무는 없다. GC된 유닛의 기본 exit0은
+종료 근거로 사용하지 않았다. 공급자 호출/운영 DB쓰기/서비스 변경0, 합성 세션만 사용했다.
+
+독립 Docker 수명주기15/21은 완전하나6개 일부 이벤트가 누락돼 엄격한 closure는 실패했다.
+기능 PASS·정리만 인수하고 전체 독립 인수는 미완료로 보존한다. 제한된 daemon metadata
+회수도 누락된 종료 기록을 찾지 못했다. 원래 실행은 소진됐으며 재시도하지 않는다. 잘못된
+mount selector로 자원 생성 전 실패한 preflight-a1과 보정된a2도 보존한다.
+
+근거: `target/r2-daily-beta/wp-8/wave176/acceptance-evidence-matrix.json`18623bytes
+SHA256`fc5184d5ce95f1ba57c2884cb1203d3025393bb2e6160964e6c7b21ef21099e0`;
+`target/r2-daily-beta/wp-8/wave177/functional-and-cleanup-closure.json`23034bytes
+SHA256`45b8c903caa43543d5779fc2eed313288314727b2990d74ebc59fe47ca75182d`.
+상세 한계는 `docs/reviews/2026-10-23-r2-beta-flow-acceptance.md`.
+다음 Wave178은 시작 전 수신 확인·제한된 연속 이벤트 수집·누락 거절을 구현한다. 현재
+API/Weba6da63c+Owner7fa 유지, DailyOFF·충돌/D-06/D-07 유예·전체 FINAL OPEN이다.
