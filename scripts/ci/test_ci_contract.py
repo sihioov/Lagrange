@@ -255,6 +255,8 @@ class WorkflowContractTests(unittest.TestCase):
                 "npm run lint --workspace @lagrange/web",
                 "npm run typecheck --workspace @lagrange/web",
                 "npm test --workspace @lagrange/web",
+                'node scripts/qa/recommendation-poll-recovery-browser.mjs '
+                '"/tmp/lagrange-recommendation-poll-${{ github.run_id }}-${{ github.run_attempt }}"',
                 'node scripts/qa/stock-beta-membership-order-browser.mjs '
                 '"/tmp/lagrange-membership-order-${{ github.run_id }}-${{ github.run_attempt }}"',
                 "npm run build --workspace @lagrange/web",

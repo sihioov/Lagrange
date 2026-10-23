@@ -31,6 +31,7 @@ export type OwnerBetaRunStatusProps = {
 export type OwnerBetaPollOptions = {
   readonly fetcher?: typeof fetch;
   readonly refresh?: () => void;
+  readonly signal?: AbortSignal;
 };
 
 export async function pollOwnerBetaRun(
@@ -40,9 +41,13 @@ export async function pollOwnerBetaRun(
   const response = await (options.fetcher ?? fetch)(ownerBetaRunPath(runId), {
     cache: "no-store",
     credentials: "same-origin",
+    signal: options.signal ?? null,
   });
-  const next = await parseBrowserApiResponse(response, ownerBetaRunSchema);
-  if (next.status === "SUCCEEDED" || next.status === "FAILED" || next.status === "CANCELED") {
+  const next = await parseBrowserApiResponse(response, ownerBetaRunSchema, options);
+  if (
+    !options.signal?.aborted &&
+    (next.status === "SUCCEEDED" || next.status === "FAILED" || next.status === "CANCELED")
+  ) {
     options.refresh?.();
   }
   return next.status;
@@ -97,11 +102,15 @@ export function OwnerBetaRunStatus({ initialStatus, runId }: OwnerBetaRunStatusP
       return;
     }
     let cancelled = false;
+    const request = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     const pollRun = async (attempt: number): Promise<void> => {
       try {
-        const nextStatus = await pollOwnerBetaRun(runId, { refresh: router.refresh });
+        const nextStatus = await pollOwnerBetaRun(runId, {
+          refresh: router.refresh,
+          signal: request.signal,
+        });
         if (cancelled) {
           return;
         }
@@ -128,6 +137,7 @@ export function OwnerBetaRunStatus({ initialStatus, runId }: OwnerBetaRunStatusP
 
     return () => {
       cancelled = true;
+      request.abort();
       if (timeout !== undefined) {
         clearTimeout(timeout);
       }

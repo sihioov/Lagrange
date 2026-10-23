@@ -10735,3 +10735,28 @@ SHA256 `0253e9d9b2ab271307095ad038fd77b1e73b197882c6f9eb3b97085334588008`.
 전체 R2-07 및 R2/R3 FINAL은 OPEN. D-06/D-07와 배당·가격 충돌 조사는 유예하며 원본 보존,
 DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0·입력 미승인·Owner 인수 미완료를 유지한다.
 이 문서 커밋은 설치된 불변 릴리스를 바꾸는 빌드 후보가 아니다.
+
+### Wave168 — 추천 실행 상태 조회 수명 보정 소스/격리
+
+Owner/일반 추천 실행 상태의 늦은 조회 응답을 화면 해제·실행 ID 교체 조건에서 실제 React와
+Chromium으로 재현했다. HTTP 헤더와 본문 파싱 지연을 분리한24경로에서12실패가 발생했다.
+Owner 완료 응답은 cancelled guard보다 앞서 refresh를 호출했고, 두 화면 모두 세션 오류
+파서에 요청 수명을 전달하지 않아 이전 요청이 로그인 이동을 일으켰다.
+
+두 화면의 polling effect 정리에서 GET을 취소하고 같은 signal을 응답 파서에 전달한다.
+Owner terminal refresh도 signal을 확인한다. 현재 요청의 정상 완료·onSettled·로그인 복구와
+기존 오류 복구를 유지한다. GET 수명 보정이며 POST 취소/서버 상태 되돌림을 뜻하지 않는다.
+기존 격리 브라우저 도구에24경로를 더해28검사를 수행하며, 정확한 CI 명령 계약도 함께 갱신했다.
+
+격리 Chromium28/28, 관련 Vitest30/30, TypeScript·lint와 CI 계약24검사를 인수했다.
+초기 optional signal 타입 오류와 실행환경/경로 오류는 보존한 후 교정했다. 별도 작업
+디렉터리의 의도하지 않은 pnpm 설치 결과는 source 밖 target에 보존하고 기존 프로젝트
+의존성으로 최종 검증했다. package.json/lockfile 의도 변경은 없으며 구조 변경이 없어
+아키텍처 도표는 변경하지 않았다.
+
+`target/r2-daily-beta/wp-8/wave168/local-validation.json` 4415bytes,
+SHA256 `0253e9d9b2ab271307095ad038fd77b1e73b197882c6f9eb3b97085334588008`.
+정확한5파일 패치의 내용 해시를 대조해 본 작업 트리에 통합했다. 이 변경 커밋은 소스/격리
+검증만 인수하며 새 hosted CI·이미지·운영 반영은 다음 단계다. 현재 API/Webca0db65+Owner7fa,
+마지막 운영 관측16:25:49KST와 DailyOFF를 유지한다. 생산 인증/공급자 호출0.
+배당·가격 충돌·D-06/D-07 유예와 입력 미승인·실제3일0·전체 R2-07/R2/R3 FINAL OPEN 유지.
