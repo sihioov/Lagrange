@@ -1847,10 +1847,10 @@ fn validate_ledger_transitions(
         if close.cash.units()? != after_buy_cash || marked_quantity(close) != after_buy_quantity {
             return Err(SimulationContractError::InvalidLedger);
         }
-        if let Some(signal) = signal {
-            if signal.cash != close.cash || signal.positions != close.positions {
-                return Err(SimulationContractError::InvalidLedger);
-            }
+        if let Some(signal) = signal
+            && (signal.cash != close.cash || signal.positions != close.positions)
+        {
+            return Err(SimulationContractError::InvalidLedger);
         }
         prior_close = Some(close);
     }

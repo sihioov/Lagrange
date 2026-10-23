@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-24 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | 2026-10-24 [R4 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md)의 WP-1 G1 증거 정리와 WP-2 G2·WP-3 G3 소스/인터페이스 수용 뒤 WP-5 필수 수정 5건과 독립 재검토를 소스 범위에서 수용했다. WP-6 최종 후보 고정·hosted 검증으로 진행한다. R4-02/03 DOING; 컴파일·실행 검증은 hosted 대기. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·유예·DailyOFF·과거 heartbeat 종료는 유지한다. |
+| 현재 실행 우선순위 | R4 첫 구현과 WP-5 소스 리뷰를 완료했고 후보 `1a27edd`의 hosted 결과를 회수했다. CI40015083289 attempt1은 Clippy 및 required FAILURE, 나머지 6개 job SUCCESS. workspace 3,522 pass/0 fail/6 ignored, 시뮬레이션 unit41·integration2 PASS를 직접 대조했다. 같은 후보 smoke40005036342 기능·정리 PASS. Clippy9진단은 두 파일에서 보정했고 formatter PASS이나 수정본 hosted는 NOT_RUN이다. R4-02/03 DOING, U2/U3 실제 실행 OPEN. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·유예·DailyOFF는 유지한다. |
 | 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | **WP-5 재검토를 수용했으며 동일 최종 후보의 전체 CI/smoke를 실행·회수한다. WP-2/3 소스 수용은 컴파일·실제 실행 인수가 아니며 실제 artifact/binary provenance는 별도로 확인한다. 원래 Web 실패는 진단 CI에서 미재현·원인 미확정으로 보존한다.** |
+| 다음 착수 항목 | **두 파일의 Clippy 보정과 종료 증거를 담은 이 변경의 커밋이 새 검증 후보다. 현재 감시 지시의 추가 smoke 금지 때문에 새 후보의 CI/smoke 각 1회 실행 범위를 확인해야 한다. 기존1a27edd의 성공 결과는 수정본 검증을 대신하지 않는다. U2 승인 artifact와 U3 실행 파일 provenance는 OPEN이다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -603,6 +603,10 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   컴파일·unit test·실제 승인 입력·provenance는 미실행이며 R4-02 전체는 DOING이다.
   **2026-10-24 G3 후속:** WP-3 소스/인터페이스 수용 뒤 WP-4의 승인 입력·기존 신호 연결을 착수했다.
   실제 artifact 위치·binary provenance와 hosted 검증은 OPEN이다.
+  **2026-10-24 G5 진행:** 후보1a27edd의 smoke 기능·정리 검증은 수용했다. CI 실행 ID 누락으로
+  required·unit·Clippy는 미검증이었다. 요청 조건 오류 보정 뒤 같은 후보 CI40015083289 attempt1을
+  확인했고 결과를 회수했다. Clippy/required FAILURE, 나머지6개 job SUCCESS이며 시뮬레이션 unit41·integration2 PASS를 직접 대조했다.
+  두 파일의 lint 보정은 formatter PASS, 수정본 hosted NOT_RUN이다. 새 후보 검증과 U2/U3 증거가 남아 DOING을 유지한다.
 - [ ] **R4-03 — 첫 기준 전략 검증.** 승인된 계약으로 전략 1개와 벤치마크 1개를 먼저 구현하고
   신호·목표 비중·현금·체결·비용·평가의 작은 수작업 기준값과 대조한다.
   **2026-10-24 계획 준비 / 구현 TODO:** 같은 계획의 WP-3/4에서 합성 원장을 먼저 검증하고
@@ -612,6 +616,8 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   **2026-10-24 G3 후속:** 원장·수작업 기준값의 직접 소스 검토, 테스트 이름 충돌 두 곳 보정과
   두 번째 비용 프로필 실패 회귀 추가 뒤 formatter PASS로 WP-4 의존 인터페이스를 수용했다.
   컴파일·unit test·실제 입력 실행 미실행으로 최종 완료는 OPEN이다.
+  **2026-10-24 G5 진행:** 후보1a27edd의 원장11개를 포함한 시뮬레이션 unit41·integration2가 hosted에서 통과했다.
+  Clippy/required FAILURE와 수정본 hosted NOT_RUN을 구별한다. U2 승인 입력·U3 실행 파일 증거가 남아 최종 완료는 미완료다.
 - [ ] **R4-04 — 재현성·미래정보·무결성 검증.** 동일 입력 결과, 미래정보 차단, 분할 중복 반영,
   반올림·잔여 현금·누락, pin 변조와 사용자 격리를 검증한다.
 - [ ] **R4-05 — 전용 실행·조회 연결.** 작업 큐·저장·API·Web 결과를 전용 계약에 연결하고 실패 시
@@ -2342,3 +2348,19 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-24 — R4-02/03 WP-5 보완 재검토: WP-2 idle/pending0과 receipt f32733cf…/소스·보고서·fast 결과를 대조했다. 19개 소스 중 예정된 세 파일 변경만 확인하고 새 manifest27ae4b99…를 고정해 기존 Sol/high 리뷰어에게 재검토를 맡겼다. q=0 가격 증거 부재의 의미도 판단 중이며 컴파일·실제 입력·binary·최종 hosted 인수는 OPEN이다. [실행 기록](reviews/2026-10-24-r4-execution.md).
 
 - 2026-10-24 — R4-02/03 G4 소스 수용: WP-5 재검토 report31010885…·전후19개 hash와 원본 계약/리뷰 보존을 확인해 F1~F5 해소 및 READY_FOR_HOSTED를 수용했다. 무가격 q=0은 실제 입력 검증 경계이며 소스 파서가 그 affordability를 입증한다고 주장하지 않는다. 최종 후보 commit/push와 기존 CI/smoke로 진행한다. 컴파일·unit·Clippy·U2/U3 실제 실행 및 R4 최종 완료는 OPEN. [재검토](reviews/2026-10-24-r4-wp-5.md)·[실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02/03 WP-6 착수: 검토된 후보1a27edd25c2a2a22e1b0a31d71403d36aaacc151의 원격 일치·clean tree·committed source19개 hash를 확인했다. 같은 SHA 실행0 확인 뒤 WP-6 Luna/medium0324a62d…에 기존 CI/smoke 각각 최대1회 실행·증거 회수를 맡겼다. 실제 runtime/parent·pending0 확인, hosted 결과 및 U2/U3 실제 실행은 아직 OPEN. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-6 smoke 종료 metadata: exact1a27edd/run40005036342 attempt1·job120590677035의20개 step SUCCESS를 코디네이터가 직접 확인했다. 본 검사·private builder 정리 성공이며 상세 기능/probe 증거는 worker 회수 중이다. CI 실행 ID 미확인·unit/Clippy 및 U2/U3 실제 실행 OPEN을 유지한다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-6 제한 관측 종료: 후보1a27edd의 smoke40005036342 attempt1 기능 PASS·Raw probe/전체 cleanup0·잔존 자원 없음과19개 소스 일치를 직접 검증했다. 실제 idle/pending0·보고서667084c2…를 회수했으나 70분 뒤에도 CI ID가 없어 G5는 PENDING이다. 기존 Luna/medium에게 5분 이내 읽기 전용 원래 CI 개별 명령 결과 회수를 맡겼다. 재실행·소스 변경·운영 작업은 포함하지 않으며 R4-02/03 DOING과 U2/U3 OPEN을 유지한다. [WP-6 보고서](reviews/2026-10-24-r4-wp-6.md)·[실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-6 CI 사전 조건 오류 확정: 원래 `test -z`가 빈 JSON 배열 `[]`에도 exit1을 반환해 `&&` 뒤 dispatch를 막는 것을 직접 재현했다. 기존 “CI 요청 exit0” 주장을 철회하며 원본 기록은 정정과 함께 보존한다. 원격1a27edd 일치·같은 후보 CI0 확인 후 배열 길이 검사와 개별 HTTP/종료 코드 기록으로 기존1회 범위의 최초 CI 실행을 WP-6에 맡겼다. 성공한 smoke는 재사용한다. 모든 worker idle/pending0·보고 회수 뒤 현재 R4 감시를 aadd7272로 교체했다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 동일 후보 CI 실제 시작: 수정된 사전 조건 뒤19:54:26UTC POST exit0/HTTP204, CI40015083289 attempt1·exact1a27edd·workflow_dispatch·in_progress를 코디네이터가 직접 대조했다. 실제 POST1회이며 동일 후보 smoke 성공을 재사용한다. 결과·G5·U2/U3는 아직 OPEN이다. [CI 실행](https://github.com/sihioov/Lagrange/actions/runs/40015083289).
+
+- 2026-10-24 — R4 CI Clippy 실패 회수: exact1a27edd/CI40015083289 attempt1의 clippy job120624974235 step10 실패. 코디네이터가 input.rs 미사용 import1·Copy clone7, contract.rs collapsible-if1을 로그/소스와 대조했다. Python·format은 성공했고 다른 job은 진행 중이다. WP-6 보고/actual idle 뒤 작은 두 파일 보정을 수행하며 source/hosted 최종 인수는 OPEN이다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 Clippy 국소 보정: WP-6 actual idle/pending0과 실패 snapshot 보고서fcfe1fbd…를 회수한 뒤 코디네이터가 input.rs의 미사용 import·Copy clone7곳과 contract.rs 중첩 조건문을 보정했다. Rust plan/preflight/fast formatter PASS, 검토 소스19개 중2개만 변경. 기존 CI의 남은 job/required를 회수하는 read-only notified follow-up을 시작했다. 수정본 compile/unit/Clippy/smoke는 NOT_RUN이며 새 후보는 아직 고정하지 않았다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-6 종료 증거 회수: exact1a27edd/CI40015083289 attempt1의8개 job과 required 실패를 대조했다. Clippy만 실패한 입력이며 나머지6개 job SUCCESS, workspace3,522 pass/0 fail/6 ignored·simulation unit41/integration2·Web129+14·PG19 PASS. 모든 소유 worker idle/pending0·보고서 회수 완료. 두 파일 lint 보정은 formatter PASS로 새 후보 고정 대상이며 새 hosted 실행은 현재 감시의 추가 smoke 금지 때문에 범위 확인 대기. R4-02/03 DOING 및 U2/U3 OPEN을 유지한다. [최종 보고](reviews/2026-10-24-r4-wp-6.md)·[실행 기록](reviews/2026-10-24-r4-execution.md).

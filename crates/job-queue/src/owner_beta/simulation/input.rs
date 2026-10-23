@@ -16,7 +16,7 @@ use market_data::{
 
 use super::{
     APPROVED_BARS_SHA256, APPROVED_END_DATE, APPROVED_SESSION_COUNT, APPROVED_START_DATE,
-    EvaluationPriceRow, Price4, SimulationContractError, SimulationSchedule,
+    EvaluationPriceRow, Price4, SimulationSchedule,
 };
 
 const BAR_PRICE_SCALE: u8 = 4;
@@ -306,15 +306,15 @@ mod tests {
                         instrument_id: InstrumentId::parse(&format!("{symbol}.KRX"))
                             .expect("instrument"),
                         session_date: *date,
-                        raw_open: price.clone(),
-                        raw_high: price.clone(),
-                        raw_low: price.clone(),
-                        raw_close: price.clone(),
+                        raw_open: price,
+                        raw_high: price,
+                        raw_low: price,
+                        raw_close: price,
                         raw_volume: 1_000,
                         raw_trading_value: None,
-                        adjusted_open: price.clone(),
-                        adjusted_high: price.clone(),
-                        adjusted_low: price.clone(),
+                        adjusted_open: price,
+                        adjusted_high: price,
+                        adjusted_low: price,
                         adjusted_close: price,
                     }
                 })

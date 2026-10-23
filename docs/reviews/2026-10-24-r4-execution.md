@@ -222,3 +222,127 @@ F1~F5 소스 해소와 READY_FOR_HOSTED를 수용하며 근거는 `wp-5/coordina
 기존 `ci.yml`과 `research-smoke.yml`의 전체 required/기능 검증을 수행한다. local heavy 우회,
 실제 artifact 업로드, 운영 접근이나 배포는 포함하지 않는다. 컴파일·unit·Clippy와 최종 same-SHA
 CI/smoke는 아직 NOT_RUN이며 U2 root·U3 실제 실행 파일 provenance도 OPEN이다.
+
+
+## WP-6 후보 고정과 실행 착수
+
+검토된 source/document24개 파일을 `1a27edd25c2a2a22e1b0a31d71403d36aaacc151`로 커밋하고
+작업 브랜치에 push했다. 원격 SHA·clean tree·검토 source19개의 committed hash 일치를 확인했다.
+전체 이벤트를 조회한 같은 SHA의 기존 Actions run은 0개였다. 새 실행은 `ci.yml`과
+`research-smoke.yml` 각각 최대1회, cache_epoch `wp3-20261013`으로 제한했다.
+후보 근거는 private `wp-6/candidate.json`에 고정했고 이후 문서 진행 기록은 후보 소스를 바꾸지 않는다.
+
+Paseo WP-6 직접 leaf `0324a62d-1753-4925-b95b-f2e4d4d3f0aa`/Codex Luna medium을 시작했다.
+실제 running·model/effort·workspace/parent·pending0과 완료 알림 등록을 확인했다. 실행별 SHA/attempt,
+checkout·필수 job/step·기능/정리 증거를 회수한다. source 수정·재실행·취소 권한은 주지 않았다.
+새 CI/smoke 결과, 컴파일·unit·Clippy는 아직 회수되지 않았으며 U2/U3 실제 실행은 OPEN이다.
+
+
+## WP-6 smoke 종료 metadata 회수
+
+후보 `1a27edd25c2a2a22e1b0a31d71403d36aaacc151`의 smoke run40005036342 attempt1이
+SUCCESS로 종료됐다. 코디네이터가 같은 SHA와 job120590677035의20개 step 전부 SUCCESS,
+본 스크립트 step12·private builder 정리 step18 성공을 직접 조회했다. WP-6는 계속 running/pending0으로
+안전한 기능/probe/cleanup 상세 증거를 회수 중이다. 이 관측은 최종 worker 보고 수용을 대신하지 않는다.
+CI dispatch는 성공 응답 보고 뒤 실행 ID가 여전히 미확인으로, CI·unit·Clippy 성공을 주장하지 않는다.
+
+
+## WP-6 제한 관측 종료와 CI 요청 증거 회수
+
+70분 관측 종료19:49:23UTC 뒤 실제 idle/pending0과 완료 알림을 회수했다. 보고서667084c2…와
+원본 dispatch receipt f3d4d3a6…를 보존한다. 코디네이터는 exact1a27edd의19개 소스 hash와
+smoke 로그의 static/functional PASS, Raw probe·전체 cleanup0, 컨테이너·볼륨·네트워크·context
+image 잔존 없음도 직접 확인했다. `wp-6/coordinator-smoke-log-evidence.json`9e075885…가
+이 검증을 기록한다. 성공한 smoke 증거는 수용하지만 required CI·unit·Clippy와 G5는 미수용이다.
+
+CI workflow331572180은 active이며 후보의 all-event 조회에는 성공한 smoke만 있다. 원래 요청의
+개별 CI 명령 exit0인지 여러 명령을 묶은 셸 exit0인지 아직 검증되지 않았다. 같은 WP-6 Luna/medium에
+5분 이내 읽기 전용 후속 조사를 맡겼고19:50:20UTC 실제 running·workspace/parent·pending0을 확인했다.
+원본 receipt는 유지하고 새 증거만 추가한다. 새 dispatch·재실행·취소·소스 변경은 허용하지 않았으며
+후속 결과를 회수한 뒤 기존 R4 범위에서 다음 CI 조치를 판단한다. U2/U3 실제 실행은 계속 OPEN이다.
+
+
+## CI 미실행 원인 확인과 최초 실행 복구
+
+WP-6의 읽기 전용 후속 actual idle/pending0과 receipt b65fddac…를 회수했다. 원래 명령은
+`gh run list --json databaseId` 출력을 `test -z`로 검사한 뒤 `&& gh workflow run ci.yml`을 호출했다.
+코디네이터가 현재 같은 SHA·branch의 CI 목록 조회 exit0/JSON `[]`, 이 문자열의 `test -z` exit1,
+올바른 배열 길이0을 직접 대조했다. 정상 JSON 출력은 빈 목록이어도 빈 문자열이 아니므로 CI 명령에
+도달할 수 없었다. “CI dispatch 성공 응답”은 잘못된 보고였으며 철회한다. GitHub 지연을 원인으로
+판단하지 않는다. 원본 보고·receipt와 후속 정정은 보존하고 `coordinator-ci-gate-diagnosis.json`에
+재현 증거를 남겼다. 원격 후보1a27edd와 workflow 정의가 그대로이며 현재 CI 실행은0개다.
+
+이는 기존1회 CI 권한을 소비한 실제 dispatch가 아니므로 같은 WP-6 Luna/medium에 조건을
+JSON 배열 길이 검사로 고친 최초 실행을 맡겼다. 개별 명령 exit와 HTTP 상태를 기록하며, POST 후
+2분 안에 run ID가 없으면 추가 요청 없이 즉시 보고한다. ID 확인 뒤에만 최대70분 결과를 회수한다.
+smoke40005036342는 재사용하고 새 smoke·rerun·취소·소스 변경은 없다. notified follow-up의
+19:53:51UTC actual running·parent/workspace·pending0을 확인했다.
+
+모든6개 worker가 idle/pending0이고 보고서 회수가 끝난 사이 현재 R4 감시만 교체했다. create가
+기존 f49b432f를 갱신했으나 누적 maxRuns 초기화는 입증되지 않아 이를 삭제하고 새 aadd7272를
+생성했다. 2분 주기·최대60회·만료21:53:16UTC로 실제 CI 검증을 감시한다. 과거 R2/R3 감시와
+새 작업 범위는 추가하지 않는다.
+
+
+후속 실제 POST는19:54:26UTC 개별 exit0·HTTP204이며 요청1회다. 코디네이터가 CI workflow의
+같은 SHA·branch 조회에서 run40015083289 attempt1, exact1a27edd, workflow_dispatch, in_progress를
+직접 확인했다. `effective-ci-dispatch.json`과 `coordinator-effective-ci-observation.json`이
+연결한다. 최초 CI 실행 ID를 회수했으므로 WP-6가 필수 job/step 결과를 기다린다. 확인 기한은
+21:04:26UTC이며 모든검사 통과나 G5 완료는 아직 주장하지 않는다.
+
+
+## CI Clippy 실패 진단
+
+후보1a27edd의 clippy job120624974235 step10이 실패했다. 코디네이터가 job 로그를 독립 회수해
+ANSI 색상만 제거한 뒤 안전한 Rust 진단만 확인했다. input.rs:19의 미사용 SimulationContractError,
+같은 파일 테스트의 FixedPoint clone-on-copy7곳(309~317), contract.rs:1850의 collapsible-if1곳이다.
+두 파일을 직접 열어 일치 여부를 확인했고 `wp-6/coordinator-clippy-diagnostics.json`에 정적 식별자만
+기록했다. 소스는 아직 바꾸지 않았다. WP-6가 계속 running/pending0으로 보고서를 작성 중이므로
+actual idle 뒤 코디네이터가 작은 두 파일 보정을 수행한다. Python·format 성공과 나머지 진행 상태는
+Clippy·required 실패를 상쇄하지 않는다. 기존 smoke 성공은1a27edd에만 결합한다.
+
+
+## Clippy 두 파일 보정과 기존 CI 잔여 회수
+
+WP-6 actual idle/pending0, 실패 snapshot 보고서fcfe1fbd…와 effective 결과 receipt8e6a2880…를
+직접 회수했다. 원래 후보·dispatch receipt는 불변이다. 코디네이터가 input.rs의 미사용 import를
+제거하고 Copy인 FixedPoint의 테스트 clone7개를 값 복사로 바꿨으며 contract.rs의 동일 조건을
+let-chain으로 합쳤다. 반환 오류·수치·fixture 값은 유지한다. 기존19개 중 바뀐 소스는 이 두 파일뿐이다.
+읽기 전용 plan, Rust fast preflight 및 formatter가 통과했다(200052Z-ea383b9c91e6).
+`wp-6/coordinator-clippy-correction.json`과 `coordinator-corrected-source-inputs.json`에
+수정·19개 해시·검증 범위를 고정했다. 컴파일·단위 테스트·Clippy·smoke의 수정본 실행은 NOT_RUN이다.
+
+동일 WP-6 Luna/medium에게 기존 CI40015083289의 남은 job과 required 최종 결과만 회수하도록
+notified follow-up을 보냈고20:01:46UTC actual running·workspace/parent·pending0을 확인했다.
+이미 알려진 Clippy 실패 때문에 다시 조기 종료하지 않고 원래21:04:26UTC 기한 내 남은 결과를
+회수한다. 다른 실제 테스트 실패가 있으면 함께 보정한 뒤 수정 후보를 고정한다. source 쓰기·dispatch·
+rerun·취소는 없으며, 로컬 수정본과 기존 GitHub checkout1a27edd를 구분한다.
+
+
+## CI 종료 증거 수용과 수정 후보 준비
+
+2026-10-24 KST: WP-6 actual idle/pending0 및 완료 알림을 확인했다. 보고서 SHA-256
+`59cc93641c890af6c062519152114423b27a3abe852fbe917f6c99ffdbad7a75`, terminal receipt
+`78b14122e0e717f040c64095448add034bb2d34ada1a987c04bd4b140e595e79`를 회수했다.
+원본 candidate/dispatch/recovery/effective-dispatch/failure-snapshot receipt의 해시를 다시 확인해 보존했다.
+
+코디네이터는 GitHub metadata와 로그를 직접 조회했다. CI40015083289 attempt1은 exact1a27edd,
+workflow_dispatch, 20:30:28UTC terminal FAILURE이다. Clippy job120624974235와
+required job120640843614가 실패했고, 나머지6개 실행 job은 성공했다. required의 모든 입력은
+Clippy를 제외하고 success였다. workspace253개 결과 줄 합계는3,522 pass/0 fail/6 ignored/
+386 filtered이며, 시뮬레이션 unit41개와 integration2개가 모두 통과했다. Web OFF129/129 및
+market-stream14/14, retry/skip/flaky0·coverage complete·cleanup/reservation true를 확인했다.
+PostgreSQL19개 suite exit0/no skip, migration62 및 재실행NO_OP를 확인했다. 로그 원문은 저장하지
+않고 `wp-6/coordinator-terminal-verification.json`에 허용된 요약과 테스트 이름만 기록했다.
+
+기존 same-SHA smoke 성공은 유지하지만 Clippy/required 실패로 G5는 미수용이다. 두 파일의
+후속 lint 보정은 직접 diff 검토와 formatter PASS까지 확인했다. 조건식의 의미, 비용·원장 계약 및
+테스트 기대값은 바뀌지 않았으며 추가 소스 수정은 필요하지 않았다. 이 보정과 종료 증거를 새
+작업 브랜치 후보로 고정한다. 현재 감시 지시는 `No blind retry, second smoke`를 명시하므로
+새 후보의 CI와 smoke 각각1회 실행을 시작하기 전에 이 범위를 확인해야 한다. 기존 후보 성공은
+수정본 검증을 대신하지 않는다. U2 승인 artifact root/execution과 U3 실제 실행 파일 provenance는
+NOT_ESTABLISHED/NOT_RUN이며 R4-02/03 최종 완료를 주장하지 않는다.
+
+소유 작업자6명 actual idle/pending0 및 보고서 회수 뒤 현재 감시 aadd7272를 삭제했다. 새 작업을
+자동 재개하는 타이머는 없다. 수정본 소스19개 hash와 두 파일만 변경된 범위, 계약 원본 hash를
+재확인했고 docs fast 공백 검사는 통과했다.
