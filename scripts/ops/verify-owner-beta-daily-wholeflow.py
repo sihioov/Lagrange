@@ -33,6 +33,26 @@ ROOT = Path(__file__).resolve().parents[2]
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
 POSTGRES = "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a"
 LABEL = "io.lagrange.daily-wholeflow"
+# Reviewed differences permitted between an accepted image source and a newer
+# host-only evidence tool. This is deliberately not a docs/tests prefix rule:
+# every other source, build input, policy, SQL file and runtime helper must match.
+TOOL_ONLY_PATHS = frozenset({
+    ".github/workflows/ci.yml",
+    "crates/kis-client/tests/market_stream_transport.rs",
+    "docs/ROADMAP.md",
+    "docs/diagrams/component_architecture.png",
+    "docs/diagrams/component_architecture.puml",
+    "docs/reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md",
+    "docs/reviews/2026-10-23-r2-beta-flow-acceptance.md",
+    "docs/runbooks/r2-approved-base-wholeflow.md",
+    "docs/superpowers/plans/2026-10-14-r2-daily-input-implementation.md",
+    "scripts/ci/test_ci_contract.py",
+    "scripts/ops/lib/owner-beta-daily-lifecycle.py",
+    "scripts/ops/owner-beta-daily-lifecycle-docker-self-test.py",
+    "scripts/ops/owner-beta-daily-lifecycle-self-test.py",
+    "scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py",
+    "scripts/ops/verify-owner-beta-daily-wholeflow.py",
+})
 ROLES = {"migration_owner": "migration_owner", "app": "app", "worker": "worker",
          "audit_writer": "audit", "research_writer": "research", "admin": "admin",
          "daily_input_admitter": "daily_input_admitter"}
@@ -125,7 +145,7 @@ def source_git(*args):
     # configuration or inherit a wildcard safe.directory from the caller.
     try:
         result = subprocess.run(
-            ["git", "-c", "safe.directory=" + str(ROOT), "-C", str(ROOT), *args],
+            ["git", "--no-replace-objects", "-c", "safe.directory=" + str(ROOT), "-C", str(ROOT), *args],
             env=ENV, capture_output=True, timeout=10, check=False)
     except (OSError, subprocess.TimeoutExpired):
         raise fixture.FixtureError("WHOLEFLOW_SOURCE_GIT_FAILED") from None
@@ -133,9 +153,20 @@ def source_git(*args):
     return result.stdout
 
 
-def verify_source(candidate):
+def verify_source(candidate, tool_source_commit=None):
+    tool = candidate if tool_source_commit is None else tool_source_commit
+    require(all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value)
+                for value in (candidate, tool)), "WHOLEFLOW_SOURCE_IDENTITY")
     head = source_git("rev-parse", "HEAD").decode("ascii").strip()
-    require(head == candidate, "WHOLEFLOW_SOURCE_REVISION")
+    require(head == tool, "WHOLEFLOW_SOURCE_REVISION")
+    for revision in (candidate, tool):
+        require(source_git("rev-parse", "--verify", revision + "^{commit}").decode("ascii").strip()
+                == revision, "WHOLEFLOW_SOURCE_REVISION")
+    changed = source_git("diff", "--name-only", "-z", "--no-renames", candidate, tool, "--")
+    paths = changed.split(b"\0")[:-1] if changed else []
+    require(not changed or changed.endswith(b"\0"), "WHOLEFLOW_SOURCE_APPLICATION_CHANGED")
+    require(all(path in {name.encode("ascii") for name in TOOL_ONLY_PATHS} for path in paths),
+            "WHOLEFLOW_SOURCE_APPLICATION_CHANGED")
     for relative in ("configs/evidence/owner-beta-daily-price-policy-v1.json",
                      "deploy/db/owner-beta-daily-control.sql", "scripts/ops/verify-owner-beta-daily-wholeflow.py",
                      "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
@@ -144,6 +175,9 @@ def verify_source(candidate):
                      "scripts/ops/lib/owner-beta-daily-lifecycle.py"):
         pinned = source_git("show", head + ":" + relative)
         require(pinned == (ROOT / relative).read_bytes(), "WHOLEFLOW_SOURCE_CHANGED")
+    return {"application_commit": candidate, "tool_commit": tool,
+            "mode": "EXACT" if candidate == tool else "EXPLICIT_TOOL_ONLY_DELTA",
+            "changed_paths": [path.decode("ascii") for path in paths]}
 
 
 def private_file(path, data, uid=0, gid=0, mode=0o600):
@@ -343,6 +377,10 @@ class WholeFlow:
     def prepare(self):
         require(sys.platform == "linux" and os.geteuid() == 0, "WHOLEFLOW_ROOT_REQUIRED")
         require(600 <= self.args.timeout_seconds <= 1800, "WHOLEFLOW_DEADLINE_INPUT")
+        # Bind both source identities before any Docker or protected input read.
+        # Image/config identity remains the accepted application candidate.
+        self.receipt["source_binding"] = verify_source(
+            self.args.candidate, getattr(self.args, "tool_source_commit", None))
         manifest = release.read_root_file(str(self.args.image_manifest), maximum=16384)
         self.images = fixture.image_manifest(manifest, self.args.candidate)
         self.receipt["image_manifest_sha256"] = fixture.digest(manifest)
@@ -353,9 +391,6 @@ class WholeFlow:
         pg = self.inspect("image", POSTGRES)
         require(POSTGRES in pg["RepoDigests"], "WHOLEFLOW_POSTGRES_IMAGE")
         self.pg_image = pg["Id"]
-        # A reviewed checkout is pinned before loading its SQL/policy fixtures;
-        # source modifications cannot silently ride on a prior image candidate.
-        verify_source(self.args.candidate)
         self.policy = (ROOT / "configs/evidence/owner-beta-daily-price-policy-v1.json").read_bytes()
         release.validate_policy(self.policy)
         self.plan = fixture.plan(dt.datetime.now(dt.timezone.utc), str(uuid.uuid4()), self.args.candidate)
@@ -809,6 +844,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true", required=True)
     parser.add_argument("--candidate", required=True)
+    parser.add_argument("--tool-source-commit", help="Exact reviewed host tool commit; defaults to --candidate")
     parser.add_argument("--image-manifest", required=True, type=Path)
     parser.add_argument("--approved-base", required=True, type=Path)
     parser.add_argument("--receipt", required=True, type=Path)

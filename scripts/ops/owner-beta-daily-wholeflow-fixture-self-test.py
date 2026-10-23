@@ -529,6 +529,17 @@ class WholeflowGitSourceTests(unittest.TestCase):
         return subprocess.run(["git", "-C", str(self.repo), *args], env=self.env,
                               capture_output=True, timeout=10, check=check)
 
+    def commit_changes(self, changes):
+        for relative, data in changes.items():
+            path = self.repo / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        driver.source_git("add", "--all")
+        driver.source_git("-c", "user.name=Wholeflow fixture", "-c", "user.email=fixture@example.invalid",
+                          "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+                          "commit", "--quiet", "-m", "distinct tool fixture")
+        return driver.source_git("rev-parse", "HEAD").decode().strip()
+
     def test_root_reads_operator_checkout_without_persistent_git_trust(self):
         before = self.git("rev-parse", "HEAD", check=False)
         self.assertNotEqual(before.returncode, 0)
@@ -562,6 +573,101 @@ class WholeflowGitSourceTests(unittest.TestCase):
             driver.verify_source(self.commit)
         self.assertEqual(str(raised.exception), "WHOLEFLOW_SOURCE_GIT_FAILED")
         self.assertNotIn(str(self.repo), str(raised.exception))
+
+    def test_explicit_tool_commit_records_both_identities_and_keeps_legacy_strict(self):
+        exact = driver.verify_source(self.commit)
+        self.assertEqual(exact, {"application_commit": self.commit, "tool_commit": self.commit,
+                                "mode": "EXACT", "changed_paths": []})
+        changes = {"scripts/ops/lib/owner-beta-daily-lifecycle.py": b"new recorder\n",
+                   "docs/runbooks/r2-approved-base-wholeflow.md": b"reviewed tool instructions\n",
+                   "crates/kis-client/tests/market_stream_transport.rs": b"fixture correction\n"}
+        tool = self.commit_changes(changes)
+        with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_REVISION"):
+            driver.verify_source(self.commit)
+        binding = driver.verify_source(self.commit, tool)
+        self.assertEqual(binding, {"application_commit": self.commit, "tool_commit": tool,
+                                  "mode": "EXPLICIT_TOOL_ONLY_DELTA", "changed_paths": sorted(changes)})
+        self.assertEqual((self.repo / ".git/config").read_bytes(), self.config_before)
+
+    def test_tool_binding_rejects_application_policy_sql_build_and_unlisted_helpers(self):
+        for path in ("apps/web/app/page.tsx", "crates/api-server/src/main.rs", "Cargo.lock",
+                     "deploy/db/Dockerfile", "deploy/db/owner-beta-daily-control.sql",
+                     "configs/evidence/owner-beta-daily-price-policy-v1.json",
+                     "scripts/ops/lib/owner-beta-daily-wholeflow-fixture.py",
+                     "scripts/ops/lib/owner-beta-daily-release.py", "docs/unreviewed-runtime.sql"):
+            with self.subTest(path=path):
+                driver.source_git("reset", "--hard", self.commit)  # This disposable fixture only.
+                tool = self.commit_changes({path: b"different application input\n"})
+                with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_APPLICATION_CHANGED"):
+                    driver.verify_source(self.commit, tool)
+
+    def test_tool_binding_rejects_deleted_renamed_and_mode_changed_application_paths(self):
+        relative = "deploy/db/owner-beta-daily-control.sql"
+        for change in ("delete", "rename", "mode"):
+            with self.subTest(change=change):
+                driver.source_git("reset", "--hard", self.commit)
+                path = self.repo / relative
+                if change == "delete":
+                    path.unlink()
+                elif change == "rename":
+                    path.rename(path.with_name("renamed.sql"))
+                else:
+                    path.chmod(0o755)
+                tool = self.commit_changes({})
+                with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_APPLICATION_CHANGED"):
+                    driver.verify_source(self.commit, tool)
+
+    def test_tool_binding_rejects_noncanonical_or_missing_source_identities(self):
+        for value in ("HEAD", "", "-c", "a" * 39, "A" * 40, None):
+            with self.subTest(value=value):
+                with mock.patch.object(driver, "source_git") as git:
+                    with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_IDENTITY"):
+                        driver.verify_source(value, self.commit)
+                    git.assert_not_called()
+        with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_IDENTITY"):
+            driver.verify_source(self.commit, "")
+        with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_GIT_FAILED"):
+            driver.verify_source("0" * 40, self.commit)
+        tree = driver.source_git("rev-parse", self.commit + "^{tree}").decode().strip()
+        with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_GIT_FAILED"):
+            driver.verify_source(tree, self.commit)
+
+    def test_tool_binding_still_rejects_dirty_protected_source(self):
+        tool = self.commit_changes({"scripts/ops/lib/owner-beta-daily-lifecycle.py": b"reviewed\n"})
+        path = self.repo / "scripts/ops/lib/owner-beta-daily-lifecycle.py"
+        path.write_bytes(b"uncommitted tool\n")
+        with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_CHANGED"):
+            driver.verify_source(self.commit, tool)
+
+    def test_git_replacement_cannot_hide_changed_application_bytes(self):
+        tool = self.commit_changes({"deploy/db/owner-beta-daily-control.sql": b"changed SQL\n"})
+        driver.source_git("replace", tool, self.commit)
+        with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_APPLICATION_CHANGED"):
+            driver.verify_source(self.commit, tool)
+
+    def test_source_binding_failure_precedes_manifest_and_docker_reads(self):
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=self.commit,
+                                                       tool_source_commit="HEAD"))
+        with mock.patch.object(driver.release, "read_root_file") as read, \
+             mock.patch.object(test, "command") as docker:
+            with self.assertRaisesRegex(f.FixtureError, "WHOLEFLOW_SOURCE_IDENTITY"):
+                test.prepare()
+            read.assert_not_called()
+            docker.assert_not_called()
+
+    def test_explicit_tool_binding_keeps_the_application_image_candidate(self):
+        tool = self.commit_changes({"scripts/ops/lib/owner-beta-daily-lifecycle.py": b"new recorder\n"})
+        test = driver.WholeFlow(types.SimpleNamespace(timeout_seconds=1200, candidate=self.commit,
+                              tool_source_commit=tool, image_manifest=Path("/fixture/images.manifest")))
+        with mock.patch.object(driver.release, "read_root_file", return_value=b"protected manifest"), \
+             mock.patch.object(f, "image_manifest", side_effect=f.FixtureError("STOP_BEFORE_DOCKER")) as manifest, \
+             mock.patch.object(test, "command") as docker:
+            with self.assertRaisesRegex(f.FixtureError, "STOP_BEFORE_DOCKER"):
+                test.prepare()
+            manifest.assert_called_once_with(b"protected manifest", self.commit)
+            docker.assert_not_called()
+        self.assertEqual(test.receipt["candidate"], self.commit)
+        self.assertEqual(test.receipt["source_binding"]["tool_commit"], tool)
 
 
 if __name__ == "__main__":

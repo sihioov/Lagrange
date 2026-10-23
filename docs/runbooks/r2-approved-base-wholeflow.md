@@ -20,6 +20,19 @@ image IDs and OCI revisions against that manifest; it does not repeat the
 builder's saved-image executable provenance check. The PostgreSQL image uses
 the repository's exact 18.4 digest.
 
+A newer reviewed host tool may supply `--tool-source-commit FULL_TOOL_SHA` while
+`--candidate` remains the accepted application/image commit. Both identifiers
+must be exact commit hashes, and checkout HEAD must match the tool. A finite
+list of fifteen reviewed tool/test/documentation/workflow paths may differ
+between the trees. Every other difference, including application code, build
+inputs, SQL, policy, and base/release/extension helpers, is rejected before
+Docker or protected manifest reads. Git replacement objects are ignored.
+Protected loaded files still match the tool commit exactly. The receipt binds
+both commits and the complete permitted path list; no image or config revision
+is rewritten to the tool identity. Omitting the option preserves the original
+same-commit requirement. This option is source/fixture validated in Wave180;
+its own hosted validation and any distinct actual execution remain separate.
+
 The historical root is mounted read-only. Producer and admitter call the
 unaltered compiled approval API independently. No test approval registry or
 dummy historical base is accepted. The source policy is the existing canonical
