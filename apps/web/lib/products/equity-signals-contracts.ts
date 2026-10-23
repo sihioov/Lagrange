@@ -521,6 +521,14 @@ export const ownerEquityV2FailureSchema = z
 
 export type OwnerEquityV2FailureModel = z.infer<typeof ownerEquityV2FailureSchema>;
 
+export const ownerEquityV2RefreshFailureSchema = z
+  .object({
+    code: ownerEquityV2FailureCodeSchema,
+    requested_through: z.iso.date(),
+    failed_at: z.iso.datetime(),
+  })
+  .strict();
+
 export const ownerEquityV2MembershipSchema = z
   .object({
     id: z.uuid(),
@@ -532,6 +540,7 @@ export const ownerEquityV2MembershipSchema = z
     generation: z.number().int().nonnegative(),
     coverage: ownerEquityV2CoverageSchema,
     failure: ownerEquityV2FailureSchema.optional(),
+    refresh_failure: ownerEquityV2RefreshFailureSchema.optional(),
     requested_at: z.iso.datetime(),
     disabled_at: z.iso.datetime().optional(),
     updated_at: z.iso.datetime(),

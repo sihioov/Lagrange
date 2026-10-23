@@ -27,7 +27,7 @@ env:
 jobs:
   policy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,6 +66,10 @@ jobs:
       - run: bash deploy/systemd/tailscale-tls-renewal-static-check.sh
       - run: bash scripts/ops/static-check.sh
       - run: bash scripts/ops/production-ops-static-check.sh
+      - name: Verify scoped Web/API refresh preserves the original Owner worker
+        run: bash scripts/ops/kis-read-compose-self-test.sh
+      - name: Verify service-status binding for daily raw and action-supply modes
+        run: python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v
       - run: bash scripts/ops/build-production-images-static-check.sh
       - run: python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence -v
       - run: python -m unittest discover -s scripts/qa -p 'test_dev_check.py' -v
@@ -78,6 +82,71 @@ jobs:
             (Join-Path $env:GITHUB_WORKSPACE 'scripts/verify-all.ps1'),
             [ref]$tokens, [ref]$parseErrors)
           if ($parseErrors.Count -ne 0) { throw "verify-all.ps1 has parser errors" }
+      - name: Verify complete image builder with synthetic Docker images
+        if: ${{ !cancelled() }}
+        run: >-
+          sudo env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory
+          GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE"
+          bash scripts/ops/build-production-images-self-test.sh
+      - name: Verify daily release filesystem and principal boundaries
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-release-self-test.py
+      - name: Verify fixed historical base copies and real reader principals
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-base-self-test.py
+      - name: Verify immutable daily release installation boundaries
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-integration-self-test.py
+      - name: Verify daily release database control rendering
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-control-self-test.py
+      - name: Verify daily runtime policy and drain failures
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-runtime-self-test.py
+      - name: Verify daily actual Docker isolation and drain
+        run: sudo "$(command -v python)" scripts/ops/owner-beta-daily-docker-self-test.py
+      - name: Verify daily controlled activation and failure ordering
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-operations-self-test.py
+      - name: Verify daily actual PostgreSQL control transport
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-transport-self-test.py
+      - name: Verify preactivation first-session forward binding
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-first-session-self-test.py
+      - name: Verify market-stream grant helper inspection boundaries
+        run: python -m unittest scripts.ops.test_market_stream_grant -v
+      - name: Verify market-stream grant inspection on isolated PostgreSQL
+        if: ${{ !cancelled() }}
+        run: sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py
+      - name: Verify daily backup files and failure ordering
+        # These fixtures own separate disposable resources. Run all three even
+        # after an independent failure; keep each exit status a hard job failure.
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-backup-self-test.py
+      - name: Verify daily encrypted full-schema isolated restore
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-backup-docker-self-test.py
+      - name: Verify installed backup version transition and recovery
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-backup-transition-self-test.py
+      - name: Verify pre-upgrade cold archive boundaries
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-recovery-self-test.py
+      - name: Verify pre-upgrade maintenance failure boundaries
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-maintenance-self-test.py
+      - name: Verify pre-upgrade schema59 isolated recovery
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/production-preupgrade-recovery-docker-self-test.py
+      - name: Verify whole-flow fixture and driver boundaries
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py
+      - name: Verify whole-flow bounded lifecycle recording
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ops/owner-beta-daily-lifecycle-self-test.py
+      - name: Verify whole-flow actual Docker lifecycle events
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-lifecycle-docker-self-test.py
+      - name: Verify whole-flow actual Docker inherited volume boundaries
+        if: ${{ !cancelled() }}
+        run: sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-docker-self-test.py
+      - name: Verify legacy production operations fixtures
+        if: ${{ !cancelled() }}
+        run: sudo bash scripts/ops/production-ops-self-test.sh
 
   format:
     runs-on: ubuntu-latest
@@ -298,6 +367,14 @@ jobs:
           started=$SECONDS
           npm test --workspace @lagrange/web
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Check recommendation polling recovery and lifetime in isolated Chromium
+        run: node scripts/qa/recommendation-poll-recovery-browser.mjs "/tmp/lagrange-recommendation-poll-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check recommendation submission lifetime in isolated Chromium
+        run: node scripts/qa/recommendation-submit-lifetime-browser.mjs "/tmp/lagrange-recommendation-submit-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check daily preference lifetime in isolated Chromium
+        run: node scripts/qa/daily-preference-lifetime-browser.mjs "/tmp/lagrange-daily-preference-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check membership response ordering in isolated Chromium
+        run: node scripts/qa/stock-beta-membership-order-browser.mjs "/tmp/lagrange-membership-order-${{ github.run_id }}-${{ github.run_attempt }}"
       - id: web-build
         run: |
           started=$SECONDS
@@ -349,10 +426,17 @@ jobs:
       # Intraday tests require this exact disposable QA endpoint.
       DATABASE_URL: postgres://postgres:lagrange@127.0.0.1:55438/postgres
       LAGRANGE_QA_DB_PORT: '55438'
+      LAGRANGE_DAILY_ARTIFACT_TEST_ROOT: /lagrange-daily-artifact-${{ github.run_id }}-${{ github.run_attempt }}/runner
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare isolated Rust toolchain store
+        # Preserve rust-toolchain.toml while avoiding preinstalled component conflicts.
+        run: |
+          set -euo pipefail
+          rustup_store="$(mktemp -d "${RUNNER_TEMP}/lagrange-workspace-rustup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.XXXXXX")"
+          printf 'RUSTUP_HOME=%s\n' "$rustup_store" >> "$GITHUB_ENV"
       - id: cache-epoch
         env:
           CACHE_EPOCH_INPUT: ${{ github.event.inputs.cache_epoch || 'wp3-20261013' }}
@@ -462,11 +546,37 @@ jobs:
           started=$SECONDS
           cargo test -p api-server --test http_owner_equity_v2_chart --locked
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Prepare protected daily artifact test parent
+        run: |
+          set -euo pipefail
+          fixture_anchor="/lagrange-daily-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "$LAGRANGE_DAILY_ARTIFACT_TEST_ROOT" = "$fixture_anchor/runner"
+          test "$(stat --format='%u:%a' /)" = '0:755'
+          test ! -e "$fixture_anchor"
+          test ! -L "$fixture_anchor"
+          sudo mkdir -m 0755 -- "$fixture_anchor"
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" -- "$fixture_anchor/runner"
+          for fixture_node in / "$fixture_anchor" "$fixture_anchor/runner"; do
+            test ! -L "$fixture_node"
+            stat --format='DAILY_ARTIFACT_FIXTURE_MODE:%u:%g:%a' -- "$fixture_node"
+          done
       - id: workspace-tests-command
         run: |
           started=$SECONDS
           cargo test --workspace --locked --no-fail-fast --features kis-client/test-support
           printf 'seconds=%s\n' "$((SECONDS - started))" >>"$GITHUB_OUTPUT"
+      - name: Verify reviewed market-stream retirement boundaries
+        run: cargo test --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state retirement_
+      - name: Lint reviewed market-stream operator tool
+        run: cargo clippy --locked -p kis-client --features market-stream-provisioning,test-support --lib --bin kis-market-stream-state -- -D warnings
+      - name: Remove empty daily artifact test parent
+        if: always()
+        run: |
+          set -euo pipefail
+          fixture_anchor="/lagrange-daily-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "$LAGRANGE_DAILY_ARTIFACT_TEST_ROOT" = "$fixture_anchor/runner"
+          if test -d "$fixture_anchor/runner"; then sudo rmdir -- "$fixture_anchor/runner"; fi
+          if test -d "$fixture_anchor"; then sudo rmdir -- "$fixture_anchor"; fi
       - if: always()
         run: docker compose -f deploy/qa/qa-db.compose.yml down -v --remove-orphans
       - name: Save public Cargo downloads

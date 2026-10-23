@@ -13,4 +13,5 @@ MIN_FREE_BYTES=107374182400
 RETENTION_DAYS=35
 MIN_KEEP=7
 POSTGRES_SERVICE=postgres
-POSTGRES_IMAGE=postgres:18.4
+# Daily history uses this exact image for networkless restore verification.
+POSTGRES_IMAGE=postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a

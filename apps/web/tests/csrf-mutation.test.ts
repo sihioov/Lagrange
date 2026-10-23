@@ -170,6 +170,35 @@ describe("CSRF-aware browser mutations", () => {
     expect(navigations).toEqual([]);
   });
 
+  it.each(["SESSION_UNKNOWN", "SESSION_EXPIRED"] as const)(
+    "does not navigate when the workspace is gone before CSRF returns %s",
+    async (code) => {
+      const lifetime = new AbortController();
+      const navigations: string[] = [];
+      const methods: string[] = [];
+      const fetcher: typeof fetch = async (input, init) => {
+        methods.push(new Request(input, init).method);
+        lifetime.abort();
+        return Response.json(
+          { error: { code, message: "fixture", request_id: "fixture" } },
+          { status: 401 },
+        );
+      };
+      await expect(
+        mutateWithCsrf("/api/v1/auth/logout", {
+          fetcher,
+          navigate: (href) => navigations.push(href),
+          origin: "https://lagrange.test",
+          signal: lifetime.signal,
+          method: "POST",
+          json: {},
+        }),
+      ).rejects.toMatchObject({ code });
+      expect(navigations).toEqual([]);
+      expect(methods).toEqual(["GET"]);
+    },
+  );
+
   it("navigates when the session expires after the CSRF preflight", async () => {
     const navigations: string[] = [];
     const calls: string[] = [];

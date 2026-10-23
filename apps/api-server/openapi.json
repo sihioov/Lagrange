@@ -1112,7 +1112,8 @@
             "IDEMPOTENCY_KEY_MISMATCH",
             "CSRF_DENIED",
             "INVALID_PARAMETER",
-            "PAYLOAD_TOO_LARGE"
+            "PAYLOAD_TOO_LARGE",
+            "FORBIDDEN"
           ],
           "phase": "current"
         },
@@ -1284,6 +1285,222 @@
             "SESSION_UNKNOWN",
             "SESSION_EXPIRED",
             "INTERNAL"
+          ],
+          "phase": "current"
+        }
+      },
+      "patch": {
+        "operationId": "patch__api_v1_strategy_configs__config_id_",
+        "summary": "PATCH /api/v1/strategy-configs/{config_id}",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actor-owned strategy configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyConfig"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": false,
+            "scope": "actor-scoped via RLS (foreign resources are indistinguishable from missing)"
+          },
+          "entitlement": {
+            "use": null,
+            "fail_closed": true
+          },
+          "idempotency": {
+            "required": true,
+            "header": "Idempotency-Key",
+            "replay": "same key + method + resource ID + body returns the cached result; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH"
+          },
+          "audit": {
+            "writer": "audit_writer (append-only)",
+            "fields": "actor/time/target/before-after/reason/correlation_id"
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "IDEMPOTENCY_KEY_MISMATCH",
+            "CSRF_DENIED",
+            "INVALID_PARAMETER",
+            "PAYLOAD_TOO_LARGE",
+            "FORBIDDEN",
+            "RESOURCE_NOT_FOUND",
+            "INVALID_STRATEGY_PARAMETER"
+          ],
+          "phase": "current"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStrategyConfigBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/recommendations/owner-beta/price-only/daily-state": {
+      "get": {
+        "operationId": "get__api_v1_recommendations_owner_beta_price_only_daily_state",
+        "summary": "GET /api/v1/recommendations/owner-beta/price-only/daily-state",
+        "tags": [
+          "v1"
+        ],
+        "parameters": [
+          {
+            "name": "strategy_config_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner daily input and recommendation state with independent dates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerBetaDailyState"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "501": {
+            "$ref": "#/components/responses/Error501"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-lagrange": {
+          "auth": {
+            "required": true,
+            "session": "opaque __Host-lagrange_session cookie"
+          },
+          "ownership": {
+            "owner_only": true,
+            "scope": "Owner role; actor-scoped daily control, admission, reservation and publication metadata"
+          },
+          "entitlement": {
+            "use": "recommendation",
+            "fail_closed": true,
+            "input": "owner_beta_daily_etf11_price_only_v1"
+          },
+          "idempotency": {
+            "required": false,
+            "note": "read-only"
+          },
+          "audit": {
+            "writer": null
+          },
+          "cache": {
+            "policy": "no-store",
+            "reason": "authenticated per-user data is never shared"
+          },
+          "errors": [
+            "SESSION_UNKNOWN",
+            "SESSION_EXPIRED",
+            "INTERNAL",
+            "DATA_ENTITLEMENT_REQUIRED",
+            "INVALID_DATE",
+            "FORBIDDEN",
+            "INVALID_PARAMETER",
+            "RESOURCE_NOT_FOUND",
+            "RESULT_INTEGRITY_FAILED"
           ],
           "phase": "current"
         }
@@ -1759,12 +1976,15 @@
           },
           "ownership": {
             "owner_only": true,
-            "scope": "Owner role; actor-scoped sealed historical price-only read model"
+            "scope": "Owner role; actor-scoped historical or daily price-only read model"
           },
           "entitlement": {
             "use": "recommendation",
             "fail_closed": true,
-            "input": "owner_beta_historical_price_only_v1"
+            "input": [
+              "owner_beta_historical_price_only_v1",
+              "owner_beta_daily_etf11_price_only_v1"
+            ]
           },
           "idempotency": {
             "required": false,
@@ -1860,12 +2080,15 @@
           },
           "ownership": {
             "owner_only": true,
-            "scope": "Owner role; actor-scoped sealed historical price-only read model"
+            "scope": "Owner role; actor-scoped historical or daily price-only read model"
           },
           "entitlement": {
             "use": "recommendation",
             "fail_closed": true,
-            "input": "owner_beta_historical_price_only_v1"
+            "input": [
+              "owner_beta_historical_price_only_v1",
+              "owner_beta_daily_etf11_price_only_v1"
+            ]
           },
           "idempotency": {
             "required": false,
@@ -9816,7 +10039,9 @@
           "strategy_id",
           "strategy_version",
           "config",
-          "is_active"
+          "is_active",
+          "owner_beta_daily_enabled",
+          "owner_beta_daily_epoch"
         ],
         "properties": {
           "id": {
@@ -9836,6 +10061,14 @@
           },
           "is_active": {
             "type": "boolean"
+          },
+          "owner_beta_daily_enabled": {
+            "type": "boolean"
+          },
+          "owner_beta_daily_epoch": {
+            "type": "integer",
+            "minimum": 0,
+            "readOnly": true
           },
           "created_at": {
             "type": "string",
@@ -9865,6 +10098,276 @@
           "is_active": {
             "type": "boolean",
             "default": true
+          },
+          "owner_beta_daily_enabled": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "UpdateStrategyConfigBody": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "owner_beta_daily_enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OwnerBetaHistoricalPins": {
+        "type": "object",
+        "required": [
+          "candidate_content_sha256",
+          "artifact_manifest_sha256",
+          "stage5_manifest_sha256",
+          "action_manifest_sha256",
+          "approval_registry_sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "candidate_content_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "artifact_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stage5_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "action_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "approval_registry_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "OwnerBetaHistoricalReadInput": {
+        "type": "object",
+        "required": [
+          "kind",
+          "candidate_content_sha256",
+          "artifact_manifest_sha256",
+          "stage5_manifest_sha256",
+          "action_manifest_sha256",
+          "approval_registry_sha256"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "historical"
+          },
+          "candidate_content_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "artifact_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "stage5_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "action_manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "approval_registry_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      },
+      "OwnerBetaDailyReadInput": {
+        "type": "object",
+        "required": [
+          "kind",
+          "content_sha256",
+          "manifest_sha256",
+          "admission_sha256",
+          "policy_sha256",
+          "base"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "daily"
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "admission_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "policy_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "base": {
+            "$ref": "#/components/schemas/OwnerBetaHistoricalPins"
+          }
+        }
+      },
+      "OwnerBetaDailyState": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "runtime_enabled",
+          "expected_session",
+          "data_support_end",
+          "recommendation_as_of",
+          "published_at",
+          "input_kind",
+          "trigger_kind",
+          "current_reservation_run_id",
+          "state",
+          "reason_code",
+          "data_due_at",
+          "observed_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "runtime_enabled": {
+            "type": "boolean"
+          },
+          "expected_session": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "data_support_end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "recommendation_as_of": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "published_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "input_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "owner_beta_daily_etf11_price_only_v1",
+              null
+            ]
+          },
+          "trigger_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "DAILY",
+              null
+            ]
+          },
+          "current_reservation_run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "DISABLED",
+              "UNVERIFIABLE",
+              "INPUT_PENDING",
+              "INPUT_BLOCKED",
+              "QUEUED",
+              "RUNNING",
+              "RETRYING",
+              "FAILED",
+              "CURRENT",
+              "STALE"
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "RUNTIME_DISABLED",
+              "CONFIG_DISABLED",
+              "CONFIG_INACTIVE",
+              "CONTROL_UNAVAILABLE",
+              "CALENDAR_COVERAGE_GAP",
+              "VERIFICATION_EXPIRED",
+              "INPUT_UNAVAILABLE",
+              "INPUT_NOT_READY",
+              "BEFORE_ACTIVATION",
+              "AWAITING_SCHEDULE",
+              "JOB_QUEUED",
+              "JOB_RUNNING",
+              "JOB_RETRYING",
+              "JOB_FAILED",
+              "CAPACITY_EXCEEDED",
+              "SUPERSEDED",
+              "CONFIGURATION_CHANGED",
+              "FUTURE_EVIDENCE",
+              "SOURCE_CONFLICT",
+              "SEALED_SOURCE_CHANGED",
+              "SOURCE_REVOKED",
+              "SOURCE_INTEGRITY",
+              "CALENDAR_CONFLICT",
+              "NONCASH_ACTION",
+              null
+            ]
+          },
+          "data_due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -10301,14 +10804,11 @@
           "vendor_snapshot",
           "strict_pit",
           "strategy_config_sha256",
-          "candidate_content_sha256",
-          "artifact_manifest_sha256",
-          "stage5_manifest_sha256",
-          "action_manifest_sha256",
-          "approval_registry_sha256",
           "created_at",
           "updated_at",
-          "items"
+          "items",
+          "trigger_kind",
+          "input"
         ],
         "additionalProperties": false,
         "properties": {
@@ -10349,7 +10849,27 @@
           },
           "input_kind": {
             "type": "string",
-            "const": "owner_beta_historical_price_only_v1"
+            "enum": [
+              "owner_beta_historical_price_only_v1",
+              "owner_beta_daily_etf11_price_only_v1"
+            ]
+          },
+          "trigger_kind": {
+            "type": "string",
+            "enum": [
+              "MANUAL",
+              "DAILY"
+            ]
+          },
+          "input": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+              },
+              {
+                "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+              }
+            ]
           },
           "capability": {
             "type": "string",
@@ -10437,6 +10957,11 @@
             ],
             "format": "date-time"
           },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Present only for SUCCEEDED, equal to finished_at."
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -10447,7 +10972,94 @@
               "$ref": "#/components/schemas/OwnerBetaPriceOnlyReadItem"
             }
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "candidate_content_sha256",
+              "artifact_manifest_sha256",
+              "stage5_manifest_sha256",
+              "action_manifest_sha256",
+              "approval_registry_sha256"
+            ],
+            "properties": {
+              "input_kind": {
+                "const": "owner_beta_historical_price_only_v1"
+              },
+              "trigger_kind": {
+                "const": "MANUAL"
+              },
+              "input": {
+                "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+              }
+            }
+          },
+          {
+            "properties": {
+              "input_kind": {
+                "const": "owner_beta_daily_etf11_price_only_v1"
+              },
+              "trigger_kind": {
+                "const": "DAILY"
+              },
+              "input": {
+                "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "candidate_content_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "artifact_manifest_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "stage5_manifest_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "action_manifest_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "approval_registry_sha256"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "SUCCEEDED"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "published_at"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "published_at"
+                ]
+              }
+            }
+          }
+        ]
       },
       "OwnerBetaPriceOnlyReadListItem": {
         "type": "object",
@@ -10465,13 +11077,10 @@
           "vendor_snapshot",
           "strict_pit",
           "strategy_config_sha256",
-          "candidate_content_sha256",
-          "artifact_manifest_sha256",
-          "stage5_manifest_sha256",
-          "action_manifest_sha256",
-          "approval_registry_sha256",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "trigger_kind",
+          "input"
         ],
         "additionalProperties": false,
         "properties": {
@@ -10512,7 +11121,27 @@
           },
           "input_kind": {
             "type": "string",
-            "const": "owner_beta_historical_price_only_v1"
+            "enum": [
+              "owner_beta_historical_price_only_v1",
+              "owner_beta_daily_etf11_price_only_v1"
+            ]
+          },
+          "trigger_kind": {
+            "type": "string",
+            "enum": [
+              "MANUAL",
+              "DAILY"
+            ]
+          },
+          "input": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+              },
+              {
+                "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+              }
+            ]
           },
           "capability": {
             "type": "string",
@@ -10600,11 +11229,103 @@
             ],
             "format": "date-time"
           },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Present only for SUCCEEDED, equal to finished_at."
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "candidate_content_sha256",
+              "artifact_manifest_sha256",
+              "stage5_manifest_sha256",
+              "action_manifest_sha256",
+              "approval_registry_sha256"
+            ],
+            "properties": {
+              "input_kind": {
+                "const": "owner_beta_historical_price_only_v1"
+              },
+              "trigger_kind": {
+                "const": "MANUAL"
+              },
+              "input": {
+                "$ref": "#/components/schemas/OwnerBetaHistoricalReadInput"
+              }
+            }
+          },
+          {
+            "properties": {
+              "input_kind": {
+                "const": "owner_beta_daily_etf11_price_only_v1"
+              },
+              "trigger_kind": {
+                "const": "DAILY"
+              },
+              "input": {
+                "$ref": "#/components/schemas/OwnerBetaDailyReadInput"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "candidate_content_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "artifact_manifest_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "stage5_manifest_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "action_manifest_sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "approval_registry_sha256"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "SUCCEEDED"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "published_at"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "published_at"
+                ]
+              }
+            }
+          }
+        ]
       },
       "OwnerBetaPriceOnlyReadPage": {
         "type": "object",
@@ -12268,6 +12989,31 @@
           }
         }
       },
+      "OwnerEquityV2RefreshFailure": {
+        "type": "object",
+        "description": "Latest incremental attempt for the next admitted generation failed. READY data remains usable. Omitted after a newer non-failed attempt, successful admission or disable; no retry authority is implied.",
+        "required": [
+          "code",
+          "requested_through",
+          "failed_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+          },
+          "requested_through": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-01-31"
+          },
+          "failed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "OwnerEquityV2Membership": {
         "type": "object",
         "required": [
@@ -12301,6 +13047,9 @@
           },
           "failure": {
             "$ref": "#/components/schemas/OwnerEquityV2Failure"
+          },
+          "refresh_failure": {
+            "$ref": "#/components/schemas/OwnerEquityV2RefreshFailure"
           },
           "requested_at": {
             "type": "string",

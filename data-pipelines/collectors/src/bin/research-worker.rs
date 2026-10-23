@@ -21,6 +21,9 @@ const USAGE: &str = "\
 research-worker [--once --date YYYY-MM-DD]
 research-worker --calendar-once --date YYYY-MM-DD (--source-batch-id UUID|--reuse-existing-source)
 research-worker --backfill-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
+research-worker --eod-raw-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
+research-worker --eod-raw-check-session-dates YYYY-MM-DD[,YYYY-MM-DD...]
+research-worker --r2-action-supply [--check]
 research-worker --range-raw --start YYYY-MM-DD --end YYYY-MM-DD [--existing-source-batch-id UUID]
 research-worker healthcheck
 research-worker --help
@@ -38,6 +41,11 @@ enum Command {
         collectors::calendar_bootstrap::CalendarSourceMode,
     ),
     BackfillSessionDates(Vec<TradingDate>),
+    EodRawSessionDates(Vec<TradingDate>),
+    EodRawCheckSessionDates(Vec<TradingDate>),
+    ActionSupply {
+        check: bool,
+    },
     DailyRangeRaw {
         start: TradingDate,
         end: TradingDate,
@@ -199,6 +207,65 @@ async fn main() -> ExitCode {
     let target_date = command_target_date(&command);
     let range_raw = matches!(&command, Command::DailyRangeRaw { .. });
     let values = environment_map();
+    if let Command::ActionSupply { check } = command {
+        return match collectors::action_supply::run(&values, check).await {
+            Ok(result) => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&result).expect("finite supply result")
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "outcome": "BLOCKED", "error_code": error.to_string(),
+                        "raw_only": true, "admitted": false
+                    })
+                );
+                ExitCode::from(2)
+            }
+        };
+    }
+    if let Command::EodRawSessionDates(dates) | Command::EodRawCheckSessionDates(dates) = &command {
+        let stdout = std::io::stdout();
+        let mut writer = stdout.lock();
+        let check = matches!(&command, Command::EodRawCheckSessionDates(_));
+        let result = if check {
+            collectors::check_eod_raw_session_dates_stream(&values, dates, &mut writer)
+        } else {
+            collectors::run_credentialed_eod_raw_session_dates_stream(&values, dates, &mut writer)
+                .await
+        };
+        return match result {
+            Ok(count) => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "ok", "phase": if check { "raw_check" } else { "raw_capture" },
+                        "outcome": if check { "raw_checked" } else { "raw_collected" },
+                        "sessions": count, "ready": false, "publication": false,
+                        "curated": false, "db": false
+                    })
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "error", "phase": if check { "raw_check" } else { "raw_capture" },
+                        "error_code": error_code(&error),
+                        "class": error.failure_class().as_str(),
+                        "target_date": null,
+                        "ready": false, "publication": false, "db": false
+                    })
+                );
+                ExitCode::from(2)
+            }
+        };
+    }
     if let Command::CalendarOnce(date, source_mode) = command {
         return match collectors::calendar_bootstrap::run_calendar_once(&values, date, source_mode)
             .await
@@ -230,6 +297,11 @@ async fn main() -> ExitCode {
         Command::InternalIngest(date, now) => run_internal_collect(&values, date, now).await,
         Command::Help => unreachable!("help returned before worker setup"),
         Command::CalendarOnce(_, _) => unreachable!("calendar bootstrap returned before EOD setup"),
+        Command::EodRawSessionDates(_)
+        | Command::EodRawCheckSessionDates(_)
+        | Command::ActionSupply { .. } => {
+            unreachable!("Raw command returned before DB setup")
+        }
     };
     match result {
         Ok(record) => {
@@ -254,6 +326,9 @@ fn command_target_date(command: &Command) -> Option<TradingDate> {
         }
         Command::Daemon
         | Command::BackfillSessionDates(_)
+        | Command::EodRawSessionDates(_)
+        | Command::EodRawCheckSessionDates(_)
+        | Command::ActionSupply { .. }
         | Command::Healthcheck
         | Command::Help
         | Command::InternalRecover(_) => None,
@@ -266,6 +341,10 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
         [] => Ok(Command::Daemon),
         [flag] if flag == "--help" || flag == "-h" => Ok(Command::Help),
         [command] if command == "healthcheck" => Ok(Command::Healthcheck),
+        [command] if command == "--r2-action-supply" => Ok(Command::ActionSupply { check: false }),
+        [command, flag] if command == "--r2-action-supply" && flag == "--check" => {
+            Ok(Command::ActionSupply { check: true })
+        }
         [mode, date_flag, date, batch_flag, batch_id]
             if mode == "--calendar-once"
                 && date_flag == "--date"
@@ -311,6 +390,16 @@ fn parse_args(args: &[String]) -> Result<Command, WorkerError> {
                 .map_err(|_| WorkerError::InvalidConfig { key: "--date" })
         }
         [flag, dates] if flag == "--backfill-session-dates" => parse_session_dates(dates),
+        [flag, dates] if flag == "--eod-raw-session-dates" => match parse_session_dates(dates)? {
+            Command::BackfillSessionDates(dates) => Ok(Command::EodRawSessionDates(dates)),
+            _ => unreachable!("session parser returns dates"),
+        },
+        [flag, dates] if flag == "--eod-raw-check-session-dates" => {
+            match parse_session_dates(dates)? {
+                Command::BackfillSessionDates(dates) => Ok(Command::EodRawCheckSessionDates(dates)),
+                _ => unreachable!("session parser returns dates"),
+            }
+        }
         [mode, start_flag, start, end_flag, end]
             if mode == "--range-raw" && start_flag == "--start" && end_flag == "--end" =>
         {
@@ -799,6 +888,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn coordination_diagnostic_event_distinguishes_local_failure_and_redacts_unknown_reason() {
+        let date = TradingDate::parse("2026-10-21").unwrap();
+        for (reason, expected) in [
+            (
+                "KIS_READ_CALLBACK_START_MISSED",
+                "KIS_READ_CALLBACK_START_MISSED",
+            ),
+            ("KIS_TOKEN_ISSUE_FAILED", "KIS_TOKEN_ISSUE_FAILED"),
+            (
+                "KIS_READ_COORDINATION_CLOCK_INVALID",
+                "KIS_READ_COORDINATION_CLOCK_INVALID",
+            ),
+            ("sentinel-token-provider-body", "BROKER_AUTH_FAILED"),
+            (
+                "KIS_TOKEN_ISSUE_FAILED sentinel-app-secret",
+                "BROKER_AUTH_FAILED",
+            ),
+        ] {
+            let error = WorkerError::Cycle {
+                target_date: date,
+                source: Box::new(WorkerError::KisClient(kis_client::KisError::Auth {
+                    reason: reason.to_owned(),
+                })),
+            };
+            let value =
+                serde_json::to_value(error_record(&error, Some(date), "KIS-NORMALIZED")).unwrap();
+            assert_eq!(value["error_code"], expected);
+            assert_eq!(value["class"], "permanent");
+            assert_eq!(
+                value["message"],
+                format!("operation failed with {expected}")
+            );
+            assert_eq!(value["target_date"], "2026-10-21");
+            assert!(!value.to_string().contains("sentinel"));
+            assert!(value.get("detail").is_none());
+            assert!(value.get("endpoint").is_none());
+        }
+    }
+
+    #[test]
     fn calendar_bootstrap_requires_explicit_date_and_attempt_identity() {
         let batch = domain::BatchId::generate();
         let args = [
@@ -919,6 +1048,50 @@ mod tests {
             }
             _ => panic!("unexpected command"),
         }
+    }
+
+    #[test]
+    fn action_supplier_cli_is_explicit_and_has_read_only_check_mode() {
+        assert!(matches!(
+            parse_args(&["--r2-action-supply".into()]).unwrap(),
+            Command::ActionSupply { check: false }
+        ));
+        assert!(matches!(
+            parse_args(&["--r2-action-supply".into(), "--check".into()]).unwrap(),
+            Command::ActionSupply { check: true }
+        ));
+        for extra in ["--once", "--date", "--backfill-session-dates", "--execute"] {
+            assert!(parse_args(&["--r2-action-supply".into(), extra.into()]).is_err());
+        }
+    }
+
+    #[test]
+    fn raw_session_argument_is_explicit_and_never_canonical_backfill() {
+        let dates = "2026-09-14,2026-09-15";
+        assert!(
+            matches!(parse_args(&["--eod-raw-session-dates".into(), dates.into()]).unwrap(),
+                         Command::EodRawSessionDates(values) if values.len() == 2)
+        );
+        assert!(
+            matches!(parse_args(&["--eod-raw-check-session-dates".into(), dates.into()]).unwrap(),
+                         Command::EodRawCheckSessionDates(values) if values.len() == 2)
+        );
+        for invalid in [
+            "",
+            "2026-09-15,2026-09-14",
+            "2026-09-14,2026-09-14",
+            "2026-02-30",
+        ] {
+            assert!(parse_args(&["--eod-raw-session-dates".into(), invalid.into()]).is_err());
+        }
+        assert!(
+            parse_args(&[
+                "--eod-raw-session-dates".into(),
+                dates.into(),
+                "--once".into()
+            ])
+            .is_err()
+        );
     }
 
     #[test]

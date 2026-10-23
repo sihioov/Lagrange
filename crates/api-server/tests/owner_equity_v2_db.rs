@@ -1,4 +1,4 @@
-//! PostgreSQL-backed WP-4 contract for the owner-managed equity V2 flow.
+//! PostgreSQL-backed WP-4 publication and WP-5 scheduling contracts.
 //!
 //! The common harness creates a fresh database, applies the repository's
 //! embedded migrations, and connects through the production `app` and
@@ -16,6 +16,7 @@ use api_server::repos::owner_equity_v2::{
 };
 use async_trait::async_trait;
 use auth::entitlement::Role;
+use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Utc};
 use common::{Harness, UserCtx, actor_pool};
 use domain::{
     BatchId, CodeCommit, ContentHash, InstrumentId, OwnerEquityUniverseHash, RetryDisposition,
@@ -23,11 +24,14 @@ use domain::{
 };
 use job_queue::owner_equity_v2::{
     AdmittedGenerationDescriptor, OWNER_EQUITY_V2_JOB_TYPE, OwnerEquityCoverage,
-    OwnerEquityJobAction, OwnerEquityJobPayload, OwnerEquityMaterialization, OwnerEquityRunOutcome,
-    OwnerEquityWorkFailure, OwnerEquityWorkerAdapter, OwnerEquityWorkerError,
-    PreparedOwnerEquityGeneration, process_owner_equity_claim,
+    OwnerEquityJobAction, OwnerEquityJobPayload, OwnerEquityMaterialization,
+    OwnerEquityPriorCandidate, OwnerEquityRunOutcome, OwnerEquityScheduleError,
+    OwnerEquitySchedulePins, OwnerEquityWorkFailure, OwnerEquityWorkerAdapter,
+    OwnerEquityWorkerError, PreparedOwnerEquityGeneration, eligible_schedule_date,
+    process_owner_equity_claim, run_owner_equity_schedule_cycle,
 };
 use job_queue::{AttemptOutcome, JobQueue, JobStatus, QueueConfig};
+use market_data::owner_equity_v2::merge_owner_equity_incremental_candidate;
 use market_data::owner_equity_v2::{
     OWNER_EQUITY_V2_CANDIDATE_VERSION, OWNER_EQUITY_V2_CONTRACT_VERSION, OWNER_ONLY_WARNING,
     OwnerEquityBar, OwnerEquityCaptureKind, OwnerEquityGenerationCandidate, OwnerEquitySourcePins,
@@ -38,6 +42,7 @@ use uuid::Uuid;
 
 const CODE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const ENTITLEMENT_REFERENCE: &str = "krx-2026-01";
+const WP5_SCHEDULE_ENTITLEMENT_REFERENCE: &str = "wp5-owner-equity-scheduler-date-window";
 const TARGET_SESSIONS: i32 = 130;
 const MINIMUM_SESSIONS: i32 = 121;
 
@@ -45,6 +50,7 @@ const MINIMUM_SESSIONS: i32 = 121;
 struct FakeAdapter {
     candidates: Arc<RwLock<BTreeMap<String, OwnerEquityGenerationCandidate>>>,
     insufficient_once: Arc<Mutex<BTreeSet<String>>>,
+    fail_incremental_once: Arc<Mutex<bool>>,
 }
 
 impl FakeAdapter {
@@ -115,6 +121,49 @@ impl OwnerEquityWorkerAdapter for FakeAdapter {
         )))
     }
 
+    async fn materialize_with_prior(
+        &self,
+        _owner_user_id: Uuid,
+        payload: &OwnerEquityJobPayload,
+        prior: Option<&OwnerEquityPriorCandidate>,
+    ) -> Result<OwnerEquityMaterialization, OwnerEquityWorkFailure> {
+        if payload.action != OwnerEquityJobAction::Incremental {
+            return self.materialize(payload).await;
+        }
+
+        if std::mem::take(&mut *self.fail_incremental_once.lock().await) {
+            return Err(OwnerEquityWorkFailure::new(
+                "INCREMENTAL_OVERLAP_CHANGED",
+                RetryDisposition::Terminal,
+            )
+            .expect("typed incremental fixture failure"));
+        }
+
+        let prior = prior.ok_or_else(missing_evidence)?;
+        let incremental = incremental_candidate_for(payload, prior);
+        let prior_artifact = ContentHash::parse(&prior.descriptor.artifact_manifest_sha256)
+            .map_err(|_| missing_evidence())?;
+        let candidate = merge_owner_equity_incremental_candidate(
+            &prior.candidate,
+            prior_artifact,
+            &incremental,
+        )
+        .map_err(|_| missing_evidence())?;
+        let generation = payload.expected_generation.expect("incremental generation");
+        self.candidates
+            .write()
+            .await
+            .insert(payload.instrument_id.clone(), candidate.clone());
+        Ok(OwnerEquityMaterialization::Ready(Box::new(
+            PreparedOwnerEquityGeneration {
+                artifact_manifest_sha256: ContentHash::from_bytes(
+                    format!("artifact:{}:{generation}", payload.instrument_id).as_bytes(),
+                ),
+                candidate,
+            },
+        )))
+    }
+
     async fn load_admitted_candidate(
         &self,
         descriptor: &AdmittedGenerationDescriptor,
@@ -179,6 +228,28 @@ fn pins() -> OwnerEquityMutationPins {
         entitlement_reference: ENTITLEMENT_REFERENCE.to_owned(),
         entitlement_sha256: format!("sha256:{}", "d".repeat(64)),
         requested_through: TradingDate::parse("2026-08-31").expect("fixture date"),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScheduleFixtureDateWindow {
+    eligible: NaiveDate,
+    prior_close: NaiveDate,
+    initial_session: NaiveDate,
+    initial_candidate_start: NaiveDate,
+}
+
+fn schedule_fixture_date_window(eligible: NaiveDate) -> ScheduleFixtureDateWindow {
+    let prior_close = eligible.pred_opt().expect("prior fixture close");
+    let initial_session = prior_close.pred_opt().expect("initial fixture session");
+    let initial_candidate_start = initial_session
+        .checked_sub_signed(chrono::Duration::days(120))
+        .expect("initial candidate coverage start");
+    ScheduleFixtureDateWindow {
+        eligible,
+        prior_close,
+        initial_session,
+        initial_candidate_start,
     }
 }
 
@@ -263,6 +334,51 @@ fn candidate_for(payload: &OwnerEquityJobPayload) -> OwnerEquityGenerationCandid
     }
 }
 
+fn incremental_candidate_for(
+    payload: &OwnerEquityJobPayload,
+    prior: &OwnerEquityPriorCandidate,
+) -> OwnerEquityGenerationCandidate {
+    let mut candidate = candidate_for(payload);
+    let prior_last = prior.candidate.last_observed_date;
+    let mut bars = vec![
+        prior
+            .candidate
+            .bars
+            .last()
+            .expect("admitted prior has bars")
+            .clone(),
+    ];
+    let symbol_bias = InstrumentId::parse(&payload.instrument_id)
+        .expect("fixture instrument")
+        .symbol()
+        .parse::<u64>()
+        .expect("numeric KRX fixture")
+        % 1_000;
+    let generation = payload.expected_generation.expect("generation action");
+    let mut date = prior_last.checked_add_days(1).expect("next fixture date");
+    let mut offset = 0_u64;
+    while date <= payload.requested_through {
+        let close = 20_000 + symbol_bias + generation * 100 + offset;
+        bars.push(OwnerEquityBar {
+            session_date: date,
+            open: close,
+            high: close + 10,
+            low: close - 10,
+            close,
+            volume: 200_000 + symbol_bias + offset * 100,
+        });
+        date = date.checked_add_days(1).expect("next fixture date");
+        offset += 1;
+    }
+
+    candidate.requested_start = prior_last;
+    candidate.observed_sessions = u32::try_from(bars.len()).expect("small fixture range");
+    candidate.first_observed_date = bars.first().expect("overlap bar").session_date;
+    candidate.last_observed_date = bars.last().expect("new fixture bar").session_date;
+    candidate.bars = bars;
+    candidate
+}
+
 async fn provision_policy(harness: &Harness, owner: &UserCtx, maximum: i32) {
     let repo = OwnerEquityV2Repo::new(harness.app_pool.clone());
     let (policy, memberships) = repo
@@ -309,6 +425,101 @@ async fn seed_owner(harness: &Harness, suffix: &str, maximum: i32) -> UserCtx {
         .await;
     provision_policy(harness, &owner, maximum).await;
     owner
+}
+
+async fn seed_schedule_calendar(harness: &Harness, session_date: NaiveDate, session_type: &str) {
+    assert!(matches!(session_type, "TRADING" | "CLOSED"));
+    let batch_id = Uuid::new_v4();
+    let date = session_date.to_string();
+    let hash = "c".repeat(64);
+    harness
+        .seed_shared(&format!(
+            "INSERT INTO data_batches \
+             (provider, market, batch_date, kind, storage_path, content_sha256, \
+              bytes_size, retrieved_at, source_batch_id, source_file_name, fetch_mode) \
+             VALUES ('KRX', 'KR', DATE '{date}', 'CALENDAR', \
+                     'synthetic/wp5-owner-v2-calendar', '{hash}', 1, \
+                     pg_catalog.clock_timestamp(), '{batch_id}', 'calendar.json', 'credentialed')"
+        ))
+        .await;
+    harness
+        .seed_shared(&format!(
+            "INSERT INTO trading_calendar_versions \
+             (exchange, session_date, session_type, timezone, source, source_version, \
+              source_batch_id, content_sha256, retrieved_at) \
+             VALUES ('KRX', DATE '{date}', '{session_type}', 'Asia/Seoul', 'kis', \
+                     'kis-chk-holiday-v1:schema-1', '{batch_id}', '{hash}', \
+                     pg_catalog.clock_timestamp())"
+        ))
+        .await;
+    harness
+        .seed_shared(&format!(
+            "INSERT INTO trading_calendars \
+             (exchange, session_date, session_type, timezone, source, source_version, \
+              source_batch_id, content_sha256, retrieved_at) \
+             VALUES ('KRX', DATE '{date}', '{session_type}', 'Asia/Seoul', 'kis', \
+                     'kis-chk-holiday-v1:schema-1', '{batch_id}', '{hash}', \
+                     pg_catalog.clock_timestamp())"
+        ))
+        .await;
+}
+
+async fn seed_wp5_schedule_entitlement(harness: &Harness, window: ScheduleFixtureDateWindow) {
+    let effective_from = window.initial_candidate_start;
+    let effective_until = window.eligible;
+    let sql = format!(
+        "INSERT INTO data_entitlements \
+         (id, contract_document_sha256, contract_reference, status, covered_datasets, \
+          covered_uses, effective_from, effective_until, managed_by) \
+         VALUES (gen_random_uuid(), repeat('d',64), \
+                 '{WP5_SCHEDULE_ENTITLEMENT_REFERENCE}', 'ACTIVE', \
+                 '[\"krx_eod_bars\"]'::jsonb, \
+                 '[\"dataset\",\"factor\",\"recommendation\",\"backtest\",\"report\",\"benchmark\",\"paper_view\",\"payload\",\"download\"]'::jsonb, \
+                 DATE '{effective_from}', DATE '{effective_until}', \
+                 (SELECT id FROM users WHERE email='owner@lagrange.test'))"
+    );
+    harness.seed_shared(&sql).await;
+}
+
+#[test]
+fn schedule_fixture_entitlement_window_covers_year_boundary_candidates() {
+    let cases = [
+        (
+            NaiveDate::from_ymd_opt(2026, 12, 31).expect("2026 boundary"),
+            NaiveDate::from_ymd_opt(2026, 12, 30).expect("2026 prior close"),
+            NaiveDate::from_ymd_opt(2026, 12, 29).expect("2026 initial session"),
+            NaiveDate::from_ymd_opt(2026, 8, 31).expect("2026 initial coverage"),
+        ),
+        (
+            NaiveDate::from_ymd_opt(2027, 1, 1).expect("2027 boundary"),
+            NaiveDate::from_ymd_opt(2026, 12, 31).expect("2027 prior close"),
+            NaiveDate::from_ymd_opt(2026, 12, 30).expect("2027 initial session"),
+            NaiveDate::from_ymd_opt(2026, 9, 1).expect("2027 initial coverage"),
+        ),
+    ];
+
+    for (eligible, expected_prior_close, expected_initial_session, expected_start) in cases {
+        let window = schedule_fixture_date_window(eligible);
+        assert_eq!(window.prior_close, expected_prior_close);
+        assert_eq!(window.initial_session, expected_initial_session);
+        assert_eq!(window.initial_candidate_start, expected_start);
+        let current_candidate_start = window
+            .eligible
+            .checked_sub_signed(chrono::Duration::days(120))
+            .expect("current candidate coverage start");
+        for candidate_date in [
+            window.initial_candidate_start,
+            window.initial_session,
+            window.prior_close,
+            current_candidate_start,
+            window.eligible,
+        ] {
+            assert!(
+                window.initial_candidate_start <= candidate_date
+                    && candidate_date <= window.eligible
+            );
+        }
+    }
 }
 
 async fn table_count(pool: &sqlx::PgPool, table: &str, owner: Uuid) -> i64 {
@@ -755,14 +966,25 @@ async fn owner_equity_v2_repository_queue_and_publication_are_atomic_and_actor_s
         0
     );
     tokio::time::sleep(Duration::from_millis(5)).await;
-    let recovered = crash_queue
+    // The 25ms queue above forces the crashed attempt to expire. Recovery uses
+    // the ordinary lease so real database checkpoints do not race that fixture.
+    let recovered = queue
         .claim_next_for("oev2-recovered", OWNER_EQUITY_V2_JOB_TYPE)
         .await
         .expect("claim recovered")
         .expect("recovered job available");
     assert_eq!(recovered.job.id, crash_add.job_id);
+    assert_ne!(recovered.attempt.id, stale_claim.attempt.id);
     assert_eq!(
-        process_owner_equity_claim(&worker_pool, &crash_queue, &recovered, &adapter)
+        recovered.attempt.attempt_no,
+        stale_claim.attempt.attempt_no + 1
+    );
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &stale_claim, &adapter).await,
+        Err(OwnerEquityWorkerError::StaleClaim)
+    );
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &recovered, &adapter)
             .await
             .expect("publish recovered"),
         OwnerEquityRunOutcome::Published
@@ -943,6 +1165,579 @@ async fn owner_equity_v2_repository_queue_and_publication_are_atomic_and_actor_s
 
     member_pool.close().await;
     different_owner_pool.close().await;
+    worker_pool.close().await;
+    harness.teardown().await;
+}
+
+#[tokio::test]
+async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() {
+    let Some(harness) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    provision_policy(&harness, &harness.owner, 2).await;
+
+    let repo = OwnerEquityV2Repo::new(harness.app_pool.clone());
+    let worker_pool = harness.worker_pool().await;
+    let queue = JobQueue::new(
+        worker_pool.clone(),
+        None,
+        QueueConfig {
+            lease: Duration::from_secs(30),
+            backoff_base: Duration::from_millis(1),
+        },
+    );
+    let adapter = FakeAdapter::default();
+    let actor = harness.owner.actor();
+    let body = "a".repeat(64);
+    let seoul = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset");
+    let database_now: DateTime<Utc> = sqlx::query_scalar("SELECT pg_catalog.clock_timestamp()")
+        .fetch_one(&worker_pool)
+        .await
+        .expect("database clock");
+    let date_window = schedule_fixture_date_window(
+        eligible_schedule_date(database_now.with_timezone(&seoul))
+            .expect("prior eligible date exists"),
+    );
+    let ScheduleFixtureDateWindow {
+        eligible,
+        prior_close,
+        initial_session,
+        ..
+    } = date_window;
+    let at_close = |date: NaiveDate| {
+        seoul
+            .from_local_datetime(&date.and_hms_opt(16, 30, 0).expect("close time"))
+            .single()
+            .expect("fixed-offset date")
+    };
+
+    seed_wp5_schedule_entitlement(&harness, date_window).await;
+
+    let mut mutation_pins = pins();
+    mutation_pins.entitlement_reference = WP5_SCHEDULE_ENTITLEMENT_REFERENCE.to_owned();
+    mutation_pins.entitlement_sha256 = format!("sha256:{}", "d".repeat(64));
+    mutation_pins.requested_through =
+        TradingDate::parse(&initial_session.to_string()).expect("initial session pin");
+    let add = repo
+        .add(
+            &actor,
+            "005930",
+            "wp5-schedule-cadence-add",
+            &body,
+            &mutation_pins,
+        )
+        .await
+        .expect("seed ready membership");
+    let initial_claim = queue
+        .claim_next_for("wp5-initial", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim initial membership")
+        .expect("initial membership queued");
+    assert_eq!(initial_claim.job.id, add.job_id);
+    let initial_payload: OwnerEquityJobPayload =
+        serde_json::from_value(initial_claim.job.payload_json.clone())
+            .expect("initial membership payload");
+    assert_eq!(
+        initial_payload.entitlement_reference,
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE
+    );
+    assert_eq!(
+        initial_payload.entitlement_sha256,
+        format!("sha256:{}", "d".repeat(64))
+    );
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &initial_claim, &adapter)
+            .await
+            .expect("publish initial generation"),
+        OwnerEquityRunOutcome::Published
+    );
+
+    let schedule_pins = OwnerEquitySchedulePins::new(
+        CODE_COMMIT.to_owned(),
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE.to_owned(),
+        format!("sha256:{}", "d".repeat(64)),
+    )
+    .expect("valid scheduler pins");
+    seed_schedule_calendar(&harness, prior_close, "TRADING").await;
+
+    let bad_rights_pins = OwnerEquitySchedulePins::new(
+        CODE_COMMIT.to_owned(),
+        "krx-unregistered-fixture".to_owned(),
+        format!("sha256:{}", "d".repeat(64)),
+    )
+    .expect("syntactically valid but unregistered rights pin");
+    assert!(matches!(
+        run_owner_equity_schedule_cycle(&worker_pool, &bad_rights_pins, at_close(eligible)).await,
+        Err(OwnerEquityScheduleError::Database)
+    ));
+
+    let first = run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible))
+        .await
+        .expect("schedule prior confirmed close");
+    assert_eq!(first.as_of, prior_close);
+    assert_eq!(first.scheduled, 1);
+
+    // The current eligible date becomes available later during this same
+    // civil key. The older incremental remains active and blocks duplication.
+    seed_schedule_calendar(&harness, eligible, "TRADING").await;
+    let blocked = run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible))
+        .await
+        .expect("recheck after late calendar publication");
+    assert_eq!(blocked.as_of, eligible);
+    assert_eq!(blocked.scheduled, 0);
+    let active_incrementals: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM public.jobs \
+          WHERE owner_user_id = $1 AND job_type = $2 \
+            AND payload_json ->> 'action' = 'INCREMENTAL' \
+            AND status IN ('QUEUED', 'RUNNING')",
+    )
+    .bind(harness.owner.user_id)
+    .bind(OWNER_EQUITY_V2_JOB_TYPE)
+    .fetch_one(&worker_pool)
+    .await
+    .expect("active incremental count");
+    assert_eq!(active_incrementals, 1);
+
+    let older_claim = queue
+        .claim_next_for("wp5-older-incremental", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim older incremental")
+        .expect("older incremental remains queued");
+    let older_payload: OwnerEquityJobPayload =
+        serde_json::from_value(older_claim.job.payload_json.clone())
+            .expect("older incremental payload");
+    assert_eq!(older_payload.action, OwnerEquityJobAction::Incremental);
+    assert_eq!(
+        older_payload.requested_through.to_string(),
+        prior_close.to_string()
+    );
+    assert_eq!(older_payload.code_commit, CODE_COMMIT);
+    assert_eq!(
+        older_payload.entitlement_reference,
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE
+    );
+    assert_eq!(
+        older_payload.entitlement_sha256,
+        format!("sha256:{}", "d".repeat(64))
+    );
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &older_claim, &adapter)
+            .await
+            .expect("settle older incremental"),
+        OwnerEquityRunOutcome::Published
+    );
+
+    let (first_poll, concurrent_poll) = tokio::join!(
+        run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible)),
+        run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible)),
+    );
+    let first_poll = first_poll.expect("schedule after older job settles");
+    let concurrent_poll = concurrent_poll.expect("concurrent same-key schedule");
+    assert_eq!(first_poll.as_of, eligible);
+    assert_eq!(concurrent_poll.as_of, eligible);
+    let mut inserted = [first_poll.scheduled, concurrent_poll.scheduled];
+    inserted.sort();
+    assert_eq!(inserted, [0, 1]);
+    let duplicate_poll =
+        run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible))
+            .await
+            .expect("repeat same-key active poll");
+    assert_eq!(duplicate_poll.scheduled, 0);
+
+    let current_claim = queue
+        .claim_next_for("wp5-current-incremental", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim current incremental")
+        .expect("current incremental queued");
+    let current_payload: OwnerEquityJobPayload =
+        serde_json::from_value(current_claim.job.payload_json.clone())
+            .expect("current incremental payload");
+    assert_eq!(current_payload.action, OwnerEquityJobAction::Incremental);
+    assert_eq!(
+        current_payload.requested_through.to_string(),
+        eligible.to_string()
+    );
+    assert_eq!(current_payload.code_commit, CODE_COMMIT);
+    assert_eq!(
+        current_payload.entitlement_reference,
+        WP5_SCHEDULE_ENTITLEMENT_REFERENCE
+    );
+    assert_eq!(
+        current_payload.entitlement_sha256,
+        format!("sha256:{}", "d".repeat(64))
+    );
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &current_claim, &adapter)
+            .await
+            .expect("publish current generation"),
+        OwnerEquityRunOutcome::Published
+    );
+
+    let complete =
+        run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible))
+            .await
+            .expect("current generation has no missing coverage");
+    assert_eq!(complete.as_of, eligible);
+    assert_eq!(complete.scheduled, 0);
+    let admitted_current_coverage: NaiveDate = sqlx::query_scalar(
+        "SELECT generation.last_session \
+           FROM public.owner_equity_instrument_generations AS generation \
+           JOIN public.owner_equity_generation_admissions AS admission \
+             ON admission.generation_id = generation.id \
+            AND admission.owner_user_id = generation.owner_user_id \
+            AND admission.membership_id = generation.membership_id \
+            AND admission.instrument_id = generation.instrument_id \
+            AND admission.generation = generation.generation \
+          WHERE generation.owner_user_id = $1 AND generation.membership_id = $2 \
+          ORDER BY generation.generation DESC LIMIT 1",
+    )
+    .bind(harness.owner.user_id)
+    .bind(add.membership.id)
+    .fetch_one(&worker_pool)
+    .await
+    .expect("latest fully admitted coverage");
+    assert_eq!(admitted_current_coverage, eligible);
+
+    // Simulate an incomplete immutable lineage row: the highest stored
+    // generation has no admission. The real scheduler must continue to use
+    // the latest generation joined on all admission identity columns.
+    let unadmitted_generation_id = Uuid::new_v4();
+    harness
+        .seed_migration_owner(
+            &harness.owner,
+            &format!(
+                "INSERT INTO public.owner_equity_instrument_generations \
+                 (id, membership_id, owner_user_id, instrument_id, generation, \
+                  target_observed_sessions, minimum_observed_sessions, observed_sessions, \
+                  first_session, last_session) \
+                 VALUES ('{unadmitted_generation_id}', '{}', '{}', '005930.KRX', 4, \
+                         {TARGET_SESSIONS}, {MINIMUM_SESSIONS}, 121, \
+                         DATE '{initial_session}', DATE '{prior_close}')",
+                add.membership.id, harness.owner.user_id
+            ),
+        )
+        .await;
+    let unadmitted_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM public.owner_equity_instrument_generations AS generation \
+           LEFT JOIN public.owner_equity_generation_admissions AS admission \
+             ON admission.generation_id = generation.id \
+            AND admission.owner_user_id = generation.owner_user_id \
+            AND admission.membership_id = generation.membership_id \
+            AND admission.instrument_id = generation.instrument_id \
+            AND admission.generation = generation.generation \
+          WHERE generation.id = $1 AND admission.generation_id IS NULL",
+    )
+    .bind(unadmitted_generation_id)
+    .fetch_one(&worker_pool)
+    .await
+    .expect("unadmitted lineage count");
+    assert_eq!(unadmitted_rows, 1);
+    let (_, displayed) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("READY coverage");
+    assert_eq!(displayed.generation, 3);
+    assert_eq!(displayed.last_session, Some(eligible));
+    let no_lineage =
+        run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible))
+            .await
+            .expect("scheduler ignores the unadmitted generation");
+    assert_eq!(no_lineage.as_of, eligible);
+    assert_eq!(no_lineage.scheduled, 0);
+
+    let closed_day = eligible.succ_opt().expect("closed fixture date");
+    seed_schedule_calendar(&harness, closed_day, "CLOSED").await;
+    let closed =
+        run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(closed_day))
+            .await
+            .expect("closed day recheck");
+    assert_eq!(closed.as_of, eligible);
+    assert_eq!(closed.scheduled, 0);
+
+    let total_incrementals: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM public.jobs \
+          WHERE owner_user_id = $1 AND job_type = $2 \
+            AND payload_json ->> 'action' = 'INCREMENTAL'",
+    )
+    .bind(harness.owner.user_id)
+    .bind(OWNER_EQUITY_V2_JOB_TYPE)
+    .fetch_one(&worker_pool)
+    .await
+    .expect("incremental job count");
+    assert_eq!(total_incrementals, 2);
+    for session_date in [prior_close, eligible] {
+        let jobs_for_date: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM public.jobs \
+              WHERE owner_user_id = $1 AND job_type = $2 \
+                AND payload_json ->> 'action' = 'INCREMENTAL' \
+                AND payload_json ->> 'requested_through' = $3",
+        )
+        .bind(harness.owner.user_id)
+        .bind(OWNER_EQUITY_V2_JOB_TYPE)
+        .bind(session_date.to_string())
+        .fetch_one(&worker_pool)
+        .await
+        .expect("one job per confirmed close");
+        assert_eq!(jobs_for_date, 1);
+    }
+
+    worker_pool.close().await;
+    harness.teardown().await;
+}
+
+// Synthetic jobs only, in the harness-owned disposable database. Production
+// refresh state is read-only and never changes a membership or retries a job.
+async fn seed_refresh_job(
+    harness: &Harness,
+    owner: &UserCtx,
+    payload: &serde_json::Value,
+    status: &str,
+    job_type: &str,
+) -> Uuid {
+    assert!(matches!(status, "QUEUED" | "FAILED"));
+    assert!(matches!(job_type, "owner_equity_v2" | "backtest"));
+    let id = Uuid::new_v4();
+    let payload = payload.to_string().replace('\'', "''");
+    let terminal = if status == "FAILED" {
+        "now(), 'UNRELATED_FAILURE'"
+    } else {
+        "NULL, NULL"
+    };
+    harness.seed_migration_owner(owner, &format!(
+        "INSERT INTO public.jobs(id, owner_user_id, job_type, payload_json, status, finished_at, error_code, created_at)
+         VALUES ('{id}', '{}', '{job_type}', '{payload}'::jsonb, '{status}', {terminal}, clock_timestamp())",
+        owner.user_id
+    )).await;
+    id
+}
+
+#[tokio::test]
+async fn incremental_failure_is_visible_without_revoking_ready_and_clears_on_recovery() {
+    let Some(harness) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    provision_policy(&harness, &harness.owner, 2).await;
+    let other = seed_owner(&harness, "refresh-other", 2).await;
+    let repo = OwnerEquityV2Repo::new(harness.app_pool.clone());
+    let worker_pool = harness.worker_pool().await;
+    let queue = JobQueue::new(worker_pool.clone(), None, QueueConfig::default());
+    let adapter = FakeAdapter::default();
+    let actor = harness.owner.actor();
+    let add = repo
+        .add(
+            &actor,
+            "005930",
+            "refresh-visibility",
+            &"a".repeat(64),
+            &pins(),
+        )
+        .await
+        .expect("add fixture membership");
+    let claim = queue
+        .claim_next_for("refresh-initial", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim")
+        .expect("initial job");
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &claim, &adapter)
+            .await
+            .expect("publish initial"),
+        OwnerEquityRunOutcome::Published
+    );
+    let (_, prior) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("prior membership");
+    assert_eq!(prior.state, "READY");
+    assert!(prior.refresh_failure_code.is_none());
+    let mut payload = claim.job.payload_json.clone();
+    payload["action"] = serde_json::json!("INCREMENTAL");
+    payload["expected_generation"] = serde_json::json!(2);
+    payload["requested_through"] = serde_json::json!("2026-09-01");
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "QUEUED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    *adapter.fail_incremental_once.lock().await = true;
+    let failed = queue
+        .claim_next_for("refresh-failed", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim")
+        .expect("incremental job");
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &failed, &adapter)
+            .await
+            .expect("settle failure"),
+        OwnerEquityRunOutcome::Failed
+    );
+
+    // Newer unrelated failures must not mask the exact outstanding failure.
+    seed_refresh_job(
+        &harness,
+        &other,
+        &payload,
+        "FAILED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    for (field, value) in [
+        ("membership_id", serde_json::json!(Uuid::new_v4())),
+        ("instrument_id", serde_json::json!("000660.KRX")),
+        ("expected_generation", serde_json::json!(1)),
+        ("action", serde_json::json!("ADD")),
+        ("schema_version", serde_json::json!(2)),
+    ] {
+        let mut unrelated = payload.clone();
+        unrelated[field] = value;
+        seed_refresh_job(
+            &harness,
+            &harness.owner,
+            &unrelated,
+            "FAILED",
+            OWNER_EQUITY_V2_JOB_TYPE,
+        )
+        .await;
+    }
+    seed_refresh_job(&harness, &harness.owner, &payload, "FAILED", "backtest").await;
+    let (_, current) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("failure visible");
+    assert_eq!(current.state, "READY");
+    assert_eq!(current.generation, prior.generation);
+    assert_eq!(current.last_session, prior.last_session);
+    assert!(current.error_code.is_none());
+    assert_eq!(
+        current.refresh_failure_code.as_deref(),
+        Some("INCREMENTAL_OVERLAP_CHANGED")
+    );
+    assert_eq!(
+        current.refresh_requested_through.as_deref(),
+        Some("2026-09-01")
+    );
+    assert!(current.refresh_failed_at.is_some());
+    let (_, listed) = repo
+        .list(&actor)
+        .await
+        .expect("list uses same scoped query");
+    assert_eq!(listed, vec![current]);
+    assert!(matches!(
+        repo.get(&other.actor(), add.membership.id).await,
+        Err(OwnerEquityRepoError::NotFound)
+    ));
+
+    let path = format!(
+        "/api/v1/research/owner-beta/equity-universe-v2/memberships/{}",
+        add.membership.id
+    );
+    let response = harness.get(&path, Some(&harness.owner)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = Harness::body_json(response).await;
+    assert_eq!(body["membership"]["lifecycle"], "READY");
+    assert_eq!(
+        body["membership"]["refresh_failure"]["code"],
+        "INCREMENTAL_OVERLAP_CHANGED"
+    );
+    assert_eq!(
+        body["membership"]["refresh_failure"]["requested_through"],
+        "2026-09-01"
+    );
+    assert!(body["membership"].get("failure").is_none());
+
+    // A newly queued attempt supersedes the previous failure, and actual
+    // publication advances the generation without rewriting the old job.
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "QUEUED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    assert!(
+        repo.get(&actor, add.membership.id)
+            .await
+            .expect("pending attempt")
+            .1
+            .refresh_failure_code
+            .is_none()
+    );
+    let retry = queue
+        .claim_next_for("refresh-recovered", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim")
+        .expect("new incremental");
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &retry, &adapter)
+            .await
+            .expect("publish incremental"),
+        OwnerEquityRunOutcome::Published
+    );
+    // Even a late failure from the now-obsolete generation cannot reappear.
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "FAILED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    let (_, recovered) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("recovered");
+    assert_eq!(recovered.generation, 2);
+    assert_eq!(
+        recovered.last_session,
+        Some(NaiveDate::from_ymd_opt(2026, 9, 1).unwrap())
+    );
+    assert!(recovered.refresh_failure_code.is_none());
+    let original_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+        .bind(failed.job.id)
+        .fetch_one(&worker_pool)
+        .await
+        .expect("original job retained");
+    assert_eq!(original_status, "FAILED");
+    payload["expected_generation"] = serde_json::json!(3);
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "FAILED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    assert!(
+        repo.get(&actor, add.membership.id)
+            .await
+            .expect("next failure")
+            .1
+            .refresh_failure_code
+            .is_some()
+    );
+    repo.disable(
+        &actor,
+        add.membership.id,
+        "refresh-disable",
+        &"b".repeat(64),
+        &pins(),
+    )
+    .await
+    .expect("disable membership");
+    assert!(
+        repo.get(&actor, add.membership.id)
+            .await
+            .expect("disabled")
+            .1
+            .refresh_failure_code
+            .is_none()
+    );
     worker_pool.close().await;
     harness.teardown().await;
 }

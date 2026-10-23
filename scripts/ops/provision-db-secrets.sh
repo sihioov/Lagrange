@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate the seven production PostgreSQL source secret files.
+# Generate the eight production PostgreSQL source secret files.
 #
 # The default mode is a non-mutating plan.  --check is a root-only read-only
 # validation of the existing DB source files; --apply is deliberately explicit
@@ -23,6 +23,7 @@ declare -a secret_names=(
   db_audit_password
   db_research_password
   db_admin_password
+  db_daily_input_admitter_password
 )
 declare -a installed_targets=()
 declare -a installed_signatures=()
@@ -36,9 +37,9 @@ Usage: scripts/ops/provision-db-secrets.sh [--dry-run|--check|--strip-trailing-n
        [--source-dir ABSOLUTE_PATH]
 
 Modes:
-  --dry-run              Print the seven-file plan without changing the host
+  --dry-run              Print the eight-file plan without changing the host
                          (default; safe to run as a non-root user).
-  --check                Validate the existing seven source files read-only;
+  --check                Validate the existing eight source files read-only;
                          requires root; accepts strict 64-hex or 44-character
                          standard Base64 encodings and never prints values.
   --strip-trailing-newline
@@ -460,7 +461,7 @@ print_plan() {
   local name
   echo "DB_SECRET_PROVISION mode=$mode"
   echo "  source=$source_dir"
-  echo "  generate exactly seven distinct 256-bit values with openssl rand -hex 32"
+  echo "  generate exactly eight distinct 256-bit values with openssl rand -hex 32"
   echo "  final files: owner=root:root mode=0600, one-line lowercase hex"
   for name in "${secret_names[@]}"; do
     echo "  ensure $source_dir/$name"
@@ -608,5 +609,5 @@ rmdir -- "$staging_dir"
 staging_dir=
 
 echo "DB_SECRET_PROVISION mode=apply source=$source_dir"
-echo 'APPLY: generated exactly seven distinct DB source secret files'
+echo 'APPLY: generated exactly eight distinct DB source secret files'
 echo 'APPLY: values were not printed; runtime-copy and database-role steps remain separate'

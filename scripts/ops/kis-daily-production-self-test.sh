@@ -12,6 +12,8 @@ state_helper="$script_dir/lib/kis-daily-state.py"
 [ -x "$installer" ] || { echo 'KIS_DAILY_SELF_TEST: installer is not executable' >&2; exit 1; }
 [ -f "$state_helper" ] && [ ! -L "$state_helper" ] || { echo 'KIS_DAILY_SELF_TEST: state helper is missing or unsafe' >&2; exit 1; }
 bash -n "$runner"
+bash -n "$script_dir/backfill-production.sh"
+bash -n "$script_dir/backfill-production-self-test.sh"
 bash -n "$installer"
 python3 -B -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="ascii"))' "$state_helper"
 
@@ -134,7 +136,7 @@ for required in \
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$release/$required"
   chmod 0755 "$release/$required"
 done
-for required in scripts/ops/lib/dotenv.sh scripts/ops/lib/db.sh; do
+for required in scripts/ops/lib/dotenv.sh scripts/ops/lib/db.sh scripts/ops/lib/kis-read-compose.sh scripts/ops/lib/backfill-progress.py; do
   printf '%s\n' '# helper fixture' >"$release/$required"
   chmod 0644 "$release/$required"
 done
@@ -155,6 +157,14 @@ KIS_DAILY_TIMER_TEST_NOW=16:30:00 \
 grep -Fq "release=$release code_commit=$commit" "$test_root/install-plan.out"
 grep -Fq "WorkingDirectory=$release" "$test_root/install-plan.out"
 grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --execute" "$test_root/install-plan.out"
+bash "$installer" "${installer_args[@]}" --raw-source --dry-run >"$test_root/raw-install-plan.out"
+grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --raw-source --execute" "$test_root/raw-install-plan.out"
+bash "$installer" "${installer_args[@]}" --action-supply --raw-source --dry-run >"$test_root/supply-install-plan.out"
+grep -Fq "ExecStart=$release/scripts/ops/kis-daily-production.sh --raw-source --action-supply --execute" "$test_root/supply-install-plan.out"
+if bash "$installer" "${installer_args[@]}" --action-supply --dry-run >"$test_root/invalid-supply.out" 2>&1; then
+  echo 'action supplier accepted legacy mode' >&2
+  exit 1
+fi
 grep -Fq 'apply-window=closed (at/after 16:30:00 Asia/Seoul; --apply is refused)' "$test_root/install-plan.out"
 
 bash "$installer" --preflight "${installer_args[@]}" >"$test_root/install-preflight.out"
@@ -471,4 +481,5 @@ if grep -Eq 'KIS_ACCOUNT_REF|(^|[^[:alnum:]_])CANO([^[:alnum:]_]|$)|ACNT_PRDT_CD
   echo 'KIS_DAILY_SELF_TEST: installer contains a forbidden account/live surface' >&2
   exit 1
 fi
+bash "$script_dir/backfill-production-self-test.sh"
 echo 'KIS_DAILY_SELF_TEST: PASS (syntax, provider-free plan, immutable release unit paths, late apply gate, lock/calendar/DB/worker contracts)'

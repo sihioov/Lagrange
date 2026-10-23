@@ -1,5 +1,13 @@
 //! One-shot, lease-supervised owner-beta price recommendation worker.
 
+pub mod daily_admission;
+mod daily_catalog;
+pub mod daily_execution;
+pub mod daily_ingest;
+mod daily_local_state;
+pub mod daily_runtime;
+pub mod daily_schedule;
+
 use std::{
     fmt,
     path::{Component, Path, PathBuf},
@@ -98,6 +106,8 @@ impl OwnerBetaRunnerConfig {
 pub enum OwnerBetaRunnerError {
     #[error("owner-beta artifact root is invalid")]
     InvalidArtifactRoot,
+    #[error("owner-beta daily execution requires a multithread runtime")]
+    UnsupportedDailyRuntime,
     #[error("owner-beta queue is unavailable")]
     QueueUnavailable,
     #[error("owner-beta publication is unavailable")]
@@ -179,6 +189,17 @@ pub async fn run_once(
         Ok(input) => input,
         Err(_) => return malformed_claim(pool, queue, &claim).await,
     };
+    run_historical_claim(pool, queue, claim, input, paths, config).await
+}
+
+async fn run_historical_claim(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: ClaimedJob,
+    input: OwnerBetaPriceRecommendationInput,
+    paths: &OwnerBetaRunnerPaths,
+    config: &OwnerBetaRunnerConfig,
+) -> Result<OwnerBetaOutcome, OwnerBetaRunnerError> {
     if input.validate_strategy_snapshot().is_err() {
         return settle(
             pool,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { mutateWithCsrf } from "@/lib/api/browser-client";
 import { parseBrowserApiResponse } from "@/lib/api/browser-response";
 import { useLocale } from "@/lib/i18n/client";
@@ -22,10 +22,21 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
   const [state, setState] = useState<RunState>("idle");
   const [message, setMessage] = useState("");
   const [submittedRun, setSubmittedRun] = useState<RecommendationRunModel | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
   const { locale } = useLocale();
   const t = recommendationsDictionary[locale];
 
+  useEffect(
+    () => () => {
+      // This signal owns UI work; an already-dispatched POST can still commit.
+      requestRef.current?.abort();
+      requestRef.current = null;
+    },
+    [],
+  );
+
   async function submit(form: HTMLFormElement): Promise<void> {
+    if (requestRef.current !== null) return;
     const formData = new FormData(form);
     const asOf = formData.get("as_of");
     const strategyConfigId = formData.get("strategy_config_id");
@@ -39,23 +50,32 @@ export function RecommendationRunForm({ configs, defaultAsOf }: RecommendationRu
       setMessage(t.selectStrategyConfig);
       return;
     }
+    const request = new AbortController();
+    requestRef.current = request;
     setState("submitting");
     setSubmittedRun(null);
     try {
       const response = await mutateWithCsrf("/api/v1/recommendations/runs", {
         json: { as_of: asOf, strategy_config_id: strategyConfigId },
         method: "POST",
+        signal: request.signal,
       });
-      const run = await parseBrowserApiResponse(response, recommendationRunSchema);
+      const run = await parseBrowserApiResponse(response, recommendationRunSchema, {
+        signal: request.signal,
+      });
+      if (request.signal.aborted) return;
       setState("idle");
       setSubmittedRun(run);
     } catch (error) {
+      if (request.signal.aborted) return;
       if (error instanceof Error) {
         setState("error");
         setMessage(error.message);
         return;
       }
       throw error;
+    } finally {
+      if (requestRef.current === request) requestRef.current = null;
     }
   }
 

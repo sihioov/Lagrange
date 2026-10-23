@@ -163,6 +163,8 @@ export function OwnerBetaReport({ run, t }: OwnerBetaReportProps) {
   }
   const safeRun = parsed.data;
   const items = safeRun.items;
+  const dailyInput = safeRun.input?.kind === "daily" ? safeRun.input : null;
+  const historicalPins = dailyInput?.base ?? safeRun;
   return (
     <section aria-labelledby="owner-beta-report-title" className="data-report">
       <header className="report-heading">
@@ -189,6 +191,14 @@ export function OwnerBetaReport({ run, t }: OwnerBetaReportProps) {
       <section aria-labelledby="owner-beta-contract-title" className="report-section">
         <h3 id="owner-beta-contract-title">{t.provenanceHeading}</h3>
         <dl className="provenance-grid">
+          <div>
+            <dt>{t.dailyProvenanceLabel}</dt>
+            <dd>{dailyInput === null ? t.dailyManual : t.dailyAutomatic}</dd>
+          </div>
+          <div>
+            <dt>{t.dailyPublishedAt}</dt>
+            <dd>{timestamp(safeRun.published_at, t)}</dd>
+          </div>
           <div>
             <dt>{t.ownerBetaStrategyIdentityLabel}</dt>
             <dd>
@@ -236,6 +246,29 @@ export function OwnerBetaReport({ run, t }: OwnerBetaReportProps) {
 
       <details className="lineage-details">
         <summary>{t.ownerBetaAuditDetails}</summary>
+        {dailyInput === null ? null : (
+          <>
+            <dl className="provenance-grid">
+              <div>
+                <dt>{t.dailyContentHash}</dt>
+                <dd className="data-cell">{dailyInput.content_sha256}</dd>
+              </div>
+              <div>
+                <dt>{t.dailyManifestHash}</dt>
+                <dd className="data-cell">{dailyInput.manifest_sha256}</dd>
+              </div>
+              <div>
+                <dt>{t.dailyAdmissionHash}</dt>
+                <dd className="data-cell">{dailyInput.admission_sha256}</dd>
+              </div>
+              <div>
+                <dt>{t.dailyPolicyHash}</dt>
+                <dd className="data-cell">{dailyInput.policy_sha256}</dd>
+              </div>
+            </dl>
+            <h4>{t.dailyBasePins}</h4>
+          </>
+        )}
         <dl className="provenance-grid">
           <div>
             <dt>{t.ownerBetaRunIdLabel}</dt>
@@ -255,23 +288,23 @@ export function OwnerBetaReport({ run, t }: OwnerBetaReportProps) {
           </div>
           <div>
             <dt>{t.ownerBetaCandidateContentHashLabel}</dt>
-            <dd className="data-cell">{safeRun.candidate_content_sha256}</dd>
+            <dd className="data-cell">{historicalPins.candidate_content_sha256}</dd>
           </div>
           <div>
             <dt>{t.ownerBetaArtifactManifestHashLabel}</dt>
-            <dd className="data-cell">{safeRun.artifact_manifest_sha256}</dd>
+            <dd className="data-cell">{historicalPins.artifact_manifest_sha256}</dd>
           </div>
           <div>
             <dt>{t.ownerBetaStage5ManifestHashLabel}</dt>
-            <dd className="data-cell">{safeRun.stage5_manifest_sha256}</dd>
+            <dd className="data-cell">{historicalPins.stage5_manifest_sha256}</dd>
           </div>
           <div>
             <dt>{t.ownerBetaActionManifestHashLabel}</dt>
-            <dd className="data-cell">{safeRun.action_manifest_sha256}</dd>
+            <dd className="data-cell">{historicalPins.action_manifest_sha256}</dd>
           </div>
           <div>
             <dt>{t.ownerBetaApprovalRegistryHashLabel}</dt>
-            <dd className="data-cell">{safeRun.approval_registry_sha256}</dd>
+            <dd className="data-cell">{historicalPins.approval_registry_sha256}</dd>
           </div>
           <div>
             <dt>{t.factorSnapshotLabel}</dt>

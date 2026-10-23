@@ -69,6 +69,7 @@ export function RecommendationRunStatus({
       return;
     }
     let cancelled = false;
+    const request = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     const pollRun = async (attempt: number): Promise<void> => {
@@ -76,11 +77,15 @@ export function RecommendationRunStatus({
         const response = await fetch(`/api/v1/recommendations/runs/${encodeURIComponent(run.id)}`, {
           cache: "no-store",
           credentials: "same-origin",
+          signal: request.signal,
         });
-        const next = await parseBrowserApiResponse(response, recommendationRunSchema);
+        const next = await parseBrowserApiResponse(response, recommendationRunSchema, {
+          signal: request.signal,
+        });
         if (cancelled) {
           return;
         }
+        setPollError(null);
         setCurrentRun(next);
         if (next.status !== "PENDING") {
           onSettled?.(next);
@@ -105,6 +110,7 @@ export function RecommendationRunStatus({
 
     return () => {
       cancelled = true;
+      request.abort();
       if (timeout !== undefined) {
         clearTimeout(timeout);
       }

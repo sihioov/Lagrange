@@ -13,6 +13,7 @@ import {
   stockBetaDashboardArchitecture,
   stockBetaDashboardCatalog,
 } from "@/components/stock-beta/dashboard/widget-registry";
+import { MembershipStatusWidget } from "@/components/stock-beta/dashboard/widgets/membership-status-widget";
 import { stockBetaDetailArchitecture } from "@/components/stock-beta/detail/widget-registry";
 import {
   defineStockBetaWidgetArchitecture,
@@ -144,6 +145,7 @@ function dashboardViewModel(
     locale: "en",
     memberships: list.memberships,
     mutationPending: false,
+    interactionReady: true,
     onAdd: async () => undefined,
     onCancelDisable: () => undefined,
     onConfirmDisable: async () => undefined,
@@ -680,5 +682,66 @@ describe("stock-beta V2 dashboard composition", () => {
     );
 
     expect(actualClientFiles.sort()).toEqual(clientFiles.sort());
+  });
+});
+
+describe("incremental refresh failure display", () => {
+  it("keeps READY detail access, shows data date and failure, and never offers a retry", () => {
+    const list = membershipsFor();
+    const failed = {
+      ...membershipFor(0, "READY"),
+      refresh_failure: {
+        code: "INCREMENTAL_OVERLAP_CHANGED",
+        requested_through: "2026-09-01",
+        failed_at: "2026-09-01T08:00:00Z",
+      },
+    };
+    const viewModel = dashboardViewModel(
+      null,
+      { ...list, memberships: [failed] },
+      {
+        copy: stockBetaDictionary.ko,
+        locale: "ko",
+      },
+    );
+    const html = renderToStaticMarkup(<MembershipStatusWidget viewModel={viewModel} />);
+    expect(html).toContain('data-lifecycle="READY"');
+    expect(html).toContain("갱신 실패");
+    expect(html).toContain("2026-09-01");
+    expect(html).toContain("데이터 기준일");
+    expect(html).toContain("2026-08-29");
+    expect(html).toContain("마지막 승인 데이터를 표시하고 있습니다.");
+    expect(html).toContain("기존 일봉과 새 응답의 값이 달라 갱신을 중단했습니다.");
+    expect(html).toContain("INCREMENTAL_OVERLAP_CHANGED");
+    expect(html).toContain(`/stock-beta/${failed.instrument_id}`);
+    expect(html).not.toContain(stockBetaDictionary.ko.retry);
+
+    const recovered = renderToStaticMarkup(
+      <MembershipStatusWidget viewModel={{ ...viewModel, memberships: list.memberships }} />,
+    );
+    expect(recovered).not.toContain("갱신 실패");
+    expect(recovered).not.toContain("INCREMENTAL_OVERLAP_CHANGED");
+    expect(recovered).toContain("2026-08-29");
+  });
+
+  it("accepts the optional contract but rejects incomplete or untyped refresh failures", () => {
+    const membership = membershipFor(0, "READY");
+    const schema = ownerEquityV2MembershipListSchema.shape.memberships.element;
+    const refresh_failure = {
+      code: "INCREMENTAL_OVERLAP_CHANGED",
+      requested_through: "2026-09-01",
+      failed_at: BASE_TIME,
+    };
+    expect(schema.safeParse({ ...membership, refresh_failure }).success).toBe(true);
+    expect(schema.safeParse(membership).success).toBe(true);
+    expect(
+      schema.safeParse({ ...membership, refresh_failure: { code: refresh_failure.code } }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...membership,
+        refresh_failure: { ...refresh_failure, code: "broker free text" },
+      }).success,
+    ).toBe(false);
   });
 });

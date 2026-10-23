@@ -6,6 +6,9 @@
 //! Curated, Paper, provider, process, or order path.
 
 pub mod compute;
+pub mod daily_compute;
+pub mod daily_input;
+pub mod daily_target;
 pub mod input;
 pub mod publish;
 pub mod recovery;

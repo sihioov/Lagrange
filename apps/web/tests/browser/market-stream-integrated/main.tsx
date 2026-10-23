@@ -71,6 +71,7 @@ function Fixture() {
     locale: "en",
     memberships: list.memberships,
     mutationPending: false,
+    interactionReady: true,
     onAdd: async () => undefined,
     onCancelDisable: noop,
     onConfirmDisable: async () => undefined,

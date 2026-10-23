@@ -67,6 +67,12 @@ export type StockBetaDictionary = {
   readonly emptyMembershipsMessage: string;
   readonly emptyMembershipsTitle: string;
   readonly failureCodeLabel: string;
+  readonly admittedDataDateLabel: string;
+  readonly unknownDataDate: string;
+  readonly refreshFailed: string;
+  readonly refreshRequestedThroughLabel: string;
+  readonly refreshPreservedData: string;
+  readonly refreshOverlapChanged: string;
   readonly firstSessionLabel: string;
   readonly generationLabel: string;
   readonly highLabel: string;
@@ -298,6 +304,12 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
       "No research instruments are configured. Add an exact six-digit KRX code.",
     emptyMembershipsTitle: "No configured instruments",
     failureCodeLabel: "Typed failure",
+    admittedDataDateLabel: "Data through",
+    unknownDataDate: "Not yet available",
+    refreshFailed: "Update failed",
+    refreshRequestedThroughLabel: "Requested through",
+    refreshPreservedData: "Showing the last approved data.",
+    refreshOverlapChanged: "The new daily bars differ from the approved data.",
     firstSessionLabel: "First session",
     generationLabel: "Generation",
     highLabel: "High",
@@ -531,6 +543,12 @@ export const stockBetaDictionary: LocaleDictionary<StockBetaDictionary> = {
     emptyMembershipsMessage: "구성된 연구 종목이 없습니다. 정확한 KRX 코드 6자리를 추가하세요.",
     emptyMembershipsTitle: "구성 종목 없음",
     failureCodeLabel: "유형화된 실패",
+    admittedDataDateLabel: "데이터 기준일",
+    unknownDataDate: "아직 없음",
+    refreshFailed: "갱신 실패",
+    refreshRequestedThroughLabel: "갱신 대상일",
+    refreshPreservedData: "마지막 승인 데이터를 표시하고 있습니다.",
+    refreshOverlapChanged: "기존 일봉과 새 응답의 값이 달라 갱신을 중단했습니다.",
     firstSessionLabel: "첫 세션",
     generationLabel: "세대",
     highLabel: "고가",

@@ -181,6 +181,128 @@ def assert_cache_policy(workflow: dict) -> None:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_workspace_rustup_store_is_isolated_without_toolchain_override(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        job = ci["jobs"]["workspace-tests"]
+        self.assertNotIn("RUSTUP_HOME", job["env"])
+        self.assertFalse(any("runner." in value for value in job["env"].values()))
+        setup = [step for step in job["steps"]
+                 if step.get("name") == "Prepare isolated Rust toolchain store"]
+        self.assertEqual(len(setup), 1)
+        self.assertEqual(job["steps"].index(setup[0]), 1)
+        self.assertNotIn("if", setup[0])
+        for env in [ci.get("env", {}), job["env"],
+                    *(step.get("env", {}) for step in job["steps"])]:
+            self.assertNotIn("RUSTUP_TOOLCHAIN", env)
+            self.assertNotIn("RUSTUP_DIST_SERVER", env)
+        self.assertNotIn("continue-on-error", job)
+        commands = command_lines(job)
+        self.assertIn("cargo test --workspace --locked --no-fail-fast --features kis-client/test-support", commands)
+        self.assertIn("cargo test -p api-server --test http_owner_equity_v2_chart --locked", commands)
+        for step in job["steps"]:
+            if "continue-on-error" in step:
+                self.assertIn(step.get("id"), {
+                    "cargo-download-restore", "cargo-target-restore", "uv-restore",
+                    "cargo-download-save", "cargo-target-save", "uv-save",
+                })
+            self.assertNotIn("RUSTUP_HOME", step.get("env", {}))
+
+    def test_workspace_rustup_setup_creates_private_store_and_requires_runner_context(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        script = next(step["run"] for step in ci["jobs"]["workspace-tests"]["steps"]
+                      if step.get("name") == "Prepare isolated Rust toolchain store")
+        with tempfile.TemporaryDirectory(prefix="rustup CI contract ") as root:
+            env_path = Path(root) / "job-env"
+            env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": root,
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                   "GITHUB_ENV": str(env_path)}
+            result = subprocess.run(["bash", "-c", script], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            key, value = env_path.read_text().strip().split("=", 1)
+            self.assertEqual(key, "RUSTUP_HOME")
+            store = Path(value)
+            self.assertEqual(store.parent, Path(root))
+            self.assertTrue(store.name.startswith("lagrange-workspace-rustup-123-1."))
+            self.assertEqual(store.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(list(store.iterdir()), [])
+            original = env_path.read_bytes()
+            del env["RUNNER_TEMP"]
+            result = subprocess.run(["bash", "-c", script], env=env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(env_path.read_bytes(), original)
+
+    def test_grant_inspection_postgres_is_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [step for step in ci["jobs"]["policy"]["steps"]
+                 if step.get("name") == "Verify market-stream grant inspection on isolated PostgreSQL"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["run"],
+            "sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py")
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+        helper_steps = [step for step in ci["jobs"]["policy"]["steps"]
+                        if step.get("name") == "Verify market-stream grant helper inspection boundaries"]
+        self.assertEqual(len(helper_steps), 1)
+        self.assertEqual(helper_steps[0]["run"],
+                         "python -m unittest scripts.ops.test_market_stream_grant -v")
+        self.assertNotIn("continue-on-error", helper_steps[0])
+        required = ci["jobs"]["required"]
+        self.assertIn("policy", required["needs"])
+        names = [step.get("name") for step in ci["jobs"]["policy"]["steps"]]
+        # The preceding transport fixture materializes this same pinned image;
+        # the inspection fixture deliberately never pulls on its own.
+        self.assertLess(names.index("Verify daily actual PostgreSQL control transport"),
+                        names.index("Verify market-stream grant inspection on isolated PostgreSQL"))
+
+    def test_daily_runner_status_bindings_are_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [step for step in ci["jobs"]["policy"]["steps"]
+                 if step.get("name") == "Verify service-status binding for daily raw and action-supply modes"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["run"],
+                         "python -m unittest discover -s scripts/ops -p 'test*service_status*.py' -v")
+        self.assertNotIn("if", steps[0])
+        self.assertNotIn("continue-on-error", steps[0])
+
+    def test_fixed_base_copy_principals_are_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [step for step in ci["jobs"]["policy"]["steps"]
+                 if step.get("name") == "Verify fixed historical base copies and real reader principals"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["run"], "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-base-self-test.py")
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+
+    def test_wholeflow_docker_fixture_is_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [
+            step for step in ci["jobs"]["policy"]["steps"]
+            if step.get("name") == "Verify whole-flow actual Docker inherited volume boundaries"
+        ]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(
+            steps[0]["run"],
+            "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-docker-self-test.py",
+        )
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+
+    def test_image_builder_fixture_is_a_required_policy_step(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        steps = [
+            step for step in ci["jobs"]["policy"]["steps"]
+            if step.get("name") == "Verify complete image builder with synthetic Docker images"
+        ]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(
+            steps[0]["run"],
+            "sudo env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory "
+            'GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" '
+            "bash scripts/ops/build-production-images-self-test.sh",
+        )
+        self.assertEqual(steps[0].get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", steps[0])
+
     def test_all_shell_scripts_are_checked_out_with_lf(self) -> None:
         attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
         self.assertIn("*.sh text eol=lf", attributes)
@@ -724,7 +846,8 @@ print(json.dumps(value))
             "npm test --workspace @lagrange/web", "npm run build --workspace @lagrange/web",
             "bash scripts/qa/candidate-web-e2e.sh",
         ]
-        web_commands = [line for line in command_lines(ci["jobs"]["web"]) if line in expected_web_commands]
+        web_commands = [line for line in command_lines(ci["jobs"]["web"])
+                        if line in expected_web_commands or line.startswith("node scripts/qa/")]
         self.assertEqual(
             web_commands,
             [
@@ -734,6 +857,14 @@ print(json.dumps(value))
                 "npm run lint --workspace @lagrange/web",
                 "npm run typecheck --workspace @lagrange/web",
                 "npm test --workspace @lagrange/web",
+                'node scripts/qa/recommendation-poll-recovery-browser.mjs '
+                '"/tmp/lagrange-recommendation-poll-${{ github.run_id }}-${{ github.run_attempt }}"',
+                'node scripts/qa/recommendation-submit-lifetime-browser.mjs '
+                '"/tmp/lagrange-recommendation-submit-${{ github.run_id }}-${{ github.run_attempt }}"',
+                'node scripts/qa/daily-preference-lifetime-browser.mjs '
+                '"/tmp/lagrange-daily-preference-${{ github.run_id }}-${{ github.run_attempt }}"',
+                'node scripts/qa/stock-beta-membership-order-browser.mjs '
+                '"/tmp/lagrange-membership-order-${{ github.run_id }}-${{ github.run_attempt }}"',
                 "npm run build --workspace @lagrange/web",
                 "bash scripts/qa/candidate-web-e2e.sh",
             ],
@@ -753,6 +884,54 @@ print(json.dumps(value))
         )
         self.assertEqual(playwright_step.get("working-directory"), "apps/web")
         policy_steps = ci["jobs"]["policy"]["steps"]
+        independent_fixtures = {
+            "Verify daily backup files and failure ordering",
+            "Verify daily encrypted full-schema isolated restore",
+            "Verify installed backup version transition and recovery",
+            "Verify pre-upgrade cold archive boundaries",
+            "Verify pre-upgrade maintenance failure boundaries",
+            "Verify pre-upgrade schema59 isolated recovery",
+            "Verify whole-flow fixture and driver boundaries",
+            "Verify whole-flow actual Docker inherited volume boundaries",
+            "Verify legacy production operations fixtures",
+        }
+        fixture_steps = [
+            step for step in policy_steps if step.get("name") in independent_fixtures
+        ]
+        self.assertEqual({step["name"] for step in fixture_steps}, independent_fixtures)
+        for step in fixture_steps:
+            self.assertEqual(step.get("if"), "${{ !cancelled() }}")
+            self.assertNotIn("continue-on-error", step)
+        transition_step = next(
+            step for step in fixture_steps
+            if step["name"] == "Verify installed backup version transition and recovery"
+        )
+        self.assertEqual(
+            transition_step["run"],
+            "sudo /usr/bin/python3 scripts/ops/production-backup-transition-self-test.py",
+        )
+        wholeflow = next(step for step in fixture_steps
+                         if step["name"] == "Verify whole-flow fixture and driver boundaries")
+        self.assertEqual(wholeflow["run"], "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-wholeflow-fixture-self-test.py")
+        lifecycle = next(step for step in policy_steps
+                         if step.get("name") == "Verify whole-flow bounded lifecycle recording")
+        self.assertEqual(lifecycle["run"], "python3 scripts/ops/owner-beta-daily-lifecycle-self-test.py")
+        self.assertEqual(lifecycle.get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", lifecycle)
+        lifecycle_docker = next(step for step in policy_steps
+                                if step.get("name") == "Verify whole-flow actual Docker lifecycle events")
+        self.assertEqual(lifecycle_docker["run"], "sudo /usr/bin/python3 scripts/ops/owner-beta-daily-lifecycle-docker-self-test.py")
+        self.assertEqual(lifecycle_docker.get("if"), "${{ !cancelled() }}")
+        self.assertNotIn("continue-on-error", lifecycle_docker)
+        for name, script in (
+            ("Verify pre-upgrade cold archive boundaries", "production-preupgrade-recovery-self-test.py"),
+            ("Verify pre-upgrade maintenance failure boundaries", "production-preupgrade-maintenance-self-test.py"),
+            ("Verify pre-upgrade schema59 isolated recovery", "production-preupgrade-recovery-docker-self-test.py"),
+        ):
+            self.assertEqual(
+                next(step["run"] for step in fixture_steps if step["name"] == name),
+                "sudo /usr/bin/python3 scripts/ops/" + script,
+            )
         setup_node = next(
             step
             for step in policy_steps
@@ -1134,6 +1313,101 @@ print(json.dumps(value))
             encoding="utf-8"
         )
         self.assertIn("RESEARCH_ENTITLEMENT_SHA256: ${RESEARCH_ENTITLEMENT_SHA256:?", compose)
+
+
+class ResearchSmokeCleanupTests(unittest.TestCase):
+    def run_cleanup(
+        self, original_exit: int = 0, failure: str = "", probe: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        source = (ROOT / "scripts/qa/research-worker-smoke.sh").read_text("utf-8")
+        functions = source.split("cleanup_command() {", 1)[1].split(
+            "trap cleanup EXIT", 1
+        )[0]
+        functions = "cleanup_command() {" + functions
+        if probe:
+            functions += "probe_cleanup() {" + source.split(
+                "probe_cleanup() {", 1
+            )[1].split("  trap probe_cleanup EXIT", 1)[0]
+        stubs = r'''
+rc() {
+  printf '%s\n' 'PRIVATE_DIAGNOSTIC_SENTINEL' >&2
+  if [ "$1" = "$FAILURE" ]; then return 17; fi
+}
+dkr() {
+  printf '%s\n' 'PRIVATE_DIAGNOSTIC_SENTINEL' >&2
+  if [ "$1 $2" = 'ps -aq' ]; then
+    if [ "$FAILURE" = query ]; then return 19; fi
+    if [ "$FAILURE" = remaining ]; then printf '%s\n' 'PRIVATE_RESOURCE_SENTINEL'; fi
+  fi
+  if [ "$1 $2" = 'volume rm' ] && [ "$FAILURE" = probe ]; then return 23; fi
+  return 0
+}
+created=1
+context_audit_created=1
+smoke_started=0 build_seconds=0 host_cargo_seconds=0
+research_worker_cache_promoted=false candidate_runner_cache_promoted=false
+research_worker_cache_bytes=0 candidate_runner_cache_bytes=0
+GITHUB_OUTPUT=/dev/null
+project=isolated-cleanup-test
+context_audit_tag=isolated-cleanup-test-context
+raw_volume=a curated_volume=b outside_volume=c binary_volume=d cargo_home_volume=e cargo_target_volume=f
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            script = "set -euo pipefail\n" + functions + stubs
+            script += f"trap {'probe_cleanup' if probe else 'cleanup'} EXIT\nexit {original_exit}\n"
+            return subprocess.run(
+                ["bash", "-c", script],
+                env={"PATH": os.defpath, "FAILURE": failure, "temp_root": directory},
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+
+    def test_success_records_absence_and_every_cleanup_stage(self) -> None:
+        result = self.run_cleanup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for step in (
+            "stop-research", "empty-fixture-data", "compose-down",
+            "project-containers", "project-volumes", "project-networks",
+            "context-image", "context-image-absence", "temporary-directory",
+        ):
+            self.assertIn(f"cleanup step={step} exit=0", result.stdout)
+        self.assertIn("original_exit=0 cleanup_exit=0", result.stdout)
+        self.assertNotIn("PRIVATE_", result.stdout + result.stderr)
+
+    def test_cleanup_failure_fails_an_otherwise_successful_smoke(self) -> None:
+        result = self.run_cleanup(failure="down")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=compose-down exit=17", result.stdout)
+        self.assertIn("step=temporary-directory exit=0", result.stdout)
+
+    def test_cleanup_failure_preserves_the_original_failure(self) -> None:
+        result = self.run_cleanup(original_exit=7, failure="down")
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("original_exit=7 cleanup_exit=1", result.stdout)
+
+    def test_failed_absence_query_is_unknown_and_fails_closed(self) -> None:
+        result = self.run_cleanup(failure="query")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=project-containers exit=19 remaining=UNKNOWN", result.stdout)
+        self.assertNotIn("PRIVATE_", result.stdout + result.stderr)
+
+    def test_leftover_resources_fail_without_printing_names(self) -> None:
+        result = self.run_cleanup(failure="remaining")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=project-containers exit=0 remaining=PRESENT", result.stdout)
+        self.assertNotIn("PRIVATE_", result.stdout + result.stderr)
+
+    def test_probe_removal_failure_fails_an_otherwise_successful_probe(self) -> None:
+        result = self.run_cleanup(failure="probe", probe=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("step=raw-probe-volumes exit=23", result.stdout)
+
+    def test_probe_removal_failure_preserves_the_original_failure(self) -> None:
+        result = self.run_cleanup(original_exit=7, failure="probe", probe=True)
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("raw-probe cleanup original_exit=7 cleanup_exit=1", result.stdout)
 
 
 if __name__ == "__main__":

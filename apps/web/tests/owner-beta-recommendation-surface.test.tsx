@@ -380,7 +380,9 @@ describe("owner-beta recommendation surface", () => {
 
       const markup = renderToStaticMarkup(await RecommendationsPage({}));
 
-      expect(markup).toContain("Recommendations unavailable");
+      expect(markup).toContain("Manual historical runs unavailable");
+      expect(markup).toContain("069500.KRX");
+      expect(markup).toContain("2026-08-19");
       expect(markup).not.toContain("Generate owner-only recommendation");
       vi.unstubAllGlobals();
       vi.unstubAllEnvs();
@@ -392,16 +394,21 @@ describe("owner-beta recommendation surface", () => {
     vi.stubGlobal("fetch", api.fetcher);
     vi.stubEnv("API_INTERNAL_URL", "https://api.internal");
 
-    const markup = renderToStaticMarkup(
-      await RecommendationsPage({
-        searchParams: Promise.resolve({ run_id: [RUN_ID, RUN_ID] }),
-      }),
-    );
+    for (const query of [
+      { run_id: [RUN_ID, RUN_ID] },
+      { daily_config_id: [CONFIG_ID, CONFIG_ID] },
+      { history_cursor: ["next", "next"] },
+      { daily_config_id: "../other" },
+    ]) {
+      const markup = renderToStaticMarkup(
+        await RecommendationsPage({ searchParams: Promise.resolve(query) }),
+      );
 
-    expect(markup).toContain("Owner-only recommendations");
-    expect(markup).toContain("Vendor snapshot");
-    expect(markup).toContain("Recommendations unavailable");
-    expect(api.paths).not.toContain(OWNER_BETA_PRICE_ONLY_RUNS_PATH);
+      expect(markup).toContain("Owner-only recommendations");
+      expect(markup).toContain("Vendor snapshot");
+      expect(markup).toContain("Recommendations unavailable");
+      expect(api.paths).not.toContain(OWNER_BETA_PRICE_ONLY_RUNS_PATH);
+    }
   });
 
   it("keeps the exact owner-beta mutation route separate from generic recommendation runs", () => {

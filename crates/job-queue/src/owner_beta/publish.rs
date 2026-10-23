@@ -37,6 +37,7 @@ pub enum OwnerBetaPublicationError {
     QueueIntegrity,
     Integrity,
     EntitlementDenied,
+    DailyAuthorityDenied,
     CommitUnknown,
 }
 
@@ -64,6 +65,7 @@ impl OwnerBetaPublicationError {
             Self::QueueIntegrity => "owner-beta publication queue contract failed",
             Self::Integrity => "owner-beta publication integrity check failed",
             Self::EntitlementDenied => "owner-beta publication entitlement is inactive",
+            Self::DailyAuthorityDenied => "owner-beta daily authority is unavailable",
             Self::CommitUnknown => "owner-beta publication commit outcome is unknown",
         }
     }
@@ -71,7 +73,7 @@ impl OwnerBetaPublicationError {
     pub const fn class(self) -> ErrorClass {
         match self {
             Self::DatabaseTransient | Self::QueueTransient => ErrorClass::Transient,
-            Self::EntitlementDenied => ErrorClass::DataBlocked,
+            Self::EntitlementDenied | Self::DailyAuthorityDenied => ErrorClass::DataBlocked,
             Self::DatabaseIntegrity
             | Self::QueueClaimLost
             | Self::QueueIntegrity
@@ -86,6 +88,8 @@ impl OwnerBetaPublicationError {
 pub enum OwnerBetaPublicationFailure {
     InputInvalid,
     EntitlementDenied,
+    DailyAuthorityDenied,
+    DailyExecutionDisabled,
     FactorInvalid,
     TargetInvalid,
     PublicationUnavailable,
@@ -98,7 +102,9 @@ impl OwnerBetaPublicationFailure {
     pub const fn class(self) -> ErrorClass {
         match self {
             Self::PublicationUnavailable | Self::ComputationUnavailable => ErrorClass::Transient,
-            Self::EntitlementDenied => ErrorClass::DataBlocked,
+            Self::EntitlementDenied | Self::DailyAuthorityDenied | Self::DailyExecutionDisabled => {
+                ErrorClass::DataBlocked
+            }
             Self::ComputationFailed => ErrorClass::Determinism,
             Self::InputInvalid | Self::FactorInvalid | Self::TargetInvalid | Self::Canceled => {
                 ErrorClass::Integrity
@@ -110,6 +116,8 @@ impl OwnerBetaPublicationFailure {
         match self {
             Self::InputInvalid => "OWNER_BETA_INPUT_INVALID",
             Self::EntitlementDenied => "OWNER_BETA_ENTITLEMENT_DENIED",
+            Self::DailyAuthorityDenied => "OWNER_BETA_DAILY_AUTHORITY_DENIED",
+            Self::DailyExecutionDisabled => "OWNER_BETA_DAILY_EXECUTION_DISABLED",
             Self::FactorInvalid => "OWNER_BETA_FACTOR_INVALID",
             Self::TargetInvalid => "OWNER_BETA_TARGET_INVALID",
             Self::PublicationUnavailable => "OWNER_BETA_PUBLICATION_UNAVAILABLE",
@@ -123,6 +131,8 @@ impl OwnerBetaPublicationFailure {
         match self {
             Self::InputInvalid => "owner-beta input rejected",
             Self::EntitlementDenied => "owner-beta entitlement unavailable",
+            Self::DailyAuthorityDenied => "owner-beta daily authority unavailable",
+            Self::DailyExecutionDisabled => "owner-beta daily execution disabled",
             Self::FactorInvalid => "owner-beta factor snapshot rejected",
             Self::TargetInvalid => "owner-beta target snapshot rejected",
             Self::PublicationUnavailable => "owner-beta publication unavailable",
@@ -736,6 +746,566 @@ fn queue_error(error: QueueError) -> OwnerBetaPublicationError {
     }
 }
 
+// Daily settlement deliberately has a separate input binding. Requeued runs
+// remain byte-identical: 0060 rejects even timestamp-only PENDING updates.
+#[derive(sqlx::FromRow)]
+struct LockedDailyRun {
+    status: String,
+    owner_user_id: uuid::Uuid,
+    strategy_config_id: uuid::Uuid,
+    strategy_id: String,
+    strategy_version: String,
+    strategy_config_json: Value,
+    strategy_config_sha256: String,
+    as_of: chrono::NaiveDate,
+    job_id: uuid::Uuid,
+    input_kind: String,
+    trigger_kind: String,
+    capability: String,
+    daily_pins: Value,
+    daily_config_epoch: i64,
+    daily_activation_epoch: i64,
+    daily_trigger_version: String,
+    historical_pins_absent: bool,
+    factor_snapshot_sha256: Option<String>,
+    target_snapshot_sha256: Option<String>,
+    cash_weight: Option<String>,
+    error_code: Option<String>,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    finished_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Settle a daily claim even when current source/config authority has been
+/// revoked. Current authority permits success; an exact fresh claim still
+/// needs to release capacity on failure. Stale claims remain recovery-owned.
+pub async fn settle_owner_beta_daily_failure(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    failure: OwnerBetaPublicationFailure,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    validate_daily_claim(claim, input)?;
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let result = settle_daily_failure_in(&mut transaction, queue, claim, input, failure).await;
+    match result {
+        Ok(outcome) => transaction
+            .commit()
+            .await
+            .map(|()| outcome)
+            .map_err(|_| OwnerBetaPublicationError::CommitUnknown),
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+fn validate_daily_claim(
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<(), OwnerBetaPublicationError> {
+    input
+        .validate()
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    let payload = serde_json::to_value(input).map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    if claim.job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || claim.job.payload_json != payload
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(())
+}
+
+async fn lock_daily_run(
+    transaction: &mut Transaction<'_, Postgres>,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<LockedDailyRun, OwnerBetaPublicationError> {
+    let run: LockedDailyRun=sqlx::query_as(
+        "SELECT status, owner_user_id, strategy_config_id, strategy_id, strategy_version, \
+                strategy_config_json, strategy_config_sha256, as_of, job_id, input_kind, trigger_kind, capability, \
+                daily_pins, daily_config_epoch, daily_activation_epoch, daily_trigger_version, \
+                candidate_content_sha256 IS NULL AND artifact_manifest_sha256 IS NULL \
+                  AND stage5_manifest_sha256 IS NULL AND action_manifest_sha256 IS NULL \
+                  AND approval_registry_sha256 IS NULL AS historical_pins_absent, \
+                factor_snapshot_sha256,target_snapshot_sha256,cash_weight::text AS cash_weight, \
+                error_code,started_at,finished_at \
+         FROM public.owner_beta_recommendation_runs WHERE id=$1 FOR UPDATE")
+        .bind(input.run_id()).fetch_optional(&mut **transaction).await.map_err(database_error)?
+        .ok_or(OwnerBetaPublicationError::Integrity)?;
+    let strategy = input.strategy_snapshot();
+    let pins = input.pins();
+    let expected_pins = serde_json::json!({
+        "content_sha256":pins.content_sha256(),"manifest_sha256":pins.manifest_sha256(),
+        "admission_sha256":pins.admission_sha256(),"policy_sha256":pins.policy_sha256(),
+    });
+    if run.status != "PENDING"
+        || run.owner_user_id != claim.job.owner_user_id
+        || run.strategy_config_id != input.strategy_config_id()
+        || run.strategy_id != strategy.strategy_id()
+        || run.strategy_version != strategy.strategy_version()
+        || run.strategy_config_json != *strategy.config_json()
+        || run.strategy_config_sha256 != strategy.config_sha256().as_str()
+        || run.as_of != input.as_of().as_naive_date()
+        || run.job_id != claim.job.id
+        || run.input_kind != factor_engine::daily_price_only::DAILY_PRICE_ONLY_INPUT_KIND
+        || run.trigger_kind != "DAILY"
+        || run.capability != PRICE_ONLY_CAPABILITY
+        || run.daily_pins != expected_pins
+        || run.daily_config_epoch != input.config_epoch()
+        || run.daily_activation_epoch != input.activation_epoch()
+        || run.daily_trigger_version != super::daily_input::OWNER_BETA_DAILY_TRIGGER_VERSION
+        || !run.historical_pins_absent
+        || run.factor_snapshot_sha256.is_some()
+        || run.target_snapshot_sha256.is_some()
+        || run.cash_weight.is_some()
+        || run.error_code.is_some()
+        || run.started_at.is_some()
+        || run.finished_at.is_some()
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    let items:i64=sqlx::query_scalar(
+        "SELECT count(*) FROM public.owner_beta_recommendation_items WHERE recommendation_run_id=$1")
+        .bind(input.run_id()).fetch_one(&mut **transaction).await.map_err(database_error)?;
+    if items != 0 {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(run)
+}
+
+async fn cancel_superseded_daily_claim_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<bool, OwnerBetaPublicationError> {
+    sqlx::query_scalar("SELECT public.cancel_superseded_owner_beta_daily_claim($1,$2,$3,$4,$5)")
+        .bind(input.run_id())
+        .bind(claim.job.id)
+        .bind(claim.attempt.id)
+        .bind(claim.attempt.attempt_no)
+        .bind(&claim.worker_id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(|error| {
+            if error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref()
+                == Some("55000")
+            {
+                OwnerBetaPublicationError::QueueClaimLost
+            } else {
+                database_error(error)
+            }
+        })
+}
+
+async fn settle_daily_failure_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    failure: OwnerBetaPublicationFailure,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    // A failed publication can cross the eligible-date boundary after preflight.
+    // Ask the typed SQL authority again; never infer supersession from a generic
+    // constraint failure, missing admission, or an authority error.
+    if failure != OwnerBetaPublicationFailure::Canceled {
+        match queue.lock_claim_in(transaction, claim).await {
+            Ok(job) => {
+                if job.id != claim.job.id
+                    || job.owner_user_id != claim.job.owner_user_id
+                    || job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+                    || job.payload_json != claim.job.payload_json
+                    || job.attempt_count != claim.job.attempt_count
+                {
+                    return Err(OwnerBetaPublicationError::Integrity);
+                }
+                lock_daily_run(transaction, claim, input).await?;
+                if cancel_superseded_daily_claim_in(transaction, claim, input).await? {
+                    return Ok(OwnerBetaPublicationOutcome::Canceled);
+                }
+            }
+            Err(QueueError::StaleClaim(_)) => {}
+            Err(error) => return Err(queue_error(error)),
+        }
+    }
+    // Existing queue methods lock and fence job/attempt before the run.
+    let status = if failure == OwnerBetaPublicationFailure::Canceled {
+        queue
+            .settle_aborted_in(transaction, claim, failure.message())
+            .await
+            .map_err(queue_error)?
+            .status
+    } else {
+        match queue
+            .settle_failure_in(
+                transaction,
+                claim,
+                failure.class(),
+                failure.code(),
+                failure.message(),
+            )
+            .await
+            .map_err(queue_error)?
+        {
+            SettleResult::Committed(job) | SettleResult::Canceled(job) => job.status,
+        }
+    };
+    let locked: (uuid::Uuid, String, Value, i32) = sqlx::query_as(
+        "SELECT owner_user_id,job_type,payload_json,attempt_count FROM public.jobs WHERE id=$1",
+    )
+    .bind(claim.job.id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    if locked.0 != claim.job.owner_user_id
+        || locked.1 != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || locked.2 != claim.job.payload_json
+        || locked.3 != claim.job.attempt_count
+        || locked.3 != claim.attempt.attempt_no
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    let _run = lock_daily_run(transaction, claim, input).await?;
+    let (outcome, run_status, error_code) = match status {
+        JobStatus::Queued => return Ok(OwnerBetaPublicationOutcome::Retrying),
+        JobStatus::Failed => (
+            OwnerBetaPublicationOutcome::Failed,
+            "FAILED",
+            failure.code(),
+        ),
+        JobStatus::Canceled => (
+            OwnerBetaPublicationOutcome::Canceled,
+            "CANCELED",
+            "CANCELED",
+        ),
+        JobStatus::Running | JobStatus::Succeeded => {
+            return Err(OwnerBetaPublicationError::QueueIntegrity);
+        }
+    };
+    if status == JobStatus::Canceled {
+        // Generic cancellation settlement records the attempt but deliberately
+        // retains its lease. Daily consistency requires its fenced release in
+        // this same transaction before the run mirror can commit.
+        let cleared = sqlx::query(
+            "UPDATE public.jobs SET locked_by=NULL,locked_at=NULL,updated_at=now() \
+             WHERE id=$1 AND owner_user_id=$2 AND status='CANCELED' \
+               AND locked_by=$3 AND attempt_count=$4",
+        )
+        .bind(claim.job.id)
+        .bind(claim.job.owner_user_id)
+        .bind(&claim.worker_id)
+        .bind(claim.attempt.attempt_no)
+        .execute(&mut **transaction)
+        .await
+        .map_err(database_error)?;
+        if cleared.rows_affected() != 1 {
+            return Err(OwnerBetaPublicationError::QueueIntegrity);
+        }
+    }
+    let updated=sqlx::query(
+        "UPDATE public.owner_beta_recommendation_runs \
+         SET status=$3,error_code=$4,started_at=COALESCE(started_at,now()),finished_at=now(),updated_at=now() \
+         WHERE id=$1 AND owner_user_id=$2 AND job_id=$5 AND status='PENDING'")
+        .bind(input.run_id()).bind(claim.job.owner_user_id).bind(run_status).bind(error_code)
+        .bind(claim.job.id).execute(&mut **transaction).await.map_err(database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(outcome)
+}
+
+/// A momentary DB check, never a retained publication capability. Success must
+/// repeat the full gate inside its atomic publication transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DailyClaimPreflight {
+    Ready,
+    Canceled,
+}
+
+pub async fn preflight_owner_beta_daily_claim(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<DailyClaimPreflight, OwnerBetaPublicationError> {
+    validate_daily_claim(claim, input)?;
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let result = preflight_daily_claim_in(&mut transaction, queue, claim, input).await;
+    match result {
+        Ok(outcome) => transaction
+            .commit()
+            .await
+            .map(|()| outcome)
+            .map_err(|_| OwnerBetaPublicationError::CommitUnknown),
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+async fn preflight_daily_claim_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+) -> Result<DailyClaimPreflight, OwnerBetaPublicationError> {
+    // Runtime uses one direct worker principal, never an elevated/SET ROLE pool.
+    let direct_worker: bool = sqlx::query_scalar(
+        "SELECT session_user::text='worker' AND current_user::text='worker' \
+         AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
+         AND NOT rolreplication AND NOT rolbypassrls \
+         FROM pg_catalog.pg_roles WHERE rolname=current_user",
+    )
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    if !direct_worker {
+        return Err(OwnerBetaPublicationError::DailyAuthorityDenied);
+    }
+    let job = match queue.lock_claim_in(transaction, claim).await {
+        Ok(job) => job,
+        Err(QueueError::StaleClaim(_)) => {
+            return match settle_daily_failure_in(
+                transaction,
+                queue,
+                claim,
+                input,
+                OwnerBetaPublicationFailure::Canceled,
+            )
+            .await?
+            {
+                OwnerBetaPublicationOutcome::Canceled => Ok(DailyClaimPreflight::Canceled),
+                _ => Err(OwnerBetaPublicationError::QueueIntegrity),
+            };
+        }
+        Err(error) => return Err(queue_error(error)),
+    };
+    if job.id != claim.job.id
+        || job.owner_user_id != claim.job.owner_user_id
+        || job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || job.payload_json != claim.job.payload_json
+        || job.attempt_count != claim.job.attempt_count
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    lock_daily_run(transaction, claim, input).await?;
+    if cancel_superseded_daily_claim_in(transaction, claim, input).await? {
+        return Ok(DailyClaimPreflight::Canceled);
+    }
+    let allowed: bool = sqlx::query_scalar("SELECT public.lock_owner_beta_daily_run_gate($1)")
+        .bind(input.run_id())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(daily_gate_error)?;
+    if !allowed {
+        return Err(OwnerBetaPublicationError::DailyAuthorityDenied);
+    }
+    Ok(DailyClaimPreflight::Ready)
+}
+
+/// Publish a daily computation only while its exact reopened file capability
+/// remains valid. Serialized factors/targets alone cannot enter this boundary.
+/// Current SQL authority is rechecked under the same transaction as all writes.
+pub async fn publish_owner_beta_daily_success(
+    pool: &PgPool,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    admitted: &market_data::daily_price_only::input::AdmittedDailyPriceInputV1<'_, '_>,
+    computation: &super::daily_compute::OwnerBetaDailyComputation,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    validate_daily_claim(claim, input)?;
+    input
+        .validate_admitted(admitted)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    validate_daily_computation(
+        input,
+        computation.factor_snapshot(),
+        computation.target_snapshot(),
+    )?;
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let result =
+        publish_daily_success_in(&mut transaction, queue, claim, input, admitted, computation)
+            .await;
+    match result {
+        Ok(outcome) => {
+            // A failed final descriptor check rolls back every output and queue
+            // transition. An uncertain commit is never retried inline.
+            if outcome == OwnerBetaPublicationOutcome::Published
+                && input.validate_admitted(admitted).is_err()
+            {
+                let _ = transaction.rollback().await;
+                return Err(OwnerBetaPublicationError::Integrity);
+            }
+            transaction
+                .commit()
+                .await
+                .map(|()| outcome)
+                .map_err(|_| OwnerBetaPublicationError::CommitUnknown)
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+fn validate_daily_computation(
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    factor: &factor_engine::daily_price_only::DailyPriceOnlyFactorSnapshot,
+    target: &super::daily_target::OwnerBetaDailyTargetSnapshotV1,
+) -> Result<(), OwnerBetaPublicationError> {
+    input
+        .validate()
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    input
+        .validate_factor_snapshot(factor)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    target
+        .validate_hash()
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    let expected = super::daily_target::build_daily_target_snapshot(input, factor)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    if &expected != target {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    Ok(())
+}
+
+fn daily_item_weight(item: &super::OwnerBetaTargetItem) -> String {
+    // 0060 requires excluded daily items to have numeric zero; historical
+    // publication retains its existing NULL representation.
+    item.target_weight()
+        .unwrap_or_else(|| "0.000000".to_owned())
+}
+
+fn daily_gate_error(error: sqlx::Error) -> OwnerBetaPublicationError {
+    if error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .as_deref()
+        == Some("23514")
+    {
+        OwnerBetaPublicationError::DailyAuthorityDenied
+    } else {
+        database_error(error)
+    }
+}
+
+async fn publish_daily_success_in(
+    transaction: &mut Transaction<'_, Postgres>,
+    queue: &JobQueue,
+    claim: &ClaimedJob,
+    input: &super::daily_input::OwnerBetaDailyRecommendationInputV1,
+    admitted: &market_data::daily_price_only::input::AdmittedDailyPriceInputV1<'_, '_>,
+    computation: &super::daily_compute::OwnerBetaDailyComputation,
+) -> Result<OwnerBetaPublicationOutcome, OwnerBetaPublicationError> {
+    let job = match queue.lock_claim_in(transaction, claim).await {
+        Ok(job) => job,
+        Err(QueueError::StaleClaim(_)) => {
+            return settle_daily_failure_in(
+                transaction,
+                queue,
+                claim,
+                input,
+                OwnerBetaPublicationFailure::Canceled,
+            )
+            .await;
+        }
+        Err(error) => return Err(queue_error(error)),
+    };
+    if job.id != claim.job.id
+        || job.owner_user_id != claim.job.owner_user_id
+        || job.job_type != OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE
+        || job.payload_json != claim.job.payload_json
+        || job.attempt_count != claim.job.attempt_count
+    {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    lock_daily_run(transaction, claim, input).await?;
+    if cancel_superseded_daily_claim_in(transaction, claim, input).await? {
+        return Ok(OwnerBetaPublicationOutcome::Canceled);
+    }
+    let allowed: bool = sqlx::query_scalar("SELECT public.lock_owner_beta_daily_run_gate($1)")
+        .bind(input.run_id())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(daily_gate_error)?;
+    if !allowed {
+        return Err(OwnerBetaPublicationError::DailyAuthorityDenied);
+    }
+    input
+        .validate_admitted(admitted)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    let target = computation.target_snapshot();
+    for item in target.items() {
+        let excluded = item.target_weight_ppm().is_none();
+        let reasons = Value::Array(
+            item.reasons()
+                .iter()
+                .map(|reason| Value::String(reason.code().to_owned()))
+                .collect(),
+        );
+        let factors = serde_json::to_value(item.factors())
+            .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+        let rank = item
+            .rank()
+            .map(i32::try_from)
+            .transpose()
+            .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+        let exclusion = if excluded {
+            Some(
+                item.reasons()
+                    .first()
+                    .ok_or(OwnerBetaPublicationError::Integrity)?
+                    .code(),
+            )
+        } else {
+            None
+        };
+        let changed = sqlx::query(
+            "INSERT INTO public.owner_beta_recommendation_items
+             (recommendation_run_id,owner_user_id,instrument_id,rank,target_weight,reason_codes,factors_json,excluded,exclusion_reason)
+             VALUES($1,$2,$3,$4,$5::numeric,$6,$7,$8,$9)")
+            .bind(input.run_id()).bind(claim.job.owner_user_id).bind(item.instrument_id())
+            .bind(rank).bind(daily_item_weight(item)).bind(reasons).bind(factors).bind(excluded).bind(exclusion)
+            .execute(&mut **transaction).await.map_err(database_error)?;
+        if changed.rows_affected() != 1 {
+            return Err(OwnerBetaPublicationError::Integrity);
+        }
+    }
+    input
+        .validate_admitted(admitted)
+        .map_err(|_| OwnerBetaPublicationError::Integrity)?;
+    // The daily run trigger rechecks authority with clock_timestamp() and owns
+    // started_at/finished_at/updated_at, including waits across the KST cutoff.
+    let changed = sqlx::query(
+        "UPDATE public.owner_beta_recommendation_runs
+         SET status='SUCCEEDED',factor_snapshot_sha256=$3,target_snapshot_sha256=$4,cash_weight=$5::numeric,error_code=NULL
+         WHERE id=$1 AND owner_user_id=$2 AND status='PENDING'")
+        .bind(input.run_id()).bind(claim.job.owner_user_id)
+        .bind(computation.factor_snapshot().hash.as_str()).bind(target.target_snapshot_sha256().as_str())
+        .bind(target.cash_weight()).execute(&mut **transaction).await.map_err(database_error)?;
+    if changed.rows_affected() != 1 {
+        return Err(OwnerBetaPublicationError::Integrity);
+    }
+    match queue
+        .settle_success_in(transaction, claim)
+        .await
+        .map_err(queue_error)?
+    {
+        SettleResult::Committed(job) if job.status == JobStatus::Succeeded => {
+            Ok(OwnerBetaPublicationOutcome::Published)
+        }
+        _ => Err(OwnerBetaPublicationError::QueueClaimLost),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -745,6 +1315,8 @@ mod tests {
         for failure in [
             OwnerBetaPublicationFailure::InputInvalid,
             OwnerBetaPublicationFailure::EntitlementDenied,
+            OwnerBetaPublicationFailure::DailyAuthorityDenied,
+            OwnerBetaPublicationFailure::DailyExecutionDisabled,
             OwnerBetaPublicationFailure::FactorInvalid,
             OwnerBetaPublicationFailure::TargetInvalid,
             OwnerBetaPublicationFailure::PublicationUnavailable,
@@ -854,5 +1426,189 @@ mod tests {
                 .iter()
                 .all(|instrument| instrument.ends_with(".KRX"))
         );
+    }
+}
+
+#[cfg(test)]
+mod daily_success_tests {
+    // Synthetic computation-only fixtures. They cannot construct an admitted
+    // input, enter the public publisher or prove filesystem/SQL integration.
+    use super::super::daily_input::OwnerBetaDailyRecommendationInputV1;
+    use super::super::daily_target::{OwnerBetaDailyTargetSnapshotV1, build_daily_target_snapshot};
+    use super::*;
+    use crate::resolver::ResolvedConfig;
+    use domain::{ContentHash, TradingDate};
+    use factor_engine::daily_price_only::{
+        DAILY_FACTOR_SNAPSHOT_SCHEMA, DAILY_PRICE_ONLY_INPUT_KIND, DailyPriceOnlyFactorSnapshot,
+    };
+    use factor_engine::snapshot::{FactorRow, NormalizationMeta};
+    use std::collections::BTreeMap;
+
+    fn input(weight: f64) -> OwnerBetaDailyRecommendationInputV1 {
+        let strategy=super::super::OwnerBetaStrategySnapshot::from_resolved_config(&ResolvedConfig {
+            strategy_id:"buy_and_hold".to_owned(),strategy_version:"1.0.0".to_owned(),
+            config:serde_json::json!({"benchmark_instrument":"069500.KRX","target_weight":weight}),
+        }).unwrap();
+        serde_json::from_value(serde_json::json!({
+            "schema":"owner-beta-daily-recommendation-v1",
+            "run_id":"00000000-0000-4000-8000-000000000001",
+            "strategy_config_id":"00000000-0000-4000-8000-000000000002","as_of":"2026-08-31",
+            "input":{"kind":"owner_beta_daily_etf11_price_only_v1","content_sha256":ContentHash::from_bytes(b"content"),
+                "manifest_sha256":ContentHash::from_bytes(b"manifest"),"admission_sha256":ContentHash::from_bytes(b"admission"),
+                "policy_sha256":ContentHash::from_bytes(b"policy")},
+            "strategy":strategy,
+            "trigger":{"kind":"DAILY","version":"owner-beta-daily-trigger-v1","config_epoch":1,"activation_epoch":2}
+        })).unwrap()
+    }
+    fn factor(input: &OwnerBetaDailyRecommendationInputV1) -> DailyPriceOnlyFactorSnapshot {
+        let mut value = DailyPriceOnlyFactorSnapshot {
+            schema: DAILY_FACTOR_SNAPSHOT_SCHEMA.to_owned(),
+            input_kind: DAILY_PRICE_ONLY_INPUT_KIND.to_owned(),
+            capability: PRICE_ONLY_CAPABILITY.to_owned(),
+            as_of: input.as_of(),
+            content_sha256: input.pins().content_sha256().to_string(),
+            manifest_sha256: input.pins().manifest_sha256().to_string(),
+            admission_sha256: input.pins().admission_sha256().to_string(),
+            policy_sha256: input.pins().policy_sha256().to_string(),
+            factor_versions: BTreeMap::new(),
+            normalization: NormalizationMeta {
+                id: "fixture".to_owned(),
+                version: "1".to_owned(),
+                params: BTreeMap::new(),
+            },
+            rows: Vec::new(),
+            hash: ContentHash::from_bytes(b"placeholder"),
+        };
+        value.hash = value.compute_hash().unwrap();
+        value
+    }
+    fn fixtures() -> (
+        OwnerBetaDailyRecommendationInputV1,
+        DailyPriceOnlyFactorSnapshot,
+        OwnerBetaDailyTargetSnapshotV1,
+    ) {
+        let input = input(1.0);
+        let factor = factor(&input);
+        let target = build_daily_target_snapshot(&input, &factor).unwrap();
+        (input, factor, target)
+    }
+    #[test]
+    fn daily_publication_validation_binds_exact_computation() {
+        let (input, factor, target) = fixtures();
+        assert_eq!(validate_daily_computation(&input, &factor, &target), Ok(()));
+    }
+    #[test]
+    fn daily_publication_validation_rejects_each_rehashed_foreign_pin() {
+        let (input, factor, target) = fixtures();
+        for index in 0..4 {
+            let mut changed = factor.clone();
+            let other = ContentHash::from_bytes(b"foreign").to_string();
+            match index {
+                0 => changed.content_sha256 = other,
+                1 => changed.manifest_sha256 = other,
+                2 => changed.admission_sha256 = other,
+                _ => changed.policy_sha256 = other,
+            }
+            changed.hash = changed.compute_hash().unwrap();
+            assert_eq!(
+                validate_daily_computation(&input, &changed, &target),
+                Err(OwnerBetaPublicationError::Integrity)
+            );
+        }
+    }
+    #[test]
+    fn daily_publication_validation_rejects_stale_hash_and_date() {
+        let (input, factor, target) = fixtures();
+        let mut changed = factor.clone();
+        changed.hash = ContentHash::from_bytes(b"stale");
+        assert_eq!(
+            validate_daily_computation(&input, &changed, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+        changed = factor;
+        changed.as_of = TradingDate::parse("2026-09-01").unwrap();
+        changed.hash = changed.compute_hash().unwrap();
+        assert_eq!(
+            validate_daily_computation(&input, &changed, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+    }
+    #[test]
+    fn daily_publication_validation_rejects_nonfinite_factor_rows() {
+        let (input, mut factor, target) = fixtures();
+        factor.rows.push(FactorRow {
+            date: input.as_of().to_iso(),
+            instrument: "069500.KRX".to_owned(),
+            factor: "unexpected".to_owned(),
+            raw: Some(f64::NAN),
+            normalized: None,
+        });
+        assert_eq!(
+            validate_daily_computation(&input, &factor, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+    }
+    #[test]
+    fn daily_publication_validation_rejects_other_valid_strategy_target() {
+        let (original, factor, target) = fixtures();
+        let other = input(0.5);
+        let other_target = build_daily_target_snapshot(&other, &factor).unwrap();
+        assert!(other_target.validate_hash().is_ok());
+        assert_eq!(
+            validate_daily_computation(&original, &factor, &other_target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+        assert_eq!(
+            validate_daily_computation(&other, &factor, &target),
+            Err(OwnerBetaPublicationError::Integrity)
+        );
+    }
+    #[test]
+    fn daily_publication_validation_rejects_changed_discriminants() {
+        let (input, factor, target) = fixtures();
+        for index in 0..3 {
+            let mut changed = factor.clone();
+            match index {
+                0 => changed.schema = "wrong".to_owned(),
+                1 => changed.input_kind = PRICE_ONLY_INPUT_KIND.to_owned(),
+                _ => changed.capability = "wrong".to_owned(),
+            }
+            changed.hash = changed.compute_hash().unwrap();
+            assert_eq!(
+                validate_daily_computation(&input, &changed, &target),
+                Err(OwnerBetaPublicationError::Integrity)
+            );
+        }
+    }
+    #[test]
+    fn daily_excluded_projection_has_zero_weight_and_no_rank() {
+        let (_, _, target) = fixtures();
+        let mut selected = 0;
+        let mut excluded = 0;
+        for item in target.items() {
+            if item.target_weight_ppm().is_none() {
+                excluded += 1;
+                assert_eq!(daily_item_weight(item), "0.000000");
+                assert!(item.rank().is_none());
+                assert!(!item.reasons().is_empty());
+            } else {
+                selected += 1;
+                assert_eq!(daily_item_weight(item), "1.000000");
+                assert_eq!(item.rank(), Some(1));
+            }
+        }
+        assert_eq!((selected, excluded), (1, 10));
+        assert_eq!(target.cash_weight(), "0.000000");
+    }
+    #[test]
+    fn daily_authority_denial_is_value_free_and_not_retryable() {
+        let error = OwnerBetaPublicationError::DailyAuthorityDenied;
+        assert_eq!(error.class(), ErrorClass::DataBlocked);
+        assert!(!error.class().retryable());
+        assert_eq!(
+            error.to_string(),
+            "owner-beta daily authority is unavailable"
+        );
+        assert_eq!(format!("{error:?}"), error.to_string());
     }
 }

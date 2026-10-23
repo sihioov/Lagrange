@@ -218,6 +218,10 @@
       {
         "source": "deploy/db/bootstrap-roles.sh",
         "image": "/usr/local/bin/lagrange-bootstrap-roles"
+      },
+      {
+        "source": "deploy/db/daily-control.sh",
+        "image": "/usr/local/bin/lagrange-daily-control"
       }
     ]
   },

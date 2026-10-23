@@ -25,6 +25,8 @@ SAFE_PHASES = frozenset(
         "publication",
         "health",
         "database",
+        "raw_capture",
+        "raw_check",
     }
 )
 SAFE_CLASSES = frozenset({"retryable", "permanent"})
@@ -138,6 +140,10 @@ def protocol_failure(state_path: str, run_identity: str, expected: dt.date, code
 
 
 def main() -> int:
+    raw_source = len(sys.argv) > 1 and sys.argv[1] == "--raw-source"
+    if raw_source:
+        del sys.argv[1]
+    completion = "RAW_COMMITTED" if raw_source else "PUBLISHED"
     if len(sys.argv) not in (5, 6):
         raise SystemExit("backfill-progress: expected STATE IDENTITY START END [SESSION_DATES_CSV]")
     state_path, run_identity, start_text, end_text = sys.argv[1:5]
@@ -163,9 +169,13 @@ def main() -> int:
     expected_index = 0
     published: set[str] = set()
     with open(state_path, encoding="ascii") as existing:
+        if raw_source:
+            header = existing.readline().rstrip("\n")
+            if header != f"LAGRANGE_EOD_RAW_STATE_V1\t{run_identity}":
+                raise SystemExit("EOD_RAW_STATE_INVALID")
         for line in existing:
             fields = line.rstrip("\n").split("\t")
-            if len(fields) == 3 and fields[1:] == ["PUBLISHED", run_identity]:
+            if len(fields) == 3 and fields[1:] == [completion, run_identity]:
                 published.add(fields[0])
 
     expected_date = expected
@@ -174,6 +184,10 @@ def main() -> int:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
+                if raw_source:
+                    state.close()
+                    return protocol_failure(state_path, run_identity, expected_date or end,
+                                            "BACKFILL_PROGRESS_INVALID")
                 print(line, end="", flush=True)
                 continue
             if isinstance(record, dict) and record.get("status") == "error":
@@ -194,13 +208,25 @@ def main() -> int:
                     )
                     return 1
                 return record_failure(state_path, run_identity, expected_date, record)
-            print(line, end="", flush=True)
+            if not isinstance(record, dict):
+                state.close()
+                return protocol_failure(state_path, run_identity, expected_date or end,
+                                        "BACKFILL_PROGRESS_INVALID")
+            if not raw_source:
+                print(line, end="", flush=True)
             if not (
                 record.get("status") == "event"
-                and record.get("event") == "published"
-                and record.get("phase") == "canonical_publication"
+                and record.get("event") == ("raw_committed" if raw_source else "published")
+                and record.get("phase") == ("raw_capture" if raw_source else "canonical_publication")
             ):
                 continue
+            if raw_source and (
+                any(record.get(key) is not False for key in ("ready", "publication", "curated", "db"))
+                or not isinstance(record.get("reused_existing_source"), bool)
+            ):
+                state.close()
+                return protocol_failure(state_path, run_identity, expected_date or end,
+                                        "BACKFILL_PROGRESS_INVALID")
             date_text = record.get("target_date")
             batch_id = record.get("batch_id")
             if expected_date is None or date_text != expected_date.isoformat() or not isinstance(batch_id, str):
@@ -212,7 +238,9 @@ def main() -> int:
                     "BACKFILL_PROGRESS_INVALID",
                 )
             try:
-                uuid.UUID(batch_id)
+                parsed_id = uuid.UUID(batch_id)
+                if raw_source and (str(parsed_id) != batch_id or parsed_id.int == 0):
+                    raise ValueError("invalid source identity")
             except ValueError as exc:
                 del exc
                 state.close()
@@ -223,11 +251,11 @@ def main() -> int:
                     "BACKFILL_PROGRESS_INVALID",
                 )
             if date_text not in published:
-                state.write(f"{date_text}\tPUBLISHED\t{run_identity}\n")
+                state.write(f"{date_text}\t{completion}\t{run_identity}\n")
                 state.flush()
                 os.fsync(state.fileno())
                 published.add(date_text)
-            print(f"BACKFILL_DONE date={date_text}", flush=True)
+            print(f"{'EOD_RAW_COMMITTED' if raw_source else 'BACKFILL_DONE'} date={date_text}", flush=True)
             expected_index += 1
             expected_date = expected_dates[expected_index] if expected_index < len(expected_dates) else None
     if expected_date is not None:

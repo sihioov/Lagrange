@@ -147,6 +147,60 @@ impl KisError {
             Self::Connect { .. } => "BROKER_UNREACHABLE",
         }
     }
+
+    /// Finite operator classification without exposing an authentication reason.
+    /// Shared read coordination already supplies these fixed codes, but `code()`
+    /// deliberately keeps the existing broad audit contract. Never return the
+    /// supplied string: other authentication failures can contain provider text.
+    pub fn diagnostic_code(&self) -> &'static str {
+        if let Self::Auth { reason } = self {
+            match reason.as_str() {
+                "KIS_READ_CHANNEL_UNSUPPORTED" => return "KIS_READ_CHANNEL_UNSUPPORTED",
+                "KIS_READ_CREDENTIALS_INVALID" => return "KIS_READ_CREDENTIALS_INVALID",
+                "KIS_READ_CREDENTIAL_SCOPE_MISMATCH" => return "KIS_READ_CREDENTIAL_SCOPE_MISMATCH",
+                "KIS_READ_CREDENTIAL_GENERATION_STALE" => {
+                    return "KIS_READ_CREDENTIAL_GENERATION_STALE";
+                }
+                "KIS_READ_COORDINATION_ROOT_UNAVAILABLE" => {
+                    return "KIS_READ_COORDINATION_ROOT_UNAVAILABLE";
+                }
+                "KIS_READ_COORDINATION_STORAGE_UNSAFE" => {
+                    return "KIS_READ_COORDINATION_STORAGE_UNSAFE";
+                }
+                "KIS_READ_COORDINATION_STATE_INVALID" => {
+                    return "KIS_READ_COORDINATION_STATE_INVALID";
+                }
+                "KIS_READ_COORDINATION_CANCELLED" => return "KIS_READ_COORDINATION_CANCELLED",
+                "KIS_READ_COORDINATION_CLOCK_INVALID" => {
+                    return "KIS_READ_COORDINATION_CLOCK_INVALID";
+                }
+                "KIS_READ_COORDINATION_BUSY" => return "KIS_READ_COORDINATION_BUSY",
+                "KIS_READ_COORDINATION_LOCK_TIMEOUT" => return "KIS_READ_COORDINATION_LOCK_TIMEOUT",
+                "KIS_READ_COORDINATION_DEADLINE_INVALID" => {
+                    return "KIS_READ_COORDINATION_DEADLINE_INVALID";
+                }
+                "KIS_READ_RESERVATION_ACTIVE" => return "KIS_READ_RESERVATION_ACTIVE",
+                "KIS_TOKEN_ISSUE_COOLDOWN" => return "KIS_TOKEN_ISSUE_COOLDOWN",
+                "KIS_TOKEN_ISSUE_FAILED" => return "KIS_TOKEN_ISSUE_FAILED",
+                "KIS_READ_BROKER_COOLDOWN" => return "KIS_READ_BROKER_COOLDOWN",
+                "KIS_READ_GLOBAL_SPACING" => return "KIS_READ_GLOBAL_SPACING",
+                "KIS_READ_CHANNEL_SPACING" => return "KIS_READ_CHANNEL_SPACING",
+                "KIS_INTRADAY_READ_SPACING" => return "KIS_INTRADAY_READ_SPACING",
+                "KIS_INTRADAY_BUDGET_EXHAUSTED" => return "KIS_INTRADAY_BUDGET_EXHAUSTED",
+                "KIS_READ_UNAUTHORIZED" => return "KIS_READ_UNAUTHORIZED",
+                "KIS_READ_CALLER_INELIGIBLE" => return "KIS_READ_CALLER_INELIGIBLE",
+                "KIS_READ_CALLER_ELIGIBILITY_FAILED" => return "KIS_READ_CALLER_ELIGIBILITY_FAILED",
+                "KIS_READ_RATE_LIMITED" => return "KIS_READ_RATE_LIMITED",
+                "KIS_READ_CALLBACK_FAILED" => return "KIS_READ_CALLBACK_FAILED",
+                "KIS_READ_CALLBACK_AMBIGUOUS" => return "KIS_READ_CALLBACK_AMBIGUOUS",
+                "KIS_READ_CALLBACK_TIMEOUT" => return "KIS_READ_CALLBACK_TIMEOUT",
+                "KIS_READ_CALLBACK_START_MISSED" => return "KIS_READ_CALLBACK_START_MISSED",
+                "KIS_READ_COORDINATION_IO_FAILED" => return "KIS_READ_COORDINATION_IO_FAILED",
+                _ => {}
+            }
+        }
+        self.code()
+    }
 }
 
 /// Keys whose values are stripped from any payload before it can be stored or
@@ -216,6 +270,60 @@ const MAX_PAYLOAD: usize = 2048;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coordination_diagnostic_preserves_finite_causes_without_changing_retry_or_audit() {
+        use crate::read_coordination::ReadCoordinationError as R;
+        for cause in [
+            R::CredentialScopeMismatch,
+            R::StaleCredentialGeneration,
+            R::RootUnavailable,
+            R::UnsafeFile,
+            R::CorruptState,
+            R::ClockRollback,
+            R::LockTimeout,
+            R::TokenIssueFailed,
+            R::UnusableToken,
+            R::Unauthorized,
+            R::CallbackStartMissed,
+            R::CallbackTimedOut,
+            R::CallbackAmbiguous,
+            R::Io {
+                operation: "sentinel-secret-operation",
+            },
+        ] {
+            let error = KisError::Auth {
+                reason: cause.code().to_owned(),
+            };
+            assert_eq!(error.diagnostic_code(), cause.code());
+            assert_eq!(error.code(), "BROKER_AUTH_FAILED");
+            assert!(!error.is_retryable(RequestKind::Read));
+            assert!(!error.is_retryable(RequestKind::Mutation));
+            assert!(!error.diagnostic_code().contains("sentinel"));
+        }
+    }
+
+    #[test]
+    fn coordination_diagnostic_rejects_free_form_and_other_error_variants() {
+        for reason in [
+            "sentinel-app-key",
+            "KIS_READ_CALLBACK_START_MISSED sentinel-token",
+            " KIS_READ_CALLBACK_START_MISSED",
+            "KIS_READ_CALLBACK_START_MISSED\n",
+            "KIS_READ_UNDOCUMENTED",
+            "KIS_READ_CALLBACK_START_MISSED\0",
+        ] {
+            let error = KisError::Auth {
+                reason: reason.to_owned(),
+            };
+            assert_eq!(error.diagnostic_code(), "BROKER_AUTH_FAILED");
+        }
+        let error = KisError::Connect {
+            reason: "KIS_READ_CALLBACK_START_MISSED".to_owned(),
+        };
+        assert_eq!(error.diagnostic_code(), "BROKER_UNREACHABLE");
+        assert!(error.is_retryable(RequestKind::Read));
+    }
 
     #[test]
     fn a_submit_timeout_is_ambiguous_and_is_never_a_failure() {

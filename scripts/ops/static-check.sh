@@ -888,8 +888,16 @@ grep -Fq -- '--emit-sessions --start "$start_date" --end "$end_date"' \
   "$ops/backfill-production.sh" || die 'backfill must use the validated XKRX session emitter'
 grep -Fq 'session_dates_csv' "$ops/backfill-production.sh" \
   || die 'backfill must preserve the exact validated session list'
-grep -Fq -- '--backfill-session-dates "$session_dates_csv"' \
+grep -Fq -- 'worker_flag=--backfill-session-dates' \
+  "$ops/backfill-production.sh" || die 'legacy canonical backfill command is missing'
+grep -Fq -- 'worker_flag=--eod-raw-session-dates' \
+  "$ops/backfill-production.sh" || die 'explicit R2 Raw source command is missing'
+grep -Fq -- '"$worker_flag" "$session_dates_csv"' \
   "$ops/backfill-production.sh" || die 'backfill must pass only validated session dates to the worker'
+grep -Fq 'state_header=LAGRANGE_EOD_RAW_STATE_V1' "$ops/backfill-production.sh" \
+  || die 'R2 Raw collection must not reuse legacy publication state'
+grep -Fq 'completion_status=RAW_COMMITTED' "$ops/backfill-production.sh" \
+  || die 'R2 Raw progress must not claim canonical publication'
 grep -Fq 'SESSION_DATES_CSV' "$ops/lib/backfill-progress.py" \
   || die 'backfill progress must validate the exact session sequence'
 materialize_service=$(awk '
@@ -929,9 +937,13 @@ grep -Fq 'backfill-progress.py' "$ops/backfill-production.sh" \
   || die 'backfill must durably consume per-date worker progress'
 grep -Fq 'os.fsync(state.fileno())' "$ops/lib/backfill-progress.py" \
   || die 'backfill per-date progress must be durable before the next date'
-grep -Fq 'record.get("phase") == "canonical_publication"' \
+grep -Fq 'record.get("phase") == ("raw_capture" if raw_source else "canonical_publication")' \
   "$ops/lib/backfill-progress.py" \
-  || die 'backfill progress must distinguish canonical EOD from final Curated recovery'
+  || die 'backfill progress must distinguish Raw collection from canonical EOD and final Curated recovery'
+grep -Fq 'completion = "RAW_COMMITTED" if raw_source else "PUBLISHED"' \
+  "$ops/lib/backfill-progress.py" || die 'Raw collection must retain a distinct progress status'
+grep -Fq '("ready", "publication", "curated", "db")' \
+  "$ops/lib/backfill-progress.py" || die 'Raw progress must check absence of publication authority'
 grep -Fq 'KIS_CALENDAR_SNAPSHOT_MISS' "$ops/lib/backfill-progress.py" \
   || die 'backfill progress must identify the only deferred calendar error'
 grep -Fq 'DEFERRED_EXIT = 75' "$ops/lib/backfill-progress.py" \

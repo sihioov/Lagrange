@@ -187,13 +187,37 @@ export const ownerBetaItemSchema = z
 
 export type OwnerBetaItemModel = z.infer<typeof ownerBetaItemSchema>;
 
-const ownerBetaRunFields = {
+const historicalPinFields = {
   action_manifest_sha256: sha256Schema,
   approval_registry_sha256: sha256Schema,
   artifact_manifest_sha256: sha256Schema,
+  candidate_content_sha256: sha256Schema,
+  stage5_manifest_sha256: sha256Schema,
+} as const;
+const historicalPinNames = Object.keys(historicalPinFields) as Array<
+  keyof typeof historicalPinFields
+>;
+const ownerBetaReadInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("historical"), ...historicalPinFields }).strict(),
+  z
+    .object({
+      kind: z.literal("daily"),
+      content_sha256: sha256Schema,
+      manifest_sha256: sha256Schema,
+      admission_sha256: sha256Schema,
+      policy_sha256: sha256Schema,
+      base: z.object(historicalPinFields).strict(),
+    })
+    .strict(),
+]);
+
+const ownerBetaRunFields = {
+  action_manifest_sha256: sha256Schema.optional(),
+  approval_registry_sha256: sha256Schema.optional(),
+  artifact_manifest_sha256: sha256Schema.optional(),
   as_of: z.iso.date(),
   audience: z.literal("OWNER_ONLY"),
-  candidate_content_sha256: sha256Schema,
+  candidate_content_sha256: sha256Schema.optional(),
   capability: z.literal("PRICE_RETURN_ONLY"),
   created_at: z.iso.datetime(),
   error_code: z
@@ -204,10 +228,14 @@ const ownerBetaRunFields = {
   factor_snapshot_sha256: sha256Schema.nullable().optional(),
   finished_at: z.iso.datetime().nullable().optional(),
   id: z.uuid(),
-  input_kind: z.literal("owner_beta_historical_price_only_v1"),
+  input_kind: z.enum([
+    "owner_beta_historical_price_only_v1",
+    "owner_beta_daily_etf11_price_only_v1",
+  ]),
+  input: ownerBetaReadInputSchema.optional(),
   items: z.array(ownerBetaItemSchema),
   job_id: z.uuid(),
-  stage5_manifest_sha256: sha256Schema,
+  stage5_manifest_sha256: sha256Schema.optional(),
   started_at: z.iso.datetime().nullable().optional(),
   status: ownerBetaRunStatusSchema,
   strategy_config_id: z.uuid(),
@@ -215,6 +243,8 @@ const ownerBetaRunFields = {
   strategy_id: z.string().min(1),
   strategy_version: z.string().min(1),
   target_snapshot_sha256: sha256Schema.nullable().optional(),
+  trigger_kind: z.enum(["MANUAL", "DAILY"]).optional(),
+  published_at: z.iso.datetime().optional(),
   updated_at: z.iso.datetime(),
   vendor_snapshot: z.literal(true),
   strict_pit: z.literal(false),
@@ -227,7 +257,42 @@ function weightUnits(value: string): number {
 
 const ownerBetaRunObjectSchema = z.object(ownerBetaRunFields).strict();
 
+function validateReadIdentity(
+  run: Omit<z.infer<typeof ownerBetaRunObjectSchema>, "items">,
+  context: z.RefinementCtx,
+): void {
+  if (run.input_kind === "owner_beta_historical_price_only_v1") {
+    // Older historical responses have no union or trigger fields. Their five
+    // original commitments remain mandatory; new fields must agree exactly.
+    const input = run.input;
+    if (
+      historicalPinNames.some((name) => run[name] === undefined) ||
+      (run.trigger_kind !== undefined && run.trigger_kind !== "MANUAL") ||
+      (input !== undefined &&
+        (input.kind !== "historical" ||
+          historicalPinNames.some((name) => input[name] !== run[name])))
+    ) {
+      context.addIssue({ code: "custom", message: "invalid historical input identity" });
+    }
+  } else if (
+    run.trigger_kind !== "DAILY" ||
+    run.input?.kind !== "daily" ||
+    historicalPinNames.some((name) => run[name] !== undefined) ||
+    run.status === "RUNNING" ||
+    (run.status === "SUCCEEDED" && run.published_at === undefined)
+  ) {
+    context.addIssue({ code: "custom", message: "invalid daily input identity" });
+  }
+  if (
+    run.published_at !== undefined &&
+    (run.status !== "SUCCEEDED" || run.published_at !== run.finished_at)
+  ) {
+    context.addIssue({ code: "custom", message: "invalid publication time" });
+  }
+}
+
 export const ownerBetaRunSchema = ownerBetaRunObjectSchema.superRefine((run, context) => {
+  validateReadIdentity(run, context);
   if (run.strategy_id === "buy_and_hold") {
     for (const item of run.items) {
       if (Object.keys(item.factors).length !== 0) {
@@ -291,7 +356,9 @@ export const ownerBetaRunSchema = ownerBetaRunObjectSchema.superRefine((run, con
 export type OwnerBetaRunModel = z.infer<typeof ownerBetaRunSchema>;
 
 /** List rows carry immutable run metadata but never item payloads. */
-export const ownerBetaRunListItemSchema = ownerBetaRunObjectSchema.omit({ items: true });
+export const ownerBetaRunListItemSchema = ownerBetaRunObjectSchema
+  .omit({ items: true })
+  .superRefine(validateReadIdentity);
 
 export type OwnerBetaRunListItemModel = z.infer<typeof ownerBetaRunListItemSchema>;
 

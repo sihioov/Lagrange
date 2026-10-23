@@ -32,6 +32,9 @@ use market_data::storage::RawStore;
 use market_data::{KIS_ACTION_MAX_PAGES, KR_ETF_CORE_SYMBOLS, KisActionRangeScope, KisProvider};
 use serde::Serialize;
 
+#[path = "kis_action_dividend_diagnostic/mod.rs"]
+mod dividend_diagnostic;
+
 const USAGE: &str = "\
 kis-action-range-raw --start YYYY-MM-DD --end YYYY-MM-DD [options]\n\
 \n\
@@ -181,6 +184,10 @@ struct FailureRecord {
 }
 
 fn main() -> ExitCode {
+    let argv = std::env::args().skip(1).collect::<Vec<_>>();
+    if argv.first().map(String::as_str) == Some("--dividend-conflict-diagnostic") {
+        return dividend_diagnostic::main(&argv[1..]);
+    }
     let args = match parse_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
         Ok(Some(args)) => args,
         Ok(None) => {
@@ -396,6 +403,18 @@ fn build_provider(
     app_key_file: &Path,
     app_secret_file: &Path,
 ) -> Result<KisProvider<LiveKisClient>, CliError> {
+    Ok(KisProvider::kr_etf_core(build_client(
+        app_key_file,
+        app_secret_file,
+        |transport| transport,
+    )?))
+}
+
+fn build_client<T: kis_client::Transport>(
+    app_key_file: &Path,
+    app_secret_file: &Path,
+    wrap: impl Fn(LiveTransport) -> T,
+) -> Result<KisMarketDataClient<T, TokioSleeper, SystemCredentialSource>, CliError> {
     let coordination =
         ProductionReadCoordination::from_env().map_err(|_| CliError::InvalidLocalConfig)?;
     let app_key_ref = CredentialRef::file(app_key_file.to_string_lossy().into_owned());
@@ -441,7 +460,7 @@ fn build_provider(
         },
     );
     let mut client = KisMarketDataClient::new(
-        read_transport,
+        wrap(read_transport),
         TokioSleeper,
         tokens,
         Arc::new(limiter),
@@ -461,9 +480,9 @@ fn build_provider(
         .map_err(|_| CliError::InvalidLocalConfig)?;
         let intraday_transport = LiveTransport::live(Duration::from_secs(3))
             .map_err(|_| CliError::LocalTransportUnavailable)?;
-        client = client.with_shared_read_coordination(auth, intraday_transport);
+        client = client.with_shared_read_coordination(auth, wrap(intraday_transport));
     }
-    Ok(KisProvider::kr_etf_core(client))
+    Ok(client)
 }
 
 fn report_parse_error(error: CliError) -> ExitCode {

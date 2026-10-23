@@ -74,6 +74,7 @@ pub struct RuntimeConfig {
     pub owner_beta_access: OwnerBetaAccessMode,
     pub owner_beta_paper: OwnerBetaPaperMode,
     pub owner_beta_price_input: OwnerBetaPriceInputMode,
+    pub owner_beta_daily: job_queue::owner_beta::runner::daily_runtime::DailyProcessMode,
     pub owner_beta_equity_signals: OwnerBetaEquitySignalsMode,
     pub stock_price_beta_artifact_root: PathBuf,
     pub owner_equity_v2_pins: Option<OwnerEquityV2RuntimePins>,
@@ -137,6 +138,7 @@ impl RuntimeConfig {
             owner_beta_access: self.owner_beta_access,
             owner_beta_paper: self.owner_beta_paper,
             owner_beta_price_input: self.owner_beta_price_input,
+            owner_beta_daily: self.owner_beta_daily,
             owner_beta_equity_signals: self.owner_beta_equity_signals,
             stock_price_beta_artifact_root: self.stock_price_beta_artifact_root.clone(),
             owner_equity_v2_pins: self.owner_equity_v2_pins.clone(),
@@ -183,6 +185,7 @@ where
     let owner_beta_access = owner_beta_access_from(&get)?;
     let owner_beta_paper = owner_beta_paper_from(&get, owner_beta_access)?;
     let owner_beta_price_input = owner_beta_price_input_from(&get, owner_beta_access)?;
+    let owner_beta_daily = owner_beta_daily_from(&get, owner_beta_access)?;
     let owner_beta_equity_signals = owner_beta_equity_signals_from(&get, owner_beta_access)?;
     let owner_equity_v2_pins = owner_equity_v2_pins_from(&get)?;
     let owner_equity_v2_api_artifact_root = owner_equity_v2_api_artifact_root_from(&get)?;
@@ -248,6 +251,7 @@ where
         owner_beta_access,
         owner_beta_paper,
         owner_beta_price_input,
+        owner_beta_daily,
         owner_beta_equity_signals,
         stock_price_beta_artifact_root,
         owner_equity_v2_pins,
@@ -543,6 +547,33 @@ where
     };
     if mode.is_enabled() && !owner_beta_access.requires_owner() {
         return Err(invalid("OWNER_BETA_PAPER_MODE"));
+    }
+    Ok(mode)
+}
+
+/// Parse the default-off daily mode within the Owner-only access boundary.
+fn owner_beta_daily_from<F>(
+    get: &F,
+    access: OwnerBetaAccessMode,
+) -> Result<job_queue::owner_beta::runner::daily_runtime::DailyProcessMode, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    use job_queue::owner_beta::runner::daily_runtime::DailyProcessMode;
+    if get("OWNER_BETA_DAILY_MODE_FILE").is_some() {
+        return Err(invalid("OWNER_BETA_DAILY_MODE_FILE"));
+    }
+    let raw = get("OWNER_BETA_DAILY_MODE")
+        .map(|value| {
+            value.into_string().map_err(|_| ConfigError::NonUnicode {
+                key: "OWNER_BETA_DAILY_MODE".into(),
+            })
+        })
+        .transpose()?;
+    let mode =
+        DailyProcessMode::parse(raw.as_deref()).map_err(|_| invalid("OWNER_BETA_DAILY_MODE"))?;
+    if mode == DailyProcessMode::OwnerOnly && !access.requires_owner() {
+        return Err(invalid("OWNER_BETA_DAILY_MODE"));
     }
     Ok(mode)
 }
@@ -2507,6 +2538,36 @@ mod tests {
         assert!(
             matches!(config(&env), Err(ConfigError::Invalid { ref key }) if key == "OWNER_BETA_PAPER_MODE_FILE"),
             "the non-secret Paper policy must not accept *_FILE"
+        );
+    }
+
+    #[test]
+    fn owner_beta_daily_api_mode_is_off_by_default_and_owner_only_when_enabled() {
+        use job_queue::owner_beta::runner::daily_runtime::DailyProcessMode;
+        let mut env = base_env();
+        assert_eq!(
+            config(&env).unwrap().api_config().owner_beta_daily,
+            DailyProcessMode::Disabled
+        );
+        env.insert("OWNER_BETA_DAILY_MODE".into(), "owner_only".into());
+        assert!(
+            matches!(config(&env),Err(ConfigError::Invalid{ref key}) if key=="OWNER_BETA_DAILY_MODE")
+        );
+        env.insert("OWNER_BETA_ACCESS_MODE".into(), "owner_only".into());
+        assert_eq!(
+            config(&env).unwrap().api_config().owner_beta_daily,
+            DailyProcessMode::OwnerOnly
+        );
+        for value in ["", "enabled", "true", "OWNER_ONLY", "owner_only "] {
+            env.insert("OWNER_BETA_DAILY_MODE".into(), value.into());
+            assert!(
+                matches!(config(&env),Err(ConfigError::Invalid{ref key}) if key=="OWNER_BETA_DAILY_MODE")
+            );
+        }
+        env.remove("OWNER_BETA_DAILY_MODE");
+        env.insert("OWNER_BETA_DAILY_MODE_FILE".into(), "/not/read".into());
+        assert!(
+            matches!(config(&env),Err(ConfigError::Invalid{ref key}) if key=="OWNER_BETA_DAILY_MODE_FILE")
         );
     }
 

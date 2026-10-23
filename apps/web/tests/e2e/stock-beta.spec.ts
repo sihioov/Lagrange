@@ -1107,15 +1107,43 @@ test.describe("provider-free Stock Beta V2", () => {
       stockBetaSeed: "failed",
     });
 
-    await page.goto("/stock-beta");
-    const card = membershipCard(page, "000001.KRX");
-    await expect(card).toHaveAttribute("data-lifecycle", "FAILED");
-    await expect(card).toContainText("OWNER_EQUITY_BACKFILL_RETRYABLE");
-    await card.getByRole("button", { name: "Retry" }).click();
-    await expect(card).toHaveAttribute("data-lifecycle", "READY", { timeout: 20_000 });
-    await expect(card).not.toContainText("OWNER_EQUITY_BACKFILL_RETRYABLE");
-    await expect(rankedRow(page, "000001.KRX")).toBeVisible({ timeout: 20_000 });
-    await expect(snapshotStrip(page)).toBeVisible({ timeout: 20_000 });
+    // Expose the server-rendered controls before React can attach event handlers.
+    // A click in this interval used to be silently lost on a slow connection.
+    let releaseScripts = () => {};
+    const scriptsReady = new Promise<void>((resolve) => {
+      releaseScripts = resolve;
+    });
+    let heldScripts = 0;
+    await page.route("**/_next/static/**", async (route) => {
+      if (route.request().resourceType() !== "script") return route.fallback();
+      heldScripts += 1;
+      await scriptsReady;
+      await route.fallback();
+    });
+    try {
+      await page.goto("/stock-beta", { waitUntil: "commit" });
+      const card = membershipCard(page, "000001.KRX");
+      await expect(card).toHaveAttribute("data-lifecycle", "FAILED");
+      await expect(card).toContainText("OWNER_EQUITY_BACKFILL_RETRYABLE");
+      await expect.poll(() => heldScripts).toBeGreaterThan(0);
+      await expect(card.getByRole("button", { name: "Retry", exact: true })).toBeDisabled();
+      await expect(card.getByRole("button", { name: "Disable", exact: true })).toBeDisabled();
+      await expect(page.getByLabel("KRX code")).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Add instrument" })).toBeDisabled();
+      releaseScripts();
+      await expect(page.getByLabel("KRX code")).toBeEnabled();
+      const retryResponse = page.waitForResponse(
+        (response) => response.request().method() === "POST" && response.url().endsWith("/retry"),
+      );
+      await card.getByRole("button", { name: "Retry", exact: true }).click();
+      expect((await retryResponse).status()).toBe(202);
+      await expect(card).toHaveAttribute("data-lifecycle", "READY", { timeout: 20_000 });
+      await expect(card).not.toContainText("OWNER_EQUITY_BACKFILL_RETRYABLE");
+      await expect(rankedRow(page, "000001.KRX")).toBeVisible({ timeout: 20_000 });
+      await expect(snapshotStrip(page)).toBeVisible({ timeout: 20_000 });
+    } finally {
+      releaseScripts();
+    }
   });
 
   test("removes a disabled row and stale snapshot signal immediately", async ({

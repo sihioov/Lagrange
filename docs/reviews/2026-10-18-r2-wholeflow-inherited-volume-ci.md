@@ -1,0 +1,170 @@
+# R2 inherited-volume correction — hosted evidence
+
+R2-04/R2-09, Wave101. Candidate `512625a31fdb59d284cbd13fa6f2334a4737cc13`.
+Both exact runs and their full evidence are accepted for hosted scope only.
+CI completed10:24:43UTC and functional smoke completed10:55:08UTC; full terminal
+recovery observed both at11:00:09UTC. Source and frozen inputs remain immutable.
+Later documentation HEAD does not change the selected candidate. Actual candidate
+images and approved-base host integration remain unexecuted/unaccepted.
+
+[Source scope and prior host failure](2026-10-18-r2-wholeflow-inherited-volume-correction.md).
+The five-source-file correction has no local project execution or independent
+review claim. Prior0120 images/restoration remain accepted; its wholeflow failed
+before bootstrap started, with one unlabelled volume retained. Both approvals
+are consumed. No new host probe/retry/deployment or volume deletion is authorized.
+
+## Exact single launches
+
+Remote branch matched the candidate and the all-event/all-workflow exact-head
+query returned zero before dispatch. Each workflow was dispatched once, exit0.
+
+| Workflow | Actual run | Created UTC | Full-evidence reporting bound UTC |
+| --- | --- | --- | --- |
+| CI | [39117542904](https://github.com/sihioov/Lagrange/actions/runs/39117542904), attempt1 |10:00:25 |11:45:25 |
+| Functional research smoke | [39117544844](https://github.com/sihioov/Lagrange/actions/runs/39117544844), attempt1 |10:00:27 |11:45:27 |
+
+Private receipts are under `target/r2-daily-beta/wp-8/wave101/`. Never rerun,
+cancel or duplicate these runs. Dispatch-intent and launch receipts govern;
+preparation no-dispatch flags remain historical.
+
+## Frozen scope
+
+Input manifest SHA256 `30b311e0bcee259f414939a73e3cf1152b0b5c5690032f2e39e9ed7e92515e3c`:
+1252 file pins/525 committed blobs;1200 prior pins unchanged, four updated source
+paths and one new actual-Docker fixture. Inventory SHA256
+`93eed6726e1637bb7151eb9829181493c898a3086569860a651a239c9bf39d3a`:
+141 required definitions (131 carried+10 new),15 image outcomes and32 wholeflow
+definitions (23 carried+4 boundary+5 actual Docker). Every carried name/current
+line reference was reconciled without executing project code.
+
+## Observation — 10:04:29 UTC
+
+Format, strict Clippy and Python jobs completed successfully. Three complete
+log hashes and three actual checkout SHAs were recovered. All1252 input pins
+and525 candidate blobs still match. Initial reconciliation SHA256
+`74f9947dc5957287e9f0360c5aec2e74d4d10a72a172a5085c8181dc67883c1f`
+at `target/r2-daily-beta/ci/512625a/initial-reconciliation.json`.
+
+Policy (including the new actual Docker suite), PostgreSQL, Web, workspace,
+required gate and functional smoke full evidence remain open. No aggregate-only
+or skipped-test acceptance. Recover all9 logs/8 checkout SHAs, all jobs/steps/pages,
+141 named results,15 image outcomes,32 wholeflow cases, carried Rust/PG/Web
+scopes and actual publication/repeat/10 cleanup outcomes. Unprinted independent
+nested rows/exits remain UNKNOWN. Raw logs stay in memory only.
+
+After complete terminal evidence, prepare the exact successor host packet and
+retained-volume disposition for one Owner decision. G4 consistent pre-upgrade
+recovery/backup transition, deployment, Owner use,3 trading days and C_R2 remain
+open. Same-agent heartbeat44965a67 confirmed; handoff SHA256
+`8c42e24e34c495fb0cac23eff11e9a64d3e8b133de34628c3c274f0f04d7e48c`;
+predecessor04318894 deletion confirmed. Renew by20:45UTC/before47th tick or expiry.
+Native Ralph remains blocked; this heartbeat is not a worker or outage protection.
+
+
+## Policy and Web reconciliation — 10:15–10:18 UTC
+
+Policy completed10:08:03UTC with the new required actual-Docker step successful.
+All five actual create/inspect tests and four new mocked boundary tests plus the
+workflow contract ran and passed. Wholeflow32 named cases,137 of141 required
+definitions, all15 image outcomes,113 affected-module cases and carried policy
+named groups were matched. Four required Rust definitions await workspace logs.
+Web's129-case off lane and14-case market-stream lane matched every carried case
+identity/outcome, with no skip/retry/flaky cases and cleanup/reservation success.
+All24 explicit Web/UI markers and34 supervisor cases matched. Five full job logs
+and five actual checkout SHAs are now recovered;1252 input pins remain unchanged.
+
+Receipt `ci/512625a/policy-web-reconciliation.json` SHA256
+`ca8dc4eaf5cc86b02afe706d1c901d558dcc9a1647868ea1cf34e9a079332735`;
+partial `ci/512625a/policy-web-partial-evidence.json` SHA256
+`03710405b17d4867bfcbd96af6c880ce84b7e5c48d8eed710a89fddb2a9385ad`.
+Paths are relative to `target/r2-daily-beta/`.
+
+The coordinator's first observation extractor recognized only bare PASS and
+missed four suite markers with explanatory suffixes; its Web matcher also
+incorrectly required a space after the first colon. Exact source marker forms
+and identical-hash complete logs resolved both. A quoting typo in coordinator
+reconciliation preparation was corrected before writing evidence. Original
+observations remain preserved; no product source change, rerun or test claim
+was substituted for the actual named rows.
+
+PostgreSQL, workspace, required gate and functional smoke full evidence remain
+pending. This is partial evidence, not hosted candidate or new host acceptance.
+Source/input freeze, existing reporting bounds and heartbeat44965a67 continue.
+
+
+## PostgreSQL reconciliation — 10:18–10:20 UTC
+
+The dedicated PostgreSQL job also completed successfully, bringing full logs and
+actual checkout matches to6. All19 direct processes exited0 without skips;146
+named rows,0060's32 names/73 subcases and83 bootstrap outcomes matched. Both
+full-release runs had62 migration SHA-384 checksums equal to the pinned source;
+0039 rollback protection, catalog checks and cleanup remained successful.
+Parallel0060 row arrays were compared by exact name/outcome multiplicity, while
+the direct process order stayed exact; no incidental emission order requirement
+was substituted for the real contract.
+
+Combined policy/PG/Web receipt SHA256
+`eb518d5d17c16e5da649a6439dceecd3b01bc331d8b58b125406e240b9942fef`;
+`ci/512625a/partial-ci-evidence.json` SHA256 `083d7bfa483a12d2fa4832513181369e401fb134990352934991173ebcba7d76`.
+The earlier five-log partial receipt remains historical. Required137/141 passed;
+workspace's four Rust definitions, the required gate job and full functional
+smoke evidence remain pending. Source/input pins and authorization remain unchanged.
+
+
+## Full required CI recovery — 10:30–10:35 UTC
+
+CI39117542904 attempt1 completed successfully at10:24:43UTC. All8 jobs, every
+step/page,8 complete log hashes and7 actual checkout SHAs were recovered.
+All141 required definitions,15 image outcomes,32 wholeflow definitions and
+carried Rust/PG/Web groups passed. Workspace reconciliation records3363 named
+rows and231 root blocks; the fragmented KIS helper name and unprinted nested
+independent rows/exits remain UNKNOWN. Three non-Linux exclusions, six ignored
+workspace rows and ten existing Python skips remain explicit.
+
+Workspace receipt SHA256
+`d9ace462daecb23662d3cc52cd2177d27c2c437847fa864acda55ad6472fc561`;
+`ci/512625a/required-ci-evidence.json` SHA256
+`0ef41cff9c95c33603c5243e18756fe17969ace59d5736679aaedb679daeaf5d`.
+All1252 file pins and525 committed blobs were rechecked. The coordinator first
+compared the Python aggregate to the previous495 count; the committed new
+workflow-contract test and identical-hash log establish496 passed/10 skipped.
+This was an evidence comparison correction, not a test failure or rerun.
+
+The separate functional smoke was still in progress at10:30:09UTC. Its actual
+publication/repeat/10 cleanup outcomes and resource absence remain pending.
+The9-log/8-checkout full terminal receipt and successor host packet follow only
+after recovery. No new host execution, volume deletion or acceptance is claimed.
+
+
+## Full hosted acceptance — 11:00 UTC
+
+CI39117542904 and functional smoke39117544844 attempt1 are SUCCESS. All8 CI jobs
+plus the smoke job, every step/page,9 full log hashes and8 actual checkout SHAs
+were recovered. All1252 frozen pins and525 committed blobs matched. Required141
+names,15 image outcomes,32 wholeflow definitions and all carried Rust/strict
+Clippy/format/PG/Web groups passed. The five actual Docker create/inspect cases
+and four mocked mount/cleanup boundaries passed; they do not prove private
+approved-base integration. Explicit exclusions and unprinted independent nested
+rows/exits remain UNKNOWN as recorded above.
+
+The functional run actually published2 universes/12 members/6 datasets/
+1 source publication/2 feeds/10 items and60 calendar/history/projected rows.
+Repeated execution preserved expected counts and lineage. All10 cleanup outcomes
+were0 and the owned-resource absence check passed. The exact success marker was
+matched against the pinned script and complete log; the general diagnostic
+extractor omitted lowercase fixture identities, so its output alone was not used.
+A raw-init-only marker is not printed in this full functional branch and remains
+NOT_PRINTED. No workflow rerun, source change or extra production probe occurred.
+
+Full terminal `target/r2-daily-beta/ci/512625a/hosted-terminal-evidence.json`
+SHA256 `4d99e5a7b07e20049a26afff264d0f20c9ee494426c1cf51cc1a79a9f2c06170`;
+functional receipt `functional-smoke-evidence.json`
+SHA256 `fda7c05b58f6d8c7620c8e48c312f43c838692e0f11528fe348178a8b5f65e7e`.
+Required-only0ef41cff and all partial receipts remain historical. Raw logs stayed
+in RAM; only finite structured evidence/hashes were persisted.
+
+Continue with the [Wave102 packet](2026-10-18-r2-512625a-host-sequence-packet.md):
+new2144-pin checkout,11 image/recovery controls and a conditional integration
+packet with explicit retention of the old anonymous volume. It is prepared,
+not authorized or executed. Prior Wave100 approval is consumed. Actual images,
+private integration, G4/deployment/Owner/three trading days/finalC_R2 stay open.

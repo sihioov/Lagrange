@@ -3,6 +3,12 @@
 **Decision status:** unapproved. Select exactly one decision at the end of this packet. No checkbox
 is selected by this document.
 
+**2026-10-23 R4-01 follow-up:** the
+[complete v1 proposal](2026-10-23-r4-price-only-simulation-contract-draft.md) now supplies recommended
+values, alternatives and consequences for all twelve rows. It remains unapproved. The Owner can
+approve that concrete version as a whole rather than fill this historical blank worksheet. No
+choice below has been selected, and preparation is not authorization to implement or publish metrics.
+
 ## Decision in one page
 
 Phase A rejected attaching a generic Nautilus/registered-`READY` backtest to the owner-beta

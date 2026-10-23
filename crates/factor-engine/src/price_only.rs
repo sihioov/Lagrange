@@ -178,12 +178,18 @@ impl From<&HistoricalPriceOnlyArtifactPins> for PriceOnlyPins {
     }
 }
 
-fn build_from_bars_and_pins(
-    bars: PriceOnlyBars,
-    pins: PriceOnlyPins,
+pub(crate) struct ComputedPriceOnlyRows {
+    pub factor_versions: BTreeMap<String, String>,
+    pub normalization: NormalizationMeta,
+    pub rows: Vec<FactorRow>,
+}
+
+/// The shared close-only arithmetic has no approval pins or serialization.
+pub(crate) fn compute_price_only_rows(
+    bars: &PriceOnlyBars,
     factors: Vec<Box<dyn Factor>>,
     normalization: Box<dyn NormalizePolicy>,
-) -> Result<PriceOnlyFactorSnapshot, FactorError> {
+) -> Result<ComputedPriceOnlyRows, FactorError> {
     for factor in &factors {
         for field in factor.required_fields() {
             if !bars.available_fields().contains(field) {
@@ -256,6 +262,24 @@ fn build_from_bars_and_pins(
         version: normalization.version().to_string(),
         params: normalization.params(),
     };
+    Ok(ComputedPriceOnlyRows {
+        factor_versions,
+        normalization,
+        rows,
+    })
+}
+
+fn build_from_bars_and_pins(
+    bars: PriceOnlyBars,
+    pins: PriceOnlyPins,
+    factors: Vec<Box<dyn Factor>>,
+    normalization: Box<dyn NormalizePolicy>,
+) -> Result<PriceOnlyFactorSnapshot, FactorError> {
+    let ComputedPriceOnlyRows {
+        factor_versions,
+        normalization,
+        rows,
+    } = compute_price_only_rows(&bars, factors, normalization)?;
     let snapshot = PriceOnlyFactorSnapshot {
         input_kind: PRICE_ONLY_INPUT_KIND.to_owned(),
         capability: PRICE_ONLY_CAPABILITY.to_owned(),

@@ -1,4 +1,7 @@
 #!/usr/bin/bash -p
+# --inspect --expected-commit SHA --grant-id UUID --approval-input PATH
+#   --approval-sha256 SHA256: existing pinned grant evidence, read-only DB check.
+# Inspection is not installation, revocation, activation, or a market connection.
 set -eu
 
 wrapper_path=${BASH_SOURCE[0]}

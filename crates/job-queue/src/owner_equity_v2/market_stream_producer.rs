@@ -3382,16 +3382,23 @@ mod runtime_owner {
             self.request_stop(StopReason::FreshEpochRequired);
         }
 
-        #[cfg_attr(feature = "market-stream-db-tests", track_caller)]
+        #[track_caller]
         fn fail(&mut self, error: MarketStreamProducerError) {
-            #[cfg(feature = "market-stream-db-tests")]
             if self.failure.is_none() {
+                // Both error enums contain only closed variants, never SQL,
+                // credentials, provider prose or quote payloads. Keep the
+                // original failure when cleanup reports a secondary error.
                 eprintln!(
-                    "KIS_TEST_DIAG owner_failure error={error:?} line={}",
-                    std::panic::Location::caller().line()
+                    "{}",
+                    serde_json::json!({
+                        "event": "owner_market_stream_failure",
+                        "code": "PRODUCER_FAILED",
+                        "cause": error.to_string(),
+                        "source_line": std::panic::Location::caller().line(),
+                    })
                 );
+                self.failure = Some(error);
             }
-            self.failure = Some(error);
             self.stopping = true;
         }
 
@@ -3555,7 +3562,7 @@ mod runtime_owner {
             }
         }
 
-        #[cfg_attr(feature = "market-stream-db-tests", track_caller)]
+        #[track_caller]
         fn fail(&mut self, error: MarketStreamProducerError) {
             self.lifecycle.fail(error);
             self.buffer.invalidate(InvalidationCause::TerminalTransport);
@@ -3784,7 +3791,7 @@ mod runtime_owner {
             self.changed.notify_waiters();
         }
 
-        #[cfg_attr(feature = "market-stream-db-tests", track_caller)]
+        #[track_caller]
         fn fail(&self, error: MarketStreamProducerError) {
             if let Ok(mut state) = self.state.lock() {
                 state.fail(error);
@@ -3981,7 +3988,17 @@ mod runtime_owner {
                 .await
             {
                 Ok(event) => event,
-                Err(_) => {
+                Err(error) => {
+                    // MarketStreamError's Display is finite typed diagnostics;
+                    // it never includes the received frame or broker message.
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({
+                            "event": "owner_market_stream_failure",
+                            "code": "TRANSPORT_READ_FAILED",
+                            "cause": error.to_string(),
+                        })
+                    );
                     shared.fail(MarketStreamProducerError::TransportFailure);
                     drop(session);
                     return;
@@ -5685,6 +5702,20 @@ mod runtime_owner {
                 MarketStreamStorageError::CommitUnknown,
             ));
             assert_eq!(db_failure.clean_exit(), None);
+        }
+
+        #[test]
+        fn original_failure_survives_cleanup_and_cannot_become_clean_exit() {
+            let original =
+                MarketStreamProducerError::Storage(MarketStreamStorageError::CommitUnknown);
+            let mut lifecycle = RuntimeLifecycle::default();
+            lifecycle.fail(original);
+            lifecycle.fail(MarketStreamProducerError::Terminal);
+            lifecycle.record_close(Err(MarketStreamProducerError::TransportFailure));
+            lifecycle.record_close(Ok(()));
+            assert_eq!(lifecycle.failure, Some(original));
+            assert!(lifecycle.stopping);
+            assert_eq!(lifecycle.clean_exit(), None);
         }
 
         type AdmissionMetadataSnapshot = (

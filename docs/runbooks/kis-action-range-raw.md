@@ -97,3 +97,36 @@ multi-page batch를 직접 입력으로 취급하지 않는다. 후속 bridge-v1
 manifest와 file-level lineage를 검토한 뒤 별도 adapter로 연결해야 한다.
 nonempty action class 중 현재 canonical mapping이 있는 것은 bonus issue뿐이며,
 나머지는 Raw 수집 후 canonical stage에서 blocker로 남는다.
+
+## 2026-10-22 한 번의 배당 충돌 진단 예외
+
+Owner는 Sep15/153130의 원래 SOURCE_CONFLICT를 조사하기 위해 이번 한 번만
+제한된 재조회를 명시적으로 허용했다. 기존 7/77-class capture와 달리
+`--dividend-conflict-diagnostic`는 아래 고정 네 조건만 순서대로 조회한다.
+
+| 순서 | SHT_CD | F_DT | T_DT |
+| --- | --- | --- | --- |
+| 1 | 153130 | 20260915 | 20260915 |
+| 2 | 153130 | 20260829 | 20261018 |
+| 3 | 빈 값 | 20260915 | 20260915 |
+| 4 | 빈 값 | 20260829 | 20261018 |
+
+경로는 dividend/HHKDB669102C0, GB1=0, CTS/HIGH_GB/tr_cont는 빈 값이다.
+기존 shared_required token/quota 경로와 30초 timeout을 사용한다. 네 logical
+요청 전체에서 기존 retry 포함 최대16 GET, 요청당 최대4 GET를 전송 직전에
+강제한다. 순차 실행하며 첫 실패·불확실한 결과에서 전체를 중단한다.
+M은 해당 첫 응답을 별도 진단 Raw로 보존한 뒤 불완전 종료하고 따라가지 않는다.
+F도 따라가지 않는다. 성공은 완전성이나 원래 두 출처의 우선순위를 입증하지 않는다.
+
+`raw/dividend-conflict-diagnostic-20261022-once`의 배타적 디렉터리 claim을
+credential resolution/network보다 먼저 동기화한다. 실패·중단·불확실 상태도
+claim을 보존하며 삭제하거나 자동 재실행하지 않는다. 각 검증된 원본은
+`provider=kis-dividend-diagnostic-20261022`의 별도 immutable batch로 커밋한다.
+기존 provider=kis와 거절된 outcomes는 변경하지 않고 DB/admission/rebind/enable을
+호출하지 않는다. 출력은 건수·날짜·해시·정형 오류뿐이다. Raw 본문/credentials는
+로그에 출력하지 않는다. 실제 GET 수와 새 파일 크기는 실행 후 증거로 확인한다.
+
+로컬 계획: `scripts/ops/kis-action-range-raw-backfill.sh --dividend-conflict-diagnostic --plan`.
+실행에는 깨끗한 exact commit, 보호된 대응 env, 원래 운영 경계 검사와 별도
+`KIS_DIVIDEND_DIAGNOSTIC_CONFIRM=I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION`
+확인이 필요하다. 이 문서 변경은 실행·충돌 해소·운영 입력 인수를 뜻하지 않는다.

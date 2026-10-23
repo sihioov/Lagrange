@@ -41,7 +41,7 @@ if [ "$mode" = plan ]; then
   cat <<EOF
 PRODUCTION_BACKUP_PLAN
   config=$config_file (root:root 0600; read only by check/run/verify)
-  classes=PostgreSQL custom dump + exact Raw archive + exact Curated archive
+  classes=legacy PostgreSQL/Raw/Curated; daily history requires the installed daily controller
   encryption=OpenSSL AES-256-CBC PBKDF2 using backup_encryption_key file
   verification=hash/decrypt/extract + isolated networkless PostgreSQL restore
   retention=age and MAX_TOTAL_BYTES, preserving MIN_KEEP verified sets
@@ -84,7 +84,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in ''|\#*) continue ;; *=*) ;; *) die 'config contains malformed line' ;; esac
   key=${line%%=*}; value=${line#*=}
   case "$key" in
-    BACKUP_ROOT|DATA_ROOT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMPOSE_PROJECT|LAGRANGE_CODE_COMMIT|KEY_FILE|LOCK_FILE|METRICS_FILE|MAX_TOTAL_BYTES|MIN_FREE_BYTES|RETENTION_DAYS|MIN_KEEP|POSTGRES_SERVICE|POSTGRES_IMAGE) ;;
+    BACKUP_ROOT|DATA_ROOT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMPOSE_PROJECT|LAGRANGE_CODE_COMMIT|KEY_FILE|LOCK_FILE|METRICS_FILE|MAX_TOTAL_BYTES|MIN_FREE_BYTES|RETENTION_DAYS|MIN_KEEP|POSTGRES_SERVICE|POSTGRES_IMAGE|DAILY_BACKUP_TOOL_COMMIT|DAILY_BACKUP_TOOL_MANIFEST) ;;
     *) die "config contains unsupported key: $key" ;;
   esac
   [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die 'config key shape is invalid'
@@ -115,6 +115,68 @@ min_keep=${cfg[MIN_KEEP]}
 postgres_service=${cfg[POSTGRES_SERVICE]}
 postgres_image=${cfg[POSTGRES_IMAGE]}
 
+# Daily history must never silently enter the legacy three-class path. The
+# application target is the current protected immutable release. An explicit,
+# hash-bound maintenance package may supply corrected backup code independently.
+# The controller still binds that exact application manifest and reader floor.
+daily_install_root=${LAGRANGE_RELEASE_ROOT:-/opt/lagrange}
+safe_path "$daily_install_root" release-root
+case "$daily_install_root" in */|*//*|*/./*|*/.) die 'release-root must be canonical' ;; esac
+if [ -e "$data_root/owner-beta-daily" ] || [ -L "$data_root/owner-beta-daily" ] ||
+   [ -e "$daily_install_root/.owner-beta-daily-reader-floor" ] ||
+   [ -L "$daily_install_root/.owner-beta-daily-reader-floor" ]; then
+  probe=$daily_install_root
+  while [ "$probe" != / ]; do
+    check_secure_parent "$probe" release-root
+    probe=${probe%/*}; [ -n "$probe" ] || probe=/
+  done
+  [ -L "$daily_install_root/current" ] || die 'daily backup needs the installed current release'
+  daily_target=$(readlink -- "$daily_install_root/current")
+  [[ "$daily_target" =~ ^releases/[0-9a-f]{40}$ ]] || die 'daily current release target is invalid'
+  daily_release=$daily_install_root/$daily_target
+  safe_path "$daily_release" daily-release
+  [ "$daily_target" = "releases/$code_commit" ] || die 'backup config is stale for the current release'
+  if [ -n "${cfg[DAILY_BACKUP_TOOL_COMMIT]+set}" ] || [ -n "${cfg[DAILY_BACKUP_TOOL_MANIFEST]+set}" ]; then
+    tool_commit=${cfg[DAILY_BACKUP_TOOL_COMMIT]:-}
+    [[ "$tool_commit" =~ ^[0-9a-f]{40}$ ]] && [ "$tool_commit" != 0000000000000000000000000000000000000000 ] ||
+      die 'daily backup tool needs an exact commit'
+    [[ "${cfg[DAILY_BACKUP_TOOL_MANIFEST]:-}" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+      die 'daily backup tool needs its manifest hash'
+    tool=$daily_install_root/maintenance/$tool_commit/scripts/ops/lib/owner-beta-daily-backup.py
+    safe_path "$tool" daily-tool
+    probe=$(dirname -- "$tool")
+    while [ "$probe" != / ]; do
+      check_secure_parent "$probe" daily-tool
+      probe=${probe%/*}; [ -n "$probe" ] || probe=/
+    done
+    [ -f "$tool" ] && [ "$(stat -c '%u:%g:%a:%h' -- "$tool")" = 0:0:644:1 ] ||
+      die 'daily backup tool is not a protected installed source'
+    operation=backup; tool_mode=apply
+    case "$mode" in check) tool_mode=preflight ;; verify-latest) operation=verify ;; esac
+    exec /usr/bin/python3 -I -S -B "$tool" --operation "$operation" --mode "$tool_mode" \
+      --install-root "$daily_install_root" --application-release "$daily_release" --config-file "$config_file"
+  fi
+  daily_wrapper=$daily_release/scripts/ops/compose-release.sh
+  safe_path "$daily_wrapper" daily-wrapper
+  probe=$(dirname -- "$daily_wrapper")
+  while [ "$probe" != / ] && [ "$probe" != "$daily_install_root" ]; do
+    check_secure_parent "$probe" daily-release
+    probe=${probe%/*}
+  done
+  [ "$probe" = "$daily_install_root" ] || die 'daily wrapper escaped the install root'
+  [ -f "$daily_wrapper" ] && [ "$(stat -c '%u:%g:%a' -- "$daily_wrapper")" = 0:0:755 ] ||
+    die 'daily wrapper is not a protected installed executable'
+  daily_args=(--scope release --backup-config "$config_file")
+  case "$mode" in
+    check) daily_args+=(--daily-backup --preflight) ;;
+    run) daily_args+=(--daily-backup --apply) ;;
+    verify-latest) daily_args+=(--daily-backup-verify --apply) ;;
+  esac
+  exec /bin/bash --noprofile --norc "$daily_wrapper" "${daily_args[@]}"
+fi
+[ -z "${cfg[DAILY_BACKUP_TOOL_COMMIT]+set}${cfg[DAILY_BACKUP_TOOL_MANIFEST]+set}" ] ||
+  die 'daily backup tool cannot enter the legacy backup path'
+
 for pair in "$backup_root:BACKUP_ROOT" "$data_root:DATA_ROOT" "$compose_file:COMPOSE_FILE" \
   "$compose_env:COMPOSE_ENV_FILE" "$key_file:KEY_FILE" "$lock_file:LOCK_FILE" \
   "$metrics_file:METRICS_FILE"; do
@@ -128,7 +190,9 @@ done
 [[ "$retention_days" =~ ^[1-9][0-9]*$ ]] || die 'RETENTION_DAYS must be positive integer'
 [[ "$min_keep" =~ ^[1-9][0-9]*$ ]] || die 'MIN_KEEP must be positive integer'
 [[ "$postgres_service" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$ ]] || die 'POSTGRES_SERVICE shape is invalid'
-[[ "$postgres_image" =~ ^postgres:[0-9]+([.][0-9]+)?$ ]] || die 'POSTGRES_IMAGE must be an explicit official postgres tag'
+[[ "$postgres_image" =~ ^postgres:[0-9]+([.][0-9]+)?$ ]] ||
+  [ "$postgres_image" = postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a ] ||
+  die 'POSTGRES_IMAGE must be an explicit official postgres tag or the pinned digest'
 [ -d "$data_root/raw" ] && [ ! -L "$data_root/raw" ] || die 'Raw source directory missing or unsafe'
 [ -d "$data_root/curated" ] && [ ! -L "$data_root/curated" ] || die 'Curated source directory missing or unsafe'
 [ -f "$compose_file" ] && [ ! -L "$compose_file" ] || die 'Compose file missing or unsafe'

@@ -128,6 +128,9 @@ pub async fn create_config(
         return r;
     }
     let actor = session.actor();
+    if body.owner_beta_daily_enabled && !actor.is_owner() {
+        return code_error("FORBIDDEN", "forbidden", &rid);
+    }
     let body_value = serde_json::to_value(&body).unwrap_or_default();
     let body_hash = crate::http::idempotency::body_hash(&body_value);
     idempotent(&state, &session, &headers, &body_hash, async {
@@ -178,7 +181,7 @@ pub async fn create_config(
         }
         let created = match state
             .strategy_configs()
-            .create(
+            .create_with_daily(
                 &actor,
                 NewStrategyConfig {
                     strategy_id: strategy_id.clone(),
@@ -186,6 +189,7 @@ pub async fn create_config(
                     config_json: body.config.clone(),
                     is_active: body.is_active,
                 },
+                body.owner_beta_daily_enabled,
             )
             .await
         {
@@ -204,23 +208,13 @@ pub async fn create_config(
                 "strategy_id": created.strategy_id,
                 "strategy_version": created.strategy_version,
                 "is_active": created.is_active,
+                "owner_beta_daily_enabled":created.daily_enabled,
+                "owner_beta_daily_epoch":created.daily_epoch,
             })),
             None,
         )
         .await;
-        (
-            StatusCode::CREATED,
-            Json(StrategyConfigDto {
-                id: created.id.to_string(),
-                strategy_id: created.strategy_id,
-                strategy_version: created.strategy_version,
-                config: created.config_json,
-                is_active: created.is_active,
-                created_at: created.created_at,
-                updated_at: created.updated_at,
-            }),
-        )
-            .into_response()
+        (StatusCode::CREATED, Json(StrategyConfigDto::from(created))).into_response()
     })
     .await
 }
@@ -238,18 +232,8 @@ pub async fn list_configs(
     let actor = session.actor();
     match state.strategy_configs().list(&actor).await {
         Ok(rows) => {
-            let items: Vec<StrategyConfigDto> = rows
-                .into_iter()
-                .map(|row| StrategyConfigDto {
-                    id: row.id.to_string(),
-                    strategy_id: row.strategy_id,
-                    strategy_version: row.strategy_version,
-                    config: row.config_json,
-                    is_active: row.is_active,
-                    created_at: row.created_at,
-                    updated_at: row.updated_at,
-                })
-                .collect();
+            let items: Vec<StrategyConfigDto> =
+                rows.into_iter().map(StrategyConfigDto::from).collect();
             (StatusCode::OK, Json(PageDto::new(items, None))).into_response()
         }
         Err(e) => tenancy_response(e, &request_id(&headers), "RESOURCE_NOT_FOUND"),
@@ -277,19 +261,7 @@ pub async fn get_config(
         }
     };
     match state.strategy_configs().get(&actor, id).await {
-        Ok(row) => (
-            StatusCode::OK,
-            Json(StrategyConfigDto {
-                id: row.id.to_string(),
-                strategy_id: row.strategy_id,
-                strategy_version: row.strategy_version,
-                config: row.config_json,
-                is_active: row.is_active,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-            }),
-        )
-            .into_response(),
+        Ok(row) => (StatusCode::OK, Json(StrategyConfigDto::from(row))).into_response(),
         Err(e) => tenancy_response(e, &rid, "RESOURCE_NOT_FOUND"),
     }
 }
@@ -307,6 +279,69 @@ fn validate_params(schema: &serde_json::Value, config: &serde_json::Value) -> Re
             ))
         }
     }
+}
+
+/// Update only this actor's configuration. Missing fields preserve stored values;
+/// SQL owns epoch advancement and rejects stale role/Owner authority at commit.
+pub async fn update_config(
+    State(state): State<ApiState>,
+    session: Session,
+    headers: HeaderMap,
+    Path(config_id): Path<String>,
+    JsonBody(body): JsonBody<crate::http::dto::UpdateStrategyConfigBody>,
+) -> Response {
+    let rid = request_id(&headers);
+    if let Err(response) = crate::http::session::require_csrf(&headers, &session.0) {
+        return response;
+    }
+    let actor = session.actor();
+    if body.owner_beta_daily_enabled == Some(true) && !actor.is_owner() {
+        return code_error("FORBIDDEN", "forbidden", &rid);
+    }
+    let id = match Uuid::parse_str(&config_id) {
+        Ok(value) if !value.is_nil() => value,
+        _ => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_PARAMETER",
+                "config id must be a uuid",
+                &rid,
+                None,
+            );
+        }
+    };
+    if body.config.is_none() && body.is_active.is_none() && body.owner_beta_daily_enabled.is_none()
+    {
+        return code_error(
+            "INVALID_PARAMETER",
+            "at least one configuration field is required",
+            &rid,
+        );
+    }
+    let body_hash = crate::http::idempotency::body_hash(
+        &serde_json::json!({"method":"PATCH","resource":"strategy_config","id":id,"body":body}),
+    );
+    idempotent(&state,&session,&headers,&body_hash,async {
+        let old=match state.strategy_configs().get(&actor,id).await {
+            Ok(row)=>row,Err(error)=>return tenancy_response(error,&rid,"RESOURCE_NOT_FOUND"),
+        };
+        if let Some(config)=&body.config {
+            let schema=match state.strategy_catalog().param_schema(&actor,&old.strategy_id,&old.strategy_version).await {
+                Ok(value)=>value,Err(error)=>return tenancy_response(error,&rid,"RESOURCE_NOT_FOUND"),
+            };
+            if let Err(message)=validate_params(&schema,config){
+                return api_error(StatusCode::UNPROCESSABLE_ENTITY,"INVALID_STRATEGY_PARAMETER",message,&rid,None);
+            }
+        }
+        let changed=match state.strategy_configs().update_with_daily(
+            &actor,id,body.config.clone(),body.is_active,body.owner_beta_daily_enabled).await {
+            Ok(row)=>row,Err(error)=>return tenancy_response(error,&rid,"RESOURCE_NOT_FOUND"),
+        };
+        audit(&state,&session,&headers,"strategy_config.update","strategy_config",&id.to_string(),
+            Some(serde_json::json!({"is_active":old.is_active,"owner_beta_daily_enabled":old.daily_enabled,"owner_beta_daily_epoch":old.daily_epoch})),
+            Some(serde_json::json!({"is_active":changed.is_active,"owner_beta_daily_enabled":changed.daily_enabled,"owner_beta_daily_epoch":changed.daily_epoch})),None).await;
+        (StatusCode::OK,Json(StrategyConfigDto::from(changed))).into_response()
+    }).await
 }
 
 #[cfg(test)]

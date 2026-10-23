@@ -1,7 +1,9 @@
+pub mod action_supply;
 pub mod calendar_bootstrap;
 mod calendar_claim;
 mod candidate_pipeline;
 mod candidate_sink;
+pub mod eod_raw;
 pub mod intraday_quotes;
 pub mod owner_equity_v2;
 mod pipeline;
@@ -47,9 +49,10 @@ pub use worker::{
     ResearchBackend, ResearchWorker, ResearchWorkerConfig, SecretValue, WORKER_ENV_KEYS,
     WaitOutcome, WorkerComponentFactory, WorkerControl, WorkerError, WorkerEvent, WorkerEventClass,
     WorkerEventKind, WorkerObserver, WorkerPhase, WorkerRunOutcome, bootstrap_worker,
-    bootstrap_worker_with, build_postgres_pool, candidate_healthcheck, current_kst_date,
-    healthcheck, next_run_delay, publication_age, retry_delay,
-    run_credentialed_backfill_session_dates_stream, run_credentialed_daily_range_raw_stream,
+    bootstrap_worker_with, build_postgres_pool, candidate_healthcheck,
+    check_eod_raw_session_dates_stream, current_kst_date, healthcheck, next_run_delay,
+    publication_age, retry_delay, run_credentialed_backfill_session_dates_stream,
+    run_credentialed_daily_range_raw_stream, run_credentialed_eod_raw_session_dates_stream,
     run_existing_daily_range_raw_stream, run_internal_ingest, run_internal_recovery,
     run_internal_recovery_page_stream, run_internal_recovery_stream, validate_synthetic_policy,
 };

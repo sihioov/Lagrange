@@ -43,7 +43,7 @@ for service in db-role-bootstrap db-migrate; do
   grep -Eq "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]].*[[:space:]]999[[:space:]]+999[[:space:]]+0400[[:space:]]+yes$" "$provision" \
     || die_static "provisioner must install $service secrets as 999:999 mode 0400"
   expected_count=1
-  [ "$service" = db-role-bootstrap ] && expected_count=7
+  [ "$service" = db-role-bootstrap ] && expected_count=8
   provision_count=$(grep -Ec "^[[:space:]]+add_copy[[:space:]]+$service[[:space:]]" "$provision" || true)
   [ "$provision_count" -eq "$expected_count" ] \
     || die_static "$service provisioner entry count changed (expected $expected_count)"

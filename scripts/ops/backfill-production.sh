@@ -13,6 +13,7 @@ state_file=${LAGRANGE_BACKFILL_STATE:-}
 calendar_dir=${LAGRANGE_XKRX_CALENDAR_DIR:-$root/data/calendars/xkrx}
 calendar_selection_file=
 calendar_metadata_file=
+selected_session_file=
 calendar_id=
 calendar_artifact_sha256=
 calendar_artifact_size=
@@ -21,14 +22,25 @@ calendar_session_count=0
 calendar_non_session_count=0
 start_date=
 end_date=
+session_dates_csv=
+session_dates_filter=0
+selected_session_count=0
 universes=etf
 mode=plan
 auto_resume=0
+raw_source=0
+state_schema=4
+state_header=LAGRANGE_BACKFILL_STATE_V4
+completion_status=PUBLISHED
+source_scope='kis/kr|kis-normalized/kr|KRX/KR|etf'
+worker_flag=--backfill-session-dates
+progress_args=()
 
 usage() {
   cat <<'EOF'
 Usage: scripts/ops/backfill-production.sh --start YYYY-MM-DD --end YYYY-MM-DD
-       [--universe etf|candidate|all] [--plan|--execute]
+       [--session-dates YYYY-MM-DD[,YYYY-MM-DD...]]
+       [--universe etf|candidate|all] [--raw-source] [--plan|--execute]
 
 The plan covers the fixed 11-ETF KIS EOD dataset. Candidate universes
 (KOSPI200/KOSDAQ150) remain a separate blocked step until their credentialed
@@ -40,7 +52,10 @@ and a valid backfill-scope production config. It uses the existing idempotent wo
 no order/account endpoint is called. The state file is append-only and each
 session date must complete Raw -> normalized -> DB publication before progress
 is recorded. The validated XKRX scheduler artifact supplies the only session
-date input: weekends and closures create zero Docker, worker, or KIS calls.
+date source: weekends and closures create zero Docker, worker, or KIS calls.
+Optional --session-dates narrows that validated selection and does not change
+the full-range V4 state identity or the calendar source. Without it, selection
+is unchanged.
 The one worker process receives the exact sorted session list, makes one
 allowlisted KIS chk-holiday call for the first needed date, and validates later
 dates against its immutable cached snapshot. A date outside that snapshot makes
@@ -53,6 +68,14 @@ pin is produced and approved after this command, so it is never required here.
 run, an interrupted RUNNING state, RETRYABLE errors, and the exact
 KIS_CALENDAR_SNAPSHOT_MISS deferred state. It refuses every other FAILED state
 until an operator explicitly reruns without --auto-resume.
+
+--raw-source explicitly selects the independent R2 source collector. It verifies
+and reuses complete immutable EOD Raw, or captures missing Raw without invoking
+legacy normalization or DB publication. Its separate EOD_RAW_STATE_V1 identity
+records RAW_COMMITTED only; this never establishes daily-input admission or
+recommendation readiness. A V4 publication state cannot be reused in this mode.
+Historical ranges and the current day must be separate invocations; the current
+day requires its dedicated calendar claim and is forbidden before 16:30 KST.
 EOF
 }
 
@@ -70,6 +93,13 @@ while [ "$#" -gt 0 ]; do
       end_date=$2
       shift 2
       ;;
+    --session-dates)
+      [ "$#" -ge 2 ] || die '--session-dates needs a nonempty comma-separated ISO date list'
+      [ "$session_dates_filter" -eq 0 ] || die '--session-dates may be supplied only once'
+      session_dates_csv=$2
+      session_dates_filter=1
+      shift 2
+      ;;
     --universe)
       [ "$#" -ge 2 ] || die '--universe needs etf|candidate|all'
       universes=$2
@@ -78,10 +108,20 @@ while [ "$#" -gt 0 ]; do
     --plan) mode=plan; shift ;;
     --execute) mode=execute; shift ;;
     --auto-resume) auto_resume=1; shift ;;
+    --raw-source) raw_source=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
+
+if [ "$raw_source" -eq 1 ]; then
+  state_schema=eod-raw-1
+  state_header=LAGRANGE_EOD_RAW_STATE_V1
+  completion_status=RAW_COMMITTED
+  source_scope='kis/kr|raw-only|etf'
+  worker_flag=--eod-raw-session-dates
+  progress_args=(--raw-source)
+fi
 
 [ -n "$start_date" ] && [ -n "$end_date" ] || die '--start and --end are required'
 [[ "$start_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --start date'
@@ -134,7 +174,13 @@ esac
 # old /var/lib/lagrange/data/backfill location remains readable only when an
 # operator explicitly supplies LAGRANGE_BACKFILL_STATE; it is never migrated
 # or removed automatically.
-[ -n "$state_file" ] || state_file=/var/lib/lagrange/state/backfill/state.tsv
+if [ -z "$state_file" ]; then
+  if [ "$raw_source" -eq 1 ]; then
+    state_file=/var/lib/lagrange/state/backfill/eod-raw-state.tsv
+  else
+    state_file=/var/lib/lagrange/state/backfill/state.tsv
+  fi
+fi
 
 check_state_path() {
   local path=$1 label=$2 probe
@@ -292,7 +338,7 @@ load_calendar_selection() {
     die 'cannot stage the validated XKRX session list'
   calendar_metadata_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-xkrx-metadata.XXXXXX") ||
     die 'cannot stage the validated XKRX calendar metadata'
-  trap 'rm -f -- "$calendar_selection_file" "$calendar_metadata_file"' EXIT
+  trap cleanup_staged_files EXIT
   if ! python3 "$root/scripts/ops/xkrx-calendar-bootstrap.py" \
     --emit-sessions --start "$start_date" --end "$end_date" \
     --output-dir "$calendar_dir" >"$calendar_selection_file" 2>"$calendar_metadata_file"; then
@@ -367,8 +413,76 @@ PY
     calendar_artifact_range calendar_session_count calendar_non_session_count <<<"$identity_line"
 }
 
+apply_session_date_filter() {
+  if [ "$session_dates_filter" -eq 0 ]; then
+    selected_session_file=$calendar_selection_file
+    selected_session_count=$calendar_session_count
+    return 0
+  fi
+
+  selected_session_file=$(mktemp "${TMPDIR:-/tmp}/lagrange-xkrx-filtered-sessions.XXXXXX") ||
+    die 'cannot stage the selected XKRX sessions'
+  if ! selected_session_count=$(python3 - "$session_dates_csv" "$calendar_selection_file" \
+    "$start_date" "$end_date" "$selected_session_file" <<'PY'
+import datetime as dt
+import re
+import sys
+from pathlib import Path
+
+csv_text, calendar_path, start_text, end_text, output_path = sys.argv[1:]
+def invalid() -> None:
+    raise SystemExit("session-date filter failed closed validation")
+
+try:
+    csv_bytes = csv_text.encode("ascii")
+except UnicodeEncodeError:
+    invalid()
+if not csv_bytes or len(csv_bytes) > 1_000_000:
+    invalid()
+values = csv_text.split(",")
+if not values or len(values) > 10_000:
+    invalid()
+dates: list[dt.date] = []
+for value in values:
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        invalid()
+    try:
+        parsed = dt.date.fromisoformat(value)
+    except ValueError:
+        invalid()
+    if parsed.isoformat() != value:
+        invalid()
+    dates.append(parsed)
+if any(left >= right for left, right in zip(dates, dates[1:])):
+    invalid()
+try:
+    start = dt.date.fromisoformat(start_text)
+    end = dt.date.fromisoformat(end_text)
+except ValueError:
+    invalid()
+if any(not start <= value <= end for value in dates):
+    invalid()
+calendar_dates = Path(calendar_path).read_text(encoding="ascii").splitlines()
+calendar_set = set(calendar_dates)
+if any(value not in calendar_set for value in values):
+    invalid()
+Path(output_path).write_text("".join(value + "\n" for value in values), encoding="ascii")
+print(len(values))
+PY
+  ); then
+    die 'session-date filter must be nonempty, canonical, strictly increasing, unique, within the selected range and XKRX calendar, and at most 10000 dates / 1000000 bytes'
+  fi
+}
+
+cleanup_staged_files() {
+  local path
+  for path in "$calendar_selection_file" "$calendar_metadata_file" "$selected_session_file"; do
+    [ -z "$path" ] || rm -f -- "$path"
+  done
+}
+
 validate_state() {
-  local expected_header=$'LAGRANGE_BACKFILL_STATE_V4\t'"$run_identity"
+  local expected_header="$state_header"$'\t'"$run_identity"
   local line number=0 state_date state_status state_id state_code
   declare -A last_status=()
   while IFS= read -r line || [ -n "$line" ]; do
@@ -392,7 +506,7 @@ validate_state() {
     [[ "$state_date" < "$start_date" || "$state_date" > "$end_date" ]] &&
       blocked "backfill state line $number is outside the requested date range"
     case "$state_status" in
-      RUNNING|PUBLISHED)
+      RUNNING|"$completion_status")
         [ "${#fields[@]}" -eq 3 ] && [ -z "$state_code" ] ||
           blocked "backfill state line $number has an unexpected error code"
         ;;
@@ -411,7 +525,7 @@ validate_state() {
       *)
         blocked "backfill state line $number has an invalid status" ;;
     esac
-    if [ "${last_status[$state_date]:-}" = PUBLISHED ] && [ "$state_status" != PUBLISHED ]; then
+    if [ "${last_status[$state_date]:-}" = "$completion_status" ] && [ "$state_status" != "$completion_status" ]; then
       blocked "backfill state line $number contradicts an already published date"
     fi
     last_status[$state_date]=$state_status
@@ -430,7 +544,7 @@ check_auto_resume_state() {
   last_status=${fields[1]:-}
   last_code=${fields[3]:-}
   case "$last_status" in
-    RUNNING|PUBLISHED|DEFERRED|RETRYABLE) ;;
+    RUNNING|"$completion_status"|DEFERRED|RETRYABLE) ;;
     FAILED)
       blocked "automatic resume is blocked by permanent/unknown failure${last_code:+ ($last_code)}; review state and rerun without --auto-resume"
       ;;
@@ -444,7 +558,25 @@ check_auto_resume_state() {
 # execute gate is evaluated.  This makes a missing/tampered/out-of-range
 # scheduler input a fail-closed local error, and gives both paths identical
 # session counts and identity material.
+# Validate this optional narrowing against the complete XKRX selection before
+# execute config gates or protected state writes. It never changes V4 identity.
 load_calendar_selection
+apply_session_date_filter
+
+# Refuse invalid current-day combinations before creating protected run state.
+# The worker independently enforces these same boundaries using its real clock.
+if [ "$raw_source" -eq 1 ] && [ "$selected_session_count" -gt 0 ]; then
+  raw_today=$(TZ=Asia/Seoul date +%F)
+  raw_last=$(tail -n 1 -- "$selected_session_file")
+  [[ "$raw_last" > "$raw_today" ]] && blocked 'Raw EOD cannot collect a future session'
+  if grep -Fxq "$raw_today" "$selected_session_file"; then
+    [ "$selected_session_count" -eq 1 ] ||
+      blocked 'Raw EOD current-day capture must be separate from historical recovery'
+    raw_now_hm=$(TZ=Asia/Seoul date +%H:%M)
+    [[ "$raw_now_hm" < 16:30 ]] &&
+      blocked 'Raw EOD current-day capture is deferred until 16:30 KST'
+  fi
+fi
 
 if [ "$mode" = execute ]; then
   [ "${BACKFILL_CONFIRM_EXTERNAL:-}" = I_UNDERSTAND_READ_ONLY_KIS_CALLS ] ||
@@ -482,13 +614,13 @@ if [ "$mode" = execute ]; then
   [ -n "$entitlement_reference" ] ||
     die 'production env is missing RESEARCH_ENTITLEMENT_REFERENCE'
   identity_payload=$(cat <<EOF
-schema=4
+schema=$state_schema
 start_date=$start_date
 end_date=$end_date
 universe=$universes
 code_commit=$code_commit
 entitlement_reference=$entitlement_reference
-source_scope=kis/kr|kis-normalized/kr|KRX/KR|etf
+source_scope=$source_scope
 calendar_id=$calendar_id
 calendar_artifact_sha256=$calendar_artifact_sha256
 calendar_artifact_range=$calendar_artifact_range
@@ -497,7 +629,7 @@ EOF
   run_identity=$(printf '%s' "$identity_payload" | sha256sum | awk '{print $1}')
   [[ "$run_identity" =~ ^[0-9a-f]{64}$ ]] || die 'could not derive backfill run identity'
   if [ ! -s "$state_file" ]; then
-    printf 'LAGRANGE_BACKFILL_STATE_V4\t%s\n' "$run_identity" >>"$state_file"
+    printf '%s\t%s\n' "$state_header" "$run_identity" >>"$state_file"
   fi
   validate_state
   check_auto_resume_state
@@ -510,13 +642,26 @@ if [ "$mode" = plan ] && ! dotenv_validate_shell_overrides; then
 fi
 
 if [ "$mode" = plan ]; then
+  if [ "$raw_source" -eq 1 ]; then
+    cat <<EOF
+EOD_RAW_PLAN: KIS read-only fixed ETF11 source collection
+  civil range: $start_date..$end_date
+  selected sessions: $selected_session_count of $calendar_session_count
+  calendar: $calendar_id $calendar_artifact_sha256
+  state: $state_file ($state_header; $completion_status only)
+  verification: immutable Raw bytes/hash/schema; reuse exact sources, reject conflicts
+  publication=false curated=false db=false ready=false
+PLAN_ONLY: no provider, Docker, DB, or persistent state write
+EOF
+    exit 0
+  fi
   cat <<EOF
 BACKFILL_PLAN: KIS read-only fixed ETF EOD
   civil range: $start_date..$end_date
   validated XKRX scheduler: calendar_id=$calendar_id artifact_sha256=$calendar_artifact_sha256
   artifact range: $calendar_artifact_range
-  session dates: $calendar_session_count (non-session skips: $calendar_non_session_count)
-  source dates: only validated XKRX sessions; no worker/KIS/Docker call for a skipped date
+  selected sessions: $selected_session_count of $calendar_session_count (non-session skips: $calendar_non_session_count)
+  source dates: only validated XKRX sessions, optionally narrowed by --session-dates; no worker/KIS/Docker call for a skipped date
   raw scope: kis/kr; normalized scope: kis-normalized/kr; DB logical provider: KRX
   idempotency: deterministic normalized batch/source_batch_id and exact manifest replay
   state identity: V4 pre-run inputs plus calendar id/hash/full artifact range
@@ -531,20 +676,20 @@ EOF
   exit 0
 fi
 
-dates=$(cat -- "$calendar_selection_file")
-published_suffix=$'\tPUBLISHED\t'"$run_identity"
+dates=$(cat -- "$selected_session_file")
+published_suffix=$'\t'"$completion_status"$'\t'"$run_identity"
 pending_dates=()
 while IFS= read -r date || [ -n "$date" ]; do
   [ -n "$date" ] || continue
   if grep -Fqx "$date$published_suffix" "$state_file"; then
-    echo "BACKFILL_SKIP date=$date state=PUBLISHED"
+    echo "BACKFILL_SKIP date=$date state=$completion_status"
     continue
   fi
   pending_dates+=("$date")
 done <<<"$dates"
 
 if [ "${#pending_dates[@]}" -eq 0 ]; then
-  echo "BACKFILL: PASS (sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count; no worker/KIS/Docker call)"
+  echo "BACKFILL: PASS (selected_sessions=$selected_session_count calendar_sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count; no worker/KIS/Docker call)"
   exit 0
 fi
 
@@ -617,8 +762,8 @@ done
 # corresponding state append so a later date failure cannot erase progress.
 progress_rc=0
 if "${compose[@]}" run --rm --no-deps research-worker \
-  --backfill-session-dates "$session_dates_csv" | \
-  python3 "$script_dir/lib/backfill-progress.py" \
+  "$worker_flag" "$session_dates_csv" | \
+  python3 "$script_dir/lib/backfill-progress.py" "${progress_args[@]}" \
     "$state_file" "$run_identity" "$worker_start" "$worker_end" "$session_dates_csv"; then
   progress_rc=0
 else
@@ -639,4 +784,4 @@ case "$progress_rc" in
     exit 1
     ;;
 esac
-echo "BACKFILL: PASS (civil_range=$start_date..$end_date sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count)"
+echo "BACKFILL: PASS (civil_range=$start_date..$end_date selected_sessions=$selected_session_count calendar_sessions=$calendar_session_count skipped_non_sessions=$calendar_non_session_count)"

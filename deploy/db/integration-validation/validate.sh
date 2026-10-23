@@ -108,6 +108,85 @@ case "$min_free_bytes" in
   ''|*[!0-9]*) die_usage 'LAGRANGE_VALIDATION_MIN_FREE_BYTES must be numeric' ;;
 esac
 
+bootstrap_gate_redacted_marker='BOOTSTRAP_OUTPUT_REDACTED'
+
+bootstrap_gate_write_marker() {
+  local destination=$1
+  if ! rm -f -- "$destination" 2>/dev/null; then
+    return 1
+  fi
+  if ! printf '%s\n' "$bootstrap_gate_redacted_marker" >"$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    return 1
+  fi
+  if ! chmod 0600 -- "$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    return 1
+  fi
+}
+
+bootstrap_record_gate() {
+  [ "$#" -eq 4 ] || return 21
+  local credential_directory=$1 raw_output=$2 destination=$3 bootstrap_status=$4
+  local name credential_path line_count grep_status
+  local -a secret_names=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
+  )
+
+  if [[ ! "$bootstrap_status" =~ ^[0-9]+$ ]]; then
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+  if ! rm -f -- "$destination" 2>/dev/null; then
+    return 21
+  fi
+  if [[ ! -f "$raw_output" || -L "$raw_output" || ! -r "$raw_output" || ! -s "$raw_output" ]]; then
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+
+  for name in "${secret_names[@]}"; do
+    credential_path="$credential_directory/$name"
+    if [[ ! -f "$credential_path" || -L "$credential_path" || ! -r "$credential_path" || ! -s "$credential_path" ]]; then
+      bootstrap_gate_write_marker "$destination" || true
+      return 21
+    fi
+    if ! line_count=$(wc -l <"$credential_path" 2>/dev/null) || [[ ! "$line_count" =~ ^[[:space:]]*0[[:space:]]*$ ]]; then
+      bootstrap_gate_write_marker "$destination" || true
+      return 21
+    fi
+    if grep -Fq -f "$credential_path" "$raw_output" >/dev/null 2>&1; then
+      if ! bootstrap_gate_write_marker "$destination"; then
+        return 21
+      fi
+      return 20
+    else
+      grep_status=$?
+      if [ "$grep_status" -ne 1 ]; then
+        bootstrap_gate_write_marker "$destination" || true
+        return 21
+      fi
+    fi
+  done
+
+  if ! cat -- "$raw_output" >"$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+  if ! chmod 0600 -- "$destination" 2>/dev/null; then
+    rm -f -- "$destination" 2>/dev/null || true
+    bootstrap_gate_write_marker "$destination" || true
+    return 21
+  fi
+
+  if [ "$bootstrap_status" = 0 ]; then
+    return 0
+  fi
+  return 10
+}
+
 if [ "$self_test" -eq 1 ]; then
   self_workdir=$(mktemp -d "${TMPDIR:-/tmp}/lagrange-pg-validation-self.XXXXXX")
   case "$self_workdir" in
@@ -125,7 +204,7 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: bash is required' >&2
     exit 1
   }
-  for command_name in cat find grep install sha256sum sort tail wc; do
+  for command_name in cat chmod cmp cp find grep install mkdir mv rm sha256sum sort tail wc; do
     command -v "$command_name" >/dev/null 2>&1 || {
       echo "PG_VALIDATION_SELF_TEST: $command_name is required" >&2
       exit 1
@@ -151,7 +230,7 @@ if [ "$self_test" -eq 1 ]; then
 
   self_migrations="$self_workdir/migrations"
   mkdir -p "$self_migrations"
-  for limit in 38 39 40 41; do
+  for limit in 38 39 40 41 59 60; do
     stage="$self_migrations/$limit"
     mkdir -p "$stage"
     while IFS= read -r migration; do
@@ -196,6 +275,9 @@ if [ "$self_test" -eq 1 ]; then
     "$script_dir/preflight-catalog.sql" \
     "$script_dir/preflight-0040.sql" \
     "$script_dir/preflight-0041.sql" \
+    "$script_dir/preflight-0060.sql" \
+    "$script_dir/actual-role-0060.sql" \
+    "$script_dir/rollback-0060-guard.sql" \
     "$script_dir/hazards.sql" \
     "$script_dir/rollback-0039-guard.sql" \
     "$script_dir/rollback-0039-postflight.sql" \
@@ -254,6 +336,136 @@ if [ "$self_test" -eq 1 ]; then
     echo 'PG_VALIDATION_SELF_TEST: staged catalog rerun check is missing' >&2
     exit 1
   }
+
+  bootstrap_gate_fixture="$self_workdir/bootstrap-gate"
+  bootstrap_gate_credentials="$bootstrap_gate_fixture/credentials"
+  bootstrap_gate_destination="$bootstrap_gate_fixture/evidence/bootstrap.log"
+  bootstrap_gate_raw="$bootstrap_gate_fixture/bootstrap.raw"
+  bootstrap_gate_diagnostic="$bootstrap_gate_fixture/gate.diagnostic"
+  bootstrap_gate_expected_marker="$bootstrap_gate_fixture/redacted.expected"
+  mkdir -p "$bootstrap_gate_credentials" "${bootstrap_gate_destination%/*}"
+  bootstrap_gate_names=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
+  )
+  bootstrap_gate_sentinels=()
+  for bootstrap_gate_index in "${!bootstrap_gate_names[@]}"; do
+    printf -v bootstrap_gate_sentinel 'synthetic-r2-bootstrap-sentinel-%02d' "$bootstrap_gate_index"
+    bootstrap_gate_sentinels+=("$bootstrap_gate_sentinel")
+    printf '%s' "$bootstrap_gate_sentinel" >"$bootstrap_gate_credentials/${bootstrap_gate_names[$bootstrap_gate_index]}"
+  done
+  printf '%s\n' "$bootstrap_gate_redacted_marker" >"$bootstrap_gate_expected_marker"
+
+  bootstrap_gate_expect_case() {
+    local expected_status=$1 credential_directory=$2 raw_path=$3 destination=$4 bootstrap_exit=$5 marker_expected=$6
+    local observed_status name credential_path grep_status
+    if bootstrap_record_gate "$credential_directory" "$raw_path" "$destination" "$bootstrap_exit" \
+      >"$bootstrap_gate_diagnostic" 2>&1; then
+      observed_status=0
+    else
+      observed_status=$?
+    fi
+    [ "$observed_status" -eq "$expected_status" ] || return 1
+    [ ! -s "$bootstrap_gate_diagnostic" ] || return 1
+    if [ "$marker_expected" = yes ]; then
+      cmp -s -- "$bootstrap_gate_expected_marker" "$destination" || return 1
+    else
+      cmp -s -- "$raw_path" "$destination" || return 1
+    fi
+    for name in "${bootstrap_gate_names[@]}"; do
+      credential_path="$credential_directory/$name"
+      [[ -f "$credential_path" && -s "$credential_path" ]] || continue
+      if grep -Fq -f "$credential_path" "$bootstrap_gate_diagnostic" "$destination" 2>/dev/null; then
+        return 1
+      else
+        grep_status=$?
+        [ "$grep_status" -eq 1 ] || return 1
+      fi
+    done
+  }
+
+  for bootstrap_gate_index in "${!bootstrap_gate_names[@]}"; do
+    bootstrap_gate_sentinel=${bootstrap_gate_sentinels[$bootstrap_gate_index]}
+    for bootstrap_gate_form in url env sql; do
+      case "$bootstrap_gate_form" in
+        url)
+          printf 'CONTEXT: postgres://synthetic@fixture/db?password=%s\n' "$bootstrap_gate_sentinel" >"$bootstrap_gate_raw"
+          ;;
+        env)
+          printf 'DB_DAILY_INPUT_ADMITTER_PASSWORD=%s\n' "$bootstrap_gate_sentinel" >"$bootstrap_gate_raw"
+          ;;
+        sql)
+          printf "ERROR: ALTER ROLE daily_input_admitter PASSWORD '%s';\n" "$bootstrap_gate_sentinel" >"$bootstrap_gate_raw"
+          ;;
+      esac
+      for bootstrap_gate_exit in 0 7; do
+        if ! bootstrap_gate_expect_case 20 "$bootstrap_gate_credentials" "$bootstrap_gate_raw" \
+          "$bootstrap_gate_destination" "$bootstrap_gate_exit" yes; then
+          echo 'PG_VALIDATION_SELF_TEST: bootstrap gate disclosure case failed' >&2
+          exit 1
+        fi
+      done
+    done
+  done
+
+  printf '%s\n' 'role bootstrap completed without credentials' >"$bootstrap_gate_raw"
+  if ! bootstrap_gate_expect_case 0 "$bootstrap_gate_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 0 no; then
+    echo 'PG_VALIDATION_SELF_TEST: clean bootstrap success gate case failed' >&2
+    exit 1
+  fi
+  printf '%s\n' 'role bootstrap failed safely with exit 7' >"$bootstrap_gate_raw"
+  if ! bootstrap_gate_expect_case 10 "$bootstrap_gate_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 7 no; then
+    echo 'PG_VALIDATION_SELF_TEST: clean bootstrap failure gate case failed' >&2
+    exit 1
+  fi
+
+  bootstrap_gate_missing_credentials="$bootstrap_gate_fixture/missing-credentials"
+  bootstrap_gate_unreadable_credentials="$bootstrap_gate_fixture/unreadable-credentials"
+  bootstrap_gate_empty_credentials="$bootstrap_gate_fixture/empty-credentials"
+  mkdir -p "$bootstrap_gate_missing_credentials" "$bootstrap_gate_unreadable_credentials" "$bootstrap_gate_empty_credentials"
+  for bootstrap_gate_name in "${bootstrap_gate_names[@]:0:7}"; do
+    cp -- "$bootstrap_gate_credentials/$bootstrap_gate_name" "$bootstrap_gate_missing_credentials/$bootstrap_gate_name"
+    cp -- "$bootstrap_gate_credentials/$bootstrap_gate_name" "$bootstrap_gate_unreadable_credentials/$bootstrap_gate_name"
+    cp -- "$bootstrap_gate_credentials/$bootstrap_gate_name" "$bootstrap_gate_empty_credentials/$bootstrap_gate_name"
+  done
+  mkdir "$bootstrap_gate_unreadable_credentials/db_daily_input_admitter_password"
+  : >"$bootstrap_gate_empty_credentials/db_daily_input_admitter_password"
+  printf '%s\n' 'synthetic bootstrap output for scan-error cases' >"$bootstrap_gate_raw"
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_missing_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: missing credential scan input was not rejected safely' >&2
+    exit 1
+  fi
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_unreadable_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 7 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: unreadable credential scan input was not rejected safely' >&2
+    exit 1
+  fi
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_empty_credentials" "$bootstrap_gate_raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: empty credential scan input was not rejected safely' >&2
+    exit 1
+  fi
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_credentials" "$bootstrap_gate_fixture/missing.raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: missing bootstrap log was not rejected safely' >&2
+    exit 1
+  fi
+  : >"$bootstrap_gate_fixture/empty.raw"
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_credentials" "$bootstrap_gate_fixture/empty.raw" \
+    "$bootstrap_gate_destination" 0 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: empty bootstrap log was not rejected safely' >&2
+    exit 1
+  fi
+  mkdir "$bootstrap_gate_fixture/unreadable.raw"
+  if ! bootstrap_gate_expect_case 21 "$bootstrap_gate_credentials" "$bootstrap_gate_fixture/unreadable.raw" \
+    "$bootstrap_gate_destination" 7 yes; then
+    echo 'PG_VALIDATION_SELF_TEST: unreadable bootstrap log was not rejected safely' >&2
+    exit 1
+  fi
+
   echo 'PG_VALIDATION_SELF_TEST: PASS'
   exit 0
 fi
@@ -303,6 +515,11 @@ cleaned=0
 docker_ready=0
 stages_run=''
 tests_run=''
+daily_harness='NOT_RUN'
+db_test_results=()
+daily_named_rows=()
+daily_subcase_rows=()
+bootstrap_negative_cases=''
 service_logins=''
 full_service_logins=''
 rollback_guard='NOT_RUN'
@@ -379,7 +596,7 @@ write_evidence() {
     printf '  "finished_at": "%s",\n' "$escaped_finished"
     printf '  "code_commit": "%s",\n' "$validation_code_commit"
     printf '  "postgres_image": "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a",\n'
-    printf '  "upgrade": {"baseline": "0038_schema_only", "sequential": ["0039", "0040", "0041"], "catalog_sha256": "%s"},\n' "$catalog_sha256"
+    printf '  "upgrade": {"baseline": "0038_schema_only", "sequential": ["0039", "0040", "0041", "0059", "0060"], "catalog_sha256": "%s"},\n' "$catalog_sha256"
     printf '  "full_release": {"first_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "second_run": {"migration_count": "%s", "latest_version": "%s", "migration_checksums": "%s"}, "rerun": "%s"},\n' \
       "$(json_escape "$full_migration_count_first")" "$(json_escape "$full_latest_migration_first")" \
       "$(json_escape "$full_migration_checksums_first")" "$(json_escape "$full_migration_count_second")" \
@@ -401,6 +618,28 @@ write_evidence() {
     printf '],\n'
     printf '  "checks": {"direct_service_role_logins": "%s", "full_release_service_role_logins": "%s", "0039_down_undelivered_guard": "%s", "skip_markers": "%s"},\n' \
       "$(json_escape "$service_logins")" "$(json_escape "$full_service_logins")" "$rollback_guard" "$skip_guard"
+    printf '  "daily_0060_harness": "%s",\n' "$daily_harness"
+    printf '  "db_test_results": ['
+    first=1
+    for row in "${db_test_results[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '%s' "$row"; first=0
+    done
+    printf '],\n'
+    printf '  "daily_0060_named_rows": ['
+    first=1
+    for row in "${daily_named_rows[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$row"; first=0
+    done
+    printf '],\n'
+    printf '  "daily_0060_subcase_rows": ['
+    first=1
+    for row in "${daily_subcase_rows[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$row"; first=0
+    done
+    printf '],\n'
     printf '  "tests_run": ['
     first=1
     IFS=',' read -r -a test_items <<<"$tests_run"
@@ -408,6 +647,16 @@ write_evidence() {
       [ -n "$test_item" ] || continue
       [ "$first" -eq 1 ] || printf ', '
       printf '"%s"' "$(json_escape "$test_item")"
+      first=0
+    done
+    printf '],\n'
+    printf '  "bootstrap_negative_cases": ['
+    first=1
+    IFS=',' read -r -a bootstrap_items <<<"$bootstrap_negative_cases"
+    for bootstrap_item in "${bootstrap_items[@]}"; do
+      [ -n "$bootstrap_item" ] || continue
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$bootstrap_item"
       first=0
     done
     printf '],\n'
@@ -420,9 +669,10 @@ write_evidence() {
     printf 'detail\t%s\n' "$detail"
     printf 'code_commit\t%s\n' "$validation_code_commit"
     printf 'baseline\t0038\n'
-    printf 'sequential\t0039,0040,0041\n'
+    printf 'sequential\t0039,0040,0041,0059,0060\n'
     printf 'stages_run\t%s\n' "$stages_run"
     printf 'tests_run\t%s\n' "$tests_run"
+    printf 'bootstrap_negative_cases\t%s\n' "$bootstrap_negative_cases"
     printf 'direct_service_role_logins\t%s\n' "$service_logins"
     printf 'full_release_service_role_logins\t%s\n' "$full_service_logins"
     printf '0039_down_undelivered_guard\t%s\n' "$rollback_guard"
@@ -525,7 +775,7 @@ generate_secret() {
 make_stages() {
   migration_root="$workdir/migrations"
   mkdir -p "$migration_root"
-  for limit in 38 39 40 41; do
+  for limit in 38 39 40 41 59 60; do
     stage="$migration_root/$limit"
     mkdir -p "$stage"
     while IFS= read -r migration; do
@@ -611,6 +861,7 @@ EOF
     printf '    volumes:\n'
     printf '      - %s:/validation/secrets:ro\n' "$password_dir"
     printf '      - %s:/validation/bootstrap-roles.sh:ro\n' "$role_script"
+    printf '      - %s:/validation/bootstrap-negative.sh:ro\n' "$script_dir/bootstrap-negative.sh"
     printf '      - %s:/validation/baseline-v1.json:ro\n' "$root/configs/strategies/baseline-v1.json"
     printf '      - %s:/validation/sync-baseline-strategy-catalog.sql:ro\n' "$root/deploy/db/sync-baseline-strategy-catalog.sql"
     if [ "$include_tool" -eq 1 ] && [ "$migration_mount" -eq 1 ]; then
@@ -644,7 +895,57 @@ bootstrap_roles() {
     -e DB_AUDIT_PASSWORD_FILE=/validation/secrets/db_audit_password \
     -e DB_RESEARCH_PASSWORD_FILE=/validation/secrets/db_research_password \
     -e DB_ADMIN_ROLE_PASSWORD_FILE=/validation/secrets/db_admin_password \
+    -e DB_DAILY_INPUT_ADMITTER_PASSWORD_FILE=/validation/secrets/db_daily_input_admitter_password \
     qa-db /bin/bash /validation/bootstrap-roles.sh
+}
+
+run_bootstrap_negative_contract() {
+  local raw="$workdir/bootstrap-negative.log" row
+  # Only this owned, fresh container receives private copies readable by the
+  # non-root postgres OS user. Real 0000-file denial must not run as root.
+  if ! main_compose exec -T -u 0 qa-db /bin/bash -ec '
+    destination=/tmp/lagrange-bootstrap-contract-inputs
+    test ! -e "$destination"
+    install -d -o postgres -g postgres -m 0700 "$destination"
+    for name in postgres_password db_migration_owner_password db_app_password \
+      db_worker_password db_audit_password db_research_password db_admin_password \
+      db_daily_input_admitter_password; do
+      install -o postgres -g postgres -m 0400 "/validation/secrets/$name" "$destination/$name"
+    done
+  ' >"$raw" 2>&1; then
+    fail 'could not prepare private disposable bootstrap-contract inputs'
+  fi
+  if ! main_compose exec -T -u postgres qa-db timeout 300s /bin/bash \
+    /validation/bootstrap-negative.sh --disposable-ci >"$raw" 2>&1; then
+    # Retain fixed case IDs only, even if an unexpected tool diagnostic occurs.
+    grep -E '^BOOTSTRAP_CONTRACT_(CASE:[a-z0-9_]+:(PASS|FAIL)|FAILURE:[a-z0-9_]+:[a-z0-9_]+)$' "$raw" \
+      >"$evidence_dir/bootstrap-negative.log" || true
+    chmod 0600 "$evidence_dir/bootstrap-negative.log"
+    fail 'actual bootstrap negative/rollback contract failed'
+  fi
+  grep -Fxq 'BOOTSTRAP_CONTRACT:PASS' "$raw" \
+    || fail 'bootstrap contract omitted its final verdict'
+  if ! awk '
+    /^BOOTSTRAP_CONTRACT_CASE:[a-z0-9_]+:PASS$/ {
+      if (seen[$0]++) exit 1
+      count++
+      next
+    }
+    /^BOOTSTRAP_CONTRACT:PASS$/ { verdict++; next }
+    { exit 1 }
+    END { if (count != 83 || verdict != 1) exit 1 }
+  ' "$raw"; then
+    fail 'bootstrap contract named outcomes are incomplete or malformed'
+  fi
+  while IFS= read -r row; do
+    case "$row" in
+      BOOTSTRAP_CONTRACT_CASE:*)
+        row=${row#BOOTSTRAP_CONTRACT_CASE:}
+        bootstrap_negative_cases=$(append_csv "$bootstrap_negative_cases" "$row")
+        ;;
+    esac
+  done <"$raw"
+  record_log "$raw" bootstrap-negative.log
 }
 
 run_psql() {
@@ -666,6 +967,7 @@ run_role_psql() {
     audit_writer) secret_name=db_audit_password ;;
     research_writer) secret_name=db_research_password ;;
     admin) secret_name=db_admin_password ;;
+    daily_input_admitter) secret_name=db_daily_input_admitter_password ;;
     *) return 1 ;;
   esac
   "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
@@ -805,6 +1107,7 @@ run_service_login() {
     audit_writer) secret_name=db_audit_password ;;
     research_writer) secret_name=db_research_password ;;
     admin) secret_name=db_admin_password ;;
+    daily_input_admitter) secret_name=db_daily_input_admitter_password ;;
     *) return 1 ;;
   esac
   "$compose_function" exec -T -u 0 qa-db /bin/bash -ec \
@@ -813,6 +1116,150 @@ run_service_login() {
   expected="$role=$role"
   observed=$(tr -d '\r' <"$raw" | tail -n 1)
   [ "$observed" = "$expected" ]
+}
+
+run_admitter_catalog_assertions() {
+  local compose_function=$1 raw=$2 sql_file="$workdir/daily-input-admitter-catalog.sql"
+  cat >"$sql_file" <<'SQL'
+DO $daily_input_admitter_catalog$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'daily_input_admitter'
+      AND rolcanlogin
+      AND NOT rolinherit
+      AND NOT rolsuper
+      AND NOT rolcreatedb
+      AND NOT rolcreaterole
+      AND NOT rolreplication
+      AND NOT rolbypassrls
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter role attributes mismatch';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_auth_members
+    WHERE member = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+       OR roleid = (SELECT oid FROM pg_roles WHERE rolname = 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter has unexpected role membership';
+  END IF;
+  IF EXISTS (
+    WITH RECURSIVE membership_closure(start_role, reachable_role) AS (
+      SELECT oid, oid
+      FROM pg_roles
+      WHERE rolname IN ('app', 'worker')
+      UNION
+      SELECT closure.start_role, membership.roleid
+      FROM membership_closure AS closure
+      JOIN pg_auth_members AS membership ON membership.member = closure.reachable_role
+    )
+    SELECT 1
+    FROM membership_closure AS closure
+    JOIN pg_roles AS start_role ON start_role.oid = closure.start_role
+    JOIN pg_roles AS reachable_role ON reachable_role.oid = closure.reachable_role
+    WHERE start_role.rolname IN ('app', 'worker')
+      AND reachable_role.rolname IN ('migration_owner', 'daily_input_admitter')
+  ) THEN
+    RAISE EXCEPTION 'app or worker reaches a protected migration role';
+  END IF;
+  IF NOT has_database_privilege('daily_input_admitter', current_database(), 'CONNECT') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks database CONNECT';
+  END IF;
+  IF NOT has_schema_privilege('daily_input_admitter', 'public', 'USAGE') THEN
+    RAISE EXCEPTION 'daily_input_admitter lacks public schema USAGE';
+  END IF;
+  IF has_database_privilege('daily_input_admitter', current_database(), 'CREATE') THEN
+    RAISE EXCEPTION 'daily_input_admitter has database CREATE';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_namespace AS ns
+    WHERE has_schema_privilege('daily_input_admitter'::name, ns.oid, 'CREATE')
+  ) THEN
+    RAISE EXCEPTION 'daily_input_admitter has schema CREATE';
+  END IF;
+  IF NOT has_schema_privilege('migration_owner', 'public', 'CREATE') THEN
+    RAISE EXCEPTION 'migration_owner lacks public schema CREATE';
+  END IF;
+END
+$daily_input_admitter_catalog$;
+SELECT 'daily_input_admitter_catalog=PASS';
+SQL
+  if ! run_psql "$compose_function" "$sql_file" >"$raw" 2>&1; then
+    return 1
+  fi
+  grep -Fqx 'daily_input_admitter_catalog=PASS' "$raw"
+}
+
+run_admitter_role_guc_check() {
+  local compose_function=$1 raw=$2 sql_file="$workdir/daily-input-admitter-role-guc.sql"
+  cat >"$sql_file" <<'SQL'
+SELECT current_user || '=' || session_user || '=' || current_setting('role');
+SQL
+  if ! run_role_psql "$compose_function" daily_input_admitter "$sql_file" >"$raw" 2>&1; then
+    return 1
+  fi
+  grep -Fqx 'daily_input_admitter=daily_input_admitter=none' "$raw"
+}
+
+assert_bootstrap_log_redacts_credentials() {
+  local password_dir=$1 raw=$2 label=$3 name
+  local -a secret_names=(
+    postgres_password db_migration_owner_password db_app_password db_worker_password
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
+  )
+  for name in "${secret_names[@]}"; do
+    if grep -Fq -f "$password_dir/$name" "$raw"; then
+      fail "$label role bootstrap output exposed a credential value ($name)"
+    fi
+  done
+}
+
+bootstrap_gate_output_is_marker() {
+  local output=$1 marker
+  [[ -f "$output" && ! -L "$output" && -s "$output" ]] || return 1
+  marker=$(cat -- "$output" 2>/dev/null) || return 1
+  [ "$marker" = "$bootstrap_gate_redacted_marker" ]
+}
+
+record_bootstrap_result() {
+  local password_dir=$1 raw=$2 evidence_name=$3 label=$4 bootstrap_status=$5
+  local gated_output="$workdir/gated-$evidence_name" gate_status
+
+  if bootstrap_record_gate "$password_dir" "$raw" "$gated_output" "$bootstrap_status"; then
+    gate_status=0
+  else
+    gate_status=$?
+  fi
+
+  case "$gate_status" in
+    0)
+      assert_bootstrap_log_redacts_credentials "$password_dir" "$gated_output" "$label"
+      record_log "$gated_output" "$evidence_name"
+      ;;
+    10)
+      assert_bootstrap_log_redacts_credentials "$password_dir" "$gated_output" "$label"
+      record_log "$gated_output" "$evidence_name"
+      fail "$label role bootstrap failed (bootstrap exit=$bootstrap_status)"
+      ;;
+    20)
+      if bootstrap_gate_output_is_marker "$gated_output"; then
+        record_log "$gated_output" "$evidence_name"
+      fi
+      fail "$label role bootstrap output disclosed a credential; evidence redacted (bootstrap exit=$bootstrap_status)"
+      ;;
+    21)
+      if bootstrap_gate_output_is_marker "$gated_output"; then
+        record_log "$gated_output" "$evidence_name"
+      fi
+      fail "$label role bootstrap credential scan failed; evidence redacted (bootstrap exit=$bootstrap_status)"
+      ;;
+    *)
+      fail "$label role bootstrap credential gate returned an unknown category (gate=$gate_status bootstrap exit=$bootstrap_status)"
+      ;;
+  esac
 }
 
 run_app_actor_sql() {
@@ -918,7 +1365,7 @@ run_full_release_lane() {
   local full_rerun_raw="$workdir/full-migrate-second.log"
   local catalog_first_raw="$workdir/full-catalog-first.log"
   local catalog_second_raw="$workdir/full-catalog-second.log"
-  local catalog_first_snapshot catalog_second_snapshot
+  local catalog_first_snapshot catalog_second_snapshot full_bootstrap_status
 
   full_started=1
   if ! full_compose up -d --wait qa-db >"$full_up_raw" 2>&1; then
@@ -927,13 +1374,15 @@ run_full_release_lane() {
   fi
   record_log "$full_up_raw" full-up.log
 
-  if ! bootstrap_roles full_compose >"$full_bootstrap_raw" 2>&1; then
-    record_log "$full_bootstrap_raw" full-bootstrap.log
-    fail 'full-release role bootstrap failed'
+  if bootstrap_roles full_compose >"$full_bootstrap_raw" 2>&1; then
+    full_bootstrap_status=0
+  else
+    full_bootstrap_status=$?
   fi
-  record_log "$full_bootstrap_raw" full-bootstrap.log
+  record_bootstrap_result "$full_password_dir" "$full_bootstrap_raw" full-bootstrap.log \
+    full-release "$full_bootstrap_status"
 
-  for service_role in migration_owner app worker audit_writer research_writer admin; do
+  for service_role in migration_owner app worker audit_writer research_writer admin daily_input_admitter; do
     service_login_raw="$workdir/full-service-login-$service_role.log"
     if ! run_service_login full_compose "$service_role" "$service_login_raw"; then
       record_log "$service_login_raw" "full-service-login-$service_role.log"
@@ -942,6 +1391,16 @@ run_full_release_lane() {
     record_log "$service_login_raw" "full-service-login-$service_role.log"
     full_service_logins=$(append_csv "$full_service_logins" "$service_role")
   done
+  if ! run_admitter_catalog_assertions full_compose "$workdir/full-admitter-catalog.log"; then
+    record_log "$workdir/full-admitter-catalog.log" full-admitter-catalog.log
+    fail 'full-release daily_input_admitter catalog/privilege assertions failed'
+  fi
+  record_log "$workdir/full-admitter-catalog.log" full-admitter-catalog.log
+  if ! run_admitter_role_guc_check full_compose "$workdir/full-admitter-role-guc.log"; then
+    record_log "$workdir/full-admitter-role-guc.log" full-admitter-role-guc.log
+    fail 'full-release daily_input_admitter role GUC assertion failed'
+  fi
+  record_log "$workdir/full-admitter-role-guc.log" full-admitter-role-guc.log
 
   if ! run_disk_check full_compose "$full_disk_raw"; then
     record_log "$full_disk_raw" full-disk-before.log
@@ -955,6 +1414,7 @@ run_full_release_lane() {
   fi
   record_log "$full_migrate_raw" full-migrate-first.log
   run_full_ledger_report full_compose first
+  [ "$full_count:$full_latest" = "62:62" ] || fail '0062 full-release ledger must contain 62 rows'
   full_migration_count_first=$full_count
   full_latest_migration_first=$full_latest
   full_migration_checksums_first=$full_checksums
@@ -1006,16 +1466,262 @@ run_full_release_lane() {
   record_log "$full_disk_raw" full-disk-after.log
 }
 
+run_daily_0060_staged() {
+  local raw role step status first_ledger second_ledger
+  run_migration_stage 59
+  raw="$workdir/preflight-0060-before.log"
+  if ! run_role_psql main_compose migration_owner "$script_dir/preflight-0060.sql" --set seed=1 >"$raw" 2>&1; then
+    record_log "$raw" preflight-0060-before.log; fail '0060 historical seed failed'
+  fi
+  record_log "$raw" preflight-0060-before.log
+  run_migration_stage 60
+  run_full_ledger_report main_compose staged-0060-first
+  first_ledger=$full_checksums
+  [ "$full_count:$full_latest" = '60:60' ] || fail '0060 staged ledger must contain 60 rows'
+  for step in first rerun; do
+    if [ "$step" = rerun ]; then
+      run_migration_stage 60
+      run_full_ledger_report main_compose staged-0060-second
+      second_ledger=$full_checksums
+      [ "$first_ledger" = "$second_ledger" ] || fail '0060 rerun changed migration checksums'
+    fi
+    raw="$workdir/preflight-0060-$step.log"
+    if ! run_role_psql main_compose migration_owner "$script_dir/preflight-0060.sql" --set seed=0 >"$raw" 2>&1; then
+      record_log "$raw" "preflight-0060-$step.log"; fail "0060 historical preservation failed: $step"
+    fi
+    record_log "$raw" "preflight-0060-$step.log"
+  done
+  for role in app worker research_writer admin daily_input_admitter; do
+    raw="$workdir/actual-role-0060-$role.log"
+    if ! run_role_psql main_compose "$role" "$script_dir/actual-role-0060.sql" >"$raw" 2>&1; then
+      record_log "$raw" "actual-role-0060-$role.log"; fail "0060 actual role failed: $role"
+    fi
+    grep -Fqx "DAILY_0060_HARNESS:actual_$role:PASS" "$raw" || fail '0060 actual role result missing'
+    printf 'DAILY_0060_HARNESS:actual_%s:PASS\n' "$role"
+    record_log "$raw" "actual-role-0060-$role.log"
+  done
+  for step in unused seed_hidden attempt post; do
+    raw="$workdir/rollback-0060-$step.log"
+    if run_role_psql main_compose migration_owner "$script_dir/rollback-0060-guard.sql" \
+       --set "unused=$([ "$step" = unused ] && printf 1 || printf 0)" \
+       --set "seed_hidden=$([ "$step" = seed_hidden ] && printf 1 || printf 0)" \
+       --set "attempt=$([ "$step" = attempt ] && printf 1 || printf 0)" >"$raw" 2>&1; then status=0; else status=$?; fi
+    record_log "$raw" "rollback-0060-$step.log"
+    if [ "$step" = attempt ]; then
+      [ "$status" -ne 0 ] && grep -Eq 'ERROR:[[:space:]]+55000:' "$raw" || fail '0060 populated DOWN did not refuse with 55000'
+    else
+      [ "$status" -eq 0 ] || fail "0060 rollback assertion failed: $step"
+    fi
+    printf 'DAILY_0060_HARNESS:rollback_%s:PASS\n' "$step"
+  done
+  daily_harness=PASS
+}
+
 run_db_test() {
-  local label=$1 target=$2
-  raw="$workdir/test-$label.log"
-  if ! (cd "$root" && DATABASE_URL="$test_database_url" CARGO_TERM_COLOR=never cargo test --locked $target -- --nocapture) >"$raw" 2>&1; then
-    record_log "$raw" "test-$label.log"
-    fail "DB-gated test failed: $label"
+  local label=$1 target=$2 status skip=false row name expected actual
+  local -a replay_rows=()
+  local raw="$workdir/test-$label.log"
+  if (cd "$root" && DATABASE_URL="$test_database_url" CARGO_TERM_COLOR=never cargo test --locked $target -- --nocapture) >"$raw" 2>&1; then status=0; else status=$?; fi
+  if grep -Fq 'SKIP:' "$raw"; then skip=true; fi
+  db_test_results+=("{\"label\":\"$label\",\"exit_code\":$status,\"skip_markers\":$skip}")
+  printf 'PG_DB_TEST_EXIT:%s:%s:SKIP_%s\n' "$label" "$status" "$skip"
+  if [ "$label" = migration-contract ]; then
+    while IFS= read -r row; do
+      if [[ "$row" =~ ^test[[:space:]](daily_0060_[a-z_]+)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
+        name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
+        daily_named_rows+=("$name:$actual")
+        printf 'PG_DB_TEST_ROW:migration-contract:%s:%s\n' "$name" "$actual"
+      elif [[ "$row" =~ ^DAILY_0060_SUBCASE:[a-z0-9_]+:PASS$ ]]; then
+        daily_subcase_rows+=("${row#DAILY_0060_SUBCASE:}")
+        printf '%s\n' "$row"
+      fi
+    done <"$raw"
+  fi
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ]; then
+    while IFS= read -r row; do
+      if [[ "$row" =~ ^test[[:space:]]([a-z_][a-z0-9_]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
+        name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
+        replay_rows+=("$name:$actual")
+        printf 'PG_DB_TEST_ROW:%s:%s:%s\n' "$label" "$name" "$actual"
+      fi
+    done <"$raw"
   fi
   record_log "$raw" "test-$label.log"
-  if grep -Fq 'SKIP:' "$raw"; then
-    fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  [ "$status" -eq 0 ] || fail "DB-gated test failed: $label"
+  [ "$skip" = false ] || fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  if [ "$label" = api-owner-beta-daily ]; then
+    for expected in \
+      http_daily_config_defaults_and_partial_updates_preserve_optin_and_epoch \
+      http_daily_config_requires_owner_csrf_and_closed_request_fields \
+      http_daily_config_idempotency_is_bound_to_resource_and_audit_once \
+      http_daily_state_enforces_session_owner_entitlement_and_config_rls \
+      http_daily_state_is_read_only_and_never_uses_generic_ready_data \
+      http_daily_state_reads_exact_admission_and_rejects_expired_or_blocked_input \
+      http_daily_read_union_preserves_manual_pins_and_daily_pending_identity \
+      http_daily_state_distinguishes_running_retry_and_terminal_failure \
+      http_daily_published_result_retains_dates_across_disable_and_verification_loss \
+      http_daily_state_rechecks_exact_control_rights_and_calendar_gap \
+      owner_beta_price_only_missing_approved_artifact_root_is_static_503_without_enqueue_rows \
+      owner_beta_supported_as_of_missing_approved_artifact_is_static_503_without_writes \
+      owner_beta_price_only_read_routes_are_owner_only_and_do_not_require_price_mode \
+      http_owner_beta_access_is_central_exhaustive_and_non_leaking \
+      http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "API daily unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 15 ] || fail 'API daily result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-publish ]; then
+    for expected in published_owner_beta_target_persists_exact_results_and_seals_claim publication_config_lock_cannot_impersonate_another_owner canceled_before_owner_beta_publication_lock_has_no_outputs stale_swept_owner_beta_claim_cannot_publish_or_touch_run owner_beta_recovery_exhaustion_mirrors_failed_run owner_beta_recovery_mirrors_unclaimed_cancellation malformed_owner_beta_payload_is_terminal_without_inventing_a_run daily_input_admitter_pool_is_direct_bounded_and_unprivileged; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "owner-beta unique publication test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 8 ] || fail 'owner-beta publication result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-schedule ]; then
+    for expected in \
+      daily_mode_defaults_off_and_rejects_ambiguous_configuration \
+      daily_disabled_mode_does_not_acquire_a_database_connection \
+      daily_absent_or_disabled_control_does_not_reserve_work \
+      daily_scheduler_reserves_canonical_snapshot_and_persistent_minute_gate \
+      daily_scheduler_new_session_replays_permanent_reservation_without_duplicate_job \
+      daily_scheduler_two_sessions_have_one_reservation_and_one_poll_receipt \
+      daily_scheduler_stage_lock_precedes_the_persistent_poll_gate \
+      daily_poll_roles_are_direct_and_cannot_be_interchanged \
+      daily_admission_cycle_holds_lock_past_minute_and_commits_failure_receipt \
+      daily_abandoned_admission_leaves_started_receipt_and_releases_session_lock \
+      daily_schedule_missing_fresh_input_commits_checked_without_job_or_fallback \
+      daily_schedule_capacity_includes_manual_jobs_without_reserving_on_deferral \
+      daily_schedule_rechecks_optin_and_uses_the_current_config_epoch \
+      daily_schedule_latest_failed_admission_cannot_fall_back_to_previous_verified_scan \
+      daily_admitter_context_is_pending_scoped_and_default_off \
+      daily_admitter_context_returns_exact_committed_tip \
+      daily_admitter_context_rejects_completed_and_superseded_receipts \
+      daily_admitter_readback_requires_direct_principal_and_no_table_grants \
+      daily_admitter_readback_rechecks_owner_and_exact_rights \
+      daily_admitter_readback_filters_foreign_owner_policy_and_stage \
+      daily_admitter_receipt_recovery_distinguishes_started_and_completed_failure \
+      daily_admitter_receipt_recovery_matches_verified_commit_without_mutation \
+      daily_admitter_receipt_keeps_old_epoch_results_historical \
+      daily_admitter_receipt_rejects_corrupt_verified_binding \
+      daily_admitter_readback_retains_blocked_event_identity \
+      daily_admitter_exact_input_absence_and_revocation_are_explicit \
+      daily_admitter_readback_security_settings_are_fixed \
+      daily_admitter_readback_down_preserves_existing_daily_evidence \
+      daily_typed_source_event_commits_exact_identity_and_failure_receipt \
+      daily_typed_source_event_foreign_identity_rolls_back_before_completion \
+      daily_typed_source_event_cannot_use_the_operator_revocation_boundary \
+      daily_typed_source_event_restart_keeps_one_event_and_distinct_receipts \
+      daily_release_control_prepare_is_disabled_and_idempotent \
+      daily_release_control_transitions_preserve_identity_and_increment_once \
+      daily_release_control_absent_rows_are_not_created_by_other_actions \
+      daily_release_control_rejects_serving_and_impersonated_sessions \
+      daily_release_control_mismatched_bindings_roll_back_without_repair \
+      daily_release_control_failed_authority_leaves_no_initial_row \
+      daily_release_control_revocation_cannot_block_disable \
+      daily_release_control_disable_preserves_changed_capacity_and_history \
+      daily_release_control_concurrent_prepare_and_transition_serialize \
+      daily_release_control_hex_values_remain_data \
+      daily_release_control_table_lock_timeout_is_atomic; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily schedule unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 43 ] || fail 'daily schedule result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-publish ]; then
+    for expected in \
+      daily_transient_failure_preserves_pending_row_and_permanent_reservation \
+      daily_terminal_failure_releases_capacity_but_preserves_reservation \
+      daily_expired_claim_cannot_settle_or_touch_the_pending_run \
+      daily_failure_still_settles_after_control_is_disabled \
+      daily_mismatched_payload_cannot_settle_the_valid_claim \
+      daily_cancellation_wins_failure_and_clears_claim_without_outputs; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily publish unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 6 ] || fail 'daily publish result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-recovery ]; then
+    for expected in \
+      daily_recovery_does_not_steal_a_live_claim \
+      daily_expired_recovery_requeues_the_same_job_and_preserves_all_sealed_rows \
+      daily_recovery_exhausts_three_attempts_without_replacing_the_reservation \
+      daily_racing_recoveries_orphan_and_requeue_only_once \
+      daily_recovery_mirrors_unclaimed_audited_cancellation \
+      daily_recovery_orphans_expired_canceled_attempt_and_releases_its_lease; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily recovery unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 6 ] || fail 'daily recovery result inventory changed'
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-backup ]; then
+    for expected in \
+      daily_backup_audit_checks_real_history_without_mutation_or_rls_blindness \
+      daily_backup_audit_rejects_missing_control_and_enabled_capture \
+      daily_backup_audit_detects_poll_state_change_without_reading_provider_bodies \
+      daily_backup_restore_recovers_original_reservation_once_without_new_job \
+      daily_backup_maintenance_rejects_serving_roles_and_impersonated_login \
+      daily_backup_restore_requires_disabled_control_and_keeps_empty_history_empty \
+      daily_backup_restore_never_reseals_old_config_or_activation_epochs \
+      daily_backup_restore_rejects_replacement_key_without_inserting_reservation \
+      daily_backup_restore_rejects_conflicting_existing_date_without_overwrite \
+      daily_backup_restore_rolls_back_earlier_repair_when_later_run_is_invalid \
+      daily_backup_orphan_job_is_blocked_without_replacement_run \
+      daily_backup_identity_visibility_rejects_effective_rls_without_policy_bypass; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily backup unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 12 ] || fail 'daily backup result inventory changed'
+  fi
+  if [ "$label" = migration-contract ]; then
+    for expected in role_preflight up_preserves_histories repeat_is_noop catalog_authority direct_principal_denials config_owner_optin config_epoch control_epoch calendar_projection calendar_before_admission calendar_gap_cutoff admission_transport admission_parent_chain admission_conflict_replay poll_rate_and_crash receipt_authority event_and_freshness reservation_dedup capacity_deferral latest_only direct_daily_spoof valid_publish terminal_immutability claim_fences retry_and_recovery cancel_drain deferred_consistency revoke_publish_races cutoff_while_waiting down_unused down_all_tenants down_atomicity; do
+      actual=0
+      for row in "${daily_named_rows[@]}"; do [ "$row" != "daily_0060_$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "0060 unique test row missing: $expected"
+    done
+    for expected in role_super role_inherit role_createdb role_createrole role_bypass role_replication role_nologin role_member role_reverse role_schema role_database role_nousage role_noconnect role_protected_direct role_protected_transitive direct_app direct_worker direct_research_writer direct_admin direct_daily_input_admitter config_overflow calendar_copy_lineage blocked_replay_identity receipt_owner_user_id receipt_policy_sha256 down_daily_run down_admissions down_admission_events down_reservations down_calendar_sources down_calendar_days down_source_events down_publication_claims down_poll_receipts down_restored_off down_poll_state down_config_optin down_hidden_epoch latest_first_auto latest_disabled latest_expired_rights latest_unknown_calendar latest_newest_missing latest_failed_scan cancel_live cancel_expired cancel_queued retry_exhausted_live retry_exhausted_orphan wait_freshness wait_eligible_boundary matrix_queued_commit matrix_queued_immediate matrix_running_commit matrix_running_immediate matrix_succeeded_commit matrix_succeeded_immediate matrix_failed_commit matrix_failed_immediate matrix_canceled_commit matrix_canceled_immediate race_config_publish_first race_config_revoke_first race_off_on_publish_first race_off_on_revoke_first race_control_publish_first race_control_revoke_first race_rights_publish_first race_rights_revoke_first race_owner_publish_first race_owner_revoke_first race_source_publish_first race_source_revoke_first; do
+      actual=0
+      for row in "${daily_subcase_rows[@]}"; do [ "$row" != "$expected:PASS" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "0060 unique subcase row missing: $expected"
+    done
+  fi
+  if [ "$label" = jobqueue-owner-beta-daily-runner ]; then
+    for expected in \
+      daily_preflight_current_claim_is_read_only_and_releases_locks \
+      daily_preflight_denies_disabled_authority_and_settles_without_outputs \
+      daily_preflight_rejects_edit_restore_epoch_without_resealing \
+      daily_preflight_rejects_changed_payload_and_foreign_attempt \
+      daily_preflight_finishes_audited_cancellation_exactly_once \
+      daily_mixed_runner_disabled_mode_blocks_without_file_approval \
+      daily_mixed_runner_current_thread_rejects_before_claim \
+      daily_mixed_runner_foreign_policy_stops_before_base_or_admission_io \
+      daily_mixed_runner_lease_mismatch_preserves_unclaimed_job \
+      daily_preflight_rejects_app_admitter_and_elevated_pools \
+      daily_supersession_preflight_cancels_and_replays_only_exact_identity \
+      daily_supersession_failure_cleanup_cancels_instead_of_retrying \
+      daily_supersession_cleanup_remains_possible_after_authority_revocation \
+      daily_supersession_missing_calendar_does_not_invent_a_newer_session \
+      daily_supersession_conflicting_calendar_does_not_cancel \
+      daily_supersession_transaction_rollback_restores_every_output_and_lease \
+      daily_supersession_samples_cutoff_after_waiting_for_control \
+      daily_supersession_foreign_worker_attempt_and_payload_cannot_cancel \
+      daily_supersession_expired_real_lease_cannot_settle \
+      daily_supersession_rejects_other_real_principals_and_restores_actor \
+      daily_supersession_additive_migration_down_up_preserves_populated_rows \
+      daily_supersession_does_not_replace_an_audited_manual_cancel_reason \
+      daily_supersession_observes_source_conflict_committed_while_waiting \
+      daily_supersession_holds_source_fence_until_atomic_commit; do
+      actual=0
+      for row in "${replay_rows[@]}"; do [ "$row" != "$expected:ok" ] || actual=$((actual+1)); done
+      [ "$actual" -eq 1 ] || fail "daily runner unique test row missing: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq 24 ] || fail 'daily runner result inventory changed'
   fi
   tests_run=$(append_csv "$tests_run" "$label")
 }
@@ -1026,7 +1732,7 @@ test_password_dir="$workdir/test-secrets"
 full_password_dir="$workdir/full-secrets"
 mkdir -p "$main_password_dir" "$test_password_dir" "$full_password_dir"
 chmod 0700 -- "$main_password_dir" "$test_password_dir" "$full_password_dir"
-for role in postgres_password db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password; do
+for role in postgres_password db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password db_daily_input_admitter_password; do
   generate_secret "$main_password_dir/$role"
   generate_secret "$full_password_dir/$role"
 done
@@ -1037,7 +1743,7 @@ done
 # credential and is written only to the private temporary secret directory.
 printf '%s' 'lagrange' >"$test_password_dir/postgres_password"
 chmod 0400 -- "$test_password_dir/postgres_password"
-for role in db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password; do
+for role in db_migration_owner_password db_app_password db_worker_password db_audit_password db_research_password db_admin_password db_daily_input_admitter_password; do
   cp -- "$test_password_dir/postgres_password" "$test_password_dir/$role"
   chmod 0400 -- "$test_password_dir/$role"
 done
@@ -1090,13 +1796,16 @@ fi
 record_log "$main_up_raw" main-up.log
 
 bootstrap_raw="$workdir/main-bootstrap.log"
-if ! bootstrap_roles main_compose >"$bootstrap_raw" 2>&1; then
-  record_log "$bootstrap_raw" main-bootstrap.log
-  fail 'production-like role bootstrap failed'
+if bootstrap_roles main_compose >"$bootstrap_raw" 2>&1; then
+  bootstrap_status=0
+else
+  bootstrap_status=$?
 fi
-record_log "$bootstrap_raw" main-bootstrap.log
+record_bootstrap_result "$main_password_dir" "$bootstrap_raw" main-bootstrap.log staged "$bootstrap_status"
 
-for service_role in migration_owner app worker audit_writer research_writer admin; do
+run_bootstrap_negative_contract
+
+for service_role in migration_owner app worker audit_writer research_writer admin daily_input_admitter; do
   service_login_raw="$workdir/service-login-$service_role.log"
   if ! run_service_login main_compose "$service_role" "$service_login_raw"; then
     record_log "$service_login_raw" "service-login-$service_role.log"
@@ -1105,6 +1814,16 @@ for service_role in migration_owner app worker audit_writer research_writer admi
   record_log "$service_login_raw" "service-login-$service_role.log"
   service_logins=$(append_csv "$service_logins" "$service_role")
 done
+if ! run_admitter_catalog_assertions main_compose "$workdir/admitter-catalog.log"; then
+  record_log "$workdir/admitter-catalog.log" admitter-catalog.log
+  fail 'staged daily_input_admitter catalog/privilege assertions failed'
+fi
+record_log "$workdir/admitter-catalog.log" admitter-catalog.log
+if ! run_admitter_role_guc_check main_compose "$workdir/admitter-role-guc.log"; then
+  record_log "$workdir/admitter-role-guc.log" admitter-role-guc.log
+  fail 'staged daily_input_admitter role GUC assertion failed'
+fi
+record_log "$workdir/admitter-role-guc.log" admitter-role-guc.log
 
 build_raw="$workdir/db-tool-build.log"
 if [ -z "${LAGRANGE_DB_VALIDATION_IMAGE:-}" ]; then
@@ -1265,6 +1984,8 @@ if ! run_psql main_compose "$script_dir/preflight-0041.sql" >"$workdir/preflight
 fi
 record_log "$workdir/preflight-0041-rerun.log" preflight-0041-rerun.log
 
+run_daily_0060_staged
+
 hazard_final_raw="$workdir/hazards-final-disk.log"
 if ! run_disk_check main_compose "$hazard_final_raw"; then
   record_log "$hazard_final_raw" hazards-final-disk.log
@@ -1304,11 +2025,13 @@ fi
 record_log "$test_up_raw" test-up.log
 
 test_bootstrap_raw="$workdir/test-bootstrap.log"
-if ! bootstrap_roles test_compose >"$test_bootstrap_raw" 2>&1; then
-  record_log "$test_bootstrap_raw" test-bootstrap.log
-  fail 'test-cluster role bootstrap failed'
+if bootstrap_roles test_compose >"$test_bootstrap_raw" 2>&1; then
+  test_bootstrap_status=0
+else
+  test_bootstrap_status=$?
 fi
-record_log "$test_bootstrap_raw" test-bootstrap.log
+record_bootstrap_result "$test_password_dir" "$test_bootstrap_raw" test-bootstrap.log \
+  test-cluster "$test_bootstrap_status"
 
 test_database_url="postgres://postgres:$(<"$test_password_dir/postgres_password")@127.0.0.1:${test_port}/postgres"
 # Every command receives DATABASE_URL. A SKIP marker is a hard failure.
@@ -1322,6 +2045,15 @@ run_db_test api-paper-scheduler '-p api-server --test paper_scheduler'
 run_db_test api-paper-runner '-p api-server --test paper_runner'
 run_db_test jobqueue-contract '-p job-queue --test queue_contract'
 run_db_test jobqueue-paper-preview '-p job-queue --test paper_preview'
+run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
+run_db_test jobqueue-owner-beta-publish '-p job-queue --test owner_beta_publish'
+run_db_test jobqueue-owner-beta-daily-schedule '-p job-queue --test owner_beta_daily_schedule'
+run_db_test jobqueue-owner-beta-daily-publish '-p job-queue --test owner_beta_daily_publish'
+run_db_test jobqueue-owner-beta-daily-recovery '-p job-queue --test owner_beta_daily_recovery'
+run_db_test jobqueue-owner-beta-daily-backup '-p job-queue --test owner_beta_daily_backup'
+run_db_test jobqueue-owner-beta-daily-runner '-p job-queue --test owner_beta_daily_runner'
+run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
+run_db_test api-owner-beta-daily '-p api-server --test http_owner_beta_daily --test http_owner_beta_price_only --test http_owner_beta_access'
 
 outcome=APPROVED
 detail='schema-only 0038 upgrade, staged 0039/0040/0041 checks, empty full-release endpoint and no-op rerun, catalog audits, and DB-gated tests passed without SKIP'

@@ -146,6 +146,7 @@ function viewModel({
     locale,
     memberships: [],
     mutationPending: false,
+    interactionReady: true,
     onAdd: async () => undefined,
     onCancelDisable: () => undefined,
     onChartRangeChange: () => undefined,

@@ -102,7 +102,7 @@ INTRADAY_TITLE_MAP = {
     "repeats cache-only app GETs 1, 10, and 100 times without demand mutations":
         "repeats stream GETs 1, 10, and 100 times without lease mutations",
 }
-FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 3, 9, 4, 3, 4, 1, 1, 39, 38)))
+FULL_FILE_COUNTS = dict(zip(OFF_FILES, (3, 3, 8, 6, 11, 9, 4, 3, 4, 1, 1, 39, 38)))
 FULL_FILE_COUNTS.update({INTRADAY_FILE: 12, STREAM_FILE: 1})
 DOTENV_NAMES = (
     ".env",
@@ -1290,7 +1290,7 @@ def compare_lane_inventories(
         "market-stream": {key for key in required if key.file in {INTRADAY_FILE, STREAM_FILE} or key == owner_key},
     }
     for lane, cases in lanes.items():
-        if len(cases) != (121 if lane == "off" else 14):
+        if len(cases) != (129 if lane == "off" else 14):
             contract_errors.append(f"{lane.upper()}_COUNT_MISMATCH")
         if {case.key for case in cases} != expected_lanes.get(lane, set()):
             contract_errors.append(f"{lane.upper()}_SELECTION_MISMATCH")
@@ -1443,6 +1443,141 @@ class LaneOutcome:
     token_sha256: str | None = None
     cases: list[Case] = dataclasses.field(default_factory=list)
     retry_attempts: int = 0
+
+
+def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
+    """Public CI evidence excludes process output, tokens, titles and annotations."""
+    known_errors = {
+        "COMMAND_FAILED", "LANE_TIMEOUT", "LANE_INTERNAL_FAILURE", "CLEANUP_FAILED",
+        "PORT_BUSY_AFTER_CLEANUP", "LISTENER_REMAINS_AFTER_CLEANUP",
+        "PLAYWRIGHT_JSON_INVALID", "RESULT_MISSING", "RESULT_UNEXPECTED",
+        "RESULT_SKIPPED", "RESULT_FLAKY", "RESULT_RETRY", "RESULT_INVENTORY_MISMATCH",
+        "OWNER_EMPTY_SELECTION_MISMATCH", "RESULT_DUPLICATE_KEY", "ACTUAL_CASE_SELECTED",
+        "COMMAND_TIMEOUT", "INTERRUPTED", "CHILD_START_FAILED", "PIDFD_UNAVAILABLE",
+        "CHILD_IDENTITY_UNVERIFIED", "SERVER_EXITED", "LISTENER_START_TIMEOUT",
+        "LISTENER_OWNER_UNVERIFIED", "FOREIGN_LISTENER", "COMPETING_LISTENER",
+        "LISTENER_ADDRESS_MISMATCH", "LISTENER_NOT_OWNED", "LISTENER_CHANGED",
+        "LISTENER_OWNER_AMBIGUOUS", "UNEXPECTED_OWNED_PORT", "ROOT_GENERATION_MISMATCH",
+        "READINESS_HTTP_FAILED", "READINESS_BODY_TOO_LARGE", "API_IDENTITY_INVALID",
+        "API_IDENTITY_MISMATCH", "WEB_RELAY_IDENTITY_INVALID",
+        "WEB_RELAY_IDENTITY_MISMATCH", "WEB_HEALTH_MISMATCH", "PLAYWRIGHT_REPORT_ERRORS",
+    }
+    statuses = {"expected", "unexpected", "flaky", "skipped"}
+    attempt_statuses = {"passed", "failed", "timedOut", "interrupted", "skipped"}
+    files = set(OFF_FILES) | {INTRADAY_FILE, STREAM_FILE}
+
+    def count(value: Any) -> int | None:
+        return value if type(value) is int and 0 <= value <= 1_000_000 else None
+
+    def safe_enum(value: Any, allowed: set[str], fallback: str = "UNKNOWN") -> str:
+        return value if isinstance(value, str) and value in allowed else fallback
+
+    error = outcome.error if isinstance(outcome.error, str) and outcome.error in known_errors else (
+        None if outcome.error is None else "OTHER_FAILURE"
+    )
+    state = safe_enum(outcome.state, {"passed", "running"} | {
+        code.lower() for code in known_errors
+    }, "other_failure")
+
+    def attempt(row: Mapping[str, Any], case_file: str) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "status": safe_enum(row.get("status"), attempt_statuses),
+            "retry": count(row.get("retry", 0)),
+        }
+        if result["status"] in {"failed", "timedOut", "interrupted"} and case_file in files:
+            error = row.get("error")
+            message = error.get("message") if isinstance(error, dict) else None
+            if isinstance(message, str):
+                # Classify only Playwright's API request prefix. Emit a fixed
+                # category, never the message, URL, call log, stack or body.
+                request_error = re.match(
+                    r"^(?:Error: )?apiRequestContext\.(?:get|post|put|patch|delete|head|fetch): ([^\r\n]*)",
+                    message[:4096],
+                )
+                if request_error is not None:
+                    first_line = request_error[1]
+                    result["request_error"] = "OTHER_REQUEST_FAILURE"
+                    for pattern, category in (
+                        (r"\bECONNRESET\b", "CONNECTION_RESET"),
+                        (r"\bECONNREFUSED\b", "CONNECTION_REFUSED"),
+                        (r"\bEPIPE\b", "BROKEN_PIPE"),
+                        (r"\bETIMEDOUT\b", "NETWORK_TIMEOUT"),
+                        (r"\bsocket hang up\b", "SOCKET_CLOSED"),
+                        (r"\bTimeout [0-9]+ms exceeded\b", "REQUEST_TIMEOUT"),
+                    ):
+                        if re.search(pattern, first_line):
+                            result["request_error"] = category
+                            break
+        location = row.get("errorLocation")
+        if result["status"] in {"failed", "timedOut", "interrupted"} and isinstance(location, dict):
+            source = location.get("file")
+            line, column = count(location.get("line")), count(location.get("column"))
+            # Emit only a known repository-relative source identity and numbers.
+            # Error messages, stacks, code frames and arbitrary path prefixes never cross.
+            if (
+                case_file in files
+                and isinstance(source, str)
+                and (source == case_file or source.endswith("/apps/web/" + case_file))
+                and line is not None and line > 0
+                and column is not None and column > 0
+            ):
+                result["error_location"] = {"file": case_file, "line": line, "column": column}
+        if (
+            result["status"] in {"failed", "timedOut", "interrupted"}
+            and case_file == "tests/e2e/owner-beta-recommendations.spec.ts"
+            and isinstance(row.get("steps"), list)
+        ):
+            known_steps = {
+                "R2_DAILY_SWITCH_SETUP", "R2_DAILY_SWITCH_HOLD",
+                "R2_DAILY_SWITCH_SELECT", "R2_DAILY_SWITCH_NAVIGATE",
+                "R2_DAILY_SWITCH_RELEASE", "R2_DAILY_SWITCH_VERIFY",
+                "R2_DAILY_SWITCH_CLEANUP",
+            }
+            failed_steps = [
+                step["title"] for step in row["steps"][:32]
+                if isinstance(step, dict) and isinstance(step.get("title"), str)
+                and step["title"] in known_steps and isinstance(step.get("error"), dict)
+            ]
+            if failed_steps:
+                result["failed_steps"] = list(dict.fromkeys(failed_steps))
+        return result
+
+    cases = []
+    for case in outcome.cases[:1000]:
+        cases.append({
+            "project": "chromium" if case.key.project == "chromium" else "UNKNOWN",
+            "file": safe_enum(case.key.file, files, "UNLISTED"),
+            "line": count(case.key.line),
+            "identity_sha256": hashlib.sha256(json_bytes({
+                "project": case.key.project, "file": case.key.file, "line": case.key.line,
+                "title": case.key.title, "test_id": case.key.test_id,
+            })).hexdigest(),
+            "status": safe_enum(case.status, statuses),
+            "expected_status": safe_enum(case.expected_status, attempt_statuses),
+            "attempt_count": len(case.results),
+            "attempts": [
+                attempt(row, case.key.file)
+                for row in case.results[:16]
+            ],
+        })
+    return {
+        "schema": "candidate-web-hosted-lane-v1",
+        "lane": safe_enum(outcome.lane, {"off", "market-stream"}),
+        "state": state, "error": error, "exit_code": count(outcome.exit_code),
+        "selected": count(outcome.selected), "passed": count(outcome.passed),
+        "skipped": count(outcome.skipped), "flaky": count(outcome.flaky),
+        "retry_attempts": count(outcome.retry_attempts),
+        "cleanup_ok": outcome.cleanup_ok is True,
+        "reservation_ok": outcome.reservation_ok is True,
+        "case_count": len(outcome.cases), "cases": cases,
+        "case_rows_truncated": len(outcome.cases) > len(cases),
+    }
+
+
+def emit_hosted_lane_evidence(outcome: LaneOutcome) -> None:
+    # The full private receipt remains local; only this explicit allowlist is
+    # copied into hosted job logs, including on browser failure.
+    print("CANDIDATE_WEB_LANE:" + json_bytes(hosted_lane_evidence(outcome)).decode("ascii").strip(), flush=True)
 
 
 class Harness:
@@ -1870,6 +2005,7 @@ class Harness:
                 break
             outcome = self._run_lane(lane, lane_expected[lane])
             self.lane_records[lane] = outcome
+            emit_hosted_lane_evidence(outcome)
             write_private(
                 self.evidence_dir / lane / "lane.json",
                 json_bytes(

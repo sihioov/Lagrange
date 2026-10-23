@@ -849,6 +849,12 @@ impl ReadCoordinator {
         if advanced {
             (gate, state) = Self::persist_state(gate, state).await?;
         }
+        // High-water persistence can itself be slow. Start the fixed dispatch
+        // window only after that bookkeeping finishes, while retaining the
+        // lock and rechecking the clock/eligibility at the actual reservation.
+        // The reservation fsync still has to finish within the same 250ms bound.
+        let start_ms = self.clock.now_ms();
+        advance_high_water(&mut state, start_ms)?;
         check_read_eligibility(&mut state, channel, intraday, start_ms)?;
         let reserved_start_ms = start_ms
             .checked_add(DURABLE_START_LEAD_MS)
@@ -2094,6 +2100,7 @@ unsafe extern "C" {
 
 #[cfg(test)]
 mod state_io_test_hook {
+    use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Condvar, Mutex, OnceLock};
     use std::time::Duration;
@@ -2142,9 +2149,9 @@ mod state_io_test_hook {
         INSTALLED.get_or_init(|| Mutex::new(None))
     }
 
-    fn installed_persist() -> &'static Mutex<Option<Installed>> {
-        static INSTALLED: OnceLock<Mutex<Option<Installed>>> = OnceLock::new();
-        INSTALLED.get_or_init(|| Mutex::new(None))
+    fn installed_persist() -> &'static Mutex<BTreeMap<u64, Arc<Barrier>>> {
+        static INSTALLED: OnceLock<Mutex<BTreeMap<u64, Arc<Barrier>>>> = OnceLock::new();
+        INSTALLED.get_or_init(|| Mutex::new(BTreeMap::new()))
     }
 
     pub(super) fn install(directory_inode: u64, barrier: Arc<Barrier>) {
@@ -2177,10 +2184,7 @@ mod state_io_test_hook {
         let previous = installed_persist()
             .lock()
             .expect("persist I/O test hook")
-            .replace(Installed {
-                directory_inode,
-                barrier,
-            });
+            .insert(directory_inode, barrier);
         assert!(
             previous.is_none(),
             "persist I/O test hook already installed"
@@ -2188,15 +2192,10 @@ mod state_io_test_hook {
     }
 
     pub(super) fn wait_persist_once(directory_inode: u64) {
-        let mut installed = installed_persist().lock().expect("persist I/O test hook");
-        let barrier = installed
-            .as_ref()
-            .filter(|value| value.directory_inode == directory_inode)
-            .map(|value| Arc::clone(&value.barrier));
-        if barrier.is_some() {
-            installed.take();
-        }
-        drop(installed);
+        let barrier = installed_persist()
+            .lock()
+            .expect("persist I/O test hook")
+            .remove(&directory_inode);
         if let Some(barrier) = barrier {
             barrier.wait();
         }
@@ -2424,6 +2423,134 @@ mod tests {
         );
         assert_eq!(reads.load(Ordering::SeqCst), 0);
         std::fs::remove_dir_all(&root).expect("remove slow-commit test root");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn slow_high_water_commit_does_not_consume_reservation_start_window() {
+        struct ReservationClock {
+            clock: AdvancingClock,
+            reads: AtomicU64,
+        }
+        impl Clock for ReservationClock {
+            fn now_ms(&self) -> i64 {
+                // After load/ensure-token, advance only at the pre-reservation
+                // observation so that its high-water write reaches our barrier.
+                if self.reads.fetch_add(1, Ordering::SeqCst) == 2 {
+                    self.clock.0.fetch_add(1, Ordering::SeqCst);
+                }
+                self.clock.now_ms()
+            }
+        }
+        let root = unique_test_root("slow-high-water");
+        std::fs::create_dir(&root).expect("create test root");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(ROOT_MODE))
+            .expect("protect test root");
+        let now_ms = 43_000_000;
+        let clock = Arc::new(ReservationClock {
+            clock: AdvancingClock::at(now_ms),
+            reads: AtomicU64::new(10),
+        });
+        let coordinator = ReadCoordinator::new(
+            ReadCoordinationConfig::new(&root, std::fs::metadata(&root).unwrap().uid()),
+            ReadCredentials::new(
+                Secret::new("unit-key".into()),
+                Secret::new("unit-secret".into()),
+                1,
+            )
+            .unwrap(),
+            clock.clone(),
+        );
+        let issuer = Arc::new(UnitIssuer {
+            calls: AtomicU64::new(0),
+            now_ms,
+        });
+        coordinator
+            .token(
+                issuer.as_ref(),
+                LockAcquisition::Bounded(Duration::from_secs(1)),
+            )
+            .await
+            .expect("prime token");
+        clock.reads.store(0, Ordering::SeqCst);
+        let barrier = state_io_test_hook::Barrier::new();
+        let release_on_drop = ReleaseOnDrop(Arc::clone(&barrier));
+        state_io_test_hook::install_persist(
+            std::fs::metadata(&root).unwrap().ino(),
+            Arc::clone(&barrier),
+        );
+        let reads = Arc::new(AtomicU64::new(0));
+        let task_reads = Arc::clone(&reads);
+        let task_coordinator = coordinator.clone();
+        let task_issuer = Arc::clone(&issuer);
+        let task = tokio::spawn(async move {
+            task_coordinator
+                .execute_intraday(
+                    ReadChannel::InquirePrice.pair().0,
+                    ReadChannel::InquirePrice.pair().1,
+                    task_issuer.as_ref(),
+                    LockAcquisition::Bounded(Duration::from_secs(1)),
+                    Duration::from_secs(3),
+                    |_, dispatch| async move {
+                        dispatch
+                            .begin_dispatch()
+                            .expect("fresh committed reservation");
+                        task_reads.fetch_add(1, Ordering::SeqCst);
+                        ReadCallbackResult::Success(())
+                    },
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !barrier.entered() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("high-water persistence reached barrier");
+        assert_eq!(clock.reads.load(Ordering::SeqCst), 3);
+        clock.clock.set(now_ms + DURABLE_START_LEAD_MS + 2);
+        barrier.release();
+        assert_eq!(task.await.expect("task"), Ok(()));
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert_eq!(issuer.calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            coordinator
+                .execute_intraday::<(), _, _>(
+                    ReadChannel::InquirePrice.pair().0,
+                    ReadChannel::InquirePrice.pair().1,
+                    issuer.as_ref(),
+                    LockAcquisition::Bounded(Duration::from_secs(1)),
+                    Duration::from_secs(3),
+                    |_, _| async { panic!("spacing must remain enforced") },
+                )
+                .await,
+            Err(ReadCoordinationError::GlobalSpacing { .. })
+        ));
+        drop(release_on_drop);
+        std::fs::remove_dir_all(&root).expect("remove test root");
+    }
+
+    #[test]
+    fn persistence_test_barriers_are_isolated_for_parallel_test_roots() {
+        let first_root = unique_test_root("barrier-first");
+        let second_root = unique_test_root("barrier-second");
+        std::fs::create_dir(&first_root).unwrap();
+        std::fs::create_dir(&second_root).unwrap();
+        let first_id = std::fs::metadata(&first_root).unwrap().ino();
+        let second_id = std::fs::metadata(&second_root).unwrap().ino();
+        let first = state_io_test_hook::Barrier::new();
+        let second = state_io_test_hook::Barrier::new();
+        state_io_test_hook::install_persist(first_id, Arc::clone(&first));
+        state_io_test_hook::install_persist(second_id, Arc::clone(&second));
+        first.release();
+        second.release();
+        state_io_test_hook::wait_persist_once(first_id);
+        assert!(first.entered());
+        assert!(!second.entered());
+        state_io_test_hook::wait_persist_once(second_id);
+        assert!(second.entered());
+        std::fs::remove_dir(first_root).unwrap();
+        std::fs::remove_dir(second_root).unwrap();
     }
 
     #[test]

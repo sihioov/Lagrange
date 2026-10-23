@@ -187,13 +187,17 @@ export function StockBetaWorkspace({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pollError, setPollError] = useState(false);
+  const [membershipRefreshPending, setMembershipRefreshPending] = useState(false);
   const [mutationPending, setMutationPending] = useState(false);
   const [pendingMembershipId, setPendingMembershipId] = useState<string | null>(null);
   const [pendingSignalRemovalInstrument, setPendingSignalRemovalInstrument] = useState<
     string | null
   >(null);
   const [disableId, setDisableId] = useState<string | null>(null);
+  const [interactionReady, setInteractionReady] = useState(false);
   const mutationPendingRef = useRef(false);
+  const mutationRequestRef = useRef<AbortController | null>(null);
+  const membershipRequestRef = useRef<AbortController | null>(null);
   const previousMembershipsRef = useRef(initialMemberships.memberships);
   const pollAttemptRef = useRef(0);
   const signalPollAttemptRef = useRef(0);
@@ -251,14 +255,56 @@ export function StockBetaWorkspace({
     });
   }, [signalRefreshCoordinator]);
 
-  const refreshMemberships = useCallback(async (): Promise<OwnerEquityV2MembershipListModel> => {
-    const next = await getOwnerEquityV2Memberships();
-    setPolicy(next.policy);
-    setMemberships(next.memberships);
-    return next;
+  const invalidateMemberships = useCallback((): void => {
+    membershipRequestRef.current?.abort();
+    membershipRequestRef.current = null;
   }, []);
 
   useEffect(() => {
+    // Server-rendered controls must wait until their event handlers are attached.
+    setInteractionReady(true);
+  }, []);
+
+  const refreshMemberships = useCallback(
+    async (pollSignal?: AbortSignal): Promise<boolean> => {
+      invalidateMemberships();
+      const request = new AbortController();
+      membershipRequestRef.current = request;
+      const signal =
+        pollSignal === undefined ? request.signal : AbortSignal.any([request.signal, pollSignal]);
+      const isCurrent = () => membershipRequestRef.current === request && !signal.aborted;
+      try {
+        const next = await getOwnerEquityV2Memberships({ signal });
+        // Abort is best effort; a response already being parsed can still settle.
+        if (!isCurrent()) return false;
+        setPolicy(next.policy);
+        setMemberships(next.memberships);
+        setPollError(false);
+        setMembershipRefreshPending(false);
+        return true;
+      } catch (error) {
+        if (!isCurrent()) return false;
+        throw error;
+      } finally {
+        if (membershipRequestRef.current === request) membershipRequestRef.current = null;
+      }
+    },
+    [invalidateMemberships],
+  );
+
+  useEffect(
+    () => () => {
+      invalidateMemberships();
+      // Suppress abandoned UI work; an already-dispatched POST may still commit.
+      mutationRequestRef.current?.abort();
+      mutationRequestRef.current = null;
+    },
+    [invalidateMemberships],
+  );
+
+  useEffect(() => {
+    invalidateMemberships();
+    setPollError(false);
     signalRefreshCoordinator.invalidate();
     setPolicy(initialMemberships.policy);
     setMemberships(initialMemberships.memberships);
@@ -328,6 +374,7 @@ export function StockBetaWorkspace({
     initialSignalError,
     initialSignalUnavailable,
     initialSignals,
+    invalidateMemberships,
     signalRefreshCoordinator,
   ]);
 
@@ -408,18 +455,21 @@ export function StockBetaWorkspace({
   const hasNonTerminalMembership = memberships.some((membership) =>
     NON_TERMINAL_LIFECYCLES.has(membership.lifecycle),
   );
+  const shouldPollMemberships = hasNonTerminalMembership || membershipRefreshPending;
 
   useEffect(() => {
-    if (!hasNonTerminalMembership) {
+    if (!shouldPollMemberships) {
       pollAttemptRef.current = 0;
       return;
     }
+    // The mutation owns its first reconciliation read; do not cancel it with a poll.
+    if (mutationPending) return;
     let cancelled = false;
+    const abort = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const poll = async (): Promise<void> => {
       try {
-        await refreshMemberships();
-        if (!cancelled) setPollError(false);
+        await refreshMemberships(abort.signal);
       } catch {
         if (!cancelled) setPollError(true);
       }
@@ -431,9 +481,10 @@ export function StockBetaWorkspace({
     timeout = setTimeout(() => void poll(), ownerEquityV2PollDelay(pollAttemptRef.current++));
     return () => {
       cancelled = true;
+      abort.abort();
       if (timeout !== undefined) clearTimeout(timeout);
     };
-  }, [hasNonTerminalMembership, refreshMemberships]);
+  }, [mutationPending, refreshMemberships, shouldPollMemberships]);
 
   useEffect(() => {
     if (pendingSignalRemovalInstrument === null) {
@@ -492,6 +543,17 @@ export function StockBetaWorkspace({
     };
   }, [pendingSignalRemovalInstrument, router, signalRefreshCoordinator]);
 
+  async function reconcileMembershipMutation(signal: AbortSignal): Promise<void> {
+    // A committed POST still needs a current GET, even if a newer server seed
+    // invalidates this first read or the old visible membership is terminal.
+    setMembershipRefreshPending(true);
+    try {
+      await refreshMemberships();
+    } catch {
+      if (!signal.aborted) setPollError(true);
+    }
+  }
+
   async function addMembership(): Promise<void> {
     if (mutationPendingRef.current) return;
     const parsed = ownerEquityV2AddBodySchema.safeParse({ instrument_code: instrumentCode });
@@ -499,6 +561,8 @@ export function StockBetaWorkspace({
       setInputError(t.invalidInstrumentCode);
       return;
     }
+    const request = new AbortController();
+    mutationRequestRef.current = request;
     mutationPendingRef.current = true;
     setMutationPending(true);
     setPendingMembershipId(null);
@@ -506,47 +570,60 @@ export function StockBetaWorkspace({
     setActionError(null);
     setActionMessage(null);
     try {
-      await addOwnerEquityV2Membership(parsed.data);
+      await addOwnerEquityV2Membership(parsed.data, { signal: request.signal });
+      if (request.signal.aborted) return;
       setInstrumentCode("");
       setActionMessage(t.addInstrumentSuccess);
-      await refreshMemberships();
+      await reconcileMembershipMutation(request.signal);
     } catch (error) {
-      setActionError(displayFailure(error, t));
+      if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
-      mutationPendingRef.current = false;
-      setMutationPending(false);
+      if (!request.signal.aborted) {
+        mutationRequestRef.current = null;
+        mutationPendingRef.current = false;
+        setMutationPending(false);
+      }
     }
   }
 
   async function retryMembership(membershipId: string): Promise<void> {
     if (mutationPendingRef.current) return;
+    const request = new AbortController();
+    mutationRequestRef.current = request;
     mutationPendingRef.current = true;
     setMutationPending(true);
     setPendingMembershipId(membershipId);
     setActionError(null);
     setActionMessage(null);
     try {
-      await retryOwnerEquityV2Membership(membershipId);
+      await retryOwnerEquityV2Membership(membershipId, { signal: request.signal });
+      if (request.signal.aborted) return;
       setActionMessage(t.retrySuccess);
-      await refreshMemberships();
+      await reconcileMembershipMutation(request.signal);
     } catch (error) {
-      setActionError(displayFailure(error, t));
+      if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
-      mutationPendingRef.current = false;
-      setMutationPending(false);
-      setPendingMembershipId(null);
+      if (!request.signal.aborted) {
+        mutationRequestRef.current = null;
+        mutationPendingRef.current = false;
+        setMutationPending(false);
+        setPendingMembershipId(null);
+      }
     }
   }
 
   async function confirmDisable(): Promise<void> {
     if (disableId === null || mutationPendingRef.current) return;
+    const request = new AbortController();
+    mutationRequestRef.current = request;
     mutationPendingRef.current = true;
     setMutationPending(true);
     setPendingMembershipId(disableId);
     setActionError(null);
     setActionMessage(null);
     try {
-      const result = await disableOwnerEquityV2Membership(disableId);
+      const result = await disableOwnerEquityV2Membership(disableId, { signal: request.signal });
+      if (request.signal.aborted) return;
       setDisableId(null);
       setActionMessage(t.disableSuccess);
       signalRefreshCoordinator.blockInstrument(result.resource.instrument_id);
@@ -554,13 +631,16 @@ export function StockBetaWorkspace({
       setSignals(null);
       setSignalUnavailable(false);
       setSignalError(null);
-      await refreshMemberships();
+      await reconcileMembershipMutation(request.signal);
     } catch (error) {
-      setActionError(displayFailure(error, t));
+      if (!request.signal.aborted) setActionError(displayFailure(error, t));
     } finally {
-      mutationPendingRef.current = false;
-      setMutationPending(false);
-      setPendingMembershipId(null);
+      if (!request.signal.aborted) {
+        mutationRequestRef.current = null;
+        mutationPendingRef.current = false;
+        setMutationPending(false);
+        setPendingMembershipId(null);
+      }
     }
   }
 
@@ -577,8 +657,7 @@ export function StockBetaWorkspace({
         : signalError === null
           ? { kind: "not-ready" }
           : { code: signalError, kind: "error" };
-  const busy =
-    mutationPending || hasNonTerminalMembership || pendingSignalRemovalInstrument !== null;
+  const busy = mutationPending || shouldPollMemberships || pendingSignalRemovalInstrument !== null;
   const viewModel = {
     actionError,
     actionMessage,
@@ -590,6 +669,7 @@ export function StockBetaWorkspace({
     copy: t,
     disableId,
     inputError,
+    interactionReady,
     intradayEnabled,
     marketStreamEnabled,
     instrumentCode,

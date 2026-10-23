@@ -223,6 +223,31 @@ pub struct PriceOnlyBars {
 }
 
 impl PriceOnlyBars {
+    /// Daily computation accepts only a reopened sealed capability and its
+    /// exact frontier session. This does not replace the runtime's DB gate.
+    pub fn from_admitted_daily(
+        input: &market_data::daily_price_only::input::AdmittedDailyPriceInputV1<'_, '_>,
+        as_of: TradingDate,
+    ) -> Result<Self, FactorError> {
+        input
+            .revalidate()
+            .map_err(|_| FactorError::InvalidDefinition {
+                detail: "sealed daily input changed".to_owned(),
+            })?;
+        if as_of != input.as_of() {
+            return Err(FactorError::MissingData {
+                detail: "daily as_of must equal the admitted frontier".to_owned(),
+            });
+        }
+        let bars = Bars::from_approved_price_only_bars(input.bars(), as_of)?;
+        input
+            .revalidate()
+            .map_err(|_| FactorError::InvalidDefinition {
+                detail: "sealed daily input changed".to_owned(),
+            })?;
+        Ok(Self { bars })
+    }
+
     /// Builds a point-in-time price-only input from the nonconstructible
     /// approved artifact.
     pub fn from_approved(

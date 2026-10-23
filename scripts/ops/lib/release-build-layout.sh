@@ -245,9 +245,14 @@ if raw != canonical(value):
     raise SystemExit("drained-readers-attestation-not-canonical")
 required = {"containers", "expires_at_utc", "format", "observed_at_utc",
             "project", "scope", "target_commit"}
+disabled_daily = isinstance(value, dict) and value.get("format") == \
+    "lagrange-build-drained-readers-attestation-v2"
+if disabled_daily:
+    required.add("disabled_daily")
 if not isinstance(value, dict) or set(value) != required:
     raise SystemExit("drained-readers-attestation-schema")
-if (value["format"] != "lagrange-build-drained-readers-attestation-v1" or
+if (value["format"] not in ("lagrange-build-drained-readers-attestation-v1",
+                            "lagrange-build-drained-readers-attestation-v2") or
         value["scope"] != "image-build-only" or value["project"] != "lagrange-station" or
         value["target_commit"] != commit):
     raise SystemExit("drained-readers-attestation-binding")
@@ -261,6 +266,28 @@ if (observed_ns > now_ns or expires_ns <= now_ns or expires_ns <= observed_ns or
 
 expected_names = sorted(("lagrange-station-owner-equity-v2-runner-1",
                          "lagrange-station-research-worker-1"))
+if disabled_daily:
+    # This is an operator attestation, not a DB query or an activation grant.
+    # The publisher must observe the exact installed release's daily control
+    # OFF and zero running jobs, then bind that protected observation's hash.
+    # The actual stopped container is checked at every build checkpoint below.
+    daily = value["disabled_daily"]
+    if (not isinstance(daily, dict) or set(daily) != {
+            "enabled", "running_jobs", "activation_epoch", "owner_user_id",
+            "policy_sha256", "source_release", "control_observation_sha256"} or
+            daily["enabled"] is not False or type(daily["running_jobs"]) is not int or
+            daily["running_jobs"] != 0 or type(daily["activation_epoch"]) is not int or
+            not 0 <= daily["activation_epoch"] <= 2**63 - 1 or
+            not isinstance(daily["owner_user_id"], str) or not re.fullmatch(
+                r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", daily["owner_user_id"]) or
+            daily["owner_user_id"] == "00000000-0000-0000-0000-000000000000"):
+        raise SystemExit("drained-readers-disabled-daily-invalid")
+    for field, width in (("policy_sha256", 64), ("source_release", 40),
+                         ("control_observation_sha256", 64)):
+        if (not isinstance(daily[field], str) or not re.fullmatch(
+                r"[0-9a-f]{" + str(width) + r"}", daily[field]) or set(daily[field]) == {"0"}):
+            raise SystemExit("drained-readers-disabled-daily-binding")
+    expected_names = sorted(expected_names + ["lagrange-station-owner-beta-runner-1"])
 container_keys = {"container_id", "container_name", "dead", "exit_code",
                   "finished_at_utc", "health_status", "image_id", "oom_killed",
                   "paused", "restarting", "restart_count", "running",
@@ -4055,15 +4082,17 @@ directories=set()
 runtime_mode_transforms={
     ("db-role-bootstrap","database","deploy/db/migrate.sh","/usr/local/bin/lagrange-migrate"):0o755,
     ("db-role-bootstrap","database","deploy/db/bootstrap-roles.sh","/usr/local/bin/lagrange-bootstrap-roles"):0o755,
+    ("db-role-bootstrap","database","deploy/db/daily-control.sh","/usr/local/bin/lagrange-daily-control"):0o755,
     ("db-migrate","database","deploy/db/migrate.sh","/usr/local/bin/lagrange-migrate"):0o755,
     ("db-migrate","database","deploy/db/bootstrap-roles.sh","/usr/local/bin/lagrange-bootstrap-roles"):0o755,
+    ("db-migrate","database","deploy/db/daily-control.sh","/usr/local/bin/lagrange-daily-control"):0o755,
     ("paper-scheduler","paper","deploy/runtime/paper-runner-entrypoint","/usr/local/bin/paper-runner"):0o755,
 }
 runtime_mode_contracts={
     "database":{
         "dockerfile":"deploy/db/Dockerfile",
-        "instruction":"RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles",
-        "destinations":("/usr/local/bin/lagrange-migrate","/usr/local/bin/lagrange-bootstrap-roles"),
+        "instruction":"RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control",
+        "destinations":("/usr/local/bin/lagrange-migrate","/usr/local/bin/lagrange-bootstrap-roles","/usr/local/bin/lagrange-daily-control"),
     },
     "paper":{
         "dockerfile":"deploy/runtime/Dockerfile.paper-runner",

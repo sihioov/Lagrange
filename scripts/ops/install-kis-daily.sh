@@ -20,6 +20,9 @@ state_dir=/var/lib/lagrange/state/backfill
 lock_file=/var/lib/lagrange/state/backfill/kis-daily.lock
 systemd_dir=/etc/systemd/system
 replace_existing=0
+runner_args=--execute
+raw_source=0
+action_supply=0
 service_temp=
 timer_temp=
 
@@ -38,7 +41,7 @@ Usage: scripts/ops/install-kis-daily.sh [--dry-run|--preflight|--check|--apply|-
        [--calendar-dir /var/lib/lagrange/state/kis-daily/calendar]
        [--state-dir /var/lib/lagrange/state/backfill]
        [--lock-file /var/lib/lagrange/state/backfill/kis-daily.lock]
-       [--systemd-dir /etc/systemd/system] [--replace-existing]
+       [--systemd-dir /etc/systemd/system] [--replace-existing] [--raw-source [--action-supply]]
 
 The service and timer names are suffixed with the first seven characters of
 the exact release commit. The service executes the release-local
@@ -51,6 +54,10 @@ Asia/Seoul, so installation must happen before that boundary.
 --install-disabled requires root and installs only new units. It reloads
 systemd and verifies both units are loaded, inactive, and disabled; it never
 changes unit activation state and can install after 16:30 Asia/Seoul.
+--raw-source pins the explicit R2 current-session source mode in ExecStart.
+It does not activate daily recommendations or infer a historical catchup range.
+--action-supply requires --raw-source and pins the bounded recurring action
+supplier in the same ExecStart. Its protected configuration remains in dotenv.
 EOF
 }
 
@@ -103,6 +110,14 @@ while [ "$#" -gt 0 ]; do
       replace_existing=1
       shift
       ;;
+    --raw-source)
+      raw_source=1
+      shift
+      ;;
+    --action-supply)
+      action_supply=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -112,6 +127,12 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+[ "$action_supply" -eq 0 ] || [ "$raw_source" -eq 1 ] ||
+  die '--action-supply requires --raw-source'
+if [ "$raw_source" -eq 1 ]; then
+  runner_args='--raw-source --execute'
+  [ "$action_supply" -eq 0 ] || runner_args='--raw-source --action-supply --execute'
+fi
 
 if [ "$mode" = install-disabled ] && [ "$replace_existing" -eq 1 ]; then
   die '--replace-existing is not allowed with --install-disabled'
@@ -204,6 +225,8 @@ check_source_inputs() {
   require_release_file scripts/ops/xkrx-calendar-bootstrap.py executable
   require_release_file scripts/ops/lib/dotenv.sh regular
   require_release_file scripts/ops/lib/db.sh regular
+  require_release_file scripts/ops/lib/kis-read-compose.sh regular
+  require_release_file scripts/ops/lib/backfill-progress.py regular
   require_release_file scripts/ops/lib/kis-daily-state.py regular
 }
 
@@ -423,7 +446,7 @@ Environment=KIS_DAILY_CALENDAR_DIR=$calendar_dir
 Environment=KIS_DAILY_STATE_DIR=$state_dir
 Environment=KIS_DAILY_LOCK_FILE=$lock_file
 Environment=BACKFILL_CONFIRM_EXTERNAL=I_UNDERSTAND_READ_ONLY_KIS_CALLS
-ExecStart=$wrapper --execute
+ExecStart=$wrapper $runner_args
 UMask=0077
 TimeoutStartSec=12h
 NoNewPrivileges=true
@@ -483,7 +506,7 @@ if [ "$mode" = dry-run ]; then
   printf '  service=%s\n' "$service_target"
   printf '  timer=%s (daily 16:30 Asia/Seoul, Persistent=true)\n' "$timer_target"
   printf '  WorkingDirectory=%s\n' "$release_root"
-  printf '  ExecStart=%s --execute\n' "$wrapper"
+  printf '  ExecStart=%s %s\n' "$wrapper" "$runner_args"
   printf '  LAGRANGE_ENV_FILE=%s\n' "$production_env_file"
   printf '  calendar=%s state=%s lock=%s\n' "$calendar_dir" "$state_dir" "$lock_file"
   printf '  apply-window=%s\n' "$apply_window"

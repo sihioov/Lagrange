@@ -31,8 +31,26 @@ pub struct StrategyConfigDto {
     pub strategy_version: String,
     pub config: Value,
     pub is_active: bool,
+    pub owner_beta_daily_enabled: bool,
+    pub owner_beta_daily_epoch: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl From<crate::repos::strategy_configs::StrategyConfigRow> for StrategyConfigDto {
+    fn from(row: crate::repos::strategy_configs::StrategyConfigRow) -> Self {
+        Self {
+            id: row.id.to_string(),
+            strategy_id: row.strategy_id,
+            strategy_version: row.strategy_version,
+            config: row.config_json,
+            is_active: row.is_active,
+            owner_beta_daily_enabled: row.daily_enabled,
+            owner_beta_daily_epoch: row.daily_epoch,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +542,41 @@ pub struct NewStrategyConfigBody {
     pub config: Value,
     #[serde(default = "default_true")]
     pub is_active: bool,
+    #[serde(default)]
+    pub owner_beta_daily_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateStrategyConfigBody {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub config: Option<Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_bool"
+    )]
+    pub is_active: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_bool"
+    )]
+    pub owner_beta_daily_enabled: Option<bool>,
+}
+fn present_bool<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
+    bool::deserialize(d).map(Some)
+}
+fn present_value<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    let v = Value::deserialize(d)?;
+    if !v.is_object() {
+        return Err(serde::de::Error::custom("configuration must be an object"));
+    }
+    Ok(Some(v))
 }
 
 fn default_true() -> bool {
@@ -575,16 +628,25 @@ pub struct OwnerBetaPriceOnlyReadRunDto {
     pub as_of: NaiveDate,
     pub status: String,
     pub input_kind: String,
+    pub trigger_kind: String,
+    pub input: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<DateTime<Utc>>,
     pub capability: String,
     pub audience: String,
     pub vendor_snapshot: bool,
     pub strict_pit: bool,
     pub strategy_config_sha256: String,
-    pub candidate_content_sha256: String,
-    pub artifact_manifest_sha256: String,
-    pub stage5_manifest_sha256: String,
-    pub action_manifest_sha256: String,
-    pub approval_registry_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_content_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage5_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_registry_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub factor_snapshot_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -615,16 +677,25 @@ pub struct OwnerBetaPriceOnlyReadListItemDto {
     pub as_of: NaiveDate,
     pub status: String,
     pub input_kind: String,
+    pub trigger_kind: String,
+    pub input: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<DateTime<Utc>>,
     pub capability: String,
     pub audience: String,
     pub vendor_snapshot: bool,
     pub strict_pit: bool,
     pub strategy_config_sha256: String,
-    pub candidate_content_sha256: String,
-    pub artifact_manifest_sha256: String,
-    pub stage5_manifest_sha256: String,
-    pub action_manifest_sha256: String,
-    pub approval_registry_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_content_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage5_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_registry_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub factor_snapshot_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

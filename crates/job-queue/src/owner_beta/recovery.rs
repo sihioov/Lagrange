@@ -119,6 +119,8 @@ struct RecoveryRun {
     target_snapshot_sha256: Option<String>,
     cash_weight: Option<String>,
     error_code: Option<String>,
+    // Private typed-binding evidence; never included in public error text.
+    binding: Value,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -266,7 +268,8 @@ async fn recover_one_in(
     let run: RecoveryRun = sqlx::query_as(
         "SELECT id, owner_user_id, job_id, strategy_config_id, as_of, status,
                 factor_snapshot_sha256, target_snapshot_sha256,
-                cash_weight::text AS cash_weight, error_code
+                cash_weight::text AS cash_weight, error_code,
+                to_jsonb(owner_beta_recommendation_runs) AS binding
          FROM public.owner_beta_recommendation_runs
          WHERE job_id = $1
          FOR UPDATE",
@@ -432,18 +435,23 @@ async fn recover_canceled(
         attempt_orphaned = true;
     }
 
-    let updated = sqlx::query(
-        "UPDATE public.jobs
+    // An unclaimed daily cancellation already has no lease. Its immutable
+    // CANCELED row must not receive a timestamp-only update. Preserve the
+    // historical path; a claimed daily cancellation still needs lease cleanup.
+    if job.locked_at.is_some() || !is_daily_binding(job, run) {
+        let updated = sqlx::query(
+            "UPDATE public.jobs
          SET locked_by = NULL, locked_at = NULL, updated_at = now()
          WHERE id = $1 AND job_type = $2 AND status = 'CANCELED'",
-    )
-    .bind(job.id)
-    .bind(OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE)
-    .execute(&mut **transaction)
-    .await
-    .map_err(database_error)?;
-    if updated.rows_affected() != 1 {
-        return Err(OwnerBetaRecoveryError::Integrity);
+        )
+        .bind(job.id)
+        .bind(OWNER_BETA_PRICE_RECOMMENDATION_JOB_TYPE)
+        .execute(&mut **transaction)
+        .await
+        .map_err(database_error)?;
+        if updated.rows_affected() != 1 {
+            return Err(OwnerBetaRecoveryError::Integrity);
+        }
     }
     mirror_canceled_run(transaction, run, job).await?;
     Ok(RecoveryAction::Canceled { attempt_orphaned })
@@ -570,6 +578,65 @@ fn validate_job_run_binding(
     {
         return Err(OwnerBetaRecoveryError::Integrity);
     }
+    if is_daily_binding(job, run) {
+        validate_daily_recovery_binding(job, run)?;
+    }
+    Ok(())
+}
+
+fn is_daily_binding(job: &RecoveryJob, run: &RecoveryRun) -> bool {
+    job.payload_json.get("schema").is_some()
+        || run.binding.get("trigger_kind").and_then(Value::as_str) == Some("DAILY")
+        || run.binding.get("input_kind").and_then(Value::as_str)
+            == Some(factor_engine::daily_price_only::DAILY_PRICE_ONLY_INPUT_KIND)
+}
+
+fn validate_daily_recovery_binding(
+    job: &RecoveryJob,
+    run: &RecoveryRun,
+) -> Result<(), OwnerBetaRecoveryError> {
+    use super::daily_input::{OwnerBetaExecutionInput, decode_owner_beta_execution_input};
+    let wire =
+        serde_json::to_vec(&job.payload_json).map_err(|_| OwnerBetaRecoveryError::Integrity)?;
+    let OwnerBetaExecutionInput::Daily(input) =
+        decode_owner_beta_execution_input(&wire).map_err(|_| OwnerBetaRecoveryError::Integrity)?
+    else {
+        return Err(OwnerBetaRecoveryError::Integrity);
+    };
+    let strategy = input.strategy_snapshot();
+    let pins = input.pins();
+    let expected = serde_json::json!({
+        "input_kind":factor_engine::daily_price_only::DAILY_PRICE_ONLY_INPUT_KIND,
+        "trigger_kind":"DAILY",
+        "capability":factor_engine::price_only::PRICE_ONLY_CAPABILITY,
+        "daily_pins":{
+            "content_sha256":pins.content_sha256(),"manifest_sha256":pins.manifest_sha256(),
+            "admission_sha256":pins.admission_sha256(),"policy_sha256":pins.policy_sha256(),
+        },
+        "daily_config_epoch":input.config_epoch(),
+        "daily_activation_epoch":input.activation_epoch(),
+        "daily_trigger_version":super::daily_input::OWNER_BETA_DAILY_TRIGGER_VERSION,
+        "strategy_id":strategy.strategy_id(),"strategy_version":strategy.strategy_version(),
+        "strategy_config_json":strategy.config_json(),"strategy_config_sha256":strategy.config_sha256(),
+        "candidate_content_sha256":null,"artifact_manifest_sha256":null,
+        "stage5_manifest_sha256":null,"action_manifest_sha256":null,
+        "approval_registry_sha256":null,
+    });
+    let fields = expected
+        .as_object()
+        .ok_or(OwnerBetaRecoveryError::Integrity)?;
+    if fields
+        .iter()
+        .any(|(key, value)| run.binding.get(key) != Some(value))
+        || (run.status == "PENDING"
+            && (run.binding.get("started_at") != Some(&Value::Null)
+                || run.binding.get("finished_at") != Some(&Value::Null)))
+    {
+        return Err(OwnerBetaRecoveryError::Integrity);
+    }
+    // No new SELECT privilege on reservations. Every queue/attempt/run mutation
+    // is checked at commit by 0060's protected deferred consistency trigger,
+    // including reservation ID/date/epochs/strategy and admission pin equality.
     Ok(())
 }
 

@@ -83,6 +83,15 @@ import {
   ownerBetaSupportedAsOfSchema,
 } from "@/lib/products/owner-beta-contracts";
 import {
+  type OwnerBetaDailyStateModel,
+  ownerBetaDailyStatePath,
+  ownerBetaDailyStateSchema,
+} from "@/lib/products/owner-beta-daily-contracts";
+import {
+  type OwnerBetaHistoryQuery,
+  ownerBetaHistoryQueryString,
+} from "@/lib/products/owner-beta-history";
+import {
   type NotificationModel,
   notificationSchema,
   type PaperAccountModel,
@@ -110,7 +119,10 @@ export type ProductApiClient = {
   readonly getRecommendationRun: (runId: string) => Promise<RecommendationRunModel>;
   readonly getLicensingStatus: () => Promise<LicensingStatusModel>;
   readonly getRecommendationRuns: () => Promise<PageResult<RecommendationRunModel>>;
-  readonly getOwnerBetaRecommendationRuns: () => Promise<OwnerBetaRunPageModel>;
+  readonly getOwnerBetaRecommendationRuns: (
+    query?: OwnerBetaHistoryQuery,
+  ) => Promise<OwnerBetaRunPageModel>;
+  readonly getOwnerBetaDailyState: (configId: string) => Promise<OwnerBetaDailyStateModel>;
   readonly getOwnerBetaRecommendationRun: (runId: string) => Promise<OwnerBetaRunModel>;
   readonly getOwnerBetaSupportedAsOf: () => Promise<OwnerBetaSupportedAsOfModel>;
   readonly getOwnerBetaEquitySignalsLatest: () => Promise<OwnerBetaEquitySignalsLatestModel>;
@@ -233,8 +245,14 @@ export function createProductApiClient(options: ServerApiClientOptions): Product
     getLicensingStatus: () => getParsed(client, "/api/v1/licensing-status", licensingStatusSchema),
     getRecommendationRuns: () =>
       getParsed(client, "/api/v1/recommendations/runs", recommendationPageSchema),
-    getOwnerBetaRecommendationRuns: () =>
-      getParsed(client, OWNER_BETA_PRICE_ONLY_RUNS_PATH, ownerBetaRunPageSchema),
+    getOwnerBetaRecommendationRuns: (query) =>
+      getParsed(
+        client,
+        OWNER_BETA_PRICE_ONLY_RUNS_PATH + ownerBetaHistoryQueryString(query),
+        ownerBetaRunPageSchema,
+      ),
+    getOwnerBetaDailyState: (configId) =>
+      getParsed(client, ownerBetaDailyStatePath(configId), ownerBetaDailyStateSchema),
     getOwnerBetaRecommendationRun: (runId) =>
       getParsed(client, ownerBetaRunPath(runId), ownerBetaRunSchema),
     getOwnerBetaSupportedAsOf: () =>

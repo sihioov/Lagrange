@@ -25,12 +25,11 @@ use job_queue::owner_beta::{
 use job_queue::resolver::ResolvedConfig;
 use job_queue::{AttemptOutcome, AuditActor, JobQueue, JobStatus, QueueConfig, SubmitJob};
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{Connection, PgPool};
 use uuid::Uuid;
 
 const RUN_ID: &str = "00000000-0000-4000-8000-000000000101";
-const CONFIG_ID: &str = "00000000-0000-4000-8000-000000000102";
 const AS_OF: &str = "2026-08-24";
 
 struct Fixture {
@@ -92,20 +91,10 @@ fn sentinel_hash(number: u8) -> String {
     format!("sha256:{number:064x}")
 }
 
-fn fixture() -> Fixture {
-    let resolved = ResolvedConfig {
-        strategy_id: "buy_and_hold".to_owned(),
-        strategy_version: "1.0.0".to_owned(),
-        config: json!({
-            "benchmark_instrument": "069500.KRX",
-            "target_weight": 1.0,
-        }),
-    };
-    let strategy = OwnerBetaStrategySnapshot::from_resolved_config(&resolved)
-        .expect("test strategy snapshot must be constructible");
+fn fixture(config_id: Uuid, strategy: OwnerBetaStrategySnapshot) -> Fixture {
     let input: OwnerBetaPriceRecommendationInput = serde_json::from_value(json!({
         "run_id": RUN_ID,
-        "strategy_config_id": CONFIG_ID,
+        "strategy_config_id": config_id.to_string(),
         "as_of": AS_OF,
         "pins": {
             "candidate_content_sha256": sentinel_hash(1),
@@ -168,8 +157,17 @@ async fn role_pool(db: &ScratchDb, role: &str, actor: Option<Uuid>) -> PgPool {
         .unwrap_or_else(|_| panic!("connect as {role}"))
 }
 
-async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid, fixture: &Fixture) -> Uuid {
-    let config_id = fixture.input.strategy_config_id();
+async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid) -> (Fixture, Uuid) {
+    let resolved = ResolvedConfig {
+        strategy_id: "buy_and_hold".to_owned(),
+        strategy_version: "1.0.0".to_owned(),
+        config: json!({
+            "benchmark_instrument": "069500.KRX",
+            "target_weight": 1.0,
+        }),
+    };
+    let strategy = OwnerBetaStrategySnapshot::from_resolved_config(&resolved)
+        .expect("test strategy snapshot must be constructible");
 
     sqlx::query(
         "INSERT INTO strategies (id, display_name, state) \
@@ -179,19 +177,20 @@ async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid, fixture: &Fi
     .await
     .expect("seed strategy registry");
 
-    sqlx::query(
+    // Exercise the app's permitted insert columns; the database owns config IDs.
+    let config_id: Uuid = sqlx::query_scalar(
         "INSERT INTO user_strategy_configs \
-         (id, owner_user_id, strategy_id, strategy_version, config_json) \
-         VALUES ($1, $2, $3, $4, $5)",
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, $2, $3, $4) RETURNING id",
     )
-    .bind(config_id)
     .bind(owner_id)
-    .bind(fixture.input.strategy_snapshot().strategy_id())
-    .bind(fixture.input.strategy_snapshot().strategy_version())
-    .bind(fixture.input.strategy_snapshot().config_json())
-    .execute(app)
+    .bind(strategy.strategy_id())
+    .bind(strategy.strategy_version())
+    .bind(strategy.config_json())
+    .fetch_one(app)
     .await
     .expect("app role inserts its own strategy config");
+    let fixture = fixture(config_id, strategy);
 
     for item in fixture.target.items() {
         let instrument_id = item.instrument_id();
@@ -264,7 +263,7 @@ async fn seed_fixture(db: &ScratchDb, app: &PgPool, owner_id: Uuid, fixture: &Fi
     .await
     .expect("app role inserts owner-beta run projection");
 
-    job.id
+    (fixture, job.id)
 }
 
 fn queue_config(lease: Duration) -> QueueConfig {
@@ -279,8 +278,6 @@ async fn published_owner_beta_target_persists_exact_results_and_seals_claim() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
-    assert_eq!(fixture.target.items().len(), 11, "fixture must cover ETF11");
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -290,7 +287,8 @@ async fn published_owner_beta_target_persists_exact_results_and_seals_claim() {
     .await
     .expect("seed publication owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
+    assert_eq!(fixture.target.items().len(), 11, "fixture must cover ETF11");
     let worker = role_pool(&db, "worker", None).await;
     let worker_can_update_configs: bool = sqlx::query_scalar(
         "SELECT has_table_privilege(\
@@ -555,7 +553,6 @@ async fn publication_config_lock_cannot_impersonate_another_owner() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_a: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -573,15 +570,13 @@ async fn publication_config_lock_cannot_impersonate_another_owner() {
     .await
     .expect("seed publication owner B");
     let app_a = role_pool(&db, "app", Some(owner_a)).await;
-    let job_id = seed_fixture(&db, &app_a, owner_a, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app_a, owner_a).await;
     let app_b = role_pool(&db, "app", Some(owner_b)).await;
-    let other_config_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO user_strategy_configs \
-         (id, owner_user_id, strategy_id, strategy_version, config_json) \
-         VALUES ($1, $2, $3, $4, $5)",
+         (owner_user_id, strategy_id, strategy_version, config_json) \
+         VALUES ($1, $2, $3, $4)",
     )
-    .bind(other_config_id)
     .bind(owner_b)
     .bind(fixture.input.strategy_snapshot().strategy_id())
     .bind(fixture.input.strategy_snapshot().strategy_version())
@@ -703,7 +698,6 @@ async fn canceled_before_owner_beta_publication_lock_has_no_outputs() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -713,7 +707,7 @@ async fn canceled_before_owner_beta_publication_lock_has_no_outputs() {
     .await
     .expect("seed cancellation owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let audit = role_pool(&db, "audit_writer", None).await;
     let worker = role_pool(&db, "worker", None).await;
     let app_queue = JobQueue::new(
@@ -826,7 +820,6 @@ async fn stale_swept_owner_beta_claim_cannot_publish_or_touch_run() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -836,7 +829,7 @@ async fn stale_swept_owner_beta_claim_cannot_publish_or_touch_run() {
     .await
     .expect("seed stale owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let worker = role_pool(&db, "worker", None).await;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(1)));
     let claim = queue
@@ -926,7 +919,6 @@ async fn owner_beta_recovery_exhaustion_mirrors_failed_run() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -936,7 +928,7 @@ async fn owner_beta_recovery_exhaustion_mirrors_failed_run() {
     .await
     .expect("seed exhausted owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let worker = role_pool(&db, "worker", None).await;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(1)));
     queue
@@ -1027,7 +1019,6 @@ async fn owner_beta_recovery_mirrors_unclaimed_cancellation() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let fixture = fixture();
     let owner_id: Uuid = sqlx::query_scalar(
         "INSERT INTO users (issuer, subject, email) VALUES ('owner-beta.test', $1, $2) RETURNING id",
     )
@@ -1040,7 +1031,7 @@ async fn owner_beta_recovery_mirrors_unclaimed_cancellation() {
     .await
     .expect("seed unclaimed cancellation owner");
     let app = role_pool(&db, "app", Some(owner_id)).await;
-    let job_id = seed_fixture(&db, &app, owner_id, &fixture).await;
+    let (fixture, job_id) = seed_fixture(&db, &app, owner_id).await;
     let audit = role_pool(&db, "audit_writer", None).await;
     let app_queue = JobQueue::new(
         app.clone(),
@@ -1201,4 +1192,181 @@ async fn malformed_owner_beta_payload_is_terminal_without_inventing_a_run() {
     worker.close().await;
     app.close().await;
     db.drop_db().await;
+}
+
+#[tokio::test]
+async fn daily_input_admitter_pool_is_direct_bounded_and_unprivileged() {
+    let Some(db) = ScratchDb::create().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+
+    let pool = db.daily_input_admitter_pool().await;
+    let check_result: Result<(), &'static str> = async {
+        if pool.options().get_max_connections() != 2 {
+            return Err("admitter pool max_connections is not two");
+        }
+
+        let direct_identity_sql = "SELECT current_user, session_user, pg_backend_pid(), current_setting('role'), current_setting('app.actor_user_id', true), current_setting('app.actor_id', true)";
+        let is_direct_admitter = |identity: &(
+            String,
+            String,
+            i32,
+            String,
+            Option<String>,
+            Option<String>,
+        )| {
+            identity.0.as_str() == "daily_input_admitter"
+                && identity.1.as_str() == "daily_input_admitter"
+                && identity.3.as_str() == "none"
+                && identity.4.is_none()
+                && identity.5.is_none()
+        };
+
+        let mut first = pool
+            .acquire()
+            .await
+            .map_err(|_| "first admitter connection could not be acquired")?;
+        let mut second = pool
+            .acquire()
+            .await
+            .map_err(|_| "second admitter connection could not be acquired")?;
+        if pool.size() > 2 {
+            return Err("admitter pool exceeded two connections");
+        }
+
+        let first_identity: (String, String, i32, String, Option<String>, Option<String>) =
+            sqlx::query_as(direct_identity_sql)
+                .fetch_one(&mut *first)
+                .await
+                .map_err(|_| "first admitter identity query failed")?;
+        let second_identity: (String, String, i32, String, Option<String>, Option<String>) =
+            sqlx::query_as(direct_identity_sql)
+                .fetch_one(&mut *second)
+                .await
+                .map_err(|_| "second admitter identity query failed")?;
+        if !is_direct_admitter(&first_identity) || !is_direct_admitter(&second_identity) {
+            return Err("held connections are not direct, actor-free admitter sessions");
+        }
+        if first_identity.2 == second_identity.2 {
+            return Err("held admitter connections share a backend PID");
+        }
+
+        if tokio::time::timeout(Duration::from_millis(100), pool.acquire())
+            .await
+            .is_ok()
+        {
+            return Err("third admitter acquire completed while both connections were held");
+        }
+
+        drop(second);
+        let mut third = match tokio::time::timeout(Duration::from_secs(10), pool.acquire()).await {
+            Ok(Ok(connection)) => connection,
+            _ => return Err("admitter acquire did not resume within ten seconds"),
+        };
+        if pool.size() > 2 {
+            return Err("admitter pool exceeded two connections after reacquire");
+        }
+        let third_identity: (String, String, i32, String, Option<String>, Option<String>) =
+            sqlx::query_as(direct_identity_sql)
+                .fetch_one(&mut *third)
+                .await
+                .map_err(|_| "reacquired admitter identity query failed")?;
+        if !is_direct_admitter(&third_identity) {
+            return Err("reacquired connection is not a direct, actor-free admitter session");
+        }
+
+        let role_attributes: (bool, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT rolcanlogin, rolinherit, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname = current_user",
+        )
+        .fetch_one(&mut *first)
+        .await
+        .map_err(|_| "admitter role attributes query failed")?;
+        if role_attributes != (true, false, false, false, false, false, false) {
+            return Err("admitter role attributes do not match the exact restricted set");
+        }
+
+        let privileges: (bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT has_database_privilege(current_user, current_database(), 'CONNECT'), has_database_privilege(current_user, current_database(), 'CREATE'), has_schema_privilege(current_user, 'public', 'USAGE'), has_schema_privilege(current_user, 'public', 'CREATE'), NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname = current_user) OR roleid = (SELECT oid FROM pg_roles WHERE rolname = current_user))",
+        )
+        .fetch_one(&mut *first)
+        .await
+        .map_err(|_| "admitter effective privilege query failed")?;
+        if privileges != (true, false, true, false, true) {
+            return Err("admitter effective privileges or membership edges are unexpected");
+        }
+
+        let mut create_tx = first
+            .begin()
+            .await
+            .map_err(|_| "admitter CREATE probe transaction could not begin")?;
+        let create_result =
+            sqlx::query("CREATE TABLE public.r2_admitter_forbidden_probe(id integer)")
+                .execute(&mut *create_tx)
+                .await;
+        let create_denied = match &create_result {
+            Err(error) => {
+                error.as_database_error().and_then(|error| error.code()).as_deref()
+                    == Some("42501")
+            }
+            Ok(_) => false,
+        };
+        create_tx
+            .rollback()
+            .await
+            .map_err(|_| "admitter CREATE probe transaction rollback failed")?;
+        if !create_denied {
+            return Err("admitter CREATE probe was not denied with SQLSTATE 42501");
+        }
+
+        let mut set_role_tx = first
+            .begin()
+            .await
+            .map_err(|_| "admitter SET ROLE probe transaction could not begin")?;
+        let set_role_result = sqlx::query("SET ROLE migration_owner")
+            .execute(&mut *set_role_tx)
+            .await;
+        let set_role_denied = match &set_role_result {
+            Err(error) => {
+                error.as_database_error().and_then(|error| error.code()).as_deref()
+                    == Some("42501")
+            }
+            Ok(_) => false,
+        };
+        set_role_tx
+            .rollback()
+            .await
+            .map_err(|_| "admitter SET ROLE probe transaction rollback failed")?;
+        if !set_role_denied {
+            return Err("admitter SET ROLE probe was not denied with SQLSTATE 42501");
+        }
+
+        let first_after_rollback: (String, String, i32, String, Option<String>, Option<String>) =
+            sqlx::query_as(direct_identity_sql)
+                .fetch_one(&mut *first)
+                .await
+                .map_err(|_| "first post-rollback identity query failed")?;
+        let third_after_rollback: (String, String, i32, String, Option<String>, Option<String>) =
+            sqlx::query_as(direct_identity_sql)
+                .fetch_one(&mut *third)
+                .await
+                .map_err(|_| "second post-rollback identity query failed")?;
+        if !is_direct_admitter(&first_after_rollback)
+            || !is_direct_admitter(&third_after_rollback)
+        {
+            return Err("post-rollback sessions changed identity, role, or actor settings");
+        }
+        if pool.size() > 2 {
+            return Err("admitter pool exceeded two connections after rollback probes");
+        }
+
+        Ok(())
+    }
+    .await;
+
+    pool.close().await;
+    db.drop_db().await;
+    if let Err(reason) = check_result {
+        panic!("{reason}");
+    }
 }

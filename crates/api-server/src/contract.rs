@@ -613,6 +613,28 @@ pub const CONTRACT_ROUTES: &[RouteSpec] = &[
         None,
         false,
     ),
+    route(
+        "PATCH",
+        "/api/v1/strategy-configs/{config_id}",
+        Phase::Current,
+        true,
+        true,
+        false,
+        false,
+        None,
+        true,
+    ),
+    route(
+        "GET",
+        "/api/v1/recommendations/owner-beta/price-only/daily-state",
+        Phase::Current,
+        false,
+        false,
+        false,
+        true,
+        Some("recommendation"),
+        false,
+    ),
     // --- recommendations -----------------------------------------------------
     route(
         "POST",

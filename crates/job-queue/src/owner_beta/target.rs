@@ -344,7 +344,7 @@ struct CanonicalTarget<'a> {
 }
 
 #[derive(Serialize)]
-struct CanonicalItem<'a> {
+pub(super) struct CanonicalItem<'a> {
     instrument_id: &'a str,
     rank: Option<u32>,
     score: Option<&'a str>,
@@ -354,7 +354,7 @@ struct CanonicalItem<'a> {
 }
 
 impl<'a> CanonicalItem<'a> {
-    fn from_item(item: &'a OwnerBetaTargetItem) -> Self {
+    pub(super) fn from_item(item: &'a OwnerBetaTargetItem) -> Self {
         Self {
             instrument_id: &item.instrument_id,
             rank: item.rank,
@@ -371,7 +371,7 @@ impl<'a> CanonicalItem<'a> {
 }
 
 #[derive(Serialize)]
-struct CanonicalReason<'a> {
+pub(super) struct CanonicalReason<'a> {
     code: &'a str,
     params: &'a BTreeMap<String, String>,
     text_ko: &'a str,
@@ -379,7 +379,7 @@ struct CanonicalReason<'a> {
 }
 
 impl<'a> CanonicalReason<'a> {
-    fn from_reason(reason: &'a OwnerBetaReason) -> Self {
+    pub(super) fn from_reason(reason: &'a OwnerBetaReason) -> Self {
         Self {
             code: reason.code.as_str(),
             params: &reason.params,
@@ -411,27 +411,52 @@ pub fn build_target_snapshot(
     validate_factor_definitions(&factor_impls)?;
     validate_factor_snapshot(input, factor_snapshot, &requirements, &factor_impls)?;
 
-    let values = values_at_as_of(factor_snapshot, &requirements.factor_ids, input.as_of())?;
+    let computed = compute_parts_for(
+        &resolved,
+        &requirements.factor_ids,
+        &factor_snapshot.rows,
+        input.as_of(),
+    )?;
+    assemble_snapshot(input, factor_snapshot, computed)
+}
+
+/// Only validated row values enter the existing five strategy equations.
+pub(super) fn compute_target_parts(
+    strategy: &super::OwnerBetaStrategySnapshot,
+    as_of: domain::TradingDate,
+    factor_versions: &BTreeMap<String, String>,
+    rows: &[FactorRow],
+) -> Result<ComputedTargetParts, OwnerBetaTargetSnapshotError> {
+    let resolved = ResolvedConfig {
+        strategy_id: strategy.strategy_id().to_owned(),
+        strategy_version: strategy.strategy_version().to_owned(),
+        config: strategy.config_json().clone(),
+    };
+    let requirements = requirements_for(&resolved)
+        .map_err(|_| OwnerBetaTargetSnapshotError::StrategyUnsupported)?;
+    let factors = factors_for(&requirements.factor_ids)
+        .map_err(|_| OwnerBetaTargetSnapshotError::StrategyUnsupported)?;
+    validate_factor_definitions(&factors)?;
+    validate_factor_versions(factor_versions, &requirements, &factors)?;
+    compute_parts_for(&resolved, &requirements.factor_ids, rows, as_of)
+}
+
+fn compute_parts_for(
+    resolved: &ResolvedConfig,
+    factor_ids: &[String],
+    rows: &[FactorRow],
+    as_of: domain::TradingDate,
+) -> Result<ComputedTargetParts, OwnerBetaTargetSnapshotError> {
+    let values = values_at_as_of(rows, factor_ids, as_of)?;
     let (items, cash_weight_ppm, portfolio_reasons) = match resolved.strategy_id.as_str() {
-        "buy_and_hold" => build_buy_and_hold(&resolved, &values)?,
-        "trend_following" => build_trend_following(&resolved, &requirements.factor_ids, &values)?,
-        "relative_momentum" => {
-            build_relative_momentum(&resolved, &requirements.factor_ids, &values)?
-        }
-        "dual_momentum" => build_dual_momentum(&resolved, &requirements.factor_ids, &values)?,
-        "inverse_volatility" => {
-            build_inverse_volatility(&resolved, &requirements.factor_ids, &values)?
-        }
+        "buy_and_hold" => build_buy_and_hold(resolved, &values)?,
+        "trend_following" => build_trend_following(resolved, factor_ids, &values)?,
+        "relative_momentum" => build_relative_momentum(resolved, factor_ids, &values)?,
+        "dual_momentum" => build_dual_momentum(resolved, factor_ids, &values)?,
+        "inverse_volatility" => build_inverse_volatility(resolved, factor_ids, &values)?,
         _ => return Err(OwnerBetaTargetSnapshotError::StrategyUnsupported),
     };
-
-    assemble_snapshot(
-        input,
-        factor_snapshot,
-        items,
-        cash_weight_ppm,
-        portfolio_reasons,
-    )
+    canonical_target_parts(items, cash_weight_ppm, portfolio_reasons)
 }
 
 fn validate_factor_definitions(
@@ -462,21 +487,25 @@ fn validate_factor_snapshot(
         return Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid);
     }
 
+    validate_factor_versions(&snapshot.factor_versions, factor_requirements, factor_impls)
+}
+
+fn validate_factor_versions(
+    factor_versions: &BTreeMap<String, String>,
+    factor_requirements: &StrategyRequirements,
+    factor_impls: &[Box<dyn Factor>],
+) -> Result<(), OwnerBetaTargetSnapshotError> {
     let expected_ids = factor_requirements
         .factor_ids
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let actual_ids = snapshot
-        .factor_versions
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    let actual_ids = factor_versions.keys().cloned().collect::<BTreeSet<_>>();
     if expected_ids != actual_ids || factor_impls.len() != expected_ids.len() {
         return Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid);
     }
     for factor in factor_impls {
-        if snapshot.factor_versions.get(factor.id()) != Some(&factor.version().to_string()) {
+        if factor_versions.get(factor.id()) != Some(&factor.version().to_string()) {
             return Err(OwnerBetaTargetSnapshotError::FactorSnapshotInvalid);
         }
     }
@@ -484,7 +513,7 @@ fn validate_factor_snapshot(
 }
 
 fn values_at_as_of(
-    snapshot: &PriceOnlyFactorSnapshot,
+    rows: &[FactorRow],
     required_factor_ids: &[String],
     as_of: domain::TradingDate,
 ) -> Result<BTreeMap<String, BTreeMap<String, Option<f64>>>, OwnerBetaTargetSnapshotError> {
@@ -493,7 +522,7 @@ fn values_at_as_of(
     let mut values = BTreeMap::<String, BTreeMap<String, Option<f64>>>::new();
     let mut seen_rows = BTreeSet::new();
     let as_of_text = as_of.to_iso();
-    for row in &snapshot.rows {
+    for row in rows {
         let row_date = domain::TradingDate::parse(&row.date)
             .map_err(|_| OwnerBetaTargetSnapshotError::FactorSnapshotInvalid)?;
         if row_date > as_of {
@@ -544,13 +573,17 @@ fn values_at_as_of(
 
 type BuildResult = (Vec<OwnerBetaTargetItem>, i64, Vec<OwnerBetaReason>);
 
-fn assemble_snapshot(
-    input: &OwnerBetaPriceRecommendationInput,
-    factor_snapshot: &PriceOnlyFactorSnapshot,
+pub(super) struct ComputedTargetParts {
+    pub(super) items: Vec<OwnerBetaTargetItem>,
+    pub(super) cash_weight_ppm: i64,
+    pub(super) portfolio_reasons: Vec<OwnerBetaReason>,
+}
+
+fn canonical_target_parts(
     mut items: Vec<OwnerBetaTargetItem>,
     cash_weight_ppm: i64,
     portfolio_reasons: Vec<OwnerBetaReason>,
-) -> Result<OwnerBetaTargetSnapshot, OwnerBetaTargetSnapshotError> {
+) -> Result<ComputedTargetParts, OwnerBetaTargetSnapshotError> {
     let expected = canonical_instruments();
     items.sort_by(|left, right| left.instrument_id.cmp(&right.instrument_id));
     if items.len() != expected.len()
@@ -581,6 +614,23 @@ fn assemble_snapshot(
     if total != OWNER_BETA_TARGET_WEIGHT_SCALE {
         return Err(OwnerBetaTargetSnapshotError::ArithmeticInvalid);
     }
+    Ok(ComputedTargetParts {
+        items,
+        cash_weight_ppm,
+        portfolio_reasons,
+    })
+}
+
+fn assemble_snapshot(
+    input: &OwnerBetaPriceRecommendationInput,
+    factor_snapshot: &PriceOnlyFactorSnapshot,
+    computed: ComputedTargetParts,
+) -> Result<OwnerBetaTargetSnapshot, OwnerBetaTargetSnapshotError> {
+    let ComputedTargetParts {
+        items,
+        cash_weight_ppm,
+        portfolio_reasons,
+    } = computed;
     let strategy = input.strategy_snapshot();
     let mut snapshot = OwnerBetaTargetSnapshot {
         schema: OWNER_BETA_TARGET_SNAPSHOT_SCHEMA,
@@ -964,7 +1014,7 @@ fn pow10(power: u32) -> Result<i128, OwnerBetaTargetSnapshotError> {
     Ok(result)
 }
 
-fn format_fixed_six(value: i64) -> String {
+pub(super) fn format_fixed_six(value: i64) -> String {
     let negative = value < 0;
     let absolute = value.unsigned_abs();
     let whole = absolute / OWNER_BETA_TARGET_WEIGHT_SCALE as u64;

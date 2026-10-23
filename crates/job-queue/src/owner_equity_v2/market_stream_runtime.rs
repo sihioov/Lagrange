@@ -1311,8 +1311,18 @@ mod runtime_supervisor {
             self.parent_stop.is_some() || self.terminal_error.is_some()
         }
 
+        #[track_caller]
         fn latch_terminal(&mut self, error: MarketStreamRuntimeError) {
             if self.terminal_error.is_none() {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "owner_market_stream_failure",
+                        "code": "RUNTIME_FAILED",
+                        "cause": error.to_string(),
+                        "source_line": std::panic::Location::caller().line(),
+                    })
+                );
                 self.terminal_error = Some(error);
             }
             self.signal_owned_shutdown();
@@ -2034,7 +2044,17 @@ mod runtime_supervisor {
                     Err(error) if reconnect_is_premutation_wait(&error) => {
                         self.clear_incarnation();
                     }
-                    Err(error) => self.latch_terminal(map_connect_error(error)),
+                    Err(error) => {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "owner_market_stream_failure",
+                                "code": "CONNECT_FAILED",
+                                "cause": error.to_string(),
+                            })
+                        );
+                        self.latch_terminal(map_connect_error(error));
+                    }
                     Ok(session) => self.pending_session = Some(session),
                 },
                 StageResult::Started(result) => match *result {

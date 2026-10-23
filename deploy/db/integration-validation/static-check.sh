@@ -14,11 +14,15 @@ die() {
 [ -x "$workflow" ] || die 'validate.sh must be executable'
 [ -x "$dir/migration-safety-audit.sh" ] || die 'migration-safety-audit.sh must be executable'
 for required in \
+  bootstrap-negative.sh \
   preflight-baseline.sql \
   preflight-0039.sql \
   preflight-catalog.sql \
   preflight-0040.sql \
   preflight-0041.sql \
+  preflight-0060.sql \
+  actual-role-0060.sql \
+  rollback-0060-guard.sql \
   hazards.sql \
   identity-boundary.sql \
   service-login.sql \
@@ -30,6 +34,7 @@ for required in \
 done
 
 bash -n "$workflow" || die 'validate.sh has shell syntax errors'
+bash -n "$dir/bootstrap-negative.sh" || die 'bootstrap-negative.sh has shell syntax errors'
 bash -n "$dir/migration-safety-audit.sh" || die 'migration-safety-audit.sh has shell syntax errors'
 
 help_output="$dir/.static-help.$$"
@@ -48,6 +53,8 @@ grep -Fq 'PG_VALIDATION_SELF_TEST: PASS' "$self_output" || die 'self-test did no
 for required_marker in \
   'DATABASE_URL="$test_database_url"' \
   "grep -Fq 'SKIP:'" \
+  "run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
+  "run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
   'preflight-0039.sql' \
   'run_terminal_paper_check' \
   'preflight-catalog.sql' \
@@ -60,6 +67,13 @@ for required_marker in \
   'export PGOPTIONS="-c lock_timeout=5s -c statement_timeout=60s"' \
   'run_migration_rerun_0039' \
   'run_full_release_lane' \
+  'run_daily_0060_staged' \
+  'PG_DB_TEST_ROW:migration-contract:' \
+  'PG_DB_TEST_EXIT:' \
+  'daily_0060_named_rows' \
+  'run_bootstrap_negative_contract' \
+  '/validation/bootstrap-negative.sh --disposable-ci' \
+  'bootstrap_negative_cases' \
   'run_catalog_negative_probe' \
   'migration_checksums=' \
   'run_migration_rerun_0041' \

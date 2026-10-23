@@ -22,10 +22,16 @@ mode=plan
 scope=release
 refresh_intraday=0
 refresh_market_stream=0
+preserve_owner_v2=0
 refresh_from_commit=
+preserved_owner_from_commit=
 bootstrap_intraday_calendar=0
 calendar_source_batch_id=
 calendar_reuse_existing_source=0
+daily_operation=
+daily_from_commit=
+daily_backup_config=
+release_lock_fd=
 release_override=
 release_commit=
 service_status_mode=absent
@@ -70,7 +76,11 @@ usage() {
 Usage: scripts/ops/compose-release.sh
        [--scope infrastructure|backfill|release]
        [--plan|--preflight|--apply] [--refresh-intraday|--refresh-market-stream]
-       [--refresh-from-commit COMMIT]
+       [--refresh-from-commit COMMIT] [--preserve-owner-v2]
+       [--preserved-owner-from-commit COMMIT]
+       [--daily-prepare|--daily-enable|--daily-disable|--daily-rebind-first-session]
+       [--daily-from-commit COMMIT]
+       [--daily-backup|--daily-backup-verify|--daily-reconcile] [--backup-config PATH]
        [--bootstrap-intraday-calendar
         (--calendar-source-batch-id UUID|--reuse-existing-source)]
 
@@ -91,6 +101,34 @@ Usage: scripts/ops/compose-release.sh
                     For market-stream refresh between immutable releases,
                     verify running services against this installed commit's
                     trusted manifest. Replacement images still use current.
+  --preserve-owner-v2
+                    With --refresh-market-stream and --refresh-from-commit,
+                    refresh only Web then API. Preserve the exact Owner V2
+                    container/start and its source revision. Requires unchanged
+                    runtime env except release and disabled supplier bindings.
+                    The resulting release has explicitly mixed worker revisions.
+  --preserved-owner-from-commit COMMIT
+                    With --preserve-owner-v2, bind an already preserved Owner to
+                    its own installed manifest and runtime env. API/Web still use
+                    --refresh-from-commit. Defaults to that commit when omitted.
+                    Does not restart, migrate or recollect through the Owner.
+  --daily-prepare|--daily-enable|--daily-disable
+                    Controlled daily operations on the current installed release.
+                    Prepare remains disabled; enable verifies actual API/cohort;
+                    disable requires database OFF and complete owned process drain.
+  --daily-from-commit COMMIT
+                    Explicit installed owner of the previous daily processes.
+                    Also used by the full release apply quiescence guard.
+  --daily-rebind-first-session
+                    Move an expired first session forward using two immutable
+                    configs. Requires explicit --daily-from-commit, daily OFF,
+                    no daily history, and pristine stopped producer/admitter.
+                    Leaves daily OFF; never resets epochs or edits config files.
+  --daily-backup|--daily-backup-verify|--daily-reconcile
+                    Verified encrypted capture, isolated verification, or original
+                    identity reconciliation. Reconciliation always leaves daily OFF.
+  --backup-config PATH
+                    Protected backup config for these three operations only.
   --scope infrastructure
                     Bootstrap PostgreSQL/migrations/raw/schema only; it does
                     not require KIS, Auth0/TLS, or future dataset pins.
@@ -125,8 +163,27 @@ while [ "$#" -gt 0 ]; do
     --plan) mode=plan; shift ;;
     --preflight) mode=preflight; shift ;;
     --apply) mode=apply; shift ;;
+    --daily-prepare|--daily-enable|--daily-disable|--daily-rebind-first-session)
+      [ -z "$daily_operation" ] || die 'select one daily operation'
+      daily_operation=${1#--daily-}; shift ;;
+    --daily-backup|--daily-backup-verify|--daily-reconcile)
+      [ -z "$daily_operation" ] || die 'select one daily operation'
+      daily_operation=${1#--daily-}; shift ;;
+    --backup-config)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_backup_config" ] || die 'backup config needs one path'
+      daily_backup_config=$2; shift 2 ;;
+    --daily-from-commit)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_from_commit" ] || die 'daily source needs one commit'
+      daily_from_commit=$2; shift 2 ;;
     --refresh-intraday) refresh_intraday=1; shift ;;
     --refresh-market-stream) refresh_market_stream=1; shift ;;
+    --preserve-owner-v2) preserve_owner_v2=1; shift ;;
+    --preserved-owner-from-commit)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$preserved_owner_from_commit" ] ||
+        die '--preserved-owner-from-commit needs one exact installed commit'
+      preserved_owner_from_commit=$2
+      shift 2
+      ;;
     --refresh-from-commit)
       [ "$#" -ge 2 ] && [ -z "$refresh_from_commit" ] ||
         die '--refresh-from-commit needs one exact installed commit'
@@ -161,6 +218,16 @@ if [ -n "$refresh_from_commit" ]; then
     [ "$refresh_from_commit" != 0000000000000000000000000000000000000000 ] ||
     die '--refresh-from-commit must be an exact nonzero lowercase commit'
 fi
+[ "$preserve_owner_v2" -eq 0 ] ||
+  { [ "$refresh_market_stream" -eq 1 ] && [ -n "$refresh_from_commit" ]; } ||
+  die '--preserve-owner-v2 requires market-stream refresh and an exact source commit'
+if [ -n "$preserved_owner_from_commit" ]; then
+  [ "$preserve_owner_v2" -eq 1 ] ||
+    die '--preserved-owner-from-commit requires --preserve-owner-v2'
+  [[ "$preserved_owner_from_commit" =~ ^[0-9a-f]{40}$ ]] &&
+    [ "$preserved_owner_from_commit" != 0000000000000000000000000000000000000000 ] ||
+    die '--preserved-owner-from-commit must be an exact nonzero lowercase commit'
+fi
 [ "$bootstrap_intraday_calendar" -eq 0 ] || [ "$scope" = release ] ||
   die '--bootstrap-intraday-calendar is valid only with --scope release'
 [ "$((refresh_intraday + refresh_market_stream + bootstrap_intraday_calendar))" -le 1 ] ||
@@ -176,6 +243,45 @@ if [ "$bootstrap_intraday_calendar" -eq 1 ]; then
 elif [ -n "$calendar_source_batch_id" ] || [ "$calendar_reuse_existing_source" -eq 1 ]; then
   die '--calendar-source-batch-id requires --bootstrap-intraday-calendar'
 fi
+
+if [ -n "$daily_from_commit" ]; then
+  [ "$scope" = release ] && [[ "$daily_from_commit" =~ ^[0-9a-f]{40}$ ]] &&
+    [ "$daily_from_commit" != 0000000000000000000000000000000000000000 ] ||
+    die 'daily source must be one exact installed nonzero commit'
+fi
+case "$daily_operation" in
+  backup|backup-verify|reconcile)
+    [ -z "$daily_from_commit" ] || die 'backup operations use only the current installed release' ;;
+  *) [ -z "$daily_backup_config" ] || die 'backup config requires a backup operation' ;;
+esac
+if [ -n "$daily_operation" ]; then
+  [ "$daily_operation" != rebind-first-session ] || [ -n "$daily_from_commit" ] ||
+    die 'first-session rebind requires the exact previous installed commit'
+  [ "$scope" = release ] && [ "$refresh_intraday" -eq 0 ] &&
+    [ "$refresh_market_stream" -eq 0 ] && [ "$bootstrap_intraday_calendar" -eq 0 ] &&
+    [ -z "$refresh_from_commit" ] || die 'daily operation cannot combine with another scope'
+  [ "$compose_file" = "$default_compose_file" ] && [ "$env_file" = "$default_env_file" ] ||
+    die 'daily operation requires the installed protected inputs'
+  daily_args=(--operation "$daily_operation" --mode "$mode" --install-root "$release_root")
+  case "$daily_operation" in
+    backup|backup-verify|reconcile)
+      [ "$daily_operation" != backup-verify ] || daily_args[1]=verify
+      [ -z "$daily_backup_config" ] || daily_args+=(--config-file "$daily_backup_config")
+      PYTHONDONTWRITEBYTECODE=1 exec /usr/bin/python3 \
+        "$script_dir/lib/owner-beta-daily-backup.py" "${daily_args[@]}" ;;
+  esac
+  [ -z "$daily_from_commit" ] || daily_args+=(--from-commit "$daily_from_commit")
+  # Shutdown bypasses unrelated Auth0/provider activation validators. The closed
+  # controller still verifies installed manifests, ownership and its DB transport.
+  PYTHONDONTWRITEBYTECODE=1 exec /usr/bin/python3 \
+    "$script_dir/lib/owner-beta-daily-operations.py" "${daily_args[@]}"
+fi
+
+# Every legacy and daily operation addresses this same local daemon explicitly.
+docker() {
+  command env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
+    docker --host unix:///var/run/docker.sock "$@"
+}
 
 [ -f "$compose_file" ] && [ ! -L "$compose_file" ] || die "Compose file missing or symlinked: $compose_file"
 [ -f "$env_file" ] && [ ! -L "$env_file" ] || blocked "production env file missing or symlinked: $env_file"
@@ -307,6 +413,39 @@ validate_service_status_daemon_gate() {
     die 'service-status daemon conflicts with the active daily timer'
   [ "$result" = 'DAEMON_MODE_GATE: PASS' ] ||
     die 'service-status daemon gate returned an invalid result'
+}
+
+acquire_daily_release_lock() {
+  local lock before after
+  lock=$release_root/.lagrange-release.lock
+  if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+    (umask 077; set -o noclobber; : >"$lock") ||
+      die 'cannot create exclusive release lock'
+  fi
+  release_image_manifest_trusted_file "$lock" release-lock ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  [ "$(stat -c '%h:%s' -- "$lock")" = 1:0 ] ||
+    die 'release lock must be empty and single-link'
+  before=$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "$lock") ||
+    die 'cannot inspect release lock'
+  exec {release_lock_fd}<>"$lock" || die 'cannot open release lock'
+  after=$(stat -Lc '%d:%i:%u:%g:%a:%h:%s' -- "/proc/$$/fd/$release_lock_fd") ||
+    die 'cannot inspect opened release lock'
+  [ "$before" = "$after" ] || die 'release lock identity changed'
+  flock --exclusive --nonblock "$release_lock_fd" ||
+    die 'another release installation is active'
+  [ "$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "$lock")" = "$before" ] ||
+    die 'release lock identity changed'
+}
+
+
+daily_release_guard() {
+  local operation=$1
+  local -a arguments=(--operation "$operation" --mode apply --install-root "$release_root"
+    --lock-fd "$release_lock_fd")
+  [ -z "$daily_from_commit" ] || arguments+=(--from-commit "$daily_from_commit")
+  PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "$script_dir/lib/owner-beta-daily-operations.py" \
+    "${arguments[@]}" || die 'daily release is not quiescent'
 }
 
 prepare_installed_release_manifest() {
@@ -475,21 +614,70 @@ verify_refresh_source() (
       die "$RELEASE_IMAGE_MANIFEST_ERROR"
   fi
   verify_running_container api-server 1
-  verify_running_container owner-equity-v2-runner 1
+  if [ "$preserve_owner_v2" -eq 1 ]; then
+    verify_preserved_owner_source
+  else
+    verify_running_container owner-equity-v2-runner 1
+  fi
   if [ "$refresh_market_stream" -eq 1 ]; then
     verify_running_container web 1
   fi
 )
+
+verify_preserved_owner_source() (
+  local owner_commit owner_manifest
+  owner_commit=${preserved_owner_from_commit:-$refresh_from_commit}
+  owner_manifest=$release_root/releases/$owner_commit/.lagrange-release-manifest
+  release_image_manifest_trusted_file "$owner_manifest" preserved-owner-source-manifest ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  release_image_manifest_load "$owner_manifest" "$owner_commit" ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  verify_running_container owner-equity-v2-runner 1
+)
+
+verify_preserved_owner_config() (
+  local key previous_env owner_commit
+  local -A target=()
+  for key in "${!DOTENV_VALUES[@]}"; do target[$key]=${DOTENV_VALUES[$key]}; done
+  owner_commit=${preserved_owner_from_commit:-$refresh_from_commit}
+  previous_env=$release_root/releases/$owner_commit/deploy/compose/.env
+  release_image_manifest_trusted_file "$previous_env" refresh-source-env ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  dotenv_load "$previous_env" || die 'cannot parse refresh source env'
+  [ "$(dotenv_get LAGRANGE_CODE_COMMIT)" = "$owner_commit" ] ||
+    die 'refresh source env commit mismatch'
+  # The supplier is a separately disabled process, never an Owner V2 input.
+  # Compare every other literal, including missing keys, without printing values.
+  for key in "${!target[@]}" "${!DOTENV_VALUES[@]}"; do
+    case "$key" in LAGRANGE_CODE_COMMIT|RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX) continue ;; esac
+    [ "${target[$key]+set}" = "${DOTENV_VALUES[$key]+set}" ] &&
+      [ "${target[$key]-}" = "${DOTENV_VALUES[$key]-}" ] ||
+      die "preserved owner runtime env differs: $key"
+  done
+)
+
+preserved_owner_identity() {
+  local id
+  id=$(compose ps --status running -q owner-equity-v2-runner)
+  [[ "$id" =~ ^[0-9A-Za-z][0-9A-Za-z_.-]*$ ]] || die 'preserved owner identity is ambiguous'
+  docker inspect --format '{{.Id}}|{{.State.StartedAt}}' "$id"
+}
 
 run_intraday_refresh() {
   # The trusted manifest remains the source of image IDs/revisions for every
   # mode. Plan/preflight inspect only; apply must prove all targeted running
   # targets before the first mutating Compose up.
   verify_manifest_images
+  if [ "$preserve_owner_v2" -eq 1 ]; then verify_preserved_owner_config; fi
   if [ -n "$refresh_from_commit" ] && [ "$mode" != apply ]; then
     verify_refresh_source
   fi
   if [ "$mode" = plan ]; then
+    if [ "$preserve_owner_v2" -eq 1 ]; then
+      echo 'COMPOSE_REFRESH_WEB_API_ORDER: verify source API/Web/Owner; recreate Web then API; preserve exact Owner container/start/source revision'
+      echo 'PLAN_ONLY: no service mutation or provider/network call made'
+      return 0
+    fi
     if [ "$refresh_market_stream" -eq 1 ]; then
       cat <<'EOF'
 COMPOSE_REFRESH_MARKET_STREAM_ORDER:
@@ -533,6 +721,20 @@ EOF
   if [ -z "$release_override" ]; then
     prepare_installed_release_manifest
     compose config --quiet || die 'Compose interpolation/config validation failed'
+  fi
+
+  if [ "$preserve_owner_v2" -eq 1 ]; then
+    local owner_before
+    owner_before=$(preserved_owner_identity) || die 'cannot bind preserved owner'
+    compose up --no-build --pull never --no-deps --force-recreate --wait web
+    verify_running_container web 1
+    compose up --no-build --pull never --no-deps --force-recreate --wait api-server
+    verify_running_container api-server 1
+    verify_preserved_owner_source
+    [ "$(preserved_owner_identity)" = "$owner_before" ] || die 'preserved owner container/start changed'
+    compose ps
+    echo 'COMPOSE_REFRESH_WEB_API: PASS (Web then API refreshed; exact source Owner V2 preserved)'
+    return 0
   fi
 
   compose up --no-build --pull never --no-deps --force-recreate --wait api-server
@@ -597,6 +799,15 @@ fi
 
 if [ "$scope" = release ] && [ "$mode" = apply ] && [ "$bootstrap_intraday_calendar" -eq 0 ]; then
   load_service_status_policy
+fi
+
+if [ "$scope" = release ] && [ "$mode" = apply ]; then
+  acquire_daily_release_lock
+  daily_release_guard guard-processes
+  if [ "$refresh_intraday" -eq 1 ] || [ "$refresh_market_stream" -eq 1 ] ||
+     [ "$bootstrap_intraday_calendar" -eq 1 ]; then
+    daily_release_guard guard
+  fi
 fi
 
 compose config --quiet || die 'Compose interpolation/config validation failed'
@@ -701,6 +912,8 @@ run_owner_beta_approval_gate
 run_owner_equity_v2_release_gate
 run_owner_market_stream_release_gate
 compose up --no-build --wait postgres
+# The shared release lock stays held across this DB guard, migrations and startup.
+daily_release_guard guard
 verify_manifest_images
 compose run --rm --no-deps db-role-bootstrap
 compose run --rm --no-deps db-migrate

@@ -1,6 +1,8 @@
+import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import StockBetaDetailPage from "@/app/(authenticated)/stock-beta/[instrument]/page";
 import StockBetaPage from "@/app/(authenticated)/stock-beta/page";
+import type { IntradayStreamProvider } from "@/components/stock-beta/quote/intraday-stream-provider";
 import { type ApiSession, apiErrorEnvelopeSchema } from "@/lib/api/contracts";
 import { ApiProblem } from "@/lib/api/response";
 import { stockBetaDictionary } from "@/lib/i18n/dictionaries/stock-beta";
@@ -17,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   getLocale: vi.fn(async (): Promise<"en" | "ko"> => "en"),
   getProductApi: vi.fn(),
   getServerSession: vi.fn(),
+  streamProviderProps: vi.fn<(props: ComponentProps<typeof IntradayStreamProvider>) => void>(),
   redirect: vi.fn((destination: string) => {
     throw Object.assign(new Error("NEXT_REDIRECT"), { destination });
   }),
@@ -26,6 +29,17 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/api/server-products", () => ({ getProductApi: mocks.getProductApi }));
 vi.mock("@/lib/api/server-session", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("@/lib/i18n/server", () => ({ getLocale: mocks.getLocale }));
+vi.mock("@/components/stock-beta/quote/intraday-stream-provider", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/components/stock-beta/quote/intraday-stream-provider")>();
+  return {
+    ...actual,
+    IntradayStreamProvider: (props: ComponentProps<typeof actual.IntradayStreamProvider>) => {
+      mocks.streamProviderProps(props);
+      return <actual.IntradayStreamProvider {...props} />;
+    },
+  };
+});
 vi.mock("next/navigation", () => ({
   redirect: mocks.redirect,
   usePathname: () => "/stock-beta",
@@ -116,6 +130,132 @@ afterEach(() => {
 });
 
 describe("Stock Beta intraday page seams", () => {
+  // Observe props at the real page -> detail/workspace -> provider boundary.
+  // SSR drives rendering only; membership assertions do not inspect its HTML.
+  it.each([0, 1])(
+    "passes only selected READY membership %s to the detail provider",
+    async (index) => {
+      vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+      vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+      mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+      const memberships = [streamMembership(0), streamMembership(1)];
+      const selected = streamMembership(index);
+      const api = apiFor();
+      api.getOwnerEquityV2Memberships.mockResolvedValue({ ...MEMBERSHIPS, memberships });
+      api.getOwnerEquityV2SignalDetail.mockResolvedValue({
+        ...DETAIL,
+        signal: {
+          ...SIGNAL,
+          instrument_id: selected.instrument_id,
+          generation: selected.generation,
+        },
+      });
+      mocks.getProductApi.mockResolvedValue(api);
+
+      await renderAsyncPage(
+        await StockBetaDetailPage({
+          params: Promise.resolve({ instrument: selected.instrument_id }),
+        }),
+      );
+
+      expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          enabled: true,
+          sessionKey: `${OWNER_SESSION.user_id}:${OWNER_SESSION.expires_at_secs}`,
+          memberships: [selected],
+        }),
+      );
+      expect(api.getOwnerEquityV2SignalDetail).toHaveBeenCalledExactlyOnceWith(
+        selected.instrument_id,
+      );
+      expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["generation mismatch", "not READY"])(
+    "passes no detail demand for %s even with another READY membership",
+    async (reason) => {
+      vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+      vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+      mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+      const selected = streamMembership(0);
+      const api = apiFor();
+      api.getOwnerEquityV2Memberships.mockResolvedValue({
+        ...MEMBERSHIPS,
+        memberships: [
+          {
+            ...selected,
+            generation:
+              reason === "generation mismatch" ? selected.generation + 1 : selected.generation,
+            lifecycle: reason === "not READY" ? "BACKFILLING" : "READY",
+          },
+          streamMembership(1),
+        ],
+      });
+      api.getOwnerEquityV2SignalDetail.mockResolvedValue({
+        ...DETAIL,
+        signal: {
+          ...SIGNAL,
+          instrument_id: selected.instrument_id,
+          generation: selected.generation,
+        },
+      });
+      mocks.getProductApi.mockResolvedValue(api);
+
+      await renderAsyncPage(
+        await StockBetaDetailPage({
+          params: Promise.resolve({ instrument: selected.instrument_id }),
+        }),
+      );
+
+      expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ enabled: true, memberships: [] }),
+      );
+    },
+  );
+
+  it("preserves both READY memberships at the board provider", async () => {
+    vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+    mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+    const memberships = [streamMembership(0), streamMembership(1)];
+    const api = apiFor();
+    api.getOwnerEquityV2Memberships.mockResolvedValue({ ...MEMBERSHIPS, memberships });
+    mocks.getProductApi.mockResolvedValue(api);
+
+    await renderAsyncPage(await StockBetaPage());
+
+    expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ enabled: true, memberships }),
+    );
+    expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
+  });
+
+  it("disables both providers when quotes are off while preserving the board server read", async () => {
+    vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "off");
+    vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
+    mocks.getServerSession.mockResolvedValue(OWNER_SESSION);
+    const memberships = [streamMembership(0), streamMembership(1)];
+    const api = apiFor();
+    api.getOwnerEquityV2Memberships.mockResolvedValue({ ...MEMBERSHIPS, memberships });
+    mocks.getProductApi.mockResolvedValue(api);
+
+    await renderAsyncPage(
+      await StockBetaDetailPage({ params: Promise.resolve({ instrument: SIGNAL.instrument_id }) }),
+    );
+    expect(api.getOwnerEquityV2Memberships).not.toHaveBeenCalled();
+    expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ enabled: false, memberships: [] }),
+    );
+    mocks.streamProviderProps.mockClear();
+
+    await renderAsyncPage(await StockBetaPage());
+    expect(api.getOwnerEquityV2Memberships).toHaveBeenCalledOnce();
+    expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ enabled: false, memberships }),
+    );
+  });
+
   it("shows the WS board and its selected READY instrument even without EOD signals", async () => {
     vi.stubEnv("OWNER_INTRADAY_QUOTES_MODE", "owner_only");
     vi.stubEnv("OWNER_INTRADAY_QUOTE_TRANSPORT", "market_ws");
@@ -176,6 +316,7 @@ describe("Stock Beta intraday page seams", () => {
       expect(markup).not.toContain("stock-beta-stream");
     }
     expect(mocks.getProductApi).not.toHaveBeenCalled();
+    expect(mocks.streamProviderProps).not.toHaveBeenCalled();
   });
 
   it("is default-off and does not add the detail membership read", async () => {
@@ -190,6 +331,9 @@ describe("Stock Beta intraday page seams", () => {
     expect(markup).not.toContain("장중 현재가");
     expect(markup).not.toContain("Intraday price");
     expect(api.getOwnerEquityV2Memberships).not.toHaveBeenCalled();
+    expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ enabled: false, memberships: [] }),
+    );
     expect(markup).toContain("Returns");
   });
 
@@ -278,6 +422,10 @@ describe("Stock Beta intraday page seams", () => {
       expect(detail).not.toContain("periodic refresh");
       expect(detail).not.toContain("stock-beta-stream-selected");
       expect(detail).toContain("Returns");
+      expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ enabled: false, memberships: [] }),
+      );
+      mocks.streamProviderProps.mockClear();
 
       const dashboard = await renderAsyncPage(await StockBetaPage());
       expect(dashboard).not.toContain("periodic refresh");
@@ -285,6 +433,9 @@ describe("Stock Beta intraday page seams", () => {
       expect(dashboard).toContain(SIGNAL.instrument_id);
       expect(dashboard).toContain('data-testid="stock-beta-widget-signal-profile"');
       expect(dashboard).toContain(stockBetaDictionary.en.chartPreparingMessage);
+      expect(mocks.streamProviderProps).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ enabled: false }),
+      );
     },
   );
 });

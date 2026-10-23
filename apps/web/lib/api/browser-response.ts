@@ -4,6 +4,8 @@ import { isLoginRequiredError, parseApiResponse } from "./response";
 export type BrowserResponseOptions = {
   /** Test seam; production callers use the browser's full navigation below. */
   readonly navigate?: (href: string) => void;
+  /** Request lifetime; cancellation also suppresses late navigation side effects. */
+  readonly signal?: AbortSignal;
 };
 
 function redirectToLogin(options: BrowserResponseOptions): void {
@@ -32,7 +34,9 @@ export async function parseBrowserApiResponse<Output>(
   try {
     return await parseApiResponse(response, schema);
   } catch (error) {
-    if (isLoginRequiredError(error)) {
+    // Cancellation can arrive after fetch resolves, while the body is still parsing.
+    // Keep the typed rejection for the caller, but do not navigate for obsolete work.
+    if (isLoginRequiredError(error) && !options.signal?.aborted) {
       redirectToLogin(options);
     }
     throw error;

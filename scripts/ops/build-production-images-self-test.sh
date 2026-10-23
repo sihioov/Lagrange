@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 # Fake-Docker self-test for the strict V2 owner-beta image build. It exercises
 # only throw-away Git fixtures and never contacts a Docker daemon or provider.
-set -euo pipefail
+set -Eeuo pipefail
+
+# Report only a source line and exit code; never dump commands or fixture logs.
+fixture_error() {
+  local status=$?
+  printf 'PRODUCTION_IMAGE_BUILD_SELF_TEST_FAILURE line=%s exit=%s\n' \
+    "${BASH_LINENO[0]}" "$status" >&2
+  return "$status"
+}
+trap fixture_error ERR
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source_root=$(cd "$script_dir/../.." && pwd)
 source_helper=$script_dir/build-production-images.sh
 source_manifest_lib=$script_dir/lib/release-image-manifest.sh
 source_layout_helper=$script_dir/lib/release-build-layout.sh
+python3 "$script_dir/build-disabled-daily-self-test.py"
 
 # Exercise the product gate functions without a live journal or Docker daemon.
 # Query bounds must preserve the same microseconds that the parser validates.
@@ -1403,9 +1413,10 @@ for rel in (
 PY
 # Model this host's clean executable source modes explicitly inside the
 # private fixture.  The final image recipe independently normalizes only the
-# three wrapper destinations below to 0755; source inventory must retain 0775.
+# four wrapper destinations below to 0755; source inventory must retain 0775.
 chmod 0775 -- "$repo_dir/deploy/db/migrate.sh" \
   "$repo_dir/deploy/db/bootstrap-roles.sh" \
+  "$repo_dir/deploy/db/daily-control.sh" \
   "$repo_dir/deploy/runtime/paper-runner-entrypoint" \
   "$repo_dir/nt/backtest-worker/runtime/backtest-worker-entrypoint"
 chmod 0664 -- "$repo_dir/migrations/0001_identity.down.sql"
@@ -1434,6 +1445,11 @@ path=os.environ["IMAGE_BUILD_DRAINED_ATTESTATION"]
 now=int(time.time())
 value={
     "containers":[
+        {"container_id":"7"*64,"container_name":"lagrange-station-owner-beta-runner-1",
+         "dead":False,"exit_code":0,"finished_at_utc":"2026-09-18T12:00:00.000000000Z",
+         "health_status":"unhealthy","image_id":"sha256:"+"8"*64,"oom_killed":False,
+         "paused":False,"restarting":False,"restart_count":0,"running":False,
+         "started_at_utc":"2026-09-18T00:00:00.000000000Z","status":"exited"},
         {"container_id":"3"*64,"container_name":"lagrange-station-owner-equity-v2-runner-1",
          "dead":False,"exit_code":0,"finished_at_utc":"2026-09-18T12:00:00.000000000Z",
          "health_status":"unhealthy","image_id":"sha256:"+"4"*64,"oom_killed":False,
@@ -1446,7 +1462,11 @@ value={
          "started_at_utc":"2026-09-18T00:00:00.000000000Z","status":"exited"},
     ],
     "expires_at_utc":datetime.datetime.fromtimestamp(now+7200,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "format":"lagrange-build-drained-readers-attestation-v1",
+    "format":"lagrange-build-drained-readers-attestation-v2",
+    "disabled_daily":{"enabled":False,"running_jobs":0,"activation_epoch":0,
+                      "owner_user_id":"11111111-1111-4111-8111-111111111111",
+                      "policy_sha256":"b"*64,"source_release":"c"*40,
+                      "control_observation_sha256":"d"*64},
     "observed_at_utc":datetime.datetime.fromtimestamp(now-5,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "project":"lagrange-station",
     "scope":"image-build-only",
@@ -1500,6 +1520,7 @@ commit = os.environ.get("LAGRANGE_CODE_COMMIT", "missing")
 runtime_image_modes = {
     "usr/local/bin/lagrange-migrate": 0o755,
     "usr/local/bin/lagrange-bootstrap-roles": 0o755,
+    "usr/local/bin/lagrange-daily-control": 0o755,
     "usr/local/bin/paper-runner": 0o755,
 }
 
@@ -1586,6 +1607,11 @@ def write_producer(destination, context):
     package = arg_value("--build-arg=CARGO_PACKAGE=")
     if package != request["package"] or binary not in request["bins"]:
         raise SystemExit("fake-docker-producer-request-mismatch")
+    # Model the D4 feature independently, rather than echoing the request into
+    # a receipt which would make a missing feature self-consistent in the fake.
+    features = ["market-stream-provisioning"] if request["recipe"] == "D4" else []
+    if request["features"] != features:
+        raise SystemExit("fake-docker-producer-feature-mismatch")
     mode = targeted_mode(request["recipe"], binary)
     log(f"producer={request['recipe']}/{binary} mode={mode or 'normal'}")
     if mode == "producer-failure":
@@ -1605,7 +1631,7 @@ def write_producer(destination, context):
         "platform": "linux/amd64",
         "host_triple": "x86_64-unknown-linux-musl",
         "profile": "release",
-        "features": [],
+        "features": features,
         "compile_env": request["compile_env"],
         "cache_key": request["cache_key"],
         "input_sha256": request["input_sha256"],
@@ -1881,9 +1907,12 @@ if args[0:2] == ["image", "save"]:
 if args[0] == "inspect":
     # The gate accepts a tightly bounded container-health projection only.
     name = args[-1]
-    if name in ("lagrange-station-research-worker-1", "lagrange-station-owner-equity-v2-runner-1"):
+    if name in ("lagrange-station-research-worker-1", "lagrange-station-owner-equity-v2-runner-1",
+                "lagrange-station-owner-beta-runner-1"):
         if name == "lagrange-station-research-worker-1":
             ident, image, exit_code, restarts = "1" * 64, "sha256:" + "2" * 64, "2", "7"
+        elif name == "lagrange-station-owner-beta-runner-1":
+            ident, image, exit_code, restarts = "7" * 64, "sha256:" + "8" * 64, "0", "0"
         else:
             ident, image, exit_code, restarts = "3" * 64, "sha256:" + "4" * 64, "0", "0"
         running, restarting, oom, health = "false", "false", "false", "unhealthy"
@@ -2098,6 +2127,12 @@ PY
 expect_runtime_mode_reject db-role-bootstrap db-role-bootstrap \
   usr/local/bin/lagrange-bootstrap-roles
 expect_runtime_mode_reject db-migrate db-migrate usr/local/bin/lagrange-migrate
+expect_runtime_mode_reject daily-control-bootstrap db-role-bootstrap \
+  usr/local/bin/lagrange-daily-control
+echo 'PRODUCTION_DAILY_CONTROL_BOOTSTRAP_MODE_REJECTION: PASS'
+expect_runtime_mode_reject daily-control-migrate db-migrate \
+  usr/local/bin/lagrange-daily-control
+echo 'PRODUCTION_DAILY_CONTROL_MIGRATE_MODE_REJECTION: PASS'
 expect_runtime_mode_reject paper-wrapper paper-scheduler usr/local/bin/paper-runner
 [ "$before_env" = "$(sha256sum "$env_file")" ]
 : >"$docker_log"
@@ -2223,8 +2258,10 @@ verification=pathlib.Path(sys.argv[3])
 transforms={
     ("db-role-bootstrap","database","deploy/db/migrate.sh","usr/local/bin/lagrange-migrate"),
     ("db-role-bootstrap","database","deploy/db/bootstrap-roles.sh","usr/local/bin/lagrange-bootstrap-roles"),
+    ("db-role-bootstrap","database","deploy/db/daily-control.sh","usr/local/bin/lagrange-daily-control"),
     ("db-migrate","database","deploy/db/migrate.sh","usr/local/bin/lagrange-migrate"),
     ("db-migrate","database","deploy/db/bootstrap-roles.sh","usr/local/bin/lagrange-bootstrap-roles"),
+    ("db-migrate","database","deploy/db/daily-control.sh","usr/local/bin/lagrange-daily-control"),
     ("paper-scheduler","paper","deploy/runtime/paper-runner-entrypoint","usr/local/bin/paper-runner"),
 }
 
@@ -2278,6 +2315,7 @@ def source_mode(group,source,path):
 
 assert source_mode("database","deploy/db/migrate.sh","deploy/db/migrate.sh")=="0775"
 assert source_mode("database","deploy/db/bootstrap-roles.sh","deploy/db/bootstrap-roles.sh")=="0775"
+assert source_mode("database","deploy/db/daily-control.sh","deploy/db/daily-control.sh")=="0775"
 assert source_mode("paper","deploy/runtime/paper-runner-entrypoint","deploy/runtime/paper-runner-entrypoint")=="0775"
 assert source_mode("database","migrations","migrations/0001_identity.down.sql")=="0664"
 assert source_mode("backtest","nt","nt/backtest-worker/runtime/backtest-worker-entrypoint")=="0775"
@@ -2290,6 +2328,59 @@ assert paper_selected["usr/local/bin/paper-runner-bin"]["executable"] is True
 assert paper_selected["usr/local/bin/paper-runner-bin"]["elf"] is True
 assert paper_expected["files"]["usr/local/bin/paper-runner-bin"]["mode"]=="0755"
 assert paper_result["files"]["usr/local/bin/paper-runner-bin"]["mode"]=="0755"
+print("PRODUCTION_DAILY_CONTROL_PAYLOAD_BYTES_AND_MODE: PASS")
+PY
+
+# Verify both D4 producer receipts through the real validator. Rehash COMPLETE
+# after each isolated mutation so rejection proves feature binding, not a stale
+# digest. The accepted producer and bundle bytes remain untouched.
+python3 - "$out_dir/.lagrange-build-state/$commit" "$layout_helper" \
+  "$repo_dir" "$out_dir/d4-feature-rejections" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+state, helper, source, cases = map(Path, sys.argv[1:])
+request = state / "bundles/D4/.release-build/request.json"
+expected = ["market-stream-provisioning"]
+assert json.loads(request.read_text())["features"] == expected
+cases.mkdir(mode=0o700)
+environment = dict(os.environ, RELEASE_BUILD_LAYOUT_SOURCE_ROOT=str(source))
+
+def verify(directory, binary):
+    return subprocess.run(
+        ["bash", "-c", '. "$1"; rbl_verify_producer "$2" D4 "$3" "$4"',
+         "fixture", str(helper), str(directory), binary, str(request)],
+        env=environment, capture_output=True, check=False,
+    )
+
+for binary in ("owner-equity-v2-runner", "kis-market-stream-state"):
+    original = state / "producers/D4" / binary
+    original_artifact = (original / "artifact.json").read_bytes()
+    original_complete = (original / "COMPLETE").read_bytes()
+    assert json.loads(original_artifact)["features"] == expected
+    result = verify(original, binary)
+    assert result.returncode == 0, "d4-feature-positive-verification-failed"
+    print(f"PRODUCTION_IMAGE_D4_FEATURE_RECEIPT: PASS bin={binary}")
+    for mutation, features in (("missing", []), ("unexpected", expected + ["fixture-unexpected"])):
+        changed = cases / f"{binary}-{mutation}"
+        shutil.copytree(original, changed)
+        artifact = json.loads(original_artifact)
+        artifact["features"] = features
+        raw = (json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        (changed / "artifact.json").write_bytes(raw)
+        (changed / "COMPLETE").write_bytes(hashlib.sha256(raw).hexdigest().encode() + b"\n")
+        result = verify(changed, binary)
+        assert result.returncode != 0, "d4-feature-mutation-accepted"
+        assert result.stderr.strip() == b"feature-producer-artifact-mismatch", "d4-feature-rejection-cause-mismatch"
+        assert not result.stdout, "d4-feature-rejection-output-unexpected"
+        print(f"PRODUCTION_IMAGE_D4_FEATURE_REJECTION: PASS bin={binary} mutation={mutation}")
+    assert (original / "artifact.json").read_bytes() == original_artifact
+    assert (original / "COMPLETE").read_bytes() == original_complete
 PY
 
 # The narrow mode table is valid only while the two recipe instructions stay
@@ -2333,8 +2424,12 @@ PY
   [ -z "$(git -C "$repo_dir" status --porcelain=v1 --untracked-files=all)" ]
 }
 expect_mode_contract_drift database "$repo_dir/deploy/db/Dockerfile" db-role-bootstrap \
-  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles' \
-  'RUN chmod 0750 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles'
+  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control' \
+  'RUN chmod 0750 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control'
+expect_mode_contract_drift daily-control-omitted "$repo_dir/deploy/db/Dockerfile" db-role-bootstrap \
+  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control' \
+  'RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles'
+echo 'PRODUCTION_DAILY_CONTROL_RECIPE_OMISSION_REJECTION: PASS'
 expect_mode_contract_drift paper "$repo_dir/deploy/runtime/Dockerfile.paper-runner" paper-scheduler \
   'RUN chmod 0755 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin' \
   'RUN chmod 0750 /usr/local/bin/paper-runner /usr/local/bin/paper-runner-bin'

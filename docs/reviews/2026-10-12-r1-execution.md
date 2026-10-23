@@ -1,10 +1,13 @@
 # R1 실행·수용 기록
 
-현재 상태: **C3 CI·기능 smoke 수용, R1-01~08 완료. R1-09 실제 이미지·manifest는 root 인증·빌드 health 전제로 BLOCKED.** [최종 인수](2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance), [외부 차단 인계](2026-10-12-r1-release-readiness.md). 아래 과거 실행 기록의 상태는 그 관측 시점의 상태다.
+현재 상태: **R1-01~09와 전체 R1 DONE — 2026-10-13, C3 `862fa95`. CI·기능 smoke, 실제 12개 이미지·공식 V2 manifest와 기존 Owner V2의 정상 복귀·정산을 수용했다. R2는 TODO다.** [최종 인수](2026-10-13-r1-c3-images.md). 아래 과거 실행 기록의 상태는 그 관측 시점의 상태다.
 
 2026-10-13 Owner 요청으로 `1fe09ef`까지 main에 fast-forward 통합한 뒤 진행 문서를 갱신했다.
 검증 대상은 C3 `862fa95`이며 통합·문서 커밋이 배포 완료를 뜻하지 않는다.
 [최신 통합 기록](#main-통합과-진행-문서-갱신--2026-10-13)을 참고한다.
+그 뒤 `b0a2579`에서 재개한 작업의 현재 root·health·C3 입력 검증은
+[R1 재개 기록](2026-10-13-r1-resumption.md)에 있다. 기존 main CI 8개 job·별도 functional smoke의
+최종 성공을 회수했으며 C3 이미지 후보는 변경하지 않았다.
 
 - 실행 요청: 2026-10-12 KST, Owner의 `$paseo-delegate 작업 진행해`.
 - 입력 커밋: `ac0a08364788e6c2f234cf85025a8d975f362d31`.
@@ -852,3 +855,60 @@ Paseo `e34176ea-bf17-4935-b6ca-4838d48cf47e`(Luna/medium)의 읽기 전용 문�
 
 R1-01~08 DONE, R1-09와 전체 R1 BLOCKED, R2 TODO를 유지한다.
 main 통합은 실제 C3 이미지·manifest 생성, 운영 배포나 provider 작업을 수행하지 않는다.
+
+## R1 재개 — 2026-10-13 excited-dolphin
+
+Owner의 `$paseo-delegate` 요청으로 `/data/worktrees/3puw275b/excited-dolphin`에서
+main `b0a2579`와 인계 일치를 확인하고 기존 실행 회수 및 R1-09 준비를 이어갔다.
+코디네이터는 `ef6cdbb0-8409-4dba-86ca-c07eadccf377`, workspace는
+`wks_10fae7d550ab1704`다. 현재 profile은 코디네이터용 Astra 하나여서
+provider/model discovery 후 고정된 실행·수집 작업에 Luna/medium을 사용했다.
+두 worker 모두 같은 workspace·parent label·실제 model/effort를 확인했다.
+launch mode를 따로 지정하거나 변경하지 않았으며 기존 세션의 full-access mode를 상속했다.
+권한 대기 우회를 위한 mode 변경은 없었다.
+
+| Agent | 범위 | 상태·회수 |
+| --- | --- | --- |
+| `a4ec33d1-32e8-4148-9b1d-3eae239ce045` — Luna/medium | main CI `38336666454`·smoke `38336666468` 읽기 전용 회수 | 첫 in-progress 보고 후 같은 run의 최종 성공·job/step·checkout·기능 로그 회수. 실제 idle/activeTurn 없음/pending0 확인, 코디네이터 원본 로그 대조 후 수용 |
+| `bf6b8f6d-7139-4b2c-8bd8-86a30e2bca52` — Luna/medium | exact-C3 입력·plan/preflight·인계 14개 hash 및 새 문서 수치 대조 | 준비·문서 대조 보고 모두 실제 idle/pending0에서 회수·수용. 수치·hash 불일치 없음; 검토 scope 밖의 main 문서 6개와 코디네이터 14-entry 대조는 별도 receipt로 확인 |
+
+worker는 추적 파일을 수정하지 않았다. 코디네이터가 새 host/timer 관측과
+receipt·C3 계약을 직접 대조하고 진행 문서를 갱신했다.
+[재개 기록](2026-10-13-r1-resumption.md)에 시각·값·hash·한계와 다음 운영 조치의 영향을 남겼다.
+root 인증 실패와 build health 미충족으로 `--apply`는 미실행이며 protected manifest 부재도
+미확인이다. 준비 가능한 read-only 작업을 완료한 것과 R1-09 완료는 구분한다.
+
+main CI는 02:44:34 UTC에 8개 job 모두 success, 별도 smoke는 03:16:46 UTC에 success였다.
+실제 checkout 8개(CI 7개·smoke 1개)는 모두 `b0a2579`이며 functional PASS를 직접 대조했다.
+worker 보고서의 초기 smoke receipt hash 한 곳 오기는 실제 파일 hash로 정정했고,
+최종 인수는 terminal receipt와 코디네이터의 원본 job-log API 근거를 사용한다.
+
+owned ledger는 `target/r1-resume-20261013/owned-workers.json`이다. create/follow-up마다
+완료 알림을 등록했고 2분 cadence의 bounded heartbeat를 사용했다.
+`4dc911df`·`7bff8125`는 갱신 시 삭제했고, 마지막 `a61ee3f5`도 두 worker의
+최종 보고·실제 idle·pending0 회수 후 삭제 성공을 확인했다. 남은 owned 실행·권한 대기는 없다.
+첫 준비 기록은 로컬 커밋 `b2f4549`, 최종 main 결과는 이 후속 문서 커밋에 기록한다.
+이번 재개 작업은 main 병합·push를 수행하지 않았다. C3 코드·workflow·다이어그램은 그대로다.
+
+## 2026-10-13 KST — 승인된 C3 이미지 준비와 R1 최종 완료
+
+후속 Owner sudo 적용 및 기존 Owner V2 정상 정지·최대 12시간 빌드·같은 컨테이너 복귀
+승인을 [재개 기록](2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드)에 연결했다.
+coordinator가 운영 실행·최종 인수를 맡고 다음 Paseo worker를 좁은 범위로 재사용했다.
+
+| Agent | 실제 모델·effort | 범위와 수용 |
+| --- | --- | --- |
+| `9640452a-386d-40b6-8165-c2c923844963` | Codex `gpt-6.1-sol`, high | 정지·복귀 소스/읽기 전용 work-state 검토, 독립 recovery의 deadline·witness 결함과 최종 runtime checker의 구체적인 발견사항을 보완한 bytes 리뷰 수용 |
+| `fd183e8a-311a-421d-aba5-85ef2872cfb3` | Codex `gpt-6-luna`, max | 고정 명세의 격리 제어 테스트(최종 24개·16개 별도 실행)와 실제 B1 및 최종 12개 이미지·manifest 읽기 전용 근거 수집. 코디네이터가 결과·원본 hash·실제 상태를 대조 |
+
+두 worker의 보고는 실제 idle·pending 0에서 회수했다. native delegation은 사용하지 않았다.
+root 설치 제어는 reviewed hash를 대조했고 독립 recovery를 먼저 활성화한 후 공식 build를 시작했다.
+15:24:01 KST Owner V2 exit0·작업 정산, 16:10:57 공식 12개 이미지·V2 manifest PASS,
+16:11:03 동일 Owner V2 healthy 복귀 및 wait exit0, 16:11:08 독립 recovery 완료를 확인했다.
+49개 gate가 모두 PASS/OOM 0이었다. 16:11:55 runtime 및 READ ONLY aggregate를 별도로
+실행해 원래 운영 identity/current link·나머지 서비스 상태와 작업·stream 미정산 0을 확인했다.
+
+정확한 local image ID·manifest 및 saved archive hash·시각·검증 한계는
+[최종 이미지 인수](2026-10-13-r1-c3-images.md)에 보존한다. source checkout은 계속 C3 detached/clean이다.
+WP-7/R1-09와 전체 R1을 완료하며 R2·C3 운영 설치·migration·새 provider 범위·개발 속도 개선은
+착수하지 않았다. 이 결과는 후속 문서 커밋으로 남기고 테스트·이미지 revision을 바꾸지 않는다.

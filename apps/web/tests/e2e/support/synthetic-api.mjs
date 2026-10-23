@@ -4,9 +4,11 @@ import { candidateResponse } from "./candidate-fixture.mjs";
 import { liveResponse } from "./live-fixture.mjs";
 import { paperResponse, paperStrategyConfigs } from "./paper-fixture.mjs";
 import {
+  additionalDailyConfigs,
   ownerBetaRecommendationResponse,
   recommendationConfig,
   recommendationResponse,
+  resetOwnerBetaDailyFixture,
 } from "./recommendation-fixture.mjs";
 import { resetStockBetaFixture, stockBetaResponse } from "./stock-beta-fixture.mjs";
 import {
@@ -146,7 +148,7 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
-  const body = request.method === "POST" ? await requestBody(request) : {};
+  const body = ["POST", "PATCH"].includes(request.method ?? "") ? await requestBody(request) : {};
   if (request.method === "POST" && url.pathname === "/__test/scenario") {
     // Reset to defaults, THEN apply. Merging into the previous scenario let
     // state outlive the test that set it: a key no later spec mentions kept
@@ -160,6 +162,7 @@ const server = createServer(async (request, response) => {
     // Every call site is unaffected: each states the keys it varies and wants
     // documented defaults for the rest, which is now what it gets.
     scenario = { ...defaultScenario, ...body };
+    resetOwnerBetaDailyFixture(scenario);
     resetStockBetaFixture(scenario);
     resetStockBetaIntradayFixture();
     json(response, 200, { scenario });
@@ -185,7 +188,11 @@ const server = createServer(async (request, response) => {
     // observe the same list regardless of fixture dispatch order.
     json(response, 200, {
       has_more: false,
-      items: [recommendationConfig(), ...paperStrategyConfigs(scenario)],
+      items: [
+        recommendationConfig(),
+        ...additionalDailyConfigs(scenario),
+        ...paperStrategyConfigs(scenario),
+      ],
       next_cursor: null,
     });
     return;
@@ -203,6 +210,7 @@ const server = createServer(async (request, response) => {
   }
   const ownerBetaRecommendation = ownerBetaRecommendationResponse({
     body,
+    query: url.search,
     headers: request.headers,
     method: request.method ?? "GET",
     pathname: url.pathname,

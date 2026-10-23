@@ -44,6 +44,7 @@ function MembershipRow({
   const confirmRef = useRef<HTMLButtonElement>(null);
   const confirming = viewModel.disableId === membership.id;
   const pending = viewModel.mutationPending && viewModel.pendingMembershipId === membership.id;
+  const disabled = !viewModel.interactionReady || pending;
   const canRetry =
     membership.lifecycle === "INSUFFICIENT_HISTORY" ||
     (membership.lifecycle === "FAILED" && membership.failure?.retryable === true);
@@ -62,6 +63,9 @@ function MembershipRow({
         <small>
           {t.generationLabel} {membership.generation}
         </small>
+        <small>
+          {t.admittedDataDateLabel}: {membership.coverage.last_session ?? t.unknownDataDate}
+        </small>
       </div>
       <StatusPill
         label={`${t.lifecycleLabel}: ${lifecycleLabel(membership.lifecycle, t)}`}
@@ -77,7 +81,7 @@ function MembershipRow({
       <div className={styles["membershipActions"]}>
         {canRetry ? (
           <button
-            disabled={pending}
+            disabled={disabled}
             onClick={() => void viewModel.onRetry(membership.id)}
             type="button"
           >
@@ -91,7 +95,7 @@ function MembershipRow({
         ) : null}
         {membership.lifecycle === "DISABLED" ? null : (
           <button
-            disabled={pending}
+            disabled={disabled}
             onClick={() => viewModel.onRequestDisable(membership.id)}
             type="button"
           >
@@ -99,18 +103,31 @@ function MembershipRow({
           </button>
         )}
       </div>
+      {membership.refresh_failure === undefined ? null : (
+        <div className={styles["refreshFailure"]} role="status">
+          <strong>{t.refreshFailed}</strong>{" "}
+          <span>
+            {t.refreshRequestedThroughLabel}: {membership.refresh_failure.requested_through}.{" "}
+            {membership.refresh_failure.code === "INCREMENTAL_OVERLAP_CHANGED"
+              ? `${t.refreshOverlapChanged} `
+              : ""}
+            {t.refreshPreservedData}
+          </span>{" "}
+          <code title={t.failureCodeLabel}>{membership.refresh_failure.code}</code>
+        </div>
+      )}
       {confirming ? (
         <fieldset className={styles["disableConfirm"]} aria-label={t.disablePrompt}>
           <legend>{t.disablePrompt}</legend>
           <button
-            disabled={pending}
+            disabled={disabled}
             onClick={() => void viewModel.onConfirmDisable()}
             ref={confirmRef}
             type="button"
           >
             {pending ? t.disabling : t.disableConfirmation}
           </button>
-          <button disabled={pending} onClick={viewModel.onCancelDisable} type="button">
+          <button disabled={disabled} onClick={viewModel.onCancelDisable} type="button">
             {t.cancel}
           </button>
         </fieldset>

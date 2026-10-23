@@ -192,6 +192,30 @@ process-local acknowledgements:
 `OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS` and
 `OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS`.
 Acknowledgements do not create a grant, day proof, admission, or provider permission.
+For a UI/API-only change that must retain the existing Owner V2 scheduler, add
+`--preserve-owner-v2` to the market-stream plan/preflight/apply commands with an explicit
+`--refresh-from-commit`. This mode verifies all three source images, refreshes Web then API,
+and verifies that the Owner container ID, start time and source image/revision remain unchanged.
+It does not recreate the Owner, enqueue a retry or collect data. This matters because the
+incremental scheduling key includes the worker code revision: deploying a new Owner revision
+can create another job for the same previously failed input window.
+
+This option requires equal parsed runtime environment keys and values between the two protected
+releases, except `LAGRANGE_CODE_COMMIT` and the separate disabled action-supplier binding. Missing,
+extra or changed runtime keys fail before mutation. It retains the normal release lock, daily
+quiescence, source-manifest, image and status-policy gates. Record the resulting mixed revisions
+explicitly: only API/Web use the new candidate. A later full refresh or rollback must review these
+actual per-service bindings; the ordinary single-source refresh must fail closed on a mixed set.
+For a subsequent UI/API-only release, keep the API/Web source in `--refresh-from-commit`
+and supply the independently accepted Owner source with
+`--preserved-owner-from-commit <owner-commit>`. This option requires `--preserve-owner-v2`.
+It loads the Owner's own trusted installed manifest, compares the target runtime env against
+that Owner release's protected env, and verifies the exact Owner image/revision before and
+after the two-service refresh. Its container ID/start must also remain unchanged.
+There is no inference from image tags, automatic Owner migration or input retry. If the
+separate Owner source is omitted, the original single-source check still applies.
+An already open browser may still need its normal page reload to use the new client bundle.
+
 Use the same `--refresh-from-commit` in the approved apply command. It selects only the
 trusted manifest at `<release-root>/releases/<commit>` for verifying the running API/Web/runner.
 The executing current release still supplies every replacement image. Missing, symlinked,
@@ -225,3 +249,42 @@ commit uncertainty, day/rights/generation changes, buffer and SSE bounds, write 
 latency and coalesced updates. A healthy service or periodic status event is not a new quote.
 Live acceptance additionally requires the G5 one-stock pilot, then all 30 actual ACKs and
 fresh authenticated display updates. Ordinary EOD acceptance is separate and remains required.
+
+
+## Reviewed retirement of a dead owned epoch
+
+`kis-market-stream-state retire-reviewed-epoch` is an operator incident action,
+separate from initialization, `--check`, runtime retry and broker clean-close.
+It is permitted only for an exact locally owned runner already stopped/drained
+with its original terminal outcome retained. Before invoking it, the root host
+review must bind the serving revision/image/container and start identity, old
+transport's terminal/absence evidence, the unchanged slot/generation and both
+anchor identities, exact current state SHA256, and absence of pending commands,
+handshake attempts and approval issuance ambiguity. Persist and hash that review.
+A healthy container alone does not satisfy these requirements.
+
+Use the separately verified exact operator image with no network, read-only
+root filesystem, no additional AppKey/AppSecret/REST-token mounts, and only
+the verified state leaf plus read-only anchor leaf mounted beneath a private
+trusted runtime parent. The existing state contains protected approval material;
+it must never be emitted or copied into diagnostics. Root is required; preserve fixed state and
+anchor owner/mode bindings. Pass `--credential-slot-id`,
+`--credential-generation`, `--expected-state-sha256` and
+`--stopped-runner-review-sha256`; the generation must match the normal
+`KIS_READ_CREDENTIAL_GENERATION` setting. Do not use an unverified image, a
+synthetic review, a different domain, or arbitrary JSON edits.
+
+The tool acquires both existing locks and rejects any state/hash/schema/domain
+change or ambiguous operation. Before changing only `current_epoch` to null,
+it fsyncs an exclusive `retired-epoch-<original-epoch>.json` with old/new state
+hashes and the host review hash. It never copies approval material into that
+receipt or resets approval state, counters, history, backoff or ordinals.
+Any failure is uncertain: retain the intent/temporary file and original outcome;
+no replay, deletion or replacement of the intent. The tool does not assert that
+the broker acknowledged a clean close or that another host is absent.
+
+After independent exact before/after field comparison and receipt verification,
+restore only the exact owned runner through the reviewed service procedure.
+Normal authenticated demand, existing day/grant checks and persistent reconnect
+budgets still control any connection. Record new receipt independently; neither
+retirement nor a healthy restart constitutes live acceptance.

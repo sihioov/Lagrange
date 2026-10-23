@@ -25,7 +25,8 @@ COPY configs/strategies/baseline-v1.json /opt/lagrange/configs/strategies/baseli
 COPY deploy/db/sync-baseline-strategy-catalog.sql /opt/lagrange/db/sync-baseline-strategy-catalog.sql
 COPY deploy/db/migrate.sh /usr/local/bin/lagrange-migrate
 COPY deploy/db/bootstrap-roles.sh /usr/local/bin/lagrange-bootstrap-roles
-RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles
+COPY deploy/db/daily-control.sh /usr/local/bin/lagrange-daily-control
+RUN chmod 0755 /usr/local/bin/lagrange-migrate /usr/local/bin/lagrange-bootstrap-roles /usr/local/bin/lagrange-daily-control
 
 USER 999:999
 ENTRYPOINT ["/usr/local/bin/lagrange-migrate"]

@@ -810,7 +810,7 @@ fn normalize_bars(
     )
 }
 
-fn canonical_bar(
+pub(crate) fn canonical_bar(
     file_name: &str,
     row: &Map<String, Value>,
     instrument: &str,
@@ -1120,27 +1120,7 @@ fn normalize_calendar_with_contract(
                     "output row must be an object",
                 )
             })?;
-            let date_text =
-                required_string(ResponseKind::Calendar, &file.file_name, row, "bass_dt")?;
-            let date = parse_kis_date(
-                ResponseKind::Calendar,
-                &file.file_name,
-                "bass_dt",
-                date_text,
-            )?;
-            let open = required_string(ResponseKind::Calendar, &file.file_name, row, "opnd_yn")?;
-            let is_open = match open {
-                "Y" => true,
-                "N" => false,
-                _ => {
-                    return Err(NormalizeError::InvalidField {
-                        kind: ResponseKind::Calendar,
-                        file_name: file.file_name.clone(),
-                        field: "opnd_yn".to_owned(),
-                        value: open.to_owned(),
-                    });
-                }
-            };
+            let (date, is_open) = validated_kis_calendar_row(row, &file.file_name)?;
             // KIS can return a window around BASS_DT.  The canonical EOD
             // batch is target-date scoped; surrounding rows are validated but
             // are not copied into this batch.
@@ -1221,6 +1201,31 @@ fn normalize_calendar_with_contract(
             endpoint_prefix,
         },
     )
+}
+
+/// Pure field mapper shared with the daily verifier. Filtering and duplicate
+/// policy remain with each caller; this preserves the generic normalizer's
+/// target-date behavior and exact field errors.
+pub(crate) fn validated_kis_calendar_row(
+    row: &Map<String, Value>,
+    file_name: &str,
+) -> Result<(TradingDate, bool), NormalizeError> {
+    let date_text = required_string(ResponseKind::Calendar, file_name, row, "bass_dt")?;
+    let date = parse_kis_date(ResponseKind::Calendar, file_name, "bass_dt", date_text)?;
+    let open = required_string(ResponseKind::Calendar, file_name, row, "opnd_yn")?;
+    let is_open = match open {
+        "Y" => true,
+        "N" => false,
+        _ => {
+            return Err(NormalizeError::InvalidField {
+                kind: ResponseKind::Calendar,
+                file_name: file_name.to_owned(),
+                field: "opnd_yn".to_owned(),
+                value: open.to_owned(),
+            });
+        }
+    };
+    Ok((date, is_open))
 }
 
 fn normalize_actions(
@@ -1920,7 +1925,7 @@ fn canonical_instrument(symbol: &str) -> String {
     format!("{symbol}.KRX")
 }
 
-fn parse_kis_date(
+pub(crate) fn parse_kis_date(
     kind: ResponseKind,
     file_name: &str,
     field: &str,

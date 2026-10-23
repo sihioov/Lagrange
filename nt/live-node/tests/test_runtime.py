@@ -7,6 +7,7 @@ simulator into a claim that real trading is available.
 from __future__ import annotations
 
 import json
+import math
 import os
 import stat
 import subprocess
@@ -14,6 +15,8 @@ import sys
 import threading
 import time
 from pathlib import Path
+from time import monotonic as _monotonic
+from time import sleep as _sleep
 
 import pytest
 
@@ -41,6 +44,52 @@ def wait_for_cycle(path: Path) -> dict[str, object]:
             return payload
         time.sleep(0.005)
     pytest.fail(f"runtime did not publish a reconciliation cycle: {path}")
+
+
+def wait_for_subprocess_cycle(
+    process: subprocess.Popen[str], path: Path
+) -> dict[str, object]:
+    deadline = _monotonic() + 10.0
+    last_cycle: int | float | None = None
+    while True:
+        returncode = process.poll()
+        if returncode is not None:
+            pytest.fail(
+                "runtime child exited before readiness "
+                f"(phase=readiness, returncode={returncode})"
+            )
+
+        if _monotonic() >= deadline:
+            last_cycle_text = "none" if last_cycle is None else str(last_cycle)
+            pytest.fail(
+                "runtime readiness deadline exceeded "
+                "(phase=readiness, deadline_seconds=10.0, "
+                f"returncode={returncode}, last_cycle={last_cycle_text})"
+            )
+
+        payload = read_status(path)
+        observed_at = _monotonic()
+        if isinstance(payload, dict):
+            cycle = payload.get("cycle")
+            if (
+                isinstance(cycle, (int, float))
+                and not isinstance(cycle, bool)
+                and (not isinstance(cycle, float) or math.isfinite(cycle))
+            ):
+                last_cycle = cycle
+                if cycle >= 1 and observed_at < deadline:
+                    returncode = process.poll()
+                    if returncode is not None:
+                        pytest.fail(
+                            "runtime child exited before readiness "
+                            f"(phase=readiness, returncode={returncode})"
+                        )
+                    if _monotonic() < deadline:
+                        return payload
+
+        remaining = deadline - _monotonic()
+        if remaining > 0:
+            _sleep(min(0.05, remaining))
 
 
 def test_dry_run_reconciles_but_never_claims_trade_readiness(tmp_path):
@@ -226,6 +275,107 @@ def test_liveness_does_not_require_trade_readiness(tmp_path):
         assert check_liveness(lock, path, 30.0, now=100.0)[0] is True
 
 
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class _FakeChild:
+    def __init__(self, returncodes: tuple[int | None, ...] = ()):
+        self._returncodes = iter(returncodes)
+        self.poll_calls = 0
+
+    def poll(self) -> int | None:
+        self.poll_calls += 1
+        return next(self._returncodes, None)
+
+
+def test_subprocess_readiness_accepts_cycle_after_former_one_second_wait(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(sys.modules[__name__], "_monotonic", clock.monotonic)
+    monkeypatch.setattr(sys.modules[__name__], "_sleep", clock.sleep)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "read_status",
+        lambda _path: None if clock.now < 1.25 else {"cycle": 1},
+    )
+
+    child = _FakeChild()
+    result = wait_for_subprocess_cycle(child, Path("unused-status.json"))
+
+    assert result == {"cycle": 1}
+    assert clock.now == pytest.approx(1.25)
+    assert clock.now > 1.0
+    assert child.poll_calls > 1
+    assert all(0 < interval <= 0.05 for interval in clock.sleeps)
+
+
+def test_subprocess_readiness_reports_early_child_exit(monkeypatch):
+    clock = _FakeClock()
+    read_calls = 0
+
+    def fake_read_status(_path):
+        nonlocal read_calls
+        read_calls += 1
+        return None
+
+    monkeypatch.setattr(sys.modules[__name__], "_monotonic", clock.monotonic)
+    monkeypatch.setattr(sys.modules[__name__], "_sleep", clock.sleep)
+    monkeypatch.setattr(sys.modules[__name__], "read_status", fake_read_status)
+    child = _FakeChild((None, 23))
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        wait_for_subprocess_cycle(child, Path("unused-status.json"))
+
+    message = str(failure.value)
+    assert "phase=readiness" in message
+    assert "returncode=23" in message
+    assert child.poll_calls == 2
+    assert read_calls == 1
+    assert clock.now == pytest.approx(0.05)
+
+
+def test_subprocess_readiness_fails_at_bounded_deadline_without_valid_cycle(
+    monkeypatch,
+):
+    clock = _FakeClock()
+    statuses = (None, {}, {"cycle": "untrusted"}, {"cycle": 0})
+    read_calls = 0
+
+    def fake_read_status(_path):
+        nonlocal read_calls
+        payload = statuses[read_calls % len(statuses)]
+        read_calls += 1
+        return payload
+
+    monkeypatch.setattr(sys.modules[__name__], "_monotonic", clock.monotonic)
+    monkeypatch.setattr(sys.modules[__name__], "_sleep", clock.sleep)
+    monkeypatch.setattr(sys.modules[__name__], "read_status", fake_read_status)
+    child = _FakeChild()
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        wait_for_subprocess_cycle(child, Path("unused-status.json"))
+
+    message = str(failure.value)
+    assert "phase=readiness" in message
+    assert "deadline_seconds=10.0" in message
+    assert "returncode=None" in message
+    assert "last_cycle=0" in message
+    assert "untrusted" not in message
+    assert clock.now == pytest.approx(10.0)
+    assert sum(clock.sleeps) == pytest.approx(10.0)
+    assert all(0 < interval <= 0.05 for interval in clock.sleeps)
+    assert child.poll_calls == read_calls + 1
+
+
 def test_direct_live_execution_request_is_fail_closed(tmp_path):
     with pytest.raises(ValueError, match="reviewed KIS runtime"):
         RuntimeConfig("acct-runtime", tmp_path, execution_enabled=True)
@@ -261,7 +411,7 @@ def test_sigterm_stops_runtime_and_releases_account_lock(tmp_path):
         text=True,
     )
     try:
-        wait_for_cycle(status)
+        wait_for_subprocess_cycle(process, status)
         process.terminate()
         assert process.wait(timeout=2) == 0
     finally:

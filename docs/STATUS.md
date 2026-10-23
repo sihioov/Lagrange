@@ -4,21 +4,58 @@
 > 이 문서는 최신 진행 요약과 날짜별 과거 구현·운영 기록을 함께 제공한다. 과거 기록의
 > “현재”, “최신”, “남은 작업”은 각 기록 당시의 표현이며 이후 우선순위는 로드맵을 먼저 확인한다.
 
-## 최신 진행 요약 — 2026-10-13 (Asia/Seoul)
+## 최신 진행 요약 — 2026-10-19 (Asia/Seoul)
+
+현재: **Wave114 도구790f1ea 전체 CI 인수; G4 운영 정보·실행안 준비.** Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+현재 추적: 후속 추적e3e092a9를05:48:08UTC 별도 active ID로 확인하고 인계0613d80d/registry 저장 후4786839b 삭제를 확인했다.17:00UTC 전/47번째 tick 전 갱신,17:48:08UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.
+
+과거 Wave79 부분 회수 당시: 파일/컨트롤러64개·format·strictClippy·Python은 통과했고 실제 PG 전송과 격리 복원의 class setup이 실패했다. SQLSTATE가 버려져 원인은 UNKNOWN이며 다른 job 완료 전 소스는 변경하지 않는다.
+
+Owner의 “R2 끝날때까지 랄프로 계속 진행해” 지시에 따른 R2 전체 목표를 유지한다.
+2026-10-17 22:40KST 재개 시 native 목표 상태는 blocked였으며 도구에 resume 기능이 없어
+현재 대화의 같은 에이전트 heartbeat가 전체 R2 후속을15분 간격으로 추적한다. 두 번째 승인 뒤 bab15aae로 인계하고 a84ee487을 삭제했다. 빌드 실패·복귀 완료 후 새 후보 검증 heartbeat e9dd6173의 인계를 저장하고 bab15aae를 삭제했다. Wave93 전체 회수 후 Wave94 검증 추적 c4f4db00의 인계를 저장하고 e9dd6173을 삭제했다. Wave94 전체 hosted 검증 완료 후 Wave95 이미지 결정 추적 cad91dfe를03:08UTC에 확인·인계 저장하고 c4f4db00을 삭제했다. Owner의 새 승인 후 실제 빌드·복귀 추적276c42d8을03:22UTC에 확인·인계 저장하고 cad91dfe를 삭제했다. 이미지 전체 회수 후04:28UTC에 후속c1c3697f를 확인·인계 저장하고276c42d8 삭제를 확인했다. 승인된 통합검증1회 실패와 후속 후보899f259 CI 시작 뒤04:49UTC에8cd8622c 인계를 저장하고c1c3697f 삭제를 확인했다. Wave97 전체 hosted 회수 뒤05:48:59UTC에 Wave98 실행안 결정 추적fc826f21을 확인·인계 저장하고8cd8622c 삭제를 확인했다. 새 Owner 승인 후07:11:51UTC 실행 추적5f3cfda2를 확인·인계 저장하고fc826f21 삭제를 확인했다. 이미지 인수·통합 사전점검 차단 뒤07:48:45UTC 후속bf7d2b09의 인계를 저장하고5f3cfda2 삭제를 확인했다. Wave99 전체 hosted 회수와 Wave100 실행안 준비 뒤08:56:43UTC 후속81b4d3b6을 확인·인계 저장하고bf7d2b09 삭제를 확인했다. 새 승인·실제 이미지 시작 뒤09:32:51UTC 후속179ec5a7 인계를 저장하고81b4d3b6 삭제를 확인했다. 이미지 인수·통합 실패 회수 뒤09:50:03UTC 후속04318894 인계를 저장하고179ec5a7 삭제를 확인했다. 후보512625a CI·smoke 시작 후10:01:08UTC 후속44965a67 인계를 저장하고04318894 삭제를 확인했다. 후속33c0cd33을11:10:07.401UTC에 확인하고 인계718e3b6b를 저장한 뒤44965a67 삭제를 확인했다.새 승인·단일 빌드 시작 뒤13:04:02UTC cad36e21 인계c086fcde를 저장하고33c0cd33 삭제를 확인했다.두 단계 종결 후13:24:06UTC f7c37450 인계1f0959ca를 저장하고cad36e21 삭제를 확인했다.정확한 새 후보 검증 시작 후13:33:10UTC6df07fcf 인계a115051c를 저장하고f7c37450 삭제를 확인했다.전체 hosted 회수·새 실행안 준비 후14:23:59UTC64149a8c 인계7c817362를 저장하고6df07fcf 삭제를 확인했다.새 승인 뒤23:08:11UTC9fb748db 인계를 저장하고64149a8c 삭제를 확인했다.두 시도 종결 뒤23:31:28UTC4fbc67c0 인계를 저장하고9fb748db 삭제를 확인했다. 새 후보 CI dispatch 뒤23:56:28UTC f208d6f4 인계를 저장하고4fbc67c0 삭제를 확인했다.전체 hosted 회수·Wave106 실행안 준비 후00:57:46UTC cb45b5b6을 확인하고 인계7fb0ad62를 저장한 뒤 f208d6f4 삭제를 확인했다.이후 승인된 b6 실행·복귀·실패 회수를 마치고 e639169 검증 추적9408eb38로 인계했다. 현재 추적68a23346을02:32:49.330UTC에 확인하고 인계cfb61e58을 저장했다.13:00UTC 전/47번째 tick 전 갱신,14:32:49UTC 만료. 직전 요약의 결과 경로를 명령원장과 일치시켰다. 같은 이름의 heartbeat 생성이 동일 ID를 반환했는데 이를 이전 ID로 잘못 삭제해 약22초 추적 공백이 발생했고, 다른 이름의 새 ID로 즉시 복구했다. 호스트 동작은 없었으며 앞으로 후속 ID가 다른지 확인한 뒤에만 이전 ID를 삭제한다. native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 중단 보호나 새 worker가 아니다. 같은 에이전트의 제한된 후속 추적이며 native Ralph는 blocked이고 daemon 중단을 보호하지 않는다. 실제 ID·만료·갱신 기한은 private owned-workers.json에 유지한다. native 목표가 active라고 주장하지 않는다. 소규모 구현 완료는 전체 완료가 아니며, 기존 실행·권한 경계와 실제 Owner
+확인·연속 3거래일 관찰 조건은 유지한다. R3로의 우선순위 전환은 하지 않는다.
+
+S4 가격·기준정보·기업행사 복원은 후보302f29a의 CI38725299504 attempt1 전체 성공과
+[범위별 인수](reviews/2026-10-15-r2-daily-provider-reconstruction-acceptance.md)를 완료했다.
+새32개·기존 회귀·strict Clippy·PG를 개별 증거와 대조했고 이전48beb25 실패도 보존한다.
+S5a/S5b는 `5f5f4e8` / CI38732527740으로 범위별 인수했다. S5c의 이전 실패를 보존하고,
+Wave49 `edeaa5d` / CI38750900179에서 fixture·Paper 시계 보정과 일일 parent/frontier/supply를
+검증했다. Wave49는 테스트 fixture 가시성 E0603으로 Rust 테스트 미실행·실패,
+나머지 결과는 전체 회수했다. Wave50 `1c82592` / CI38755069474 attempt1에서 해당 보정과
+I3 새 계산19/20·S5def36/37 통과, 기존 서비스 상태2개를 포함한 총4개 실패를 전체 회수했다.
+컴파일·strict Clippy·PG와 실제DB 발행8개는 통과했다. [실패 근거](reviews/2026-10-16-r2-daily-factor-target-ci.md)를 보존하고
+Wave51 보정 후보 `bd33596`의 CI38760423300 attempt1 전체 성공을 회수해 [I3/S5cdef 범위별 인수](reviews/2026-10-16-r2-test-correction-ci-acceptance.md)를 완료했다. 423pins/302blobs/7checkout·계산21·artifact/continuation63·서비스 상태38·기존 회귀·PG13단계/발행8개를 대조했다. I4a 후보 `d0536f6` / CI38764564342 attempt1은 테스트 logging 참조 E0433 세 곳으로 실패했다. [전체 회수](reviews/2026-10-16-r2-daily-cycle-ci.md) 후 Wave53 `a72aaa4`의 Rust·Clippy·실제DB 검증이 통과했고 일일 실패/복구12개·스케줄14개를 대조했다. 웹 E2E 실패로 후보 전체는 미인수이며 원인은 UNKNOWN이다. [전체 회수](reviews/2026-10-16-r2-daily-settlement-ci.md)를 보존하고 Wave54 `47c7dbc` / CI38771904166을 한 번 실행해 일일 성공 저장·웹 진단 보완을 검증 중이다. 전체 성공 결과를 회수해 488pins/318blobs/7checkout·새 Rust8·웹 감독34·E2E121+14·기존 Rust/PG를 대조하고 [범위별 인수](reviews/2026-10-16-r2-daily-success-ci.md)했다. Wave55 체인 로더 소스 검토 후 `3073e9e` / CI38776392579 attempt1을 한 번 실행했다. 507pins/321blobs·8jobs/logs/7checkout와 새15개 및 기존 모든 Rust/PG/Web 결과를 대조해 [범위별 인수](reviews/2026-10-16-r2-daily-replay-ci.md)했다. 다음 [Wave56 혼합 실행·DB preflight](reviews/2026-10-16-r2-daily-runner-source.md)는 새12개(실제DB10개)를 작성하고527pins로 고정했다. 후보 `9343706` / [CI38780494397](https://github.com/sihioov/Lagrange/actions/runs/38780494397) attempt1을 기존 실행0·원격 일치 확인 후 한 번 dispatch했다. 전체 실패를 [회수](reviews/2026-10-16-r2-daily-runner-ci.md)했다. 새12개·PG17개 lane 및 이전 필수 Rust는 통과했지만 strict lint와 collector DB bootstrap1개가 실패했다. 후자의 SQLSTATE는 기존 코드가 버려 원인은 UNKNOWN이다. [Wave57 두 테스트 파일 보정](reviews/2026-10-16-r2-daily-runner-lint-correction.md)을 검토하고 후보c4f35bb / CI38784769462 attempt1을 한 번 실행했다. 548pins/328blobs/7checkout·실제DB collector3개·일일 실행12개 및 이전 필수 Rust/PG/Web 전체 성공을 [범위별 인수](reviews/2026-10-16-r2-daily-runner-correction-ci.md)했다. 다음 Wave58은 기존0060을 보존하는0061 superseded 취소와14개 실제DB 회귀다. producer/admitter 연결과 운영 인수는 남아 있다.
 
 | 항목 | 확인된 상태 |
 | --- | --- |
-| main 통합 | `orange-dugong`의 R1 작업을 `1b8dca3` → `1fe09ef` fast-forward로 반영. 이후 변경은 이 요약을 포함한 문서 갱신 |
-| 검증 대상 | C3 `862fa954c16d28a617271fe6f613d34226e2d558`; 코드·테스트·workflow·다이어그램은 해당 후보와 동일 |
+| main 통합 | R1 기준 `b0a2579`. 2026-10-14 재조회한 remote main은 별도 개발 속도 개선의 `1286e73`; 이번 R2는 기존 기준의 `excited-dolphin`에서 별도 검증 |
+| 검증 대상 | R1은 C3 `862fa954c16d28a617271fe6f613d34226e2d558`로 고정. R2 F1/F2는 초기 `3ee453f`와 보정본 `f8b9296` CI 성공·P2 리뷰 종료; U2 구현 전 부분 후보이며 최종 C_R2와 구분 |
 | R1-01~08 | DONE — 동일 C3의 CI 8개 job과 별도 research smoke 통과 |
-| R1-09 / 전체 R1 | BLOCKED — 실제 이미지·immutable manifest 생성 전 root 인증과 공식 빌드 health 조건 해소 필요 |
-| 다음 단계 | R1-09 배포 후보 준비를 마친 뒤 R2 일일 수집·추천·실제 Owner 사용 인수 진행. R2는 TODO |
-| 운영 반영 | 이번 main 통합으로 C3 이미지 빌드·서비스 전환·운영 migration·provider 호출을 실행하지 않음 |
+| main push 검증 | `b0a2579`의 기존 CI `38336666454` 8개 job·smoke `38336666468` functional PASS 최종 회수. 각각 11:44:34·12:16:46 KST success; C3와 별도 근거 |
+| R1-09 / 전체 R1 | DONE — 2026-10-13, C3 실제 12개 이미지·V2 manifest 대조, gate 49개 PASS/OOM 0, 기존 Owner V2 정상 복귀·작업 정산 확인 |
+| 다음 단계 | Wave113 보정 조회 결정 → G4 소스·중단/복구 실행안 → 배포·Owner·3실제거래일·C_R2. |
+| 운영 반영 | 승인된 C3 이미지 준비와 기존 Owner V2의 한시적 정지·동일 컨테이너 복귀 완료. 운영 release는 `fce9b90` 유지; C3 설치·migration·새 provider 요청 미실행 |
 
 검증 수치와 기존 skip·관측 한계는 [C3 최종 인수](reviews/2026-10-12-r1-acceptance.md#candidate-c3-hosted-acceptance),
 통합 기록은 [main 반영 기록](reviews/2026-10-12-r1-acceptance.md#main-integration--2026-10-13)에 있다.
-남은 조건과 정확한 빌드 입력·명령은 [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)를 따른다.
-아래 운영 관측은 과거 기록이며 이번 문서 갱신에서 운영 상태를 새로 조회한 결과가 아니다.
+정확한 빌드 입력·명령과 운영 적용 전 남은 조건은 [배포 준비 인계](reviews/2026-10-12-r1-release-readiness.md)를 따른다.
+실제 image ID·manifest hash·정산·복귀의 [최종 인수](reviews/2026-10-13-r1-c3-images.md)를 확보해 R1을 완료했다.
+최신 root·서비스·자원 관측, C3 재검증과 기존 main 실행의 최종 결과는
+[R1 재개 기록](reviews/2026-10-13-r1-resumption.md)에 있다.
+R2 계획 작성 후 Owner의 실행 요청으로 현재 상태와 소스 계약을 대조했다. current `fce9b90`의 daily
+timer는 비활성이며 실행 manifest 대상 중 3개가 일치하고 5개는 과거 이미지다. 원인은 아직 추정하지 않는다.
+두 국소 결함은 `3ee453f`로 feature branch에 푸시해 기존 실행 부재 확인 후 CI를 한 번 요청했다.
+독립 리뷰의 두 테스트 격리·기간 finding은 보정본 `f8b9296`의 CI와 독립 소스 리뷰로 닫았다. 10월 13일 23:51 KST READ ONLY DB 집계는
+59개 migration checksum 일치, ETF11 발행 8월 28일·Owner V2 10월 6일을 확인했다.
+날짜 artifact와 daily DB 기록의 차이는 28세션이다. 조회 도구의 앞선 문법 오류·실패를 보존하고
+집계·정확한 날짜 차이와 [복구 범위 검토](reviews/2026-10-13-r2-catch-up-readiness.md)를 수용했다. 8월 31일은 기존 EOD의 별도 발행 복구 후보다. 서비스 변경·provider 호출은 미실행이다.
+기존 KIS 개인 이용 권리는 ADR-0005로 해결돼 있다. 새 ETF 일일 입력의 독립 검증·자동 추천 계약은 2026-10-14 Owner가 채택했으며, 소스 구현과 후속 운영 검증을 진행한다.
+동일 후보 검증·운영 적용, 실제 Owner 사용·연속 3거래일 관찰은 후속 인수 조건이다.
+아래 날짜별 운영 관측은 과거 기록이며 이번 재관측과 구분한다.
+
+Wave62의 [전체 CI 회수](reviews/2026-10-16-r2-daily-runtime-connection-ci.md)로 새 실행 연결의 범위별 검증을 인수했다. 실제 운영 성공과 구분하며 I5를 이어간다.
 
 ## 날짜별 구현·운영 기록 보존
 
@@ -3105,3 +3142,1477 @@ credential read, live KIS/provider call은 아직 수행하지 않았다.
 4. **없는 값은 없는 채로.** 0 대입·이월·기본값 대체는 하류에서 구분 불가능한 거짓 신호를 만든다.
 5. **게이트 증거를 조용히 바꾸지 않는다.** 골든 재승인·게이트 입력 변경은 명시적 행위이며 커밋 메시지에 선언한다.
 6. **차단을 위조하지 않는다.** BLOCKED_EXTERNAL은 실패가 아니라 이 시스템이 설계대로 멈춰 있다는 증거다.
+
+### Wave24 review recovered; Wave25 source correction prepared — 2026-10-14
+
+Reviewer a4b5c1b9-3354-400b-be82-b8dec4f87278 reached actual idle with activeTurn null
+and pending0 at11:37:17.774UTC; full substantive final recovered11:37:27UTC within
+the original60minute bound. Report496lines SHA256
+`60970b3a03cd81899e74e2f8ad4fab6713cd1461ac8cf4f5afa4c97179ba5cf7` is preserved.
+Coordinator verified all29 pins, committed target bytes and19 baseline references,
+81 report links/line bounds, and concrete source/test anchors for R01–R16.
+
+Four P1 groups cover privacy/type/closure and integration-target compile blockers;
+twelve P2 groups cover strict-warning exposure, duplicate-field EOF parity, failure
+lock-last lifetime, lock identity policy, wrong/masked/nondeterministic assertions,
+missing operation/race coverage, stat-size mapping, preflight ordering and fixture
+modes. These are validated static findings and written-coverage gaps, not executed
+compiler/lint/test diagnostics. P1–P10 and all32 guard rows remain binding.
+S2 source acceptance is withheld. All34 existing S2 definitions remain UNEXECUTED.
+Old a888cd6 success excludes the new files and remains partial I0c evidence only.
+
+Heartbeat aeaa4fa6 was deleted only after actual idle/pending0/full final recovery.
+No running worker was redirected and no frozen source changed. The next package
+owns only source.rs and daily_price_only_snapshot.rs; mod.rs and20 readonly references,
+eight evidence artifacts and the accepted898-line contract stay frozen. Inventory
+source-wave-25-S2-correction-inputs.json:152lines,
+SHA256 `e03273e83e23948583fc8026622e7c83c5b255fb2db380cdde2f4f5391f006bf`.
+A fresh Luna/max correction context avoids resuming the old implementer's observed
+230408/258400-token context. This is no model/effort escalation. The sole configured
+Astra/high profile is labeled coordinator; repository specified-implementation routing
+selects Luna/max, whose availability was rechecked.
+
+Only source/static verification is authorized locally. Independent correction review
+precedes any new exact-candidate hosted CI; inspect existing runs first and dispatch
+once. No old run is rerun/cancelled/duplicated. Negative bootstrap/rollback,0060,
+provider/copy reconstruction/admission, diagrams before main, runtime/Owner/final C_R2
+remain open. Current Mem0 context returned MCP_ERROR; no history recovered or memory
+save is claimed, and no stale hook was retried.
+
+### Wave25 actual correction startup and monitor
+
+Fresh direct worker `3591c5d4-6111-4961-9423-c4f6ab1c6f60`,
+codex/gpt-6-luna/max, actually started `2026-10-14T11:44:10.164Z`.
+Model/effort, workspace wks_10fae7d550ab1704 and coordinator parent,
+running/activeTurn and pending0 were verified. Completion/error/permission notification
+was registered by create_agent; no permission mode override was supplied.
+Its90minute reporting deadline is `2026-10-14T13:14:10.164Z`.
+
+Only source.rs and daily_price_only_snapshot.rs are writable under the committed
+`a89aa6b4955814ab9ec3b85b3d1bdd5b006e439e` correction brief and30 input pins.
+The former implementer remains idle; no concurrent source writer exists.
+Heartbeat `57665dd0` runs every two minutes,max60,expires `2026-10-14T13:44:37.427Z`.
+It replaces deleted aeaa4fa6 after complete prior reviewer recovery. Recover exact
+INCOMPLETE scope at the reporting bound, and renew/handoff before expiry; same-daemon
+heartbeat cannot protect daemon outage. No new CI or operational action was started.
+
+### Wave25 correction recovered; Wave26 review prepared — 2026-10-14
+
+Correction worker3591c5d4 reached actual idle/activeTurn null/pending0 at12:22:07.583UTC;
+full substantive final recovered12:22:17UTC within90minutes. The memory-only callback
+was followed by recovery of the full78-line source report. Heartbeat57665dd0 was
+removed after recovery. Source-only handoff addresses16finding groups; acceptance
+remains withheld pending independent review and exact-candidate hosted verification.
+
+Coordinator matched28 unchanged reference/evidence pins,2baseline blobs,94 report
+links and the complete two-file delta. The worker source3986/c3233eb4 and test1896/754a32ec
+are preserved in its report. After idle, coordinator fixed a new moved-PathBuf use
+in the same-lock-inode test by moving a cloned hook_path; final source3987/4577d5f1,
+test1896/754a32ec,mod9/700469d6 unchanged. Scoped rustfmt/diff checks passed; no compiler,
+Clippy, parser, tests or operational action ran.45written definitions comprise44Linux
+and1nonLinux excluded from Linux expectations. The previous34-definition inventory
+and all prior CI evidence remain preserved.
+
+The exact bounded review is Wave26 WP-4/I1b-S2-F-R, Sol/high, one new report,
+60minutes from actual startup. Source/contract/D4/D5 and all pinned references freeze
+before launch. Coordinator C01 and resource/EOF/FD-observer/lint questions are explicit
+review inputs, not automatically closed findings. No new CI has been dispatched.
+Mem0 context returned MCP_ERROR; no save is claimed and no stale hook was retried.
+
+### Wave26 actual independent correction review startup
+
+Source/handoff commit `7545094404628974c1bd626c84f6c3f704555f5f` is frozen.
+Input inventory source-wave-26-S2-review-inputs.json has 186 lines, SHA256
+`9bffe79342b2a5a1b61691ff63b6a1b36a992ddb9357d763479ae21272cc83bf`,
+and 38 pins: 3 targets, 19 references, 16 evidence artifacts. The committed
+correction delta and baseline copies are included. All 45 written definitions
+remain UNEXECUTED; 44 are Linux expectations and one non-Linux case is excluded.
+
+Existing independent reviewer `a4b5c1b9-3354-400b-be82-b8dec4f87278` was reconfirmed
+actual idle/activeTurn null/pending0 before the complete standalone brief was sent.
+The new WP-4/I1b-S2-F-R turn actually started `2026-10-14T12:38:23.234Z`.
+Codex/gpt-6.1-sol/high, workspace/parent, running/activeTurn and pending0 matched;
+background/notifyOnFinish were explicitly requested. No permission mode changed.
+The 60-minute reporting deadline is `2026-10-14T13:38:23.234Z`.
+
+Only docs/reviews/2026-10-14-r2-raw-snapshot-corrections-review.md is writable.
+All R01–R16 (including R12a–h), P1–P10, T01–T32, 45 test definitions and coordinator
+C01 require concrete independent disposition. No source/compiler/test acceptance
+or new CI/push is claimed. Bounded correction may follow only after actual idle,
+pending0 and full substantive final recovery; source-review closure precedes one
+new exact-candidate hosted CI after existing-run query.
+
+Heartbeat `b6352577` owns only this reviewer and scope, every two minutes/max60,
+expiring `2026-10-14T14:39:01.434Z`. It replaces the deleted completed-correction
+monitor57665dd0. Recover exact INCOMPLETE coverage at the reporting bound and
+renew or hand off before expiry; same-daemon heartbeat cannot protect daemon outage.
+The private startup receipt and owned-worker ledger record the actual lifecycle.
+Historical successes/failures and all later operational/Owner/0060/diagram gates remain.
+
+### Wave44 single candidate launch — 2026-10-15
+
+S5a candidate `5a83e0d978444201237d404307f3e7ea8e79f037` is pushed and exactly one
+[CI38728478625 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38728478625)
+was dispatched at11:35:58UTC after remote equality and all-event exact-head query0.
+The pre-query unsupported gh flag failed before any receipt/dispatch; the corrected
+all-page read query returned0. No retry/duplicate of a dispatched workflow.
+Frozen287pins/231candidateblobs and33new written definitions await full hosted result.
+Later documentation HEAD does not change the pinned candidate. Source remains frozen;
+next protected-prefix preparation may use only new unregistered files. No new worker,
+local project execution, provider action or runtime/Owner acceptance.
+
+## Wave45 — first protected historical continuation, candidate and S5a-C01
+
+S5a5a83e0d/run38728478625 is fully recovered before edits:8terminal jobs,7exact
+checkouts,287pins/231blobs.31/33new cases pass;2positive timestamp fixtures fail
+InvalidTimestamp before their assertions. Production observer remains byte-identical;
+C01 adds the exact nine-digit fraction to those2strings only. No parser weakening.
+All carried named regressions, strict lint, PG60/32/73/83/12, cleanup and other jobs
+pass, while workspace/required fail. Full immutable failure receipt remains preserved.
+
+New history.rs/candidate.rs and21private regressions implement only the first
+approved-v3 continuation and its in-memory D4 candidate. The opaque approved base,
+fixed calendar/grid, every original price overlap, exact arithmetic, complete source
+documents and canonical bytes are bound. Daily admitted parents, persisted frontier,
+immutable storage/admission/supply remain later. No synthetic approved handle exists.
+Real full-base/factory and snapshot-to-candidate integration are not exercised by
+these private fixtures; they remain explicit integration work. The production
+approval/normalizer/discovery/SQL/workflow/dependencies and old tests stay unchanged.
+
+Coordinator direct review and scoped standalone2024format only; no independent
+review, local project execution, new delegation/provider/production action or
+source acceptance. Freeze all21new and carried names/pins, query exact-head runs,
+verify remote SHA and dispatch one new candidate. Never rerun/cancel/duplicate.
+Ralph continues through R2; runtime/Owner/three trading days/final C_R2 remain open.
+
+### Wave45 single candidate launch — 2026-10-15
+
+Candidate `5f5f4e845de5011f7ee2e7d0a1fe0e27d0d18f18`,
+[CI38732527740 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38732527740),
+created12:09:30UTC. All-event exact-head queries before/after push returned0, remote
+SHA matched, then exactly one workflow_dispatch returned0 and one matching run was
+recovered.303pins/243candidateblobs,21new definitions and33carried S5a names are frozen.
+Other required groups retain their earlier exact inventories; no aggregate count
+is treated as unique evidence. Wave44 failure remains immutable. Source acceptance
+awaits full jobs/logs/checkout and named-result recovery. Coordinator direct only;
+no local executable verification or delegation. Subsequent documentation commits
+do not alter the candidate. Prepare only independent unregistered successor files
+while CI runs. Runtime/Owner/three trading days/final C_R2 remain open.
+
+### Wave45 acceptance and Wave46 preparation — 2026-10-15
+
+5f5f4e8/38732527740 attempt1 is fully recovered SUCCESS:8jobs/7checkouts,303pins/
+243blobs,21new S5b and33S5a named cases pass; all carried groups and PG32/73/83/12/
+60checksums in both lanes/cleanup pass. [Bounded acceptance](reviews/2026-10-15-r2-daily-protected-prefix-acceptance.md)
+retains the real approved-factory/full-candidate integration limit and all prior failures.
+Wave46 now prepares descriptor-safe candidate storage, independent first candidate
+verification and durable admission copy/readback. New unregistered artifact/admission
+files were prepared without changing active CI pins. No local project execution,
+new delegation, runtime/Owner/final acceptance. Ralph continues.
+
+
+### 2026-10-15 — Wave46 S5c source prepared
+
+R2-04/09: first candidate storage, independent first-admission comparison, copied
+sealed admission and canonical full-price readback are written.27new definitions
+are unexecuted:26Linux expected and1nonLinux excluded. Direct coordinator source
+review/scoped2024format only; no local project execution or new delegation.
+Real approved-factory/distinct-UID end-to-end and fault durability remain open.
+See `docs/reviews/2026-10-15-r2-daily-artifact-admission-source.md`. Wave45 success
+and earlier failures remain immutable. Freeze one successor candidate for hosted
+CI; Ralph continues through daily-parent/frontier/supply and all remaining R2 gates.
+
+
+### Wave46 single candidate launch — 2026-10-15
+
+Candidate718d99d0f5db63636681b12457e32079b72f8c5c is frozen at313input pins/
+250committed blobs.27new definitions:26Linux expected,1nonLinux excluded; carried
+S5b21/S5a33 and earlier required groups have refreshed anchors. Before/after push,
+all-event exact-head queries returned0 and remote SHA matched. One dispatch only:
+run38737242162 attempt1, CI/ci.yml/workflow_dispatch/excited-dolphin, created
+2026-10-15T12:46:39Z. Full recovery is pending; no compiler/test acceptance yet.
+Never rerun/cancel/duplicate. While running, only unregistered successor files and
+mutable coordinator tracking docs may change. All prior evidence remains intact.
+
+
+### 2026-10-15 — Wave47 S5c-C01 after full failed-run recovery
+
+Wave46 718d99d/run38737242162 attempt1:8terminal jobs/8logs/7checkouts,313pins/
+250blobs recovered. S5c26Linux:10pass/16fixture UnsafePath failures before behavior
+assertions;1nonLinux excluded. Prior named groups, strictClippy/format/web/Python/
+PG32/73/83/12/60checksums/cleanup pass; workspace/required fail. Preserve all evidence.
+C01 changes only test fixture parent from checkout to required HOME, keeping33088
+production bytes identical and all27names. Exact rejected ancestor/ACL cause was not
+printed. No local project execution or new delegation. Freeze one successor and
+single hosted verification, not a rerun. Source/runtime/final C_R2 remain unaccepted.
+Unregistered continuation/price_extension/frontier preparation is excluded.
+
+
+### Wave47 C01 single candidate launch — 2026-10-15
+
+Candidate2824dd0c2503ee37ab828bafdf0ddb0750974951, CI38740542364 attempt1,
+created13:11:01UTC. Exact-head all-event query0/remotematch preceded one dispatch.
+319pins/252blobs/26Linux expected plus1new exclusion are frozen. Full result recovery
+pending; no acceptance. Prior failed candidate remains preserved. Only unregistered
+successor files and mutable tracking docs change while the run is active.
+
+
+### 2026-10-15 — Wave48 C02 protected hosted fixture
+
+Wave47 2824dd0/run38740542364 attempt1 is fully recovered FAILURE:8jobs/8logs/
+7checkouts,319pins/252blobs. Same16Root::open UnsafePath setup failures,10newpasses;
+all prior named groups,Clippy/format/web/Python/policy/PG32/73/83/12/60checksums/cleanup
+pass. HOME alone did not meet the fixture precondition; precise ancestor cause unknown.
+C02 uses a new run/attempt-specific root0755 ancestor and runner0700 child in isolated
+hostedCI, explicit test env, nonrecursive cleanup.33088productionbytes unchanged;
+no guards weakened or local privileged/project execution. Scope is onlyartifact
+privatefixture and CIworkspace harness.27names retained. Unregistered S5d/e drafts
+remain excluded; no source/runtime/Owner/final C_R2 acceptance. See C02 review record.
+
+
+### Wave48 C02 single candidate launch — 2026-10-15
+
+Candidate69513a8e596ebecdac9736f276b9b2303dba8dc5, CI38744953343 attempt1,
+CI/ci.yml/workflow_dispatch/excited-dolphin,created13:42:11UTC. All-event exact-head
+queries before/after push returned0 and remote SHA matched; one dispatch only.
+325pins/254candidateblobs,27retained names/26Linuxexpected/1newexclusion are frozen.
+Full recovery must include explicit protected-fixture setup and nonrecursive cleanup
+steps and four mode/UID/GID observations. No source/compiler/runtime acceptance.
+Prior two failures remain preserved. Only unregistered successor preparation and
+mutable coordinator tracking docs may change while CI runs. Ralph continues.
+
+
+### Wave48 partial fixture diagnosis — 2026-10-15
+
+The still-running workspace job printed16S5c fixture UnsafePath failures at
+artifact.rs:972:69. Its explicit mode observations are root0755,/opt0777,
+owned-anchor0755,runner-child0700. Thus /opt violates the unchanged no-group/other-
+write ancestry guard; the precise first rejection is not instrumented. This is
+partial evidence, not final run recovery. Web/PG/lint/format/policy/Python completed
+successfully. Preserve the running candidate and all prior failures. After full
+terminal recovery, move only the isolated test hierarchy directly below the observed
+root0755, without chmod of any shared ancestor. Prepared unregistered daily-parent,
+frontier and pure disabled supplier code can then join one bounded successor scope;
+no acceptance or duplicate dispatch is inferred.
+
+
+### Wave48 complete failure recovery — 2026-10-15
+
+69513a8/38744953343 attempt1 FAILURE fully recovered:8terminaljobs/8logs/7exact
+checkouts,325pins/254candidateblobs. S5c26Linux10PASS/16fixtureUnsafePath failures;
+all retained named groups pass. Workspace also contains the independent failure
+`paper_io::tests::stalled_blocking_work_returns_at_its_deadline` at paper_io.rs:173:26,
+awaiting closure-start notification under automatically advancing paused time. This
+extra failure is preserved in all-workspace-failures.json; aggregate group success
+is not full-workspace success. Fixture /opt0777 violates the production guard.
+Clippy/format/web/Python/policy/PG and fixture/DB cleanup pass. PG32/73/83/12 exits0
+noSKIP/60checksums bothlanes/NO_OP/directroles/0039/catalog/cleanup all pass; unprinted
+nested helper rows/innerexits remainUNKNOWN. No source/runtime acceptance. Receipt
+3494lines SHA202d6d9637dae5e5b80db330e7a9f8e1ce52dd4a64b0e019f9f58fd276397408.
+Next bounded candidate combines the direct-root fixture correction, exact Paper test
+clock-start synchronization and prepared daily parent/frontier/supplier library.
+No old run rerun/cancel/duplicate; local project execution/delegation remain forbidden.
+
+
+## Wave49 — daily parent/frontier/supplier plus bounded fixture corrections
+
+After Wave48 full failure recovery, integrate the previously unregistered S5d/e/f
+library and37new regressions with the C03 direct-root hosted fixture and the two
+existing Paper clock-test synchronizations. Production Paper bytes and existing
+artifact guards remain intact. Shared price loop equivalence was checked after
+private field substitutions. [Source scope/limits](reviews/2026-10-15-r2-daily-continuation-frontier-contract.md).
+Direct coordinator review only; no independent/compiler/test/runtime acceptance.
+Freeze exact new/carried names and source/reference pins, query all-event exact-head
+runs, verify remote SHA and dispatch one new candidate. Existing runs remain unchanged.
+R2-04/09 and I3–I7/runtime/Owner/three trading days/final C_R2 stay open; Ralph continues.
+
+
+### Wave49 single candidate launch — 2026-10-15
+
+Candidate `edeaa5db456bc4c62e6eef6e7a561e6a49accff4`,
+[CI38750900179 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38750900179),
+created14:23:05UTC, CI/ci.yml/workflow_dispatch/excited-dolphin. Exact-head all-event
+queries before/after push returned0 and remote SHA matched; exactly one dispatch.
+348input pins/261committed candidate blobs and37new definitions are frozen; carried
+S5c26Linux and the2affected Paper clock tests are independently named, along with
+all prior required groups. Full recovery must inspect every failed workspace row,
+three direct-root fixture mode observations, setup and nonrecursive cleanup.
+No source/compiler/test acceptance yet. Only independent unregistered I3 preparation
+and mutable coordinator tracking docs may change while CI runs. Earlier failure
+receipts remain immutable. Runtime/Owner/three trading days/final C_R2 remain open.
+
+
+## Wave50 — I3 loader/factor/target with S5def-C01
+
+Wave49 edeaa5d/38750900179 attempt1 is fully recovered FAILURE:8terminaljobs/
+8logs/7checkouts,348pins/261blobs. E0603 in2frontier test calls points to the private
+continuation fixture; Rust workspace tests never started. All required workspace
+names NOT_EXECUTED, separate chart6PASS. PG32/73/83/12/60checksums bothlanes/noSKIP/
+NO_OP/directroles/0039/catalog/cleanup PASS; web/format/policy/Python PASS. Fixture
+root0755/anchor0755/child0700, setup and cleanup PASS. Full private receipt3350lines
+SHA4cf38abd73e5abc4b7539974847a06fd36ad589153641200856acd7da2d6dbd0.
+After full recovery, only cfg(test) fixture visibility is widened within daily_price_only.
+I3 adds opaque sealed input adapter, explicit schema/duplicate-safe loader, daily factor
+and target preimages and compute seam. Historical canonical representations/arithmetic
+are preserved by9static region comparisons.20new tests are written/unexecuted, with
+old factor/input/compute/target/publish and all prior groups retained. Direct coordinator
+only, no new worker/local project execution/source acceptance. Freeze a new candidate,
+query all-event exact-head runs and dispatch once. I4–I7/runtime/Owner/3days/final C_R2
+remain; Ralph continues. Full approved-base end-to-end and independent review remain.
+
+
+### Wave51 single correction candidate launch — 2026-10-16 KST
+
+Candidate `bd33596f515afe18437dad03bd940219c630d248`,
+[CI38760423300 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38760423300),
+created2026-10-15T15:27:03Z. CI/ci.yml/workflow_dispatch/excited-dolphin.
+All-event exact-head queries returned0 before/after push, remote SHA matched;
+exactly one dispatch.423pins/302committedblobs,21I3 definitions (one renamed and
+one added),38service-status definitions and all carried groups are frozen.
+Four test files/regions only; production bytes/SQL unchanged. Source disposition
+is direct coordinator only. Full hosted recovery pending; no acceptance yet.
+Unregistered I4 source preparation continues independently. Earlier failures,
+operational/Owner/three-trading-day/finalC_R2 gates remain.
+
+
+### Wave53 I4b single candidate launch — 2026-10-16 KST
+
+Candidate `a72aaa4fef618a7bdb7a292b171fd70d6245d52b`,
+[CI38768192668 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38768192668),
+created2026-10-15T16:20:40Z, CI/ci.yml/workflow_dispatch/excited-dolphin.
+Exact-head all-event queries before/after push returned0 and remote SHA matched.
+Dispatch issued once; recovered exactly one matching run. Frozen467pins/314candidate
+blobs;12new daily failure/recovery,14carried I4a and8affected unit definitions.
+DedicatedPG must report16outer exits0/noSKIP,14schedule+6dailyPublish+6dailyRecovery
++8historicalPublish named rows, plus preserved migration/bootstrap/checksum gates.
+Full terminal evidence pending. No source/compiler/test acceptance. Success publication,
+full approved-input orchestration and I5-I7/runtime/Owner/3tradingdays/finalC_R2 remain.
+No new worker or local project execution. Source/inputs stay frozen during this run.
+
+
+### Wave57 bounded acceptance and Wave58 supersession scope — 2026-10-16 KST
+
+c4f35bb/CI38784769462 attempt1 SUCCESS recovered at2026-10-15T18:43:36.629885+00:00.
+8jobs/logs/7checkouts,548pins/328blobs,2pure+10actualDB runner,3collector
+actualDB names and every carried group passed. PG17exit0/noSKIP,14/6/6/8/10,
+32/73/83 and60UPSHA384checksums both lanes passed. Web34+121/14,
+strictClippy/workspaceformat and Python487/10skip/7warnings passed.
+Receipt7484lines/SHA8fae21d9c8ca6d614569019e18ebba4ee47f45d4bd5628ba4ff5ee2a48dbc4e2.
+Old masked collector bootstrap root cause remains UNKNOWN; failure preserved.
+
+Wave58 owns six source files after full recovery: new0061supersession UP/DOWN,
+owner_beta/publish.rs,owner_beta_daily_runner.rs,integration-validation/validate.sh,
+migration-contract/tests/migration_contract.rs. Preserve0060 bytes, every prior
+runner definition and historical publication prefix. Typed direct-worker cancellation
+requires exact live job/attempt/run/reservation and trustworthy newer eligible date
+after control/source locks; keeps permanent reservation and publishes nothing.
+Apply at daily preflight/success/failure; manual cancellation remains unchanged.
+14new actualDB cases plus10old runner names required: source-fence races, actual
+role impersonation denial, real expired lease, cutoff after waits, rollback and
+61down/up preservation. Full-release endpoint61; staged0060/no-op remains60.
+No local project execution/delegation/production/provider action; coordinator
+direct review only. Freeze and exact-candidate CI before acceptance.
+I4g/full I4/I5-I7/independent integration review/runtime/Owner/three trading days/
+final C_R2 remain. Ralph continues.
+
+
+### Wave58 source frozen — 2026-10-16 KST
+
+Six-file supersession source review complete; direct coordinator only, no executable
+acceptance.567pins/544unchanged prior pins, fourteen new actualDB definitions and
+all24daily-runner names frozen.0060/historical prefix/all prior runner definitions
+preserved. Source inputs2352lines/SHAbfa0f8fbe37570886652674a62740ddc4362abd4d08fe4ca81631b73e5651358;
+inventory3917lines/SHA3854f00aad7c126c10e174539b8a9be153a2b1ed4f9517dbddbe7b1a1866580e.
+Scoped standalone2024format/whitespace pass. Full-release61UP checksums in both
+lanes and staged0060at60, PG17targets,24runner cases and all previous gates required.
+One exact-candidate hosted CI only after all-event query0/remote equality.
+No local project/SQL execution, delegation or production activation. Ralph continues.
+
+
+### Wave58 single candidate CI — 2026-10-16 KST
+
+Candidate 7a5b347ca5e42ddc7ef0d5e1ceedb8dc2182fdf4,
+[CI38788565250 attempt1](https://github.com/sihioov/Lagrange/actions/runs/38788565250),
+created2026-10-15T18:47:41Z, ci.yml/workflow_dispatch/excited-dolphin.
+Prepush all-event exact-head query0 at18:47:08.047566Z; remote equality and
+postpush query0 at18:47:40.135978Z preceded exactly one dispatch.
+567pins/332candidate blobs,544prior unchanged pins; source inputs2352lines/SHA
+bfa0f8fbe37570886652674a62740ddc4362abd4d08fe4ca81631b73e5651358;
+inventory3917lines/SHA3854f00aad7c126c10e174539b8a9be153a2b1ed4f9517dbddbe7b1a1866580e.
+Fourteen new actual-DB supersession tests and all24daily-runner names frozen.
+Full-release61UP checksums in both lanes, staged0060at60, PG17targets and all
+previous Rust/Web gates required. No acceptance until complete result recovery.
+This later tracking-doc commit does not change the candidate. No rerun/cancel/
+duplicate/local project execution/delegation. I4g preparation remains read-only
+during this run. Ralph continues through final C_R2.
+
+
+### Wave58 bounded acceptance and Wave59 navigation scope — 2026-10-16 KST
+
+7a5b347/CI38788565250 attempt1 SUCCESS fully recovered at2026-10-15T19:12:16.938922+00:00.
+8jobs/logs/7checkouts,567pins/332blobs,14new actualDB supersession and all24runner
+names pass. All prior Rust/chart groups, PG17exit0/noSKIP,14/6/6/8/24,
+32/73/83, both61UPchecksums/NO_OP/roles/0039/catalog/cleanup, web34+121/14,
+workspaceformat/strictClippy and Python487/10skip/7warnings pass.
+Receipt7738lines/SHAe79c08f443a851059d0f0d32c0cd1f96a6b99ae3dcd965833c9807d07dbce589; no local project/SQL execution or delegation.
+
+Wave59 owns ONLY daily_price_only/artifact.rs,frontier.rs,replay.rs after full
+recovery. Add explicit bounded stable protected-name capture; recognized staging
+is invisible, bounded and never followed/deleted. Metadata is unapproved navigation.
+Reopen one exact admission/frontier ancestry pair through every existing full
+validator, retaining current cumulative leaf/frontier. Preserve previous functions
+and test definitions; add19names (10native filesystem,3frontier decoder,6paired
+navigation). No DB/CLI/activation, source acquisition or new approval constructor.
+Actual approved-base returned capabilities remain an isolated-runtime evidence gap.
+Direct coordinator review, new frozen input/inventory and one exact-candidate CI
+required. Runtime context/receipts, producer/admitter wiring, full I4/I5-I7,
+independent integration review/UID/ACL/crash/I6 diagrams/G4/operations/Owner/three
+trading days/final C_R2 remain open. Ralph continues.
+
+
+### Wave59 source frozen — 2026-10-16 KST
+
+R2-04/09, WP-4/I4g1: three-file insertions +1064/-0 reviewed directly;19 new
+WRITTEN_UNEXECUTED definitions (10 Linux filesystem,9 pure navigation). Protected
+bounded name capture and explicitly pinned paired replay preserve existing full
+validators, SQL and all prior tests. No latest authority or synthetic approved base.
+Scoped standalone rustfmt2024/whitespace pass; four original function regions
+and564 unchanged prior pins match. Source report89lines/SHA7a6c820c4cf06e67c83b4349e2d7498a3c1071debf235812bd9ee8de457360c4.
+Frozen wave59-I4g1 inputs2421lines/SHA3d2e70d57651133d7e3c0ef005749b41bf77b4ab0bc4b0ba23385641c0b83086,
+584pins; inventory4090lines/SHA614f08edbe605d58f2e861735072ac13a893507df25df656a3ebae6006f0cbc9.
+Source/compiler/test acceptance pending a single exact-candidate hosted CI after
+existing-run and remote/pin/blob checks. No local execution/delegation. Full real
+approved-base flow, producer/admitter wiring, I5–I7, runtime/Owner/three trading
+days/final C_R2 remain open. Ralph continues.
+
+
+### Wave59 single candidate CI — 2026-10-16 KST
+
+Candidate35b64febac11eb258c86dc51a35d4d67ba7fe87b, run38792738853 attempt1,
+[CI](https://github.com/sihioov/Lagrange/actions/runs/38792738853), created2026-10-15T19:17:54Z.
+Before push: all-event exact-head query0 at19:17:29.784565UTC,584pins/334committed
+blobs matched; remote was accepted7a5b347. After one push, remote equality and
+query0 at19:17:52.583253UTC preceded exactly one workflow_dispatch. Reservation
+written before dispatch; initial propagation did not cause another run. Source and
+frozen inputs remain immutable while running. Later documentation HEAD does not
+change this candidate. No source/compiler/test acceptance yet. Existing successes
+and failures preserved. No local execution or delegation; Ralph continues.
+
+### Wave59 accepted; Wave60 admitter readback scope — 2026-10-16 KST
+
+35b64fe/CI38792738853 attempt1 SUCCESS fully recovered at2026-10-15T19:41:06.405048+00:00.
+All8jobs/logs/7checkouts,584pins/334blobs and19new navigation names plus every prior
+required Rust group match. PG17exit0/noSKIP,14/6/6/8/24,32/73/83, both61UP
+checksum sets/NO_OP/roles/0039/catalog/cleanup, workspaceformat/strictClippy,
+web34+121/14 and Python487/10skip/7warnings pass.
+Receipt7854lines/SHA397ca7e33841ab6fd96680aba1308958898f118b49bd6fdda38a7622a29eebc6; direct coordinator review, not independent integration review.
+[Bounded evidence](reviews/2026-10-16-r2-daily-navigation-ci.md).
+Actual approved-base paired capability remains untested.
+
+Wave60 R2-04/09 WP-4/I4g2 owns ONLY migrations/0062_owner_beta_daily_admitter_readback
+UP/DOWN, job-queue runner/daily_admission.rs, tests/owner_beta_daily_schedule.rs and
+deploy/db/integration-validation/validate.sh. Add pending-cycle context, exact
+admission metadata and exact receipt readback through direct-admitter authority;
+old epoch/foreign identity cannot become current authority. No new table grants.
+18new definitions:14actualDB and4pure; dedicated schedule inventory14→28,
+full-release61→62 while staged0060 stays60. Existing0060/0061 and all prior tests
+remain unchanged. Source/static work only until direct review, new pins/inventory
+and one exact-candidate hosted CI. No new worker, local project/SQL execution or
+activation. Full producer/admitter wiring, real approved input, I5-I7, runtime/Owner/
+three trading days/final C_R2 remain open. R2-04/09 DOING; Ralph continues.
+
+### Wave60 source frozen — 2026-10-16 KST
+
+R2-04/09 WP-4/I4g2: five-file narrow direct-admitter context/input/receipt readback.
+0062 additive UP/DOWN; no new table grant or activation. Existing0060/0061 and prior
+Rust boundary/test bodies preserved.18WRITTEN_UNEXECUTED definitions=14actualDB+4pure;
+dedicated schedule/readback28names, full-release62UP, staged0060 remains60.
+Direct coordinator source review (not independent); scopedrustfmt2024/whitespace pass.
+Source report96lines/SHA3296f32b126c73590710de211aa950a7a057a47adca752003ec62aa87db56ed5.
+Frozen wave60-I4g2 inputs2483lines/SHAfe288aed5018cc0ebf7a26f32dd87d607d3328013c773b4cef87b2e3b568cc36,
+603pins; inventory4380lines/SHAf85982d9ca18041ec0b19ce13472df9f6b92843e7ab719c0394590d185421902.
+581 unchanged prior pins and original function regions preserved. No source/compiler/
+SQL/test acceptance yet. One exact-candidate hosted CI only after existing-run0 and
+remote/pin/blob checks. Real transport loss/approved filesystem integration, full
+producer/admitter state+CLI, I5-I7/runtime/Owner/three trading days/finalC_R2 remain open.
+No local project/SQL execution or delegation. Ralph continues.
+
+### Wave60 single candidate CI — 2026-10-16 KST
+
+Candidate ef6227921be0a45b6947a03b98441d8fc343eff5, run38796372356 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38796372356, created2026-10-15T19:44:43Z.
+Pre-push all-event exact-head query0 at19:44:20.133320UTC;603pins/338candidate blobs
+match, remote35b64fe preserved until one push. Post-push remote equality and query0
+at19:44:41.733949UTC preceded one dispatch issued19:44:43.477725UTC. Reservation
+persisted before dispatch; no rerun/cancel/duplicate. Source and inputs frozen;
+later documentation HEAD does not change the tested candidate. Full eight-job/log,
+checkout/pin,18new/28dedicatedschedule and all earlier groups must be recovered.
+No local project/SQL execution, provider access or delegation. Full I4/I5-I7 and
+operational/Owner/three-day/final C_R2 remain open. Ralph continues.
+
+
+### Wave60 failure recovered; Wave61 bounded C01 — 2026-10-16 KST
+
+ef62279/CI38796372356 attempt1 FAILURE fully recovered at2026-10-15T19:59:10.819424+00:00.
+8jobs/logs/7checkouts,603pins/338blobs match. Workspace and dedicated28schedule
+tests did not execute because one new privilege test passes a dynamic String to
+SQLx0.9 query_scalar (E0277); strictClippy reports the same defect.6chart, web34+
+121/14, Python487/10skip/7warnings, PG32/73/83/8historicalpublish, both62UPchecksum
+sets/NO_OP/roles/0039/catalog/cleanup pass. Later daily PG groups remain UNKNOWN.
+Receipt7146lines/SHAa58c2eb7a1bfdc6be764c8bb353067c96094f7c139f703b24046aa892bb48b0d; no source acceptance.
+[Full evidence](reviews/2026-10-16-r2-daily-admitter-readback-ci.md). Preserve candidate/run and all prior evidence.
+
+After full recovery, C01 owns only tests/owner_beta_daily_schedule.rs: replace the
+two dynamically formatted privilege queries with their exact static literals.
+Production/migrations/harness and18definitions/28PGnames remain unchanged. New
+review/pins and one new exact-candidate CI after all-event query0/remotematch.
+No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three
+trading days/final C_R2 remain open; Ralph continues.
+
+
+### Wave61 C01 source frozen — 2026-10-16 KST
+
+Only one privilege test changed +5/-3 to exact static SQL literals; all production
+code/migrations/harness unchanged.18readback definitions and28dedicated PG names
+retained. Direct review, scopedrustfmt2024 and whitespace pass; no execution claim.
+Successor wave61-I4g2-C01 inputs2515lines/SHA8eddb0bb,620pins (602prior unchanged),
+inventory4380lines/SHA82087f44. One fresh exact-candidate hosted CI after all-event
+query0/remotematch; failed ef62279 preserved. No local project/SQL execution or
+workers. Full I4/I5-I7/runtime/Owner/three-day/final C_R2 remain open; Ralph continues.
+
+
+### Wave61 single corrected-candidate CI — 2026-10-16 KST
+
+Candidate 9d0d4591708cc618b9d050d2e223d5eea8b15b64, run38798878711 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38798878711, created2026-10-15T20:03:35Z.
+Prepush all-event exact-head query0 at20:01:16.761705UTC;620pins/340committed
+blobs match. Remote ef62279 preserved until one push. Postpush query0 and remote
+match at2026-10-15T20:03:33.671430+00:00 preceded one dispatch at2026-10-15T20:03:35.923138+00:00.
+Reservation persisted before dispatch. Source/inputs frozen; later documentation
+HEAD is not this candidate.18readback definitions/28dedicatedPG names and all prior
+gates require full recovery. No acceptance yet; never rerun/cancel/duplicate.
+No local project/SQL execution or delegation. Full I4/I5-I7/runtime/Owner/three-day/
+final C_R2 remain open; Ralph continues with unregistered runtime draft only.
+
+
+### Wave61 recovered; Wave62 complete runtime connection — 2026-10-16 KST
+
+9d0d459/CI38798878711 attempt1 FAILURE fully recovered `2026-10-15T20:29:27.691352+00:00`.
+All8jobs/logs/7checkouts,620pins/340blobs; new18readback and28dedicatedschedule
+names PASS. Sole failing definition is the existing supersession DOWN/UP test:
+actual62migration versions vs hard-coded61. Both workspace and PG reproduce it.
+All other required Rust/PG contracts/Web/Python and strictClippy/format pass.
+Receipt8092lines/SHAeac40093b025b65ae9e560f86acbef40777a966eb77835e3ed35b89ade29557a; candidate not accepted.
+[Recovery report](reviews/2026-10-16-r2-daily-admitter-readback-c01-ci.md). Previous successes/failures remain immutable.
+
+Wave62 R2-04/09 WP-4/I4g3 owns exactly10source/test/harness paths: runner.rs;
+runner/daily_local_state.rs,daily_catalog.rs,daily_ingest.rs,daily_admission.rs;
+bin/owner-beta-runner.rs and its nested daily.rs; tests/owner_beta_daily_schedule.rs,
+owner_beta_daily_runner.rs; deploy/db/integration-validation/validate.sh.
+One coherent connection: private persistent full-cycle flock/minute gate/exact
+restart hints; bounded unapproved catalog + full sealed replay; producer with no
+DB/network; direct-admitter context/independentRaw validation/canonicalevents/
+exactreceipt recovery; disabled-default CLI and mixed worker with minute scheduler.
+Use only the real approved-v3 factory; no fake approval or data upload. Existing
+0060–0062 and historical disabled-mode runner behavior remain preserved. Fix the
+existing test to compare all embedded UP versions, retaining the DOWN/UP/data checks.
+Plan23new definitions (10Linux-native,9other non-DB,4actualDB); dedicatedschedule28→32.
+Direct coordinator review then frozen inputs/inventory and one exact-candidate CI.
+No source/compiler/test acceptance yet. No local project/SQL/provider/production
+execution or delegation. Full approved input/runtime/UIDACL/crash/installer/I5-I7/
+independent review/I6/G4/Owner/3trading days/final C_R2 remain open; Ralph continues.
+
+
+### Wave62 source frozen — 2026-10-16 KST
+
+R2-04/09 WP-4/I4g3 complete runtime connection:10registered files,23new definitions
+(10Linux-native,9other non-DB,4actualDB), all WRITTEN_UNEXECUTED. Producer/admitter
+persistent state, exact restart reconciliation, typed source events, CLI and mixed
+worker connected; OFF preserves historical path. Existing migration assertion now
+compares the entire embedded UP set. All0060–0062/dependencies/workflow unchanged.
+Direct source disposition (not independent), scopedrustfmt2024/whitespace pass.
+Report85lines/SHA05ec45c4;642pins including614unchanged prior pins, successorinputs
+2684lines/SHA c550b853, inventory4626/SHA a7496e3b. Dedicated PG schedule32, runner24,
+17targets retain no-SKIP/exit gates. New candidate CI pending exact-head query0 and
+remote/pin/blob comparison. No compiler/test/runtime acceptance. I5–I7, actual
+approved-v3/Raw three-UID flow, installer/crash/rollback, independent final review,
+I6diagrams before main/G4/Owner/3trading days/final C_R2 stay open. Ralph continues.
+
+
+### Wave62 single candidate CI — 2026-10-16 KST
+
+Candidate eed17d2bf79b287d65ca33e1ca0d1c3eee82995f; run38804040503 attempt1,
+https://github.com/sihioov/Lagrange/actions/runs/38804040503, created20:41:53UTC.
+All-event exact-head query0 at20:41:30.641533UTC;642pins/346committed blobs match.
+One push from9d0d459, then remote match and query0 at20:41:52.500048UTC before
+one dispatch20:41:54.245017UTC. Reservation persisted; no rerun/cancel/duplicate.
+Full8jobs/logs/7checkout,23newnames and all carried groups plus32schedule/24runner
+and17dedicatedPGtargets require recovery. Source and frozeninputs stay immutable.
+Later documentation HEAD is not the tested candidate. No acceptance yet. Next
+independent preparation is I5 daily API/config/read projection, then I7Web and I6
+installed runtime/diagrams. G4/Owner/3tradingdays/finalC_R2 remain open; Ralph continues.
+
+- 2026-10-16 Wave63 I5: 기존 Web strict decoder가 새 API 필드를 거부하는 구체적 호환성 문제를 확인하여 decoder 3개·회귀 테스트 1개를 같은 패키지에 추가(25경로). I7 UI·실제 사용 인수는 여전히 별도.
+
+- 2026-10-16 Wave63 I5 후보 고정: 설정 opt-in/epoch, 일일 상태와 historical/daily 조회 union, strict Web 계약, 실제 HTTP/RLS 검증을 작성했다. 직접 소스 검토·Rust2024 포맷·공백만 PASS이며 컴파일/테스트/운영 인수는 아직 없다. [소스 근거](reviews/2026-10-16-r2-daily-api-source.md).
+
+Wave63 launch: candidate68c6f648765dc9dc28c4818f92a1dbbd8f91c8c4,683pins/371candidate blobs matched.
+Before push all-event exact-head count0 at21:32:50.431229UTC; remote baselineeed17d2.
+After push remote exact candidate and count0 at21:33:06.431188UTC; exactly one dispatch.
+Recovered run38810733003 attempt1/workflow_dispatch/CI/ci.yml/excited-dolphin,
+created2026-10-15T21:33:07Z; URL https://github.com/sihioov/Lagrange/actions/runs/38810733003.
+No rerun/cancel/duplicate. Inputs/inventory remain frozen; documentation HEAD changes
+cannot change the reviewed candidate. Recover every job/log/checkouts and named evidence
+before acceptance. New tests/compiler/runtime acceptance remains open.
+
+### Wave63 full failure recovery; Wave64 I5-C01 — 2026-10-16 KST
+
+Candidate68c6f64/run38810733003 attempt1 FAILURE: all8jobs/logs and7checkout,
+683pins/371blobs matched; source acceptance false. E0603 private contract path,
+misplaced price-input doc comment/blank line and one Web test format error are
+concrete corrections. OpenAPI passed; all25newRust and6Web, carried workspace
+and following14PGtargets NOT_EXECUTED. PGfirst3targets,32/73/83named cases,
+62UPchecksum sets twice/noop/directroles/0039/catalog/cleanup passed separately.
+Receipt5393lines/1c133b8b; failure originals remain immutable. Register Wave64
+I5-C01 for only repos/owner_beta.rs,runtime.rs and r2-daily-api-contracts.test.ts.
+Use existing public re-export, restore intended comment and exact reported layouts.
+No visibility/gate/lint suppression/test-assertion weakening, new definitions,
+local execution or delegation. One new candidate only after reviewed correction,
+successor freeze, exact-head all-event query0 and remote equality. I7/I6,real
+approved-base threeUID integration,independent review,G4/Owner/3tradingdays/C_R2 open.
+Ralph continues; full failure detail: docs/reviews/2026-10-16-r2-daily-api-ci.md.
+
+Wave64 I5-C01 freeze: three-file exact diff reviewed; existing public export used,
+misplaced comment restored, hosted Web formatter layouts matched. All25Rust/6Web
+names/assertions preserved, no new definitions. Rust2024/whitespace PASS; compiler,
+lint/DB/Web still require hosted evidence. Successor702pins (680prior unchanged),
+inputs2862lines/377a0e14,inventory5034/c1d3121f,source report33/cfddf30f.
+Prior failure receipt remains immutable. No local project execution/delegation.
+Prepare one new exact-candidate CI after all-event run query0 and remote equality.
+
+Wave64 launch: candidate3480afeff1666bef6a940046f94e2d3798a4ea96,
+run38812634642 attempt1/workflow_dispatch/CI/ci.yml/excited-dolphin,
+https://github.com/sihioov/Lagrange/actions/runs/38812634642, created21:48:28UTC.
+Pre-push query0 at21:48:15.003073UTC,702pins/373candidate blobs match; remote68c6f64.
+Post-push remote exact and query0 at21:48:26.881343UTC before one dispatch21:48:28.621942.
+No rerun/cancel/duplicate. Full result recovery required; sources/inputs immutable.
+I7 preparation is read-only until I5 disposition; no source/compiler acceptance yet.
+
+### Wave64 failure recovered; Wave65 I5-C02 — 2026-10-16 KST
+
+3480afe/run38812634642 attempt1 FAILURE fully recovered:8terminaljobs/logs,
+7checkout,702pins/373blobs. StrictClippy/workspaceformat/OpenAPI/lint passed.
+I5Rust24PASS/1FAIL and allcarriedworkspace groups plus6chart passed; the same
+state_no_fallback SQLSTATE22P02 failed dedicatedPG (9/10newdailyHTTP passed).
+17PGtargets passed; finalAPI target failed,3laterprice-only names NOT_EXECUTED.
+PG32/73/83 cases,62checksumtwosets/noop/roles/0039/catalog/cleanup passed.
+Webtypecheck fiveTS4111 accesses; sixWeb/unit/build/E2E NOT_EXECUTED.
+Receipt6486/cc4d3ff6; no source acceptance. Preserve allold evidence.
+
+Register Wave65I5-C02: only http_owner_beta_daily.rs and r2-daily-api-contracts.test.ts.
+Use existing read-only admin pool for two cross-table write observations; replace
+five Record index-signature accesses with brackets. No production pool/RLS change,
+assertion removal, newdefinition, lint suppression orworkflow change. One new
+exactcandidateCI only after source review/freeze andexistingall-eventquery0/remotematch.
+No local execution/delegation. I7drafts remain RAMonly. I7/I6/runtime/Owner/3days/C_R2 open.
+Report: docs/reviews/2026-10-16-r2-daily-api-c01-ci.md.
+
+Wave65 I5-C02 source freeze: exact two-test-file correction reviewed. Only two
+verification connections and five property access expressions changed; no new
+names or weakened assertions. Rust2024/whitespace pass.722pins (700unchanged prior),
+inputs2931/b6f3b845,inventory5034/b1961038,source report34/2d4c0f56.
+All25Rust/6Web definitions carried; no product source/roles/workflow change.
+Fresh candidate CI remains required; no local project execution/delegation.
+
+Wave65 launch: candidate abfca9cdf186e559092209e8c7340ecad02728fb,
+CI38815899362 attempt1/workflow_dispatch/ci.yml/excited-dolphin,
+https://github.com/sihioov/Lagrange/actions/runs/38815899362, created22:15:53UTC.
+Pre-push all-event exact-head query0 at22:15:24.395495UTC,722pins/375committed blobs;
+remote3480afe. Post-push remote exact/query0 at22:15:52.145416UTC; one dispatch,
+issued22:15:54.192971UTC. No redispatch/rerun/cancel. Sources and inputs frozen;
+full8job/log/name recovery required. No I5/source/runtime acceptance yet.
+Later documentation HEAD is not the pinned source candidate. I7 preparation remains
+read-only/drafts; I7/I6/independent review/runtime/Owner/three trading days/C_R2 open.
+
+### Wave65 recovery; Wave66 I5-C03 — 2026-10-16 KST
+
+abfca9c/run38815899362 attempt1 FAILURE fully recovered:8jobs/logs/7checkout,
+722pins/375blobs. Workspace I5Rust25/25 and allcarriedgroups+chart6 PASS;
+Web6new/34supervisor/121OFF+14stream PASS,noSKIP/flaky/retry. StrictClippy/format/
+Python/policy PASS. All18PGcommands exit0/noSKIP and actualdailyAPI15 names PASS.
+PG validator failed because replay [a-z_]+ drops two names containing503;
+canonical13/15 guard correctly refused acceptance. Full PG loghash2c6f28ba,
+actual row anchors1935/1937; receipt8693/159718d2 and supplement211/24ba4eeb.
+PGothernamed groups/62checksums twice/noop/roles/0039/catalog/cleanup PASS;
+nestedunprintedhelperrows/exits UNKNOWN. Original failure remains preserved.
+
+Wave66I5-C03 owns only deploy/db/integration-validation/validate.sh, one regexp
+allowingdigits after a valid initial character. Preserveexact15/uniqueness/
+cardinality/exit0/noSKIP and every test assertion. No product/role/workflow change.
+No localprojectexecution/delegation; one freshcandidateCI afterreview/freeze and
+exact-headall-eventquery0/remotematch. I7 drafts remain RAMonly. I7/I6/independent
+review/real approved-base threeUID/G4/Owner/3tradingdays/C_R2 remainopen; Ralphcontinues.
+Report: docs/reviews/2026-10-16-r2-daily-api-c02-ci.md.
+
+Wave66 I5-C03 freeze: exact one-line harness replacement reviewed; all15 required
+names and cardinality/uniqueness/exit0/noSKIP unchanged. No new definitions.
+742pins (721prior unchanged), inputs3000/9286375b,
+inventory5034/ec40abff, source report31/3148ee42.
+Whitespace PASS; no local project execution/delegation. Prepare one new exact
+candidate after all-event query0 and remote equality. I5 acceptance remains pending.
+
+Wave66 launch: candidate77047494433f08674e2d0127293cefa3c5446acb,
+CI38818261699 attempt1/workflow_dispatch/ci.yml/excited-dolphin, created22:36:30UTC.
+https://github.com/sihioov/Lagrange/actions/runs/38818261699
+Pre-push all-event head query0 at22:36:11.630786UTC;742pins/377committedblobs match,
+remoteabfca9c. Post-push remote exact/query0 at22:36:28.893520UTC, one dispatch
+issued22:36:30.580244UTC. No rerun/cancel/duplicate. Source/inputs frozen untilfull
+recovery. Later docsHEAD is not candidate. I5acceptance/I7/I6/runtime/Owner/3days/C_R2 open.
+
+### Wave66 acceptance; Wave67 I7 Web — 2026-10-16 KST
+
+7704749/CI38818261699 attempt1 SUCCESS; all8jobs/full-log hashes/7checkout,
+742pins/377committedblobs match. I5 Rust25,Web6,canonicalPGdailyAPI15 and
+18PGtargets exit0/noSKIP nowpass. All carried workspace groups/chart6,
+PG32/73/83/publish8/schedule32/dailyPublish6/recovery6/runner24,62checksums twice,
+no-op/roles/0039/catalog/cleanup and strictClippy/format/Web supervisor34/
+121OFF+14stream/Python/policy passed. Prior failures preserved. Accept bounded
+I5 source/executable contract only; no runtime/Owner acceptance.
+Report: docs/reviews/2026-10-16-r2-daily-api-c03-ci.md.
+
+Register Wave67I7 with26 exact paths in wave67-I7-ownership.json: strategy
+defaultOFF controls, selected daily config, independent expected/support/asof/
+published dates, finite status/reasons, retained same-config prior success,
+bounded cursor history and explicit manual provenance. POST adds explicitflag
+only withOwner capability; PATCH sends onlyflag withCSRF/idempotency and exact
+confirmed response. Unknown legacy flag is unreported/disabled. Poll30s/timeout10s,
+no overlap/hidden-current/foreign-config late response. Auth/entitlement deny
+remains authoritative; historical discovery errors do not erase daily evidence.
+Daily fourpins/nestedfivebase and legacyfive remain distinct.
+Nine new helper/component/test files and17existing paths; synthetic fixtures,
+18newVitest cases and8newbrowser cases. Browser inventory exact121->129OFF,
+14stream unchanged; 34supervisor case assertions stay strict. No local project
+execution, newworkers, backend orworkflow changes. I6/independent integrated
+review/actual approved-base threeUID/G4/Owner/3tradingdays/finalC_R2 remainopen.
+
+Wave67 I7 freeze:26 exact paths,18 new Vitest names/markers and8 newbrowser names.
+Original3 Owner cases retained byte-identically;129OFF/14stream expected and34
+supervisor names unchanged. Browser inventory-only diff confirmed. Allnewcases
+WRITTEN_UNEXECUTED. 795pins (740prior unchanged),
+inputs3247/cd06a374, inventory5321/b7837180,
+source report83/0fab5b04. Whitespace PASS.
+Direct source review only; no localprojectexecution/delegation. Prepare exactly
+one new candidate after all-eventquery0/remotematch. I6/integratedreview/runtime/
+Owner/threeactualtradingdays/finalC_R2 open.
+
+Wave67 launch: candidate b4457f81d12bcc0782b907dbdea0a43e41718034,
+CI38820827515 attempt1, workflow_dispatch/ci.yml/excited-dolphin, created
+2026-10-15T23:00:09Z. All795pins/413candidateblobs matched; all-event query0
+before push22:59:44.547092UTC and after push23:00:07.486523UTC with remote match.
+One dispatch at23:00:09.533733, run identified23:00:17.416839. No retry/cancel/
+duplicate. Source/inputs frozen until full eight-job/checkouts/log/named-case
+recovery; reporting bound00:30:09UTC. New18Vitest/8browser cases remain unexecuted
+until results recovered. Direct coordinator recovery, no worker or same-daemon
+outage guarantee. Later docsHEAD does not change the pinned candidate. I6 and
+operational/Owner/three-day/finalC_R2 evidence remain open.
+
+### Wave67 full failure recovery; Wave68 I7-C01 — 2026-10-16 KST
+
+b4457f8/CI38820827515attempt1 failedWeb/required; all8terminal/full-log hashes/
+7checkouts,795pins/413candidateblobs recovered. Other6jobs succeeded, including
+all carriedworkspace namedgroups/chart6, strictClippy/format/Python/policy,
+PG18targets exit0/noSKIP, dailyAPI15 and all priorPGgates/62checksums twice.
+WebOpenAPIpassed; typecheck/unit/build/browser skipped. New18UI/8browser and
+carriedWeb6/supervisor34 NOT_EXECUTED. I7acceptance remainsfalse.
+The same Web log hash confirms exactly7errors: six formatting files and one
+unused configId effect dependency. The earlier two-file proposal was incomplete;
+it was superseded before edits. Full failure report:
+docs/reviews/2026-10-16-r2-daily-web-ci.md.
+
+After fullrecovery register Wave68I7-C01 with exact7paths in privateownership.
+Apply only diagnostics; preserve labels/expressions/testnames/assertions and
+config-keyed remounts. No blanket lint allows, localformatter/tests or worker.
+Inventory lines mustrefresh. Newcandidate canrun once onlyafter sourcefreeze/
+all-eventquery0/remotematch. I6/G4/Owner/3tradingdays/finalC_R2 remainopen.
+
+Wave68 I7-C01 frozen:7 exactfiles; sixdiagnosticlayouts and1effectdependency.
+All18UI names/markers and8browser names preserved; testlinereferences refreshed.
+Original3Owner/runner/supervisorbytes identical;129OFF/14stream/34supervisor remain.
+815pins/788priorunchanged. Inputs3357/39123788,
+inventory5321/6f1e978d, report36/583b8c49.
+Directsource/diff/string/name/line/whitespace review only; no local execution.
+All executable claims pending newexactcandidateCI after existingrun0/remotematch.
+I6/G4/Owner/threeactualtradingdays/finalC_R2 remainopen. Ralphcontinues.
+
+### Wave68 I7-C01 single candidate CI — 2026-10-16 KST
+
+Candidate3e4cdb3fffeb77f1b5445644fc97dd9376af2dff;815pins/415candidateblobs.
+All-event exact-headquery0 at23:25:47.278394UTC, remote baseline matched.
+After onepush, all-eventquery0/remotematch23:26:06.939491UTC; exactlyone dispatch
+23:26:08.678965UTC. CI38823547944 attempt1 identified23:26:16.449715UTC,
+workflow_dispatch/ci.yml/excited-dolphin. No rerun/cancel/duplicate.
+Seven corrected files and frozen inputs remain immutable until full result recovery.
+Expected18UI/8newbrowser, owner11 total,129OFF/14stream,34supervisor,6carriedWeb;
+all priorRust/PG targets remain required. Reporting bound00:56:08UTC; no daemon
+outage guarantee. Later documentationHEAD is separate from pinned candidate.
+No compiler/test acceptance yet. I6/G4/Owner/3tradingdays/finalC_R2 remainopen.
+
+### Wave68 full failure recovery; Wave69 I7-C02 — 2026-10-16 KST
+
+3e4cdb3/CI38823547944 attempt1 fully recovered:8terminal/full logs,7checkouts,
+815pins/415candidateblobs. Six execution jobs passed; Web/required failed.
+All18UI,6carriedWeb,34supervisor passed;129OFF had127passed/1failed/1timedOut,
+14stream passed, no skip/retry/flaky and cleanup/reservation passed.
+FAILED fixture omits required error_code; timeout's exact operation remains
+UNKNOWN. Two unbounded test waits identified statically, not claimed as cause.
+[Full recovery](reviews/2026-10-16-r2-daily-web-c01-ci.md) preserves all evidence.
+
+Wave69 I7-C02 owns only recommendation-fixture.mjs, Owner browser spec and the
+candidate-web-e2e runner/supervisor test pair, as listed in private ownership.
+Correct fixture code with strict-schema negatives, bounded actual late response
+and configuration isolation, allowlisted source-location diagnostics/hostile
+tests. All existing definition names and acceptance guards remain required.
+No product/backend change, local execution, worker or new CI yet. I6, integrated
+review, actual approved-base/threeUID, G4/Owner/3tradingdays/finalC_R2 stay open.
+
+Wave69 I7-C02 frozen:4 exact test/fixture/diagnostic paths. Failed detail now
+satisfies the unchanged schema; bounded real response/cancellation handshakes
+retain all config/date assertions. Allowlisted failed-attempt source positions
+preserve raw-output secrecy and strict runner result/inventory/cleanup checks.
+All18UI/8newbrowser/11Owner/34supervisor names retained,129OFF/14stream required.
+834pins/811prior unchanged.
+Inputs3400/160a445b, inventory5321/a0a3ce62,
+report49/2d2ef43e.
+Direct source review only; no local project execution or new acceptance.
+I6/actual approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.
+
+### Wave69 I7-C02 single candidate CI — 2026-10-16 KST
+
+Candidatef9a64db39b4e8c7ad6006d411c3b5acfc05e6234;834pins/417candidateblobs.
+All-event exact-headquery0 at23:56:42.770003UTC, remote baseline matched.
+After onepush, all-eventquery0/remotematch23:56:59.769512UTC; one dispatch
+23:57:01.611558UTC. CI38826611025 attempt1 identified23:57:24.448463UTC,
+workflow_dispatch/ci.yml/excited-dolphin. No rerun/cancel/duplicate.
+Four corrected files and inputs remain frozen until complete eight-job, seven
+checkout, full-log-hash and actual named-result recovery. Reporting bound
+2026-10-16T01:27:01UTC; direct coordinator recovery, no new worker. Later docsHEAD
+is separate from pinned candidate; no daemon-outage guarantee.
+Expected18UI/8newbrowser/11Owner,129OFF/14stream,34supervisor and6carriedWeb;
+all existing Rust/PG gates remain required. No new executable acceptance yet.
+I6/integrated review/approved-base threeUID/G4/Owner/3tradingdays/C_R2 remainopen.
+
+### Wave69 full failure recovery; Wave70 I7-C03 — 2026-10-16 KST
+
+f9a64db/CI38826611025 attempt1 fully recovered:8terminal/full logs,7checkouts,
+834pins/417candidateblobs. Six execution jobs passed; Web/required failed.
+All31 required Rust groups/chart6/18DB targets and PG checksum/cleanup gates
+passed. All18UI/6carriedWeb/34supervisor passed;129OFF128passed/1timedOut,
+14stream passed, no skip/retry/flaky. C02 strict FAILED fixture now passes.
+The configuration-switch blocking line remains UNKNOWN. Pinned source review
+establishes the prompt-only exact label cannot match wrapping option text.
+[Full recovery](reviews/2026-10-16-r2-daily-web-c02-ci.md) retains evidence.
+
+Wave70 I7-C03 owns the Owner browser spec and runner/supervisor-test pair only.
+Correct the label locator with exact control/value assertions; seven bounded
+steps and fixed failed-step identifiers preserve private output boundaries.
+No product/backend change, weakened guards, local execution, new worker or CI.
+I6/approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 stay open.
+
+Wave70 I7-C03 frozen:3 exact test/diagnostic paths. Prompt-prefix locator with
+exact control/value assertions; seven bounded steps; fixed failure identifiers.
+All18UI/8newbrowser/11Owner/34supervisor names retained;129OFF/14stream required.
+Other10Owner/first32supervisor bodies and runner execution code unchanged.
+853pins/831prior unchanged.
+Inputs3465/286c30d9, inventory5321/c4f8e273,
+report44/8a68065c.
+Direct source review only; no local project execution or new acceptance.
+I6/approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.
+
+### Wave70 I7-C03 single candidate CI — 2026-10-16 KST
+
+Candidate f1f55ac9cc268f7531bcf08f409e7770767b62d5;853pins/419candidateblobs.
+All-event exact-head query0 at2026-10-16T00:21:26.754890+00:00; remote baseline matched.
+After onepush, all-eventquery0/remotematch2026-10-16T00:21:43.242606+00:00;
+one dispatch2026-10-16T00:21:45.086231+00:00. CI38829047490 attempt1 identified
+2026-10-16T00:22:06.590200+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. Source and frozen inputs immutable until all8terminal
+jobs/full-log hashes/7actualcheckouts/named-results recovery. Reporting bound
+2026-10-16T01:51:44+00:00; direct coordinator, no new worker; no daemon-outage guarantee.
+Later documentation HEAD is separate from candidate. All18UI/8newbrowser/
+11Owner/129OFF/14stream/34supervisor and existing Rust/PG gates remain required.
+No new executable acceptance. I6/approved-base threeUID/integrated review/
+G4/Owner/three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave70 full failure recovery; Wave71 I7-C04 — 2026-10-16 KST
+
+f1f55ac/CI38829047490 fully recovered:8terminal/full logs,7checkouts,853pins/
+419candidateblobs. Six execution jobs passed;Web/required failed. All31Rust
+groups/chart6/18DBtargets/PG gates passed. Web18UI/6carried/34supervisor passed;
+OFF128/129 andstream14/14 passed,no skip/retry/flaky,cleanup/reservation passed.
+Only config-switch failed at fixed VERIFY phase384:5; earlier phases completed.
+Second config legitimately retains observed_at Oct15 while five config-specific
+date fields are null. Whole-panel negative Oct15 assertion contradicts that.
+Inner assertion location UNKNOWN; source contradiction independently established.
+
+Wave71I7-C04 owns only Owner browser spec: exact five empty values plus positive
+observation-time assertions. Existing OFF/preference/report/late-response/
+navigation/bounds remain. No product/fixture/runner changes,local execution,
+worker or CI yet. I6/integrated review/G4/Owner/3tradingdays/finalC_R2 open.
+
+Wave71 I7-C04 frozen:1 exact browser spec. Five config-specific date values
+must be Not reported; legitimate observation timestamp separately required.
+All18UI/8newbrowser/11Owner/34supervisor names retained;129OFF/14stream required.
+Other10Owner bodies, fixture/application/runner bytes and all bounds unchanged.
+872pins/852prior unchanged.
+Inputs3519/3f743383, inventory5321/2401d8eb,
+report27/f8bee667.
+Direct source review only; no local project execution or new acceptance.
+I6/approved-base threeUID/integrated review/G4/Owner/3tradingdays/C_R2 open.
+
+### Wave71 I7-C04 single candidate CI — 2026-10-16 KST
+
+Candidate eb3a9384d298d1dedc10c896fcacac7d5245d3ea;872pins/421candidateblobs.
+All-event exact-head query0 at2026-10-16T00:46:53.120247+00:00; remote baseline matched.
+After onepush, all-eventquery0/remotematch2026-10-16T00:49:31.856285+00:00;
+one dispatch2026-10-16T00:49:33.801694+00:00. CI38831683987attempt1 identified
+2026-10-16T00:49:42.101129+00:00,workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. Browser source/frozen inputs remain immutable until
+all8terminal/full-log hashes/7checkouts/named-results recovery. Reporting bound
+2026-10-16T02:19:33+00:00;direct coordinator,no newworker,no daemon-outage guarantee.
+Later docsHEAD is separate from candidate. All18UI/8newbrowser/11Owner,
+129OFF/14stream/34supervisor and existing Rust/PG gates remain required.
+No I7 acceptance yet. I6/approved-base threeUID/integratedreview/G4/Owner/
+three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave71 acceptance; Wave72 I6A foundation — 2026-10-16 KST
+
+eb3a938/CI38831683987attempt1 fully recovered:8terminal/full logs,7checkouts,
+872pins/421candidateblobs;all30Rust groups/chart6/18DBtargets and PG gates passed.
+Web18UI/6carried/34supervisor/129OFF/14stream passed,no skip/retry/flaky and
+cleanup/reservation passed. All11Owner and8newdaily cases matched.
+Bounded I7 source/synthetic-hosted acceptance only; prior failures preserved.
+
+Wave72 I6A owns11 files: closed Python helper/root filesystem tests, canonical
+policy/reader and3 synthetic fixture files,3 Rust parity-test targets and
+one added policy CI step. Explicit D5/I6 helper/test/fixture scope extension.
+16 isolated real filesystem/UID cases plus3 Rust canonical parity definitions.
+No live config values inferred; fixture Owner/commit/entitlement are synthetic.
+Existing installer/Compose/build manifest canonical12,source/data/DB/provider,
+runtime/diagrams remain untouched. No local executable checks/newworker.
+After foundation, I6B controlled integration/diagrams and actual approved-base
+threeUID whole-flow/multiday, independent review,G4,Owner,three actual trading
+days and finalC_R2 remain open. Ralph continues.
+
+Wave72 I6A frozen:11 owned paths,3 Rust byte/schema parity definitions and16
+real filesystem/UID hosted-only cases, allWRITTEN_UNEXECUTED. Canonical policy
+e9149ef5; protected config/state and monotonic60/61/62 reader floor.
+898pins/868prior unchanged.
+Inputs3664/9ec7d40e,inventory5477/5fb89e4e,
+report69/465cf96b.
+Direct source review/scoped rustfmt2024/whitespace only; no local execution.
+I6B connections/diagrams and actual approved-base threeUID integration,independent
+review,G4,Owner,three actual trading days/finalC_R2 remain open.
+
+### Wave72 I6A single candidate CI — 2026-10-16 KST
+
+Candidate d462ea85a1347a2accea716e6cde3a00e261de58;898pins/430candidateblobs.
+All-event exact-head query0 at2026-10-16T01:18:15.970521+00:00; remote prior candidate matched.
+After onepush, all-eventquery0/remotematch2026-10-16T01:18:56.010586+00:00;
+one dispatch2026-10-16T01:18:57.748549+00:00. CI38834438912attempt1 identified
+2026-10-16T01:19:06.146209+00:00,workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs immutable until8terminal/
+full-log hashes/7checkouts/named-results recovery. Reporting bound2026-10-16T02:48:57+00:00.
+Direct coordinator,no newworker,no daemon-outage guarantee.
+Later docsHEAD is separate from candidate. New3Rust/16realUIDfilesystem
+and all prior18UI/129OFF/14stream/34supervisor/Rust/PG gates required.
+No I6A executable acceptance yet. I6B Compose/installer/manifest/diagrams,
+approved-base whole-flow/independentreview/G4/Owner/three actual trading days/
+finalC_R2 remain open. Ralph continues.
+
+### Wave72 foundation acceptance; Wave73 immutable installer binding — 2026-10-16 KST
+
+d462ea8/CI38834438912 attempt1 fully recovered: eight terminal jobs/full log
+hashes, seven checkouts,898 pins/430 candidate blobs. All31 Rust groups plus
+chart6, new16 real-UID filesystem cases, three parity cases and previous
+Web/PG gates passed. Accept only I6A foundation/source and hosted scope.
+
+Wave73 I6B1 owns10 files: mode library/helper, immutable installer, validator,
+canonical image manifest library, new12-case integration suite, legacy fixture,
+static check, existing policy workflow and daily installation runbook.
+Direct coordinator, no workers. Source review precedes one exact-candidate CI.
+No local project executable checks. The canonical12 build inventory stays fixed.
+A compatible OFF rollback preserves the reader floor/history; changing current
+alone does not stop processes or update database control.
+
+I6B2 must connect actual Compose activation, verified graceful process drain,
+DB control, coordinated daily backup/restore and evidence-bound diagrams.
+Actual approved-base threeUID first/multiday flow, independent integrated review,
+G4, real Owner use, three actual trading days and final C_R2 remain open.
+Prior successes/failures and unknown nested helper rows are preserved.
+
+Wave73 I6B1 frozen:10 owned paths,12 new real-root installer definitions,
+16 unchanged filesystem/UID and3 Rust parity cases, plus legacy ops fixture.
+All new definitions WRITTEN_UNEXECUTED; source review is direct coordinator.
+924 pins/895 prior unchanged.
+Inputs 3757/6f9b4748,
+inventory 5582/bd34c1c4,
+report 72/dca1e3a9.
+Canonical12 image records and all Rust bytes preserved. Static/whitespace only
+locally. Actual Compose/DB/drain/backup/diagrams, approved-base whole flow,
+independent review,G4,Owner,three actual trading days/final C_R2 remain open.
+
+### Wave73 immutable installation binding: single candidate CI — 2026-10-16 KST
+
+Candidate 89ff855a4b27cfd1240ed368946cb1a8c9a0437a;924 pins/439 candidate blobs.
+All-event exact-head query0 at 2026-10-16T01:45:10.515082+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T01:46:09.701945+00:00;
+one dispatch 2026-10-16T01:46:11.340730+00:00. CI38836892120 attempt1 identified
+2026-10-16T01:46:23.629463+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T03:16:10+00:00; direct coordinator, no new worker.
+
+Require12 new actual-root installer tests,16 previous filesystem cases,
+three Rust parity cases, legacy production-ops fixture and all prior Rust/PG/
+Web gates. No I6B1 executable acceptance yet. Later documentation HEAD does not
+change the candidate. I6B2 actual Compose/DB/drain/backup/diagrams, approved-base
+whole flow, independent review,G4,Owner,three actual trading days/final C_R2
+remain open. Ralph continues.
+
+### Wave73 acceptance; Wave74 release DB control — 2026-10-16 KST
+
+89ff855/CI38836892120 attempt1 fully recovered:8 terminal/full logs,
+7 checkouts,924 pins/439 candidate blobs; all required gates passed.
+Installer12/filesystem16/legacy fixture,31 Rust groups/chart6,18 DB targets/
+123 named rows and all prior Web/PG gates passed. Bounded I6B1 acceptance only.
+
+Wave74 I6B2a owns7 files: closed SQL template/renderer,6 root render cases,
+11 actual-role DB cases appended to the existing32 schedule cases, exact
+43-name no-SKIP harness, policy CI step and runbook. No new grant/role/schema,
+Compose start, process drain, provider or production action. Direct coordinator,
+no worker; source review then one exact-candidate hosted verification.
+
+DB authority is tested before connecting the runtime switch. I6B2b must still
+connect actual Compose/mode/capacity and graceful drain. Consistent daily
+backup/restore reconciliation and diagrams, approved-base threeUID whole flow,
+independent integrated review,G4,Owner,three trading days/finalC_R2 remain open.
+
+Wave74 I6B2a frozen:7 owned paths;11 real-role DB definitions plus6 root renderer
+definitions, all WRITTEN_UNEXECUTED. All32 old schedule definitions/helpers
+byte-identical; dedicated no-SKIP lane requires43 exact names. Existing28 root
+filesystem/installer cases and all old gates preserved.
+945 pins/919 prior unchanged.
+Inputs 3859/a1dbdb71, inventory 5810/aaf0d5f7,
+report 64/b07cae4b.
+Static/whitespace and scoped standalone rustfmt2024 only locally. No DB/runtime
+activation or executable acceptance. I6B2b runtime/drain, backup/reconciliation,
+diagrams, approved-base whole flow, independent review,G4,Owner,three actual
+trading days/final C_R2 remain open.
+
+### Wave74 release database control: single candidate CI — 2026-10-16 KST
+
+Candidate 570e277fed776371d526ef56d11c6a580746210e;945 pins/443 candidate blobs.
+All-event exact-head query0 at 2026-10-16T02:14:32.994198+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T02:15:37.028609+00:00;
+one dispatch 2026-10-16T02:15:38.768641+00:00. CI38839505678 attempt1 identified
+2026-10-16T02:16:06.623549+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T03:45:38+00:00; direct coordinator, no new worker.
+
+Require11 new actual-role DB cases (43 exact schedule names),6 root renderer
+cases,16 previous filesystem/12 installer cases,three Rust parity cases,
+legacy production-ops fixture and all prior Rust/PG/Web gates.
+No I6B2a executable acceptance yet. Later documentation HEAD does not
+change the candidate. I6B2b actual Compose/control transport/drain, consistent backup/diagrams, approved-base
+whole flow, independent review,G4,Owner,three actual trading days/final C_R2
+remain open. Ralph continues.
+
+### 2026-10-16 — I6B2a accepted; actual runtime boundary implementation
+
+570e277/CI38839505678 attempt1 fully recovered and bounded DB control accepted:8 jobs,7 checkouts,945pins/443blobs,11new DB/6root cases plus all prior gates. Wave75 directly implements inactive overlay and actual Docker policy/drain fixtures; I6B2c release activation wiring and all operational/Owner/C_R2 gates remain open. No worker or local execution.
+
+Wave75 I6B2b frozen:6 owned paths;19 injected-failure and5 actual Docker fixture
+definitions, all WRITTEN_UNEXECUTED. All prior definition sources unchanged.
+969 pins/943 prior unchanged.
+Inputs 3923/130be69f, inventory 6006/c56caafb,
+report 69/280aa44e.
+Static/source/whitespace only locally. No supported activation CLI yet.
+I6B2c release/DB wiring, backup/reconciliation/diagrams, approved-base whole flow,
+independent review,G4,Owner,three actual trading days/finalC_R2 remain open.
+
+### Wave75 runtime boundaries: single candidate CI — 2026-10-16 KST
+
+Candidate 606d3f6602c7e0c0ba3e7b28ded73905a311daa1;969 pins/450 candidate blobs.
+All-event exact-head query0 at 2026-10-16T02:43:53.800038+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T02:45:33.882383+00:00;
+one dispatch 2026-10-16T02:45:35.584230+00:00. CI38842068730 attempt1 identified
+2026-10-16T02:45:49.921463+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T04:15:35+00:00; direct coordinator, no new worker.
+
+Require19 injected-failure and5 actual Docker definitions, all previous34 root
+cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
+Rust/PG/Web gates. No runtime boundary acceptance yet. Later documentation HEAD
+does not change the candidate. I6B2c official wrapper/DB transport, consistent
+backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave75 accepted; Wave76 I6B2c controlled activation — 2026-10-16 KST
+
+606d3f6/CI38842068730 attempt1 fully recovered: eight successful jobs/full logs,
+seven checkouts,969 pins/450 candidate blobs. All19 failure tests and5 actual
+Docker fixtures plus previous34 root cases,32 Rust groups/chart6,PG18 targets/
+134 named rows and Web gates passed. Bounded runtime-policy/drain acceptance
+only; see the daily runtime CI report.
+
+Wave76 owns13 files for the sole official release prepare/enable/disable path,
+fixed migration-image psql transport and readonly bootstrap status, protected
+context, full-release quiescence guard, failure-order/root tests and disposable
+actual Docker PostgreSQL transport tests. Preserve existing canonical12 images,
+DB grants/schema and authority checks; bind both old and new installed commits.
+Disable must attempt owned process drain even after DB/render failure. New
+activation keeps DB disabled until the actual target API and three-process
+cohort pass; failure returns to disabled/drained without history reset.
+
+Direct coordinator only; no delegation. Static source/hash/definition checks
+locally; new executable claims require one new exact-candidate hosted CI after
+source review and all-event existing-run query. Backup/reconciliation/diagrams,
+approved-base whole flow, independent integrated review,G4,Owner,three actual
+trading days/final C_R2 remain open. Ralph continues.
+
+Wave76 I6B2c frozen:12 changed owned paths; prior228-line daily overlay unchanged.
+29 operation/root/failure definitions and8 actual PostgreSQL transport definitions,
+all WRITTEN_UNEXECUTED. Prior root58 and all other definition sources preserved.
+996 pins/965 prior unchanged.
+Inputs 4057/7850d159, inventory 6306/b36c65a8,
+report 106/3ea01747.
+Direct source/whitespace review only; actual runtime activation remains unaccepted.
+Backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave76 controlled activation: single candidate CI — 2026-10-16 KST
+
+Candidate 6614dda99cd0613c5199c617ef253b3bb7a48b3c;996 pins/460 candidate blobs.
+All-event exact-head query0 at 2026-10-16T03:44:44.060918+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T03:44:53.071767+00:00;
+one dispatch 2026-10-16T03:44:54.912468+00:00. CI38847051561 attempt1 identified
+2026-10-16T03:45:11.912794+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T05:14:54+00:00; direct coordinator, no new worker.
+
+Require29 operation/root and8 actual PostgreSQL transport definitions, all prior58 root
+cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
+Rust/PG/Web gates. No operational activation or full-flow acceptance yet. Later documentation HEAD
+does not change the candidate. Consistent
+backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+### Wave76 failure recovered; Wave77 I6B2c-C01 — 2026-10-16 KST
+
+6614dda/CI38847051561 attempt1 fully recovered:8 terminal/full logs,7 checkouts,
+996 pins/460 blobs. Workspace32 groups/chart6, strict lint,format,
+PG18 targets/134 rows and all prior Web gates passed. Policy and required failed
+on obsolete exactly-four owner-beta mode assertion. New29 operations+8 transport
+and previous58 root/runtime/Docker cases plus legacy operations were NOT_EXECUTED.
+See [activation CI failure](reviews/2026-10-16-r2-daily-activation-ci.md).
+
+Wave77 owns only production-ops-static-check.sh. Preserve all four old guards,
+add literal-OFF API/worker daily assertions and controlled-wrapper guard checks.
+Runtime/SQL/Compose/workflow/test bytes remain frozen. Direct coordinator; no
+delegation/local execution. Source closure then one fresh exact-candidate CI,
+never rerun/cancel/duplicate. No I6B2c/runtime acceptance. Backup/reconciliation,
+diagrams,approved-base whole flow,independent review,G4,Owner,three actual trading
+days/finalC_R2 remain open. Ralph continues.
+
+Wave77 I6B2c-C01 frozen:one changed checker;all runtime/test/workflow bytes unchanged.
+All95 root/runtime/transport definitions retained;new29+8 still WRITTEN_UNEXECUTED.
+1016 pins/995 prior unchanged.
+Inputs 4096/59b3544f,inventory 6306/d2e6630f,
+source report 35/b2af11ba.
+Direct source/whitespace review only. Fresh exact-candidate CI required.
+Backup/reconciliation/diagrams,approved-base whole flow,independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open.
+
+### Wave77 daily-mode static contract correction: single candidate CI — 2026-10-16 KST
+
+Candidate 719a2e2820837c96af4b183b87659de6f58740f7;1016 pins/462 candidate blobs.
+All-event exact-head query0 at 2026-10-16T04:10:28.255272+00:00; remote prior candidate matched.
+After one push, all-event query0/remote match 2026-10-16T04:10:52.486194+00:00;
+one dispatch 2026-10-16T04:10:54.380913+00:00. CI38849276458 attempt1 identified
+2026-10-16T04:11:00.920705+00:00, workflow_dispatch/ci.yml/excited-dolphin.
+No rerun/cancel/duplicate. All frozen sources/inputs remain immutable until
+eight terminal jobs/full logs/seven checkouts/named results are recovered.
+Reporting bound 2026-10-16T05:40:54+00:00; direct coordinator, no new worker.
+
+Require29 operation/root and8 actual PostgreSQL transport definitions, all prior58 root
+cases/legacy operations fixture,43 actual-role PG schedule cases and all prior
+Rust/PG/Web gates. No operational activation or full-flow acceptance yet. Later documentation HEAD
+does not change the candidate. Consistent
+backup/reconciliation/diagrams, approved-base whole flow, independent review,G4,
+Owner,three actual trading days/finalC_R2 remain open. Ralph continues.
+
+I6B3 backup/reconciliation draft is registered in an isolated coordinator worktree
+from719a2e2 while Wave77 CI38849276458 continues. No additional worker or local
+project execution. Frozen primary candidate remains unchanged; draft transfer
+requires full Wave77 recovery and disposition. No backup/runtime acceptance.
+
+### R2 elapsed-time audit — 2026-10-16 13:33 KST
+
+Ralph approximately18h17m;36 distinct candidate CI runs,15SUCCESS/21FAILURE,
+nonoverlapping CI intervals43,205s. Latest719a2e2/run38849276458 fully recovered
+with one existing Owner-equity workspace test failure; all new29+8 pass.
+Candidate acceptance withheld. Source corrections/full CI granularity and
+repeated bookkeeping caused avoidable delay; completion groups are now fixed
+to known failures+backup/reconciliation, whole-flow/diagrams/review, then
+G4/Owner/actual3tradingdays. No new implementation/CI/production during audit.
+Details: docs/reviews/2026-10-16-r2-ralph-progress-audit.md.
+
+
+### Wave77 recovery fixture diagnosis — 2026-10-16 KST
+
+Same-job log digest verified; fixed diagnostic is `publish recovered: STALE_CLAIM`.
+The crash fixture reused its 25ms expiry queue for successful recovery. Only the
+recovery claim/process now use the existing normal 5s test queue; crash/sweep,
+orphan/no-admission/one-publication assertions remain, with new-attempt identity
+and old-worker rejection after re-claim added. Source/rustfmt/whitespace pass;
+changed test UNEXECUTED. Registered exact test-file extension in the I6B3 draft.
+No production change or new CI. Batch with coherent backup/reconciliation work;
+previous failed run remains failed and all final R2 gates remain open.
+
+
+### I6B3 backup foundation — 2026-10-16 KST
+
+After full Wave77 recovery and committed fixture correction 3c100be, transferred
+eight bounded source/test files from the registered coordinator draft. Complete
+file inventory/reference checks, fixed DB audit/original-reservation repair, and
+exact prior-cohort resume primitives are written. New55 definitions (34 file,
+8 resume,11 SQL,2 transport) remain WRITTEN_UNEXECUTED. Direct source/whitespace
+and scoped Rustfmt checks only; no compiler, Python, SQL, Docker or new CI run.
+Next: encrypted capture/isolated restore, native same-identity reconciliation,
+controller cleanup and official command/installer/CI wiring as one coherent
+candidate. All whole-flow/independent-review/G4/Owner/three-day gates stay open.
+
+Wave79 15:54KST 후속: PG 전용19target exit0/noSKIP·62checksum두lane·0060/0039/cleanup 통과. 별도 policy DB준비2곳과 Web OFF129중1개는 실패했고 원인은 미확정이다. Rust 전체 테스트와 required 집계/전체 회수는 진행 중. 기존1030+추가/보정 총1041pin 불변; 새 CI나 소스 수정 없음. 이후 실제 TCP/SQL 준비 확인·안전한 오류코드·backup named-row 누락을 한 보정 범위로 다룬다. 운영/Owner/3거래일은 미시작.
+
+Wave79 전체 회수: 61f9c7f/38861769625 attempt1은 FAILURE.8job/8full-log hash/7checkout/1041pin/481blob 확인. Rust3346+chart6·PG19target·62checksum·lint/format/Python 통과. 새86정의는78PASS/8NOT_EXECUTED; policy DB준비2곳·Web OFF1개 실패의 원인은 UNKNOWN. 64backup·10CI계약·11Owner브라우저는 통과했다. 다음은 준비 확인·안전한 오류코드·backup named-row를 묶은 제한 보정이며 운영/Owner/3거래일 인수는 계속 미완료.
+
+
+### Wave81 single candidate CI — 2026-10-16 KST
+
+Wave81: 후보70401cf/CI38869717878 attempt1을 exact-head all-event/all-workflow 조회0·원격 SHA 대조 후07:50:07UTC에 한 번 시작했다.1053pin/485blob 일치.07:56UTC까지 백업 실제 격리복원7개·policy·format·strictClippy·Python은 통과했고 Rust전체·PG·Web은 진행 중이다. 전체8job 결과 회수 전 후보 인수는 보류한다. 운영·Owner·3거래일 관측은 미시작이다.
+Reporting bound09:20:07UTC; no rerun/cancel/duplicate, new worker, local project
+execution or production action. Frozen inputs and candidate remain unchanged.
+
+
+### First operational transition preparation — 2026-10-16 KST
+
+첫 운영 전환의 남은 의존성을 소스로 대조했다: schema59용 일관된 소유권/ACL 복원 증거, 기존 백업6파일의 명시적 버전 전환, 실제 승인 V3 기반3UID 전체 흐름 fixture가 필요하다. 기존 설치기의 no-clobber와 승인 registry는 유지한다. 아직 실행 준비/권한 요청 완료가 아니며 운영 동작은 없다.
+Source assessment: docs/reviews/2026-10-16-r2-first-rollout-readiness.md.
+Wave81 frozen candidate/inputs unchanged; no new CI, worker or local project execution.
+
+### Wave81 full recovery and scoped acceptance — 2026-10-16 KST
+
+Wave81 후보70401cf/CI38869717878 attempt1이17:06KST에 전체8job SUCCESS로 종료했다.8개 로그·7checkout·1053pin/485blob과 백업88개·기존 필수 named gates를 대조해 I6B3 범위의 hosted 검증을 인수했다. 운영 적용·Owner 확인·3거래일 관찰은 미시작이다.
+
+All88 definitions and required current/carried groups PASS; 8 full log hashes,
+7 actual checkout SHAs,1053 pins/485 blobs matched. The source-bound named-row
+supplement corrects one interleaved binary header and adds one complete result;
+a separate noncanonical `okok` row and unprinted nested helpers remain UNKNOWN.
+Original receipts and all failed runs are preserved. Source/compiler/test
+acceptance is limited to the I6B3 package and carried hosted gates, not independent
+review, production, Owner or final C_R2. The owned ledger and launch record are
+terminal; no new CI, worker or local project/production action occurred.
+
+Next is the coherent first-rollout preparation already defined in
+`docs/reviews/2026-10-16-r2-first-rollout-readiness.md`: consistent pre-upgrade
+recovery, exact installed-backup transition and approved-base three-UID whole
+flow; then diagrams/independent review and the concrete operational packet.
+Historical 72-hour host authority remains expired. Three trading days have not
+started. Ralph remains active; current run success does not close R2.
+
+### Wave82 first-rollout source checkpoint — 2026-10-16 KST
+
+첫 운영 전환 준비: 기존 백업6파일의 별도 교체·복구 경로와22개 회귀 정의를 작성했다. fresh installer의 덮어쓰기 거부는 그대로다. 소스/문자열 대조만 했고 테스트·운영은 미실행이며, 사전 DB 복구·승인 입력 전체 흐름과 묶어서 검증한다.
+
+Four executable/test/workflow paths: new bounded six-file transition tool,22
+actual-root filesystem definitions, hard policy CI step and its existing contract
+test assertion. Direct static review only. Fresh installer and backup runner
+bytes unchanged. No project import/parser/test, root, systemd, Docker, DB,
+provider, worker or new CI operation. Private checkpoint is
+`target/r2-daily-beta/wp-4-integration/wave82-first-rollout-source-checkpoint.json`.
+
+Follow `docs/runbooks/r2-first-backup-transition.md`; no execution-ready or
+independent-review claim. Pre-upgrade consistent recovery and approved-base
+whole flow remain the next source work within this same coherent package.
+
+### Wave82 pre-upgrade recovery source checkpoint — 2026-10-16 KST
+
+Cold PG18 whole-cluster/file archive and isolated clone verification primitives
+are written, with18 filesystem/contract and3 native-Docker definitions, all
+WRITTEN_UNEXECUTED. Combined with the prior22 transition definitions, Wave82 has43
+written cases. Daily format remains distinct; no runtime/source acceptance or
+new CI. See `docs/runbooks/r2-preupgrade-recovery.md` and private checkpoint
+`target/r2-daily-beta/wp-4-integration/wave82-preupgrade-recovery-source-checkpoint.json`.
+Next: bounded maintenance entry point/writer fences/no-clobber publication and
+actual approved-base whole flow, then coherent candidate review/verification.
+The historical sudo-expiry timestamp is not current root access evidence;
+existing read-only/EOD approvals remain in force. No authority expansion.
+
+### Wave82 maintenance command source checkpoint — 2026-10-16 KST
+
+Bounded pre-upgrade audit/capture/verify is written in a separate protected
+maintenance payload, preserving the old current release until recovery exists.
+The command binds fresh clock/boot/revisions/old migration bytes, existing
+release/backup/Raw locks, stopped writer observations, encrypted file capture,
+networkless cloned verification and no-replace publication. Ambiguous verifier
+creation/cleanup retains an owned intent/copied mount and blocks later calls.
+
+New28 filesystem/OpenSSL/observation-fake definitions and one actual-Docker
+lost-response definition bring Wave82 to72 WRITTEN_UNEXECUTED cases. Static
+source/text checks only; no source/compiler/runtime acceptance or new CI.
+See `docs/runbooks/r2-preupgrade-recovery.md` and private checkpoint
+`target/r2-daily-beta/wp-4-integration/wave82-maintenance-source-checkpoint.json`.
+Next: actual approved-base whole flow, coherent review and one hosted candidate;
+then diagrams/independent review/G3-G4/operations/Owner/three trading days.
+Existing read-only/EOD approvals remain; no new operational authority claimed.
+
+2026-10-16, Wave82 C04: whole-flow source tracing found the installed `/data/raw`
+leaf was passed to a reader that adds `raw`, selecting `/data/raw/raw`. The
+ingest adapter now validates the leaf and passes its parent. Four new direct
+filesystem/path definitions are WRITTEN_UNEXECUTED (Wave82 total76); scoped
+Rust2024 formatting/whitespace only. Full evidence and remaining whole-flow work
+are in [first-rollout readiness](reviews/2026-10-16-r2-first-rollout-readiness.md).
+No new CI, worker, local project execution or production action.
+
+
+### Wave85 full hosted recovery and bounded release preparation — 2026-10-16
+
+Candidate `f215665012d1f4f1b81289dd94606bceb0cb8c46`, CI38901117928 attempt1, completed12:55:45UTC with all8 jobs SUCCESS. All8 full log hashes,7 actual checkout SHAs,1137 pins/506 blobs and100 named first-rollout PASS rows were reconciled. All carried required groups matched; actual native recovery ownership is999:0/0700 in8 source/restored observations. Strict lint/format, PG146 rows/19 targets/62 checksums twice/0060/0039/bootstrap/cleanup, Web129+14 and Python487 passed. Rust has3351 complete workspace PASS rows,6 ignored and6 separate chart PASS rows;2 fragmented non-required outcomes and nested helper independent results remain UNKNOWN. Earlier failures/exclusions remain intact. Accept only the hosted package scope; no new executable correction or CI dispatch is needed from this success.
+
+Prepared303 diagram citation ranges against this candidate in the isolated draft, a clean detached image checkout with2115 tracked files and an inert private interpolation input, and an independent review packet for202 changed non-documentation paths. Neither PNG rendering, reviewer launch nor image/whole-flow execution occurred. Unprivileged host observations at13:01:28UTC still select old releasefce9b90, show no listed build processes and active Docker/containerd units; root/protected paths/container health/kernel OOM remain unqueried. Exact bounded privileged-read and one-reviewer exception decisions were requested; no response is assumed. G3/G4, actual deployment/Owner/three trading days and final C_R2 remain open.
+
+
+### R2 scope-decision block — 2026-10-16
+
+The same unanswered privileged-read/reviewer-exception decisions persisted across three consecutive goal turns, including the original preparation turn. All independent authorized preparation is complete; no live CI/reviewer is being awaited. The native Ralph goal was set to BLOCKED after this audit. R2-01~09/final C_R2 remain the full objective, not completed or narrowed. Resume only within the explicit response to the prepared host-admission and integrated-review packets. No duplicate CI, new worker, root/Docker action or operational mutation was performed.
+
+## 2026-10-18 Wave101 full hosted acceptance and Wave102 preparation
+
+후보512625a의 CI8작업과 기능smoke가 모두 SUCCESS로 종료했다. 전체9로그/8checkout·1252pin/525blob·필수141개/이미지15결과/wholeflow32개와 실제 게시·반복·정리10개를 대조해 hosted 범위를 인수했다. Wave102는 새2144소스pin/11제어파일로 이미지 유지보수1회와 완전한 복귀 뒤 격리 통합검증1회를 준비했다. 새 호스트 실행은 미승인·미실행이며 기존 익명볼륨은 보존한다. G4·배포·Owner·3거래일·C_R2는 미완료다.
+
+후속33c0cd33을11:10:07.401UTC에 확인하고 인계718e3b6b를 저장한 뒤44965a67 삭제를 확인했다.22:00UTC 전/47번째 tick 전 갱신하며23:10:07.395UTC 만료다. 같은 에이전트의 제한된 후속 추적이며 native Ralph는 blocked이고 daemon 중단을 보호하지 않는다.
+
+
+## Wave106 authorized host execution — 2026-10-19 01:06 UTC
+
+Wave106 새 Owner 승인79bbfcb7에 따라 b6b2ddb 여덟 번째 이미지 실행을01:06UTC 한 번 시작했다.2152소스/11제어/12핵심pin·새 호스트11상태·READ ONLY 작업 정리·공식 plan/preflight를 통과했고, 독립 복구 실제 active 확인 후 Owner V2가 정상 exit0로 종료됐다. 이미지 빌드/동일 ID 복귀의 전체 성공을 확인한 뒤 승인된 다섯 번째 실제 격리통합을 추가 질문 없이 한 번 실행한다. 현재 빌드 중이며 새 이미지·통합 인수는 아직 아니다. 기존 UNKNOWN/0120 정리 INCOMPLETE와 G4·배포·Owner·3거래일·C_R2 미완료를 보존한다.
+
+[Execution packet](reviews/2026-10-19-r2-b6b2ddb-host-sequence-packet.md). Authorization79bbfcb7; current tracking247ea746.
+
+
+## Wave107 — closed host attempt and canonical discovery correction (2026-10-19)
+
+b6b2ddb 여덟 번째 이미지12개와 동일 Owner 복귀를 인수했다(closure a285575b). 승인된 다섯 번째 실제 통합은 첫 생산·승인0 이후 두 번째 생산 INPUT_BLOCKED로 실패했다.01:27UTC 전체 회수/9컨테이너·네트워크 정리/운영11상태·current·보존볼륨 불변을 확인했다(closure ec848470). 두 승인은 소진됐으며 자동 재시도 없음. Wave107은 재구성 enum 순서와 저장 wire 순서의 구조 비교 불일치를 기존 canonicalizer 재사용으로 수정하고 회귀4개를 작성했다. 아직 새 hosted 검증 전이며 정확한 런타임 거부 지점·기존 UNKNOWN/0120 INCOMPLETE, G4·배포·Owner·3거래일·C_R2 미완료를 보존한다.
+
+[Full recovery and source correction](reviews/2026-10-19-r2-daily-discovery-canonical-order.md). No new host execution. Tracking dda1a840, renew12:20UTC.
+
+
+## Wave108 — e639169 hosted accepted; new concrete host sequence (2026-10-19)
+
+후보 e639169의 CI39186174905 attempt1(02:03:23UTC)·기능 smoke39186177169 attempt1(02:20:59UTC)이 성공했고02:21:48UTC 전체9로그/8실제checkout·1437pin/537blob·174필수(새 Rust4 포함)/15이미지결과/44wholeflow 및 실제 게시·반복·10정리0를 회수했다. Wave108은2155소스/11제어/12핵심pin의 아홉 번째 이미지1회, 완전 복귀·독립 복구 성공 후 조건부 여섯 번째 실제 격리통합1회 실행안이다. 기존 Wave106 두 승인은 소진됐고 새 결정 전 미실행이다. 정확한 과거 런타임 거부 지점·미출력 UNKNOWN/0120 정리 INCOMPLETE를 보존한다. 새 이미지·호스트 통합·G4·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[Full hosted/source evidence](reviews/2026-10-19-r2-daily-discovery-canonical-order.md) · [Concrete packet](reviews/2026-10-19-r2-e639169-host-sequence-packet.md).
+
+hosted f44b66b1 / functional2cd651b9 / requiredCI006273fc; sequence361f94a8 /
+finalstatic46b77078.2155 source pins/11 finite inverse controls/12 unchanged critical
+pins/1437 frozen hosted inputs match. Admission metadata block/observer diagnostics
+unchanged; no local project/control execution, new host reads or independent review.
+New images/manifest/host state UNKNOWN until new decision and fresh gates.
+
+현재 추적68a23346을02:32:49.330UTC에 확인하고 인계cfb61e58을 저장했다.13:00UTC 전/47번째 tick 전 갱신,14:32:49UTC 만료. 직전 요약의 결과 경로를 명령원장과 일치시켰다. 같은 이름의 heartbeat 생성이 동일 ID를 반환했는데 이를 이전 ID로 잘못 삭제해 약22초 추적 공백이 발생했고, 다른 이름의 새 ID로 즉시 복구했다. 호스트 동작은 없었으며 앞으로 후속 ID가 다른지 확인한 뒤에만 이전 ID를 삭제한다. native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 중단 보호나 새 worker가 아니다.
+
+
+## Wave108 authorized execution — 2026-10-19 02:55 UTC
+
+Wave108 새 Owner 승인 cea1e033에 따라 e639169 아홉 번째 이미지 빌드를02:55UTC 한 번 시작했다. 새2155소스/11제어/12핵심pin·호스트11상태·READ ONLY 정산·공식 plan/preflight가 통과했다. 독립 복구 실제 active를 먼저 확인했고 Owner V2는02:55:06UTC 정상 exit0로 종료됐다. 전체12이미지·동일 ID 복귀·독립 복구 성공종료·무프로세스·정산을 인수한 뒤 승인된 여섯 번째 실제 격리통합을 추가 질문 없이 한 번 실행한다. 현재 이미지 빌드 중이며 호스트 통합은 미실행이다. 자동재시도 없음; 기존 UNKNOWN/0120 정리 INCOMPLETE와 G4·배포·Owner·3연속 실제거래일·C_R2 미완료를 보존한다.
+
+추적 efe29fa6, 인계40fcee35를 저장하고 이전68a23346을 삭제했다.13:50UTC 전/47번째 tick 전 갱신;14:55:32UTC 만료. 독립 복구 서비스가 호스트 복귀를 담당하며 heartbeat는 같은 에이전트의 제한된 후속 추적이다.
+
+
+## Wave108 terminal acceptance / Wave109 G4 source readiness — 2026-10-19 03:17 UTC
+
+Wave108 승인 cea1e033의 두 실행을 모두 성공 종결했다. e639169 아홉 번째 이미지12개·704파일/49게이트·2155소스pin을 인수했고03:12:26UTC 동일 Owner 정상 복귀,03:12:30UTC 독립 복구 실제 성공종료·무프로세스·READONLY 정산을 회수했다. 여섯 번째 실제 격리통합은03:13:15UTC 한 번 시작해03:16:56UTC exit0,03:17:18UTC 전체 회수를 완료했다. 최초/후속 승인·HTTP 게시·재시작·capture/restore·복원 프로세스 게시 유지의6단계가 모두 통과했고 임시21컨테이너/2네트워크를 모두 정리했다. 운영11상태·current·기존 base/보존볼륨은 유지됐다. 합성 세션 결과이며 실제 시장 수신·배포·Owner 로그인·3거래일 관찰은 아니다. 두 승인은 소진됐다. 과거 거부 내부원인 UNKNOWN/0120 정리 INCOMPLETE를 보존한다.
+
+Wave109 G4 도구 소스 준비: 별도 maintenance payload의 base helper 누락과 보존해야 할 역사적 terminal unit의 정확한 inventory 계약을 보완한다. 로컬 프로젝트 실행·새 호스트 조회/동작 없이 소스 검토와 새 hosted 검증을 준비한다. 기존 앱 e639169/이미지/manifest/실행 근거는 불변이다. G4·백업 전환·배포·Owner·3연속 실제거래일·최종 C_R2는 미완료다.
+
+Image closure `0e2892c1984f783080796e8a6408c7413598028e0ce88931d2dc64dc5769926d`; manifest `e18b3aa714106db4a737caa35a8f18c151e5173528db3b118d134e8ac0dfeda2`; wholeflow closure `7f2465e63d919464cf2478d5dd1e0d78fe5496996cdc4fdbaab7cac693885d6a` (63 pins). Tracking `910f3b16`, handoff `76ffabde`, predecessor `d212c6ce` deletion confirmed. No pending question/new host authority.
+
+
+## Wave109 maintenance-v2 source ready; hosted execution pending
+
+Wave109 G4 도구 소스2파일을 보완했다. 별도 payload12개에 base helper를 포함했고 v2계약에서 종료된 transient 기록과 중지된 writer를 구분하면서 전체 inventory/fragment pin/실행대기열/PID/재귀 cgroup/활성화 연결을 대조한다. 기존28개와 새13개(총41) maintenance 회귀는 작성·직접 검토만 했으며 새 후보 hosted CI 전이다. 앱 e639169의 이미지·실제 격리통합 인수는 그대로 보존한다. 새 호스트 조회·G4실행·배포·Owner·3거래일·C_R2 인수는 아니다.
+
+Full8job CI once for a distinct tool candidate; no functional-smoke or host retry of the accepted e639169 application. Exact private definition inventory retains all174previous required names plus13new maintenance cases.
+
+
+## Wave109 full CI acceptance / Wave110 bounded inventory decision — 2026-10-19 04:00 UTC
+
+복구 도구3de6420의 CI39195322025 attempt1 8작업이03:53:57UTC 성공했고04:00:50UTC 전체8로그/7실제checkout·1447pin/540blob·187필수/41maintenance(새13)/15이미지결과/44wholeflow를 회수했다. 앱 e639169의12이미지·실제 격리통합6단계 인수는 별도 보존한다. Wave110은 서비스 중단 없는300초 한도의 운영 metadata 조회1회 실행안이다. 이전 failed persistent KIS unit과 실제 PG부모/전체 writer정보를 추정하지 않으며 기록 reset/delete/filter를 하지 않는다. 새 명시 결정 전 호스트 조회·G4 중단/백업·배포는 미실행이다. Owner 사용·연속 실제3거래일·최종 C_R2는 미완료다.
+
+Tool hosted receipt `a2a0e307ff8a52bcc6f7c38d787ff9af145d3c18a0395beb255b7488bc913deb`; required input reconciliation `392f4502bd14585463340ab563c2cef065d136740985de66eee7da92953bf842`. Cargo stdout/stderr의 두 delayed header는 로그 회수 coordinator에서만 보정했으며 이전 parser/error/diagnostic과 실제 로그를 보존했다. 후보·테스트·workflow는 변경/재실행하지 않았다. 기존3nonLinux/6ignored/10Python skips, 잘린 중첩 이름과 미출력 독립 결과 UNKNOWN을 보존한다.
+
+Wave110 prepared survey `881323f47165786c28120b95b261c76ddd0850a1141ac3c21df02c939ad59567`,31pins; final static `21fb7cd081b469095de234c2ab402e33605c830d9ea95102082fa9645c4fa3ea`. [운영 조회 실행안](reviews/2026-10-19-r2-g4-operating-inventory-packet.md)은 새 결정에 한 번만 연결하며 재시도/운영 중단 권한을 포함하지 않는다. Wave108 두 실행 승인 소진과 successorHostExecutionAuthorized=false가 새 결정의 근거다. 과거0120 볼륨정리 INCOMPLETE와 모든 accepted evidence를 유지한다.
+
+추적2a41527f를04:05:19UTC active로 확인하고 인계d40b4751와 owned-workers를 저장한 뒤 이전2ba3df30 삭제를 확인했다.15:00UTC 전/47번째 tick 전 갱신,16:05:19UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.
+
+
+## Wave110 survey terminal / Wave111 path correction — 2026-10-19 04:10 UTC
+
+Wave110 승인에 따른 운영 metadata 조회1회는04:10:17UTC G4_PG_PATH/exit1로 종결됐다. 일반 Docker root를 고정한 조회 코드 조건에서 중단됐으며 실제 경로와 앞선 부분 관측은 미출력 UNKNOWN이다. 서비스·데이터·SQL·provider 동작은 없었고 해당1회 승인은 소진됐다. Wave111은 정확한 기존 PG mount/volume 경로 결합과 필터링된 부분 결과 보존을 보완한300초 읽기 전용 조회안이다. 새 결정 전 추가 호스트 조회는 하지 않는다. e639169 앱·이미지·실제 통합과3de6420 도구 CI 인수는 보존하며 G4·배포·Owner·연속 실제3거래일·C_R2는 미완료다.
+
+First authorization babc9cb1; exact root-command exit1/finite G4_PG_PATH, stderr0; terminal f6899e8d/closure112ad940. Raw logs were never persisted. The first script lost earlier filtered observations on failure, so they remain UNKNOWN rather than reconstructed from parent completion. No automatic retry. Original packet/controls/intent/evidence remain immutable.
+
+The corrected private survey binds the same fixed PG container mount to the exact named local volume Name/Source/Mountpoint, checks a canonical absolute volumes/name/_data suffix without assuming Docker root, preserves nofollow directory reads and retained-volume exclusion, and emits only already-filtered partial metadata plus finite stage labels on failure. No added child command, production source change, local parser/helper/test execution or independent review. Hosted41maintenance cases do not validate this survey. [Concrete packet](reviews/2026-10-19-r2-g4-inventory-path-correction-packet.md); prepared0b00872e/39pins, finalstaticdb031ed8. A new explicit one-shot decision is needed because the previous single execution is consumed. No outage/backup/deploy authority.
+
+추적bd7f2569를04:15:31UTC active로 확인하고 인계d091160b/registry를 저장한 뒤2a41527f 삭제를 확인했다.15:10UTC 전/47번째 tick 전 갱신,16:15:31UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+
+
+## Wave111 partial survey terminal / Wave112 metadata completion — 2026-10-19 04:22 UTC
+
+Wave111 승인 조회1회는04:22:01UTC exit1/FileNotFoundError로 종결됐지만56유닛·13컨테이너·실제PG경로·5root metadata·보호파일7개를 회수했다. 다음 고정 시도는release lock이며 정확한 누락 구성요소는UNKNOWN이다. /data1000:1000/0755, PG부모0701/볼륨1777, disabled persistent failed유닛은 현G4도구와 맞지 않아 별도명시설계가 필요하다. 키metadata·자원·writer·최종재대조는 미회수다. Wave112는 부재와 변화도 명시적으로 기록하며 독립 metadata를 끝까지 수집하는300초 읽기전용1회안을50pin으로 준비했다. 새 결정 전 호스트실행없음; 운영파일·서비스·SQL·provider 변경없음. 앱e639169 이미지·실제통합 및도구3de6420 CI 인수는 유지한다. G4·배포·Owner·연속실제3거래일·C_R2는 미완료다.
+
+추적d17c7730을04:33:06UTC active로 확인하고 인계45d9d519/registry 저장 뒤bd7f2569 삭제를 확인했다.15:30UTC 전/47번째 tick 전 갱신,16:33:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+
+종료 a7695e49, 종결 f2efca1e, readiness13fd35c6. 새 prepared4766af8c/50pins, staticb453b55f; 운영설계8024a4ae는 UNIMPLEMENTED이며 권한이 아니다. 반복 조회·실패 unit reset·공유/data 소유권 변경·PG 권한 변경은 실행하지 않았다. [상세 실행안](reviews/2026-10-19-r2-g4-partial-inventory-and-completion.md).
+
+
+## Wave112 authorization binding failure / Wave113 correction — 2026-10-19 04:44 UTC
+
+Wave112 a3는04:44:27UTC 한 번 실행됐으나 내부 조회기에 남은 Wave111 승인 경로 때문에 첫 운영 관측 전 G4_NEW_AUTHORIZATION_REQUIRED/exit1로 종료됐다. 코디네이터 준비 오류이며 root 프로세스 실행과 승인 소진을 기록했다. 운영 변경은 없고50pin 불변이다. Wave113 a4는 조회기·실행기 각각3리터럴만 보정하고 별도 경로/scope/argv 대조 및59pin 정적 검증을 완료했다. 미실행이며 새 결정이 필요하다. 앱e639169 이미지·실제통합/도구3de6420 CI 인수는 유지한다. 남은 metadata·G4·배포·Owner·연속실제3거래일·C_R2는 미완료다.
+
+실제 실패 원인: wrapper=Wave112/V3, reader=Wave111/V2 receipt를 읽고V3를 요구.50봉인 입력이 같아도 파일 간 정합성이 맞지 않았다. 새 사본은 BASEa4/승인Wave113/scopeV4만 각각3리터럴 변경하며 역변환 및 서로 다른 파일의 바인딩을 대조했다. 동작·guard·대상은 동일하다. 제어 실행·project parser/helper/test/compiler·새 독립 리뷰는 하지 않았다.
+
+종료b065beb9, 종결9e538ad5, 새prepared96d7013f/59pins, static3f6e7c8d, bindingbb73d173. 기존 executionLimit1/automaticRetryAuthorizedfalse 때문에 새 실행 결정 전 중단한다. 이전 a1/a2/a3와 모든 인수된 소스/근거는 보존한다. [상세 실행안](reviews/2026-10-19-r2-g4-authorization-binding-correction.md).
+
+추적d54eea44를04:52:06UTC active로 확인하고 인계e555f380/registry 저장 뒤d17c7730 삭제를 확인했다.15:45UTC 전/47번째 tick 전 갱신,16:52:06UTC 만료. Native Ralph blocked/no resume API; 같은 에이전트의 제한된 후속 추적이다.
+
+
+## Wave113 terminal recovery / Wave114 compatibility source — 2026-10-19
+
+Wave113 승인 조회 a4는2026-10-19 05:06:05UTC 한 번 실행해12단계와 최종 상태 대조까지 회수했다. 종료는exit2/METADATA_RECOVERED_WITH_GAPS이며 유일한 gap은release lock의 실제 부재다. 잠금 파일을 만들지 않았고56유닛 두 번의 metadata가 같았다. 키metadata·자원·제한된 열린FD/maps 관측도 회수했으나 전역/미래/외부 writer 차단 증명은 아니다. 승인0543fefc는 소진됐고 추가 조회는 하지 않는다. Wave114는 실제 PG ancestry와 disabled persistent failed 유닛, 비대칭 관측된 activation 속성을 보존하는 maintenance-v3 소스를 준비했다. 기존41개와 신규14개(총55개) maintenance 회귀는 작성·직접 검토 단계이며 새 후보 hosted CI 전이다. 인수된 앱e639169/12이미지/실제 통합과 도구3de6420/기존 근거는 불변이다. G4 중단·일관 백업·복구·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[소스·실행 경계](reviews/2026-10-19-r2-g4-host-compatibility-source.md). 키의 외부 보관 식별명과 외부/수동 writer 유무는 한 번 질문했으며 답변 대기 중이다. 새로운 운영 실행 승인을 요청한 상태가 아니다.
+
+추적729c2a81을05:18:32UTC active로 확인하고 인계63f45651/registry 저장 후d54eea44 삭제를 확인했다.16:30UTC 전/47번째 tick 전 갱신,17:18:32UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이다.
+
+
+## Wave114 compatibility CI acceptance — 2026-10-19 05:46 UTC
+
+Wave114 복구 도구790f1ea의 CI39204199932 attempt1 8작업이05:45:47UTC 성공했고05:46:39UTC 전체8로그/7실제checkout·1464pin/548blob·201필수 결과를 회수했다. 기존41개+신규14개 maintenance55개와 실제 Docker cold restore4개가 통과했다. 승인된 Wave113 조회는12단계까지 회수했으며 유일한 gap인 release lock 부재를 그대로 보존한다. 운영 중단·백업·배포는 실행하지 않았다. 키의 외부 보관 식별명과 외부/수동 writer 유무는 이미 한 번 질문했고 답변 대기다. 정확한 G4 admission/main/recovery 제어와 실행안을 완성한 뒤 필요한 운영 결정을 받는다. 앱e639169/12이미지/실제 통합 인수는 보존하며 G4·백업 전환·배포·Owner·3연속 실제거래일·C_R2는 미완료다.
+
+[범위와 미완료 조건](reviews/2026-10-19-r2-g4-compatibility-ci-and-operating-gaps.md).
+
+후속 추적e3e092a9를05:48:08UTC 별도 active ID로 확인하고 인계0613d80d/registry 저장 후4786839b 삭제를 확인했다.17:00UTC 전/47번째 tick 전 갱신,17:48:08UTC 만료. Native Ralph blocked/no resume API; 동일 에이전트의 제한된 후속 추적이며 worker나 장애 보호가 아니다.

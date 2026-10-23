@@ -3,6 +3,9 @@
 //! An empty approval registry is a valid deployment state: this worker may
 //! start, but individual jobs fail closed during the sealed computation.
 
+#[path = "owner-beta-runner/daily.rs"]
+mod daily;
+
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -345,6 +348,9 @@ const fn recovery_failure_exits() -> bool {
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    if let Some(exit) = daily::dispatch(std::env::args_os().collect()).await {
+        return exit;
+    }
     let config = match config() {
         Ok(config) => config,
         Err(()) => {
@@ -366,6 +372,16 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
+    let daily_config = match daily::worker_config(&config.artifact_root) {
+        Ok(value) => value,
+        Err(()) => {
+            eprintln!(
+                "{}",
+                json!({"event":"owner_beta_startup","code":"DAILY_CONFIGURATION_INVALID"})
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     let options = match database_options(config.production) {
         Ok(options) => options,
         Err(()) => {
@@ -417,6 +433,7 @@ async fn main() -> ExitCode {
         });
     }
     let mut next_recovery = tokio::time::Instant::now();
+    let mut next_daily_schedule = tokio::time::Instant::now();
     let mut exit = ExitCode::SUCCESS;
     loop {
         if *shutdown_rx.borrow() {
@@ -447,7 +464,25 @@ async fn main() -> ExitCode {
             }
             next_recovery = now + config.recovery;
         }
-        match run_once(&pool, &queue, &config.worker_id, &paths, &runner).await {
+        if daily_config.is_some() && tokio::time::Instant::now() >= next_daily_schedule {
+            daily::schedule(&pool, daily_config.as_ref()).await;
+            next_daily_schedule = tokio::time::Instant::now() + Duration::from_secs(60);
+        }
+        let result = if daily_config.is_some() {
+            let mode = daily::execution(daily_config.as_ref());
+            job_queue::owner_beta::runner::daily_execution::run_once_with_daily(
+                &pool,
+                &queue,
+                &config.worker_id,
+                &paths,
+                &runner,
+                &mode,
+            )
+            .await
+        } else {
+            run_once(&pool, &queue, &config.worker_id, &paths, &runner).await
+        };
+        match result {
             Ok(outcome) => {
                 eprintln!(
                     "{}",

@@ -150,7 +150,7 @@ mod tests {
 
     static TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn stalled_blocking_work_returns_at_its_deadline() {
         let _test_lock = TEST_LOCK
             .get_or_init(tokio::sync::Mutex::default)
@@ -170,16 +170,29 @@ mod tests {
                 Ok::<_, ()>(())
             },
         ));
-        started_rx.await.expect("blocking closure started");
+        // Paused Tokio time auto-advances while the OS blocking thread is still
+        // waiting to start. Confirm entry on the real clock before advancing it.
+        tokio::time::timeout(Duration::from_secs(5), started_rx)
+            .await
+            .expect("blocking closure startup deadline")
+            .expect("blocking closure started");
+        tokio::time::pause();
         tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::time::resume();
         assert!(matches!(
-            task.await.expect("blocking task join"),
+            tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .expect("blocking task completion deadline")
+                .expect("blocking task join"),
             Err(BlockingIoError::TimedOut)
         ));
-        finished_rx.await.expect("blocking closure observed cancel");
+        tokio::time::timeout(Duration::from_secs(5), finished_rx)
+            .await
+            .expect("blocking closure cancellation deadline")
+            .expect("blocking closure observed cancel");
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn shutdown_cancels_blocking_work_without_waiting_for_the_deadline() {
         let _test_lock = TEST_LOCK
             .get_or_init(tokio::sync::Mutex::default)
@@ -200,12 +213,21 @@ mod tests {
                 Ok::<_, ()>(())
             },
         ));
-        started_rx.await.expect("blocking closure started");
+        tokio::time::timeout(Duration::from_secs(5), started_rx)
+            .await
+            .expect("blocking closure startup deadline")
+            .expect("blocking closure started");
         shutdown_tx.send(true).expect("shutdown signal");
         assert!(matches!(
-            task.await.expect("blocking task join"),
+            tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .expect("blocking task completion deadline")
+                .expect("blocking task join"),
             Err(BlockingIoError::Canceled)
         ));
-        finished_rx.await.expect("blocking closure observed cancel");
+        tokio::time::timeout(Duration::from_secs(5), finished_rx)
+            .await
+            .expect("blocking closure cancellation deadline")
+            .expect("blocking closure observed cancel");
     }
 }

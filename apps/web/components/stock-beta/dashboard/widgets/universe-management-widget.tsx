@@ -39,7 +39,7 @@ export function UniverseManagementWidget({
               }
               aria-invalid={viewModel.inputError === null ? undefined : true}
               autoComplete="off"
-              disabled={viewModel.mutationPending}
+              disabled={!viewModel.interactionReady || viewModel.mutationPending}
               id="stock-beta-instrument-code"
               inputMode="numeric"
               onChange={(event) => viewModel.onInstrumentCodeChange(event.target.value)}
@@ -49,7 +49,11 @@ export function UniverseManagementWidget({
             <small id="stock-beta-instrument-code-hint">{t.instrumentCodeHint}</small>
           </label>
           <button
-            disabled={viewModel.mutationPending || policy.remaining_capacity === 0}
+            disabled={
+              !viewModel.interactionReady ||
+              viewModel.mutationPending ||
+              policy.remaining_capacity === 0
+            }
             type="submit"
           >
             {viewModel.mutationPending && viewModel.pendingMembershipId === null

@@ -623,7 +623,31 @@ PY
   dkr buildx bake --builder "$buildx_builder" --file "$bake_file" --load "${grants[@]}" "$service"
 }
 context_audit_tag="${project}-context-audit"
+context_audit_created=0
+cleanup_command() {
+  local step="$1" command_exit=0
+  shift
+  "$@" >/dev/null 2>&1 || command_exit=$?
+  printf 'RESEARCH_WORKER_SMOKE: cleanup step=%s exit=%s\n' "$step" "$command_exit"
+  return "$command_exit"
+}
+cleanup_absent() {
+  local step="$1" remaining command_exit=0
+  shift
+  remaining="$("$@" 2>/dev/null)" || command_exit=$?
+  if [ "$command_exit" -ne 0 ]; then
+    printf 'RESEARCH_WORKER_SMOKE: cleanup step=%s exit=%s remaining=UNKNOWN\n' "$step" "$command_exit"
+    return 1
+  fi
+  if [ -n "$remaining" ]; then
+    printf 'RESEARCH_WORKER_SMOKE: cleanup step=%s exit=0 remaining=PRESENT\n' "$step"
+    return 1
+  fi
+  printf 'RESEARCH_WORKER_SMOKE: cleanup step=%s exit=0 remaining=NONE\n' "$step"
+}
 cleanup() {
+  local original_exit=$? cleanup_exit=0
+  trap - EXIT
   local total_seconds test_seconds
   total_seconds=$((SECONDS - smoke_started))
   test_seconds=$((total_seconds - build_seconds - host_cargo_seconds))
@@ -638,14 +662,22 @@ cleanup() {
     } >>"$GITHUB_OUTPUT" || echo 'RESEARCH_WORKER_SMOKE: timing outputs unavailable' >&2
   fi
   if [ "$created" -eq 1 ]; then
-    rc stop research-worker >/dev/null 2>&1 || true
-    rc run --rm --no-deps --entrypoint /bin/sh --user 0:0 research-raw-init \
-      -ec 'for path in /data/raw /data/curated; do find "$path" -mindepth 1 -delete; done' >/dev/null 2>&1 || true
-    rc down -v --remove-orphans --rmi local >/dev/null 2>&1 || true
-    rmdir "$raw_root/raw" "$raw_root/curated" >/dev/null 2>&1 || true
+    cleanup_command stop-research rc stop research-worker || cleanup_exit=1
+    cleanup_command empty-fixture-data rc run --rm --no-deps --entrypoint /bin/sh --user 0:0 research-raw-init \
+      -ec 'for path in /data/raw /data/curated; do find "$path" -mindepth 1 -delete; done' || cleanup_exit=1
+    cleanup_command compose-down rc down -v --remove-orphans --rmi local || cleanup_exit=1
+    cleanup_absent project-containers dkr ps -aq --filter "label=com.docker.compose.project=$project" || cleanup_exit=1
+    cleanup_absent project-volumes dkr volume ls -q --filter "label=com.docker.compose.project=$project" || cleanup_exit=1
+    cleanup_absent project-networks dkr network ls -q --filter "label=com.docker.compose.project=$project" || cleanup_exit=1
   fi
-  dkr image rm -f "$context_audit_tag" >/dev/null 2>&1 || true
-  rm -rf -- "$temp_root"
+  if [ "$context_audit_created" -eq 1 ]; then
+    cleanup_command context-image dkr image rm -f "$context_audit_tag" || cleanup_exit=1
+    cleanup_absent context-image-absence dkr image ls -q --filter "reference=$context_audit_tag" || cleanup_exit=1
+  fi
+  cleanup_command temporary-directory rm -rf -- "$temp_root" || cleanup_exit=1
+  printf 'RESEARCH_WORKER_SMOKE: cleanup original_exit=%s cleanup_exit=%s\n' "$original_exit" "$cleanup_exit"
+  if [ "$original_exit" -eq 0 ]; then exit "$cleanup_exit"; fi
+  exit "$original_exit"
 }
 trap cleanup EXIT
 if [ "${GITHUB_ACTIONS:-}" = true ]; then
@@ -663,7 +695,16 @@ raw_init_ownership_probe() (
   binary_volume="${probe_id}-binary"
   cargo_home_volume="${probe_id}-cargo-home"
   cargo_target_volume="${probe_id}-cargo-target"
-  trap 'dkr volume rm -f "$raw_volume" "$curated_volume" "$outside_volume" "$binary_volume" "$cargo_home_volume" "$cargo_target_volume" >/dev/null 2>&1 || true' EXIT
+  probe_cleanup() {
+    local original_exit=$? cleanup_exit=0
+    trap - EXIT
+    cleanup_command raw-probe-volumes dkr volume rm -f "$raw_volume" "$curated_volume" "$outside_volume" \
+      "$binary_volume" "$cargo_home_volume" "$cargo_target_volume" || cleanup_exit=1
+    printf 'RESEARCH_WORKER_SMOKE: raw-probe cleanup original_exit=%s cleanup_exit=%s\n' "$original_exit" "$cleanup_exit"
+    if [ "$original_exit" -eq 0 ]; then exit "$cleanup_exit"; fi
+    exit "$original_exit"
+  }
+  trap probe_cleanup EXIT
   dkr volume create "$raw_volume" >/dev/null || fail 'Raw init probe volume creation failed'
   dkr volume create "$curated_volume" >/dev/null || fail 'Raw init Curated volume creation failed'
   dkr volume create "$outside_volume" >/dev/null || fail 'Raw init outside volume creation failed'
@@ -882,6 +923,7 @@ RUN test -f /context/Cargo.toml \
  && test ! -e /context/scripts/qa/read-only-fsync.rs
 DOCKERFILE
 dkr build --no-cache -q -t "$context_audit_tag" -f "$(hostpath "$audit_dockerfile")" "$(hostpath "$audit_root")" >/dev/null || fail 'Docker build-context sentinel audit failed'
+context_audit_created=1
 rc up -d --wait postgres >/dev/null || fail 'PostgreSQL did not become healthy'
 
 research_password="$(<"$research_secret")"
@@ -895,11 +937,17 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'audit_writer') THEN CREATE ROLE audit_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$escaped_password'; END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'research_writer') THEN CREATE ROLE research_writer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$escaped_password'; END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin') THEN CREATE ROLE admin LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '$escaped_password'; END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'daily_input_admitter') THEN
+    CREATE ROLE daily_input_admitter LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+      NOREPLICATION NOBYPASSRLS PASSWORD '$escaped_password';
+  END IF;
 END
 \$roles\$;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT CONNECT ON DATABASE lagrange
+  TO migration_owner, app, worker, audit_writer, research_writer, admin, daily_input_admitter;
 GRANT USAGE ON SCHEMA public
-  TO migration_owner, app, worker, audit_writer, research_writer, admin;
+  TO migration_owner, app, worker, audit_writer, research_writer, admin, daily_input_admitter;
 GRANT CREATE ON SCHEMA public TO migration_owner;
 SQL
 unset escaped_password

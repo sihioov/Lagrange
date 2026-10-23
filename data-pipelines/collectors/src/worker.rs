@@ -30,7 +30,8 @@ use market_data::normalize::NormalizeError;
 use market_data::provider::{EodProvider, KrxProvider, ProviderError, RecordedBundle};
 use market_data::providers::kis::{KR_ETF_CORE_SYMBOLS, KisProvider};
 use market_data::range_normalize::{
-    ExpectedRangeSessions, RangeNormalizeError, normalize_kis_daily_range_batch,
+    APPROVED_EFFECTIVE_FROM, ExpectedRangeSessions, RangeNormalizeError,
+    normalize_kis_daily_range_batch,
 };
 use market_data::storage::{ManifestEntry, RawStore, StoreError};
 use market_data::{
@@ -97,6 +98,7 @@ pub const WORKER_ENV_KEYS: &[&str] = &[
     "RESEARCH_RAW_ROOT",
     "RESEARCH_CURATED_ROOT",
     "RESEARCH_ENTITLEMENT_REFERENCE",
+    "RESEARCH_R2_ACTION_SUPPLY_CONFIG_HEX",
     "RESEARCH_SYNTHETIC_BUNDLE",
     "RESEARCH_CANDIDATE_ENABLED",
     "RESEARCH_CANDIDATE_RAW_ROOT",
@@ -354,7 +356,7 @@ impl WorkerError {
     pub fn safe_diagnostic(&self) -> Option<WorkerDiagnostic<'_>> {
         match self {
             Self::KisClient(source) => Some(WorkerDiagnostic {
-                error_code: source.code(),
+                error_code: source.diagnostic_code(),
                 endpoint: kis_error_endpoint(source),
                 http_status: kis_error_http_status(source),
                 response_kind: None,
@@ -596,7 +598,18 @@ fn normalize_store_error_code(error: &StoreError) -> &'static str {
         | StoreError::InvalidBatchMetadata { .. }
         | StoreError::MissingEvidence { .. }
         | StoreError::Serialization { .. }
-        | StoreError::ManifestConflict { .. } => "KIS_NORMALIZE_INTEGRITY_FAILURE",
+        | StoreError::ManifestConflict { .. }
+        | StoreError::InvalidCommittedManifestReadLimits { .. }
+        | StoreError::CommittedManifestReadLimitOverflow
+        | StoreError::CommittedManifestReadAllocationFailed { .. }
+        | StoreError::CommittedManifestReadByteCountOverflow
+        | StoreError::CommittedManifestReadLineCountOverflow
+        | StoreError::CommittedManifestReadRecordCountOverflow
+        | StoreError::CommittedManifestByteLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordLimitExceeded { .. }
+        | StoreError::CommittedManifestRecordScopeMismatch { .. }
+        | StoreError::InvalidCommittedManifestRecord { .. }
+        | StoreError::CommittedManifestRecordConflict { .. } => "KIS_NORMALIZE_INTEGRITY_FAILURE",
     }
 }
 
@@ -902,7 +915,7 @@ pub(crate) fn build_production_kis_provider(
 /// historical Raw-only command. Credential values remain in
 /// `SystemCredentialSource` and are read by the token issuer/client only when
 /// the first request is made.
-fn build_production_kis_provider_from_files(
+pub(crate) fn build_production_kis_provider_from_files(
     app_key_path: &Path,
     app_secret_path: &Path,
 ) -> Result<LiveKisProvider, WorkerError> {
@@ -1550,6 +1563,145 @@ pub struct DailyRangeRawSummary {
     pub start: TradingDate,
     pub end: TradingDate,
     pub reused_existing_source: bool,
+}
+
+/// Explicit source collection for the independent R2 consumer. This never
+/// constructs a DB pool, legacy normalizer, publication sink or Curated store.
+/// Events attest only immutable Raw acquisition; admission remains separate.
+/// Inspect immutable source bytes without constructing a provider or DB pool.
+/// Missing sources are observations, not permission to refetch conflicting Raw.
+pub fn check_eod_raw_session_dates_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    dates: &[TradingDate],
+    writer: &mut W,
+) -> Result<usize, WorkerError> {
+    let now = UtcTimestamp::now();
+    let today = current_kst_date(Utc::now());
+    if dates.is_empty()
+        || dates.len() > 10_000
+        || dates.windows(2).any(|pair| pair[0] >= pair[1])
+        || dates.iter().any(|date| {
+            *date > today
+                || *date < TradingDate::parse(APPROVED_EFFECTIVE_FROM).expect("approved floor")
+        })
+    {
+        return Err(WorkerError::InvalidConfig {
+            key: "--eod-raw-check-session-dates",
+        });
+    }
+    let config = DailyRangeRawRecoveryConfig::from_map(values)?;
+    // Presence is observational, not session admission. The operator wrapper
+    // validates its protected operational calendar before choosing dates; the
+    // historical range normalizer's embedded horizon must not cap daily Raw.
+    let store = RawStore::new(&config.raw_root);
+    for &date in dates {
+        let source = crate::eod_raw::existing_eod_source(
+            &store,
+            &IngestRequest::new(MARKET_KR.to_owned(), date, now),
+            &config.entitlement_reference,
+        )
+        .map_err(WorkerError::Pipeline)?;
+        serde_json::to_writer(
+            &mut *writer,
+            &serde_json::json!({
+                "status": "event", "event": "eod_source_checked", "phase": "raw_check",
+                "target_date": date.to_iso(), "source_present": source.is_some(),
+                "batch_id": source.map(|entry| entry.batch_id),
+                "ready": false, "publication": false, "curated": false, "db": false
+            }),
+        )
+        .map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })?;
+        writer
+            .write_all(b"\n")
+            .and_then(|_| writer.flush())
+            .map_err(|_| WorkerError::Io {
+                phase: WorkerPhase::Ingest,
+            })?;
+    }
+    Ok(dates.len())
+}
+
+pub async fn run_credentialed_eod_raw_session_dates_stream<W: io::Write>(
+    values: &HashMap<String, String>,
+    dates: &[TradingDate],
+    writer: &mut W,
+) -> Result<usize, WorkerError> {
+    let now = Utc::now();
+    let today = current_kst_date(now);
+    if dates.is_empty()
+        || dates.len() > 10_000
+        || dates.windows(2).any(|pair| pair[0] >= pair[1])
+        || dates.iter().any(|date| {
+            *date > today
+                || *date < TradingDate::parse(APPROVED_EFFECTIVE_FROM).expect("approved floor")
+        })
+        // Dedicated current-day evidence must not relabel a cached historical
+        // calendar snapshot. Keep current-day capture a separate invocation.
+        || (dates.contains(&today) && dates.len() != 1)
+        || (dates.contains(&today)
+            && now.with_timezone(&FixedOffset::east_opt(KST_OFFSET_SECS).unwrap()).time()
+                < CANDIDATE_CONFIRMED_CLOSE_KST)
+    {
+        return Err(WorkerError::InvalidConfig {
+            key: "--eod-raw-session-dates",
+        });
+    }
+    let config = DailyRangeRawRecoveryConfig::from_map(values)?;
+    // Match the existing backfill boundary: the official wrapper selects dates
+    // from its protected operational calendar. Each Raw capture independently
+    // requires an exact committed KIS trading-day row before non-calendar GETs.
+    // Keep the historical range normalizer's frozen calendar unchanged.
+    let key = PathBuf::from(nonempty(values, "KIS_APP_KEY_FILE")?);
+    let secret = PathBuf::from(nonempty(values, "KIS_APP_SECRET_FILE")?);
+    if !key.is_absolute() || !secret.is_absolute() {
+        return Err(WorkerError::InvalidConfig {
+            key: "KIS_APP_KEY_FILE",
+        });
+    }
+    let timeout = parse_attempt_timeout(values)?;
+    let store = RawStore::new(&config.raw_root);
+    // The existing shared coordinator owns token reuse and per-channel quotas.
+    // Historical requests share one committed calendar original with explicit
+    // provenance, never an unlinked in-memory copy of a prior request.
+    let provider = build_production_kis_provider_from_files(&key, &secret)?;
+    let mut historical_calendar = None;
+    for &date in dates {
+        let (source, calendar) = tokio::time::timeout(
+            timeout,
+            crate::eod_raw::capture_eod_source_with_calendar(
+                &store,
+                &provider,
+                &IngestRequest::new(MARKET_KR.to_owned(), date, UtcTimestamp::now()),
+                &config.entitlement_reference,
+                date == today,
+                historical_calendar.as_ref(),
+            ),
+        )
+        .await
+        .map_err(|_| WorkerError::Timeout {
+            phase: WorkerPhase::Ingest,
+        })?
+        .map_err(WorkerError::Pipeline)?;
+        historical_calendar = calendar;
+        let event = serde_json::json!({
+            "status": "event", "event": "raw_committed", "phase": "raw_capture",
+            "batch_id": source.batch_id, "target_date": date.to_iso(),
+            "reused_existing_source": source.reused,
+            "ready": false, "publication": false, "curated": false, "db": false
+        });
+        serde_json::to_writer(&mut *writer, &event).map_err(|_| WorkerError::Io {
+            phase: WorkerPhase::Ingest,
+        })?;
+        writer
+            .write_all(b"\n")
+            .and_then(|_| writer.flush())
+            .map_err(|_| WorkerError::Io {
+                phase: WorkerPhase::Ingest,
+            })?;
+    }
+    Ok(dates.len())
 }
 
 pub async fn run_credentialed_daily_range_raw_stream<W: io::Write>(
@@ -6227,6 +6379,22 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
     }
 
     #[test]
+    fn coordination_diagnostic_survives_helper_boundary_without_free_form_message() {
+        let output = br#"{"status":"error","error_code":"KIS_READ_CALLBACK_START_MISSED","provider":"KIS-NORMALIZED","market":"KR","target_date":"2026-10-21","phase":"ingest","class":"permanent","batch_id":null,"message":"sentinel-secret-must-not-propagate"}"#;
+        let error = decode_helper_output_with_provider(
+            output,
+            WorkerPhase::Ingest,
+            Some(domain::TradingDate::parse("2026-10-21").unwrap()),
+            "KIS-NORMALIZED",
+        )
+        .expect_err("finite helper failure");
+        let diagnostic = error.safe_diagnostic().expect("diagnostic preserved");
+        assert_eq!(diagnostic.error_code, "KIS_READ_CALLBACK_START_MISSED");
+        assert_eq!(error.failure_class(), crate::FailureClass::Permanent);
+        assert!(!format!("{error:?}").contains("sentinel"));
+    }
+
+    #[test]
     fn helper_provider_diagnostic_preserves_only_validated_safe_metadata() {
         let pipeline_error = super::WorkerError::Pipeline(crate::PipelineError::Ingest {
             source: market_data::IngestError::MalformedResponse {
@@ -6384,6 +6552,91 @@ while true; do printf x >> "$RESEARCH_TEST_HEARTBEAT"; sleep 0.01; done
         assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_UNEXPECTED_ENDPOINT");
         assert_eq!(diagnostic.endpoint, None);
         assert_eq!(diagnostic.file_name, Some("bars.json"));
+    }
+
+    #[test]
+    fn committed_manifest_store_errors_are_permanent_and_diagnostic_redacted() {
+        use market_data::normalize::NormalizeError;
+        use market_data::storage::StoreError;
+
+        let assert_failure = |error: StoreError| {
+            assert_eq!(
+                crate::pipeline::store_failure_class(&error),
+                crate::FailureClass::Permanent
+            );
+            let normalize_error = NormalizeError::Store(error);
+            assert_eq!(
+                crate::pipeline::normalize_failure_class(&normalize_error),
+                crate::FailureClass::Permanent
+            );
+            let diagnostic = super::normalize_diagnostic(&normalize_error)
+                .expect("committed manifest normalization diagnostic");
+            assert_eq!(diagnostic.error_code, "KIS_NORMALIZE_INTEGRITY_FAILURE");
+            assert_eq!(diagnostic.endpoint, None);
+            assert_eq!(diagnostic.http_status, None);
+            assert_eq!(diagnostic.response_kind, None);
+            assert_eq!(diagnostic.file_name, None);
+            let rendered = format!("{diagnostic:?}");
+            assert!(!rendered.contains("S1_SYNTHETIC_REASON"));
+            assert!(!rendered.contains("S1_SYNTHETIC_PATH"));
+            assert!(!rendered.contains("S1_SYNTHETIC_CLEANUP"));
+        };
+
+        for error in [
+            StoreError::InvalidCommittedManifestReadLimits {
+                reason: "S1_SYNTHETIC_REASON",
+            },
+            StoreError::CommittedManifestReadLimitOverflow,
+            StoreError::CommittedManifestReadAllocationFailed {
+                requested_bytes: usize::MAX,
+            },
+            StoreError::CommittedManifestReadByteCountOverflow,
+            StoreError::CommittedManifestReadLineCountOverflow,
+            StoreError::CommittedManifestReadRecordCountOverflow,
+            StoreError::CommittedManifestByteLimitExceeded { max_bytes: 128 },
+            StoreError::CommittedManifestRecordLimitExceeded { max_records: 8 },
+            StoreError::CommittedManifestRecordScopeMismatch {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 9,
+            },
+            StoreError::InvalidCommittedManifestRecord {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 10,
+            },
+            StoreError::CommittedManifestRecordConflict {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 11,
+            },
+        ] {
+            assert_failure(error);
+        }
+
+        assert_failure(StoreError::CleanupFailed {
+            path: "S1_SYNTHETIC_PATH".to_owned(),
+            original: Box::new(StoreError::InvalidCommittedManifestRecord {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 12,
+            }),
+            cleanup: std::io::Error::other("S1_SYNTHETIC_CLEANUP"),
+        });
+
+        let entry = market_data::storage::ManifestEntry {
+            batch_id: domain::BatchId::generate(),
+            provider: market_data::contract::PROVIDER_KIS_DAILY_RANGE.to_owned(),
+            market: market_data::contract::MARKET_KR.to_owned(),
+            date: domain::TradingDate::parse("2026-08-19").unwrap(),
+            retrieved_at: domain::UtcTimestamp::parse_rfc3339("2026-08-19T00:00:00Z").unwrap(),
+            mode: market_data::contract::FetchMode::Credentialed,
+            entitlement_reference: Some("fixture://kis".to_owned()),
+            files: Vec::new(),
+        };
+        assert_failure(StoreError::IndeterminateBatchCommit {
+            entry: Box::new(entry),
+            source: Box::new(StoreError::CommittedManifestRecordConflict {
+                path: "S1_SYNTHETIC_PATH".to_owned(),
+                line: 13,
+            }),
+        });
     }
 
     #[test]

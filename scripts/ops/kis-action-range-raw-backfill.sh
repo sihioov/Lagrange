@@ -25,6 +25,7 @@ env_file_seen=0
 compose_service=research-action-range-raw
 compose_profile=action-range-raw
 confirmation=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS
+diagnostic=0
 
 usage() {
   cat <<'EOF'
@@ -33,6 +34,11 @@ Usage: scripts/ops/kis-action-range-raw-backfill.sh
        [--scope etf11|whole-market]
        [--env-file ABSOLUTE_PATH]
        [--plan|--preflight|--execute]
+
+One-time 2026-10-22 diagnostic: --dividend-conflict-diagnostic replaces dates
+and scope, uses exactly four fixed dividend queries and at most 16 wire GETs.
+Execute requires KIS_DIVIDEND_DIAGNOSTIC_CONFIRM=
+I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION. No admission or replay.
 
 The default --plan prints the fixed KIS KSD action request shape only. It does
 not read the production env or secrets, invoke Docker, write data, or use a
@@ -62,6 +68,11 @@ while [ "$#" -gt 0 ]; do
       [ -z "$start_date" ] || die '--start must not be repeated'
       start_date=$2
       shift 2
+      ;;
+    --dividend-conflict-diagnostic)
+      [ "$diagnostic" -eq 0 ] || die 'diagnostic flag must not be repeated'
+      diagnostic=1
+      shift
       ;;
     --end)
       [ "$#" -ge 2 ] || die '--end needs YYYY-MM-DD'
@@ -102,6 +113,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$diagnostic" -eq 1 ]; then
+  [ -z "$start_date" ] && [ -z "$end_date" ] && [ "$scope_seen" -eq 0 ] ||
+    die 'diagnostic has four fixed queries; do not supply dates or scope'
+  start_date=2026-08-29
+  end_date=2026-10-18
+fi
+
 [ -n "$start_date" ] && [ -n "$end_date" ] ||
   die '--start and --end are required'
 [[ "$start_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die 'invalid --start date'
@@ -134,6 +152,13 @@ case "$scope" in
 esac
 
 print_plan() {
+  if [ "$diagnostic" -eq 1 ]; then
+    printf 'KIS_DIVIDEND_DIAGNOSTIC_PLAN logical_queries=4 max_wire_GET_including_retries=16\n'
+    printf '  symbol=153130,blank dates=20260915..20260915,20260829..20261018\n'
+    printf '  single_page=true sequential=true shared_coordination=required admission=false replay=false\n'
+    printf 'PLAN_ONLY: no Docker, secret, production-env, data-root write, or network action made\n'
+    return
+  fi
   printf 'KIS_ACTION_RANGE_RAW_PLAN mode=plan\n'
   printf '  range=%s..%s scope=%s (%s)\n' "$start_date" "$end_date" "$scope" "$scope_description"
   printf '  initial_requests=%s max_pages_per_class=10\n' "$initial_calls"
@@ -198,6 +223,10 @@ fi
 if ! kis_read_compose_configure "$root"; then
   die "$KIS_READ_COMPOSE_ERROR"
 fi
+if [ "$diagnostic" -eq 1 ]; then
+  [ "$(dotenv_effective_get KIS_READ_COORDINATION_MODE)" = shared_required ] ||
+    blocked 'dividend diagnostic requires existing shared read coordination'
+fi
 
 commit=$(dotenv_effective_get LAGRANGE_CODE_COMMIT)
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] ||
@@ -249,8 +278,13 @@ if [ "$mode" = preflight ]; then
   exit 0
 fi
 
-[ "${KIS_ACTION_RANGE_CONFIRM:-}" = "$confirmation" ] ||
-  blocked 'set KIS_ACTION_RANGE_CONFIRM=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS for execute'
+if [ "$diagnostic" -eq 1 ]; then
+  [ "${KIS_DIVIDEND_DIAGNOSTIC_CONFIRM:-}" = I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION ] ||
+    blocked 'exact one-time dividend diagnostic acknowledgement required'
+else
+  [ "${KIS_ACTION_RANGE_CONFIRM:-}" = "$confirmation" ] ||
+    blocked 'set KIS_ACTION_RANGE_CONFIRM=I_UNDERSTAND_READ_ONLY_KIS_ACTION_RANGE_CALLS for execute'
+fi
 
 running_services=$(compose ps --status running --services 2>/dev/null) ||
   blocked 'cannot inspect running Compose services'
@@ -278,7 +312,14 @@ image_commit=$(docker image inspect --format '{{range .Config.Env}}{{println .}}
 
 # The acknowledgement is passed as a Compose run override rather than stored
 # in the production env file. It is not a credential and is exact by design.
-compose run --rm --no-deps -e "KIS_ACTION_RANGE_CONFIRM=$confirmation" "$compose_service" \
-  --start "$start_date" --end "$end_date" --scope "$scope" --execute ||
-  die 'action-range Raw one-shot failed'
+if [ "$diagnostic" -eq 1 ]; then
+  compose run --rm --no-deps \
+    -e KIS_DIVIDEND_DIAGNOSTIC_CONFIRM=I_APPROVE_ONCE_DIVIDEND_4_QUERIES_MAX16_GET_NO_ADMISSION \
+    "$compose_service" --dividend-conflict-diagnostic --execute ||
+    die 'dividend diagnostic stopped; preserve original claim and evidence; do not replay'
+else
+  compose run --rm --no-deps -e "KIS_ACTION_RANGE_CONFIRM=$confirmation" "$compose_service" \
+    --start "$start_date" --end "$end_date" --scope "$scope" --execute ||
+    die 'action-range Raw one-shot failed'
+fi
 echo 'KIS_ACTION_RANGE_RAW: PASS (Raw-only action capture completed; no publication/catalog action)'

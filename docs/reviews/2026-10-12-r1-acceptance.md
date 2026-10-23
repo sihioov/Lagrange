@@ -1,8 +1,24 @@
 # R1 same-commit hosted acceptance
 
-Status: **C3 HOSTED ACCEPTED — all eight CI jobs and functional research smoke passed on `862fa954c16d28a617271fe6f613d34226e2d558`. R1-09 remains BLOCKED on root authentication and build-health prerequisites.**
-Local validation and hosted validation are recorded separately. No production
-rollout or R1 completion is claimed.
+Status: **R1 DONE — completed 2026-10-13 on C3 `862fa954c16d28a617271fe6f613d34226e2d558`. All eight CI jobs and functional research smoke passed; twelve real image IDs/revisions and the official V2 manifest were verified, and the original Owner V2 container was restored healthy with settled work.**
+Local, hosted, image and runtime evidence remain distinct. R2 is TODO; no C3
+production rollout or migration is claimed. Earlier open/blocking states below
+are dated historical evidence, superseded by the final disposition immediately below.
+
+## R1-09 final image and maintenance acceptance — 2026-10-13
+
+The official C3 build emitted PASS at 07:10:57 UTC. All twelve services succeeded
+serially; all 49 gates including B1–B4 and final-bytes passed with no OOM records.
+The strict root-owned V2 manifest SHA-256 is
+`041fdaf1ddfe8746df3e4eacf3a180435a0cd2364952e3036da8c3e0e4ccb64f`.
+The coordinator matched actual tag IDs/revisions against manifest and saved-byte
+verification records, then recovered systemd-run exit0 and same-container
+restoration at 07:11:03 UTC, independently confirmed by recovery at 07:11:08.
+The 07:11:55 runtime and READ ONLY aggregate checks passed. Complete IDs, receipt
+hashes, resource samples and limits are in the [final image record](2026-10-13-r1-c3-images.md).
+Together with the retained migration/backup/rollback source review, this closes
+WP-7/R1-09 and overall R1. Production activation and real Owner/data acceptance
+remain R2; this documentation commit does not replace the tested/built C3 SHA.
 
 ## Main integration — 2026-10-13
 
@@ -25,6 +41,38 @@ requires root authentication, build-health admission and actual image/manifest
 evidence. Main integration performs no production activation or provider work.
 Earlier statements below that main merge was outside scope describe the prior
 closeout; this separately authorized integration supersedes that scope limit.
+
+### Resumption — existing main-push runs
+
+On 2026-10-13, a fresh fetch confirmed main at
+`b0a2579bef472ae6b604405d0ab6f50255786dd4`, matching the handoff; the delta
+from C3 still contains only six progress documents. Existing main-push
+[CI 38336666454](https://github.com/sihioov/Lagrange/actions/runs/38336666454) and
+[smoke 38336666468](https://github.com/sihioov/Lagrange/actions/runs/38336666468)
+both completed successfully without dispatch, rerun or cancellation.
+Their exact head is `b0a2579bef472ae6b604405d0ab6f50255786dd4`, distinct from C3.
+CI completed successfully at 02:44:34 UTC with all eight jobs passing; the
+coordinator independently checked all seven checkout command/output pairs and
+actual test-result markers. Smoke completed at 03:16:46 UTC; its checkout pair
+also matches main, and the original job log emits `RESEARCH_WORKER_SMOKE: functional PASS`.
+The PostgreSQL failure-diagnostic step was conditionally skipped; all validation
+steps succeeded. Functional smoke success does not establish separate cleanup
+receipts or production image evidence.
+[The resumption record](2026-10-13-r1-resumption.md) preserves the fresh
+root/health/resource observations, successful exact-C3 plan/preflight and final
+run/job/step receipts with independent original-log hashes.
+The image candidate remains C3 and R1-09 remains BLOCKED.
+
+At 05:14–05:16 UTC, after the Owner installed the temporary sudo utility,
+noninteractive root access, the enabled expiry timer and protected manifest/state
+parent metadata were verified. The C3 manifest and state directory were absent;
+official root plan/preflight with the manifest argument passed. Fresh inspection
+still showed research exited2 and Owner V2 running, so neither ordinary health
+nor the existing drained-reader alternative admitted a build. No images were
+built. [The follow-up evidence](2026-10-13-r1-resumption.md#owner-sudo-적용-후-root-전제-해소)
+supersedes the earlier root blocker without changing C3 or R1 completion criteria.
+
+The later [authorized maintenance](2026-10-13-r1-resumption.md#승인된-owner-v2-유지보수와-c3-빌드) supersedes the preceding build-health blocker. C3 remains pinned; image preparation and runtime deployment are separate.
 
 ## Candidate C — 79da119e6e8b52be424ec8132ac2a52f65726471
 

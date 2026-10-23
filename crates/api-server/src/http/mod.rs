@@ -16,6 +16,7 @@ pub mod live;
 pub mod middleware;
 pub mod notifications;
 pub mod owner_beta;
+pub mod owner_beta_daily;
 pub mod owner_equity_v2;
 pub mod owner_intraday_quotes;
 mod owner_market_stream;
@@ -295,7 +296,14 @@ pub fn api_router(state: ApiState) -> Router {
             post(strategies::create_config),
         )
         .route("/strategy-configs", get(strategies::list_configs))
-        .route("/strategy-configs/{config_id}", get(strategies::get_config))
+        .route(
+            "/strategy-configs/{config_id}",
+            get(strategies::get_config).patch(strategies::update_config),
+        )
+        .route(
+            "/recommendations/owner-beta/price-only/daily-state",
+            get(owner_beta_daily::get_daily_state),
+        )
         // recommendations
         .route("/recommendations/runs", post(recommendations::create_run))
         .route(

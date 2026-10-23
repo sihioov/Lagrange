@@ -1286,8 +1286,19 @@ async fn check_stream_semantics(harness: &Harness) -> Result<(), &'static str> {
     .await?
     .ok_or("partial halted aggregate absent")?;
     check_observation_delay(&row, seeded)?;
-    check_counts(&row, 2, 1, 1)?;
-    let expected_until = seeded + Duration::seconds(2);
+    // Within the first 28 seconds of the real KST day, this otherwise fresh
+    // provider event belongs to the previous session and must not be live.
+    // Producer readiness still has its own original heartbeat deadline.
+    let before_open = seeded - Duration::seconds(28) < stream.open_at;
+    let expected_until = if before_open {
+        check_counts(&row, 2, 0, 0)?;
+        eprintln!("SERVICE_STATUS_PARTIAL_CASE:BEFORE_OPEN_DENIED");
+        row_value::<DateTime<Utc>>(&row, "producer_heartbeat_at") + Duration::seconds(10)
+    } else {
+        check_counts(&row, 2, 1, 1)?;
+        eprintln!("SERVICE_STATUS_PARTIAL_CASE:IN_SESSION_COVERAGE_MATCHED");
+        seeded + Duration::seconds(2)
+    };
     if row_value::<DateTime<Utc>>(&row, "valid_until") != expected_until
         || row_value::<DateTime<Utc>>(&row, "oldest_provider_trade_at") + Duration::seconds(30)
             >= row_value::<DateTime<Utc>>(&row, "observed_at")

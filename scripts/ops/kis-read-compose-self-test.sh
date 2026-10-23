@@ -202,6 +202,18 @@ cp "$script_dir/lib/release-image-manifest.sh" \
 cp "$source_root/deploy/compose/compose.service-status.yml" \
   "$release_root/deploy/compose/compose.service-status.yml"
 status_policy_helper=$release_root/scripts/ops/lib/service-status-policy.py
+cat >"$release_root/scripts/ops/lib/owner-beta-daily-operations.py" <<'PY'
+import os
+import sys
+
+assert sys.argv[2] in ("guard", "guard-processes")
+expected = ["--operation", sys.argv[2], "--mode", "apply", "--install-root",
+            os.environ["FAKE_POLICY_INSTALL_ROOT"], "--lock-fd"]
+assert sys.argv[1:8] == expected and len(sys.argv) == 9
+os.fstat(int(sys.argv[8]))
+if os.environ.get("FAKE_DAILY_GUARD_REJECT") == "1":
+    raise SystemExit(1)
+PY
 cat >"$status_policy_helper" <<'PY'
 import os
 import sys
@@ -288,6 +300,9 @@ SH
 cat >"$fake_bin/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+# The operator wrapper pins the local daemon before every Docker command.
+[ "${1:-}" = --host ] && [ "${2:-}" = unix:///var/run/docker.sock ] || exit 98
+shift 2
 printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
 
 image_id_for_service() {
@@ -351,6 +366,13 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
 fi
 
 if [ "${1:-}" = inspect ]; then
+  if [[ " $* " == *'{{.Id}}|{{.State.StartedAt}}'* ]]; then
+    stamp=2026-01-01T00:00:00Z
+    if [ "${FAKE_OWNER_START_DRIFT:-0}" = 1 ] &&
+        [ -e "${FAKE_TRANSITION_STATE:?}/web" ]; then stamp=2026-01-02T00:00:00Z; fi
+    printf '%s|%s\n' "${!#}" "$stamp"
+    exit 0
+  fi
   if [[ " $* " == *'{{.State.Status}}'* ]]; then
     printf '%s\n' "${FAKE_WORKER_STATUS:-exited}"
     exit 0
@@ -365,6 +387,10 @@ if [ "${1:-}" = inspect ]; then
     revision=$FAKE_PREVIOUS_COMMIT
   fi
   image_id=$(image_id_for_service "$service")
+  if [ "$service" = owner-equity-v2-runner ] && [ -n "${FAKE_PRESERVED_OWNER_COMMIT:-}" ]; then
+    image_id=$(FAKE_IMAGE_OFFSET=200 image_id_for_service "$service")
+    revision=$FAKE_PRESERVED_OWNER_COMMIT
+  fi
   [ "${FAKE_MISMATCH_SERVICE:-}" = "$service" ] &&
     image_id=sha256:9999999999999999999999999999999999999999999999999999999999999999
   printf '%s|%s\n' "$image_id" "$revision"
@@ -721,6 +747,151 @@ for inspection in plan preflight; do
     --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" "--$inspection"
   assert_no_transition_mutation
 done
+
+# UI-only changes must not restart the Owner scheduler: its durable incremental
+# key includes the code revision, so a new worker revision can collect again.
+mkdir -p "$previous_root/deploy/compose"
+sed "s/^LAGRANGE_CODE_COMMIT=.*/LAGRANGE_CODE_COMMIT=$previous_commit/" \
+  "$refresh_env" >"$previous_root/deploy/compose/.env"
+chmod 0600 "$previous_root/deploy/compose/.env"
+: >"$docker_log"
+if run_refresh "$tmp/preserve-missing-source.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --preserve-owner-v2 --apply; then
+  fail 'preserve Owner accepted an implicit source'
+fi
+assert_no_transition_mutation
+for inspection in plan preflight; do
+  : >"$docker_log"
+  run_transition "$tmp/preserve-$inspection.out" bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" \
+    --preserve-owner-v2 "--$inspection"
+  assert_no_transition_mutation
+done
+cp "$previous_root/deploy/compose/.env" "$tmp/preserve-env.saved"
+for drift in changed missing extra duplicate; do
+  cp "$tmp/preserve-env.saved" "$previous_root/deploy/compose/.env"
+  case "$drift" in
+    changed) sed -i 's/OWNER_INTRADAY_QUOTES_MODE=owner_only/OWNER_INTRADAY_QUOTES_MODE=off/' "$previous_root/deploy/compose/.env" ;;
+    missing) sed -i '/^OWNER_INTRADAY_QUOTES_MODE=/d' "$previous_root/deploy/compose/.env" ;;
+    extra) printf 'UNEXPECTED_RUNTIME_SETTING=1\n' >>"$previous_root/deploy/compose/.env" ;;
+    duplicate) printf 'OWNER_INTRADAY_QUOTES_MODE=owner_only\n' >>"$previous_root/deploy/compose/.env" ;;
+  esac
+  : >"$docker_log"
+  if run_transition "$tmp/preserve-env-$drift.out" bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" \
+    --preserve-owner-v2 --apply; then fail 'preserved Owner accepted runtime configuration drift'; fi
+  assert_no_transition_mutation
+done
+cp "$tmp/preserve-env.saved" "$previous_root/deploy/compose/.env"
+: >"$docker_log"
+if run_transition "$tmp/preserve-daily-guard.out" env FAKE_DAILY_GUARD_REJECT=1 \
+  bash "$release_root/scripts/ops/compose-release.sh" --scope release \
+  --refresh-market-stream --refresh-from-commit "$previous_commit" --preserve-owner-v2 --apply; then
+  fail 'preserve Owner bypassed the daily quiescence guard'
+fi
+grep -Fq 'daily release is not quiescent' "$tmp/preserve-daily-guard.out"
+assert_no_transition_mutation
+: >"$docker_log"
+if run_transition "$tmp/preserve-restarted-owner.out" env FAKE_OWNER_START_DRIFT=1 \
+  bash "$release_root/scripts/ops/compose-release.sh" --scope release \
+  --refresh-market-stream --refresh-from-commit "$previous_commit" --preserve-owner-v2 --apply; then
+  fail 'preserve Owner accepted a changed start identity'
+fi
+grep -Fq 'preserved owner container/start changed' "$tmp/preserve-restarted-owner.out"
+! grep -Eq '^compose .* up .* owner-equity-v2-runner$' "$docker_log"
+rm -- "$transition_state/api-server" "$transition_state/web"
+: >"$docker_log"
+run_transition "$tmp/preserve-apply.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" --preserve-owner-v2 --apply
+grep -Fq 'COMPOSE_REFRESH_WEB_API: PASS' "$tmp/preserve-apply.out"
+mapfile -t preserve_ups < <(grep '^compose .* up ' "$docker_log")
+[ "${#preserve_ups[@]}" -eq 2 ] || fail 'preserve Owner must recreate exactly two services'
+[[ "${preserve_ups[0]}" == *'--no-build --pull never --no-deps --force-recreate --wait web' ]]
+[[ "${preserve_ups[1]}" == *'--no-build --pull never --no-deps --force-recreate --wait api-server' ]]
+[ ! -e "$transition_state/owner-equity-v2-runner" ] || fail 'preserved Owner was recreated'
+! grep -Eq '^compose .* (run|build|stop|down)( |$)' "$docker_log"
+! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
+rm -- "$transition_state/api-server" "$transition_state/web"
+
+# A second UI-only release starts with API/Web and Owner at different revisions.
+preserved_owner_commit=abcdef0123456789abcdef0123456789abcdef01
+preserved_owner_root=$install_root/releases/$preserved_owner_commit
+mkdir -p "$preserved_owner_root/deploy/compose"
+write_manifest "$preserved_owner_root/.lagrange-release-manifest" "$preserved_owner_commit" 200
+sed "s/^LAGRANGE_CODE_COMMIT=.*/LAGRANGE_CODE_COMMIT=$preserved_owner_commit/" \
+  "$refresh_env" >"$preserved_owner_root/deploy/compose/.env"
+chmod 0600 "$preserved_owner_root/deploy/compose/.env"
+run_mixed_preserve() {
+  run_transition "$1" env FAKE_PRESERVED_OWNER_COMMIT="$preserved_owner_commit" \
+    bash "$release_root/scripts/ops/compose-release.sh" --scope release \
+    --refresh-market-stream --refresh-from-commit "$previous_commit" --preserve-owner-v2 \
+    --preserved-owner-from-commit "$preserved_owner_commit" "${@:2}"
+}
+: >"$docker_log"
+if run_transition "$tmp/mixed-owner-unselected.out" env FAKE_PRESERVED_OWNER_COMMIT="$preserved_owner_commit" \
+  bash "$release_root/scripts/ops/compose-release.sh" --scope release \
+  --refresh-market-stream --refresh-from-commit "$previous_commit" --preserve-owner-v2 --apply; then
+  fail 'mixed Owner was accepted without its explicit source'
+fi
+grep -Fq 'persistent service image_id mismatch: owner-equity-v2-runner' "$tmp/mixed-owner-unselected.out"
+assert_no_transition_mutation
+for inspection in plan preflight; do
+  : >"$docker_log"
+  run_mixed_preserve "$tmp/mixed-preserve-$inspection.out" "--$inspection"
+  assert_no_transition_mutation
+done
+for bad_commit in '' invalid ../escape 0000000000000000000000000000000000000000; do
+  : >"$docker_log"
+  if run_transition "$tmp/mixed-bad-commit.out" bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" \
+    --preserve-owner-v2 --preserved-owner-from-commit "$bad_commit" --apply; then
+    fail 'preserved Owner source accepted an invalid commit'
+  fi
+  assert_no_transition_mutation
+done
+: >"$docker_log"
+if run_transition "$tmp/mixed-without-preserve.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" \
+  --preserved-owner-from-commit "$preserved_owner_commit" --apply; then
+  fail 'separate Owner source accepted outside preservation'
+fi
+assert_no_transition_mutation
+mv "$preserved_owner_root/.lagrange-release-manifest" "$tmp/mixed-owner-manifest.saved"
+for invalid_manifest in missing symlink; do
+  [ "$invalid_manifest" != symlink ] || ln -s "$tmp/mixed-owner-manifest.saved" "$preserved_owner_root/.lagrange-release-manifest"
+  : >"$docker_log"
+  if run_mixed_preserve "$tmp/mixed-manifest-$invalid_manifest.out" --apply; then
+    fail 'mixed Owner source accepted a missing/symlink manifest'
+  fi
+  assert_no_transition_mutation
+done
+rm -- "$preserved_owner_root/.lagrange-release-manifest"
+mv "$tmp/mixed-owner-manifest.saved" "$preserved_owner_root/.lagrange-release-manifest"
+printf 'UNEXPECTED_OWNER_SETTING=1\n' >>"$preserved_owner_root/deploy/compose/.env"
+: >"$docker_log"
+if run_mixed_preserve "$tmp/mixed-owner-env-drift.out" --apply; then
+  fail 'mixed Owner source runtime config was not compared'
+fi
+assert_no_transition_mutation
+sed -i '/^UNEXPECTED_OWNER_SETTING=/d' "$preserved_owner_root/deploy/compose/.env"
+for mismatch in owner-equity-v2-runner web; do
+  : >"$docker_log"
+  if FAKE_MISMATCH_SERVICE="$mismatch" run_mixed_preserve "$tmp/mixed-image-mismatch.out" --apply; then
+    fail 'mixed source accepted a mismatched running image'
+  fi
+  assert_no_transition_mutation
+done
+: >"$docker_log"
+run_mixed_preserve "$tmp/mixed-preserve-apply.out" --apply
+grep -Fq 'COMPOSE_REFRESH_WEB_API: PASS' "$tmp/mixed-preserve-apply.out"
+mapfile -t preserve_ups < <(grep '^compose .* up ' "$docker_log")
+[ "${#preserve_ups[@]}" -eq 2 ] || fail 'mixed preserve must recreate exactly two services'
+[[ "${preserve_ups[0]}" == *'--no-build --pull never --no-deps --force-recreate --wait web' ]]
+[[ "${preserve_ups[1]}" == *'--no-build --pull never --no-deps --force-recreate --wait api-server' ]]
+[ ! -e "$transition_state/owner-equity-v2-runner" ] || fail 'mixed preserved Owner was recreated'
+! grep -Eq '^compose .* (run|build|stop|down)( |$)' "$docker_log"
+rm -- "$transition_state/api-server" "$transition_state/web"
+
 : >"$docker_log"
 run_transition "$tmp/transition-apply.out" bash "$release_root/scripts/ops/compose-release.sh" \
   --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" --apply

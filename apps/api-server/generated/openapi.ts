@@ -226,6 +226,19 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** PATCH /api/v1/strategy-configs/{config_id} */
+        patch: operations["patch__api_v1_strategy_configs__config_id_"];
+        trace?: never;
+    };
+    "/api/v1/recommendations/owner-beta/price-only/daily-state": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never; };
+        /** GET /api/v1/recommendations/owner-beta/price-only/daily-state */
+        get: operations["get__api_v1_recommendations_owner_beta_price_only_daily_state"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -1536,6 +1549,8 @@ export interface components {
                 [key: string]: unknown;
             };
             is_active: boolean;
+            owner_beta_daily_enabled: boolean;
+            readonly owner_beta_daily_epoch: number;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */
@@ -1548,6 +1563,46 @@ export interface components {
             };
             /** @default true */
             is_active: boolean;
+            /** @default false */
+            owner_beta_daily_enabled: boolean;
+        };
+        UpdateStrategyConfigBody: {
+            config?: { [key: string]: unknown; };
+            is_active?: boolean;
+            owner_beta_daily_enabled?: boolean;
+        };
+        OwnerBetaHistoricalPins: {
+            candidate_content_sha256: string;
+            artifact_manifest_sha256: string;
+            stage5_manifest_sha256: string;
+            action_manifest_sha256: string;
+            approval_registry_sha256: string;
+        };
+        OwnerBetaHistoricalReadInput: components["schemas"]["OwnerBetaHistoricalPins"] & {
+            kind: "historical";
+        };
+        OwnerBetaDailyReadInput: {
+            kind: "daily";
+            content_sha256: string;
+            manifest_sha256: string;
+            admission_sha256: string;
+            policy_sha256: string;
+            base: components["schemas"]["OwnerBetaHistoricalPins"];
+        };
+        OwnerBetaDailyState: {
+            enabled: boolean;
+            runtime_enabled: boolean;
+            expected_session: string | null;
+            data_support_end: string | null;
+            recommendation_as_of: string | null;
+            published_at: string | null;
+            input_kind: "owner_beta_daily_etf11_price_only_v1" | null;
+            trigger_kind: "DAILY" | null;
+            current_reservation_run_id: string | null;
+            state: "DISABLED" | "UNVERIFIABLE" | "INPUT_PENDING" | "INPUT_BLOCKED" | "QUEUED" | "RUNNING" | "RETRYING" | "FAILED" | "CURRENT" | "STALE";
+            reason_code: "RUNTIME_DISABLED" | "CONFIG_DISABLED" | "CONFIG_INACTIVE" | "CONTROL_UNAVAILABLE" | "CALENDAR_COVERAGE_GAP" | "VERIFICATION_EXPIRED" | "INPUT_UNAVAILABLE" | "INPUT_NOT_READY" | "BEFORE_ACTIVATION" | "AWAITING_SCHEDULE" | "JOB_QUEUED" | "JOB_RUNNING" | "JOB_RETRYING" | "JOB_FAILED" | "CAPACITY_EXCEEDED" | "SUPERSEDED" | "CONFIGURATION_CHANGED" | "FUTURE_EVIDENCE" | "SOURCE_CONFLICT" | "SEALED_SOURCE_CHANGED" | "SOURCE_REVOKED" | "SOURCE_INTEGRITY" | "CALENDAR_CONFLICT" | "NONCASH_ACTION" | null;
+            data_due_at: string | null;
+            observed_at: string;
         };
         RecommendationItem: {
             /** @example 069500.KRX */
@@ -1656,8 +1711,9 @@ export interface components {
             as_of: string;
             /** @enum {string} */
             status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
-            /** @constant */
-            input_kind: "owner_beta_historical_price_only_v1";
+            input_kind: "owner_beta_historical_price_only_v1" | "owner_beta_daily_etf11_price_only_v1";
+            trigger_kind: "MANUAL" | "DAILY";
+            input: components["schemas"]["OwnerBetaHistoricalReadInput"] | components["schemas"]["OwnerBetaDailyReadInput"];
             /** @constant */
             capability: "PRICE_RETURN_ONLY";
             /** @constant */
@@ -1667,11 +1723,11 @@ export interface components {
             /** @constant */
             strict_pit: false;
             strategy_config_sha256: string;
-            candidate_content_sha256: string;
-            artifact_manifest_sha256: string;
-            stage5_manifest_sha256: string;
-            action_manifest_sha256: string;
-            approval_registry_sha256: string;
+            candidate_content_sha256?: string;
+            artifact_manifest_sha256?: string;
+            stage5_manifest_sha256?: string;
+            action_manifest_sha256?: string;
+            approval_registry_sha256?: string;
             factor_snapshot_sha256?: string | null;
             target_snapshot_sha256?: string | null;
             cash_weight?: string | null;
@@ -1682,10 +1738,30 @@ export interface components {
             started_at?: string | null;
             /** Format: date-time */
             finished_at?: string | null;
+            /** Present only for SUCCEEDED, equal to finished_at. */
+            published_at?: string;
             /** Format: date-time */
             updated_at: string;
             items: components["schemas"]["OwnerBetaPriceOnlyReadItem"][];
-        };
+        } & ({
+            input_kind: "owner_beta_historical_price_only_v1";
+            trigger_kind: "MANUAL";
+            input: components["schemas"]["OwnerBetaHistoricalReadInput"];
+            candidate_content_sha256: string;
+            artifact_manifest_sha256: string;
+            stage5_manifest_sha256: string;
+            action_manifest_sha256: string;
+            approval_registry_sha256: string;
+        } | {
+            input_kind: "owner_beta_daily_etf11_price_only_v1";
+            trigger_kind: "DAILY";
+            input: components["schemas"]["OwnerBetaDailyReadInput"];
+            candidate_content_sha256?: never;
+            artifact_manifest_sha256?: never;
+            stage5_manifest_sha256?: never;
+            action_manifest_sha256?: never;
+            approval_registry_sha256?: never;
+        });
         OwnerBetaPriceOnlyReadListItem: {
             /** Format: uuid */
             id: string;
@@ -1699,8 +1775,9 @@ export interface components {
             as_of: string;
             /** @enum {string} */
             status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
-            /** @constant */
-            input_kind: "owner_beta_historical_price_only_v1";
+            input_kind: "owner_beta_historical_price_only_v1" | "owner_beta_daily_etf11_price_only_v1";
+            trigger_kind: "MANUAL" | "DAILY";
+            input: components["schemas"]["OwnerBetaHistoricalReadInput"] | components["schemas"]["OwnerBetaDailyReadInput"];
             /** @constant */
             capability: "PRICE_RETURN_ONLY";
             /** @constant */
@@ -1710,11 +1787,11 @@ export interface components {
             /** @constant */
             strict_pit: false;
             strategy_config_sha256: string;
-            candidate_content_sha256: string;
-            artifact_manifest_sha256: string;
-            stage5_manifest_sha256: string;
-            action_manifest_sha256: string;
-            approval_registry_sha256: string;
+            candidate_content_sha256?: string;
+            artifact_manifest_sha256?: string;
+            stage5_manifest_sha256?: string;
+            action_manifest_sha256?: string;
+            approval_registry_sha256?: string;
             factor_snapshot_sha256?: string | null;
             target_snapshot_sha256?: string | null;
             cash_weight?: string | null;
@@ -1725,9 +1802,29 @@ export interface components {
             started_at?: string | null;
             /** Format: date-time */
             finished_at?: string | null;
+            /** Present only for SUCCEEDED, equal to finished_at. */
+            published_at?: string;
             /** Format: date-time */
             updated_at: string;
-        };
+        } & ({
+            input_kind: "owner_beta_historical_price_only_v1";
+            trigger_kind: "MANUAL";
+            input: components["schemas"]["OwnerBetaHistoricalReadInput"];
+            candidate_content_sha256: string;
+            artifact_manifest_sha256: string;
+            stage5_manifest_sha256: string;
+            action_manifest_sha256: string;
+            approval_registry_sha256: string;
+        } | {
+            input_kind: "owner_beta_daily_etf11_price_only_v1";
+            trigger_kind: "DAILY";
+            input: components["schemas"]["OwnerBetaDailyReadInput"];
+            candidate_content_sha256?: never;
+            artifact_manifest_sha256?: never;
+            stage5_manifest_sha256?: never;
+            action_manifest_sha256?: never;
+            approval_registry_sha256?: never;
+        });
         OwnerBetaPriceOnlyReadPage: {
             items: components["schemas"]["OwnerBetaPriceOnlyReadListItem"][];
             /** @description opaque signed cursor; null when the last page */
@@ -2126,6 +2223,14 @@ export interface components {
             code: string;
             retryable: boolean;
         };
+        /** @description Latest incremental attempt for the next admitted generation failed. READY data remains usable. Omitted after a newer non-failed attempt, successful admission or disable; no retry authority is implied. */
+        OwnerEquityV2RefreshFailure: {
+            code: string;
+            /** @example 2026-01-31 */
+            requested_through: string;
+            /** Format: date-time */
+            failed_at: string;
+        };
         OwnerEquityV2Membership: {
             /** Format: uuid */
             id: string;
@@ -2134,6 +2239,7 @@ export interface components {
             generation: number;
             coverage: components["schemas"]["OwnerEquityV2Coverage"];
             failure?: components["schemas"]["OwnerEquityV2Failure"];
+            refresh_failure?: components["schemas"]["OwnerEquityV2RefreshFailure"];
             /** Format: date-time */
             requested_at: string;
             /** Format: date-time */
@@ -3441,6 +3547,54 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    patch__api_v1_strategy_configs__config_id_: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: { config_id: string; };
+            cookie?: never;
+        };
+        requestBody: { content: { "application/json": components["schemas"]["UpdateStrategyConfigBody"]; }; };
+        responses: {
+            /** @description Actor-owned strategy configuration updated */
+            200: { headers: { [name: string]: unknown; }; content: { "application/json": components["schemas"]["StrategyConfig"]; }; };
+            400: components["responses"]["Error400"];
+            401: components["responses"]["Error401"];
+            403: components["responses"]["Error403"];
+            404: components["responses"]["Error404"];
+            409: components["responses"]["Error409"];
+            413: components["responses"]["Error413"];
+            422: components["responses"]["Error422"];
+            429: components["responses"]["Error429"];
+            500: components["responses"]["Error500"];
+            501: components["responses"]["Error501"];
+            503: components["responses"]["Error503"];
+        };
+    };
+    get__api_v1_recommendations_owner_beta_price_only_daily_state: {
+        parameters: {
+            query: { strategy_config_id: string; };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner daily input and recommendation state with independent dates */
+            200: { headers: { [name: string]: unknown; }; content: { "application/json": components["schemas"]["OwnerBetaDailyState"]; }; };
             400: components["responses"]["Error400"];
             401: components["responses"]["Error401"];
             403: components["responses"]["Error403"];

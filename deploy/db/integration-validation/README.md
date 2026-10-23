@@ -8,6 +8,26 @@ the exit trap.
 
 ## Staged upgrade lane
 
+Before migrations, the unchanged production role bootstrap is exercised by
+`bootstrap-negative.sh` in this owned disposable cluster. The fixture runs as
+the non-root postgres OS user and emits 83 distinct case outcomes: three
+positive controls, seven invalid-role attributes, two membership directions,
+eight direct/transitive protected-role paths, six CREATE privilege cases,
+56 failures across all eight credential files, and one real lock-timeout
+rollback. Credentials, password verifiers and raw failure output are never
+printed. The JSON evidence includes every named outcome.
+
+Each rejected bootstrap must preserve the captured role attributes/password
+verifiers, memberships, database ownership/ACL and three fixture schema
+ownership/ACLs. ACLs are compared as sorted effective grant entries. A second
+connection acknowledges its database ACL lock before the late-failure case;
+the real bootstrap must complete all role statements and revoke public-schema
+CREATE, then fail at the following database GRANT with its existing lock
+timeout. The rollback must restore the earlier ACL and leave the new admitter
+absent. This verifies bootstrap transaction rollback, not migration0060 DOWN.
+The helper refuses migrated/colliding fixtures, has finite timeouts and removes
+its private credential copies. Existing role-login checks follow it.
+
 The upgrade cluster starts empty and receives the schema-only SQLx stage 0038.
 For this disposable stage only, the workflow overrides the migration image
 entrypoint with `/bin/bash`, validates its generated migration-owner password
@@ -36,17 +56,33 @@ is checked in a supervisor pass because `migration_owner` is subject to forced
 RLS on `pending_targets`; catalog audit access remains verified by the actual
 `migration_owner` login.
 
+The same staged cluster then advances to 0059. `preflight-0060.sql` uses a direct
+migration-owner login to seed eight synthetic historical recommendation rows
+(v2/v3 pins × PENDING/FAILED/CANCELED/SUCCEEDED), retaining their complete JSON,
+items, job payloads, timestamps, the prior function definitions and 59 checksums.
+After 0060, both the initial pass and no-op rerun must preserve that history and
+produce 60 ledger rows. The ten daily tables must be migration-owned with forced
+RLS, with no control activation or config opt-in.
+
+`actual-role-0060.sql` separately logs in as app, worker, research_writer, admin
+and daily_input_admitter and checks CREATE, SET ROLE, DML and private-function
+denials plus the rightful empty-control entrypoints. `rollback-0060-guard.sql`
+rehearses unused DOWN/UP in one transaction, comparing the old functions, grants,
+history and RLS. A second Owner's edited-and-restored config then requires DOWN
+to refuse with SQLSTATE 55000 despite being invisible to the first actor. Its
+failed transaction must preserve schema, history, epochs and FORCE RLS.
+
 ## Empty full-release lane
 
 A second disposable cluster has its own generated credentials and role
 bootstrap. It uses the same pinned PostgreSQL image and the same migration
 image, starts with no seeded application data, and runs the normal image
-entrypoint through every current up migration. At baseline `ac0a083`, the
-endpoint is 0059. It then runs the normal entrypoint a second time and records
+entrypoint through every current up migration. The 0060 candidate requires
+exactly 60 migrations. It then runs the normal entrypoint a second time and records
 the migration count, latest version, and every SQLx checksum for both passes.
 The second pass must leave the ledger checksums and catalog row/audit identity
 unchanged and require exactly five strategies, with no Paper fixture. This
-lane is separate from the staged 0038-to-0041 upgrade cluster. The full-release
+lane is separate from the staged 0038-to-0060 upgrade cluster. The full-release
 cluster is torn down and its Compose project checked for remaining containers
 before the DB-gated test cluster starts.
 
@@ -57,6 +93,21 @@ helpers derive serving-role URLs from the supervisor URL; the selected
 job-queue helper still uses the repository's synthetic `lagrange` compatibility
 fixture. It is not an operator or production credential. Every selected Cargo
 command receives `DATABASE_URL`; any `SKIP:` output is a hard failure.
+
+The 32 `daily_0060_*` definitions use direct logins and isolated scratch databases.
+Their source also defines 73 fixed subcase outcomes, including real two-connection
+blocking observations. The cutoff-boundary case uses a private fixture clock
+adapter feeding the unchanged pure cutoff function; it is not live wall-clock
+observation. The isolated DOWN-category fixtures temporarily remove dependencies
+inside transactions that are always rolled back. They exercise refusal guards,
+not a production method for bypassing constraints.
+
+The harness requires exactly one successful libtest row for each of the 32 names
+and one PASS for each of the 73 subcases. It emits `PG_DB_TEST_ROW`,
+`DAILY_0060_SUBCASE` and `PG_DB_TEST_EXIT` fixed records and retains them in
+`evidence.json`, including each of the twelve Cargo process exit codes and SKIP
+checks. Missing rows fail the harness. Written definitions and workspace tests
+without DATABASE_URL do not count as DB execution evidence.
 
 ## Run
 

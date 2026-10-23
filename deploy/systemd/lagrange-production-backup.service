@@ -23,7 +23,7 @@ ProtectControlGroups=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX
 ReadOnlyPaths=/opt/lagrange /etc/lagrange/production-backup.conf /etc/lagrange/secrets/backup_encryption_key /var/lib/lagrange/data
-ReadWritePaths=/srv/backups/lagrange /var/lib/lagrange/backup-state
+ReadWritePaths=/srv/backups/lagrange /var/lib/lagrange/backup-state -/opt/lagrange/.lagrange-release.lock
 
 [Install]
 WantedBy=multi-user.target

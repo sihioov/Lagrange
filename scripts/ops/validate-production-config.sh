@@ -32,6 +32,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 source "$script_dir/lib/dotenv.sh"
 source "$script_dir/lib/kis-read-compose.sh"
+source "$script_dir/lib/owner-beta-daily-release.sh"
 env_file=${LAGRANGE_ENV_FILE:-$root/deploy/compose/.env}
 source_dir=$root/deploy/secrets
 runtime_dir=
@@ -132,6 +133,21 @@ if ! dotenv_validate_shell_overrides; then
 fi
 
 get() { dotenv_get "$1"; }
+
+# Parse the daily mode with the same closed library as the immutable installer.
+# These internal paths/hashes may be derived only by the controlled runtime
+# wrapper; a protected env input must never bypass that verification.
+if ! daily_release_parse_mode; then
+  invalid+=("$DAILY_RELEASE_ERROR")
+elif [ "$DAILY_RELEASE_MODE" = owner_only ] &&
+     [ "$scope" != release ] && [ "$scope" != backfill ] && [ "$scope" != range-raw ]; then
+  invalid+=("owner_beta_daily_requires_release_or_supplier_scope")
+fi
+# The official daily/backfill suppliers use backfill scope; the separate manual
+# action-range Raw supplier uses its DB-free range-raw scope. Both may validate
+# inputs when the installed daily recommendation mode is ON. This permits supply
+# only, without changing recurring range limits; daily activation requires the immutable
+# release wrapper's verified config, reader floor and runtime binding.
 
 # These keys are this release's local coordination/session contract and must be guarded
 # even when an operator supplies a shell-only value for a key absent from the
@@ -618,12 +634,13 @@ manifest_hash=$(get RECOMMENDATION_DATASET_MANIFEST_SHA256)
 if [ "$scope" = infrastructure ]; then
   secret_files=(
     postgres_password db_migration_owner_password db_app_password db_worker_password
-    db_audit_password db_research_password db_admin_password
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
   )
 elif [ "$scope" = backfill ]; then
   secret_files=(
     postgres_password db_migration_owner_password db_app_password db_worker_password
-    db_audit_password db_research_password db_admin_password kis_app_key kis_app_secret
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
+    kis_app_key kis_app_secret
   )
 elif [ "$scope" = range-raw ]; then
   secret_files=(kis_app_key kis_app_secret)
@@ -632,20 +649,20 @@ elif [ "$scope" = range-raw-recovery ]; then
 elif [ "$scope" = serving-prereqs ]; then
   secret_files=(
     postgres_password db_migration_owner_password db_app_password db_worker_password
-    db_audit_password db_research_password db_admin_password cursor_secret
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password cursor_secret
     session_secret csrf_secret auth0_client_secret backup_encryption_key
   )
 else
   secret_files=(
     postgres_password db_migration_owner_password db_app_password db_worker_password
-    db_audit_password db_research_password db_admin_password cursor_secret
+    db_audit_password db_research_password db_admin_password db_daily_input_admitter_password cursor_secret
     session_secret csrf_secret auth0_client_secret kis_app_key kis_app_secret
     backup_encryption_key
   )
 fi
 db_secret_names=(
   postgres_password db_migration_owner_password db_app_password db_worker_password
-  db_audit_password db_research_password db_admin_password
+  db_audit_password db_research_password db_admin_password db_daily_input_admitter_password
 )
 crypto_secret_names=(session_secret csrf_secret cursor_secret backup_encryption_key)
 declare -A db_secret_ready=()
@@ -673,7 +690,7 @@ check_crypto_source_shape() {
 for name in "${secret_files[@]}"; do
   path="$source_dir/$name"
   case "$name" in
-    postgres_password|db_migration_owner_password|db_app_password|db_worker_password|db_audit_password|db_research_password|db_admin_password) is_db_secret=yes ;;
+    postgres_password|db_migration_owner_password|db_app_password|db_worker_password|db_audit_password|db_research_password|db_admin_password|db_daily_input_admitter_password) is_db_secret=yes ;;
     *) is_db_secret=no ;;
   esac
   is_crypto_secret=no
@@ -777,12 +794,15 @@ if [ "$scope" = infrastructure ]; then
     db-role-bootstrap/db_migration_owner_password:999:999:400
     db-role-bootstrap/db_app_password:999:999:400 db-role-bootstrap/db_worker_password:999:999:400
     db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
-    db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
+    db-role-bootstrap/db_admin_password:999:999:400
+    db-role-bootstrap/db_daily_input_admitter_password:999:999:400
+    db-migrate/db_migration_owner_password:999:999:400
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
   )
 elif [ "$scope" = serving-prereqs ]; then
   runtime_specs=(
     reverse-proxy/lagrange_tls_cert:101:101:440 reverse-proxy/lagrange_tls_key:101:101:440
+    owner-beta-daily-admitter/db_daily_input_admitter_password:10003:10003:440
     api-server/db_app_password:10001:10001:440 api-server/db_admin_password:10001:10001:440
     api-server/db_audit_password:10001:10001:440 api-server/cursor_secret:10001:10001:440
     api-server/session_secret:10001:10001:440 api-server/csrf_secret:10001:10001:440
@@ -791,7 +811,9 @@ elif [ "$scope" = serving-prereqs ]; then
     db-role-bootstrap/db_migration_owner_password:999:999:400
     db-role-bootstrap/db_app_password:999:999:400 db-role-bootstrap/db_worker_password:999:999:400
     db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
-    db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
+    db-role-bootstrap/db_admin_password:999:999:400
+    db-role-bootstrap/db_daily_input_admitter_password:999:999:400
+    db-migrate/db_migration_owner_password:999:999:400
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
     research-worker/db_research_password:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440
     candidate-runner/db_worker_password:10001:10001:440 owner-beta-runner/db_worker_password:10001:10001:440
@@ -806,7 +828,9 @@ elif [ "$scope" = backfill ]; then
     db-role-bootstrap/db_migration_owner_password:999:999:400
     db-role-bootstrap/db_app_password:999:999:400 db-role-bootstrap/db_worker_password:999:999:400
     db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
-    db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
+    db-role-bootstrap/db_admin_password:999:999:400
+    db-role-bootstrap/db_daily_input_admitter_password:999:999:400
+    db-migrate/db_migration_owner_password:999:999:400
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
     research-worker/db_research_password:10001:10001:440 research-worker/kis_app_key:10001:10001:440
     research-worker/kis_app_secret:10001:10001:440
@@ -821,6 +845,7 @@ elif [ "$scope" = range-raw-recovery ]; then
 else
   runtime_specs=(
     reverse-proxy/lagrange_tls_cert:101:101:440 reverse-proxy/lagrange_tls_key:101:101:440
+    owner-beta-daily-admitter/db_daily_input_admitter_password:10003:10003:440
     api-server/db_app_password:10001:10001:440 api-server/db_admin_password:10001:10001:440
     api-server/db_audit_password:10001:10001:440 api-server/cursor_secret:10001:10001:440
     api-server/session_secret:10001:10001:440 api-server/csrf_secret:10001:10001:440
@@ -829,7 +854,9 @@ else
     db-role-bootstrap/db_migration_owner_password:999:999:400
     db-role-bootstrap/db_app_password:999:999:400 db-role-bootstrap/db_worker_password:999:999:400
     db-role-bootstrap/db_audit_password:999:999:400 db-role-bootstrap/db_research_password:999:999:400
-    db-role-bootstrap/db_admin_password:999:999:400 db-migrate/db_migration_owner_password:999:999:400
+    db-role-bootstrap/db_admin_password:999:999:400
+    db-role-bootstrap/db_daily_input_admitter_password:999:999:400
+    db-migrate/db_migration_owner_password:999:999:400
     postgres/postgres_password:999:999:440 research-schema-check/postgres_password:999:999:440
     research-worker/db_research_password:10001:10001:440 research-worker/kis_app_key:10001:10001:440
     research-worker/kis_app_secret:10001:10001:440 recommendation-runner/db_worker_password:10001:10001:440

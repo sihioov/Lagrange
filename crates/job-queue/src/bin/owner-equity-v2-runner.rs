@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use collectors::intraday_quotes::{
@@ -444,16 +444,28 @@ fn load_config() -> Result<Config, ConfigError> {
 
 #[derive(Debug, Default)]
 struct ScheduleCadence {
-    completed_key: Option<NaiveDate>,
+    next_attempt_at: Option<Instant>,
 }
 
 impl ScheduleCadence {
-    fn pending_key(&self, now_kst: DateTime<FixedOffset>) -> Option<NaiveDate> {
-        eligible_schedule_date(now_kst).filter(|key| Some(*key) != self.completed_key)
+    const RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
+    fn pending_key(
+        &self,
+        now_kst: DateTime<FixedOffset>,
+        monotonic_now: Instant,
+    ) -> Option<NaiveDate> {
+        if self
+            .next_attempt_at
+            .is_some_and(|next_attempt_at| monotonic_now < next_attempt_at)
+        {
+            return None;
+        }
+        eligible_schedule_date(now_kst)
     }
 
-    fn complete(&mut self, key: NaiveDate) {
-        self.completed_key = Some(key);
+    fn record_attempt_finished(&mut self, monotonic_finished: Instant) {
+        self.next_attempt_at = Some(monotonic_finished + Self::RETRY_INTERVAL);
     }
 }
 
@@ -869,7 +881,6 @@ async fn main() -> ExitCode {
             let mut next_recovery = tokio::time::Instant::now();
             let seoul = FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
             let mut schedule_cadence = ScheduleCadence::default();
-            let mut next_schedule_attempt = tokio::time::Instant::now();
             let mut exit = ExitCode::SUCCESS;
             loop {
                 if *shutdown_rx.borrow() {
@@ -908,16 +919,22 @@ async fn main() -> ExitCode {
                 }
                 let now = tokio::time::Instant::now();
                 let now_kst = Utc::now().with_timezone(&seoul);
-                if let Some(key) = schedule_cadence.pending_key(now_kst)
-                    && now >= next_schedule_attempt
+                if schedule_cadence
+                    .pending_key(now_kst, Instant::now())
+                    .is_some()
                 {
                     let pins = config
                         .schedule_pins
                         .as_ref()
                         .expect("non-healthcheck configuration has schedule pins");
-                    match run_owner_equity_schedule_cycle(&pool, pins, now_kst).await {
+                    let schedule_result =
+                        run_owner_equity_schedule_cycle(&pool, pins, now_kst).await;
+                    // Apply one interval after every completed attempt, including
+                    // successful no-work cycles and slow failures. This keeps the
+                    // scheduler bounded without making a civil key permanent.
+                    schedule_cadence.record_attempt_finished(Instant::now());
+                    match schedule_result {
                         Ok(report) => {
-                            schedule_cadence.complete(key);
                             println!(
                                 "{}",
                                 json!({
@@ -935,8 +952,6 @@ async fn main() -> ExitCode {
                                     "code":"CONFIRMED_CLOSE_UNAVAILABLE"
                                 })
                             );
-                            next_schedule_attempt =
-                                tokio::time::Instant::now() + Duration::from_secs(60);
                         }
                         Err(
                             OwnerEquityScheduleError::Database
@@ -949,8 +964,6 @@ async fn main() -> ExitCode {
                                     "code":"SCHEDULER_UNAVAILABLE"
                                 })
                             );
-                            next_schedule_attempt =
-                                tokio::time::Instant::now() + Duration::from_secs(60);
                         }
                     }
                 }
@@ -1262,17 +1275,105 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_catches_up_once_per_confirmed_close_key() {
+    fn schedule_cadence_initial_poll_and_restart_are_immediate() {
         let seoul = FixedOffset::east_opt(9 * 60 * 60).unwrap();
-        let before = seoul.with_ymd_and_hms(2026, 8, 31, 16, 29, 59).unwrap();
         let at = seoul.with_ymd_and_hms(2026, 8, 31, 16, 30, 0).unwrap();
+        let key = NaiveDate::from_ymd_opt(2026, 8, 31).unwrap();
+        let monotonic_start = Instant::now();
         let mut cadence = ScheduleCadence::default();
-        let catchup = cadence.pending_key(before).unwrap();
-        assert_eq!(catchup.to_string(), "2026-08-30");
-        cadence.complete(catchup);
-        assert_eq!(cadence.pending_key(before), None);
-        let current = cadence.pending_key(at).unwrap();
-        assert_eq!(current.to_string(), "2026-08-31");
+        assert_eq!(cadence.pending_key(at, monotonic_start), Some(key));
+
+        cadence.record_attempt_finished(monotonic_start);
+        let restarted = ScheduleCadence::default();
+        assert_eq!(restarted.pending_key(at, monotonic_start), Some(key));
+    }
+
+    #[test]
+    fn schedule_cadence_successful_zero_work_old_close_retries_same_key() {
+        let seoul = FixedOffset::east_opt(9 * 60 * 60).unwrap();
+        let at = seoul.with_ymd_and_hms(2026, 8, 31, 16, 30, 0).unwrap();
+        let key = NaiveDate::from_ymd_opt(2026, 8, 31).unwrap();
+        let old_close = NaiveDate::from_ymd_opt(2026, 8, 30).unwrap();
+        // A successful zero-work report may still refer to this older close;
+        // cadence remembers only when its attempt finished.
+        assert!(old_close < key);
+        let monotonic_start = Instant::now();
+        let mut cadence = ScheduleCadence::default();
+        cadence.record_attempt_finished(monotonic_start);
+
+        assert_eq!(
+            cadence.pending_key(at, monotonic_start + Duration::from_secs(59)),
+            None
+        );
+        assert_eq!(
+            cadence.pending_key(at, monotonic_start + Duration::from_secs(60)),
+            Some(key)
+        );
+    }
+
+    #[test]
+    fn schedule_cadence_failed_attempt_uses_the_same_sixty_second_throttle() {
+        let seoul = FixedOffset::east_opt(9 * 60 * 60).unwrap();
+        let at = seoul.with_ymd_and_hms(2026, 8, 31, 16, 30, 0).unwrap();
+        let key = NaiveDate::from_ymd_opt(2026, 8, 31).unwrap();
+        let monotonic_start = Instant::now();
+        let mut cadence = ScheduleCadence::default();
+
+        // The caller records the completion timestamp for every Result branch.
+        cadence.record_attempt_finished(monotonic_start);
+        assert_eq!(
+            cadence.pending_key(at, monotonic_start + Duration::from_secs(59)),
+            None
+        );
+        assert_eq!(
+            cadence.pending_key(at, monotonic_start + Duration::from_secs(60)),
+            Some(key)
+        );
+    }
+
+    #[test]
+    fn schedule_cadence_cutoff_change_does_not_bypass_monotonic_throttle() {
+        let seoul = FixedOffset::east_opt(9 * 60 * 60).unwrap();
+        let before_cutoff = seoul.with_ymd_and_hms(2026, 8, 31, 16, 29, 59).unwrap();
+        let after_cutoff = seoul.with_ymd_and_hms(2026, 8, 31, 16, 30, 0).unwrap();
+        let previous_key = NaiveDate::from_ymd_opt(2026, 8, 30).unwrap();
+        let current_key = NaiveDate::from_ymd_opt(2026, 8, 31).unwrap();
+        let monotonic_start = Instant::now();
+        let mut cadence = ScheduleCadence::default();
+
+        assert_eq!(
+            cadence.pending_key(before_cutoff, monotonic_start),
+            Some(previous_key)
+        );
+        cadence.record_attempt_finished(monotonic_start);
+        assert_eq!(
+            cadence.pending_key(after_cutoff, monotonic_start + Duration::from_secs(59)),
+            None
+        );
+        assert_eq!(
+            cadence.pending_key(after_cutoff, monotonic_start + Duration::from_secs(60)),
+            Some(current_key)
+        );
+    }
+
+    #[test]
+    fn schedule_cadence_long_attempt_waits_sixty_seconds_after_completion() {
+        let seoul = FixedOffset::east_opt(9 * 60 * 60).unwrap();
+        let at = seoul.with_ymd_and_hms(2026, 8, 31, 16, 30, 0).unwrap();
+        let key = NaiveDate::from_ymd_opt(2026, 8, 31).unwrap();
+        let monotonic_start = Instant::now();
+        let monotonic_finished = monotonic_start + Duration::from_secs(5 * 60);
+        let mut cadence = ScheduleCadence::default();
+        cadence.record_attempt_finished(monotonic_finished);
+
+        assert_eq!(
+            cadence.pending_key(at, monotonic_finished + Duration::from_secs(59)),
+            None
+        );
+        assert_eq!(
+            cadence.pending_key(at, monotonic_finished + Duration::from_secs(60)),
+            Some(key)
+        );
     }
 
     #[test]
