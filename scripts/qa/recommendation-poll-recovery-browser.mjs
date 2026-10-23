@@ -162,14 +162,18 @@ try {
     const page = await context.newPage();
     page.on("pageerror", (error) => pageErrors.push(error.message));
     let requests = 0;
-    let releaseThird;
+    let releaseSecond, releaseThird, releaseFourth;
+    const secondGate = new Promise((yes) => { releaseSecond = yes; });
+    const fourthGate = new Promise((yes) => { releaseFourth = yes; });
     const thirdGate = new Promise((yes) => {
       releaseThird = yes;
     });
     await page.route("**/api/v1/recommendations/**", async (route) => {
       assert.equal(route.request().method(), "GET");
       const step = ++requests;
+      if (step === 2) await secondGate;
       if (step === 3) await thirdGate;
+      if (step === 4) await fourthGate;
       const failedPoll = step === 1 || step === 3;
       const body = failedPoll
         ? {
@@ -191,8 +195,13 @@ try {
     });
     await page.goto(`${origin}/?kind=${kind}`);
     const error = page.locator(".form-result");
+    // Observe after the following request starts; its gated response cannot erase the error.
+    await expect.poll(() => requests).toBe(2);
+    // Exercise an observer slower than the 250 ms retry without changing product timers.
+    await page.waitForTimeout(1000);
     await expect(error).toHaveText("Temporary fixture status failure");
-    await expect.poll(() => requests).toBeGreaterThanOrEqual(3);
+    releaseSecond();
+    await expect.poll(() => requests).toBe(3);
     let recovered = true;
     try {
       await expect(error).toHaveCount(0, { timeout: 600 });
@@ -205,7 +214,10 @@ try {
       passed: recovered,
     });
     releaseThird();
+    await expect.poll(() => requests).toBe(4);
+    await page.waitForTimeout(1000);
     await expect(error).toHaveText("Temporary fixture status failure");
+    releaseFourth();
     await expect(
       page.getByRole("heading", { name: "Recommendation failed", exact: true }),
     ).toBeVisible();
