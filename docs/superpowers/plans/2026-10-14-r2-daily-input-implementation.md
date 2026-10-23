@@ -11089,3 +11089,12 @@ SHA256`04af1b7c2ae08232a1a179a8f5c101cec4d1c0b7b93453a57faf093bfd80460d`.
 현재 운영 API/Weba6da63c+Owner7fa와 Wave177 기능 PASS·정리/불완전 기록을 보존한다.
 새 소스/격리 검사 인수이며 hosted/실제 새 전체흐름은 미완료다. 원래 소진 실행·기존 CI/빌드
 재시도 없음. DailyOFF·입력 미승인·충돌/D-06/D-07 유예·전체 R2-07/R2/R3 FINAL OPEN.
+
+
+## Wave179 — original lifecycle CI failure and bounded synthetic socket lifetime correction (2026-10-23)
+
+- R2-09 / R2-07 DOING. Original `74c7cec` CI [39955177211 attempt1](https://github.com/sihioov/Lagrange/actions/runs/39955177211) failed; all eight full logs and seven exact checkouts were recovered. Policy, including the new 19 offline lifecycle cases and one actual Docker lifecycle case, passed. This does not accept the whole candidate. Original failure closure: `target/r2-daily-beta/ci/74c7cec/original-failure-closure.json`, 12041 bytes, SHA-256 `5d30d17a0662ff7765dd580e90f372d0677b08ff3cfb7daecdee3e67203828cd`.
+- The Rust ninth-buffered-control test expected `Protocol` but got `Io`. Its synthetic server closed after one Pong or a 100ms read timeout. A new 200ms delayed-consumer regression reproduced `Io` before correction. Explicit subscription, written-frame, and assertion-release channels now hold that socket through the protocol assertion, with bounded five-second fixture waits. Both the original protocol assertion and the delayed regression remain strict; application transport code is unchanged. The full synthetic transport module passed 51/51 with no ignored tests after correction.
+- Web OFF lane passed 128/129; the remaining backtest case failed in synthetic scenario setup at `backtests.spec.ts:10` with typed `CONNECTION_RESET`. Market-stream lane passed 14/14, with zero retries and successful cleanup in both lanes. Original connection-reset cause remains UNKNOWN. No web behavior, retry, or acceptance rule is changed to mask it.
+- This commit contains test-fixture correction and records, not a new serving release. A distinct exact-source hosted CI is next; the original run is consumed and will not be rerun. API/Web `a6da63c` plus preserved Owner `7fa779c` remain the accepted serving bindings; no production command or new host-health claim is made. Wave177 incomplete independent lifecycle evidence stays incomplete; its original wholeflow is not replayed.
+- After source acceptance, review explicit tool/application-source bindings before any distinct wholeflow use. D-06/D-07 and historical data conflicts remain deferred; input admission, Daily activation, actual three scheduled trading days, Owner acceptance, and R2/R3 FINAL remain OPEN.

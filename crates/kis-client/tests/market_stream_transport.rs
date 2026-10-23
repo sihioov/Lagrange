@@ -691,6 +691,15 @@ async fn packed_receipts_never_escape_a_buffered_poison_message() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn buffered_drain_bound_fails_closed_before_a_ninth_complete_message() {
+    assert_buffered_drain_bound(Duration::ZERO).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn buffered_drain_bound_survives_a_delayed_consumer_without_fixture_eof() {
+    assert_buffered_drain_bound(Duration::from_millis(200)).await;
+}
+
+async fn assert_buffered_drain_bound(consumer_delay: Duration) {
     let directory = tempfile::tempdir().unwrap();
     let state = MarketStreamDomain::for_test(directory.path(), Uuid::new_v4()).unwrap();
     let approval_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -702,7 +711,15 @@ async fn buffered_drain_bound_fails_closed_before_a_ninth_complete_message() {
     ));
     let ws_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let ws_port = ws_listener.local_addr().unwrap().port();
-    let ws_task = tokio::spawn(run_data_then_nine_controls_server(ws_listener));
+    let (start_tx, start_rx) = oneshot::channel();
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let (finish_tx, finish_rx) = oneshot::channel();
+    let ws_task = tokio::spawn(run_data_then_nine_controls_server(
+        ws_listener,
+        start_rx,
+        ready_tx,
+        finish_rx,
+    ));
     let approval = ApprovalClient::for_loopback(
         &format!("http://127.0.0.1:{approval_port}"),
         Secret::new(APPKEY_SENTINEL.to_owned()),
@@ -719,12 +736,27 @@ async fn buffered_drain_bound_fails_closed_before_a_ninth_complete_message() {
     .await
     .unwrap();
     session.subscribe("005930").await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    start_tx.send(()).expect("fixture must await subscription");
+    tokio::time::timeout(Duration::from_secs(5), ready_rx)
+        .await
+        .expect("fixture must write all buffered frames")
+        .expect("fixture must acknowledge written frames");
+    // Exercise a delayed consumer past the old server's 100ms lifetime. Its
+    // scheduler must not turn the ninth-message protocol assertion into EOF.
+    tokio::time::sleep(consumer_delay).await;
     assert_eq!(
         session.next_event().await.unwrap_err(),
         MarketStreamError::Protocol
     );
     assert!(session.is_closed());
+    assert!(
+        !ws_task.is_finished(),
+        "fixture must survive the assertions"
+    );
+    drop(session);
+    finish_tx
+        .send(())
+        .expect("fixture must await assertion release");
     approval_task.await.unwrap();
     ws_task.await.unwrap();
 }
@@ -3026,19 +3058,34 @@ async fn run_packed_data_then_duplicate_ack_server(listener: TcpListener) {
     stream.write_all(&bytes).await.unwrap();
 }
 
-async fn run_data_then_nine_controls_server(listener: TcpListener) {
+async fn run_data_then_nine_controls_server(
+    listener: TcpListener,
+    start_rx: oneshot::Receiver<()>,
+    ready_tx: oneshot::Sender<()>,
+    finish_rx: oneshot::Receiver<()>,
+) {
     let (mut stream, _) = listener.accept().await.unwrap();
     websocket_handshake(&mut stream).await;
     let _ = read_server_frame(&mut stream).await;
     write_server_frame(&mut stream, 0x1, &ack("005930", "SUBSCRIBE SUCCESS"), true).await;
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    tokio::time::timeout(Duration::from_secs(5), start_rx)
+        .await
+        .expect("client must finish subscribing")
+        .expect("client must request buffered frames");
     let mut bytes = server_frame_bytes(0x1, &market_message(), true);
     for index in 0..9u8 {
         bytes.extend(server_frame_bytes(0x9, &[index], true));
     }
     stream.write_all(&bytes).await.unwrap();
-    let mut sink = [0u8; 512];
-    let _ = tokio::time::timeout(Duration::from_millis(100), stream.read(&mut sink)).await;
+    ready_tx.send(()).expect("client must await written frames");
+    // Reading just one Pong used to drop this socket while the client was
+    // still writing the remaining Pongs. Hold it until the assertion finishes;
+    // the finite timeout only catches a broken fixture handshake.
+    tokio::time::timeout(Duration::from_secs(5), finish_rx)
+        .await
+        .expect("client assertions must finish")
+        .expect("client must release the fixture");
+    drop(stream);
 }
 
 async fn assert_buffered_text_poison(followup: Vec<u8>, generation: &'static str) {
