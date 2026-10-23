@@ -4506,3 +4506,18 @@ Disable 시나리오가 동일 READY 초기값을 다시 넣어 교체를 재현
 
 현재 운영 API/Web9c145db+Owner7fa와 마지막19:46:19KST 관측을 유지한다. 배당·가격 충돌과
 D-06/D-07은 유예, DailyOFF/epoch0·KISdisabled·입력 미승인·실제3거래일/Owner/FINAL OPEN이다.
+
+## Wave174 — 상태 조회 복구의 기존 순서 검사 연결 보정
+
+Wave173 `2451089` CI39943888323 attempt1의 Web 단위 검사524개 중523개가 통과하고,
+비활성화 후 신호 제거 순서를 검사하는 기존1개가 실패했다. 해당 검사는 confirmDisable에서
+`await refreshMemberships()`를 직접 찾았지만 새 복구 함수로 호출이 이동해 위치가 -1이었다.
+신호 제거→복구 함수→상태 조회의 실제 소스 순서는 유지됐다. 실패 후보는 배포하지 않는다.
+원래 CI 나머지 결과는 계속 회수하며 원래 실행을 재시도하지 않는다.
+
+기존 검사가 새 함수 호출의 위치와 내부 refreshMemberships 연결을 확인하도록 보정했다.
+제품과 Chromium 시나리오는 변경하지 않았다. 전체 Web 단위66파일524개·변경 파일 lint PASS.
+Wave173 Chromium49·관련24·타입 검사 근거는 동일 제품/검사 파일 해시로 보존하며 재실행하지
+않았다. 새 후보 hosted 전체 검증과 이미지·운영 배포는 다음이다. 근거:
+`target/r2-daily-beta/wp-8/wave174/local-validation.json`.
+현재 API/Web9c145db+Owner7fa, DailyOFF·충돌/D-06/D-07 유예·전체 FINAL OPEN 유지.

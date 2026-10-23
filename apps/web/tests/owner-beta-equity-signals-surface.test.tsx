@@ -520,12 +520,20 @@ describe("Owner stock signal beta V2 surface", () => {
       disableStart,
     );
     const clearSignals = source.indexOf("setSignals(null)", pendingRemoval);
-    const refreshMemberships = source.indexOf("await refreshMemberships()", pendingRemoval);
+    const reconcileMemberships = source.indexOf(
+      "await reconcileMembershipMutation(request.signal)",
+      pendingRemoval,
+    );
 
     expect(disableStart).toBeGreaterThanOrEqual(0);
     expect(pendingRemoval).toBeGreaterThan(disableStart);
     expect(clearSignals).toBeGreaterThan(pendingRemoval);
-    expect(refreshMemberships).toBeGreaterThan(clearSignals);
+    expect(reconcileMemberships).toBeGreaterThan(clearSignals);
+    const reconciliation = source.slice(
+      source.indexOf("async function reconcileMembershipMutation"),
+      source.indexOf("async function addMembership"),
+    );
+    expect(reconciliation).toContain("await refreshMemberships()");
     expect(source).toContain(
       "next.rows.some((row) => row.instrument_id === pendingSignalRemovalInstrument)",
     );
