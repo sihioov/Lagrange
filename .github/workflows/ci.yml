@@ -160,6 +160,8 @@ jobs:
       - run: npm test --workspace @lagrange/web
       - name: Check recommendation polling recovery and lifetime in isolated Chromium
         run: node scripts/qa/recommendation-poll-recovery-browser.mjs "/tmp/lagrange-recommendation-poll-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check recommendation submission lifetime in isolated Chromium
+        run: node scripts/qa/recommendation-submit-lifetime-browser.mjs "/tmp/lagrange-recommendation-submit-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Check membership response ordering in isolated Chromium
         run: node scripts/qa/stock-beta-membership-order-browser.mjs "/tmp/lagrange-membership-order-${{ github.run_id }}-${{ github.run_attempt }}"
       - run: npm run build --workspace @lagrange/web
