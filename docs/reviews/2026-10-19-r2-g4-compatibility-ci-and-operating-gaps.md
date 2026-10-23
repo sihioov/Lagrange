@@ -3961,3 +3961,31 @@ membership·세대·작업형식 격리, 미승인 최고세대 제외를 대조
 근거는 target/r2-daily-beta/wp-8/wave162/local-validation.json 및 각 원래 로그다.
 현재는 소스/격리 검증 범위이며 새 고정 후보의 hosted CI·이미지·운영 배포는 아직 미완료다.
 기존7fa serving, 원본273000/272000 충돌·권위 미확정, D-06/D-07 유예·DailyOFF·FINAL 미완료를 유지한다.
+
+### Wave163 — 화면 배포에서 기존 Owner 수집기 보존
+
+Wave162의 API/Web 변경은 수집기 교체를 필요로 하지 않는다. 추가 검토에서
+schedule_owner_equity_incremental의 작업 identity에 code_commit이 들어가는 것을 확인했다.
+따라서 새 Owner revision 배포는 같은 실패 기간을 새 작업으로 조회할 수 있다. 이번 표시 수정은
+기존7fa Owner를 유지하고 Web→API만 갱신하도록 공식 compose-release.sh에
+--preserve-owner-v2를 추가했다. 정확한 이전 commit/manifest, 기존3개 이미지와 현재 env를
+검증하고 release commit 및 별도 비활성 supplier binding 외의 모든 env 차이는 거부한다.
+기존 release lock·Daily quiescence·상태 정책·승인 검사는 유지하며 작업 뒤 Owner의 실제
+container/start/image/revision이 바뀌지 않았는지 대조한다. 결과는 API/Web 새 후보와 Owner7fa의
+명시적인 혼합 revision이며 이후 전체 갱신은 서비스별 새로운 결합 검토가 필요하다.
+
+공급자·Docker·root를 사용하지 않는 공식 fixture가 Web→API 순서, 정확히2개 교체,
+Owner 불변과 env/identity/Daily guard 오류 차단을 통과했다. 이 검사를 hosted policy에 추가했다.
+기존 fixture의 명시적 Docker socket 및 daily guard stub 누락도 보정했다. 첫3개 fixture 실패와
+기본 Python의 PyYAML 미설치 실패를 보존하고, 실제 운영 오류로 분류하지 않았다.
+격리 PyYAML6.0.2 CI 계약 검사와 운영 정적 검사도 통과했다. Wave162의 DB/Web/OpenAPI
+검증은 유효하며 변경된 최종 소스에는 별도의 최초 전체 CI를 적용한다. d0960b0의 원래
+CI39885216543은 취소/재실행하지 않고 이전 후보 결과로 회수한다. 운영 반영은 아직 미완료다.
+빌드용 잠시 정지/재시작이 필요하면 같은7fa Owner container/image만 정상 복귀시키며, 그 실제
+시작 시각을 새로 결합한다. 실패 작업·원본 충돌·DailyOFF·D-06/D-07 유예·FINAL 미완료는 유지한다.
+
+원래 d0960b0 CI의 Web은 OFF129개 통과 후 market-stream12/13에서 실패했다.
+실패 위치 stock-beta-intraday.spec.ts:1567은 카드의 모든 small 요소에 세대 번호 한 줄을
+기대하던 assertion이다. 새 기준일 행으로 두 요소가 된 소스를 확인했고, 세대와 API 응답의
+기준일 두 줄을 모두 정확히 검증하도록 수정했다. 테스트 제외/재시도/시간 연장은 없다.
+원래 실패를 보존하고 최종 변경 후보의 최초 CI에서 이 경로를 검증한다.

@@ -257,9 +257,9 @@ job_queue --> kis_client : market-only WS realtime runtime;\nowned socket, separ
 ' evidence: crates/factor-engine/src/price_only.rs:9-11 (use market_data::{ApprovedHistoricalPriceOnlyArtifact,..})
 factor_engine --> market_data
 
-' evidence: scripts/ops/compose-release.sh:215-237
+' evidence: scripts/ops/compose-release.sh:237-257
 daily_wrapper --> daily_ops : protected prepare / enable / disable
-' evidence: scripts/ops/compose-release.sh:227-232
+' evidence: scripts/ops/compose-release.sh:246-251
 daily_wrapper --> daily_backup : backup / verify / reconcile
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:32-44,790-808,831-842
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy

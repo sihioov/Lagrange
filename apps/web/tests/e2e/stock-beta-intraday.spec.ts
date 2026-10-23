@@ -1564,7 +1564,10 @@ test.describe("provider-free Stock Beta intraday integration", () => {
               const card = membershipCards(page).nth(index);
               await expect(membershipCards(page)).toHaveCount(list.memberships.length);
               await expect(card.locator("strong")).toHaveText(admitted.instrument_id);
-              await expect(card.locator("small")).toHaveText(`Generation ${transition.generation}`);
+              await expect(card.locator("small")).toHaveText([
+                `Generation ${transition.generation}`,
+                `Data through: ${membership.coverage.last_session ?? "Not yet available"}`,
+              ]);
               await expect(card).toHaveAttribute("data-lifecycle", transition.lifecycle);
               renderedHeldState = true;
             }

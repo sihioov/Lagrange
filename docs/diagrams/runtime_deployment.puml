@@ -327,7 +327,7 @@ research --> curated : curated Parquet bars
 ' evidence: data-pipelines/collectors/src/calendar_bootstrap.rs:105-120,219-239; data-pipelines/collectors/src/sink.rs:213-251; data-pipelines/collectors/src/worker.rs:2740-3151 (partitioned recovery, exact-generation replay, and publication; shifted by the service-status producer additions); data-pipelines/collectors/src/candidate_sink.rs:308-355,431-479,537-579,865-1000 (rights, ledger/generation inspection, amendment revalidation, and price publication); data-pipelines/collectors/src/worker.rs:1048,1069; data-pipelines/collectors/src/service_status.rs:80-105,122-137; migrations/0059_research_execution_status.up.sql:56-73; deploy/compose/compose.yml:609-613 (DB_USER research_writer)
 research --> pg : catalog + calendar-only publication\nand fenced 0059 EOD attempt writes\n(research_writer,\nSECURITY DEFINER procs)
 
-' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:322-341,344-375; scripts/ops/lib/release-image-manifest.sh:340-374
+' evidence: scripts/ops/lib/entitlement-amend-installed-release.sh:1-5,205-223; scripts/ops/compose-release.sh:323-363,365-385; scripts/ops/lib/release-image-manifest.sh:340-374
 note right of oneshots
   Entitlement amendment is an operator-only db-migrate path. The installed
   release guard binds files/env/manifest/project/commit; the pre-amendment

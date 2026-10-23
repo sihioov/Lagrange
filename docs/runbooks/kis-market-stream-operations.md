@@ -192,6 +192,22 @@ process-local acknowledgements:
 `OWNER_EQUITY_V2_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_EQUITY_V2_READ_ONLY_KIS_CALLS` and
 `OWNER_MARKET_STREAM_ROLLOUT_CONFIRM=I_UNDERSTAND_OWNER_MARKET_STREAM_READ_ONLY_WS_CALLS`.
 Acknowledgements do not create a grant, day proof, admission, or provider permission.
+For a UI/API-only change that must retain the existing Owner V2 scheduler, add
+`--preserve-owner-v2` to the market-stream plan/preflight/apply commands with an explicit
+`--refresh-from-commit`. This mode verifies all three source images, refreshes Web then API,
+and verifies that the Owner container ID, start time and source image/revision remain unchanged.
+It does not recreate the Owner, enqueue a retry or collect data. This matters because the
+incremental scheduling key includes the worker code revision: deploying a new Owner revision
+can create another job for the same previously failed input window.
+
+This option requires equal parsed runtime environment keys and values between the two protected
+releases, except `LAGRANGE_CODE_COMMIT` and the separate disabled action-supplier binding. Missing,
+extra or changed runtime keys fail before mutation. It retains the normal release lock, daily
+quiescence, source-manifest, image and status-policy gates. Record the resulting mixed revisions
+explicitly: only API/Web use the new candidate. A later full refresh or rollback must review these
+actual per-service bindings; the ordinary single-source refresh must fail closed on a mixed set.
+An already open browser may still need its normal page reload to use the new client bundle.
+
 Use the same `--refresh-from-commit` in the approved apply command. It selects only the
 trusted manifest at `<release-root>/releases/<commit>` for verifying the running API/Web/runner.
 The executing current release still supplies every replacement image. Missing, symlinked,
