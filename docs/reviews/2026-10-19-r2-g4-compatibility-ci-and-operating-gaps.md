@@ -4374,3 +4374,36 @@ Wave169 추천 생성 수명 보정의 Chromium20·관련30·타입/lint·CI계�
 27fc 후보의 빌드/배포는 실행하지 않았다. 다음은 보정 커밋의 새 hosted CI, 별도 이미지
 빌드·복귀 검증 후 Web/API 배포다. 충돌·D-06/D-07 유예, DailyOFF·입력 미승인·
 첫 실제 세션null·실제3일0·전체 R2-07/R2/R3 FINAL OPEN을 유지한다.
+
+### Wave170 — 추천 생성 폼 수명 보정 운영 인수
+
+2026-10-23 18:09:21 KST, 후보 `0352ae21444735eb70ab2dce34f8be4da1a42ecd`의 Web/API 운영 반영을 독립 인수했다.
+Owner/일반 추천 생성 폼을 떠난 뒤 도착한 CSRF/POST 응답이 로그인 이동이나 후속 조회를
+일으키는 문제를 보정했다. UI 수명 signal을 CSRF/응답 파서에 전달하고 늦은 상태 반영을
+억제하며, 이미 전송된 POST·현재 폼의 정상 생성·로그인 복구는 유지한다.
+
+Wave16927fc0e9 original CI39923506477 attempt1은 기존 추천 조회 검사의 첫 오류 표시
+관측에서 실패해 배포하지 않았다. 느린 관측으로 동일 실패를 재현하고 다음 응답을
+관측 뒤에 풀도록 검사를 동기화했다. 제품 조회 간격은 변경하지 않았다. 원래 CI의
+정확한 스케줄링 지연은 미관측이며 원본 실패·미실행 빌드 준비를 보존했다.
+
+추천 생성 Chromium20·관련30·타입/lint·CI계약24와 보정된 추천 조회 Chromium28을
+인수했다. 새0352ae2 CI39924523107 attempt1 전체8작업/8전체로그/7정확checkout·
+Rust155/Python154·PG19/page14, 생성20/조회28/멤버십40경로를 인수했다. 기존 Web
+OFF/market-stream lane의 skip/flaky/retry는0이다.
+
+공식 사전 검사와 새로운 실제 운영 전제 확인 뒤 첫 build-a1을 실행했다. 원래12이미지49gate
+PASS, stop/build/start/recovery4유닛 정상0/PID0/빈cgroup, 같은7fa Owner 복귀와 다른10개
+상태·전체21개 inventory 불변을 독립 인수했다. 공식 설치/check·KIS disabled·상태 타이머
+복원 후 Web→API 두 개만 갱신했다. 선택 릴리스/API/Web은0352ae2이며 수집기는7fa다.
+새 이미지/revision/health·HTTP, Owner container/image/start 및 다른9개 상태·19개 inventory
+불변을 대조했다. Owner의 인수된 시작은 `2026-10-23T09:08:09.719069671Z`이다. 복원 의무는 남지 않았다.
+이는 해당 시점/범위 관측이며 실제 인증·새 시세 수신·실제3거래일 인수는 아니다.
+
+- `target/r2-daily-beta/ci/0352ae2/hosted-source-closure.json`: 330070bytes, SHA256 `444a6fde0da8d709242e749a72aff267ffba4d4f7ffb5083806bb0b58b6eb74e`.
+- `target/r2-daily-beta/wp-8/wave170/build-a1/image-restoration-observation-20261023T090850.json`: 857931bytes, SHA256 `148a612a7ebc5599d2f710e3b38707f18688d44f7e8e5295e3de97b648c5a0a4`.
+- `target/r2-daily-beta/wp-8/wave170/serving-deployment-closure-20261023T090921.json`: 69307bytes, SHA256 `bbdf99fa226914b15b1b1331b7cd89e09f49ec36215b0f444f9fbede3ac4b4f0`.
+
+전체 R2-07 및 R2/R3 FINAL은 OPEN이다. D-06/D-07와 배당·가격 충돌 조사는 유예하며 원본을 보존한다.
+DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0·입력 미승인·Owner 인수 미완료를 유지한다.
+다음은 로드맵에서 독립적으로 진행 가능한 베타 작업을 선정하는 것이다. 이 문서 커밋은 빌드 후보가 아니다.
