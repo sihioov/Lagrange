@@ -44,6 +44,7 @@ function MembershipRow({
   const confirmRef = useRef<HTMLButtonElement>(null);
   const confirming = viewModel.disableId === membership.id;
   const pending = viewModel.mutationPending && viewModel.pendingMembershipId === membership.id;
+  const disabled = !viewModel.interactionReady || pending;
   const canRetry =
     membership.lifecycle === "INSUFFICIENT_HISTORY" ||
     (membership.lifecycle === "FAILED" && membership.failure?.retryable === true);
@@ -80,7 +81,7 @@ function MembershipRow({
       <div className={styles["membershipActions"]}>
         {canRetry ? (
           <button
-            disabled={pending}
+            disabled={disabled}
             onClick={() => void viewModel.onRetry(membership.id)}
             type="button"
           >
@@ -94,7 +95,7 @@ function MembershipRow({
         ) : null}
         {membership.lifecycle === "DISABLED" ? null : (
           <button
-            disabled={pending}
+            disabled={disabled}
             onClick={() => viewModel.onRequestDisable(membership.id)}
             type="button"
           >
@@ -119,14 +120,14 @@ function MembershipRow({
         <fieldset className={styles["disableConfirm"]} aria-label={t.disablePrompt}>
           <legend>{t.disablePrompt}</legend>
           <button
-            disabled={pending}
+            disabled={disabled}
             onClick={() => void viewModel.onConfirmDisable()}
             ref={confirmRef}
             type="button"
           >
             {pending ? t.disabling : t.disableConfirmation}
           </button>
-          <button disabled={pending} onClick={viewModel.onCancelDisable} type="button">
+          <button disabled={disabled} onClick={viewModel.onCancelDisable} type="button">
             {t.cancel}
           </button>
         </fieldset>

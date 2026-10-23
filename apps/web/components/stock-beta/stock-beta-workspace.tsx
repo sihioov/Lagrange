@@ -193,6 +193,7 @@ export function StockBetaWorkspace({
     string | null
   >(null);
   const [disableId, setDisableId] = useState<string | null>(null);
+  const [interactionReady, setInteractionReady] = useState(false);
   const mutationPendingRef = useRef(false);
   const mutationRequestRef = useRef<AbortController | null>(null);
   const membershipRequestRef = useRef<AbortController | null>(null);
@@ -256,6 +257,11 @@ export function StockBetaWorkspace({
   const invalidateMemberships = useCallback((): void => {
     membershipRequestRef.current?.abort();
     membershipRequestRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    // Server-rendered controls must wait until their event handlers are attached.
+    setInteractionReady(true);
   }, []);
 
   const refreshMemberships = useCallback(
@@ -648,6 +654,7 @@ export function StockBetaWorkspace({
     copy: t,
     disableId,
     inputError,
+    interactionReady,
     intradayEnabled,
     marketStreamEnabled,
     instrumentCode,

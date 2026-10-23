@@ -10895,3 +10895,26 @@ Daily 설정·인증·공급자 호출은0이다. 새 브라우저 검사를 hos
 현재 API/Web0352ae2+Owner7fa, 마지막18:09:21KST 운영 관측을 유지한다. 배당/가격 충돌·
 D-06/D-07 유예, DailyOFF/epoch0·KISdisabled·입력 미승인·firstSessionnull·실제3일0·
 전체 R2-07/R2/R3 FINAL OPEN을 유지한다.
+
+## Wave172 — 서버 렌더링 직후 종목 변경 클릭 손실 보정
+
+Wave171 `8912fa8`의 원래 CI39932963864 attempt1에서 새 일일 설정28검사는 통과했지만,
+기존 Web OFF 통합129개 중 Retry 뒤 READY 확인1개가 실패했다(128 PASS, market-stream14 PASS).
+원래 CI·실패를 보존하며 해당 후보의 빌드/배포는 실행하지 않는다. 원래 실패의 직접 원인은
+관측 부족으로 UNKNOWN이다.
+
+별도 로컬 Next/Chromium에서 client bundle을 지연했을 때 SSR Retry 버튼이 활성 상태이고
+클릭이 요청을 보내지 못한 채 FAILED에 남는 문제를 재현했다. 정상 로딩 대조군은 READY에
+도달했다. 이 재현을 원래 CI 실패와 동일 원인이라고 단정하지 않는다. R2-07 수정으로
+이벤트 처리가 준비될 때까지 종목 코드 입력·추가·Retry·Disable을 비활성화한다. 기존
+요청 잠금·응답 수명·서버 변경 의미·READY 판정은 유지한다.
+
+기존 Retry 통합 검사를 강화해 SSR 구간의 비활성 상태, 로딩 완료 후 활성화, 실제 합성
+POST202와 READY·신호 표시를 확인했다. 해당 Chromium1·관련45검사·타입/lint PASS.
+초기 로컬 준비/환경/타입 실패도 보존한다. 근거:
+`target/r2-daily-beta/wp-8/wave172/local-validation.json`. 구조 변경이 없어 도표는 보존한다.
+
+Wave171 일일 설정 수정도 포함한 새 후보로 CI를 진행한다. 소스/격리 검증 인수이며
+새 CI·이미지·Web/API 배포는 미완료다. 현재0352ae2+Owner7fa, 마지막18:09:21KST
+운영 관측·DailyOFF/epoch0·KISdisabled를 유지한다. 배당/가격 충돌·D-06/D-07은 유예,
+입력 승인·실제3거래일·전체 R2-07/R2/R3 FINAL은 OPEN이다.

@@ -49,6 +49,7 @@ function models(): { dashboard: StockBetaDashboardViewModel; detail: StockBetaDe
       locale: "en",
       memberships: list.memberships,
       mutationPending: false,
+      interactionReady: true,
       onAdd: async () => undefined,
       onCancelDisable: () => undefined,
       onConfirmDisable: async () => undefined,

@@ -45,6 +45,7 @@ export type StockBetaDashboardViewModel = {
   readonly locale: Locale;
   readonly memberships: readonly OwnerEquityV2MembershipModel[];
   readonly mutationPending: boolean;
+  readonly interactionReady: boolean;
   readonly onAdd: () => Promise<void>;
   readonly onCancelDisable: () => void;
   readonly onConfirmDisable: () => Promise<void>;
