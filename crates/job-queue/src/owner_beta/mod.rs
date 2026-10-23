@@ -13,6 +13,7 @@ pub mod input;
 pub mod publish;
 pub mod recovery;
 pub mod runner;
+pub mod simulation;
 pub mod target;
 
 pub use compute::{

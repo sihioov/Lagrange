@@ -1919,6 +1919,110 @@ mod tests {
         );
     }
 
+    #[test]
+    fn trend_50_200_equal_values_select_cash_and_targets_are_unchanged() {
+        let input = input_for(&resolved(
+            "trend_following",
+            json!({
+                "benchmark_instrument": "069500.KRX",
+                "fast_ma": 50,
+                "slow_ma": 200
+            }),
+        ));
+        let equal_factor_values = |instrument: &str, factor: &str| {
+            if instrument != "069500.KRX" {
+                0.0
+            } else if factor == "trend_50" || factor == "trend_200" {
+                0.25
+            } else {
+                0.0
+            }
+        };
+        let equal_factors =
+            factor_snapshot(&input, &["trend_50", "trend_200"], equal_factor_values);
+        let equal_target = build_target_snapshot(&input, &equal_factors).expect("equal target");
+        equal_target.validate_hash().expect("equal target hash");
+        assert_eq!(
+            equal_target.cash_weight_ppm(),
+            OWNER_BETA_TARGET_WEIGHT_SCALE
+        );
+        assert_eq!(
+            equal_target
+                .items()
+                .iter()
+                .find(|item| item.instrument_id() == "069500.KRX")
+                .expect("benchmark item")
+                .target_weight_ppm(),
+            None
+        );
+
+        let repeated_equal_factors =
+            factor_snapshot(&input, &["trend_50", "trend_200"], equal_factor_values);
+        assert_eq!(equal_factors.rows, repeated_equal_factors.rows);
+        let repeated_equal_target =
+            build_target_snapshot(&input, &repeated_equal_factors).expect("repeated equal target");
+        repeated_equal_target
+            .validate_hash()
+            .expect("repeated equal target hash");
+        assert_eq!(
+            equal_target.target_snapshot_sha256(),
+            repeated_equal_target.target_snapshot_sha256()
+        );
+    }
+
+    #[test]
+    fn trend_50_200_literal_order_cases_match_existing_target_builder() {
+        let input = input_for(&resolved(
+            "trend_following",
+            json!({
+                "benchmark_instrument": "069500.KRX",
+                "fast_ma": 50,
+                "slow_ma": 200
+            }),
+        ));
+        let cases = [
+            (
+                "fast-below-slow",
+                0.10,
+                0.20,
+                Some(OWNER_BETA_TARGET_WEIGHT_SCALE),
+                0,
+            ),
+            (
+                "fast-above-slow",
+                0.20,
+                0.10,
+                None,
+                OWNER_BETA_TARGET_WEIGHT_SCALE,
+            ),
+        ];
+        for (name, fast_value, slow_value, expected_weight, expected_cash) in cases {
+            let factors =
+                factor_snapshot(&input, &["trend_50", "trend_200"], |instrument, factor| {
+                    if instrument != "069500.KRX" {
+                        0.0
+                    } else if factor == "trend_50" {
+                        fast_value
+                    } else {
+                        slow_value
+                    }
+                });
+            let target = build_target_snapshot(&input, &factors)
+                .unwrap_or_else(|_| panic!("{name} trend target"));
+            target
+                .validate_hash()
+                .unwrap_or_else(|_| panic!("{name} target hash"));
+            let benchmark_weight = target
+                .items()
+                .iter()
+                .find(|item| item.instrument_id() == "069500.KRX")
+                .expect("benchmark item")
+                .target_weight_ppm();
+            assert_eq!(benchmark_weight, expected_weight, "{name}");
+            assert_eq!(target.cash_weight_ppm(), expected_cash, "{name}");
+        }
+    }
+
     fn set_null(snapshot: &mut PriceOnlyFactorSnapshot, instrument: &str, factor: Option<&str>) {
         for row in &mut snapshot.rows {
             if row.instrument == instrument && factor.is_none_or(|factor| row.factor == factor) {

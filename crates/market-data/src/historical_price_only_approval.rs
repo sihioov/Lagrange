@@ -105,6 +105,7 @@ impl fmt::Debug for HistoricalPriceOnlyArtifactPins {
 pub struct ApprovedHistoricalPriceOnlyArtifact {
     pins: HistoricalPriceOnlyArtifactPins,
     bars: Vec<HistoricalPriceOnlyBar>,
+    v3_approval_summary: Option<crate::HistoricalPriceOnlyV3ArtifactApprovalSummary>,
 }
 
 impl ApprovedHistoricalPriceOnlyArtifact {
@@ -113,6 +114,14 @@ impl ApprovedHistoricalPriceOnlyArtifact {
     }
     pub fn bars(&self) -> &[HistoricalPriceOnlyBar] {
         &self.bars
+    }
+
+    /// Read-only metadata copied from the verified V3 artifact envelope.
+    /// V2 approvals do not carry this summary.
+    pub fn v3_approval_summary(
+        &self,
+    ) -> Option<&crate::HistoricalPriceOnlyV3ArtifactApprovalSummary> {
+        self.v3_approval_summary.as_ref()
     }
 }
 
@@ -329,6 +338,7 @@ fn approve_v2_with_pins(
     Ok(ApprovedHistoricalPriceOnlyArtifact {
         pins,
         bars: verified.approved_bars().to_vec(),
+        v3_approval_summary: None,
     })
 }
 
@@ -365,6 +375,7 @@ fn approve_v3_with_pins(
     Ok(ApprovedHistoricalPriceOnlyArtifact {
         pins,
         bars: verified.bars().to_vec(),
+        v3_approval_summary: Some(summary.clone()),
     })
 }
 
@@ -1189,6 +1200,7 @@ mod tests {
         let approved = ApprovedHistoricalPriceOnlyArtifact {
             pins: pins(&record),
             bars: Vec::new(),
+            v3_approval_summary: None,
         };
         let debug = format!("{approved:?}");
         assert!(!debug.contains("/operator-root-sentinel"));

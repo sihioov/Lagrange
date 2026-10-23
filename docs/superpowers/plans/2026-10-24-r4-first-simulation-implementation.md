@@ -6,7 +6,8 @@ Native subagents: prohibited for worker packages
 - 작성일: 2026-10-24 (Asia/Seoul).
 - 기준 revision: `bb906d374f17e25485b440017639894bceb3e1ac`.
 - 대상 작업 디렉터리: `/data/worktrees/3puw275b/short-bobcat`, 브랜치 `review-handoff-next-task`.
-- 상태: **Owner 실행 지시 수신. WP-1/2 Paseo worker RUNNING, 결과 미수용. WP-3~6 TODO.**
+- 상태: **Owner 실행 지시 수신. WP-1 G1 증거 수용·진단 CI39990016668 전체 성공, 원래 실패 원인 미확정.
+  WP-2 G2 및 WP-3 G3 소스/인터페이스 수용(컴파일·테스트 미실행), WP-4 보완 소스 검토 완료(실행 미검증), WP-5 F1~F5 수정과 독립 재검토 수용(READY_FOR_HOSTED). WP-6 후보 고정·hosted 대기.**
   [실행 기록](../../reviews/2026-10-24-r4-execution.md)에 수용·검증 상태를 구분해 기록한다.
 - 상위 작업: [ROADMAP R4-02/03](../../ROADMAP.md#8-r4--추천-전용-백테스트).
   R4-04의 계산·무결성 검증 일부를 함께 수행하되 R4-04 전체 완료로 표시하지 않는다.
@@ -221,6 +222,13 @@ worker가 `$paseo-delegate`를 다시 실행하거나 Paseo `create_agent`/`send
 - 산출물: 컴파일 가능한 계약 모듈·테스트, P0→field/validator 대응표, WP-3 인터페이스.
   공통 필수 보고 형식을 따른다.
 
+G2 검토 보정(2026-10-24): 초안은 원장과 다른 수익률·MDD·회전율을 성공 결과로 받아들였다.
+검증 생성자 요구를 충족하도록 WP-3의 공유 정확분수 지표 helper만 WP-2 보완으로 앞당긴다.
+추가 소유 범위는 `simulation/metrics.rs`, 모듈 연결, 기존 lock의 num-bigint/num-rational/num-traits를
+연결하는 job-queue Cargo 항목뿐이다. 버전·계약 값·schema는 바꾸지 않는다. WP-3는 이 helper를
+재사용해 실제 원장을 계산한다. JSON 파서의 깊이 제한과 변조 거절 회귀도 WP-2에서 보완한다.
+컴파일·실행 검증은 아직 미수행이며 G2 수용 전에는 WP-3를 시작하지 않는다.
+
 ### WP-3 — 두 비용 프로필의 순수 원장과 지표
 
 - cwd: `/data/worktrees/3puw275b/short-bobcat`.
@@ -282,6 +290,31 @@ worker가 `$paseo-delegate`를 다시 실행하거나 Paseo `create_agent`/`send
   실제 artifact 없으면 그 실행은 NOT_RUN으로 보고한다. U2 부재가 합성/거절 경로 구현을 막지는 않는다.
 - 산출물: 승인 입력 연결과 테스트, 실제/합성/미실행의 증거 표, 공통 필수 보고.
 
+### WP-4 보완 — 기존 팩터 정의 identity와 합성 회귀
+
+2026-10-24 코디네이터 검토에서 호출자 제공 digest가 실제 정의와 연결되지 않는 공백을 확인했다.
+이 항목의 표현만 다음으로 고정한다. 투자 규칙·원본 계약·결과 schema·팩터 산술은 변경하지 않는다.
+
+- `factor_definition.sha256`는 호출자 문자열을 받지 않고 실제 기존 `factors_for`가 반환하는
+  trend_200/50 정의의 descriptor를 만들고 기존 canonical JSON helper로 계산한다.
+- descriptor schema는 `owner-beta-trend-factor-definition-v1`. 필드는 `schema`, `factors`,
+  `sources`다. factors는 ID ASCII 오름차순이며 각 항목은 `id`, `version`, `required_fields`,
+  `lookback`(`kind=trading_days`, `window`, `min_periods`), `null_policy=insufficient_lookback`를
+  실제 Factor trait 값에서 읽는다. 정확한 50/200·CLOSE·full-window·현재 정책이 아니면 거절한다.
+- sources는 `factor_contract_sha256`, `trend_impl_sha256`, `trend_support_sha256` 세 필드다.
+  각각 기존 factor-engine `src/contract.rs`, `src/factors/trend.rs`, `src/lazy_util.rs`의 컴파일 시
+  포함한 정확한 바이트 SHA-256이다. runtime 파일 I/O·수작업 hash 상수·경로/시간 입력은 없다.
+- result의 기존 `factor_definition.version`은 두 실제 정의의 동일한 semver다. 서로 다르면 거절한다.
+  모든 계산된 factor snapshot의 version map을 이 정의와 대조한다. 이 정의 digest는 실행 binary의
+  provenance를 대신하지 않으며 U3는 별도로 미실행 상태를 유지한다.
+- 원래 WP-4 파일 안에서 producer/연결/변조·결정성 회귀를 구현한다. 추가 소유권은
+  `crates/factor-engine/src/price_only.rs`와 `crates/job-queue/src/owner_beta/target.rs`의 기존
+  `cfg(test)` 영역에 한정한다. 기존 test-only helper로 실제 TrendFactor50/200의 T 이후 가격 변경
+  불변성과 기존 target builder의 50/200 동률→현금·목표 불변 회귀를 추가한다. 두 test seam을 사용한
+  합성 근거를 full sealed-artifact 실행으로 표현하지 않는다. production 생성자를 열지 않는다.
+- 원본 WP-4 receipt는 보존하고 보완 receipt를 별도로 남긴다. compile/unit test/Clippy는 최종 hosted
+  검증 전 NOT_RUN이다. WP-4 보완 검토 뒤 WP-5를 시작한다.
+
 ### WP-5 — 독립 계약·코드 리뷰
 
 - cwd: `/data/worktrees/3puw275b/short-bobcat`.
@@ -341,6 +374,13 @@ WP-2의 폐쇄형 필드·단계·정규화·실패 타입·P0 대응표를 직�
 성공 결과를 검증 없이 만들 수 없는지, 원장/지표 타입에 필요한 값이 모두 있는지 점검한다.
 엔진 provenance의 검증된 실행 context 형식과 합성 테스트의 한계를 기록한다.
 WP-3에 타입/API·수용 revision/hash를 전달한다. 미정 계약을 worker가 새 기본값으로 채우게 하지 않는다.
+
+U3 실행 증거 형식: 결과의 기존 `EngineIdentity` 필드만 사용한다. 실제 값은 최종 후보의 격리 빌드에서
+확인한 전체 source revision, 그 빌드가 만든 **실제 실행 파일**의 SHA-256, 실제 toolchain/target/profile과
+대조해야 한다. private 실행 receipt가 해당 빌드 근거와 binary 해시를 연결하고 결과 안 identity와 일치시킨다.
+WP-3의 순수 원장에는 이 I/O를 넣지 않는다. WP-4가 같은 executable의 실행 근거를 확보하지 못하면
+실제 provenance/승인 artifact 실행은 NOT_RUN으로 남기며, 단위 테스트의 선언 identity를 승격하지 않는다.
+이 형식 확정은 빌드·실행 증거를 이미 확보했다는 뜻이 아니며 새 실행 CLI나 운영 작업을 허용하지 않는다.
 
 ### G3 — 순수 원장 수용 / 승인 입력 연결
 
@@ -407,12 +447,12 @@ cargo test --workspace --locked --no-fail-fast --features kis-client/test-suppor
 
 | Package | 상태 | 증거 / 다음 행동 |
 | --- | --- | --- |
-| WP-1 | DOING | Paseo Luna/max `8ea821ee-6f0f-40e7-95ff-2ed186127556` idle; G1 진단 변경 수용, 원인 해결은 후속 CI 대기 |
-| WP-2 | DOING | Paseo Luna/max `9b43c7e7-311c-4e53-93db-97698f1c85eb`; 직접 폐쇄형 타입/정규 해시 구현 |
-| WP-3 | TODO | WP-2 수용 뒤 수작업 원장·정확한 지표 구현 |
-| WP-4 | TODO | WP-3 수용 뒤 승인 입력·기존 신호 연결 |
-| WP-5 | TODO | WP-1~4 통합 결과 독립 리뷰 |
-| WP-6 | TODO | 필수 리뷰 해소·후보 고정 뒤 hosted 증거 회수 |
+| WP-1 | DONE (G1 증거 범위) | 2026-10-24 exact90f133e CI39990016668 attempt1 all8 SUCCESS, Web143개 통과. 원래 실패 미재현/원인 미확정 보존; 최종 R4 검증은 별도 |
+| WP-2 | 보완 소스 수용 / hosted OPEN | G2 및 F2/F4/F5 독립 재검토 수용. contract da4f0312…; 컴파일/테스트 미실행 |
+| WP-3 | G3 소스 수용 / hosted OPEN | 원장·수작업 회귀 소스와 coordinator 테스트 보정 수용. 실제 테스트 미실행 |
+| WP-4 | 보완 소스 검토 완료 / hosted OPEN | 정의 digest·기존 계산·합성 회귀 보완 c8101079… 대조; 실행 미검증, 독립 리뷰 F1/F3는 coordinator 수정 |
+| WP-5 | DONE (소스 리뷰 범위) | 2026-10-24 manifest27ae4b99…의 19개 파일과 report31010885… 직접 대조. F1~F5 해소, READY_FOR_HOSTED; runtime 인수 아님 |
+| WP-6 | 후보 고정 / hosted 대기 | G4 소스 수용. 정확한 commit을 push한 뒤 기존 CI·smoke를 각 1회 실행·회수 |
 
 2026-10-24: Owner의 `$paseo-delegate-plan` 요청으로 계획 작성. 원본 계약 hash·로컬 코드 접점·
 검증 절차·실행 스킬 위치를 확인했다. 구현·worker·새 hosted 실행·운영 변경은 시작하지 않았다.
@@ -424,3 +464,22 @@ cargo test --workspace --locked --no-fail-fast --features kis-client/test-suppor
 2026-10-24 후속: Owner가 `$paseo-delegate 작업 진행 시작해`라고 지시해 G0을 확인하고 WP-1/2를
 Paseo MCP로 실행했다. 모델/effort·작업 트리·parent 관계·알림 등록을 확인했고 전용 bounded 감시를 설정했다.
 현재 소스/검증 결과는 미수용이며 운영 조치는 없다.
+
+
+### WP-5 리뷰 후 수정 배정 — 2026-10-24
+
+F1/F3는 코디네이터가 signals.rs 미사용 import와 input.rs 날짜 fixture를 고친다.
+F2/F4/F5는 기존 WP-2가 contract.rs와 해당 테스트만 수정한다. 최대 비용 포함 q/q+1,
+같은 날짜 시가 mark/체결 및 두 원장 공통 가격을 검증하며 기존 산술·거절 조건은 보존한다.
+현재 schema에 없는 가격을 추측해서 q=0 근거를 만들지 않는다. 양쪽 현금 원장에 opening price가
+전혀 없는 경우의 검증 한계는 별도 보고하고 재검토한다. 원본 리뷰·receipt는 고정 보존한다.
+
+2026-10-24 재검토 착수: WP-2 actual idle/pending0·보완 보고서/receipt와 fast 결과를 회수했다.
+최초 19개 소스 중 contract/input/signals 세 파일만 바뀌었음을 확인해 새 review-inputs-r2.json을 고정했다.
+기존 WP-5 Sol/high에 변경 영역과 가격 증거 없는 q=0의 계약 경계 판단을 맡겼다. 원본 리뷰/manifest는 보존한다.
+컴파일·unit·Clippy·실제 입력/binary·최종 hosted 인수는 여전히 OPEN이다.
+
+2026-10-24 G4 소스 수용: WP-5 실제 idle/pending0, 전후 19개 hash와 원본 계약/보고서 보존을 확인했다.
+F1~F5가 해소됐고 새 필수 수정은 없다. 무가격 q=0은 입력/provenance 검증 경계로 수용하되 실제 원가
+검증을 주장하지 않는다. 가격 증거가 있는 q=0 거절과 q+1 overflow 직접 회귀는 보완 권고로 기록했다.
+최종 후보의 기존 CI·smoke는 새로 실행하며 U2/U3 실제 실행은 OPEN을 유지한다.

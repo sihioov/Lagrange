@@ -21,9 +21,12 @@ Owner가 계획 작성 뒤 `$paseo-delegate 작업 진행 시작해`라고 실�
 
 | 패키지 | Paseo agent | 모델/effort | 현재 상태 | 소유 범위 |
 | --- | --- | --- | --- | --- |
-| WP-1 | `8ea821ee-6f0f-40e7-95ff-2ed186127556` | Codex Luna/max | IDLE, 진단 변경 수용 / 원인 해결 OPEN | G1 수정 범위의 안전한 assertion 식별과 회귀 |
-| WP-2 | `9b43c7e7-311c-4e53-93db-97698f1c85eb` | Codex Luna/max | RUNNING, 미수용 | owner_beta simulation 계약·정규화와 WP-2 보고서 |
-| WP-3~6 | 미생성 | 계획 참조 | TODO | 의존 gate 뒤 착수 |
+| WP-1 | `8ea821ee-6f0f-40e7-95ff-2ed186127556` | Codex Luna/max | IDLE, G1 증거 DONE / 원래 원인 미확정 | 원래 실행 및 진단 CI all8 성공 회수 |
+| WP-2 | `9b43c7e7-311c-4e53-93db-97698f1c85eb` | Codex Luna/max | 리뷰 F2/F4/F5 보완 RUNNING / hosted OPEN | contract.rs fixture·최대매수·가격 일관성 검증 |
+| WP-3 | `d4764d5e-e105-4069-acbe-c441dc4bba11` | Codex Luna/max | IDLE, G3 소스/인터페이스 수용 / hosted OPEN | 두 프로필 순수 원장·회귀, coordinator 테스트 보정 포함 |
+| WP-4 | `d245145e-7ede-4cd5-b567-d227efa3bd6d` | Codex Luna/max | IDLE, 보완 소스 검토 완료 / 실행 미검증 | 승인 입력·기존 신호, 정의 digest·합성 회귀 |
+| WP-5 | `feb72820-cfc7-4733-a099-3d582b26b75c` | Codex Sol/high | IDLE, 보고 회수 / CHANGES_REQUIRED | F1~F5 발견, 수정 뒤 변경 영역 재검토 |
+| WP-6 | 미생성 | 계획 참조 | TODO | 독립 리뷰/후속 수정 수용 뒤 hosted 검증 |
 
 CI39976478432와 smoke39976478535의 최종 상태·원인은 WP-1이 기존 실행에서 회수한다.
 WP-2는 독립된 소스 작업을 진행한다. local focused Rust는 공용 private slot·package 전제와
@@ -74,3 +77,148 @@ Web lint/typecheck와 실제 browser 실행은 미실행이다. 이 수용은 �
 후속 CI에서 실제 assertion ID를 확보하기 위해 이 진단 변경과 계획/실행 문서만 별도 후보로 고정한다.
 WP-2의 진행 중 Rust 변경은 이 후보에 포함하지 않는다. 기존 `ci.yml`을 작업 브랜치의 정확한 후보에서
 한 번 실행하고 결과를 회수한다. 원래 smoke 성공은 보존하며 최종 R4 후보의 CI·smoke를 대신하지 않는다.
+
+### 진단 CI 시작
+
+후보 `90f133e867064b54c2f581549f72253517905ef9`를 `review-handoff-next-task`에 commit/push하고
+원격 branch SHA와 일치함을 확인했다. 이 후보는 진단 소스3파일과 문서4파일이며 진행 중 Rust 변경은 제외했다.
+동일 후보의 기존 실행0 확인 후 `ci.yml`을 `cache_epoch=wp3-20261013`으로 한 번 dispatch했다.
+[CI39990016668](https://github.com/sihioov/Lagrange/actions/runs/39990016668)은
+2026-10-23 16:49:51 UTC에 생성됐고 조회 시 `workflow_dispatch`/같은 SHA/`in_progress`다.
+최종 결과·새 assertion ID는 아직 미회수다. smoke는 이 중간 진단 후보에서 새로 실행하지 않았다.
+이 근거는 후보 commit 이후 얻은 관측이며 다음 문서 변경에 보존한다.
+
+## G2 — 초안 검토와 보완
+
+WP-2 완료 알림과 보고서를 회수했고 실제 idle·activeTurn 없음·pending0을 확인했다.
+코디네이터가 결과 생성자·정규 파서·폐쇄 wire schema·원장 전이·지표 검증·테스트를 직접 대조했다.
+초안의 fast 포맷/공백 검사 통과는 인정하되 컴파일·단위 테스트는 미실행으로 유지한다.
+
+`validate_ledger`는 비용·체결 합계와 종료 상태를 검사하지만 일별/기간 수익률·MDD·회전율을
+원장에서 재계산하지 않는다. 기존 hash 테스트도 원장은 그대로 두고 기간 수익률만 변경한 결과를
+유효한 결과로 취급한다. 이 때문에 G2는 미수용이다. 원장 기반 정확분수 지표 helper를 WP-3에서
+WP-2 보완으로 앞당겨 성공 생성/역직렬화 경계에서 대조하고, 표시 반올림 값의 차이 대신 정확한
+원본 NAV 차이로 비교 수익률을 검증한다. 같은 helper를 WP-3가 재사용하며 중복 계산 규칙을 만들지 않는다.
+직접 재귀 JSON 파서의 깊이 제한도 추가한다. 승인 계약·성과 공개·운영 범위는 바뀌지 않는다.
+
+2026-10-24 후속 관측: 진단 CI39990016668의 Web job120539072349는 SUCCESS이며 workspace-tests는 진행 중이다. WP-1의 실제 idle/pending0 확인 후 동일 worker에 안전한 상세 근거 회수만 전달했다. WP-2는 G2 보완으로 재시작했다. 두 후속 모두 notifyOnFinish 등록/turn_started를 확인했고 현재 bounded heartbeat를 유지한다.
+
+### 진단 Web 결과 독립 수용
+
+WP-1의 알림 등록 후속 실행도 완료 notification이 전달됐다. 실제 idle/pending0과 보고서 diff, receipt SHA `c5c70cae…`/mode0600을 확인했다. 코디네이터가 원래 Web job 로그의 allowlist 요약을 독립 대조해 off129/129·market-stream14/14, retry0, coverage complete, cleanup/reservation true가 receipt와 일치함을 확인했다. 원문 로그는 저장하지 않았다. Private 독립 대조는 `wp-1/coordinator-diagnostic-web-check.json`이다. 기존 실패 원인은 미확정이며 전체 CI 종료 및 최종 결합 후보 CI/smoke는 별도 gate다.
+
+### G1 종료 — 진단 후보 전체 CI 성공
+
+2026-10-24 KST, exact `90f133e867064b54c2f581549f72253517905ef9`의 CI39990016668 attempt1이 completed/success로 종료됐고 required를 포함한8개 job이 모두 성공했다. GitHub run/전체 job metadata를 직접 대조했다. private terminal receipt `wp-1/coordinator-ci-terminal.json` SHA `789fb262…`에 보존했다. 진단 소스만 포함된 후보여서 WP-2 Rust 컴파일 증거는 아니며 smoke도 이 중간 후보에서는 실행하지 않았다. WP-1은 G1 증거 범위로 완료 처리한다. 원래 bb906d3 Web 실패는 미재현/원인 미확정으로 보존하고 앱 수정 완료를 주장하지 않는다. 최종 결합 R4 후보의 CI와 smoke는 계획대로 별도로 실행한다.
+
+## G2 소스 수용과 WP-3 착수
+
+2026-10-24 KST WP-2 후속 완료 알림과 실제 idle/activeTurn 없음/pending0을 확인했다. 보고서·source/manifest8개 SHA가 최종 receipt `a3821e46db4d7ada271de4cda465f9a0aa4d05b835adad626a1f4180ee945bca`와 모두 일치한다. 코디네이터는 폐쇄 schema/원장 전이/정확 분수 helper/변조 거절 경계/깊이64 파서/기존 숫자 잠금 버전을 직접 확인했다. formatter와 docs fast 원래 receipt도 PASS였다. 중간 hash 불일치는 worker의 마지막 수정 전 receipt를 읽은 것이며 최종8개 대조는 일치했다.
+
+기준HEAD90f133e 위 미커밋 소스를 **WP-3 의존 인터페이스로 수용**한다. `wp-2/coordinator-g2-acceptance.json`에 정확한 파일 hash와 범위를 고정했다. 이 수용은 컴파일·unit test·Clippy·실제 artifact/binary 검증이 아니며 이들은 NOT_RUN이다. U3는 최종 격리 빌드와 실제 실행 파일 hash를 연결하는 private receipt로 입증하도록 계획에 고정했고 합성 identity는 승격하지 않는다. R4-02 전체 완료는 아니다.
+
+G2 뒤 WP-3을 새 직접 leaf `d4764d5e-e105-4069-acbe-c441dc4bba11`/Codex Luna max로 시작했다. 실제 모델/effort, workspace/cwd/parent, running/pending0을 확인했고 notifyOnFinish를 등록했다. mod.rs 소유권을 이전하고 metrics는 공용 helper 재사용 및 추가 회귀만 허용했다. 담당자는 두 비용 프로필 원장, 정수 최대매수/비용/잔여현금/최종일과 수작업 기준값을 구현한다. 승인 입력·팩터 연결은 WP-4, 최종 hosted 검증은 WP-6에 남는다.
+
+
+## G3 소스 수용과 WP-4 착수
+
+WP-3 완료 알림과 실제 idle·activeTurn 없음·pending0을 확인했다. 원본 보고서 및 receipt
+`fcbfb5c0…`의 3개 파일 hash가 일치했다. 코디네이터는 원장 구현, 1,000원 수작업 기준값,
+정수 최대 매수/비용·현금 보존·갭·최종일 규칙, 정확 지표 재사용과 긴 기간 테스트를 직접 검토했다.
+테스트의 지역 변수 `fixture`가 같은 이름의 함수를 가리는 두 호출은 `self::fixture`로 고쳤다.
+첫 비용 프로필은 성공하지만 두 번째가 volume=0 때문에 실패하는 전체 비교 거절 회귀도 추가했다.
+제품 산술은 바꾸지 않았다. 원본 worker 보고서/receipt는 수정 전 근거로 보존한다.
+
+보정 후 Rust fast formatter는 PASS
+(`target/dev-check/20261023T173729Z-10a23842c7a1/run.json`). 최종 ledger SHA-256은
+`7cbfe8f4ef45a2b3087f9d03483499c1d87d3bbd53e7293949e100fe75d98c91`이며
+`wp-3/coordinator-g3-acceptance.json`이 수용한 8개 소스 hash와 제한을 기록한다.
+**G3는 WP-4의 소스/인터페이스 의존성만 수용**한다. 컴파일·단위 테스트·Clippy와 실제 artifact/
+실행 파일 provenance는 NOT_RUN이며 최종 hosted 및 실제 입력 인수 조건은 유지한다.
+
+WP-4 직접 leaf `d245145e-7ede-4cd5-b567-d227efa3bd6d`를 Luna/max로 시작했다.
+실제 running·모델/effort·cwd/workspace/parent·pending0을 확인했고 완료 알림을 등록했다.
+기존 sealed 승인, 독립 XKRX 세션, 기존 factor/target 계산을 재사용하도록 범위를 한정했다.
+실제 승인 artifact의 로컬 root는 아직 확인되지 않았으며 새 수집/운영 접근으로 채우지 않는다.
+기존 factor-definition identity 근거가 없거나 실제 executable 근거를 얻지 못하면 그 부분을
+명시해 반환하고 합성 identity를 실제 실행 증거로 승격하지 않는다. WP-5 리뷰와 WP-6 동일 후보
+검증은 아직 미착수다. 현재 작업 전용 heartbeat의 다음 정산과 완료 알림으로 이어간다.
+
+
+## WP-4 초안 회수와 보완 범위
+
+실제 idle·activeTurn 없음·pending0을 확인하고 원본 receipt `bc0bebdc…`, 8개 파일 hash 및
+3개 fast receipt hash를 직접 대조했다. sealed 승인/독립 세션/기존 계산 추출·결과 쌍 반환을 검토했다.
+호출자 digest를 검증 없이 결과에 넣는 부분은 미수용이다. 기존 Factor trait 메타데이터와 정의/지원
+소스의 컴파일 시 바이트 hash를 canonical descriptor로 묶도록 계획의 WP-4 보완 절에 표현을 고정했다.
+또한 기존 cfg(test) 경계 두 곳에서 실제 50/200 미래 가격 불변·동률 현금 회귀를 추가하도록 소유 범위를
+좁게 보완했다. 새 전략 값·승인 우회·실제 입력 획득·runtime CLI는 추가하지 않는다.
+원본 보고서/receipt의 한계는 보존하고 보완 증거를 별도로 회수한다. U2/U3 실제 실행과 컴파일·테스트는
+여전히 NOT_RUN이며 WP-5는 이 보완 검토 뒤 시작한다.
+
+동일 WP-4 Luna/max에 위 두 보완만 notified follow-up으로 전달했다. 원본 receipt를 보존하고 보완 receipt를 별도로 제출하도록 했다.
+
+
+## WP-4 보완 소스 검토와 WP-5 착수
+
+WP-4 notified follow-up 완료 알림과 실제 idle/pending0을 회수했다. 보완 receipt `c8101079…`의
+10개 현재 파일 hash, 원본 receipt 불변, fast receipt 2개를 직접 대조했다. 확대한 두 파일의
+`cfg(test)` 이전 production 바이트도 HEAD와 같다. 실제 정의 메타데이터·세 소스 바이트 hash,
+모든 snapshot version map 대조와 engine 연결, 50/200 미래정보·동률 target 회귀를 직접 검토했다.
+`wp-4/coordinator-review-readiness.json`은 독립 리뷰에 넘길 소스 준비만 수용한다. 컴파일·새 회귀 실행·
+Clippy·실제 승인 artifact·binary provenance는 여전히 NOT_RUN이다.
+
+19개 소스의 정확한 현재 hash를 `wp-5/review-inputs.json` (`0c221741…`)으로 고정했다.
+WP-5 직접 리뷰어 `feb72820-cfc7-4733-a099-3d582b26b75c`/Codex gpt-6.1-sol high를 시작하고
+실제 runtime·workspace/parent·pending0과 완료 알림 등록을 확인했다. 소스 쓰기는 금지하고 보고서만
+소유한다. 독립 리뷰의 필수 수정과 같은 최종 후보의 CI·smoke는 후속 gate로 유지한다.
+
+모든 기존 작업자가 idle/pending0이고 보고서가 회수된 시점에 현재 R4 감시를 교체했다.
+기존 `54a441da` 삭제 성공 뒤 새 `f49b432f`가 active이며 2분 주기, 최대60회,
+만료 `2026-10-23T20:12:11.368Z`다. 첫 create가 같은 ID를 갱신하는 동작을 보였으므로
+삭제 후 재생성 응답으로 새 ID를 확정했다. 이 전환 중 실행 중인 worker는 없었다.
+현재 R4의 WP-5/6 이후 gate만 감시하며 과거 R2/R3 감시는 재개하지 않는다.
+
+
+## WP-5 필수 수정 회수
+
+리뷰어 실제 idle/pending0·보고서와 전후 19개 source hash를 직접 확인했다. F1 미사용 import,
+F2 buy/cash ppm 합계 오류 fixture, F3 정상 세션을 비정상으로 기대한 날짜 fixture,
+F4 성공 결과의 최대 매수 검증 누락, F5 같은 날 시가 mark·체결 및 원장 간 가격 불일치를 채택했다.
+source gate는 CHANGES_REQUIRED이며 Rust 실패를 실제 실행 관측으로 표현하지 않는다.
+
+코디네이터는 signals.rs 미사용 import를 제거하고, input.rs의 부재 날짜를 fixture 마지막 날짜 뒤로
+선택해 absence assertion과 별도 정상 두 세션 case를 보존했다. formatter PASS
+(`20261023T181935Z-f1a11c654339`), 컴파일/테스트 NOT_RUN; 두 파일 hash는
+`wp-5/coordinator-f1-f3-repair.json`에 고정했다. WP-2 Luna/max는 notified follow-up으로
+contract.rs F2/F4/F5 보완을 맡았고 실제 running/parent/pending0을 확인했다. 쓰기 범위는 겹치지 않는다.
+가격 증거가 없는 q=0 주장의 잔여 검증 경계는 보고를 받아 별도로 판단하며 새로운 가격을 만들지 않는다.
+수정 회수·독립 재검토 뒤 최종 후보를 고정한다. 기존 WP-5 보고와 review-inputs manifest는 변경하지 않는다.
+
+
+## WP-5 보완 회수와 독립 재검토
+
+WP-2 완료 알림과 actual idle/pending0을 회수하고 receipt `f32733cf…`, contract `da4f0312…`,
+보고서 `d68a91e4…` 및 Rust/docs fast PASS receipt를 직접 대조했다. 최대매수 q/q+1·공유 수수료,
+날짜별 원장 내/원장 간 시가·종가 검사와 생산 자금 기준 회귀를 읽었다. 최초19개 소스 중
+contract/input/signals 세 파일만 바뀌었으며 원본 manifest는 불변이다. 새 `review-inputs-r2.json`
+SHA `27ae4b99…`와 `coordinator-correction-readiness.json`에 검토 입력을 고정했다.
+
+기존 WP-5 Sol/high에 notified follow-up을 보내 actual running·parent/workspace·pending0을 확인했다.
+F1~F5 해소와 가격 증거 없는 현금-only q=0의 검증 경계를 독립 판단한다. 소스 쓰기는 금지하며
+기존 리뷰에 후속 결론만 추가한다. 이 단계는 source gate 수용 또는 컴파일/실제 실행 완료가 아니다.
+
+
+## G4 소스 수용과 최종 후보 준비
+
+WP-5 실제 idle/pending0 및 재검토 report `31010885…`, exit receipt `0b310124…`를 회수했다.
+현재19개 source hash와 계약 원본, 원래 리뷰 prefix22926 bytes의 불변을 직접 검증했다.
+F1~F5 소스 해소와 READY_FOR_HOSTED를 수용하며 근거는 `wp-5/coordinator-g4-source-acceptance.json`
+(`ce0b82b8…`)에 있다. 무가격 q=0은 결과 JSON으로 외부 bars를 복원할 수 없는 입력 검증 경계다.
+실제 실행은 여전히 승인 raw open으로 최대 수량을 계산해야 하며 schema/투자 규칙을 바꾸지 않았다.
+가격 증거가 있는 q=0 거절·q+1 overflow 직접 회귀는 비차단 권고로 보존한다.
+
+이번 source/document 후보를 작업 브랜치에 commit/push해 WP-6의 정확한 SHA로 고정한다.
+기존 `ci.yml`과 `research-smoke.yml`의 전체 required/기능 검증을 수행한다. local heavy 우회,
+실제 artifact 업로드, 운영 접근이나 배포는 포함하지 않는다. 컴파일·unit·Clippy와 최종 same-SHA
+CI/smoke는 아직 NOT_RUN이며 U2 root·U3 실제 실행 파일 provenance도 OPEN이다.

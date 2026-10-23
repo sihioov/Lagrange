@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-24 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | 2026-10-24 Owner 실행 지시에 따라 [R4 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md)의 WP-1 CI 정리·WP-2 결과 계약을 Paseo로 병렬 착수했다. R4-02 DOING, 결과 미수용. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·D-06/D-07/005930 유예·DailyOFF·과거 heartbeat 종료는 유지한다. |
+| 현재 실행 우선순위 | 2026-10-24 [R4 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md)의 WP-1 G1 증거 정리와 WP-2 G2·WP-3 G3 소스/인터페이스 수용 뒤 WP-5 필수 수정 5건과 독립 재검토를 소스 범위에서 수용했다. WP-6 최종 후보 고정·hosted 검증으로 진행한다. R4-02/03 DOING; 컴파일·실행 검증은 hosted 대기. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·유예·DailyOFF·과거 heartbeat 종료는 유지한다. |
 | 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | **WP-1의 기존 CI39976478432·smoke39976478535 결과/실패 원인과 WP-2의 Rust 계약을 회수·검증한다. 계약 수용 뒤 WP-3 작은 원장→WP-4 승인 입력/기존 신호→리뷰→동일 후보 검증으로 이어간다. 같은 R4 최초 승인을 반복하지 않는다. 현재 결과 수용·성과 공개·운영 변경은 없으며 R2/R3 FINAL은 별도 OPEN.** |
+| 다음 착수 항목 | **WP-5 재검토를 수용했으며 동일 최종 후보의 전체 CI/smoke를 실행·회수한다. WP-2/3 소스 수용은 컴파일·실제 실행 인수가 아니며 실제 artifact/binary provenance는 별도로 확인한다. 원래 Web 실패는 진단 CI에서 미재현·원인 미확정으로 보존한다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -598,11 +598,20 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   WP-1은 기존 main CI 실패를 별도 정리하며, 새 실행·코드 구현·실제 artifact 검증은 아직 없다.
   **2026-10-24 후속 DOING:** Owner의 `$paseo-delegate` 실행 지시로 WP-2 Luna/max를 시작했다.
   [실행 기록](reviews/2026-10-24-r4-execution.md)에 worker와 알림/감시·소유 범위를 고정했다.
-  실제 worker running을 확인했으며 구현 결과·검증은 미수용이다.
+  초기 running/미수용 상태는 보존한다. **2026-10-24 G2 후속:** 결과 계약·정확 지표 검증 소스를
+  직접 검토하고 receipt a3821e46…의8개 파일 hash/fast 검사 일치로 WP-3 인터페이스를 수용했다.
+  컴파일·unit test·실제 승인 입력·provenance는 미실행이며 R4-02 전체는 DOING이다.
+  **2026-10-24 G3 후속:** WP-3 소스/인터페이스 수용 뒤 WP-4의 승인 입력·기존 신호 연결을 착수했다.
+  실제 artifact 위치·binary provenance와 hosted 검증은 OPEN이다.
 - [ ] **R4-03 — 첫 기준 전략 검증.** 승인된 계약으로 전략 1개와 벤치마크 1개를 먼저 구현하고
   신호·목표 비중·현금·체결·비용·평가의 작은 수작업 기준값과 대조한다.
   **2026-10-24 계획 준비 / 구현 TODO:** 같은 계획의 WP-3/4에서 합성 원장을 먼저 검증하고
   승인 입력을 연결한다. 실제 승인 artifact 부재 시 그 실행과 최종 인수는 OPEN으로 보존한다.
+  **2026-10-24 후속 DOING:** G2 소스 수용 뒤 WP-3 Luna/max를 시작했다. 두 비용 프로필의
+  순수 원장·수작업 기준값을 구현 중이며 G3 검증/실제 입력 실행은 미수용이다.
+  **2026-10-24 G3 후속:** 원장·수작업 기준값의 직접 소스 검토, 테스트 이름 충돌 두 곳 보정과
+  두 번째 비용 프로필 실패 회귀 추가 뒤 formatter PASS로 WP-4 의존 인터페이스를 수용했다.
+  컴파일·unit test·실제 입력 실행 미실행으로 최종 완료는 OPEN이다.
 - [ ] **R4-04 — 재현성·미래정보·무결성 검증.** 동일 입력 결과, 미래정보 차단, 분할 중복 반영,
   반올림·잔여 현금·누락, pin 변조와 사용자 격리를 검증한다.
 - [ ] **R4-05 — 전용 실행·조회 연결.** 작업 큐·저장·API·Web 결과를 전용 계약에 연결하고 실패 시
@@ -2311,3 +2320,25 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-24 — R4-02 TODO→DOING: Owner의 `$paseo-delegate 작업 진행 시작해` 지시로 WP-1 CI 정리와 WP-2 Rust 결과 계약을 Codex Luna/max Paseo worker 두 명에게 위임했다. 실제 runtime 모델/effort·workspace·parent와 running을 확인했고 완료 알림 및 이 작업 전용 bounded 감시를 설정했다. 결과/검증 미수용, WP-3~6 TODO, 운영 변경과 유예 재개 없음. [실행 기록](reviews/2026-10-24-r4-execution.md).
 
 - 2026-10-24 — R4 WP-1 원래 CI 회수·진단 변경 수용: bb906d3의 CI 실패(129개 중1개 Web assertion)·smoke 성공을 구분했다. 고정 assertion ID/제한된 sanitizer와 회귀3개·AST, 4개 source/report hash 일치를 확인했다. 기존 assertion/timeout·비밀 제외를 보존하며 정확한 원인은 후속 CI에서 회수한다. WP-2 Rust 구현은 병행하고 운영/유예는 변경하지 않는다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-1 진단 후보90f133e hosted CI 시작: source3파일·계획/실행 문서4파일만 작업 브랜치에 commit/push하고 원격 SHA 일치 및 기존 실행0을 확인했다. CI39990016668을 한 번 dispatch, 조회 시 진행 중. Rust WP-2 작업은 후보에서 제외하고 병행하며 최종 R4 CI/smoke를 대신하지 않는다. [증거](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-2 초안 회수·G2 보완: 완료 알림/idle/pending0 및 보고서를 회수했다. 직접 소스 대조에서 원장과 다른 수익률·MDD·회전율을 성공 결과가 수용하는 검증 누락을 확인해 미수용했다. 동일 worker에 공유 정확분수 지표 검증과 JSON 깊이 제한을 보완하도록 전달했다. WP-3 착수는 G2 수용 뒤이며 compile/test는 hosted 확인 전 NOT_RUN이다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-1 진단 Web 증거 수용: exact90f133e/CI39990016668의 Web job120539072349에서 off129/129·stream14/14·retry0·coverage/cleanup/reservation을 독립 대조했다. 실제 worker idle/pending0·보고서/receipt 일치 확인. 원래 실패 원인은 미확정이고 전체 CI는 workspace-tests 진행 중이며 최종 R4 후보 검증은 남는다. WP-2 G2 보완을 계속한다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 WP-1 G1 증거 DONE: exact90f133e/CI39990016668 attempt1이 required 포함8개 job 모두 SUCCESS로 종료돼 원래 run metadata와 대조했다. 원래 bb906d3 실패는 미재현/원인 미확정으로 보존한다. 중간 후보에는 Rust WP-2가 없어 그 컴파일 인수가 아니며 최종 결합 CI/smoke는 남는다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02 G2 소스 수용·R4-03 DOING: 실제 WP-2 idle/pending0과 최종 receipt a3821e46…/8개 hash, formatter·공백 검사 및 직접 검토를 근거로 원장 구현 인터페이스를 수용했다. WP-3 `d4764d5e…`/Luna max의 실제 runtime/parent 확인 후 착수. 컴파일·단위 테스트·실제 artifact/binary 인수는 NOT_RUN이며 최종 hosted gate에 남는다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02/03 G3 소스 수용·WP-4 착수: WP-3 idle/pending0과 원본 3개 hash를 회수했고 직접 원장 검토 뒤 테스트 이름 충돌 두 곳과 비용 쌍 실패 회귀를 보정했다. formatter PASS, ledger7cbfe8f4…를 WP-4 의존 인터페이스로 수용했다. 새 직접 leaf d245145e…/Luna max의 실제 runtime/parent 확인. 컴파일·unit test·Clippy·실제 artifact/실행 파일 검증은 NOT_RUN이며 최종 인수는 OPEN이다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02/03 WP-4 초안 회수·미수용: 실제 idle/pending0, 원본 bc0bebdc…와 소스 8개·fast 기록 3개 hash 일치를 확인했다. 호출자 digest 대신 실제 기존 팩터 정의·컴파일 시 소스 바이트에 결합한 identity를 계산하도록 표현을 고정하고, 기존 test-only seam에서 50/200 미래정보·동률 회귀를 보완한다. 실제 artifact/binary·컴파일·unit test 인수는 NOT_RUN 유지. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02/03 WP-4 보완 소스 검토·WP-5 착수: 실제 follow-up idle/pending0, c8101079…의10개 hash·fast 기록과 두 파일 test-only 범위를 확인했다. 실제 정의 digest/버전 연결과50/200 합성 회귀를 독립 리뷰 입력으로 수용하고19개 소스를 고정해 Sol/high 리뷰어 feb72820…를 시작했다. 컴파일·unit test·실제 데이터·binary는 NOT_RUN, 최종 hosted 인수는 OPEN. 전용 감시는 모든 기존 turn/보고서 정산 뒤 f49b432f로 교체했다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02/03 독립 리뷰 CHANGES_REQUIRED: WP-5 idle/pending0·19개 source hash 확인 후 F1~F5 채택. 코디네이터가 import/날짜 fixture를 보정(formatter PASS), 기존 WP-2가 contract fixture·최대매수·동일 시가 검증을 보완한다. 소스 gate/컴파일·unit test·실제 artifact·binary·최종 hosted 인수 OPEN. 원본 리뷰와 과거 소스 수용 증거는 보존한다. [리뷰](reviews/2026-10-24-r4-wp-5.md)·[실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02/03 WP-5 보완 재검토: WP-2 idle/pending0과 receipt f32733cf…/소스·보고서·fast 결과를 대조했다. 19개 소스 중 예정된 세 파일 변경만 확인하고 새 manifest27ae4b99…를 고정해 기존 Sol/high 리뷰어에게 재검토를 맡겼다. q=0 가격 증거 부재의 의미도 판단 중이며 컴파일·실제 입력·binary·최종 hosted 인수는 OPEN이다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4-02/03 G4 소스 수용: WP-5 재검토 report31010885…·전후19개 hash와 원본 계약/리뷰 보존을 확인해 F1~F5 해소 및 READY_FOR_HOSTED를 수용했다. 무가격 q=0은 실제 입력 검증 경계이며 소스 파서가 그 affordability를 입증한다고 주장하지 않는다. 최종 후보 commit/push와 기존 CI/smoke로 진행한다. 컴파일·unit·Clippy·U2/U3 실제 실행 및 R4 최종 완료는 OPEN. [재검토](reviews/2026-10-24-r4-wp-5.md)·[실행 기록](reviews/2026-10-24-r4-execution.md).

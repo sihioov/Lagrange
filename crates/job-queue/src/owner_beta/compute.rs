@@ -8,6 +8,7 @@ use std::{fmt, path::Path};
 
 use factor_engine::price_only::{PRICE_ONLY_CAPABILITY, PRICE_ONLY_INPUT_KIND};
 use factor_engine::{Field, PriceOnlyFactorSnapshot, PriceOnlyFactorSnapshotBuilder};
+use market_data::ApprovedHistoricalPriceOnlyArtifact;
 
 use super::{
     OWNER_BETA_TARGET_HASH_ALGORITHM, OWNER_BETA_TARGET_SNAPSHOT_SCHEMA,
@@ -82,8 +83,23 @@ pub fn compute_owner_beta_price_recommendation(
         pins.approval_registry_sha256(),
     )
     .map_err(|_| OwnerBetaComputationError::ArtifactApprovalRejected)?;
+    compute_owner_beta_price_recommendation_with_approved(&approved, input)
+}
+
+/// Computes from one already-approved immutable artifact object.
+///
+/// This is crate-private for consumers that must evaluate several as-of dates
+/// against the exact same bytes. Approval remains the caller's first step;
+/// the complete strategy, pin, factor, target, and hash checks stay here.
+pub(crate) fn compute_owner_beta_price_recommendation_with_approved(
+    approved: &ApprovedHistoricalPriceOnlyArtifact,
+    input: &OwnerBetaPriceRecommendationInput,
+) -> Result<OwnerBetaComputation, OwnerBetaComputationError> {
     input
-        .validate_approved_artifact(&approved)
+        .validate_strategy_snapshot()
+        .map_err(|_| OwnerBetaComputationError::StrategyInvalid)?;
+    input
+        .validate_approved_artifact(approved)
         .map_err(|_| OwnerBetaComputationError::ArtifactApprovalRejected)?;
 
     let strategy = input.strategy_snapshot();
@@ -103,7 +119,7 @@ pub fn compute_owner_beta_price_recommendation(
         return Err(OwnerBetaComputationError::FactorDefinitionInvalid);
     }
 
-    let factor_snapshot = PriceOnlyFactorSnapshotBuilder::new(&approved, input.as_of())
+    let factor_snapshot = PriceOnlyFactorSnapshotBuilder::new(approved, input.as_of())
         .with_factors(factors)
         .map_err(|_| OwnerBetaComputationError::FactorDefinitionInvalid)?
         .build()
@@ -191,14 +207,17 @@ mod tests {
         let approval = production
             .find("approve_historical_price_only_artifact_for_pin_values(")
             .expect("approval call");
+        let approved_helper = production
+            .find("compute_owner_beta_price_recommendation_with_approved(&approved, input)")
+            .expect("approved artifact helper call");
         assert!(production.contains("pins.approval_registry_sha256()"));
         let builder = production
-            .find("PriceOnlyFactorSnapshotBuilder::new(&approved, input.as_of())")
+            .find("PriceOnlyFactorSnapshotBuilder::new(approved, input.as_of())")
             .expect("exact factor builder");
         let target = production
             .find("build_target_snapshot(input, &factor_snapshot)")
             .expect("target call");
-        assert!(approval < builder && builder < target);
+        assert!(approval < approved_helper && approved_helper < builder && builder < target);
         assert!(!production.contains("std::env"));
         assert!(!production.contains("Command::"));
     }
