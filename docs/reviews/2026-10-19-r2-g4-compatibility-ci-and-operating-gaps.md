@@ -4521,3 +4521,53 @@ Wave173 Chromium49·관련24·타입 검사 근거는 동일 제품/검사 파�
 않았다. 새 후보 hosted 전체 검증과 이미지·운영 배포는 다음이다. 근거:
 `target/r2-daily-beta/wp-8/wave174/local-validation.json`.
 현재 API/Web9c145db+Owner7fa, DailyOFF·충돌/D-06/D-07 유예·전체 FINAL OPEN 유지.
+
+### Wave174 — 종목 변경 접수 후 상태 조회 복구 운영 인수
+
+2026-10-23 20:53:45 KST, `a6da63c134fa471ff91e28a32c4b6a2ad9c08ba7`의 Web/API 운영 반영을 독립 인수했다. 종목 추가·재시도·비활성화
+접수 후 첫 상태 조회가 실패하면 기존 상태와 접수 성공 표시를 보존하고 GET 조회를 계속한다.
+서버 초기값 교체·화면 해제·최신 응답 순서와 중복 변경 방지를 유지한다.
+
+Wave1732451089 원래 CI39943888323 Web 단위523/524·정적 호출 순서 검사1실패는
+보존한다. 해당 후보의 운영 빌드/배포는 실행하지 않았다. Wave174는 제품 변경 없이 기존
+검사가 새 복구 함수를 경유하는 연결을 확인하도록 보정했고 전체 Web524/lint PASS.
+원래 Chromium49의 동일 제품·검사 해시를 대조했다. 새a6da63c CI39944347341 attempt1
+전체8작업/전체8로그/7정확checkout·Rust155/Python154·PG19/page14 및 일일설정28/
+추천생성20/조회28/멤버십49를 인수했다. Web OFF/market-stream lane의 skip/flaky/retry0을
+확인했다. 모든 fixture 검증은 운영 인증·시세 수신 증거와 구분한다.
+로컬 closure 검증기의 요약 필드 KeyError는 원본 실패 기록을 보존한 별도 검증기로 보정했다.
+CI 요약은 checks/evidence만 출력하므로 정확한 후보 소스의 빈 요청/오류 배열 assertion과
+해당 CI step 성공을 대조했다. Cargo stderr의 다음 target header가 research-worker의10개
+stdout 검사 사이에 끼어든 부분은 후보 내 유일한 정의와 완전한10 PASS block으로 귀속했다.
+원래 CI/테스트를 재실행하지 않았으며 제품·운영 스크립트는 변경하지 않았다.
+
+새 build-a1의12이미지49gate·4유닛 정상0/빈cgroup·원래7fa Owner 복귀를 독립 인수했다.
+공식 설치/check·KIS disabled·상태 타이머 복원 후 Web→API만 갱신했고, 정확한 이미지/
+revision/health·HTTP와 보존 Owner 및 다른9개 상태/19개 inventory 불변을 확인했다.
+Owner 인수된 시작은 `2026-10-23T11:53:04.545361396Z`이며 복원 의무는 남지 않았다.
+이는 해당 시점/범위 관측이며 현재 인증·새 시세 수신·실제 거래일 인수는 아니다.
+
+- `target/r2-daily-beta/ci/a6da63c/hosted-source-closure.json`: 347703bytes, SHA256 `2c0472f0bbc18048d36ee359e2ffddca8857fe956ea5dd1df2c79d243f87d3d4`.
+- `target/r2-daily-beta/wp-8/wave174/build-a1/image-restoration-observation-20261023T115314.json`: 858037bytes, SHA256 `7b528112da1da23c33c1d7fda3f19c8e19b3a170b36728db07641c0c6e052b50`.
+- `target/r2-daily-beta/wp-8/wave174/serving-deployment-closure-20261023T115345.json`: 67904bytes, SHA256 `8a1b130016ae4146a944379c21ee666d564513ec0ac895d5ea265790491b2017`.
+
+전체 R2-07/R2/R3 FINAL은 OPEN이다. 배당·가격 충돌·D-06/D-07은 유예하고 원본을 보존한다.
+DailyOFF/epoch0·KISdisabled·입력 미승인·첫 세션null·실제3일0·Owner 인수 미완료 유지.
+다음 R2-07은 일일 상태 패널의 숨김·시간초과·화면 해제 중 늦은 응답을 격리 검증하는 작업이다.
+기존 표시/설정 교체/현재 세션 만료 검사는 유지하며 구체적 실패가 재현될 때만 제품을 수정한다. 범위는 `target/r2-daily-beta/wp-8/wave175/daily-state-visibility-timeout-scope.json`에 기록했다. 이 문서 커밋은 빌드 후보가 아니다.
+
+### Wave175 — Daily 상태 응답 경계 격리 검증
+
+운영 반영을 독립 인수한 `a6da63c134fa471ff91e28a32c4b6a2ad9c08ba7`의 동일 소스를
+격리 React/Chromium에서 검증했다. 현재 요청·숨김 이벤트·화면 해제·실제10초 시간초과와
+정상 응답/세션 만료 응답을 조합한8개 모두 PASS. 응답 본문 파싱을 보류한 뒤 취소 경계를
+지나 늦게 반환해도 이전 결과 표시/로그인 이동이 발생하지 않았고, 복귀/수동 재조회는
+정확히1개 GET이었다. 정상 CURRENT 표시와 현재 세션 만료의 로그인 이동은 양성 대조로
+통과했다. 외부/예상 밖 요청·page error0, 원래 실행 종료0.
+
+가시성은 격리 document.hidden seam과 visibilitychange 이벤트이며 실제 탭 수명 인수는
+아니다. 시계 변경 없이 실제 타이머를 기다렸고 운영 인증·데이터·provider·Daily 활성화
+증거를 만들지 않았다. 제품 변경·추가 CI/빌드/배포는 없으며 기존 인수를 재실행하지 않았다.
+근거: `target/r2-daily-beta/wp-8/wave175/validation-closure.json` — 1563bytes, SHA256 `78eaf465c233f6acda88c0ae0cb14dfcee939384fa47b6aa1f0b49e89ba633aa`.
+다음은 R2-07 종목 변경·추천 생성/조회·Daily 설정/상태별 기존 근거와 미완료 인수 범위를
+대조하는 제한된 검토다. 전체 R2-07/R2/R3 FINAL OPEN, 충돌·D-06/D-07 유예·DailyOFF 유지.
