@@ -2404,6 +2404,17 @@ const SCHEMAS = {
       retryable: { type: "boolean" },
     },
   },
+  OwnerEquityV2RefreshFailure: {
+    type: "object",
+    description: "Latest incremental attempt for the next admitted generation failed. READY data remains usable. Omitted after a newer non-failed attempt, successful admission or disable; no retry authority is implied.",
+    required: ["code", "requested_through", "failed_at"],
+    additionalProperties: false,
+    properties: {
+      code: { type: "string", pattern: "^[A-Z][A-Z0-9_]{0,63}$" },
+      requested_through: dateStr,
+      failed_at: ts,
+    },
+  },
   OwnerEquityV2Membership: {
     type: "object",
     required: [
@@ -2423,6 +2434,7 @@ const SCHEMAS = {
       generation: { type: "integer", minimum: 0 },
       coverage: { $ref: "#/components/schemas/OwnerEquityV2Coverage" },
       failure: { $ref: "#/components/schemas/OwnerEquityV2Failure" },
+      refresh_failure: { $ref: "#/components/schemas/OwnerEquityV2RefreshFailure" },
       requested_at: ts,
       disabled_at: ts,
       updated_at: ts,

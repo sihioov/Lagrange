@@ -173,6 +173,9 @@ web --> status_panel : Owner-only main Dashboard surface
 ' evidence: apps/web/components/service-status/service-status-panel.tsx:16,340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; crates/api-server/src/http/mod.rs:463; crates/api-server/src/http/service_status.rs:51-85,257-263 (Owner check and audited read)
 status_panel --> api_server : GET /api/v1/admin/service-status;\nread-only status response
 
+' evidence: crates/api-server/src/http/mod.rs:342-347 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
+web --> api_server : Owner V2 membership GET: data date +\nlatest incremental refresh failure; READY preserved
+
 ' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:361,366,370 (lease/SSE routes; shifted by the status module declaration); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
 web --> api_server : same-origin lease POST/DELETE + SSE;\nWS-backed realtime cache;\nsession-cookie HTTP /api/v1/*, /auth/*
 

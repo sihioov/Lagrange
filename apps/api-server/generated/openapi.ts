@@ -2223,6 +2223,14 @@ export interface components {
             code: string;
             retryable: boolean;
         };
+        /** @description Latest incremental attempt for the next admitted generation failed. READY data remains usable. Omitted after a newer non-failed attempt, successful admission or disable; no retry authority is implied. */
+        OwnerEquityV2RefreshFailure: {
+            code: string;
+            /** @example 2026-01-31 */
+            requested_through: string;
+            /** Format: date-time */
+            failed_at: string;
+        };
         OwnerEquityV2Membership: {
             /** Format: uuid */
             id: string;
@@ -2231,6 +2239,7 @@ export interface components {
             generation: number;
             coverage: components["schemas"]["OwnerEquityV2Coverage"];
             failure?: components["schemas"]["OwnerEquityV2Failure"];
+            refresh_failure?: components["schemas"]["OwnerEquityV2RefreshFailure"];
             /** Format: date-time */
             requested_at: string;
             /** Format: date-time */

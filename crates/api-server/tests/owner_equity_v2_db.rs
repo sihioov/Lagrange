@@ -50,6 +50,7 @@ const MINIMUM_SESSIONS: i32 = 121;
 struct FakeAdapter {
     candidates: Arc<RwLock<BTreeMap<String, OwnerEquityGenerationCandidate>>>,
     insufficient_once: Arc<Mutex<BTreeSet<String>>>,
+    fail_incremental_once: Arc<Mutex<bool>>,
 }
 
 impl FakeAdapter {
@@ -128,6 +129,14 @@ impl OwnerEquityWorkerAdapter for FakeAdapter {
     ) -> Result<OwnerEquityMaterialization, OwnerEquityWorkFailure> {
         if payload.action != OwnerEquityJobAction::Incremental {
             return self.materialize(payload).await;
+        }
+
+        if std::mem::take(&mut *self.fail_incremental_once.lock().await) {
+            return Err(OwnerEquityWorkFailure::new(
+                "INCREMENTAL_OVERLAP_CHANGED",
+                RetryDisposition::Terminal,
+            )
+            .expect("typed incremental fixture failure"));
         }
 
         let prior = prior.ok_or_else(missing_evidence)?;
@@ -1424,6 +1433,12 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
     .await
     .expect("unadmitted lineage count");
     assert_eq!(unadmitted_rows, 1);
+    let (_, displayed) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("READY coverage");
+    assert_eq!(displayed.generation, 3);
+    assert_eq!(displayed.last_session, Some(eligible));
     let no_lineage =
         run_owner_equity_schedule_cycle(&worker_pool, &schedule_pins, at_close(eligible))
             .await
@@ -1467,6 +1482,262 @@ async fn owner_equity_schedule_rechecks_late_calendar_after_older_job_settles() 
         assert_eq!(jobs_for_date, 1);
     }
 
+    worker_pool.close().await;
+    harness.teardown().await;
+}
+
+// Synthetic jobs only, in the harness-owned disposable database. Production
+// refresh state is read-only and never changes a membership or retries a job.
+async fn seed_refresh_job(
+    harness: &Harness,
+    owner: &UserCtx,
+    payload: &serde_json::Value,
+    status: &str,
+    job_type: &str,
+) -> Uuid {
+    assert!(matches!(status, "QUEUED" | "FAILED"));
+    assert!(matches!(job_type, "owner_equity_v2" | "backtest"));
+    let id = Uuid::new_v4();
+    let payload = payload.to_string().replace('\'', "''");
+    let terminal = if status == "FAILED" {
+        "now(), 'UNRELATED_FAILURE'"
+    } else {
+        "NULL, NULL"
+    };
+    harness.seed_migration_owner(owner, &format!(
+        "INSERT INTO public.jobs(id, owner_user_id, job_type, payload_json, status, finished_at, error_code, created_at)
+         VALUES ('{id}', '{}', '{job_type}', '{payload}'::jsonb, '{status}', {terminal}, clock_timestamp())",
+        owner.user_id
+    )).await;
+    id
+}
+
+#[tokio::test]
+async fn incremental_failure_is_visible_without_revoking_ready_and_clears_on_recovery() {
+    let Some(harness) = Harness::new().await else {
+        eprintln!("SKIP: DATABASE_URL not set");
+        return;
+    };
+    provision_policy(&harness, &harness.owner, 2).await;
+    let other = seed_owner(&harness, "refresh-other", 2).await;
+    let repo = OwnerEquityV2Repo::new(harness.app_pool.clone());
+    let worker_pool = harness.worker_pool().await;
+    let queue = JobQueue::new(worker_pool.clone(), None, QueueConfig::default());
+    let adapter = FakeAdapter::default();
+    let actor = harness.owner.actor();
+    let add = repo
+        .add(
+            &actor,
+            "005930",
+            "refresh-visibility",
+            &"a".repeat(64),
+            &pins(),
+        )
+        .await
+        .expect("add fixture membership");
+    let claim = queue
+        .claim_next_for("refresh-initial", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim")
+        .expect("initial job");
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &claim, &adapter)
+            .await
+            .expect("publish initial"),
+        OwnerEquityRunOutcome::Published
+    );
+    let (_, prior) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("prior membership");
+    assert_eq!(prior.state, "READY");
+    assert!(prior.refresh_failure_code.is_none());
+    let mut payload = claim.job.payload_json.clone();
+    payload["action"] = serde_json::json!("INCREMENTAL");
+    payload["expected_generation"] = serde_json::json!(2);
+    payload["requested_through"] = serde_json::json!("2026-09-01");
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "QUEUED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    *adapter.fail_incremental_once.lock().await = true;
+    let failed = queue
+        .claim_next_for("refresh-failed", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim")
+        .expect("incremental job");
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &failed, &adapter)
+            .await
+            .expect("settle failure"),
+        OwnerEquityRunOutcome::Failed
+    );
+
+    // Newer unrelated failures must not mask the exact outstanding failure.
+    seed_refresh_job(
+        &harness,
+        &other,
+        &payload,
+        "FAILED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    for (field, value) in [
+        ("membership_id", serde_json::json!(Uuid::new_v4())),
+        ("instrument_id", serde_json::json!("000660.KRX")),
+        ("expected_generation", serde_json::json!(1)),
+        ("action", serde_json::json!("ADD")),
+        ("schema_version", serde_json::json!(2)),
+    ] {
+        let mut unrelated = payload.clone();
+        unrelated[field] = value;
+        seed_refresh_job(
+            &harness,
+            &harness.owner,
+            &unrelated,
+            "FAILED",
+            OWNER_EQUITY_V2_JOB_TYPE,
+        )
+        .await;
+    }
+    seed_refresh_job(&harness, &harness.owner, &payload, "FAILED", "backtest").await;
+    let (_, current) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("failure visible");
+    assert_eq!(current.state, "READY");
+    assert_eq!(current.generation, prior.generation);
+    assert_eq!(current.last_session, prior.last_session);
+    assert!(current.error_code.is_none());
+    assert_eq!(
+        current.refresh_failure_code.as_deref(),
+        Some("INCREMENTAL_OVERLAP_CHANGED")
+    );
+    assert_eq!(
+        current.refresh_requested_through.as_deref(),
+        Some("2026-09-01")
+    );
+    assert!(current.refresh_failed_at.is_some());
+    let (_, listed) = repo
+        .list(&actor)
+        .await
+        .expect("list uses same scoped query");
+    assert_eq!(listed, vec![current]);
+    assert!(matches!(
+        repo.get(&other.actor(), add.membership.id).await,
+        Err(OwnerEquityRepoError::NotFound)
+    ));
+
+    let path = format!(
+        "/api/v1/research/owner-beta/equity-universe-v2/memberships/{}",
+        add.membership.id
+    );
+    let response = harness.get(&path, Some(&harness.owner)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = Harness::body_json(response).await;
+    assert_eq!(body["membership"]["lifecycle"], "READY");
+    assert_eq!(
+        body["membership"]["refresh_failure"]["code"],
+        "INCREMENTAL_OVERLAP_CHANGED"
+    );
+    assert_eq!(
+        body["membership"]["refresh_failure"]["requested_through"],
+        "2026-09-01"
+    );
+    assert!(body["membership"].get("failure").is_none());
+
+    // A newly queued attempt supersedes the previous failure, and actual
+    // publication advances the generation without rewriting the old job.
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "QUEUED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    assert!(
+        repo.get(&actor, add.membership.id)
+            .await
+            .expect("pending attempt")
+            .1
+            .refresh_failure_code
+            .is_none()
+    );
+    let retry = queue
+        .claim_next_for("refresh-recovered", OWNER_EQUITY_V2_JOB_TYPE)
+        .await
+        .expect("claim")
+        .expect("new incremental");
+    assert_eq!(
+        process_owner_equity_claim(&worker_pool, &queue, &retry, &adapter)
+            .await
+            .expect("publish incremental"),
+        OwnerEquityRunOutcome::Published
+    );
+    // Even a late failure from the now-obsolete generation cannot reappear.
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "FAILED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    let (_, recovered) = repo
+        .get(&actor, add.membership.id)
+        .await
+        .expect("recovered");
+    assert_eq!(recovered.generation, 2);
+    assert_eq!(
+        recovered.last_session,
+        Some(NaiveDate::from_ymd_opt(2026, 9, 1).unwrap())
+    );
+    assert!(recovered.refresh_failure_code.is_none());
+    let original_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+        .bind(failed.job.id)
+        .fetch_one(&worker_pool)
+        .await
+        .expect("original job retained");
+    assert_eq!(original_status, "FAILED");
+    payload["expected_generation"] = serde_json::json!(3);
+    seed_refresh_job(
+        &harness,
+        &harness.owner,
+        &payload,
+        "FAILED",
+        OWNER_EQUITY_V2_JOB_TYPE,
+    )
+    .await;
+    assert!(
+        repo.get(&actor, add.membership.id)
+            .await
+            .expect("next failure")
+            .1
+            .refresh_failure_code
+            .is_some()
+    );
+    repo.disable(
+        &actor,
+        add.membership.id,
+        "refresh-disable",
+        &"b".repeat(64),
+        &pins(),
+    )
+    .await
+    .expect("disable membership");
+    assert!(
+        repo.get(&actor, add.membership.id)
+            .await
+            .expect("disabled")
+            .1
+            .refresh_failure_code
+            .is_none()
+    );
     worker_pool.close().await;
     harness.teardown().await;
 }

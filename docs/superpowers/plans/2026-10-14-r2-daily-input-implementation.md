@@ -10408,3 +10408,25 @@ SHA540a955b3ab20e8e83844d4dcb21a3105b98b8bc79077f8d0f122b5bed0fbbd2;
 최신10:17:53 관측은 불변 입력/원본 해시 대조에 한정된다. 전체 서비스 health는 별도10:10KST
 관측이며 새 인증·시세·당일 달력·타이머 인수로 갱신하지 않는다. 제품 코드/테스트/CI/빌드/배포는
 이번 진단에서 수행하지 않았다.7fa serving·DailyOFF·D-06/D-07 유예·R2/R3 FINAL 미완료를 유지한다.
+
+### Wave162 — READY를 유지하는 증분 갱신 실패 표시
+
+2026-10-23 Owner의 “그럼 다시 작업 시작해” 지시에 따라 R2-07 표시 누락을 보정했다.
+membership GET에 선택적 refresh_failure(code/requested_through/failed_at)를 추가했다.
+현재 Owner·membership·instrument와 승인 generation의 다음 세대에 해당하는 INCREMENTAL 작업만
+읽고, 모든 상태 중 최신 created_at/id를 선택한 뒤 FAILED일 때만 반환한다. 따라서 새 대기 작업,
+성공한 세대 승인 또는 비활성화 뒤 이전 실패가 다시 노출되지 않는다. READY의 기준일은 정확한
+admission identity를 가진 세대에서 읽어 더 높은 미승인 행으로 바뀌지 않도록 했다.
+Web은 기존 READY 상세 링크와 데이터를 유지하며 데이터 기준일·갱신 실패·대상일·유형 코드를
+표시한다. 재시도 버튼이나 공급자 호출·DB mutation·입력 승인 경로는 추가하지 않았다.
+소스 계약과 두 아키텍처 그림의 근거를 갱신하고 PNG를 로컬 network-none 환경에서 렌더링했다.
+
+격리 검증: 새 전용 QA PostgreSQL/실제 app·worker 역할에서4테스트 PASS, SKIP0.
+실제 worker 실패→API HTTP200/READY+별도실패→새 작업/성공 승인→과거실패 제거, 타Owner·종목·
+membership·세대·작업형식 격리, 미승인 최고세대 제외를 대조했다. 전용 QA project는 제거했다.
+관련 Web3파일30테스트·typecheck, OpenAPI 검사와 Rust 계약20테스트가 통과했다.
+의존성 누락으로 처음 OpenAPI 명령이 실패한 뒤 고정 lockfile npm ci로 복구했다. 생성기가 바꾸는
+무관한 기존 TypeScript 정밀 타입은 보존하고 이번 선택적 필드/타입만 반영했다.
+근거는 target/r2-daily-beta/wp-8/wave162/local-validation.json 및 각 원래 로그다.
+현재는 소스/격리 검증 범위이며 새 고정 후보의 hosted CI·이미지·운영 배포는 아직 미완료다.
+기존7fa serving, 원본273000/272000 충돌·권위 미확정, D-06/D-07 유예·DailyOFF·FINAL 미완료를 유지한다.

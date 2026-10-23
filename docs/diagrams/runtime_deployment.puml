@@ -265,6 +265,9 @@ nginx --> api : /api/*, /auth/*;\nstream/lease authority preserved; SSE unbuffer
 ' evidence: deploy/nginx/nginx.conf:197,198,200 (internal artifact alias); deploy/compose/compose.yml:61 (ro artifact mount)
 artifacts --> nginx : X-Accel-Redirect\ndelivery (ro mount)
 
+' evidence: crates/api-server/src/http/mod.rs:342-347 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
+web --> api : Owner V2 membership GET: data date +\nlatest incremental refresh failure; READY preserved
+
 ' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:361,366,370 (lease/SSE routes; shifted by the status module declaration); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)
 web --> api : browser same-origin CSRF lease mutations\nand one SSE per active tab (through nginx);\nWS-backed realtime cache
 

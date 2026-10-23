@@ -200,6 +200,7 @@ fn openapi_owner_equity_v2_routes_and_dtos_are_exact() {
         "OwnerEquityV2Policy",
         "OwnerEquityV2Coverage",
         "OwnerEquityV2Failure",
+        "OwnerEquityV2RefreshFailure",
         "OwnerEquityV2Membership",
         "OwnerEquityV2Mutation",
         "OwnerEquityV2Snapshot",

@@ -88,6 +88,13 @@ pub struct OwnerEquityFailureDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct OwnerEquityRefreshFailureDto {
+    pub code: String,
+    pub requested_through: NaiveDate,
+    pub failed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct OwnerEquityMembershipDto {
     pub id: Uuid,
     pub instrument_id: String,
@@ -96,6 +103,8 @@ pub struct OwnerEquityMembershipDto {
     pub coverage: OwnerEquityCoverageDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<OwnerEquityFailureDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_failure: Option<OwnerEquityRefreshFailureDto>,
     pub requested_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_at: Option<DateTime<Utc>>,
@@ -1113,6 +1122,22 @@ fn membership_dto(
         (None, None) => None,
         _ => return Err(OwnerEquityRepoError::Integrity),
     };
+    let refresh_failure = match (
+        &membership.refresh_failure_code,
+        &membership.refresh_requested_through,
+        membership.refresh_failed_at,
+    ) {
+        (Some(code), Some(through), Some(failed_at)) if membership.state == "READY" => {
+            Some(OwnerEquityRefreshFailureDto {
+                code: code.clone(),
+                requested_through: NaiveDate::parse_from_str(through, "%Y-%m-%d")
+                    .map_err(|_| OwnerEquityRepoError::Integrity)?,
+                failed_at,
+            })
+        }
+        (None, None, None) => None,
+        _ => return Err(OwnerEquityRepoError::Integrity),
+    };
     Ok(OwnerEquityMembershipDto {
         id: membership.id,
         instrument_id: membership.instrument_id.clone(),
@@ -1130,6 +1155,7 @@ fn membership_dto(
             last_session: membership.last_session,
         },
         failure,
+        refresh_failure,
         requested_at: membership.requested_at,
         disabled_at: membership.disabled_at,
         updated_at: membership.updated_at,

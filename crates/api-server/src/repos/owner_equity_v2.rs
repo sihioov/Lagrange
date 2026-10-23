@@ -35,6 +35,9 @@ pub struct OwnerEquityMembershipRecord {
     pub state: String,
     pub error_code: Option<String>,
     pub error_retryable: Option<bool>,
+    pub refresh_failure_code: Option<String>,
+    pub refresh_requested_through: Option<String>,
+    pub refresh_failed_at: Option<DateTime<Utc>>,
     pub requested_at: DateTime<Utc>,
     pub disabled_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
@@ -545,10 +548,17 @@ impl OwnerEquityV2Repo {
     }
 }
 
+// READY coverage comes from an admitted generation. Refresh errors are a
+// separate, read-only projection of its next-generation job: consider every
+// status before selecting the latest attempt so an old failure cannot reappear
+// behind a newer pending/successful/canceled attempt. Never read broker prose.
 fn membership_select(where_clause: &str) -> sqlx::AssertSqlSafe<String> {
     sqlx::AssertSqlSafe(format!(
         "SELECT membership.id, membership.instrument_id, membership.state,
                 membership.error_code, membership.error_retryable,
+                refresh.error_code AS refresh_failure_code,
+                refresh.requested_through AS refresh_requested_through,
+                refresh.finished_at AS refresh_failed_at,
                 membership.requested_at, membership.disabled_at, membership.updated_at,
                 COALESCE(generation.generation, 0) AS generation,
                 COALESCE(generation.observed_sessions, 0) AS observed_sessions,
@@ -563,8 +573,30 @@ fn membership_select(where_clause: &str) -> sqlx::AssertSqlSafe<String> {
               FROM public.owner_equity_instrument_generations AS item
               WHERE item.membership_id = membership.id
                 AND item.owner_user_id = membership.owner_user_id
+                AND (membership.state <> 'READY' OR EXISTS (
+                    SELECT 1 FROM public.owner_equity_generation_admissions AS admission
+                    WHERE admission.generation_id = item.id
+                      AND admission.owner_user_id = item.owner_user_id
+                      AND admission.membership_id = item.membership_id
+                      AND admission.instrument_id = item.instrument_id
+                      AND admission.generation = item.generation
+                ))
               ORDER BY item.generation DESC LIMIT 1
-         ) AS generation ON true {where_clause}"
+         ) AS generation ON true
+         LEFT JOIN LATERAL (
+              SELECT job.status, job.error_code, job.finished_at,
+                     job.payload_json ->> 'requested_through' AS requested_through
+              FROM public.jobs AS job
+              WHERE membership.state = 'READY'
+                AND job.owner_user_id = membership.owner_user_id
+                AND job.job_type = '{OWNER_EQUITY_V2_JOB_TYPE}'
+                AND job.payload_json -> 'schema_version' = '1'::jsonb
+                AND job.payload_json ->> 'action' = 'INCREMENTAL'
+                AND job.payload_json ->> 'membership_id' = membership.id::text
+                AND job.payload_json ->> 'instrument_id' = membership.instrument_id
+                AND job.payload_json -> 'expected_generation' = to_jsonb(generation.generation + 1)
+              ORDER BY job.created_at DESC, job.id DESC LIMIT 1
+         ) AS refresh ON refresh.status = 'FAILED' {where_clause}"
     ))
 }
 
