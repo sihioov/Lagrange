@@ -18,15 +18,16 @@ export function StrategyDailyControl({ configId, enabled }: StrategyDailyControl
   const [confirmed, setConfirmed] = useState(enabled);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const alive = useRef(false);
-  const saving = useRef(false);
+  const requestRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
+  useEffect(
+    () => () => {
+      // This signal owns UI recovery; an already-dispatched PATCH can still commit.
+      requestRef.current?.abort();
+      requestRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     setConfirmed(enabled);
@@ -34,26 +35,27 @@ export function StrategyDailyControl({ configId, enabled }: StrategyDailyControl
   }, [enabled]);
 
   async function save(): Promise<void> {
-    if (saving.current || confirmed === undefined) {
+    if (requestRef.current !== null || confirmed === undefined) {
       return;
     }
     const next = !confirmed;
-    saving.current = true;
+    const request = new AbortController();
+    requestRef.current = request;
     setBusy(true);
     setFailed(false);
     try {
-      const saved = await saveOwnerBetaDailyPreference(configId, next);
-      if (alive.current) {
+      const saved = await saveOwnerBetaDailyPreference(configId, next, { signal: request.signal });
+      if (!request.signal.aborted) {
         setConfirmed(saved.owner_beta_daily_enabled);
         router.refresh();
       }
     } catch {
-      if (alive.current) {
+      if (!request.signal.aborted) {
         setFailed(true);
       }
     } finally {
-      saving.current = false;
-      if (alive.current) {
+      if (requestRef.current === request) requestRef.current = null;
+      if (!request.signal.aborted) {
         setBusy(false);
       }
     }

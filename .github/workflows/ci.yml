@@ -162,6 +162,8 @@ jobs:
         run: node scripts/qa/recommendation-poll-recovery-browser.mjs "/tmp/lagrange-recommendation-poll-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Check recommendation submission lifetime in isolated Chromium
         run: node scripts/qa/recommendation-submit-lifetime-browser.mjs "/tmp/lagrange-recommendation-submit-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Check daily preference lifetime in isolated Chromium
+        run: node scripts/qa/daily-preference-lifetime-browser.mjs "/tmp/lagrange-daily-preference-${{ github.run_id }}-${{ github.run_attempt }}"
       - name: Check membership response ordering in isolated Chromium
         run: node scripts/qa/stock-beta-membership-order-browser.mjs "/tmp/lagrange-membership-order-${{ github.run_id }}-${{ github.run_attempt }}"
       - run: npm run build --workspace @lagrange/web

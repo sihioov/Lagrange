@@ -10876,3 +10876,22 @@ PASS, stop/build/start/recovery4유닛 정상0/PID0/빈cgroup, 같은7fa Owner �
 전체 R2-07 및 R2/R3 FINAL은 OPEN이다. D-06/D-07와 배당·가격 충돌 조사는 유예하며 원본을 보존한다.
 DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0·입력 미승인·Owner 인수 미완료를 유지한다.
 다음은 로드맵에서 독립적으로 진행 가능한 베타 작업을 선정하는 것이다. 이 문서 커밋은 빌드 후보가 아니다.
+
+### Wave171 — 일일 실행 설정 저장 응답 수명 보정
+
+R2-07 독립 작업으로 일일 실행 설정의 CSRF/PATCH 응답을 지연한 실제 React/Chromium
+28경로 중8개에서 화면 해제·설정 교체 뒤 오래된 세션 오류의 로그인 이동을 재현했다.
+설정 교체는 기존 페이지의 configId key를 그대로 사용했으며, key 없는 교체를 운영 결함으로
+추정하지 않았다. UI 수명 signal을 기존 저장 helper의 CSRF/응답 파서까지 전달하고
+화면 해제 시 폐기한다. 이미 전송된 PATCH의 서버 적용 의미와 현재 화면의 정상 저장·
+로그인 복구·실패 표시·서버 seed 갱신 중 저장 잠금은 유지한다.
+
+수정 후 Chromium28/28(헤더/본문 지연, 현재/해제/설정 교체/seed 갱신)·관련 Vitest29·
+타입/lint·CI 명령 계약24검사를 인수했다. 외부 요청/브라우저 오류0이며 production
+Daily 설정·인증·공급자 호출은0이다. 새 브라우저 검사를 hosted CI에 연결했다.
+근거: `target/r2-daily-beta/wp-8/wave171/local-validation.json`. 구조 변경이 없어 도표는 보존한다.
+
+이 변경은 소스/격리 검증 인수이며 새 hosted CI·이미지·Web/API 배포는 아직 미완료다.
+현재 API/Web0352ae2+Owner7fa, 마지막18:09:21KST 운영 관측을 유지한다. 배당/가격 충돌·
+D-06/D-07 유예, DailyOFF/epoch0·KISdisabled·입력 미승인·firstSessionnull·실제3일0·
+전체 R2-07/R2/R3 FINAL OPEN을 유지한다.

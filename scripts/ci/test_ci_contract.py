@@ -259,6 +259,8 @@ class WorkflowContractTests(unittest.TestCase):
                 '"/tmp/lagrange-recommendation-poll-${{ github.run_id }}-${{ github.run_attempt }}"',
                 'node scripts/qa/recommendation-submit-lifetime-browser.mjs '
                 '"/tmp/lagrange-recommendation-submit-${{ github.run_id }}-${{ github.run_attempt }}"',
+                'node scripts/qa/daily-preference-lifetime-browser.mjs '
+                '"/tmp/lagrange-daily-preference-${{ github.run_id }}-${{ github.run_attempt }}"',
                 'node scripts/qa/stock-beta-membership-order-browser.mjs '
                 '"/tmp/lagrange-membership-order-${{ github.run_id }}-${{ github.run_attempt }}"',
                 "npm run build --workspace @lagrange/web",
