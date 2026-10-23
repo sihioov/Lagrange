@@ -206,6 +206,14 @@ extra or changed runtime keys fail before mutation. It retains the normal releas
 quiescence, source-manifest, image and status-policy gates. Record the resulting mixed revisions
 explicitly: only API/Web use the new candidate. A later full refresh or rollback must review these
 actual per-service bindings; the ordinary single-source refresh must fail closed on a mixed set.
+For a subsequent UI/API-only release, keep the API/Web source in `--refresh-from-commit`
+and supply the independently accepted Owner source with
+`--preserved-owner-from-commit <owner-commit>`. This option requires `--preserve-owner-v2`.
+It loads the Owner's own trusted installed manifest, compares the target runtime env against
+that Owner release's protected env, and verifies the exact Owner image/revision before and
+after the two-service refresh. Its container ID/start must also remain unchanged.
+There is no inference from image tags, automatic Owner migration or input retry. If the
+separate Owner source is omitted, the original single-source check still applies.
 An already open browser may still need its normal page reload to use the new client bundle.
 
 Use the same `--refresh-from-commit` in the approved apply command. It selects only the

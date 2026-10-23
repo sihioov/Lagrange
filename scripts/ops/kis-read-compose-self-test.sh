@@ -387,6 +387,10 @@ if [ "${1:-}" = inspect ]; then
     revision=$FAKE_PREVIOUS_COMMIT
   fi
   image_id=$(image_id_for_service "$service")
+  if [ "$service" = owner-equity-v2-runner ] && [ -n "${FAKE_PRESERVED_OWNER_COMMIT:-}" ]; then
+    image_id=$(FAKE_IMAGE_OFFSET=200 image_id_for_service "$service")
+    revision=$FAKE_PRESERVED_OWNER_COMMIT
+  fi
   [ "${FAKE_MISMATCH_SERVICE:-}" = "$service" ] &&
     image_id=sha256:9999999999999999999999999999999999999999999999999999999999999999
   printf '%s|%s\n' "$image_id" "$revision"
@@ -807,6 +811,85 @@ mapfile -t preserve_ups < <(grep '^compose .* up ' "$docker_log")
 [ ! -e "$transition_state/owner-equity-v2-runner" ] || fail 'preserved Owner was recreated'
 ! grep -Eq '^compose .* (run|build|stop|down)( |$)' "$docker_log"
 ! find "$install_root" -maxdepth 1 -name '.release-image-override.*' -print -quit | grep -q .
+rm -- "$transition_state/api-server" "$transition_state/web"
+
+# A second UI-only release starts with API/Web and Owner at different revisions.
+preserved_owner_commit=abcdef0123456789abcdef0123456789abcdef01
+preserved_owner_root=$install_root/releases/$preserved_owner_commit
+mkdir -p "$preserved_owner_root/deploy/compose"
+write_manifest "$preserved_owner_root/.lagrange-release-manifest" "$preserved_owner_commit" 200
+sed "s/^LAGRANGE_CODE_COMMIT=.*/LAGRANGE_CODE_COMMIT=$preserved_owner_commit/" \
+  "$refresh_env" >"$preserved_owner_root/deploy/compose/.env"
+chmod 0600 "$preserved_owner_root/deploy/compose/.env"
+run_mixed_preserve() {
+  run_transition "$1" env FAKE_PRESERVED_OWNER_COMMIT="$preserved_owner_commit" \
+    bash "$release_root/scripts/ops/compose-release.sh" --scope release \
+    --refresh-market-stream --refresh-from-commit "$previous_commit" --preserve-owner-v2 \
+    --preserved-owner-from-commit "$preserved_owner_commit" "${@:2}"
+}
+: >"$docker_log"
+if run_transition "$tmp/mixed-owner-unselected.out" env FAKE_PRESERVED_OWNER_COMMIT="$preserved_owner_commit" \
+  bash "$release_root/scripts/ops/compose-release.sh" --scope release \
+  --refresh-market-stream --refresh-from-commit "$previous_commit" --preserve-owner-v2 --apply; then
+  fail 'mixed Owner was accepted without its explicit source'
+fi
+grep -Fq 'persistent service image_id mismatch: owner-equity-v2-runner' "$tmp/mixed-owner-unselected.out"
+assert_no_transition_mutation
+for inspection in plan preflight; do
+  : >"$docker_log"
+  run_mixed_preserve "$tmp/mixed-preserve-$inspection.out" "--$inspection"
+  assert_no_transition_mutation
+done
+for bad_commit in '' invalid ../escape 0000000000000000000000000000000000000000; do
+  : >"$docker_log"
+  if run_transition "$tmp/mixed-bad-commit.out" bash "$release_root/scripts/ops/compose-release.sh" \
+    --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" \
+    --preserve-owner-v2 --preserved-owner-from-commit "$bad_commit" --apply; then
+    fail 'preserved Owner source accepted an invalid commit'
+  fi
+  assert_no_transition_mutation
+done
+: >"$docker_log"
+if run_transition "$tmp/mixed-without-preserve.out" bash "$release_root/scripts/ops/compose-release.sh" \
+  --scope release --refresh-market-stream --refresh-from-commit "$previous_commit" \
+  --preserved-owner-from-commit "$preserved_owner_commit" --apply; then
+  fail 'separate Owner source accepted outside preservation'
+fi
+assert_no_transition_mutation
+mv "$preserved_owner_root/.lagrange-release-manifest" "$tmp/mixed-owner-manifest.saved"
+for invalid_manifest in missing symlink; do
+  [ "$invalid_manifest" != symlink ] || ln -s "$tmp/mixed-owner-manifest.saved" "$preserved_owner_root/.lagrange-release-manifest"
+  : >"$docker_log"
+  if run_mixed_preserve "$tmp/mixed-manifest-$invalid_manifest.out" --apply; then
+    fail 'mixed Owner source accepted a missing/symlink manifest'
+  fi
+  assert_no_transition_mutation
+done
+rm -- "$preserved_owner_root/.lagrange-release-manifest"
+mv "$tmp/mixed-owner-manifest.saved" "$preserved_owner_root/.lagrange-release-manifest"
+printf 'UNEXPECTED_OWNER_SETTING=1\n' >>"$preserved_owner_root/deploy/compose/.env"
+: >"$docker_log"
+if run_mixed_preserve "$tmp/mixed-owner-env-drift.out" --apply; then
+  fail 'mixed Owner source runtime config was not compared'
+fi
+assert_no_transition_mutation
+sed -i '/^UNEXPECTED_OWNER_SETTING=/d' "$preserved_owner_root/deploy/compose/.env"
+for mismatch in owner-equity-v2-runner web; do
+  : >"$docker_log"
+  if FAKE_MISMATCH_SERVICE="$mismatch" run_mixed_preserve "$tmp/mixed-image-mismatch.out" --apply; then
+    fail 'mixed source accepted a mismatched running image'
+  fi
+  assert_no_transition_mutation
+done
+: >"$docker_log"
+run_mixed_preserve "$tmp/mixed-preserve-apply.out" --apply
+grep -Fq 'COMPOSE_REFRESH_WEB_API: PASS' "$tmp/mixed-preserve-apply.out"
+mapfile -t preserve_ups < <(grep '^compose .* up ' "$docker_log")
+[ "${#preserve_ups[@]}" -eq 2 ] || fail 'mixed preserve must recreate exactly two services'
+[[ "${preserve_ups[0]}" == *'--no-build --pull never --no-deps --force-recreate --wait web' ]]
+[[ "${preserve_ups[1]}" == *'--no-build --pull never --no-deps --force-recreate --wait api-server' ]]
+[ ! -e "$transition_state/owner-equity-v2-runner" ] || fail 'mixed preserved Owner was recreated'
+! grep -Eq '^compose .* (run|build|stop|down)( |$)' "$docker_log"
 rm -- "$transition_state/api-server" "$transition_state/web"
 
 : >"$docker_log"

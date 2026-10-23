@@ -4063,3 +4063,19 @@ fixture URL 오타는 검사0개로 보존했다. fixture 응답은 실제 인�
 그 안의 원본 브라우저 영수증이다. 다음은 새 후보 한 번의 hosted CI 및 별도 이미지/운영 인수다.
 기존 API/Web8917 + Owner7fa 운영과 마지막11:36KST 관측은 유지되며 이번 작업에서 운영/
 공급자/DB 변경은0이다. 전체 R2-07/FINAL·입력 승인·DailyOFF·실제3일0·D-06/D-07 유예는 유지한다.
+
+### Wave164 — 후속 화면 배포의 혼합 버전 검증 보완
+
+현재 API/Web8917과 Owner7fa를 기존 단일 source commit으로 동시에 검증할 수 없는 배포
+도구 제약을 확인했다. 기존 도구는 별도 Owner source 옵션을 거절하는 격리 red를 보존했다.
+`--preserved-owner-from-commit`을 `--preserve-owner-v2`에 한정해 추가하고 API/Web 이전
+manifest와 Owner의 이전 manifest/보호 env를 따로 검증한다. 최신 대상 이미지는 그대로
+현재 후보에서 선택한다. Web→API 두 개만 교체하며 Owner ID/start/image/revision을 재검증한다.
+
+잘못된/빠진 commit·보호 manifest 누락/symlink·Owner env 차이·잘못된 Owner/Web image의
+변경 전 거절과 plan/preflight 비변경, 성공 시 두 서비스만 교체를 격리 fake Docker로 검증했다.
+기존 자기검사 전체와 운영 정적 검사 PASS. 이 경로는 재수집·입력 승인·Owner 재생성을 하지 않는다.
+원래 db0bb1f CI39901353016 attempt1에서 새 Chromium 단계의 CI 명령 계약 누락이 드러났다.
+정확한 명령 목록을 추가해 계약24개 PASS; 원래 실패는 보존하며 재실행하지 않는다.
+최종 후보는 이 보완 커밋이며 새 전체 CI 한 번으로 검증한다. UI의7개 브라우저/54개 검사
+통과는 유지하지만 최종 hosted/이미지/운영 인수는 아직 미완료다. 기존 운영·DailyOFF 유지.

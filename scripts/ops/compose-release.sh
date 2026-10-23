@@ -24,6 +24,7 @@ refresh_intraday=0
 refresh_market_stream=0
 preserve_owner_v2=0
 refresh_from_commit=
+preserved_owner_from_commit=
 bootstrap_intraday_calendar=0
 calendar_source_batch_id=
 calendar_reuse_existing_source=0
@@ -76,6 +77,7 @@ Usage: scripts/ops/compose-release.sh
        [--scope infrastructure|backfill|release]
        [--plan|--preflight|--apply] [--refresh-intraday|--refresh-market-stream]
        [--refresh-from-commit COMMIT] [--preserve-owner-v2]
+       [--preserved-owner-from-commit COMMIT]
        [--daily-prepare|--daily-enable|--daily-disable|--daily-rebind-first-session]
        [--daily-from-commit COMMIT]
        [--daily-backup|--daily-backup-verify|--daily-reconcile] [--backup-config PATH]
@@ -105,6 +107,11 @@ Usage: scripts/ops/compose-release.sh
                     container/start and its source revision. Requires unchanged
                     runtime env except release and disabled supplier bindings.
                     The resulting release has explicitly mixed worker revisions.
+  --preserved-owner-from-commit COMMIT
+                    With --preserve-owner-v2, bind an already preserved Owner to
+                    its own installed manifest and runtime env. API/Web still use
+                    --refresh-from-commit. Defaults to that commit when omitted.
+                    Does not restart, migrate or recollect through the Owner.
   --daily-prepare|--daily-enable|--daily-disable
                     Controlled daily operations on the current installed release.
                     Prepare remains disabled; enable verifies actual API/cohort;
@@ -171,6 +178,12 @@ while [ "$#" -gt 0 ]; do
     --refresh-intraday) refresh_intraday=1; shift ;;
     --refresh-market-stream) refresh_market_stream=1; shift ;;
     --preserve-owner-v2) preserve_owner_v2=1; shift ;;
+    --preserved-owner-from-commit)
+      [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$preserved_owner_from_commit" ] ||
+        die '--preserved-owner-from-commit needs one exact installed commit'
+      preserved_owner_from_commit=$2
+      shift 2
+      ;;
     --refresh-from-commit)
       [ "$#" -ge 2 ] && [ -z "$refresh_from_commit" ] ||
         die '--refresh-from-commit needs one exact installed commit'
@@ -208,6 +221,13 @@ fi
 [ "$preserve_owner_v2" -eq 0 ] ||
   { [ "$refresh_market_stream" -eq 1 ] && [ -n "$refresh_from_commit" ]; } ||
   die '--preserve-owner-v2 requires market-stream refresh and an exact source commit'
+if [ -n "$preserved_owner_from_commit" ]; then
+  [ "$preserve_owner_v2" -eq 1 ] ||
+    die '--preserved-owner-from-commit requires --preserve-owner-v2'
+  [[ "$preserved_owner_from_commit" =~ ^[0-9a-f]{40}$ ]] &&
+    [ "$preserved_owner_from_commit" != 0000000000000000000000000000000000000000 ] ||
+    die '--preserved-owner-from-commit must be an exact nonzero lowercase commit'
+fi
 [ "$bootstrap_intraday_calendar" -eq 0 ] || [ "$scope" = release ] ||
   die '--bootstrap-intraday-calendar is valid only with --scope release'
 [ "$((refresh_intraday + refresh_market_stream + bootstrap_intraday_calendar))" -le 1 ] ||
@@ -594,21 +614,37 @@ verify_refresh_source() (
       die "$RELEASE_IMAGE_MANIFEST_ERROR"
   fi
   verify_running_container api-server 1
-  verify_running_container owner-equity-v2-runner 1
+  if [ "$preserve_owner_v2" -eq 1 ]; then
+    verify_preserved_owner_source
+  else
+    verify_running_container owner-equity-v2-runner 1
+  fi
   if [ "$refresh_market_stream" -eq 1 ]; then
     verify_running_container web 1
   fi
 )
 
+verify_preserved_owner_source() (
+  local owner_commit owner_manifest
+  owner_commit=${preserved_owner_from_commit:-$refresh_from_commit}
+  owner_manifest=$release_root/releases/$owner_commit/.lagrange-release-manifest
+  release_image_manifest_trusted_file "$owner_manifest" preserved-owner-source-manifest ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  release_image_manifest_load "$owner_manifest" "$owner_commit" ||
+    die "$RELEASE_IMAGE_MANIFEST_ERROR"
+  verify_running_container owner-equity-v2-runner 1
+)
+
 verify_preserved_owner_config() (
-  local key previous_env
+  local key previous_env owner_commit
   local -A target=()
   for key in "${!DOTENV_VALUES[@]}"; do target[$key]=${DOTENV_VALUES[$key]}; done
-  previous_env=$release_root/releases/$refresh_from_commit/deploy/compose/.env
+  owner_commit=${preserved_owner_from_commit:-$refresh_from_commit}
+  previous_env=$release_root/releases/$owner_commit/deploy/compose/.env
   release_image_manifest_trusted_file "$previous_env" refresh-source-env ||
     die "$RELEASE_IMAGE_MANIFEST_ERROR"
   dotenv_load "$previous_env" || die 'cannot parse refresh source env'
-  [ "$(dotenv_get LAGRANGE_CODE_COMMIT)" = "$refresh_from_commit" ] ||
+  [ "$(dotenv_get LAGRANGE_CODE_COMMIT)" = "$owner_commit" ] ||
     die 'refresh source env commit mismatch'
   # The supplier is a separately disabled process, never an Owner V2 input.
   # Compare every other literal, including missing keys, without printing values.
@@ -694,11 +730,7 @@ EOF
     verify_running_container web 1
     compose up --no-build --pull never --no-deps --force-recreate --wait api-server
     verify_running_container api-server 1
-    (
-      release_image_manifest_load "$release_root/releases/$refresh_from_commit/.lagrange-release-manifest" "$refresh_from_commit" ||
-        die "$RELEASE_IMAGE_MANIFEST_ERROR"
-      verify_running_container owner-equity-v2-runner 1
-    )
+    verify_preserved_owner_source
     [ "$(preserved_owner_identity)" = "$owner_before" ] || die 'preserved owner container/start changed'
     compose ps
     echo 'COMPOSE_REFRESH_WEB_API: PASS (Web then API refreshed; exact source Owner V2 preserved)'
