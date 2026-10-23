@@ -158,6 +158,8 @@ jobs:
       - run: npm run lint --workspace @lagrange/web
       - run: npm run typecheck --workspace @lagrange/web
       - run: npm test --workspace @lagrange/web
+      - name: Check membership response ordering in isolated Chromium
+        run: node scripts/qa/stock-beta-membership-order-browser.mjs "/tmp/lagrange-membership-order-${{ github.run_id }}-${{ github.run_attempt }}"
       - run: npm run build --workspace @lagrange/web
       - run: bash scripts/qa/candidate-web-e2e.sh
 

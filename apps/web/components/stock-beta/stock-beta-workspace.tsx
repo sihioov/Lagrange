@@ -194,6 +194,7 @@ export function StockBetaWorkspace({
   >(null);
   const [disableId, setDisableId] = useState<string | null>(null);
   const mutationPendingRef = useRef(false);
+  const membershipRequestRef = useRef<AbortController | null>(null);
   const previousMembershipsRef = useRef(initialMemberships.memberships);
   const pollAttemptRef = useRef(0);
   const signalPollAttemptRef = useRef(0);
@@ -251,14 +252,42 @@ export function StockBetaWorkspace({
     });
   }, [signalRefreshCoordinator]);
 
-  const refreshMemberships = useCallback(async (): Promise<OwnerEquityV2MembershipListModel> => {
-    const next = await getOwnerEquityV2Memberships();
-    setPolicy(next.policy);
-    setMemberships(next.memberships);
-    return next;
+  const invalidateMemberships = useCallback((): void => {
+    membershipRequestRef.current?.abort();
+    membershipRequestRef.current = null;
   }, []);
 
+  const refreshMemberships = useCallback(
+    async (pollSignal?: AbortSignal): Promise<boolean> => {
+      invalidateMemberships();
+      const request = new AbortController();
+      membershipRequestRef.current = request;
+      const signal =
+        pollSignal === undefined ? request.signal : AbortSignal.any([request.signal, pollSignal]);
+      const isCurrent = () => membershipRequestRef.current === request && !signal.aborted;
+      try {
+        const next = await getOwnerEquityV2Memberships({ signal });
+        // Abort is best effort; a response already being parsed can still settle.
+        if (!isCurrent()) return false;
+        setPolicy(next.policy);
+        setMemberships(next.memberships);
+        setPollError(false);
+        return true;
+      } catch (error) {
+        if (!isCurrent()) return false;
+        throw error;
+      } finally {
+        if (membershipRequestRef.current === request) membershipRequestRef.current = null;
+      }
+    },
+    [invalidateMemberships],
+  );
+
+  useEffect(() => () => invalidateMemberships(), [invalidateMemberships]);
+
   useEffect(() => {
+    invalidateMemberships();
+    setPollError(false);
     signalRefreshCoordinator.invalidate();
     setPolicy(initialMemberships.policy);
     setMemberships(initialMemberships.memberships);
@@ -328,6 +357,7 @@ export function StockBetaWorkspace({
     initialSignalError,
     initialSignalUnavailable,
     initialSignals,
+    invalidateMemberships,
     signalRefreshCoordinator,
   ]);
 
@@ -415,11 +445,11 @@ export function StockBetaWorkspace({
       return;
     }
     let cancelled = false;
+    const abort = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const poll = async (): Promise<void> => {
       try {
-        await refreshMemberships();
-        if (!cancelled) setPollError(false);
+        await refreshMemberships(abort.signal);
       } catch {
         if (!cancelled) setPollError(true);
       }
@@ -431,6 +461,7 @@ export function StockBetaWorkspace({
     timeout = setTimeout(() => void poll(), ownerEquityV2PollDelay(pollAttemptRef.current++));
     return () => {
       cancelled = true;
+      abort.abort();
       if (timeout !== undefined) clearTimeout(timeout);
     };
   }, [hasNonTerminalMembership, refreshMemberships]);
