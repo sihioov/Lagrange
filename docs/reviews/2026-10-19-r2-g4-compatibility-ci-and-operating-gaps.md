@@ -4291,3 +4291,44 @@ SHA256 `0253e9d9b2ab271307095ad038fd77b1e73b197882c6f9eb3b97085334588008`.
 검증만 인수하며 새 hosted CI·이미지·운영 반영은 다음 단계다. 현재 API/Webca0db65+Owner7fa,
 마지막 운영 관측16:25:49KST와 DailyOFF를 유지한다. 생산 인증/공급자 호출0.
 배당·가격 충돌·D-06/D-07 유예와 입력 미승인·실제3일0·전체 R2-07/R2/R3 FINAL OPEN 유지.
+
+### Wave168 — 추천 실행 상태 조회 수명 보정 운영 인수
+
+2026-10-23 17:13:30 KST, 후보 `2c2d6fa1979e03928cc4e5b2d287ddd1ec52368b`의 Web/API 운영 반영을 독립 인수했다.
+Owner/일반 추천 상태 조회에서 화면 해제·실행 ID 교체 뒤 도착한 응답이 로그인 이동이나
+완료 refresh를 일으키던 동작을 보정했다. HTTP 헤더/본문 지연24경로 중 원래12실패를
+재현했고, polling effect 정리에서 GET을 취소하며 같은 signal을 응답 파서와 Owner 완료
+refresh에 적용했다. 현재 요청의 정상 완료·onSettled·로그인 복구·이전 오류 제거는 유지한다.
+GET 수명 보정이며 이미 전송된 POST나 서버 상태를 취소하는 변경이 아니다.
+
+격리 Chromium28·관련30테스트·타입/lint·CI계약24검사와 원래 CI39918068161 attempt1의
+전체8작업/8전체로그/7정확checkout·Rust155/Python154·PG19/page14를 인수했다.
+새 추천 조회 브라우저28경로와 기존 멤버십40경로를 정확한 목록과 대조했고 기존 Web
+OFF/market-stream lane의 skip/flaky/retry는0이다. 초기 로컬 타입/실행환경 오류는 보존했다.
+
+공식 사전 검사와 새로운 실제 운영 전제 확인 뒤 첫 build-a1을 실행했다. 원래12이미지49gate
+PASS, stop/build/start/recovery4유닛 정상0/PID0/빈cgroup, 같은7fa Owner 복귀와 다른10개
+상태·전체21개 inventory 불변을 독립 인수했다. 공식 설치/check·KIS disabled·상태 타이머
+복원 후 Web→API 두 개만 갱신했다. 선택 릴리스/API/Web은2c2d6fa이며 수집기는7fa다.
+새 이미지/revision/health·HTTP, Owner container/image/start 및 다른9개 상태·19개 inventory
+불변을 대조했다. Owner의 인수된 시작은 `2026-10-23T08:12:11.656890264Z`이다. 복원 의무는 남지 않았다.
+이는 해당 시점/범위 관측이며 실제 인증·새 시세 수신·실제3거래일 인수는 아니다.
+
+- `target/r2-daily-beta/ci/2c2d6fa/hosted-source-closure.json`: 323394bytes, SHA256 `2961fe428d86c6b1b23cfb2f72d6f1022cb3ba376bb14b95898700e5d196bd5f`.
+- `target/r2-daily-beta/wp-8/wave168/build-a1/image-restoration-observation-20261023T081259.json`: 857953bytes, SHA256 `3a7c40effd6c806723cbb821e0ccb2ccb71cc7f74c769bab0d53c0c595508ab8`.
+- `target/r2-daily-beta/wp-8/wave168/serving-deployment-closure-20261023T081330.json`: 69296bytes, SHA256 `f08c0f6df591515785989c2c7265984e06517091ecf0b15df10fb5523682ebae`.
+
+다음 독립 작업인 Owner/일반 추천 생성 폼의 늦은 응답 수명 보정은 별도 작업 트리에서
+준비했다. CSRF/POST의 헤더·본문 지연16경로 중8실패를 재현했고, 수정 후 정상 생성과
+이미 보낸 POST 유지 대조를 포함한 Chromium20·관련30·타입/lint·CI계약24검사를 인수했다.
+화면 해제 시 UI 수명만 종료하고 같은 signal을 CSRF/응답 파서에 전달하며 늦은 상태 반영과
+후속 polling을 막는다. 현재 폼의 정상 생성·로그인 복구는 유지한다. 이 후속 수정은 아직
+소스 통합/커밋·hosted CI·빌드·배포 전이다. 초기 린트 실행 위치 오류2건은 보존했고
+apps/web 작업 디렉터리에서 검사를 통과했다.
+`target/r2-daily-beta/wp-8/wave169/local-validation-a2.json` 5093bytes,
+SHA256 `be7371f8fcfb82b7c5edf1d8429e97586d165eb44ab5f75fb349321c32820690`.
+
+전체 R2-07 및 R2/R3 FINAL은 OPEN. D-06/D-07와 배당·가격 충돌 조사는 유예하며 원본 보존,
+DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0·입력 미승인·Owner 인수 미완료를 유지한다.
+다음은 검증된 추천 생성 폼 수정의 정확한5파일 패치를 통합하는 독립 작업이다.
+해결된 오류나 수용된 CI/빌드/배포를 반복하지 않는다. 이 문서 커밋은 빌드 후보가 아니다.
