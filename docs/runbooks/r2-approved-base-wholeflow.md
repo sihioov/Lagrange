@@ -4,8 +4,11 @@ Roadmap R2-04/R2-07/R2-09; status updated2026-10-23. Historicale639169
 approved-base integration was accepted in Wave108. Currenta6da63c Wave177
 reported functional PASS and independently confirmed cleanup, but six of21
 temporary container lifecycles lack complete independent event evidence. Its
-full independent acceptance remains incomplete. Both original executions are
-consumed; neither may be replayed to repair evidence.
+full independent acceptance remains incomplete. A distinct Wave181 run accepted
+currenta6 images with exactb2 host tools: all six functional phases and21 complete
+container/two network lifecycles (88 continuous events), independently checked
+2026-10-23T13:52:06UTC. Historical and new original executions are consumed;
+none may be replayed to repair evidence.
 
 See [current acceptance and limits](../reviews/2026-10-23-r2-beta-flow-acceptance.md).
 Hosted fixture tests are a separate boundary and cannot close actual integration.
@@ -30,8 +33,10 @@ Docker or protected manifest reads. Git replacement objects are ignored.
 Protected loaded files still match the tool commit exactly. The receipt binds
 both commits and the complete permitted path list; no image or config revision
 is rewritten to the tool identity. Omitting the option preserves the original
-same-commit requirement. This option is source/fixture validated in Wave180;
-its own hosted validation and any distinct actual execution remain separate.
+same-commit requirement. Wave180b2 exact-source hosted validation passed, and
+Wave181 exercised this binding with existinga6 images and the real approved
+historical base plus a synthetic extension. Actual production inputs, market
+sessions and Owner acceptance remain separate.
 
 The historical root is mounted read-only. Producer and admitter call the
 unaltered compiled approval API independently. No test approval registry or
@@ -159,7 +164,8 @@ Docker mount-boundary suite. Their version-specific results are recorded with
 the exact candidate CI closure. They do not establish actual approved-base
 admission, HTTP publication or recovery.
 
-Remaining: complete current-candidate independent lifecycle evidence, admitted
-production inputs, actual Owner use, three consecutive scheduled trading days
-and final`C_R2`. Historical G4 acceptance remains preserved and is not repeated
-by this disposable integration. D-06/D-07 remain deferred follow-ups.
+Wave181 closes the current-candidate isolated lifecycle evidence scope.
+Remaining: admitted production inputs, actual Owner use, three consecutive
+scheduled trading days and final`C_R2`. Historical G4 acceptance remains
+preserved and is not repeated by this disposable integration. D-06/D-07 remain
+deferred follow-ups.

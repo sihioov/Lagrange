@@ -1,4 +1,4 @@
-# R2 beta flow acceptance — Waves176–177
+# R2 beta flow acceptance — Waves176–181
 
 2026-10-23; R2-07/R2-09. API/Web candidate
 `a6da63c134fa471ff91e28a32c4b6a2ad9c08ba7`, preserved Owner V2
@@ -63,6 +63,32 @@ stream. Future distinct wholeflows need bounded continuous sanitized recording,
 with receipt of the first owned network event before starting containers and
 complete lifecycle reconciliation before acceptance. This does not reconstruct
 Wave177's missing records. [Docker event contract](https://docs.docker.com/reference/cli/docker/system/events/).
+
+## Current application with reviewed host tools (Wave181)
+
+A distinct run accepted the currenta6 application with reviewedb2 host tools on
+2026-10-23. Both original hosted candidates5ac/B2 passed all8 jobs and logs;
+B2's157 required Rust and221 Python rows include the source-binding and
+continuous-event fixtures. The exact existinga6 image set was reused.
+
+The new operation ran13:47:39–13:51:18UTC. All six functional phases passed.
+At13:52:06UTC, independent reconciliation verified21 complete container and
+2 complete network lifecycles from88 continuous sanitized events, including
+exact role/image/exit/order bindings and the protected file hash. Both recorder
+clients and readers drained, with zero reconnects. All owned resources and the
+exact original cgroup were empty; the11 production states and21-container
+inventory were unchanged. No restoration is owed.
+
+The protected event file is27304bytes, SHA256
+`798e6248ca2626657d083018fefe87d8dee95b18ef72b35876ce5111f950cf99`.
+The independent closure is `target/r2-daily-beta/wp-8/wave181/wholeflow-closure.json`,
+17407bytes, SHA256`4ae5855c62e327c5273426f4a4fd5a2ea8c02c27edf5b5c146a150083188f4b7`.
+
+This accepts the current application's approved-base integration with a
+synthetic extension. It is not production input admission, a real trading
+calendar/session, three scheduled days or Owner acceptance. The original
+Wave177 evidence remains incomplete and consumed; the new run does not fill
+its missing events. No application deployment or image build was performed.
 
 ## Open acceptance
 
