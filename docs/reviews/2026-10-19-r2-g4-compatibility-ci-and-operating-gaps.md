@@ -4182,3 +4182,32 @@ SESSION_EXPIRED/UNKNOWN, 비활성화 뒤의 이전 세션 오류, 화면 해제
 이 변경 커밋의 소스/격리 검증 범위만 인수하며 hosted CI·이미지·운영 반영은 다음이다.
 API/Web0ff579c+Owner7fa 및14:19:22KST 실제 운영 관측은 그대로다. 생산 인증/공급자 호출0.
 배당·가격 충돌과 D-06/D-07 유예, DailyOFF·입력 미승인·실제3일0·전체 R2-07/FINAL OPEN을 유지한다.
+
+### Wave166 — 취소된 세션 오류의 늦은 로그인 이동 보정 운영 인수
+
+2026-10-23 15:26:20 KST, 후보 `282e76593e7b496be95e022fe64de870e3500819`의 Web/API 운영 반영을 독립 인수했다.
+서버 초기값 교체 뒤의 SESSION_EXPIRED/UNKNOWN, 비활성화·화면 해제 뒤 이전 세션 오류가
+로그인으로 이동시키던 네 경로를 격리 재현·보정했다. 응답 해석 뒤 요청 취소 여부를 확인하며
+현재 요청의 정상 로그인 복구·원래 typed 오류는 보존한다. Chromium13·Vitest46·타입/lint와
+CI39906663521 attempt1 all8/full8logs/7checkout·Rust155/Python154·PG19/page14·브라우저13을
+인수했다. 기존 Web OFF/market-stream lane의 skip/flaky/retry는0이다.
+
+build-a1은 Compose 전개용 RESEARCH_ENTITLEMENT_SHA256 누락으로 컴파일 전 종료했고,
+같은7fa Owner 정상 복귀를 별도로 인수했다. 원래 실패 유닛·출력을 보존하고 이전 인수 빌드와 같은
+비활성 Compose 전용 자리표시자를 사용한 새 build-a2를 검증했다. build-a2의12이미지49gate PASS와 stop/build/start/recovery4유닛 정상0/PID0/빈cgroup,
+같은7fa Owner 복귀 및 다른10개 상태·전체21개 inventory 불변을 독립 인수했다.
+공식 설치/check·KIS disabled·상태 타이머 복원 후 Web→API 두 개만 갱신했다.
+선택 릴리스/API/Web은282e765이며 수집기는7fa다. 새 이미지/revision/health·HTTP,
+Owner container/image/start 및 다른9개 상태·19개 inventory 불변을 대조했다.
+Owner의 인수된 시작은 `2026-10-23T06:24:37.611847932Z`이다. 복원 의무는 남지 않았다.
+다른 worker 전체 이행이나 실제 인증·새 시세 수신·실제3거래일을 입증하는 관측은 아니다.
+
+- `target/r2-daily-beta/ci/282e765/hosted-source-closure.json`: 307618bytes, SHA256 `e6f9193460e41c6edc5c2952db3a91296f2b0dda170008b44e4a10af74e03dc2`.
+- `target/r2-daily-beta/wp-8/wave166/build-a1/failed-build-restoration-closure-20261023T060407.json`: 22562bytes, SHA256 `3fc04eff0ea3abb6447bfb4ef75f906db8e87066d5553b9871f6f6f183e7279b`.
+- `target/r2-daily-beta/wp-8/wave166/build-a2/image-restoration-observation-20261023T062506.json`: 858135bytes, SHA256 `cb5048aef76156c58f4dbe492068ff16b360c92c708b29320223d452c427de61`.
+- `target/r2-daily-beta/wp-8/wave166/serving-deployment-closure-20261023T062620.json`: 68600bytes, SHA256 `c3cc67f853efd99e301352dab375882771c9e62218cd7c78c40854aa45241475`.
+
+R2-07의 이 보정은 소스·격리/hosted 검사·운영 반영 범위에서 인수했다. 전체 R2-07 및
+R2/R3 FINAL은 OPEN이다. D-06/D-07 유예, Sep15 배당 충돌과005930 종가273000/272000의
+미확정 원인·원본·실패 기록을 보존한다. DailyOFF/epoch0·KISdisabled·firstSessionnull·실제3일0,
+입력 승인·Owner 인수는 미완료다. 이 문서 커밋은 설치된 불변 릴리스를 바꾸는 빌드 후보가 아니다.
