@@ -514,3 +514,7 @@ G5의 소스 구현·격리 hosted 검증 범위를 수용한다. 실제 승인 
 당시 가용 메모리850MiB/스왑0 때문에 로컬 컴파일을 피하고 제한된 격리 런타임만 준비한다.
 실제 승인 artifact의 새 복사/수집/hosted 업로드·운영 서비스 변경은 없다. 상세 절차와
 소유 범위는 계획의 후속 실행 절과 private owned-workers ledger에 기록한다.
+
+## 실제 승인 입력 후속 수용 — 2026-10-24 09:43UTC
+
+Owner 후속 지시에 따라 기존 승인 root를 직접 확인하고 대상9a0b14f의 source-only hosted executable을 빌드했다. CI40078923911 attempt1 all9 및 same-SHA smoke40078925934가 성공했다. 두 독립 격리 프로세스×각2회에서 두 비용 프로필 결과가 일치했고 승인5pin/bars·실행 파일 provenance·정리·기존 운영 identity 불변을 직접 검증했다. U2/U3와 R4-02/03 첫 구현/실제 기준 전략 범위를 수용하며 [전체 종료 근거](2026-10-24-r4-actual-simulation.md)에 기록했다.10명 소유 작업자의 actual idle/pending0와 모든 보고서를 회수했다. R4-04 전체, R4-05/06 및 운영/Owner 인수는 미완료로 보존한다.

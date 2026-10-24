@@ -6,9 +6,11 @@ Native subagents: prohibited for worker packages
 - 작성일: 2026-10-24 (Asia/Seoul).
 - 기준 revision: `bb906d374f17e25485b440017639894bceb3e1ac`.
 - 대상 작업 디렉터리: `/data/worktrees/3puw275b/short-bobcat`, 브랜치 `review-handoff-next-task`.
-- 상태: **Owner 실행 지시 수신. WP-1 G1 증거 수용·진단 CI39990016668 전체 성공, 원래 실패 원인 미확정.
-  WP-2~4 소스/인터페이스 및 WP-5 독립 리뷰 수용. 최신 후보6ada50c의 CI40071485641은 required 포함8개 job SUCCESS, 같은 SHA smoke40071496969 기능·정리 PASS. simulation unit41/integration2 PASS이며 G5 소스·격리 검증을 수용했다. U2 실제 승인 입력 실행·U3 실행 파일 provenance는 OPEN이며, Owner 후속 지시에 따라 기존 artifact 위치·승인 pin·bars 해시를 직접 확인했다.**
-  [실행 기록](../../reviews/2026-10-24-r4-execution.md)에 수용·검증 상태를 구분해 기록한다.
+- 상태: **2026-10-24 완료 — 첫 구현·격리 검증 및 후속 실제 승인 입력 실행 범위.**
+  대상9a0b14f의 CI40078923911 attempt1 all9 SUCCESS, 같은 SHA smoke40078925934 PASS,
+  실제 승인 v3 입력·executable provenance·두 독립 프로세스×각2회×두 비용 프로필의 결과 일치와
+  정리를 코디네이터가 수용했다. 원래 CI 실패 원인 미확정 및 후속 실패/보정 이력은 보존한다.
+  [실제 실행 수용](../../reviews/2026-10-24-r4-actual-simulation.md). 운영 출시·성과 API/Web 노출은 범위 밖이다.
 - 상위 작업: [ROADMAP R4-02/03](../../ROADMAP.md#8-r4--추천-전용-백테스트).
   R4-04의 계산·무결성 검증 일부를 함께 수행하되 R4-04 전체 완료로 표시하지 않는다.
 - 결정 근거: [R2/R3→R4 인계](../../handoffs/2026-10-23-r2-r3-to-r4.md),
@@ -448,11 +450,11 @@ cargo test --workspace --locked --no-fail-fast --features kis-client/test-suppor
 | Package | 상태 | 증거 / 다음 행동 |
 | --- | --- | --- |
 | WP-1 | DONE (G1 증거 범위) | 2026-10-24 exact90f133e CI39990016668 attempt1 all8 SUCCESS, Web143개 통과. 원래 실패 미재현/원인 미확정 보존; 최종 R4 검증은 별도 |
-| WP-2 | DONE (소스·격리 검증 범위) | 2026-10-24 대상6ada50c 계약·정확 산술 회귀, CI8개 job·same-SHA smoke PASS. 실제 결과 provenance는 별도 OPEN |
-| WP-3 | DONE (소스·합성 원장 검증 범위) | 2026-10-24 대상6ada50c 원장11개 포함 시뮬레이션 unit41 PASS. 실제 승인 입력 실행은 OPEN |
-| WP-4 | 소스·격리 검증 수용 / 실제 입력 OPEN | 2026-10-24 대상6ada50c input/signals/engine 회귀·integration2·CI8개·smoke PASS. U2 실제 artifact 실행·U3 provenance 미확인 |
+| WP-2 | DONE | 2026-10-24 대상6ada50c 계약·정확 산술 회귀, CI8개 job·same-SHA smoke PASS. 후속9a0b14f 실제 결과/provenance 검증도 수용 |
+| WP-3 | DONE | 2026-10-24 대상6ada50c 원장11개 포함 시뮬레이션 unit41 PASS. 후속9a0b14f 실제 승인 입력·반복 결과도 수용 |
+| WP-4 | DONE | 2026-10-24 대상6ada50c input/signals/engine 회귀·integration2·CI8개·smoke PASS. 후속9a0b14f U2 실제 실행·U3 executable provenance와 두 프로세스 재현 수용 |
 | WP-5 | DONE (소스 리뷰 범위) | 2026-10-24 manifest27ae4b99…의 19개 파일과 report31010885… 직접 대조. F1~F5 해소, READY_FOR_HOSTED; runtime 인수 아님 |
-| WP-6 | DONE (same-SHA hosted 검증 범위) | 2026-10-24 대상6ada50c CI40071485641·smoke40071496969 attempt1 SUCCESS. Coordinator 로그·소스19hash·보고서·receipt 검증,6명 idle/pending0 확인 후 감시 종료. G5 소스·격리 범위 수용; 실제 입력 인수 OPEN |
+| WP-6 | DONE (same-SHA hosted 검증 범위) | 2026-10-24 대상9a0b14f CI40078923911 attempt1 all9·smoke40078925934 SUCCESS. Coordinator 로그·소스23hash·보고서·receipt 검증 및 idle/pending0 확인. 이전6ada50c 성공과 실패 이력은 보존; 실제 입력 후속 수용은 별도 종료 기록에 연결 |
 
 2026-10-24: Owner의 `$paseo-delegate-plan` 요청으로 계획 작성. 원본 계약 hash·로컬 코드 접점·
 검증 절차·실행 스킬 위치를 확인했다. 구현·worker·새 hosted 실행·운영 변경은 시작하지 않았다.
@@ -527,3 +529,7 @@ Owner가 위치·해시 확인 및 남은 실행 단계 보고 후 “진행해 
 검증 example은 운영 CLI가 아니고 job 등록·DB/API/Web 노출도 없다. 동일 코드 SHA의 hosted
 검사와 executable/run identity, 승인 pin, 두 비용 결과의 재현을 각각 기록한다.
 소유 작업자·실행·알림은 기존 private ledger에 추가하고 코디네이터 검증 뒤 수용한다.
+
+2026-10-24 09:40UTC — 후속9a0b14f의 source-only executable build·CI40078923911 attempt1 9개 job·same-SHA smoke40078925934 기능/정리를 직접 수용했다. source23개·binary f7ed6422…·rustc1.97.1/musl/release provenance를 대조했고 첫 실제 승인 입력2,252세션/두 비용 프로필·내부 반복 hash와 정리를 확인했다. WP-6 idle/pending0·보고서 회수 완료. 두 번째 독립 프로세스의 교차 재현·최종 정리 전까지 실제 실행의 최종 인수는 PENDING이다. [실제 실행 기록](../../reviews/2026-10-24-r4-actual-simulation.md).
+
+2026-10-24 09:43UTC — 실제 실행 후속 완료.9a0b14f의 두 독립 프로세스가 각2회·두 비용 결과를 재현했고5개 pin/bars/executable identity·종료0·컨테이너 부재·자식 reap·운영 identity 불변을 확인했다. CI9개/same-SHA smoke 수용과 함께 U2/U3를 닫고 R4-02/03 첫 구현/기준 전략 검증을 완료했다.10명 actual idle/pending0·보고서 회수 완료. R4-04 전체·R4-05/06·운영/Owner 인수는 범위 밖 미완료다. [최종 근거](../../reviews/2026-10-24-r4-actual-simulation.md).
