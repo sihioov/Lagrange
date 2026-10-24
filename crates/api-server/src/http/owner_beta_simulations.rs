@@ -444,6 +444,7 @@ fn owner_allowed(state: &ApiState, session: &Session) -> bool {
     state.cfg.owner_beta_access == OwnerBetaAccessMode::OwnerOnly && session.actor().is_owner()
 }
 
+#[allow(clippy::result_large_err)]
 fn client_key(headers: &HeaderMap, rid: &str) -> Result<String, Response> {
     let Some(value) = headers.get(header::HeaderName::from_static("idempotency-key")) else {
         return Err(code_error(
@@ -472,6 +473,7 @@ fn client_key(headers: &HeaderMap, rid: &str) -> Result<String, Response> {
     Ok(value.to_owned())
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_date_field(
     field: SimulationDateField,
     name: &str,
@@ -573,6 +575,7 @@ fn authorize_schedule(
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn decode_cursor(
     state: &ApiState,
     rid: &str,
@@ -589,6 +592,7 @@ fn decode_cursor(
     Ok(Some((created_at, id)))
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_run_id(value: &str, rid: &str) -> Result<Uuid, Response> {
     Uuid::parse_str(value)
         .map_err(|_| code_error("INVALID_PARAMETER", "run id must be a uuid", rid))

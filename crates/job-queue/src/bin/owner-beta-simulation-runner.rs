@@ -267,7 +267,7 @@ fn parse_args(values: Vec<OsString>) -> Result<ParsedArgs, ()> {
 }
 
 fn parse_options(values: &[OsString]) -> Result<BTreeMap<String, OsString>, ()> {
-    if values.len() % 2 != 0 {
+    if !values.len().is_multiple_of(2) {
         return Err(());
     }
     let mut options = BTreeMap::new();

@@ -445,7 +445,7 @@ fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
         "ALTER TABLE public.owner_beta_simulation_runs NO FORCE ROW LEVEL SECURITY",
         "ALTER TABLE public.owner_beta_simulation_result_pairs NO FORCE ROW LEVEL SECURITY",
         "IF EXISTS (SELECT 1 FROM public.owner_beta_simulation_result_pairs)",
-        "IF EXISTS (SELECT 1 FROM public.owner_beta_simulation_runs)",
+        "OR EXISTS (SELECT 1 FROM public.owner_beta_simulation_runs)",
         "owner beta simulation migration requires empty run and pair history",
     ] {
         assert!(

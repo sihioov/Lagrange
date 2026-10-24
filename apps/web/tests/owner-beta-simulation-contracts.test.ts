@@ -359,7 +359,7 @@ describe("owner-beta simulation contracts", () => {
     expect(formatSimulationPercent("-0.000050000000")).toBe("0.00%");
     expect(formatSimulationMoney("1250000.0050")).toBe("₩1,250,000.00");
     expect(formatSimulationMoney("1250000.0150")).toBe("₩1,250,000.02");
-    expect(formatSimulationMoney("-0.0050")).toBe("0.00");
+    expect(formatSimulationMoney("-0.0050")).toBe("₩0.00");
   });
 
   it("caps automatic poll eligibility at 60 attempts per selection", () => {

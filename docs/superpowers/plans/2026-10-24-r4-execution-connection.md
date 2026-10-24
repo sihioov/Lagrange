@@ -881,3 +881,62 @@ exactly once each on that new SHA. The prior failed candidate must not be rerun.
 use a separate private directory and exclusive intent files. Source readiness is not hosted or
 runtime acceptance: exact19/23/6 named gates, Web checks, authentic artifacts and the separately
 bounded approved-input connection/owner-isolation proof remain required.
+
+### G3 second hosted result and scoped correction (2026-10-25)
+
+Candidate `1fadf3b176757516e9475308d79d2c2915166e62` ran CI `40122686601` and
+Research smoke `40122689146`, each attempt1 and once. CI completed six failed jobs including
+required, three successful jobs and172 recorded steps. Format, Python and policy passed.
+Smoke completed successfully with functional PASS; reported project container/volume/network
+and context-image absence is distinct from unverified private-builder absence. Cache saves do
+not establish persistence or performance. Both artifact listings were empty. Required19 source,
+23 PostgreSQL and6 proof outcomes remain unevidenced; no approved-input runtime was attempted.
+
+WP-7 reached actual idle/activeTurn null/pending0. Coordinator recovery matched68 candidate,
+97 protected and872 compile inputs and preserved126 evidence files. Report SHA-256
+`d5c079891941f6d1b67718357bc6bea3de97ec421cce69812e31c9a50c0ec870` is CHANGES_REQUIRED.
+The new private freeze is `target/r4-connection/hosted-correction-round2-preparation/recovered-freeze.json`
+(SHA-256 `32cf82b80cdc317f72ba97b2c519b22e34e6ac4c7e56a0e8df753bf80c23f608`).
+Original failed reviews, prior candidates and all receipts remain intact.
+
+Direct diagnostics and source inspection constrain the correction to five files:
+- WP-3B owns the two test files: use the existing boxed TestResult error for tx_a, test generic
+  claim absence with is_none, and match the existing0063 rollback runs-table OR EXISTS token.
+  Actor/RLS/atomicity/lease checks, both SQL guards, migration SQL and all test names stay fixed.
+- WP-5 owns one expectation: normalized negative-zero KRW is `₩0.00`, matching the formatter's
+  existing prefix. Product formatting and the other assertions remain unchanged.
+- Coordinator owns four function-local result_large_err allowances using the repository's
+  Response-helper convention and the runner's equivalent is_multiple_of parity predicate.
+
+These are new exposed failure causes after the first correction, not blind retries. No local
+Rust compilation/Clippy/tests, DB, Web typecheck/unit/build/browser or runtime proof is allowed.
+Use source inspection, permitted formatting/lint and whitespace checks, recover the worker
+reports/hashes, then freeze the integrated delta for the existing independent reviewer. No
+structural edge or currently cited line is changed by these five-file corrections; diagram
+sources and PNGs stay intact. After source acceptance, a new clean candidate must pass the
+existing same-SHA CI/required/source build and smoke before authenticated artifacts and the
+separately bounded approved-input connection proof. R4-04 isolation and R4-05 remain incomplete.
+
+The bounded correction is integrated. WP-3B and WP-5 are idle with no active turn or pending
+permission. Coordinator inspection confirmed the exact assigned edits, unchanged test names
+and all 126 preserved evidence hashes. Rust formatting, Web workspace lint and documentation
+fast checks passed. The existing independent reviewer will review this frozen seven-path delta
+(five code/test files plus roadmap and plan); hosted and runtime acceptance remain pending.
+
+### G3 second correction source acceptance (2026-10-25)
+
+The independent reviewer returned READY_FOR_HOSTED with no mandatory source item remaining.
+Coordinator recovery verified actual idle, activeTurn null and pending0, all 68 source,
+139 protected-evidence and 872 compile-input hashes, unchanged HEAD/index and private modes.
+The report SHA-256 is `15f095b09fca47c7c8c9cc052969da10713679a8af39a2f47131d3cc9b233210`;
+receipt SHA-256 is `8a69708e6cefbeed2fef050adb67e4b94e18db3258b5adf39664779ae360dab8`.
+Both are under `target/r4-connection/wp-6/hosted-round2-correction/`; coordinator recovery is
+`target/r4-connection/coordinator-hosted-round2-correction-acceptance.json`.
+
+Only roadmap/plan acceptance records change after that review; all five corrected code/test
+files, unchanged diagrams and compile inputs remain exactly reviewed. The target is the new
+commit containing this acceptance record, not the failed prior candidate. Run existing
+CI/required with source-only build and Research smoke once each at that new SHA, recovering
+the exact named results and artifact identities. No hosted or runtime acceptance is implied.
+Original failure evidence, approved-input boundaries and actual owner isolation requirements
+remain intact. Do not rerun either failed candidate.

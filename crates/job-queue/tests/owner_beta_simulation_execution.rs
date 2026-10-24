@@ -508,7 +508,7 @@ async fn r4_actor_rls_and_hash_isolation_body(db: &ScratchDb) -> TestResult {
         .await?;
         assert_eq!((own, foreign), (1, 0));
         tx.commit().await?;
-        Ok::<_, sqlx::Error>(())
+        Ok::<_, Box<dyn Error>>(())
     };
     tx_a.await?;
     let actor_cleared: bool = sqlx::query_scalar(
@@ -1236,9 +1236,8 @@ async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult
         .await?
         .expect("typed R4 claim");
     assert_eq!(claim.job.id, fixture.job_id);
-    assert_eq!(
-        queue.claim_next("generic-worker").await?,
-        None,
+    assert!(
+        queue.claim_next("generic-worker").await?.is_none(),
         "generic untyped claim cannot consume the R4 job"
     );
     sqlx::query("UPDATE public.jobs SET locked_at = now() - interval '10 seconds' WHERE id = $1")
