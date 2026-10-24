@@ -32,7 +32,7 @@ use job_queue::{
 };
 use market_data::KR_ETF_CORE_SYMBOLS;
 use serde_json::json;
-use sqlx::{Executor, PgPool, postgres::PgConnectOptions, postgres::PgPoolOptions};
+use sqlx::{PgPool, postgres::PgConnectOptions, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -70,19 +70,376 @@ async fn new_owner(db: &ScratchDb, suffix: &str) -> TestResult<Uuid> {
 }
 
 async fn role_pool(db: &ScratchDb, role: &str, actor: Option<Uuid>) -> PgPool {
-    let mut options: PgConnectOptions = db
+    let actor = actor.map(|actor| actor.to_string());
+    role_pool_with_actor_value(db, role, actor.as_deref()).await
+}
+
+async fn role_pool_with_actor_value(db: &ScratchDb, role: &str, actor: Option<&str>) -> PgPool {
+    let options: PgConnectOptions = db
         .role_url(role)
         .parse()
         .unwrap_or_else(|_| panic!("valid {role} test role URL"));
-    if let Some(actor) = actor {
-        options = options.options([("app.actor_user_id", actor.to_string())]);
-    }
-    PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(10))
         .connect_with(options)
         .await
-        .unwrap_or_else(|_| panic!("connect as {role}"))
+        .unwrap_or_else(|_| panic!("connect as {role}"));
+    if let Some(actor) = actor {
+        sqlx::query_scalar::<_, String>(
+            "SELECT pg_catalog.set_config('app.actor_user_id', $1, false)",
+        )
+        .bind(actor)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|_| panic!("set test actor for {role}"));
+    }
+    pool
+}
+
+async fn assert_raw_actor(
+    pool: &PgPool,
+    expected_backend_pid: i32,
+    expected: Option<&str>,
+    context: &str,
+) -> TestResult {
+    let (backend_pid, observed): (i32, Option<String>) = sqlx::query_as(
+        "SELECT pg_catalog.pg_backend_pid(),
+                pg_catalog.current_setting('app.actor_user_id', true)",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        backend_pid, expected_backend_pid,
+        "{context}: same connection"
+    );
+    assert_eq!(observed.as_deref(), expected, "{context}");
+    Ok(())
+}
+
+async fn assert_raw_actor_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    expected: &str,
+    context: &str,
+) -> TestResult {
+    let observed: String =
+        sqlx::query_scalar("SELECT pg_catalog.current_setting('app.actor_user_id', true)")
+            .fetch_one(&mut **transaction)
+            .await?;
+    assert_eq!(observed, expected, "{context}");
+    Ok(())
+}
+
+async fn assert_actor_logically_absent(
+    pool: &PgPool,
+    expected_backend_pid: i32,
+    context: &str,
+) -> TestResult {
+    let (backend_pid, absent): (i32, bool) = sqlx::query_as(
+        "SELECT pg_catalog.pg_backend_pid(),
+                NULLIF(pg_catalog.current_setting('app.actor_user_id', true), '') IS NULL",
+    )
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        backend_pid, expected_backend_pid,
+        "{context}: same connection"
+    );
+    assert!(absent, "{context}");
+    Ok(())
+}
+
+fn assert_sqlstate(error: &sqlx::Error, expected: &str, context: &str) {
+    let code = error
+        .as_database_error()
+        .and_then(|database_error| database_error.code());
+    assert_eq!(code.as_deref(), Some(expected), "{context}");
+}
+
+async fn pin_inactive_candidate_control_for_test(db: &ScratchDb, worker: &PgPool) -> TestResult {
+    let candidate: (bool, Uuid) = sqlx::query_as(
+        "SELECT active, service_user_id
+           FROM public.candidate_scheduler_control
+          WHERE control_key = 'scheduler'",
+    )
+    .fetch_one(worker)
+    .await?;
+    assert_eq!(
+        candidate,
+        (
+            false,
+            Uuid::parse_str("00000000-0000-4000-8000-000000000042")?,
+        ),
+        "the default candidate service row remains present and inactive"
+    );
+    let daily_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM public.owner_beta_daily_control")
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(
+        daily_rows, 0,
+        "the isolated test has no Daily control to activate"
+    );
+    Ok(())
+}
+
+#[derive(Debug, sqlx::FromRow, PartialEq, Eq)]
+struct JobsOwnerPolicySnapshot {
+    roles: Vec<String>,
+    command: String,
+    permissive: String,
+    using_expression: Option<String>,
+    check_expression: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow, PartialEq, Eq)]
+struct CandidateSettlementSnapshot {
+    definition: String,
+    body: String,
+    owner: String,
+    configuration: String,
+    acl: String,
+    security_definer: bool,
+    language: String,
+}
+
+async fn jobs_owner_policy_snapshot(pool: &PgPool) -> TestResult<JobsOwnerPolicySnapshot> {
+    Ok(sqlx::query_as(
+        "SELECT roles::text[] AS roles, cmd AS command, permissive,
+                qual AS using_expression, with_check AS check_expression
+           FROM pg_catalog.pg_policies
+          WHERE schemaname = 'public'
+            AND tablename = 'jobs'
+            AND policyname = 'tenant_all_owner_jobs'",
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
+async fn candidate_settlement_snapshot(pool: &PgPool) -> TestResult<CandidateSettlementSnapshot> {
+    Ok(sqlx::query_as(
+        "SELECT pg_catalog.pg_get_functiondef(p.oid) AS definition,
+                p.prosrc AS body,
+                owner.rolname::text AS owner,
+                COALESCE(p.proconfig::text, '') AS configuration,
+                COALESCE(p.proacl::text, '<default>') AS acl,
+                p.prosecdef AS security_definer,
+                lang.lanname::text AS language
+           FROM pg_catalog.pg_proc AS p
+           JOIN pg_catalog.pg_roles AS owner ON owner.oid = p.proowner
+           JOIN pg_catalog.pg_language AS lang ON lang.oid = p.prolang
+          WHERE p.oid =
+                'public.assert_candidate_publication_settlement()'::regprocedure",
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
+fn legacy_candidate_settlement_body() -> &'static str {
+    let source = include_str!("../../../migrations/0044_candidate_pipeline.up.sql");
+    let function_start = source
+        .find("CREATE FUNCTION public.assert_candidate_publication_settlement()")
+        .expect("0044 candidate settlement function exists");
+    let function_source = &source[function_start..];
+    let body_start = function_source
+        .find("AS $assert$")
+        .expect("0044 candidate settlement body starts")
+        + "AS $assert$".len();
+    let body_end = function_source[body_start..]
+        .find("$assert$;")
+        .expect("0044 candidate settlement body ends")
+        + body_start;
+    &function_source[body_start..body_end]
+}
+
+async fn assert_generic_attempt_first_actor_scope(
+    db: &ScratchDb,
+    actor_setting: Option<&str>,
+    expected_actor: Option<&str>,
+    label: &str,
+) -> TestResult {
+    let owner_b = new_owner(db, &format!("r4-{label}-owner-b")).await?;
+    let worker = role_pool_with_actor_value(db, "worker", actor_setting).await;
+    let worker_backend_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+        .fetch_one(&worker)
+        .await?;
+    let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(1)));
+    let fixture_queue = JobQueue::new(db.pool.clone(), None, queue_config(Duration::from_secs(1)));
+    let recovering = fixture_queue
+        .submit(job_queue::SubmitJob {
+            owner_user_id: owner_b,
+            job_type: "backtest".to_owned(),
+            payload: json!({"kind": "actor-recovery", "case": label}),
+            priority: 1,
+            idempotency_key: None,
+            max_attempts: 2,
+            available_at: None,
+        })
+        .await?;
+    let claim = queue
+        .claim_next(&format!("r4-{label}-recovery-worker"))
+        .await?
+        .expect("generic recovery fixture is claimable");
+    assert_eq!(claim.job.id, recovering.id);
+    match expected_actor {
+        Some(actor) => {
+            assert_raw_actor(
+                &worker,
+                worker_backend_pid,
+                Some(actor),
+                "generic claim keeps actor A",
+            )
+            .await?
+        }
+        None => {
+            assert_actor_logically_absent(
+                &worker,
+                worker_backend_pid,
+                "generic claim keeps actor logically absent",
+            )
+            .await?
+        }
+    }
+    sqlx::query(
+        "UPDATE public.jobs
+            SET locked_at = pg_catalog.now() - interval '10 seconds'
+          WHERE id = $1",
+    )
+    .bind(recovering.id)
+    .execute(&db.pool)
+    .await?;
+    let recovered = queue.sweep().await?;
+    assert_eq!(
+        (
+            recovered.jobs_checked,
+            recovered.attempts_orphaned,
+            recovered.jobs_requeued
+        ),
+        (1, 1, 1),
+        "{label} generic recovery performs its attempt-first transition"
+    );
+    match expected_actor {
+        Some(actor) => {
+            assert_raw_actor(
+                &worker,
+                worker_backend_pid,
+                Some(actor),
+                "generic recovery restores actor A",
+            )
+            .await?
+        }
+        None => {
+            assert_actor_logically_absent(
+                &worker,
+                worker_backend_pid,
+                "generic recovery keeps actor logically absent",
+            )
+            .await?
+        }
+    }
+    let recovered_state: (JobStatus, String, i64) = sqlx::query_as(
+        "SELECT job.status, attempt.outcome,
+                (SELECT count(*) FROM public.job_attempts AS all_attempts
+                  WHERE all_attempts.job_id = job.id)
+           FROM public.jobs AS job
+           JOIN public.job_attempts AS attempt
+             ON attempt.job_id = job.id AND attempt.attempt_no = 1
+          WHERE job.id = $1",
+    )
+    .bind(recovering.id)
+    .fetch_one(&db.pool)
+    .await?;
+    assert_eq!(
+        recovered_state,
+        (JobStatus::Queued, "ORPHANED".to_owned(), 1)
+    );
+    sqlx::query(
+        "UPDATE public.jobs
+            SET available_at = pg_catalog.now() + interval '1 hour'
+          WHERE id = $1",
+    )
+    .bind(recovering.id)
+    .execute(&db.pool)
+    .await?;
+
+    let canceled = fixture_queue
+        .submit(job_queue::SubmitJob {
+            owner_user_id: owner_b,
+            job_type: "backtest".to_owned(),
+            payload: json!({"kind": "actor-cancel-settlement", "case": label}),
+            priority: 1,
+            idempotency_key: None,
+            max_attempts: 2,
+            available_at: None,
+        })
+        .await?;
+    let canceled_claim = queue
+        .claim_next(&format!("r4-{label}-cancel-worker"))
+        .await?
+        .expect("generic cancellation fixture is claimable");
+    assert_eq!(canceled_claim.job.id, canceled.id);
+    let app = role_pool(db, "app", Some(owner_b)).await;
+    let audit = role_pool(db, "audit_writer", None).await;
+    let cancel_queue = JobQueue::new(app, Some(audit), queue_config(Duration::from_secs(1)));
+    let mut actor = AuditActor::new("owner");
+    actor.user_id = Some(owner_b);
+    actor.correlation_id = Some(format!("r4-{label}-cancel-{}", Uuid::new_v4()));
+    assert!(matches!(
+        cancel_queue.request_cancel(canceled.id, &actor).await?,
+        job_queue::CancelResult::Canceled(_)
+    ));
+    sqlx::query(
+        "UPDATE public.jobs
+            SET locked_at = pg_catalog.now() - interval '10 seconds'
+          WHERE id = $1",
+    )
+    .bind(canceled.id)
+    .execute(&db.pool)
+    .await?;
+    let canceled_recovery = queue.sweep().await?;
+    assert_eq!(
+        (
+            canceled_recovery.jobs_checked,
+            canceled_recovery.attempts_orphaned
+        ),
+        (1, 1),
+        "{label} canceled settlement first terminalizes its attempt"
+    );
+    match expected_actor {
+        Some(actor) => {
+            assert_raw_actor(
+                &worker,
+                worker_backend_pid,
+                Some(actor),
+                "canceled settlement restores actor A",
+            )
+            .await?
+        }
+        None => {
+            assert_actor_logically_absent(
+                &worker,
+                worker_backend_pid,
+                "canceled settlement keeps actor logically absent",
+            )
+            .await?
+        }
+    }
+    let canceled_state: (JobStatus, String) = sqlx::query_as(
+        "SELECT job.status, attempt.outcome
+           FROM public.jobs AS job
+           JOIN public.job_attempts AS attempt
+             ON attempt.job_id = job.id AND attempt.attempt_no = 1
+          WHERE job.id = $1",
+    )
+    .bind(canceled.id)
+    .fetch_one(&db.pool)
+    .await?;
+    assert_eq!(canceled_state, (JobStatus::Canceled, "ORPHANED".to_owned()));
+    sqlx::query("UPDATE public.jobs SET locked_at = NULL WHERE id = $1")
+        .bind(canceled.id)
+        .execute(&db.pool)
+        .await?;
+    Ok(())
 }
 
 async fn set_actor(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, owner: Uuid) -> TestResult {
@@ -188,8 +545,8 @@ async fn seed_fixture_with_identity_window(
     let input = SimulationJobInput::from_json(&input_json(run_id, config_id))
         .map_err(|_| "synthetic fixed-window input must validate")?;
 
-    let mut tx = app.begin().await?;
-    set_actor(&mut tx, owner_id).await?;
+    // Explicit config IDs (including the nil-ID regression) are privileged
+    // fixture preparation. The app's production column grant excludes id.
     sqlx::query(
         "INSERT INTO public.user_strategy_configs
             (id, owner_user_id, strategy_id, strategy_version, config_json, is_active)
@@ -198,8 +555,32 @@ async fn seed_fixture_with_identity_window(
     .bind(config_id)
     .bind(owner_id)
     .bind(input.strategy().config_json())
-    .execute(&mut *tx)
+    .execute(&db.pool)
     .await?;
+
+    let mut tx = app.begin().await?;
+    set_actor(&mut tx, owner_id).await?;
+    let app_identity: (String, String, Uuid) = sqlx::query_as(
+        "SELECT current_user::text, session_user::text,
+                current_setting('app.actor_user_id')::uuid",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    assert_eq!(app_identity, ("app".to_owned(), "app".to_owned(), owner_id));
+    let config_matches: bool = sqlx::query_scalar(
+        "SELECT owner_user_id = $2 AND strategy_id = 'trend_following'
+                AND strategy_version = '1.0.0' AND config_json = $3 AND is_active
+           FROM public.user_strategy_configs WHERE id = $1",
+    )
+    .bind(config_id)
+    .bind(owner_id)
+    .bind(input.strategy().config_json())
+    .fetch_one(&mut *tx)
+    .await?;
+    assert!(
+        config_matches,
+        "app sees the exact owner-bound fixture config"
+    );
 
     let mut job_payload = serde_json::to_value(&input)?;
     let (evaluation_start, evaluation_end, session_count) = match evaluation_window {
@@ -640,6 +1021,52 @@ async fn r4_role_grants_and_forced_rls_body(db: &ScratchDb) -> TestResult {
     .fetch_one(&db.pool)
     .await?;
     assert!(!worker_config_update);
+    let fixture_only_privileges: (bool, bool) = sqlx::query_as(
+        "SELECT pg_catalog.has_column_privilege(
+            'app', 'public.user_strategy_configs', 'id', 'INSERT'),
+                pg_catalog.has_table_privilege('worker', 'public.jobs', 'INSERT')",
+    )
+    .fetch_one(&db.pool)
+    .await?;
+    assert_eq!(fixture_only_privileges, (false, false));
+
+    let mut allowed_config = app.begin().await?;
+    set_actor(&mut allowed_config, owner).await?;
+    let created: (Uuid, Uuid) = sqlx::query_as(
+        "INSERT INTO public.user_strategy_configs
+            (owner_user_id, strategy_id, strategy_version, config_json, is_active)
+         VALUES ($1, 'trend_following', '1.0.0', $2, true)
+         RETURNING id, owner_user_id",
+    )
+    .bind(owner)
+    .bind(fixture.input.strategy().config_json())
+    .fetch_one(&mut *allowed_config)
+    .await?;
+    assert_ne!(created.0, fixture.input.strategy_config_id());
+    assert_eq!(created.1, owner);
+    allowed_config.rollback().await?;
+
+    let mut forbidden_config = app.begin().await?;
+    set_actor(&mut forbidden_config, owner).await?;
+    let denied = sqlx::query(
+        "INSERT INTO public.user_strategy_configs
+            (id, owner_user_id, strategy_id, strategy_version, config_json, is_active)
+         VALUES ($1, $2, 'trend_following', '1.0.0', $3, true)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(owner)
+    .bind(fixture.input.strategy().config_json())
+    .execute(&mut *forbidden_config)
+    .await
+    .expect_err("app cannot choose a config ID");
+    assert_eq!(
+        denied
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("42501")
+    );
+    forbidden_config.rollback().await?;
     let app_pair_insert: bool = sqlx::query_scalar(
         "SELECT pg_catalog.has_any_column_privilege(
             'app', 'public.owner_beta_simulation_result_pairs', 'INSERT')",
@@ -792,6 +1219,18 @@ async fn r4_role_grants_and_forced_rls_body(db: &ScratchDb) -> TestResult {
             .is_err(),
         "worker cannot retag a simulation job"
     );
+    let foreign_owner = new_owner(db, "r4-grants-retag-owner").await?;
+    let owner_retag = sqlx::query("UPDATE public.jobs SET owner_user_id = $2 WHERE id = $1")
+        .bind(fixture.job_id)
+        .bind(foreign_owner)
+        .execute(&worker)
+        .await
+        .expect_err("worker cannot retag a simulation job owner");
+    assert_sqlstate(
+        &owner_retag,
+        "42501",
+        "worker owner retag remains forbidden",
+    );
     for role_pool in [&admin, &research, &audit] {
         assert!(
             sqlx::query(
@@ -823,11 +1262,49 @@ async fn r4_success_pair_is_one_commit() {
 }
 
 async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
-    let owner = new_owner(db, "r4-atomic").await?;
+    let owner_a = new_owner(db, "r4-actor-a").await?;
+    let owner_b = new_owner(db, "r4-atomic-owner-b").await?;
     let app = role_pool(db, "app", None).await;
-    let fixture = seed_fixture(db, owner, &app, "atomic").await?;
-    let worker = role_pool(db, "worker", None).await;
+    let fixture = seed_fixture(db, owner_b, &app, "atomic").await?;
+    let actor_a = owner_a.to_string();
+    let worker = role_pool_with_actor_value(db, "worker", Some(&actor_a)).await;
+    let worker_backend_pid: i32 = sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+        .fetch_one(&worker)
+        .await?;
+    pin_inactive_candidate_control_for_test(db, &worker).await?;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(60)));
+    let generic = JobQueue::new(db.pool.clone(), None, queue_config(Duration::from_secs(60)))
+        .submit(job_queue::SubmitJob {
+            owner_user_id: owner_b,
+            job_type: "backtest".to_owned(),
+            payload: json!({"kind": "actor-preservation-generic"}),
+            priority: 1,
+            idempotency_key: None,
+            max_attempts: 1,
+            available_at: None,
+        })
+        .await?;
+    let generic_claim = queue
+        .claim_next("r4-actor-a-generic")
+        .await?
+        .expect("generic owner B claim");
+    assert_eq!(generic_claim.job.id, generic.id);
+    assert_raw_actor(
+        &worker,
+        worker_backend_pid,
+        Some(&actor_a),
+        "generic claim preserves worker actor A",
+    )
+    .await?;
+    queue.settle_success(&generic_claim).await?;
+    assert_raw_actor(
+        &worker,
+        worker_backend_pid,
+        Some(&actor_a),
+        "generic attempt settlement preserves worker actor A",
+    )
+    .await?;
+
     let claim = queue
         .claim_next_for(
             "r4-atomic-worker",
@@ -835,6 +1312,13 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         )
         .await?
         .expect("typed R4 claim");
+    assert_raw_actor(
+        &worker,
+        worker_backend_pid,
+        Some(&actor_a),
+        "R4 claim and attempt insertion preserve worker actor A",
+    )
+    .await?;
     let engine = synthetic_engine('a');
     let pair = synthetic_pair(&fixture, &engine);
 
@@ -846,12 +1330,18 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
          VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(fixture.input.run_id())
-    .bind(owner)
+    .bind(owner_b)
     .bind(pair.illustrative_10bp_per_side_bytes())
     .bind(pair.illustrative_10bp_per_side_sha256().as_str())
     .bind(pair.zero_cost_reference_bytes())
     .bind(pair.zero_cost_reference_sha256().as_str())
     .execute(&mut *uncommitted)
+    .await?;
+    assert_raw_actor_in_transaction(
+        &mut uncommitted,
+        &actor_a,
+        "R4 pair validation restores actor A in its writing transaction",
+    )
     .await?;
     let app_pair_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
@@ -864,7 +1354,7 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "uncommitted pair is invisible on a separate app connection"
     );
     let mut app_read = app.begin().await?;
-    set_actor(&mut app_read, owner).await?;
+    set_actor(&mut app_read, owner_b).await?;
     let actor_pair_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
     )
@@ -881,6 +1371,13 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
     let published =
         publish_simulation_success(&queue, &claim, &fixture.input, &pair, &engine).await?;
     assert_eq!(published, SimulationPublicationOutcome::Published);
+    assert_raw_actor(
+        &worker,
+        worker_backend_pid,
+        Some(&actor_a),
+        "nested run, pair, attempt and deferred callbacks preserve actor A",
+    )
+    .await?;
     let stored: (Vec<u8>, String, Vec<u8>, String) = sqlx::query_as(
         "SELECT illustrative_canonical, illustrative_sha256,
                 zero_cost_canonical, zero_cost_sha256
@@ -917,7 +1414,7 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "unset actor remains invisible after publication"
     );
     let mut actor_tx = app.begin().await?;
-    set_actor(&mut actor_tx, owner).await?;
+    set_actor(&mut actor_tx, owner_b).await?;
     let visible: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
     )
@@ -929,6 +1426,117 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "app sees both profiles only after the full commit"
     );
     actor_tx.commit().await?;
+
+    let mut deferred = worker.begin().await?;
+    let noop_job_update = sqlx::query("UPDATE public.jobs SET status = status WHERE id = $1")
+        .bind(fixture.job_id)
+        .execute(&mut *deferred)
+        .await?;
+    assert_eq!(noop_job_update.rows_affected(), 1);
+    assert_raw_actor_in_transaction(
+        &mut deferred,
+        &actor_a,
+        "the jobs status trigger restores actor A before deferred checks",
+    )
+    .await?;
+    sqlx::query("SET CONSTRAINTS ALL IMMEDIATE")
+        .execute(&mut *deferred)
+        .await?;
+    assert_raw_actor_in_transaction(
+        &mut deferred,
+        &actor_a,
+        "forced candidate and R4 deferred callbacks preserve actor A",
+    )
+    .await?;
+    deferred.commit().await?;
+    assert_raw_actor(
+        &worker,
+        worker_backend_pid,
+        Some(&actor_a),
+        "worker pool retains actor A after forced deferred checks",
+    )
+    .await?;
+
+    let savepoint_fixture = seed_fixture(db, owner_b, &app, "actor-savepoint").await?;
+    let savepoint_claim = queue
+        .claim_next_for(
+            "r4-actor-savepoint-worker",
+            OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE,
+        )
+        .await?
+        .expect("savepoint fixture claim");
+    let mut scoped_write = worker.begin().await?;
+    assert_raw_actor_in_transaction(
+        &mut scoped_write,
+        &actor_a,
+        "actor A is set before the savepoint",
+    )
+    .await?;
+    let before_attempt: (Uuid, i32, String, Option<String>) = sqlx::query_as(
+        "SELECT job_id, attempt_no, outcome, claimed_by
+           FROM public.job_attempts WHERE id = $1",
+    )
+    .bind(savepoint_claim.attempt.id)
+    .fetch_one(&mut *scoped_write)
+    .await?;
+    let before_job_status: JobStatus =
+        sqlx::query_scalar("SELECT status FROM public.jobs WHERE id = $1")
+            .bind(savepoint_fixture.job_id)
+            .fetch_one(&mut *scoped_write)
+            .await?;
+    sqlx::query("SAVEPOINT actor_scope_rollback")
+        .execute(&mut *scoped_write)
+        .await?;
+    sqlx::query(
+        "UPDATE public.job_attempts
+            SET outcome = 'ORPHANED', finished_at = pg_catalog.now()
+          WHERE id = $1",
+    )
+    .bind(savepoint_claim.attempt.id)
+    .execute(&mut *scoped_write)
+    .await?;
+    assert_raw_actor_in_transaction(
+        &mut scoped_write,
+        &actor_a,
+        "successful attempt guard write restores actor A before savepoint rollback",
+    )
+    .await?;
+    let late_validation =
+        sqlx::query("UPDATE public.job_attempts SET attempt_no = attempt_no + 1 WHERE id = $1")
+            .bind(savepoint_claim.attempt.id)
+            .execute(&mut *scoped_write)
+            .await
+            .expect_err("attempt identity remains immutable after scoped actor work");
+    assert_sqlstate(
+        &late_validation,
+        "42501",
+        "late attempt validation rejects immutable identity",
+    );
+    sqlx::query("ROLLBACK TO SAVEPOINT actor_scope_rollback")
+        .execute(&mut *scoped_write)
+        .await?;
+    assert_raw_actor_in_transaction(
+        &mut scoped_write,
+        &actor_a,
+        "savepoint rollback preserves the original raw actor A",
+    )
+    .await?;
+    let after_attempt: (Uuid, i32, String, Option<String>) = sqlx::query_as(
+        "SELECT job_id, attempt_no, outcome, claimed_by
+           FROM public.job_attempts WHERE id = $1",
+    )
+    .bind(savepoint_claim.attempt.id)
+    .fetch_one(&mut *scoped_write)
+    .await?;
+    let after_job_status: JobStatus =
+        sqlx::query_scalar("SELECT status FROM public.jobs WHERE id = $1")
+            .bind(savepoint_fixture.job_id)
+            .fetch_one(&mut *scoped_write)
+            .await?;
+    assert_eq!(after_attempt, before_attempt);
+    assert_eq!(after_job_status, before_job_status);
+    scoped_write.rollback().await?;
+
     assert_eq!(
         reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &engine).await?,
         SimulationCommitState::Published
@@ -952,6 +1560,7 @@ async fn r4_partial_pair_and_transaction_failure_hidden_body(db: &ScratchDb) -> 
     let app = role_pool(db, "app", None).await;
     let fixture = seed_fixture(db, owner, &app, "partial").await?;
     let worker = role_pool(db, "worker", None).await;
+    pin_inactive_candidate_control_for_test(db, &worker).await?;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(60)));
     let claim = queue
         .claim_next_for(
@@ -1158,7 +1767,14 @@ async fn r4_typed_claim_and_generic_exclusion_body(db: &ScratchDb) -> TestResult
     let fixture = seed_fixture(db, owner, &app, "typed-only").await?;
     let worker = role_pool(db, "worker", None).await;
     let queue = JobQueue::new(worker, None, queue_config(Duration::from_secs(30)));
-    let ordinary = queue
+    let fixture_queue = JobQueue::new(db.pool.clone(), None, queue_config(Duration::from_secs(30)));
+    let worker_role = queue.pool();
+    let worker_identity: (String, String) =
+        sqlx::query_as("SELECT current_user::text, session_user::text")
+            .fetch_one(&worker_role)
+            .await?;
+    assert_eq!(worker_identity, ("worker".to_owned(), "worker".to_owned()));
+    let ordinary = fixture_queue
         .submit(job_queue::SubmitJob {
             owner_user_id: owner,
             job_type: "backtest".to_owned(),
@@ -1197,6 +1813,95 @@ async fn r4_typed_claim_and_generic_exclusion_body(db: &ScratchDb) -> TestResult
         .expect("one exact R4 worker claims the simulation");
     assert_eq!(typed.job.id, fixture.job_id);
     assert_eq!(typed.attempt.attempt_no, 1);
+
+    let generic_target = fixture_queue
+        .submit(job_queue::SubmitJob {
+            owner_user_id: owner,
+            job_type: "backtest".to_owned(),
+            payload: json!({"kind": "r4-attempt-reassignment-target"}),
+            priority: 1,
+            idempotency_key: None,
+            max_attempts: 2,
+            available_at: None,
+        })
+        .await?;
+    let target_slot_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM public.job_attempts
+          WHERE job_id = $1 AND attempt_no = 1",
+    )
+    .bind(generic_target.id)
+    .fetch_one(&db.pool)
+    .await?;
+    assert_eq!(target_slot_count, 0, "R4-to-generic target slot is unused");
+    let r4_to_generic = sqlx::query("UPDATE public.job_attempts SET job_id = $2 WHERE id = $1")
+        .bind(typed.attempt.id)
+        .bind(generic_target.id)
+        .execute(&worker_role)
+        .await
+        .expect_err("an R4 attempt cannot be reassigned to a generic job");
+    assert_sqlstate(
+        &r4_to_generic,
+        "42501",
+        "R4-to-generic reassignment reaches the immutable-parent guard",
+    );
+    let retained_r4_link: (Uuid, i32) =
+        sqlx::query_as("SELECT job_id, attempt_no FROM public.job_attempts WHERE id = $1")
+            .bind(typed.attempt.id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(retained_r4_link, (fixture.job_id, 1));
+
+    let generic_source = fixture_queue
+        .submit(job_queue::SubmitJob {
+            owner_user_id: owner,
+            job_type: "backtest".to_owned(),
+            payload: json!({"kind": "generic-attempt-reassignment-source"}),
+            priority: 1,
+            idempotency_key: None,
+            max_attempts: 2,
+            available_at: None,
+        })
+        .await?;
+    let reassigned_attempt_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO public.job_attempts
+            (id, job_id, attempt_no, outcome, claimed_by, started_at)
+         VALUES ($1, $2, 1, 'RUNNING', 'r4-parent-reassignment-test', pg_catalog.now())",
+    )
+    .bind(reassigned_attempt_id)
+    .bind(generic_source.id)
+    .execute(&db.pool)
+    .await?;
+    let unused_r4 = seed_fixture(db, owner, &app, "attempt-reassignment-target").await?;
+    let reverse_target_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM public.job_attempts
+          WHERE job_id = $1 AND attempt_no = 1",
+    )
+    .bind(unused_r4.job_id)
+    .fetch_one(&db.pool)
+    .await?;
+    assert_eq!(
+        reverse_target_count, 0,
+        "generic-to-R4 target slot is unused"
+    );
+    let generic_to_r4 = sqlx::query("UPDATE public.job_attempts SET job_id = $2 WHERE id = $1")
+        .bind(reassigned_attempt_id)
+        .bind(unused_r4.job_id)
+        .execute(&worker_role)
+        .await
+        .expect_err("a generic attempt cannot be reassigned to an R4 job");
+    assert_sqlstate(
+        &generic_to_r4,
+        "42501",
+        "generic-to-R4 reassignment reaches the immutable-parent guard",
+    );
+    let retained_generic_link: (Uuid, i32) =
+        sqlx::query_as("SELECT job_id, attempt_no FROM public.job_attempts WHERE id = $1")
+            .bind(reassigned_attempt_id)
+            .fetch_one(&db.pool)
+            .await?;
+    assert_eq!(retained_generic_link, (generic_source.id, 1));
+
     sqlx::query(
         "UPDATE public.jobs SET locked_at = pg_catalog.now() - interval '10 seconds' WHERE id = $1",
     )
@@ -1227,6 +1932,7 @@ async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult
     let app = role_pool(db, "app", None).await;
     let fixture = seed_fixture(db, owner, &app, "recovery").await?;
     let worker = role_pool(db, "worker", None).await;
+    pin_inactive_candidate_control_for_test(db, &worker).await?;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(60)));
     let claim = queue
         .claim_next_for(
@@ -1392,6 +2098,32 @@ async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult
         .await?,
         SimulationPublicationOutcome::Canceled,
         "recovered cancellation wins over a late zombie failure"
+    );
+
+    let actor_a = new_owner(db, "r4-recovery-actor-a").await?.to_string();
+    assert_generic_attempt_first_actor_scope(db, None, None, "missing-actor").await?;
+    assert_generic_attempt_first_actor_scope(db, Some(""), None, "empty-actor").await?;
+    assert_generic_attempt_first_actor_scope(db, Some(&actor_a), Some(&actor_a), "valid-actor-a")
+        .await?;
+
+    for actor_setting in [None, Some("")] {
+        let migration_owner =
+            role_pool_with_actor_value(db, "migration_owner", actor_setting).await;
+        let visible_jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM public.jobs")
+            .fetch_one(&migration_owner)
+            .await?;
+        assert_eq!(visible_jobs, 0, "NULL and empty actors are no identity");
+    }
+    let malformed_actor =
+        role_pool_with_actor_value(db, "migration_owner", Some("not-a-uuid")).await;
+    let malformed_read = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM public.jobs")
+        .fetch_one(&malformed_actor)
+        .await
+        .expect_err("a malformed nonempty actor is rejected by the scoped owner reader");
+    assert_sqlstate(
+        &malformed_read,
+        "22P02",
+        "malformed nonempty actor is not treated as missing",
     );
     Ok(())
 }
@@ -1585,6 +2317,8 @@ async fn r4_migration_up_down_guards() {
 
 async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     let migration_owner = role_pool(db, "migration_owner", None).await;
+    let before_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
+    let before_callback = candidate_settlement_snapshot(&migration_owner).await?;
     let mut down = migration_owner.begin().await?;
     sqlx::raw_sql(include_str!(
         "../../../migrations/0063_owner_beta_price_only_simulations.down.sql"
@@ -1592,6 +2326,44 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     .execute(&mut *down)
     .await?;
     down.commit().await?;
+    let down_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
+    let down_callback = candidate_settlement_snapshot(&migration_owner).await?;
+    assert_eq!(down_policy.roles, vec!["migration_owner".to_owned()]);
+    assert_eq!(down_policy.command, "ALL");
+    assert_eq!(down_policy.permissive, "PERMISSIVE");
+    let legacy_using = down_policy
+        .using_expression
+        .as_deref()
+        .expect("legacy jobs owner USING expression");
+    let legacy_check = down_policy
+        .check_expression
+        .as_deref()
+        .expect("legacy jobs owner WITH CHECK expression");
+    assert_ne!(
+        before_policy.using_expression, down_policy.using_expression,
+        "down restores the historical owner expression before up reinstalls the repair"
+    );
+    assert_eq!(legacy_using, legacy_check);
+    assert!(legacy_using.contains("current_setting"));
+    assert!(legacy_using.contains("uuid"));
+    assert!(
+        !legacy_using.contains("NULLIF"),
+        "down restores the historical raw current_setting cast"
+    );
+    assert_ne!(before_callback.definition, down_callback.definition);
+    assert!(down_callback.definition.contains(&down_callback.body));
+    assert!(
+        down_callback.definition.contains(
+            "CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()"
+        )
+    );
+    assert_eq!(down_callback.body, legacy_candidate_settlement_body());
+    assert_eq!(down_callback.owner, "migration_owner");
+    assert_eq!(down_callback.configuration, "{search_path=pg_catalog}");
+    assert_eq!(down_callback.acl, before_callback.acl);
+    assert!(down_callback.security_definer);
+    assert_eq!(down_callback.language, "plpgsql");
+
     let mut up = migration_owner.begin().await?;
     sqlx::raw_sql(include_str!(
         "../../../migrations/0063_owner_beta_price_only_simulations.up.sql"
@@ -1599,6 +2371,16 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     .execute(&mut *up)
     .await?;
     up.commit().await?;
+    let after_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
+    let after_callback = candidate_settlement_snapshot(&migration_owner).await?;
+    assert_eq!(
+        before_policy, after_policy,
+        "empty down/up restores jobs owner policy"
+    );
+    assert_eq!(
+        before_callback, after_callback,
+        "empty down/up restores the complete scoped candidate callback"
+    );
 
     let actor = new_owner(db, "r4-down-actor").await?;
     let hidden_owner = new_owner(db, "r4-down-hidden-owner").await?;
@@ -2099,7 +2881,7 @@ async fn r4_invalid_claim_is_terminal_and_attempt_fenced_body(db: &ScratchDb) ->
         settle_invalid_simulation_claim(&queue, &claim_two).await?,
         SimulationPublicationOutcome::Failed
     );
-    let final_state: (
+    type FinalSimulationState = (
         JobStatus,
         i32,
         Option<String>,
@@ -2108,7 +2890,8 @@ async fn r4_invalid_claim_is_terminal_and_attempt_fenced_body(db: &ScratchDb) ->
         String,
         Option<String>,
         i64,
-    ) = sqlx::query_as(
+    );
+    let final_state: FinalSimulationState = sqlx::query_as(
         "SELECT job.status, job.attempt_count, job.error_code,
                     run.status, run.error_code, attempt.outcome, attempt.error_code,
                     (SELECT count(*) FROM public.owner_beta_simulation_result_pairs pair

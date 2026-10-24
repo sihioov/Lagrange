@@ -28,7 +28,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use job_queue::{JobQueue, JobStatus, QueueConfig, SettleResult, SubmitJob};
 use sqlx::migrate::{MigrationType, Migrator};
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use sqlx::types::Uuid;
 
 use result_model::robustness::{
@@ -159,6 +159,40 @@ async fn connect_with_retry(
     }
 }
 
+async fn connect_as_migration_owner(
+    url: &str,
+    attempts: u32,
+) -> Result<PgPool, Box<dyn Error + Send + Sync>> {
+    let mut options: PgConnectOptions = url.parse()?;
+    options = options.options([("statement_timeout", "20s")]);
+    let mut last: Option<sqlx::Error> = None;
+    for attempt in 0..attempts {
+        match PgPoolOptions::new()
+            .max_connections(4)
+            .acquire_timeout(Duration::from_secs(20))
+            .after_connect(|connection, _metadata| {
+                Box::pin(async move {
+                    sqlx::raw_sql("SET ROLE migration_owner")
+                        .execute(&mut *connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_with(options.clone())
+            .await
+        {
+            Ok(pool) => return Ok(pool),
+            Err(error) => {
+                last = Some(error);
+                tokio::time::sleep(Duration::from_millis(200 * (attempt as u64 + 1))).await;
+            }
+        }
+    }
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| "migration-owner pool connection attempts exhausted".into()))
+}
+
 /// Creates a fresh scratch database and runs the full T3 migration set.
 async fn scratch_db() -> Result<(PgPool, String), Box<dyn Error + Send + Sync>> {
     let super_url = env::var("DATABASE_URL").expect("DATABASE_URL required");
@@ -168,18 +202,67 @@ async fn scratch_db() -> Result<(PgPool, String), Box<dyn Error + Send + Sync>> 
         .execute(&admin)
         .await?;
     sqlx::raw_sql(ROLE_BOOTSTRAP_SQL).execute(&admin).await?;
+    drop(admin);
     let url = conn_url(&super_url, "postgres", &db);
     let pool = connect_with_retry(&url, 4).await?;
-    MIGRATOR.run(&pool).await?;
+    // The shared bootstrap creates cluster roles, but schema grants are
+    // database-local and must also be applied inside this scratch database.
+    sqlx::raw_sql(ROLE_BOOTSTRAP_SQL).execute(&pool).await?;
+    let migration_pool = connect_as_migration_owner(&url, 4).await?;
+    let identities: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&migration_pool)
+        .await?;
+    assert_eq!(identities.0, "migration_owner");
+    assert_ne!(identities.0, identities.1);
+    let migration_owner_can_create: bool =
+        sqlx::query_scalar("SELECT has_schema_privilege('migration_owner', 'public', 'CREATE')")
+            .fetch_one(&migration_pool)
+            .await?;
+    assert!(
+        migration_owner_can_create,
+        "scratch public schema is migration-owner writable"
+    );
+    MIGRATOR.run(&migration_pool).await?;
     // Every up-migration must be recorded (sqlx embeds .up and .down sides;
     // the DB table records only the applied up side).
     let recorded: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
-        .fetch_one(&pool)
+        .fetch_one(&migration_pool)
         .await?;
     let expected = up_migration_count() as i64;
     if recorded != expected {
         return Err(format!("expected {expected} applied up-migrations, found {recorded}").into());
     }
+    let table_owners: Vec<(String, String)> = sqlx::query_as(
+        "SELECT c.relname::text, pg_catalog.pg_get_userbyid(c.relowner)::text \
+         FROM pg_catalog.pg_class AS c \
+         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' \
+           AND c.relname IN ('jobs', 'job_attempts', 'user_strategy_configs') \
+         ORDER BY c.relname",
+    )
+    .fetch_all(&migration_pool)
+    .await?;
+    assert_eq!(
+        table_owners,
+        vec![
+            ("job_attempts".to_owned(), "migration_owner".to_owned()),
+            ("jobs".to_owned(), "migration_owner".to_owned()),
+            (
+                "user_strategy_configs".to_owned(),
+                "migration_owner".to_owned()
+            ),
+        ],
+        "robustness tables must be owned by migration_owner"
+    );
+    let attempt_guard_owner: String = sqlx::query_scalar(
+        "SELECT pg_catalog.pg_get_userbyid(proowner) \
+         FROM pg_catalog.pg_proc \
+         WHERE oid = 'public.owner_beta_simulation_attempt_guard()'::regprocedure",
+    )
+    .fetch_one(&migration_pool)
+    .await?;
+    assert_eq!(attempt_guard_owner, "migration_owner");
+    migration_pool.close().await;
     Ok((pool, db))
 }
 

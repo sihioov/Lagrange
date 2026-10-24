@@ -283,6 +283,89 @@ def assert_cache_policy(workflow: dict) -> None:
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_r4_simulation_contract_pin_matches_document_sql_and_fixtures(self) -> None:
+        contract_source = (
+            ROOT / "crates/job-queue/src/owner_beta/simulation/contract.rs"
+        ).read_text(encoding="utf-8")
+        constant_match = re.search(
+            r'pub const APPROVED_CONTRACT_SHA256:\s*&str\s*=\s*"(?P<value>sha256:[^"]+)"',
+            contract_source,
+        )
+        self.assertIsNotNone(constant_match, "approved contract hash constant is missing")
+        assert constant_match is not None
+        approved_hash = constant_match.group("value")
+        self.assertRegex(approved_hash, r"^sha256:[0-9a-f]{64}$")
+
+        contract_document = (
+            ROOT
+            / "docs/superpowers/plans/2026-10-23-r4-price-only-simulation-contract-draft.md"
+        )
+        self.assertTrue(contract_document.is_file(), "adopted simulation contract document is missing")
+        document_hash = "sha256:" + hashlib.sha256(contract_document.read_bytes()).hexdigest()
+        self.assertEqual(approved_hash, document_hash)
+
+        sql = (ROOT / "migrations/0063_owner_beta_price_only_simulations.up.sql").read_text(
+            encoding="utf-8"
+        )
+        predicates = (
+            (
+                "run CHECK",
+                re.compile(
+                    r"CONSTRAINT\s+owner_beta_simulation_runs_contract_hash_check\s+"
+                    r"CHECK\s*\(\s*contract_document_sha256\s*=\s*"
+                    r"'(?P<value>sha256:[0-9a-f]+)'\s*\)",
+                    re.DOTALL,
+                ),
+            ),
+            (
+                "jobs insert guard",
+                re.compile(
+                    r"payload_json\s*->>\s*'contract_document_sha256'\s+"
+                    r"IS DISTINCT FROM\s*'(?P<value>sha256:[0-9a-f]+)'",
+                    re.DOTALL,
+                ),
+            ),
+        )
+
+        def assert_contract_predicates(sql_text: str) -> None:
+            for label, pattern in predicates:
+                match = pattern.search(sql_text)
+                if match is None:
+                    raise AssertionError(f"missing {label} contract predicate")
+                if match.group("value") != approved_hash:
+                    raise AssertionError(f"{label} contract pin differs from approved document")
+
+        assert_contract_predicates(sql)
+
+        legacy_66_hex = (
+            "sha256:8c5c6bf7f07de09f14f1e1e5eaa2b6479be4b10e8b98ed5a89a280ac95568e87cd"
+        )
+        self.assertEqual(len(legacy_66_hex.removeprefix("sha256:")), 66)
+        for label, pattern in predicates:
+            with self.subTest(mutated_predicate=label):
+                match = pattern.search(sql)
+                self.assertIsNotNone(match)
+                assert match is not None
+                start, end = match.span("value")
+                mutant_sql = sql[:start] + legacy_66_hex + sql[end:]
+                with self.assertRaisesRegex(AssertionError, re.escape(label)):
+                    assert_contract_predicates(mutant_sql)
+
+        fixture_value = re.compile(
+            r'"contract_document_sha256"\s*:\s*'
+            r"job_queue::owner_beta::simulation::APPROVED_CONTRACT_SHA256\b"
+        )
+        for fixture_path in (
+            "crates/api-server/tests/common/mod.rs",
+            "crates/job-queue/tests/queue_contract.rs",
+        ):
+            fixture_source = (ROOT / fixture_path).read_text(encoding="utf-8")
+            self.assertRegex(
+                fixture_source,
+                fixture_value,
+                f"{fixture_path} must use the exported approved contract hash",
+            )
+
     def test_workspace_rustup_store_is_isolated_without_toolchain_override(self) -> None:
         _, ci = load_workflow("ci.yml")
         job = ci["jobs"]["workspace-tests"]

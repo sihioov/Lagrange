@@ -1,6 +1,115 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
+CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $assert$
+DECLARE
+    v_job_id uuid;
+    v_run_id uuid;
+    v_run_status text;
+    v_job_status text;
+    v_attempt_count integer;
+    v_service_user_id uuid;
+    v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);
+    v_actor_changed boolean := false;
+BEGIN
+    SELECT control.service_user_id INTO v_service_user_id
+    FROM public.candidate_scheduler_control AS control
+    WHERE control.control_key = 'scheduler';
+    IF NOT FOUND THEN RETURN NULL; END IF;
+    -- Constraint triggers run as migration_owner at COMMIT, outside any
+    -- request actor scope. Bind the only owner candidate jobs may use before
+    -- touching the FORCE-RLS queue tables.
+    v_actor_changed := v_actor_before IS DISTINCT FROM v_service_user_id::text;
+    PERFORM pg_catalog.set_config(
+        'app.actor_user_id', v_service_user_id::text, true
+    );
+    IF TG_TABLE_NAME = 'stock_analysis_runs' THEN
+        IF TG_OP = 'DELETE' THEN
+            v_run_id := OLD.id;
+            v_job_id := OLD.job_id;
+        ELSE
+            v_run_id := NEW.id;
+            v_job_id := NEW.job_id;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'jobs' THEN
+        IF TG_OP = 'DELETE' THEN v_job_id := OLD.id; ELSE v_job_id := NEW.id; END IF;
+        SELECT run.id INTO v_run_id
+        FROM public.stock_analysis_runs AS run
+        WHERE run.job_id = v_job_id;
+    ELSE
+        IF TG_OP = 'DELETE' THEN v_job_id := OLD.job_id; ELSE v_job_id := NEW.job_id; END IF;
+        SELECT run.id INTO v_run_id
+        FROM public.stock_analysis_runs AS run
+        WHERE run.job_id = v_job_id;
+    END IF;
+
+    IF v_run_id IS NULL OR v_job_id IS NULL THEN
+        IF v_actor_changed THEN
+            PERFORM pg_catalog.set_config(
+                'app.actor_user_id', COALESCE(v_actor_before, ''), true
+            );
+        END IF;
+        RETURN NULL;
+    END IF;
+    SELECT run.status, job.status, job.attempt_count
+    INTO v_run_status, v_job_status, v_attempt_count
+    FROM public.stock_analysis_runs AS run
+    JOIN public.jobs AS job ON job.id = run.job_id
+    WHERE run.id = v_run_id;
+    IF NOT FOUND THEN
+        IF v_actor_changed THEN
+            PERFORM pg_catalog.set_config(
+                'app.actor_user_id', COALESCE(v_actor_before, ''), true
+            );
+        END IF;
+        RETURN NULL;
+    END IF;
+
+    IF v_run_status = 'SUCCEEDED' OR v_job_status = 'SUCCEEDED' THEN
+        IF v_run_status <> 'SUCCEEDED'
+            OR v_job_status <> 'SUCCEEDED'
+            OR NOT EXISTS (
+                SELECT 1
+                FROM public.job_attempts AS attempt
+                WHERE attempt.job_id = v_job_id
+                  AND attempt.attempt_no = v_attempt_count
+                  AND attempt.outcome = 'SUCCEEDED'
+                  AND attempt.finished_at IS NOT NULL
+            )
+            OR NOT EXISTS (
+                SELECT 1
+                FROM public.candidate_feed_snapshots AS feed
+                WHERE feed.run_id = v_run_id
+            )
+        THEN
+            RAISE EXCEPTION 'candidate publication and queue settlement must commit atomically'
+                USING ERRCODE = '23514';
+        END IF;
+    ELSIF v_run_status IN ('FAILED', 'BLOCKED')
+        OR v_job_status IN ('FAILED', 'CANCELED')
+    THEN
+        IF v_run_status NOT IN ('FAILED', 'BLOCKED')
+            OR v_job_status NOT IN ('FAILED', 'CANCELED')
+        THEN
+            RAISE EXCEPTION 'candidate failure and queue settlement must commit atomically'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
+    END IF;
+    RETURN NULL;
+END
+$assert$;
+
+
 CREATE TABLE public.owner_beta_simulation_runs (
     id uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     owner_user_id uuid NOT NULL
@@ -77,7 +186,7 @@ CREATE TABLE public.owner_beta_simulation_runs (
     CONSTRAINT owner_beta_simulation_runs_approval_hash_check
         CHECK (approval_registry_sha256 = 'sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707'),
     CONSTRAINT owner_beta_simulation_runs_contract_hash_check
-        CHECK (contract_document_sha256 = 'sha256:8c5c6bf7f07de09f14f1e1e5eaa2b6479be4b10e8b98ed5a89a280ac95568e87cd'),
+        CHECK (contract_document_sha256 = 'sha256:8c5c6bf7f07de09f14f1e5eaa2b6479be4b10e8b98ed5a89a280ac95568e87cd'),
     CONSTRAINT owner_beta_simulation_runs_bars_hash_check
         CHECK (bars_sha256 = 'sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe'),
     CONSTRAINT owner_beta_simulation_runs_status_check
@@ -246,6 +355,11 @@ CREATE POLICY owner_beta_simulation_pairs_migration_owner_actor
         pg_catalog.current_setting('app.actor_user_id', true), ''
     )::uuid);
 
+-- Trigger reads of generic jobs can start with no actor; keep the owner policy null-safe.
+ALTER POLICY tenant_all_owner_jobs ON public.jobs TO migration_owner
+    USING (owner_user_id = NULLIF(current_setting('app.actor_user_id', true), '')::uuid)
+    WITH CHECK (owner_user_id = NULLIF(current_setting('app.actor_user_id', true), '')::uuid);
+
 -- Trigger-only JSON binding helper. The caller's exact payload is compared as
 -- jsonb, so extra keys, wrong JSON types, dates, pins, or strategy fields fail.
 CREATE FUNCTION public.owner_beta_simulation_payload_matches(
@@ -317,9 +431,6 @@ BEGIN
         RETURN NEW;
     END IF;
 
-    IF session_user <> 'app' THEN
-        PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
-    END IF;
     SELECT pg_catalog.array_agg(key ORDER BY key)
       INTO v_top_level_keys
       FROM pg_catalog.jsonb_object_keys(NEW.payload_json) AS keys(key);
@@ -367,7 +478,7 @@ BEGIN
        OR NEW.payload_json -> 'pins' ->> 'approval_registry_sha256'
             IS DISTINCT FROM 'sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707'
        OR NEW.payload_json ->> 'contract_document_sha256'
-            IS DISTINCT FROM 'sha256:8c5c6bf7f07de09f14f1e1e5eaa2b6479be4b10e8b98ed5a89a280ac95568e87cd'
+            IS DISTINCT FROM 'sha256:8c5c6bf7f07de09f14f1e5eaa2b6479be4b10e8b98ed5a89a280ac95568e87cd'
        OR NEW.payload_json ->> 'bars_sha256'
             IS DISTINCT FROM 'sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe'
        OR NEW.payload_json -> 'strategy' ->> 'strategy_id' IS DISTINCT FROM 'trend_following'
@@ -399,9 +510,15 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $jobs_lineage$
 DECLARE
+    v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);
+    v_actor_changed boolean := false;
     v_has_run boolean;
 BEGIN
-    PERFORM pg_catalog.set_config('app.actor_user_id', OLD.owner_user_id::text, true);
+    PERFORM NULLIF(v_actor_before, '')::uuid;
+    IF v_actor_before IS DISTINCT FROM OLD.owner_user_id::text THEN
+        PERFORM pg_catalog.set_config('app.actor_user_id', OLD.owner_user_id::text, true);
+        v_actor_changed := true;
+    END IF;
     SELECT EXISTS (
         SELECT 1
           FROM public.owner_beta_simulation_runs AS run
@@ -414,6 +531,11 @@ BEGIN
             RAISE EXCEPTION 'owner beta simulation job lineage is immutable'
                 USING ERRCODE = '42501';
         END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
+    END IF;
         RETURN OLD;
     END IF;
 
@@ -431,6 +553,11 @@ BEGIN
     THEN
         RAISE EXCEPTION 'owner beta simulation job lineage is immutable'
             USING ERRCODE = '42501';
+    END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
     END IF;
     RETURN NEW;
 END
@@ -456,6 +583,8 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $run_binding$
 DECLARE
+    v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);
+    v_actor_changed boolean := false;
     v_job_owner uuid;
     v_job_type text;
     v_job_payload jsonb;
@@ -471,8 +600,11 @@ BEGIN
             USING ERRCODE = '42501';
     END IF;
 
-    IF session_user <> 'app' THEN
+    PERFORM NULLIF(v_actor_before, '')::uuid;
+    IF session_user <> 'app'
+       AND v_actor_before IS DISTINCT FROM NEW.owner_user_id::text THEN
         PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+        v_actor_changed := true;
     END IF;
     IF TG_OP = 'UPDATE' THEN
         IF NEW.id IS DISTINCT FROM OLD.id
@@ -577,6 +709,11 @@ BEGIN
         RAISE EXCEPTION 'owner beta simulation strategy snapshot is not active at admission'
             USING ERRCODE = '23514';
     END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
+    END IF;
     RETURN NEW;
 END
 $run_binding$;
@@ -595,13 +732,20 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $config_lock$
+DECLARE
+    v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);
+    v_actor_changed boolean := false;
 BEGIN
     IF NEW.status IS DISTINCT FROM 'SUCCEEDED'
        OR OLD.status IS NOT DISTINCT FROM 'SUCCEEDED'
     THEN
         RETURN NEW;
     END IF;
-    PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+    PERFORM NULLIF(v_actor_before, '')::uuid;
+    IF v_actor_before IS DISTINCT FROM NEW.owner_user_id::text THEN
+        PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+        v_actor_changed := true;
+    END IF;
     PERFORM 1
       FROM public.user_strategy_configs AS config
      WHERE config.id = NEW.strategy_config_id
@@ -610,6 +754,11 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'owner beta simulation strategy config identity is unavailable'
             USING ERRCODE = '23514';
+    END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
     END IF;
     RETURN NEW;
 END
@@ -647,9 +796,6 @@ DECLARE
 BEGIN
     IF NEW.job_type <> 'owner_beta_price_only_simulation' THEN
         RETURN NEW;
-    END IF;
-    IF session_user <> 'app' THEN
-        PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
     END IF;
     BEGIN
         v_run_id := (NEW.payload_json ->> 'run_id')::uuid;
@@ -723,13 +869,19 @@ DECLARE
     v_run_approval text;
     v_run_contract text;
     v_run_bars text;
+    v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);
+    v_actor_changed boolean := false;
 BEGIN
     IF TG_OP <> 'INSERT' THEN
         RAISE EXCEPTION 'owner beta simulation result pair is immutable'
             USING ERRCODE = '42501';
     END IF;
 
-    PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+    PERFORM NULLIF(v_actor_before, '')::uuid;
+    IF v_actor_before IS DISTINCT FROM NEW.owner_user_id::text THEN
+        PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+        v_actor_changed := true;
+    END IF;
     SELECT run.owner_user_id, run.job_id, run.strategy_config_id,
            run.strategy_id, run.strategy_version, run.strategy_config_json,
            run.strategy_config_sha256, run.evaluation_start, run.evaluation_end,
@@ -780,6 +932,11 @@ BEGIN
         RAISE EXCEPTION 'owner beta simulation result pair binding is invalid'
             USING ERRCODE = '23514';
     END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
+    END IF;
     RETURN NEW;
 END
 $pair_binding$;
@@ -790,26 +947,6 @@ REVOKE ALL ON FUNCTION public.owner_beta_simulation_pairs_validate_insert()
 CREATE TRIGGER owner_beta_simulation_pairs_validate_insert
     BEFORE INSERT OR UPDATE OR DELETE ON public.owner_beta_simulation_result_pairs
     FOR EACH ROW EXECUTE FUNCTION public.owner_beta_simulation_pairs_validate_insert();
-
-CREATE FUNCTION public.owner_beta_simulation_jobs_set_actor()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, pg_temp
-AS $job_actor$
-BEGIN
-    IF NEW.job_type = 'owner_beta_price_only_simulation' THEN
-        PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
-    END IF;
-    RETURN NEW;
-END
-$job_actor$;
-ALTER FUNCTION public.owner_beta_simulation_jobs_set_actor() OWNER TO migration_owner;
-REVOKE ALL ON FUNCTION public.owner_beta_simulation_jobs_set_actor()
-    FROM PUBLIC, app, worker, admin, audit_writer, research_writer;
-CREATE TRIGGER owner_beta_simulation_jobs_set_actor
-    BEFORE UPDATE OF status ON public.jobs
-    FOR EACH ROW EXECUTE FUNCTION public.owner_beta_simulation_jobs_set_actor();
 
 -- Every attempt transition for the new type is bound back to its concrete job
 -- row. The migration-owner policy above exposes only this row during protected
@@ -822,6 +959,10 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $attempt_guard$
 DECLARE
+    v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);
+    v_actor_changed boolean := false;
+    v_old_is_r4 boolean := false;
+    v_new_is_r4 boolean := false;
     v_owner uuid;
     v_job_type text;
     v_job_status text;
@@ -831,15 +972,65 @@ DECLARE
     v_published_attempt_id uuid;
     v_pair_exists boolean;
 BEGIN
-    SELECT job.owner_user_id, job.job_type, job.status, job.attempt_count, job.locked_by
-      INTO v_owner, v_job_type, v_job_status, v_attempt_count, v_locked_by
-      FROM public.jobs AS job
-     WHERE job.id = CASE WHEN TG_OP = 'DELETE' THEN OLD.job_id ELSE NEW.job_id END;
-    IF NOT FOUND OR v_job_type <> 'owner_beta_price_only_simulation' THEN
-        IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-    END IF;
-    PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+    -- Reject malformed caller context before RLS discovery, even on the ORed trigger policy.
+    PERFORM NULLIF(v_actor_before, '')::uuid;
+    IF TG_OP = 'INSERT' THEN
+        SELECT job.owner_user_id, job.job_type, job.status, job.attempt_count, job.locked_by
+          INTO v_owner, v_job_type, v_job_status, v_attempt_count, v_locked_by
+          FROM public.jobs AS job
+         WHERE job.id = NEW.job_id
+           AND job.job_type = 'owner_beta_price_only_simulation';
+        IF NOT FOUND THEN
+            RETURN NEW;
+        END IF;
+    ELSIF TG_OP = 'DELETE' THEN
+        SELECT job.owner_user_id, job.job_type, job.status, job.attempt_count, job.locked_by
+          INTO v_owner, v_job_type, v_job_status, v_attempt_count, v_locked_by
+          FROM public.jobs AS job
+         WHERE job.id = OLD.job_id
+           AND job.job_type = 'owner_beta_price_only_simulation';
+        IF NOT FOUND THEN
+            RETURN OLD;
+        END IF;
+    ELSE
+        PERFORM 1
+          FROM public.jobs AS job
+         WHERE job.id = OLD.job_id
+           AND job.job_type = 'owner_beta_price_only_simulation';
+        v_old_is_r4 := FOUND;
+        PERFORM 1
+          FROM public.jobs AS job
+         WHERE job.id = NEW.job_id
+           AND job.job_type = 'owner_beta_price_only_simulation';
+        v_new_is_r4 := FOUND;
 
+        IF NEW.job_id IS DISTINCT FROM OLD.job_id THEN
+            IF v_old_is_r4 OR v_new_is_r4 THEN
+                RAISE EXCEPTION 'owner beta simulation attempt binding is immutable'
+                    USING ERRCODE = '42501';
+            END IF;
+            RETURN NEW;
+        END IF;
+        IF NOT v_old_is_r4 AND NOT v_new_is_r4 THEN
+            RETURN NEW;
+        END IF;
+
+        -- The unchanged attempt remains anchored to its OLD parent identity.
+        SELECT job.owner_user_id, job.job_type, job.status, job.attempt_count, job.locked_by
+          INTO v_owner, v_job_type, v_job_status, v_attempt_count, v_locked_by
+          FROM public.jobs AS job
+         WHERE job.id = OLD.job_id
+           AND job.job_type = 'owner_beta_price_only_simulation';
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'owner beta simulation attempt binding is immutable'
+                USING ERRCODE = '42501';
+        END IF;
+    END IF;
+
+    IF v_actor_before IS DISTINCT FROM v_owner::text THEN
+        PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+        v_actor_changed := true;
+    END IF;
     IF TG_OP = 'INSERT' THEN
         IF NEW.attempt_no <> v_attempt_count
            OR NEW.outcome <> 'RUNNING'
@@ -848,6 +1039,11 @@ BEGIN
         THEN
             RAISE EXCEPTION 'owner beta simulation attempt binding is invalid'
                 USING ERRCODE = '23514';
+        END IF;
+        IF v_actor_changed THEN
+            PERFORM pg_catalog.set_config(
+                'app.actor_user_id', COALESCE(v_actor_before, ''), true
+            );
         END IF;
         RETURN NEW;
     END IF;
@@ -889,6 +1085,11 @@ BEGIN
     THEN
         RAISE EXCEPTION 'owner beta simulation published attempt is immutable'
             USING ERRCODE = '42501';
+    END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
     END IF;
     RETURN NEW;
 END
@@ -950,7 +1151,10 @@ DECLARE
     v_attempt_no integer;
     v_attempt_outcome text;
     v_attempt_claimed_by text;
+    v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);
+    v_actor_changed boolean := false;
 BEGIN
+    PERFORM NULLIF(v_actor_before, '')::uuid;
     IF TG_TABLE_NAME = 'jobs' THEN
         v_job_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END;
         v_owner := CASE WHEN TG_OP = 'DELETE' THEN OLD.owner_user_id ELSE NEW.owner_user_id END;
@@ -958,7 +1162,6 @@ BEGIN
         IF v_job_type <> 'owner_beta_price_only_simulation' THEN
             RETURN NULL;
         END IF;
-        PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
         v_run_id := NULL;
     ELSIF TG_TABLE_NAME = 'owner_beta_simulation_runs' THEN
         v_run_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END;
@@ -967,20 +1170,30 @@ BEGIN
     ELSIF TG_TABLE_NAME = 'owner_beta_simulation_result_pairs' THEN
         v_run_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.run_id ELSE NEW.run_id END;
         v_owner := CASE WHEN TG_OP = 'DELETE' THEN OLD.owner_user_id ELSE NEW.owner_user_id END;
-        PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+        IF v_actor_before IS DISTINCT FROM v_owner::text THEN
+            PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+            v_actor_changed := true;
+        END IF;
         SELECT run.job_id INTO v_job_id
           FROM public.owner_beta_simulation_runs AS run
          WHERE run.id = v_run_id AND run.owner_user_id = v_owner;
     ELSE
         v_job_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.job_id ELSE NEW.job_id END;
         v_owner := NULL;
-        SELECT job.owner_user_id INTO v_owner
+        v_job_type := NULL;
+        SELECT job.owner_user_id, job.job_type INTO v_owner, v_job_type
           FROM public.jobs AS job
          WHERE job.id = v_job_id;
         IF NOT FOUND THEN
             RETURN NULL;
         END IF;
-        PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+        IF v_job_type <> 'owner_beta_price_only_simulation' THEN
+            RETURN NULL;
+        END IF;
+        IF v_actor_before IS DISTINCT FROM v_owner::text THEN
+            PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+            v_actor_changed := true;
+        END IF;
         SELECT run.id INTO v_run_id
           FROM public.owner_beta_simulation_runs AS run
          WHERE run.job_id = v_job_id AND run.owner_user_id = v_owner;
@@ -990,7 +1203,11 @@ BEGIN
         RAISE EXCEPTION 'owner beta simulation deferred binding is incomplete'
             USING ERRCODE = '23514';
     END IF;
-    PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+    IF NOT v_actor_changed
+       AND v_actor_before IS DISTINCT FROM v_owner::text THEN
+        PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);
+        v_actor_changed := true;
+    END IF;
 
     -- The committed-state inspection follows job -> run -> pair lock order.
     SELECT job.owner_user_id, job.job_type, job.status, job.attempt_count,
@@ -1011,6 +1228,11 @@ BEGIN
         ) THEN
             RAISE EXCEPTION 'owner beta simulation job was retagged'
                 USING ERRCODE = '23514';
+        END IF;
+        IF v_actor_changed THEN
+            PERFORM pg_catalog.set_config(
+                'app.actor_user_id', COALESCE(v_actor_before, ''), true
+            );
         END IF;
         RETURN NULL;
     END IF;
@@ -1171,6 +1393,11 @@ BEGIN
             RAISE EXCEPTION 'owner beta simulation published attempt binding is invalid'
                 USING ERRCODE = '23514';
         END IF;
+    END IF;
+    IF v_actor_changed THEN
+        PERFORM pg_catalog.set_config(
+            'app.actor_user_id', COALESCE(v_actor_before, ''), true
+        );
     END IF;
     RETURN NULL;
 END

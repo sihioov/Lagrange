@@ -940,3 +940,112 @@ CI/required with source-only build and Research smoke once each at that new SHA,
 the exact named results and artifact identities. No hosted or runtime acceptance is implied.
 Original failure evidence, approved-input boundaries and actual owner isolation requirements
 remain intact. Do not rerun either failed candidate.
+
+
+### G3 third hosted failure and bounded correction (2026-10-25)
+
+Candidate `5c20f5b4cd9aa2c8256b15ddb252c4ea5d97bc3f` was dispatched once per workflow:
+CI40128291578 attempt1 and its required aggregate failed; Research smoke40128294217 attempt1
+succeeded. Both terminal artifact listings are empty. The pinned build parser confirmed the19
+source-only cases; the workspace harness directly reported all23 frozen PostgreSQL names once,
+22FAILED/1OK. The separate PostgreSQL job contained none of those23 names. Six proof cases were
+not reached because of a duplicated attribute. Web OpenAPI/lint/typecheck,539Vitest cases and
+build passed; the separate browser harness failed with coverage_incomplete. Smoke confirms
+functional PASS, four restore/save markers and two serialized exports; independent private-builder
+absence and cache persistence remain unverified.
+
+WP7's immutable terminal report is `target/r4-connection/wp-7/round-3/observer-continuation/report.md`
+(SHA256 `2a4f6b87d0e077a8b6ef6df994da1e812aadf82bbb963892e27feee2102dbfcf`).
+The separately recovered cause report identifies14 storage SQLSTATE42501 and6 API InputInvalid;
+two R4 causes remain unknown due to interleaved log blocks. These categories do not establish
+which database object caused42501. WP1's source report (`42ed091c5b7b2db41b724d264376f0602a7a44466570c6152f3d19b4f9c168df`)
+confirms four malformed contract pins and two standalone scratch builders using the wrong migration
+role. Eleven other failing targets already use canonical migration_owner preparation. Do not infer
+that these two fixes resolve all failures. Original reports and227 protected files remain frozen.
+
+Bounded ownership for this correction branch:
+
+| Owner | Exact write scope | Work / permitted checks |
+| --- | --- | --- |
+| WP3B, Luna/max | 0063 up SQL; API tests/common; queue_contract; result-model robustness_harness; owner_beta_simulation_execution test; scripts/ci/test_ci_contract.py | Two SQL literals, two positive fixture constants, two standalone migration-only owner pools, unused import/local tuple alias, exact contract parity regression. Owned rustfmt/Python contracts only; no DB/compile. |
+| WP5, Luna/max | scripts/qa/candidate-web-e2e-runner.py and its test file | Include existing22 simulation browser cases in strict off/full inventories and regression fixtures. Bounded mocked Python tests; no browser execution. |
+| WP1, 6.1-sol/high | New private hosted-round3-cause-audit report/receipt only | Analyze committed candidate's42501 and generic22P02/actor paths against recovered safe causes; no speculative production patch. |
+| Coordinator | Proof example's duplicate outer dead_code attribute; this plan and ROADMAP | Small integration and source/protected-evidence verification; review remaining hypotheses before assigning any trigger correction. |
+
+Assignments with starting hashes and non-overlapping scopes are under each owner's
+`hosted-round3-correction/assignment.md` (WP1 uses `hosted-round3-cause-audit`). No existing tests,
+strict inventory validation, FORCE RLS, atomic pair constraints, or required hosted jobs may be
+weakened. The approved contract/calculation, production, provider, input and Daily boundaries remain.
+After source corrections and independent review, freeze a new candidate for existing hosted gates;
+never rerun the failed candidate blindly. Authenticated artifacts and actual owner/API isolation
+remain mandatory later gates. R4-05 stays DOING and R4-04 full isolation stays blocked.
+
+
+#### Third correction recovery and fixture repair (2026-10-25)
+
+WP3B's six-file correction and WP5's two-file inventory correction were recovered after
+actual idle with no pending permissions. The coordinator verified all227 protected hashes,
+HEAD/index, source hashes and private modes. Existing system Python (with PyYAML) passed the
+new contract parity test; the approved stdlib Web supervisor suite passed36 tests in22.626s.
+These are local contract/harness checks, not browser or PostgreSQL evidence.
+
+WP1's follow-up source audit (report SHA256
+`f8853b7630df585dd1f3c5872bcc1febd2fccf96e5b6d5690c1094dc9e378fb4`) found two concrete
+fixture privilege contradictions. The coordinator owns the one-file repair in
+`crates/job-queue/tests/owner_beta_simulation_execution.rs`: seed explicitly selected config
+IDs through the existing privileged fixture pool, preserving the nil-ID case; assert the
+real app role and owner plus config visibility before app jobs/run writes; retain denied
+app config-ID INSERT and worker jobs INSERT privileges; exercise allowed app config creation
+and explicit-ID denial. Seed the ordinary generic job through the fixture queue, retaining
+worker claim/settle. No production grants or policy are changed by this fixture correction.
+All15 existing storage test names remain. Rustfmt and whitespace checks pass; DB execution awaits
+hosted validation.
+
+The same audit proves0063 jobs lineage changes caller actor without restoring it. Its proposed
+empty-GUC explanation for three generic22P02 errors remains a hypothesis. Existing WP6 owns
+only `target/r4-connection/wp-6/actor-guard-design-review/` to assess a bounded restoration and
+null-safe migration-owner jobs policy design, including down migration and behavioral regression
+requirements. It may not modify source or run DB/hosted checks. Coordinator fixture/docs writes
+and WP6 report writes do not overlap. Implementation of the actor repair follows this review;
+no sentinel actor, widened grant, weakened RLS, skipped test, or production action is authorized.
+
+### Actor repair implementation scope (2026-10-25)
+
+WP2's bounded correction review found no additional defect; it excludes actor repair and does
+not declare overall hosted readiness. WP6's design report SHA256
+`55fcf1eb94c9794cc75cb65b37254b6291898fdcc77061b6893dc04fa33bcfca` was recovered after actual
+idle with all five pins and227 protected hashes matching. Adopt scoped restoration in0063,
+normalization of only the migration-owner jobs policy, and OLD/NEW attempt-parent discovery
+before any generic early return. Keep all existing immutable binding and publication fences.
+
+The coordinator confirmed the older0044 scheduler control is seeded even when inactive.
+Its jobs/attempts deferred callback changes actor independently of0063, so it is part of the
+standard R4 scratch path. In0063 up, replace only that callback's body to snapshot and restore
+the caller actor on normal exits; preserve its settlement checks, ownership, settings and ACL.
+Down restores the original0044 definition after the existing history refusal. Historical0044
+bytes and inactive control remain unchanged. Do not remove the control to make tests pass.
+
+Existing WP3B owns0063 up/down and the migration-contract assertions. Existing WP3C owns only
+the storage suite's behavioral helpers/assertions: same-connection actor preservation,
+attempt-first recovery, both directions of parent reassignment, error/savepoint restoration,
+deferred callbacks and policy/function roundtrip. Existing15/69 names remain fixed. Their write
+scopes do not overlap. The private shared specification and252-entry evidence freeze are in
+`target/r4-connection/hosted-round3-correction-preparation/`; coordinator owns documentation and
+diagram citations. No local heavy execution is added. Independent source review, a new candidate's
+hosted checks and authenticated artifacts still precede the approved-input isolation proof.
+
+### Actor repair implementation recovery (2026-10-25)
+
+Both owned implementation workers are actually idle with no pending permissions. The three SQL/static-test outputs and the behavioral test report were recovered with all252 protected and six read-only source hashes intact; HEAD remains5c20f5b and the index is unchanged. Existing15 storage and69 migration-contract test names remain intact. The original worker reports remain immutable.
+
+The coordinator corrected the behavioral test's default candidate service UUID to the exact0044 seed, removed its redundant inactive-state mutation, bound pool actor assertions to the same backend PID, and executed both attempt-parent reassignment denials as the real worker role. The callback's seeded inactive control remains present. The current patch covers scoped0063 restoration, the0044 callback replacement and exact down definition, null-safe migration-owner jobs policy, OLD/NEW parent discovery, deferred constraints and savepoint restoration. These are source changes awaiting independent review and hosted PostgreSQL execution, not established isolation outcomes.
+
+Pinned Rust formatting and owned whitespace checks passed; no Rust compile, Clippy, SQL/database or browser check was run locally. Diagram evidence citations are updated to the settled SQL locations and rendered locally. Next: independent source review, a new frozen candidate and each existing required CI/build and smoke dispatch once; only successful hosted gates and authenticated exact4+2 artifacts unlock the separately bounded approved-input connection proof. Prior candidate runs must not be rerun.
+
+### Third correction source acceptance (2026-10-25)
+
+The independent reviewer returned READY_FOR_HOSTED with no mandatory source finding. Coordinator confirmed actual idle, activeTurn null, pending permissions empty, report SHA256 db7b5acc7bed9ced9445f28e3ccbb5d25a9367f1e31e1e609f1da6a1ca979b0c, receipt SHA256 f0b21c34629ff17a3e799214a0c786fb324bde7b5ad0a7e2311d6ac9feb499f5 and all71 source/265 protected/872 compile inputs. The original review and earlier failures remain immutable. Only this plan and roadmap acceptance text change after review.
+
+The source verdict does not establish compilation or PostgreSQL behavior. Post-COMMIT actor checks alone cannot reveal transaction-local leakage; direct assertions inside transactions cover their specified paths, while other exit restoration conclusions remain source-based. Two unidentified old R4 failures and other unrecovered target causes remain unresolved. All existing hosted gates remain required.
+
+Create a new candidate containing this record and the reviewed corrections, verify committed and working blobs, push the same branch, and dispatch existing CI/required with selected source-only build and Research smoke once each. Do not rerun any of the three failed candidate SHAs. Only successful same-candidate required gates permit authenticating exact4+2 artifacts before the separately frozen approved-input scratch connection proof. R4-04 full isolation and R4-05 completion remain unaccepted.

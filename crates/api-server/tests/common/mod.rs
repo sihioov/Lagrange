@@ -976,7 +976,7 @@ impl Harness {
                 "action_manifest_sha256": "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550",
                 "approval_registry_sha256": "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707"
             },
-            "contract_document_sha256": "sha256:8c5c6bf7f07de09f14f1e1e5eaa2b6479be4b10e8b98ed5a89a280ac95568e87cd",
+            "contract_document_sha256": job_queue::owner_beta::simulation::APPROVED_CONTRACT_SHA256,
             "bars_sha256": "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe",
             "strategy": {
                 "strategy_id": "trend_following",

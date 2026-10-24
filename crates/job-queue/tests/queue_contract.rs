@@ -232,6 +232,36 @@ async fn admin_pool(url: &str) -> Result<PgPool, Box<dyn Error>> {
     connect_with_retry(url, 3).await
 }
 
+async fn connect_as_migration_owner(url: &str, attempts: u32) -> Result<PgPool, Box<dyn Error>> {
+    let options: PgConnectOptions = url.parse()?;
+    let mut last: Option<sqlx::Error> = None;
+    for attempt in 0..attempts {
+        match PgPoolOptions::new()
+            .max_connections(4)
+            .acquire_timeout(Duration::from_secs(8))
+            .after_connect(|connection, _metadata| {
+                Box::pin(async move {
+                    sqlx::raw_sql("SET ROLE migration_owner")
+                        .execute(&mut *connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_with(options.clone())
+            .await
+        {
+            Ok(pool) => return Ok(pool),
+            Err(error) => {
+                last = Some(error);
+                tokio::time::sleep(Duration::from_millis(200 * (attempt as u64 + 1))).await;
+            }
+        }
+    }
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| "migration-owner pool connection attempts exhausted".into()))
+}
+
 /// Create a fresh scratch database, bootstrap roles, apply all migrations,
 /// and insert one test user. Returns (db_name, superuser_pool).
 async fn create_scratch_db(super_url: &str) -> Result<(String, PgPool), Box<dyn Error>> {
@@ -262,14 +292,60 @@ async fn create_scratch_db(super_url: &str) -> Result<(String, PgPool), Box<dyn 
     .await?;
     drop(super_new);
 
-    let pool = connect_with_retry(&conn_url(super_url, "postgres", &db), 6).await?;
+    let scratch_url = conn_url(super_url, "postgres", &db);
+    let pool = connect_with_retry(&scratch_url, 6).await?;
+    let migration_pool = connect_as_migration_owner(&scratch_url, 6).await?;
     let expected = up_migration_count();
     assert!(expected > 0, "migrator must embed at least one migration");
-    MIGRATOR.run(&pool).await?;
+    let identities: (String, String) = sqlx::query_as("SELECT current_user, session_user")
+        .fetch_one(&migration_pool)
+        .await?;
+    assert_eq!(identities.0, "migration_owner");
+    assert_ne!(identities.0, identities.1);
+    let migration_owner_can_create: bool =
+        sqlx::query_scalar("SELECT has_schema_privilege('migration_owner', 'public', 'CREATE')")
+            .fetch_one(&migration_pool)
+            .await?;
+    assert!(
+        migration_owner_can_create,
+        "scratch public schema is migration-owned writable"
+    );
+    MIGRATOR.run(&migration_pool).await?;
     let applied: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
-        .fetch_one(&pool)
+        .fetch_one(&migration_pool)
         .await?;
     assert_eq!(applied as usize, expected, "all migrations applied");
+    let table_owners: Vec<(String, String)> = sqlx::query_as(
+        "SELECT c.relname::text, pg_catalog.pg_get_userbyid(c.relowner)::text \
+         FROM pg_catalog.pg_class AS c \
+         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' \
+           AND c.relname IN ('jobs', 'job_attempts', 'user_strategy_configs') \
+         ORDER BY c.relname",
+    )
+    .fetch_all(&migration_pool)
+    .await?;
+    assert_eq!(
+        table_owners,
+        vec![
+            ("job_attempts".to_owned(), "migration_owner".to_owned()),
+            ("jobs".to_owned(), "migration_owner".to_owned()),
+            (
+                "user_strategy_configs".to_owned(),
+                "migration_owner".to_owned()
+            ),
+        ],
+        "queue tables must be owned by migration_owner"
+    );
+    let attempt_guard_owner: String = sqlx::query_scalar(
+        "SELECT pg_catalog.pg_get_userbyid(proowner) \
+         FROM pg_catalog.pg_proc \
+         WHERE oid = 'public.owner_beta_simulation_attempt_guard()'::regprocedure",
+    )
+    .fetch_one(&migration_pool)
+    .await?;
+    assert_eq!(attempt_guard_owner, "migration_owner");
+    migration_pool.close().await;
     Ok((db, pool))
 }
 
@@ -557,7 +633,7 @@ fn r4_simulation_input_json(run_id: Uuid, strategy_config_id: Uuid) -> Vec<u8> {
             "action_manifest_sha256": "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550",
             "approval_registry_sha256": "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707"
         },
-        "contract_document_sha256": "sha256:8c5c6bf7f07de09f14f1e1e5eaa2b6479be4b10e8b98ed5a89a280ac95568e87cd",
+        "contract_document_sha256": job_queue::owner_beta::simulation::APPROVED_CONTRACT_SHA256,
         "bars_sha256": "sha256:23354c54708d7a458aadc4f2cb2fca77469969e91256b6d3b119101ebae98ffe",
         "strategy": {
             "strategy_id": "trend_following",

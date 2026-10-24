@@ -177,6 +177,8 @@ const OWNER_BETA_SIMULATION_UP_SQL: &str =
     include_str!("../../../../migrations/0063_owner_beta_price_only_simulations.up.sql");
 const OWNER_BETA_SIMULATION_DOWN_SQL: &str =
     include_str!("../../../../migrations/0063_owner_beta_price_only_simulations.down.sql");
+const CANDIDATE_PIPELINE_0044_UP_SQL: &str =
+    include_str!("../../../../migrations/0044_candidate_pipeline.up.sql");
 const OWNER_EQUITY_UNIVERSE_V2_UP_SQL: &str =
     include_str!("../../../../migrations/0053_owner_managed_equity_universe_v2.up.sql");
 const OWNER_EQUITY_UNIVERSE_V2_DOWN_SQL: &str =
@@ -374,6 +376,53 @@ fn owner_beta_price_recommendation_persistence_is_separate_and_fail_closed() {
 
 #[test]
 fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
+    fn function_definition<'a>(sql: &'a str, declaration: &str, dollar_tag: &str) -> &'a str {
+        let start = sql.find(declaration).expect("trigger function declaration");
+        let marker = format!("{dollar_tag};");
+        let end = sql[start..]
+            .find(&marker)
+            .map(|offset| start + offset + marker.len())
+            .expect("complete trigger function body");
+        &sql[start..end]
+    }
+
+    let normalize_sql = |sql: &str| sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let policy_name = "ALTER POLICY tenant_all_owner_jobs ON public.jobs";
+    let policy_statement = |sql: &str| {
+        normalize_sql(
+            sql.split(policy_name)
+                .nth(1)
+                .and_then(|tail| tail.split(';').next())
+                .expect("migration-owner jobs policy statement"),
+        )
+    };
+    assert_eq!(OWNER_BETA_SIMULATION_UP_SQL.matches(policy_name).count(), 1);
+    assert_eq!(
+        OWNER_BETA_SIMULATION_DOWN_SQL.matches(policy_name).count(),
+        1
+    );
+    let null_safe = "owner_user_id = NULLIF(current_setting('app.actor_user_id', true), '')::uuid";
+    assert_eq!(
+        policy_statement(OWNER_BETA_SIMULATION_UP_SQL),
+        format!("TO migration_owner USING ({null_safe}) WITH CHECK ({null_safe})")
+    );
+    let historical = "owner_user_id = current_setting('app.actor_user_id', true)::uuid";
+    assert_eq!(
+        policy_statement(OWNER_BETA_SIMULATION_DOWN_SQL),
+        format!("TO migration_owner USING ({historical}) WITH CHECK ({historical})")
+    );
+    for policy_sql in [OWNER_BETA_SIMULATION_UP_SQL, OWNER_BETA_SIMULATION_DOWN_SQL] {
+        assert!(!policy_sql.contains("CREATE POLICY tenant_all_owner_jobs"));
+        assert!(!policy_sql.contains("DROP POLICY tenant_all_owner_jobs"));
+    }
+    let trigger_policy_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP POLICY owner_beta_simulation_jobs_trigger_select ON public.jobs;")
+        .expect("0063 down removes its trigger-only policy");
+    let owner_policy_restore = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find(policy_name)
+        .expect("0063 down restores its owner policy");
+    assert!(trigger_policy_drop < owner_policy_restore);
+
     assert_eq!(
         MIGRATOR
             .migrations
@@ -459,6 +508,115 @@ fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
             .contains("CASCADE"),
         "0063 rollback must not use CASCADE"
     );
+
+    let legacy = function_definition(
+        CANDIDATE_PIPELINE_0044_UP_SQL,
+        "CREATE FUNCTION public.assert_candidate_publication_settlement()",
+        "$assert$",
+    );
+    let restored = function_definition(
+        OWNER_BETA_SIMULATION_DOWN_SQL,
+        "CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()",
+        "$assert$",
+    )
+    .replacen("CREATE OR REPLACE FUNCTION", "CREATE FUNCTION", 1);
+    assert_eq!(
+        restored.as_str(),
+        legacy,
+        "0063 down restores the exact 0044 callback"
+    );
+    let history_refusal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("$owner_beta_simulation_empty_guard$;")
+        .expect("0063 populated-history rollback refusal");
+    let callback_restore = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()")
+        .expect("0063 down callback restoration");
+    assert!(history_refusal < callback_restore);
+
+    let callback = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()",
+        "$assert$",
+    );
+    let no_control = callback
+        .find("IF NOT FOUND THEN RETURN NULL; END IF;")
+        .unwrap();
+    let actor_set = callback.find("PERFORM pg_catalog.set_config(").unwrap();
+    assert!(no_control < actor_set);
+    assert!(
+        callback.contains(
+            "v_actor_before text := pg_catalog.current_setting('app.actor_user_id', true);"
+        )
+    );
+    assert_eq!(callback.matches("COALESCE(v_actor_before, '')").count(), 3);
+    for migration in [OWNER_BETA_SIMULATION_UP_SQL, OWNER_BETA_SIMULATION_DOWN_SQL] {
+        assert!(
+            !migration.contains("DROP FUNCTION public.assert_candidate_publication_settlement")
+        );
+        assert!(
+            !migration.contains("ALTER FUNCTION public.assert_candidate_publication_settlement()")
+        );
+    }
+
+    for (function, tag) in [
+        ("jobs_lineage_guard", "$jobs_lineage$"),
+        ("runs_validate_binding", "$run_binding$"),
+        ("runs_lock_config_on_success", "$config_lock$"),
+        ("pairs_validate_insert", "$pair_binding$"),
+        ("attempt_guard", "$attempt_guard$"),
+        ("deferred_guard", "$deferred_guard$"),
+    ] {
+        let body = function_definition(
+            OWNER_BETA_SIMULATION_UP_SQL,
+            &format!("CREATE FUNCTION public.owner_beta_simulation_{function}()"),
+            tag,
+        );
+        for token in [
+            "v_actor_before text := pg_catalog.current_setting",
+            "v_actor_changed boolean := false;",
+            "PERFORM NULLIF(v_actor_before, '')::uuid;",
+            "set_config('app.actor_user_id'",
+            "COALESCE(v_actor_before, '')",
+        ] {
+            assert!(body.contains(token), "{function} scopes and restores actor");
+        }
+    }
+    for (function, tag) in [
+        ("jobs_insert_guard", "$jobs_insert$"),
+        ("jobs_validate_insert_payload", "$job_payload$"),
+    ] {
+        assert!(
+            !function_definition(
+                OWNER_BETA_SIMULATION_UP_SQL,
+                &format!("CREATE FUNCTION public.owner_beta_simulation_{function}()"),
+                tag,
+            )
+            .contains("set_config('app.actor_user_id'")
+        );
+    }
+    assert!(!OWNER_BETA_SIMULATION_UP_SQL.contains("owner_beta_simulation_jobs_set_actor"));
+    assert!(!OWNER_BETA_SIMULATION_DOWN_SQL.contains("owner_beta_simulation_jobs_set_actor"));
+
+    let attempt = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE FUNCTION public.owner_beta_simulation_attempt_guard()",
+        "$attempt_guard$",
+    );
+    let old_probe = attempt.find("job.id = OLD.job_id").unwrap();
+    let old_capture = attempt.find("v_old_is_r4 := FOUND;").unwrap();
+    let new_probe = old_capture + attempt[old_capture..].find("job.id = NEW.job_id").unwrap();
+    let new_capture = attempt.find("v_new_is_r4 := FOUND;").unwrap();
+    let reassignment = attempt
+        .find("IF NEW.job_id IS DISTINCT FROM OLD.job_id THEN")
+        .unwrap();
+    let actor_set = attempt
+        .find("PERFORM pg_catalog.set_config('app.actor_user_id', v_owner::text, true);")
+        .unwrap();
+    assert!(old_probe < old_capture);
+    assert!(old_capture < new_probe && new_probe < new_capture && new_capture < reassignment);
+    assert!(reassignment < actor_set);
+    assert!(attempt[reassignment..actor_set].contains("IF v_old_is_r4 OR v_new_is_r4"));
+    assert!(attempt[reassignment..actor_set].contains("USING ERRCODE = '42501'"));
 
     let run_binding = OWNER_BETA_SIMULATION_UP_SQL
         .split("CREATE FUNCTION public.owner_beta_simulation_runs_validate_binding()")

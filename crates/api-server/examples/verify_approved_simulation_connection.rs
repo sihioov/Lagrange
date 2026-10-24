@@ -3,8 +3,8 @@
 //! The separately delivered runner is started by the coordinator only after
 //! this program writes `ready.json`; this example never launches child work.
 
-// The shared integration harness exposes many helpers unused by this binary.
-#[allow(dead_code)]
+// The shared harness already declares its own dead_code allowance.
+
 #[path = "../tests/common/mod.rs"]
 mod common;
 mod simulation_connection_proof;

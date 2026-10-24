@@ -629,9 +629,9 @@ print(json.dumps({"state":state,"cleanup_ok":clean}), flush=True)
             stream_cases = runner.parse_playwright_inventory(inventory_document(stream_specs))
             off = harness._run_lane("off", off_cases)
             stream = harness._run_lane("market-stream", stream_cases)
-            self.assertEqual((off.state, off.selected, off.passed, off.skipped), ("passed", 129, 129, 0))
+            self.assertEqual((off.state, off.selected, off.passed, off.skipped), ("passed", 151, 151, 0))
             self.assertEqual((stream.state, stream.selected, stream.passed, stream.skipped), ("passed", 14, 14, 0))
-            self.assertEqual(len({case.key for case in off.cases + stream.cases}), 142)
+            self.assertEqual(len({case.key for case in off.cases + stream.cases}), 164)
             self.assertNotEqual(off.token_sha256, stream.token_sha256)
             api_roots = [item.root_key for item in supervisor.roots if item.label.startswith("api-")]
             self.assertEqual(len(api_roots), 2)
@@ -1482,7 +1482,7 @@ while True: time.sleep(0.05)
         stream = runner.parse_playwright_inventory(inventory_document(stream_specs))
         receipt = runner.compare_lane_inventories(full, {"off": off, "market-stream": stream})
         self.assertEqual(receipt["state"], "complete")
-        self.assertEqual((receipt["full_count"], receipt["required_synthetic_count"], receipt["selected_count"], receipt["selected_execution_count"]), (143, 142, 142, 143))
+        self.assertEqual((receipt["full_count"], receipt["required_synthetic_count"], receipt["selected_count"], receipt["selected_execution_count"]), (165, 164, 164, 165))
         self.assertEqual(len(receipt["approved_overlap"]), 1)
         self.assertIn("renders an empty owner capacity", receipt["approved_overlap"][0])
         self.assertEqual(receipt["actual_case"]["state"], "dedicated_not_executed_in_synthetic_CI")
@@ -1531,6 +1531,23 @@ while True: time.sleep(0.05)
             runner.compare_lane_inventories(parse(full_specs + [second_actual]), {"off": off, "market-stream": stream})
         self.assertEqual(raised.exception.code, "ACTUAL_INVENTORY_CARDINALITY")
 
+    def test_inventory_rejects_omitted_owner_beta_simulation_inventory(self) -> None:
+        full_specs, off_specs, stream_specs = final_inventory_specs()
+        simulation_file = runner.OWNER_BETA_SIMULATIONS_FILE
+        self.assertEqual(sum(spec["file"] == simulation_file for spec in full_specs), 22)
+        self.assertEqual(sum(spec["file"] == simulation_file for spec in off_specs), 22)
+        parse = lambda specs: runner.parse_playwright_inventory(inventory_document(specs))
+        full, off, stream = parse(full_specs), parse(off_specs), parse(stream_specs)
+        omitted = [case for case in off if case.key.file != simulation_file]
+
+        result = runner.compare_lane_inventories(full, {"off": omitted, "market-stream": stream})
+
+        self.assertEqual(result["state"], "coverage_incomplete")
+        self.assertIn("OFF_COUNT_MISMATCH", result["contract_errors"])
+        self.assertIn("OFF_SELECTION_MISMATCH", result["contract_errors"])
+        self.assertEqual(len(result["missing"]), 22)
+        self.assertTrue(all(simulation_file in missing for missing in result["missing"]))
+
     def test_collection_derives_exact_owner_test_list_and_rejects_old_source(self) -> None:
         full_specs, off_specs, stream_specs = final_inventory_specs()
         parse = lambda specs: runner.parse_playwright_inventory(inventory_document(specs))
@@ -1551,7 +1568,7 @@ while True: time.sleep(0.05)
         try:
             with mock.patch.object(harness, "_playwright_json", side_effect=collect):
                 collected = harness.collect_inventories()
-            self.assertEqual(tuple(map(len, collected)), (143, 129, 14))
+            self.assertEqual(tuple(map(len, collected)), (165, 151, 14))
             self.assertEqual(calls[0]["mode"], "market-stream")
             self.assertEqual(calls[1]["files"], runner.OFF_FILES)
             self.assertEqual(calls[2]["files"], (runner.INTRADAY_FILE, runner.STREAM_FILE))

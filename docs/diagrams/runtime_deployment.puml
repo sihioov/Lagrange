@@ -110,7 +110,7 @@ simulation_provenance --> simulation_child : validate same executable before inp
 simulation_parent --> simulation_child : spawn --child; bounded pipes; TERM/KILL + wait
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:588-593
 artifacts --> simulation_child : read approved root through engine (operator path)
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:131,339; crates/job-queue/src/owner_beta/simulation_execution/publish.rs:496-546; migrations/0063_owner_beta_price_only_simulations.up.sql:163-184
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:131,339; crates/job-queue/src/owner_beta/simulation_execution/publish.rs:496-546; migrations/0063_owner_beta_price_only_simulations.up.sql:272-293
 simulation_parent --> simulation_tables : worker SQL; fenced atomic publication/recovery
 ' evidence: crates/api-server/src/http/mod.rs:417-431; crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906
 api --> simulation_tables : dedicated authenticated API; app actor snapshot reads
