@@ -7,7 +7,7 @@ Native subagents: prohibited for worker packages
 - 기준 revision: `bb906d374f17e25485b440017639894bceb3e1ac`.
 - 대상 작업 디렉터리: `/data/worktrees/3puw275b/short-bobcat`, 브랜치 `review-handoff-next-task`.
 - 상태: **Owner 실행 지시 수신. WP-1 G1 증거 수용·진단 CI39990016668 전체 성공, 원래 실패 원인 미확정.
-  WP-2 G2 및 WP-3 G3 소스/인터페이스 수용, WP-4 보완 소스 검토 완료, WP-5 F1~F5 수정과 독립 재검토 수용(READY_FOR_HOSTED). WP-6 후보1a27edd smoke 기능·정리 증거 수용, CI40015083289 종료 회수: Clippy/required FAILURE, 나머지6개 job SUCCESS, simulation unit41/integration2 PASS. 두 파일 보정·formatter PASS, 수정본 hosted와 U2/U3 OPEN.**
+  WP-2~4 소스/인터페이스 및 WP-5 독립 리뷰 수용. 최신 후보7d388a7의 CI40062490973은 Clippy/required FAILURE, 나머지6개 SUCCESS; smoke40062501852 기능·정리 PASS. simulation unit41/integration2 PASS. 추가 테스트 lint14곳의 한 파일 보정·formatter PASS이며 후속 수정 후보 hosted와 U2/U3는 OPEN이다.**
   [실행 기록](../../reviews/2026-10-24-r4-execution.md)에 수용·검증 상태를 구분해 기록한다.
 - 상위 작업: [ROADMAP R4-02/03](../../ROADMAP.md#8-r4--추천-전용-백테스트).
   R4-04의 계산·무결성 검증 일부를 함께 수행하되 R4-04 전체 완료로 표시하지 않는다.
@@ -452,7 +452,7 @@ cargo test --workspace --locked --no-fail-fast --features kis-client/test-suppor
 | WP-3 | G3 소스 및 후보 회귀 PASS | exact1a27edd 원장11개 포함 시뮬레이션 unit41 PASS. 실제 승인 입력 실행은 OPEN |
 | WP-4 | 보완 소스 및 후보 합성 회귀 PASS | exact1a27edd input/signals/engine 회귀와 integration2 PASS. 후속 lint 보정의 hosted 및 실제 U2/U3 OPEN |
 | WP-5 | DONE (소스 리뷰 범위) | 2026-10-24 manifest27ae4b99…의 19개 파일과 report31010885… 직접 대조. F1~F5 해소, READY_FOR_HOSTED; runtime 인수 아님 |
-| WP-6 | 기존 후보 증거 회수 완료 / G5 미수용 | exact1a27edd smoke PASS; CI40015083289 attempt1 Clippy/required FAIL, 나머지6개 job PASS. 두 파일 보정 formatter PASS, 수정 후보 hosted 실행 범위 확인 대기 |
+| WP-6 | 두 후보 증거 회수 완료 / G5 미수용 | exact7d388a7 CI40062490973 Clippy/required FAIL, 나머지6개 PASS; smoke40062501852 기능·정리 PASS. 작업자 idle/pending0 및 최종 보고서 직접 검증. 추가14곳 보정 후보 hosted NOT_RUN, 새 검증 쌍 범위 확인 필요. 이전1a27edd 증거 보존 |
 
 2026-10-24: Owner의 `$paseo-delegate-plan` 요청으로 계획 작성. 원본 계약 hash·로컬 코드 접점·
 검증 절차·실행 스킬 위치를 확인했다. 구현·worker·새 hosted 실행·운영 변경은 시작하지 않았다.
@@ -485,3 +485,11 @@ F1~F5가 해소됐고 새 필수 수정은 없다. 무가격 q=0은 입력/prove
 최종 후보의 기존 CI·smoke는 새로 실행하며 U2/U3 실제 실행은 OPEN을 유지한다.
 
 2026-10-24 종료 회수: WP-6 actual idle/pending0 뒤 보고서59cc9364…와 terminal receipt78b14122…를 회수했다. 코디네이터가 run/job/required 및 로그를 직접 대조해 workspace3,522 pass/0 fail/6 ignored, simulation unit41/integration2, Web143, PG19를 확인했다. Clippy/required 실패로 G5는 미수용이다. 두 파일 lint 보정과 종료 문서를 새 후보로 고정하며, 현재 감시 지시의 추가 smoke 금지 아래 새 후보 CI/smoke 각각1회 허용 범위를 확인한다. U2/U3 실제 실행은 OPEN이다.
+
+2026-10-24 재개: Owner “이어서 진행햐”를 수정 후보7d388a7 CI/smoke 각1회에 대한 진행 승인으로 기록했다. 과거 제한/실패 증거는 보존한다. 기존 WP-6 Luna/medium actual idle/pending0, HEAD/remote/19소스와 빈 실행 목록을 확인한 뒤 notified follow-up과 새 bounded 감시b5cd7be4를 등록했다. 코디네이터가 종료 결과를 검증하기 전 G5는 미수용이다.
+
+2026-10-24 추가 lint 실패: CI40062490973의 factor-engine 테스트 Copy clone14곳을 한 파일에서 보정했다. 생산 코드 prefix와 기대값은 동일하고 formatter PASS다. R4 추가 코드의 남은 clone 사용을 타입별로 제한 검토했으며 이를 Clippy 통과로 주장하지 않는다. 현재7d388a7의 나머지 CI/smoke 회수는 계속하고 새 보정 hosted는 NOT_RUN으로 구분한다.
+
+2026-10-24 05:02UTC CI 종료: exact7d388a7 CI40062490973 attempt1은 Clippy·required FAILURE, 나머지6개 job SUCCESS다. 코디네이터가 workspace3,522 pass/0 fail/6 ignored, simulation unit41/integration2 및 required 원인을 직접 대조했다. 같은 후보 smoke와 WP-6 최종 보고서 회수를 계속하며 추가 미커밋 lint 보정 hosted와 U2/U3는 미검증이다.
+
+2026-10-24 종료 회수: exact7d388a7 smoke40062501852 attempt1 SUCCESS, 기능·정리 exit0 및20개 step 성공을 직접 대조했다. Web143개와 PostgreSQL19suite·62migration NO_OP도 확인했다. WP-6 최종보고서와9개 private receipt, 원본prefix 보존 및6명 actual idle/pending0를 확인했다. 단위테스트 수치는41개로 정정돼 coordinator와 일치한다. 추가 수정은 price_only.rs cfg(test)의Copy clone14개뿐이며 새 후보의 hosted는 NOT_RUN이다. 현재 각1회 승인은 소진됐고 추가 dispatch는 하지 않는다. U2/U3 실제 증거와 G5는 OPEN이다.

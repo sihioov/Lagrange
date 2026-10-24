@@ -366,15 +366,15 @@ mod tests {
                             instrument_id: InstrumentId::parse(&format!("{symbol}.KRX"))
                                 .expect("ETF11 instrument"),
                             session_date: *session,
-                            raw_open: close.clone(),
-                            raw_high: close.clone(),
-                            raw_low: close.clone(),
-                            raw_close: close.clone(),
+                            raw_open: close,
+                            raw_high: close,
+                            raw_low: close,
+                            raw_close: close,
                             raw_volume: 1_000 + instrument_index as u64,
                             raw_trading_value: Some(fixed(10_000)),
-                            adjusted_open: close.clone(),
-                            adjusted_high: close.clone(),
-                            adjusted_low: close.clone(),
+                            adjusted_open: close,
+                            adjusted_high: close,
+                            adjusted_low: close,
                             adjusted_close: close,
                         }
                     })
@@ -538,13 +538,13 @@ mod tests {
                 .num_days() as i128;
             let price =
                 fixed(10_000 + days_after_t + (row_index % KR_ETF_CORE_SYMBOLS.len()) as i128);
-            bar.raw_open = price.clone();
-            bar.raw_high = price.clone();
-            bar.raw_low = price.clone();
-            bar.raw_close = price.clone();
-            bar.adjusted_open = price.clone();
-            bar.adjusted_high = price.clone();
-            bar.adjusted_low = price.clone();
+            bar.raw_open = price;
+            bar.raw_high = price;
+            bar.raw_low = price;
+            bar.raw_close = price;
+            bar.adjusted_open = price;
+            bar.adjusted_high = price;
+            bar.adjusted_low = price;
             bar.adjusted_close = price;
         }
 

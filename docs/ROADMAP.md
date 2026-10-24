@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-24 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4 첫 구현과 WP-5 소스 리뷰를 완료했고 후보 `1a27edd`의 hosted 결과를 회수했다. CI40015083289 attempt1은 Clippy 및 required FAILURE, 나머지 6개 job SUCCESS. workspace 3,522 pass/0 fail/6 ignored, 시뮬레이션 unit41·integration2 PASS를 직접 대조했다. 같은 후보 smoke40005036342 기능·정리 PASS. Clippy9진단은 두 파일에서 보정했고 formatter PASS이나 수정본 hosted는 NOT_RUN이다. R4-02/03 DOING, U2/U3 실제 실행 OPEN. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·유예·DailyOFF는 유지한다. |
+| 현재 실행 우선순위 | R4 첫 구현과 WP-5 소스 리뷰를 완료했다. 최신 검증 후보 `7d388a7`의 CI40062490973 attempt1은 Clippy·required FAILURE, 나머지6개 job SUCCESS다. workspace3,522 pass/0 fail/6 ignored, simulation unit41·integration2, Web143, PostgreSQL19를 직접 대조했다. 같은 SHA의 smoke40062501852 attempt1은 기능·정리 PASS다. 추가 Clippy14건은 factor-engine 테스트 한 파일에서 보정했고 formatter PASS이며, 이 기록을 포함하는 후속 수정 후보의 hosted는 NOT_RUN이다. 이전1a27edd의 실패·보정과 검증 이력은 보존한다. R4-02/03 DOING, U2/U3 실제 실행 OPEN. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·유예·DailyOFF는 유지한다. |
 | 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | **두 파일의 Clippy 보정과 종료 증거를 담은 이 변경의 커밋이 새 검증 후보다. 현재 감시 지시의 추가 smoke 금지 때문에 새 후보의 CI/smoke 각 1회 실행 범위를 확인해야 한다. 기존1a27edd의 성공 결과는 수정본 검증을 대신하지 않는다. U2 승인 artifact와 U3 실행 파일 provenance는 OPEN이다.** |
+| 다음 착수 항목 | **추가 Clippy14건을 고친 후속 후보의 동일 SHA CI·smoke 검증. 직전 지시의7d388a7 각1회 실행은 모두 소진했고 추가 dispatch 금지 범위를 유지하므로, 후속 후보를 고정한 뒤 새 검증 쌍의 실행 범위를 확인한다. 실제 U2 승인 artifact·U3 실행 파일 provenance는 별도 OPEN이다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -2364,3 +2364,11 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-24 — R4 Clippy 국소 보정: WP-6 actual idle/pending0과 실패 snapshot 보고서fcfe1fbd…를 회수한 뒤 코디네이터가 input.rs의 미사용 import·Copy clone7곳과 contract.rs 중첩 조건문을 보정했다. Rust plan/preflight/fast formatter PASS, 검토 소스19개 중2개만 변경. 기존 CI의 남은 job/required를 회수하는 read-only notified follow-up을 시작했다. 수정본 compile/unit/Clippy/smoke는 NOT_RUN이며 새 후보는 아직 고정하지 않았다. [실행 기록](reviews/2026-10-24-r4-execution.md).
 
 - 2026-10-24 — R4 WP-6 종료 증거 회수: exact1a27edd/CI40015083289 attempt1의8개 job과 required 실패를 대조했다. Clippy만 실패한 입력이며 나머지6개 job SUCCESS, workspace3,522 pass/0 fail/6 ignored·simulation unit41/integration2·Web129+14·PG19 PASS. 모든 소유 worker idle/pending0·보고서 회수 완료. 두 파일 lint 보정은 formatter PASS로 새 후보 고정 대상이며 새 hosted 실행은 현재 감시의 추가 smoke 금지 때문에 범위 확인 대기. R4-02/03 DOING 및 U2/U3 OPEN을 유지한다. [최종 보고](reviews/2026-10-24-r4-wp-6.md)·[실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 수정 후보 검증 재개: Owner가 구체적인 CI/smoke 각1회 실행 요청 뒤 “이어서 진행햐”라고 지시했다. 이전 추가 smoke 제한은7d388a7da98ac407d3b177d09a5bd256436e4b9b의 새 검증 쌍에 한해 해소됐다. HEAD/remote·소스19개 hash·clean tree와 같은 후보 실행0을 확인했고 기존 WP-6 Luna/medium에 notified follow-up을 보냈다. 이 작업 전용 새 감시b5cd7be4를 등록했다. R4-02/03 DOING, 결과와 U2/U3 실제 실행은 OPEN. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+- 2026-10-24 — R4 추가 Clippy 보정: exact7d388a7/CI40062490973의 factor-engine lib-test에서 FixedPoint clone_on_copy14건을 직접 확인했다. 코디네이터가 price_only.rs cfg(test) 두 영역만 Copy 대입으로 바꿨고 생산 소스 prefix 동일·Rust fast formatter PASS를 확인했다. 기존7d388a7 CI/smoke는 계속 회수하며 새 수정은 미커밋·hosted NOT_RUN이다. [실행 기록](reviews/2026-10-24-r4-execution.md).
+
+2026-10-24 05:02UTC — R4 후보7d388a7의 CI40062490973 attempt1 종료를 독립 확인했다. Clippy·required 실패, 나머지6개 성공이며 workspace3,522 pass/0 fail/6 ignored 및 simulation unit41/integration2 PASS다. 같은 후보 smoke와 WP-6 보고서 회수는 진행 중이다. 추가 테스트 lint 보정 hosted와 U2/U3는 미검증으로 유지한다.
+
+2026-10-24 — R4 후보7d388a7의 CI40062490973·smoke40062501852 attempt1 종료와 WP-6 보고서를 회수했다. 코디네이터가 same-SHA metadata·workspace/required/Web/PostgreSQL·smoke 기능/정리를 검증했다. 소유 작업자6명 idle/pending0이며 테스트41개 수치 정정도 확인했다. 추가14곳 lint 수정 후보는 formatter PASS, hosted NOT_RUN으로 고정한다. 새 검증은 기존 추가-dispatch 금지 경계를 따른다.

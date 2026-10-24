@@ -346,3 +346,82 @@ NOT_ESTABLISHED/NOT_RUN이며 R4-02/03 최종 완료를 주장하지 않는다.
 소유 작업자6명 actual idle/pending0 및 보고서 회수 뒤 현재 감시 aadd7272를 삭제했다. 새 작업을
 자동 재개하는 타이머는 없다. 수정본 소스19개 hash와 두 파일만 변경된 범위, 계약 원본 hash를
 재확인했고 docs fast 공백 검사는 통과했다.
+
+
+## 수정 후보7d388a7 hosted 검증 재개
+
+2026-10-24 04:27UTC: 구체적인 수정 후보 CI/smoke 각1회 요청 뒤 Owner가 “이어서 진행햐”라고
+지시했다. 이 검증 쌍에는 이전 추가 smoke 제한이 적용되지 않으며 반복 확인을 요구하지 않는다.
+후보 `7d388a7da98ac407d3b177d09a5bd256436e4b9b`의 local HEAD/remote/branch 및19개 소스의
+현재·커밋 hash가 일치했고 clean tree였다. workflow identity+branch+SHA로 조회한 기존 CI/smoke는
+둘 다0개였다. `wp-6/candidate-7d388a7/authorization.json`에 원본 보고서 prefix hash/길이와 범위를
+고정했다. 해당 후보를 다시 commit하거나 source를 변경하지 않는다.
+
+기존 WP-6 `0324a62d-1753-4925-b95b-f2e4d4d3f0aa`의 actual idle/pending0 및
+Codex gpt-6-luna/medium, workspace/parent를 확인했다. 같은 작업자에게 notifyOnFinish로
+각 workflow 최대1회와 결과 회수만 맡겼다. inherited mode는 변경하지 않았다. JSON 배열 길이
+검사, 개별 exit/HTTP204와 run identity 회수를 요구했고 실패를 숨기거나 blind retry하지 않는다.
+이미 시작된 나머지 job과 required 및 smoke cleanup까지 원래70분 기한 내 회수하도록 했다.
+새 감시b5cd7be4는2분 간격·최대60회·06:27UTC 만료이며 소유 worker와 현재 범위만 감시한다.
+이전aadd7272 및 옛 작업 감시는 재개하지 않았다. 새 후보 결과는 아직 미검증이며 U2/U3 실제
+artifact/실행 파일 증거와 R4-02/03 최종 완료는 OPEN이다.
+
+04:28UTC 실제 실행: CI POST04:28:44.563699·smoke POST04:28:55.105544 모두 개별 exit0/HTTP204였다.
+코디네이터가 CI40062490973 attempt1과 smoke40062501852 attempt1의 workflow identity, exact7d388a7,
+branch/event를 GitHub에서 독립 확인했다. 각1회 접수이며 CI format은 PASS, 나머지 job과 smoke는
+진행 중이다. 새 후보의 최종 검증 인수는 아직 아니다. WP-6의 관찰 기한은 최초 POST 기준05:38:44UTC다.
+
+
+## 추가 factor-engine 테스트 lint 보정
+
+CI40062490973 attempt1의 Clippy job120778800630이 실패했다. 코디네이터가 로그를 독립 회수해
+`price_only.rs`369–377 및541–547의 FixedPoint clone_on_copy14건을 확인했다. `domain/src/fixed.rs:58`의
+Copy 구현과 cfg(test) 경계를 대조하고 테스트 fixture/미래가격 변조의14개 clone만 직접 대입으로
+바꿨다. 생산 코드 prefix·검증 기대값은 동일하다. 같은 종류의 진단이 다른 crate에서 추가로 드러나
+R4 추가 영역의 남은 clone 사이트를 타입별로 제한 검토했고 String/Vec/계약/hash 소유 값은 유지했다.
+이 검토는 컴파일러 검증을 대신하지 않는다.
+
+Rust fast formatter `target/dev-check/20261024T043432Z-d6f2afd75be8/run.json`은 PASS다.
+진단 위치·전후 hash·검증 경계를 `candidate-7d388a7/coordinator-factor-test-correction.json`에 기록했다.
+한 파일 미커밋 보정이며 현재 실행의 immutable7d388a7에는 포함되지 않는다. WP-6의 실행 중 과제를
+변경하지 않았고 CI 나머지 job/required 및 smoke 결과를 계속 회수한다. 추가 dispatch/retry/cancel은
+하지 않았다. 새 보정의 compile/unit/Clippy·hosted와 U2/U3 실제 증거는 미검증이다.
+
+
+## 수정 후보7d388a7 CI 종료 확인
+
+2026-10-24 05:02UTC: CI40062490973 attempt1은05:01:19UTC에 FAILURE로 종료했다. 코디네이터가
+workflow331572180, branch, exact7d388a7, event와8개 job metadata를 대조했다. Clippy와 required는
+실패했고 나머지6개 job은 성공했다. required 로그도 CLIPPY_RESULT만 failure임을 확인했다.
+workspace 로그253개 test result 요약은3,522 passed/0 failed/6 ignored/386 filtered다. 고유한
+owner_beta::simulation 테스트41개 및 owner_beta_simulation integration2개가 모두 ok다.
+정제된 근거는 candidate-7d388a7/coordinator-ci-terminal-verification.json에 기록했다.
+WP-6 중간 활동에는 단위 테스트42개로 기재돼 있으므로 actual idle 뒤 최종 보고서 수치를 대조한다.
+smoke40062501852는 계속 실행 중이며 작업자를 재지시하지 않았다. 로컬 factor-engine14곳 보정은
+이 후보에 포함되지 않으므로 hosted NOT_RUN이고, G5 및 U2/U3 실제 인수는 여전히 미완료다.
+
+
+## 수정 후보7d388a7 최종 회수와 후속 보정 후보
+
+2026-10-24: smoke40062501852 attempt1은 05:14:30UTC run metadata 기준 SUCCESS다.
+job120778832585는 05:14:29UTC에 종료했고 20개 step 모두 성공이다. 코디네이터가 static/functional
+PASS, Raw probe와 overall cleanup exit0, project container/volume/network 및 context image의
+remaining=NONE, 해당 private builder removed를 직접 대조했다. 별도의 6개 probe volume 삭제 후
+absence 조회는 없으므로 그 독립 부재 증거를 주장하지 않는다. Cache save 성공은 attempted/unverified다.
+Web OFF129/129·market-stream14/14, coverage complete·cleanup/reservation true·skip/flaky/retry0,
+PostgreSQL19suite exit0·skip0, 62migration 재실행 NO_OP도 독립 로그로 확인했다.
+정제된 코디네이터 근거는 candidate-7d388a7/coordinator-runtime-verification.json에 있다.
+
+WP-6 완료 알림08a311cc를 회수하고 소유6명 actual idle/pending0를 확인했다. 보고서
+SHA-256 1b34961b97e10f7f2c87c4b8eb1ff29a92b3d0b815b80764a630e5751cc04f11과 9개
+mode0600 receipt를 회수했다. 최초 보고서16948byte prefix는 그대로이고 단위 테스트 수치는41개로
+정정돼 코디네이터 결과와 일치한다. CI 실패로 G5는 미수용이며 같은 후보의 smoke 성공만 수용한다.
+
+후속 소스 변경은 price_only.rs의 cfg(test) 안에서 Copy clone14개를 직접 대입으로 바꾼 한 파일뿐이다.
+생산 prefix와 테스트 기대값은 동일하고 최종 소스 해시는
+3e7b3925582de41ba23903778bcf105ecf14500b891e78ee55c139f462a378ca다.
+Rust fast formatter PASS의 입력과 일치한다. 이 기록과 종료 보고서를 묶어 후속 후보를 고정한다.
+새 후보 CI·smoke는 NOT_RUN이며 직전7d388a7 각1회 승인은 소진됐다. 추가 dispatch 금지 경계에 따라
+구체적인 새 후보의 검증 쌍 실행 범위를 확인한다. U2 실제 artifact·U3 실행 파일 증거는 OPEN을 유지한다.
+
+모든 소유 작업자의 종료·pending0·보고서 회수를 확인한 뒤 감시b5cd7be4를 삭제했다. 새 실행을 자동 시작하는 감시는 남기지 않았다.
