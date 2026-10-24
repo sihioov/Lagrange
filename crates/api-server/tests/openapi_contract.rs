@@ -224,10 +224,9 @@ fn openapi_owner_beta_simulation_wire_is_exact_and_closed() {
             .iter()
             .any(|code| code == "INVALID_CURSOR")
     );
-    assert_eq!(
+    assert!(
         spec["paths"][&format!("{base}/runs/{{run_id}}/pair")]["get"]["responses"]["409"]
             .is_object(),
-        true,
         "pair readiness has a typed 409 response"
     );
     assert!(

@@ -35,6 +35,10 @@ fn enqueue_body(config_id: Uuid) -> Value {
 }
 
 fn assert_private(response: &axum::response::Response) {
+    assert_private_for(response, Harness::RID);
+}
+
+fn assert_private_for(response: &axum::response::Response, expected_rid: &str) {
     assert_eq!(
         response
             .headers()
@@ -47,7 +51,7 @@ fn assert_private(response: &axum::response::Response) {
             .headers()
             .get("x-request-id")
             .and_then(|v| v.to_str().ok()),
-        Some(Harness::RID)
+        Some(expected_rid)
     );
 }
 
@@ -750,8 +754,8 @@ async fn simulation_cancel_publish_and_lease_races() {
         Some(json!({})),
     );
     let (first, second) = tokio::join!(first, second);
-    assert_private(&first);
-    assert_private(&second);
+    assert_private_for(&first, "cancel-race-a");
+    assert_private_for(&second, "cancel-race-b");
     assert_eq!(status(&first), StatusCode::OK);
     assert_eq!(status(&second), StatusCode::OK);
     let first_body = Harness::body_json(first).await;
@@ -785,7 +789,7 @@ async fn simulation_cancel_publish_and_lease_races() {
             Some(json!({})),
         )
         .await;
-    assert_private(&key_reused_for_other_run);
+    assert_private_for(&key_reused_for_other_run, "cancel-other-run-key");
     assert_eq!(status(&key_reused_for_other_run), StatusCode::CONFLICT);
     assert_eq!(
         Harness::error_code(&Harness::body_json(key_reused_for_other_run).await),

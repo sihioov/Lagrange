@@ -113,7 +113,7 @@ def assert_r4_verification_job(workflow: dict) -> None:
     assert job.get("if") == R4_TRIGGER, "R4 verification job trigger broadened"
     assert job.get("permissions") == {"contents": "read"}, "R4 verification job permissions expanded"
     assert job.get("runs-on") == "ubuntu-latest", "R4 verification job runner changed"
-    assert job.get("timeout-minutes") == "45", "R4 verification job timeout changed"
+    assert job.get("timeout-minutes") == "90", "R4 verification job timeout changed"
     assert set(job) == {
         "if", "permissions", "runs-on", "timeout-minutes", "steps"
     }, "R4 verification job gained inputs or execution scope"

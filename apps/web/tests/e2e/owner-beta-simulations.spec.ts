@@ -33,6 +33,28 @@ function apiProblemResponse(status: number, code: string, message: string) {
   };
 }
 
+async function interceptEnqueueProblem(
+  page: import("@playwright/test").Page,
+  status: number,
+  code: string,
+  message: string,
+): Promise<() => number> {
+  const origin = new URL(page.url()).origin;
+  let injectedPosts = 0;
+  await page.route(
+    (url) => url.origin === origin && url.pathname === SIMULATION_RUNS_PATH,
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      injectedPosts += 1;
+      await route.fulfill(apiProblemResponse(status, code, message));
+    },
+  );
+  return () => injectedPosts;
+}
+
 test("member cannot enumerate or call the owner-only simulation surface", async ({
   page,
   request,
@@ -144,7 +166,11 @@ test("owner queues a closed request with CSRF and idempotency, then treats cance
   expect(cancel.postDataJSON()).toEqual({});
   expect(cancel.headers()["x-csrf-token"]).toBeTruthy();
   expect(cancel.headers()["idempotency-key"]).toBeTruthy();
-  await expect(page.getByText("Cancellation was acknowledged", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Cancellation was acknowledged. Refreshing the server's current run state.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Simulation running" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Simulation canceled" })).toHaveCount(0);
 });
@@ -238,11 +264,14 @@ test("uses login recovery when enqueue expires after successful CSRF preflight",
 }) => {
   await setScenario(request, OWNER_SIMULATION);
   await page.goto("/backtests/owner-beta/price-only");
-  const origin = new URL(page.url()).origin;
-  await page.route(
-    (url) => url.origin === origin && url.pathname === SIMULATION_RUNS_PATH,
-    (route) => route.fulfill(apiProblemResponse(401, "SESSION_EXPIRED", "session expired")),
-    { times: 1 },
+  await expect(
+    page.getByRole("button", { name: "Select 2026-08-27 to 2026-08-28, SUCCEEDED" }),
+  ).toBeVisible();
+  const injectedPosts = await interceptEnqueueProblem(
+    page,
+    401,
+    "SESSION_EXPIRED",
+    "session expired",
   );
   const csrfResponse = page.waitForResponse(
     (current) =>
@@ -252,14 +281,26 @@ test("uses login recovery when enqueue expires after successful CSRF preflight",
     (current) =>
       current.method() === "POST" && new URL(current.url()).pathname === SIMULATION_RUNS_PATH,
   );
+  const enqueueResponse = page.waitForResponse(
+    (current) =>
+      current.request().method() === "POST" &&
+      new URL(current.url()).pathname === SIMULATION_RUNS_PATH,
+  );
   const form = page.getByRole("form", { name: "Queue a simulation" });
   await form.getByLabel("Eligible strategy configuration").selectOption(SIMULATION_CONFIG_ID);
   await form.getByRole("button", { name: "Queue simulation" }).click();
-  const [csrf, enqueue] = await Promise.all([csrfResponse, enqueueRequest]);
+  const [csrf, enqueue, rejected] = await Promise.all([
+    csrfResponse,
+    enqueueRequest,
+    enqueueResponse,
+  ]);
   expect(csrf.status()).toBe(200);
   expect(enqueue.headers()["x-csrf-token"]).toBeTruthy();
   expect(enqueue.headers()["idempotency-key"]).toBeTruthy();
+  expect(rejected.status()).toBe(401);
+  expect((await rejected.json()).error.code).toBe("SESSION_EXPIRED");
   await expect(page).toHaveURL(/\/auth\/login$/);
+  expect(injectedPosts()).toBe(1);
 });
 
 test("shows the form-specific message for a typed INVALID_DATE enqueue rejection", async ({
@@ -268,12 +309,19 @@ test("shows the form-specific message for a typed INVALID_DATE enqueue rejection
 }) => {
   await setScenario(request, OWNER_SIMULATION);
   await page.goto("/backtests/owner-beta/price-only");
-  const origin = new URL(page.url()).origin;
-  await page.route(
-    (url) => url.origin === origin && url.pathname === SIMULATION_RUNS_PATH,
-    (route) =>
-      route.fulfill(apiProblemResponse(400, "INVALID_DATE", "evaluation date is not allowed")),
-    { times: 1 },
+  await expect(
+    page.getByRole("button", { name: "Select 2026-08-27 to 2026-08-28, SUCCEEDED" }),
+  ).toBeVisible();
+  const injectedPosts = await interceptEnqueueProblem(
+    page,
+    400,
+    "INVALID_DATE",
+    "evaluation date is not allowed",
+  );
+  const enqueueResponse = page.waitForResponse(
+    (current) =>
+      current.request().method() === "POST" &&
+      new URL(current.url()).pathname === SIMULATION_RUNS_PATH,
   );
   const form = page.getByRole("form", { name: "Queue a simulation" });
   await form.getByLabel("Eligible strategy configuration").selectOption(SIMULATION_CONFIG_ID);
@@ -281,7 +329,16 @@ test("shows the form-specific message for a typed INVALID_DATE enqueue rejection
   await form.getByLabel("Evaluation end date").fill("2026-08-28");
   await form.getByRole("button", { name: "Queue simulation" }).click();
 
+  const rejected = await enqueueResponse;
+  expect(rejected.status()).toBe(400);
+  expect((await rejected.json()).error.code).toBe("INVALID_DATE");
+  expect(rejected.request().headers()["x-csrf-token"]).toBeTruthy();
+  expect(rejected.request().headers()["idempotency-key"]).toBeTruthy();
   await expect(form.getByRole("alert")).toContainText("Enter valid dates in chronological order");
+  await expect(page).toHaveURL(/\/backtests\/owner-beta\/price-only$/);
+  await expect(page.getByRole("heading", { name: "Simulation running" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Simulation queued" })).toHaveCount(0);
+  expect(injectedPosts()).toBe(1);
 });
 
 test("invalidates an in-flight success when cancellation loses entitlement", async ({
@@ -461,7 +518,9 @@ test("owner without an eligible saved configuration cannot queue or invent one",
 
   await expect(appAlert(page)).toContainText("No eligible strategy configuration");
   await expect(page.getByRole("button", { name: "Queue simulation" })).toHaveCount(0);
-  await expect(page.getByLabel("Eligible strategy configuration")).toHaveCount(0);
+  await expect(
+    page.getByRole("combobox", { name: "Eligible strategy configuration", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("rejects reversed dates before sending an enqueue request", async ({ page, request }) => {
@@ -529,7 +588,11 @@ test("keeps cancellation available after rights loss without fabricating a termi
   );
   await page.getByRole("button", { name: "Request cancellation" }).click();
   await cancelRequest;
-  await expect(page.getByText("Cancellation was acknowledged", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Cancellation was acknowledged. Refreshing the server's current run state.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Simulation canceled" })).toHaveCount(0);
 });
 

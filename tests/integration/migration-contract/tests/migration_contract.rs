@@ -471,6 +471,33 @@ fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
         );
     }
     let executable_up = OWNER_BETA_SIMULATION_UP_SQL.to_ascii_lowercase();
+    let pair_select_policy = OWNER_BETA_SIMULATION_UP_SQL
+        .split("CREATE POLICY owner_beta_simulation_pairs_app_select")
+        .nth(1)
+        .expect("pair read policy exists")
+        .split(';')
+        .next()
+        .expect("pair read policy statement");
+    let (absent_actor_guard, authorized_actor_branch) = pair_select_policy
+        .split_once("THEN false\n        ELSE")
+        .expect("absent actors are denied before any nested jobs policy is evaluated");
+    assert!(absent_actor_guard.contains(
+        "CASE WHEN NULLIF(pg_catalog.current_setting('app.actor_user_id', true), '') IS NULL"
+    ));
+    for predicate in [
+        "owner_user_id = NULLIF(",
+        "AND EXISTS (",
+        "run.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id",
+        "run.status = 'SUCCEEDED'",
+        "job.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id",
+        "job.job_type = 'owner_beta_price_only_simulation'",
+        "job.status = 'SUCCEEDED'",
+    ] {
+        assert!(
+            authorized_actor_branch.contains(predicate),
+            "the guarded pair policy retains {predicate}"
+        );
+    }
     for grant in executable_up
         .split(';')
         .map(str::trim)

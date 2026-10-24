@@ -1049,3 +1049,133 @@ The independent reviewer returned READY_FOR_HOSTED with no mandatory source find
 The source verdict does not establish compilation or PostgreSQL behavior. Post-COMMIT actor checks alone cannot reveal transaction-local leakage; direct assertions inside transactions cover their specified paths, while other exit restoration conclusions remain source-based. Two unidentified old R4 failures and other unrecovered target causes remain unresolved. All existing hosted gates remain required.
 
 Create a new candidate containing this record and the reviewed corrections, verify committed and working blobs, push the same branch, and dispatch existing CI/required with selected source-only build and Research smoke once each. Do not rerun any of the three failed candidate SHAs. Only successful same-candidate required gates permit authenticating exact4+2 artifacts before the separately frozen approved-input scratch connection proof. R4-04 full isolation and R4-05 completion remain unaccepted.
+
+### G3 fourth hosted evidence and bounded diagnosis (2026-10-25)
+
+Candidate `9c3af801b44357eea96a7ec6452aa9cade6a2b25` ran CI40137757186 and
+Research smoke40137759181 once each, attempt1. CI and required failed; smoke passed.
+WP7 actual idle/pending0, report `1355e5df5bf14fa0d96caf4deea63fb75fd5780b3d93d49f302e996a2ce45d50`
+and receipt `0c558987ee69bf8d42d2ec53e7a7346147ebc62e4adf79d22ca3e6b2544fde9f`
+were recovered with71 source/271 protected/872 compile/17 observer inputs intact.
+The monitor is reaped and both terminal artifact lists are empty. Old candidates and all
+round-four evidence remain immutable; no rerun or artifact authentication is authorized here.
+
+Source19 passed both the pinned build parser and separate workspace direct rows.
+Dedicated PG ran15 frozen storage cases:7 passed,8 failed, then8 API cases were not reached.
+Workspace ran all23 PG-scope cases:14 passed,9 failed. These harnesses remain distinct.
+Web unit539 passed; E2E coverage is complete with165 executions/164 unique identities and
+5 unexpected off-lane cases. The optional build was cancelled after source markers;
+proof6 has no execution proof. A45-minute source limit is not proof of the cancellation cause.
+Smoke static/functional markers and project-resource absence checks passed. Two cache exports
+completed, but their direct service identities and independent builder absence were not recovered.
+Cache persistence/performance and host OOM/resource metrics remain unverified.
+
+The coordinator corrects only the direct Clippy bool-assertion diagnostic at
+`crates/api-server/tests/openapi_contract.rs:227`, preserving its condition and message.
+Existing owned idle WP1 and WP2 separately trace the DB/actor failures and Web5 failures
+read-only. Because22P02 and some actor-related assertions survived the preceding correction,
+prior actor-restoration assumptions must be tested against the new exact source locations;
+do not extend that theory without a complete causal chain. The build cancellation branch is
+separate coordinator analysis. No local heavy compile, database, Docker or browser execution;
+no new remote reads, input access, production changes or new workers. Source implementations
+wait for verified bounded causes and retain all acceptance fences and existing test names.
+Only after corrections and independent source review may a new candidate be frozen and the
+existing required CI/optional build plus smoke dispatched once. Actual authenticated owner
+isolation remains blocked on successful hosted gates and authenticated4+2 deliverables.
+
+
+### G3 fourth hosted correction — implementation integrated, source review pending (2026-10-25)
+
+The coordinator recovered both diagnoses only after actual idle, no pending requests,
+matching report receipts and all current71 source/338 protected/872 compile pins.
+WP1 report SHA256 is `d15a2259afd8b93d24b42a1b0b0bfe8c2d65d671ba79421b19886db00bcf4654`;
+WP2 report SHA256 is `e110973b7afb74d0e6c875d7c6bfff03f0d0c8eba8be43a0f6a1159a818a210f`.
+Their private paths are `target/r4-connection/wp-1/hosted-round4-diagnosis/` and
+`target/r4-connection/wp-2/hosted-round4-web-diagnosis/`.
+
+- Storage/API fixture corrections preserve the existing named tests and acceptance:
+  valid synthetic hexadecimal identities, explicit inactive scratch candidate control
+  with the seeded row/callback retained, lease-relative expiry with a live negative
+  control, distinct malformed-caller versus stored-pair reconciliation expectations,
+  and exact per-request correlation IDs. No production control or historical migration
+  changes are authorized by these test arrangements.
+- Web corrections target the full cancellation acknowledgement, the actual named
+  combobox, and POST-only injected errors with observed response status/code/count.
+  The prior five unexpected cases remain historical failures; the two enqueue cases'
+  actual intercepted request/order was not retained. No product auth, abort, rights,
+  eligibility or cancellation semantics are changed to accommodate the tests.
+- The prior22P02 inner statement is still unconfirmed. Source inspection finds a
+  separate unsafe evaluation-order dependency: the new pair policy's AND expression
+  joins jobs, whose historical app policy casts empty actor text to UUID. PostgreSQL
+  does not guarantee AND ordering and documents CASE as an evaluation guard, subject
+  to constant-folding/aggregate caveats. The R4 policy now returns false for missing
+  or empty actor before entering the existing owner/run/jobs predicates. No predicate,
+  role, grant or historical app policy is removed or broadened. Same-connection
+  missing/empty/valid/malformed actor behavior and phase-labelled failures must be
+  checked in hosted PostgreSQL; source reasoning is not a reproduction of the old
+  failure. References: [evaluation rules](https://www.postgresql.org/docs/17/sql-expressions.html#SYNTAX-EXPRESS-EVAL)
+  and [CASE](https://www.postgresql.org/docs/17/functions-conditional.html#FUNCTIONS-CASE).
+- A separate bounded read of check-run121002800665 annotations now confirms timeout.
+  The raw bytes were not retained; their digest and safe classification are in
+  `target/r4-connection/hosted-round4-correction-preparation/build-annotation-evidence.json`.
+  The original worker report's earlier uncertainty is preserved. Exact active compiler
+  phase, OOM and resource metrics remain unknown. Only this source-build job's limit
+  changes45→90 minutes. All serial release commands, CARGO_BUILD_JOBS=2, permission,
+  source/proof parser gates, required aggregation and success-only exact4+2 uploads
+  remain unchanged. No old candidate run is retried.
+
+Coordinator checks so far: pinned rustfmt1.97.1/edition2024 on its Rust changes,
+Python AST, TypeScript syntax via Node24 strip-types, and three focused existing
+workflow contract tests passed. The existing Biome2.5.7 binary from the same repository
+worktree family was reused with cwd=apps/web; one formatting correction was applied and
+the focused check passed. No dependency install, Web build/browser, Rust compile or
+database check was run. These checks do
+not establish hosted success. WP1 changed only its two bounded test files; coordinator
+owns Web/policy/budget and documentation. Independent source review and a new clean
+candidate remain prerequisites for any later dispatch. G3 runtime/artifact gates and
+all previous approval boundaries stay unchanged.
+
+The final WP1 correction report was recovered after actual idle/pending0, with SHA256
+`1226e0dc62771a1784a4644417d0e514cc3d6fb05d30837439c6d24f038bca36` and receipt
+`76c6aafe4f6887a6b0b8a12fe815d0e8a8858424869703e1455b34915300e380` under
+`target/r4-connection/wp-1/hosted-round4-correction/`. All57 readonly source,
+867 readonly compile and345 protected evidence hashes matched. The worker retained
+the original15 storage/23 aggregate PostgreSQL names and corrected the later live-cancel
+expiry as well. Coordinator review then corrected two remaining expiry arrangements:
+the30-second typed-claim generic-sweeper exclusion and60-second frozen-config
+cancellation now use the same lease-derived helper and assert real eligibility before
+their unchanged expected outcomes. The two10-second arrangements for1-second generic
+leases remain valid. Pinned rustfmt, whitespace and original storage-name checks pass;
+no compile/database/browser run has occurred.
+
+Index preservation exception: baseline bytes hashed to
+`811eb11b9729a09e29a7b9c0050de58c8418293250e893f8543443fc6836ae54`; observed bytes hash to
+`ce82be142240f011190b880693726fd0add089838c5a9ea70db004d034fd43b3`. HEAD is unchanged and
+all2254 stage0 path/mode/blob entries equal HEAD, with no staged diff. An automatic
+stat refresh is plausible but was not observed conclusively. No index reset or
+reconstruction was performed. The original baseline and worker report remain immutable;
+`coordinator-index-byte-deviation.json` records the exception, and the independent review
+must pin the current bytes without claiming the old byte-preservation check passed.
+
+### G3 fourth correction review accepted — new hosted candidate next (2026-10-25)
+
+The coordinator recovered WP6 at actual idle with no pending permissions and accepted
+READY_FOR_HOSTED for source review only. The report SHA256 is
+`d960f15f4eee67e549c3a50b8c354e46dfb5c0621f89c763e9927437d0f54823`; receipt SHA256 is
+`0d754bc211344153f0c784d3c25917f9f5ed89d210cb7d7153d4ffda8d5d725c`, under
+`target/r4-connection/wp-6/hosted-round4-correction/`. All71 source/document/image,
+361 protected evidence and872 compile-input hashes matched independently. The review
+found no mandatory source correction. HEAD/branch/current index remained pinned during
+review; the earlier index-byte exception remains documented, with no repair or old-byte
+preservation claim. The two recorded coordinator lease corrections were independently
+checked against the saved worker-final source.
+
+Only this plan and ROADMAP acceptance text change after review. The next step is a new
+clean committed candidate and exactly one existing CI dispatch with selected source-only
+build plus one Research smoke dispatch at the same SHA. No previous candidate run is
+retried. The source verdict does not establish compilation, PostgreSQL/browser behavior,
+proof6, authenticated delivery or approved-input owner isolation. Historical unknowns
+remain unknown. Required hosted success and coordinator authentication of the exact4+2
+archives still precede the isolated real authenticated API/runner proof and mandatory
+cross-user denial/failed-partial-pair nonvisibility checks. Scope and input permissions
+remain unchanged.

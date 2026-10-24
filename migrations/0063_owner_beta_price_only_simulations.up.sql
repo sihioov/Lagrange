@@ -326,20 +326,25 @@ CREATE POLICY owner_beta_simulation_runs_migration_owner_actor
 CREATE POLICY owner_beta_simulation_pairs_app_select
     ON public.owner_beta_simulation_result_pairs FOR SELECT TO app
     USING (
-        owner_user_id = NULLIF(
-            pg_catalog.current_setting('app.actor_user_id', true), ''
-        )::uuid
-        AND EXISTS (
-            SELECT 1
-              FROM public.owner_beta_simulation_runs AS run
-              JOIN public.jobs AS job ON job.id = run.job_id
-             WHERE run.id = owner_beta_simulation_result_pairs.run_id
-               AND run.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id
-               AND run.status = 'SUCCEEDED'
-               AND job.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id
-               AND job.job_type = 'owner_beta_price_only_simulation'
-               AND job.status = 'SUCCEEDED'
-        )
+        -- AND does not sequence evaluation, so absent actors must not reach jobs' app UUID cast.
+        CASE WHEN NULLIF(pg_catalog.current_setting('app.actor_user_id', true), '') IS NULL
+            THEN false
+        ELSE
+            owner_user_id = NULLIF(
+                pg_catalog.current_setting('app.actor_user_id', true), ''
+            )::uuid
+            AND EXISTS (
+                SELECT 1
+                  FROM public.owner_beta_simulation_runs AS run
+                  JOIN public.jobs AS job ON job.id = run.job_id
+                 WHERE run.id = owner_beta_simulation_result_pairs.run_id
+                    AND run.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id
+                    AND run.status = 'SUCCEEDED'
+                    AND job.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id
+                    AND job.job_type = 'owner_beta_price_only_simulation'
+                    AND job.status = 'SUCCEEDED'
+            )
+        END
     );
 CREATE POLICY owner_beta_simulation_pairs_worker_select
     ON public.owner_beta_simulation_result_pairs FOR SELECT TO worker USING (true);

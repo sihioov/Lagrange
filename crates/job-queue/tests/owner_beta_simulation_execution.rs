@@ -32,7 +32,7 @@ use job_queue::{
 };
 use market_data::KR_ETF_CORE_SYMBOLS;
 use serde_json::json;
-use sqlx::{PgPool, postgres::PgConnectOptions, postgres::PgPoolOptions};
+use sqlx::{Connection, PgConnection, PgPool, postgres::PgConnectOptions, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -157,6 +157,17 @@ fn assert_sqlstate(error: &sqlx::Error, expected: &str, context: &str) {
 }
 
 async fn pin_inactive_candidate_control_for_test(db: &ScratchDb, worker: &PgPool) -> TestResult {
+    let updated = sqlx::query(
+        "UPDATE public.candidate_scheduler_control SET active = false
+          WHERE control_key = 'scheduler'",
+    )
+    .execute(&db.pool)
+    .await?;
+    assert_eq!(
+        updated.rows_affected(),
+        1,
+        "retain the existing control row"
+    );
     let candidate: (bool, Uuid) = sqlx::query_as(
         "SELECT active, service_user_id
            FROM public.candidate_scheduler_control
@@ -180,6 +191,236 @@ async fn pin_inactive_candidate_control_for_test(db: &ScratchDb, worker: &PgPool
         daily_rows, 0,
         "the isolated test has no Daily control to activate"
     );
+    Ok(())
+}
+
+async fn recovery_eligible(db: &ScratchDb, job_id: Uuid, lease: Duration) -> TestResult<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM public.jobs job
+             JOIN public.owner_beta_simulation_runs run
+               ON run.job_id = job.id AND run.owner_user_id = job.owner_user_id
+             WHERE job.id = $1 AND job.job_type = $2 AND run.status = 'PENDING'
+               AND (
+                    (job.status = 'RUNNING'
+                     AND job.locked_at <= pg_catalog.now() - make_interval(secs => $3))
+                 OR (job.status = 'CANCELED'
+                     AND (job.locked_at IS NULL
+                          OR job.locked_at <= pg_catalog.now() - make_interval(secs => $3)))
+                 OR (job.status = 'FAILED' AND job.error_code = 'attempts_exhausted')
+               )
+         )",
+    )
+    .bind(job_id)
+    .bind(OWNER_BETA_PRICE_ONLY_SIMULATION_JOB_TYPE)
+    .bind(lease.as_secs_f64())
+    .fetch_one(&db.pool)
+    .await?)
+}
+
+async fn expire_fixture_job(db: &ScratchDb, job_id: Uuid, lease: Duration) -> TestResult {
+    let age = lease
+        .checked_add(Duration::from_secs(1))
+        .ok_or("fixture lease margin overflow")?
+        .as_secs_f64();
+    assert!(age.is_finite() && age > lease.as_secs_f64() && age <= f64::from(i32::MAX));
+    let updated = sqlx::query(
+        "UPDATE public.jobs
+            SET locked_at = pg_catalog.now() - make_interval(secs => $2)
+          WHERE id = $1",
+    )
+    .bind(job_id)
+    .bind(age)
+    .execute(&db.pool)
+    .await?;
+    assert_eq!(updated.rows_affected(), 1, "expire only the fixture job");
+    assert!(
+        recovery_eligible(db, job_id, lease).await?,
+        "the aged fixture satisfies the production recovery predicate"
+    );
+    Ok(())
+}
+
+fn fixture_phase<T>(phase: &'static str, result: TestResult<T>) -> TestResult<T> {
+    result.map_err(|error| {
+        let category = if let Some(error) = error.downcast_ref::<sqlx::Error>() {
+            let code = error.as_database_error().and_then(|error| error.code());
+            if let Some(code) = code
+                && code.len() == 5
+                && code.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            {
+                format!("SQLSTATE:{code}")
+            } else {
+                "TYPE:SQLX".to_owned()
+            }
+        } else if error.downcast_ref::<SimulationPublicationError>().is_some() {
+            "TYPE:SIMULATION_PUBLICATION".to_owned()
+        } else {
+            "TYPE:FIXTURE".to_owned()
+        };
+        let diagnostic = format!("R4_FIXTURE_PHASE:{phase}:{category}");
+        eprintln!("{diagnostic}");
+        diagnostic.into()
+    })
+}
+
+fn sql_phase<T>(phase: &'static str, result: Result<T, sqlx::Error>) -> TestResult<T> {
+    fixture_phase(
+        phase,
+        result.map_err(|error| Box::new(error) as Box<dyn Error>),
+    )
+}
+
+async fn isolation_pair_count(
+    connection: &mut PgConnection,
+    phase: &'static str,
+    run_id: Option<Uuid>,
+) -> TestResult<i64> {
+    sql_phase(
+        phase,
+        sqlx::query_scalar(
+            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs
+              WHERE ($1::uuid IS NULL OR run_id = $1)",
+        )
+        .bind(run_id)
+        .fetch_one(connection)
+        .await,
+    )
+}
+
+async fn assert_isolation_actor_state(
+    connection: &mut PgConnection,
+    backend_pid: i32,
+    state: &'static str,
+    expected_owner: Option<Uuid>,
+) -> TestResult {
+    let (observed_pid, missing, empty, matches_owner): (i32, bool, bool, bool) = sql_phase(
+        "actor_state",
+        sqlx::query_as(
+            "SELECT pg_catalog.pg_backend_pid(),
+                    pg_catalog.current_setting('app.actor_user_id', true) IS NULL,
+                    COALESCE(pg_catalog.current_setting('app.actor_user_id', true) = '', false),
+                    COALESCE(pg_catalog.current_setting('app.actor_user_id', true) = $1, false)",
+        )
+        .bind(expected_owner.map(|owner| owner.to_string()))
+        .fetch_one(connection)
+        .await,
+    )?;
+    assert_eq!(observed_pid, backend_pid, "same isolation connection");
+    let matches = match state {
+        "missing" => missing,
+        "empty" => !missing && empty,
+        "valid" => !missing && !empty && expected_owner.is_some() && matches_owner,
+        "malformed" => !missing && !empty && expected_owner.is_none(),
+        _ => false,
+    };
+    assert!(matches, "isolation actor classification matches {state}");
+    eprintln!("R4_ISOLATION_ACTOR:{state}");
+    Ok(())
+}
+
+async fn check_isolation_actor_read_states(
+    db: &ScratchDb,
+    fixture_a: &SimulationFixture,
+    fixture_b: &SimulationFixture,
+) -> TestResult {
+    // A new direct app login has never set the custom GUC. Keep every probe on
+    // this pool's single acquired backend, without reacquiring from that pool.
+    let app = role_pool(db, "app", None).await;
+    let mut connection = app.acquire().await?;
+    let backend_pid: i32 = sql_phase(
+        "fresh_app_backend",
+        sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *connection)
+            .await,
+    )?;
+    assert_isolation_actor_state(&mut connection, backend_pid, "missing", None).await?;
+    assert_eq!(
+        isolation_pair_count(&mut connection, "fresh_missing_pair_select", None).await?,
+        0,
+        "genuinely missing actor sees no committed pairs"
+    );
+
+    let mut empty = connection.begin().await?;
+    sql_phase(
+        "set_empty_actor",
+        sqlx::query_scalar::<_, String>(
+            "SELECT pg_catalog.set_config('app.actor_user_id', '', true)",
+        )
+        .fetch_one(&mut *empty)
+        .await,
+    )?;
+    assert_isolation_actor_state(&mut empty, backend_pid, "empty", None).await?;
+    assert_eq!(
+        isolation_pair_count(&mut empty, "empty_pair_select", None).await?,
+        0,
+        "explicitly empty actor sees no committed pairs"
+    );
+    empty.commit().await?;
+
+    for (own, foreign, own_phase, foreign_phase) in [
+        (
+            fixture_a,
+            fixture_b,
+            "valid_a_pair_select",
+            "foreign_b_pair_select",
+        ),
+        (
+            fixture_b,
+            fixture_a,
+            "valid_b_pair_select",
+            "foreign_a_pair_select",
+        ),
+    ] {
+        let mut valid = connection.begin().await?;
+        set_actor(&mut valid, own.owner_id).await?;
+        assert_isolation_actor_state(&mut valid, backend_pid, "valid", Some(own.owner_id)).await?;
+        assert_eq!(
+            isolation_pair_count(&mut valid, own_phase, Some(own.input.run_id())).await?,
+            1,
+            "valid actor reads its committed pair"
+        );
+        assert_eq!(
+            isolation_pair_count(&mut valid, foreign_phase, Some(foreign.input.run_id())).await?,
+            0,
+            "valid actor cannot read another owner's pair"
+        );
+        valid.commit().await?;
+    }
+
+    let mut malformed = connection.begin().await?;
+    sql_phase(
+        "set_malformed_actor",
+        sqlx::query_scalar::<_, String>(
+            "SELECT pg_catalog.set_config('app.actor_user_id', 'malformed-actor', true)",
+        )
+        .fetch_one(&mut *malformed)
+        .await,
+    )?;
+    assert_isolation_actor_state(&mut malformed, backend_pid, "malformed", None).await?;
+    let malformed_result = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs",
+    )
+    .fetch_one(&mut *malformed)
+    .await;
+    match malformed_result {
+        Err(error) => assert_sqlstate(&error, "22P02", "malformed_actor_pair_select"),
+        Ok(_) => return Err("malformed_actor_pair_select: expected SQLSTATE 22P02".into()),
+    }
+    malformed.rollback().await?;
+    let (final_pid, absent): (i32, bool) = sql_phase(
+        "restored_actor",
+        sqlx::query_as(
+            "SELECT pg_catalog.pg_backend_pid(),
+                    NULLIF(pg_catalog.current_setting('app.actor_user_id', true), '') IS NULL",
+        )
+        .fetch_one(&mut *connection)
+        .await,
+    )?;
+    assert_eq!(final_pid, backend_pid, "same backend after actor probes");
+    assert!(absent, "transaction-local actor settings are restored");
+    drop(connection);
+    app.close().await;
     Ok(())
 }
 
@@ -851,8 +1092,14 @@ async fn r4_actor_rls_and_hash_isolation_body(db: &ScratchDb) -> TestResult {
     let worker = role_pool(db, "worker", None).await;
     let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(30)));
     let engine = synthetic_engine('a');
-    let pair_a = publish_fixture(&fixture_a, &worker, &queue, &engine).await?;
-    let pair_b = publish_fixture(&fixture_b, &worker, &queue, &engine).await?;
+    let pair_a = fixture_phase(
+        "publish_a",
+        publish_fixture(&fixture_a, &worker, &queue, &engine).await,
+    )?;
+    let pair_b = fixture_phase(
+        "publish_b",
+        publish_fixture(&fixture_b, &worker, &queue, &engine).await,
+    )?;
     assert_eq!(
         pair_a.illustrative_10bp_per_side_sha256(),
         pair_b.illustrative_10bp_per_side_sha256(),
@@ -862,30 +1109,37 @@ async fn r4_actor_rls_and_hash_isolation_body(db: &ScratchDb) -> TestResult {
         pair_a.zero_cost_reference_sha256(),
         pair_b.zero_cost_reference_sha256()
     );
-    let owner_pair_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs
+    let owner_pair_count: i64 = sql_phase(
+        "same_hash_pair_select",
+        sqlx::query_scalar(
+            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs
           WHERE illustrative_sha256 = $1 AND zero_cost_sha256 = $2",
-    )
-    .bind(pair_a.illustrative_10bp_per_side_sha256().as_str())
-    .bind(pair_a.zero_cost_reference_sha256().as_str())
-    .fetch_one(&db.pool)
-    .await?;
+        )
+        .bind(pair_a.illustrative_10bp_per_side_sha256().as_str())
+        .bind(pair_a.zero_cost_reference_sha256().as_str())
+        .fetch_one(&db.pool)
+        .await,
+    )?;
     assert_eq!(owner_pair_count, 2, "no global hash uniqueness or reuse");
+    fixture_phase(
+        "actor_read_states",
+        check_isolation_actor_read_states(db, &fixture_a, &fixture_b).await,
+    )?;
 
     let tx_a = async {
         let mut tx = app.begin().await?;
         set_actor(&mut tx, owner_a).await?;
-        let own: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+        let own = isolation_pair_count(
+            &mut tx,
+            "existing_a_pair_select",
+            Some(fixture_a.input.run_id()),
         )
-        .bind(fixture_a.input.run_id())
-        .fetch_one(&mut *tx)
         .await?;
-        let foreign: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+        let foreign = isolation_pair_count(
+            &mut tx,
+            "existing_a_foreign_pair_select",
+            Some(fixture_b.input.run_id()),
         )
-        .bind(fixture_b.input.run_id())
-        .fetch_one(&mut *tx)
         .await?;
         assert_eq!((own, foreign), (1, 0));
         tx.commit().await?;
@@ -915,17 +1169,17 @@ async fn r4_actor_rls_and_hash_isolation_body(db: &ScratchDb) -> TestResult {
             .fetch_one(&mut *tx_b)
             .await?;
     assert_eq!((own_b, foreign_b), (1, 0));
-    let own_b_pair: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+    let own_b_pair = isolation_pair_count(
+        &mut tx_b,
+        "existing_b_pair_select",
+        Some(fixture_b.input.run_id()),
     )
-    .bind(fixture_b.input.run_id())
-    .fetch_one(&mut *tx_b)
     .await?;
-    let foreign_b_pair: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+    let foreign_b_pair = isolation_pair_count(
+        &mut tx_b,
+        "existing_b_foreign_pair_select",
+        Some(fixture_a.input.run_id()),
     )
-    .bind(fixture_a.input.run_id())
-    .fetch_one(&mut *tx_b)
     .await?;
     assert_eq!((own_b_pair, foreign_b_pair), (1, 0));
     tx_b.commit().await?;
@@ -954,10 +1208,12 @@ async fn r4_actor_rls_and_hash_isolation_body(db: &ScratchDb) -> TestResult {
             .await?;
     assert_eq!(foreign_status, JobStatus::Queued);
 
-    let unset_count: i64 =
+    let unset_count: i64 = sql_phase(
+        "existing_final_absent_pair_select",
         sqlx::query_scalar("SELECT count(*) FROM public.owner_beta_simulation_result_pairs")
             .fetch_one(&app)
-            .await?;
+            .await,
+    )?;
     assert_eq!(unset_count, 0, "unset actor sees no pair rows");
     Ok(())
 }
@@ -1762,12 +2018,13 @@ async fn r4_typed_claim_and_generic_exclusion() {
 }
 
 async fn r4_typed_claim_and_generic_exclusion_body(db: &ScratchDb) -> TestResult {
+    let lease = Duration::from_secs(30);
     let owner = new_owner(db, "r4-typed-only").await?;
     let app = role_pool(db, "app", None).await;
     let fixture = seed_fixture(db, owner, &app, "typed-only").await?;
     let worker = role_pool(db, "worker", None).await;
-    let queue = JobQueue::new(worker, None, queue_config(Duration::from_secs(30)));
-    let fixture_queue = JobQueue::new(db.pool.clone(), None, queue_config(Duration::from_secs(30)));
+    let queue = JobQueue::new(worker, None, queue_config(lease));
+    let fixture_queue = JobQueue::new(db.pool.clone(), None, queue_config(lease));
     let worker_role = queue.pool();
     let worker_identity: (String, String) =
         sqlx::query_as("SELECT current_user::text, session_user::text")
@@ -1902,12 +2159,7 @@ async fn r4_typed_claim_and_generic_exclusion_body(db: &ScratchDb) -> TestResult
             .await?;
     assert_eq!(retained_generic_link, (generic_source.id, 1));
 
-    sqlx::query(
-        "UPDATE public.jobs SET locked_at = pg_catalog.now() - interval '10 seconds' WHERE id = $1",
-    )
-    .bind(fixture.job_id)
-    .execute(&db.pool)
-    .await?;
+    expire_fixture_job(db, fixture.job_id, lease).await?;
     assert_eq!(queue.sweep().await?.jobs_checked, 0);
     assert_eq!(
         queue.get_by_id(fixture.job_id).await?.status,
@@ -1928,12 +2180,13 @@ async fn r4_lease_retry_exhaustion_and_zombie() {
 }
 
 async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult {
+    let lease = Duration::from_secs(60);
     let owner = new_owner(db, "r4-recovery").await?;
     let app = role_pool(db, "app", None).await;
     let fixture = seed_fixture(db, owner, &app, "recovery").await?;
     let worker = role_pool(db, "worker", None).await;
     pin_inactive_candidate_control_for_test(db, &worker).await?;
-    let queue = JobQueue::new(worker.clone(), None, queue_config(Duration::from_secs(60)));
+    let queue = JobQueue::new(worker.clone(), None, queue_config(lease));
     let claim = queue
         .claim_next_for(
             "r4-recovery-worker-1",
@@ -1946,10 +2199,7 @@ async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult
         queue.claim_next("generic-worker").await?.is_none(),
         "generic untyped claim cannot consume the R4 job"
     );
-    sqlx::query("UPDATE public.jobs SET locked_at = now() - interval '10 seconds' WHERE id = $1")
-        .bind(fixture.job_id)
-        .execute(&db.pool)
-        .await?;
+    expire_fixture_job(db, fixture.job_id, lease).await?;
     assert_eq!(
         queue.sweep().await?.jobs_checked,
         0,
@@ -2001,10 +2251,7 @@ async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult
     assert_eq!(heartbeat, job_queue::HeartbeatStatus::Extended);
     let no_op = recover_simulation_claims(&queue).await?;
     assert_eq!(no_op.jobs_checked, 0, "heartbeat wins database-clock race");
-    sqlx::query("UPDATE public.jobs SET locked_at = now() - interval '10 seconds' WHERE id = $1")
-        .bind(fixture.job_id)
-        .execute(&db.pool)
-        .await?;
+    expire_fixture_job(db, fixture.job_id, lease).await?;
     let second = recover_simulation_claims(&queue).await?;
     assert_eq!((second.jobs_requeued, second.attempts_orphaned), (1, 1));
 
@@ -2017,10 +2264,7 @@ async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult
         .await?
         .expect("dedicated recovery requeues attempt 3");
     assert_eq!(claim_three.attempt.attempt_no, 3);
-    sqlx::query("UPDATE public.jobs SET locked_at = now() - interval '10 seconds' WHERE id = $1")
-        .bind(fixture.job_id)
-        .execute(&db.pool)
-        .await?;
+    expire_fixture_job(db, fixture.job_id, lease).await?;
     let exhausted = recover_simulation_claims(&queue).await?;
     assert_eq!((exhausted.jobs_failed, exhausted.attempts_orphaned), (1, 1));
     let terminal: (JobStatus, String, String) = sqlx::query_as(
@@ -2054,25 +2298,14 @@ async fn r4_lease_retry_exhaustion_and_zombie_body(db: &ScratchDb) -> TestResult
         .expect("running cancellation claim");
     let actor_pool = role_pool(db, "app", Some(cancel_owner)).await;
     let audit_pool = role_pool(db, "audit_writer", None).await;
-    let cancel_queue = JobQueue::new(
-        actor_pool,
-        Some(audit_pool),
-        queue_config(Duration::from_secs(60)),
-    );
+    let cancel_queue = JobQueue::new(actor_pool, Some(audit_pool), queue_config(lease));
     let mut cancel_actor = AuditActor::new("owner");
     cancel_actor.user_id = Some(cancel_owner);
     cancel_actor.correlation_id = Some(format!("r4-recovery-cancel-{}", Uuid::new_v4()));
     cancel_queue
         .request_cancel(cancel_fixture.job_id, &cancel_actor)
         .await?;
-    sqlx::query(
-        "UPDATE public.jobs
-            SET locked_at = pg_catalog.now() - interval '10 seconds'
-          WHERE id = $1",
-    )
-    .bind(cancel_fixture.job_id)
-    .execute(&db.pool)
-    .await?;
+    expire_fixture_job(db, cancel_fixture.job_id, lease).await?;
     assert_eq!(queue.sweep().await?.jobs_checked, 0);
     let canceled_recovery = recover_simulation_claims(&queue).await?;
     assert_eq!(
@@ -2591,7 +2824,7 @@ async fn r4_entitlement_covers_every_consumed_session_body(db: &ScratchDb) -> Te
         )
         .await?
         .expect("typed simulation claim");
-    let engine = synthetic_engine('g');
+    let engine = synthetic_engine('7');
     let pair = synthetic_pair(&fixture, &engine);
     let dates = fixture
         .input
@@ -2768,20 +3001,51 @@ async fn r4_commit_unknown_reconciliation_body(db: &ScratchDb) -> TestResult {
     let engine = synthetic_engine('e');
     let pair = synthetic_pair(&fixture, &engine);
     assert_eq!(
-        reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &engine).await?,
+        fixture_phase(
+            "reconcile_before_publish",
+            reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &engine)
+                .await
+                .map_err(Into::into),
+        )?,
         SimulationCommitState::NotPublished
     );
     assert_eq!(
-        publish_simulation_success(&queue, &claim, &fixture.input, &pair, &engine).await?,
+        fixture_phase(
+            "reconcile_publish",
+            publish_simulation_success(&queue, &claim, &fixture.input, &pair, &engine)
+                .await
+                .map_err(Into::into),
+        )?,
         SimulationPublicationOutcome::Published
     );
     assert_eq!(
-        reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &engine).await?,
+        fixture_phase(
+            "reconcile_committed_pair",
+            reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &engine)
+                .await
+                .map_err(Into::into),
+        )?,
         SimulationCommitState::Published
     );
     let other_engine = synthetic_engine('f');
+    match reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &other_engine).await {
+        Err(SimulationPublicationError::Integrity) => {}
+        unexpected => {
+            fixture_phase(
+                "reconcile_inconsistent_engine",
+                unexpected.map_err(Into::into),
+            )?;
+            return Err("reconcile_inconsistent_engine: expected integrity rejection".into());
+        }
+    }
+    let other_pair = synthetic_pair(&fixture, &other_engine);
     assert_eq!(
-        reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &other_engine).await?,
+        fixture_phase(
+            "reconcile_other_valid_pair",
+            reconcile_simulation_commit(&queue, &claim, &fixture.input, &other_pair, &other_engine)
+                .await
+                .map_err(Into::into),
+        )?,
         SimulationCommitState::Unresolved
     );
     Ok(())
@@ -3101,6 +3365,7 @@ async fn r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs() {
 async fn r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs_body(
     db: &ScratchDb,
 ) -> TestResult {
+    let lease = Duration::from_secs(60);
     let calendar_owner = new_owner(db, "r4-invalid-calendar-recovery").await?;
     let calendar_fixture = seed_invalid_fixture(
         db,
@@ -3155,14 +3420,10 @@ async fn r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs_body(
     .await?;
 
     let worker = role_pool(db, "worker", None).await;
-    let queue = JobQueue::new(worker, None, queue_config(Duration::from_secs(60)));
+    let queue = JobQueue::new(worker, None, queue_config(lease));
     let queued_app = role_pool(db, "app", Some(queued_cancel_owner)).await;
     let queued_audit = role_pool(db, "audit_writer", None).await;
-    let queued_cancel_queue = JobQueue::new(
-        queued_app,
-        Some(queued_audit),
-        queue_config(Duration::from_secs(60)),
-    );
+    let queued_cancel_queue = JobQueue::new(queued_app, Some(queued_audit), queue_config(lease));
     let mut queued_actor = AuditActor::new("owner");
     queued_actor.user_id = Some(queued_cancel_owner);
     queued_actor.correlation_id = Some(format!("r4-invalid-queued-cancel-{}", Uuid::new_v4()));
@@ -3198,22 +3459,11 @@ async fn r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs_body(
         warmup_fixture.job_id,
         valid_fixture.job_id,
     ] {
-        sqlx::query(
-            "UPDATE public.jobs
-                SET locked_at = pg_catalog.now() - interval '10 seconds'
-              WHERE id = $1",
-        )
-        .bind(job_id)
-        .execute(&db.pool)
-        .await?;
+        expire_fixture_job(db, job_id, lease).await?;
     }
     let live_app = role_pool(db, "app", Some(live_cancel_owner)).await;
     let live_audit = role_pool(db, "audit_writer", None).await;
-    let live_cancel_queue = JobQueue::new(
-        live_app,
-        Some(live_audit),
-        queue_config(Duration::from_secs(60)),
-    );
+    let live_cancel_queue = JobQueue::new(live_app, Some(live_audit), queue_config(lease));
     let mut live_actor = AuditActor::new("owner");
     live_actor.user_id = Some(live_cancel_owner);
     live_actor.correlation_id = Some(format!("r4-invalid-live-cancel-{}", Uuid::new_v4()));
@@ -3223,6 +3473,22 @@ async fn r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs_body(
             .await?,
         job_queue::CancelResult::Canceled(_)
     ));
+
+    let live_canceled: (JobStatus, bool) = sqlx::query_as(
+        "SELECT status,
+                locked_at IS NOT NULL
+                AND locked_at > pg_catalog.now() - make_interval(secs => $2)
+           FROM public.jobs WHERE id = $1",
+    )
+    .bind(live_cancel_fixture.job_id)
+    .bind(lease.as_secs_f64())
+    .fetch_one(&db.pool)
+    .await?;
+    assert_eq!(live_canceled, (JobStatus::Canceled, true));
+    assert!(
+        !recovery_eligible(db, live_cancel_fixture.job_id, lease).await?,
+        "live canceled claim is excluded from recovery"
+    );
 
     let first = recover_simulation_claims(&queue).await?;
     assert_eq!(first.jobs_checked, 4);
@@ -3330,14 +3596,7 @@ async fn r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs_body(
         )
     );
 
-    sqlx::query(
-        "UPDATE public.jobs
-            SET locked_at = pg_catalog.now() - interval '10 seconds'
-          WHERE id = $1",
-    )
-    .bind(live_cancel_fixture.job_id)
-    .execute(&db.pool)
-    .await?;
+    expire_fixture_job(db, live_cancel_fixture.job_id, lease).await?;
     let live_expired = recover_simulation_claims(&queue).await?;
     assert_eq!(
         (
@@ -3370,8 +3629,9 @@ async fn r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication() 
 async fn r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication_body(
     db: &ScratchDb,
 ) -> TestResult {
+    let lease = Duration::from_secs(60);
     let worker = role_pool(db, "worker", None).await;
-    let queue = JobQueue::new(worker, None, queue_config(Duration::from_secs(60)));
+    let queue = JobQueue::new(worker, None, queue_config(lease));
 
     let success_owner = new_owner(db, "r4-frozen-success").await?;
     let success_fixture = seed_fixture(
@@ -3416,7 +3676,7 @@ async fn r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication_bo
         )
         .await?
         .expect("frozen config success claim");
-    let engine = synthetic_engine('g');
+    let engine = synthetic_engine('7');
     let pair = synthetic_pair(&success_fixture, &engine);
     assert_eq!(
         publish_simulation_success(
@@ -3509,11 +3769,7 @@ async fn r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication_bo
         .expect("frozen config cancellation claim");
     let app_cancel = role_pool(db, "app", Some(cancel_owner)).await;
     let audit_cancel = role_pool(db, "audit_writer", None).await;
-    let cancel_queue = JobQueue::new(
-        app_cancel,
-        Some(audit_cancel),
-        queue_config(Duration::from_secs(60)),
-    );
+    let cancel_queue = JobQueue::new(app_cancel, Some(audit_cancel), queue_config(lease));
     let mut actor = AuditActor::new("owner");
     actor.user_id = Some(cancel_owner);
     actor.correlation_id = Some(format!("r4-frozen-cancel-{}", Uuid::new_v4()));
@@ -3523,14 +3779,7 @@ async fn r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication_bo
             .await?,
         job_queue::CancelResult::Canceled(_)
     ));
-    sqlx::query(
-        "UPDATE public.jobs
-            SET locked_at = pg_catalog.now() - interval '10 seconds'
-          WHERE id = $1",
-    )
-    .bind(cancel_fixture.job_id)
-    .execute(&db.pool)
-    .await?;
+    expire_fixture_job(db, cancel_fixture.job_id, lease).await?;
     let recovery = recover_simulation_claims(&queue).await?;
     assert_eq!((recovery.runs_canceled, recovery.attempts_orphaned), (1, 1));
     let canceled_snapshot: (String, Option<String>, serde_json::Value, bool) = sqlx::query_as(
