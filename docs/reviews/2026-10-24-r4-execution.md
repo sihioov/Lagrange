@@ -507,3 +507,10 @@ G5의 소스 구현·격리 hosted 검증 범위를 수용한다. 실제 승인 
 그 후속 작업에서 확보해야 한다. 이번 검증 대상은6ada50c이고 후속 문서 커밋을 새 실행 증거로 취급하지 않는다.
 
 2026-10-24 08:15UTC — Owner가 기존 artifact 위치를 직접 찾으라고 지시해 사용자 경로 제공 대기를 해소했다. 기록 두 곳과 기존 Compose 읽기 전용 연결을 대조한 root는 `/var/lib/lagrange/data/artifacts/historical-price-beta-root`다. 호스트 일반 읽기와 sudo는 거부됐지만 기존 API의 UID10001·읽기 전용 마운트에서 현재 파일과 승인 candidate/manifest/Stage5/action pin, bars SHA·26,972행·2,452세션을 확인했다. 파일·서비스 설정을 변경하거나 데이터를 복사하지 않았다. 실제 sealed Rust 승인·시뮬레이션·U3 executable provenance는 NOT_RUN이며 기존 API 이미지를 실행 증거로 대신하지 않는다. [위치·해시 기록](2026-10-24-r4-approved-artifact-location.md).
+
+
+2026-10-24 후속 실행: Owner의 “진행해 머뭇거리지.말고”에 따라 U3 검증 example과
+소스 전용 hosted binary build를 서로 다른 Paseo Luna/max 작업자에게 위임했다.
+당시 가용 메모리850MiB/스왑0 때문에 로컬 컴파일을 피하고 제한된 격리 런타임만 준비한다.
+실제 승인 artifact의 새 복사/수집/hosted 업로드·운영 서비스 변경은 없다. 상세 절차와
+소유 범위는 계획의 후속 실행 절과 private owned-workers ledger에 기록한다.

@@ -19,6 +19,13 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 SHA_ACTION = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 CACHE_SHA = "27d5ce7f107fe9357f9df03efb73ab90386fccae"
+R4_VERIFICATION_JOB = "r4-verification-build"
+R4_TRIGGER = "${{ github.event_name == 'workflow_dispatch' && inputs.r4_verification_build }}"
+R4_UPLOAD_ACTION = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+R4_DELIVERY_PATHS = [
+    "${{ runner.temp }}/r4-verification-build/delivery/verify_approved_simulation",
+    "${{ runner.temp }}/r4-verification-build/delivery/provenance.json",
+]
 CARGO_DOWNLOAD_PATHS = {
     "~/.cargo/registry/index", "~/.cargo/registry/cache", "~/.cargo/registry/src",
     "~/.cargo/git/db", "~/.cargo/git/checkouts",
@@ -82,6 +89,67 @@ def action_uses(workflow: dict) -> list[str]:
 
 def command_lines(job: dict) -> list[str]:
     return [line.strip() for step in job["steps"] for line in step.get("run", "").splitlines()]
+
+
+def assert_r4_verification_job(workflow: dict) -> None:
+    dispatch = workflow["on"]["workflow_dispatch"]
+    verification_input = dispatch["inputs"]["r4_verification_build"]
+    assert verification_input == {
+        "description": "Build the focused R4 verification binary from this source revision.",
+        "required": "false",
+        "default": "false",
+        "type": "boolean",
+    }, "R4 verification build must remain opt-in and default false"
+
+    job = workflow["jobs"][R4_VERIFICATION_JOB]
+    assert job.get("if") == R4_TRIGGER, "R4 verification job trigger broadened"
+    assert job.get("permissions") == {"contents": "read"}, "R4 verification job permissions expanded"
+    assert job.get("runs-on") == "ubuntu-latest", "R4 verification job runner changed"
+    assert job.get("timeout-minutes") == "45", "R4 verification job timeout changed"
+    assert set(job) == {
+        "if", "permissions", "runs-on", "timeout-minutes", "steps"
+    }, "R4 verification job gained inputs or execution scope"
+    steps = job["steps"]
+    assert len(steps) == 3, "R4 verification job steps changed"
+    assert steps[0] == {
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {"ref": "${{ github.sha }}", "persist-credentials": "false"},
+    }, "R4 verification checkout must use the pinned, credential-free source revision"
+    assert steps[1] == {
+        "name": "Build and verify the source-only R4 binary",
+        "run": "bash scripts/ci/build-r4-verification.sh",
+    }, "R4 verification job build command or step environment changed"
+
+
+def assert_artifact_upload_policy(workflow_name: str, workflow: dict) -> None:
+    uploads = [
+        (job_id, step)
+        for job_id, job in workflow["jobs"].items()
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+    if workflow_name != "ci.yml":
+        assert not uploads, "artifact uploads are not approved in this workflow"
+        return
+
+    assert len(uploads) == 1, "only the exact optional R4 source-only job may upload an artifact"
+    job_id, step = uploads[0]
+    assert job_id == R4_VERIFICATION_JOB, "artifact upload moved outside the optional R4 job"
+    assert step.get("uses") == R4_UPLOAD_ACTION, "unapproved artifact upload action"
+    job_steps = workflow["jobs"][job_id]["steps"]
+    assert job_steps[-1] is step, "R4 artifact upload must be the final success-only step"
+    assert step.get("if") == "success()", "R4 artifact upload must run only after successful verification"
+    assert step.get("with") == {
+        "name": "r4-verification-${{ github.sha }}",
+        "path": "\n".join(R4_DELIVERY_PATHS) + "\n",
+        "if-no-files-found": "error",
+        "retention-days": "1",
+        "compression-level": "0",
+    }, "R4 artifact name, fixed delivery paths, or retention policy changed"
+    assert not any(
+        candidate.get("uses", "").startswith("actions/download-artifact@")
+        for candidate in job_steps
+    ), "R4 verification job cannot consume an artifact input"
 
 
 def assert_runner_env_context(workflow: dict) -> None:
@@ -339,6 +407,7 @@ class WorkflowContractTests(unittest.TestCase):
                     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
                     "actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903",
                     "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+                    R4_UPLOAD_ACTION,
                     f"actions/cache/restore@{CACHE_SHA}", f"actions/cache/save@{CACHE_SHA}",
                 })
             for job in workflow["jobs"].values():
@@ -350,12 +419,132 @@ class WorkflowContractTests(unittest.TestCase):
                             step.get("with", {}).get("persist-credentials"), "false"
                         )
             text = path.read_text(encoding="utf-8").lower()
-            self.assertNotIn("actions/upload-artifact", text)
             self.assertNotIn("target/", text)
             self.assertNotIn("pull_request_target", text)
             self.assertNotIn("secrets.", text)
             self.assertNotRegex(text, r"steps\.[a-z-]+-save\.outputs")
+            assert_artifact_upload_policy(name, workflow)
             assert_cache_policy(workflow)
+
+    def test_r4_verification_job_is_opt_in_and_source_only(self) -> None:
+        _, workflow = load_workflow("ci.yml")
+        assert_r4_verification_job(workflow)
+        assert_artifact_upload_policy("ci.yml", workflow)
+
+        script = (ROOT / "scripts/ci/build-r4-verification.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("set -euo pipefail", script)
+        self.assertIn(
+            "apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev",
+            script,
+        )
+        self.assertIn(
+            "rust:1.97.1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900",
+            script,
+        )
+        self.assertIn('target=/source,readonly', script)
+        self.assertIn('target=/out', script)
+        self.assertIn("CARGO_BUILD_JOBS=2", script)
+        self.assertIn("CARGO_TARGET_DIR=/out/cargo-target", script)
+        self.assertIn("CARGO_INCREMENTAL=0", script)
+        cargo_commands = [
+            line.strip() for line in script.splitlines() if line.strip().startswith("cargo ")
+        ]
+        self.assertEqual(
+            cargo_commands,
+            [
+                "cargo fmt --all --check",
+                "cargo clippy --locked --release -p job-queue --example verify_approved_simulation -- -D warnings",
+                "cargo test --locked --release -p job-queue --example verify_approved_simulation",
+                "cargo build --locked --release -p job-queue --example verify_approved_simulation",
+            ],
+        )
+        for marker in (
+            "rustc --version",
+            "rustc -vV",
+            "R4_VERIFICATION_GIT_COMMIT",
+            "R4_VERIFICATION_TOOLCHAIN",
+            "R4_VERIFICATION_TARGET",
+            "R4_VERIFICATION_PROFILE=release",
+            "readelf -l",
+            "/out/delivery/verify_approved_simulation",
+            'delivery_dir / "provenance.json"',
+            "source_example_sha256",
+            "source_cargo_lock_sha256",
+            "source_job_queue_manifest_sha256",
+            "GITHUB_RUN_ID",
+            "GITHUB_RUN_ATTEMPT",
+            "chmod 644 /out/build-metadata.txt /out/rustc-version.txt /out/rustc-vV.txt",
+        ):
+            self.assertIn(marker, script)
+        self.assertNotIn("/var/run/docker.sock", script)
+        self.assertNotIn("--secret", script)
+        self.assertNotIn("&&", script)
+        self.assertNotIn("actions/download-artifact", script)
+        for forbidden in ("--workspace", "DATABASE_URL", "uv ", "phase0"):
+            self.assertNotIn(forbidden, script)
+
+    def test_r4_compiler_identity_accepts_matching_short_and_full_commit(self) -> None:
+        script = (ROOT / "scripts/ci/build-r4-verification.sh").read_text()
+        start = script.index('rustc_version="$(rustc --version)"')
+        end = script.index('case "${R4_VERIFICATION_GIT_COMMIT:-}"', start)
+        identity = script[start:end]
+        full_commit = "8bab26f4f" + "a" * 31
+        stub = "rustc() { if [ \"$1\" = --version ]; then printf '%s\\n' \"$R4_TEST_VERSION\"; else printf '%s\\n' \"$R4_TEST_VERBOSE\"; fi; }\n"
+        verbose = f"release: 1.97.1\ncommit-hash: {full_commit}\nhost: x86_64-unknown-linux-musl"
+        for version, expected_code in (
+            ("rustc 1.97.1 (8bab26f4f 2026-07-14)", 0),
+            ("rustc 1.97.1 (000000000 2026-07-14)", 2),
+            ("rustc 1.97.0 (8bab26f4f 2026-07-14)", 2),
+        ):
+            with self.subTest(version=version):
+                result = subprocess.run(
+                    ["sh", "-eu", "-c", stub + identity], capture_output=True,
+                    env={"PATH": os.defpath, "R4_TEST_VERSION": version, "R4_TEST_VERBOSE": verbose},
+                    timeout=5, check=False,
+                )
+                self.assertEqual(result.returncode, expected_code, result.stderr)
+
+    def test_r4_artifact_exception_rejects_scope_expansion(self) -> None:
+        _, baseline = load_workflow("ci.yml")
+        changed = copy.deepcopy(baseline)
+        changed["jobs"]["policy"]["steps"].append(
+            {"uses": R4_UPLOAD_ACTION, "with": {"path": "**/*"}}
+        )
+        with self.assertRaisesRegex(AssertionError, "only the exact optional R4"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        changed_upload = changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1]
+        changed_upload["with"]["path"] = "${{ runner.temp }}/r4-verification-build/**"
+        with self.assertRaisesRegex(AssertionError, "fixed delivery paths"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1].pop("if")
+        with self.assertRaisesRegex(AssertionError, "only after successful verification"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        changed["jobs"][R4_VERIFICATION_JOB]["if"] = "${{ always() }}"
+        with self.assertRaisesRegex(AssertionError, "trigger broadened"):
+            assert_r4_verification_job(changed)
+
+        changed = copy.deepcopy(baseline)
+        changed["on"]["workflow_dispatch"]["inputs"]["r4_verification_build"][
+            "default"
+        ] = "true"
+        with self.assertRaisesRegex(AssertionError, "default false"):
+            assert_r4_verification_job(changed)
+
+        _, smoke = load_workflow("research-smoke.yml")
+        changed_smoke = copy.deepcopy(smoke)
+        changed_smoke["jobs"][next(iter(changed_smoke["jobs"]))]["steps"].append(
+            {"uses": R4_UPLOAD_ACTION, "with": {"path": "output"}}
+        )
+        with self.assertRaisesRegex(AssertionError, "not approved in this workflow"):
+            assert_artifact_upload_policy("research-smoke.yml", changed_smoke)
 
     def test_cache_policy_rejects_path_expansion_gate_skips_and_untrusted_saves(self) -> None:
         _, baseline = load_workflow("ci.yml")
@@ -811,6 +1000,7 @@ print(json.dumps(value))
                 "workspace-tests",
                 "python-tests",
                 "postgres-integration-validation",
+                R4_VERIFICATION_JOB,
                 "required",
             },
         )
@@ -990,6 +1180,7 @@ print(json.dumps(value))
                 "workspace-tests",
                 "python-tests",
                 "postgres-integration-validation",
+                R4_VERIFICATION_JOB,
             },
         )
         self.assertEqual(
@@ -1000,6 +1191,14 @@ print(json.dumps(value))
             required["steps"][0]["env"]["WEB_RESULT"],
             "${{ needs.web.result }}",
         )
+        self.assertEqual(
+            required["steps"][0]["env"]["R4_VERIFICATION_BUILD_SELECTED"],
+            R4_TRIGGER,
+        )
+        self.assertEqual(
+            required["steps"][0]["env"]["R4_VERIFICATION_BUILD_RESULT"],
+            "${{ needs.r4-verification-build.result }}",
+        )
         qa_compose = (ROOT / "deploy" / "qa" / "qa-db.compose.yml").read_text(
             encoding="utf-8"
         )
@@ -1007,6 +1206,46 @@ print(json.dumps(value))
         self.assertIn(
             "127.0.0.1:${LAGRANGE_QA_DB_PORT:-55432}:5432", qa_compose
         )
+
+    def test_required_validates_selected_and_unselected_r4_job_results(self) -> None:
+        _, ci = load_workflow("ci.yml")
+        required = ci["jobs"]["required"]
+        self.assertEqual(required.get("if"), "always()")
+        run_script = required["steps"][0]["run"]
+        base_env = {
+            "PATH": os.defpath,
+            "POLICY_RESULT": "success",
+            "FORMAT_RESULT": "success",
+            "CLIPPY_RESULT": "success",
+            "WEB_RESULT": "success",
+            "TEST_RESULT": "success",
+            "PYTHON_TEST_RESULT": "success",
+            "POSTGRES_VALIDATION_RESULT": "success",
+        }
+        cases = (
+            ("true", "success", 0),
+            ("false", "skipped", 0),
+            ("true", "skipped", 1),
+            ("true", "failure", 1),
+            ("false", "success", 1),
+            ("false", "failure", 1),
+        )
+        for selected, result, expected_code in cases:
+            env = {
+                **base_env,
+                "R4_VERIFICATION_BUILD_SELECTED": selected,
+                "R4_VERIFICATION_BUILD_RESULT": result,
+            }
+            with self.subTest(selected=selected, result=result):
+                completed = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-c", run_script],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=5,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, expected_code, completed.stderr)
 
     def test_verify_all_gates_have_ci_counterparts(self) -> None:
         # Every hard gate declared by scripts/verify-all.sh ("Every gate is a

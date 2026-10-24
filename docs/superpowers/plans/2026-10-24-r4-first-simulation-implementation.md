@@ -501,3 +501,29 @@ F1~F5가 해소됐고 새 필수 수정은 없다. 무가격 q=0은 입력/prove
 2026-10-24 07:47UTC — WP-6 완료 알림52b3d2ee와6명 실제 idle/pending0를 회수했다. exact6ada50c의 CI8개 및 smoke 기능·정리 성공을 코디네이터가 직접 검증해 G5의 소스·격리 범위만 수용했다. 전용 builder 제거 출력도 회수해 worker 보고의 제한을 보완했다. 원본 보고 prefix와8개 worker receipt를 보존하고 감시99090809를 삭제했다. U2 기존 승인 artifact 경로를 사용자에게 요청했으며 실제 실행·U3 provenance·R4-03 최종 인수는 OPEN이다.
 
 2026-10-24 08:15UTC — Owner가 기존 artifact 위치를 직접 찾으라고 지시해 사용자 경로 제공 대기를 해소했다. 기록 두 곳과 기존 Compose 읽기 전용 연결을 대조한 root는 `/var/lib/lagrange/data/artifacts/historical-price-beta-root`다. 호스트 일반 읽기와 sudo는 거부됐지만 기존 API의 UID10001·읽기 전용 마운트에서 현재 파일과 승인 candidate/manifest/Stage5/action pin, bars SHA·26,972행·2,452세션을 확인했다. 파일·서비스 설정을 변경하거나 데이터를 복사하지 않았다. 실제 sealed Rust 승인·시뮬레이션·U3 executable provenance는 NOT_RUN이며 기존 API 이미지를 실행 증거로 대신하지 않는다. [위치·해시 기록](../../reviews/2026-10-24-r4-approved-artifact-location.md).
+
+
+### 2026-10-24 후속 실행 — 실제 승인 입력과 U3
+
+Owner가 위치·해시 확인 및 남은 실행 단계 보고 후 “진행해 머뭇거리지.말고”라고 지시했다.
+코디네이터는 실제 실행에 필요한 다음 기술적 절차를 선택했다. 기존 운영 CLI·서비스를
+확장하거나 provider 데이터를 hosted 환경에 올리는 작업은 아니다.
+
+- U3 harness: Luna/max, intermediate. 기존 public simulation API만 호출하는 검증용 Cargo example.
+  컴파일 시 source/toolchain/target/profile과 실제 자기 binary hash를 결합하고, 두 비용 프로필의
+  반복 실행·canonical hash·strict JSON 재검증이 모두 성공해야 aggregate summary를 출력한다.
+- U3 hosted build: Luna/max, intermediate. 기존 CI에 기본 OFF인 dispatch 입력과 검증 파일 빌드를
+  추가한다. 기존 필수 7개 검사와 required를 유지하며 선택한 빌드도 실패 시 인수하지 않는다.
+  별도 소스 전용 artifact 예외는 실행 파일과 provenance 두 경로로 한정한다. Raw·Curated·
+  승인 입력·로그·일반 target 디렉터리는 업로드하지 않는다.
+- 코디네이터 실행: 당시 가용 메모리 약850MiB/스왑 여유0이므로 로컬 컴파일하지 않는다.
+  검증된 static binary만 받아 기존 승인 root를 읽기 전용으로 연결한 일회성 격리 런타임에서
+  실행한다. UID10001, network none, read-only root, capability 제거, CPU/메모리/PID 상한,
+  소유 자식 종료·정리와 기존 서비스 불변을 확인한다. 기존 승인 데이터의 복사·재수집이나
+  운영 서비스 내부에 새 코드를 설치하지 않는다.
+
+이 후속 실행의 제한된 읽기 전용 artifact 연결은 과거 위치 탐색 단계의 새 mount 금지와
+구분한다. 실제 실행 지시에 필요한 격리 검증용 연결만 선택했으며 운영 mount/권한을 변경하지 않는다.
+검증 example은 운영 CLI가 아니고 job 등록·DB/API/Web 노출도 없다. 동일 코드 SHA의 hosted
+검사와 executable/run identity, 승인 pin, 두 비용 결과의 재현을 각각 기록한다.
+소유 작업자·실행·알림은 기존 private ledger에 추가하고 코디네이터 검증 뒤 수용한다.
