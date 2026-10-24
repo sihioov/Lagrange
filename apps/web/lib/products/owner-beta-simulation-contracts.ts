@@ -99,7 +99,12 @@ export const ownerBetaSimulationRunBodySchema = z
     ) {
       context.addIssue({ code: "custom", message: "start_date must not follow end_date" });
     }
-  }) satisfies z.ZodType<components["schemas"]["OwnerBetaSimulationRunBody"]>;
+  })
+  .transform(({ strategy_config_id, start_date, end_date }) => ({
+    strategy_config_id,
+    ...(start_date === undefined ? {} : { start_date }),
+    ...(end_date === undefined ? {} : { end_date }),
+  })) satisfies z.ZodType<components["schemas"]["OwnerBetaSimulationRunBody"]>;
 
 export type OwnerBetaSimulationRunBody = z.infer<typeof ownerBetaSimulationRunBodySchema>;
 
@@ -872,7 +877,9 @@ export function ownerBetaSimulationRunsPath(query: OwnerBetaSimulationRunsQuery 
   return `${OWNER_BETA_SIMULATION_RUNS_PATH}?${search.toString()}`;
 }
 
-export function ownerBetaSimulationRunPath(runId: string): string {
+export function ownerBetaSimulationRunPath(
+  runId: string,
+): `/api/v1/backtests/owner-beta/price-only/runs/${string}` {
   return `${OWNER_BETA_SIMULATION_RUNS_PATH}/${encodeURIComponent(uuidSchema.parse(runId))}`;
 }
 

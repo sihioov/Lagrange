@@ -381,12 +381,14 @@ impl OwnerBetaSimulationRepo {
         authorize_date(entitlements, actor, current_date)?;
         let limit = limit.clamp(1, 100);
         let mut tx = self.begin_read_snapshot(actor).await?;
+        // Only the fixed SQL prefix and literal suffixes are interpolated;
+        // owner, cursor values and limit remain bind parameters.
         let mut rows = match cursor {
             Some((created_at, id)) => {
-                sqlx::query_as::<_, SimulationDbRow>(&format!(
+                sqlx::query_as::<_, SimulationDbRow>(sqlx::AssertSqlSafe(format!(
                     "{RUN_LIST_SELECT} AND (run.created_at, run.id) < ($2, $3)
                      ORDER BY run.created_at DESC, run.id DESC LIMIT $4"
-                ))
+                )))
                 .bind(owner)
                 .bind(created_at)
                 .bind(id)
@@ -395,10 +397,10 @@ impl OwnerBetaSimulationRepo {
                 .await
             }
             None => {
-                sqlx::query_as::<_, SimulationDbRow>(&format!(
+                sqlx::query_as::<_, SimulationDbRow>(sqlx::AssertSqlSafe(format!(
                     "{RUN_LIST_SELECT} ORDER BY run.created_at DESC, run.id DESC
                      LIMIT $2"
-                ))
+                )))
                 .bind(owner)
                 .bind((limit + 1) as i64)
                 .fetch_all(&mut *tx)

@@ -301,8 +301,11 @@ pub async fn run_simulation_once(
         Err(error) => {
             let failure = match error {
                 ChildStartError::InvalidRequest => SimulationPublicationFailure::InputInvalid,
+                #[cfg(not(target_os = "linux"))]
+                ChildStartError::IsolationUnavailable => {
+                    SimulationPublicationFailure::InfrastructureUnavailable
+                }
                 ChildStartError::SpawnFailed
-                | ChildStartError::IsolationUnavailable
                 | ChildStartError::PipeUnavailable
                 | ChildStartError::CleanupUnconfirmed => {
                     SimulationPublicationFailure::InfrastructureUnavailable

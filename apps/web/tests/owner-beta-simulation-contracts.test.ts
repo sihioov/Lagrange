@@ -155,6 +155,24 @@ describe("owner-beta simulation contracts", () => {
       strategy_config_id: CONFIG_ID,
     });
     expect(
+      ownerBetaSimulationRunBodySchema.parse({
+        strategy_config_id: CONFIG_ID,
+        start_date: undefined,
+        end_date: undefined,
+      }),
+    ).toStrictEqual({ strategy_config_id: CONFIG_ID });
+    expect(
+      ownerBetaSimulationRunBodySchema.parse({
+        strategy_config_id: CONFIG_ID,
+        start_date: "2026-08-27",
+        end_date: "2026-08-28",
+      }),
+    ).toStrictEqual({
+      strategy_config_id: CONFIG_ID,
+      start_date: "2026-08-27",
+      end_date: "2026-08-28",
+    });
+    expect(
       ownerBetaSimulationRunBodySchema.safeParse({
         strategy_config_id: CONFIG_ID,
         start_date: "2026-08-27",

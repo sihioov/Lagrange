@@ -81,6 +81,7 @@ pub(super) struct BoundedChildResult {
 pub(super) enum ChildStartError {
     InvalidRequest,
     SpawnFailed,
+    #[cfg(not(target_os = "linux"))]
     IsolationUnavailable,
     PipeUnavailable,
     CleanupUnconfirmed,
@@ -482,10 +483,10 @@ fn terminate_owned_group(
     // phase. A failed signal is never evidence that the group exited.
     let term_deadline = Instant::now() + if term_sent { grace } else { Duration::ZERO };
     while Instant::now() < term_deadline {
-        if status.is_none() {
-            if let Ok(Some(exited)) = child.try_wait() {
-                status = Some(exited);
-            }
+        if status.is_none()
+            && let Ok(Some(exited)) = child.try_wait()
+        {
+            status = Some(exited);
         }
         snapshot = process_group_snapshot(process_group).ok();
         if let (Some(status), Some(group)) = (status, snapshot)
@@ -505,10 +506,10 @@ fn terminate_owned_group(
     }
     let kill_deadline = Instant::now() + CHILD_KILL_CONFIRMATION;
     while Instant::now() < kill_deadline {
-        if status.is_none() {
-            if let Ok(Some(exited)) = child.try_wait() {
-                status = Some(exited);
-            }
+        if status.is_none()
+            && let Ok(Some(exited)) = child.try_wait()
+        {
+            status = Some(exited);
         }
         snapshot = process_group_snapshot(process_group).ok();
         if let (Some(status), Some(group)) = (status, snapshot)

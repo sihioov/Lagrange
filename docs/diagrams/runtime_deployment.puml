@@ -104,15 +104,15 @@ package "R4-05 SOURCE EXECUTABLES\nNO COMPOSE SERVICE OR INSTALLED ACTIVATION" #
 
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/provenance.rs:132-168; crates/job-queue/src/owner_beta/simulation_execution/runner.rs:111,129
 simulation_provenance --> simulation_parent : validate before recovery/claim
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:575-581
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:576-582
 simulation_provenance --> simulation_child : validate same executable before input
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:214-240; crates/job-queue/src/owner_beta/simulation_execution/child.rs:142-153,461-523
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:214-240; crates/job-queue/src/owner_beta/simulation_execution/child.rs:143-154,464-524
 simulation_parent --> simulation_child : spawn --child; bounded pipes; TERM/KILL + wait
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:587-592
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:588-593
 artifacts --> simulation_child : read approved root through engine (operator path)
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:131,336; crates/job-queue/src/owner_beta/simulation_execution/publish.rs:496-546; migrations/0063_owner_beta_price_only_simulations.up.sql:163-184
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/runner.rs:131,339; crates/job-queue/src/owner_beta/simulation_execution/publish.rs:496-546; migrations/0063_owner_beta_price_only_simulations.up.sql:163-184
 simulation_parent --> simulation_tables : worker SQL; fenced atomic publication/recovery
-' evidence: crates/api-server/src/http/mod.rs:417-431; crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,882-904
+' evidence: crates/api-server/src/http/mod.rs:417-431; crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906
 api --> simulation_tables : dedicated authenticated API; app actor snapshot reads
 
 note bottom of simulation_parent
@@ -306,7 +306,7 @@ artifacts --> nginx : X-Accel-Redirect\ndelivery (ro mount)
 ' evidence: crates/api-server/src/http/mod.rs:342-348 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
 web --> api : Owner V2 membership GET: data date +\nlatest incremental refresh failure; READY preserved
 
-' evidence: apps/web/components/backtests/owner-beta-simulation-form.tsx:111-116; apps/web/components/backtests/owner-beta-simulation-status.tsx:97-110,357-402,496-506; apps/web/lib/products/owner-beta-simulation-contracts.ts:862-886; deploy/nginx/nginx.conf:117-118; crates/api-server/src/http/mod.rs:417-431
+' evidence: apps/web/components/backtests/owner-beta-simulation-form.tsx:111-116; apps/web/components/backtests/owner-beta-simulation-status.tsx:97-110,357-402,496-506; apps/web/lib/products/owner-beta-simulation-contracts.ts:867-893; deploy/nginx/nginx.conf:117-118; crates/api-server/src/http/mod.rs:417-431
 web --> api : browser same-origin simulation requests (through nginx)\nCSRF enqueue/cancel; bounded metadata polling; whole pair\nsource connection; no deployment claim
 
 ' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized lease mutation); apps/web/lib/api/csrf-mutation-lock.ts:8,17 (same-origin mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:363-372 (lease/SSE routes); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (server session client)

@@ -818,3 +818,66 @@ PostgreSQL and Web named gates remain mandatory; a failure requires diagnosis, n
 Authenticated static build artifacts and the separately frozen scratch/Unix-socket runtime proof
 follow hosted success. No compile/test/runtime result, user isolation or R4-05 completion is claimed
 by this source acceptance. R4-04 isolation remains blocked on actual connection evidence.
+
+
+### G3 first hosted result and bounded correction (2026-10-25)
+
+Candidate `ccb9d8f596f6333821c8842e697edb6ee78314ce` ran CI `40117548175` and
+Research smoke `40117550387`, each attempt1 and exactly once. CI failed six jobs plus
+`required`; format and Python tests passed. Smoke completed all20 steps with functional PASS.
+Its cleanup summary observed no project containers, volumes, networks or context image.
+Private-builder removal has no independent absence check, and successful cache-save steps do
+not establish persistence or performance. Both artifact listings were empty. The19 source,
+23 PostgreSQL and6 proof named results remain unverified; runtime isolation is not accepted.
+
+WP-7 reached actual idle/pending0. The coordinator independently verified66 changed,
+52 protected and872 compile-input hashes against the original candidate, then preserved the
+worker report and receipts. The worker's narrow log filter lacked detailed CI diagnostics;
+coordinator reads of the same exact job logs recovered the following bounded corrections:
+
+- Web request parsing omits absent optional date properties; the run URL helper returns its
+  exact route template type. Existing contract tests cover both absent and supplied dates.
+- The non-Linux isolation error variant and match arm are platform-gated; two child-reaping
+  conditions use let chains. Fail-closed behavior and cleanup remain unchanged.
+- Two list queries wrap fixed SQL composition in `AssertSqlSafe`; all owner/cursor/limit
+  values remain bound parameters, with no grant or transaction changes.
+- WP-3D aligns the full-release migration guard and two backup/grant fixture inventories with
+  migration0063 in exactly four assigned files. Historical staged guards remain unchanged.
+
+The original candidate, failed reviews, run identities and private WP-7 evidence remain
+preserved. The coordinator owns the five Web/Rust/API source files and documentation/diagram
+citation refresh; WP-3D owns only the four migration-fixture files. Targeted Rust formatting
+passed. Local Web lint initially could not find Biome; verification uses the existing pinned
+2.5.7 installation through the Web workspace and passed (305 files, no fixes,6 warnings/69 infos).
+Rust and docs fast checks passed; refreshed citation PNGs rendered locally with exit0/OOM false
+and confirmed owned-container absence. Compile, typecheck, DB and browser checks remain
+hosted obligations. After combined source/hash review and independent correction review,
+freeze a new candidate and run existing CI/required plus Research smoke once each on that SHA.
+Authenticated artifacts and a separately frozen approved-input scratch runtime follow hosted
+success. No production or provider work, input copy/upload/recollection, or blind rerun is allowed.
+
+WP-3D subsequently reached actual idle/pending0. The coordinator verified all four changed
+source hashes against the worker receipt and original candidate, plus19 preserved report/receipt
+hashes and private modes. Bash syntax, Python AST (no imports), DB static check including its
+no-Docker self-test, diff whitespace, and the exact0001..0063 up/down inventory passed. The only
+additional diagnostic edit changes the grant fixture's printed count to63. This is source/static
+readiness for independent correction review; actual PostgreSQL setup and named cases remain
+unverified. Freeze this combined delta before dispatching the existing independent reviewer.
+
+
+### G3 corrected source accepted for new hosted candidate (2026-10-25)
+
+The independent reviewer reached actual idle/activeTurn null/pending0 with READY_FOR_HOSTED.
+Report SHA-256 `158b3044bdc9d938687d1c3d9ed55879463a648fa31f49590e52bc23cf686424`;
+receipt `df2c0c8fc75a5516ae8157d67e214c1ba87ebf9ccc8eb49a7fd581b586a70c75`. The coordinator
+independently matched all68 source,85 protected evidence and872 compile inputs against start/finish
+review receipts. All four observed failure classes are resolved in source; no mandatory source
+issue remains. Earlier failure/READY reports and exact first-run evidence remain preserved.
+
+This ROADMAP/plan acceptance record is the only post-review delta. Commit the corrected candidate
+on the existing review branch, verify all source and compile inputs against committed blobs, push
+without force, then dispatch existing CI/required with optional source-only build and Research smoke
+exactly once each on that new SHA. The prior failed candidate must not be rerun. Round2 receipts
+use a separate private directory and exclusive intent files. Source readiness is not hosted or
+runtime acceptance: exact19/23/6 named gates, Web checks, authentic artifacts and the separately
+bounded approved-input connection/owner-isolation proof remain required.

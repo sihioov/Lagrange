@@ -1447,7 +1447,7 @@ run_full_release_lane() {
   fi
   record_log "$full_migrate_raw" full-migrate-first.log
   run_full_ledger_report full_compose first
-  [ "$full_count:$full_latest" = "62:62" ] || fail '0062 full-release ledger must contain 62 rows'
+  [ "$full_count:$full_latest" = "63:63" ] || fail '0063 full-release ledger must contain 63 rows'
   full_migration_count_first=$full_count
   full_latest_migration_first=$full_latest
   full_migration_checksums_first=$full_checksums
