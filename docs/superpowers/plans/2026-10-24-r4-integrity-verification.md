@@ -139,8 +139,11 @@ Complete this assignment directly and report if it needs further decomposition.
 
 WP-1 `524179cd-658a-410c-b51e-fe3a5003f984` (gpt-6.1-sol/high/auto)은 idle/pending0·보고 회수 후 G1 수용.
 WP-2 `05091469-ebf3-4009-9f91-2cb60c72b788` (gpt-6-luna/max/auto)은 idle/pending0·보고 회수 후 G2 소스 대조 완료.
-완료 알림과 현재 작업 전용5분 감시 `9df45261`를 유지한다. WP-3 `354fef5b-9222-44ec-ab6c-d0c959c5a38a` (gpt-6.1-sol/high/auto) idle/pending0·보고 회수 및 G3 수용. WP-4는 최종 후보 검증 증거를 회수한다.
-코디네이터 example UUID 보완은 rustfmt check PASS이며 새 hosted/runtime 실행은 아직 없다.
+WP-3 `354fef5b-9222-44ec-ab6c-d0c959c5a38a` (gpt-6.1-sol/high/auto)은 idle/pending0·보고 회수 및 G3 수용.
+WP-4 `a9700117-90a9-40bb-ad96-48afc09a9164` (gpt-6-luna/medium/auto)의 동일 후보 hosted
+증거와 최종 보고서도 회수했고 실제 idle/pending0을 확인했다. 코디네이터가 source-only binary
+출처와 승인 입력 실행·정리를 직접 확인했다. 이 검증 묶음의 G4 계산 범위는 수용하며
+전체 R4-04의 R4-05 사용자 격리 의존은 BLOCKED로 인계한다.
 
 ### G1 수용 — 2026-10-24
 
@@ -171,3 +174,28 @@ Rust fast receipt `20261024T103048Z-a6299026016e`의 cargo-format PASS를 회수
 이 변경 묶음의 후보를 고정해 CI(optional R4 verification build 포함)·smoke를 각1회 실행한다.
 별도 private runtime 준비는 기존 lifecycle 함수를 유지하고 프로세스1회로 제한했다.
 정리·지연 생성·소유권·종료 모의6개 PASS이며 실제 Docker/승인 입력은 아직 실행하지 않았다.
+
+### G4 계산 검증 수용 및 의존성 인계 — 2026-10-24
+
+대상 `70998fdf6a57f6f238b2126b3e5304eb89eab5c7`의 CI40086826583 attempt1은
+9개 job/required 모두 성공했고, Research smoke40086828572 attempt1은20개 step 및
+static/functional/cleanup이 성공했다. 각각 POST1회·HTTP204·개별 exit0이며 재실행은 없었다.
+워크스페이스 harness 합계3,524 passed/0 failed(고유 테스트 수 아님), simulation unit43/integration2,
+새 C1/C2와 verification example4개가 통과했다. 후보42개 파일과 독립 리뷰/보고서 해시를 대조했다.
+
+artifact12558182261의 ZIP digest·binary/source/run/attempt/toolchain provenance를 검증했다.
+실행 파일 SHA-256은 `0e6ecb45219e72b8033256163a8d36228d9b17099aeeb7bd4be72d2f13eaece5`다.
+기존 승인 root를 read-only로 사용한 격리 프로세스1회가1,074.461초에 성공했다.
+2017-06-22~2026-08-28의2,252세션, 두 비용 프로필의 내부2회 계산에서 run/config ID가 달라도
+canonical bytes/hash가 같았다. 입력 pin/bars·실행 파일 identity가 일치하고 exit0/OOM false,
+소유 컨테이너 부재·attach 회수·cleanup SETTLED 및 운영 컨테이너 identity 불변을 확인했다.
+새 후보의 독립 프로세스 간 반복은 실행하지 않았다.
+
+[최종 검증 기록](../../reviews/2026-10-24-r4-integrity-verification.md)에 run 링크, 결과 hash와
+private receipt hash를 기록했다. hosted Raw probe6개 볼륨의 개별 부재와 `|| true`로 보호된
+private builder 제거의 실제 부재는 미검증으로 보존한다. 기존9a0b14f 증거는 그대로 유지한다.
+
+모든 소유 작업자·요청·실행은 종료됐고 보고서를 회수했다. 현재 감시 `9df45261`의 삭제 성공을 확인했다.
+전체 R4-04는 owner-scoped job/result 저장·RLS·인증 API가 없는 R4-05 의존으로 BLOCKED다.
+후속 R4-05 담당이 다른 사용자 간 목록·ID/hash 조회/재사용, 동일 hash의 별도 소유권과
+failed/partial pair 비노출을 검증해야 한다. 해당 제품 연결과 R4-06·운영 변경은 수행하지 않았다.
