@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-24 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4 첫 구현과 WP-5 소스 리뷰를 완료했다. 최신 검증 후보 `7d388a7`의 CI40062490973 attempt1은 Clippy·required FAILURE, 나머지6개 job SUCCESS다. workspace3,522 pass/0 fail/6 ignored, simulation unit41·integration2, Web143, PostgreSQL19를 직접 대조했다. 같은 SHA의 smoke40062501852 attempt1은 기능·정리 PASS다. 추가 Clippy14건은 factor-engine 테스트 한 파일에서 보정했고 formatter PASS이며, 이 기록을 포함하는 후속 수정 후보의 hosted는 NOT_RUN이다. 이전1a27edd의 실패·보정과 검증 이력은 보존한다. R4-02/03 DOING, U2/U3 실제 실행 OPEN. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·유예·DailyOFF는 유지한다. |
+| 현재 실행 우선순위 | R4 첫 구현의 소스·격리 검증을 수용했다. 검증 대상 `6ada50c`의 CI40071485641 attempt1은 required 포함8개 job SUCCESS, 같은 SHA smoke40071496969 attempt1은 기능·정리 PASS다. workspace3,522 pass/0 fail/6 ignored, 시뮬레이션 unit41·integration2, Web143·PostgreSQL19를 직접 확인했다. 소유 작업자6명 idle/pending0와 보고서 회수 뒤 감시를 종료했다. R4-02/03의 실제 입력·결과 인수와 U2/U3는 OPEN이며 이전 실패 이력은 보존한다. [실행 기록](reviews/2026-10-24-r4-execution.md). R2/R3 미완료·유예·Daily OFF는 유지한다. |
 | 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | **추가 Clippy14건을 고친 후속 후보의 동일 SHA CI·smoke 검증. 직전 지시의7d388a7 각1회 실행은 모두 소진했고 추가 dispatch 금지 범위를 유지하므로, 후속 후보를 고정한 뒤 새 검증 쌍의 실행 범위를 확인한다. 실제 U2 승인 artifact·U3 실행 파일 provenance는 별도 OPEN이다.** |
+| 다음 착수 항목 | **기존 v3 승인 artifact의 로컬 절대경로를 받아 U2 입력 위치를 확립하고, U3 격리 실행 파일 provenance와 실제 결과 재현 검증을 진행할 범위를 정한다. 현재 소스·격리 검증은 완료됐으며 실제 artifact 실행·결과 hash 재현은 NOT_RUN이다. 새 workflow·데이터 탐색/복사/업로드·provider/운영 작업은 시작하지 않았다.** |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -606,7 +606,7 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   **2026-10-24 G5 진행:** 후보1a27edd의 smoke 기능·정리 검증은 수용했다. CI 실행 ID 누락으로
   required·unit·Clippy는 미검증이었다. 요청 조건 오류 보정 뒤 같은 후보 CI40015083289 attempt1을
   확인했고 결과를 회수했다. Clippy/required FAILURE, 나머지6개 job SUCCESS이며 시뮬레이션 unit41·integration2 PASS를 직접 대조했다.
-  두 파일의 lint 보정은 formatter PASS, 수정본 hosted NOT_RUN이다. 새 후보 검증과 U2/U3 증거가 남아 DOING을 유지한다.
+  두 파일의 lint 보정은 당시 formatter PASS, 수정본 hosted NOT_RUN이었다. 후속7d388a7에서 추가 테스트 lint14건을 확인·보정했다. **2026-10-24 소스·격리 검증 수용:** 대상6ada50c의 CI8개 job·same-SHA smoke와 독립 리뷰/회귀 근거를 수용했다. 실제 승인 입력·실행 파일 provenance는 미확인으로 분리하며 R4-02의 전체 인수는 DOING으로 남긴다.
 - [ ] **R4-03 — 첫 기준 전략 검증.** 승인된 계약으로 전략 1개와 벤치마크 1개를 먼저 구현하고
   신호·목표 비중·현금·체결·비용·평가의 작은 수작업 기준값과 대조한다.
   **2026-10-24 계획 준비 / 구현 TODO:** 같은 계획의 WP-3/4에서 합성 원장을 먼저 검증하고
@@ -617,7 +617,7 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   두 번째 비용 프로필 실패 회귀 추가 뒤 formatter PASS로 WP-4 의존 인터페이스를 수용했다.
   컴파일·unit test·실제 입력 실행 미실행으로 최종 완료는 OPEN이다.
   **2026-10-24 G5 진행:** 후보1a27edd의 원장11개를 포함한 시뮬레이션 unit41·integration2가 hosted에서 통과했다.
-  Clippy/required FAILURE와 수정본 hosted NOT_RUN을 구별한다. U2 승인 입력·U3 실행 파일 증거가 남아 최종 완료는 미완료다.
+  이전 후보의 Clippy/required FAILURE를 보존한다. **2026-10-24 대상6ada50c:** CI8개 job·시뮬레이션 unit41/integration2·same-SHA smoke가 통과해 소스와 합성 회귀를 수용했다. U2 승인 입력의 실제 시뮬레이션·U3 실행 파일 증거·결과 hash 재현은 NOT_RUN이므로 최종 완료는 미완료다.
 - [ ] **R4-04 — 재현성·미래정보·무결성 검증.** 동일 입력 결과, 미래정보 차단, 분할 중복 반영,
   반올림·잔여 현금·누락, pin 변조와 사용자 격리를 검증한다.
 - [ ] **R4-05 — 전용 실행·조회 연결.** 작업 큐·저장·API·Web 결과를 전용 계약에 연결하고 실패 시
@@ -2372,3 +2372,13 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 2026-10-24 05:02UTC — R4 후보7d388a7의 CI40062490973 attempt1 종료를 독립 확인했다. Clippy·required 실패, 나머지6개 성공이며 workspace3,522 pass/0 fail/6 ignored 및 simulation unit41/integration2 PASS다. 같은 후보 smoke와 WP-6 보고서 회수는 진행 중이다. 추가 테스트 lint 보정 hosted와 U2/U3는 미검증으로 유지한다.
 
 2026-10-24 — R4 후보7d388a7의 CI40062490973·smoke40062501852 attempt1 종료와 WP-6 보고서를 회수했다. 코디네이터가 same-SHA metadata·workspace/required/Web/PostgreSQL·smoke 기능/정리를 검증했다. 소유 작업자6명 idle/pending0이며 테스트41개 수치 정정도 확인했다. 추가14곳 lint 수정 후보는 formatter PASS, hosted NOT_RUN으로 고정한다. 새 검증은 기존 추가-dispatch 금지 경계를 따른다.
+
+2026-10-24 06:47UTC — Owner의 “그래 진행해”를 후보6ada50c8bf62250dc8f3c0be98f9735c944fec75의 CI·Research worker smoke 각1회 실행 승인으로 기록했다. 기존 WP-6 Luna/medium을 notified follow-up으로 재개했고 CI40071485641·smoke40071496969 attempt1의 개별 HTTP204·exit0, workflow·branch·SHA와19개 소스 해시를 직접 대조했다. 두 실행은 진행 중이며 현재 작업만 추적하는5분 감시99090809를 등록했다. R4-02/03 DOING 및 G5·U2/U3 OPEN을 유지한다.
+
+2026-10-24 06:50UTC — R4 후보6ada50c의 strict workspace Clippy가 성공했다. 코디네이터가 all-targets/all-features/locked/-D warnings 명령과 성공 로그, 후보 소스19개 해시를 직접 확인했다. Python·format도 성공이며 나머지4개 CI job·smoke는 진행 중, required 집계는 아직 나타나지 않았다. 소유 작업자6명 pending0, WP-6만 running이다. 최종 G5 및 U2/U3는 OPEN을 유지한다.
+
+2026-10-24 07:00UTC — R4 후보6ada50c CI의6개 job 성공을 확인했다. Web OFF129·market-stream14 PASS, coverage complete·cleanup/reservation true·skip/flaky/retry0이며 PostgreSQL19suite exit0·skip0,62migration 재실행 NO_OP다. workspace-tests·required·smoke 최종 결과는 아직 없고 WP-6은 running/pending0다. G5 및 U2/U3 OPEN을 유지한다.
+
+2026-10-24 07:25UTC — R4 후보6ada50c의 CI40071485641 attempt1이07:20:33UTC에 SUCCESS로 종료됐다. 코디네이터가 exact workflow·branch·SHA,8개 job과 required의7개 success 입력, workspace3,522 pass/0 fail/6 ignored 및 완료된 시뮬레이션 unit41·integration2를 직접 검증했다. 같은 후보 smoke40071496969와 WP-6 최종 보고서는 대기 중이다. U2/U3 실제 증거와 최종 G5는 OPEN이다.
+
+2026-10-24 07:47UTC — R4 대상6ada50c의 same-SHA CI40071485641·smoke40071496969 attempt1 성공과 기능·정리 근거를 직접 검증해 G5 소스·격리 검증 범위를 수용했다. 소유6명 idle/pending0, 완료 알림과 최종 보고서·8개 worker receipt 및 소스19개 해시를 확인했다. 코디네이터가 추가 회수한 전용 builder 제거 로그로 보고서의 좁은 미확인 표시를 보완했다. Raw-probe6개 volume의 별도 부재 조회는 미검증이다. 감시99090809를 삭제했고 기존 승인 artifact 경로를 사용자에게 요청했다. 실제 U2/U3·R4-03 완료 및 R4-04~06은 자동 완료하지 않는다.

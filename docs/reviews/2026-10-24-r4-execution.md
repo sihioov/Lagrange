@@ -425,3 +425,83 @@ Rust fast formatter PASS의 입력과 일치한다. 이 기록과 종료 보고�
 구체적인 새 후보의 검증 쌍 실행 범위를 확인한다. U2 실제 artifact·U3 실행 파일 증거는 OPEN을 유지한다.
 
 모든 소유 작업자의 종료·pending0·보고서 회수를 확인한 뒤 감시b5cd7be4를 삭제했다. 새 실행을 자동 시작하는 감시는 남기지 않았다.
+
+
+## 후보6ada50c 검증 재개
+
+2026-10-24 06:47UTC: Owner가 구체적인 CI·Research worker smoke 각1회 실행 요청에
+“그래 진행해”라고 답했다. 후보는 `6ada50c8bf62250dc8f3c0be98f9735c944fec75`이며,
+승인은 이 후보의 두 실행에만 적용한다. 기존 후보의 실패와 승인 소진 기록은 보존한다.
+`candidate-6ada50c/authorization.json`에 승인 범위와 원본 WP-6 보고서25475byte prefix hash를
+고정했다. local HEAD·remote·19개 소스 해시와 두 workflow의 기존 실행0개를 확인했다.
+
+기존 WP-6 `0324a62d-1753-4925-b95b-f2e4d4d3f0aa`의 actual idle/pending0를 확인한 뒤
+Codex Luna/medium 설정으로 notified follow-up을 시작했다. 실제 codex-turn-5는06:44:41UTC에
+시작했고 대기 요청은 없다. 현재 작업 전용 heartbeat99090809는5분 간격,2시간/최대24회다.
+이전 감시는 되살리지 않았다. 작업자의 소유 범위는 WP-6 보고서 추가와 새 private receipt다.
+
+CI40071485641·smoke40071496969는 각각 attempt1, workflow331572180/331572181,
+branch `review-handoff-next-task`, exact6ada50c, workflow_dispatch다. 개별 POST는
+06:45:49.134877UTC/06:45:59.103395UTC에 exit0·HTTP204를 반환했다. 코디네이터가 정제된
+개별 receipt와 GitHub run metadata를 독립 대조했으며 두 실행은 진행 중이다. source19개 해시도
+일치한다. 근거는 `candidate-6ada50c/coordinator-dispatch-observation.json`에 기록했다.
+
+CI8개 job과 required, 같은 SHA smoke 기능·정리 및 최종 보고서를 회수한 뒤 수용 여부를 판단한다.
+추가 dispatch·재실행은 하지 않으며 G5와 실제 U2 artifact·U3 실행 파일 증거는 OPEN이다.
+
+2026-10-24 06:50UTC 중간 검증: CI40071485641 attempt1의 Clippy job120805679577이 SUCCESS다.
+코디네이터가 `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
+명령, dev profile 완료와 오류0을 직접 확인했다. Python·format도 SUCCESS이며 policy·Web·workspace·
+PostgreSQL과 smoke는 진행 중이다. required 집계는 아직 없다. 소스19개 해시 일치와6명 pending0,
+WP-6 codex-turn-5 running을 확인했다. 근거는 `candidate-6ada50c/coordinator-clippy-interim-verification.json`이다.
+최종 결과를 수용한 상태는 아니며 기존 callback과 heartbeat99090809로 회수를 계속한다.
+
+2026-10-24 07:00UTC 중간 검증: exact6ada50c CI40071485641 attempt1의 policy·Web·PostgreSQL도
+SUCCESS로 종료돼6개 job이 통과했다. Web job120805679737에서 OFF129/129·market-stream14/14,
+coverage complete·cleanup/reservation true·skip/flaky/retry0을 확인했다. PostgreSQL job120805679438의
+19suite exit0·skip0, 첫/두 번째 migration count62·latest62·rerun NO_OP와0039 guard PASS,
+skip marker ENFORCED를 직접 대조했다. 근거는 `candidate-6ada50c/coordinator-web-postgres-verification.json`이다.
+workspace-tests와 smoke는 진행 중이고 required는 아직 없으므로 G5를 수용하지 않는다.
+소스19개 해시 일치, 소유6명 pending0와 WP-6 codex-turn-5 running을 확인했으며 감시는 유지한다.
+
+
+## 후보6ada50c CI 종료 검증
+
+2026-10-24 07:25UTC: CI40071485641 attempt1은07:20:33UTC에 SUCCESS로 종료됐다. 코디네이터가
+workflow331572180·branch·exact6ada50c·event와8개 job의 terminal SUCCESS를 직접 확인했다.
+required job120812558234의7개 입력은 모두 success다. workspace job120805679750에서
+`cargo test --workspace --locked --no-fail-fast --features kis-client/test-support` 명령과
+253개 test-result 행의 합계3,522 pass/0 fail/6 ignored/386 filtered를 대조했다.
+완료된 이름 기준 시뮬레이션 unit41개와 owner_beta_simulation 통합2개가 모두 통과했다.
+통합2개는 변조된 v3 pin 거절과 사용 불가능한 승인 artifact 거절 검증이며 실제 artifact 실행이 아니다.
+
+기존 strict Clippy·Web143·PostgreSQL19 증거와 소스19개 해시도 연결했다. private 근거는
+`candidate-6ada50c/coordinator-ci-terminal-verification.json`이다. 같은 SHA smoke40071496969와
+WP-6 최종 보고서는 아직 진행 중이다. 소유6명 pending0, WP-6만 running으로 확인했고 감시를 유지한다.
+G5 최종 수용과 U2 실제 artifact·U3 실행 파일 provenance는 OPEN이다.
+
+
+## 후보6ada50c 최종 회수와 소스·격리 검증 수용
+
+2026-10-24 07:47UTC: exact6ada50c CI40071485641과 smoke40071496969는 모두 attempt1 SUCCESS다.
+smoke는07:43:27UTC에 종료됐고 job120805712053의20개 step이 성공했다. 코디네이터가 static/functional
+PASS, Raw-probe·overall cleanup exit0, project container/volume/network와 context image remaining=NONE,
+임시 디렉터리 정리를 직접 확인했다. `lagrange-smoke-40071496969-1 removed` 출력도 회수했다.
+worker가 explicit 제거 출력을 찾지 못했다고 기록한 부분은 이 추가 근거로 보완한다. 별도의 builder
+부재 조회와6개 standalone Raw-probe volume 부재 조회를 했다는 뜻은 아니다. 캐시 지속성·성능은 미검증이다.
+
+완료 알림52b3d2ee와6명 actual idle/pending0를 확인했다. 최종 worker 보고서 SHA-256
+4dc0ac2431dfa34826039d911c34e9a8c05e3b910b5a1a970651f3c61434f85b,8개 mode0600 worker receipt,
+보호된25475byte prefix와19개 local/candidate 소스 hash가 일치한다. 원본 worker 보고·receipt는 보존하고
+보고서 끝에 코디네이터의 builder 근거와 수용 범위를 덧붙였다. private 근거는
+`candidate-6ada50c/coordinator-smoke-terminal-verification.json`과
+`candidate-6ada50c/coordinator-source-hosted-acceptance.json`이다.
+
+G5의 소스 구현·격리 hosted 검증 범위를 수용한다. 실제 승인 artifact 실행, 실행 binary provenance,
+실제 결과 hash 재현은 NOT_RUN이다. R4-02/03의 전체 인수와 R4-04~06, 운영·Owner 인수는 완료하지 않는다.
+기존 v3 승인 artifact의 절대경로가 확립되지 않아 사용자에게 경로를 요청했다. 새 위치 탐색·mount·복사·
+업로드·provider 재수집이나 신규 workflow 실행은 하지 않았다. 현재 검증 쌍은 모두 소진됐고 추가 실행은 없다.
+
+모든 소유 작업자의 종료·pending0·보고서 회수·직접 검증이 끝난 뒤 heartbeat99090809 삭제 성공을 확인했다.
+이전 heartbeat도 되살리지 않았다. 남은 외부 입력은 승인 artifact 경로이며 U3 실제 격리 실행 증거는
+그 후속 작업에서 확보해야 한다. 이번 검증 대상은6ada50c이고 후속 문서 커밋을 새 실행 증거로 취급하지 않는다.

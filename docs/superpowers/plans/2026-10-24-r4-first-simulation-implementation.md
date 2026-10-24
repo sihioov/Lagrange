@@ -448,11 +448,11 @@ cargo test --workspace --locked --no-fail-fast --features kis-client/test-suppor
 | Package | 상태 | 증거 / 다음 행동 |
 | --- | --- | --- |
 | WP-1 | DONE (G1 증거 범위) | 2026-10-24 exact90f133e CI39990016668 attempt1 all8 SUCCESS, Web143개 통과. 원래 실패 미재현/원인 미확정 보존; 최종 R4 검증은 별도 |
-| WP-2 | 보완 소스 수용 / 최종 hosted OPEN | G2·F2/F4/F5 소스 리뷰 수용, exact1a27edd의 계약·정확 산술 회귀 PASS. 후속 lint 보정의 hosted NOT_RUN |
-| WP-3 | G3 소스 및 후보 회귀 PASS | exact1a27edd 원장11개 포함 시뮬레이션 unit41 PASS. 실제 승인 입력 실행은 OPEN |
-| WP-4 | 보완 소스 및 후보 합성 회귀 PASS | exact1a27edd input/signals/engine 회귀와 integration2 PASS. 후속 lint 보정의 hosted 및 실제 U2/U3 OPEN |
+| WP-2 | DONE (소스·격리 검증 범위) | 2026-10-24 대상6ada50c 계약·정확 산술 회귀, CI8개 job·same-SHA smoke PASS. 실제 결과 provenance는 별도 OPEN |
+| WP-3 | DONE (소스·합성 원장 검증 범위) | 2026-10-24 대상6ada50c 원장11개 포함 시뮬레이션 unit41 PASS. 실제 승인 입력 실행은 OPEN |
+| WP-4 | 소스·격리 검증 수용 / 실제 입력 OPEN | 2026-10-24 대상6ada50c input/signals/engine 회귀·integration2·CI8개·smoke PASS. U2 실제 artifact 실행·U3 provenance 미확인 |
 | WP-5 | DONE (소스 리뷰 범위) | 2026-10-24 manifest27ae4b99…의 19개 파일과 report31010885… 직접 대조. F1~F5 해소, READY_FOR_HOSTED; runtime 인수 아님 |
-| WP-6 | 두 후보 증거 회수 완료 / G5 미수용 | exact7d388a7 CI40062490973 Clippy/required FAIL, 나머지6개 PASS; smoke40062501852 기능·정리 PASS. 작업자 idle/pending0 및 최종 보고서 직접 검증. 추가14곳 보정 후보 hosted NOT_RUN, 새 검증 쌍 범위 확인 필요. 이전1a27edd 증거 보존 |
+| WP-6 | DONE (same-SHA hosted 검증 범위) | 2026-10-24 대상6ada50c CI40071485641·smoke40071496969 attempt1 SUCCESS. Coordinator 로그·소스19hash·보고서·receipt 검증,6명 idle/pending0 확인 후 감시 종료. G5 소스·격리 범위 수용; 실제 입력 인수 OPEN |
 
 2026-10-24: Owner의 `$paseo-delegate-plan` 요청으로 계획 작성. 원본 계약 hash·로컬 코드 접점·
 검증 절차·실행 스킬 위치를 확인했다. 구현·worker·새 hosted 실행·운영 변경은 시작하지 않았다.
@@ -493,3 +493,9 @@ F1~F5가 해소됐고 새 필수 수정은 없다. 무가격 q=0은 입력/prove
 2026-10-24 05:02UTC CI 종료: exact7d388a7 CI40062490973 attempt1은 Clippy·required FAILURE, 나머지6개 job SUCCESS다. 코디네이터가 workspace3,522 pass/0 fail/6 ignored, simulation unit41/integration2 및 required 원인을 직접 대조했다. 같은 후보 smoke와 WP-6 최종 보고서 회수를 계속하며 추가 미커밋 lint 보정 hosted와 U2/U3는 미검증이다.
 
 2026-10-24 종료 회수: exact7d388a7 smoke40062501852 attempt1 SUCCESS, 기능·정리 exit0 및20개 step 성공을 직접 대조했다. Web143개와 PostgreSQL19suite·62migration NO_OP도 확인했다. WP-6 최종보고서와9개 private receipt, 원본prefix 보존 및6명 actual idle/pending0를 확인했다. 단위테스트 수치는41개로 정정돼 coordinator와 일치한다. 추가 수정은 price_only.rs cfg(test)의Copy clone14개뿐이며 새 후보의 hosted는 NOT_RUN이다. 현재 각1회 승인은 소진됐고 추가 dispatch는 하지 않는다. U2/U3 실제 증거와 G5는 OPEN이다.
+
+2026-10-24 06:47UTC 재개: 추가14곳 테스트 lint 보정을 포함한6ada50c 후보의 CI·smoke 각1회 실행을 Owner가 “그래 진행해”로 승인했다. 기존 WP-6의 actual idle/pending0 확인 뒤 notified follow-up을 시작했고 실제 codex-turn-5 running을 확인했다. CI40071485641·smoke40071496969 attempt1의 workflow·branch·SHA와 개별 HTTP204·exit0를 직접 대조했다. 현재 작업 전용5분 감시99090809(2시간/최대24회)를 등록했다. 코디네이터의 종료 결과 수용 전까지 G5와 U2/U3는 OPEN이다.
+
+2026-10-24 07:25UTC — exact6ada50c CI40071485641 attempt1 all8 SUCCESS를 직접 대조했다. required의7개 입력도 모두 success이고 시뮬레이션 unit41/integration2가 통과했다. 같은 후보 smoke와 WP-6 최종 보고서 회수를 계속하며 G5와 실제 U2/U3는 OPEN을 유지한다.
+
+2026-10-24 07:47UTC — WP-6 완료 알림52b3d2ee와6명 실제 idle/pending0를 회수했다. exact6ada50c의 CI8개 및 smoke 기능·정리 성공을 코디네이터가 직접 검증해 G5의 소스·격리 범위만 수용했다. 전용 builder 제거 출력도 회수해 worker 보고의 제한을 보완했다. 원본 보고 prefix와8개 worker receipt를 보존하고 감시99090809를 삭제했다. U2 기존 승인 artifact 경로를 사용자에게 요청했으며 실제 실행·U3 provenance·R4-03 최종 인수는 OPEN이다.
