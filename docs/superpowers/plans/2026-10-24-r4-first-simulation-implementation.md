@@ -7,7 +7,7 @@ Native subagents: prohibited for worker packages
 - 기준 revision: `bb906d374f17e25485b440017639894bceb3e1ac`.
 - 대상 작업 디렉터리: `/data/worktrees/3puw275b/short-bobcat`, 브랜치 `review-handoff-next-task`.
 - 상태: **Owner 실행 지시 수신. WP-1 G1 증거 수용·진단 CI39990016668 전체 성공, 원래 실패 원인 미확정.
-  WP-2~4 소스/인터페이스 및 WP-5 독립 리뷰 수용. 최신 후보7d388a7의 CI40062490973은 Clippy/required FAILURE, 나머지6개 SUCCESS; smoke40062501852 기능·정리 PASS. simulation unit41/integration2 PASS. 추가 테스트 lint14곳의 한 파일 보정·formatter PASS이며 후속 수정 후보 hosted와 U2/U3는 OPEN이다.**
+  WP-2~4 소스/인터페이스 및 WP-5 독립 리뷰 수용. 최신 후보6ada50c의 CI40071485641은 required 포함8개 job SUCCESS, 같은 SHA smoke40071496969 기능·정리 PASS. simulation unit41/integration2 PASS이며 G5 소스·격리 검증을 수용했다. U2 실제 승인 입력 실행·U3 실행 파일 provenance는 OPEN이며, Owner 후속 지시에 따라 기존 artifact 위치·승인 pin·bars 해시를 직접 확인했다.**
   [실행 기록](../../reviews/2026-10-24-r4-execution.md)에 수용·검증 상태를 구분해 기록한다.
 - 상위 작업: [ROADMAP R4-02/03](../../ROADMAP.md#8-r4--추천-전용-백테스트).
   R4-04의 계산·무결성 검증 일부를 함께 수행하되 R4-04 전체 완료로 표시하지 않는다.
@@ -499,3 +499,5 @@ F1~F5가 해소됐고 새 필수 수정은 없다. 무가격 q=0은 입력/prove
 2026-10-24 07:25UTC — exact6ada50c CI40071485641 attempt1 all8 SUCCESS를 직접 대조했다. required의7개 입력도 모두 success이고 시뮬레이션 unit41/integration2가 통과했다. 같은 후보 smoke와 WP-6 최종 보고서 회수를 계속하며 G5와 실제 U2/U3는 OPEN을 유지한다.
 
 2026-10-24 07:47UTC — WP-6 완료 알림52b3d2ee와6명 실제 idle/pending0를 회수했다. exact6ada50c의 CI8개 및 smoke 기능·정리 성공을 코디네이터가 직접 검증해 G5의 소스·격리 범위만 수용했다. 전용 builder 제거 출력도 회수해 worker 보고의 제한을 보완했다. 원본 보고 prefix와8개 worker receipt를 보존하고 감시99090809를 삭제했다. U2 기존 승인 artifact 경로를 사용자에게 요청했으며 실제 실행·U3 provenance·R4-03 최종 인수는 OPEN이다.
+
+2026-10-24 08:15UTC — Owner가 기존 artifact 위치를 직접 찾으라고 지시해 사용자 경로 제공 대기를 해소했다. 기록 두 곳과 기존 Compose 읽기 전용 연결을 대조한 root는 `/var/lib/lagrange/data/artifacts/historical-price-beta-root`다. 호스트 일반 읽기와 sudo는 거부됐지만 기존 API의 UID10001·읽기 전용 마운트에서 현재 파일과 승인 candidate/manifest/Stage5/action pin, bars SHA·26,972행·2,452세션을 확인했다. 파일·서비스 설정을 변경하거나 데이터를 복사하지 않았다. 실제 sealed Rust 승인·시뮬레이션·U3 executable provenance는 NOT_RUN이며 기존 API 이미지를 실행 증거로 대신하지 않는다. [위치·해시 기록](../../reviews/2026-10-24-r4-approved-artifact-location.md).

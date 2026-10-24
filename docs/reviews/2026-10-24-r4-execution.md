@@ -505,3 +505,5 @@ G5의 소스 구현·격리 hosted 검증 범위를 수용한다. 실제 승인 
 모든 소유 작업자의 종료·pending0·보고서 회수·직접 검증이 끝난 뒤 heartbeat99090809 삭제 성공을 확인했다.
 이전 heartbeat도 되살리지 않았다. 남은 외부 입력은 승인 artifact 경로이며 U3 실제 격리 실행 증거는
 그 후속 작업에서 확보해야 한다. 이번 검증 대상은6ada50c이고 후속 문서 커밋을 새 실행 증거로 취급하지 않는다.
+
+2026-10-24 08:15UTC — Owner가 기존 artifact 위치를 직접 찾으라고 지시해 사용자 경로 제공 대기를 해소했다. 기록 두 곳과 기존 Compose 읽기 전용 연결을 대조한 root는 `/var/lib/lagrange/data/artifacts/historical-price-beta-root`다. 호스트 일반 읽기와 sudo는 거부됐지만 기존 API의 UID10001·읽기 전용 마운트에서 현재 파일과 승인 candidate/manifest/Stage5/action pin, bars SHA·26,972행·2,452세션을 확인했다. 파일·서비스 설정을 변경하거나 데이터를 복사하지 않았다. 실제 sealed Rust 승인·시뮬레이션·U3 executable provenance는 NOT_RUN이며 기존 API 이미지를 실행 증거로 대신하지 않는다. [위치·해시 기록](2026-10-24-r4-approved-artifact-location.md).
