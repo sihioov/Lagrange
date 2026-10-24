@@ -14,6 +14,7 @@ pub mod publish;
 pub mod recovery;
 pub mod runner;
 pub mod simulation;
+pub mod simulation_execution;
 pub mod target;
 
 pub use compute::{

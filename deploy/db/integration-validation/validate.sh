@@ -519,6 +519,9 @@ daily_harness='NOT_RUN'
 db_test_results=()
 daily_named_rows=()
 daily_subcase_rows=()
+r4_simulation_test_commands=()
+r4_simulation_expected_rows=()
+r4_simulation_named_rows=()
 bootstrap_negative_cases=''
 service_logins=''
 full_service_logins=''
@@ -640,6 +643,27 @@ write_evidence() {
       printf '"%s"' "$row"; first=0
     done
     printf '],\n'
+    printf '  "r4_simulation_test_commands": ['
+    first=1
+    for row in "${r4_simulation_test_commands[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$(json_escape "$row")"; first=0
+    done
+    printf '],\n'
+    printf '  "r4_simulation_expected_rows": ['
+    first=1
+    for row in "${r4_simulation_expected_rows[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$(json_escape "$row")"; first=0
+    done
+    printf '],\n'
+    printf '  "r4_simulation_named_rows": ['
+    first=1
+    for row in "${r4_simulation_named_rows[@]}"; do
+      [ "$first" -eq 1 ] || printf ', '
+      printf '"%s"' "$(json_escape "$row")"; first=0
+    done
+    printf '],\n'
     printf '  "tests_run": ['
     first=1
     IFS=',' read -r -a test_items <<<"$tests_run"
@@ -672,6 +696,15 @@ write_evidence() {
     printf 'sequential\t0039,0040,0041,0059,0060\n'
     printf 'stages_run\t%s\n' "$stages_run"
     printf 'tests_run\t%s\n' "$tests_run"
+    for row in "${r4_simulation_test_commands[@]}"; do
+      printf 'r4_simulation_test_command\t%s\n' "$row"
+    done
+    for row in "${r4_simulation_expected_rows[@]}"; do
+      printf 'r4_simulation_expected_row\t%s\n' "$row"
+    done
+    for row in "${r4_simulation_named_rows[@]}"; do
+      printf 'r4_simulation_named_row\t%s\n' "$row"
+    done
     printf 'bootstrap_negative_cases\t%s\n' "$bootstrap_negative_cases"
     printf 'direct_service_role_logins\t%s\n' "$service_logins"
     printf 'full_release_service_role_logins\t%s\n' "$full_service_logins"
@@ -1518,9 +1551,53 @@ run_daily_0060_staged() {
 }
 
 run_db_test() {
-  local label=$1 target=$2 status skip=false row name expected actual
+  local label=$1 target=$2 status skip=false row name expected actual actual_count successful_count row_name row_result
   local -a replay_rows=()
+  local -a expected_names=()
   local raw="$workdir/test-$label.log"
+  case "$label" in
+    jobqueue-owner-beta-simulation-execution)
+      expected_names=(
+        r4_actor_rls_and_hash_isolation
+        r4_role_grants_and_forced_rls
+        r4_success_pair_is_one_commit
+        r4_partial_pair_and_transaction_failure_hidden
+        r4_typed_claim_and_generic_exclusion
+        r4_lease_retry_exhaustion_and_zombie
+        r4_cancel_wins_and_late_publish_denied
+        r4_migration_up_down_guards
+        r4_read_revalidates_both_profiles
+        r4_entitlement_covers_every_consumed_session
+        r4_failure_settlement_retries_only_infrastructure_errors
+        r4_commit_unknown_reconciliation
+        r4_invalid_claim_is_terminal_and_attempt_fenced
+        r4_invalid_recovery_is_terminal_and_continues_to_valid_jobs
+        r4_frozen_config_edits_allow_failure_cancel_recovery_and_publication
+      )
+      ;;
+    api-owner-beta-simulation-replay)
+      expected_names=(
+        http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding
+      )
+      ;;
+    api-owner-beta-simulations)
+      expected_names=(
+        simulation_owner_admission_and_closed_body
+        simulation_http_cross_owner_list_get_cancel_pair
+        simulation_same_hash_independent_ownership
+        simulation_pair_only_after_atomic_success
+        simulation_cancel_publish_and_lease_races
+        simulation_entitlement_revoke_and_safe_errors
+        simulation_generic_surfaces_stay_separate
+      )
+      ;;
+  esac
+  if [ "${#expected_names[@]}" -gt 0 ]; then
+    r4_simulation_test_commands+=("$label:cargo test --locked $target -- --nocapture")
+    for expected in "${expected_names[@]}"; do
+      r4_simulation_expected_rows+=("$label:$expected")
+    done
+  fi
   if (cd "$root" && DATABASE_URL="$test_database_url" CARGO_TERM_COLOR=never cargo test --locked $target -- --nocapture) >"$raw" 2>&1; then status=0; else status=$?; fi
   if grep -Fq 'SKIP:' "$raw"; then skip=true; fi
   db_test_results+=("{\"label\":\"$label\",\"exit_code\":$status,\"skip_markers\":$skip}")
@@ -1537,18 +1614,41 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ] || [ "$label" = jobqueue-owner-beta-simulation-execution ] || [ "$label" = api-owner-beta-simulation-replay ] || [ "$label" = api-owner-beta-simulations ]; then
     while IFS= read -r row; do
-      if [[ "$row" =~ ^test[[:space:]]([a-z_][a-z0-9_]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED)$ ]]; then
+      if [[ "$row" =~ ^test[[:space:]]([A-Za-z_][A-Za-z0-9_:]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED|ignored)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
         replay_rows+=("$name:$actual")
         printf 'PG_DB_TEST_ROW:%s:%s:%s\n' "$label" "$name" "$actual"
+        case "$label" in
+          jobqueue-owner-beta-simulation-execution|api-owner-beta-simulation-replay|api-owner-beta-simulations)
+            r4_simulation_named_rows+=("$label:$name:$actual")
+            ;;
+        esac
       fi
     done <"$raw"
   fi
   record_log "$raw" "test-$label.log"
   [ "$status" -eq 0 ] || fail "DB-gated test failed: $label"
   [ "$skip" = false ] || fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  if [ "${#expected_names[@]}" -gt 0 ]; then
+    for expected in "${expected_names[@]}"; do
+      actual_count=0
+      successful_count=0
+      for row in "${replay_rows[@]}"; do
+        row_name=${row%:*}
+        row_result=${row##*:}
+        if [ "$row_name" = "$expected" ]; then
+          actual_count=$((actual_count + 1))
+          [ "$row_result" != ok ] || successful_count=$((successful_count + 1))
+        fi
+      done
+      [ "$actual_count" -eq 1 ] || fail "R4 simulation named test row missing or duplicated: $expected"
+      [ "$successful_count" -eq 1 ] || fail "R4 simulation named test did not pass: $expected"
+    done
+    [ "${#replay_rows[@]}" -eq "${#expected_names[@]}" ] \
+      || fail "R4 simulation test inventory changed: $label"
+  fi
   if [ "$label" = api-owner-beta-daily ]; then
     for expected in \
       http_daily_config_defaults_and_partial_updates_preserve_optin_and_epoch \
@@ -2054,7 +2154,10 @@ run_db_test jobqueue-owner-beta-daily-backup '-p job-queue --test owner_beta_dai
 run_db_test jobqueue-owner-beta-daily-runner '-p job-queue --test owner_beta_daily_runner'
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 run_db_test api-owner-beta-daily '-p api-server --test http_owner_beta_daily --test http_owner_beta_price_only --test http_owner_beta_access'
+run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'
+run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'
+run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'
 
 outcome=APPROVED
-detail='schema-only 0038 upgrade, staged 0039/0040/0041 checks, empty full-release endpoint and no-op rerun, catalog audits, and DB-gated tests passed without SKIP'
+detail='schema-only upgrade, staged release checks, catalog audits, existing DB-gated tests, and R4 simulation DB-gated tests passed without SKIP'
 exit 0

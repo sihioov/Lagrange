@@ -920,6 +920,19 @@ jobs:
           path: |
             ${{ runner.temp }}/r4-verification-build/delivery/verify_approved_simulation
             ${{ runner.temp }}/r4-verification-build/delivery/provenance.json
+            ${{ runner.temp }}/r4-verification-build/delivery/owner-beta-simulation-runner
+            ${{ runner.temp }}/r4-verification-build/delivery/simulation-runner-provenance.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - name: Upload the R4 connection proof and provenance
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: r4-connection-proof-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/r4-verification-build/proof-delivery/verify_approved_simulation_connection
+            ${{ runner.temp }}/r4-verification-build/proof-delivery/connection-proof-provenance.json
           if-no-files-found: error
           retention-days: 1
           compression-level: 0

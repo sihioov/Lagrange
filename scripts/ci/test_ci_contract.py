@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -25,7 +26,14 @@ R4_UPLOAD_ACTION = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607
 R4_DELIVERY_PATHS = [
     "${{ runner.temp }}/r4-verification-build/delivery/verify_approved_simulation",
     "${{ runner.temp }}/r4-verification-build/delivery/provenance.json",
+    "${{ runner.temp }}/r4-verification-build/delivery/owner-beta-simulation-runner",
+    "${{ runner.temp }}/r4-verification-build/delivery/simulation-runner-provenance.json",
 ]
+R4_PROOF_DELIVERY_PATHS = [
+    "${{ runner.temp }}/r4-verification-build/proof-delivery/verify_approved_simulation_connection",
+    "${{ runner.temp }}/r4-verification-build/proof-delivery/connection-proof-provenance.json",
+]
+R4_PROOF_UPLOAD_NAME = "r4-connection-proof-${{ github.sha }}"
 CARGO_DOWNLOAD_PATHS = {
     "~/.cargo/registry/index", "~/.cargo/registry/cache", "~/.cargo/registry/src",
     "~/.cargo/git/db", "~/.cargo/git/checkouts",
@@ -110,7 +118,7 @@ def assert_r4_verification_job(workflow: dict) -> None:
         "if", "permissions", "runs-on", "timeout-minutes", "steps"
     }, "R4 verification job gained inputs or execution scope"
     steps = job["steps"]
-    assert len(steps) == 3, "R4 verification job steps changed"
+    assert len(steps) == 4, "R4 verification job steps changed"
     assert steps[0] == {
         "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "with": {"ref": "${{ github.sha }}", "persist-credentials": "false"},
@@ -119,6 +127,12 @@ def assert_r4_verification_job(workflow: dict) -> None:
         "name": "Build and verify the source-only R4 binary",
         "run": "bash scripts/ci/build-r4-verification.sh",
     }, "R4 verification job build command or step environment changed"
+    assert steps[2].get("name") == "Upload the R4 binary and provenance", (
+        "original four-file R4 artifact must stay immediately after the build"
+    )
+    assert steps[3].get("name") == "Upload the R4 connection proof and provenance", (
+        "the separate proof artifact must be the final R4 job step"
+    )
 
 
 def assert_artifact_upload_policy(workflow_name: str, workflow: dict) -> None:
@@ -132,20 +146,40 @@ def assert_artifact_upload_policy(workflow_name: str, workflow: dict) -> None:
         assert not uploads, "artifact uploads are not approved in this workflow"
         return
 
-    assert len(uploads) == 1, "only the exact optional R4 source-only job may upload an artifact"
-    job_id, step = uploads[0]
-    assert job_id == R4_VERIFICATION_JOB, "artifact upload moved outside the optional R4 job"
-    assert step.get("uses") == R4_UPLOAD_ACTION, "unapproved artifact upload action"
-    job_steps = workflow["jobs"][job_id]["steps"]
-    assert job_steps[-1] is step, "R4 artifact upload must be the final success-only step"
-    assert step.get("if") == "success()", "R4 artifact upload must run only after successful verification"
-    assert step.get("with") == {
+    assert len(uploads) == 2, "only the two exact optional R4 artifacts may be uploaded"
+    assert all(job_id == R4_VERIFICATION_JOB for job_id, _ in uploads), (
+        "artifact upload moved outside the optional R4 source-only job"
+    )
+    job_steps = workflow["jobs"][R4_VERIFICATION_JOB]["steps"]
+    original_step, proof_step = job_steps[-2:]
+    assert uploads == [
+        (R4_VERIFICATION_JOB, original_step),
+        (R4_VERIFICATION_JOB, proof_step),
+    ], "the original artifact must precede the separate proof artifact as the last two steps"
+    assert original_step.get("name") == "Upload the R4 binary and provenance", (
+        "original R4 artifact name or upload order changed"
+    )
+    assert original_step.get("uses") == R4_UPLOAD_ACTION, "unapproved artifact upload action"
+    assert original_step.get("if") == "success()", "original artifact upload must be success-only"
+    assert original_step.get("with") == {
         "name": "r4-verification-${{ github.sha }}",
         "path": "\n".join(R4_DELIVERY_PATHS) + "\n",
         "if-no-files-found": "error",
         "retention-days": "1",
         "compression-level": "0",
-    }, "R4 artifact name, fixed delivery paths, or retention policy changed"
+    }, "original R4 artifact name, fixed delivery paths, or retention policy changed"
+    assert proof_step.get("name") == "Upload the R4 connection proof and provenance", (
+        "proof artifact name or upload order changed"
+    )
+    assert proof_step.get("uses") == R4_UPLOAD_ACTION, "unapproved proof artifact upload action"
+    assert proof_step.get("if") == "success()", "proof artifact upload must run only after successful verification"
+    assert proof_step.get("with") == {
+        "name": R4_PROOF_UPLOAD_NAME,
+        "path": "\n".join(R4_PROOF_DELIVERY_PATHS) + "\n",
+        "if-no-files-found": "error",
+        "retention-days": "1",
+        "compression-level": "0",
+    }, "proof artifact name, fixed delivery paths, or retention policy changed"
     assert not any(
         candidate.get("uses", "").startswith("actions/download-artifact@")
         for candidate in job_steps
@@ -436,7 +470,7 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("set -euo pipefail", script)
         self.assertIn(
-            "apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev",
+            "apk add --no-cache build-base musl-dev pkgconf openssl-dev postgresql-dev python3",
             script,
         )
         self.assertIn(
@@ -456,8 +490,18 @@ class WorkflowContractTests(unittest.TestCase):
             [
                 "cargo fmt --all --check",
                 "cargo clippy --locked --release -p job-queue --example verify_approved_simulation -- -D warnings",
-                "cargo test --locked --release -p job-queue --example verify_approved_simulation",
+                "cargo test --locked --release -p job-queue --example verify_approved_simulation -- \\",
+                "cargo clippy --locked --release -p job-queue --bin owner-beta-simulation-runner -- -D warnings",
+                "cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::child::tests -- \\",
+                "cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::provenance::tests -- \\",
+                "cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::runner::tests -- \\",
+                "cargo test --locked --release -p job-queue --bin owner-beta-simulation-runner -- \\",
+                "cargo test --locked --release -p job-queue --test owner_beta_simulation_process -- \\",
                 "cargo build --locked --release -p job-queue --example verify_approved_simulation",
+                "cargo build --locked --release -p job-queue --bin owner-beta-simulation-runner",
+                "cargo clippy --locked --release -p api-server --example verify_approved_simulation_connection -- -D warnings",
+                "cargo test --locked --release -p api-server --example verify_approved_simulation_connection -- --nocapture --test-threads=1 \\",
+                "cargo build --locked --release -p api-server --example verify_approved_simulation_connection",
             ],
         )
         for marker in (
@@ -467,17 +511,70 @@ class WorkflowContractTests(unittest.TestCase):
             "R4_VERIFICATION_TOOLCHAIN",
             "R4_VERIFICATION_TARGET",
             "R4_VERIFICATION_PROFILE=release",
+            "R4_SIMULATION_BUILD_GIT_COMMIT",
+            "R4_SIMULATION_BUILD_TOOLCHAIN",
+            "R4_SIMULATION_BUILD_TARGET",
+            "R4_SIMULATION_BUILD_PROFILE",
+            "R4_SIMULATION_BUILD_WORKFLOW_RUN_ID",
+            "R4_SIMULATION_BUILD_WORKFLOW_RUN_ATTEMPT",
+            "R4_CONNECTION_PROOF_BUILD_GIT_COMMIT",
+            "R4_CONNECTION_PROOF_BUILD_TOOLCHAIN",
+            "R4_CONNECTION_PROOF_BUILD_TARGET",
+            "R4_CONNECTION_PROOF_BUILD_PROFILE",
+            "R4_CONNECTION_PROOF_BUILD_WORKFLOW_RUN_ID",
+            "R4_CONNECTION_PROOF_BUILD_WORKFLOW_RUN_ATTEMPT",
             "readelf -l",
             "/out/delivery/verify_approved_simulation",
+            "/out/delivery/owner-beta-simulation-runner",
+            'simulation_provenance_path = delivery_dir / "simulation-runner-provenance.json"',
+            '"owner-beta-simulation-build-v1"',
+            '"owner-beta-simulation-connection-proof-build-v1"',
             'delivery_dir / "provenance.json"',
             "source_example_sha256",
             "source_cargo_lock_sha256",
             "source_job_queue_manifest_sha256",
+            "simulation_source_paths",
+            "simulation-source-hashes-before.tsv",
+            "simulation-source-hashes-after.tsv",
+            "R4_SOURCE_TEST_LOG:PASS",
+            "/out/test-logs/",
+            "verify-rust-test-log.py",
+            "proof-source-inventory.py",
+            "proof-source-paths-before.txt",
+            "proof-source-paths-after.txt",
+            "proof-source-hashes-before.tsv",
+            "proof-source-hashes-after.tsv",
+            "proof-build-metadata.txt",
+            "proof-delivery",
+            "R4_CONNECTION_PROOF_SOURCE_INVENTORY_BEGIN",
+            "R4_CONNECTION_PROOF_RECEIPT_BEGIN",
+            "R4_CONNECTION_PROOF_TEST_LOG:PASS",
+            "R4_CONNECTION_PROOF_RECEIPT:PASS",
+            "connection-proof-provenance.json",
+            "proof_cli_rejects_missing_duplicate_unknown_and_nonisolated_options",
+            "proof_receipts_bind_origin_compile_and_binaries",
+            "proof_scratch_guard_requires_socket_nonce_and_empty_cluster",
+            "proof_control_files_are_private_closed_and_no_overwrite",
+            "proof_pair_rejects_mixed_binding_and_truncated_content",
+            "proof_role_url_preserves_unix_socket_query",
             "GITHUB_RUN_ID",
             "GITHUB_RUN_ATTEMPT",
             "chmod 644 /out/build-metadata.txt /out/rustc-version.txt /out/rustc-vV.txt",
         ):
             self.assertIn(marker, script)
+        for test_name in (
+            "fixture_process_escalates_reaps_leader_and_leaves_no_live_group_member",
+            "provenance_accepts_matching_receipt_compile_and_executable",
+            "runner_runtime_boundary_is_linux_only",
+            "ctrl_c_and_sigterm_request_the_same_cooperative_shutdown",
+            "owner_beta_simulation_child_rejects_untrusted_startup_before_request_processing",
+        ):
+            self.assertIn(test_name, script)
+        self.assertNotIn("/out/delivery/test-logs", script)
+        self.assertIn(
+            "expected_delivery_entries=$'owner-beta-simulation-runner\\nprovenance.json\\nsimulation-runner-provenance.json\\nverify_approved_simulation'",
+            script,
+        )
         self.assertNotIn("/var/run/docker.sock", script)
         self.assertNotIn("--secret", script)
         self.assertNotIn("&&", script)
@@ -506,24 +603,391 @@ class WorkflowContractTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, expected_code, result.stderr)
 
+    def test_r4_rust_test_log_parser_requires_each_successful_named_case(self) -> None:
+        script = (ROOT / "scripts/ci/build-r4-verification.sh").read_text(
+            encoding="utf-8"
+        )
+        start_marker = "# R4_SOURCE_TEST_LOG_PARSER_BEGIN\n"
+        end_marker = "\nPYTHON\n# R4_SOURCE_TEST_LOG_PARSER_END"
+        start = script.index("<<'PYTHON'\n", script.index(start_marker)) + len(
+            "<<'PYTHON'\n"
+        )
+        end = script.index(end_marker, start)
+        parser_source = script[start:end] + "\n"
+        expected = ("first_case", "second_case")
+        passing_log = "\n".join(
+            (
+                "running 2 tests",
+                "test owner_beta::simulation_execution::child::tests::first_case ... ok",
+                "test child::tests::second_case ... ok",
+                "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s",
+            )
+        )
+        failing_logs = {
+            "zero": "running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            "missing": "running 1 test\ntest tests::first_case ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s",
+            "duplicate": "running 2 tests\ntest tests::first_case ... ok\ntest tests::first_case ... ok\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            "failed": "running 2 tests\ntest tests::first_case ... ok\ntest tests::second_case ... FAILED\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            "ignored": "running 2 tests\ntest tests::first_case ... ok\ntest tests::second_case ... ignored\ntest result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            "skip": "SKIP: source-only lane was skipped\n" + passing_log,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            parser_path = Path(temporary) / "verify-rust-test-log.py"
+            log_path = Path(temporary) / "test.log"
+            parser_path.write_text(parser_source, encoding="utf-8")
+
+            def invoke(contents: str, names: tuple[str, ...] = expected) -> subprocess.CompletedProcess:
+                log_path.write_text(contents, encoding="utf-8")
+                return subprocess.run(
+                    [sys.executable, str(parser_path), str(log_path), "fixture", *names],
+                    capture_output=True,
+                    text=True,
+                    env={"PATH": os.defpath},
+                    timeout=5,
+                    check=False,
+                )
+
+            accepted = invoke(passing_log)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertIn("R4_SOURCE_TEST_LOG:PASS:fixture:2", accepted.stdout)
+            for label, contents in failing_logs.items():
+                with self.subTest(case=label):
+                    rejected = invoke(contents)
+                    self.assertNotEqual(rejected.returncode, 0)
+
+    def test_r4_artifact_rejects_extra_data_log_and_wildcard_inputs(self) -> None:
+        _, baseline = load_workflow("ci.yml")
+        extra_paths = (
+            "${{ runner.temp }}/r4-verification-build/delivery/build.log",
+            "${{ runner.temp }}/r4-verification-build/delivery/provider-data.json",
+            "${{ runner.temp }}/r4-verification-build/delivery/target/release/**",
+            "${{ runner.temp }}/r4-verification-build/delivery/*.log",
+        )
+        for extra_path in extra_paths:
+            changed = copy.deepcopy(baseline)
+            changed["jobs"][R4_VERIFICATION_JOB]["steps"][-2]["with"]["path"] += (
+                "\n" + extra_path
+            )
+            with self.subTest(path=extra_path), self.assertRaisesRegex(
+                AssertionError, "original R4 artifact"
+            ):
+                assert_artifact_upload_policy("ci.yml", changed)
+
+    def test_r4_proof_artifact_rejects_scope_and_order_changes(self) -> None:
+        _, baseline = load_workflow("ci.yml")
+
+        changed = copy.deepcopy(baseline)
+        changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1]["with"]["path"] += (
+            "\n${{ runner.temp }}/r4-verification-build/proof-delivery/*.json"
+        )
+        with self.assertRaisesRegex(AssertionError, "proof artifact name, fixed delivery paths"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1]["with"]["name"] = "wrong-proof-name"
+        with self.assertRaisesRegex(AssertionError, "proof artifact name, fixed delivery paths"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1].pop("if")
+        with self.assertRaisesRegex(AssertionError, "proof artifact upload must run only"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        steps = changed["jobs"][R4_VERIFICATION_JOB]["steps"]
+        steps[-2], steps[-1] = steps[-1], steps[-2]
+        with self.assertRaisesRegex(AssertionError, "original R4 artifact name or upload order"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        original_upload = changed["jobs"][R4_VERIFICATION_JOB]["steps"][-2]
+        original_upload["with"]["path"] += (
+            "\n" + R4_PROOF_DELIVERY_PATHS[0]
+        )
+        with self.assertRaisesRegex(AssertionError, "original R4 artifact name"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        changed["jobs"][R4_VERIFICATION_JOB]["steps"].append(
+            copy.deepcopy(changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1])
+        )
+        with self.assertRaisesRegex(AssertionError, "only the two exact optional R4"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        proof_upload = changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1]
+        changed["jobs"]["policy"]["steps"].append(proof_upload)
+        with self.assertRaisesRegex(AssertionError, "only the two exact optional R4"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+        changed = copy.deepcopy(baseline)
+        moved_proof = changed["jobs"][R4_VERIFICATION_JOB]["steps"].pop()
+        changed["jobs"]["policy"]["steps"].append(moved_proof)
+        with self.assertRaisesRegex(AssertionError, "artifact upload moved outside"):
+            assert_artifact_upload_policy("ci.yml", changed)
+
+    def test_r4_proof_source_inventory_includes_declared_inputs_and_static_includes(self) -> None:
+        script = (ROOT / "scripts/ci/build-r4-verification.sh").read_text(encoding="utf-8")
+        marker = "# R4_CONNECTION_PROOF_SOURCE_INVENTORY_BEGIN\n"
+        start = script.index("<<'PYTHON'\n", script.index(marker)) + len("<<'PYTHON'\n")
+        end = script.index("\nPYTHON\nchmod 600 \"$proof_source_inventory_script\"", start)
+        helper_source = script[start:end] + "\n"
+
+        with tempfile.TemporaryDirectory(prefix="r4-proof-inventory-") as temporary:
+            temp_root = Path(temporary)
+            helper = temp_root / "proof-source-inventory.py"
+            helper.write_text(helper_source, encoding="utf-8")
+
+            def fixture_repo(name: str) -> Path:
+                repo = temp_root / name
+                repo.mkdir()
+                files = {
+                    "Cargo.toml": "[workspace]\n",
+                    "Cargo.lock": "version = 4\n",
+                    "rust-toolchain.toml": "[toolchain]\nchannel = \"1.97.1\"\n",
+                    "README.md": "not a declared compile input\n",
+                    "crates/api-server/Cargo.toml": "[package]\nname = \"fixture\"\n",
+                    "crates/api-server/examples/verify.rs": (
+                        'const BYTES: &[u8] = include_bytes!("fixtures/proof.bin");\n'
+                        'const TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/root.txt"));\n'
+                    ),
+                    "crates/api-server/examples/fixtures/proof.bin": b"fixture bytes",
+                    "crates/api-server/fixtures/root.txt": "fixture text\n",
+                    "migrations/0001_fixture.sql": "SELECT 1;\n",
+                }
+                for relative, content in files.items():
+                    path = repo / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if isinstance(content, bytes):
+                        path.write_bytes(content)
+                    else:
+                        path.write_text(content, encoding="utf-8")
+                subprocess.run(["git", "init", "--quiet", str(repo)], check=True, capture_output=True)
+                subprocess.run(["git", "-C", str(repo), "add", "--all"], check=True, capture_output=True)
+                return repo
+
+            repo = fixture_repo("valid")
+            output = temp_root / "valid-inventory.txt"
+            result = subprocess.run(
+                [sys.executable, str(helper), str(repo), str(output)],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            paths = output.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(paths, sorted(paths))
+            self.assertEqual(
+                set(paths),
+                {
+                    "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
+                    "crates/api-server/Cargo.toml",
+                    "crates/api-server/examples/verify.rs",
+                    "crates/api-server/examples/fixtures/proof.bin",
+                    "crates/api-server/fixtures/root.txt",
+                    "migrations/0001_fixture.sql",
+                },
+            )
+            self.assertNotIn("README.md", paths)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+            symlink_repo = fixture_repo("symlink")
+            linked = symlink_repo / "crates/api-server/src/linked.rs"
+            linked.parent.mkdir(parents=True, exist_ok=True)
+            linked.symlink_to("../examples/verify.rs")
+            subprocess.run(["git", "-C", str(symlink_repo), "add", "--all"], check=True, capture_output=True)
+            symlink_output = temp_root / "symlink-inventory.txt"
+            rejected_link = subprocess.run(
+                [sys.executable, str(helper), str(symlink_repo), str(symlink_output)],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            self.assertNotEqual(rejected_link.returncode, 0)
+            self.assertFalse(symlink_output.exists())
+
+            newline_repo = fixture_repo("newline")
+            newline_source = newline_repo / "bad\nsource.rs"
+            newline_source.write_text("fn main() {}\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(newline_repo), "add", "--all"], check=True, capture_output=True)
+            newline_output = temp_root / "newline-inventory.txt"
+            rejected_newline = subprocess.run(
+                [sys.executable, str(helper), str(newline_repo), str(newline_output)],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            self.assertNotEqual(rejected_newline.returncode, 0)
+            self.assertFalse(newline_output.exists())
+
+    def test_r4_proof_source_hashes_reject_unsafe_paths_and_symlinks(self) -> None:
+        script = (ROOT / "scripts/ci/build-r4-verification.sh").read_text(encoding="utf-8")
+        marker = "# R4_CONNECTION_PROOF_SOURCE_HASH_BEGIN\n"
+        start = script.index("<<'PYTHON'\n", script.index(marker)) + len("<<'PYTHON'\n")
+        end = script.index("\nPYTHON\n# R4_CONNECTION_PROOF_SOURCE_HASH_END", start)
+        helper_source = script[start:end] + "\n"
+        with tempfile.TemporaryDirectory(prefix="r4-proof-hashes-") as temporary:
+            temp_root = Path(temporary)
+            helper = temp_root / "proof-source-hashes.py"
+            helper.write_text(helper_source, encoding="utf-8")
+            source_root = temp_root / "source"
+            source_root.mkdir()
+            source = source_root / "Cargo.toml"
+            source.write_text("[workspace]\n", encoding="utf-8")
+            inventory = temp_root / "paths.txt"
+            output = temp_root / "hashes.tsv"
+
+            def invoke() -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    [sys.executable, str(helper), str(inventory), str(output), str(source_root)],
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+
+            inventory.write_text("Cargo.toml\n", encoding="utf-8")
+            result = invoke()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            expected_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            self.assertEqual(output.read_text(), f"Cargo.toml\t{expected_digest}\n")
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+            output.unlink()
+            inventory.write_text("../Cargo.toml\n", encoding="utf-8")
+            self.assertNotEqual(invoke().returncode, 0)
+            self.assertFalse(output.exists())
+
+            inventory.write_text("Cargo.toml\nCargo.toml\n", encoding="utf-8")
+            self.assertNotEqual(invoke().returncode, 0)
+            self.assertFalse(output.exists())
+
+            link = source_root / "linked.rs"
+            link.symlink_to(source)
+            inventory.write_text("linked.rs\n", encoding="utf-8")
+            self.assertNotEqual(invoke().returncode, 0)
+            self.assertFalse(output.exists())
+
+    def test_r4_proof_receipt_binds_identity_binary_and_stable_source_map(self) -> None:
+        script = (ROOT / "scripts/ci/build-r4-verification.sh").read_text(encoding="utf-8")
+        marker = "# R4_CONNECTION_PROOF_RECEIPT_BEGIN\n"
+        start = script.index("<<'PYTHON'\n", script.index(marker)) + len("<<'PYTHON'\n")
+        end = script.index("\nPYTHON\n# R4_CONNECTION_PROOF_RECEIPT_END", start)
+        helper_source = script[start:end] + "\n"
+        expected_fields = {
+            "schema", "git_commit", "toolchain", "target", "profile",
+            "workflow_run_id", "workflow_run_attempt", "binary_sha256", "source_hashes",
+        }
+
+        with tempfile.TemporaryDirectory(prefix="r4-proof-receipt-") as temporary:
+            temp_root = Path(temporary)
+            helper = temp_root / "proof-receipt.py"
+            helper.write_text(helper_source, encoding="utf-8")
+
+            def fixture(name: str, mutation: str | None = None):
+                base = temp_root / name
+                build_root = base / "build"
+                proof_dir = build_root / "proof-delivery"
+                delivery_dir = build_root / "delivery"
+                source_root = base / "source"
+                proof_dir.mkdir(mode=0o700, parents=True)
+                proof_dir.chmod(0o700)
+                delivery_dir.mkdir()
+                source_root.mkdir()
+                source_file = source_root / "Cargo.toml"
+                source_file.write_text("[workspace]\n", encoding="utf-8")
+                source_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+                paths = "Cargo.toml\n" if mutation != "unsafe-path" else "../Cargo.toml\n"
+                for path_name in (
+                    "proof-source-paths.txt", "proof-source-paths-before.txt",
+                    "proof-source-paths-after.txt", "proof-source-paths-after-host.txt",
+                ):
+                    path = build_root / path_name
+                    path.write_text(paths, encoding="utf-8")
+                    path.chmod(0o600)
+                hash_path = "Cargo.toml" if mutation != "unsafe-path" else "../Cargo.toml"
+                hash_text = f"{hash_path}\t{source_digest}\n"
+                for path_name in ("proof-source-hashes-before.tsv", "proof-source-hashes-after.tsv"):
+                    path = build_root / path_name
+                    path.write_text(hash_text, encoding="utf-8")
+                    path.chmod(0o600)
+
+                proof_binary = proof_dir / "verify_approved_simulation_connection"
+                proof_bytes = b"\x7fELFproof-fixture"
+                proof_binary.write_bytes(proof_bytes)
+                proof_binary.chmod(0o755)
+                runner_binary = delivery_dir / "owner-beta-simulation-runner"
+                runner_bytes = b"\x7fELFrunner-fixture"
+                runner_binary.write_bytes(runner_bytes)
+                runner_binary.chmod(0o755)
+                commit = "a" * 40
+                run_id = "12345"
+                attempt = "2"
+                toolchain = "rustc-1.97.1-8bab26f4f"
+                metadata_run = "12346" if mutation == "wrong-identity" else run_id
+                metadata_digest = "0" * 64 if mutation == "wrong-proof-hash" else hashlib.sha256(proof_bytes).hexdigest()
+                metadata = {
+                    "git_commit": commit, "toolchain": toolchain,
+                    "target": "x86_64-unknown-linux-musl", "profile": "release",
+                    "workflow_run_id": metadata_run, "workflow_run_attempt": attempt,
+                    "binary_sha256": metadata_digest, "binary_size_bytes": str(len(proof_bytes)),
+                }
+                metadata_path = build_root / "proof-build-metadata.txt"
+                metadata_path.write_text("".join(f"{key}={value}\n" for key,value in metadata.items()), encoding="ascii")
+                metadata_path.chmod(0o600)
+                runner_receipt = {
+                    "schema": "owner-beta-simulation-build-v1", "git_commit": commit,
+                    "toolchain": toolchain, "target": "x86_64-unknown-linux-musl",
+                    "profile": "release", "workflow_run_id": run_id,
+                    "workflow_run_attempt": attempt,
+                    "binary_sha256": hashlib.sha256(runner_bytes).hexdigest(),
+                    "source_hashes": {"Cargo.toml": source_digest},
+                }
+                if mutation == "wrong-runner-binding":
+                    runner_receipt["workflow_run_attempt"] = "3"
+                runner_path = delivery_dir / "simulation-runner-provenance.json"
+                runner_text = json.dumps(runner_receipt, sort_keys=True, separators=(",", ":"))
+                if mutation == "duplicate-runner-key":
+                    runner_text = runner_text.replace('"schema":', '"schema":"duplicate","schema":', 1)
+                runner_path.write_text(runner_text + "\n", encoding="utf-8")
+                runner_path.chmod(0o600)
+                if mutation == "receipt-exists":
+                    (proof_dir / "connection-proof-provenance.json").write_text("{}\n")
+                    (proof_dir / "connection-proof-provenance.json").chmod(0o600)
+                return build_root, proof_dir, runner_path, source_root, commit, run_id, attempt
+
+            valid_args = fixture("valid")
+            command = [sys.executable, str(helper), *(str(x) for x in valid_args[:4]), *valid_args[4:]]
+            accepted = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            receipt_path = valid_args[1] / "connection-proof-provenance.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(set(receipt), expected_fields)
+            self.assertEqual(receipt["schema"], "owner-beta-simulation-connection-proof-build-v1")
+            self.assertEqual(list(receipt["source_hashes"]), ["Cargo.toml"])
+            self.assertEqual(receipt_path.stat().st_mode & 0o777, 0o600)
+
+            for case in (
+                "wrong-identity", "wrong-proof-hash", "wrong-runner-binding",
+                "duplicate-runner-key", "unsafe-path", "receipt-exists",
+            ):
+                with self.subTest(case=case):
+                    values = fixture(case, case)
+                    args = [sys.executable, str(helper), *(str(x) for x in values[:4]), *values[4:]]
+                    rejected = subprocess.run(args, capture_output=True, text=True, timeout=5, check=False)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    if case != "receipt-exists":
+                        self.assertFalse((values[1] / "connection-proof-provenance.json").exists())
+
     def test_r4_artifact_exception_rejects_scope_expansion(self) -> None:
         _, baseline = load_workflow("ci.yml")
         changed = copy.deepcopy(baseline)
         changed["jobs"]["policy"]["steps"].append(
             {"uses": R4_UPLOAD_ACTION, "with": {"path": "**/*"}}
         )
-        with self.assertRaisesRegex(AssertionError, "only the exact optional R4"):
+        with self.assertRaisesRegex(AssertionError, "only the two exact optional R4"):
             assert_artifact_upload_policy("ci.yml", changed)
 
         changed = copy.deepcopy(baseline)
-        changed_upload = changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1]
+        changed_upload = changed["jobs"][R4_VERIFICATION_JOB]["steps"][-2]
         changed_upload["with"]["path"] = "${{ runner.temp }}/r4-verification-build/**"
-        with self.assertRaisesRegex(AssertionError, "fixed delivery paths"):
+        with self.assertRaisesRegex(AssertionError, "original R4 artifact name"):
             assert_artifact_upload_policy("ci.yml", changed)
 
         changed = copy.deepcopy(baseline)
-        changed["jobs"][R4_VERIFICATION_JOB]["steps"][-1].pop("if")
-        with self.assertRaisesRegex(AssertionError, "only after successful verification"):
+        changed["jobs"][R4_VERIFICATION_JOB]["steps"][-2].pop("if")
+        with self.assertRaisesRegex(AssertionError, "original artifact upload must be success-only"):
             assert_artifact_upload_policy("ci.yml", changed)
 
         changed = copy.deepcopy(baseline)

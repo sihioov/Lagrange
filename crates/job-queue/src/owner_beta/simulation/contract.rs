@@ -26,15 +26,15 @@ pub const APPROVED_START_DATE: &str = "2016-08-29";
 pub const APPROVED_END_DATE: &str = "2026-08-28";
 pub const PRODUCTION_INITIAL_CAPITAL: &str = "10000000.0000";
 
-const APPROVED_CANDIDATE_CONTENT_SHA256: &str =
+pub(crate) const APPROVED_CANDIDATE_CONTENT_SHA256: &str =
     "sha256:b0fb82f6a580f3def13a1e1e34bea68e30d95dc720306e7ee54b6c3199cf402d";
-const APPROVED_ARTIFACT_MANIFEST_SHA256: &str =
+pub(crate) const APPROVED_ARTIFACT_MANIFEST_SHA256: &str =
     "sha256:53587f32ce67ae1a8488b9c00096465185d03e35b1b38a04f39ed5462da7f6b6";
-const APPROVED_STAGE5_MANIFEST_SHA256: &str =
+pub(crate) const APPROVED_STAGE5_MANIFEST_SHA256: &str =
     "sha256:5b2900594e03e322d4e81adaa79fc6c40ae70035213786972ed5cb7a22870d2a";
-const APPROVED_ACTION_MANIFEST_SHA256: &str =
+pub(crate) const APPROVED_ACTION_MANIFEST_SHA256: &str =
     "sha256:080d38142a6506f741114eb75a77a36c23c2554a0d39eba8843ff62bfb484550";
-const APPROVED_REGISTRY_SHA256: &str =
+pub(crate) const APPROVED_REGISTRY_SHA256: &str =
     "sha256:5d3aa2b354d8c0c51d0d7d029e9fd3f92e0570fe074262bfc900829a5a2bb707";
 const TREND_INSTRUMENT: &str = "069500.KRX";
 
@@ -389,6 +389,10 @@ impl StrategyIdentity {
             },
         })
     }
+
+    pub fn strategy_snapshot_sha256(&self) -> &Sha256Digest {
+        &self.strategy_snapshot_sha256
+    }
 }
 
 fn is_ascii_identifier(value: &str) -> bool {
@@ -470,6 +474,30 @@ impl SimulationInputIdentity {
                 strict_pit: false,
             },
         })
+    }
+
+    pub fn candidate_content_sha256(&self) -> &Sha256Digest {
+        &self.pins.candidate_content_sha256
+    }
+
+    pub fn artifact_manifest_sha256(&self) -> &Sha256Digest {
+        &self.pins.artifact_manifest_sha256
+    }
+
+    pub fn stage5_manifest_sha256(&self) -> &Sha256Digest {
+        &self.pins.stage5_manifest_sha256
+    }
+
+    pub fn action_manifest_sha256(&self) -> &Sha256Digest {
+        &self.pins.action_manifest_sha256
+    }
+
+    pub fn approval_registry_sha256(&self) -> &Sha256Digest {
+        &self.pins.approval_registry_sha256
+    }
+
+    pub fn bars_sha256(&self) -> &Sha256Digest {
+        &self.bars_sha256
     }
 }
 
@@ -1568,6 +1596,22 @@ impl SimulationResult {
 
     pub fn schedule(&self) -> &SimulationSchedule {
         &self.schedule
+    }
+
+    pub fn engine(&self) -> &EngineIdentity {
+        &self.engine
+    }
+
+    pub fn input(&self) -> &SimulationInputIdentity {
+        &self.input
+    }
+
+    pub fn strategy(&self) -> &StrategyIdentity {
+        &self.strategy
+    }
+
+    pub fn conventions(&self) -> &SimulationConventions {
+        &self.conventions
     }
 
     pub fn signals(&self) -> &[SignalSnapshot] {

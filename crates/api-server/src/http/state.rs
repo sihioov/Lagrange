@@ -223,6 +223,16 @@ pub struct ApiState {
     /// Bounds independent V2 candidate artifact verification. The chart
     /// handler never performs blocking filesystem I/O on an async worker.
     pub(crate) owner_equity_v2_artifact: Arc<Semaphore>,
+    /// Private library-test seam for synthetic validated simulation inputs.
+    /// This field and its accessors do not exist in production builds.
+    #[cfg(test)]
+    owner_beta_simulation_test_input: Arc<
+        Mutex<
+            std::collections::VecDeque<
+                job_queue::owner_beta::simulation_execution::SimulationJobInput,
+            >,
+        >,
+    >,
     pub(crate) market_stream_consumers: ConsumerRegistry,
     pub(crate) service_status_runtime: Arc<crate::service_status::ServiceStatusRuntime>,
     actor_pools: Arc<Mutex<HashMap<String, sqlx::PgPool>>>,
@@ -238,6 +248,29 @@ impl SessionBackend for ApiState {
 }
 
 impl ApiState {
+    /// Install one structurally validated synthetic admission input for a
+    /// real-router PostgreSQL library test. This cannot be called by an
+    /// integration-test crate or a production build.
+    #[cfg(test)]
+    pub(crate) fn set_owner_beta_simulation_test_input(
+        &self,
+        input: job_queue::owner_beta::simulation_execution::SimulationJobInput,
+    ) {
+        if let Ok(mut slot) = self.owner_beta_simulation_test_input.lock() {
+            slot.push_back(input);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_owner_beta_simulation_test_input(
+        &self,
+    ) -> Option<job_queue::owner_beta::simulation_execution::SimulationJobInput> {
+        self.owner_beta_simulation_test_input
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.pop_front())
+    }
+
     /// Exercise refresh-capacity denial on this state without changing its
     /// production limits, authentication, policy or trusted snapshot path.
     #[doc(hidden)]
@@ -330,6 +363,10 @@ impl ApiState {
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
             owner_beta_approval: Arc::new(Semaphore::new(1)),
             owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
+            #[cfg(test)]
+            owner_beta_simulation_test_input: Arc::new(Mutex::new(
+                std::collections::VecDeque::new(),
+            )),
             market_stream_consumers: ConsumerRegistry::default(),
             service_status_runtime: Arc::new(crate::service_status::ServiceStatusRuntime::default()),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
@@ -354,6 +391,10 @@ impl ApiState {
             idempotency: Arc::new(InMemoryIdempotencyStore::default()),
             owner_beta_approval: Arc::new(Semaphore::new(1)),
             owner_equity_v2_artifact: Arc::new(Semaphore::new(1)),
+            #[cfg(test)]
+            owner_beta_simulation_test_input: Arc::new(Mutex::new(
+                std::collections::VecDeque::new(),
+            )),
             market_stream_consumers: ConsumerRegistry::default(),
             service_status_runtime: Arc::new(crate::service_status::ServiceStatusRuntime::default()),
             actor_pools: Arc::new(Mutex::new(HashMap::new())),
@@ -411,6 +452,11 @@ impl ApiState {
         &self,
     ) -> crate::repos::owner_beta::OwnerBetaRecommendationRepo {
         crate::repos::owner_beta::OwnerBetaRecommendationRepo::new(self.app_pool.clone())
+    }
+    pub fn owner_beta_simulations(
+        &self,
+    ) -> crate::repos::owner_beta_simulations::OwnerBetaSimulationRepo {
+        crate::repos::owner_beta_simulations::OwnerBetaSimulationRepo::new(self.app_pool.clone())
     }
     pub fn owner_equity_v2(&self) -> crate::repos::owner_equity_v2::OwnerEquityV2Repo {
         crate::repos::owner_equity_v2::OwnerEquityV2Repo::new(self.app_pool.clone())

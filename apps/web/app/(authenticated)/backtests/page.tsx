@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BacktestComparison } from "@/components/backtests/backtest-comparison";
 import { BacktestCreateForm } from "@/components/backtests/backtest-create-form";
@@ -8,9 +9,11 @@ import { BacktestReport } from "@/components/backtests/backtest-report";
 import { OwnerBetaProductRoute } from "@/components/pages/owner-beta-product-route";
 import { RoutePage } from "@/components/pages/route-page";
 import { StatePanel } from "@/components/states/state-panel";
+import type { ApiSession } from "@/lib/api/contracts";
 import { ApiProblem, isLoginRequiredError } from "@/lib/api/response";
 import { getProductApi } from "@/lib/api/server-products";
 import { type BacktestsDictionary, backtestsDictionary } from "@/lib/i18n/dictionaries/backtests";
+import { ownerBetaSimulationDictionary } from "@/lib/i18n/dictionaries/owner-beta-simulation";
 import { getLocale } from "@/lib/i18n/server";
 import { type BacktestRunModel, backtestCreationDefaults } from "@/lib/products/backtest-contracts";
 import { type LicensingStatusModel, permitsUse } from "@/lib/products/contracts";
@@ -58,9 +61,10 @@ export default async function BacktestsPage() {
   });
 }
 
-async function BacktestsProductPage() {
+async function BacktestsProductPage(session: ApiSession) {
   const locale = await getLocale();
   const t = backtestsDictionary[locale];
+  const simulationText = ownerBetaSimulationDictionary[locale];
   const api = await getProductApi();
   try {
     const licensing = await api.getLicensingStatus();
@@ -79,6 +83,13 @@ async function BacktestsProductPage() {
 
     return (
       <RoutePage description={t.pageDescription} title={t.pageTitle}>
+        {session.role === "owner" && session.owner_beta_access_mode === "owner_only" ? (
+          <section aria-label={simulationText.entrySectionLabel} className="workflow-panel">
+            <Link className="quiet-action" href="/backtests/owner-beta/price-only">
+              {simulationText.entryLinkLabel}
+            </Link>
+          </section>
+        ) : null}
         {defaults === null ? (
           <StatePanel
             kind="blocked"

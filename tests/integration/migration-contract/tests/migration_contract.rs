@@ -173,6 +173,10 @@ const OWNER_BETA_STRATEGY_CONFIG_LOCK_UP_SQL: &str =
     include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.up.sql");
 const OWNER_BETA_STRATEGY_CONFIG_LOCK_DOWN_SQL: &str =
     include_str!("../../../../migrations/0052_owner_beta_strategy_config_lock.down.sql");
+const OWNER_BETA_SIMULATION_UP_SQL: &str =
+    include_str!("../../../../migrations/0063_owner_beta_price_only_simulations.up.sql");
+const OWNER_BETA_SIMULATION_DOWN_SQL: &str =
+    include_str!("../../../../migrations/0063_owner_beta_price_only_simulations.down.sql");
 const OWNER_EQUITY_UNIVERSE_V2_UP_SQL: &str =
     include_str!("../../../../migrations/0053_owner_managed_equity_universe_v2.up.sql");
 const OWNER_EQUITY_UNIVERSE_V2_DOWN_SQL: &str =
@@ -366,6 +370,165 @@ fn owner_beta_price_recommendation_persistence_is_separate_and_fail_closed() {
             .contains("CASCADE"),
         "0049 rollback must not use CASCADE"
     );
+}
+
+#[test]
+fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
+    assert_eq!(
+        MIGRATOR
+            .migrations
+            .iter()
+            .filter(|migration| migration.version == 63)
+            .count(),
+        2,
+        "0063 must have exactly one reversible up/down migration pair"
+    );
+    for token in [
+        "CREATE TABLE public.owner_beta_simulation_runs",
+        "CREATE TABLE public.owner_beta_simulation_result_pairs",
+        "UNIQUE (id, owner_user_id)",
+        "FOREIGN KEY (run_id, owner_user_id)",
+        "published_attempt_id uuid",
+        "engine_json jsonb",
+        "illustrative_canonical bytea NOT NULL",
+        "zero_cost_canonical bytea NOT NULL",
+        "ALTER TABLE public.owner_beta_simulation_runs FORCE ROW LEVEL SECURITY",
+        "ALTER TABLE public.owner_beta_simulation_result_pairs FORCE ROW LEVEL SECURITY",
+        "CREATE POLICY owner_beta_simulation_pairs_app_select",
+        "run.status = 'SUCCEEDED'",
+        "job.job_type = 'owner_beta_price_only_simulation'",
+        "job.status = 'SUCCEEDED'",
+        "CREATE POLICY owner_beta_simulation_runs_app_insert",
+        "status = 'PENDING'",
+        "GRANT INSERT (",
+        ") ON public.owner_beta_simulation_runs TO app;",
+        "GRANT UPDATE (",
+        ") ON public.owner_beta_simulation_runs TO worker;",
+        "GRANT INSERT (",
+        ") ON public.owner_beta_simulation_result_pairs TO worker;",
+        "CREATE POLICY owner_beta_simulation_jobs_trigger_select",
+        "pg_catalog.pg_trigger_depth() > 0",
+        "CREATE FUNCTION public.owner_beta_simulation_runs_lock_config_on_success()",
+        "SET search_path = pg_catalog, pg_temp",
+        "CREATE FUNCTION public.lock_owner_beta_simulation_entitlement(",
+        "covered_uses @> '[\"backtest\"]'::jsonb",
+        "FOR SHARE OF entitlement",
+        "DEFERRABLE INITIALLY DEFERRED",
+        "success requires a whole pair",
+    ] {
+        assert!(
+            OWNER_BETA_SIMULATION_UP_SQL.contains(token),
+            "0063 simulation schema is missing {token}"
+        );
+    }
+    let executable_up = OWNER_BETA_SIMULATION_UP_SQL.to_ascii_lowercase();
+    for grant in executable_up
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| statement.starts_with("grant "))
+    {
+        assert!(
+            !grant.contains("audit_writer")
+                && !grant.contains("research_writer")
+                && !grant.contains(" to public"),
+            "0063 grants no simulation capability to public or non-serving writers: {grant}"
+        );
+    }
+    assert!(
+        !executable_up.contains("grant update")
+            || !executable_up.contains("on public.user_strategy_configs"),
+        "0063 must not grant worker strategy-config updates"
+    );
+    for token in [
+        "LOCK TABLE public.owner_beta_simulation_runs IN ACCESS EXCLUSIVE MODE",
+        "LOCK TABLE public.owner_beta_simulation_result_pairs IN ACCESS EXCLUSIVE MODE",
+        "ALTER TABLE public.owner_beta_simulation_runs NO FORCE ROW LEVEL SECURITY",
+        "ALTER TABLE public.owner_beta_simulation_result_pairs NO FORCE ROW LEVEL SECURITY",
+        "IF EXISTS (SELECT 1 FROM public.owner_beta_simulation_result_pairs)",
+        "IF EXISTS (SELECT 1 FROM public.owner_beta_simulation_runs)",
+        "owner beta simulation migration requires empty run and pair history",
+    ] {
+        assert!(
+            OWNER_BETA_SIMULATION_DOWN_SQL.contains(token),
+            "0063 rollback guard is missing {token}"
+        );
+    }
+    assert!(
+        !OWNER_BETA_SIMULATION_DOWN_SQL
+            .to_ascii_uppercase()
+            .contains("CASCADE"),
+        "0063 rollback must not use CASCADE"
+    );
+
+    let run_binding = OWNER_BETA_SIMULATION_UP_SQL
+        .split("CREATE FUNCTION public.owner_beta_simulation_runs_validate_binding()")
+        .nth(1)
+        .and_then(|body| body.split("$run_binding$;").next())
+        .expect("0063 run binding trigger body");
+    for check in [
+        "IF TG_OP = 'INSERT'",
+        "v_config_strategy IS DISTINCT FROM NEW.strategy_id",
+        "v_config_version IS DISTINCT FROM NEW.strategy_version",
+        "v_config_json IS DISTINCT FROM NEW.strategy_config_json",
+        "OR NOT v_config_active",
+    ] {
+        assert!(
+            run_binding.contains(check),
+            "0063 checks the current active config snapshot at admission: {check}"
+        );
+    }
+    assert_eq!(
+        run_binding
+            .matches("v_config_strategy IS DISTINCT FROM NEW.strategy_id")
+            .count(),
+        1,
+        "later run updates do not reinterpret mutable strategy config values"
+    );
+    let update_config_lookup = run_binding
+        .split("IF TG_OP = 'INSERT' THEN")
+        .nth(1)
+        .and_then(|branch| branch.split("ELSE").nth(1))
+        .and_then(|branch| branch.split("END IF;").next())
+        .expect("0063 update-only config lookup");
+    assert!(update_config_lookup.contains("SELECT config.owner_user_id"));
+    for mutable_field in [
+        "config.strategy_id",
+        "config.strategy_version",
+        "config.config_json",
+        "config.is_active",
+    ] {
+        assert!(
+            !update_config_lookup.contains(mutable_field),
+            "0063 UPDATE lookup does not read mutable config field {mutable_field}"
+        );
+    }
+
+    let success_config_lock = OWNER_BETA_SIMULATION_UP_SQL
+        .split("CREATE FUNCTION public.owner_beta_simulation_runs_lock_config_on_success()")
+        .nth(1)
+        .and_then(|body| body.split("$config_lock$;").next())
+        .expect("0063 success config lock trigger body");
+    for check in [
+        "WHERE config.id = NEW.strategy_config_id",
+        "AND config.owner_user_id = NEW.owner_user_id",
+        "FOR SHARE OF config",
+    ] {
+        assert!(
+            success_config_lock.contains(check),
+            "0063 success locks the existing owner config identity: {check}"
+        );
+    }
+    for mutable_field in [
+        "is_active",
+        "strategy_id",
+        "strategy_version",
+        "config_json",
+    ] {
+        assert!(
+            !success_config_lock.contains(mutable_field),
+            "0063 success locking does not recheck mutable config field {mutable_field}"
+        );
+    }
 }
 
 #[test]

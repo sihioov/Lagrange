@@ -82,6 +82,215 @@ fn openapi_contract_routes_match_router_inventory() {
 }
 
 #[test]
+fn openapi_owner_beta_simulation_wire_is_exact_and_closed() {
+    let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
+    let base = "/api/v1/backtests/owner-beta/price-only";
+    let operations = [
+        (
+            "post",
+            format!("{base}/runs"),
+            "202",
+            "OwnerBetaSimulationEnqueued",
+        ),
+        (
+            "get",
+            format!("{base}/runs"),
+            "200",
+            "OwnerBetaSimulationPage",
+        ),
+        (
+            "get",
+            format!("{base}/runs/{{run_id}}"),
+            "200",
+            "OwnerBetaSimulationRun",
+        ),
+        (
+            "post",
+            format!("{base}/runs/{{run_id}}/cancel"),
+            "200",
+            "OwnerBetaSimulationCancel",
+        ),
+        (
+            "get",
+            format!("{base}/runs/{{run_id}}/pair"),
+            "200",
+            "OwnerBetaSimulationPair",
+        ),
+    ];
+    assert_eq!(
+        spec["paths"]
+            .as_object()
+            .expect("paths")
+            .keys()
+            .filter(|path| path.starts_with(base))
+            .count(),
+        4,
+        "the five methods use four distinct paths"
+    );
+    for (method, path, success, schema) in operations {
+        let operation = &spec["paths"][&path][method];
+        assert!(operation.is_object(), "missing {method} {path}");
+        assert_eq!(operation["x-lagrange"]["auth"]["required"], true);
+        assert_eq!(operation["x-lagrange"]["ownership"]["owner_only"], true);
+        assert_eq!(operation["x-lagrange"]["cache"]["policy"], "no-store");
+        assert_eq!(
+            operation["responses"][success]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{schema}")
+        );
+        let actual = operation["responses"]
+            .as_object()
+            .expect("responses")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let expected = if method == "post" && path.ends_with("/runs") {
+            BTreeSet::from([
+                "202", "400", "401", "403", "404", "409", "413", "422", "429", "500", "503",
+            ])
+        } else if method == "get" && path.ends_with("/runs") {
+            BTreeSet::from(["200", "400", "401", "403", "422", "500"])
+        } else if method == "get" && path.ends_with("/pair") {
+            BTreeSet::from(["200", "400", "401", "403", "404", "409", "422", "500"])
+        } else if method == "post" {
+            BTreeSet::from([
+                "200", "400", "401", "403", "404", "409", "413", "422", "500",
+            ])
+        } else {
+            BTreeSet::from(["200", "400", "401", "403", "404", "422", "500"])
+        };
+        assert_eq!(actual, expected, "response status set for {method} {path}");
+        if method == "post" {
+            let parameters = operation["parameters"]
+                .as_array()
+                .expect("mutation headers and path parameters");
+            for name in ["Idempotency-Key", "X-CSRF-Token"] {
+                let parameter = parameters
+                    .iter()
+                    .find(|parameter| parameter["name"] == name)
+                    .unwrap_or_else(|| panic!("{method} {path} requires {name}"));
+                assert_eq!(parameter["in"], "header");
+                assert_eq!(parameter["required"], true);
+            }
+        }
+    }
+    let cancel = &spec["paths"][&format!("{base}/runs/{{run_id}}/cancel")]["post"];
+    assert_eq!(cancel["x-lagrange"]["entitlement"]["use"], Value::Null);
+    assert_eq!(cancel["x-lagrange"]["idempotency"]["required"], true);
+    assert_eq!(
+        cancel["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/EmptyBody"
+    );
+    let create = &spec["paths"][&format!("{base}/runs")]["post"];
+    assert_eq!(
+        create["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/OwnerBetaSimulationRunBody"
+    );
+    let body = &spec["components"]["schemas"]["OwnerBetaSimulationRunBody"];
+    assert_eq!(body["additionalProperties"], false);
+    assert_eq!(body["required"], serde_json::json!(["strategy_config_id"]));
+    assert_eq!(
+        body["properties"]
+            .as_object()
+            .expect("closed body")
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "strategy_config_id".to_owned(),
+            "start_date".to_owned(),
+            "end_date".to_owned()
+        ])
+    );
+    for date_field in ["start_date", "end_date"] {
+        assert_eq!(body["properties"][date_field]["type"], "string");
+        assert_eq!(
+            body["properties"][date_field]["pattern"],
+            "^\\d{4}-\\d{2}-\\d{2}$"
+        );
+    }
+    let list = &spec["paths"][&format!("{base}/runs")]["get"];
+    let limit = list["parameters"]
+        .as_array()
+        .expect("list query params")
+        .iter()
+        .find(|parameter| parameter["name"] == "limit")
+        .expect("page limit");
+    assert_eq!(limit["schema"]["default"], 20);
+    assert_eq!(limit["schema"]["maximum"], 100);
+    assert!(
+        !spec["paths"][&format!("{base}/runs/{{run_id}}")]["get"]["x-lagrange"]["errors"]
+            .as_array()
+            .expect("run errors")
+            .iter()
+            .any(|code| code == "INVALID_CURSOR")
+    );
+    assert_eq!(
+        spec["paths"][&format!("{base}/runs/{{run_id}}/pair")]["get"]["responses"]["409"]
+            .is_object(),
+        true,
+        "pair readiness has a typed 409 response"
+    );
+    assert!(
+        spec["components"]["schemas"]["ErrorCode"]["enum"]
+            .as_array()
+            .expect("error enum")
+            .iter()
+            .any(|value| value == "SIMULATION_RESULT_NOT_READY")
+    );
+
+    let run = &spec["components"]["schemas"]["OwnerBetaSimulationRun"];
+    assert_eq!(run["additionalProperties"], false);
+    assert_eq!(run["properties"]["audience"]["const"], "OWNER_ONLY");
+    assert_eq!(
+        run["properties"]["capability"]["const"],
+        "PRICE_RETURN_ONLY"
+    );
+    let pair = &spec["components"]["schemas"]["OwnerBetaSimulationPair"];
+    assert_eq!(pair["additionalProperties"], false);
+    assert_eq!(
+        pair["properties"]["illustrative_10bp_per_side"]["$ref"],
+        "#/components/schemas/OwnerBetaSimulationProfile"
+    );
+    assert_eq!(
+        pair["properties"]["zero_cost_reference"]["$ref"],
+        "#/components/schemas/OwnerBetaSimulationProfile"
+    );
+    let result = &spec["components"]["schemas"]["SimulationResult"];
+    assert_eq!(result["additionalProperties"], false);
+    assert_eq!(
+        result["required"],
+        serde_json::json!([
+            "contract",
+            "input",
+            "engine",
+            "strategy",
+            "schedule",
+            "conventions",
+            "signals",
+            "strategy_ledger",
+            "benchmark_ledger"
+        ])
+    );
+    assert_eq!(
+        result["properties"]["input"]["$ref"],
+        "#/components/schemas/SimulationInputIdentity"
+    );
+    assert_eq!(
+        result["properties"]["conventions"]["$ref"],
+        "#/components/schemas/SimulationConventions"
+    );
+    assert_eq!(
+        spec["components"]["schemas"]["SimulationEvidenceLabels"]["properties"]["data_scope"]["const"],
+        "OWNER_ONLY",
+        "the established labels remain under input.labels"
+    );
+    assert_eq!(
+        spec["components"]["schemas"]["SimulationCostConvention"]["properties"]["profile"]["enum"],
+        serde_json::json!(["ILLUSTRATIVE_10BP_PER_SIDE_V1", "ZERO_COST_REFERENCE_V1"])
+    );
+}
+
+#[test]
 fn service_status_openapi_is_owner_only_private_audited_and_exactly_typed() {
     let spec: Value = serde_json::from_str(SPEC).expect("spec parses");
     let operation = &spec["paths"]["/api/v1/admin/service-status"]["get"];

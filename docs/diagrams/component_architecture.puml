@@ -24,6 +24,17 @@
 ' 2026-10-23: folded QA-only continuous daemon-event recorder; no production edge.
 ' evidence: scripts/ops/verify-owner-beta-daily-wholeflow.py:137,784-788; scripts/ops/lib/owner-beta-daily-lifecycle.py:120-149
 ' 2026-10-19: fixed V3 role-owned base copies; original approval guards unchanged.
+' 2026-10-25: R4-05 source queue/API/storage and attested Linux child boundary.
+' No simulation service deployment, migration apply, or runtime acceptance is implied.
+' The opt-in R4-05 connection proof example is QA-only and its edges are folded:
+'   proof example -> shared Harness and real in-process API router
+' evidence: crates/api-server/examples/verify_approved_simulation_connection.rs:8-10; crates/api-server/examples/simulation_connection_proof/mod.rs:945,996-1005
+'   proof example -> typed job-queue input/result-pair contract
+' evidence: crates/api-server/Cargo.toml:40; crates/api-server/examples/simulation_connection_proof/mod.rs:21-24,1049,1704-1710
+'   proof example -> nonce-guarded scratch PostgreSQL and private readiness/report files
+' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:820-838,880-888,1101-1111,1270-1274,1821-1915
+' CI delivers the proof separately; these source paths do not establish executed acceptance.
+' evidence: .github/workflows/ci.yml:928-939; scripts/ci/build-r4-verification.sh:765-824,1158-1506
 ' Every drawn arrow carries an evidence comment ("' evidence: <file:line>")
 ' pointing at the concrete code that makes the edge exist:
 '   - Rust edges: Cargo.toml path dependency PLUS a real `use`/call site.
@@ -65,6 +76,8 @@
 title Lagrange Station — Component Architecture (code dependencies)
 
 skinparam componentStyle rectangle
+' Preserve readable labels across the full graph; render with PLANTUML_LIMIT_SIZE=16384.
+scale max 16000 width
 skinparam packageStyle rectangle
 skinparam shadowing false
 skinparam linetype ortho
@@ -88,6 +101,7 @@ package "Rust workspace (edition 2024)" {
   package "Orchestration" #FBE4EC {
     component "crates/job-queue\n(PG job queue + runner bins:\nbacktest / recommendation /\ncandidate / owner-beta /\nowner-equity-v2;\nWS-only realtime producer;\nopt-in WS state initializer)" as job_queue
     component "owner_beta::runner daily modules\n(producer / independent admitter,\nminute-gated local state,\nscheduler + mixed queue execution)\n[inside job-queue]" as daily_runner
+    component "owner_beta::simulation_execution\n(typed input, attested child,\nlease/cancel/recovery, whole-pair publication)\n[inside job-queue; source only]" as simulation_execution
   }
 
   package "Research & results" #F1E6F7 {
@@ -95,6 +109,7 @@ package "Rust workspace (edition 2024)" {
     component "crates/selector\n(fixed-universe selection,\ntarget portfolios)" as selector
     component "crates/portfolio-model\n(sizing, costs, ledger)" as portfolio_model
     component "crates/result-model\n(common result model,\npaper parity)" as result_model
+    component "owner_beta::simulation\n(fixed price-only engine;\nillustrative + zero-cost pair)\n[inside job-queue]" as simulation_engine
   }
 
   package "Live-trading guard" #FBE5E5 {
@@ -117,6 +132,8 @@ package "Rust workspace (edition 2024)" {
     component "crates/auth\n(OIDC, sessions, RBAC,\nentitlement gate)" as auth
   }
 }
+
+database "Migration 0063 source contract\nowner_beta_simulation_runs +\nowner_beta_simulation_result_pairs\nFORCE RLS; atomic complete pair\n(not applied to production)" as simulation_storage
 
 note bottom of domain
   Depended on directly by the 9 service crates
@@ -172,13 +189,16 @@ package "Owner service status (optional deployment)" #FFF4D6 {
 ' evidence: apps/web/app/(authenticated)/page.tsx:45-54 (server session and explicit Owner role gate; status does not depend on product access or market-data entitlement)
 web --> status_panel : Owner-only main Dashboard surface
 
-' evidence: apps/web/components/service-status/service-status-panel.tsx:16,340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; crates/api-server/src/http/mod.rs:463; crates/api-server/src/http/service_status.rs:51-85,257-263 (Owner check and audited read)
+' evidence: apps/web/components/service-status/service-status-panel.tsx:16,340-345; apps/web/lib/operations/service-status-client.ts:6,94-103; crates/api-server/src/http/mod.rs:480; crates/api-server/src/http/service_status.rs:51-85,257-263 (Owner check and audited read)
 status_panel --> api_server : GET /api/v1/admin/service-status;\nread-only status response
 
-' evidence: crates/api-server/src/http/mod.rs:342-347 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
+' evidence: crates/api-server/src/http/mod.rs:342-348 (membership GET); crates/api-server/src/http/owner_equity_v2.rs:91-107,1125-1141 (refresh_failure DTO); crates/api-server/src/repos/owner_equity_v2.rs:555-602 (actor/membership/admitted-generation scoped job read); apps/web/components/stock-beta/dashboard/widgets/membership-status-widget.tsx:67-69,105-118 (data date and refresh failure)
 web --> api_server : Owner V2 membership GET: data date +\nlatest incremental refresh failure; READY preserved
 
-' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:361,366,370 (lease/SSE routes; shifted by the status module declaration); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
+' evidence: apps/web/app/(authenticated)/backtests/owner-beta/price-only/page.tsx:55-82; apps/web/components/backtests/owner-beta-simulation-form.tsx:111-116; apps/web/components/backtests/owner-beta-simulation-status.tsx:357-402,496-506; crates/api-server/src/http/mod.rs:417-431
+web --> api_server : dedicated Owner price-only simulation\nenqueue / metadata / cancel / whole pair\nOwner + owner_only; separate from generic backtests
+
+' evidence: apps/web/lib/products/intraday-stream-client.ts:156,158,166,172 (serialized same-origin CSRF mutation), apps/web/lib/api/csrf-mutation-lock.ts:8,17 (shared mutation lock); apps/web/components/stock-beta/quote/intraday-stream-controller.ts:115,329 (one EventSource); apps/web/components/stock-beta/quote/intraday-quotes-mode.ts:4-10 (WS-only feature selection); crates/api-server/src/http/mod.rs:363-372 (lease/SSE routes); crates/api-server/src/runtime.rs:282-356 (WS-only activation); apps/web/lib/api/server-client.ts:23 (session client)
 web --> api_server : same-origin lease POST/DELETE + SSE;\nWS-backed realtime cache;\nsession-cookie HTTP /api/v1/*, /auth/*
 
 ' evidence: apps/web/lib/api/contracts.ts:1 (generated route types); apps/api-server/generated/openapi.ts:2,22,42 (schema2 lease/SSE paths); apps/web/lib/products/intraday-quotes-client.ts:3 (existing REST contracts)
@@ -233,6 +253,17 @@ status_observer --> status_snapshot : root-owned atomic snapshot write
 status_snapshot ..> api_server : optional read-only DIRECTORY mount;\nfixed production reader and ownership validation
 
 ' ---------------- job-queue edges ----------------
+
+' evidence: crates/api-server/Cargo.toml:40; crates/api-server/src/repos/owner_beta_simulations.rs:18-21,216-220,921-929
+api_server --> simulation_execution : sealed input + stored whole-pair checker
+' evidence: crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,882-904; migrations/0063_owner_beta_price_only_simulations.up.sql:185-233
+api_server --> simulation_storage : app actor RLS; enqueue + snapshot reads
+' evidence: crates/job-queue/src/bin/owner-beta-simulation-runner.rs:10-12,152-154
+job_queue --> simulation_execution : dedicated runner binary entry point
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:587-592
+simulation_execution --> simulation_engine : same-executable child invokes approved-input engine
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/publish.rs:456-546; crates/job-queue/src/owner_beta/simulation_execution/recovery.rs:42; migrations/0063_owner_beta_price_only_simulations.up.sql:1182-1196
+simulation_execution --> simulation_storage : worker claim fences; job/run/pair one commit
 
 ' evidence: crates/job-queue/src/bin/owner-beta-runner.rs:351,375,467-474; crates/job-queue/src/bin/owner-beta-runner/daily.rs:227-229; crates/job-queue/src/owner_beta/runner.rs:3-9
 job_queue --> daily_runner : explicit producer/admitter commands;\noptional scheduler and mixed worker

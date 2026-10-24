@@ -55,6 +55,14 @@ for required_marker in \
   "grep -Fq 'SKIP:'" \
   "run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
   "run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
+  "run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'" \
+  "run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'" \
+  "run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'" \
+  'R4 simulation test inventory changed:' \
+  'r4_simulation_test_commands' \
+  'r4_simulation_expected_rows' \
+  'r4_simulation_named_rows' \
+  'PG_DB_TEST_ROW:%s:%s:%s' \
   'preflight-0039.sql' \
   'run_terminal_paper_check' \
   'preflight-catalog.sql' \
@@ -83,6 +91,19 @@ for required_marker in \
   'down -v --remove-orphans' \
   'printf '\''%s\n'\'' "$tool_block"'; do
   grep -Fq -- "$required_marker" "$workflow" || die "workflow marker missing: $required_marker"
+done
+for required_evidence_marker in \
+  'jobqueue_owner_beta_simulation_execution' \
+  'api_owner_beta_simulation_replay' \
+  'api_owner_beta_simulations' \
+  'cargo test --locked -p job-queue --test owner_beta_simulation_execution -- --nocapture' \
+  'cargo test --locked -p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding -- --nocapture' \
+  'cargo test --locked -p api-server --test http_owner_beta_simulations -- --nocapture' \
+  '15 exact named rows' \
+  'one module-qualified exact row' \
+  '7 exact named rows'; do
+  grep -Fq -- "$required_evidence_marker" "$dir/EVIDENCE_TEMPLATE.md" \
+    || die "evidence template marker missing: $required_evidence_marker"
 done
 for required_catalog_marker in \
   'baseline catalog does not contain the five exact expected IDs' \

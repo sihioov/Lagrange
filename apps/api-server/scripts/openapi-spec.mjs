@@ -15,6 +15,10 @@ import {
   SERVICE_STATUS_SCHEMAS,
   SERVICE_STATUS_SUCCESS,
 } from "./openapi-service-status.mjs";
+import {
+  SIMULATION_ROUTES,
+  SIMULATION_SCHEMAS,
+} from "./openapi-owner-beta-simulations.mjs";
 
 const PHASE3 = "phase3";
 const INTRADAY_BIGINT_MAXIMUM = JSON.rawJSON("9223372036854775807");
@@ -156,6 +160,7 @@ const ROUTES = [
   ["DELETE", "/api/v1/screener/screens/{id}", { mutating: true, noBody: true, idem: true, audit: true }],
   // backtests
   ["POST", "/api/v1/backtests", { mutating: true, idem: true, entitlement: "backtest", audit: true }],
+  ...SIMULATION_ROUTES,
   ["GET", "/api/v1/backtests", { entitlement: "backtest", shared: true }],
   ["GET", "/api/v1/backtests/{run_id}", { entitlement: "backtest", shared: true }],
   ["POST", "/api/v1/backtests/{run_id}/cancel", { mutating: true, idem: true, entitlement: "backtest", audit: true }],
@@ -229,6 +234,7 @@ const ERROR_CODES = [
   ["DATASET_BLOCKED", 422], ["DATA_STALE", 422],
   ["INVALID_STRATEGY_PARAMETER", 422], ["UNSUPPORTED_MARKET_CURRENCY", 422],
   ["BACKTEST_CAPACITY_EXCEEDED", 429], ["ROBUSTNESS_CAPACITY_EXCEEDED", 429],
+  ["SIMULATION_RESULT_NOT_READY", 409],
   ["RECOMMENDATION_CAPACITY_EXCEEDED", 429],
   ["OWNER_BETA_PRICE_INPUT_UNAVAILABLE", 503],
   ["OWNER_BETA_STRATEGY_UNSUPPORTED", 422],
@@ -270,6 +276,20 @@ if (ERROR_CODES_SET.size !== ERROR_CODES.length) {
 const ENVELOPE = { $ref: "#/components/schemas/ErrorEnvelope" };
 
 function errorResponses(route) {
+  if (route?.[2]?.ownerBetaSimulation) {
+    const method = route[0];
+    const path = route[1];
+    const codes = method === "GET" && path.endsWith("/pair")
+      ? [400, 401, 403, 404, 409, 422, 500]
+      : method === "POST" && path.endsWith("/cancel")
+        ? [400, 401, 403, 404, 409, 413, 422, 500]
+        : method === "POST"
+          ? [400, 401, 403, 404, 409, 413, 422, 429, 500, 503]
+          : path.endsWith("/runs")
+            ? [400, 401, 403, 422, 500]
+            : [400, 401, 403, 404, 422, 500];
+    return Object.fromEntries(codes.map((code) => [code, { $ref: `#/components/responses/Error${code}` }]));
+  }
   if (route?.[2]?.serviceStatus) {
     return {
       "400": { $ref: "#/components/responses/Error400" },
@@ -351,6 +371,7 @@ function operation(route) {
   const audit = flags.audit === true;
   const shared = flags.shared === true;
   const cacheGet = isOwnerIntradayQuoteCache(route);
+  const simulation = flags.ownerBetaSimulation === true;
 
   const op = {
     operationId: `${method}_${path.replace(/[\/{}\-]/g, "_")}`,
@@ -365,7 +386,9 @@ function operation(route) {
       auth: { required: true, session: "opaque __Host-lagrange_session cookie" },
       ownership: {
         owner_only: owner,
-        scope: flags.ownerMarketStream
+        scope: simulation
+          ? "Owner role; actor-owned simulation rows and a complete checked result pair; foreign run IDs match missing IDs"
+          : flags.ownerMarketStream
           ? "Owner role and exact canonical session; current actor RLS, grant, date and membership generation"
           : flags.ownerBetaSupportedAsOf
           ? "Owner role; approved sealed historical price-only artifact"
@@ -411,6 +434,14 @@ function operation(route) {
               header: "Idempotency-Key",
               replay: "same key + same body + renewal sequence returns the durable demand result; mismatch is 409 IDEMPOTENCY_MISMATCH",
             }
+          : simulation
+          ? {
+              required: true,
+              header: "Idempotency-Key",
+              replay: path.endsWith("/cancel")
+                ? "same key + POST + canonical run route + empty body is an acknowledgement only; ownership is rechecked before replay"
+                : "same key + canonical simulation intent replays the original durable PENDING envelope even after the run becomes terminal; mismatch is 409 IDEMPOTENCY_KEY_MISMATCH",
+            }
           : {
               required: idemRequired,
               header: "Idempotency-Key",
@@ -424,7 +455,9 @@ function operation(route) {
       audit: audit
         ? {
             writer: "audit_writer (append-only)",
-            fields: flags.ownerBetaPrice
+            fields: simulation
+              ? "bounded run/job/config IDs and evaluation dates or cancellation status with request correlation; no input or result body"
+              : flags.ownerBetaPrice
               ? "fixed action + run/job/config IDs + as_of"
               : "actor/time/target/before-after/reason/correlation_id",
           }
@@ -443,7 +476,7 @@ function operation(route) {
   for (const [n, k] of Object.entries(pathParams(path))) {
     const schema = flags.ownerMarketStream && n === "lease_id"
       ? STREAM_SCHEMAS.OwnerMarketStreamLease.properties.lease_id
-      : n === "membership_id" || n === "demand_id" || n === "lease_id"
+        : n === "membership_id" || n === "demand_id" || n === "lease_id" || simulation && n === "run_id"
         ? { type: "string", format: "uuid" }
         : n === "instrument_id" && (flags.ownerEquityV2 || cacheGet)
           ? { type: "string", pattern: "^[0-9]{6}\\.KRX$" }
@@ -463,9 +496,16 @@ function operation(route) {
   if (path === "/api/v1/candidates/feed/latest" || path === "/api/v1/candidates/feed/{date}") {
     op.parameters.push(param("universe", "query", { $ref: "#/components/schemas/UniverseKey" }, false));
   }
-  if (path.endsWith("/runs") && method === "get" || path === "/api/v1/backtests" && method === "get") {
-    op.parameters.push(param("cursor", "query", { type: "string" }, false));
-    op.parameters.push(param("limit", "query", { type: "integer", minimum: 1, maximum: 100 }, false));
+  if ((path.endsWith("/runs") && method === "get") || (path === "/api/v1/backtests" && method === "get")) {
+    op.parameters.push(param("cursor", "query", simulation
+      ? { type: "string", description: "Signed owner-scoped keyset cursor returned by the prior page." }
+      : { type: "string" }, false));
+    op.parameters.push(param("limit", "query", {
+      type: "integer",
+      minimum: 1,
+      maximum: 100,
+      ...(simulation ? { default: 20 } : {}),
+    }, false));
   }
   if (flags.ownerEquityV2Chart) {
     op.parameters.push(param("snapshot_id", "query", { type: "string", format: "uuid" }, true));
@@ -480,6 +520,16 @@ function operation(route) {
       op.parameters.push(param("lease_id", "query", { type: "string", format: "uuid", description: "Exactly one canonical non-nil UUID; no other query parameter is accepted." }, true));
       op.parameters.push(param("Last-Event-ID", "header", { type: "string", maxLength: 80, pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[1-9][0-9]{0,18}$", description: "Bounded UUID:positive-i64 cursor. Every reconnect resets and reads the current snapshot; no history replay." }, false));
     }
+  }
+  if (simulation && mutating) {
+    op.parameters.push(param("Idempotency-Key", "header", {
+      type: "string",
+      minLength: 1,
+      maxLength: 200,
+      pattern: "^[!-~]{1,200}$",
+      description: "Visible ASCII intent key; the durable queue namespace is actor-owned.",
+    }, true));
+    op.parameters.push(param("X-CSRF-Token", "header", { type: "string", minLength: 1 }, true));
   }
   if (cacheGet) {
     op.parameters.push(param("membership_id", "query", { type: "string", format: "uuid" }, true));
@@ -517,6 +567,23 @@ function successResponsesFor(method, path) {
     description,
     content: { "application/json": { schema: { $ref: schema } } },
   });
+  if (path.startsWith("/api/v1/backtests/owner-beta/price-only/")) {
+    if (path.endsWith("/cancel") && method === "post") {
+      return { "200": json("Cancellation request acknowledgement; GET reports current queue/run state", "#/components/schemas/OwnerBetaSimulationCancel") };
+    }
+    if (path.endsWith("/pair") && method === "get") {
+      return { "200": json("Complete checked illustrative and zero-cost canonical SimulationResult pair", "#/components/schemas/OwnerBetaSimulationPair") };
+    }
+    if (path.endsWith("/runs") && method === "post") {
+      return { "202": json("Owner-beta price-only simulation accepted", "#/components/schemas/OwnerBetaSimulationEnqueued") };
+    }
+    if (path.endsWith("/runs") && method === "get") {
+      return { "200": json("Actor-owned simulation metadata page; every successful pair is checked before status is served", "#/components/schemas/OwnerBetaSimulationPage") };
+    }
+    if (path.endsWith("/runs/{run_id}") && method === "get") {
+      return { "200": json("Actor-owned simulation metadata; successful results require a complete checked pair", "#/components/schemas/OwnerBetaSimulationRun") };
+    }
+  }
   if (path === "/api/v1/strategy-configs/{config_id}" && method === "patch") {
     return { "200": json("Actor-owned strategy configuration updated", "#/components/schemas/StrategyConfig") };
   }
@@ -655,6 +722,9 @@ function isOwnerIntradayQuoteCache(route) {
 }
 
 function bodySchemaRef(path) {
+  if (path === "/api/v1/backtests/owner-beta/price-only/runs") {
+    return "#/components/schemas/OwnerBetaSimulationRunBody";
+  }
   if (path === "/api/v1/strategy-configs/{config_id}") return "#/components/schemas/UpdateStrategyConfigBody";
   if (path === `${STREAM_PREFIX}/stream-leases`) return "#/components/schemas/OwnerMarketStreamLeaseBody";
   if (path === `${STREAM_PREFIX}/stream-leases/{lease_id}`) return "#/components/schemas/OwnerMarketStreamReleaseBody";
@@ -693,6 +763,29 @@ function bodySchemaRef(path) {
 function errorCodesFor(route) {
   const path = route[1];
   const flags = route[2];
+  if (flags.ownerBetaSimulation) {
+    const codes = ["SESSION_UNKNOWN", "SESSION_EXPIRED", "FORBIDDEN", "INTERNAL"];
+    if (flags.entitlement) codes.push("DATA_ENTITLEMENT_REQUIRED");
+    if (route[0] === "POST" && path.endsWith("/runs")) {
+      codes.push(
+        "CSRF_DENIED", "IDEMPOTENCY_KEY_REQUIRED", "IDEMPOTENCY_KEY_MISMATCH",
+        "INVALID_PARAMETER", "INVALID_DATE", "RESOURCE_NOT_FOUND", "OWNER_BETA_STRATEGY_UNSUPPORTED",
+        "OWNER_BETA_PRICE_INPUT_UNAVAILABLE", "BACKTEST_CAPACITY_EXCEEDED", "RESULT_INTEGRITY_FAILED",
+        "PAYLOAD_TOO_LARGE",
+      );
+    } else if (route[0] === "POST") {
+      codes.push(
+        "CSRF_DENIED", "IDEMPOTENCY_KEY_REQUIRED", "IDEMPOTENCY_KEY_MISMATCH",
+        "INVALID_PARAMETER", "RESOURCE_NOT_FOUND", "RESULT_INTEGRITY_FAILED", "PAYLOAD_TOO_LARGE",
+      );
+    } else if (path.endsWith("/runs")) {
+      codes.push("INVALID_CURSOR", "DATA_ENTITLEMENT_REQUIRED", "RESULT_INTEGRITY_FAILED");
+    } else {
+      codes.push("RESOURCE_NOT_FOUND", "RESULT_INTEGRITY_FAILED");
+      if (path.endsWith("/pair")) codes.push("SIMULATION_RESULT_NOT_READY");
+    }
+    return [...new Set(codes)];
+  }
   if (flags.serviceStatus) {
     return [
       "SESSION_UNKNOWN",
@@ -862,6 +955,7 @@ const uuid = { type: "string", format: "uuid" };
 
 const SCHEMAS = {
   ...SERVICE_STATUS_SCHEMAS,
+  ...SIMULATION_SCHEMAS,
   Error: {
     type: "object",
     required: ["code", "message", "request_id"],

@@ -268,6 +268,7 @@ impl JobQueue {
                 sqlx::query_as(
                     "SELECT id FROM jobs
                      WHERE status = 'QUEUED' AND available_at <= now()
+                       AND job_type <> 'owner_beta_price_only_simulation'
                      ORDER BY priority DESC, created_at
                      FOR UPDATE SKIP LOCKED
                      LIMIT 1",
@@ -804,6 +805,7 @@ impl JobQueue {
             "SELECT id FROM jobs
              WHERE status IN ('RUNNING', 'CANCELED')
                AND job_type <> 'owner_beta_price_recommendation'
+               AND job_type <> 'owner_beta_price_only_simulation'
                AND locked_at <= now() - make_interval(secs => $1)",
         )
         .bind(self.config.lease.as_secs_f64())
@@ -829,6 +831,7 @@ impl JobQueue {
             "SELECT attempt_count, max_attempts, status FROM jobs
              WHERE id = $1
                AND job_type <> 'owner_beta_price_recommendation'
+               AND job_type <> 'owner_beta_price_only_simulation'
                AND locked_at <= now() - make_interval(secs => $2)
              FOR UPDATE",
         )

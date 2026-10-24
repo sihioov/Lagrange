@@ -14,6 +14,7 @@ pub mod metrics;
 pub mod ops;
 pub mod order_intents;
 pub mod owner_beta;
+pub mod owner_beta_simulations;
 pub mod owner_equity_v2;
 pub mod owner_intraday_quotes;
 pub(crate) mod owner_market_stream;

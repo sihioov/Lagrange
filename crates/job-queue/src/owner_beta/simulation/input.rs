@@ -53,23 +53,51 @@ pub(crate) fn approve_and_prepare(
 ) -> Result<ApprovedSimulationInput, SimulationInputError> {
     let artifact = market_data::approve_historical_price_only_artifact(artifact_root)
         .map_err(|_| SimulationInputError::ApprovalRejected)?;
-    let range_start = TradingDate::parse(APPROVED_START_DATE)
-        .map_err(|_| SimulationInputError::MetadataInvalid)?;
-    let range_end =
-        TradingDate::parse(APPROVED_END_DATE).map_err(|_| SimulationInputError::MetadataInvalid)?;
-    let expected = ExpectedRangeSessions::approved_xkrx(range_start, range_end)
-        .map_err(|_| SimulationInputError::MetadataInvalid)?;
-
-    validate_approved_metadata(&artifact, &expected.sessions)?;
-    validate_bars_against_sessions(artifact.bars(), &expected.sessions)?;
-
-    let schedule = build_schedule(&expected.sessions, evaluation_start, evaluation_end)?;
+    let schedule = prepare_approved_simulation_window(&artifact, evaluation_start, evaluation_end)?;
     let evaluation_prices = evaluation_prices(artifact.bars(), schedule.evaluation_sessions())?;
     Ok(ApprovedSimulationInput {
         artifact,
         schedule,
         evaluation_prices,
     })
+}
+
+/// Validates the sealed artifact against the fixed v3 metadata, bars, and
+/// approved XKRX calendar, then prepares the requested evaluation window.
+/// The artifact is already approved by the caller and is never reopened.
+pub fn prepare_approved_simulation_window(
+    artifact: &ApprovedHistoricalPriceOnlyArtifact,
+    evaluation_start: Option<TradingDate>,
+    evaluation_end: Option<TradingDate>,
+) -> Result<SimulationSchedule, SimulationInputError> {
+    let expected = expected_approved_sessions()?;
+    validate_approved_metadata(artifact, &expected.sessions)?;
+    validate_bars_against_sessions(artifact.bars(), &expected.sessions)?;
+    build_schedule(&expected.sessions, evaluation_start, evaluation_end)
+}
+
+/// Rebuilds a queued window from its dates using the same approved calendar
+/// and schedule rules as artifact-backed preparation. This validates date
+/// binding only; callers still need to reapprove the artifact before running.
+pub(crate) fn reconstruct_approved_simulation_schedule(
+    evaluation_start: TradingDate,
+    evaluation_end: TradingDate,
+) -> Result<SimulationSchedule, SimulationInputError> {
+    let expected = expected_approved_sessions()?;
+    build_schedule(
+        &expected.sessions,
+        Some(evaluation_start),
+        Some(evaluation_end),
+    )
+}
+
+fn expected_approved_sessions() -> Result<ExpectedRangeSessions, SimulationInputError> {
+    let range_start = TradingDate::parse(APPROVED_START_DATE)
+        .map_err(|_| SimulationInputError::MetadataInvalid)?;
+    let range_end =
+        TradingDate::parse(APPROVED_END_DATE).map_err(|_| SimulationInputError::MetadataInvalid)?;
+    ExpectedRangeSessions::approved_xkrx(range_start, range_end)
+        .map_err(|_| SimulationInputError::MetadataInvalid)
 }
 
 fn validate_approved_metadata(
