@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-24 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-02/03 첫 구현·실제 승인 입력 검증 DONE(2026-10-24, 대상 `9a0b14f`). CI40078923911 attempt1의9개 job·same-SHA smoke40078925934 기능/정리 성공, 실제 executable provenance와 두 독립 프로세스×각2회×두 비용 프로필의 결과 일치·정리를 수용했다. [실제 실행 기록](reviews/2026-10-24-r4-actual-simulation.md). 기존 실패 이력과 R2/R3 미완료·유예·Daily OFF는 보존한다. |
+| 현재 실행 우선순위 | R4-04 DOING — q=0·q+1 overflow 회귀와 실행 ID 변경의 G3 독립 소스 리뷰 완료; 최종 후보 hosted·실제 반복 검증 대기. 전체 사용자 격리는 R4-05 저장/RLS/API 의존으로 OPEN이다. R4-02/03의9a0b14f 실제 검증 완료는 보존한다. [R4-04 계획](superpowers/plans/2026-10-24-r4-integrity-verification.md). R2/R3 유예·Daily OFF 유지. |
 | 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | R4-04의 남은 전체 무결성·사용자 격리 검증을 정리한 뒤 R4-05 전용 큐·저장·API·Web 연결로 진행한다. 현재 승인된 첫 시뮬레이션 실행 묶음은 완료했으며 R4-05/06·운영 출시·Owner 사용 인수를 완료로 간주하지 않는다. [계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md)·[실제 실행 수용](reviews/2026-10-24-r4-actual-simulation.md). |
+| 다음 착수 항목 | R4-04의 고정 후보 CI/required·smoke와 source-only 검증 실행 파일을 확인하고, 동일 binary·승인 입력에서 다른 실행 ID의 결과 재현을 확인한다. 사용자 격리의 R4-05 저장/API 의존은 현재 순수 함수 검증과 구분한다. R4-05/06·운영 출시는 이번 묶음에 자동 포함하지 않는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -624,7 +624,11 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   **완료 2026-10-24; 대상9a0b14f:** 수작업 기준값 회귀·unit41/integration2, 실제2,252세션의 전략/벤치마크·두 비용 프로필 및 두 독립 프로세스×각2회 결과 hash 일치와 정리 완료. [종료 근거](reviews/2026-10-24-r4-actual-simulation.md). 가격수익률·vendor snapshot·strict_pit=false 경계를 유지한다.
 - [ ] **R4-04 — 재현성·미래정보·무결성 검증.** 동일 입력 결과, 미래정보 차단, 분할 중복 반영,
   반올림·잔여 현금·누락, pin 변조와 사용자 격리를 검증한다.
+  **2026-10-24 후속 DOING:** Owner “이어서 작업 진행해” 지시로 [Paseo 검증 계획](superpowers/plans/2026-10-24-r4-integrity-verification.md)을 착수한다. 기존 검증과 실제 누락을 먼저 대응하고 필수 회귀/보정만 구현한다.
   **2026-10-24 부분 검증 수용:** 첫 구현의 관련 회귀와9a0b14f 실제 두 프로세스 반복 결과·pin/provenance·정리는 통과했다. 전체 항목과 사용자 격리 검증의 완료를 대신하지 않는다.
+  **2026-10-24 G1:** 감사32개 입력 해시·검증 소스27개 일치와 계약 경계를 직접 확인했다. 가격 증거가 있는 q=0 거절·q+1 overflow 회귀, 다른 실행 ID의 같은 hash 확인을 보완한다. 전용 저장/RLS/API가 없는 사용자 격리는 R4-05 의존으로 OPEN이며 이 체크박스는 유지한다.
+  **2026-10-24 G2:** 수량 회귀2개와 example의 다른 run/config ID 요청을 추가했다. 생산 계산 코드 불변·해시·formatter를 확인했고 독립 리뷰로 진행한다. 새 테스트·실제 실행 인수는 아직 없다.
+  **2026-10-24 G3:** 독립 리뷰 READY_FOR_HOSTED, 필수 수정 없음과 최종 소스 해시를 수용했다. 같은 후보 CI/required·smoke·새 binary 및 승인 입력 반복 증거는 후속이며 전체 사용자 격리는 OPEN이다.
 - [ ] **R4-05 — 전용 실행·조회 연결.** 작업 큐·저장·API·Web 결과를 전용 계약에 연결하고 실패 시
   부분 성과를 노출하지 않는다. 구조가 바뀌면 아키텍처 도표와 근거·PNG도 같은 변경에 갱신한다.
 - [ ] **R4-06 — 기준 전략 확대·출시.** 검증된 첫 전략에서 기존 5개 기준 전략으로 확대한다.
@@ -2401,3 +2405,11 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 2026-10-24 09:40UTC — exact9a0b14f smoke40078925934 attempt1 SUCCESS/20개 step 성공, 기능·정리 및 전용 builder 제거를 직접 대조했다. WP-6 idle/pending0·최종 보고/receipt와 소스23개/HEAD/remote 일치를 확인해 동일 후보 CI9개·smoke를 수용했다. Raw-probe 볼륨의 별도 부재 조회 한계를 보존한다. 실제 두 번째 프로세스·교차 해시·최종 정리는 진행 중이다. [기록](reviews/2026-10-24-r4-actual-simulation.md).
 
 2026-10-24 09:43UTC — R4-02/03 DONE: 대상9a0b14f의 두 독립 프로세스가 각각1,081.655/1,078.588초 뒤 exit0으로 종료했고 각2회·두 비용 프로필의 결과가 일치했다.5개 승인 pin·bars·실행 파일 provenance·aggregate 산술·stdout hash·정리·운영 컨테이너 identity 불변을 직접 대조했다. 같은 후보 CI9개/smoke 성공과10명 idle/pending0·보고서 회수를 수용했다. R4-04 전체·R4-05/06 및 운영/Owner 인수는 남는다. [종료 기록](reviews/2026-10-24-r4-actual-simulation.md).
+
+2026-10-24 — R4-04 후속 착수: Owner 진행 지시로900057c를 기준으로 증거 대응·필수 보정·독립 리뷰·최종 hosted 검증 계획을 작성했다. 먼저 사용자 격리와 아직 없는 R4-05 연결의 경계를 분석한다. 앞 단계 실제 입력 검증은 보존하며 새 runtime/provider/운영 작업은 시작하지 않았다.
+
+2026-10-24 — R4-04 G1 감사 수용: source-only 수량 경계 회귀2개와 기존 example의 실행 ID 변화 검증으로 구현 범위를 고정했다. 변경된 실행 파일은 최종 후보 hosted build·동일 SHA CI/smoke 뒤 기존 승인 입력으로 제한 검증한다. 전체 사용자 격리는 R4-05 의존으로 기록하며 새 제품 연결은 미착수다.
+
+2026-10-24 — R4-04 G2 소스 대조 완료: 수량 회귀2개 구현과 formatter 증거를 회수했다. 독립 리뷰 후 최종 후보 검증을 진행하며 새 compile/test/runtime 성공은 주장하지 않는다.
+
+2026-10-24 — R4-04 G3 독립 소스 리뷰 수용: 필수 수정 없이 종료했고 coordinator가 해시·diff·보고서를 검증했다. 이 후보의 기존 CI+optional source-only build와 smoke를 각1회 진행한다. 실제 입력 및 R4-05 격리 인수는 완료로 표시하지 않는다.

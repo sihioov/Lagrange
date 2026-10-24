@@ -112,17 +112,20 @@ fn run() -> Result<(), Failure> {
     )
     .map_err(|_| Failure::Provenance)?;
     let identity = SimulationRunIdentity::new(engine);
-    let request = SimulationRunRequest::new(Uuid::nil(), Uuid::nil());
+    let first_request = SimulationRunRequest::new(Uuid::nil(), Uuid::nil());
+    // Execution/config identifiers must not change the canonical calculation.
+    // This checks content reproducibility, not owner authorization or isolation.
+    let second_request = SimulationRunRequest::new(Uuid::from_u128(1), Uuid::from_u128(2));
 
     let first = run_approved_historical_price_only_simulation(
         &arguments.artifact_root,
-        &request,
+        &first_request,
         &identity,
     )
     .map_err(Failure::Simulation)?;
     let second = run_approved_historical_price_only_simulation(
         &arguments.artifact_root,
-        &request,
+        &second_request,
         &identity,
     )
     .map_err(Failure::Simulation)?;

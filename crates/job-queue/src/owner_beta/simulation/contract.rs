@@ -3981,6 +3981,293 @@ mod tests {
     }
 
     #[test]
+    fn evidenced_zero_share_claim_is_rejected_for_strategy_and_benchmark() {
+        const MAXIMUM_QUANTITY_AT_100_KRW: u64 = 99_900;
+        let original =
+            production_trading_result(MAXIMUM_QUANTITY_AT_100_KRW, MAXIMUM_QUANTITY_AT_100_KRW);
+        let canonical = original.canonical_json().unwrap();
+        let round_tripped = SimulationResult::from_json(&canonical).unwrap();
+        assert_eq!(round_tripped.canonical_json().unwrap(), canonical);
+
+        let capital = Money4::parse(PRODUCTION_INITIAL_CAPITAL).unwrap();
+        let first_open = Price4::parse("100.0000").unwrap();
+        let ten_bp_fee = Money4::parse("0.1000").unwrap();
+        let one_share_with_fee = Money4::from_units(
+            first_open
+                .units()
+                .unwrap()
+                .checked_add(ten_bp_fee.units().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(one_share_with_fee, Money4::parse("100.1000").unwrap());
+        assert!(one_share_with_fee.units().unwrap() <= capital.units().unwrap());
+
+        for replace_strategy in [false, true] {
+            // Rebuild from the same valid result so only one ledger is replaced
+            // in each direction and the opposite ledger keeps its opening quote.
+            let mut result =
+                production_trading_result(MAXIMUM_QUANTITY_AT_100_KRW, MAXIMUM_QUANTITY_AT_100_KRW);
+            let (cash_only_records, _) = test_ledger(&result.schedule, capital.clone(), true);
+            if replace_strategy {
+                result.strategy_ledger.records = cash_only_records;
+            } else {
+                result.benchmark_ledger.records = cash_only_records;
+            }
+            refresh_result_metrics(&mut result);
+
+            let first_date = result.schedule.evaluation_sessions[0];
+            let second_date = result.schedule.evaluation_sessions[1];
+            let (cash_only_records, opposite_records) = if replace_strategy {
+                (
+                    &result.strategy_ledger.records,
+                    &result.benchmark_ledger.records,
+                )
+            } else {
+                (
+                    &result.benchmark_ledger.records,
+                    &result.strategy_ledger.records,
+                )
+            };
+            let zero_share_buy = cash_only_records
+                .iter()
+                .find(|record| {
+                    record.session_date == first_date && record.phase == LedgerPhase::Buy
+                })
+                .unwrap();
+            assert!(zero_share_buy.events.is_empty());
+            assert_eq!(
+                zero_share_buy.unfilled_reason,
+                UnfilledReason::ZeroShareQuantity
+            );
+            assert_eq!(zero_share_buy.cash, capital);
+
+            let quote_key = (first_date, TREND_INSTRUMENT.to_owned());
+            let opposite_opening_prices = collect_opening_prices(opposite_records).unwrap();
+            assert_eq!(opposite_opening_prices.get(&quote_key), Some(&first_open));
+            assert!(
+                !collect_opening_prices(cash_only_records)
+                    .unwrap()
+                    .contains_key(&quote_key)
+            );
+
+            assert_eq!(
+                result.signals[0]
+                    .targets
+                    .iter()
+                    .find(|target| target.instrument_id == TREND_INSTRUMENT)
+                    .unwrap()
+                    .weight_ppm,
+                1_000_000
+            );
+            assert_eq!(
+                result.signals[1]
+                    .targets
+                    .iter()
+                    .find(|target| target.instrument_id == TREND_INSTRUMENT)
+                    .unwrap()
+                    .weight_ppm,
+                0
+            );
+            if replace_strategy {
+                let second_sell = result
+                    .strategy_ledger
+                    .records
+                    .iter()
+                    .find(|record| {
+                        record.session_date == second_date && record.phase == LedgerPhase::Sell
+                    })
+                    .unwrap();
+                assert!(second_sell.events.is_empty());
+                assert_eq!(second_sell.unfilled_reason, UnfilledReason::NoOrderRequired);
+            }
+
+            for record in &result.strategy_ledger.records {
+                assert_eq!(record.validate(), Ok(()));
+            }
+            for record in &result.benchmark_ledger.records {
+                assert_eq!(record.validate(), Ok(()));
+            }
+            let profile = result.conventions.cost.profile;
+            let initial_capital = &result.conventions.portfolio.initial_capital;
+            assert_eq!(
+                validate_ledger(
+                    result.strategy_ledger.initial_cash.as_str(),
+                    &result.strategy_ledger.records,
+                    &result.strategy_ledger.metrics,
+                    &result.schedule,
+                    initial_capital,
+                    profile,
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate_ledger(
+                    result.benchmark_ledger.initial_cash.as_str(),
+                    &result.benchmark_ledger.records,
+                    &result.benchmark_ledger.metrics,
+                    &result.schedule,
+                    initial_capital,
+                    profile,
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate_ledger_transitions(
+                    &result.strategy_ledger.records,
+                    &result.schedule,
+                    profile,
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate_ledger_transitions(
+                    &result.benchmark_ledger.records,
+                    &result.schedule,
+                    profile,
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate_signal_targets_against_schedule(&result.signals, &result.schedule),
+                Ok(())
+            );
+            assert_eq!(
+                validate_strategy_target_path(
+                    &result.signals,
+                    &result.strategy_ledger,
+                    &result.schedule,
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate_benchmark_path(&result.benchmark_ledger, &result.schedule),
+                Ok(())
+            );
+            assert_eq!(
+                validate_shared_market_marks(
+                    &result.strategy_ledger.records,
+                    &result.benchmark_ledger.records,
+                    profile,
+                ),
+                Err(SimulationContractError::InvalidLedger)
+            );
+            assert_eq!(
+                result.validate(false),
+                Err(SimulationContractError::InvalidLedger)
+            );
+            assert_result_rejected_by_all_entry_points(&result);
+        }
+    }
+
+    #[test]
+    fn maximum_buy_q_plus_one_overflow_fails_closed() {
+        let unit_price = Price4::parse("0.0001").unwrap();
+        let zero_cost = CostProfile::ZeroCostReferenceV1;
+
+        let maximum_quantity = u64::MAX;
+        let maximum_cash_units = i128::from(maximum_quantity);
+        let maximum_event = TradeEvent::new(
+            TREND_INSTRUMENT,
+            TradeSide::Buy,
+            maximum_quantity,
+            unit_price.clone(),
+            Money4::zero(),
+            Money4::zero(),
+            maximum_quantity,
+        )
+        .unwrap();
+        assert_eq!(
+            maximum_event.notional().units().unwrap(),
+            maximum_cash_units
+        );
+        assert_eq!(maximum_event.cost().units().unwrap(), 0);
+        assert_eq!(
+            maximum_event
+                .notional()
+                .units()
+                .unwrap()
+                .checked_add(maximum_event.cost().units().unwrap())
+                .unwrap(),
+            maximum_cash_units
+        );
+        assert_eq!(
+            validate_maximum_affordable_buy(maximum_cash_units, &maximum_event, zero_cost),
+            Err(SimulationContractError::ArithmeticOverflow)
+        );
+
+        let control_quantity = u64::MAX - 1;
+        let control_cash_units = i128::from(control_quantity);
+        let control_event = TradeEvent::new(
+            TREND_INSTRUMENT,
+            TradeSide::Buy,
+            control_quantity,
+            unit_price,
+            Money4::zero(),
+            Money4::zero(),
+            control_quantity,
+        )
+        .unwrap();
+        assert_eq!(
+            control_event.notional().units().unwrap(),
+            control_cash_units
+        );
+        assert_eq!(control_event.cost().units().unwrap(), 0);
+        assert_eq!(
+            control_event
+                .notional()
+                .units()
+                .unwrap()
+                .checked_add(control_event.cost().units().unwrap())
+                .unwrap(),
+            control_cash_units
+        );
+        assert_eq!(control_quantity.checked_add(1), Some(u64::MAX));
+        assert_eq!(
+            validate_maximum_affordable_buy(control_cash_units, &control_event, zero_cost),
+            Ok(())
+        );
+
+        let overflowing_price_units = i128::MAX / 2 + 1;
+        let price_as_money = Money4::from_units(overflowing_price_units).unwrap();
+        let overflowing_price = Price4::parse(price_as_money.as_str()).unwrap();
+        let overflowing_cash = Money4::from_units(overflowing_price_units).unwrap();
+        let overflowing_event = TradeEvent::new(
+            TREND_INSTRUMENT,
+            TradeSide::Buy,
+            1,
+            overflowing_price,
+            Money4::zero(),
+            Money4::zero(),
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            overflowing_event.notional().units().unwrap(),
+            overflowing_price_units
+        );
+        assert_eq!(overflowing_event.cost().units().unwrap(), 0);
+        assert_eq!(overflowing_event.quantity().checked_add(1), Some(2));
+        assert_eq!(
+            overflowing_event
+                .notional()
+                .units()
+                .unwrap()
+                .checked_add(overflowing_event.cost().units().unwrap())
+                .unwrap(),
+            overflowing_cash.units().unwrap()
+        );
+        assert_eq!(
+            validate_maximum_affordable_buy(
+                overflowing_cash.units().unwrap(),
+                &overflowing_event,
+                zero_cost,
+            ),
+            Err(SimulationContractError::ArithmeticOverflow)
+        );
+    }
+
+    #[test]
     fn same_session_open_prices_must_match_marks_trades_and_both_ledgers() {
         const MAXIMUM_QUANTITY_AT_100_KRW: u64 = 99_900;
 
