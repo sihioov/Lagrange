@@ -9,10 +9,10 @@
 | 최종 갱신일 | 2026-10-25 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-05 DOING — 다섯 번째 후보 `7f80c4d`의 CI/required는 실패했고 R4 build·Research smoke는 성공했다. source19/proof6 strict-parser와 Web unit539·E2E165회가 통과했다. 전용 PostgreSQL은13성공·2실패·8미도달, workspace PostgreSQL23은21성공·2실패다. 빈 actor의 pair 조회에서22P02가 남았고 Clippy unused_mut를 한 줄 보정한다. [연결 계획](superpowers/plans/2026-10-24-r4-execution-connection.md). R4-04 계산 검증은 수용, 전체 사용자 격리는 BLOCKED다. R2/R3 유예·Daily OFF 유지. |
+| 현재 실행 우선순위 | R4-05 DOING — 여섯 번째 후보 `c75700e`의 CI/required는 실패했고 R4 build·Research smoke는 성공했다. source19/proof6 strict-parser, Web unit539·E2E165회가 통과했다. 전용 PostgreSQL은14성공·1실패·8미도달, workspace PostgreSQL23은22성공·1실패다. 남은 actor 보존 assertion의 0035 트리거 경로와 heartbeat 테스트의 완료 대기 결함을 소스에서 확인했다. R4 전용 트리거·actor/catalog 회귀와 Clippy·Heartbeat 테스트 보정의 독립 소스 리뷰를 수용했다. 새 후보 hosted 검증을 준비하며 실제 DB·격리 인수는 남아 있다. [연결 계획](superpowers/plans/2026-10-24-r4-execution-connection.md). R4-04 계산 검증은 수용, 전체 사용자 격리는 BLOCKED다. R2/R3 유예·Daily OFF 유지. |
 | 상세 실행 계획 | [R4 첫 구현 Paseo 계획](superpowers/plans/2026-10-24-r4-first-simulation-implementation.md) — main CI 정리, 결과 계약, 원장, 승인 입력 연결, 리뷰, 동일 후보 검증의 6개 WP. 기존 [R2 계획](superpowers/plans/2026-10-13-r2-daily-research-beta.md)·[U2 후속 계획](superpowers/plans/2026-10-14-r2-daily-input-implementation.md)·[실행 기록](reviews/2026-10-13-r2-execution.md)은 미완료 인수와 과거 근거를 보존한다. [R1 계획](superpowers/plans/2026-10-12-r1-ci-recovery.md)은 완료. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | 독립 WP6의 실제 종료와71 source/872 compile/506 protected 해시를 대조해 `READY_FOR_HOSTED — SOURCE REVIEW ONLY`를 수용했다. 새 후보를 커밋·푸시하고 기존 CI(선택 R4 build 포함)와 Research smoke를 각각 한 번 실행한다. 새 actor/예상 SQLSTATE 표식의 오프라인 관측기 검사는 통과했다. 실제 DB 동작·격리는 미검증이며 모든 필수 hosted gate 성공 전 archive 인증·승인 입력 G3는 차단한다. R4-06·운영 출시는 포함하지 않는다. |
+| 다음 착수 항목 | WP6의 actual idle/pending0와 READY_FOR_HOSTED 소스 리뷰,72 source/872 compile/621 protected 해시를 확인했다. 새 actor 표식 파서를 관측기에 연결하고 새 후보를 commit/push한 뒤 기존 CI·선택 build와 smoke를 각1회 실행한다. 과거 실패의 실제 호출·쓰기 지연 원인은 미확정으로 남긴다. 모든 필수 hosted gate 성공 전 archive 인증·승인 입력 G3는 차단하며 기존 후보는 재실행하지 않는다. R4-06·운영 출시는 포함하지 않는다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -661,6 +661,10 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   **2026-10-25 제한 보정 통합:** 두 담당자의 실제 idle/pending0와 원 보고서·해시를 회수했다. 0063 invoker helper·app 전용 실행 권한·down 순서와 같은 연결의 actor/helper/ACL/catalog 회귀를 통합했다. 코디네이터는 게시·재조정 진단 두 호출의 오류 타입 변환, catalog 행 타입 명칭, 예상 SQLSTATE 전용 표식을 보정했다. 기존15/69개 테스트 이름과 원 실패 증거를 보존했으며 포맷·공백·정적 이름 대조만 통과했다. 실제 컴파일/DB/hosted/격리 결과는 미검증이고 독립 소스 리뷰가 남는다.
   **2026-10-25 독립 소스 리뷰 수용:** WP6 actual idle/pending0, 보고서 `fe6ad26c1175f3a4071e6c784a89430d59228ef3ee127b1872770bdbb8e878e4`와 receipt `b2961072908aa221fb3cc00f034e75a3823b273db6476eaee82e5a9be46514c1`,71/872/506 해시 및 HEAD/index/11개 변경 경로를 대조했다. 필수 소스 지적 없음으로 새 후보 hosted 검증 준비만 수용한다. 이전 CI 실패·미확정 원인·실제 격리 차단은 유지한다. 도표 로컬 렌더와 docs-fast가 통과했고 예상 SQLSTATE 거절을 실제 실패와 구분하는 관측기 오프라인 검사를 추가했다.
 
+  **2026-10-25 round6 종결 회수:** 후보 `c75700e`의 CI40151933028/required 실패, build 및 smoke40151934711 성공을 실제 idle 상태에서 회수했다. 보고서 `8a3bb03f8f08817c832638e0e2deb713c060ee5cfb70a965e45297bb2f12b135`와 receipt `1d704a64ba5bbebdf6df383592427bc47c0ede2db5939151dd900bec0d84d4bf`,71/516/872/29 입력·907 committed blob·index 보존을 확인했다. source19/proof6와 Web539/165는 통과했지만 전용 PG14성공·1실패·8미도달, workspace PG22성공·1실패이며 별도 heartbeat assertion도 실패했다. 예상22P02 거절은 실패와 구분한다. 남은 pair actor assertion의 호출 지점·실제 값과 heartbeat 원인은 미확정이다. Clippy unused `zero_cost`는 반환값을 버리는 한 줄 보정이며 검증 assertion은 유지한다. artifact2개는 metadata만 회수했고 필수 실패로 인증/G3는 차단한다.
+
+  - 2026-10-25 6차 제한 보정 진행: WP1 actor 진단(eb06f58c), WP6 heartbeat 진단(661a9879)을 실제 idle·71/872/587 해시 대조 후 수용했다. 0035 callback의 R4 actor 변경을0063에서만 건너뛰고 역사적 정의·권한은 보존하는 수정과 회귀를 기존 WP3B/WP3C가 분리 수행한다. Heartbeat 기존 테스트는35ms 고정 대기를 주기적 쓰기 완료 관찰·정상 종료 회수 후 assertion으로 바꿨으며 포맷·diff 검사만 통과했다. 실제 과거 실패 호출·타이밍은 미확정, 새 compile/DB/hosted·archive·G3 인수는 미완료다.
+  **2026-10-25 6차 보정 통합:** WP3B·WP3C의 종료와 원 보고서를 회수했다. terminal callback의 R4 전용 분기 및 down 복원, 같은 backend actor·catalog 회귀, Heartbeat 완료 대기·정리를 통합했다. 코디네이터가 저장 테스트의 다섯 국소 오류를 수정했고 기존15 storage·69 migration 이름,61/867/599 보존 해시와 HEAD/index를 확인했다. 새 observer의 actor 표식은 오프라인 parser 검증만 완료했다. 독립 소스 리뷰와 새 후보 hosted·실제 격리 검증은 미완료다.
 - [ ] **R4-06 — 기준 전략 확대·출시.** 검증된 첫 전략에서 기존 5개 기준 전략으로 확대한다.
   전략별 결과 근거, 승인된 지표·비용·벤치마크 설명, 운영 설치·Owner 확인까지 기록한다.
 
@@ -2519,3 +2523,11 @@ Wave134 검증(2026-10-21 KST): 청약일 보정의37개 재구성 테스트(신
 - 2026-10-25 — R4-05 pair-read 제한 보정 두 작업을 회수했다. WP3B 보고서290867809c6fe8dbbda77731e452d2db6b9866324c84c459aa462f5d996c4388, WP3C 보고서65251e478b617939940da06092ee4576148c0e607af9d939217cb846f8cc256f와 보존67/868/485개 입력을 대조했다. 진단 호출 타입 변환 두 곳·예상 거절 로그 표식을 직접 보정하고15/69개 테스트 이름을 확인했다. 함수 권한 경계를 도표에 반영하며 독립 소스 리뷰 후 새 후보 검증이 필요하다. DB/runtime/격리 인수는 미완료다.
 
 - 2026-10-25 — R4-05 pair-read 보정의 독립 소스 리뷰를 수용했다. 보고서 fe6ad26c1175f3a4071e6c784a89430d59228ef3ee127b1872770bdbb8e878e4, receipt b2961072908aa221fb3cc00f034e75a3823b273db6476eaee82e5a9be46514c1 및71/872/506 입력을 확인했다. 새 후보의 CI·선택 build·smoke 후 실제 결과를 회수한다. 코드 검토 통과는 DB 동작·archive 인증·승인 입력 격리 인수가 아니다.
+
+- 2026-10-25 — R4-05 round6 증거를 실제 종료 뒤 회수했다. build/source19/proof6·Web539/165·smoke 성공과 필수 CI 실패를 분리 기록한다. 전용 PG에는 actor 보존 assertion 한 건과8개 미도달이 남고 workspace에는 별도 heartbeat 테스트 실패도 있다. 미사용 fixture 바인딩만 직접 보정하고 두 assertion 경로를 기존 담당자에게 읽기 전용 진단으로 나눈다. 기존6개 후보·모든 증거를 보존하며 archive 인증·실제 승인 입력 실행은 차단 상태다.
+
+| 2026-10-25 | R4-05 | 6차 진단 회수·제한 보정 진행 | WP1/WP6 소스 진단,71/872/587 보존 확인; R4 전용 legacy-trigger 보정·회귀 위임, Heartbeat 테스트 완료 대기·정리 수정과 포맷 검사 | 실제 DB/새 hosted/격리 인수 미완료; 기존 후보 재실행 없음 |
+
+- 2026-10-25 — R4-05 6차 보정의 두 구현 보고서를 회수하고 통합 검증했다. WP3C 원 소스를 보존한 채 callback 본문 공백, Option 비교 타입, 선택적 PID 조건, missing actor의 논리적 부재, ACL boolean 문자열을 수정했다. format/diff·기존 이름·실제 migration 본문 대조와 parser 정적 검증을 통과했다. Heartbeat 테스트와 현재 도표 근거를 포함해 독립 소스 리뷰를 준비하며 DB/runtime·새 hosted·archive 인증·실제 사용자 격리는 미검증이다.
+
+- 2026-10-25 — R4-05 6차 보정의 독립 소스 리뷰를 수용했다. 보고서 e7589007f47da92a2e8029ca405941f4f897010f275e4448a242fa096f0fe816, receipt b5f04210cec719e3d8af0831bc718e8a1bd3e33a0ab82763900836db0bb03117 및72/872/621 입력과 실제 종료를 확인했다. 이후 소스 수정 없이 수용 문서만 추가하고 새 후보의 기존 hosted 검증 각1회로 진행한다. DB/runtime·artifact 인증·실제 사용자 격리는 미검증이며 이전6개 후보는 재실행하지 않는다.

@@ -110,6 +110,45 @@ END
 $assert$;
 
 
+-- R4 jobs do not have recommendation runs to synchronize. Preserve the
+-- historical callback for every other job type without changing their actor
+-- binding or terminal behavior.
+CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+    IF NEW.job_type = 'owner_beta_price_only_simulation' THEN
+        RETURN NEW;
+    END IF;
+    PERFORM pg_catalog.set_config('app.actor_user_id', NEW.owner_user_id::text, true);
+    IF NEW.job_type = 'recommendation'
+       AND NEW.status = 'FAILED'
+       AND OLD.status IS DISTINCT FROM NEW.status
+       AND NEW.error_code = 'attempts_exhausted' THEN
+        UPDATE public.recommendation_runs
+           SET status = 'FAILED',
+               summary_json = '{"code":"RECOMMENDATION_ATTEMPTS_EXHAUSTED","message":"recommendation worker attempts were exhausted"}'::jsonb
+         WHERE job_id = NEW.id
+           AND owner_user_id = NEW.owner_user_id
+           AND status = 'PENDING';
+    ELSIF NEW.job_type = 'recommendation'
+       AND NEW.status = 'CANCELED'
+       AND OLD.status IS DISTINCT FROM NEW.status THEN
+        UPDATE public.recommendation_runs
+           SET status = 'FAILED',
+               summary_json = '{"code":"RECOMMENDATION_CANCELED","message":"recommendation was canceled"}'::jsonb
+         WHERE job_id = NEW.id
+           AND owner_user_id = NEW.owner_user_id
+           AND status = 'PENDING';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
 CREATE TABLE public.owner_beta_simulation_runs (
     id uuid PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
     owner_user_id uuid NOT NULL

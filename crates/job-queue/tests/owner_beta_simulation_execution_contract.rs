@@ -356,7 +356,7 @@ fn pair_rejects_mixed_engine_schedule_signals_and_strategy() {
     let engine = synthetic_engine('a');
     let other_engine = synthetic_engine('b');
     let strategy_hash = input.strategy().config_sha256().as_str();
-    let (illustrative, zero_cost) = synthetic_pair_bytes(&input, &engine, strategy_hash, 'a');
+    let (illustrative, _) = synthetic_pair_bytes(&input, &engine, strategy_hash, 'a');
 
     let other_zero = synthetic_result_bytes(
         input.schedule(),

@@ -110,24 +110,37 @@ async fn assert_raw_actor(
     )
     .fetch_one(pool)
     .await?;
-    assert_eq!(
-        backend_pid, expected_backend_pid,
+    assert!(
+        backend_pid == expected_backend_pid,
         "{context}: same connection"
     );
-    assert_eq!(observed.as_deref(), expected, "{context}");
+    assert!(observed.as_deref() == expected, "{context}");
     Ok(())
 }
 
 async fn assert_raw_actor_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    expected: &str,
-    context: &str,
+    expected: Option<&str>,
+    expected_backend_pid: Option<i32>,
+    phase: Option<&'static str>,
+    context: &'static str,
 ) -> TestResult {
-    let observed: String =
-        sqlx::query_scalar("SELECT pg_catalog.current_setting('app.actor_user_id', true)")
-            .fetch_one(&mut **transaction)
-            .await?;
-    assert_eq!(observed, expected, "{context}");
+    let (backend_pid, observed): (i32, Option<String>) = sqlx::query_as(
+        "SELECT pg_catalog.pg_backend_pid(),
+                pg_catalog.current_setting('app.actor_user_id', true)",
+    )
+    .fetch_one(&mut **transaction)
+    .await?;
+    let actor_matches = observed.as_deref() == expected;
+    let backend_matches = expected_backend_pid.is_none_or(|expected| backend_pid == expected);
+    let matches = actor_matches && backend_matches;
+    if let Some(phase) = phase {
+        eprintln!(
+            "R4_ACTOR_ASSERT:{phase}:{}",
+            if matches { "match" } else { "mismatch" }
+        );
+    }
+    assert!(matches, "{context}");
     Ok(())
 }
 
@@ -142,11 +155,90 @@ async fn assert_actor_logically_absent(
     )
     .fetch_one(pool)
     .await?;
-    assert_eq!(
-        backend_pid, expected_backend_pid,
+    assert!(
+        backend_pid == expected_backend_pid,
         "{context}: same connection"
     );
     assert!(absent, "{context}");
+    Ok(())
+}
+
+async fn assert_terminal_status_preserves_actor(
+    worker: &PgPool,
+    expected_backend_pid: i32,
+    job_id: Uuid,
+    expected_initial_actor: Option<&str>,
+    context: &'static str,
+) -> TestResult {
+    let mut transaction = sql_phase("terminal_actor_transaction_begin", worker.begin().await)?;
+    let before: (i32, Option<String>) = sql_phase(
+        "terminal_actor_before_status_update",
+        sqlx::query_as(
+            "SELECT pg_catalog.pg_backend_pid(),
+                    pg_catalog.current_setting('app.actor_user_id', true)",
+        )
+        .fetch_one(&mut *transaction)
+        .await,
+    )?;
+    assert!(
+        before.0 == expected_backend_pid,
+        "{context}: same worker backend"
+    );
+    assert!(
+        before.1.as_deref() == expected_initial_actor,
+        "{context}: initial raw actor value"
+    );
+
+    let update = sql_phase(
+        "terminal_actor_noop_status_update",
+        sqlx::query("UPDATE public.jobs SET status = status WHERE id = $1")
+            .bind(job_id)
+            .execute(&mut *transaction)
+            .await,
+    )?;
+    let after: (i32, Option<String>) = sql_phase(
+        "terminal_actor_after_status_update",
+        sqlx::query_as(
+            "SELECT pg_catalog.pg_backend_pid(),
+                    pg_catalog.current_setting('app.actor_user_id', true)",
+        )
+        .fetch_one(&mut *transaction)
+        .await,
+    )?;
+    // The existing BEFORE lineage guard restores a previously missing custom
+    // GUC as empty. Preserve logical absence only in that case; an explicit
+    // empty or valid setting still requires exact raw equality.
+    let actor_preserved = match before.1.as_deref() {
+        None => after.1.as_deref().is_none_or(str::is_empty),
+        Some(value) => after.1.as_deref() == Some(value),
+    };
+    let preserved = after.0 == before.0 && after.0 == expected_backend_pid && actor_preserved;
+    assert!(
+        preserved,
+        "{context}: terminal R4 update preserves actor state"
+    );
+    assert!(
+        update.rows_affected() == 1,
+        "{context}: exactly one job row matched"
+    );
+    sql_phase(
+        "terminal_actor_update_rollback",
+        transaction.rollback().await,
+    )?;
+    let (backend_pid, absent): (i32, bool) = sql_phase(
+        "terminal_actor_after_rollback",
+        sqlx::query_as(
+            "SELECT pg_catalog.pg_backend_pid(),
+                    NULLIF(pg_catalog.current_setting('app.actor_user_id', true), '') IS NULL",
+        )
+        .fetch_one(worker)
+        .await,
+    )?;
+    assert!(
+        backend_pid == expected_backend_pid,
+        "{context}: same worker backend"
+    );
+    assert!(absent, "{context}: rollback preserves logical absence");
     Ok(())
 }
 
@@ -331,7 +423,7 @@ async fn assert_isolation_actor_state(
         .fetch_one(connection)
         .await,
     )?;
-    assert_eq!(observed_pid, backend_pid, "same isolation connection");
+    assert!(observed_pid == backend_pid, "same isolation connection");
     let missing = raw_actor.is_none();
     let empty = raw_actor.as_deref() == Some("");
     let valid = !missing && !empty && expected_owner.is_some() && matches_owner;
@@ -677,7 +769,7 @@ async fn check_isolation_actor_read_states(
         .fetch_one(&mut *connection)
         .await,
     )?;
-    assert_eq!(final_pid, backend_pid, "same backend after actor probes");
+    assert!(final_pid == backend_pid, "same backend after actor probes");
     assert!(absent, "transaction-local actor settings are restored");
     drop(connection);
     app.close().await;
@@ -702,6 +794,178 @@ struct CandidateSettlementSnapshot {
     acl: String,
     security_definer: bool,
     language: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct TerminalTriggerSnapshot {
+    count: i64,
+    name: Option<String>,
+    table: Option<String>,
+    function_name: Option<String>,
+    definition_sha256: Option<String>,
+    enabled: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct TerminalCallbackAuthoritySnapshot {
+    owner: String,
+    security_definer: bool,
+    language: String,
+    configuration: String,
+    normalized_acl: String,
+    effective_acl: String,
+    trigger: TerminalTriggerSnapshot,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct TerminalCallbackSnapshot {
+    definition_sha256: String,
+    body_sha256: String,
+    authority: TerminalCallbackAuthoritySnapshot,
+}
+
+#[derive(sqlx::FromRow)]
+struct TerminalCallbackSnapshotRow {
+    function_definition: String,
+    function_body: String,
+    owner_name: String,
+    security_definer: bool,
+    language_name: String,
+    configuration: String,
+    normalized_acl: String,
+    effective_acl: String,
+    trigger_count: i64,
+    trigger_name: Option<String>,
+    trigger_table: Option<String>,
+    trigger_function_name: Option<String>,
+    trigger_definition: Option<String>,
+    trigger_enabled: Option<String>,
+}
+
+async fn terminal_callback_snapshot(pool: &PgPool) -> TestResult<TerminalCallbackSnapshot> {
+    let row: TerminalCallbackSnapshotRow = sql_phase(
+        "terminal_callback_catalog_snapshot",
+        sqlx::query_as(
+            "SELECT pg_catalog.pg_get_functiondef(p.oid) AS function_definition,
+                p.prosrc AS function_body,
+                owner.rolname::text AS owner_name,
+                p.prosecdef AS security_definer,
+                lang.lanname::text AS language_name,
+                COALESCE(p.proconfig::text, '<default>') AS configuration,
+                COALESCE((
+                    SELECT pg_catalog.string_agg(
+                        pg_catalog.format('%s:%s:%s:%s',
+                            COALESCE(grantee.rolname::text, 'PUBLIC'),
+                            entry.privilege_type, entry.is_grantable::text,
+                            COALESCE(grantor.rolname::text, '<unknown>')),
+                        ',' ORDER BY COALESCE(grantee.rolname::text, 'PUBLIC'),
+                                   entry.privilege_type, entry.is_grantable,
+                                   COALESCE(grantor.rolname::text, '<unknown>'))
+                      FROM pg_catalog.aclexplode(
+                               COALESCE(p.proacl,
+                                        pg_catalog.acldefault('f', p.proowner))) entry
+                      LEFT JOIN pg_catalog.pg_roles grantee
+                        ON grantee.oid = entry.grantee
+                      LEFT JOIN pg_catalog.pg_roles grantor
+                        ON grantor.oid = entry.grantor), '') AS normalized_acl,
+                pg_catalog.concat(
+                    'PUBLIC=', (EXISTS (
+                        SELECT 1
+                          FROM pg_catalog.aclexplode(
+                                   COALESCE(p.proacl,
+                                            pg_catalog.acldefault('f', p.proowner))) entry
+                         WHERE entry.grantee = 0
+                           AND entry.privilege_type = 'EXECUTE'))::text,
+                    ';app=', pg_catalog.has_function_privilege('app', p.oid, 'EXECUTE')::text,
+                    ';worker=', pg_catalog.has_function_privilege('worker', p.oid, 'EXECUTE')::text,
+                    ';admin=', pg_catalog.has_function_privilege('admin', p.oid, 'EXECUTE')::text,
+                    ';audit_writer=', pg_catalog.has_function_privilege('audit_writer', p.oid, 'EXECUTE')::text,
+                    ';research_writer=', pg_catalog.has_function_privilege('research_writer', p.oid, 'EXECUTE')::text,
+                    ';migration_owner=', pg_catalog.has_function_privilege('migration_owner', p.oid, 'EXECUTE')::text) AS effective_acl,
+                jobs_trigger.trigger_count AS trigger_count,
+                jobs_trigger.trigger_name AS trigger_name,
+                jobs_trigger.trigger_table AS trigger_table,
+                jobs_trigger.trigger_function AS trigger_function_name,
+                jobs_trigger.trigger_definition AS trigger_definition,
+                jobs_trigger.trigger_enabled AS trigger_enabled
+           FROM pg_catalog.pg_proc p
+           JOIN pg_catalog.pg_roles owner ON owner.oid = p.proowner
+           JOIN pg_catalog.pg_language lang ON lang.oid = p.prolang
+          CROSS JOIN LATERAL (
+                SELECT count(*)::bigint AS trigger_count,
+                       pg_catalog.min(trg.tgname::text) AS trigger_name,
+                       pg_catalog.min(job_ns.nspname::text || '.' || job_relation.relname::text)
+                           AS trigger_table,
+                       pg_catalog.min(trg_proc.proname::text) AS trigger_function,
+                       pg_catalog.min(pg_catalog.pg_get_triggerdef(trg.oid))
+                           AS trigger_definition,
+                       pg_catalog.min(trg.tgenabled::text) AS trigger_enabled
+                  FROM pg_catalog.pg_trigger trg
+                  JOIN pg_catalog.pg_class job_relation ON job_relation.oid = trg.tgrelid
+                  JOIN pg_catalog.pg_namespace job_ns ON job_ns.oid = job_relation.relnamespace
+                  JOIN pg_catalog.pg_proc trg_proc ON trg_proc.oid = trg.tgfoid
+                 WHERE trg.tgfoid = p.oid
+                   AND trg.tgrelid = 'public.jobs'::pg_catalog.regclass
+                   AND NOT trg.tgisinternal) jobs_trigger
+          WHERE p.oid = pg_catalog.to_regprocedure(
+              'public.sync_recommendation_run_from_terminal_job()')",
+        )
+        .fetch_one(pool)
+        .await,
+    )?;
+    Ok(TerminalCallbackSnapshot {
+        definition_sha256: sha256_hex(row.function_definition.as_bytes()),
+        body_sha256: sha256_hex(row.function_body.as_bytes()),
+        authority: TerminalCallbackAuthoritySnapshot {
+            owner: row.owner_name,
+            security_definer: row.security_definer,
+            language: row.language_name,
+            configuration: row.configuration,
+            normalized_acl: row.normalized_acl,
+            effective_acl: row.effective_acl,
+            trigger: TerminalTriggerSnapshot {
+                count: row.trigger_count,
+                name: row.trigger_name,
+                table: row.trigger_table,
+                function_name: row.trigger_function_name,
+                definition_sha256: row
+                    .trigger_definition
+                    .as_deref()
+                    .map(|definition| sha256_hex(definition.as_bytes())),
+                enabled: row.trigger_enabled,
+            },
+        },
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn legacy_terminal_callback_body() -> &'static str {
+    let source = include_str!("../../../migrations/0035_recommendation_entitlement_lock.up.sql");
+    let function_start = source
+        .find("CREATE FUNCTION public.sync_recommendation_run_from_terminal_job()")
+        .expect("0035 terminal callback exists");
+    let function_source = &source[function_start..];
+    let body_start = function_source
+        .find("AS $$")
+        .expect("0035 terminal callback body starts")
+        + "AS $$".len();
+    let body_end = function_source[body_start..]
+        .find("$$;")
+        .expect("0035 terminal callback body ends")
+        + body_start;
+    &function_source[body_start..body_end]
+}
+
+fn corrected_terminal_callback_body() -> String {
+    let (prefix, suffix) = legacy_terminal_callback_body()
+        .split_once("BEGIN\n")
+        .expect("0035 terminal callback has a function BEGIN");
+    format!(
+        "{prefix}BEGIN\n    IF NEW.job_type = 'owner_beta_price_only_simulation' THEN\n        RETURN NEW;\n    END IF;\n{suffix}"
+    )
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -2044,7 +2308,9 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "uncommitted_worker_actor",
         assert_raw_actor_in_transaction(
             &mut uncommitted,
-            &actor_a,
+            Some(&actor_a),
+            Some(worker_backend_pid),
+            Some("uncommitted_worker_actor"),
             "R4 pair validation restores actor A in its writing transaction",
         )
         .await,
@@ -2230,6 +2496,17 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
     actor_tx.commit().await?;
 
     let mut deferred = worker.begin().await?;
+    fixture_phase(
+        "actor_before_jobs_status_update",
+        assert_raw_actor_in_transaction(
+            &mut deferred,
+            Some(&actor_a),
+            Some(worker_backend_pid),
+            None,
+            "worker actor A and backend are unchanged before the R4 status update",
+        )
+        .await,
+    )?;
     let noop_job_update = sql_phase(
         "deferred_jobs_status_update",
         sqlx::query("UPDATE public.jobs SET status = status WHERE id = $1")
@@ -2237,16 +2514,18 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
             .execute(&mut *deferred)
             .await,
     )?;
-    assert_eq!(noop_job_update.rows_affected(), 1);
     fixture_phase(
         "actor_after_jobs_status_trigger",
         assert_raw_actor_in_transaction(
             &mut deferred,
-            &actor_a,
+            Some(&actor_a),
+            Some(worker_backend_pid),
+            Some("actor_after_jobs_status_trigger"),
             "the jobs status trigger restores actor A before deferred checks",
         )
         .await,
     )?;
+    assert_eq!(noop_job_update.rows_affected(), 1);
     sql_phase(
         "forced_deferred_constraints",
         sqlx::query("SET CONSTRAINTS ALL IMMEDIATE")
@@ -2257,7 +2536,9 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "actor_after_forced_deferred_checks",
         assert_raw_actor_in_transaction(
             &mut deferred,
-            &actor_a,
+            Some(&actor_a),
+            Some(worker_backend_pid),
+            Some("actor_after_forced_deferred_checks"),
             "forced candidate and R4 deferred callbacks preserve actor A",
         )
         .await,
@@ -2274,6 +2555,40 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         .await,
     )?;
 
+    let empty_actor_worker = role_pool_with_actor_value(db, "worker", Some("")).await;
+    let empty_actor_backend_pid: i32 = sql_phase(
+        "empty_actor_worker_backend",
+        sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&empty_actor_worker)
+            .await,
+    )?;
+    assert_terminal_status_preserves_actor(
+        &empty_actor_worker,
+        empty_actor_backend_pid,
+        fixture.job_id,
+        Some(""),
+        "explicitly empty worker actor",
+    )
+    .await?;
+    empty_actor_worker.close().await;
+
+    let missing_actor_worker = role_pool(db, "worker", None).await;
+    let missing_actor_backend_pid: i32 = sql_phase(
+        "missing_actor_worker_backend",
+        sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&missing_actor_worker)
+            .await,
+    )?;
+    assert_terminal_status_preserves_actor(
+        &missing_actor_worker,
+        missing_actor_backend_pid,
+        fixture.job_id,
+        None,
+        "logically missing worker actor",
+    )
+    .await?;
+    missing_actor_worker.close().await;
+
     let savepoint_fixture = seed_fixture(db, owner_b, &app, "actor-savepoint").await?;
     let savepoint_claim = queue
         .claim_next_for(
@@ -2287,7 +2602,9 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "actor_before_late_attempt_savepoint",
         assert_raw_actor_in_transaction(
             &mut scoped_write,
-            &actor_a,
+            Some(&actor_a),
+            Some(worker_backend_pid),
+            Some("actor_before_late_attempt_savepoint"),
             "actor A is set before the savepoint",
         )
         .await,
@@ -2325,7 +2642,9 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "actor_after_savepoint_attempt_update",
         assert_raw_actor_in_transaction(
             &mut scoped_write,
-            &actor_a,
+            Some(&actor_a),
+            Some(worker_backend_pid),
+            Some("actor_after_savepoint_attempt_update"),
             "successful attempt guard write restores actor A before savepoint rollback",
         )
         .await,
@@ -2347,7 +2666,9 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         "actor_after_late_attempt_rollback",
         assert_raw_actor_in_transaction(
             &mut scoped_write,
-            &actor_a,
+            Some(&actor_a),
+            Some(worker_backend_pid),
+            Some("actor_after_late_attempt_rollback"),
             "savepoint rollback preserves the original raw actor A",
         )
         .await,
@@ -3133,6 +3454,44 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     let before_pair_helper = pair_read_allowed_snapshot(&migration_owner)
         .await?
         .expect("pair read helper exists before down");
+    let before_terminal_callback = terminal_callback_snapshot(&migration_owner).await?;
+    assert!(
+        before_terminal_callback.body_sha256
+            == sha256_hex(corrected_terminal_callback_body().as_bytes()),
+        "0063 up preserves the historical terminal body plus only its R4 guard"
+    );
+    assert!(
+        before_terminal_callback.authority.owner == "migration_owner"
+            && before_terminal_callback.authority.normalized_acl
+                == "migration_owner:EXECUTE:false:migration_owner"
+            && before_terminal_callback.authority.security_definer
+            && before_terminal_callback.authority.language == "plpgsql"
+            && before_terminal_callback
+                .authority
+                .configuration
+                .contains("pg_catalog")
+            && before_terminal_callback
+                .authority
+                .configuration
+                .contains("pg_temp"),
+        "terminal callback retains its historical owner, definer, language, and search path"
+    );
+    assert!(
+        before_terminal_callback.authority.effective_acl
+            == "PUBLIC=false;app=false;worker=false;admin=false;audit_writer=false;research_writer=false;migration_owner=true",
+        "terminal callback effective execution rights remain owner-only"
+    );
+    let trigger = &before_terminal_callback.authority.trigger;
+    assert!(
+        trigger.count == 1
+            && trigger.name.as_deref() == Some("jobs_sync_recommendation_terminal_run")
+            && trigger.table.as_deref() == Some("public.jobs")
+            && trigger.function_name.as_deref()
+                == Some("sync_recommendation_run_from_terminal_job")
+            && trigger.definition_sha256.is_some()
+            && trigger.enabled.as_deref() == Some("O"),
+        "the original enabled jobs trigger remains attached to the terminal callback"
+    );
     assert!(
         before_pair_helper.policy_dependency && pair_read_policy_exists(&migration_owner).await?,
         "pair app policy depends on the helper before down"
@@ -3147,6 +3506,7 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     let down_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
     let down_callback = candidate_settlement_snapshot(&migration_owner).await?;
     let down_pair_helper = pair_read_allowed_snapshot(&migration_owner).await?;
+    let down_terminal_callback = terminal_callback_snapshot(&migration_owner).await?;
     assert!(
         down_pair_helper.is_none(),
         "empty down removes the pair helper"
@@ -3154,6 +3514,19 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     assert!(
         !pair_read_policy_exists(&migration_owner).await?,
         "empty down removes the dependent pair app policy"
+    );
+    assert!(
+        down_terminal_callback.body_sha256
+            == sha256_hex(legacy_terminal_callback_body().as_bytes()),
+        "empty down restores the historical terminal body"
+    );
+    assert!(
+        before_terminal_callback.authority == down_terminal_callback.authority,
+        "empty down preserves terminal callback owner, ACL, settings, and trigger attachment"
+    );
+    assert!(
+        before_terminal_callback.definition_sha256 != down_terminal_callback.definition_sha256,
+        "empty down changes only the terminal function definition"
     );
     assert_eq!(down_policy.roles, vec!["migration_owner".to_owned()]);
     assert_eq!(down_policy.command, "ALL");
@@ -3212,6 +3585,7 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     let after_pair_helper = pair_read_allowed_snapshot(&migration_owner)
         .await?
         .expect("up restores the pair read helper");
+    let after_terminal_callback = terminal_callback_snapshot(&migration_owner).await?;
     assert!(
         pair_read_policy_exists(&migration_owner).await?,
         "up restores the dependent pair app policy"
@@ -3227,6 +3601,10 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     assert!(
         before_pair_helper == after_pair_helper,
         "empty down/up restores the helper definition, authority, ACL, and dependency"
+    );
+    assert!(
+        before_terminal_callback == after_terminal_callback,
+        "empty down/up restores the corrected terminal body and complete catalog snapshot"
     );
 
     let actor = new_owner(db, "r4-down-actor").await?;
@@ -3246,6 +3624,27 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
         "a hidden owner's history prevents rollback"
     );
     populated_down.rollback().await?;
+    let refusal_policy = jobs_owner_policy_snapshot(&foreign_scoped_migration_owner).await?;
+    let refusal_callback = candidate_settlement_snapshot(&foreign_scoped_migration_owner).await?;
+    let refusal_pair_helper = pair_read_allowed_snapshot(&foreign_scoped_migration_owner).await?;
+    let refusal_terminal_callback =
+        terminal_callback_snapshot(&foreign_scoped_migration_owner).await?;
+    assert!(
+        before_policy == refusal_policy,
+        "refused down preserves the jobs policy"
+    );
+    assert!(
+        before_callback == refusal_callback,
+        "refused down preserves the candidate callback snapshot"
+    );
+    assert!(
+        Some(&before_pair_helper) == refusal_pair_helper.as_ref(),
+        "refused down preserves the pair helper snapshot"
+    );
+    assert!(
+        before_terminal_callback == refusal_terminal_callback,
+        "refused down preserves the terminal function and trigger snapshots"
+    );
     let still_forced: bool = sqlx::query_scalar(
         "SELECT c.relforcerowsecurity FROM pg_catalog.pg_class c
           WHERE c.oid = 'public.owner_beta_simulation_runs'::regclass",

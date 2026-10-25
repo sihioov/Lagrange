@@ -256,13 +256,13 @@ status_snapshot ..> api_server : optional read-only DIRECTORY mount;\nfixed prod
 
 ' evidence: crates/api-server/Cargo.toml:40; crates/api-server/src/repos/owner_beta_simulations.rs:18-21,216-220,923-931
 api_server --> simulation_execution : sealed input + stored whole-pair checker
-' evidence: crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906; migrations/0063_owner_beta_price_only_simulations.up.sql:294-312,326-379
+' evidence: crates/api-server/src/http/state.rs:456-459; crates/api-server/src/repos/owner_beta_simulations.rs:179-199,255-258,884-906; migrations/0063_owner_beta_price_only_simulations.up.sql:333-351,365-418
 api_server --> simulation_storage : app actor RLS; enqueue + snapshot reads;\napp-only invoker pair predicate
 ' evidence: crates/job-queue/src/bin/owner-beta-simulation-runner.rs:10-12,152-154
 job_queue --> simulation_execution : dedicated runner binary entry point
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/child.rs:588-593
 simulation_execution --> simulation_engine : same-executable child invokes approved-input engine
-' evidence: crates/job-queue/src/owner_beta/simulation_execution/publish.rs:456-546; crates/job-queue/src/owner_beta/simulation_execution/recovery.rs:42; migrations/0063_owner_beta_price_only_simulations.up.sql:1444-1459
+' evidence: crates/job-queue/src/owner_beta/simulation_execution/publish.rs:456-546; crates/job-queue/src/owner_beta/simulation_execution/recovery.rs:42; migrations/0063_owner_beta_price_only_simulations.up.sql:1483-1498
 simulation_execution --> simulation_storage : worker claim fences; job/run/pair one commit
 
 ' evidence: crates/job-queue/src/bin/owner-beta-runner.rs:351,375,467-474; crates/job-queue/src/bin/owner-beta-runner/daily.rs:227-229; crates/job-queue/src/owner_beta/runner.rs:3-9

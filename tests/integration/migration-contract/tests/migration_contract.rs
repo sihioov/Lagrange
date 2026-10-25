@@ -662,6 +662,96 @@ fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
         "0063 rollback must not use CASCADE"
     );
 
+    let legacy_terminal = function_definition(
+        RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL,
+        "CREATE FUNCTION public.sync_recommendation_run_from_terminal_job()",
+        "$$",
+    );
+    assert_eq!(
+        RECOMMENDATION_ENTITLEMENT_LOCK_UP_SQL
+            .matches("CREATE FUNCTION public.sync_recommendation_run_from_terminal_job()")
+            .count(),
+        1,
+        "0035 retains its single historical terminal callback definition"
+    );
+    assert!(
+        !legacy_terminal.contains("owner_beta_price_only_simulation"),
+        "0035 remains free of the later R4-specific guard"
+    );
+
+    let terminal_guard = concat!(
+        "    IF NEW.job_type = 'owner_beta_price_only_simulation' THEN\n",
+        "        RETURN NEW;\n",
+        "    END IF;\n",
+    );
+    let corrected_terminal = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()",
+        "$$",
+    );
+    assert_eq!(corrected_terminal.matches(terminal_guard).count(), 1);
+    let restored_up = corrected_terminal.replacen(terminal_guard, "", 1).replacen(
+        "CREATE OR REPLACE FUNCTION",
+        "CREATE FUNCTION",
+        1,
+    );
+    assert_eq!(
+        restored_up, legacy_terminal,
+        "0063 up changes only the early R4 guard in the historical callback"
+    );
+    let guard_at = corrected_terminal
+        .find(terminal_guard)
+        .expect("0063 R4 terminal guard");
+    let actor_set_at = corrected_terminal
+        .find("PERFORM pg_catalog.set_config('app.actor_user_id'")
+        .expect("historical terminal actor setter");
+    assert!(guard_at < actor_set_at);
+
+    let restored_terminal = function_definition(
+        OWNER_BETA_SIMULATION_DOWN_SQL,
+        "CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()",
+        "$$",
+    )
+    .replacen("CREATE OR REPLACE FUNCTION", "CREATE FUNCTION", 1);
+    assert_eq!(
+        restored_terminal, legacy_terminal,
+        "0063 down restores the exact historical terminal callback"
+    );
+    let history_refusal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("$owner_beta_simulation_empty_guard$;")
+        .expect("0063 populated-history rollback refusal");
+    let terminal_restore = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("CREATE OR REPLACE FUNCTION public.sync_recommendation_run_from_terminal_job()")
+        .expect("0063 down terminal callback restoration");
+    let first_r4_removal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP TRIGGER owner_beta_simulation_attempts_deferred_guard")
+        .expect("0063 down first R4 object removal");
+    assert!(history_refusal < terminal_restore && terminal_restore < first_r4_removal);
+
+    for migration in [OWNER_BETA_SIMULATION_UP_SQL, OWNER_BETA_SIMULATION_DOWN_SQL] {
+        let lowered = migration.to_ascii_lowercase();
+        assert!(
+            !lowered.contains("alter function public.sync_recommendation_run_from_terminal_job()")
+                && !lowered.contains(
+                    "grant execute on function public.sync_recommendation_run_from_terminal_job()"
+                )
+                && !lowered.contains(
+                    "grant all on function public.sync_recommendation_run_from_terminal_job()"
+                )
+                && !lowered.contains(
+                    "revoke execute on function public.sync_recommendation_run_from_terminal_job()"
+                )
+                && !lowered.contains(
+                    "revoke all on function public.sync_recommendation_run_from_terminal_job()"
+                ),
+            "0063 preserves terminal callback owner and ACL through CREATE OR REPLACE"
+        );
+        assert!(
+            !lowered.contains("jobs_sync_recommendation_terminal_run"),
+            "0063 preserves the historical jobs trigger attachment"
+        );
+    }
+
     let legacy = function_definition(
         CANDIDATE_PIPELINE_0044_UP_SQL,
         "CREATE FUNCTION public.assert_candidate_publication_settlement()",
