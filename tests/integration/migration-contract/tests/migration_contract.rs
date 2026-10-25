@@ -471,6 +471,117 @@ fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
         );
     }
     let executable_up = OWNER_BETA_SIMULATION_UP_SQL.to_ascii_lowercase();
+    let pair_read = function_definition(
+        OWNER_BETA_SIMULATION_UP_SQL,
+        "CREATE FUNCTION public.owner_beta_simulation_pair_read_allowed(",
+        "$pair_read$",
+    );
+    for attribute in [
+        "RETURNS boolean",
+        "LANGUAGE plpgsql",
+        "STABLE",
+        "SECURITY INVOKER",
+        "CALLED ON NULL INPUT",
+        "PARALLEL UNSAFE",
+        "SET search_path = pg_catalog",
+    ] {
+        assert!(
+            pair_read.contains(attribute),
+            "pair-read helper lacks {attribute}"
+        );
+    }
+    for forbidden in [
+        "STRICT",
+        "LEAKPROOF",
+        "SECURITY DEFINER",
+        "EXCEPTION",
+        "EXECUTE ",
+        "set_config(",
+        "SET ROLE",
+        "SET SESSION AUTHORIZATION",
+        "row_security",
+        "FOR UPDATE",
+        "FOR SHARE",
+        "LOCK TABLE",
+        "owner_beta_simulation_result_pairs",
+    ] {
+        assert!(
+            !pair_read.contains(forbidden),
+            "pair-read helper must not contain {forbidden}"
+        );
+    }
+    let raw_actor = pair_read
+        .find("v_actor_raw := pg_catalog.current_setting('app.actor_user_id', true);")
+        .expect("pair-read helper reads the raw actor");
+    let missing_guard = pair_read
+        .find("IF NULLIF(v_actor_raw, '') IS NULL THEN")
+        .expect("pair-read helper guards missing and empty actor");
+    let missing_return = pair_read[missing_guard..]
+        .find("RETURN false;")
+        .map(|offset| missing_guard + offset)
+        .expect("missing and empty actor return false");
+    let actor_cast = pair_read
+        .find("v_actor_id := v_actor_raw::uuid;")
+        .expect("nonempty actor is cast without swallowing errors");
+    let owner_guard = pair_read
+        .find("IF p_run_id IS NULL OR p_owner_id IS DISTINCT FROM v_actor_id THEN")
+        .expect("null run and foreign owner return before lookup");
+    let owner_return = pair_read[owner_guard..]
+        .find("RETURN false;")
+        .map(|offset| owner_guard + offset)
+        .expect("null run or foreign owner return false");
+    let pair_lookup = pair_read
+        .find("RETURN EXISTS (")
+        .expect("pair-read helper has a separate publication lookup");
+    assert!(raw_actor < missing_guard);
+    assert!(missing_guard < missing_return && missing_return < actor_cast);
+    assert!(actor_cast < owner_guard && owner_guard < owner_return && owner_return < pair_lookup);
+    for predicate in [
+        "FROM public.owner_beta_simulation_runs AS run",
+        "JOIN public.jobs AS job ON job.id = run.job_id",
+        "WHERE run.id = p_run_id",
+        "AND run.owner_user_id = p_owner_id",
+        "AND run.status = 'SUCCEEDED'",
+        "AND job.owner_user_id = p_owner_id",
+        "AND job.job_type = 'owner_beta_price_only_simulation'",
+        "AND job.status = 'SUCCEEDED'",
+    ] {
+        assert!(
+            pair_read.contains(predicate),
+            "pair-read helper lacks {predicate}"
+        );
+    }
+
+    let normalized_up = normalize_sql(OWNER_BETA_SIMULATION_UP_SQL);
+    for ddl in [
+        "ALTER FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) OWNER TO migration_owner;",
+        "REVOKE ALL ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) FROM PUBLIC, worker, admin, audit_writer, research_writer;",
+        "GRANT EXECUTE ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) TO app;",
+    ] {
+        assert!(
+            normalized_up.contains(ddl),
+            "pair-read function ACL lacks {ddl}"
+        );
+    }
+    assert_eq!(
+        OWNER_BETA_SIMULATION_UP_SQL
+            .matches("GRANT EXECUTE ON FUNCTION public.owner_beta_simulation_pair_read_allowed")
+            .count(),
+        1,
+        "only app receives explicit EXECUTE on the pair-read helper"
+    );
+    let helper_ddl = normalized_up
+        .find("CREATE FUNCTION public.owner_beta_simulation_pair_read_allowed(")
+        .expect("pair-read helper creation");
+    let owner_ddl = normalized_up
+        .find("ALTER FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) OWNER TO migration_owner;")
+        .expect("pair-read helper owner is set");
+    let revoke_ddl = normalized_up
+        .find("REVOKE ALL ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid)")
+        .expect("pair-read helper ACL is restricted");
+    let grant_ddl = normalized_up
+        .find("GRANT EXECUTE ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid) TO app;")
+        .expect("app receives pair-read helper EXECUTE");
     let pair_select_policy = OWNER_BETA_SIMULATION_UP_SQL
         .split("CREATE POLICY owner_beta_simulation_pairs_app_select")
         .nth(1)
@@ -478,26 +589,41 @@ fn owner_beta_price_only_simulation_storage_is_atomic_and_owner_scoped() {
         .split(';')
         .next()
         .expect("pair read policy statement");
-    let (absent_actor_guard, authorized_actor_branch) = pair_select_policy
-        .split_once("THEN false\n        ELSE")
-        .expect("absent actors are denied before any nested jobs policy is evaluated");
-    assert!(absent_actor_guard.contains(
-        "CASE WHEN NULLIF(pg_catalog.current_setting('app.actor_user_id', true), '') IS NULL"
-    ));
-    for predicate in [
-        "owner_user_id = NULLIF(",
-        "AND EXISTS (",
-        "run.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id",
-        "run.status = 'SUCCEEDED'",
-        "job.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id",
-        "job.job_type = 'owner_beta_price_only_simulation'",
-        "job.status = 'SUCCEEDED'",
-    ] {
-        assert!(
-            authorized_actor_branch.contains(predicate),
-            "the guarded pair policy retains {predicate}"
-        );
-    }
+    let policy_ddl = normalized_up
+        .find("CREATE POLICY owner_beta_simulation_pairs_app_select")
+        .expect("pair read policy declaration");
+    assert!(
+        helper_ddl < owner_ddl
+            && owner_ddl < revoke_ddl
+            && revoke_ddl < grant_ddl
+            && grant_ddl < policy_ddl,
+        "helper, owner, ACL, grant and policy are installed in order"
+    );
+    assert!(
+        pair_select_policy
+            .contains("ON public.owner_beta_simulation_result_pairs FOR SELECT TO app")
+    );
+    assert!(pair_select_policy.contains("USING (public.owner_beta_simulation_pair_read_allowed("));
+    assert!(pair_select_policy.contains("owner_beta_simulation_result_pairs.run_id"));
+    assert!(pair_select_policy.contains("owner_beta_simulation_result_pairs.owner_user_id"));
+    assert!(!pair_select_policy.contains("CASE"));
+    assert!(!pair_select_policy.contains("EXISTS"));
+
+    let pair_policy_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP POLICY owner_beta_simulation_pairs_app_select")
+        .expect("down removes app pair policy");
+    let pair_helper_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid);")
+        .expect("down removes pair-read helper by exact signature");
+    let pair_table_drop = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("DROP TABLE public.owner_beta_simulation_result_pairs;")
+        .expect("down removes pair table");
+    let history_refusal = OWNER_BETA_SIMULATION_DOWN_SQL
+        .find("$owner_beta_simulation_empty_guard$;")
+        .expect("populated-history refusal remains first");
+    assert!(history_refusal < pair_policy_drop);
+    assert!(pair_policy_drop < pair_helper_drop && pair_helper_drop < pair_table_drop);
+    assert!(!OWNER_BETA_SIMULATION_DOWN_SQL.contains("CASCADE"));
     for grant in executable_up
         .split(';')
         .map(str::trim)

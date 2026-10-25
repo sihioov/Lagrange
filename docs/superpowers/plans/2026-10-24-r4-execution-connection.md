@@ -1179,3 +1179,72 @@ remain unknown. Required hosted success and coordinator authentication of the ex
 archives still precede the isolated real authenticated API/runner proof and mandatory
 cross-user denial/failed-partial-pair nonvisibility checks. Scope and input permissions
 remain unchanged.
+
+
+### G3 fifth candidate terminal evidence — remaining actor lookup failure (2026-10-25)
+
+Candidate `7f80c4db6ef0f7de722302553b2c38768c074fe3` ran CI40144306388 and
+Research smoke40144308241 once each, attempt1/workflow_dispatch. CI and required
+failed; the selected R4 build and smoke succeeded. WP7 is actual idle/pending0.
+The report SHA256 is `087f6907ccd069ecbf7a68e9fab6c7a01222c9f8e8e3eb41b7a6a173750a0700`;
+receipt SHA256 is `25dfddcd764c4b73cf8f9c15ae91d6310634451e927d8719593439d892e999e6`.
+The coordinator checked71 source,368 protected,872 compile,21 observer inputs,
+907 committed blobs,40 output hashes and the unchanged candidate index. Recovery:
+`target/r4-connection/hosted-round5-correction-preparation/wp7-recovery.json`.
+
+Source19 and proof6 passed the pinned strict parser; source19 also passed direct
+workspace rows. Web unit539 and all165 E2E executions/164 unique identities passed.
+Dedicated PG ran15 storage cases:13 passed and2 failed, then8 API/replay cases were
+not reached. Workspace ran all23:21 passed and2 failed. The fixed phase marker
+identifies `empty_pair_select` with SQLSTATE22P02 on the same app backend, after
+missing and empty actor classifications. The success-pair test also failed22P02,
+but its exact inner statement is not retained. Do not infer successful isolation.
+
+The previous R4 pair CASE guard did not remove the observed empty-actor failure.
+Re-plan only that diagnosis branch: existing WP6 performs a read-only trace of
+pair policy, referenced run/jobs RLS and test phases, identifying competing causes,
+a minimal in-scope correction or the precise missing evidence. No speculative SQL
+edit, historical migration change, global app-policy change, actor mutation, role
+expansion or removal of owner/run/job/status/partial-pair fences is authorized by
+this diagnosis assignment. The coordinator removes the independently confirmed
+unused `mut` at API test line335; assertions and behavior stay unchanged.
+
+Both exact artifact metadata records exist, but no archive was downloaded or
+authenticated. Required CI success remains mandatory before exact4+2 archive
+verification and the separately frozen approved-input G3 execution. Smoke cache
+exports and project-resource absence are evidenced; independent builder absence,
+cache persistence/performance and host resource metrics remain unavailable.
+All old runs/reports remain immutable; never rerun the five consumed candidates.
+
+
+### 2026-10-25 round5 diagnosis accepted; bounded pair-read correction
+
+WP6 actual idle and report `dc95f2b4ccb9c190b93f39158bad3c5543f81dcfa9a660b3521d7f31027e9a4e`, receipt `0f52ec9a36f59f2992992bfa17428e5846f4821e64ba7c8e87ed7ef8ba610bbc`, and71 source/872 compile/478 protected hashes were verified. The same-backend empty-actor lookup failure is confirmed; nested jobs actor-cast evaluation stage and the second failing statement remain unconfirmed. The diagnosis is not runtime acceptance.
+
+Within the authorized R4-05 implementation, add only `public.owner_beta_simulation_pair_read_allowed(uuid, uuid)` as a PL/pgSQL STABLE SECURITY INVOKER, CALLED ON NULL INPUT, PARALLEL UNSAFE function with `search_path=pg_catalog`. Return false for a missing/empty actor before reaching a separate nested query. Cast every nonempty actor before argument/owner shortcuts so malformed values retain22P02. Preserve run ID, both owners, successful run/job status, dedicated job type and existing RLS. Do not query the pair table recursively. The app pair policy calls this helper with its row's run/owner IDs.
+
+This implementation scope explicitly includes app-only EXECUTE on the new function, with PUBLIC and other runtime roles denied. It adds no table grant, role membership, definer authority, actor mutation or generic jobs app-policy change. Preserve historical0010/0044/0060/0061 bytes,0063 writer/lease/retag/OLD+NEW-parent guards, candidate control and Daily OFF. Down retains its populated-history refusal, drops the dependent pair policy before the helper, and restores the existing callback/jobs policies unchanged.
+
+Existing WP3B owns0063 up/down and migration-contract assertions. Existing WP3C owns only the storage behavior test. Preserve15 storage/69 migration/23 PG/8 Web/22 browser names. Extend same-backend cold/warm missing/empty/valid/malformed reads, direct-helper and ACL checks, and down/up definition/config/ACL/dependency snapshots. Add fixed phase labels to the success-pair test without weakening atomicity or absence assertions; do not guess a writer fix. Local verification is limited to pinned rustfmt, diff and source/static checks; compile/DB/browser remain hosted. Coordinator owns documentation/diagrams and independent final review before any new candidate. No consumed candidate rerun, archive download or G3 execution is authorized by these edits.
+
+The procedural boundary follows PostgreSQL's documented first-reached SQL preparation behavior, not an observed explanation of the old failure: [PL/pgSQL plan caching](https://www.postgresql.org/docs/16/plpgsql-implementation.html#PLPGSQL-PLAN-CACHING). Function authority and null-input attributes follow [CREATE FUNCTION](https://www.postgresql.org/docs/16/sql-createfunction.html). Runtime regressions must still prove the new candidate.
+
+
+### 2026-10-25 pair-read source correction integration
+
+Both owned workers reached actual idle with no pending requests. WP3B report SHA256 `290867809c6fe8dbbda77731e452d2db6b9866324c84c459aa462f5d996c4388`, receipt `f2285e1858cfb8a248b76e2b75aac276bbebac8fa433ae975fb78ed0b99fc90a`; WP3C report `65251e478b617939940da06092ee4576148c0e607af9d939217cb846f8cc256f`, receipt `e1bfc1f797505c0e497bec6397051d6b4deac28e4844a4b074ef177f293273be` were recovered with67 readonly source/868 compile/485 protected hashes. Old reports and the WP3C final source snapshot are preserved under the private correction-preparation directory.
+
+The coordinator checked the actual diffs and corrected two `SimulationPublicationError` results passed to the boxed-error phase wrapper, named the large catalog row type, and separated expected rejection markers (`R4_EXPECTED_SQLSTATE`) from failing phase markers (`R4_FIXTURE_PHASE`). These are source corrections, not compiler-observed outcomes. Initial local name extraction counted only19 synchronous migration tests; including tokio tests confirmed all69 unchanged, alongside15 storage tests. Pinned formatting and whitespace checks pass. No compile/SQL/DB/browser run occurred.
+
+The function still uses caller RLS and full publication predicates, with no writer or historical policy change. Same-backend regression source now covers cold/warm missing/empty/valid/malformed states, direct helper null/owner cases, ACL/catalog dependency and empty down/up equivalence. Fixed success-pair phases preserve atomic/partial invisibility checks and distinguish the still-unlocalized second failure if it recurs. Expected malformed/immutable denials must not be counted as test failures by future evidence extraction. Current actor markers carry a fixed phase and classification; the future observer must support this format without printing raw values.
+
+Diagram evidence is updated for the new app-callable invoker predicate and shifted0063 deferred-trigger lines. After local PNG rendering and documentation checks, existing WP6 independently reviews the combined exact source before a new candidate. Preserve all original required jobs,19source/23PG/6proof and Web inventories, same-candidate gates and the archive/G3 block until hosted success.
+
+
+### 2026-10-25 pair-read independent source review accepted
+
+WP6 reached actual idle with no pending request. Its report SHA256 `fe6ad26c1175f3a4071e6c784a89430d59228ef3ee127b1872770bdbb8e878e4` and receipt `b2961072908aa221fb3cc00f034e75a3823b273db6476eaee82e5a9be46514c1` were recovered and matched, alongside71 source,872 compile-input and506 protected hashes, unchanged HEAD/index and eleven authorized dirty paths. All eleven owned workers are idle. The verdict is **READY_FOR_HOSTED — SOURCE REVIEW ONLY**, with no mandatory source finding. Only this plan and ROADMAP acceptance text are added after that review.
+
+The local diagram renderer exited0 without OOM and the owned container was independently absent; docs-fast `target/dev-check/20261025T012649Z-01b05cac509f/run.json` passed. The next observer's offline phase parser recognizes the four fixed actor classifications and separates the three exact expected-denial phase/code pairs from actual fixture-phase failures. Unknown phases, suffixes and secret sentinels are rejected. Those parser checks are not test outcomes or runtime isolation evidence.
+
+Create a new clean committed/pushed candidate, then dispatch the existing CI with optional source-only build and Research smoke once each. Preserve all prior reports and never rerun consumed candidate SHAs. Compilation/SQLx/PLpgSQL/DB behavior and whether both old failures are fixed remain unverified; exact early-evaluation and second-statement causes remain unknown. All required hosted gates must succeed before coordinator authentication of exact4+2 archives and the separately frozen approved-input scratchDB/authenticated API/runner proof. Owner isolation and failed/partial-pair nonvisibility remain unaccepted.

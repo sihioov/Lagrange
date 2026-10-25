@@ -332,7 +332,7 @@ async fn simulation_owner_admission_and_closed_body() {
 
 #[tokio::test]
 async fn simulation_http_cross_owner_list_get_cancel_pair() {
-    let Some((mut h, config_a)) = setup().await else {
+    let Some((h, config_a)) = setup().await else {
         return;
     };
     let owner_b = h

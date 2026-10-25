@@ -125,6 +125,10 @@ DROP TRIGGER owner_beta_simulation_runs_validate_binding
 DROP TRIGGER owner_beta_simulation_jobs_lineage_guard ON public.jobs;
 DROP TRIGGER owner_beta_simulation_jobs_insert_guard ON public.jobs;
 
+DROP POLICY owner_beta_simulation_pairs_app_select
+    ON public.owner_beta_simulation_result_pairs;
+DROP FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid);
+
 DROP POLICY owner_beta_simulation_jobs_trigger_select ON public.jobs;
 ALTER POLICY tenant_all_owner_jobs ON public.jobs TO migration_owner
     USING (owner_user_id = current_setting('app.actor_user_id', true)::uuid)

@@ -323,28 +323,58 @@ CREATE POLICY owner_beta_simulation_runs_migration_owner_actor
         pg_catalog.current_setting('app.actor_user_id', true), ''
     )::uuid);
 
+CREATE FUNCTION public.owner_beta_simulation_pair_read_allowed(
+    p_run_id uuid,
+    p_owner_id uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+CALLED ON NULL INPUT
+PARALLEL UNSAFE
+SET search_path = pg_catalog
+AS $pair_read$
+DECLARE
+    v_actor_raw text;
+    v_actor_id uuid;
+BEGIN
+    v_actor_raw := pg_catalog.current_setting('app.actor_user_id', true);
+    IF NULLIF(v_actor_raw, '') IS NULL THEN
+        RETURN false;
+    END IF;
+
+    v_actor_id := v_actor_raw::uuid;
+    IF p_run_id IS NULL OR p_owner_id IS DISTINCT FROM v_actor_id THEN
+        RETURN false;
+    END IF;
+
+    RETURN EXISTS (
+        SELECT 1
+        FROM public.owner_beta_simulation_runs AS run
+        JOIN public.jobs AS job ON job.id = run.job_id
+        WHERE run.id = p_run_id
+          AND run.owner_user_id = p_owner_id
+          AND run.status = 'SUCCEEDED'
+          AND job.owner_user_id = p_owner_id
+          AND job.job_type = 'owner_beta_price_only_simulation'
+          AND job.status = 'SUCCEEDED'
+    );
+END
+$pair_read$;
+ALTER FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid)
+    OWNER TO migration_owner;
+REVOKE ALL ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid)
+    FROM PUBLIC, worker, admin, audit_writer, research_writer;
+GRANT EXECUTE ON FUNCTION public.owner_beta_simulation_pair_read_allowed(uuid, uuid)
+    TO app;
+
 CREATE POLICY owner_beta_simulation_pairs_app_select
     ON public.owner_beta_simulation_result_pairs FOR SELECT TO app
-    USING (
-        -- AND does not sequence evaluation, so absent actors must not reach jobs' app UUID cast.
-        CASE WHEN NULLIF(pg_catalog.current_setting('app.actor_user_id', true), '') IS NULL
-            THEN false
-        ELSE
-            owner_user_id = NULLIF(
-                pg_catalog.current_setting('app.actor_user_id', true), ''
-            )::uuid
-            AND EXISTS (
-                SELECT 1
-                  FROM public.owner_beta_simulation_runs AS run
-                  JOIN public.jobs AS job ON job.id = run.job_id
-                 WHERE run.id = owner_beta_simulation_result_pairs.run_id
-                    AND run.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id
-                    AND run.status = 'SUCCEEDED'
-                    AND job.owner_user_id = owner_beta_simulation_result_pairs.owner_user_id
-                    AND job.job_type = 'owner_beta_price_only_simulation'
-                    AND job.status = 'SUCCEEDED'
-            )
-        END
+    USING (public.owner_beta_simulation_pair_read_allowed(
+        owner_beta_simulation_result_pairs.run_id,
+        owner_beta_simulation_result_pairs.owner_user_id
+    )
     );
 CREATE POLICY owner_beta_simulation_pairs_worker_select
     ON public.owner_beta_simulation_result_pairs FOR SELECT TO worker USING (true);

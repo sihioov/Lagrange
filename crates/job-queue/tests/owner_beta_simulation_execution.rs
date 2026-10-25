@@ -32,6 +32,7 @@ use job_queue::{
 };
 use market_data::KR_ETF_CORE_SYMBOLS;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::{Connection, PgConnection, PgPool, postgres::PgConnectOptions, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -154,6 +155,11 @@ fn assert_sqlstate(error: &sqlx::Error, expected: &str, context: &str) {
         .as_database_error()
         .and_then(|database_error| database_error.code());
     assert_eq!(code.as_deref(), Some(expected), "{context}");
+}
+
+fn assert_sqlstate_phase(error: &sqlx::Error, expected: &str, phase: &'static str) {
+    assert_sqlstate(error, expected, phase);
+    eprintln!("R4_EXPECTED_SQLSTATE:{phase}:{expected}");
 }
 
 async fn pin_inactive_candidate_control_for_test(db: &ScratchDb, worker: &PgPool) -> TestResult {
@@ -288,18 +294,37 @@ async fn isolation_pair_count(
     )
 }
 
+async fn isolation_pair_read_allowed(
+    connection: &mut PgConnection,
+    phase: &'static str,
+    run_id: Option<Uuid>,
+    owner_id: Option<Uuid>,
+) -> TestResult<bool> {
+    sql_phase(
+        phase,
+        sqlx::query_scalar(
+            "SELECT public.owner_beta_simulation_pair_read_allowed(
+                $1::uuid, $2::uuid)",
+        )
+        .bind(run_id)
+        .bind(owner_id)
+        .fetch_one(connection)
+        .await,
+    )
+}
+
 async fn assert_isolation_actor_state(
     connection: &mut PgConnection,
     backend_pid: i32,
     state: &'static str,
     expected_owner: Option<Uuid>,
+    phase: &'static str,
 ) -> TestResult {
-    let (observed_pid, missing, empty, matches_owner): (i32, bool, bool, bool) = sql_phase(
-        "actor_state",
+    let (observed_pid, raw_actor, matches_owner): (i32, Option<String>, bool) = sql_phase(
+        phase,
         sqlx::query_as(
             "SELECT pg_catalog.pg_backend_pid(),
-                    pg_catalog.current_setting('app.actor_user_id', true) IS NULL,
-                    COALESCE(pg_catalog.current_setting('app.actor_user_id', true) = '', false),
+                    pg_catalog.current_setting('app.actor_user_id', true),
                     COALESCE(pg_catalog.current_setting('app.actor_user_id', true) = $1, false)",
         )
         .bind(expected_owner.map(|owner| owner.to_string()))
@@ -307,15 +332,28 @@ async fn assert_isolation_actor_state(
         .await,
     )?;
     assert_eq!(observed_pid, backend_pid, "same isolation connection");
+    let missing = raw_actor.is_none();
+    let empty = raw_actor.as_deref() == Some("");
+    let valid = !missing && !empty && expected_owner.is_some() && matches_owner;
     let matches = match state {
         "missing" => missing,
         "empty" => !missing && empty,
-        "valid" => !missing && !empty && expected_owner.is_some() && matches_owner,
+        "absent" => missing || empty,
+        "valid" => valid,
         "malformed" => !missing && !empty && expected_owner.is_none(),
         _ => false,
     };
     assert!(matches, "isolation actor classification matches {state}");
-    eprintln!("R4_ISOLATION_ACTOR:{state}");
+    let category = if missing {
+        "missing"
+    } else if empty {
+        "empty"
+    } else if valid {
+        "expected_valid"
+    } else {
+        "other_nonempty"
+    };
+    eprintln!("R4_ISOLATION_ACTOR:{phase}:{category}");
     Ok(())
 }
 
@@ -334,12 +372,38 @@ async fn check_isolation_actor_read_states(
             .fetch_one(&mut *connection)
             .await,
     )?;
-    assert_isolation_actor_state(&mut connection, backend_pid, "missing", None).await?;
+    assert_isolation_actor_state(
+        &mut connection,
+        backend_pid,
+        "missing",
+        None,
+        "fresh_missing_actor_before_read",
+    )
+    .await?;
     assert_eq!(
         isolation_pair_count(&mut connection, "fresh_missing_pair_select", None).await?,
         0,
         "genuinely missing actor sees no committed pairs"
     );
+    assert_isolation_actor_state(
+        &mut connection,
+        backend_pid,
+        "missing",
+        None,
+        "fresh_missing_actor_after_read",
+    )
+    .await?;
+    assert!(
+        !isolation_pair_read_allowed(&mut connection, "missing_actor_helper", None, None,).await?
+    );
+    assert_isolation_actor_state(
+        &mut connection,
+        backend_pid,
+        "missing",
+        None,
+        "missing_actor_after_helper",
+    )
+    .await?;
 
     let mut empty = connection.begin().await?;
     sql_phase(
@@ -350,12 +414,49 @@ async fn check_isolation_actor_read_states(
         .fetch_one(&mut *empty)
         .await,
     )?;
-    assert_isolation_actor_state(&mut empty, backend_pid, "empty", None).await?;
+    assert_isolation_actor_state(
+        &mut empty,
+        backend_pid,
+        "empty",
+        None,
+        "cold_empty_actor_before_helper",
+    )
+    .await?;
+    assert!(
+        !isolation_pair_read_allowed(&mut empty, "empty_actor_helper_cold", None, None,).await?
+    );
+    assert_isolation_actor_state(
+        &mut empty,
+        backend_pid,
+        "empty",
+        None,
+        "cold_empty_actor_after_helper",
+    )
+    .await?;
+    assert!(
+        !isolation_pair_read_allowed(&mut empty, "empty_actor_helper_warm", None, None,).await?
+    );
+    assert_isolation_actor_state(
+        &mut empty,
+        backend_pid,
+        "empty",
+        None,
+        "cold_empty_actor_after_warm_helper",
+    )
+    .await?;
     assert_eq!(
         isolation_pair_count(&mut empty, "empty_pair_select", None).await?,
         0,
         "explicitly empty actor sees no committed pairs"
     );
+    assert_isolation_actor_state(
+        &mut empty,
+        backend_pid,
+        "empty",
+        None,
+        "empty_actor_after_pair_select",
+    )
+    .await?;
     empty.commit().await?;
 
     for (own, foreign, own_phase, foreign_phase) in [
@@ -374,19 +475,132 @@ async fn check_isolation_actor_read_states(
     ] {
         let mut valid = connection.begin().await?;
         set_actor(&mut valid, own.owner_id).await?;
-        assert_isolation_actor_state(&mut valid, backend_pid, "valid", Some(own.owner_id)).await?;
+        assert_isolation_actor_state(
+            &mut valid,
+            backend_pid,
+            "valid",
+            Some(own.owner_id),
+            "valid_actor_before_pair_reads",
+        )
+        .await?;
+        assert!(
+            isolation_pair_read_allowed(
+                &mut valid,
+                "valid_owner_helper",
+                Some(own.input.run_id()),
+                Some(own.owner_id),
+            )
+            .await?
+        );
+        assert_isolation_actor_state(
+            &mut valid,
+            backend_pid,
+            "valid",
+            Some(own.owner_id),
+            "valid_actor_after_owner_helper",
+        )
+        .await?;
+        assert!(
+            !isolation_pair_read_allowed(
+                &mut valid,
+                "foreign_owner_helper",
+                Some(foreign.input.run_id()),
+                Some(foreign.owner_id),
+            )
+            .await?
+        );
+        assert!(
+            !isolation_pair_read_allowed(
+                &mut valid,
+                "missing_run_helper",
+                Some(Uuid::new_v4()),
+                Some(own.owner_id),
+            )
+            .await?
+        );
+        assert!(
+            !isolation_pair_read_allowed(&mut valid, "null_arguments_helper", None, None,).await?
+        );
+        assert_isolation_actor_state(
+            &mut valid,
+            backend_pid,
+            "valid",
+            Some(own.owner_id),
+            "valid_actor_after_direct_helper_probes",
+        )
+        .await?;
         assert_eq!(
             isolation_pair_count(&mut valid, own_phase, Some(own.input.run_id())).await?,
             1,
             "valid actor reads its committed pair"
         );
+        assert_isolation_actor_state(
+            &mut valid,
+            backend_pid,
+            "valid",
+            Some(own.owner_id),
+            "valid_actor_after_own_pair_read",
+        )
+        .await?;
         assert_eq!(
             isolation_pair_count(&mut valid, foreign_phase, Some(foreign.input.run_id())).await?,
             0,
             "valid actor cannot read another owner's pair"
         );
+        assert_isolation_actor_state(
+            &mut valid,
+            backend_pid,
+            "valid",
+            Some(own.owner_id),
+            "valid_actor_after_foreign_pair_read",
+        )
+        .await?;
         valid.commit().await?;
     }
+
+    let mut warm_empty = connection.begin().await?;
+    sql_phase(
+        "set_warm_empty_actor",
+        sqlx::query_scalar::<_, String>(
+            "SELECT pg_catalog.set_config('app.actor_user_id', '', true)",
+        )
+        .fetch_one(&mut *warm_empty)
+        .await,
+    )?;
+    assert_isolation_actor_state(
+        &mut warm_empty,
+        backend_pid,
+        "empty",
+        None,
+        "warm_empty_actor_before_helper",
+    )
+    .await?;
+    assert!(
+        !isolation_pair_read_allowed(&mut warm_empty, "warm_empty_actor_helper", None, None,)
+            .await?
+    );
+    assert_isolation_actor_state(
+        &mut warm_empty,
+        backend_pid,
+        "empty",
+        None,
+        "post_owner_reads_empty_actor_after_helper",
+    )
+    .await?;
+    assert_eq!(
+        isolation_pair_count(&mut warm_empty, "warm_empty_pair_select", None).await?,
+        0,
+        "empty actor remains hidden after valid inner-query reads"
+    );
+    assert_isolation_actor_state(
+        &mut warm_empty,
+        backend_pid,
+        "empty",
+        None,
+        "warm_empty_actor_after_pair_read",
+    )
+    .await?;
+    warm_empty.commit().await?;
 
     let mut malformed = connection.begin().await?;
     sql_phase(
@@ -397,16 +611,62 @@ async fn check_isolation_actor_read_states(
         .fetch_one(&mut *malformed)
         .await,
     )?;
-    assert_isolation_actor_state(&mut malformed, backend_pid, "malformed", None).await?;
+    assert_isolation_actor_state(
+        &mut malformed,
+        backend_pid,
+        "malformed",
+        None,
+        "malformed_actor_before_helper",
+    )
+    .await?;
+    sqlx::query("SAVEPOINT malformed_helper_probe")
+        .execute(&mut *malformed)
+        .await?;
+    let malformed_helper = sqlx::query_scalar::<_, bool>(
+        "SELECT public.owner_beta_simulation_pair_read_allowed(NULL::uuid, NULL::uuid)",
+    )
+    .fetch_one(&mut *malformed)
+    .await
+    .expect_err("malformed actor is validated before null arguments");
+    assert_sqlstate_phase(
+        &malformed_helper,
+        "22P02",
+        "malformed_helper_null_arguments",
+    );
+    sqlx::query("ROLLBACK TO SAVEPOINT malformed_helper_probe")
+        .execute(&mut *malformed)
+        .await?;
+    assert_isolation_actor_state(
+        &mut malformed,
+        backend_pid,
+        "malformed",
+        None,
+        "malformed_actor_after_helper_rollback",
+    )
+    .await?;
+    sqlx::query("SAVEPOINT malformed_pair_probe")
+        .execute(&mut *malformed)
+        .await?;
     let malformed_result = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM public.owner_beta_simulation_result_pairs",
     )
     .fetch_one(&mut *malformed)
     .await;
     match malformed_result {
-        Err(error) => assert_sqlstate(&error, "22P02", "malformed_actor_pair_select"),
+        Err(error) => assert_sqlstate_phase(&error, "22P02", "malformed_actor_pair_select"),
         Ok(_) => return Err("malformed_actor_pair_select: expected SQLSTATE 22P02".into()),
     }
+    sqlx::query("ROLLBACK TO SAVEPOINT malformed_pair_probe")
+        .execute(&mut *malformed)
+        .await?;
+    assert_isolation_actor_state(
+        &mut malformed,
+        backend_pid,
+        "malformed",
+        None,
+        "malformed_actor_after_pair_rollback",
+    )
+    .await?;
     malformed.rollback().await?;
     let (final_pid, absent): (i32, bool) = sql_phase(
         "restored_actor",
@@ -442,6 +702,165 @@ struct CandidateSettlementSnapshot {
     acl: String,
     security_definer: bool,
     language: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PairReadAllowedSnapshot {
+    definition_sha256: String,
+    body_sha256: String,
+    owner: String,
+    language: String,
+    security_definer: bool,
+    volatility: String,
+    strict: bool,
+    leakproof: bool,
+    parallel: String,
+    configuration: String,
+    normalized_acl: String,
+    effective_acl: String,
+    policy_dependency: bool,
+}
+
+type PairReadAllowedRow = (
+    String,
+    String,
+    String,
+    String,
+    bool,
+    String,
+    bool,
+    bool,
+    String,
+    String,
+    String,
+    String,
+    bool,
+);
+
+async fn pair_read_allowed_snapshot(pool: &PgPool) -> TestResult<Option<PairReadAllowedSnapshot>> {
+    let row: Option<PairReadAllowedRow> = sqlx::query_as(
+        "SELECT pg_catalog.pg_get_functiondef(p.oid), p.prosrc,
+                owner.rolname::text, lang.lanname::text, p.prosecdef,
+                p.provolatile::text, p.proisstrict, p.proleakproof,
+                p.proparallel::text, COALESCE(p.proconfig::text, '<default>'),
+                COALESCE((
+                    SELECT pg_catalog.string_agg(
+                        pg_catalog.format('%s:%s:%s:%s',
+                            COALESCE(grantee.rolname::text, 'PUBLIC'),
+                            entry.privilege_type, entry.is_grantable,
+                            COALESCE(grantor.rolname::text, '<unknown>')),
+                        ',' ORDER BY COALESCE(grantee.rolname::text, 'PUBLIC'),
+                                   entry.privilege_type, entry.is_grantable,
+                                   COALESCE(grantor.rolname::text, '<unknown>'))
+                      FROM pg_catalog.aclexplode(
+                               COALESCE(p.proacl,
+                                        pg_catalog.acldefault('f', p.proowner))) entry
+                      LEFT JOIN pg_catalog.pg_roles grantee
+                        ON grantee.oid = entry.grantee
+                      LEFT JOIN pg_catalog.pg_roles grantor
+                        ON grantor.oid = entry.grantor), ''),
+                pg_catalog.concat(
+                    'PUBLIC=', EXISTS (
+                        SELECT 1
+                          FROM pg_catalog.aclexplode(
+                                   COALESCE(p.proacl,
+                                            pg_catalog.acldefault('f', p.proowner))) entry
+                         WHERE entry.grantee = 0
+                           AND entry.privilege_type = 'EXECUTE'),
+                    ';app=', pg_catalog.has_function_privilege('app', p.oid, 'EXECUTE'),
+                    ';worker=', pg_catalog.has_function_privilege('worker', p.oid, 'EXECUTE'),
+                    ';admin=', pg_catalog.has_function_privilege('admin', p.oid, 'EXECUTE'),
+                    ';audit_writer=', pg_catalog.has_function_privilege('audit_writer', p.oid, 'EXECUTE'),
+                    ';research_writer=', pg_catalog.has_function_privilege('research_writer', p.oid, 'EXECUTE'),
+                    ';migration_owner=', pg_catalog.has_function_privilege('migration_owner', p.oid, 'EXECUTE')),
+                EXISTS (
+                    SELECT 1
+                      FROM pg_catalog.pg_depend dependency
+                      JOIN pg_catalog.pg_policy policy
+                        ON dependency.classid = 'pg_catalog.pg_policy'::pg_catalog.regclass
+                       AND policy.oid = dependency.objid
+                     WHERE dependency.refclassid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+                       AND dependency.refobjid = p.oid
+                       AND policy.polrelid =
+                           pg_catalog.to_regclass(
+                               'public.owner_beta_simulation_result_pairs')
+                       AND policy.polname = 'owner_beta_simulation_pairs_app_select')
+           FROM pg_catalog.pg_proc p
+           JOIN pg_catalog.pg_roles owner ON owner.oid = p.proowner
+           JOIN pg_catalog.pg_language lang ON lang.oid = p.prolang
+          WHERE p.oid = pg_catalog.to_regprocedure(
+              'public.owner_beta_simulation_pair_read_allowed(uuid,uuid)')",
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(
+        |(
+            definition,
+            body,
+            owner,
+            language,
+            security_definer,
+            volatility,
+            strict,
+            leakproof,
+            parallel,
+            configuration,
+            normalized_acl,
+            effective_acl,
+            policy_dependency,
+        )| PairReadAllowedSnapshot {
+            definition_sha256: format!("{:x}", Sha256::digest(definition.as_bytes())),
+            body_sha256: format!("{:x}", Sha256::digest(body.as_bytes())),
+            owner,
+            language,
+            security_definer,
+            volatility,
+            strict,
+            leakproof,
+            parallel,
+            configuration,
+            normalized_acl,
+            effective_acl,
+            policy_dependency,
+        },
+    ))
+}
+
+async fn pair_read_allowed_effective_acl(
+    pool: &PgPool,
+) -> TestResult<(bool, bool, bool, bool, bool, bool, bool)> {
+    Ok(sqlx::query_as(
+        "SELECT EXISTS (
+                    SELECT 1
+                      FROM pg_catalog.aclexplode(
+                               COALESCE(p.proacl,
+                                        pg_catalog.acldefault('f', p.proowner))) entry
+                     WHERE entry.grantee = 0
+                       AND entry.privilege_type = 'EXECUTE'),
+                pg_catalog.has_function_privilege('app', p.oid, 'EXECUTE'),
+                pg_catalog.has_function_privilege('worker', p.oid, 'EXECUTE'),
+                pg_catalog.has_function_privilege('admin', p.oid, 'EXECUTE'),
+                pg_catalog.has_function_privilege('audit_writer', p.oid, 'EXECUTE'),
+                pg_catalog.has_function_privilege('research_writer', p.oid, 'EXECUTE'),
+                pg_catalog.has_function_privilege('migration_owner', p.oid, 'EXECUTE')
+           FROM pg_catalog.pg_proc p
+          WHERE p.oid = pg_catalog.to_regprocedure(
+              'public.owner_beta_simulation_pair_read_allowed(uuid,uuid)')",
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
+async fn pair_read_policy_exists(pool: &PgPool) -> TestResult<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_policy
+             WHERE polrelid = pg_catalog.to_regclass(
+                   'public.owner_beta_simulation_result_pairs')
+               AND polname = 'owner_beta_simulation_pairs_app_select')",
+    )
+    .fetch_one(pool)
+    .await?)
 }
 
 async fn jobs_owner_policy_snapshot(pool: &PgPool) -> TestResult<JobsOwnerPolicySnapshot> {
@@ -1236,6 +1655,31 @@ async fn r4_role_grants_and_forced_rls_body(db: &ScratchDb) -> TestResult {
     let research = role_pool(db, "research_writer", None).await;
     let audit = role_pool(db, "audit_writer", None).await;
 
+    let helper = pair_read_allowed_snapshot(&db.pool)
+        .await?
+        .expect("pair read invoker helper exists");
+    assert!(
+        helper.owner == "migration_owner",
+        "helper retains migration owner"
+    );
+    assert!(helper.language == "plpgsql", "helper is procedural");
+    assert!(!helper.security_definer, "helper is SECURITY INVOKER");
+    assert!(helper.volatility == "s", "helper is STABLE");
+    assert!(!helper.strict, "helper is called on NULL input");
+    assert!(!helper.leakproof, "helper is not LEAKPROOF");
+    assert!(helper.parallel == "u", "helper is PARALLEL UNSAFE");
+    assert!(
+        helper.configuration == "{search_path=pg_catalog}",
+        "helper pins its search path"
+    );
+    assert!(helper.policy_dependency, "pair policy depends on helper");
+    let effective_acl = pair_read_allowed_effective_acl(&db.pool).await?;
+    assert_eq!(
+        effective_acl,
+        (false, true, false, false, false, false, true),
+        "only app and the function owner can execute the helper"
+    );
+
     let role_identity: (String, String, bool, bool) = sqlx::query_as(
         "SELECT current_user::text, session_user::text,
                 r.rolsuper, r.rolbypassrls
@@ -1579,61 +2023,123 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
     let pair = synthetic_pair(&fixture, &engine);
 
     let mut uncommitted = worker.begin().await?;
-    sqlx::query(
-        "INSERT INTO public.owner_beta_simulation_result_pairs
+    sql_phase(
+        "uncommitted_worker_pair_insert",
+        sqlx::query(
+            "INSERT INTO public.owner_beta_simulation_result_pairs
             (run_id, owner_user_id, illustrative_canonical, illustrative_sha256,
              zero_cost_canonical, zero_cost_sha256)
          VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(fixture.input.run_id())
+        .bind(owner_b)
+        .bind(pair.illustrative_10bp_per_side_bytes())
+        .bind(pair.illustrative_10bp_per_side_sha256().as_str())
+        .bind(pair.zero_cost_reference_bytes())
+        .bind(pair.zero_cost_reference_sha256().as_str())
+        .execute(&mut *uncommitted)
+        .await,
+    )?;
+    fixture_phase(
+        "uncommitted_worker_actor",
+        assert_raw_actor_in_transaction(
+            &mut uncommitted,
+            &actor_a,
+            "R4 pair validation restores actor A in its writing transaction",
+        )
+        .await,
+    )?;
+    let mut absent_app_reader = app.acquire().await?;
+    let app_backend_pid: i32 = sql_phase(
+        "uncommitted_absent_app_backend",
+        sqlx::query_scalar("SELECT pg_catalog.pg_backend_pid()")
+            .fetch_one(&mut *absent_app_reader)
+            .await,
+    )?;
+    assert_isolation_actor_state(
+        &mut absent_app_reader,
+        app_backend_pid,
+        "absent",
+        None,
+        "uncommitted_absent_app_actor_before_read",
     )
-    .bind(fixture.input.run_id())
-    .bind(owner_b)
-    .bind(pair.illustrative_10bp_per_side_bytes())
-    .bind(pair.illustrative_10bp_per_side_sha256().as_str())
-    .bind(pair.zero_cost_reference_bytes())
-    .bind(pair.zero_cost_reference_sha256().as_str())
-    .execute(&mut *uncommitted)
     .await?;
-    assert_raw_actor_in_transaction(
-        &mut uncommitted,
-        &actor_a,
-        "R4 pair validation restores actor A in its writing transaction",
-    )
-    .await?;
-    let app_pair_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
-    )
-    .bind(fixture.input.run_id())
-    .fetch_one(&app)
-    .await?;
+    let app_pair_count: i64 = sql_phase(
+        "uncommitted_absent_app_pair_select",
+        sqlx::query_scalar(
+            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+        )
+        .bind(fixture.input.run_id())
+        .fetch_one(&mut *absent_app_reader)
+        .await,
+    )?;
     assert_eq!(
         app_pair_count, 0,
         "uncommitted pair is invisible on a separate app connection"
     );
+    assert_isolation_actor_state(
+        &mut absent_app_reader,
+        app_backend_pid,
+        "absent",
+        None,
+        "uncommitted_absent_app_actor_after_read",
+    )
+    .await?;
+    drop(absent_app_reader);
     let mut app_read = app.begin().await?;
     set_actor(&mut app_read, owner_b).await?;
-    let actor_pair_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+    assert_isolation_actor_state(
+        &mut app_read,
+        app_backend_pid,
+        "valid",
+        Some(owner_b),
+        "uncommitted_owner_actor_before_read",
     )
-    .bind(fixture.input.run_id())
-    .fetch_one(&mut *app_read)
     .await?;
+    let actor_pair_count: i64 = sql_phase(
+        "uncommitted_valid_owner_pair_select",
+        sqlx::query_scalar(
+            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+        )
+        .bind(fixture.input.run_id())
+        .fetch_one(&mut *app_read)
+        .await,
+    )?;
     assert_eq!(
         actor_pair_count, 0,
         "owner actor cannot see an uncommitted pair"
     );
-    app_read.rollback().await?;
-    uncommitted.rollback().await?;
-
-    let published =
-        publish_simulation_success(&queue, &claim, &fixture.input, &pair, &engine).await?;
-    assert_eq!(published, SimulationPublicationOutcome::Published);
-    assert_raw_actor(
-        &worker,
-        worker_backend_pid,
-        Some(&actor_a),
-        "nested run, pair, attempt and deferred callbacks preserve actor A",
+    assert_isolation_actor_state(
+        &mut app_read,
+        app_backend_pid,
+        "valid",
+        Some(owner_b),
+        "uncommitted_owner_actor_after_read",
     )
     .await?;
+    app_read.rollback().await?;
+    sql_phase(
+        "rollback_uncommitted_worker_pair",
+        uncommitted.rollback().await,
+    )?;
+
+    let published = fixture_phase(
+        "publish_pair",
+        publish_simulation_success(&queue, &claim, &fixture.input, &pair, &engine)
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn Error>),
+    )?;
+    assert_eq!(published, SimulationPublicationOutcome::Published);
+    fixture_phase(
+        "published_worker_actor",
+        assert_raw_actor(
+            &worker,
+            worker_backend_pid,
+            Some(&actor_a),
+            "nested run, pair, attempt and deferred callbacks preserve actor A",
+        )
+        .await,
+    )?;
     let stored: (Vec<u8>, String, Vec<u8>, String) = sqlx::query_as(
         "SELECT illustrative_canonical, illustrative_sha256,
                 zero_cost_canonical, zero_cost_sha256
@@ -1659,59 +2165,114 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
     assert_eq!(lifecycle.0, "SUCCEEDED");
     assert_eq!(lifecycle.1, "SUCCEEDED");
     assert_eq!(lifecycle.2, "SUCCEEDED");
-    let app_pair_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+    let mut absent_app_reader = app.acquire().await?;
+    assert_isolation_actor_state(
+        &mut absent_app_reader,
+        app_backend_pid,
+        "absent",
+        None,
+        "published_absent_app_actor_before_read",
     )
-    .bind(fixture.input.run_id())
-    .fetch_one(&app)
     .await?;
+    let app_pair_count: i64 = sql_phase(
+        "published_absent_app_pair_select",
+        sqlx::query_scalar(
+            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+        )
+        .bind(fixture.input.run_id())
+        .fetch_one(&mut *absent_app_reader)
+        .await,
+    )?;
     assert_eq!(
         app_pair_count, 0,
         "unset actor remains invisible after publication"
     );
+    assert_isolation_actor_state(
+        &mut absent_app_reader,
+        app_backend_pid,
+        "absent",
+        None,
+        "published_absent_app_actor_after_read",
+    )
+    .await?;
+    drop(absent_app_reader);
     let mut actor_tx = app.begin().await?;
     set_actor(&mut actor_tx, owner_b).await?;
-    let visible: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+    assert_isolation_actor_state(
+        &mut actor_tx,
+        app_backend_pid,
+        "valid",
+        Some(owner_b),
+        "published_owner_actor_before_read",
     )
-    .bind(fixture.input.run_id())
-    .fetch_one(&mut *actor_tx)
     .await?;
+    let visible: i64 = sql_phase(
+        "published_valid_owner_pair_select",
+        sqlx::query_scalar(
+            "SELECT count(*) FROM public.owner_beta_simulation_result_pairs WHERE run_id = $1",
+        )
+        .bind(fixture.input.run_id())
+        .fetch_one(&mut *actor_tx)
+        .await,
+    )?;
     assert_eq!(
         visible, 1,
         "app sees both profiles only after the full commit"
     );
+    assert_isolation_actor_state(
+        &mut actor_tx,
+        app_backend_pid,
+        "valid",
+        Some(owner_b),
+        "published_owner_actor_after_read",
+    )
+    .await?;
     actor_tx.commit().await?;
 
     let mut deferred = worker.begin().await?;
-    let noop_job_update = sqlx::query("UPDATE public.jobs SET status = status WHERE id = $1")
-        .bind(fixture.job_id)
-        .execute(&mut *deferred)
-        .await?;
+    let noop_job_update = sql_phase(
+        "deferred_jobs_status_update",
+        sqlx::query("UPDATE public.jobs SET status = status WHERE id = $1")
+            .bind(fixture.job_id)
+            .execute(&mut *deferred)
+            .await,
+    )?;
     assert_eq!(noop_job_update.rows_affected(), 1);
-    assert_raw_actor_in_transaction(
-        &mut deferred,
-        &actor_a,
-        "the jobs status trigger restores actor A before deferred checks",
-    )
-    .await?;
-    sqlx::query("SET CONSTRAINTS ALL IMMEDIATE")
-        .execute(&mut *deferred)
-        .await?;
-    assert_raw_actor_in_transaction(
-        &mut deferred,
-        &actor_a,
-        "forced candidate and R4 deferred callbacks preserve actor A",
-    )
-    .await?;
-    deferred.commit().await?;
-    assert_raw_actor(
-        &worker,
-        worker_backend_pid,
-        Some(&actor_a),
-        "worker pool retains actor A after forced deferred checks",
-    )
-    .await?;
+    fixture_phase(
+        "actor_after_jobs_status_trigger",
+        assert_raw_actor_in_transaction(
+            &mut deferred,
+            &actor_a,
+            "the jobs status trigger restores actor A before deferred checks",
+        )
+        .await,
+    )?;
+    sql_phase(
+        "forced_deferred_constraints",
+        sqlx::query("SET CONSTRAINTS ALL IMMEDIATE")
+            .execute(&mut *deferred)
+            .await,
+    )?;
+    fixture_phase(
+        "actor_after_forced_deferred_checks",
+        assert_raw_actor_in_transaction(
+            &mut deferred,
+            &actor_a,
+            "forced candidate and R4 deferred callbacks preserve actor A",
+        )
+        .await,
+    )?;
+    sql_phase("commit_forced_deferred_checks", deferred.commit().await)?;
+    fixture_phase(
+        "worker_actor_after_forced_deferred_commit",
+        assert_raw_actor(
+            &worker,
+            worker_backend_pid,
+            Some(&actor_a),
+            "worker pool retains actor A after forced deferred checks",
+        )
+        .await,
+    )?;
 
     let savepoint_fixture = seed_fixture(db, owner_b, &app, "actor-savepoint").await?;
     let savepoint_claim = queue
@@ -1722,12 +2283,15 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
         .await?
         .expect("savepoint fixture claim");
     let mut scoped_write = worker.begin().await?;
-    assert_raw_actor_in_transaction(
-        &mut scoped_write,
-        &actor_a,
-        "actor A is set before the savepoint",
-    )
-    .await?;
+    fixture_phase(
+        "actor_before_late_attempt_savepoint",
+        assert_raw_actor_in_transaction(
+            &mut scoped_write,
+            &actor_a,
+            "actor A is set before the savepoint",
+        )
+        .await,
+    )?;
     let before_attempt: (Uuid, i32, String, Option<String>) = sqlx::query_as(
         "SELECT job_id, attempt_no, outcome, claimed_by
            FROM public.job_attempts WHERE id = $1",
@@ -1740,43 +2304,54 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
             .bind(savepoint_fixture.job_id)
             .fetch_one(&mut *scoped_write)
             .await?;
-    sqlx::query("SAVEPOINT actor_scope_rollback")
-        .execute(&mut *scoped_write)
-        .await?;
-    sqlx::query(
-        "UPDATE public.job_attempts
+    sql_phase(
+        "savepoint_late_attempt_path",
+        sqlx::query("SAVEPOINT actor_scope_rollback")
+            .execute(&mut *scoped_write)
+            .await,
+    )?;
+    sql_phase(
+        "savepoint_attempt_orphan_update",
+        sqlx::query(
+            "UPDATE public.job_attempts
             SET outcome = 'ORPHANED', finished_at = pg_catalog.now()
           WHERE id = $1",
-    )
-    .bind(savepoint_claim.attempt.id)
-    .execute(&mut *scoped_write)
-    .await?;
-    assert_raw_actor_in_transaction(
-        &mut scoped_write,
-        &actor_a,
-        "successful attempt guard write restores actor A before savepoint rollback",
-    )
-    .await?;
+        )
+        .bind(savepoint_claim.attempt.id)
+        .execute(&mut *scoped_write)
+        .await,
+    )?;
+    fixture_phase(
+        "actor_after_savepoint_attempt_update",
+        assert_raw_actor_in_transaction(
+            &mut scoped_write,
+            &actor_a,
+            "successful attempt guard write restores actor A before savepoint rollback",
+        )
+        .await,
+    )?;
     let late_validation =
         sqlx::query("UPDATE public.job_attempts SET attempt_no = attempt_no + 1 WHERE id = $1")
             .bind(savepoint_claim.attempt.id)
             .execute(&mut *scoped_write)
             .await
             .expect_err("attempt identity remains immutable after scoped actor work");
-    assert_sqlstate(
-        &late_validation,
-        "42501",
-        "late attempt validation rejects immutable identity",
-    );
-    sqlx::query("ROLLBACK TO SAVEPOINT actor_scope_rollback")
-        .execute(&mut *scoped_write)
-        .await?;
-    assert_raw_actor_in_transaction(
-        &mut scoped_write,
-        &actor_a,
-        "savepoint rollback preserves the original raw actor A",
-    )
-    .await?;
+    assert_sqlstate_phase(&late_validation, "42501", "late_attempt_identity_update");
+    sql_phase(
+        "rollback_late_attempt_savepoint",
+        sqlx::query("ROLLBACK TO SAVEPOINT actor_scope_rollback")
+            .execute(&mut *scoped_write)
+            .await,
+    )?;
+    fixture_phase(
+        "actor_after_late_attempt_rollback",
+        assert_raw_actor_in_transaction(
+            &mut scoped_write,
+            &actor_a,
+            "savepoint rollback preserves the original raw actor A",
+        )
+        .await,
+    )?;
     let after_attempt: (Uuid, i32, String, Option<String>) = sqlx::query_as(
         "SELECT job_id, attempt_no, outcome, claimed_by
            FROM public.job_attempts WHERE id = $1",
@@ -1791,12 +2366,15 @@ async fn r4_success_pair_is_one_commit_body(db: &ScratchDb) -> TestResult {
             .await?;
     assert_eq!(after_attempt, before_attempt);
     assert_eq!(after_job_status, before_job_status);
-    scoped_write.rollback().await?;
+    sql_phase("rollback_attempt_fixture", scoped_write.rollback().await)?;
 
-    assert_eq!(
-        reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &engine).await?,
-        SimulationCommitState::Published
-    );
+    let reconciled = fixture_phase(
+        "reconcile_publication",
+        reconcile_simulation_commit(&queue, &claim, &fixture.input, &pair, &engine)
+            .await
+            .map_err(|error| Box::new(error) as Box<dyn Error>),
+    )?;
+    assert_eq!(reconciled, SimulationCommitState::Published);
     Ok(())
 }
 
@@ -2552,6 +3130,13 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     let migration_owner = role_pool(db, "migration_owner", None).await;
     let before_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
     let before_callback = candidate_settlement_snapshot(&migration_owner).await?;
+    let before_pair_helper = pair_read_allowed_snapshot(&migration_owner)
+        .await?
+        .expect("pair read helper exists before down");
+    assert!(
+        before_pair_helper.policy_dependency && pair_read_policy_exists(&migration_owner).await?,
+        "pair app policy depends on the helper before down"
+    );
     let mut down = migration_owner.begin().await?;
     sqlx::raw_sql(include_str!(
         "../../../migrations/0063_owner_beta_price_only_simulations.down.sql"
@@ -2561,6 +3146,15 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     down.commit().await?;
     let down_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
     let down_callback = candidate_settlement_snapshot(&migration_owner).await?;
+    let down_pair_helper = pair_read_allowed_snapshot(&migration_owner).await?;
+    assert!(
+        down_pair_helper.is_none(),
+        "empty down removes the pair helper"
+    );
+    assert!(
+        !pair_read_policy_exists(&migration_owner).await?,
+        "empty down removes the dependent pair app policy"
+    );
     assert_eq!(down_policy.roles, vec!["migration_owner".to_owned()]);
     assert_eq!(down_policy.command, "ALL");
     assert_eq!(down_policy.permissive, "PERMISSIVE");
@@ -2572,25 +3166,34 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
         .check_expression
         .as_deref()
         .expect("legacy jobs owner WITH CHECK expression");
-    assert_ne!(
-        before_policy.using_expression, down_policy.using_expression,
+    assert!(
+        before_policy.using_expression != down_policy.using_expression,
         "down restores the historical owner expression before up reinstalls the repair"
     );
-    assert_eq!(legacy_using, legacy_check);
+    assert!(
+        legacy_using == legacy_check,
+        "legacy jobs owner checks match"
+    );
     assert!(legacy_using.contains("current_setting"));
     assert!(legacy_using.contains("uuid"));
     assert!(
         !legacy_using.contains("NULLIF"),
         "down restores the historical raw current_setting cast"
     );
-    assert_ne!(before_callback.definition, down_callback.definition);
+    assert!(
+        before_callback.definition != down_callback.definition,
+        "down restores a distinct historical callback"
+    );
     assert!(down_callback.definition.contains(&down_callback.body));
     assert!(
         down_callback.definition.contains(
             "CREATE OR REPLACE FUNCTION public.assert_candidate_publication_settlement()"
         )
     );
-    assert_eq!(down_callback.body, legacy_candidate_settlement_body());
+    assert!(
+        down_callback.body == legacy_candidate_settlement_body(),
+        "down restores the historical callback body"
+    );
     assert_eq!(down_callback.owner, "migration_owner");
     assert_eq!(down_callback.configuration, "{search_path=pg_catalog}");
     assert_eq!(down_callback.acl, before_callback.acl);
@@ -2606,13 +3209,24 @@ async fn r4_migration_up_down_guards_body(db: &ScratchDb) -> TestResult {
     up.commit().await?;
     let after_policy = jobs_owner_policy_snapshot(&migration_owner).await?;
     let after_callback = candidate_settlement_snapshot(&migration_owner).await?;
-    assert_eq!(
-        before_policy, after_policy,
+    let after_pair_helper = pair_read_allowed_snapshot(&migration_owner)
+        .await?
+        .expect("up restores the pair read helper");
+    assert!(
+        pair_read_policy_exists(&migration_owner).await?,
+        "up restores the dependent pair app policy"
+    );
+    assert!(
+        before_policy == after_policy,
         "empty down/up restores jobs owner policy"
     );
-    assert_eq!(
-        before_callback, after_callback,
+    assert!(
+        before_callback == after_callback,
         "empty down/up restores the complete scoped candidate callback"
+    );
+    assert!(
+        before_pair_helper == after_pair_helper,
+        "empty down/up restores the helper definition, authority, ACL, and dependency"
     );
 
     let actor = new_owner(db, "r4-down-actor").await?;
