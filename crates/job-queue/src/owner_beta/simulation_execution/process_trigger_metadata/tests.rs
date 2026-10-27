@@ -13,17 +13,23 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 
+#[cfg(feature = "r4-pg-observer-tests")]
+#[path = "../../../../tests/common/mod.rs"]
+mod pg_test_common;
+
 // The DB harness enables this feature against its disposable, migrated PG.
 // Ordinary unit runs remain independent of DATABASE_URL and a live database.
 #[cfg(feature = "r4-pg-observer-tests")]
 #[tokio::test]
 async fn r4_trigger_metadata_pg_projection() {
-    let url = std::env::var("DATABASE_URL").expect("disposable DATABASE_URL is required");
+    let db = pg_test_common::ScratchDb::create()
+        .await
+        .expect("disposable DATABASE_URL is required");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
-        .connect(&url)
+        .connect(&db.role_url("worker"))
         .await
-        .expect("connect to disposable PostgreSQL");
+        .expect("connect directly as worker to disposable PostgreSQL");
 
     async fn public_relation_oid(pool: &PgPool, name: &str) -> u32 {
         let oid: i64 = sqlx::query_scalar(
@@ -157,6 +163,7 @@ async fn r4_trigger_metadata_pg_projection() {
     );
     transport.close().await.expect("close observer connection");
     pool.close().await;
+    db.drop_db().await;
     eprintln!("R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS");
 }
 
