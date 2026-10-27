@@ -78,6 +78,9 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             "or os.path.lexists(target + '/.owner-beta-simulation') "
             "or os.path.lexists(target + '/.owner-beta-simulation-receipt'):\n"
             "    raise SystemExit(1)\n"
+            "pending = root + '/current.fixture-pending'\n"
+            "os.symlink('releases/' + os.path.basename(target), pending)\n"
+            "os.replace(pending, root + '/current')\n"
             "print('SIMULATION_OPERATION: LEGACY_OFF_ACTIVATED')\n")
         compose = self.repo / "deploy/compose"
         compose.mkdir(parents=True)

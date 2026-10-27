@@ -1060,7 +1060,7 @@ async fn v2_defaults_are_admitted_and_any_v2_history_refuses_down() {
 
     // Keep v1 admission/rejection covered after 0064 is present.
     let v1 = insert_v1_fixture(&db, &app, owner).await.unwrap();
-    let mut invalid_v1 = serde_json::to_value(&v1_input(Uuid::new_v4(), Uuid::new_v4())).unwrap();
+    let mut invalid_v1 = serde_json::to_value(v1_input(Uuid::new_v4(), Uuid::new_v4())).unwrap();
     invalid_v1["contract_document_sha256"] = json!(V2_CONTRACT_SHA256);
     let mut reject_tx = app.begin().await.unwrap();
     set_actor(&mut reject_tx, owner).await.unwrap();

@@ -681,7 +681,17 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-provenance.log si
   provenance_receipt_is_closed_duplicate_free_and_trailing_free \
   provenance_rejects_expected_receipt_compile_and_executable_mismatches \
   provenance_accepts_matching_receipt_compile_and_executable \
-  provenance_requires_complete_compile_variables_and_safe_source_paths
+  provenance_requires_complete_compile_variables_and_safe_source_paths \
+  checked_process_config_fixture_rejects_a_raw_byte_mutation_under_its_original_pin \
+  provenance_origin_selection_is_compile_time_closed_and_disjoint \
+  provenance_official_origin_rejects_hosted_receipts_and_hosted_origin_rejects_official \
+  provenance_official_origin_requires_pinned_receipt_and_original_executable \
+  official_checked_config_uses_shared_receipt_and_complete_binding_flow \
+  official_checked_config_rejects_independent_pin_and_compile_mismatches_before_reads \
+  official_checked_config_rejects_binary_binding_and_current_executable_mismatch \
+  official_checked_config_rejects_raw_receipt_mutation_and_invalid_receipt_schema \
+  official_checked_config_requires_exact_bounded_complete_marker \
+  retained_official_binding_revalidates_the_same_config_and_original_pins
 cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::runner::tests -- \
   --nocapture --test-threads=1 >/out/test-logs/simulation-runner.log 2>&1 || {
     echo 'R4 simulation runner tests failed; see the private build log.' >&2
