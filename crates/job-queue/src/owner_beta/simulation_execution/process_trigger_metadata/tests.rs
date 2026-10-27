@@ -13,6 +13,153 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 
+// The DB harness enables this feature against its disposable, migrated PG.
+// Ordinary unit runs remain independent of DATABASE_URL and a live database.
+#[cfg(feature = "r4-pg-observer-tests")]
+#[tokio::test]
+async fn r4_trigger_metadata_pg_projection() {
+    let url = std::env::var("DATABASE_URL").expect("disposable DATABASE_URL is required");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect to disposable PostgreSQL");
+
+    async fn public_relation_oid(pool: &PgPool, name: &str) -> u32 {
+        let oid: i64 = sqlx::query_scalar(
+            "SELECT relation.oid::pg_catalog.int8 FROM pg_catalog.pg_class AS relation \
+             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+             WHERE namespace.nspname = 'public' AND relation.relname = $1",
+        )
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .expect("required public relation exists");
+        u32::try_from(oid).expect("relation OID fits u32")
+    }
+
+    let relation_names = [
+        "job_attempts",
+        "jobs",
+        "owner_beta_simulation_result_pairs",
+        "owner_beta_simulation_runs",
+    ];
+    let mut relation_oids = [0_u32; 4];
+    for (index, name) in relation_names.iter().enumerate() {
+        relation_oids[index] = public_relation_oid(&pool, name).await;
+    }
+    let adjacent_relation_oid = public_relation_oid(&pool, "user_strategy_configs").await;
+    let worker_oid: i64 = sqlx::query_scalar(
+        "SELECT oid::pg_catalog.int8 FROM pg_catalog.pg_roles WHERE rolname = 'worker'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("worker role exists");
+    let mut root_oids = [0_u32; ROOT_HEADER_ACCEPT_LIMIT];
+    for (index, spec) in ROOT_SPECS.iter().enumerate() {
+        let oid: i64 = sqlx::query_scalar(
+            "SELECT routine.oid::pg_catalog.int8 FROM pg_catalog.pg_proc AS routine \
+             JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace \
+             WHERE namespace.nspname = 'public' AND routine.proname = $1 \
+             ORDER BY routine.oid LIMIT 1",
+        )
+        .bind(spec.name)
+        .fetch_one(&pool)
+        .await
+        .expect("required trigger routine exists");
+        root_oids[index] = u32::try_from(oid).expect("routine OID fits u32");
+    }
+    let trigger_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT trigger.oid::pg_catalog.int8 FROM pg_catalog.pg_trigger AS trigger \
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = trigger.tgrelid \
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+         WHERE namespace.nspname = 'public' ORDER BY trigger.oid LIMIT 13",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read public trigger OIDs");
+    assert!(trigger_ids.len() >= USER_CONSTRAINT_ACCEPT_LIMIT);
+    let mut constraint_trigger_oids = [0_u32; USER_CONSTRAINT_ACCEPT_LIMIT];
+    for (index, oid) in trigger_ids.iter().enumerate() {
+        constraint_trigger_oids[index] = u32::try_from(*oid).expect("trigger OID fits u32");
+    }
+    let update_trigger_oids = [constraint_trigger_oids[0], constraint_trigger_oids[1]];
+
+    let mut transport = SqlxObserverTransport::new(&pool);
+    transport
+        .acquire()
+        .await
+        .expect("acquire observer connection");
+    transport.arm_close_on_drop();
+    assert!(
+        transport
+            .execute(Statement::Begin)
+            .await
+            .expect("BEGIN")
+            .is_empty()
+    );
+    let statements = [
+        Statement::Configure { timeout_ms: 30_000 },
+        Statement::Context,
+        Statement::Roles,
+        Statement::WorkerMemberships {
+            worker_oid: u32::try_from(worker_oid).expect("worker OID fits u32"),
+        },
+        Statement::Relations,
+        Statement::PrimaryInheritance { relation_oids },
+        Statement::RootHeaders,
+        Statement::RootSettings { root_oids },
+        Statement::ForwardTriggers {
+            relation_oids,
+            root_oids,
+        },
+        Statement::AdjacentConfigHook {
+            relation_oid: adjacent_relation_oid,
+        },
+        Statement::ReverseProtectedHooks { root_oids },
+        Statement::UpdateOfAttributes {
+            trigger_oids: update_trigger_oids,
+        },
+        Statement::UserTriggerConstraints {
+            trigger_oids: constraint_trigger_oids,
+        },
+        Statement::FinalContext,
+    ];
+    for statement in statements {
+        let plan = statement_plan(statement);
+        let rows = transport
+            .execute(statement)
+            .await
+            .expect("real SQLx projection");
+        // A correct catalog can have no worker memberships or inheritance.
+        if !matches!(
+            plan.kind,
+            StatementKind::WorkerMemberships | StatementKind::PrimaryInheritance
+        ) {
+            assert!(!rows.is_empty(), "empty PG projection: {:?}", plan.kind);
+        }
+        assert!(
+            rows.iter().all(|row| row.cells.len() == plan.shape.len()
+                && !row
+                    .cells
+                    .iter()
+                    .any(|cell| matches!(cell, RawCell::WrongType))),
+            "wrong PG projection shape or type: {:?}",
+            plan.kind
+        );
+    }
+    assert!(
+        transport
+            .execute(Statement::Commit)
+            .await
+            .expect("COMMIT")
+            .is_empty()
+    );
+    transport.close().await.expect("close observer connection");
+    pool.close().await;
+    eprintln!("R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS");
+}
+
 const VALID_CONFIG: &str = r##"{"schema":"owner-beta-simulation-process-v1","code_commit":"0123456789abcdef0123456789abcdef01234567","manifest_format":"LAGRANGE_RELEASE_MANIFEST_V3","manifest_sha256":"sha256:1111111111111111111111111111111111111111111111111111111111111111","image_id":"sha256:2222222222222222222222222222222222222222222222222222222222222222","receipt_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","binary_sha256":"sha256:4444444444444444444444444444444444444444444444444444444444444444","source_input_sha256":"sha256:5555555555555555555555555555555555555555555555555555555555555555","recipe_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666","build_origin":"official-release-v1","package":"job-queue","bin":"owner-beta-simulation-runner","target":"x86_64-unknown-linux-musl","profile":"release","toolchain":"1.97.1","owner":"11111111-2222-3333-4444-555555555555","entitlement_reference":"fixture:synthetic-owner-rights-v1","entitlement_sha256":"sha256:7777777777777777777777777777777777777777777777777777777777777777","historical_root":"/synthetic/history/δ","reader_uid":10001,"reader_gid":10001,"paths":{"config":"/run/owner-beta-simulation/config.json","artifact_root":"/data/owner-beta-artifacts","receipt":"/usr/share/lagrange/owner-beta-simulation/artifact.json","complete":"/usr/share/lagrange/owner-beta-simulation/COMPLETE","executable":"/usr/local/bin/owner-beta-simulation-runner","worker_id":"owner-beta-simulation-runner"},"limits":{"memory_bytes":1234567,"nano_cpus":2345678,"health_tmpfs_bytes":3456789,"pids_limit":42,"startup_timeout_seconds":123,"health_max_age_seconds":234,"stop_timeout_seconds":345}}"##;
 const TEST_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const TEST_CONFIG_TIMEOUT_MS: i64 = 123_000;

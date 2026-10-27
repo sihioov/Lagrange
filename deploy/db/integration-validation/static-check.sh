@@ -55,6 +55,8 @@ for required_marker in \
   "grep -Fq 'SKIP:'" \
   "run_db_test jobqueue-daily-admitter-pool '-p job-queue --test owner_beta_publish daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
   "run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'" \
+  "run_db_test jobqueue-r4-trigger-metadata-pg '-p job-queue --features r4-pg-observer-tests --lib r4_trigger_metadata_pg_projection'" \
+  'R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS' \
   "run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'" \
   "run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'" \
   "run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'" \

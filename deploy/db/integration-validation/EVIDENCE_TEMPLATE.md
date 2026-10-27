@@ -79,14 +79,15 @@ tests:
   jobqueue_owner_beta_daily_runner: PASS|FAIL|BLOCKED_EXTERNAL
   api_daily_admitter_pool: PASS|FAIL|BLOCKED_EXTERNAL
   api_owner_beta_daily: PASS|FAIL|BLOCKED_EXTERNAL
+  jobqueue_r4_trigger_metadata_pg: PASS|FAIL|BLOCKED_EXTERNAL (one feature-gated real SQLx/PG test; 13 projections and transaction commands)
   jobqueue_owner_beta_simulation_execution: PASS|FAIL|BLOCKED_EXTERNAL (16 exact named rows)
   api_owner_beta_simulation_replay: PASS|FAIL|BLOCKED_EXTERNAL (one module-qualified exact row)
   api_owner_beta_simulations: PASS|FAIL|BLOCKED_EXTERNAL (7 exact named rows)
-  process_exit_rows: 22 labels, each actual exit_code and skip_markers
+  process_exit_rows: every registered DB-test label, each actual exit_code and skip_markers
   daily_0060_named_rows: 32 unique exact names with actual libtest outcome
   daily_0060_subcase_rows: 73 unique fixed labels with actual PASS
-  r4_simulation_test_commands: exact three Cargo commands recorded in evidence.json
-  r4_simulation_expected_rows: exact 23 expected names recorded in evidence.json
+  r4_simulation_test_commands: every registered R4 Cargo command recorded in evidence.json
+  r4_simulation_expected_rows: every registered R4 expected name recorded in evidence.json
   r4_simulation_named_rows: actual names/results recorded in evidence.json and PG_DB_TEST_ROW markers
   skip_markers: none (yes|no)
 

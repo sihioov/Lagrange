@@ -1556,6 +1556,11 @@ run_db_test() {
   local -a expected_names=()
   local raw="$workdir/test-$label.log"
   case "$label" in
+    jobqueue-r4-trigger-metadata-pg)
+      expected_names=(
+        owner_beta::simulation_execution::process_trigger_metadata::tests::r4_trigger_metadata_pg_projection
+      )
+      ;;
     jobqueue-owner-beta-simulation-execution)
       expected_names=(
         r4_actor_rls_and_hash_isolation
@@ -1637,14 +1642,14 @@ run_db_test() {
       fi
     done <"$raw"
   fi
-  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ] || [ "$label" = jobqueue-owner-beta-simulation-execution ] || [ "$label" = api-owner-beta-simulation-replay ] || [ "$label" = api-owner-beta-simulations ] || [ "$label" = jobqueue-owner-beta-simulation-v2-migration ] || [ "$label" = jobqueue-owner-beta-simulation-v2-execution ] || [ "$label" = api-owner-beta-simulations-v2 ]; then
+  if [ "$label" = jobqueue-owner-beta-publish ] || [ "$label" = jobqueue-owner-beta-daily-schedule ] || [ "$label" = jobqueue-owner-beta-daily-publish ] || [ "$label" = jobqueue-owner-beta-daily-recovery ] || [ "$label" = jobqueue-owner-beta-daily-backup ] || [ "$label" = jobqueue-owner-beta-daily-runner ] || [ "$label" = api-owner-beta-daily ] || [ "$label" = jobqueue-r4-trigger-metadata-pg ] || [ "$label" = jobqueue-owner-beta-simulation-execution ] || [ "$label" = api-owner-beta-simulation-replay ] || [ "$label" = api-owner-beta-simulations ] || [ "$label" = jobqueue-owner-beta-simulation-v2-migration ] || [ "$label" = jobqueue-owner-beta-simulation-v2-execution ] || [ "$label" = api-owner-beta-simulations-v2 ]; then
     while IFS= read -r row; do
       if [[ "$row" =~ ^test[[:space:]]([A-Za-z_][A-Za-z0-9_:]*)[[:space:]]\.\.\.[[:space:]](ok|FAILED|ignored)$ ]]; then
         name=${BASH_REMATCH[1]}; actual=${BASH_REMATCH[2]}
         replay_rows+=("$name:$actual")
         printf 'PG_DB_TEST_ROW:%s:%s:%s\n' "$label" "$name" "$actual"
         case "$label" in
-          jobqueue-owner-beta-simulation-execution|api-owner-beta-simulation-replay|api-owner-beta-simulations|jobqueue-owner-beta-simulation-v2-migration|jobqueue-owner-beta-simulation-v2-execution|api-owner-beta-simulations-v2)
+          jobqueue-r4-trigger-metadata-pg|jobqueue-owner-beta-simulation-execution|api-owner-beta-simulation-replay|api-owner-beta-simulations|jobqueue-owner-beta-simulation-v2-migration|jobqueue-owner-beta-simulation-v2-execution|api-owner-beta-simulations-v2)
             r4_simulation_named_rows+=("$label:$name:$actual")
             ;;
         esac
@@ -1654,6 +1659,10 @@ run_db_test() {
   record_log "$raw" "test-$label.log"
   [ "$status" -eq 0 ] || fail "DB-gated test failed: $label"
   [ "$skip" = false ] || fail "DB-gated test emitted SKIP despite DATABASE_URL: $label"
+  if [ "$label" = jobqueue-r4-trigger-metadata-pg ]; then
+    grep -Fqx 'R4_TRIGGER_PG:13_PROJECTIONS_AND_COMMANDS:PASS' "$raw" \
+      || fail 'R4 trigger metadata real PG projection marker missing'
+  fi
   if [ "${#expected_names[@]}" -gt 0 ]; then
     for expected in "${expected_names[@]}"; do
       actual_count=0
@@ -2178,6 +2187,7 @@ run_db_test jobqueue-owner-beta-daily-backup '-p job-queue --test owner_beta_dai
 run_db_test jobqueue-owner-beta-daily-runner '-p job-queue --test owner_beta_daily_runner'
 run_db_test api-daily-admitter-pool '-p api-server --test http_owner_beta_access http_daily_input_admitter_pool_is_direct_bounded_and_unprivileged'
 run_db_test api-owner-beta-daily '-p api-server --test http_owner_beta_daily --test http_owner_beta_price_only --test http_owner_beta_access'
+run_db_test jobqueue-r4-trigger-metadata-pg '-p job-queue --features r4-pg-observer-tests --lib r4_trigger_metadata_pg_projection'
 run_db_test jobqueue-owner-beta-simulation-execution '-p job-queue --test owner_beta_simulation_execution'
 run_db_test api-owner-beta-simulation-replay '-p api-server --lib http::owner_beta_simulations::tests::simulation_durable_replay_and_intent_binding'
 run_db_test api-owner-beta-simulations '-p api-server --test http_owner_beta_simulations'

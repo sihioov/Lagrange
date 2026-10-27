@@ -926,13 +926,16 @@ class WorkflowContractTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             matches = tuple(re.finditer(pattern, source))
             self.assertEqual(len(matches), len(re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]", source)))
-            # The frozen R4 binary runs on Linux; platform-excluded tests are
-            # source regressions, not executable libtest rows in that image.
+            # The frozen R4 binary runs on Linux without the disposable-PG
+            # feature. Its gated observer test is checked in the DB lane.
             return tuple(
                 match.group(1)
                 for match in matches
                 if source[:match.start()].splitlines()[-1].strip()
-                != '#[cfg(not(target_os = "linux"))]'
+                not in {
+                    '#[cfg(not(target_os = "linux"))]',
+                    '#[cfg(feature = "r4-pg-observer-tests")]',
+                }
             )
 
         def registered(lane: str) -> tuple[str, ...]:

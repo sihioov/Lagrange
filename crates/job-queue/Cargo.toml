@@ -18,6 +18,8 @@ market-stream-provisioning = ["kis-client/market-stream-provisioning"]
 # harness and enables kis-client's loopback-only test constructors.  It is
 # never a production default or runtime override.
 market-stream-db-tests = ["kis-client/test-support"]
+# Hosted disposable-PostgreSQL observer projection test only. Never a runtime default.
+r4-pg-observer-tests = []
 
 [dependencies]
 # The factor values a baseline backtest decides from. Pulled in so the RUNNER
