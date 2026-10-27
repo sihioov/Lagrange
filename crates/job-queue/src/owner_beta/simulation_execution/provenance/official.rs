@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::owner_beta::simulation::EngineIdentity;
 
-use super::{SimulationWorkerError, is_lower_sha256, sha256_file};
+#[cfg(test)]
+use super::sha256_file;
+use super::{SimulationWorkerError, is_lower_sha256};
 
 pub(super) const TOOLCHAIN: &str = "1.97.1";
 pub(super) const TARGET: &str = "x86_64-unknown-linux-musl";

@@ -627,7 +627,7 @@ mod linux_tests {
     #[test]
     fn config_reader_uses_read_only_no_follow_handles_and_exact_c3a_bytes() {
         let (bytes, expected_hash, expected_config) = checked_config();
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let config = linux::read_config_with(syscalls, TEST_COMMIT, &expected_hash).unwrap();
         assert_eq!(config, expected_config);
         assert_all_handles_dropped(&state);
@@ -659,7 +659,7 @@ mod linux_tests {
     #[test]
     fn invalid_pins_are_rejected_before_io_and_c3a_rejects_bad_raw_config() {
         let (bytes, expected_hash, _) = checked_config();
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         assert_eq!(
             linux::read_config_with(syscalls, &"0".repeat(40), &expected_hash),
             Err(Error::ConfigRejected)
@@ -667,7 +667,7 @@ mod linux_tests {
         assert!(state.borrow().operations.is_empty());
         assert_eq!(state.borrow().acquired, 0);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let different_commit = "1123456789abcdef0123456789abcdef01234567";
         assert_eq!(
             linux::read_config_with(syscalls, different_commit, &expected_hash),
@@ -675,7 +675,7 @@ mod linux_tests {
         );
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let zero_hash = format!("sha256:{}", "0".repeat(64));
         assert_eq!(
             linux::read_config_with(syscalls, TEST_COMMIT, &zero_hash),
@@ -713,7 +713,7 @@ mod linux_tests {
     fn config_metadata_acl_type_and_hardlink_policies_fail_closed() {
         let (bytes, hash, _) = checked_config();
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         mutate_node_metadata(
             &state,
             "/run/owner-beta-simulation/config.json",
@@ -727,7 +727,7 @@ mod linux_tests {
         );
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         mutate_node_metadata(
             &state,
             "/run/owner-beta-simulation/config.json",
@@ -741,7 +741,7 @@ mod linux_tests {
         );
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         mutate_node_metadata(
             &state,
             "/run/owner-beta-simulation/config.json",
@@ -762,7 +762,7 @@ mod linux_tests {
             libc::S_IFDIR,
             libc::S_IFLNK,
         ] {
-            let (mut syscalls, state) = config_environment(&bytes);
+            let (syscalls, state) = config_environment(&bytes);
             mutate_node_metadata(
                 &state,
                 "/run/owner-beta-simulation/config.json",
@@ -777,7 +777,7 @@ mod linux_tests {
             assert_all_handles_dropped(&state);
         }
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         set_acl(
             &state,
             "/run/owner-beta-simulation/config.json",
@@ -790,7 +790,7 @@ mod linux_tests {
         );
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         set_acl(
             &state,
             "/run/owner-beta-simulation/config.json",
@@ -818,7 +818,7 @@ mod linux_tests {
     fn config_bounded_reads_cover_empty_size_limit_short_eof_and_eintr() {
         let (bytes, hash, _) = checked_config();
         for invalid_size in [0, -1] {
-            let (mut syscalls, state) = config_environment(&bytes);
+            let (syscalls, state) = config_environment(&bytes);
             mutate_node_metadata(
                 &state,
                 "/run/owner-beta-simulation/config.json",
@@ -833,7 +833,7 @@ mod linux_tests {
             assert_all_handles_dropped(&state);
         }
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         mutate_node_metadata(
             &state,
             "/run/owner-beta-simulation/config.json",
@@ -847,7 +847,7 @@ mod linux_tests {
         );
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let node_id = state
             .borrow()
             .node_id("/run/owner-beta-simulation/config.json")
@@ -857,7 +857,7 @@ mod linux_tests {
         assert!(state.borrow().read_calls > 1);
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let node_id = state
             .borrow()
             .node_id("/run/owner-beta-simulation/config.json")
@@ -875,7 +875,7 @@ mod linux_tests {
         );
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let node_id = state
             .borrow()
             .node_id("/run/owner-beta-simulation/config.json")
@@ -976,7 +976,7 @@ mod linux_tests {
     #[test]
     fn config_leaf_mutation_fails_but_directory_timestamp_change_is_allowed() {
         let (bytes, hash, _) = checked_config();
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let mut changed = fake_node_metadata(&state, "/run/owner-beta-simulation/config.json");
         changed.ctime_nanoseconds += 1;
         state
@@ -992,7 +992,7 @@ mod linux_tests {
         );
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let mut changed = fake_node_metadata(&state, "/run");
         changed.mtime_seconds += 1;
         state
@@ -1005,7 +1005,7 @@ mod linux_tests {
         assert!(linux::read_config_with(syscalls, TEST_COMMIT, &hash).is_ok());
         assert_all_handles_dropped(&state);
 
-        let (mut syscalls, state) = config_environment(&bytes);
+        let (syscalls, state) = config_environment(&bytes);
         let mut changed = fake_node_metadata(&state, "/run");
         changed.inode += 100;
         state
@@ -1600,7 +1600,7 @@ mod linux_tests {
             "/run/owner-beta-simulation",
             "/run/owner-beta-simulation/config.json",
         ] {
-            let (mut syscalls, state) = config_environment(&config_bytes);
+            let (syscalls, state) = config_environment(&config_bytes);
             state
                 .borrow_mut()
                 .open_errors

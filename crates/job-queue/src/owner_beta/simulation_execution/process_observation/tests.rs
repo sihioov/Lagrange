@@ -642,7 +642,7 @@ fn unsupported_pidfd_factory_fails_without_replacement_fallback() {
             Err(Error::Unavailable)
         });
         assert_eq!(invalid.err(), Some(Error::InvalidProcess));
-        assert!(!invalid_pid_factory_called.borrow());
+        assert!(!*invalid_pid_factory_called.borrow());
     }
 }
 

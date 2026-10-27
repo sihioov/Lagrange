@@ -2078,13 +2078,6 @@ fn decode_context(
         migration_owner_oid,
         database_owner_oid,
         schema_owner_oid,
-        worker_can_login: row.worker_can_login,
-        worker_is_superuser: row.worker_is_superuser,
-        worker_can_create_database: row.worker_can_create_database,
-        worker_can_create_role: row.worker_can_create_role,
-        worker_can_replicate: row.worker_can_replicate,
-        worker_bypasses_rls: row.worker_bypasses_rls,
-        worker_inherits_roles: row.worker_inherits_roles,
         worker_can_login,
         worker_is_superuser,
         worker_can_create_database,
@@ -2768,7 +2761,7 @@ fn validate_root_headers(
 fn search_path_matches(actual: &str, expected: &str) -> bool {
     let actual = actual.as_bytes();
     let expected_parts = expected.split(',').collect::<Vec<_>>();
-    let mut cursor = 0;
+    let mut cursor = 0_usize;
     for (index, part) in expected_parts.iter().enumerate() {
         let part = part.as_bytes();
         let Some(end) = cursor.checked_add(part.len()) else {

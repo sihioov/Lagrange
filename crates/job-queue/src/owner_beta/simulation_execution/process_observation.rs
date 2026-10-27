@@ -284,7 +284,10 @@ fn parse_stat(
         return Err(SimulationProcessObservationError::InvalidProcess);
     }
 
-    let fields: Vec<&[u8]> = bytes[suffix_start..].split_ascii_whitespace().collect();
+    let fields: Vec<&[u8]> = bytes[suffix_start..]
+        .split(|byte| byte.is_ascii_whitespace())
+        .filter(|field| !field.is_empty())
+        .collect();
     if fields.len() < 20 || fields[0].len() != 1 {
         return Err(SimulationProcessObservationError::InvalidProcess);
     }

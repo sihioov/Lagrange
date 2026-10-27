@@ -160,7 +160,7 @@ LIMIT 65"#;
 const ROLLBACK_SQL: &str = "ROLLBACK";
 const COMMIT_SQL: &str = "COMMIT";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RawCategory {
     Command,
     Setup,
@@ -2305,7 +2305,7 @@ async fn observe_with_transport<T: ObserverTransport>(
     // Arm guarded disposal synchronously before any later await or SQL.
     transport.arm_close_on_drop();
     if canceled_during_acquire {
-        let mut error = SimulationConfiguredInputRightsError::canceled();
+        let error = SimulationConfiguredInputRightsError::canceled();
         return Err(close_before_begin(transport, error, canceled).await);
     }
 

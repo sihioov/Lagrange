@@ -263,7 +263,7 @@ pub(super) async fn startup(
             TrustedSimulationRuntime::load_official_config(&config, &commit, &receipt_pin)
                 .map_err(|_| ())?;
         runtime.revalidate().map_err(|_| ())?;
-        Ok((config, runtime))
+        Ok::<_, ()>((config, runtime))
     });
     let loaded = tokio::select! {
         biased;

@@ -450,7 +450,8 @@ if ! fakeroot bash -c '
   index=0
   for service in db-role-bootstrap db-migrate api-server web research-worker \
     recommendation-runner candidate-runner owner-beta-runner owner-equity-v2-runner \
-    nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler; do
+    nt-backtest-worker-1 nt-backtest-worker-2 paper-scheduler \
+    owner-beta-simulation-runner; do
     index=$((index + 1))
     RELEASE_IMAGE_MANIFEST_REFS["$service"]=$(release_image_manifest_ref_for "$service" "$fake_commit")
     RELEASE_IMAGE_MANIFEST_IDS["$service"]=$(printf "sha256:%064d" "$index")

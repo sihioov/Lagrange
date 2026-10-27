@@ -106,8 +106,13 @@ grep -Fq 'OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}' "$compose_f
   die 'Compose owner-beta Paper policy injection missing'
 grep -Fq 'OWNER_BETA_EQUITY_SIGNALS_MODE: ${OWNER_BETA_EQUITY_SIGNALS_MODE:-disabled}' "$compose_file" ||
   die 'Compose fixed-equity owner-beta policy injection missing'
-[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 5 ] ||
-  die 'Compose must expose the four approved modes and the controlled daily mode only'
+[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 8 ] ||
+  die 'Compose owner-beta mode and simulation policy inventory changed'
+for policy in 'OWNER_BETA_SIMULATION_MODE: disabled' 'OWNER_BETA_ACCESS_MODE: disabled' \
+  'OWNER_BETA_PRICE_INPUT_MODE: disabled'; do
+  [ "$(grep -Fxc "      $policy" "$compose_file")" -eq 1 ] ||
+    die "base simulation worker policy changed: $policy"
+done
 [ "$(grep -Ec '^      OWNER_BETA_DAILY_MODE: disabled$' <<<"$api_block")" -eq 1 ] ||
   die 'base api-server daily mode must be literal disabled'
 daily_worker_block=$(awk '

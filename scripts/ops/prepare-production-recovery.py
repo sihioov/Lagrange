@@ -55,6 +55,9 @@ UNIT_NAME = re.compile(r"lagrange-[a-zA-Z0-9_.@-]+\.(service|timer|socket|path)"
 PAYLOAD = (
     "scripts/ops/prepare-production-recovery.py", "scripts/ops/transition-production-backup.py",
     "scripts/ops/lib/production-preupgrade-recovery.py", "scripts/ops/lib/owner-beta-daily-backup.py",
+    "scripts/ops/lib/owner-beta-simulation-operations.py",
+    "scripts/ops/lib/owner-beta-simulation-release.py",
+    "scripts/ops/lib/owner-beta-simulation-runtime.py",
     "scripts/ops/lib/owner-beta-daily-backup-files.py", "scripts/ops/lib/owner-beta-daily-operations.py",
     "scripts/ops/lib/owner-beta-daily-runtime.py", "scripts/ops/lib/owner-beta-daily-release.py",
     "scripts/ops/lib/owner-beta-daily-base.py",

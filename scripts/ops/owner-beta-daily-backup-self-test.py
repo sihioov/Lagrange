@@ -1173,6 +1173,7 @@ class BackupToolPackageTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location(
             "tool_controller_tested", ROOT / "scripts/ops/lib/owner-beta-daily-backup.py")
         backup = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = backup
         spec.loader.exec_module(backup)
         release = str(self.directory / "releases" / self.app)
         binding = types.SimpleNamespace(data_root=str(self.directory / "data"))

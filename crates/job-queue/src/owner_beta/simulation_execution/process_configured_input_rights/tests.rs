@@ -919,7 +919,7 @@ fn covers_any_is_recomputed_for_active_and_inactive_rows() {
     let dates = InputFixture::new().dates;
     let first = dates[0].as_naive_date();
     let last = dates[dates.len() - 1].as_naive_date();
-    let mut wrong_flag = active_entitlement(
+    let wrong_flag = active_entitlement(
         1,
         first,
         last,
@@ -1359,7 +1359,10 @@ fn projection_guard_rejects_mutations_in_each_real_sql_projection() {
 
         let (start, end) = outer_projection_range(sql).expect("SQL has an outer projection");
         let original = split_top_level_projection(&sql[start..end])
-            .expect("outer projection splits at top level");
+            .expect("outer projection splits at top level")
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
         let reconstruct = |columns: &[String]| {
             format!("{} {} {}", &sql[..start], columns.join(", "), &sql[end..])
         };

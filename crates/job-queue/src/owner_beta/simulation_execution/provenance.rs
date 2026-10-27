@@ -1671,7 +1671,7 @@ mod tests {
             vec!["compile-identity", "artifact-root", "current-executable"]
         );
 
-        let mut executable_mismatch = official_fixture();
+        let executable_mismatch = official_fixture();
         executable_mismatch
             .io
             .set_executable_sha256(&"e".repeat(64));
@@ -1698,7 +1698,7 @@ mod tests {
 
     #[test]
     fn official_checked_config_rejects_raw_receipt_mutation_and_invalid_receipt_schema() {
-        let mut raw_mutation = official_fixture();
+        let raw_mutation = official_fixture();
         let mut changed_bytes = raw_mutation.receipt_bytes.clone();
         changed_bytes.push(b' ');
         raw_mutation

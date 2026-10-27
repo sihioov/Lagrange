@@ -146,7 +146,7 @@ class DailyBackupDockerTests(unittest.TestCase):
                 "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n"
                 "GRANT USAGE ON SCHEMA public TO " + ",".join(roles[1:]) + ";\n", stage="roles")
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
-        if len(migrations) != 63:
+        if len(migrations) != 64:
             raise RuntimeError("DAILY_BACKUP_FIXTURE_MIGRATION_INVENTORY")
         identity = cls.sql("SELECT current_user||':'||session_user;", role="migration_owner", stage="identity").strip()
         if identity != b"migration_owner:migration_owner":
@@ -313,7 +313,7 @@ class DailyBackupDockerTests(unittest.TestCase):
 
     def test_actual_full_schema_encrypted_files_and_networkless_database_restore(self):
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
-        self.assertEqual(len(migrations), 63)
+        self.assertEqual(len(migrations), 64)
         ledger = self.sql("SELECT version::text||':'||encode(checksum,'hex')||':'||success::text "
                           "FROM public._sqlx_migrations ORDER BY version;", role="migration_owner")
         self.assertEqual(ledger.decode("ascii").splitlines(), [

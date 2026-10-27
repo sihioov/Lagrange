@@ -88,7 +88,7 @@ class PrivateDatabase:
                 "GRANT USAGE,CREATE ON SCHEMA public TO migration_owner;\n"
                 "GRANT USAGE ON SCHEMA public TO " + ",".join(roles[1:]) + ";\n", stage="roles")
         migrations = sorted((ROOT / "migrations").glob("*.up.sql"))
-        if len(migrations) != 63:
+        if len(migrations) != 64:
             raise RuntimeError("GRANT_FIXTURE_MIGRATION_INVENTORY")
         for path in migrations:
             script = path.read_text()
@@ -104,7 +104,7 @@ class PrivateDatabase:
                 "covered_datasets,covered_uses,effective_from,effective_until,managed_by) VALUES('" +
                 pure.ENTITLEMENT + "','" + "a" * 64 + "','fixture grant','ACTIVE','[]','[]',"
                 "'2000-01-01','2099-12-31','" + pure.OWNER + "');", stage="seed")
-        print("GRANT_INSPECT_FIXTURE: migrations=63 sha256=" + cls.migration_hash, flush=True)
+        print("GRANT_INSPECT_FIXTURE: migrations=64 sha256=" + cls.migration_hash, flush=True)
         print("GRANT_INSPECT_FIXTURE: container=" + cls.server + " name=" + cls.name, flush=True)
 
     @classmethod

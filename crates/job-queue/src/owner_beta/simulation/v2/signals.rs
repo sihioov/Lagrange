@@ -832,7 +832,7 @@ mod tests {
         let sessions = weekday_dates(NaiveDate::from_ymd_opt(2020, 1, 1).expect("date"), 5);
         let ready = first_ready_index_with(&sessions, 0, |date| {
             if date == sessions[0] || date == sessions[1] {
-                Ok(None)
+                Ok::<_, V2SignalError>(None)
             } else {
                 Ok(Some(date))
             }

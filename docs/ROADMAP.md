@@ -6,13 +6,13 @@
 
 | 관리 항목 | 현재 값 |
 | --- | --- |
-| 최종 갱신일 | 2026-10-27 (Asia/Seoul) |
+| 최종 갱신일 | 2026-10-28 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | R4-06 DOING — Owner 효율화 지시에 따라 남은 작업을 실행기 통합(WP-5C3E), 배포·운영 통합(WP-5C4), 실제 검증(WP-6B) 세 묶음으로 재편했다. D2K correction1 F1–F6는 SOURCE 수용,39 Rust NOT RUN. 필수 CI·DB·운영·Owner 인수는 유지한다. |
+| 현재 실행 우선순위 | R4-06 DOING — 통합 SOURCE 후보를 검증 브랜치에 커밋하고 첫 CI의 Rust·Web·운영·PG 실패를 수정 중이다. 동일 후보의 필수 CI·DB·운영·Owner 인수는 유지한다. |
 | 상세 실행 계획 | [R4 잔여 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)이 이후 실행 순서다. [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 계약·증거 이력을 보존한다. |
 | main 통합 | `1286e73`과 R2/R3·R4 인계 `7a396d7`의 병합 `bb906d3` 및 원격 main 일치를 확인했다. 원래 CI39976478432 attempt1은 Web E2E 단일 실패로 FAILURE, smoke39976478535 attempt1은 SUCCESS. G1 진단 변경을 수용했고 후속 후보에서 assertion 원인을 회수한다. [병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md). |
-| 다음 착수 항목 | 실행기 E와 운영 C4의 SOURCE 통합 검토를 마쳤고 WP-6B 테스트 등록·운영 절차·구조도 소스를 연결했다. 다음은 동일 후보의 첫 컴파일 및 집중 검증이며, 현재 SOURCE/offline 권한에는 실행·커밋·hosted dispatch가 포함되지 않는다. 기존 필수 CI·SQLx/PG·운영·백업/복원·Owner 인수와 PNG 렌더는 미완료다. |
+| 다음 착수 항목 | 검증 브랜치 `r4-validation-20261028`의 첫 CI `40534043791`에서 발견한 컴파일·Web 수량·운영 fixture 실패를 묶어 수정하고 같은 후속 SHA의 필수 CI를 재실행한다. PNG는 렌더했으나 새 후보 커밋과 CI 검증은 아직이다. SQLx/PG·운영·백업/복원·Owner 인수는 미완료다. |
 | 진행 상태 | R1-01~09 및 전체 R1 DONE. C3 `862fa95`의 CI·smoke, 실제 12개 이미지·V2 manifest, 기존 Owner V2 복귀 검증 완료. main `b0a2579`의 기존 CI·smoke도 최종 성공 회수 |
 | 판단이 필요한 항목 | R2 U2 계약은 2026-10-14 채택됨. G4와 기존 배포·백업/복원 인수는 보존한다. 2026-10-23 Owner가 비긴급 검증의 후속 이슈화를 채택했다. Wave166 정정으로 D-06 및005930 가격 충돌 조사는 유예 유지하며 독립 개발을 계속한다. D-07도 유예이며 입력 승인·Daily 활성화·실제3거래일·R2/R3 FINAL은 미완료다. R4-01의 `owner-beta-price-only-simulation-v1-draft-1` 제안/설명 뒤 Owner가 “진행해”라고 지시했고, 후속 지시로 기록 저장 후 다른 세션에서 착수한다. 원본·후속 결정은 인계에 고정했다. |
 
@@ -677,6 +677,7 @@ R3는 소스·계약 대조와 공개 공식 자료 확인부터 진행하며, �
   **2026-10-25 실패 진단 소스 검토 수용:** WP6 actual idle/pending0, 보고서 `cfee6bca8762134ea353eb811498ef70cc147c763b60bbb4a16c267a09328145`, receipt `2cd97a092902bad13f90f465891e4504eeaf6dce0d2adda150b37765f71903cb` 및919/820개 해시를 대조했다. 초기 psql guard를 실패 위치로 좁히는 근거와 `datname::text` 한 줄 보정안을 수용하되 실제 오류 원문·SQLSTATE와 보정 효과는 미검증으로 유지한다. 전체 명령 이벤트 기록이 없어 이 위치를 무조건적인 직접 오류 증거로 표현하지 않는다. 기존11개 작업자 모두 idle/activeTurn null/pending0, 소유 컨테이너 부재·ACL 복원·기존 서비스10개 불변·슬롯 해제를 확인했다. **BLOCKED; 원인:** 실제1회 실행 한도 소진. **해소 조건/후속 담당:** Owner의 추가1회 한도 승인 후 코디네이터가 미적용 보정안과 별도 실행 조건을 고정하고 검증한다. 원 intent·freeze·실패 영수증은 재사용하거나 수정하지 않는다.
   **2026-10-25 추가1회 승인·DOING 재개:** Owner의 “승인하니 이어서 작업 진행해”로 총 실제 한도3회(기존2회 소진, 잔여1회)를 고정했다. 승인 입력과 판독 보호를 유지하고 API·runner UID10001 및 인증 전달 파일·비공개 제어 파일 접근을 함께 보정한다. 독립 검토·새 freeze 뒤 한 번만 실행하며 실제 격리 인수는 미완료다.
 - [ ] **R4-06 — 기준 전략 확대·출시.** 검증된 첫 전략에서 기존 5개 기준 전략으로 확대한다.
+  **2026-10-28 검증 착수:** SOURCE 인계 후보를 `bd90201289565f4312e42558a4aca5ec85f72e86`로 커밋하고 검증 브랜치에 푸시했다. 첫 hosted CI `40534043791`에서 format·일반 Python은 PASS, Rust compile·Web 후보 E2E 수량·운영 policy·PG 통합은 FAIL이다. PostgreSQL 실패는 현재까지 같은 job-queue 컴파일 오류로 좁혀졌으며 실제 SQL 검증 성공으로 간주하지 않는다. 오류와 고정 fixture inventory를 수정 중이며 후속 후보의 필수 CI는 아직 NOT RUN. 구조도 PNG는 로컬 렌더했으나 새 커밋·hosted 검증 전이다. 배포·실제 승인 입력·백업/복원·Owner 인수는 OPEN이다.
   **현재 DOING — 2026-10-27 SOURCE 통합 회수:** E continuation2와 C4 continuation3를 SOURCE 수용했다. C4 교체 생성 응답 상실 뒤 이전 세대가 target pending에 남는 경로는 coordinator가 운영 코드·회귀 두 파일에서 보정했다. WP-6B의 private process292개·DB16개 등록, 운영 Python 두 스위트, runbook·구조도 소스를 연결했다. 근거는 `target/r4-expansion-implementation/wave24-supervision/final-source-handoff/report.md`. 모든 신규 테스트·compile/SQLx/PG/hosted/운영/백업·복원/Owner 검증과 PNG 렌더는 미완료이며 R4-06 전체 완료를 뜻하지 않는다.
 
   **이전 DOING — 2026-10-27 통합 SOURCE 검토:** E continuation2의 drain ack·오류/cleanup 보존·legacy heartbeat 수정을 SOURCE 수용했다. C4 continuation2는 보존 회수 후 시작 실패 정리·서로 다른 릴리스의 stopped generation 인계·잘못된 회귀 snapshot 지적 F1–F3를 같은 담당자에게 반환했다. 근거는 `target/r4-expansion-implementation/wave24-supervision/c4-continuation-2-recovery/source-review.md`. WP-6B 등록·runbook/diagram 통합과 compile/PG/운영/Owner 조건은 미완료다.

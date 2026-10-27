@@ -116,7 +116,9 @@ jobs:
         run: python -m unittest scripts.ops.test_market_stream_grant -v
       - name: Verify market-stream grant inspection on isolated PostgreSQL
         if: ${{ !cancelled() }}
-        run: sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py
+        run: |
+          sudo docker pull postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a
+          sudo nice -n 10 /usr/bin/python3 -B scripts/ops/market-stream-grant-inspect-self-test.py
       - name: Verify daily backup files and failure ordering
         # These fixtures own separate disposable resources. Run all three even
         # after an independent failure; keep each exit status a hard job failure.

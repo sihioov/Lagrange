@@ -1219,7 +1219,7 @@ fn primitive_decoder_rejects_bad_type_category_count_null_pair_and_text_contract
     );
 
     let mut budget = LogicalPayloadBudget::default();
-    assert_eq!(
+    assert!(matches!(
         RawDecoder::new(
             row(RawCategory::Role, vec![bool_cell(true)]),
             RawCategory::Context,
@@ -1228,7 +1228,7 @@ fn primitive_decoder_rejects_bad_type_category_count_null_pair_and_text_contract
         )
         .map_err(|error| error.primary),
         Err(PrimaryFailure::CatalogInvalid)
-    );
+    ));
 
     let mut budget = LogicalPayloadBudget::default();
     let mut wrong_count = RawDecoder::new(
@@ -1508,10 +1508,10 @@ fn timeout_is_checked_before_acquire_and_fixed_bind_helpers_are_exact() {
     let config = config_with_timeout(3_000_000);
     let canceled = Arc::clone(&fake.canceled);
     let result = block_on(observe_with_transport(&mut fake, &config, &canceled));
-    assert_eq!(
+    assert!(matches!(
         result.map_err(|error| error.primary),
         Err(PrimaryFailure::InvalidBound)
-    );
+    ));
     assert!(!fake.event_log().contains(&Event::Acquire));
 }
 
