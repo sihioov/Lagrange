@@ -1232,6 +1232,37 @@ mkdir -p "$backup_fixture/release-root"
 export LAGRANGE_RELEASE_ROOT=$backup_fixture/release-root
 chmod 0700 "$backup_fixture" "$backup_fixture/backups" "$backup_fixture/state" \
   "$backup_fixture/locks" "$backup_fixture/compose" "$backup_fixture/release-root"
+# The legacy encryption fixture has no database. Give the runner an isolated,
+# protected synthetic empty-history response; the real inventory and its
+# refusal cases are exercised by the simulation operations suites.
+backup_commit=2222222222222222222222222222222222222222
+mkdir -p "$backup_fixture/release-root/releases/$backup_commit" "$backup_fixture/installed-ops/lib"
+: >"$backup_fixture/release-root/.lagrange-release.lock"
+chmod 0600 "$backup_fixture/release-root/.lagrange-release.lock"
+backup_runner=$backup_fixture/installed-ops/run-production-backup.sh
+cp "$ops/run-production-backup.sh" "$backup_runner"
+chmod 0755 "$backup_runner"
+cat >"$backup_fixture/installed-ops/lib/owner-beta-simulation-operations.py" <<'PY'
+import os
+import sys
+
+args = sys.argv[1:]
+if (len(args) != 11 or args[0] != "transition" or
+        args[1] != "--install-root" or args[3] != "--target-release" or
+        args[5] != "--commit" or args[7] != "--lock-fd" or
+        args[9:] != ["--action", "inspect"]):
+    raise SystemExit(1)
+root, target, commit = args[2], args[4], args[6]
+if (target != root + "/releases/" + commit or
+        not os.path.islink(root + "/current") or
+        os.readlink(root + "/current") != "releases/" + commit or
+        os.path.lexists(root + "/.owner-beta-simulation-reader-floor") or
+        os.path.lexists(target + "/.owner-beta-simulation") or
+        os.path.lexists(target + "/.owner-beta-simulation-receipt")):
+    raise SystemExit(1)
+print("SIMULATION_OPERATION: LEGACY_OFF")
+PY
+chmod 0644 "$backup_fixture/installed-ops/lib/owner-beta-simulation-operations.py"
 printf '%s' raw-fixture-secret >"$backup_fixture/data/raw/row"
 printf '%s' curated-fixture-secret >"$backup_fixture/data/curated/row"
 printf '%s\n' 'services: {}' >"$backup_fixture/compose/compose.yml"
@@ -1323,9 +1354,20 @@ if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_insta
 fi
 grep -Fq 'refusing to overwrite existing target' "$backup_fixture/install-existing.out"
 
+if PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
+  FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
+  >"$backup_fixture/no-current.out" 2>&1; then
+  echo 'production-ops-self-test: backup accepted unknown simulation history' >&2
+  exit 1
+fi
+grep -Fq 'simulation history cannot be determined without a current release' \
+  "$backup_fixture/no-current.out"
+ln -s "releases/$backup_commit" "$backup_fixture/release-root/current"
+
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
-  bash "$ops/run-production-backup.sh" --run --config-file "$backup_fixture/backup.conf" \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
   >"$backup_fixture/run-one.out"
 first_set=$(find "$backup_fixture/backups" -maxdepth 1 -type d -name 'backup-*' -print -quit)
 [ -n "$first_set" ]
@@ -1340,14 +1382,14 @@ write_backup_config $((first_size + 2048))
 sleep 1
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
-  bash "$ops/run-production-backup.sh" --run --config-file "$backup_fixture/backup.conf" \
+  bash "$backup_runner" --run --config-file "$backup_fixture/backup.conf" \
   >"$backup_fixture/run-two.out"
 [ "$(find "$backup_fixture/backups" -maxdepth 1 -type d -name 'backup-*' | wc -l)" -eq 1 ]
 grep -Fq 'PRODUCTION_BACKUP_PRUNED' "$backup_fixture/run-two.out"
 grep -Fq -- '--network none --read-only --user 999:999' "$FAKE_DOCKER_LOG"
 PATH="$backup_fixture/bin:$ownership_bin:$PATH" REAL_INSTALL_BIN="$real_install" REAL_TAR_BIN="$real_tar" \
   FAKE_DOCKER_LOG="$FAKE_DOCKER_LOG" \
-  bash "$ops/run-production-backup.sh" --verify-latest \
+  bash "$backup_runner" --verify-latest \
   --config-file "$backup_fixture/backup.conf" >"$backup_fixture/verify.out"
 grep -Fq 'isolated=true' "$backup_fixture/verify.out"
 

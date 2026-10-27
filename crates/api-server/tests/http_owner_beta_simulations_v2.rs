@@ -203,11 +203,11 @@ async fn v2_success_pairs_read_all_defaults_and_preserve_v1_history() {
         v1_zero_cost_hash
     );
     assert_eq!(
-        v1_pair["illustrative_10bp_per_side"]["result"]["schema"],
+        v1_pair["illustrative_10bp_per_side"]["result"]["contract"]["result_schema_version"],
         SimulationContractVersion::V1.result_schema()
     );
     assert_eq!(
-        v1_pair["illustrative_10bp_per_side"]["result"]["contract_version"],
+        v1_pair["illustrative_10bp_per_side"]["result"]["contract"]["contract_version"],
         SimulationContractVersion::V1.contract_version()
     );
 

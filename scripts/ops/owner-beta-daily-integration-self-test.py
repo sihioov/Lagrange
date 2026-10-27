@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real root installer integration in an isolated disposable hosted fixture."""
+"""Root Daily installer mechanics in an isolated disposable hosted fixture."""
 from __future__ import annotations
 
 import fcntl
@@ -62,6 +62,23 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
             target.chmod(0o644)
+        # This suite has no DB or Docker daemon. Keep its historical Daily
+        # installer assertions scoped to a synthetic no-simulation inventory;
+        # the real controller and fail-closed inventory have separate tests.
+        simulation = self.repo / "scripts/ops/lib/owner-beta-simulation-operations.py"
+        simulation.write_text(
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "if len(args) != 11 or args[0] != 'transition' or args[1] != '--install-root' "
+            "or args[3] != '--target-release' or args[5] != '--commit' "
+            "or args[7] != '--lock-fd' or args[9] != '--action' or args[10] != 'activate':\n"
+            "    raise SystemExit(1)\n"
+            "root, target = args[2], args[4]\n"
+            "if os.path.lexists(root + '/.owner-beta-simulation-reader-floor') "
+            "or os.path.lexists(target + '/.owner-beta-simulation') "
+            "or os.path.lexists(target + '/.owner-beta-simulation-receipt'):\n"
+            "    raise SystemExit(1)\n"
+            "print('SIMULATION_OPERATION: LEGACY_OFF_ACTIVATED')\n")
         compose = self.repo / "deploy/compose"
         compose.mkdir(parents=True)
         (compose / "compose.yml").write_text("services: {}\n")

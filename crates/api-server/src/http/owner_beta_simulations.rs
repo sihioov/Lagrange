@@ -319,7 +319,7 @@ async fn create_v2_run(
         &resolved,
         evaluation_start,
         evaluation_end,
-        replay.as_ref(),
+        replay.as_deref(),
     )
     .await
     {

@@ -117,7 +117,7 @@ pub struct SimulationRunHeader {
 /// supplies its frozen strategy snapshot; only a new queue key reads the
 /// mutable active configuration.
 pub enum V2SubmissionPreflight {
-    Replay(V2SimulationJobInput),
+    Replay(Box<V2SimulationJobInput>),
     New(ResolvedConfig),
 }
 
@@ -363,7 +363,7 @@ impl OwnerBetaSimulationRepo {
             tx.commit()
                 .await
                 .map_err(|_| OwnerBetaSimulationRepoError::Internal)?;
-            return Ok(V2SubmissionPreflight::Replay(validated));
+            return Ok(V2SubmissionPreflight::Replay(Box::new(validated)));
         }
 
         let resolved = load_active_config(&mut tx, owner, strategy_config_id).await?;
