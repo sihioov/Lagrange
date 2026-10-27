@@ -960,7 +960,21 @@ class WorkflowContractTests(unittest.TestCase):
                 expected.extend(f"owner_beta::simulation_execution::{module}::tests::{name}"
                                 for name in source_names(source))
         self.assertTrue(expected)
-        self.assertEqual(registered("simulation-process-integration"), tuple(expected))
+        def flatten_nested_test_module(name: str) -> str:
+            parts = name.split("::")
+            if len(parts) == 5:
+                return name
+            self.assertEqual(len(parts), 6)
+            module, nested_module = parts[2], parts[4]
+            self.assertIn(module, modules)
+            nested_source = (execution / module / "tests.rs").read_text(encoding="utf-8")
+            self.assertRegex(nested_source, rf"(?m)^\s*mod {re.escape(nested_module)}\s*\{{")
+            return "::".join((*parts[:4], parts[5]))
+
+        self.assertEqual(
+            tuple(flatten_nested_test_module(name) for name in registered("simulation-process-integration")),
+            tuple(expected),
+        )
         self.assertEqual(registered("simulation-runner"), source_names(execution / "runner.rs"))
         self.assertEqual(registered("simulation-runner-cli"),
                          source_names(ROOT / "crates/job-queue/src/bin/owner-beta-simulation-runner.rs"))

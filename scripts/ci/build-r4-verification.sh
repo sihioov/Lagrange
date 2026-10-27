@@ -105,7 +105,11 @@ def main() -> None:
         if match is not None:
             rows.append(match.groups())
     if len(rows) != len(expected) or passed_count != len(expected):
-        fail(lane, "executed test row count does not match the frozen inventory")
+        fail(
+            lane,
+            "executed test row count does not match the frozen inventory "
+            f"(expected={len(expected)}, rows={len(rows)}, passed={passed_count})",
+        )
 
     observed = Counter()
     for name, result in rows:
@@ -831,17 +835,17 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_observation::tests::unsupported_pidfd_factory_fails_without_replacement_fallback \
   owner_beta::simulation_execution::process_observation::tests::linux_errno_classification_is_fail_closed_and_value_free \
   owner_beta::simulation_execution::process_observation::tests::diagnostics_expose_only_static_type_and_error_names \
-  owner_beta::simulation_execution::process_observation::tests::partial_descriptor_acquisition_drops_each_actual_handle_once \
-  owner_beta::simulation_execution::process_observation::tests::capture_failure_after_descriptor_acquisition_drops_every_actual_handle \
-  owner_beta::simulation_execution::process_observation::tests::production_policy_requests_fixed_nofollow_flags_and_retains_descriptors \
-  owner_beta::simulation_execution::process_observation::tests::filesystem_type_and_held_or_named_types_fail_closed \
-  owner_beta::simulation_execution::process_observation::tests::leaf_type_symlink_and_identity_replacements_use_shared_metadata_checks \
-  owner_beta::simulation_execution::process_observation::tests::directory_and_leaf_replacements_are_checked_before_and_after_reads \
-  owner_beta::simulation_execution::process_observation::tests::ordinary_missing_and_permission_errors_are_unavailable_on_the_shared_path \
-  owner_beta::simulation_execution::process_observation::tests::bounded_leaf_reader_handles_short_reads_eof_overflow_and_eintr_without_retry \
-  owner_beta::simulation_execution::process_observation::tests::pidfd_poll_statuses_events_and_syscall_errors_are_fail_closed \
-  owner_beta::simulation_execution::process_observation::tests::successful_revalidation_uses_the_same_retained_pidfd_and_directories \
-  owner_beta::simulation_execution::process_observation::tests::missing_named_entry_during_revalidation_poisoned_without_more_io \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::partial_descriptor_acquisition_drops_each_actual_handle_once \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::capture_failure_after_descriptor_acquisition_drops_every_actual_handle \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::production_policy_requests_fixed_nofollow_flags_and_retains_descriptors \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::filesystem_type_and_held_or_named_types_fail_closed \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::leaf_type_symlink_and_identity_replacements_use_shared_metadata_checks \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::directory_and_leaf_replacements_are_checked_before_and_after_reads \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::ordinary_missing_and_permission_errors_are_unavailable_on_the_shared_path \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::bounded_leaf_reader_handles_short_reads_eof_overflow_and_eintr_without_retry \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::pidfd_poll_statuses_events_and_syscall_errors_are_fail_closed \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::successful_revalidation_uses_the_same_retained_pidfd_and_directories \
+  owner_beta::simulation_execution::process_observation::tests::descriptor_regressions::missing_named_entry_during_revalidation_poisoned_without_more_io \
   owner_beta::simulation_execution::process_parent::tests::only_acknowledged_no_candidate_idle_counts_as_cycle \
   owner_beta::simulation_execution::process_parent::tests::failed_startup_never_invokes_claim_path \
   owner_beta::simulation_execution::process_parent::tests::canceled_and_failed_startup_never_admit_the_claim_path \
@@ -859,26 +863,26 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_parent::tests::fatal_completion_starts_bounded_cleanup_without_resetting_deadline \
   owner_beta::simulation_execution::process_parent::tests::real_lease_error_notifies_root_and_is_not_drain_suppression \
   owner_beta::simulation_execution::process_parent::tests::validation_error_during_shutdown_is_not_erased_by_settlement_outcome \
-  owner_beta::simulation_execution::process_read::tests::config_reader_uses_read_only_no_follow_handles_and_exact_c3a_bytes \
-  owner_beta::simulation_execution::process_read::tests::invalid_pins_are_rejected_before_io_and_c3a_rejects_bad_raw_config \
-  owner_beta::simulation_execution::process_read::tests::config_metadata_acl_type_and_hardlink_policies_fail_closed \
-  owner_beta::simulation_execution::process_read::tests::config_bounded_reads_cover_empty_size_limit_short_eof_and_eintr \
-  owner_beta::simulation_execution::process_read::tests::exact_config_and_health_caps_are_accepted_with_bounded_reads \
-  owner_beta::simulation_execution::process_read::tests::config_read_time_cap_plus_one_is_bounded_and_rejected \
-  owner_beta::simulation_execution::process_read::tests::health_read_time_cap_plus_one_is_bounded_and_precedes_observation \
-  owner_beta::simulation_execution::process_read::tests::config_leaf_mutation_fails_but_directory_timestamp_change_is_allowed \
-  owner_beta::simulation_execution::process_read::tests::current_name_or_metadata_change_after_read_is_rejected_before_observation \
-  owner_beta::simulation_execution::process_read::tests::config_root_and_parent_metadata_or_symlink_fail_closed \
-  owner_beta::simulation_execution::process_read::tests::health_ready_and_busy_records_follow_c3b_and_observer_order \
-  owner_beta::simulation_execution::process_read::tests::malformed_duplicate_and_unbound_health_never_reach_process_observer \
-  owner_beta::simulation_execution::process_read::tests::generation_binding_and_final_observer_clock_control_readiness \
-  owner_beta::simulation_execution::process_read::tests::observer_unavailability_is_typed_and_closes_the_read_set \
-  owner_beta::simulation_execution::process_read::tests::c3b_phase_staleness_future_clock_and_sticky_failure_remain_authoritative \
-  owner_beta::simulation_execution::process_read::tests::health_storage_metadata_acl_tmpfs_and_device_relationships_fail_closed \
-  owner_beta::simulation_execution::process_read::tests::health_read_size_eof_and_interruption_are_bounded_and_close_descriptors \
-  owner_beta::simulation_execution::process_read::tests::retained_file_and_lock_replacements_during_observation_are_rejected \
-  owner_beta::simulation_execution::process_read::tests::partial_acquisition_closes_every_descriptor_and_static_errors_do_not_echo_paths \
-  owner_beta::simulation_execution::process_read::tests::root_and_child_open_errors_share_typed_classification_without_retry \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::config_reader_uses_read_only_no_follow_handles_and_exact_c3a_bytes \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::invalid_pins_are_rejected_before_io_and_c3a_rejects_bad_raw_config \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::config_metadata_acl_type_and_hardlink_policies_fail_closed \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::config_bounded_reads_cover_empty_size_limit_short_eof_and_eintr \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::exact_config_and_health_caps_are_accepted_with_bounded_reads \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::config_read_time_cap_plus_one_is_bounded_and_rejected \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::health_read_time_cap_plus_one_is_bounded_and_precedes_observation \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::config_leaf_mutation_fails_but_directory_timestamp_change_is_allowed \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::current_name_or_metadata_change_after_read_is_rejected_before_observation \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::config_root_and_parent_metadata_or_symlink_fail_closed \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::health_ready_and_busy_records_follow_c3b_and_observer_order \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::malformed_duplicate_and_unbound_health_never_reach_process_observer \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::generation_binding_and_final_observer_clock_control_readiness \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::observer_unavailability_is_typed_and_closes_the_read_set \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::c3b_phase_staleness_future_clock_and_sticky_failure_remain_authoritative \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::health_storage_metadata_acl_tmpfs_and_device_relationships_fail_closed \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::health_read_size_eof_and_interruption_are_bounded_and_close_descriptors \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::retained_file_and_lock_replacements_during_observation_are_rejected \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::partial_acquisition_closes_every_descriptor_and_static_errors_do_not_echo_paths \
+  owner_beta::simulation_execution::process_read::tests::linux_tests::root_and_child_open_errors_share_typed_classification_without_retry \
   owner_beta::simulation_execution::process_rls_metadata::tests::every_catalog_projection_has_exact_top_level_order_alias_and_cast_type \
   owner_beta::simulation_execution::process_rls_metadata::tests::fixed_sql_is_bounded_catalog_only_and_never_reads_expression_or_body_text \
   owner_beta::simulation_execution::process_rls_metadata::tests::embedded_baseline_identity_relation_roles_and_ten_policy_contracts_are_exact \
@@ -966,41 +970,41 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-process-integrati
   owner_beta::simulation_execution::process_trigger_metadata::tests::dropping_pending_futures_records_only_guarded_disposal \
   owner_beta::simulation_execution::process_trigger_metadata::tests::command_result_discards_row_payload_and_rejects_presence \
   owner_beta::simulation_execution::process_trigger_metadata::tests::rollback_row_keeps_cleanup_unconfirmed_after_primary_failure \
-  owner_beta::simulation_execution::process_write::tests::checked_startup_and_event_lifecycle_publish_c3b_records \
-  owner_beta::simulation_execution::process_write::tests::initial_existing_current_pending_or_unknown_entry_is_dirty_without_mutation \
-  owner_beta::simulation_execution::process_write::tests::nonblocking_lock_contender_never_observes_or_mutates_records \
-  owner_beta::simulation_execution::process_write::tests::observation_failures_are_typed_and_do_not_cross_visibility \
-  owner_beta::simulation_execution::process_write::tests::changed_generation_before_and_after_rename_has_boundary_specific_outcome \
-  owner_beta::simulation_execution::process_write::tests::short_writes_and_reads_complete_with_exact_same_descriptor_readback \
-  owner_beta::simulation_execution::process_write::tests::every_apply_failure_poison_prevents_all_later_io_and_keeps_lock_until_drop \
-  owner_beta::simulation_execution::process_write::tests::syscall_failures_are_bounded_and_visibility_depends_on_rename_boundary \
-  owner_beta::simulation_execution::process_write::tests::post_rename_observation_failure_is_unconfirmed_and_never_restored \
-  owner_beta::simulation_execution::process_write::tests::post_rename_apply_failure_keeps_new_record_and_poisoned_lock \
-  owner_beta::simulation_execution::process_write::tests::stable_in_range_size_disagreement_fails_before_rename_and_preserves_prior_current \
-  owner_beta::simulation_execution::process_write::tests::stable_in_range_size_disagreement_after_rename_is_unconfirmed_and_poisoned \
-  owner_beta::simulation_execution::process_write::tests::read_time_cap_plus_one_with_in_range_metadata_is_bounded_and_not_published \
-  owner_beta::simulation_execution::process_write::tests::size_or_time_change_during_readback_fails_before_visibility \
-  owner_beta::simulation_execution::process_write::tests::create_collision_preserves_pending_and_prior_current_without_retry \
-  owner_beta::simulation_execution::process_write::tests::pre_rename_ancestor_or_current_replacement_keeps_old_publication \
-  owner_beta::simulation_execution::process_write::tests::post_rename_ancestor_or_current_replacement_is_unconfirmed_and_not_restored \
-  owner_beta::simulation_execution::process_write::tests::altered_readback_and_backward_clock_fail_closed_without_retry \
-  owner_beta::simulation_execution::process_write::tests::zero_write_and_zero_length_read_are_terminal_failures \
-  owner_beta::simulation_execution::process_write::tests::temporary_acl_and_creation_mode_faults_leave_the_pending_evidence \
-  owner_beta::simulation_execution::process_write::tests::temporary_type_owner_group_link_device_and_size_faults_fail_before_write \
-  owner_beta::simulation_execution::process_write::tests::effective_identity_and_acl_metadata_fail_before_observation \
-  owner_beta::simulation_execution::process_write::tests::apply_rechecks_uid_and_gid_before_filesystem_or_observation_work \
-  owner_beta::simulation_execution::process_write::tests::fixed_tree_metadata_modes_types_devices_and_tmpfs_are_checked \
-  owner_beta::simulation_execution::process_write::tests::access_and_default_acls_are_rejected_on_every_retained_tree_object \
-  owner_beta::simulation_execution::process_write::tests::acl_absence_errno_is_accepted_but_other_xattr_errors_fail_once \
-  owner_beta::simulation_execution::process_write::tests::current_record_type_owner_group_mode_link_acl_device_and_size_faults_fail_closed \
-  owner_beta::simulation_execution::process_write::tests::descriptor_errno_classification_never_retries_interrupts \
-  owner_beta::simulation_execution::process_write::tests::raw_dirent_parser_rejects_truncation_duplicates_missing_names_and_slashes \
-  owner_beta::simulation_execution::process_write::tests::malformed_inventory_stops_before_observation_and_temp_creation \
-  owner_beta::simulation_execution::process_write::tests::interrupted_inventory_read_is_not_retried \
-  owner_beta::simulation_execution::process_write::tests::missing_dot_entry_and_over_limit_inventory_are_rejected \
-  owner_beta::simulation_execution::process_write::tests::replacing_retained_ancestor_lock_or_published_inode_before_apply_is_detected \
-  owner_beta::simulation_execution::process_write::tests::health_sequence_overflow_maps_to_a_value_free_rejection \
-  owner_beta::simulation_execution::process_write::tests::writer_and_errors_have_redacted_debug_output
+  owner_beta::simulation_execution::process_write::tests::linux_tests::checked_startup_and_event_lifecycle_publish_c3b_records \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::initial_existing_current_pending_or_unknown_entry_is_dirty_without_mutation \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::nonblocking_lock_contender_never_observes_or_mutates_records \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::observation_failures_are_typed_and_do_not_cross_visibility \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::changed_generation_before_and_after_rename_has_boundary_specific_outcome \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::short_writes_and_reads_complete_with_exact_same_descriptor_readback \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::every_apply_failure_poison_prevents_all_later_io_and_keeps_lock_until_drop \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::syscall_failures_are_bounded_and_visibility_depends_on_rename_boundary \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::post_rename_observation_failure_is_unconfirmed_and_never_restored \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::post_rename_apply_failure_keeps_new_record_and_poisoned_lock \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::stable_in_range_size_disagreement_fails_before_rename_and_preserves_prior_current \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::stable_in_range_size_disagreement_after_rename_is_unconfirmed_and_poisoned \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::read_time_cap_plus_one_with_in_range_metadata_is_bounded_and_not_published \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::size_or_time_change_during_readback_fails_before_visibility \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::create_collision_preserves_pending_and_prior_current_without_retry \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::pre_rename_ancestor_or_current_replacement_keeps_old_publication \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::post_rename_ancestor_or_current_replacement_is_unconfirmed_and_not_restored \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::altered_readback_and_backward_clock_fail_closed_without_retry \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::zero_write_and_zero_length_read_are_terminal_failures \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::temporary_acl_and_creation_mode_faults_leave_the_pending_evidence \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::temporary_type_owner_group_link_device_and_size_faults_fail_before_write \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::effective_identity_and_acl_metadata_fail_before_observation \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::apply_rechecks_uid_and_gid_before_filesystem_or_observation_work \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::fixed_tree_metadata_modes_types_devices_and_tmpfs_are_checked \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::access_and_default_acls_are_rejected_on_every_retained_tree_object \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::acl_absence_errno_is_accepted_but_other_xattr_errors_fail_once \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::current_record_type_owner_group_mode_link_acl_device_and_size_faults_fail_closed \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::descriptor_errno_classification_never_retries_interrupts \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::raw_dirent_parser_rejects_truncation_duplicates_missing_names_and_slashes \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::malformed_inventory_stops_before_observation_and_temp_creation \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::interrupted_inventory_read_is_not_retried \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::missing_dot_entry_and_over_limit_inventory_are_rejected \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::replacing_retained_ancestor_lock_or_published_inode_before_apply_is_detected \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::health_sequence_overflow_maps_to_a_value_free_rejection \
+  owner_beta::simulation_execution::process_write::tests::linux_tests::writer_and_errors_have_redacted_debug_output
 # R4_PROCESS_INTEGRATION_TESTS_END
 cargo test --locked --release -p job-queue --bin owner-beta-simulation-runner -- \
   --nocapture --test-threads=1 >/out/test-logs/simulation-runner-cli.log 2>&1 || {
