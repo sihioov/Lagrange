@@ -166,6 +166,14 @@ class DailyReleaseIntegrationTests(unittest.TestCase):
                  for p in self.install.rglob("*")}
         self.assertEqual(before, after)
 
+    def test_check_rejects_protected_simulation_floor_on_legacy_release(self):
+        self.expect_pass(self.command())
+        floor = self.install / ".owner-beta-simulation-reader-floor"
+        floor.write_bytes(b"unrecognized-floor")
+        floor.chmod(0o600)
+        self.expect_fail(self.command("--check"))
+        self.assertEqual(self.current(), "releases/" + self.commit)
+
     def test_on_requires_separate_config_before_any_current_link(self):
         self.inputs("owner_only")
         self.expect_fail(self.command())

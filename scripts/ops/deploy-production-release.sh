@@ -378,9 +378,11 @@ ensure_compatibility_links() {
 
 if [ "$mode" = check ]; then
   validate_current
+  # This installed-file check has no DB history evidence. The guard still
+  # requires a compatible reader for any protected floor or config it finds.
   /usr/bin/python3 "$script_dir/lib/owner-beta-simulation-release.py" reader-check \
     --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
-    --mode disabled --history-present >/dev/null || die 'simulation reader compatibility check failed'
+    --mode disabled >/dev/null || die 'simulation reader compatibility check failed'
   echo "PRODUCTION_RELEASE_CHECK: PASS commit=$release_commit manifest=installed-v2"
   exit 0
 fi

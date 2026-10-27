@@ -711,7 +711,7 @@ python3 /out/verify-rust-test-log.py /out/test-logs/simulation-runner.log simula
   runner_runtime_boundary_is_linux_only
 # R4_PROCESS_INTEGRATION_TESTS_BEGIN
 cargo test --locked --release -p job-queue --lib owner_beta::simulation_execution::process_ -- \
-  --nocapture --test-threads=1 >/out/test-logs/simulation-process-integration.log 2>&1 || {
+  --test-threads=1 >/out/test-logs/simulation-process-integration.log 2>&1 || {
     echo 'R4 process integration tests failed; see the private build log.' >&2
     exit 1
   }
