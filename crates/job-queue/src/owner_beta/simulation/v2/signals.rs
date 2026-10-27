@@ -987,12 +987,13 @@ mod tests {
         for factor in strategy.factor_names() {
             versions.insert((*factor).to_owned(), "1.0.0".to_owned());
             for instrument in approved_instruments() {
+                let value = value_for(factor, &instrument);
                 rows.push(FactorRow {
                     date: date.to_iso(),
                     instrument: instrument.clone(),
                     factor: (*factor).to_owned(),
-                    raw: Some(value_for(factor, &instrument)),
-                    normalized: None,
+                    raw: Some(value),
+                    normalized: Some(value),
                 });
             }
         }

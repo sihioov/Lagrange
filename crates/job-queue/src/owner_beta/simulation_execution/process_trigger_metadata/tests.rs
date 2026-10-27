@@ -1720,7 +1720,7 @@ fn context_roles_relations_and_context_drift_fail_closed() {
             bool_cell(false),
         ],
     ));
-    assert_primary(&mut unexpected_membership, PrimaryFailure::PolicyRejected);
+    assert_primary(&mut unexpected_membership, PrimaryFailure::BoundExceeded);
 
     let mut relation_name = FakeTransport::valid();
     set_text(
@@ -1751,7 +1751,7 @@ fn context_roles_relations_and_context_drift_fail_closed() {
         RawCategory::Inheritance,
         vec![i64_cell(10), i64_cell(11)],
     ));
-    assert_primary(&mut inherited, PrimaryFailure::PolicyRejected);
+    assert_primary(&mut inherited, PrimaryFailure::BoundExceeded);
 
     let mut drifted = FakeTransport::valid();
     set_i64(
@@ -2182,7 +2182,7 @@ fn trigger_numeric_candidates_and_update_vector_bounds_fail_closed() {
         "jobs",
         "jobs_sync_recommendation_terminal_run",
     );
-    set_i32(&mut update_extra_attribute.fixture.reverse[index], 22, 1);
+    set_i32(&mut update_extra_attribute.fixture.reverse[index], 22, 2);
     assert_primary(&mut update_extra_attribute, PrimaryFailure::PolicyRejected);
 }
 
@@ -2387,7 +2387,7 @@ fn update_of_status_requires_the_resolved_live_attribute_crosslink() {
     set_i64(
         &mut foreign_relation.fixture.update_attributes[0],
         5,
-        i64::from(TEST_RELATION_OID_BASE + 1),
+        i64::from(relation_oid("job_attempts")),
     );
     assert_primary(&mut foreign_relation, PrimaryFailure::PolicyRejected);
 

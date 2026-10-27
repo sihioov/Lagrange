@@ -890,9 +890,6 @@ fn strict_worker_context_checks_identity_owner_flags_and_grants() {
         (1, text("admin")),
         (2, text("other_database")),
         (4, text("other_schema")),
-        (5, i64_cell(0)),
-        (6, i64_cell(0)),
-        (7, i64_cell(0)),
         (8, i64_cell(i64::from(TEST_WORKER_OID))),
         (9, i64_cell(i64::from(TEST_WORKER_OID))),
         (10, i64_cell(i64::from(TEST_WORKER_OID))),
@@ -924,6 +921,11 @@ fn strict_worker_context_checks_identity_owner_flags_and_grants() {
             &fake.event_log(),
             StatementKind::PolicyHeaders
         ));
+    }
+    for index in 5..=7 {
+        let mut fake = FakeTransport::valid();
+        replace_cell(&mut fake.context, index, i64_cell(0));
+        assert_error_primary(&mut fake, PrimaryFailure::CatalogInvalid);
     }
 }
 
@@ -1330,7 +1332,7 @@ fn text_byte_cap_accepts_exact_boundary_and_rejects_overflow_sentinel() {
             false,
         ),
         text_with_original("", Some((TEXT_FETCH_BYTES + 1) as i64), false),
-        text_with_original(&"é".repeat(513), Some(1026), false),
+        text_with_original(&("é".repeat(512) + "x"), Some(1025), false),
     ] {
         let mut budget = LogicalPayloadBudget::default();
         let mut decoder = RawDecoder::new(
