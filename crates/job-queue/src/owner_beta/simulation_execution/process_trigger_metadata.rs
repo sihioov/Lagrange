@@ -4168,7 +4168,18 @@ impl<'a> SqlxObserverTransport<'a> {
         let rows = query
             .fetch_all(self.connection()?)
             .await
-            .map_err(|_| TransportFailure::Database)?;
+            .map_err(|_error| {
+                #[cfg(all(test, feature = "r4-pg-observer-tests"))]
+                eprintln!(
+                    "R4_TRIGGER_PG:SQLSTATE:{}",
+                    _error
+                        .as_database_error()
+                        .and_then(|database| database.code())
+                        .as_deref()
+                        .unwrap_or("non-db")
+                );
+                TransportFailure::Database
+            })?;
         raw_pg_rows(
             rows,
             plan.category.ok_or(TransportFailure::State)?,

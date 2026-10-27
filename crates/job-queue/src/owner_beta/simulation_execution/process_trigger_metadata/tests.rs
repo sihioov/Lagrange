@@ -136,7 +136,7 @@ async fn r4_trigger_metadata_pg_projection() {
         let rows = transport
             .execute(statement)
             .await
-            .expect("real SQLx projection");
+            .unwrap_or_else(|error| panic!("real SQLx projection {:?}: {:?}", plan.kind, error));
         // A correct catalog can have no worker memberships or inheritance.
         if !matches!(
             plan.kind,
